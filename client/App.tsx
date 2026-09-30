@@ -2416,9 +2416,6 @@ function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebT
           ) : (
             <>
               <div className="studylog-editor-toolbar">
-                <button type="button" className="btn xs ghost" onClick={() => setText((t) => `${t}${t.trim() ? "\n\n" : ""}${L("Contrôle — ", "Test — ")}${L("matière", "subject")} :\nCe que j'ai eu faux :\n- `)}>
-                  {L("Noter les erreurs d'un contrôle", "Log mistakes from a test")}
-                </button>
                 {recog.supported ? (
                   <button
                     type="button"

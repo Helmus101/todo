@@ -1201,6 +1201,12 @@ export interface WebTask {
    *  something the student has to be shown a specific artifact chip to find. Append-only from Otto's side
    *  (WRITE_TO_BOARD tool); grows over the life of the task, across sessions, same as `chat`. */
   board?: BoardEntry[];
+  /** This session's learning objectives (SET_OBJECTIVES tool) — a short checklist Otto lays out once a
+   *  topic is chosen (3-6 items) and updates `done` on as the student demonstrates each one, instead of the
+   *  single free-text `focus` board entry. Client-local, same as chat/board/problems: replaced wholesale on
+   *  each SET_OBJECTIVES call (not append-only), so the list always reflects Otto's current read of progress
+   *  rather than accumulating stale/superseded objectives across a long session. */
+  objectives?: TaskObjective[];
   /** ONE free-response practice problem for the day's math/physics/science themes (Study Journal daily
    *  entries only — see generateDailyStudyCards in server/claude.ts) — deliberately NOT multiple choice:
    *  the student types their own answer and it's checked against `answer` (see practiceAnswerMatches
@@ -1397,20 +1403,38 @@ export interface BoardEntry {
   /** Plain text/markdown-lite (renderChatText already handles this) — not restricted to any one format,
    *  since a formula, an instruction, and a summary all need different shapes. When kind === "diagram" this
    *  is still a one-line caption (not the figure itself — see `diagram` below), so the entry reads sensibly
-   *  even before the SVG renders or if the ops fail validation. */
+   *  even before the SVG renders or if the ops fail validation. Same for kind === "outline": a one-line
+   *  caption/title, with the actual structure in `outline` below. */
   text: string;
   /** Loose styling hint only, not a hard schema — lets the UI render a formula differently from an
    *  instruction without forcing Otto into a rigid structure for what's meant to be a free-form board.
    *  "focus" opens a session's document (today's arc), "definition" records a key term the first time it
    *  comes up, "insight" credits the STUDENT's own aha by name — together with formula/summary these make
    *  the board read like a document being built entry by entry, not a pile of disconnected notes. "diagram"
-   *  is a real drawn figure (see `diagram`) rather than text/ASCII. */
-  kind?: "note" | "instruction" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram";
+   *  is a real drawn figure (see `diagram`) rather than text/ASCII. "outline" is a headed, bulleted section
+   *  (see `outline`) — for essay-based/humanities content (history causes, source analysis, an essay plan)
+   *  where a flat sentence or a spatial diagram both fit poorly; math/science still reach for
+   *  formula/diagram first. */
+  kind?: "note" | "instruction" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline";
   /** Present only when kind === "diagram" — the figure's shapes, rendered as SVG (BoardArtifact.tsx). Capped
    *  at 15 ops server-side (makeDiagramEntry, server/claude.ts): enough for a labeled triangle or a small
    *  graph, not enough to build a full illustration op-by-op. */
   diagram?: DiagramOp[];
+  /** Present only when kind === "outline" — one or more headed sections, each a short list of bullet
+   *  points. Built for a history/essay-style board (causes-of-an-event, a source's key points, an essay's
+   *  section-by-section plan) the same way `diagram` is built for a geometric figure: structure the model
+   *  hands over typed, instead of hoping a numbered list survives inside a flat `text` string. Capped
+   *  server-side (makeOutlineEntry) at 6 sections x 8 bullets — enough for a real essay plan, not a whole
+   *  textbook chapter in one entry. */
+  outline?: { heading: string; bullets: string[] }[];
   at: string;
+}
+
+/** One item on a session's learning-objectives checklist (SET_OBJECTIVES tool) — see WebTask.objectives. */
+export interface TaskObjective {
+  id: string;
+  label: string;
+  done: boolean;
 }
 
 // ── AI-personalized theme token validation ──────────────────────────────────────────────────���──────────

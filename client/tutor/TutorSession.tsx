@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { WebTask } from "../../shared/types.ts";
 import { api } from "../api.ts";
-import { appendLocalChat, appendLocalBoard, appendLocalProblems, getLocalThread } from "../localChatBoard.ts";
+import { appendLocalChat, appendLocalBoard, appendLocalProblems, setLocalObjectives, getLocalThread } from "../localChatBoard.ts";
 import { useLang, TaskModal } from "../ui.tsx";
 import { AskOttoPanel } from "../study/AskOttoPanel.tsx";
 import { BoardArtifact } from "../study/artifacts/BoardArtifact.tsx";
@@ -105,13 +105,6 @@ export function TutorSession({ userId, onExit }: { userId: string | null; onExit
     setPastSessions(getTutorSessions(userId));
   }, [userId]);
 
-  // Re-check for active session when subject changes
-  useEffect(() => {
-    if (selectedSubject) {
-      peekForActiveSession();
-    }
-  }, [selectedSubject]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const saveAndClose = useCallback((task: WebTask, startedAt: string) => {
     const chat = task.chat || [];
     const board = task.board || [];
@@ -185,11 +178,14 @@ export function TutorSession({ userId, onExit }: { userId: string | null; onExit
       // come back as a hard "Otto couldn't reply" with no message at all. canvasMode restricts the tutor to
       // CREATE_PROBLEM (individual, inline, answerable right on the board) instead — the only artifact this
       // screen actually knows how to show.
-      const response = await api.chat(task.id, message, task.chat || [], task.board || [], task.problems || [], undefined, undefined, voiceMode, true, true);
-      const { task: updated, chatDelta, board, problems } = response;
+      const response = await api.chat(task.id, message, task.chat || [], task.board || [], task.problems || [], undefined, undefined, voiceMode, true, true, task.objectives || []);
+      const { task: updated, chatDelta, board, problems, objectives } = response;
       const chat = appendLocalChat(task.id, chatDelta, userId);
       const newBoard = appendLocalBoard(task.id, board, userId);
       const newProblems = appendLocalProblems(task.id, problems, userId);
+      // objectives is only ever the FULL replacement list (SET_OBJECTIVES' own contract), or undefined
+      // when Otto didn't touch it this turn — never overwrite the existing list with an empty one.
+      const newObjectives = objectives?.length ? setLocalObjectives(task.id, objectives, userId) : (task.objectives || []);
       // Only update relevant fields, preserve context/steps/links from before
       setTask({
         ...task,
@@ -197,6 +193,7 @@ export function TutorSession({ userId, onExit }: { userId: string | null; onExit
         chat,
         board: newBoard,
         problems: newProblems,
+        objectives: newObjectives,
         // Don't overwrite context/steps/links with irrelevant data
         context: task.context || "",
         steps: task.steps || [],
@@ -270,12 +267,14 @@ export function TutorSession({ userId, onExit }: { userId: string | null; onExit
     const chat = local.chat.length ? local.chat : (pendingActiveSession.chat || []);
     const board = local.board.length ? local.board : (pendingActiveSession.board || []);
     const problems = local.problems.length ? local.problems : (pendingActiveSession.problems || []);
+    const objectives = local.objectives.length ? local.objectives : (pendingActiveSession.objectives || []);
     // Only load relevant fields from the task, ignore irrelevant ones
     setTask({
       ...pendingActiveSession,
       chat,
       board,
       problems,
+      objectives,
       // Clear irrelevant context from previous sessions
       context: "",
       steps: [],
@@ -319,6 +318,7 @@ export function TutorSession({ userId, onExit }: { userId: string | null; onExit
           chat: [],
           board: [],
           problems: [],
+          objectives: [],
           // Clear any residual fields
           context: "",
           steps: [],
@@ -557,7 +557,31 @@ export function TutorSession({ userId, onExit }: { userId: string | null; onExit
         {desmosOpen ? (
           <TutorDesmos onClose={() => setDesmosOpen(false)} />
         ) : (
-          <div className="tutor-board-body"><BoardArtifact task={task} writing={sending} /></div>
+          <>
+            {/* Today's focus: the session's SET_OBJECTIVES checklist, distinct from the board's own single
+                "focus" entry (one sentence of narrative framing). Shown as a compact strip above the board
+                itself so progress is visible at a glance without taking over the pane the way a full section
+                would — a long humanities session especially benefits from seeing "2 of 6 done" at a glance. */}
+            {!!task.objectives?.length && (
+              <div className="tutor-objectives" aria-label={L("Objectifs de la séance", "Today's focus")}>
+                <div className="tutor-objectives-head">
+                  <span>{L("Objectifs du jour", "Today's focus")}</span>
+                  <span className="tutor-objectives-progress">
+                    {task.objectives.filter((o) => o.done).length}/{task.objectives.length}
+                  </span>
+                </div>
+                <ul className="tutor-objectives-list">
+                  {task.objectives.map((o) => (
+                    <li key={o.id} className={o.done ? "done" : ""}>
+                      <span className="tutor-objectives-check" aria-hidden>{o.done ? "✓" : ""}</span>
+                      {o.label}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <div className="tutor-board-body"><BoardArtifact task={task} writing={sending} /></div>
+          </>
         )}
       </section>
     </main>

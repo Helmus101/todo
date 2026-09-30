@@ -27,6 +27,7 @@ const KIND_LABEL: Record<string, [string, string]> = {
   insight: ["Déclic", "Insight"],
   definition: ["Définition", "Definition"],
   diagram: ["Figure", "Figure"],
+  outline: ["Plan", "Outline"],
 };
 
 // Quiet margin glyph per kind — a worksheet's annotations, not badges. Typographic on purpose (no icon
@@ -39,6 +40,7 @@ const KIND_GLYPH: Record<string, string> = {
   insight: "✦",
   definition: "≡",
   diagram: "◫",
+  outline: "▤",
 };
 
 const LABEL_SIZE: Record<string, number> = { sm: 12, md: 14, lg: 18 };
@@ -472,6 +474,20 @@ export function BoardArtifact({ task, writing }: BoardArtifactProps) {
                 </>
               ) : e.kind === "summary" ? (
                 <ReasoningTrace text={e.text} en={en} />
+              ) : e.kind === "outline" && e.outline?.length ? (
+                <>
+                  {stripStrayMarkdown(e.text) ? <div className="sm-board-entry-text sm-board-outline-title">{stripStrayMarkdown(e.text)}</div> : null}
+                  <div className="sm-board-outline">
+                    {e.outline.map((section, i) => (
+                      <div key={i} className="sm-board-outline-section">
+                        <div className="sm-board-outline-heading">{stripStrayMarkdown(section.heading)}</div>
+                        <ul className="sm-board-outline-bullets">
+                          {section.bullets.map((b, j) => <li key={j}>{renderChatText(b)}</li>)}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </>
               ) : (
                 <>
                   <div className="sm-board-entry-text">{renderChatText(e.text)}</div>

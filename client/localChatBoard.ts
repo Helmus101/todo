@@ -9,7 +9,7 @@
 // — the trade-off the user explicitly chose over keeping cloud sync.
 // Same account-scoping pattern as localDecks.ts (keyed by userId) so signing into a different account on
 // the same browser doesn't leak one student's conversations into another's.
-import type { WebTask, BoardEntry, TaskProblem } from "../shared/types.ts";
+import type { WebTask, BoardEntry, TaskProblem, TaskObjective } from "../shared/types.ts";
 
 type ChatMessage = NonNullable<WebTask["chat"]>[number];
 
@@ -17,6 +17,7 @@ interface LocalTaskThread {
   chat: ChatMessage[];
   board: BoardEntry[];
   problems: TaskProblem[];
+  objectives: TaskObjective[];
 }
 
 const BASE_KEY = "otto-local-chat-board";
@@ -60,7 +61,7 @@ function writeAll(map: Record<string, LocalTaskThread>, userId: string | null): 
  *  a task object without a null check at every call site. */
 export function getLocalThread(taskId: string, userId: string | null = null): LocalTaskThread {
   const t = readAll(userId)[taskId];
-  return { chat: t?.chat || [], board: t?.board || [], problems: t?.problems || [] };
+  return { chat: t?.chat || [], board: t?.board || [], problems: t?.problems || [], objectives: t?.objectives || [] };
 }
 
 /** Overlay every task's local thread onto a freshly-fetched task list — the server stops sending fresh
@@ -76,17 +77,18 @@ export function hydrateLocalThreads(list: WebTask[], userId: string | null = nul
   let migrated = false;
   const out = list.map((t) => {
     const local = all[t.id];
-    if (local?.chat?.length || local?.board?.length || local?.problems?.length) {
+    if (local?.chat?.length || local?.board?.length || local?.problems?.length || local?.objectives?.length) {
       return {
         ...t,
         ...(local.chat?.length ? { chat: local.chat } : {}),
         ...(local.board?.length ? { board: local.board } : {}),
         ...(local.problems?.length ? { problems: local.problems } : {}),
+        ...(local.objectives?.length ? { objectives: local.objectives } : {}),
       };
     }
     // Nothing local yet — if the server still has legacy cloud data for this task, capture it now.
     if (t.chat?.length || t.board?.length || t.problems?.length) {
-      all[t.id] = { chat: t.chat || [], board: t.board || [], problems: t.problems || [] };
+      all[t.id] = { chat: t.chat || [], board: t.board || [], problems: t.problems || [], objectives: [] };
       migrated = true;
     }
     return t;
@@ -102,7 +104,7 @@ export function appendLocalChat(taskId: string, newMessages: ChatMessage[], user
   const map = readAll(userId);
   const existing = map[taskId]?.chat || [];
   const chat = [...existing, ...newMessages].slice(-CHAT_CAP);
-  map[taskId] = { chat, board: map[taskId]?.board || [], problems: map[taskId]?.problems || [] };
+  map[taskId] = { chat, board: map[taskId]?.board || [], problems: map[taskId]?.problems || [], objectives: map[taskId]?.objectives || [] };
   writeAll(map, userId);
   return chat;
 }
@@ -112,7 +114,7 @@ export function appendLocalBoard(taskId: string, newEntries: BoardEntry[], userI
   const map = readAll(userId);
   const existing = map[taskId]?.board || [];
   const board = [...existing, ...newEntries].slice(-BOARD_CAP);
-  map[taskId] = { chat: map[taskId]?.chat || [], board, problems: map[taskId]?.problems || [] };
+  map[taskId] = { chat: map[taskId]?.chat || [], board, problems: map[taskId]?.problems || [], objectives: map[taskId]?.objectives || [] };
   writeAll(map, userId);
   return board;
 }
@@ -122,9 +124,18 @@ export function appendLocalProblems(taskId: string, newProblems: TaskProblem[], 
   const map = readAll(userId);
   const existing = map[taskId]?.problems || [];
   const problems = [...existing, ...newProblems].slice(-PROBLEMS_CAP);
-  map[taskId] = { chat: map[taskId]?.chat || [], board: map[taskId]?.board || [], problems };
+  map[taskId] = { chat: map[taskId]?.chat || [], board: map[taskId]?.board || [], problems, objectives: map[taskId]?.objectives || [] };
   writeAll(map, userId);
   return problems;
+}
+
+/** Replaces the WHOLE objectives list (SET_OBJECTIVES' own contract — the model always sends the full
+ *  current list, never a delta), unlike the append* functions above which grow their array. */
+export function setLocalObjectives(taskId: string, objectives: TaskObjective[], userId: string | null = null): TaskObjective[] {
+  const map = readAll(userId);
+  map[taskId] = { chat: map[taskId]?.chat || [], board: map[taskId]?.board || [], problems: map[taskId]?.problems || [], objectives };
+  writeAll(map, userId);
+  return objectives;
 }
 
 /** Called on signout — this browser's local conversations belong to the account that's leaving, never the

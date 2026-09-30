@@ -1418,12 +1418,17 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
   const currentBoard = currentBoardRaw
     .filter((b: any) => b && typeof b.text === "string" && b.text.trim())
     .slice(-60)
-    .map((b: any) => ({ id: "", at: "", text: String(b.text).slice(0, 600), ...(typeof b.kind === "string" ? { kind: b.kind } : {}) }));
+    .map((b: any) => ({ id: "", at: "", text: String(b.text).slice(0, 600), ...(typeof b.kind === "string" ? { kind: b.kind } : {}), ...(b.kind === "outline" && Array.isArray(b.outline) ? { outline: b.outline.slice(0, 6).map((s: any) => ({ heading: String(s?.heading || "").slice(0, 120), bullets: (Array.isArray(s?.bullets) ? s.bullets : []).map((x: any) => String(x).slice(0, 200)).slice(0, 8) })) } : {}) }));
   const currentProblemsRaw = Array.isArray(req.body?.problems) ? req.body.problems : [];
   const currentProblems = currentProblemsRaw
     .filter((p: any) => p && typeof p.question === "string" && p.question.trim())
     .slice(-12)
     .map((p: any) => ({ id: "", createdAt: "", question: String(p.question).slice(0, 600), ...(Array.isArray(p.options) ? { options: p.options.map((o: any) => String(o).slice(0, 300)).slice(0, 6) } : {}) }));
+  const currentObjectivesRaw = Array.isArray(req.body?.objectives) ? req.body.objectives : [];
+  const currentObjectives = currentObjectivesRaw
+    .filter((o: any) => o && typeof o.label === "string" && o.label.trim())
+    .slice(-6)
+    .map((o: any) => ({ id: "", label: String(o.label).slice(0, 160), done: Boolean(o.done) }));
   try {
     let academic: { homework: Awaited<ReturnType<typeof pronoteSvc.pronoteHomework>>; tests: Awaited<ReturnType<typeof pronoteSvc.pronoteTests>> } | undefined;
     try {
@@ -1484,7 +1489,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
       message,
       profile,
       academic,
-      { stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, primer: req.body?.primer === true, recentJournal, currentBoard, currentProblems, notNeeded: tasks.notNeededFronts(req.session.tasks || [], t.sourceSubject) },
+      { stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, primer: req.body?.primer === true, recentJournal, currentBoard, currentProblems, currentObjectives, notNeeded: tasks.notNeededFronts(req.session.tasks || [], t.sourceSubject) },
     );
     addUsage(profile, out.tokens, "chat"); // untracked before — a tool-calling turn can now cost like a small run
     bumpActivityHour(profile, new Date(), t.sourceSubject);
@@ -1558,7 +1563,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
         ...(t.evidence?.length ? { sources: t.evidence.slice(0, 8).map((source) => ({ label: source.label, url: source.url })) } : {}),
         ...(out.guardrailTripped ? { guardrail: true } : {}) },
     ];
-    res.json({ reply: out.reply, chatDelta: newChat, board: out.board, problems: out.problems, guardrailTripped: out.guardrailTripped, task: t });
+    res.json({ reply: out.reply, chatDelta: newChat, board: out.board, problems: out.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped, task: t });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || M(req, "échec de la discussion", "chat failed") });
   }

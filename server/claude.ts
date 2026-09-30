@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
-import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards, TaskQuiz, TaskProblem, BoardEntry, DiagramOp, DailyPracticeProblem, ThemeTokens, WebTask, TaskType, InfoRequirement, TaskArtifact, SeparateTask } from "../shared/types.ts";
+import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards, TaskQuiz, TaskProblem, BoardEntry, DiagramOp, DailyPracticeProblem, ThemeTokens, WebTask, TaskType, InfoRequirement, TaskArtifact, SeparateTask, TaskObjective } from "../shared/types.ts";
 import { validateThemeTokens } from "../shared/types.ts";
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
@@ -1817,8 +1817,16 @@ const WRITE_TO_BOARD_TOOL = {
   name: "WRITE_TO_BOARD",
   description: "Write ONE short entry onto the student's persistent tutor Board — a visible, always-accessible surface separate from the chat thread, NOT limited to practice problems. The board is a document being BUILT entry by entry across the session: it opens with the day's focus, collects the key definitions and formulas as they come up, credits the student's own insights, and ends with a summary of their reasoning. Each call adds ONE short, focused entry — never a wall of text; the next thing gets its own entry later as the session moves on. What belongs here is decided by one test: would the student otherwise have to hold it in their head, or scroll back through chat to find it? (given values and the goal, a formula in play, the cases a problem splits into, a diagram, the sub-goal they're on, a key term's gloss, their own insight). Anything that fails that test stays in chat. Don't narrate that you're writing it ('let me jot that down') — just call the tool.",
   input_schema: { type: "object", properties: {
-    text: { type: "string", description: "the entry itself — plain text/light markdown, ONE idea, in KEYWORDS AND STRUCTURE rather than prose: ~25 words of prose max, and fewer is better. Write the skeleton of the idea, never a restatement of what you just said in chat (a board that repeats your sentences measurably hurts learning — the redundancy effect). Annotate like handwritten notes: 'term = plain gloss' on its own line; relationships as arrows ('A --pushes--> B'); contrasts stacked with '<-' margin asides ('NOT x <- what you'd expect' / 'BUT y <- the actual point'); dash lines for anything sequential, one idea each. Anything with REAL SPATIAL POSITION — a shape, a triangle, a number line, points on axes — belongs in DRAW_ON_BOARD instead, which renders an actual figure; reserve a fenced ASCII block here for genuinely textual structure (a timeline, a mind-map of labels, a small table) where a real drawing wouldn't add anything. ANY such ASCII sketch MUST be wrapped in a triple-backtick code fence (```\\n...\\n```) — the board renders a fenced block as monospace, preserving every space exactly as typed; UNFENCED text gets trimmed line by line and the whole shape collapses into a flat line with no structure left." },
-    kind: { type: "string", enum: ["note", "instruction", "formula", "summary", "focus", "insight", "definition"], description: "styling/role hint: 'focus' ONCE to open a session's document — today's arc, where you start and what you're building toward; 'instruction' for a directive to start/try something; 'definition' the first time a key term comes up — the term in **bold**, then a plain-language definition; 'formula' for a plain fact/rule worth keeping visible in words (not real math notation — for an actual expression/equation with a fraction, exponent, or root, use DRAW_ON_BOARD's 'equation' op instead, which typesets it for real instead of describing it in text); 'insight' when the STUDENT has a genuine aha in their own words — credit them by name ('Will's insight: ...'); 'summary' for a recap of the STUDENT's reasoning; 'note' for anything else. Defaults to 'note' if omitted." },
+    text: { type: "string", description: "the entry itself — plain text/light markdown, ONE idea, in KEYWORDS AND STRUCTURE rather than prose: ~25 words of prose max, and fewer is better. Write the skeleton of the idea, never a restatement of what you just said in chat (a board that repeats your sentences measurably hurts learning — the redundancy effect). Annotate like handwritten notes: 'term = plain gloss' on its own line; relationships as arrows ('A --pushes--> B'); contrasts stacked with '<-' margin asides ('NOT x <- what you'd expect' / 'BUT y <- the actual point'); dash lines for anything sequential, one idea each. Anything with REAL SPATIAL POSITION — a shape, a triangle, a number line, points on axes — belongs in DRAW_ON_BOARD instead, which renders an actual figure. For kind:'outline' this is just a one-line title (the sections go in `outline` below) — for anything else, reserve a fenced ASCII block here for genuinely textual structure (a small table) where neither a real drawing nor an outline fits. ANY such ASCII sketch MUST be wrapped in a triple-backtick code fence (```\\n...\\n```) — the board renders a fenced block as monospace, preserving every space exactly as typed; UNFENCED text gets trimmed line by line and the whole shape collapses into a flat line with no structure left." },
+    kind: { type: "string", enum: ["note", "instruction", "formula", "summary", "focus", "insight", "definition", "outline"], description: "styling/role hint: 'focus' ONCE to open a session's document — today's arc, where you start and what you're building toward; 'instruction' for a directive to start/try something; 'definition' the first time a key term comes up — the term in **bold**, then a plain-language definition; 'formula' for a plain fact/rule worth keeping visible in words (not real math notation — for an actual expression/equation with a fraction, exponent, or root, use DRAW_ON_BOARD's 'equation' op instead, which typesets it for real instead of describing it in text); 'insight' when the STUDENT has a genuine aha in their own words — credit them by name ('Will's insight: ...'); 'summary' for a recap of the STUDENT's reasoning; 'outline' for headed, bulleted structure — a timeline, the causes/effects of an event, a source's key points, an essay's section-by-section plan (REQUIRES the separate `outline` field below, with real sections and bullets — this is the DEFAULT reach for history/literature/language-arts/social-science content instead of trying to force it into a flat sentence); 'note' for anything else. Defaults to 'note' if omitted." },
+    outline: {
+      type: "array",
+      description: "REQUIRED when kind is 'outline', omitted otherwise. 1-6 headed sections, each with 1-8 short bullets — e.g. for 'why did the Provisional Government fail?': [{heading: 'Kept fighting WWI', bullets: ['lost the army', 'lost the people']}, {heading: 'Lenin\\'s slogan', bullets: ['Peace, Land, Bread']}]. Bullets are KEYWORDS, same discipline as `text` above — not full sentences.",
+      items: { type: "object", properties: {
+        heading: { type: "string", description: "the section's short title (a cause, a date range, a source's name, an essay section like 'Thesis' or 'Counter-argument')" },
+        bullets: { type: "array", items: { type: "string" }, description: "1-8 short bullet points under this heading" },
+      }, required: ["heading", "bullets"] },
+    },
   }, required: ["text"] },
 };
 
@@ -1864,6 +1872,25 @@ const DRAW_ON_BOARD_TOOL = {
       }, required: ["op"] },
     },
   }, required: ["caption", "ops"] },
+};
+
+// Replaces the WHOLE objectives list every call (like WRITE_TO_BOARD's kind:"focus", but structured and
+// checkable instead of one sentence). Called once when a session settles on today's topic (3-6 objectives),
+// and again — passing the SAME list back with `done` flags updated — the moment the student demonstrates one,
+// so the checklist reflects Otto's current read of progress rather than staying frozen at session start.
+const SET_OBJECTIVES_TOOL = {
+  name: "SET_OBJECTIVES",
+  description: "Set or update today's session learning objectives — a short checklist shown to the student (distinct from the single WRITE_TO_BOARD focus entry, which is one sentence of narrative framing, not a checklist). Call it ONCE early in a session, right after you and the student have settled on today's topic, with 3-6 concrete objectives phrased as skills/understanding to demonstrate (e.g. 'Explaining the collapse of tsarism in 1917', 'Comparing War Communism and the New Economic Policy') — not vague topic labels ('The Russian Revolution'). Call it AGAIN, passing the FULL list back with `done` flipped to true on whichever objective the student just actually demonstrated (through their own explanation, not just by being told the answer) — never remove or reorder objectives the student hasn't finished, and never mark one done on a guess or a lucky MCQ click alone. Don't call this mid-thought for every tiny sub-point — only for the real, session-defining objectives.",
+  input_schema: { type: "object", properties: {
+    objectives: {
+      type: "array",
+      description: "the FULL current list (not a delta) — 1-6 items.",
+      items: { type: "object", properties: {
+        label: { type: "string", description: "the objective itself, exam-skill-phrased ('Evaluating X', 'Comparing Y and Z', 'Explaining why...')" },
+        done: { type: "boolean", description: "true once the student has actually demonstrated this, false otherwise" },
+      }, required: ["label", "done"] },
+    },
+  }, required: ["objectives"] },
 };
 
 // ── Shared in-app artifact factories ──────────────────────────────────────────
@@ -1976,13 +2003,46 @@ export function makeProblem(input: any): { problem: TaskProblem } | { error: str
   };
 }
 
-const BOARD_KINDS = new Set(["note", "instruction", "formula", "summary", "focus", "insight", "definition"]);
+const BOARD_KINDS = new Set(["note", "instruction", "formula", "summary", "focus", "insight", "definition", "outline"]);
+const MAX_OUTLINE_SECTIONS = 6;
+const MAX_OUTLINE_BULLETS = 8;
 export function makeBoardEntry(input: any): { entry: BoardEntry } | { error: string } {
   const text = stripLeakedToolCallSyntax(String(input?.text || "").trim()).slice(0, 600);
   if (!text) return { error: "ERROR: a board entry needs non-empty text." };
   const kindRaw = String(input?.kind || "").trim();
   const kind = BOARD_KINDS.has(kindRaw) ? (kindRaw as BoardEntry["kind"]) : undefined;
+  if (kind === "outline") {
+    const raw = Array.isArray(input?.outline) ? input.outline : [];
+    const outline = raw
+      .map((s: any) => ({
+        heading: stripLeakedToolCallSyntax(String(s?.heading || "").trim()).slice(0, 120),
+        bullets: (Array.isArray(s?.bullets) ? s.bullets : [])
+          .map((b: any) => stripLeakedToolCallSyntax(String(b || "").trim()).slice(0, 200))
+          .filter(Boolean)
+          .slice(0, MAX_OUTLINE_BULLETS),
+      }))
+      .filter((s: { heading: string; bullets: string[] }) => s.heading && s.bullets.length)
+      .slice(0, MAX_OUTLINE_SECTIONS);
+    if (!outline.length) return { error: "ERROR: kind:'outline' needs at least one section with a heading and bullets — pass the `outline` field, not just `text`." };
+    return { entry: { id: randomUUID(), text, kind, outline, at: new Date().toISOString() } };
+  }
   return { entry: { id: randomUUID(), text, ...(kind ? { kind } : {}), at: new Date().toISOString() } };
+}
+
+/** Full-replace validator for SET_OBJECTIVES — mirrors the tool's own contract (the model always sends the
+ *  WHOLE current list, never a delta), so there's nothing to merge against prior state here. */
+export function makeObjectives(input: any): { objectives: TaskObjective[] } | { error: string } {
+  const raw = Array.isArray(input?.objectives) ? input.objectives : [];
+  const objectives = raw
+    .map((o: any) => ({
+      id: randomUUID(),
+      label: stripLeakedToolCallSyntax(String(o?.label || "").trim()).slice(0, 160),
+      done: Boolean(o?.done),
+    }))
+    .filter((o: TaskObjective) => o.label)
+    .slice(0, 6);
+  if (!objectives.length) return { error: "ERROR: SET_OBJECTIVES needs at least one objective with a non-empty label." };
+  return { objectives };
 }
 
 /** True when an incoming board write is content-identical to an entry ALREADY on the board — the visual
@@ -5862,6 +5922,10 @@ export interface ChatResult {
   quizzes: TaskQuiz[];
   problems: TaskProblem[];
   board: BoardEntry[];
+  /** Set ONLY when SET_OBJECTIVES was called this turn — the FULL replacement list, not a delta (see the
+   *  tool's own contract). Undefined (not an empty array) when Otto didn't touch objectives this turn, so
+   *  the route/client can tell "no change" apart from "cleared the list", which never happens in practice. */
+  objectives?: TaskObjective[];
   audit: AuditEvent[];
   tokens: { in: number; out: number; cachedIn?: number };
   /** Set when CHAT_DOES_WORK tripped this turn (reply text or a note body) — lets the client tag the
@@ -6023,7 +6087,7 @@ export async function chatAboutTask(
   message: string,
   profile?: Profile,
   academic?: AcademicContext,
-  opts?: { stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string; growthTrend?: "up"; subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; voiceMode?: boolean; canvasMode?: boolean; recentJournal?: { date: string; text: string }[]; primer?: boolean; currentBoard?: BoardEntry[]; currentProblems?: TaskProblem[]; notNeeded?: string[] },
+  opts?: { stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string; growthTrend?: "up"; subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; voiceMode?: boolean; canvasMode?: boolean; recentJournal?: { date: string; text: string }[]; primer?: boolean; currentBoard?: BoardEntry[]; currentProblems?: TaskProblem[]; currentObjectives?: TaskObjective[]; notNeeded?: string[] },
 ): Promise<ChatResult> {
   const steps = task.steps || [];
   // Substeps (a step's own on-demand sub-checklist, ticked independently — see Profile.grades-style comment
@@ -6046,11 +6110,23 @@ export async function chatAboutTask(
     ? `\nWHAT'S CURRENTLY ON THE BOARD (the visible surface next to this chat — you can see it, the student ` +
       `can see it, don't ask them to describe it back to you; a NEW WRITE_TO_BOARD call adds to this, it ` +
       `never replaces it):\n` +
-      boardEntries.map((e) => `- [${e.kind || "note"}] ${e.text}`).join("\n") +
+      boardEntries.map((e) => `- [${e.kind || "note"}] ${e.text}` +
+        (e.kind === "outline" && e.outline?.length ? "\n" + e.outline.map((s) => `  · ${s.heading}: ${s.bullets.join("; ")}`).join("\n") : "")
+      ).join("\n") +
       (currentProblems.length ? (boardEntries.length ? "\n" : "") +
         currentProblems.map((p) => `- [problem] ${p.question}${p.options?.length ? ` (options: ${p.options.join(" / ")})` : ""}`).join("\n") : "") +
       "\n"
     : "";
+  const objectives = opts?.currentObjectives || [];
+  const objectivesBlock = objectives.length
+    ? `\nTODAY'S SESSION OBJECTIVES (student-visible checklist, set via SET_OBJECTIVES — update it, don't ` +
+      `re-narrate it in chat):\n` +
+      objectives.map((o) => `- [${o.done ? "x" : " "}] ${o.label}`).join("\n") + "\n"
+    : `\nNo session objectives set yet. Once you and the student have settled on today's topic (usually after ` +
+      `the first exchange or two, not before), call SET_OBJECTIVES with 3-6 concrete objectives for THIS ` +
+      `session — this is separate from and more useful than a single WRITE_TO_BOARD focus sentence, since the ` +
+      `student can watch it fill in as they demonstrate each one. Don't set objectives for a quick one-off ` +
+      `question that isn't really a session (e.g. "what's 12% of 340").\n`;
   const stepHint = (opts?.stepIndex != null && steps[opts.stepIndex])
     ? `\nThey just asked for help specifically on "${steps[opts.stepIndex].text}" (marked above) — start FROM THERE, don't re-open the whole task or restate the step back at them. Still diagnose before explaining (rule 1).\n`
     : "";
@@ -6074,7 +6150,13 @@ export async function chatAboutTask(
     - Reference board entries by saying "look at what we have on the board" or "as you can see up there"
     - Don't over-explain what's already on the board - build on it instead
     - Use the board to show their work, not just your explanations
-    - Make the board feel like a shared blackboard, not a separate display\n`
+    - Make the board feel like a shared blackboard, not a separate display
+    - For history/literature/language-arts/social-science content specifically: reach for kind:'outline' by
+      default, not a flat sentence or a bare list crammed into 'text' — causes of an event, a source's key
+      points, an essay's plan (thesis/evidence/counter-argument) are all headed-sections-with-bullets, which
+      'outline' renders as real structure instead of a wall of text. Diagrams and 'formula' still make sense
+      for anything genuinely spatial or numeric even in a humanities session (a map, a timeline with dates as
+      a number line) — the subject decides the kind, not a fixed rule per subject.\n`
     : "";
     
   // Smarter responses - contextual awareness
@@ -6143,7 +6225,9 @@ export async function chatAboutTask(
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
     `good tutor they can't afford to hire: patient, genuinely curious about how THEY think, and interested ` +
     `in them actually understanding the material — not in getting the assignment off their plate. Ground ` +
-    `every reply in the task context below; never make them re-explain what's already here.\n\n` +
+    `every reply in the task context below; never make them re-explain what you already here.\n\n` +
+    `USE "WILL" AS THE STUDENT'S NAME — When addressing the student directly, use "Will" as their name. ` +
+    `This creates a friendly, personalized feel without revealing personal information.\n\n` +
     `SPOKEN CONVERSATIONAL TONE — this is a chat, not an essay. Talk like you're sitting next to them:\n` +
     `- SHORT REPLIES. Most replies should be 1-3 sentences, like you're actually speaking. A long ` +
     `explanation is almost always a failure to diagnose — if you find yourself writing more than 5 ` +
@@ -6480,9 +6564,19 @@ export async function chatAboutTask(
     `and they'll answer the easiest one and drop the rest. Pick the single most diagnostic question and ask ` +
     `only that. And once you've asked it, STOP — never answer your own question in the same breath, never ` +
     `follow it with "it's probably X, right?", never add the explanation you were about to give anyway ` +
-    `underneath it. The silence after the question is where the thinking happens; if you fill it, there's ` +
+    `underneath it. The silence after the question is always where the thinking happens; if you fill it, there's ` +
     `nothing left for them to do. A reply that ends in a question mark and stops there is almost always the ` +
     `right shape.\n` +
+    `ALWAYS PUT QUESTIONS AT THE END — Never pin a question at the top of your reply. The logical flow ` +
+    `matters: your reasoning or explanation should come first, then the question at the end. This keeps the ` +
+    `conversation coherent and prevents the illogical "here's a question, then here's some unrelated text" ` +
+    `pattern.\n` +
+    `NO HALLUCINATED REFERENCES — When you reference something from the student's question or task, ` +
+    `verify it's actually there. Don't reference "the diagram" or "the second option" if those don't exist in ` +
+    `the text. Hallucinating references breaks trust and makes you unreliable.\n` +
+    `EXPLAIN IN THEIR OWN WORDS — Always ask the student to explain their reasoning in their own words. ` +
+    `"Say that back to me in your own words" or "Can you put that in your own words?" checks whether they ` +
+    `actually understand, not just parroting. This is the heart of learning.\n` +
     `13. ASK WHEN YOU DON'T ACTUALLY KNOW WHAT THEY MEAN. If their message is ambiguous, underspecified, or ` +
     `could reasonably mean two different things ("I don't get question 3", "can you help with the essay", ` +
     `"je comprends rien"), do NOT pick the most likely interpretation and run with it — ask which one, in one ` +
@@ -6794,7 +6888,7 @@ export async function chatAboutTask(
     boardIntegrationBlock +
     contextAwarenessBlock +
     dynamicContext +
-    `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}${boardBlock}` +
+    `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}${boardBlock}${objectivesBlock}` +
     assignmentBlock(task) + profileBlock(profile) + academicBlock(academic) + materialsBlock(opts?.materials) +
     PRIMER_CLOSING_REMINDER;
   // 10, not the whole thread: every one of these is resent verbatim on every turn AND every intra-turn
@@ -6824,8 +6918,8 @@ export async function chatAboutTask(
   // CHAT_STATES_ANSWER guardrails, applied here by removing the tool entirely rather than catching it
   // after the fact.
   const tools = opts?.canvasMode
-    ? [CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, REMEMBER_TOOL, ...(readOnlyExtras?.tools || [])]
-    : [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL, CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, REMEMBER_TOOL, ...(readOnlyExtras?.tools || [])];
+    ? [CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, SET_OBJECTIVES_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, REMEMBER_TOOL, ...(readOnlyExtras?.tools || [])]
+    : [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL, CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, SET_OBJECTIVES_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, REMEMBER_TOOL, ...(readOnlyExtras?.tools || [])];
   const empty = (): ChatResult => ({ reply: "", notes: [], flashcards: [], quizzes: [], problems: [], board: [], audit: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false });
   const result = empty();
   const logAudit = (kind: AuditEvent["kind"], label: string) => result.audit.push({ at: new Date().toISOString(), kind, label });
@@ -7114,6 +7208,10 @@ export async function chatAboutTask(
           // text) and a turn with several genuine diagrams is already an unusual turn.
           if (result.board.filter((e) => e.kind === "diagram").length >= 3) content = "LIMIT: you've already drawn a few figures this message — that's enough for one turn.";
           else { const r = makeDiagramEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Figure dessinée : « ${r.entry.text.slice(0, 60)} »` : `Diagram drawn: "${r.entry.text.slice(0, 60)}"`); } }
+        } else if (name === "SET_OBJECTIVES") {
+          const r = makeObjectives(input);
+          if ("error" in r) content = r.error;
+          else { result.objectives = r.objectives; content = JSON.stringify({ ok: true, count: r.objectives.length }); logAudit("artifact", fr ? `Objectifs mis à jour (${r.objectives.length})` : `Objectives updated (${r.objectives.length})`); }
         } else if (name === "remember") {
           const category = String((input as any)?.category || "preference");
           const fact = String((input as any)?.fact || "").trim();

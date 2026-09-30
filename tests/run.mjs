@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives } from "../server/claude.ts";
 import { evaluateArithmetic, parseNumber, findArithmeticClaims, hasArithmetic } from "../server/arithmetic.ts";
 import { isLikelyEcho, createEchoFilter, normalizeForEcho } from "../client/voice/echoGuard.ts";
 import { speechErrorMessage } from "../client/voice/speechErrors.ts";
@@ -1968,6 +1968,34 @@ check("text over the cap is truncated, not rejected", makeBoardEntry({ text: "x"
   const withRealLink = makeNote({ title: "x", body: "Voici la source officielle : [le site du gouvernement](https://www.gouvernement.fr/some-real-page) pour plus de détails complets." });
   check("a genuinely unrelated real link is left untouched", "note" in withRealLink && withRealLink.note.body.includes("gouvernement.fr"));
 }
+
+section("makeBoardEntry — kind:'outline' (headed sections for humanities/essay content)");
+check("a well-formed outline is accepted with its sections intact", (() => {
+  const r = makeBoardEntry({ text: "Why the Provisional Government failed", kind: "outline", outline: [
+    { heading: "Kept fighting WWI", bullets: ["lost the army", "lost the people"] },
+    { heading: "Lenin's slogan", bullets: ["Peace, Land, Bread"] },
+  ] });
+  return "entry" in r && r.entry.kind === "outline" && r.entry.outline?.length === 2 && r.entry.outline[0].bullets.length === 2;
+})());
+check("outline kind with no outline field is rejected, not silently downgraded", "error" in makeBoardEntry({ text: "Causes of WWI", kind: "outline" }));
+check("outline sections are capped at 6, bullets at 8", (() => {
+  const outline = Array.from({ length: 10 }, (_, i) => ({ heading: `S${i}`, bullets: Array.from({ length: 12 }, (_, j) => `b${j}`) }));
+  const r = makeBoardEntry({ text: "x", kind: "outline", outline });
+  return "entry" in r && r.entry.outline.length === 6 && r.entry.outline[0].bullets.length === 8;
+})());
+
+section("makeObjectives — SET_OBJECTIVES full-replace validation (session learning-objectives checklist)");
+check("a well-formed objectives list is accepted", (() => {
+  const r = makeObjectives({ objectives: [{ label: "Explaining the collapse of tsarism in 1917", done: false }, { label: "Comparing War Communism and the NEP", done: true }] });
+  return "objectives" in r && r.objectives.length === 2 && r.objectives[1].done === true && r.objectives[0].done === false;
+})());
+check("an empty list is rejected", "error" in makeObjectives({ objectives: [] }));
+check("entries with no label are dropped, not stored as garbage", makeObjectives({ objectives: [{ label: "", done: false }, { label: "Real one", done: false }] }).objectives.length === 1);
+check("list is capped at 6 objectives", makeObjectives({ objectives: Array.from({ length: 10 }, (_, i) => ({ label: `Obj ${i}`, done: false })) }).objectives.length === 6);
+check("each objective gets a fresh id even if the model didn't send one", (() => {
+  const r = makeObjectives({ objectives: [{ label: "x", done: false }] });
+  return "objectives" in r && typeof r.objectives[0].id === "string" && r.objectives[0].id.length > 0;
+})());
 
 // ── Guardrails: the graded-work detector must catch the real thing without flagging legitimate tutoring
 section("CHAT_DOES_WORK / DOES_STUDENT_WORK — true positives without false positives");
