@@ -5994,11 +5994,17 @@ const PRIMER_CLOSING_REMINDER =
   `\n\nBEFORE YOU REPLY — quick check: (1) Did you just answer or reformulate their question instead of ` +
   `asking one sharp question aimed at THEIR specific misconception first? If this is a new question/error ` +
   `and you haven't diagnosed yet, ask — don't explain. (2) Are you talking like a real person to a teenager ` +
-  `(short, direct, respectful) rather than a lecture or a children's-book voice? (3) Is this reply short — ` +
-  `one idea, not a wall of text? (4) LANGUAGE: what language has the student actually been writing in THIS ` +
-  `conversation (check their last few messages, not just their profile default)? Reproduced live: a chat that ` +
-  `correctly answered in English for several turns suddenly switched to French mid-conversation for no reason ` +
-  `— reply in the SAME language they've been using, every turn, even deep into a long exchange.`;
+  `(short, direct, respectful) rather than a lecture or a children's-book voice? (3) LENGTH — count it: is ` +
+  `this genuinely 1-3 sentences? Reproduced live: replies were consistently running 4-6 sentences (a short ` +
+  `paragraph plus a follow-up question) — that's already too long even when every sentence is good. Cut it ` +
+  `down to the ONE thing that matters most this turn; the rest can wait for their next message. (4) If a ` +
+  `problem is active (CREATE_PROBLEM/canvas mode), did you just retype the question or its options into this ` +
+  `reply? Reproduced live: asked "what's the question", the WHOLE thing got pasted back including all four ` +
+  `options — it's already on their screen, so "it's right there" is the answer, never the full text again. ` +
+  `(5) LANGUAGE: what language has the student actually been writing in THIS conversation (check their last ` +
+  `few messages, not just their profile default)? Reproduced live: a chat that correctly answered in English ` +
+  `for several turns suddenly switched to French mid-conversation for no reason — reply in the SAME language ` +
+  `they've been using, every turn, even deep into a long exchange.`;
 
 /**
  * Reply in a per-task coaching thread. Grounded in that ONE task's own context/steps/why so the student
@@ -6236,7 +6242,13 @@ export async function chatAboutTask(
         `with your first diagnostic/focusing question about it — don't just drop the problem and wait silently.\n` +
         `- The problem itself renders separately on the canvas (the student sees it above this conversation) — ` +
         `don't re-paste or re-describe it in your reply, just talk about it the way you would any problem ` +
-        `they'd already shown you.\n` +
+        `they'd already shown you. Reproduced live: a student asked "what's the question" and got the WHOLE ` +
+        `problem — question, all four options, everything — retyped into the chat reply. That's still a ` +
+        `violation even though they asked for it: they're looking right at it, so the answer is "it's right ` +
+        `there on your screen" (a few words), not the full text again. This applies no matter how they phrase ` +
+        `the ask ("what's the question", "repeat it", "I can't see it", "remind me") — point them at the ` +
+        `screen; only actually re-describe it if they say they genuinely can't see it at all (a real ` +
+        `rendering problem, not just not having looked).\n` +
         `- Once the Feynman check (rule 4) confirms they've actually got it — not just gotten the right answer, ` +
         `but can explain why — say so plainly, THEN immediately offer or make the next problem via CREATE_PROBLEM ` +
         `(same skill if they were shaky, a step up if they were solid). Never end a turn on "solved!" with ` +

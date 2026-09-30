@@ -512,13 +512,17 @@ export function TutorSession({ userId, onExit }: { userId: string | null; onExit
             <p>{L("Salut ! Je suis Otto, ton tuteur. On travaille ensemble sur ce que tu veux apprendre ?", "Hi! I'm Otto, your tutor. Ready to work on whatever you'd like to learn?")}</p>
           </div>
         )}
+        {/* Reported live: the mic should be off while Otto is speaking, not open for interruption — no
+            `bargeIn` prop below, so this falls back to AskOttoPanel's standard pause-mic-during-TTS
+            behavior (abort the recognizer the moment speech starts, restart it ~400ms after it ends). A
+            deliberate reversal of the earlier barge-in feature for the Tutor specifically. */}
         <div className="tutor-chat-body">
           <AskOttoPanel
             task={task} currentStep={undefined} input={input} setInput={setInput} sending={sending}
             error={error} pendingMsg={pendingMsg} onSend={(o, v) => void send(o, v)}
             onOpenNote={noop} onOpenDeck={noop} onOpenQuiz={noop}
             emptyText="" placeholder={L("Écris ici…", "Type here…")}
-            bargeIn onVoiceStateChange={handleVoiceState}
+            onVoiceStateChange={handleVoiceState}
           />
         </div>
       </section>
