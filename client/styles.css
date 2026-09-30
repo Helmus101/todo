@@ -6367,6 +6367,25 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .sm-board-focus-pin .sm-board-entry-kind { color: var(--accent); }
 .sm-board-focus-text { margin-top: 2px; }
 
+/* ── Tutor Session: Desmos tools panel (the student-usable Desmos place) ──────
+   Sits at the top of the board pane, above the board body: collapsed it's one quiet toggle, expanded it
+   puts the live calculator between the pane header and the board so the figure tool pairs with the
+   lesson's visuals. */
+.tutor-desmos { flex: 0 0 auto; border-bottom: 1px solid var(--line); background: var(--surface); }
+.tutor-desmos-toggle { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 16px; background: none; border: none; font-family: inherit; font-size: 13px; font-weight: 600; color: var(--ink-2); cursor: pointer; }
+.tutor-desmos-toggle:hover { color: var(--ink); }
+.tutor-desmos-glyph { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: var(--radius-pill); background: var(--accent-soft); color: var(--accent); font-size: 12px; font-style: italic; font-weight: 700; }
+.tutor-desmos-chev { margin-left: auto; font-size: 11px; }
+.tutor-desmos-panel { display: flex; flex-direction: column; }
+.tutor-desmos-tabs { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 0 16px 8px; }
+.tutor-desmos-tab { padding: 4px 10px; border: 1px solid var(--line); border-radius: var(--radius-pill); background: none; font-family: inherit; font-size: 12px; font-weight: 600; color: var(--ink-2); cursor: pointer; }
+.tutor-desmos-tab.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.tutor-desmos-pop { margin-left: auto; font-size: 12px; color: var(--ink-2); text-decoration: none; }
+.tutor-desmos-pop:hover { color: var(--accent); }
+.tutor-desmos-frame-wrap { position: relative; height: min(52vh, 460px); }
+.tutor-desmos-frame { width: 100%; height: 100%; border: none; }
+.tutor-desmos-hint { margin: 0; padding: 6px 16px; font-size: 12px; color: var(--ink-2); border-top: 1px solid var(--line); }
+
 /* THE BOARD AS A WORKSHEET — the board is a drafted lesson document, not a card feed. Header block (date +
    subject), quiet numbered sections in the margin, glyphs instead of badges, write-in animation for newly
    drafted entries, and a live "Otto écrit…" indicator while the tutor's reply is being generated. */

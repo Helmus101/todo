@@ -5,6 +5,7 @@ import { hydrateLocalThreads, appendLocalChat, appendLocalBoard, appendLocalProb
 import { useLang, TaskModal } from "../ui.tsx";
 import { AskOttoPanel } from "../study/AskOttoPanel.tsx";
 import { BoardArtifact } from "../study/artifacts/BoardArtifact.tsx";
+import { TutorDesmos } from "./TutorDesmos.tsx";
 import { buildSessionSummary, saveTutorSession, getTutorSessions, type TutorSessionSummary } from "./tutorSessions.ts";
 
 /** Tutor Session (route /tutor) — the Primer-style one-to-one lesson: a chat with Otto on one side and
@@ -416,6 +417,10 @@ export function TutorSession({ userId }: { userId: string | null }) {
             </span>
           ) : null}
         </div>
+        {/* The tutor's Desmos place — the tools the student can USE mid-lesson (graphing, scientific,
+            geometry, four-function), embedded above the board so the figure tool sits with the lesson's
+            visuals. Student-opened only, like every other manual surface in the tutor. */}
+        <TutorDesmos />
         <div className="tutor-board-body"><BoardArtifact task={task} writing={sending} /></div>
       </section>
     </main>

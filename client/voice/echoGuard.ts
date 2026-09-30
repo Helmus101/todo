@@ -85,15 +85,21 @@ export interface EchoFilter {
  *  Plain factory (not a hook) so it's trivially unit-testable and usable from any surface. One instance
  *  per mounted voice surface (AskOttoPanel, TaskCard's TaskChat, StudyHelpPanel) — driven by that
  *  surface's synth.speaking transitions. */
-export function createEchoFilter(tailMs = 2000): EchoFilter {
+export function createEchoFilter(tailMs = 5000): EchoFilter {
   let spokenText = "";
   let speaking = false;
   let speechEndedAt = 0;
+  let recentReplies: string[] = []; // Track last few replies to catch delayed echoes
   return {
     speechStarted(text) {
       spokenText = text || "";
       speaking = true;
       speechEndedAt = 0;
+      // Add to recent replies for loop detection
+      if (spokenText) {
+        recentReplies.push(spokenText);
+        if (recentReplies.length > 5) recentReplies.shift();
+      }
     },
     speechEnded() {
       speaking = false;
@@ -101,9 +107,18 @@ export function createEchoFilter(tailMs = 2000): EchoFilter {
     },
     isEcho(heard) {
       if (!spokenText) return false;
+      const heardNorm = normalizeForEcho(heard);
+      if (!heardNorm) return false;
+      
       // Insurance #2: verbatim repeat of the reply currently/just spoken — no time bound. This is the
       // loop-killer: even if every other window misses, the echo's content IS the reply.
-      if (normalizeForEcho(heard) && normalizeForEcho(heard) === normalizeForEcho(spokenText)) return true;
+      if (heardNorm === normalizeForEcho(spokenText)) return true;
+      
+      // Check against recent replies to catch delayed echoes from previous turns
+      for (const reply of recentReplies) {
+        if (heardNorm === normalizeForEcho(reply)) return true;
+      }
+      
       const inWindow = speaking || (speechEndedAt > 0 && Date.now() - speechEndedAt < tailMs);
       if (!inWindow) return false;
       return isLikelyEcho(spokenText, heard);
