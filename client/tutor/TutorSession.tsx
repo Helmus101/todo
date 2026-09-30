@@ -91,17 +91,24 @@ export function TutorSession({ userId }: { userId: string | null }) {
       const t = Array.isArray(list)
         ? list.find((x) => x.source === "freestudy" && x.status !== "dismissed" && x.status !== "done")
         : undefined;
-      // A freestudy task with ZERO chat and ZERO board content, more than a few minutes old, isn't a real
-      // session to resume — it's a ghost: opened once (a subject tap, then the tab closed or the browser
-      // crashed before a first message ever went out) or the leftover of a dismiss call that failed
-      // silently (best-effort — see endSession/the inactivity-timeout effect) and never actually reached
-      // the server. Reported live: "constantly thinks a session is in progress even though there isn't" —
-      // a truly-empty task otherwise nags forever, since nothing ever marks it dismissed. 3 minutes is
-      // comfortably past "just started, hasn't typed anything yet" (that student is still ON this page) —
-      // this only ever fires on a FRESH mount finding an old, untouched husk. Dismiss it for real (not just
-      // hide it client-side) so it stops coming back on every future visit too, and treat this load as if
-      // there were no active session at all.
-      const isGhost = t && !(t.chat?.length) && !(t.board?.length) && (Date.now() - (Date.parse(t.createdAt || "") || 0)) > 3 * 60_000;
+      // A freestudy task with ZERO chat/board content ANYWHERE, more than a few minutes old, isn't a real
+      // session to resume — it's a ghost: opened once (a subject tap, then the tab closed before a first
+      // message went out) or the leftover of a dismiss that failed silently and never reached the server.
+      // MUST check localStorage here, not `t.chat`/`t.board` — the server task object never carries chat/
+      // board at all (they live ONLY in this browser's localStorage overlay, see localChatBoard.ts); reading
+      // them off `t` made EVERY session, real or not, look empty once it crossed 3 minutes old, and silently
+      // auto-dismissed genuinely-active sessions — the exact regression reported right after this shipped
+      // ("session in progress" stopped being detected at all). Dismiss a REAL ghost for real (not just hide
+      // it client-side) so it stops coming back on every future visit; a session with real content is never
+      // touched here regardless of age.
+      const hasLocalContent = (id: string): boolean => {
+        try {
+          const chat = localStorage.getItem(`otto-chat-${id}-${userId}`);
+          const board = localStorage.getItem(`otto-board-${id}-${userId}`);
+          return !!(chat && chat !== "[]") || !!(board && board !== "[]");
+        } catch { return true; } // can't tell — assume real rather than risk dismissing a live session
+      };
+      const isGhost = !!t && !hasLocalContent(t.id) && (Date.now() - (Date.parse(t.createdAt || "") || 0)) > 3 * 60_000;
       if (isGhost) {
         void api.dismiss(t!.id).catch(() => { /* best-effort; worst case it resurfaces once more next visit */ });
         setPendingActiveSession(null);
@@ -110,7 +117,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
       setPendingActiveSession(t || null);
     }).catch(() => setLoadError(true))
       .finally(() => setCheckingSession(false));
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
     if (mountFetchStartedRef.current) return;
@@ -532,28 +539,21 @@ export function TutorSession({ userId }: { userId: string | null }) {
       <section className="tutor-board" aria-label={L("Tableau", "Board")}>
         <div className="tutor-pane-title">
           <span>{L("Le tableau", "Board")}</span>
-        </div>
-        {/* Voice state lives on the BOARD pane: in voice-first mode this is the pane the student is
-            actually looking at. A real orb, not a small pill — voice is meant to be the primary way of
-            using the tutor, so "are you hearing me / is Otto talking" gets legible, ambient feedback
-            instead of a status dot easy to miss while eyes are on a figure. */}
-        {voiceState.voiceModeOn ? (
-          <div className="tutor-voice-orb-bar">
-            <div className={`tutor-voice-orb${voiceState.speaking ? " speaking" : voiceState.listening ? " listening" : ""}`} aria-hidden="true">
-              <span className="tutor-voice-orb-ring" />
-              <span className="tutor-voice-orb-ring ring-2" />
-              <span className="tutor-voice-orb-core" />
-            </div>
-            <span className="tutor-voice-orb-label" role="status">
+          {/* Voice state lives on the BOARD pane: in voice-first mode this is the pane the student is
+              actually looking at. Kept small and inline in the pane title (reported: the earlier full-width
+              orb banner was too big/intrusive) — a compact status dot + label is enough to answer "am I
+              being heard / is Otto talking" without taking over the pane. */}
+          {voiceState.voiceModeOn ? (
+            <span className={`tutor-voice-pill${voiceState.speaking ? " speaking" : voiceState.listening ? " listening" : ""}`} role="status">
               {voiceState.speaking
                 ? L("Otto parle…", "Otto is speaking…")
                 : voiceState.listening
                   ? L("Je t'écoute…", "Listening…")
                   : L("Voix activée", "Voice on")}
+              {voiceState.listening && voiceState.interim ? <span className="tutor-voice-interim">{voiceState.interim}</span> : null}
             </span>
-            {voiceState.listening && voiceState.interim ? <span className="tutor-voice-interim">{voiceState.interim}</span> : null}
-          </div>
-        ) : null}
+          ) : null}
+        </div>
         {/* The tutor's Desmos place — the tools the student can USE mid-lesson (graphing, scientific,
             geometry, four-function), embedded above the board so the figure tool sits with the lesson's
             visuals. Student-opened only, like every other manual surface in the tutor. */}

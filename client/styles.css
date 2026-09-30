@@ -6381,26 +6381,18 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .tutor-session.voice-primary .tutor-board { border-color: var(--accent); }
 .tutor-session .tutor-pane-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 
-/* The voice orb — replaces the old small status pill. Voice mode is meant to be the primary way of using
-   the tutor (Aristotle-style), so the "are you hearing me / is Otto talking" feedback gets a real, legible
-   presence on the board pane instead of a tiny dot next to a label. Sits as its own banner under the pane
-   title, full width, board content scrolls below it. */
-.tutor-voice-orb-bar { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 20px 16px 22px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--accent) 4%, var(--surface)); flex: 0 0 auto; }
-.tutor-voice-orb { position: relative; width: 60px; height: 60px; display: flex; align-items: center; justify-content: center; flex: 0 0 auto; }
-.tutor-voice-orb-core { position: absolute; inset: 16px; border-radius: 50%; background: var(--ink-2); opacity: .18; transition: background .2s ease, opacity .2s ease; }
-.tutor-voice-orb-ring { position: absolute; inset: 0; border-radius: 50%; border: 2px solid var(--ink-2); opacity: 0; }
-.tutor-voice-orb.listening .tutor-voice-orb-core { background: var(--accent); opacity: .4; }
-.tutor-voice-orb.listening .tutor-voice-orb-ring { border-color: var(--accent); opacity: .5; animation: tutor-orb-pulse 1.8s ease-out infinite; }
-.tutor-voice-orb.listening .tutor-voice-orb-ring.ring-2 { animation-delay: .6s; }
-.tutor-voice-orb.speaking .tutor-voice-orb-core { background: var(--accent); opacity: .65; animation: tutor-orb-speak .85s ease-in-out infinite; }
-.tutor-voice-orb.speaking .tutor-voice-orb-ring { border-color: var(--accent); opacity: .3; }
-@keyframes tutor-orb-pulse { 0% { transform: scale(.55); opacity: .55; } 100% { transform: scale(1.8); opacity: 0; } }
-@keyframes tutor-orb-speak { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.2); } }
-.tutor-voice-orb-label { font-size: 13px; font-weight: 600; color: var(--ink-2); }
-.tutor-voice-orb.listening ~ .tutor-voice-orb-label, .tutor-voice-orb-bar:has(.listening) .tutor-voice-orb-label { color: var(--accent); }
-.tutor-voice-orb-bar:has(.speaking) .tutor-voice-orb-label { color: var(--accent); }
-.tutor-voice-interim { font-weight: 400; font-style: italic; color: var(--ink-2); max-width: min(420px, 90%); text-align: center; }
-@media (prefers-reduced-motion: reduce) { .tutor-voice-orb-ring, .tutor-voice-orb.speaking .tutor-voice-orb-core { animation: none !important; } }
+/* Small inline voice status pill in the pane title — tried a big full-width pulsing orb banner here first;
+   reported as too big/intrusive, reverted to a compact status dot + label that answers "am I being heard /
+   is Otto talking" without taking over the board pane. */
+.tutor-voice-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.tutor-voice-pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--ink-2); opacity: .5; }
+.tutor-voice-pill.listening { color: var(--accent); }
+.tutor-voice-pill.listening::before { background: var(--accent); opacity: 1; animation: tutor-voice-pulse 1.4s ease-in-out infinite; }
+.tutor-voice-pill.speaking { color: var(--accent); }
+.tutor-voice-pill.speaking::before { background: var(--accent); opacity: .5; }
+@keyframes tutor-voice-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+.tutor-voice-interim { font-weight: 400; font-style: italic; color: var(--ink-2); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .tutor-voice-pill.listening::before { animation: none; } }
 
 /* BoardArtifact: the pinned day's focus (kind:"focus") — the board reads as a lesson page with a heading,
    not a scroll of fragments; the goal stays visible no matter how long the entry flow below grows. */
