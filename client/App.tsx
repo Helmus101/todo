@@ -841,6 +841,8 @@ export function App() {
     const onNewAccount = async () => {
       try { await api.setProfilePreference("language", preLoginLang); } catch { /* best-effort */ }
     };
+    // Don't render landing page while status is loading to prevent flash
+    if (status === null) return <div className="screen"><div className="brand boot"><Logo size={26} /> Otto</div><div className="spinner" /></div>;
     return (
       <LangContext.Provider value={preLoginLang}>
         {route === "login" || route === "signup" || route === "reset-password"
@@ -4068,16 +4070,16 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
       {/* Simple Features */}
       <section className="features-simple">
         <div className="feature-simple">
-          <h3>{L("Plan du jour", "Daily plan")}</h3>
-          <p>{L("3 actions prioritaires pour aujourd'hui, pas plus.", "3 priority actions for today, nothing more.")}</p>
+          <h3>{L("Tuteur IA", "AI Tutor")}</h3>
+          <p>{L("Un tuteur Socratique qui te guide par des questions, jamais des réponses toutes faites.", "A Socratic tutor who guides with questions, never ready-made answers.")}</p>
         </div>
         <div className="feature-simple">
-          <h3>{L("Fiches & Quiz", "Flashcards & Quizzes")}</h3>
-          <p>{L("Générés automatiquement à partir de ton travail.", "Automatically generated from your work.")}</p>
+          <h3>{L("Répétition espacée", "Spaced repetition")}</h3>
+          <p>{L("Chaque fiche revient juste avant que tu ne l'oublies — optimisé pour la rétention.", "Each card resurfaces right before you'd forget — optimized for retention.")}</p>
         </div>
         <div className="feature-simple">
-          <h3>{L("Otto t'aide", "Otto helps")}</h3>
-          <p>{L("Un tuteur qui t'explique, jamais un solutionnaire.", "A tutor who explains, never a solution key.")}</p>
+          <h3>{L("Détection proactive", "Proactive detection")}</h3>
+          <p>{L("Otto détecte tes devoirs et les décompose en étapes claires automatiquement.", "Otto detects your homework and breaks it into clear steps automatically.")}</p>
         </div>
       </section>
 
@@ -4089,15 +4091,15 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
         <dl className="research-list-simple">
           <div className="research-row-simple">
             <dt>{L("Questionnement socratique", "Socratic questioning")}</dt>
-            <dd>{L("Otto guide par des questions qui te font trouver la réponse.", "Otto guides with questions that lead you to the answer.")}</dd>
+            <dd>{L("Otto te fait construire la réponse toi-même, il ne l'a jamais donnée.", "Otto makes you build the answer yourself, never gives it.")}</dd>
           </div>
           <div className="research-row-simple">
-            <dt>{L("Répétition espacée", "Spaced repetition")}</dt>
-            <dd>{L("Chaque carte revient juste avant que tu ne l'oublies.", "Each card resurfaces right before you'd forget it.")}</dd>
+            <dt>{L("Algorithme Leitner", "Leitner algorithm")}</dt>
+            <dd>{L("La répartition optimale des révisions pour une mémorisation durable.", "Optimal review scheduling for durable memorization.")}</dd>
           </div>
           <div className="research-row-simple">
-            <dt>{L("Matrice d'Eisenhower", "Eisenhower matrix")}</dt>
-            <dd>{L("Tes tâches sont classées par urgent/important réel.", "Your tasks are ranked by real urgency/importance.")}</dd>
+            <dt>{L("Décomposition automatique", "Automatic breakdown")}</dt>
+            <dd>{L("Otto analyse tes devoirs et crée un plan d'action étape par étape.", "Otto analyzes your homework and creates a step-by-step action plan.")}</dd>
           </div>
         </dl>
       </section>
