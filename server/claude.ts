@@ -625,6 +625,30 @@ const BIG_PROJECT_RE = /extended essay\b|\bee\b|theory of knowledge|\btok\b|\bca
 export function isBigIbProject(_profile: Profile | undefined, title: string, why: string): boolean {
   return BIG_PROJECT_RE.test(`${title} ${why}`);
 }
+
+/** The granularity ladder's code-level gate (reported live: a 5-minute "download your ticket" errand
+ *  still shipped a 3-step list with an "All steps 0/3" counter — the MISSION text and the step-4 prompt
+ *  both say steps are optional, but a prompt instruction alone kept producing step lists for trivial
+ *  tasks). A SMALL, single-session task (an errand, a form, a download, a booking, one short drill) needs
+ *  a first action, not a plan: the caller trims such tasks to at most one step. Conservative in BOTH
+ *  directions: any study/assessment/project signal (taskType or keyword) keeps the full list, so a
+ *  genuinely complex plan is never flattened — only shapes with NO multi-step signal at all get trimmed. */
+export function taskNeedsStepList(task: { title: string; why: string; goal?: string; taskType?: string }): boolean {
+  if (task.taskType && ["learn", "review", "practice", "prepare_assessment"].includes(task.taskType)) return true;
+  const text = `${task.title} ${task.why} ${task.goal || ""}`;
+  if (BIG_PROJECT_RE.test(text)) return true;
+  if (/test|exam|quiz|assess|interrogation|[ée]valuation|contr[ôo]le|dissert|essay|expos[ée]|present|projet|project|extended|revis|prepare|pr[ée]par/i.test(text)) return true;
+  // A multi-leg PRACTICAL task ("Lock dates, bookings and an Arctic-ready itinerary" — taskType
+  // "logistics", no assessment keyword) still genuinely needs its 3-4 steps. Two signals: the DoD
+  // enumerating multiple distinct parts (the same comma/"and" split the step-4 prompt's dodParts rule
+  // uses — 3+ real parts is a multi-deliverable task, not an errand), or explicit booking/organizing
+  // verbs in the title. "Ticket downloaded" splits to one part; "purpose, dates, transport and
+  // accommodation booked, documents identified" splits to five.
+  const parts = (task.goal || task.why || "").toLowerCase().split(/,|;| and | et |\bplus\b/).map((p) => p.trim()).filter((p) => p.length > 3).length;
+  if (parts >= 3) return true;
+  if (/\bbook|reserv|itinerary|organis|organiz|coordinat/i.test(task.title)) return true;
+  return false;
+}
 // Hardcoded mission — this is what Otto IS, not a preference that can drift with prompt tweaks. Otto is
 // built for STUDENTS: a companion that keeps them moving, never a do-it-all that does their work for them.
 const MISSION =
@@ -4393,8 +4417,20 @@ export async function runTask(
         }
       }
       // Keep research links scarce and task-specific; the card should not become a bibliography.
+  // Relevance gate, same reasoning as finalize()'s link check below: a web_search's results are only
+  // candidates. Reported live: a "download your Ledger OP3N ticket" task carrying a Mailchimp marketing
+  // page and a "Sell tickets with Luma" pricing page — the search engine's loose keyword match surfaced
+  // them and they sailed onto the card. A link that shares no real word (4+ chars) with the task's own
+  // title/why/definition of done is noise, however real the URL. Only applied when there IS a usable
+  // word set (a very short title would over-filter); worst case = old behavior.
+  const linkAllowWords = new Set(`${task.title} ${task.why} ${definitionOfDone}`.toLowerCase().match(/[a-zà-ÿ0-9]{4,}/g) || []);
   links = links
   .filter((link, index, all) => all.findIndex((other) => canonicalUrl(other.url) === canonicalUrl(link.url)) === index)
+  .filter((link) => {
+    if (linkAllowWords.size < 2) return true;
+    const linkWords = `${link.label} ${link.url}`.toLowerCase().match(/[a-zà-ÿ0-9]{4,}/g) || [];
+    return linkWords.some((w) => linkAllowWords.has(w));
+  })
   .slice(0, 3);
     }
     // Distinguish "no search needed" from "search attempted and totally failed" — without this, context
@@ -4458,9 +4494,14 @@ export async function runTask(
       `There is this task: "${task.title}".\n` +
       `The user wants to have this definition of done: ${definitionOfDone}\n\n` +
       `Based on all this information:\n${context || "(no external context was needed — plan from the task itself)"}\n\n` +
-      `Create small, minimal, actionable steps to help the user achieve this.\n` +
+      `Create small, minimal, actionable steps to help the user achieve this.
+` +
+      `SIZE THE PLAN TO THE TASK — steps are OPTIONAL, not the default output shape:\n` +
+      `- SMALL, SINGLE-SESSION task (an errand, a download, a form, a booking, one short drill — doable in one sitting): NO step list. One useful artifact only if genuinely needed, plus a tiny first action. A step list on a 5-minute errand is clutter, not structure.\n` +
+      `- MULTI-DAY or ASSESSMENT-PREP work: 3-4 short, scannable steps, each anchored to a part of the Definition of Done.\n` +
+      `- GENUINELY COMPLEX PROJECT (multi-week, multi-stage): the full breakdown, capped at 8 steps / milestones.\n` +
       `RULES:\n` +
-      `- 3-5 steps, each a SHORT concrete one-liner (≤10 words). Each step is ONE single action, not a broad category.\n` +
+      `- Each step, when you write one, is a SHORT concrete one-liner (≤10 words). Each step is ONE single action, not a broad category.\n` +
       `- Break the work into INDIVIDUAL steps — never one big step with sub-steps. If you're tempted to write a step like "Review chapter 5" that's really several things, write each thing as its own step instead.\n` +
       `- SEQUENCE STEPS IN THE ORDER THE STUDENT WILL ACTUALLY DO THEM. Before writing the list, ask of every step: what must already be true for the student to be able to start this one? That prerequisite step goes FIRST. Two forms of this keep going wrong live:\n` +
       `  (a) REACTING TO AN ATTEMPT. A step that reacts to, reviews, or repeats based on an attempt (retake, log mistakes, fix what was wrong, redo until clean) can only come AFTER the step where that attempt actually happens. Reported live: a "reach a clean run on an MCQ set" task generated step 1 as "Log missed items, then retake until no unresolved misses" and step 2 as "Sit a timed set" — backwards, since there's nothing to log or retake before a first attempt has happened.\n` +
@@ -4471,7 +4512,7 @@ export async function runTask(
       `- Never include research/search steps IF the context above already contains enough concrete, specific material to satisfy the definition of done. But check that first: if the definition of done asks for a produced list/comparison/shortlist of real specific options (activities, sources, products, providers) and the context above is thin, generic, or missing that — a handful of search queries and a paragraph of vague summary is NOT the same as an actual curated list — then the FIRST steps must be genuine research/compilation steps that actually build that list, not steps that assume it already exists. Skipping straight to refinement steps (filtering, tagging, comparing) when there's nothing concrete yet to filter/tag/compare produces a step list that can't reach the definition of done at all.\n` +
       `- Never include artifact-creation steps (flashcards/quiz/note creation — that's handled separately).\n` +
       `- COVER THE DEFINITION OF DONE'S OWN PARTS: identify its distinct sub-requirements (usually separated by commas/"and"/semicolons — e.g. "purpose, dates, travellers, transport and accommodation booked, and any required documents identified" is FIVE separate things, not one) and make sure the step list, together, actually addresses every one of them. A step list that looks plausible but silently leaves a named part of the definition of done untouched is incomplete, not just short — go back and add the missing step rather than padding an already-covered part.\n` +
-      `- Match the plan's size to the task's real complexity — 3 steps for a simple task, up to 5 for a genuinely complex one. Never pad to look thorough. Fewer is better. If one honest attempt (a diagnostic step) would tell the student where they actually stand, that can be the ENTIRE plan — don't manufacture a longer one just to look thorough.\n` +
+      `- Match the plan's size to the task's real complexity: zero steps for a single-session task (just a first action), 3-4 for multi-day/assessment prep, at most 8 for a genuinely complex project. Never pad to look thorough. Fewer is better. If one honest attempt (a diagnostic step) would tell the student where they actually stand, that can be the ENTIRE plan — don't manufacture a longer one just to look thorough.\n` +
       `- STEP QUALITY — for every step, internally check (never expose this checklist in the wording): can they start it immediately with no further planning? Is the action concrete with a clear object? Does it produce something, or just consume time? Will they know when it's actually finished? "Review chapter" fails this (can't tell when done, no output); "Explain each of the three laws in one sentence from memory, no notes" passes (concrete, self-checking, produces something). Write it as a normal sentence, not a template — just make sure the substance answers all four questions.\n` +
       `- FIRST STEP MUST BE STARTABLE RIGHT NOW. Reject a first step like "Research the topic", "Review everything", "Prepare for the test", or "Figure out what to do" unless research/review genuinely IS the whole task — prefer a first move that reduces uncertainty or produces the first real piece of work (for "prepare for tomorrow's test": not "review everything" but "answer five questions from memory covering the main topics, no notes, and see what's actually still shaky").\n` +
       `- WHEN MASTERY IS GENUINELY UNCERTAIN (a review/exam-prep/understanding-check task, not a known-quantity logistics task), prefer a step that MEASURES where the student actually stands before one that assumes they need to relearn everything from scratch.\n` +
@@ -4575,6 +4616,15 @@ export async function runTask(
     // the chance to be marked as Otto's own automatable work. This file's own earlier revision of this
     // exact block ran them in the wrong order — fixed to match finalize()'s documented-correct sequence.
     steps = dropTrivialSteps(steps);
+    // Granularity gate: steps are OPTIONAL for small, single-session tasks (errand, form, download,
+    // booking — doable in one sitting). For those, keep at most one step ("start here") and rely on
+    // the first action; a step list on a 5-minute errand is clutter, and the model kept producing one
+    // despite the prompt. Any task with a study/assessment/project signal (taskNeedsStepList) keeps its
+    // full list; only shapes with no such signal at all get trimmed to the one-step + first-action form.
+    if (!taskNeedsStepList({ title: task.title, why: task.why, goal: definitionOfDone, taskType: task.taskType }) && steps.length > 1) {
+      steps = steps.slice(0, 1);
+      audit.push({ at: new Date().toISOString(), kind: "guardrail", label: fr ? `Plan réduit à une seule action : petite tâche d'une seule session` : `Plan trimmed to a single action — small, single-session task` });
+    }
     // Observational only — never deletes a step. stepsMatchTitle/isFolderHousekeepingDrift are whole-plan
     // drift signals; this file has repeated scars from keyword-based DELETION filters "verified live to
     // crash tests by zeroing out valid steps," so these only ever log for debugging, never remove anything.
@@ -4834,7 +4884,14 @@ export async function runTask(
           `(dates, decisions, anything confirmed), then what is still OPEN with the concrete options and their ` +
           `real prices/links/deadlines from the context, then the checklist of what to book, bring, prepare or ` +
           `send. Every line carries a real specific — a brief made of generic advice ("research your options", ` +
-          `"pack warm clothes") is worthless; the whole point is that the specifics are already in it.\n` +
+          `"pack warm clothes") is worthless; the whole point is that the specifics are already in it. ` +
+          `SIZE IT TO THE TASK: a small, single-session task (install an app, download a ticket, send a form) ` +
+          `gets a SHORT brief — roughly 60-120 words, at most 2 sections, NO troubleshooting table and no ` +
+          `what-if branches; only the 2-4 specifics that matter (where it lives, which email/account, the one ` +
+          `real gotcha). A genuinely multi-leg task (a trip, a multi-stage application, a multi-week project) ` +
+          `may run longer and use a table — but only with rows that each carry a real, necessary specific. ` +
+          `A brief that mostly restates the task's own title, dates or due-status is too long however well ` +
+          `organized.\n` +
           `Use markdown ` +
           `(headings, **bold**, bullet lists, GFM pipe tables when tabular). Every cell in a table must be ` +
           `filled with real content from the context — never leave blanks, and never invent a name/price/detail ` +
@@ -5682,8 +5739,21 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   // Otto had ACTUALLY JUST CREATED on this exact run, the most legitimate link there is.
   const modelLinks = linksRaw.filter((l) => !l.autoLabel);
   const survivingModelLinks = new Set(dropForeignEntityLinks(taskTitle || "", definitionOfDone, filteredSteps, modelLinks));
+  // Relevance gate (reported live: a "download your Ledger OP3N ticket" task linking to a Mailchimp page
+  // and a "Sell Luma tickets" page — DDG's loose keyword match on "luma" returned them and the model
+  // dutifully listed the URLs it was handed). A web_search's OWN results are only candidates, not facts
+  // about the task: a link that shares NO real word with the task's own fields and final steps is noise
+  // the task card is better without, however real the URL is. Kind-label links ("the Google Doc Otto
+  // created") are exempt — same reasoning as the foreign-entity exemption above.
+  const stepTexts = filteredSteps.map((s) => s.text).join(" ");
+  const titleWords = new Set(`${taskTitle || ""} ${definitionOfDone || ""} ${stepTexts}`.toLowerCase().match(/[a-zà-ÿ0-9]{4,}/g) || []);
+  const relevantModelLinks = modelLinks.filter((l) => {
+    if (!titleWords.size) return true;
+    const linkWords = `${l.label} ${l.url}`.toLowerCase().match(/[a-zà-ÿ0-9]{4,}/g) || [];
+    return linkWords.some((w) => titleWords.has(w));
+  });
   const cleanLinks = linksRaw
-    .filter((l) => l.autoLabel || survivingModelLinks.has(l))
+    .filter((l) => l.autoLabel || (survivingModelLinks.has(l) && relevantModelLinks.includes(l)))
     .map(({ autoLabel, ...l }) => l)
     .slice(0, 3); // original relative order preserved — autoLabel links aren't more/less important, just exempt from the check
   const sendables: Sendable[] = (Array.isArray(out?.sendables) ? out.sendables : [])

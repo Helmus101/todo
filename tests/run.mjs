@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList } from "../server/claude.ts";
 import { evaluateArithmetic, parseNumber, findArithmeticClaims, hasArithmetic } from "../server/arithmetic.ts";
 import { isLikelyEcho, createEchoFilter, normalizeForEcho } from "../client/voice/echoGuard.ts";
 import { speechErrorMessage } from "../client/voice/speechErrors.ts";
@@ -1836,6 +1836,49 @@ section("runTask wiring — step-quality filters + taskType enum sync (source-or
   check("runTask's real step-4 prompt has the STEP QUALITY rule (start-immediately/concrete/produces-output/self-checking-done)", /STEP QUALITY.{0,60}for every step, internally check/.test(runTaskBody));
   check("runTask's real step-4 prompt has the FIRST-MOVE rule with its example", /FIRST STEP MUST BE STARTABLE RIGHT NOW/.test(runTaskBody));
   check("runTask's real step-4 prompt has the diagnose-before-assuming-relearn rule for uncertain-mastery tasks", /WHEN MASTERY IS GENUINELY UNCERTAIN/.test(runTaskBody));
+}
+
+// ── Granularity ladder: steps are OPTIONAL, briefs are size-tiered ───────────────────────────────
+// Reported live: a 5-minute "download your Ledger OP3N ticket" errand shipped a 3-step list ("All steps
+// 0/3") plus a 700-word brief with two troubleshooting tables. The MISSION already carried the ladder
+// (prompt-only); this pins the code-level gates so a future edit can't quietly revert to steps-always.
+section("Granularity ladder — taskNeedsStepList gate + size-tiered brief prompt (pins)");
+{
+  // Behavioral: the gate itself, both directions.
+  check("a small single-session errand does NOT need a step list", !taskNeedsStepList({ title: "Download your Ledger OP3N ticket for 15 Oct", why: "Registration approved; ticket sits in the Luma app", taskType: "logistics" }));
+  check("a trivial admin task does NOT need a step list", !taskNeedsStepList({ title: "Send the signed form back to the office", why: "Deadline Friday" }));
+  check("a bookings/coordinating logistics task keeps its steps", taskNeedsStepList({ title: "Lock dates, bookings and an Arctic-ready itinerary", why: "Trip prep", taskType: "logistics" }));
+  check("assessment prep keeps its steps", taskNeedsStepList({ title: "Prepare for the in-class History essay on Russia", why: "In-class essay Oct 9", taskType: "prepare_assessment" }));
+  check("review/practice/learn taskTypes keep their steps", taskNeedsStepList({ title: "Anything", why: "x", taskType: "review" }) && taskNeedsStepList({ title: "Anything", why: "x", taskType: "practice" }) && taskNeedsStepList({ title: "Anything", why: "x", taskType: "learn" }));
+  check("a multi-week project keeps its steps even untyped", taskNeedsStepList({ title: "Extended Essay first draft", why: "Due March" }));
+  check("an assessment keyword in a plain errand title keeps its steps", taskNeedsStepList({ title: "Register for the Math test", why: "Admin form" }));
+  // Source pins: the step-4 prompt sizes the plan, runTask gates the output, the note prompt tiers briefs.
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const runTaskStart = src.indexOf("export async function runTask(");
+  const runTaskBody = src.slice(runTaskStart, src.indexOf("\nexport async function writeStepsFromContext", runTaskStart));
+  check("runTask's step-4 prompt says small single-session tasks get NO step list", /SMALL, SINGLE-SESSION task[^\n]*NO step list/.test(runTaskBody));
+  check("runTask's step-4 prompt carries the full granularity ladder", /MULTI-DAY or ASSESSMENT-PREP/.test(runTaskBody) && /GENUINELY COMPLEX PROJECT/.test(runTaskBody));
+  check("runTask gates its own step output through taskNeedsStepList", /taskNeedsStepList\(\{ title: task\.title, why: task\.why, goal: definitionOfDone, taskType: task\.taskType \}/.test(runTaskBody));
+  check("the gate runs after the triviality gate and trims to one step", /steps = dropTrivialSteps\(steps\);[\s\S]{0,600}if \(!taskNeedsStepList/.test(runTaskBody) && /steps\.slice\(0, 1\)/.test(runTaskBody));
+  const noteWriter = src.slice(src.indexOf("Create a short in-app reference note"), src.indexOf('{"title": "note title"'));
+  check("the note writer sizes briefs to the task (60-120 words for a small task, no troubleshooting table)", /SIZE IT TO THE TASK/.test(noteWriter) && /60-120 words/.test(noteWriter) && /NO troubleshooting table/.test(noteWriter));
+  check("the note writer allows a longer, tabular brief only for genuinely multi-leg tasks", /multi-leg task/.test(noteWriter) && /rows that each carry a real, necessary specific/.test(noteWriter));
+}
+
+// ── Link relevance: a web_search's results are candidates, not facts about the task ──────────────
+// Reported live: a "download your Ledger OP3N ticket" task linking to a Mailchimp marketing page and a
+// "Sell tickets with Luma" pricing page — real URLs, zero relevance, surfaced by the search engine's
+// loose keyword match and passed through because "they came from the search".
+section("Link relevance gate — task-link filtering (source pins)");
+{
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const runTaskStart = src.indexOf("export async function runTask(");
+  const runTaskBody = src.slice(runTaskStart, src.indexOf("\nexport async function writeStepsFromContext", runTaskStart));
+  check("runTask filters its research links for relevance to the task's own words", /linkAllowWords/.test(runTaskBody) && /linkWords\.some\(\(w\) => linkAllowWords\.has\(w\)\)/.test(runTaskBody));
+  check("the relevance gate keeps behavior unchanged for very short titles (over-filter guard)", /linkAllowWords\.size < 2\) return true/.test(runTaskBody));
+  const finalizeStart = src.indexOf("export function finalize(");
+  const finalizeBody = src.slice(finalizeStart, finalizeStart + 60000);
+  check("finalize applies the same relevance gate to model-provided links", /relevantModelLinks/.test(finalizeBody) && /survivingModelLinks\.has\(l\) && relevantModelLinks\.includes\(l\)/.test(finalizeBody));
 }
 section("Flashcard/artifact-selection prompts carry the retrieval-quality and error-targeting rules (source pins)");
 {
