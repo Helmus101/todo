@@ -3450,25 +3450,67 @@ app.post("/api/study/profile", requireAuth, async (req, res) => {
 });
 
 // ── Text-to-speech via FreeTTS ──────────────────────────────────────────────
+// Voice per account language (verified live: the old hardcoded "brian" voice was ENGLISH — a French
+// account's tutor replies were spoken by an English voice, mangling the audio — AND the whole endpoint
+// 404s now: FreeTTS moved /api/speech → /api/v1/tts, requires a locale-shaped voice name ("brian" fails
+// its own validation pattern), authenticates via an `x-api-key` header instead of Bearer, and returns a
+// JSON {audio_url} the client must fetch separately). Flow: POST /api/v1/tts → GET the returned audio_url
+// (with the same key) → stream the mp3 back to the client. Voice choice: French accounts get a real
+// fr-FR neural voice; English keeps a good en-US one. Any upstream failure stays fail-open — the client's
+// useSpeechSynthesis already falls back to the browser's built-in TTS (which IS language-correct, it picks
+// a voice by the fr-FR/en-US lang passed in) whenever this route errors.
+const TTS_VOICE_BY_LANG: Record<string, string> = {
+  fr: "fr-FR-DeniseNeural",
+  en: "en-US-AriaNeural",
+};
+const DEFAULT_TTS_VOICE = "en-US-AriaNeural";
+
 app.post("/api/tts", requireAuth, async (req, res) => {
   const { text } = req.body;
   if (!text || typeof text !== "string") { res.status(400).json({ error: M(req, "le texte est requis", "text is required") }); return; }
   if (!process.env.FREETTS_API_KEY) { res.status(501).json({ error: M(req, "Synthèse vocale non configurée", "TTS not configured") }); return; }
 
+  const voice = TTS_VOICE_BY_LANG[req.session.profile?.language || ""] || DEFAULT_TTS_VOICE;
+  const key = process.env.FREETTS_API_KEY;
   try {
-    const response = await fetch("https://freetts.org/api/speech", {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${process.env.FREETTS_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ text, voice: "brian", outputFormat: "audio/mp3" }),
-    });
-
-    if (!response.ok) {
-      console.error(`[tts] FreeTTS error: ${response.status}`);
+    // Step 1: request synthesis. Two retry voices on 4xx: the exact configured name could be retired by
+    // the vendor (their catalogue rotates — voices go Preview/GA/discontinued), so fall back to the
+    // multilingual sibling (always GA), then to ANY fr-FR/en-US GA voice from the live catalogue.
+    let fileId: string | undefined;
+    let audioUrl: string | undefined;
+    const attempt = async (v: string): Promise<{ ok: true; audioUrl: string } | { ok: false; status: number }> => {
+      const synth = await fetch("https://freetts.org/api/v1/tts", {
+        method: "POST",
+        headers: { "x-api-key": key, "Content-Type": "application/json" },
+        body: JSON.stringify({ text: text.slice(0, 4500), voice: v, outputFormat: "audio/mp3" }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!synth.ok) return { ok: false, status: synth.status };
+      const meta = await synth.json() as { audio_url?: string };
+      return meta.audio_url ? { ok: true, audioUrl: meta.audio_url } : { ok: false, status: 502 };
+    };
+    const fallbacks = voice === TTS_VOICE_BY_LANG.fr
+      ? ["fr-FR-VivienneMultilingualNeural", "fr-FR-EloiseNeural"]
+      : ["en-US-JennyNeural"];
+    for (const v of [voice, ...fallbacks]) {
+      const r = await attempt(v);
+      if (r.ok) { audioUrl = r.audioUrl; break; }
+      if (r.status !== 400 && r.status !== 422) break; // quota/auth/outage — voice retrying won't help
+    }
+    if (!audioUrl) {
+      console.error(`[tts] FreeTTS synthesis failed for voice ${voice}`);
       res.status(500).json({ error: M(req, "Échec de la génération vocale", "TTS generation failed") });
       return;
     }
-
-    const buffer = await response.arrayBuffer();
+    // Step 2: fetch the actual audio. (Only the audio_url's own origin is ever fetched — the URL comes
+    // from FreeTTS's own JSON response, never from the client.)
+    const audio = await fetch(audioUrl, { headers: { "x-api-key": key }, signal: AbortSignal.timeout(20_000) });
+    if (!audio.ok) {
+      console.error(`[tts] FreeTTS audio fetch error: ${audio.status}`);
+      res.status(500).json({ error: M(req, "Échec de la requête vocale", "TTS request failed") });
+      return;
+    }
+    const buffer = await audio.arrayBuffer();
     res.setHeader("Content-Type", "audio/mpeg");
     res.send(Buffer.from(buffer));
   } catch (e: any) {
