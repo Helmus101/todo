@@ -1928,6 +1928,14 @@ const SET_OBJECTIVES_TOOL = {
  *  artifact-enforcement check in the run loop with nothing to show the student — a real hole in the chain.
  *  40 chars is comfortably below any genuine fiche and comfortably above "TODO". */
 const MIN_NOTE_BODY = 40;
+// Brief compression trigger: a SMALL, single-session task whose note came back with more than this many
+// words gets ONE rewrite pass (a small model call that keeps the real specifics and cuts the padding).
+// This is a trigger for a smart rewrite, NOT a hard cap: a brief is long either because the model padded
+// it (compress that) or because the task genuinely carries that much content (leave it alone — the pass
+// only fires for small tasks at all, and the rewrite itself is told to return the original unchanged if
+// cutting anything would lose a real specific). Failure is fail-open: if the rewrite call fails or
+// returns nothing usable, the original brief ships unchanged.
+const BRIEF_COMPRESS_WORDS = 150;
 // Defense-in-depth against a fabricated self-referential link (observed live: a note linked to a fake
 // "otto.ai/note/<uuid>" URL — this app has no such domain and no public per-note page at all, everything is
 // in-app SPA state). The prompt (CREATE_NOTE_TOOL's own description) already forbids inventing a URL, but a
@@ -4903,6 +4911,39 @@ export async function runTask(
         );
         const note = makeNote(noteOut);
         if ("note" in note) {
+          // Brief compression pass — brief length should be ADAPTED TO THE TASK, not a fixed output shape:
+          // a 5-minute errand needs ~80 words, a multi-leg trip brief may legitimately run long. The prompt
+          // above already asks for 60-120 words on a small task, but the reported live brief (700+ words,
+          // two troubleshooting tables, for "download your ticket") ran long anyway — a prompt instruction
+          // alone isn't a guarantee, same reasoning as every other verify-don't-trust gate in this file.
+          // So: small task only (taskNeedsStepList false), body clearly bloated (> BRIEF_COMPRESS_WORDS)
+          // → ONE rewrite call that keeps every real specific and cuts the rest. Never a silent chop: if
+          // the rewrite fails or comes back empty, the original brief ships unchanged.
+          if (!taskNeedsStepList({ title: task.title, why: task.why, goal: definitionOfDone, taskType: task.taskType })) {
+            const wc = countWords(note.note.body);
+            if (wc > BRIEF_COMPRESS_WORDS) {
+              const compressed = await ask(
+                `Below is a brief Otto wrote for this task:\nTASK: "${task.title}"\n` +
+                `DEFINITION OF DONE: ${definitionOfDone}\n\n` +
+                `BRIEF (markdown):\n${note.note.body}\n\n` +
+                `This task is small and single-session, and the brief is too long (${wc} words). Rewrite it in at most 120 words: ` +
+                `keep every real specific it contains (names, dates, links, prices, account details, and the one or two genuine gotchas) and the minimum structure needed to carry them. ` +
+                `Cut: anything that restates the task's own title/dates/status, what-if branches, troubleshooting tables, background the student already knows, and filler sentences. ` +
+                `Write in the same language as the original. Return JSON: {"body": "compressed markdown"}. ` +
+                `Only return the original unchanged if cutting anything would lose a real specific.`,
+                1600,
+              );
+              const body = String(compressed?.body || "").trim();
+              const rewritten = body && countWords(body) < wc ? makeNote({ title: note.note.title, body }) : null;
+              if (rewritten && "note" in rewritten) {
+                audit.push({ at: new Date().toISOString(), kind: "guardrail", label: fr ? `Fiche raccourcie : ${wc} → ${countWords(rewritten.note.body)} mots` : `Brief compressed: ${wc} → ${countWords(rewritten.note.body)} words` });
+                console.log(`${new Date().toISOString()} [ai] step 5: compressed an over-long brief for a small task (${wc} → ${countWords(rewritten.note.body)} words)`);
+                note.note = rewritten.note;
+              } else {
+                console.log(`${new Date().toISOString()} [ai] step 5: brief compression didn't return a usable rewrite — keeping the original (${wc} words)`);
+              }
+            }
+          }
           notes.push(note.note);
           did.push(fr ? `Créé une fiche : ${note.note.title}` : `Created note: ${note.note.title}`);
           audit.push({ at: new Date().toISOString(), kind: "artifact", label: `note: ${note.note.title}` });
