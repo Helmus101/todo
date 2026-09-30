@@ -464,14 +464,15 @@ export function App() {
     try { localStorage.setItem("otto-tasks", JSON.stringify(tasks.slice(0, 60))); } catch { /* ignore */ }
   }, [tasks]);
 
+  const [initialStatusChecked, setInitialStatusChecked] = useState(false);
   // Retry status until the backend is reachable (tsx dev-server boot race) — don't get stuck on the spinner.
   // After the retries are exhausted, surface a real "can't reach the server" screen instead of a forever-spinner.
   useEffect(() => {
     let stop = false, tries = 0;
     const tick = async () => {
       if (stop) return;
-      try { const s = await api.status(); if (!stop) { applyStatus(s); setLoadError(false); } }
-      catch { if (!stop) { if (tries++ < 30) setTimeout(tick, 1000); else setLoadError(true); } }
+      try { const s = await api.status(); if (!stop) { applyStatus(s); setInitialStatusChecked(true); setLoadError(false); } }
+      catch { if (!stop) { if (tries++ < 30) setTimeout(tick, 1000); else { setInitialStatusChecked(true); setLoadError(true); } } }
     };
     void tick();
     return () => { stop = true; };
@@ -811,7 +812,7 @@ export function App() {
   if (route === "terms") return <LegalPage kind="terms" lang={status?.loggedIn ? status.language : preLoginLang} />;
   if (route === "research") return <ResearchPage lang={status?.loggedIn ? status.language : preLoginLang} />;
 
-  if (!status) {
+  if (!status || !initialStatusChecked) {
     if (loadError) {
       // This is the ONE screen that can render before status (and so LangContext) has ever loaded — a
       // student on a bad connection would see it hardcoded in English on a French-default app. Fall back
@@ -835,15 +836,15 @@ export function App() {
     const onNewAccount = async () => {
       try { await api.setProfilePreference("language", preLoginLang); } catch { /* best-effort */ }
     };
-    // Don't render landing page while status is loading to prevent flash
-    if (status === null) return <div className="screen"><div className="brand boot"><Logo size={26} /> Otto</div><div className="spinner" /></div>;
     return (
       <LangContext.Provider value={preLoginLang}>
         {route === "login" || route === "signup" || route === "reset-password"
           ? <LoginPage status={status} lang={preLoginLang} onLangChange={setLandingLang} onDone={async (isNew) => { signedOutRef.current = false; if (isNew) { await onNewAccount(); startOnboard(); } await loadStatus(); navigate("tasks"); }} initialMode={route === "signup" ? "signup" : route === "reset-password" ? "reset" : "login"} />
           : route === "unlimited"
           ? <LoginPage status={status} lang={preLoginLang} onLangChange={setLandingLang} onDone={async () => { signedOutRef.current = false; await loadStatus(); navigate("unlimited"); }} initialMode="login" />
-          : <Landing lang={preLoginLang} onLangChange={setLandingLang} />}
+          : route === "" || route === "/"
+          ? <Landing lang={preLoginLang} onLangChange={setLandingLang} />
+          : <LoginPage status={status} lang={preLoginLang} onLangChange={setLandingLang} onDone={async () => { signedOutRef.current = false; await loadStatus(); navigate(route); }} initialMode="login" />}
       </LangContext.Provider>
     );
   }
@@ -3521,18 +3522,18 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
       {/* Hero Section - Simplified */}
       <main className="hero-simple">
         <h1 className="hero-title-simple">
-          {en ? <>Your studies, <span className="tally-highlight">clearer</span>.</> : <>Ton lycée, <span className="tally-highlight">plus clair</span>.</>}
+          {en ? <>Your studies, <span className="tally-highlight">under control</span>.</> : <>Ton lycée, <span className="tally-highlight">sous contrôle</span>.</>}
         </h1>
 
         <p className="hero-sub-simple">
           {L(
-            "Otto transforme tes devoirs et contrôles en un plan simple pour aujourd'hui. Fiches, quiz, et étapes — sans jamais faire le travail à ta place.",
-            "Otto turns your homework and exams into a simple plan for today. Flashcards, quizzes, and steps — never doing the work for you.",
+            "Otto synchronise Pronote et tes agendas pour transformer tes devoirs et contrôles en un plan quotidien simple — avec un tuteur IA Socratique qui t'aide sur ce que tu ne comprends pas encore.",
+            "Otto syncs Pronote and your calendars to turn homework and exams into a simple daily plan — with a Socratic AI tutor for concepts you don't master yet.",
           )}
         </p>
 
         <div className="hero-cta-simple">
-          <a className="btn primary big" href="/signup">{L("Commencer", "Get started")}</a>
+          <a className="btn primary big" href="/signup">{L("Commencer gratuitement", "Get started for free")}</a>
           <a className="btn ghost big" href="/login">{L("Se connecter", "Log in")}</a>
         </div>
       </main>
@@ -3540,36 +3541,36 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
       {/* Simple Features */}
       <section className="features-simple">
         <div className="feature-simple">
-          <h3>{L("Tuteur IA", "AI Tutor")}</h3>
-          <p>{L("Un tuteur Socratique qui te guide par des questions, jamais des réponses toutes faites.", "A Socratic tutor who guides with questions, never ready-made answers.")}</p>
+          <h3>{L("Tuteur Socratique IA", "Socratic AI Tutor")}</h3>
+          <p>{L("Un tuteur qui t'aide sur les notions difficiles par des questions guidées, sans jamais faire les devoirs à ta place.", "A tutor that guides you through tough concepts with questions, never doing your work for you.")}</p>
         </div>
         <div className="feature-simple">
-          <h3>{L("Répétition espacée", "Spaced repetition")}</h3>
-          <p>{L("Chaque fiche revient juste avant que tu ne l'oublies — optimisé pour la rétention.", "Each card resurfaces right before you'd forget — optimized for retention.")}</p>
+          <h3>{L("Détection & Plan Proactif", "Proactive Detection & Plan")}</h3>
+          <p>{L("Importe tes devoirs depuis Pronote et organise automatiquement tes étapes de travail de la journée.", "Imports your homework from Pronote to auto-organize your step-by-step daily plan.")}</p>
         </div>
         <div className="feature-simple">
-          <h3>{L("Détection proactive", "Proactive detection")}</h3>
-          <p>{L("Otto détecte tes devoirs et les décompose en étapes claires automatiquement.", "Otto detects your homework and breaks it into clear steps automatically.")}</p>
+          <h3>{L("Répétition Espacée & Quiz", "Spaced Repetition & Quizzes")}</h3>
+          <p>{L("Génère des fiches de révision et des quiz optimisés après chaque séance pour une mémorisation durable.", "Auto-generates flashcards and quizzes optimized for long-term retention after study sessions.")}</p>
         </div>
       </section>
 
       {/* Research — kept but simplified */}
       <section className="landing-sec-simple">
         <div className="sec-header-simple">
-          <h2>{L("Construit sur des méthodes qui marchent.", "Built on methods that work.")}</h2>
+          <h2>{L("Construit sur des méthodes éprouvées.", "Built on proven methods.")}</h2>
         </div>
         <dl className="research-list-simple">
           <div className="research-row-simple">
             <dt>{L("Questionnement socratique", "Socratic questioning")}</dt>
-            <dd>{L("Otto te fait construire la réponse toi-même, il ne l'a jamais donnée.", "Otto makes you build the answer yourself, never gives it.")}</dd>
+            <dd>{L("Te fait construire la réponse toi-même au lieu de te la donner toute faite.", "Guides you to build the answer yourself instead of handing it over.")}</dd>
           </div>
           <div className="research-row-simple">
-            <dt>{L("Algorithme Leitner", "Leitner algorithm")}</dt>
-            <dd>{L("La répartition optimale des révisions pour une mémorisation durable.", "Optimal review scheduling for durable memorization.")}</dd>
+            <dt>{L("Système Leitner", "Leitner system")}</dt>
+            <dd>{L("Fait réapparaître les cartes de révision juste avant le moment où tu les oublierais.", "Resurfaces flashcards right before you would forget them.")}</dd>
           </div>
           <div className="research-row-simple">
-            <dt>{L("Décomposition automatique", "Automatic breakdown")}</dt>
-            <dd>{L("Otto analyse tes devoirs et crée un plan d'action étape par étape.", "Otto analyzes your homework and creates a step-by-step action plan.")}</dd>
+            <dt>{L("Matrice d'Eisenhower", "Eisenhower matrix")}</dt>
+            <dd>{L("Priorise tes tâches selon leur réelle urgence et importance pour tes objectifs.", "Prioritizes your tasks by true urgency and importance for your goals.")}</dd>
           </div>
         </dl>
       </section>
@@ -3582,15 +3583,19 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
         <div className="faq-list-simple">
           <details className="faq-item-simple">
             <summary>{L("Est-ce qu'Otto fait mes devoirs à ma place ?", "Does Otto do my homework for me?")}</summary>
-            <p>{L("Non — Otto détecte toute consigne de travail noté et produit à la place une fiche méthodologique ou des questions guides.", "No — Otto detects graded work and provides step-by-step methodologies instead.")}</p>
+            <p>{L("Non — Otto détecte tout travail noté et produit à la place une fiche méthodologique et des questions d'entraînement.", "No — Otto detects graded work and provides step-by-step methodologies and practice questions instead.")}</p>
           </details>
           <details className="faq-item-simple">
-            <summary>{L("Je suis en filière IB, est-ce adapté ?", "I am an IB student, does Otto adapt?")}</summary>
-            <p>{L("Absolument. Otto prend en charge les filières HL/SL, TOK, CAS et Extended Essay avec Google Calendar ou des entrées manuelles.", "Yes. Otto fully supports HL/SL subjects, TOK, CAS, and Extended Essay with Google Calendar or manual entries.")}</p>
+            <summary>{L("Comment fonctionne le tuteur IA ?", "How does the AI tutor work?")}</summary>
+            <p>{L("Le tuteur t'explique les concepts inconnus et te guide pas à pas pour résoudre tes exercices, sans jamais donner la réponse directement.", "The tutor explains unknown concepts and guides you step-by-step to solve exercises, without giving the direct answer.")}</p>
           </details>
           <details className="faq-item-simple">
-            <summary>{L("Mes identifiants scolaires sont-ils sécurisés ?", "Are my school credentials safe?")}</summary>
-            <p>{L("Tes identifiants sont chiffrés avec AES-256-GCM et ne sont jamais partagés ni revendus.", "Your credentials are encrypted using AES-256-GCM and never shared or sold.")}</p>
+            <summary>{L("Je suis en filière IB ou Bac, est-ce adapté ?", "Does Otto work for IB or French Bac students?")}</summary>
+            <p>{L("Absolument. Otto gère Pronote, Google Calendar/Gmail ainsi que les filières IB (HL/SL, TOK, CAS, EE) et Bac.", "Yes. Otto supports Pronote, Google Calendar/Gmail, as well as IB (HL/SL, TOK, CAS, EE) and French Bac subjects.")}</p>
+          </details>
+          <details className="faq-item-simple">
+            <summary>{L("Mes identifiants Pronote sont-ils sécurisés ?", "Are my Pronote credentials safe?")}</summary>
+            <p>{L("Tes identifiants sont chiffrés en AES-256-GCM et ne sont jamais stockés en clair ni revendus.", "Your credentials are encrypted using AES-256-GCM and never stored in plain text or sold.")}</p>
           </details>
         </div>
       </section>
