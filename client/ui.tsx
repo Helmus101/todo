@@ -31,8 +31,8 @@ export function useLang(): (fr: string, en: string) => string {
 
 /** A small dismissible callout shown the FIRST time a student encounters a specific feature — Study Mode's
  *  desk, the tutor Board, canvas mode, a flashcard review, Journal, etc. Distinct from the one-time signup
- *  Onboarding() flow (App.tsx): that's a single linear tour covering the app's top-level sections up front,
- *  which is exactly the wrong moment to explain something like "how canvas mode works" — a student hasn't
+ *  Onboarding() flow (App.tsx): that's a deliberately SHORT linear tour (name, track/language, one-screen
+ *  feature map) — deep per-feature explanation deliberately lives HERE instead, shown at the moment a
  *  reached that screen yet, won't remember a line from a tour days ago, and the tour would either skip
  *  depth entirely or overload day one with detail for things not even in view yet. This shows the
  *  explanation exactly when and where it's actually relevant, once, ever (localStorage — see
@@ -152,8 +152,8 @@ export function sourceAttributionLine(t: { source?: string; createdAt?: string }
   return when ? `${en ? label.en : label.fr} · ${when}` : (en ? label.en : label.fr);
 }
 
-// Onboarding's step 6 sidebar tour is the ONLY place any page's purpose gets explained — once a student
-// dismisses onboarding, that explanation is gone for good, with nothing on the page itself. A small,
+// Onboarding's feature-map step is a one-liner per page only — once a student dismisses onboarding, that
+// summary is all they got, with nothing on the page itself. A small,
 // dismissible one-line caption closes that gap without turning into a nagging banner: same persisted-
 // dismissal pattern already used for "skip connect" (App.tsx's otto-skip-connect), keyed per page so
 // dismissing one page's hint doesn't hide another's.
