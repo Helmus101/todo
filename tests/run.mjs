@@ -1477,7 +1477,7 @@ section("Tutor Session — sessions never auto-start, and past boards read at a 
     const peekBody = tutorSrc.slice(peekStart, tutorSrc.indexOf("}, []);", peekStart) + 6);
     return /peekForActiveSession/.test(tutorSrc) && /api\.tasks\(\)\.then/.test(peekBody) && !/setTask\(/.test(peekBody) && /setPendingActiveSession\(t \|\| null\)/.test(peekBody) && !/api\.studyFreeSession\(\)\.then/.test(tutorSrc);
   })());
-  check("an in-progress session is offered back ONLY via an explicit Resume button (no auto-open on mount)", /resumeActiveSession/.test(tutorSrc) && /onClick=\{resumeActiveSession\}/.test(tutorSrc) && /Reprendre la séance en cours/.test(tutorSrc));
+  check("an in-progress session is offered back ONLY via an explicit Resume button (no auto-open on mount)", /resumeActiveSession/.test(tutorSrc) && /onClick=\{resumeActiveSession\}/.test(tutorSrc) && /L\("Reprendre", "Resume"\)/.test(tutorSrc));
   check("Start is the only create path and always passes fresh (a new lesson starts clean)", /api\.studyFreeSession\(true, selectedSubject\)/.test(tutorSrc));
   check("voice stays manual (no startInVoiceMode on the panel — the mic toggle is the student's)", !/startInVoiceMode=/.test(tutorSrc));
   // Direct request: "refine ui for past boards" — each history item shows the board AT A GLANCE (first

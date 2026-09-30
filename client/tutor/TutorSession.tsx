@@ -268,30 +268,38 @@ export function TutorSession({ userId }: { userId: string | null }) {
               the first screen on /tutor, never a resumed session (reported: "tutor shouldn't auto open
               session"). Resuming needs no subject; it reopens the session where it was left. */}
           {activeSession && (
-            <button className="btn primary tutor-start-btn" onClick={resumeActiveSession}>
-              {L("Reprendre la séance en cours", "Resume the session in progress")}
-            </button>
+            <div className="tutor-active-session-card">
+              <div className="tutor-active-session-header">
+                <span className="tutor-active-session-badge">{L("En cours", "In progress")}</span>
+                <span className="tutor-active-session-subject">{activeSession.sourceSubject || ""}</span>
+              </div>
+              <p className="tutor-active-session-text">
+                {L("Tu as une séance en cours. Veux-tu la reprendre ou en commencer une nouvelle ?", "You have a session in progress. Resume it or start a new one?")}
+              </p>
+              <div className="tutor-active-session-actions">
+                <button className="btn primary tutor-resume-btn" onClick={resumeActiveSession}>
+                  {L("Reprendre", "Resume")}
+                </button>
+                <button className="btn ghost tutor-new-btn" onClick={() => setSelectedSubject(activeSession.sourceSubject || "")}>
+                  {L("Nouvelle séance", "New session")}
+                </button>
+              </div>
+            </div>
           )}
 
           {/* Start appears only once a subject is picked — a session without a subject has no context for
               the tutor and no label in history. When a session is already in progress it becomes the
               secondary option: it supersedes the current session (saved if substantial, then dismissed). */}
-          {selectedSubject ? (
-            <div className="tutor-start-actions">
-              <button
-                className={`btn ${activeSession ? "ghost" : "primary"} tutor-start-btn`}
-                onClick={() => void startNewSession()}
-                disabled={startingSession}
-              >
-                {startingSession
-                  ? L("Démarrage…", "Starting…")
-                  : activeSession
-                    ? L("Nouvelle séance de ", "New ") + selectedSubject + L("", " session")
-                    : L("Commencer une séance de ", "Start a ") + selectedSubject + L("", " session")}
-              </button>
-            </div>
-          ) : (
-            <p className="tutor-landing-sub" style={{ marginTop: 8 }}>{L("Choisis une matière pour commencer.", "Pick a subject to begin.")}</p>
+          {!activeSession && selectedSubject && (
+            <button
+              className="btn primary tutor-start-btn"
+              onClick={() => void startNewSession()}
+              disabled={startingSession}
+            >
+              {startingSession
+                ? L("Démarrage…", "Starting…")
+                : L("Commencer une séance de ", "Start a ") + selectedSubject + L("", " session")}
+            </button>
           )}
 
           {pastSessions.length > 0 && (
