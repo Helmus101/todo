@@ -169,7 +169,7 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
 
       {!pinned && <span className="sm-board-section-num" aria-hidden="true">{String(sectionNumber).padStart(2, "0")}</span>}
       <div className="sm-board-entry-main">
-      <div className="sm-board-problem-label">{en ? "Problem" : "Problème"}</div>
+      <div className="sm-board-problem-label">{en ? "Practice problem" : "Problème d'entraînement"}</div>
       <div className="sm-board-problem-q">{stripStrayMarkdown(problem.question)}</div>
       {problem.format && !answered ? <div className="sm-board-problem-format">{problem.format}</div> : null}
       {problem.hint && !answered ? (
