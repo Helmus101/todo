@@ -6351,30 +6351,56 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 
 
 /* ── Tutor Session (Primer-style: chat + board) ─────────────────────────────── */
-.tutor-session { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; padding: 16px 20px; height: calc(100vh - 64px); box-sizing: border-box; }
+/* The board is the lesson's real document — give it the larger half even at rest (chat is the input
+   surface, the board is what accumulates and matters); voice mode pushes the ratio further still. */
+.tutor-session { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr); gap: 20px; padding: 20px 24px; height: calc(100vh - 64px); box-sizing: border-box; }
 .tutor-chat, .tutor-board { display: flex; flex-direction: column; min-height: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
-.tutor-pane-title { padding: 10px 16px; font-weight: 600; border-bottom: 1px solid var(--line); }
+.tutor-pane-title { padding: 12px 18px; font-weight: 600; border-bottom: 1px solid var(--line); }
 .tutor-chat-body, .tutor-board-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px; max-height: calc(100vh - 200px); }
 .tutor-board-body { overflow: auto; }
 .tutor-start { padding: 16px; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; border-bottom: 1px solid var(--line); }
 .tutor-start p { margin: 0; font-size: 1.1rem; }
 @media (max-width: 800px) { .tutor-session { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; height: auto; min-height: calc(100vh - 64px); } }
 
+/* The board reads as a page with real margins, not content jammed to the pane's edges — more room per
+   entry, a wider column so worked lines/equations breathe, generous space between sections instead of a
+   tight hairline-only rhythm. Scoped to the tutor's board specifically (BoardArtifact is reused elsewhere
+   — e.g. TaskCard — where the tighter, compact treatment is still right). */
+.tutor-board .sm-board-body { padding: 28px clamp(20px, 4vw, 48px) 40px; max-width: 760px; margin: 0 auto; width: 100%; box-sizing: border-box; }
+.tutor-board .sm-board-entry, .tutor-board .sm-board-problem { padding: 18px 0; }
+.tutor-board .sm-board-entry-text { font-size: 15px; line-height: 1.65; }
+.tutor-board .sm-board-header { margin-bottom: 18px; padding-bottom: 12px; }
+.tutor-board .sm-board-focus-pin { padding: 14px 16px; margin-bottom: 16px; }
+@media (max-width: 800px) { .tutor-board .sm-board-body { padding: 18px 16px 28px; } }
+
 /* ── Tutor Session: voice-first additions ─────────────────────────────────────
    Research (gesture + dual-coding): in a spoken lesson the student's eyes belong on the visual surface —
    figures and structure help while listening; nobody re-reads a chat transcript mid-sentence. So voice
    mode shifts the pane balance toward the board, highlights it, and reports mic state where they look. */
-.tutor-session.voice-primary { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); }
+.tutor-session.voice-primary { grid-template-columns: minmax(0, 0.72fr) minmax(0, 1.28fr); }
 .tutor-session.voice-primary .tutor-board { border-color: var(--accent); }
 .tutor-session .tutor-pane-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.tutor-voice-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--ink-2); }
-.tutor-voice-pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--ink-2); opacity: .5; }
-.tutor-voice-pill.listening { color: var(--accent); }
-.tutor-voice-pill.listening::before { background: var(--accent); opacity: 1; animation: tutor-voice-pulse 1.4s ease-in-out infinite; }
-.tutor-voice-pill.speaking { color: var(--accent); }
-.tutor-voice-pill.speaking::before { background: var(--accent); opacity: .5; }
-@keyframes tutor-voice-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
-.tutor-voice-interim { font-weight: 400; font-style: italic; color: var(--ink-2); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The voice orb — replaces the old small status pill. Voice mode is meant to be the primary way of using
+   the tutor (Aristotle-style), so the "are you hearing me / is Otto talking" feedback gets a real, legible
+   presence on the board pane instead of a tiny dot next to a label. Sits as its own banner under the pane
+   title, full width, board content scrolls below it. */
+.tutor-voice-orb-bar { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 20px 16px 22px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--accent) 4%, var(--surface)); flex: 0 0 auto; }
+.tutor-voice-orb { position: relative; width: 60px; height: 60px; display: flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+.tutor-voice-orb-core { position: absolute; inset: 16px; border-radius: 50%; background: var(--ink-2); opacity: .18; transition: background .2s ease, opacity .2s ease; }
+.tutor-voice-orb-ring { position: absolute; inset: 0; border-radius: 50%; border: 2px solid var(--ink-2); opacity: 0; }
+.tutor-voice-orb.listening .tutor-voice-orb-core { background: var(--accent); opacity: .4; }
+.tutor-voice-orb.listening .tutor-voice-orb-ring { border-color: var(--accent); opacity: .5; animation: tutor-orb-pulse 1.8s ease-out infinite; }
+.tutor-voice-orb.listening .tutor-voice-orb-ring.ring-2 { animation-delay: .6s; }
+.tutor-voice-orb.speaking .tutor-voice-orb-core { background: var(--accent); opacity: .65; animation: tutor-orb-speak .85s ease-in-out infinite; }
+.tutor-voice-orb.speaking .tutor-voice-orb-ring { border-color: var(--accent); opacity: .3; }
+@keyframes tutor-orb-pulse { 0% { transform: scale(.55); opacity: .55; } 100% { transform: scale(1.8); opacity: 0; } }
+@keyframes tutor-orb-speak { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.2); } }
+.tutor-voice-orb-label { font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.tutor-voice-orb.listening ~ .tutor-voice-orb-label, .tutor-voice-orb-bar:has(.listening) .tutor-voice-orb-label { color: var(--accent); }
+.tutor-voice-orb-bar:has(.speaking) .tutor-voice-orb-label { color: var(--accent); }
+.tutor-voice-interim { font-weight: 400; font-style: italic; color: var(--ink-2); max-width: min(420px, 90%); text-align: center; }
+@media (prefers-reduced-motion: reduce) { .tutor-voice-orb-ring, .tutor-voice-orb.speaking .tutor-voice-orb-core { animation: none !important; } }
 
 /* BoardArtifact: the pinned day's focus (kind:"focus") — the board reads as a lesson page with a heading,
    not a scroll of fragments; the goal stays visible no matter how long the entry flow below grows. */
@@ -6415,6 +6441,15 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 @keyframes sm-board-writein { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 .sm-board-writein { animation: sm-board-writein .35s var(--ease-out, ease-out); }
 @media (prefers-reduced-motion: reduce) { .sm-board-writein { animation: none; } }
+
+/* Ink reveal — a freshly-written entry wipes into view top-to-bottom (clip-path), like watching it actually
+   get written rather than popping in fully formed. Duration is set inline per-entry (BoardArtifact.tsx),
+   scaled to how much text there is, so a one-line formula reveals quickly and a longer reasoning trace takes
+   a beat longer — reads as writing speed, not a fixed UI transition. Paired with sm-board-writein's own
+   fade/slide via a two-animation shorthand (`.35s, Ns`) set alongside this class. */
+@keyframes sm-board-reveal-ink { from { clip-path: inset(0 0 100% 0); } to { clip-path: inset(0 0 0% 0); } }
+.sm-board-reveal { animation-name: sm-board-writein, sm-board-reveal-ink; animation-timing-function: var(--ease-out, ease-out), linear; animation-fill-mode: both, both; }
+@media (prefers-reduced-motion: reduce) { .sm-board-reveal { animation: none !important; clip-path: none !important; } }
 .sm-board-todo-chip { display: inline-flex; align-items: center; gap: 5px; margin-top: 6px; padding: 3px 10px; border-radius: var(--radius-pill); background: var(--accent-soft); color: var(--accent); font-size: 11.5px; font-weight: 700; letter-spacing: .02em; }
 .sm-board-todo-chip::before { content: "✎"; font-size: 11px; }
 /* Reasoning trace (kind:"summary") — the record of HOW the student got there, as a numbered-ish dash list

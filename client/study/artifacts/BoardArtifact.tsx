@@ -147,13 +147,18 @@ interface ProblemBlockProps {
   onTextAnswer: (text: string) => void;
   onSubmit: () => void;
   en: boolean;
+  fresh?: boolean;
 }
 
-function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onShowHint, onPick, onTextAnswer, onSubmit, en }: ProblemBlockProps) {
+function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onShowHint, onPick, onTextAnswer, onSubmit, en, fresh }: ProblemBlockProps) {
   const problemIsMCQ = Array.isArray(problem.options) && problem.options.length >= 2;
   const answered = problemIsMCQ ? state.picked !== null : state.submitted;
   return (
-    <div className="sm-board-problem sm-board-writein">
+    <div
+      className={`sm-board-problem sm-board-writein${fresh ? " sm-board-reveal" : ""}`}
+      style={fresh ? { animationDuration: `.35s, ${Math.min(1.6, Math.max(0.5, problem.question.length / 90))}s` } : undefined}
+    >
+
       <span className="sm-board-section-num" aria-hidden="true">{String(sectionNumber).padStart(2, "0")}</span>
       <div className="sm-board-entry-main">
       <div className="sm-board-problem-label">{en ? "Problem" : "Problème"}</div>
@@ -267,6 +272,24 @@ export function BoardArtifact({ task, writing }: BoardArtifactProps) {
     endRef.current?.scrollIntoView({ block: "nearest" });
   }, [entries.length, problems.length]);
 
+  // "Ink reveal" — an entry that just arrived writes itself onto the page (clip-path wipe, duration scaled
+  // to how much text there is) instead of popping in fully formed, the "watching it actually get written"
+  // feel Aristotle's board is built around. Seeded with every id already on the board at FIRST render, so
+  // reopening/resuming a session never replays the reveal on old content — only entries that arrive during
+  // this mount ever get it. A later rerender (e.g. answering a problem) doesn't replay it either: the DOM
+  // node isn't remounted, so a CSS mount-animation only ever plays once regardless of the class staying put.
+  const seenKeysRef = useRef<Set<string> | null>(null);
+  if (seenKeysRef.current === null) {
+    const initial = new Set<string>();
+    for (const i of flowItems) initial.add(i.key);
+    seenKeysRef.current = initial;
+  }
+  const isFreshlyWritten = (key: string) => !seenKeysRef.current!.has(key);
+  useEffect(() => {
+    for (const i of flowItems) seenKeysRef.current!.add(i.key);
+  }, [flowItems]);
+  const revealDuration = (text: string): number => Math.min(1.6, Math.max(0.5, text.length / 90));
+
   const setProblemPicked = (problemId: string, picked: number | null) => {
     setProblemState(prev => ({ ...prev, [problemId]: { ...prev[problemId] || { picked: null, textAnswer: "", submitted: false }, picked, submitted: false } }));
   };
@@ -363,6 +386,7 @@ export function BoardArtifact({ task, writing }: BoardArtifactProps) {
         item.problem ? (
           <ProblemBlock
             key={item.key}
+            fresh={isFreshlyWritten(item.key)}
             problem={item.problem}
             sectionNumber={idx + 1}
             state={getProblemState(item.problem.id)}
@@ -376,16 +400,20 @@ export function BoardArtifact({ task, writing }: BoardArtifactProps) {
           />
         ) : (() => {
           const e = item.entry!;
+          const fresh = isFreshlyWritten(item.key);
           return (
-            <div key={item.key} className={`sm-board-entry sm-board-entry-${e.kind || "note"} sm-board-writein`}>
+            <div
+              key={item.key}
+              className={`sm-board-entry sm-board-entry-${e.kind || "note"} sm-board-writein${fresh ? " sm-board-reveal" : ""}`}
+              style={fresh ? { animationDuration: `.35s, ${revealDuration(e.text)}s` } : undefined}
+            >
               <span className="sm-board-section-num" aria-hidden="true">{String(idx + 1).padStart(2, "0")}</span>
               <div className="sm-board-entry-main">
-              {e.kind && KIND_LABEL[e.kind] ? (
-                <span className="sm-board-entry-kind">
-                  {KIND_GLYPH[e.kind] ? <span className="sm-board-glyph" aria-hidden="true">{KIND_GLYPH[e.kind]}</span> : null}
-                  {L(...KIND_LABEL[e.kind])}
-                </span>
-              ) : null}
+              {/* No kind-label chip here on purpose (removed: "Formule"/"Définition"/"Insight"/…) — the board
+                  reads as ONE continuous document the tutor is working on, not a form with labeled fields.
+                  The underlying `kind` still drives real formatting differences below (a diagram is a figure,
+                  a summary is a reasoning trace) and a quiet style hook (sm-board-entry-{kind}), just never a
+                  visible tag naming what category an entry is. */}
               {e.kind === "diagram" && e.diagram?.length ? (
                 <>
                   <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>

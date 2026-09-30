@@ -1477,6 +1477,20 @@ export function countWords(text: string): number {
   return (text.trim().match(/\S+/g) || []).length;
 }
 
+// Reproduced live: a chat reply that mid-sentence starts showing the model's own raw tool-call plumbing —
+// special-token markers like "<｜tool▁calls▁begin｜>" / "<｜tool▁call▁begin｜>function<｜tool▁sep｜>WRITE_TO_BOARD"
+// followed by its raw argument text and even a stray closing fence — instead of that call landing in the
+// structured `tool_calls` field the way it's supposed to. A DeepSeek backend quirk (most likely triggered when
+// a call comes late in a long completion), not something a prompt instruction can reliably prevent, so this
+// strips it defensively rather than trying to stop the model from ever doing it. Whatever's actually meant
+// for the student always comes BEFORE the first such marker — the leak is always a trailing artifact, never
+// interleaved with real prose — so cutting there is safe and loses nothing genuine.
+const TOOL_CALL_LEAK_MARKER = /<｜[^｜<>]{0,60}｜>/;
+function stripLeakedToolCallSyntax(text: string): string {
+  const m = TOOL_CALL_LEAK_MARKER.exec(text);
+  return m ? text.slice(0, m.index).trimEnd() : text;
+}
+
 function truncateCleanly(text: string, maxLen: number): string {
   if (text.length <= maxLen) return text;
   const slice = text.slice(0, maxLen);
@@ -1950,7 +1964,7 @@ export function makeProblem(input: any): { problem: TaskProblem } | { error: str
 
 const BOARD_KINDS = new Set(["note", "instruction", "formula", "summary", "focus", "insight", "definition"]);
 export function makeBoardEntry(input: any): { entry: BoardEntry } | { error: string } {
-  const text = String(input?.text || "").trim().slice(0, 600);
+  const text = stripLeakedToolCallSyntax(String(input?.text || "").trim()).slice(0, 600);
   if (!text) return { error: "ERROR: a board entry needs non-empty text." };
   const kindRaw = String(input?.kind || "").trim();
   const kind = BOARD_KINDS.has(kindRaw) ? (kindRaw as BoardEntry["kind"]) : undefined;
@@ -5913,7 +5927,20 @@ const PRIMER_PERSONA =
   `- GROW WITH THEM: use what you remember of their earlier sessions (profile, errors, journal, chat) to pick ` +
   `the next step just beyond what they can already do, and revisit shaky things later.\n` +
   `- NEVER be an answer machine; never shame; keep everything safe and age-appropriate; if they ask off-topic ` +
-  `things, answer simply and steer back gently. Respond in the student's language.\n\n`;
+  `things, answer simply and steer back gently. Respond in the student's language.\n` +
+  `- FIND THE MISCONCEPTION BEFORE YOU TEACH ANYTHING. This is the single most important rule here, and the ` +
+  `one you'll be most tempted to skip. When they ask a question or get something wrong, your job in that turn ` +
+  `is NOT to answer it and NOT to explain the topic in general — it's to find out exactly what's happening in ` +
+  `THEIR head right now, with one sharp, specific question aimed at the likely error, before you say anything ` +
+  `else. Two concrete anti-patterns, both failures even though they look helpful: (1) answering the question ` +
+  `they asked ("what's the formula for X" → you just give the formula) instead of asking what they've tried or ` +
+  `what they think X depends on; (2) reformulating — repeating their own question or the task back to them in ` +
+  `slightly different words ("so you're trying to find X, right?") and treating that restatement as if it were ` +
+  `diagnosis. Neither surfaces anything about how they're actually thinking. A real diagnostic question asks ` +
+  `THEM to reveal reasoning you don't yet have: "what did you try first?", "walk me through how you got that ` +
+  `number", "what do you think happens if the angle goes to zero — why?". Only once their answer has actually ` +
+  `told you something — a specific wrong assumption, a step they skipped, a rule they're misapplying — do you ` +
+  `teach, and even then teach that ONE specific thing, not the whole topic.\n\n`;
 
 /**
  * Reply in a per-task coaching thread. Grounded in that ONE task's own context/steps/why so the student
@@ -6717,6 +6744,7 @@ export async function chatAboutTask(
   const result = empty();
   const logAudit = (kind: AuditEvent["kind"], label: string) => result.audit.push({ at: new Date().toISOString(), kind, label });
   const finish = (reply: string): ChatResult => {
+    reply = stripLeakedToolCallSyntax(reply);
     // The redirect line replaces a violating REPLY, but if that same turn also produced artifacts, they were
     // almost certainly the same violation wearing a different container (a "fiche" that's just the essay) —
     // discard them too rather than hand over a chip whose text just got rejected.
