@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords } from "../server/claude.ts";
 import { evaluateArithmetic, parseNumber, findArithmeticClaims, hasArithmetic } from "../server/arithmetic.ts";
 import { isLikelyEcho, createEchoFilter, normalizeForEcho } from "../client/voice/echoGuard.ts";
 import { speechErrorMessage } from "../client/voice/speechErrors.ts";
@@ -1984,6 +1984,43 @@ check("catches 'the diagram I drew'", CHAT_CLAIMS_DIAGRAM.test("Look at the diag
 check("catches 'I just sketched [a diagram]'", CHAT_CLAIMS_DIAGRAM.test("I just sketched a diagram to show where -3 sits."));
 check("catches FR 'le triangle que j'ai dessiné'", CHAT_CLAIMS_DIAGRAM.test("Regarde le triangle que j'ai dessiné pour toi."));
 check("does NOT flag ordinary prose mentioning a shape by name", !CHAT_CLAIMS_DIAGRAM.test("A triangle has three sides — can you name them?"));
+
+section("CHAT_ASSERTS_FACT — catches confident unique-fact assertions (verify-or-hedge trigger)");
+check("catches an EN author attribution", CHAT_ASSERTS_FACT.test("The author of L'Étranger is Albert Camus."));
+check("catches an FR auteur attribution", CHAT_ASSERTS_FACT.test("L'auteur de L'Étranger est Camus."));
+check("catches an EN invention with the inventor", CHAT_ASSERTS_FACT.test("The telephone was invented by Bell in 1876."));
+check("catches an FR invention", CHAT_ASSERTS_FACT.test("Le téléphone a été inventé par Bell."));
+check("catches an FR invention (accented participle, no JS boundary trap)", CHAT_ASSERTS_FACT.test("Le téléphone a été inventé par Bell.") && CHAT_ASSERTS_FACT.test("La pile a été inventée par Volta."));
+check("catches a dated EN discovery", CHAT_ASSERTS_FACT.test("In 1665 Newton discovered gravity, which is why..."));
+check("catches a dated FR discovery", CHAT_ASSERTS_FACT.test("En 1665 Newton a découvert la gravitation."));
+check("does NOT flag ordinary analysis prose", !CHAT_ASSERTS_FACT.test("So the author wants us to feel the tension here — what do you think?"));
+check("does NOT flag a method explanation with a year in it", !CHAT_ASSERTS_FACT.test("In 1665 the plague closed Cambridge — but for the exam, what matters is the method."));
+check("does NOT flag generic history chatter without a claim verb", !CHAT_ASSERTS_FACT.test("Le théâtre du 17e siècle, c'est tout un monde."));
+
+section("countWords + the chat length backstop (TALE budget, silent compression round)");
+check("countWords counts whitespace-delimited words", countWords("un deux trois") === 3 && countWords("  a  b ") === 2 && countWords("") === 0);
+{
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  // Behavioral posture, pinned structurally: the truth pass lives in the NO-TOOL branch (the only shape
+  // a final draft takes), after the truncation retry, before finish() — not in the tool-calls path.
+  const noToolIdx = src.indexOf("if (!toolCalls.length) {");
+  const noToolEnd = src.indexOf("messages.push({ role: \"assistant\", content: textContent, tool_calls: toolCalls });");
+  const noToolBody = src.slice(noToolIdx, noToolEnd);
+  check("the truth pass lives inside the no-tool branch (verifies the draft that actually ships)", noToolIdx > 0 && /POST-REPLY TRUTH PASS/.test(noToolBody) && /findArithmeticClaims\(textContent\)/.test(noToolBody));
+  check("arith verification: gated, latched, corrective round before finish", /!arithCorrected && !lastRound/.test(noToolBody) && /arithCorrected = true;/.test(noToolBody) && /Independent recomputation of your draft/.test(noToolBody));
+  check("fact verification: verify-or-hedge, skipped when web_search already ran this turn", /!factCorrected && !lastRound && CHAT_ASSERTS_FACT\.test\(textContent\)/.test(noToolBody) && /web search\|Recherche web/.test(noToolBody));
+  check("length backstop: >120 words, once, non-voice only", /!lengthRetried && !lastRound && !opts\?\.voiceMode && countWords\(textContent\) > 120/.test(noToolBody));
+  check("the tool path has NO truth pass (final drafts never exit there)", (() => {
+    const toolIdx = src.indexOf("messages.push({ role: \"assistant\", content: textContent, tool_calls: toolCalls });");
+    const boardNudgeIdx = src.indexOf("if (!boardNudgeDone && !lastRound && shouldNudgeBoardWrite(");
+    const toolPath = src.slice(toolIdx, boardNudgeIdx);
+    return !/findArithmeticClaims\(textContent\)/.test(toolPath) && !/CHAT_ASSERTS_FACT\.test\(textContent\)/.test(toolPath);
+  })());
+  check("the prompt carries the fact taxonomy (computation/unique fact/analysis)", /NEVER WRONG — THE FACT TAXONOMY/.test(src) && /the calculator wins/.test(src));
+  check("the prompt carries the calibration rule (Kadavath)", /CALIBRATION: models are surprisingly good at knowing what they don't know/.test(src));
+  check("the prompt carries the TALE 45-word budget", /UNDER 45 WORDS/.test(src));
+  check("the prompt carries the growth-mindset error framing (Dweck)", /ERRORS ARE INFORMATION, NOT VERDICTS/.test(src) && /pas encore/.test(src));
+}
 
 section("Flashcards the student doesn't NEED to learn (card.notNeeded) — excluded, fed back, scoped");
 {

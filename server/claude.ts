@@ -5818,7 +5818,7 @@ export const CHAT_CLAIMS_DIAGRAM = /\b(?:the |that |this )?(?:graph|diagram|figu
 // French verbs — JS \b is ASCII-only, so `était\b` would NEVER match (see CHAT_CLAIMS_DIAGRAM's note);
 // accented endings use a letter lookahead instead. Exported for test pinning, same as the guardrails above.
 export const CHAT_ASSERTS_FACT =
-  /\b(?:the\s+)?(?:author|writer|auteur)\s+(?:of|de)\s+[^,.;!?]{2,60}\s*(?:\bis\b|\bwas\b|\best\b|était(?![a-zà-öø-ÿ]))|\b(?:was|were)\s+(?:invented|discovered|founded|composed|first\s+described)\s+(?:by|in|around)\b|\ba\s+été\s+(?:inventé|découvert|fondé|composé)\b|\b(?:in|en)\s+(?:1\d{3}|20\d{2})\b[^.!?]{0,60}?(?:\bdiscovered\b|\binvented\b|\bwas\s+born\b|\ba\s+inventé|\ba\s+découvert|\best\s+né)/i;
+  /\b(?:the\s+)?(?:author|writer|auteur)\s+(?:of|de)\s+[^,.;!?]{2,60}\s*(?:\bis\b|\bwas\b|\best\b|était(?![a-zà-öø-ÿ]))|\b(?:was|were)\s+(?:invented|discovered|founded|composed|first\s+described)\s+(?:by|in|around)\b|\ba\s+été\s+(?:inventé|découvert|fondé|composé)(?:e|es|s)?(?![a-zà-öø-ÿ])|\b(?:in|en)\s+(?:1\d{3}|20\d{2})\b[^.!?]{0,60}?(?:\bdiscovered\b|\binvented\b|\bwas\s+born\b|\ba\s+inventé|\ba\s+découvert|\best\s+né)/i;
 
 /** What `chatAboutTask` returns: the spoken reply, plus any artifacts the tutor made this turn (empty
  *  arrays, never undefined — the route accumulates these straight onto the task). */
