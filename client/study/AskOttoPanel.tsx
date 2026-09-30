@@ -6,6 +6,7 @@ import { useSpeechSynthesis } from "../voice/useSpeechSynthesis.ts";
 import { useVoiceModePref } from "../voice/useVoiceModePref.ts";
 import { VoiceControls } from "../voice/VoiceControls.tsx";
 import { createEchoFilter } from "../voice/echoGuard.ts";
+import { findArithmeticClaims } from "../../server/arithmetic.ts";
 import { InlineProblem } from "./InlineProblem.tsx";
 
 interface AskOttoPanelProps {
@@ -47,6 +48,20 @@ interface AskOttoPanelProps {
 function speakingNowText(task: WebTask): string {
   const chat = task.chat || [];
   return chat.length ? chat[chat.length - 1]?.text || "" : "";
+}
+
+// PHASE 4 of the tutor-truth work: an independent, client-side double-check of every arithmetic
+// equality Otto asserts, using the SAME deterministic evaluator the server verifies with
+// (server/arithmetic.ts — pure, no imports, so it bundles client-side unchanged; one oracle, two
+// callers, exactly the CRITIC/CoVe posture). The server's own post-reply pass already rewrites
+// wrong arithmetic before it ever ships — so a mismatch that STILL reaches the client means the
+// verifier never ran (deadline hit, ceiling hit, older saved message). This renders that residue
+// visible instead of silent: a small "double-check this" notice under the message, with the claim
+// and both values. Deliberately a LEARNING SIGNAL, not an error banner, and never auto-corrected:
+// spotting the discrepancy IS the exercise, and the student takes it to Otto. localStorage history
+// re-checks too — the notice appears on old sessions' messages where the old model had no verifier.
+function arithmeticMismatches(text: string): { raw: string; lhs: string; claimed: number | null; actual: number | null }[] {
+  return findArithmeticClaims(text).filter((c) => c.mismatch).map((c) => ({ raw: c.raw, lhs: c.lhs, claimed: c.right, actual: c.left }));
 }
 
 // Mirrors TaskCard.tsx's TaskChat exactly (same pending-echo/typing-dots/slow-hint/error-retry state
@@ -237,6 +252,20 @@ export function AskOttoPanel({
             {m.role === "assistant" && m.guardrail ? (
               <span className="sm-ai-guardrail-tag">Otto guides, doesn't do it for you</span>
             ) : null}
+            {m.role === "assistant" && (() => {
+              const mismatches = arithmeticMismatches(m.text);
+              return mismatches.length ? (
+                <div className="sm-ai-calc-check" role="note">
+                  <span className="sm-ai-calc-check-icon" aria-hidden="true">⚠</span>
+                  <span>
+                    {L("Vérifie ce calcul avec Otto : ", "Double-check this with Otto: ")}
+                    <code>{mismatches[0].raw}</code>
+                    {(mismatches[0].actual != null && mismatches[0].claimed != null) ? ` (${mismatches[0].lhs} = ${mismatches[0].actual})` : ""}
+                    {mismatches.length > 1 ? L(` — et ${mismatches.length - 1} autre(s)`, ` — and ${mismatches.length - 1} more`) : ""}
+                  </span>
+                </div>
+              ) : null;
+            })()}
           </div>
         ))}
         {pendingMsg ? <div className="sm-ai-msg sm-ai-msg-user sm-ai-msg-pending">{pendingMsg}</div> : null}

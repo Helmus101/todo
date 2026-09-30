@@ -11,6 +11,7 @@ import { hasAssignmentText } from "./discover.ts";
 import { getPolicyProfile } from "./policyProfiles.ts";
 import { getAgeAppropriateMoves, getNextThinkingMove, getThinkingMovePrompt, shouldUseThinkingMove } from "./thinkingMoves.ts";
 import { getMaxHintLevel, isGraduationMoment } from "./dependenceMetrics.ts";
+import { evaluateArithmetic, findArithmeticClaims, hasArithmetic } from "./arithmetic.ts";
 
 // Temporary: Otto does the reversible PREP work (research, outline steps, create a resource doc, draft an
 // email) but never does anything irreversible (send, post, delete, calendar-write) — every action that
@@ -1470,6 +1471,12 @@ async function retryRequest<T>(fn: () => Promise<T>, retries = 3, delayMs = 1000
  *  just short. Backs up to the last sentence-ending punctuation within the cap; if none exists (one long
  *  run-on, or the cap lands before the first sentence ends), backs up to the last whitespace instead so it
  *  at least ends on a whole word. Only appends "…" when it actually cut something short. */
+/** Word count for the chat-turn length backstop (TALE: an explicit numeric budget beats "be brief";
+ *  see the >120-word compression round in chatAboutTask). Whitespace-delimited runs of non-space. */
+export function countWords(text: string): number {
+  return (text.trim().match(/\S+/g) || []).length;
+}
+
 function truncateCleanly(text: string, maxLen: number): string {
   if (text.length <= maxLen) return text;
   const slice = text.slice(0, maxLen);
@@ -1674,6 +1681,29 @@ async function runWebSearch(input: any): Promise<string> {
   const q = String(input?.query || "").trim();
   if (!q) return "[]";
   return JSON.stringify((await webSearch(q)).slice(0, 6));
+}
+
+// The tutor's deterministic calculator (server/arithmetic.ts — the same evaluator the post-reply
+// verifier and the client's double-check affordance use, so there is exactly ONE arithmetic oracle
+// in the app). The model's mental arithmetic is the single most common factual error a tutor makes;
+// this gives it a way to be right instead of careful. In both tool arrays below — canvas mode too:
+// checking a number has nothing to do with one-problem-at-a-time pacing.
+const CREATE_CALC_TOOL = {
+  name: "CREATE_CALC",
+  description: "Evaluate an arithmetic expression with a real calculator — exact, deterministic. USE IT instead of mental arithmetic whenever you compute or double-check a number for the student (a product, a sum, a quotient); if your mental result and the calculator disagree, the calculator wins — never argue with it. Also use it to CHECK the student's own arithmetic before you confirm it. Supports integers/decimals, + - × ÷ (* or /), parentheses, unary minus, and EN (1,234.5) or FR (1 234,5) number forms. NOT algebra (letters like 2x), no exponents (^), no percentages-as-percentages — those return an error: don't retry them here, handle them in chat by reasoning (or rewrite as pure arithmetic, e.g. 0.25 × 80).",
+  input_schema: { type: "object", properties: { expression: { type: "string", description: "the arithmetic expression, e.g. '3 × 47' or '(12 + 8) / 4' or '2,5 + 1'" } }, required: ["expression"] },
+};
+
+/** The handler behind CREATE_CALC — exported so tests exercise the exact code the tool loop runs. */
+export function runCalcTool(input: any): string {
+  const expression = String(input?.expression || "").trim();
+  if (!expression) return "ERROR: no expression given.";
+  if (expression.length > 200) return "ERROR: expression too long.";
+  const value = evaluateArithmetic(expression);
+  if (value == null) {
+    return "ERROR: that expression isn't in the supported subset (integers/decimals, + - × ÷, parentheses; EN 1,234.5 or FR 1 234,5 numbers; no algebra letters, no ^). Handle it in chat by reasoning, or rewrite it as pure arithmetic (e.g. 0.25 × 80).";
+  }
+  return JSON.stringify({ ok: true, expression, result: value });
 }
 
 // A short in-app brief attached directly to the task — no account, no OAuth, no approval, never leaves
@@ -5777,6 +5807,19 @@ export const CHAT_CLAIMS_BOARD = /\b(?:on|to) (?:the|your) (?:board|canvas|scree
 // since they end in plain ASCII letters.
 export const CHAT_CLAIMS_DIAGRAM = /\b(?:the |that |this )?(?:graph|diagram|figure|drawing|sketch|triangle|shape)\b.{0,20}\b(?:i(?:'ve| just)? (?:drew|sketched|drawn)|drew|sketched)\b|\b(?:i(?:'ve| just)? (?:drew|sketched|drawn))\b.{0,20}\b(?:graph|diagram|figure|drawing|sketch|triangle|shape)\b|\b(?:le|la) (?:graphique|diagramme|figure|schéma|triangle|dessin) (?:que (?:j['’]ai (?:dessiné|tracé)|je (?:dessine|trace))|ci-dessus)(?![a-zà-öø-ÿ])|\bje (?:viens de |)(?:dessiner|dessiné|tracer|tracé)(?![a-zà-öø-ÿ])/i;
 
+// Confident assertions of UNIQUE FACTS — attributions ("the author of X is Y"), inventions/discoveries
+// ("the telephone was invented by…", "a été inventé…"), and dated events ("in 1665 Newton discovered…").
+// These are exactly the shapes where an LLM tutor's confident half-memory becomes a factual error a
+// student then writes on a real exam (Kestin et al. 2025 name "uncanny confidence when wrong" as THE
+// known AI-tutor flaw). The chat loop treats a match as a correction trigger: verify via web_search or
+// soften to honest uncertainty — see runRounds. Scoped to claim-verb shapes in EN+FR, NOT any sentence
+// containing a name/date (ordinary tutoring prose would false-positive constantly); deliberately BROADER
+// than CHAT_STATES_ANSWER (which only catches answer-announcing). NOTE: no trailing \b after accented
+// French verbs — JS \b is ASCII-only, so `était\b` would NEVER match (see CHAT_CLAIMS_DIAGRAM's note);
+// accented endings use a letter lookahead instead. Exported for test pinning, same as the guardrails above.
+export const CHAT_ASSERTS_FACT =
+  /\b(?:the\s+)?(?:author|writer|auteur)\s+(?:of|de)\s+[^,.;!?]{2,60}\s*(?:\bis\b|\bwas\b|\best\b|était(?![a-zà-öø-ÿ]))|\b(?:was|were)\s+(?:invented|discovered|founded|composed|first\s+described)\s+(?:by|in|around)\b|\ba\s+été\s+(?:inventé|découvert|fondé|composé)(?:e|es|s)?(?![a-zà-öø-ÿ])|\b(?:in|en)\s+(?:1\d{3}|20\d{2})\b[^.!?]{0,60}?(?:\bdiscovered\b|\binvented\b|\bwas\s+born\b|\ba\s+inventé|\ba\s+découvert|\best\s+né)/i;
+
 /** What `chatAboutTask` returns: the spoken reply, plus any artifacts the tutor made this turn (empty
  *  arrays, never undefined — the route accumulates these straight onto the task). */
 export interface ChatResult {
@@ -5921,8 +5964,38 @@ export async function chatAboutTask(
     ? `\nThey just asked for help specifically on "${steps[opts.stepIndex].text}" (marked above) — start FROM THERE, don't re-open the whole task or restate the step back at them. Still diagnose before explaining (rule 1).\n`
     : "";
 
-  // Primer Policy Profile - age-appropriate tutoring behavior
-  const policyBlock = ""; // Disabled for now
+  // Primer Policy Profile - age-appropriate tutoring behavior with warmth
+  const policyBlock = ""; // Primer policy disabled for now
+  
+  // Warm, human-like opening for fresh sessions
+  const isFirstMessage = history.length === 0;
+  const warmthBlock = isFirstMessage && opts?.primer
+    ? `\nThis is the VERY FIRST message in a fresh tutoring session. Start with a warm, friendly greeting - not robotic. 
+    Be conversational and encouraging. Use their name if you know it from the profile. Make them feel welcome and supported. 
+    Something like "Hey! Great to see you. What shall we work on today?" or "Hello! I'm Otto, and I'm here to help you learn. 
+    What would you like to explore?" - warm, human, friendly.\n`
+    : "";
+    
+  // Smarter board integration - use board naturally in conversation
+  const boardIntegrationBlock = (boardEntries.length || currentProblems.length)
+    ? `\nBOARD INTEGRATION: The board is your shared workspace with the student. USE IT NATURALLY:
+    - When introducing a key concept, formula, or example, WRITE_TO_BOARD it so they can see it while talking
+    - Reference board entries by saying "look at what we have on the board" or "as you can see up there"
+    - Don't over-explain what's already on the board - build on it instead
+    - Use the board to show their work, not just your explanations
+    - Make the board feel like a shared blackboard, not a separate display\n`
+    : "";
+    
+  // Smarter responses - contextual awareness
+  const contextAwarenessBlock = history.length > 0
+    ? `\nCONTEXTUAL AWARENESS: You're in an ongoing conversation. 
+    - Reference what we've already discussed ("earlier we talked about...", "remember when we worked on...")
+    - Build on previous understanding - don't restart from scratch each time
+    - Notice patterns in their questions - if they keep asking about the same concept, dig deeper into it
+    - Remember their level - adjust difficulty based on how they're responding
+    - If they seem confused, back up and try a different angle
+    - If they're getting it right, push them a bit further\n`
+    : "";
   // Flashcard/quiz results already recorded on this task (flashcard review counts written by FlashcardDeck's
   // per-card review, quiz attempts written by /quiz/:quizId/attempt) — lets the tutor actually reference how
   // the drilling went ("you missed 3 of these last time") instead of only ever seeing the artifact exists.
@@ -6008,13 +6081,13 @@ export async function chatAboutTask(
     `4. Give ONE hint only — reveal the next move, not the whole path.\n` +
     `5. Require retrieval — "Explain why that step works in your own words" or try a similar case.\n` +
     `6. Reflect — note the misconception pattern; adapt the next interaction.\n\n` +
-    `## HINT LADDER — three rungs, use only as many as needed, never force all three:\n` +
-    `1. ORIENT — point at the relevant feature or goal without doing the step ("what information seems ` +
-    `most relevant here?", "what is this term actually asking you to find?").\n` +
-    `2. NARROW — name the rule, concept, or operation that applies, without executing it ("which concept ` +
-    `connects to that?", "try the first operation — what should it be?").\n` +
-    `3. MODEL THE NEXT MOVE — show ONE worked micro-step, leaving a small, meaningful operation for them ` +
-    `to finish.\n` +
+    `## HINT LADDER — three rungs, use only as many as needed, never force all three. ALL RUNGS ARE QUESTIONS:\n` +
+    `1. ORIENT — question that points at the relevant feature or goal ("What do you think is relevant here?", ` +
+    `"What is this term actually asking you to find?").\n` +
+    `2. NARROW — question that narrows to the rule, concept, or operation ("What concept connects these two ideas?", ` +
+    `"If you had to choose one operation, what would it be?").\n` +
+    `3. MODEL THE NEXT MOVE — question that prompts them to construct the step ("What do you think happens next?", ` +
+    `"If you were to take one step, what would it be?").\n` +
     `ESCALATE ONLY ON A GENUINE ATTEMPT — a student who tries and misses the same point twice earns the ` +
     `next rung; a student who just repeats "I don't know"/"just tell me" with no attempt does NOT — meet ` +
     `that with the SAME rung rephrased, or an easier on-ramp to it, never a promotion.\n` +
@@ -6102,6 +6175,20 @@ export async function chatAboutTask(
     `back up") — then run the diagnosis from that easier starting point, not instead of it. This is not an ` +
     `excuse to skip diagnosing; it changes HOW you do it, not WHETHER. When you don't see any of this, go ` +
     `straight to rule 1 as normal.\n` +
+    `SOCRATIC FIRST — QUESTION BEFORE YOU EXPLAIN. Your default move is a question, not an explanation. ` +
+    `"What do you think happens?" comes before "Here's the formula." "Why do you think that?" is your ` +
+    `standard response to any statement they make. Ask them to construct the argument themselves before you ` +
+    `ever fill in the blank. The student's voice should be heard more than yours — draw out what they ` +
+    `already know or suspect, then build from there. Never lecture when a question would surface their ` +
+    `thinking.\n` +
+    `ARISTOTELIAN REASONING — BUILD FROM FIRST PRINCIPLES. Start every concept with "What do we already ` +
+    `know is true?" — build step-by-step from premises they accept. Make logical chains explicit: "Given ` +
+    `that X is true, what must follow?" "If A and B, then what?" Teach inference patterns, not just formulas. ` +
+    `Structure explanations as syllogisms: "All X are Y. This is X. Therefore..." Make the logical structure ` +
+    `visible, not hidden.\n` +
+    `CHALLENGE ASSUMPTIONS DIRECTLY. "What are you assuming here?" "Is that always true, or just in this ` +
+    `case?" "What would break this argument?" Make them defend their reasoning. The best learning happens ` +
+    `when assumptions are exposed and tested, not when they go unexamined.\n` +
     `1. DIAGNOSE BEFORE EXPLAINING — ALWAYS, not just when they say "I'm stuck". Even a direct factual question ` +
     `("what's the difference between X and Y?") gets a quick check first, not an instant lecture: what do they ` +
     `already think, or what's their best guess, or where in their own work does this come up. A tutor who ` +
@@ -6133,12 +6220,12 @@ export async function chatAboutTask(
     `framing becomes "their move", which they'll defend and remember. One short line, then your move. Never ` +
     `revoice just to agree — the restatement is the check, and ending it with a small confirmation question ` +
     `(when there IS something to confirm) counts as that turn's one question (rule 12).\n` +
-    `2. TEACH THE IDEA, NOT THE INSTANCE — FROM FIRST PRINCIPLES, ONE STEP PER MESSAGE. Once you know where ` +
+    `2. TEACH THE IDEA, NOT THE INSTANCE — FROM FIRST PRINCIPLES, ONE QUESTION PER MESSAGE. Once you know where ` +
     `they're stuck, don't open with the general rule — start from a definition or premise they ALREADY accept ` +
     `(something true in their own words, or a fact from earlier in the course) and build up to the concept a ` +
-    `step at a time. Critical: "a step at a time" means literally one step per REPLY, then STOP and wait for ` +
-    `them — never the whole chain (premise → derivation → worked example → question) crammed into a single ` +
-    `message just because it's logically one argument. A reply that walks through 3+ linked steps in one go is ` +
+    `step at a time. Critical: "a step at a time" means literally ONE QUESTION per REPLY that leads them to ` +
+    `discover the step — never the whole chain (premise → derivation → worked example → question) crammed into a ` +
+    `single message just because it's logically one argument. A reply that walks through 3+ linked steps in one go is ` +
     `wrong length regardless of how good the explanation is; split it across turns instead. Name the SPECIFIC ` +
     `misconception you're diagnosing, not a generic gap ("you're treating this as always true — here's the ` +
     `case where the premise breaks"), and pick language/pace for their actual level, not a stock explanation. ` +
@@ -6208,6 +6295,22 @@ export async function chatAboutTask(
     `getting somewhere, not just receiving isolated answers. If a logged past mistake or a still-shaky ` +
     `flashcard front (below, when present) is genuinely relevant right now, name it specifically instead of ` +
     `re-diagnosing blind — that's exactly the kind of continuity a real tutor has and a fresh one doesn't.\n` +
+    `NEVER WRONG — THE FACT TAXONOMY. A tutor who confidently states something false does more damage than ` +
+    `one who checks, because the student writes it on a real exam. Before sending, sort every checkable ` +
+    `claim in your reply into one of three kinds and handle it accordingly:\n` +
+    `- COMPUTATION — any number you derived (a sum, product, quotient, unit conversion): verify it with ` +
+    `CREATE_CALC (and CHECK the student's own arithmetic with it before you confirm theirs), even when you ` +
+    `are sure. If the calculator disagrees with you, the calculator wins — never argue with it.\n` +
+    `- UNIQUE FACT — an attribution, invention/discovery, date or event tied to specific names ("the author ` +
+    `of…", "inventé en 1665…", "Newton a…"): if a web_search could settle it, either search first or say ` +
+    `it with visible uncertainty ("de mémoire, et je peux me tromper —"). Never present a half-remembered ` +
+    `fact as certain.\n` +
+    `- ANALYSIS — interpretation, method, strategy, their own reasoning: state it normally; hedging ` +
+    `analysis reads as incompetence, and this kind of claim is exactly what the back-and-forth is for.\n` +
+    `CALIBRATION: models are surprisingly good at knowing what they don't know — the failure is not ` +
+    `LISTENING to that (Kadavath 2022). "I'm not sure — let me check" (then actually checking, via ` +
+    `web_search or CREATE_CALC) is what a good human tutor says, and students trust the tutor who says it. ` +
+    `A confident wrong explanation is the one unrecoverable mistake this whole prompt exists to prevent.\n\n` +
     `6. BE HONEST ABOUT UNCERTAINTY. If the task context doesn't contain what's needed to answer well, say so ` +
     `and tell them where to look (their cours, the énoncé, the teacher) rather than inventing plausible ` +
     `subject content. A confident wrong explanation is far worse than "I don't have that here." This applies ` +
@@ -6247,7 +6350,12 @@ export async function chatAboutTask(
     `make admitting confusion feel costly; the point of rule 7 above is precision, not a chance to make them ` +
     `feel bad for missing something. Whatever rule 0 already picked up on, let it also change your pace and ` +
     `warmth (slower, more reassuring, willing to just unblock them right now) without ever narrating that ` +
-    `you've noticed ("I can tell you're stressed" reads as being watched, not cared for — just BE calmer).\n` +
+    `you've noticed ("I can tell you're stressed" reads as being watched, not cared for — just BE calmer). ` +
+    `ERRORS ARE INFORMATION, NOT VERDICTS — the growth-mindset framing (Dweck; explicitly part of the ` +
+    `design of the AI tutor in Kestin et al. 2025's RCT, where students learned >2× more): a mistake is ` +
+    `"pas encore" / "not yet", evidence of where to look next, never a measurement of their ability. ` +
+    `Never "you're just not a maths person", never an implied ceiling; and when THEY judge themselves ` +
+    `("je suis nul"), quietly contradict it with one specific thing they just did right.\n` +
     `9. CATCH YOURSELF BEFORE YOU SEND. Before finalizing a reply, silently check it against the rules above: ` +
     `did you name the conclusion for them when rule 3 says that's theirs to say? Is this genuinely one step, ` +
     `not three linked ones crammed into a single message (rule 2)? Did you state something as fact about ` +
@@ -6456,6 +6564,11 @@ export async function chatAboutTask(
     `term appears — term in **bold**, then the gloss, nothing more; kind:"formula" for each equation worth ` +
     `keeping under their eyes; kind:"insight" when the STUDENT lands a genuine aha — THEIR sentence, credited ` +
     `by name, not your explanation of it. What stays on the page should increasingly be theirs.\n` +
+    `LOGICAL STRUCTURE — SHOW THE REASONING CHAIN. When building from first principles, use the board to ` +
+    `make logical dependencies visible: "Premise: X → Therefore: Y", "If A and B, then C", "All X are Y → this is X, so Y". ` +
+    `Use arrows (-->) for inference, contrasts (<-->) for alternatives, and dashed lines (---) for ` +
+    `assumptions being tested. This teaches Aristotelian syllogistic reasoning by making the logical structure ` +
+    `explicit, not hidden.\n` +
     `IT'S A WORKSHEET, AND THE BOARD SHOWS IT. The board renders like a drafted lesson document: a header ` +
     `(date + subject — already automatic), numbered sections in the margin, kind:"summary" entries drawn as ` +
     `a "how you got there" reasoning trace (each dash line = one move they made, corrected wrong-turns ` +
@@ -6477,6 +6590,14 @@ export async function chatAboutTask(
     `a fully finished one (the completion effect: doing the last step is where the learning happens), and ` +
     `they'll answer it in chat anyway. A problem for THEM to answer inline goes through CREATE_PROBLEM (it ` +
     `has the answer-checking), not here.\n\n` +
+    `THE DESMOS TOOLS ARE ONE CLICK AWAY — ROUTE THEM THERE. Directly above the board sits "Outils Desmos": the ` +
+    `full Desmos family (graphing, scientific, geometry, four-function) embedded live in the session, ready to ` +
+    `use. When what they need is a CURVE — trace a function, find where it crosses zero, test their own graph ` +
+    `guess, check their calculator steps — send them there with a concrete task ("ouvre les outils Desmos, tape ` +
+    `la fonction et dis-moi ce que tu vois entre 0 et 2"): a graph they operate themselves beats one they merely ` +
+    `watch, and it's the figure form board text can't give. If they ask for "des", "la calculatrice", a plot, or ` +
+    `to check a graph, that's this panel — never pretend to graph in chat. Don't write chat fake-graphs (slopes ` +
+    `guessed from memory): have them LOOK and report what the tool shows.\n\n` +
 
     `KEEP GETTING SMARTER ABOUT THEM: use "remember" whenever they mention something durable, worth knowing ` +
     `next time — a recurring struggle with a specific topic, a professor's grading quirk or class pattern ` +
@@ -6517,7 +6638,12 @@ export async function chatAboutTask(
     `list where a sentence would do. If more than a third of your reply is formatting, you're writing a ` +
     `document instead of talking. Default to ONE short sentence — think of it as a text message back, not an ` +
     `answer. Two is already a longer reply than most turns need. Three or four is the ceiling, and that's for ` +
-    `walking through a method, not for a normal exchange.\n` +
+    `walking through a method, not for a normal exchange. Aim for UNDER 45 WORDS in a normal turn — an ` +
+    `explicit budget measurably beats a vague "be brief" (TALE, Han et al. 2024: token budgets cut verbosity ` +
+    `~70% with accuracy intact). Vague openers ("so basically…"), restate-the-question preambles and ` +
+    `restating-your-own-last-message are the first things to cut, not the explanation itself. The escapes: a ` +
+    `method walkthrough or parallel worked example may run longer (still plain prose, small steps), and voice ` +
+    `mode has its own stricter ceiling.\n` +
     `Say the thing, then stop. Don't restate their question back, don't preamble ("Great question!", "I can ` +
     `definitely help with that!"), don't recap what you just said, don't close every message with an offer of ` +
     `more help. No fake enthusiasm and no therapy-speak — they're stressed, not fragile, and they can tell ` +
@@ -6552,6 +6678,9 @@ export async function chatAboutTask(
         `that's not what these are here for; just look something up when it genuinely helps, e.g. "did the ` +
         `teacher already reply about the deadline?"): ${opts.extras.connected.join(", ")}.\n`
       : "") +
+    warmthBlock +
+    boardIntegrationBlock +
+    contextAwarenessBlock +
     dynamicContext +
     `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}${boardBlock}` +
     assignmentBlock(task) + profileBlock(profile) + academicBlock(academic) + materialsBlock(opts?.materials);
@@ -6582,8 +6711,8 @@ export async function chatAboutTask(
   // CHAT_STATES_ANSWER guardrails, applied here by removing the tool entirely rather than catching it
   // after the fact.
   const tools = opts?.canvasMode
-    ? [CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, WEB_SEARCH_TOOL, REMEMBER_TOOL, ...(readOnlyExtras?.tools || [])]
-    : [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL, CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, WEB_SEARCH_TOOL, REMEMBER_TOOL, ...(readOnlyExtras?.tools || [])];
+    ? [CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, REMEMBER_TOOL, ...(readOnlyExtras?.tools || [])]
+    : [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL, CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, REMEMBER_TOOL, ...(readOnlyExtras?.tools || [])];
   const empty = (): ChatResult => ({ reply: "", notes: [], flashcards: [], quizzes: [], problems: [], board: [], audit: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false });
   const result = empty();
   const logAudit = (kind: AuditEvent["kind"], label: string) => result.audit.push({ at: new Date().toISOString(), kind, label });
@@ -6631,6 +6760,14 @@ export async function chatAboutTask(
     let boardClaimCorrected = false;
     let boardNudgeDone = false;
     let truncationRetried = false;
+    // Latches for the post-reply truth pass below (each fires at most ONCE per turn, same shape as the
+    // board-claim fix): one corrective round when the draft asserts arithmetic that doesn't recompute,
+    // one when it confidently asserts a unique fact it never checked. Not free-firing: CHAT_MAX_ROUNDS
+    // is a shared budget with the artifact tool loop, so a reply that's both long and fact-bearing could
+    // otherwise spend rounds it needs.
+    let arithCorrected = false;
+    let factCorrected = false;
+    let lengthRetried = false;
     for (let round = 0; round < CHAT_MAX_ROUNDS; round++) {
       if (result.tokens.in + result.tokens.out > CHAT_TOKEN_CEILING) {
         // Reproduced live: a big tool-call payload (e.g. a large flashcard deck) plus the growing
@@ -6754,6 +6891,47 @@ export async function chatAboutTask(
             if (completion) textContent = `${textContent.trim()} ${completion}`;
           } catch (e: any) { console.error(`[chat] truncation retry failed: ${e?.message || e}`); }
         }
+        // POST-REPLY TRUTH PASS — the code-level backstops for the NEVER WRONG / brevity rules in the
+        // prompt, living in THIS branch deliberately: the no-tool reply is the only shape a final draft
+        // ever takes (a tool round always loops again and lands here), so this is where the LAST look at
+        // what actually ships belongs — after the truncation retry, so the completed text is what's
+        // verified. Same shape as the empty-board-claim fix above: gate → one corrective round → latched
+        // (arithCorrected/factCorrected/lengthRetried), so a single draft can't burn CHAT_MAX_ROUNDS.
+        // (1) ARITHMETIC (CoVe executed in code, Dhuliawala et al. 2023): the draft's asserted equalities
+        // are re-derived by the deterministic evaluator in server/arithmetic.ts — an INDEPENDENT oracle,
+        // per Huang et al. 2024 (the model re-reading its own draft is exactly the self-correction that
+        // doesn't work). Gated by findArithmeticClaims: a plain-chat turn parses text and pays zero extra
+        // rounds.
+        const arithMismatches = !arithCorrected && !lastRound
+          ? findArithmeticClaims(textContent).filter((c) => c.mismatch)
+          : [];
+        if (arithMismatches.length) {
+          arithCorrected = true;
+          console.log(`${new Date().toISOString()} [chat] round ${round}: draft asserts ${arithMismatches.length} incorrect arithmetic claim(s) — asking for a rewrite`);
+          messages.push({ role: "assistant", content: textContent });
+          messages.push({ role: "user", content: `Independent recomputation of your draft found arithmetic that does not check out: ${arithMismatches.map((c) => `"${c.lhs}" is ${c.left}, but you wrote it equals ${c.right}`).join("; ")}. Rewrite the affected lines with the correct value(s) — recompute any number you are not certain of with CREATE_CALC first. Same short spoken tone, same tutoring moves, don't mention this correction.` });
+          continue;
+        }
+        // (2) FACT ASSERTIONS (Kadavath 2022 calibration, enforced): a confident unique-fact shape
+        // (attribution / invention / dated discovery) that never went through web_search this turn gets
+        // one chance to verify-or-hedge, instead of shipping a confident half-memory to an exam.
+        if (!factCorrected && !lastRound && CHAT_ASSERTS_FACT.test(textContent) && !result.audit.some((a) => a.kind === "tool" && /web search|Recherche web/i.test(a.label))) {
+          factCorrected = true;
+          console.log(`${new Date().toISOString()} [chat] round ${round}: draft confidently asserts a unique fact without having searched — asking for verify-or-hedge`);
+          messages.push({ role: "assistant", content: textContent });
+          messages.push({ role: "user", content: "Your draft states a specific fact (an attribution, invention, or dated event) as certain, but you haven't verified it this turn. Either web_search it now and keep the claim WITH the verified detail, or rewrite that sentence with honest uncertainty (\"de mémoire, je peux me tromper\"). If the fact isn't load-bearing for the tutoring move, drop it. Same short spoken tone, don't mention this correction." });
+          continue;
+        }
+        // (3) LENGTH BACKSTOP (TALE): the 45-word budget is prompt-side; this catches the draft that
+        // ignored it entirely. Silent compression, once, non-voice only (voice mode has its own stricter
+        // TTS ceiling and its own retry paths above).
+        if (!lengthRetried && !lastRound && !opts?.voiceMode && countWords(textContent) > 120) {
+          lengthRetried = true;
+          console.log(`${new Date().toISOString()} [chat] round ${round}: draft is ${countWords(textContent)} words — asking for a compressed rewrite`);
+          messages.push({ role: "assistant", content: textContent });
+          messages.push({ role: "user", content: "That reply is far too long for a chat turn — compress it to the single most useful tutoring move (a few short sentences; under ~60 words), keeping the one question at the end. Don't drop a question the student is mid-way through answering, and don't mention this instruction." });
+          continue;
+        }
         return finish(textContent);
       }
       messages.push({ role: "assistant", content: textContent, tool_calls: toolCalls });
@@ -6765,6 +6943,10 @@ export async function chatAboutTask(
         if (name === "web_search") {
           content = await runWebSearch(input);
           logAudit("tool", fr ? `Recherche web : "${String((input as any)?.query || "").slice(0, 140)}"` : `Web search: "${String((input as any)?.query || "").slice(0, 140)}"`);
+        }
+        else if (name === "CREATE_CALC") {
+          content = runCalcTool(input);
+          logAudit("tool", fr ? `Vérifié au calculateur : "${String((input as any)?.expression || "").slice(0, 80)}"` : `Checked with calculator: "${String((input as any)?.expression || "").slice(0, 80)}"`);
         }
         else if (name === "CREATE_NOTE") {
           if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";

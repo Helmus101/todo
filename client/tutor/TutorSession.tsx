@@ -5,6 +5,7 @@ import { hydrateLocalThreads, appendLocalChat, appendLocalBoard, appendLocalProb
 import { useLang, TaskModal } from "../ui.tsx";
 import { AskOttoPanel } from "../study/AskOttoPanel.tsx";
 import { BoardArtifact } from "../study/artifacts/BoardArtifact.tsx";
+import { TutorDesmos } from "./TutorDesmos.tsx";
 import { buildSessionSummary, saveTutorSession, getTutorSessions, type TutorSessionSummary } from "./tutorSessions.ts";
 
 /** Tutor Session (route /tutor) — the Primer-style one-to-one lesson: a chat with Otto on one side and
@@ -214,10 +215,12 @@ export function TutorSession({ userId }: { userId: string | null }) {
       // for a NEW lesson on a specific subject: fresh:true (a blank session, never a resume of an old
       // thread — the route's fresh mode also clears any leftover empty shell). Resuming an in-progress
       // session is only ever the landing's explicit "Reprendre" click (resumeActiveSession).
+      // For a fresh session, use the task as-is from the server WITHOUT hydrating local cache to ensure
+      // a truly blank session (no old chat/board from localStorage).
       const list = await api.studyFreeSession(true, selectedSubject);
       const t = Array.isArray(list) ? list.find((x) => x.source === "freestudy" && x.sourceSubject === selectedSubject) : undefined;
       if (t) {
-        setTask(hydrateLocalThreads([t], userId)[0]);
+        setTask({ ...t, chat: [], board: [], problems: [] }); // Fresh session: empty chat, board, problems
         setSessionStart(new Date().toISOString());
       }
       setPendingActiveSession(null);
@@ -265,30 +268,38 @@ export function TutorSession({ userId }: { userId: string | null }) {
               the first screen on /tutor, never a resumed session (reported: "tutor shouldn't auto open
               session"). Resuming needs no subject; it reopens the session where it was left. */}
           {activeSession && (
-            <button className="btn primary tutor-start-btn" onClick={resumeActiveSession}>
-              {L("Reprendre la séance en cours", "Resume the session in progress")}
-            </button>
+            <div className="tutor-active-session-card">
+              <div className="tutor-active-session-header">
+                <span className="tutor-active-session-badge">{L("En cours", "In progress")}</span>
+                <span className="tutor-active-session-subject">{activeSession.sourceSubject || ""}</span>
+              </div>
+              <p className="tutor-active-session-text">
+                {L("Tu as une séance en cours. Veux-tu la reprendre ou en commencer une nouvelle ?", "You have a session in progress. Resume it or start a new one?")}
+              </p>
+              <div className="tutor-active-session-actions">
+                <button className="btn primary tutor-resume-btn" onClick={resumeActiveSession}>
+                  {L("Reprendre", "Resume")}
+                </button>
+                <button className="btn ghost tutor-new-btn" onClick={() => setSelectedSubject(activeSession.sourceSubject || "")}>
+                  {L("Nouvelle séance", "New session")}
+                </button>
+              </div>
+            </div>
           )}
 
           {/* Start appears only once a subject is picked — a session without a subject has no context for
               the tutor and no label in history. When a session is already in progress it becomes the
               secondary option: it supersedes the current session (saved if substantial, then dismissed). */}
-          {selectedSubject ? (
-            <div className="tutor-start-actions">
-              <button
-                className={`btn ${activeSession ? "ghost" : "primary"} tutor-start-btn`}
-                onClick={() => void startNewSession()}
-                disabled={startingSession}
-              >
-                {startingSession
-                  ? L("Démarrage…", "Starting…")
-                  : activeSession
-                    ? L("Nouvelle séance de ", "New ") + selectedSubject + L("", " session")
-                    : L("Commencer une séance de ", "Start a ") + selectedSubject + L("", " session")}
-              </button>
-            </div>
-          ) : (
-            <p className="tutor-landing-sub" style={{ marginTop: 8 }}>{L("Choisis une matière pour commencer.", "Pick a subject to begin.")}</p>
+          {!activeSession && selectedSubject && (
+            <button
+              className="btn primary tutor-start-btn"
+              onClick={() => void startNewSession()}
+              disabled={startingSession}
+            >
+              {startingSession
+                ? L("Démarrage…", "Starting…")
+                : L("Commencer une séance de ", "Start a ") + selectedSubject + L("", " session")}
+            </button>
           )}
 
           {pastSessions.length > 0 && (
@@ -416,6 +427,10 @@ export function TutorSession({ userId }: { userId: string | null }) {
             </span>
           ) : null}
         </div>
+        {/* The tutor's Desmos place — the tools the student can USE mid-lesson (graphing, scientific,
+            geometry, four-function), embedded above the board so the figure tool sits with the lesson's
+            visuals. Student-opened only, like every other manual surface in the tutor. */}
+        <TutorDesmos />
         <div className="tutor-board-body"><BoardArtifact task={task} writing={sending} /></div>
       </section>
     </main>

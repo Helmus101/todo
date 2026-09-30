@@ -1,7 +1,8 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords } from "../server/claude.ts";
+import { evaluateArithmetic, parseNumber, findArithmeticClaims, hasArithmetic } from "../server/arithmetic.ts";
 import { isLikelyEcho, createEchoFilter, normalizeForEcho } from "../client/voice/echoGuard.ts";
 import { speechErrorMessage } from "../client/voice/speechErrors.ts";
 import { replanMilestones } from "../server/milestones.ts";
@@ -1363,6 +1364,44 @@ section("shouldNudgeBoardWrite — a confirmed student math step must land on th
   check("the prompt names the confirmation moment as a board moment", /"YES — EXACTLY THAT" IS A BOARD MOMENT TOO/.test(claudeSrc5));
 }
 
+section("Arithmetic ground truth — evaluator, claim extractor, CREATE_CALC (server/arithmetic.ts + claude.ts)");
+{
+  // Phase 1 of the tutor-truth plan: the model's mental arithmetic is the most common factual error a
+  // tutor makes. The fix is a code-level oracle (the CoVe/CRITIC posture — verification must be an
+  // INDEPENDENT recomputation, never the model re-reading its own draft) shared by THREE callers: the
+  // CREATE_CALC tool (mid-turn), the post-reply verifier (claude.ts, later pass), and the client's
+  // double-check affordance (Phase 4). The evaluator/extractor checks below run the REAL code —
+  // behavioral, not grep pins.
+  check("evaluator: precedence and parens", evaluateArithmetic("2+3*4") === 14 && evaluateArithmetic("(2+3)*4") === 20);
+  check("evaluator: the tutor's unicode operators (× ÷ − and letter-x) all work", evaluateArithmetic("3 × 47") === 141 && evaluateArithmetic("10 ÷ 4") === 2.5 && evaluateArithmetic("10 − 4") === 6 && evaluateArithmetic("3 x 4") === 12);
+  check("evaluator: FR decimal + EN/FR grouping", evaluateArithmetic("2,5 + 1") === 3.5 && evaluateArithmetic("1,234 + 1") === 1235 && evaluateArithmetic("1 234 + 1") === 1235);
+  check("evaluator: unary minus folds (start, after op, after paren)", evaluateArithmetic("-3 + 5") === 2 && evaluateArithmetic("2 * -3") === -6 && evaluateArithmetic("(-3 + 5) * 2") === 4);
+  check("evaluator REFUSES what it can't verify (no best-effort guesses)", evaluateArithmetic("2^10") === null && evaluateArithmetic("2 + a") === null && evaluateArithmetic("(2+3") === null && evaluateArithmetic("1/0") === null && evaluateArithmetic("3 + * 4") === null);
+  check("parseNumber: FR decimal, thin-space/nbsp grouping, EN comma grouping", parseNumber("3,5") === 3.5 && parseNumber("1 234") === 1234 && parseNumber("1\u00A0234") === 1234 && parseNumber("1,234") === 1234);
+  check("parseNumber: mixed separators resolve by the LAST-separator rule", parseNumber("1 234,5") === 1234.5 && parseNumber("1,234.5") === 1234.5);
+  check("parseNumber: unit suffixes strip (€, %, kg)", parseNumber("12 €") === 12 && parseNumber("25%") === 25 && parseNumber("3 kg") === 3);
+  check("parseNumber: malformed spacing is null, never guessed", parseNumber("12 34") === null);
+  check("claims: a correct equality is not flagged", findArithmeticClaims("Donc 3 × 47 = 141.")[0]?.mismatch === false);
+  check("claims: a wrong equality IS flagged", findArithmeticClaims("3 × 47 = 151")[0]?.mismatch === true);
+  check("claims: FR donne separator + FR decimals verify", findArithmeticClaims("2,5 + 1 = 3,5 donc c'est bon")[0]?.mismatch === false && findArithmeticClaims("3 + 3 donne 6.")[0]?.mismatch === false);
+  check("claims: percent form forms NO claim (never misread as +)", findArithmeticClaims("50% de 80 = 45").length === 0);
+  check("claims: an algebra tail is skipped, not misverified", findArithmeticClaims("x = 34 + 1, donc...").length === 0);
+  check("claims: duplicates collapse; multi-claim order kept", findArithmeticClaims("12 × 3 = 36 ... again 12 × 3 = 36").length === 1 && (() => { const c = findArithmeticClaims("5 + 5 = 10 and 6 × 7 = 48"); return c.length === 2 && c[0].mismatch === false && c[1].mismatch === true; })());
+  check("hasArithmetic is a cheap EN/FR pre-filter", hasArithmetic("2,5 + 1") === true && hasArithmetic("aucun calcul ici") === false);
+  // CREATE_CALC — exercised through the REAL handler the tool loop dispatches to.
+  check("CREATE_CALC returns the exact result", JSON.parse(runCalcTool({ expression: "3 × 47" })).result === 141);
+  check("CREATE_CALC supports FR decimals and parens", JSON.parse(runCalcTool({ expression: "2,5 + 1" })).result === 3.5 && JSON.parse(runCalcTool({ expression: "(12+8)/4" })).result === 5);
+  check("CREATE_CALC refuses out-of-subset input with guidance, never a guess", /^ERROR:/.test(runCalcTool({ expression: "2x + 1" })) && /^ERROR: no expression/.test(runCalcTool({})));
+  // Wiring pins — the tool must actually be reachable from BOTH tutor tool arrays and dispatched by name.
+  const claudeSrcCalc = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const arithSrc = readFileSync(new URL("../server/arithmetic.ts", import.meta.url), "utf8");
+  const calcCount = (claudeSrcCalc.match(/CREATE_CALC_TOOL/g) || []).length; // const + 2 array entries
+  check("CREATE_CALC is in BOTH tutor tool arrays (normal + canvas mode)", calcCount === 3);
+  check("CREATE_CALC has a dispatch branch in the tool loop", /name === "CREATE_CALC"/.test(claudeSrcCalc) && /runCalcTool\(input\)/.test(claudeSrcCalc));
+  check("claude.ts imports the shared arithmetic oracle", /import \{ evaluateArithmetic, findArithmeticClaims, hasArithmetic \} from "\.\/arithmetic\.ts"/.test(claudeSrcCalc));
+  check("the arithmetic module is pure (no imports, no eval — client-importable)", !/^\s*import /m.test(arithSrc) && !/[^.a-zA-Z]eval\(/.test(arithSrc));
+}
+
 section("isLikelyEcho — textual echo discrimination for real barge-in (client/voice/echoGuard.ts)");
 {
   // Barge-in keeps the mic OPEN while Otto speaks — so the mic hears Otto through the speakers too. The
@@ -1438,7 +1477,7 @@ section("Tutor Session — sessions never auto-start, and past boards read at a 
     const peekBody = tutorSrc.slice(peekStart, tutorSrc.indexOf("}, []);", peekStart) + 6);
     return /peekForActiveSession/.test(tutorSrc) && /api\.tasks\(\)\.then/.test(peekBody) && !/setTask\(/.test(peekBody) && /setPendingActiveSession\(t \|\| null\)/.test(peekBody) && !/api\.studyFreeSession\(\)\.then/.test(tutorSrc);
   })());
-  check("an in-progress session is offered back ONLY via an explicit Resume button (no auto-open on mount)", /resumeActiveSession/.test(tutorSrc) && /onClick=\{resumeActiveSession\}/.test(tutorSrc) && /Reprendre la séance en cours/.test(tutorSrc));
+  check("an in-progress session is offered back ONLY via an explicit Resume button (no auto-open on mount)", /resumeActiveSession/.test(tutorSrc) && /onClick=\{resumeActiveSession\}/.test(tutorSrc) && /L\("Reprendre", "Resume"\)/.test(tutorSrc));
   check("Start is the only create path and always passes fresh (a new lesson starts clean)", /api\.studyFreeSession\(true, selectedSubject\)/.test(tutorSrc));
   check("voice stays manual (no startInVoiceMode on the panel — the mic toggle is the student's)", !/startInVoiceMode=/.test(tutorSrc));
   // Direct request: "refine ui for past boards" — each history item shows the board AT A GLANCE (first
@@ -1945,6 +1984,63 @@ check("catches 'the diagram I drew'", CHAT_CLAIMS_DIAGRAM.test("Look at the diag
 check("catches 'I just sketched [a diagram]'", CHAT_CLAIMS_DIAGRAM.test("I just sketched a diagram to show where -3 sits."));
 check("catches FR 'le triangle que j'ai dessiné'", CHAT_CLAIMS_DIAGRAM.test("Regarde le triangle que j'ai dessiné pour toi."));
 check("does NOT flag ordinary prose mentioning a shape by name", !CHAT_CLAIMS_DIAGRAM.test("A triangle has three sides — can you name them?"));
+
+section("CHAT_ASSERTS_FACT — catches confident unique-fact assertions (verify-or-hedge trigger)");
+check("catches an EN author attribution", CHAT_ASSERTS_FACT.test("The author of L'Étranger is Albert Camus."));
+check("catches an FR auteur attribution", CHAT_ASSERTS_FACT.test("L'auteur de L'Étranger est Camus."));
+check("catches an EN invention with the inventor", CHAT_ASSERTS_FACT.test("The telephone was invented by Bell in 1876."));
+check("catches an FR invention", CHAT_ASSERTS_FACT.test("Le téléphone a été inventé par Bell."));
+check("catches an FR invention (accented participle, no JS boundary trap)", CHAT_ASSERTS_FACT.test("Le téléphone a été inventé par Bell.") && CHAT_ASSERTS_FACT.test("La pile a été inventée par Volta."));
+check("catches a dated EN discovery", CHAT_ASSERTS_FACT.test("In 1665 Newton discovered gravity, which is why..."));
+check("catches a dated FR discovery", CHAT_ASSERTS_FACT.test("En 1665 Newton a découvert la gravitation."));
+check("does NOT flag ordinary analysis prose", !CHAT_ASSERTS_FACT.test("So the author wants us to feel the tension here — what do you think?"));
+check("does NOT flag a method explanation with a year in it", !CHAT_ASSERTS_FACT.test("In 1665 the plague closed Cambridge — but for the exam, what matters is the method."));
+check("does NOT flag generic history chatter without a claim verb", !CHAT_ASSERTS_FACT.test("Le théâtre du 17e siècle, c'est tout un monde."));
+
+section("countWords + the chat length backstop (TALE budget, silent compression round)");
+check("countWords counts whitespace-delimited words", countWords("un deux trois") === 3 && countWords("  a  b ") === 2 && countWords("") === 0);
+{
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  // Behavioral posture, pinned structurally: the truth pass lives in the NO-TOOL branch (the only shape
+  // a final draft takes), after the truncation retry, before finish() — not in the tool-calls path.
+  const noToolIdx = src.indexOf("if (!toolCalls.length) {");
+  const noToolEnd = src.indexOf("messages.push({ role: \"assistant\", content: textContent, tool_calls: toolCalls });");
+  const noToolBody = src.slice(noToolIdx, noToolEnd);
+  check("the truth pass lives inside the no-tool branch (verifies the draft that actually ships)", noToolIdx > 0 && /POST-REPLY TRUTH PASS/.test(noToolBody) && /findArithmeticClaims\(textContent\)/.test(noToolBody));
+  check("arith verification: gated, latched, corrective round before finish", /!arithCorrected && !lastRound/.test(noToolBody) && /arithCorrected = true;/.test(noToolBody) && /Independent recomputation of your draft/.test(noToolBody));
+  check("fact verification: verify-or-hedge, skipped when web_search already ran this turn", /!factCorrected && !lastRound && CHAT_ASSERTS_FACT\.test\(textContent\)/.test(noToolBody) && /web search\|Recherche web/.test(noToolBody));
+  check("length backstop: >120 words, once, non-voice only", /!lengthRetried && !lastRound && !opts\?\.voiceMode && countWords\(textContent\) > 120/.test(noToolBody));
+  check("the tool path has NO truth pass (final drafts never exit there)", (() => {
+    const toolIdx = src.indexOf("messages.push({ role: \"assistant\", content: textContent, tool_calls: toolCalls });");
+    const boardNudgeIdx = src.indexOf("if (!boardNudgeDone && !lastRound && shouldNudgeBoardWrite(");
+    const toolPath = src.slice(toolIdx, boardNudgeIdx);
+    return !/findArithmeticClaims\(textContent\)/.test(toolPath) && !/CHAT_ASSERTS_FACT\.test\(textContent\)/.test(toolPath);
+  })());
+  check("the prompt carries the fact taxonomy (computation/unique fact/analysis)", /NEVER WRONG — THE FACT TAXONOMY/.test(src) && /the calculator wins/.test(src));
+  check("the prompt carries the calibration rule (Kadavath)", /CALIBRATION: models are surprisingly good at knowing what they don't know/.test(src));
+  check("the prompt carries the TALE 45-word budget", /UNDER 45 WORDS/.test(src));
+  check("the prompt carries the growth-mindset error framing (Dweck)", /ERRORS ARE INFORMATION, NOT VERDICTS/.test(src) && /pas encore/.test(src));
+}
+
+section("Client double-check affordance — the same oracle, rendered as a learning signal (AskOttoPanel)");
+{
+  // The server's post-reply pass rewrites wrong arithmetic before it ships; a mismatch that STILL
+  // reaches the client means the verifier never ran (deadline hit, ceiling hit, or an older saved
+  // message). Phase 4 renders that residue visible — via the SAME server/arithmetic.ts evaluator
+  // (one oracle, two callers), imported into the client bundle. A quiet notice, never an error banner,
+  // and never auto-corrected: spotting the discrepancy IS the exercise.
+  const panelSrc = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
+  check("AskOttoPanel imports the shared arithmetic oracle (same evaluator as the server verifier)", /import \{ findArithmeticClaims \} from "\.\.\/\.\.\/server\/arithmetic\.ts"/.test(panelSrc));
+  check("assistant messages get the double-check notice on an unverified mismatch", /arithmeticMismatches\(m\.text\)/.test(panelSrc) && /sm-ai-calc-check/.test(panelSrc) && /Double-check this with Otto/.test(panelSrc) && /role="note"/.test(panelSrc));
+  check("the notice shows the claim and the recomputed value, capped at the first + a count", /mismatches\[0\]\.raw/.test(panelSrc) && /mismatches\[0\]\.actual/.test(panelSrc) && /mismatches\.length - 1/.test(panelSrc));
+  check("it is a signal only — no auto-correction, no API call from the notice", (() => {
+    const idx = panelSrc.indexOf("sm-ai-calc-check");
+    const body = panelSrc.slice(panelSrc.lastIndexOf("{m.role === \"assistant\" && (() => {", idx), panelSrc.indexOf("})()}", idx) + 5);
+    return !/api\./.test(body) && !/onSend/.test(body);
+  })());
+  const cssSrc = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
+  check("the notice's styles exist (quiet amber, not an alarm-red banner)", /\.sm-ai-calc-check \{/.test(cssSrc) && /#d97706/.test(cssSrc));
+}
 
 section("Flashcards the student doesn't NEED to learn (card.notNeeded) — excluded, fed back, scoped");
 {
@@ -2963,6 +3059,41 @@ section("leadingArm — honest, deterministic 'what does the bandit currently be
   check("step 4's JSON shape allows a url on a step", /"url": "only if one of the links above fits"/.test(step4));
   check("step links are validated against the task's own links before anything else runs",
     src.indexOf("steps = restrictStepUrlsToLinks(steps, links)") < src.indexOf("steps = dropUnanchoredSteps"));
+}
+
+// ── Tutor Session: the Desmos tools place ────────────────────────────────────────────────────────
+section("Tutor Desmos tools — the student-usable place (contract + pins)");
+{
+  // Direct request: "make sure in the tutor you have a place for desmos extensions that user can use".
+  // The embed contract is pure data (client/tutor/desmosTools.ts) so it's tested directly, the same way
+  // echoGuard/speechErrors are; the panel and wiring are pinned by source, the way this file pins
+  // TutorSession behavior everywhere else.
+  const { DESMOS_TOOLS, desmosToolUrl, isDesmosEmbedUrl } = await import("../client/tutor/desmosTools.ts");
+  check("the four public Desmos calculators are the tool family", DESMOS_TOOLS.length === 4 && DESMOS_TOOLS.map((t) => t.id).join(",") === "graphing,scientific,geometry,fourfunction");
+  check("each tool carries a real desmos.com embed path and bilingual label", DESMOS_TOOLS.every((t) => /^https:\/\/www\.desmos\.com\//.test(t.path) && t.label.length === 2 && t.hint.length === 2));
+  check("desmosToolUrl resolves each id (and falls back to graphing)", desmosToolUrl("scientific") === "https://www.desmos.com/scientific" && desmosToolUrl("nope" || "graphing") === "https://www.desmos.com/calculator");
+  check("the embed allowlist accepts exactly the four calculator pages (any other URL is refused)", ["https://www.desmos.com/calculator", "https://desmos.com/geometry", "https://www.desmos.com/fourfunction/"].every(isDesmosEmbedUrl) && !["http://www.desmos.com/calculator", "https://evil.test/calculator", "https://www.desmos.com/calculator/abc123", "javascript:alert(1)"].some(isDesmosEmbedUrl));
+
+  const tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  const desmosCompSrc = readFileSync(new URL("../client/tutor/TutorDesmos.tsx", import.meta.url), "utf8");
+  check("the board pane renders the Desmos panel (the tutor's one place for it)", /<TutorDesmos \/>/.test(tutorSrc) && tutorSrc.indexOf("<TutorDesmos />") < tutorSrc.indexOf("tutor-board-body"));
+  check("the panel embeds Desmos in a sandboxed iframe, never top-navigation", (/sandbox="([^"]*)"/.exec(desmosCompSrc) || [])[1] === "allow-scripts allow-same-origin allow-popups" && /allow="fullscreen"/.test(desmosCompSrc));
+  check("switching tools remounts the iframe via key (each calculator starts clean)", /key=\{toolId\}/.test(desmosCompSrc));
+  check("the panel is collapsed until the student opens it (manual, like the rest of the tutor)", /useState\(false\)/.test(desmosCompSrc) && /aria-expanded=\{open\}/.test(desmosCompSrc));
+  check("every tab comes from the shared tool family, not a hand-typed URL", /DESMOS_TOOLS\.map/.test(desmosCompSrc) && /desmosToolUrl\(toolId\)/.test(desmosCompSrc) && !/src="https:\/\/www\.desmos/.test(desmosCompSrc));
+  const stylesSrc2 = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
+  check("the Desmos panel styles exist", /\.tutor-desmos-toggle/.test(stylesSrc2) && /\.tutor-desmos-frame/.test(stylesSrc2) && /\.tutor-desmos-tab\.on/.test(stylesSrc2));
+
+  // The tutor prompt must route students to the panel — otherwise the tool is a shelf decoration. Pinned
+  // in the BOARD block (the Desmos toggle sits directly above the board pane), where the guidance about
+  // the session's visual surfaces lives.
+  const claudeSrc6 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const desmosPrompt = claudeSrc6.slice(claudeSrc6.indexOf("THE DESMOS TOOLS ARE ONE CLICK AWAY"), claudeSrc6.indexOf("KEEP GETTING SMARTER ABOUT THEM"));
+  check("the tutor prompt routes students to the Desmos panel with a concrete task", /THE DESMOS TOOLS ARE ONE CLICK AWAY/.test(claudeSrc6) && /ouvre les outils Desmos/.test(desmosPrompt));
+  check("the prompt names the tool family the panel actually offers", /graphing, scientific, geometry, four-function/.test(desmosPrompt));
+  check("the prompt bans fake chat graphs — the student operates the real tool", /never pretend to graph in chat/.test(desmosPrompt));
+  const desmosArtifactSrc = readFileSync(new URL("../client/study/artifacts/DesmosArtifact.tsx", import.meta.url), "utf8");
+  check("the embed contract matches Study Mode's existing artifact (sandbox, no top-navigation)", /sandbox="allow-scripts allow-same-origin allow-popups"/.test(desmosArtifactSrc));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
