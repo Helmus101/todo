@@ -11,6 +11,7 @@ import { hasAssignmentText } from "./discover.ts";
 import { getPolicyProfile } from "./policyProfiles.ts";
 import { getAgeAppropriateMoves, getNextThinkingMove, getThinkingMovePrompt, shouldUseThinkingMove } from "./thinkingMoves.ts";
 import { getMaxHintLevel, isGraduationMoment } from "./dependenceMetrics.ts";
+import { evaluateArithmetic, findArithmeticClaims, hasArithmetic } from "./arithmetic.ts";
 
 // Temporary: Otto does the reversible PREP work (research, outline steps, create a resource doc, draft an
 // email) but never does anything irreversible (send, post, delete, calendar-write) — every action that
@@ -1674,6 +1675,29 @@ async function runWebSearch(input: any): Promise<string> {
   const q = String(input?.query || "").trim();
   if (!q) return "[]";
   return JSON.stringify((await webSearch(q)).slice(0, 6));
+}
+
+// The tutor's deterministic calculator (server/arithmetic.ts — the same evaluator the post-reply
+// verifier and the client's double-check affordance use, so there is exactly ONE arithmetic oracle
+// in the app). The model's mental arithmetic is the single most common factual error a tutor makes;
+// this gives it a way to be right instead of careful. In both tool arrays below — canvas mode too:
+// checking a number has nothing to do with one-problem-at-a-time pacing.
+const CREATE_CALC_TOOL = {
+  name: "CREATE_CALC",
+  description: "Evaluate an arithmetic expression with a real calculator — exact, deterministic. USE IT instead of mental arithmetic whenever you compute or double-check a number for the student (a product, a sum, a quotient); if your mental result and the calculator disagree, the calculator wins — never argue with it. Also use it to CHECK the student's own arithmetic before you confirm it. Supports integers/decimals, + - × ÷ (* or /), parentheses, unary minus, and EN (1,234.5) or FR (1 234,5) number forms. NOT algebra (letters like 2x), no exponents (^), no percentages-as-percentages — those return an error: don't retry them here, handle them in chat by reasoning (or rewrite as pure arithmetic, e.g. 0.25 × 80).",
+  input_schema: { type: "object", properties: { expression: { type: "string", description: "the arithmetic expression, e.g. '3 × 47' or '(12 + 8) / 4' or '2,5 + 1'" } }, required: ["expression"] },
+};
+
+/** The handler behind CREATE_CALC — exported so tests exercise the exact code the tool loop runs. */
+export function runCalcTool(input: any): string {
+  const expression = String(input?.expression || "").trim();
+  if (!expression) return "ERROR: no expression given.";
+  if (expression.length > 200) return "ERROR: expression too long.";
+  const value = evaluateArithmetic(expression);
+  if (value == null) {
+    return "ERROR: that expression isn't in the supported subset (integers/decimals, + - × ÷, parentheses; EN 1,234.5 or FR 1 234,5 numbers; no algebra letters, no ^). Handle it in chat by reasoning, or rewrite it as pure arithmetic (e.g. 0.25 × 80).";
+  }
+  return JSON.stringify({ ok: true, expression, result: value });
 }
 
 // A short in-app brief attached directly to the task — no account, no OAuth, no approval, never leaves
@@ -6477,6 +6501,14 @@ export async function chatAboutTask(
     `a fully finished one (the completion effect: doing the last step is where the learning happens), and ` +
     `they'll answer it in chat anyway. A problem for THEM to answer inline goes through CREATE_PROBLEM (it ` +
     `has the answer-checking), not here.\n\n` +
+    `THE DESMOS TOOLS ARE ONE CLICK AWAY — ROUTE THEM THERE. Directly above the board sits "Outils Desmos": the ` +
+    `full Desmos family (graphing, scientific, geometry, four-function) embedded live in the session, ready to ` +
+    `use. When what they need is a CURVE — trace a function, find where it crosses zero, test their own graph ` +
+    `guess, check their calculator steps — send them there with a concrete task ("ouvre les outils Desmos, tape ` +
+    `la fonction et dis-moi ce que tu vois entre 0 et 2"): a graph they operate themselves beats one they merely ` +
+    `watch, and it's the figure form board text can't give. If they ask for "des", "la calculatrice", a plot, or ` +
+    `to check a graph, that's this panel — never pretend to graph in chat. Don't write chat fake-graphs (slopes ` +
+    `guessed from memory): have them LOOK and report what the tool shows.\n\n` +
 
     `KEEP GETTING SMARTER ABOUT THEM: use "remember" whenever they mention something durable, worth knowing ` +
     `next time — a recurring struggle with a specific topic, a professor's grading quirk or class pattern ` +
@@ -6582,8 +6614,8 @@ export async function chatAboutTask(
   // CHAT_STATES_ANSWER guardrails, applied here by removing the tool entirely rather than catching it
   // after the fact.
   const tools = opts?.canvasMode
-    ? [CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, WEB_SEARCH_TOOL, REMEMBER_TOOL, ...(readOnlyExtras?.tools || [])]
-    : [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL, CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, WEB_SEARCH_TOOL, REMEMBER_TOOL, ...(readOnlyExtras?.tools || [])];
+    ? [CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, REMEMBER_TOOL, ...(readOnlyExtras?.tools || [])]
+    : [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL, CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, REMEMBER_TOOL, ...(readOnlyExtras?.tools || [])];
   const empty = (): ChatResult => ({ reply: "", notes: [], flashcards: [], quizzes: [], problems: [], board: [], audit: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false });
   const result = empty();
   const logAudit = (kind: AuditEvent["kind"], label: string) => result.audit.push({ at: new Date().toISOString(), kind, label });
@@ -6765,6 +6797,10 @@ export async function chatAboutTask(
         if (name === "web_search") {
           content = await runWebSearch(input);
           logAudit("tool", fr ? `Recherche web : "${String((input as any)?.query || "").slice(0, 140)}"` : `Web search: "${String((input as any)?.query || "").slice(0, 140)}"`);
+        }
+        else if (name === "CREATE_CALC") {
+          content = runCalcTool(input);
+          logAudit("tool", fr ? `Vérifié au calculateur : "${String((input as any)?.expression || "").slice(0, 80)}"` : `Checked with calculator: "${String((input as any)?.expression || "").slice(0, 80)}"`);
         }
         else if (name === "CREATE_NOTE") {
           if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";

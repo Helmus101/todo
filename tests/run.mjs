@@ -1,7 +1,8 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool } from "../server/claude.ts";
+import { evaluateArithmetic, parseNumber, findArithmeticClaims, hasArithmetic } from "../server/arithmetic.ts";
 import { isLikelyEcho, createEchoFilter, normalizeForEcho } from "../client/voice/echoGuard.ts";
 import { speechErrorMessage } from "../client/voice/speechErrors.ts";
 import { replanMilestones } from "../server/milestones.ts";
@@ -1361,6 +1362,44 @@ section("shouldNudgeBoardWrite — a confirmed student math step must land on th
   // round, latched, feeding the model back its own reply so the write actually happens mid-turn.
   check("the nudge is a ONE-SHOT corrective round inside the tool loop", /boardNudgeDone = false;/.test(claudeSrc5) && /!boardNudgeDone && !lastRound && shouldNudgeBoardWrite\(textContent, message, result\.board\.length > 0\)/.test(claudeSrc5) && /boardNudgeDone = true;/.test(claudeSrc5));
   check("the prompt names the confirmation moment as a board moment", /"YES — EXACTLY THAT" IS A BOARD MOMENT TOO/.test(claudeSrc5));
+}
+
+section("Arithmetic ground truth — evaluator, claim extractor, CREATE_CALC (server/arithmetic.ts + claude.ts)");
+{
+  // Phase 1 of the tutor-truth plan: the model's mental arithmetic is the most common factual error a
+  // tutor makes. The fix is a code-level oracle (the CoVe/CRITIC posture — verification must be an
+  // INDEPENDENT recomputation, never the model re-reading its own draft) shared by THREE callers: the
+  // CREATE_CALC tool (mid-turn), the post-reply verifier (claude.ts, later pass), and the client's
+  // double-check affordance (Phase 4). The evaluator/extractor checks below run the REAL code —
+  // behavioral, not grep pins.
+  check("evaluator: precedence and parens", evaluateArithmetic("2+3*4") === 14 && evaluateArithmetic("(2+3)*4") === 20);
+  check("evaluator: the tutor's unicode operators (× ÷ − and letter-x) all work", evaluateArithmetic("3 × 47") === 141 && evaluateArithmetic("10 ÷ 4") === 2.5 && evaluateArithmetic("10 − 4") === 6 && evaluateArithmetic("3 x 4") === 12);
+  check("evaluator: FR decimal + EN/FR grouping", evaluateArithmetic("2,5 + 1") === 3.5 && evaluateArithmetic("1,234 + 1") === 1235 && evaluateArithmetic("1 234 + 1") === 1235);
+  check("evaluator: unary minus folds (start, after op, after paren)", evaluateArithmetic("-3 + 5") === 2 && evaluateArithmetic("2 * -3") === -6 && evaluateArithmetic("(-3 + 5) * 2") === 4);
+  check("evaluator REFUSES what it can't verify (no best-effort guesses)", evaluateArithmetic("2^10") === null && evaluateArithmetic("2 + a") === null && evaluateArithmetic("(2+3") === null && evaluateArithmetic("1/0") === null && evaluateArithmetic("3 + * 4") === null);
+  check("parseNumber: FR decimal, thin-space/nbsp grouping, EN comma grouping", parseNumber("3,5") === 3.5 && parseNumber("1 234") === 1234 && parseNumber("1\u00A0234") === 1234 && parseNumber("1,234") === 1234);
+  check("parseNumber: mixed separators resolve by the LAST-separator rule", parseNumber("1 234,5") === 1234.5 && parseNumber("1,234.5") === 1234.5);
+  check("parseNumber: unit suffixes strip (€, %, kg)", parseNumber("12 €") === 12 && parseNumber("25%") === 25 && parseNumber("3 kg") === 3);
+  check("parseNumber: malformed spacing is null, never guessed", parseNumber("12 34") === null);
+  check("claims: a correct equality is not flagged", findArithmeticClaims("Donc 3 × 47 = 141.")[0]?.mismatch === false);
+  check("claims: a wrong equality IS flagged", findArithmeticClaims("3 × 47 = 151")[0]?.mismatch === true);
+  check("claims: FR donne separator + FR decimals verify", findArithmeticClaims("2,5 + 1 = 3,5 donc c'est bon")[0]?.mismatch === false && findArithmeticClaims("3 + 3 donne 6.")[0]?.mismatch === false);
+  check("claims: percent form forms NO claim (never misread as +)", findArithmeticClaims("50% de 80 = 45").length === 0);
+  check("claims: an algebra tail is skipped, not misverified", findArithmeticClaims("x = 34 + 1, donc...").length === 0);
+  check("claims: duplicates collapse; multi-claim order kept", findArithmeticClaims("12 × 3 = 36 ... again 12 × 3 = 36").length === 1 && (() => { const c = findArithmeticClaims("5 + 5 = 10 and 6 × 7 = 48"); return c.length === 2 && c[0].mismatch === false && c[1].mismatch === true; })());
+  check("hasArithmetic is a cheap EN/FR pre-filter", hasArithmetic("2,5 + 1") === true && hasArithmetic("aucun calcul ici") === false);
+  // CREATE_CALC — exercised through the REAL handler the tool loop dispatches to.
+  check("CREATE_CALC returns the exact result", JSON.parse(runCalcTool({ expression: "3 × 47" })).result === 141);
+  check("CREATE_CALC supports FR decimals and parens", JSON.parse(runCalcTool({ expression: "2,5 + 1" })).result === 3.5 && JSON.parse(runCalcTool({ expression: "(12+8)/4" })).result === 5);
+  check("CREATE_CALC refuses out-of-subset input with guidance, never a guess", /^ERROR:/.test(runCalcTool({ expression: "2x + 1" })) && /^ERROR: no expression/.test(runCalcTool({})));
+  // Wiring pins — the tool must actually be reachable from BOTH tutor tool arrays and dispatched by name.
+  const claudeSrcCalc = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const arithSrc = readFileSync(new URL("../server/arithmetic.ts", import.meta.url), "utf8");
+  const calcCount = (claudeSrcCalc.match(/CREATE_CALC_TOOL/g) || []).length; // const + 2 array entries
+  check("CREATE_CALC is in BOTH tutor tool arrays (normal + canvas mode)", calcCount === 3);
+  check("CREATE_CALC has a dispatch branch in the tool loop", /name === "CREATE_CALC"/.test(claudeSrcCalc) && /runCalcTool\(input\)/.test(claudeSrcCalc));
+  check("claude.ts imports the shared arithmetic oracle", /import \{ evaluateArithmetic, findArithmeticClaims, hasArithmetic \} from "\.\/arithmetic\.ts"/.test(claudeSrcCalc));
+  check("the arithmetic module is pure (no imports, no eval — client-importable)", !/^\s*import /m.test(arithSrc) && !/[^.a-zA-Z]eval\(/.test(arithSrc));
 }
 
 section("isLikelyEcho — textual echo discrimination for real barge-in (client/voice/echoGuard.ts)");
@@ -2963,6 +3002,41 @@ section("leadingArm — honest, deterministic 'what does the bandit currently be
   check("step 4's JSON shape allows a url on a step", /"url": "only if one of the links above fits"/.test(step4));
   check("step links are validated against the task's own links before anything else runs",
     src.indexOf("steps = restrictStepUrlsToLinks(steps, links)") < src.indexOf("steps = dropUnanchoredSteps"));
+}
+
+// ── Tutor Session: the Desmos tools place ────────────────────────────────────────────────────────
+section("Tutor Desmos tools — the student-usable place (contract + pins)");
+{
+  // Direct request: "make sure in the tutor you have a place for desmos extensions that user can use".
+  // The embed contract is pure data (client/tutor/desmosTools.ts) so it's tested directly, the same way
+  // echoGuard/speechErrors are; the panel and wiring are pinned by source, the way this file pins
+  // TutorSession behavior everywhere else.
+  const { DESMOS_TOOLS, desmosToolUrl, isDesmosEmbedUrl } = await import("../client/tutor/desmosTools.ts");
+  check("the four public Desmos calculators are the tool family", DESMOS_TOOLS.length === 4 && DESMOS_TOOLS.map((t) => t.id).join(",") === "graphing,scientific,geometry,fourfunction");
+  check("each tool carries a real desmos.com embed path and bilingual label", DESMOS_TOOLS.every((t) => /^https:\/\/www\.desmos\.com\//.test(t.path) && t.label.length === 2 && t.hint.length === 2));
+  check("desmosToolUrl resolves each id (and falls back to graphing)", desmosToolUrl("scientific") === "https://www.desmos.com/scientific" && desmosToolUrl("nope" || "graphing") === "https://www.desmos.com/calculator");
+  check("the embed allowlist accepts exactly the four calculator pages (any other URL is refused)", ["https://www.desmos.com/calculator", "https://desmos.com/geometry", "https://www.desmos.com/fourfunction/"].every(isDesmosEmbedUrl) && !["http://www.desmos.com/calculator", "https://evil.test/calculator", "https://www.desmos.com/calculator/abc123", "javascript:alert(1)"].some(isDesmosEmbedUrl));
+
+  const tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  const desmosCompSrc = readFileSync(new URL("../client/tutor/TutorDesmos.tsx", import.meta.url), "utf8");
+  check("the board pane renders the Desmos panel (the tutor's one place for it)", /<TutorDesmos \/>/.test(tutorSrc) && tutorSrc.indexOf("<TutorDesmos />") < tutorSrc.indexOf("tutor-board-body"));
+  check("the panel embeds Desmos in a sandboxed iframe, never top-navigation", (/sandbox="([^"]*)"/.exec(desmosCompSrc) || [])[1] === "allow-scripts allow-same-origin allow-popups" && /allow="fullscreen"/.test(desmosCompSrc));
+  check("switching tools remounts the iframe via key (each calculator starts clean)", /key=\{toolId\}/.test(desmosCompSrc));
+  check("the panel is collapsed until the student opens it (manual, like the rest of the tutor)", /useState\(false\)/.test(desmosCompSrc) && /aria-expanded=\{open\}/.test(desmosCompSrc));
+  check("every tab comes from the shared tool family, not a hand-typed URL", /DESMOS_TOOLS\.map/.test(desmosCompSrc) && /desmosToolUrl\(toolId\)/.test(desmosCompSrc) && !/src="https:\/\/www\.desmos/.test(desmosCompSrc));
+  const stylesSrc2 = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
+  check("the Desmos panel styles exist", /\.tutor-desmos-toggle/.test(stylesSrc2) && /\.tutor-desmos-frame/.test(stylesSrc2) && /\.tutor-desmos-tab\.on/.test(stylesSrc2));
+
+  // The tutor prompt must route students to the panel — otherwise the tool is a shelf decoration. Pinned
+  // in the BOARD block (the Desmos toggle sits directly above the board pane), where the guidance about
+  // the session's visual surfaces lives.
+  const claudeSrc6 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const desmosPrompt = claudeSrc6.slice(claudeSrc6.indexOf("THE DESMOS TOOLS ARE ONE CLICK AWAY"), claudeSrc6.indexOf("KEEP GETTING SMARTER ABOUT THEM"));
+  check("the tutor prompt routes students to the Desmos panel with a concrete task", /THE DESMOS TOOLS ARE ONE CLICK AWAY/.test(claudeSrc6) && /ouvre les outils Desmos/.test(desmosPrompt));
+  check("the prompt names the tool family the panel actually offers", /graphing, scientific, geometry, four-function/.test(desmosPrompt));
+  check("the prompt bans fake chat graphs — the student operates the real tool", /never pretend to graph in chat/.test(desmosPrompt));
+  const desmosArtifactSrc = readFileSync(new URL("../client/study/artifacts/DesmosArtifact.tsx", import.meta.url), "utf8");
+  check("the embed contract matches Study Mode's existing artifact (sandbox, no top-navigation)", /sandbox="allow-scripts allow-same-origin allow-popups"/.test(desmosArtifactSrc));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
