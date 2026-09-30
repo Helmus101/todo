@@ -2022,7 +2022,12 @@ export function shouldNudgeBoardWrite(reply: string, lastStudentMessage: string,
     || /\b(sin|cos|tan|log|ln|exp|lim|deriv\w*|dériv\w*|factor\w*|simplif\w*|cancel\w*)\b/i.test(text)
     || /\b(formula|formule|equation|équation|square|carré)\b/i.test(text);
   if (!mathInPlay) return false;
-  return /^\s*(yes|yeah|yep|exactly|correct|right|nice|perfect|well done|good|bravo|that'?s (it|right|correct)|oui|ouais|exact|exactement|c'est (ça|ca|exact|correct)|parfait|bien joué|très bien|nickel)\b/i.test(reply.trim());
+  // Reproduced live: a real session where every "Spot on. The thruster gave it a boost…" confirmation after
+  // a correct physics answer never triggered the nudge — "spot on" (and a few other everyday ways of saying
+  // "you got it") simply weren't in this list, so the ONE mechanism meant to catch "confirmed the student's
+  // math/physics and wrote nothing down" silently missed every single one of them in that session. Board
+  // ends up looking empty even though the tutor is actively confirming worked answers turn after turn.
+  return /^\s*(yes|yeah|yep|exactly|correct|right|nice|perfect|well done|good|bravo|spot on|nailed it|(you(?:'ve)? )?got it( right)?|absolutely|that'?s (it|right|correct)|oui|ouais|exact|exactement|c'est (ça|ca|exact|correct)|parfait|bien joué|très bien|nickel|voilà|tout à fait)\b/i.test(reply.trim());
 }
 
 const MAX_DIAGRAM_OPS = 15;
@@ -6571,6 +6576,19 @@ export async function chatAboutTask(
     `board far more often than feels necessary, AND why the board never becomes a dumping ground. Talking is ` +
     `the conversation; the board is what they can still see while they think — it holds what working memory ` +
     `shouldn't have to, so their head is free for the actual thinking.\n` +
+    `A SCENARIO/PROBLEM ALWAYS GOES ON THE BOARD, THE MOMENT YOU POSE IT — not after, not "if it feels like a ` +
+    `real problem". Reproduced live: several turns of "a 4 kg crate, μs = 0.5, push 8 N — how big is the ` +
+    `friction?" style scenarios stayed ONLY in chat text, invisible the moment the conversation scrolled — the ` +
+    `board sat there with nothing on it despite an entire session of real problems being worked. If you're a ` +
+    `numeric scenario the student is meant to work from (a CREATE_PROBLEM, or a scenario you set up in prose ` +
+    `either way), its givens and the actual question go on the board in the SAME turn you introduce it, before ` +
+    `you ask anything about it — never leave a working problem living only as scrollback.\n` +
+    `NEVER INTRODUCE A NUMBER THEY DIDN'T GIVE YOU, SILENTLY. Reproduced live: a friction problem where the ` +
+    `student never stated μk, and a later turn just used "μk = 0.3" as if it had always been given — the ` +
+    `student had no way to know where that number came from and rightly asked "how do I know μk?". If a ` +
+    `problem needs a value nobody has stated yet, either ask them for it, or if you're supplying an example ` +
+    `value yourself, SAY so explicitly ("let's say μk = 0.3 for this one") and put it on the board as a given ` +
+    `— never let an invented number blend in as if it were part of the original problem.\n` +
     `BE CONCISE — KEYWORDS AND STRUCTURE, NEVER PROSE. The rule most easily got wrong. Board text that ` +
     `RESTATES a sentence you just said in chat measurably HURTS learning (the redundancy effect: the student ` +
     `spends working memory reconciling two copies of the same thing instead of learning it). The one documented ` +

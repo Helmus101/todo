@@ -1286,7 +1286,9 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   // Reported live: the board-entries JSX existed TWICE in this file (a merge accident) — every entry the
   // tutor wrote rendered twice. The dedupe-by-id inside each copy couldn't catch it: both copies matched
   // the same entries. This pin counts the actual render sites so a future merge can't reintroduce it.
-  check("board items render through the ONE merged flow, never a separate problem section", (boardSrc.match(/flowItems\.map\(/g) || []).length === 1 && !/flowEntries\.map\(/.test(boardSrc) && !/dedupedProblems\.map\(/.test(boardSrc));
+  // `flowItems.filter(...).map(` (not bare `flowItems.map(`) since the pinned active-problem card excludes
+  // itself from the flow before mapping, so it's never rendered twice — see BoardArtifact's `activeProblem`.
+  check("board items render through the ONE merged flow, never a separate problem section", (boardSrc.match(/flowItems\.filter\(/g) || []).length === 1 && (boardSrc.match(/\)\.map\(\(item/g) || []).length === 1 && !/flowEntries\.map\(/.test(boardSrc) && !/dedupedProblems\.map\(/.test(boardSrc));
   check("the old duplicated inline filter/render block is really gone", (boardSrc.match(/deduplicate by id to prevent duplicates/g) || []).length === 0);
   // Problems never had the id-dedupe the entries block always had — a double-responded turn stacked the
   // same problem twice. Dedupe happens BEFORE the merge, and the merged flow is the only render path.
@@ -1356,6 +1358,14 @@ section("shouldNudgeBoardWrite — a confirmed student math step must land on th
   check("math but no confirmation → no nudge (normal coaching loop, not a miss)", !shouldNudgeBoardWrite("Let's start with sin²θ + cos²θ = 1 — what does that give you for 1 − cos²θ?", "i don't know where to start", false));
   check("a question-only reply with math from the student → no nudge", !shouldNudgeBoardWrite("What do you get when you cancel sinθ?", "sin²θ / (sinθ·cosθ) = ?", false));
   check("lowercase/casual confirmations count (yeah, oui, c'est ça)", shouldNudgeBoardWrite("yeah — that's the identity. x = 2.", "x = 2?", false) && shouldNudgeBoardWrite("oui c'est ça ! donc 2x = 4", "2x = 4 ?", false));
+  // The live-reported miss: a whole physics session confirming correct answers turn after turn, but the
+  // nudge's affirmation list didn't include "spot on" (or "got it", "nailed it", "absolutely") — so the one
+  // mechanism meant to catch "confirmed correct math and wrote nothing" silently missed every single one.
+  check("'spot on' (the exact live miss) triggers the nudge", shouldNudgeBoardWrite("Spot on. The thruster gave it a boost, and once it cut off F_net = 0.", "so it keeps moving at constant velocity?", false));
+  check("other everyday affirmations trigger it too (nailed it, got it, absolutely)",
+    shouldNudgeBoardWrite("Nailed it — F = ma gives 10 N.", "so F = 2 * 5?", false) &&
+    shouldNudgeBoardWrite("You got it right — x = 4.", "is x = 4?", false) &&
+    shouldNudgeBoardWrite("Absolutely — v = 20 m/s.", "so v = d/t = 20?", false));
 
   const claudeSrc5 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
   // Enforcement in code, not just the prompt — same posture as the empty-board-claim fix: one corrective

@@ -148,18 +148,24 @@ interface ProblemBlockProps {
   onSubmit: () => void;
   en: boolean;
   fresh?: boolean;
+  /** True for the CURRENT (unanswered) problem, pinned in its own fixed card at the top of the board rather
+   *  than living in the scrolling flow — see BoardArtifact's `activeProblem`. Once answered it drops back
+   *  into the ordinary flow rendering (this same component, `pinned` just false) as part of the session's
+   *  history. Suppresses the flow's section number (a pinned card isn't "section 04 of the document") and
+   *  adds a class for the sticky-card treatment. */
+  pinned?: boolean;
 }
 
-function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onShowHint, onPick, onTextAnswer, onSubmit, en, fresh }: ProblemBlockProps) {
+function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onShowHint, onPick, onTextAnswer, onSubmit, en, fresh, pinned }: ProblemBlockProps) {
   const problemIsMCQ = Array.isArray(problem.options) && problem.options.length >= 2;
   const answered = problemIsMCQ ? state.picked !== null : state.submitted;
   return (
     <div
-      className={`sm-board-problem sm-board-writein${fresh ? " sm-board-reveal" : ""}`}
+      className={`sm-board-problem sm-board-writein${fresh ? " sm-board-reveal" : ""}${pinned ? " sm-board-problem-pinned" : ""}`}
       style={fresh ? { animationDuration: `.35s, ${Math.min(1.6, Math.max(0.5, problem.question.length / 90))}s` } : undefined}
     >
 
-      <span className="sm-board-section-num" aria-hidden="true">{String(sectionNumber).padStart(2, "0")}</span>
+      {!pinned && <span className="sm-board-section-num" aria-hidden="true">{String(sectionNumber).padStart(2, "0")}</span>}
       <div className="sm-board-entry-main">
       <div className="sm-board-problem-label">{en ? "Problem" : "Problème"}</div>
       <div className="sm-board-problem-q">{stripStrayMarkdown(problem.question)}</div>
@@ -304,6 +310,20 @@ export function BoardArtifact({ task, writing }: BoardArtifactProps) {
 
   const getProblemState = (problemId: string) => problemState[problemId] || { picked: null, textAnswer: "", submitted: false };
 
+  // THE ACTIVE PROBLEM — pinned in its own card at the very top of the board, not buried in the scrolling
+  // flow. Reported live, comparing against a reference tutor app: the current thing the student is actually
+  // meant to be doing right now should be the first thing they see, not something they scroll down past
+  // formulas and old problems to find. Only ever ONE problem is "active" — the most recently created one
+  // that hasn't been answered yet; everything else (including this same problem once it IS answered) reads
+  // as ordinary session history in the flow below, same as before.
+  const isProblemAnswered = (p: TaskProblem): boolean => {
+    const st = getProblemState(p.id);
+    return (Array.isArray(p.options) && p.options.length >= 2) ? st.picked !== null : st.submitted;
+  };
+  const activeProblem = [...dedupedProblems]
+    .sort((a, b) => (Date.parse(b.createdAt || "") || 0) - (Date.parse(a.createdAt || "") || 0))
+    .find((p) => !isProblemAnswered(p));
+
   // Free-response check: trimmed, case-insensitive comparison
   const checkFreeResponse = (problemId: string): boolean => {
     const problem = problems.find(p => p.id === problemId);
@@ -371,6 +391,29 @@ export function BoardArtifact({ task, writing }: BoardArtifactProps) {
       {/* The pinned session goal (kind:"focus") — always the FIRST thing on the board, like the heading of
           a lesson page: the day's arc stays visible no matter how long the flow below grows. The latest
           focus wins if a session ever writes a second one. */}
+      {/* THE ACTIVE PROBLEM — pinned above everything else, including the focus line: the thing the student
+          is meant to be doing RIGHT NOW is the first thing they see on this pane, not something buried below
+          formulas and past problems (see `activeProblem`'s own comment). Excluded from the flow below so it
+          never renders twice; the moment it's answered it stops being "active" and the flow below already
+          has it in its rightful chronological place as session history. */}
+      {activeProblem ? (
+        <ProblemBlock
+          key={activeProblem.id}
+          pinned
+          fresh={isFreshlyWritten(activeProblem.id)}
+          problem={activeProblem}
+          sectionNumber={0}
+          state={getProblemState(activeProblem.id)}
+          hintShown={!!showHint[activeProblem.id]}
+          isCorrect={checkFreeResponse(activeProblem.id)}
+          onShowHint={() => setShowHint(prev => ({ ...prev, [activeProblem.id]: true }))}
+          onPick={(picked) => setProblemPicked(activeProblem.id, picked)}
+          onTextAnswer={(text) => setProblemTextAnswer(activeProblem.id, text)}
+          onSubmit={() => submitProblem(activeProblem.id)}
+          en={en}
+        />
+      ) : null}
+
       {latestFocus ? (
         <div className="sm-board-focus-pin">
           <span className="sm-board-entry-kind"><span className="sm-board-glyph">{KIND_GLYPH.focus}</span>{L(...KIND_LABEL.focus)}</span>
@@ -381,8 +424,9 @@ export function BoardArtifact({ task, writing }: BoardArtifactProps) {
       {/* ONE FLOW — entries and problems interleaved by timestamp, in the order the session produced them.
           Problems are NOT a pinned section: a CREATE_PROBLEM sits right between the entry that set it up and
           the insight that answered it. Every item gets a worksheet section number (01, 02, …) — the document
-          is being drafted, section by section, not fed in as cards. */}
-      {flowItems.map((item, idx) =>
+          is being drafted, section by section, not fed in as cards. The pinned active problem above is
+          excluded here (item.problem.id === activeProblem?.id) so it doesn't render a second time. */}
+      {flowItems.filter((item) => !item.problem || item.problem.id !== activeProblem?.id).map((item, idx) =>
         item.problem ? (
           <ProblemBlock
             key={item.key}

@@ -6353,7 +6353,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 /* ── Tutor Session (Primer-style: chat + board) ─────────────────────────────── */
 /* The board is the lesson's real document — give it the larger half even at rest (chat is the input
    surface, the board is what accumulates and matters); voice mode pushes the ratio further still. */
-.tutor-session { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr); gap: 20px; padding: 20px 24px; height: calc(100vh - 64px); box-sizing: border-box; }
+.tutor-session { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 0.55fr) minmax(0, 1.45fr); gap: 20px; padding: 20px 24px; height: calc(100vh - 64px); box-sizing: border-box; }
 .tutor-chat, .tutor-board { display: flex; flex-direction: column; min-height: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .tutor-pane-title { padding: 12px 18px; font-weight: 600; border-bottom: 1px solid var(--line); }
 .tutor-chat-body, .tutor-board-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px; max-height: calc(100vh - 200px); }
@@ -6377,7 +6377,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
    Research (gesture + dual-coding): in a spoken lesson the student's eyes belong on the visual surface —
    figures and structure help while listening; nobody re-reads a chat transcript mid-sentence. So voice
    mode shifts the pane balance toward the board, highlights it, and reports mic state where they look. */
-.tutor-session.voice-primary { grid-template-columns: minmax(0, 0.72fr) minmax(0, 1.28fr); }
+.tutor-session.voice-primary { grid-template-columns: minmax(0, 0.4fr) minmax(0, 1.6fr); }
 .tutor-session.voice-primary .tutor-board { border-color: var(--accent); }
 .tutor-session .tutor-pane-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 
@@ -6399,6 +6399,15 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .sm-board-focus-pin { margin: 4px 4px 10px; padding: 10px 12px; border: 1px solid var(--accent); border-left-width: 3px; border-radius: var(--radius); background: var(--accent-soft); }
 .sm-board-focus-pin .sm-board-entry-kind { color: var(--accent); }
 .sm-board-focus-text { margin-top: 2px; }
+
+/* The ACTIVE problem card — pinned above everything else (even the focus line), a clearly distinct card
+   rather than just another flow entry: reported live, comparing against a reference app, that "what am I
+   supposed to be doing right now" needs to be the first thing visible, not something to scroll past older
+   formulas/problems to find. Bigger shadow/border than an ordinary sm-board-problem so it reads as THE
+   current thing, not one more item in the list; drops back to the plain flow treatment automatically once
+   answered (it's the same ProblemBlock component, just without the `pinned` class from then on). */
+.sm-board-problem-pinned { margin: 4px 4px 14px; box-shadow: var(--shadow-md, 0 4px 16px rgba(0,0,0,.08)); border-color: var(--accent); border-width: 1.5px; }
+.tutor-board .sm-board-problem-pinned { margin: 4px 4px 18px; }
 
 /* ── Tutor Session: Desmos tools panel (the student-usable Desmos place) ──────
    Sits at the top of the board pane, above the board body: collapsed it's one quiet toggle, expanded it
