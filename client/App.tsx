@@ -167,7 +167,11 @@ const routeOf = (pathname: string) => pathname.replace(/^\/+/, "").replace(/\/+$
  * (no full reload) — but lets REAL server routes (/auth/*, /api/*) and new-tab/download links through.
  */
 function usePathRoute(): [string, (r: string) => void] {
-  const [route, setRoute] = useState(routeOf(window.location.pathname));
+  const [route, setRoute] = useState(() => {
+    const r = routeOf(window.location.pathname);
+    if (r === "" && CACHED_STATUS?.loggedIn) return "tasks";
+    return r;
+  });
   useEffect(() => {
     const on = () => setRoute(routeOf(window.location.pathname));
     window.addEventListener("popstate", on);
@@ -735,21 +739,11 @@ export function App() {
     finally { setBusy(false); }
   };
   const signOut = async () => {
-    // Set BEFORE the async logout call (not after) — every background interval/tick checks this, so a
-    // kick/sync/sweep that would otherwise fire in the gap while `api.logout()` is still in flight is
-    // stopped at the source instead of racing the server-side session destroy (see signedOutRef above).
     signedOutRef.current = true;
-    // Was unguarded — offline, api.logout() throws and skips everything below, leaving local state (and
-    // the localStorage cache) intact on what's supposed to be a shared/school-computer-safe sign-out.
-    // The local cleanup matters MORE than the server call succeeding, so it happens regardless.
-    try { await api.logout(); } catch { /* the local cleanup below is what actually matters here */ }
-    // Clear every local cache keyed to THIS account — without this, the next sign-in on the same browser
-    // (a different person, or the same person after clearing cookies) would hydrate instantly from the
-    // PREVIOUS account's cached tasks/status (see CACHED_TASKS/CACHED_STATUS above) before the real fetch
-    // replaces them — visible, if briefly, as someone else's to-do list. None of these are needed once
-    // signed out; the next session starts genuinely fresh.
+    lastAuthenticatedStatusRef.current = null;
+    setStatus(null);
+    try { await api.logout(); } catch { /* ignore */ }
     try { ["otto-tasks", "weave-status", "otto-seen-tasks", "otto-lastgen", "otto-onboard", "otto-onboard-step", "otto-onboard-track"].forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
-    // Clear user-specific local backups (decks, quizzes)
     const userId = status?.user || null;
     clearLocalDecks(userId);
     clearLocalQuizzes(userId);
@@ -1213,8 +1207,6 @@ export function App() {
                 </div>
               )}
             </div>
-
-            <WeekRailFab lang={status.language} onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))} tasks={tasks} />
 
             <div className="dash-more">
               {live.length > 0 && (laterToday.length > 0 || canWait.length > 0) && (
@@ -2515,14 +2507,6 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
   const [usage, setUsage] = useState<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string; byCategory: Partial<Record<"sweep" | "autorun" | "chat" | "manual_refine" | "studylog" | "student_model" | "other", number>> } | null>(null);
   const [showKnows, setShowKnows] = useState(false);
   const [showStudentModel, setShowStudentModel] = useState(false);
-  const [showErrorLog, setShowErrorLog] = useState(false);
-  const [showUsage, setShowUsage] = useState(false);
-  const [showPersonalization, setShowPersonalization] = useState(false);
-  const [showFocusAnalytics, setShowFocusAnalytics] = useState(false);
-  const [focusStats, setFocusStats] = useState<Profile["focusStats"] | null>(null);
-  const [focusSessions, setFocusSessions] = useState<FocusSession[] | null>(null);
-  useEffect(() => { void api.recordMetric("settings_opened", 1); }, []);
-  const [themeBusy, setThemeBusy] = useState(false);
   const [patterns, setPatterns] = useState<{
     predictedEngagement: { weekday: number; hour: number; confidence: number } | null; weakSubjects: string[];
     subjectMastery: { subject: string; correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }[];
@@ -2532,27 +2516,8 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
   } | null>(null);
   useEffect(() => { void api.patternsSummary().then(setPatterns).catch(() => {}); }, []);
   
-  // Load focus analytics when section is opened
-  const loadFocusAnalytics = async () => {
-    try {
-      const [statsData, sessionsData] = await Promise.all([
-        api.getFocusStats(),
-        api.getFocusSessions(20),
-      ]);
-      setFocusStats(statsData.stats);
-      setFocusSessions(sessionsData.sessions);
-    } catch (e) {
-      console.error("Failed to load focus analytics:", e);
-    }
-  };
-  
-  useEffect(() => {
-    if (showFocusAnalytics) void loadFocusAnalytics();
-  }, [showFocusAnalytics]);
-  
   // Optimistic toggles/selects — flip instantly, reconcile with the server after (no round-trip lag).
   const [paused, setPausedLocal] = useState(status.paused);
-  const [betaFeatures, setBetaFeaturesLocal] = useState(!!status.betaFeatures);
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [importingData, setImportingData] = useState(false);
   const importFileRef = useRef<HTMLInputElement>(null);
@@ -2574,29 +2539,11 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
       if (importFileRef.current) importFileRef.current.value = "";
     }
   };
-  // A failed profile load used to leave `profile` at null forever with no signal — every `profile?.x` below
-  // just silently reads as "empty account" (0 grades, restricted integrations by default) instead of "this
-  // didn't load." Track it explicitly so Settings can say so instead of quietly looking like a fresh account.
   const [profileError, setProfileError] = useState(false);
   const loadProfile = () => { setProfileError(false); void api.profile().then(setProfile).catch(() => setProfileError(true)); };
   useEffect(() => { setPausedLocal(status.paused); }, [status.paused]);
-  useEffect(() => { setBetaFeaturesLocal(!!status.betaFeatures); }, [status.betaFeatures]);
   useEffect(() => { loadProfile(); void api.usage().then(setUsage).catch(() => {}); }, []);
-  // Month-to-date AI spend vs. the cap — both computed server-side (EUR, approximate; for visibility + the cap).
-  // Was hardcoded to "€" + French comma formatting for every account regardless of language — the
-  // underlying spend is tracked in USD server-side (see monthCostUsd/monthlyBudgetUsd in shared/types.ts),
-  // so a non-French user saw a currency symbol and decimal style that were both simply wrong for them.
-  // Not full multi-currency conversion (no real per-country signal exists yet) — just "not literally
-  // incorrect for every non-French user": USD in English, EUR in French, both properly locale-formatted.
-  const fmtEur = (n: number) => {
-    const en = status.language === "en";
-    const currency = en ? "USD" : "EUR";
-    const nf = new Intl.NumberFormat(en ? "en-US" : "fr-FR", { style: "currency", currency, minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    if (n <= 0) return nf.format(0);
-    if (n < 0.01) return `< ${nf.format(0.01)}`;
-    return nf.format(n);
-  };
-  useReveal(); // fades each settings section in on first paint (see `.reveal` in styles.css)
+  useReveal();
 
   return (
     <main className="settings-page">
@@ -2607,36 +2554,15 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.03s" }}>
         <h3>{L("Compte", "Account")}</h3>
-        <div className="modal-row"><span className="lbl">{status.user}{status.cloud ? L(" · synchronisé", " · synced") : ""}</span><button className="btn xs" onClick={() => void onSignOut()}>{L("Se déconnecter", "Sign out")}</button></div>
-        {/* French parents care about RGPD more than the AI-spend number itself — show both, but privacy first.
-            NEVER claim EU-only data residency here — the AI calls (server/claude.ts) go to DeepSeek, which has
-            no confirmed EU residency and no DPA (see DATA_PROTECTION.md). Only state what's actually true. */}
-        <div className="modal-row"><span className="lbl">{L("Confidentialité", "Privacy")}</span><span className="val">{L("Ton mot de passe Pronote est chiffré et jamais revendu. ", "Your Pronote password is encrypted and never resold. ")}<a href="/privacy">{L("Détails sur le traitement de tes données →", "Details on how your data is handled →")}</a></span></div>
+        <div className="modal-row"><span className="lbl">{status.user}{status.cloud ? L(" · synchronisé", " · synced") : ""}</span><button className="btn xs danger" onClick={() => void onSignOut()}>{L("Se déconnecter", "Sign out")}</button></div>
+        <div className="modal-row"><span className="lbl">{L("Confidentialité", "Privacy")}</span><span className="val">{L("Ton mot de passe Pronote est chiffré et jamais revendu. ", "Your Pronote password is encrypted and never resold. ")}<a href="/privacy">{L("Détails →", "Details →")}</a></span></div>
         <div className="modal-row"><span className="lbl">{L("Mentions légales", "Legal")}</span><span className="val"><a href="/privacy">{L("Confidentialité", "Privacy")}</a> · <a href="/terms">{L("CGU", "Terms")}</a></span></div>
-        {/* GDPR self-serve: download everything stored (Art. 20, portability) and permanently delete it
-            (Art. 17, erasure) — no "email us and wait" step for either. */}
         <div className="modal-row">
           <span className="lbl">{L("Tes données", "Your data")}</span>
           <span className="val"><a href={api.exportDataUrl()} download>{L("Télécharger mes données", "Download my data")}</a></span>
         </div>
-        {/* Other half of portability: move everything (journal, error log, flashcards, tasks) from one
-            account into this one, e.g. after switching Supabase accounts — see scripts/migrate-account.ts
-            for the offline equivalent of the same merge. Imports MERGE into whatever's already here, never
-            replace it, so this is safe to run on an account that already has data. */}
-        <div className="modal-row">
-          <span className="lbl">{L("Importer des données", "Import data")}</span>
-          <span className="val">
-            <input ref={importFileRef} type="file" accept="application/json" style={{ display: "none" }}
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) void onImportFile(f); }} />
-            <button type="button" className="btn xs ghost" disabled={importingData} onClick={() => importFileRef.current?.click()}>
-              {importingData ? L("Import…", "Importing…") : L("Depuis un fichier exporté", "From an exported file")}
-            </button>
-          </span>
-        </div>
         <div className="modal-row">
           <span className="lbl">{L("Supprimer le compte", "Delete account")}</span>
-          {/* Vermilion is reserved for exactly this — an irreversible action — everywhere else in the app;
-              this was the one destructive button styled as a plain .btn xs, indistinguishable from "Save". */}
           <button
             className="btn xs danger"
             disabled={deletingAccount}
@@ -2650,216 +2576,30 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
         </div>
       </section>
 
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.045s" }}>
-        <button className="sec-toggle" aria-expanded={showUsage} onClick={() => setShowUsage((v) => !v)}>
-          <h3>{L("Utilisation et coût", "Usage & cost")}</h3>
-          <span className={`caret ${showUsage ? "open" : ""}`} aria-hidden="true">›</span>
-        </button>
-        {showUsage && <div className="settings-reveal">
-        {usage && <div className="modal-row"><span className="lbl">{L("Utilisation IA ce mois-ci", "AI usage this month")}</span><span className="val" title={L(`${usage.runs} exécutions au total`, `${usage.runs} runs total`)}>≈ {fmtEur(usage.monthCostUsd)} {L("sur", "of")} {fmtEur(usage.budgetUsd)}{usage.over ? L(" · plafond atteint", " · cap reached") : ""} · {L("renouvellement", "renews")} {fmtDay(usage.renewsOn, L)}</span></div>}
-        {/* Breakdown by WHAT spent it — added after a live "why is €0.30/day being spent with no interaction"
-            question that the single total above couldn't answer on its own. sweep = the daily background scan,
-            autorun = tasks Otto ran on its own (no click needed anymore), chat = Ask Otto conversations,
-            manual_refine = tightening a rough manually-typed title. Only shown once there's something to show —
-            an empty/all-zero breakdown (new account, or spend from before this existed) would just be noise. */}
-        {usage && Object.values(usage.byCategory).some((v) => (v || 0) > 0) ? (
-          <div className="modal-row modal-row-usage-breakdown">
-            <span className="lbl">{L("Détail des coûts", "Cost breakdown")}</span>
-            <span className="val">
-              {(() => {
-                // Three buckets a student actually thinks in, not the six internal accounting categories
-                // addUsage tracks (sweep/autorun/manual_refine are all "Otto finding and doing tasks on its
-                // own or on a click" from the reader's point of view — splitting those three into separate
-                // rows just made the list longer without answering "what's costing money" any better).
-                const GROUPS: Record<string, "chat" | "studylog" | "tasks"> = {
-                  chat: "chat",
-                  studylog: "studylog",
-                  sweep: "tasks", autorun: "tasks", manual_refine: "tasks", other: "tasks",
-                };
-                const labels: Record<string, string> = {
-                  chat: L("Chat", "Chat"),
-                  studylog: L("Journal d'apprentissage", "Study journal"),
-                  tasks: L("Génération et exécution des tâches", "Task generation & execution"),
-                };
-                const grouped: Partial<Record<string, number>> = {};
-                for (const [k, v] of Object.entries(usage.byCategory)) {
-                  const bucket = GROUPS[k] || "tasks";
-                  grouped[bucket] = (grouped[bucket] || 0) + (v || 0);
-                }
-                // Sorted highest-cost-first, so "what's actually costing the most" is answerable at a glance
-                // instead of a fixed-order list the reader has to scan and compare themselves.
-                const entries = (Object.entries(grouped) as [string, number | undefined][])
-                  .filter(([, v]) => (v || 0) > 0)
-                  .sort((a, b) => (b[1] || 0) - (a[1] || 0));
-                const total = entries.reduce((s, [, v]) => s + (v || 0), 0) || 1;
-                return (
-                  <ul className="usage-breakdown-list">
-                    {entries.map(([k, v], i) => {
-                      const pct = Math.round(((v || 0) / total) * 100);
-                      return (
-                        <li key={k} className={i === 0 ? "usage-breakdown-top" : ""}>
-                          <span className="usage-breakdown-label">{labels[k] || k}{i === 0 ? L(" — le plus coûteux", " — costs the most") : ""}</span>
-                          <span className="usage-breakdown-bar-track"><span className="usage-breakdown-bar" style={{ width: `${pct}%` }} /></span>
-                          <span className="usage-breakdown-amount">{fmtEur(v || 0)} ({pct}%)</span>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                );
-              })()}
-            </span>
-          </div>
-        ) : null}
-        </div>}
-      </section>
-
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.048s" }}>
-        <button className="sec-toggle" aria-expanded={showPersonalization} onClick={() => setShowPersonalization((v) => !v)}>
-          <h3>{L("Télémétrie et focus", "Focus & telemetry metrics")}</h3>
-          <span className={`caret ${showPersonalization ? "open" : ""}`} aria-hidden="true">›</span>
-        </button>
-        {showPersonalization && <div className="settings-reveal">
-          <p className="settings-hint">
-            {L("Analyse 100 % locale du regard, de la posture et des clignements pour adapter le rythme des sessions et la taille des tâches.", "100% on-device gaze, posture, and blink tracking used to adapt session pacing and task difficulty.")}
-          </p>
-          {profile?.focusStats && profile.focusStats.totalTrackedSessions > 0 ? (
-            <div className="set-list" style={{ marginTop: 8 }}>
-              <div className="modal-row">
-                <span className="lbl">{L("Concentration moyenne", "Average concentration")}</span>
-                <span className="val" style={{ fontWeight: 600, color: profile.focusStats.avgConcentration >= 70 ? "var(--color-success, #34c759)" : "var(--color-warning, #ff9f0a)" }}>
-                  {profile.focusStats.avgConcentration}% ({profile.focusStats.totalTrackedSessions} {L("sessions suivies", "tracked sessions")})
-                </span>
-              </div>
-              <div className="modal-row">
-                <span className="lbl">{L("Temps regard écran", "Gaze on-screen time")}</span>
-                <span className="val">{profile.focusStats.avgGazeOnScreenPct}%</span>
-              </div>
-              <div className="modal-row">
-                <span className="lbl">{L("Rythme de clignement", "Blink rate")}</span>
-                <span className="val">{profile.focusStats.avgBlinkRate} / min</span>
-              </div>
-              <div className="modal-row">
-                <span className="lbl">{L("Niveau d'agitation", "Restlessness level")}</span>
-                <span className="val">{profile.focusStats.restlessPct}%</span>
-              </div>
-              {profile.focusStats.subjectFocus && Object.keys(profile.focusStats.subjectFocus).length > 0 && (
-                <div className="modal-row" style={{ alignItems: "flex-start" }}>
-                  <span className="lbl">{L("Focus par matière", "Focus by subject")}</span>
-                  <span className="val">
-                    <ul className="usage-breakdown-list">
-                      {Object.entries(profile.focusStats.subjectFocus).map(([subj, score]) => (
-                        <li key={subj}>
-                          <span className="usage-breakdown-label">{subj}</span>
-                          <span className="usage-breakdown-bar-track">
-                            <span className="usage-breakdown-bar" style={{ width: `${score}%`, backgroundColor: score >= 70 ? "var(--color-success, #34c759)" : "var(--color-warning, #ff9f0a)" }} />
-                          </span>
-                          <span className="usage-breakdown-amount">{score}%</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </span>
-                </div>
-              )}
-            </div>
-          ) : (
-            <p className="settings-hint" style={{ marginTop: 8 }}>
-              {L("Aucune donnée de télémétrie enregistrée pour l'instant. Active la caméra privée pendant une session d'étude pour commencer le suivi.", "No telemetry data recorded yet. Enable the private camera artifact during a study session to begin tracking.")}
-            </p>
-          )}
-        </div>}
-      </section>
-
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.055s" }}>
-        <h3>{L("Apparence", "Appearance")}</h3>
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.05s" }}>
+        <h3>{L("Otto AI", "Otto AI")}</h3>
+        <p className="settings-hint">{L("L'IA d'Otto t'accompagne sur les notions que tu ne maîtrises pas encore :", "Otto's AI guides you on concepts you don't master yet:")}</p>
         <div className="modal-row">
-          <span className="lbl">{L("Densité de l'interface", "Interface density")}</span>
-          <span className="val">
-            <div className="density-picker">
-              {(["cozy", "compact", "spacious"] as const).map((d) => (
-                <button
-                  key={d}
-                  type="button"
-                  className={`btn xs ${profile?.uiDensity === d || (!profile?.uiDensity && d === "cozy") ? "primary" : "ghost"}`}
-                  onClick={() => void api.setProfilePreference("uiDensity", d).then((p) => {
-                    setProfile(p);
-                    if (d !== "cozy") document.documentElement.setAttribute("data-density", d);
-                    else document.documentElement.removeAttribute("data-density");
-                    try { localStorage.setItem("otto-density-arm", ""); } catch { /* ignore */ }
-                  }).catch(() => notify(L("Impossible de changer ça pour l'instant.", "Couldn't change that right now."), "error"))}
-                >
-                  {d === "cozy" ? L("Confortable", "Cozy") : d === "compact" ? L("Compacte", "Compact") : L("Spacieuse", "Spacious")}
-                </button>
-              ))}
-            </div>
-          </span>
+          <span className="lbl">{L("Tuteur personnalisé", "Personalized tutor")}</span>
+          <span className="val">{L("Un tuteur Socratique qui s'adapte à ton niveau et t'aide sur les notions difficiles.", "A Socratic tutor that adapts to your level and helps with difficult concepts.")}</span>
         </div>
         <div className="modal-row">
-          <span className="lbl">{L("Thème personnalisé (IA)", "Personalized theme (AI)")}</span>
-          <span className="val">
-            {betaFeatures ? (
-              <button type="button" className="btn xs ghost" disabled={themeBusy} onClick={async () => {
-                setThemeBusy(true);
-                try {
-                  const result = await api.personalizeTheme();
-                  // Apply the theme immediately from the response
-                  const root = document.documentElement;
-                  const keys = ["--bg", "--surface", "--bg-2", "--line", "--radius", "--radius-sm", "--radius-xs"] as const;
-                  for (const k of keys) {
-                    const v = result.customTheme?.[k];
-                    if (v) root.style.setProperty(k, v); else root.style.removeProperty(k);
-                  }
-                  onChanged(); // Reload status to sync across tabs
-                }
-                catch (e: any) { notify(e?.message || L("Impossible de personnaliser le thème pour l'instant.", "Couldn't personalize the theme right now."), "error"); }
-                finally { setThemeBusy(false); }
-              }}>
-                {themeBusy ? L("Création…", "Creating…") : status.customTheme ? L("Réessayer", "Try another") : L("Laisser Otto personnaliser mon thème", "Let Otto personalize my theme")}
-              </button>
-            ) : (
-              <span className="settings-hint">{L("Active les fonctionnalités bêta ci-dessus pour essayer ça.", "Turn on beta features above to try this.")}</span>
-            )}
-            {status.customTheme ? (
-              <button type="button" className="btn xs ghost" onClick={async () => {
-                try {
-                  await api.resetTheme();
-                  // Remove theme immediately
-                  const root = document.documentElement;
-                  const keys = ["--bg", "--surface", "--bg-2", "--line", "--radius", "--radius-sm", "--radius-xs"] as const;
-                  for (const k of keys) {
-                    root.style.removeProperty(k);
-                  }
-                  onChanged();
-                }
-                catch (e: any) { notify(e?.message || L("Impossible de réinitialiser le thème.", "Couldn't reset the theme."), "error"); }
-              }}>
-                {L("Réinitialiser", "Reset")}
-              </button>
-            ) : null}
-          </span>
+          <span className="lbl">{L("Détection proactive", "Proactive detection")}</span>
+          <span className="val">{L("Otto détecte tes devoirs sur Pronote et les décompose en étapes claires automatiquement.", "Otto detects your homework from Pronote and breaks it into clear steps automatically.")}</span>
+        </div>
+        <div className="modal-row">
+          <span className="lbl">{L("Répétition espacée", "Spaced repetition")}</span>
+          <span className="val">{L("Crée des fiches et des quiz basés sur tout ton travail pour une mémorisation durable.", "Creates flashcards and quizzes based on all your work for durable memorization.")}</span>
         </div>
       </section>
 
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.06s" }}>
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.07s" }}>
         <h3>{L("Sources", "Sources")}</h3>
-        {/* Otto Lycée v1 originally scoped this to just Pronote + Gmail/Calendar/Drive for EVERY account —
-            correct for a French Bac student, but it silently hid the rest of Composio's catalog
-            (Slack/Notion/GitHub/Linear/…) from every account regardless of track, including IB/international
-            students who often lean on those tools for school coordination more than a French lycéen does.
-            Now gated by track: the narrow Lycée-only grid stays the default for "bac"/unset (unchanged for
-            existing French users), full catalog opens up for "ib"/"other" (see GoogleTiles' `restricted`). */}
         <p className="settings-hint">{L("Otto lit ces sources et prépare le travail — ", "Otto reads these sources and preps the work — ")}<b>{L("il n'envoie et ne rend jamais rien à ta place", "it never sends or hands anything in for you")}</b>.</p>
         <PronoteTile status={status} onStatusUpdate={onStatusUpdate} />
         <GoogleTiles onChanged={onChanged} restricted={profile?.track !== "ib" && profile?.track !== "other"} />
       </section>
 
-      {/* The Otto Tabs extension (extension/) is built and packaged (see scripts/zip-extension.sh, which
-          runs before every dev/build so this download is always current) but had NO discoverable install
-          path anywhere in the app — the zip existed at /otto-tabs-extension.zip with nothing linking to it,
-          so in practice nobody could ever find or install it, making its two real features (grouping tabs
-          Otto opens, and blocking other sites during an active Study Mode session) dead for every user.
-          Not published to the Chrome Web Store (no listing exists) — Chrome still allows a manually
-          unpacked extension via chrome://extensions' developer-mode "Load unpacked", which is what these
-          steps walk through. */}
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.09s" }}>
         <h3>{L("Préférences", "Preferences")}</h3>
         <div className="set-list">
@@ -2867,28 +2607,9 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
             <span className="set-text"><b>{L("Mettre Otto en pause", "Pause Otto")}</b><span className="settings-hint">{L("Arrête toute l'IA. Tes tâches restent en place.", "Stops all AI activity. Your tasks stay as they are.")}</span></span>
             <span className="switch"><input type="checkbox" checked={paused} onChange={(e) => {
               const v = e.target.checked;
-              setPausedLocal(v); // optimistic — revert below on failure
+              setPausedLocal(v);
               void api.setPaused(v).then(() => onChanged()).catch((err: any) => {
                 setPausedLocal(!v);
-                notify(err?.message || L("Ce réglage n'a pas été enregistré — réessaie.", "That setting didn't save — give it another try."), "error");
-              });
-            }} /><span className="switch-track" /></span>
-          </label>
-          {/* Off by default for every account. On unlocks: personalized Pomodoro/audio/density/chat-style
-              suggestions, the Study Mode focus camera, and the AI-personalized theme generator — listed
-              explicitly in the hint so turning it off doesn't just silently make things disappear with no
-              explanation. Off is never a degraded experience, it's each feature's own existing safe
-              default (the same one already used if the live personalization call ever fails). */}
-          <label className="set-row">
-            <span className="set-text"><b>{L("Fonctionnalités bêta", "Beta features")}</b><span className="settings-hint">{L("Suggestions personnalisées (Pomodoro, son, densité, style), caméra de concentration, thème IA.", "Personalized suggestions (Pomodoro, audio, density, chat style), the focus camera, AI theme.")}</span></span>
-            <span className="switch"><input type="checkbox" checked={betaFeatures} onChange={(e) => {
-              const v = e.target.checked;
-              setBetaFeaturesLocal(v); // optimistic — revert below on failure
-              void api.setProfilePreference("betaFeatures", v).then((p) => {
-                setProfile(p);
-                onChanged();
-              }).catch((err: any) => {
-                setBetaFeaturesLocal(!v);
                 notify(err?.message || L("Ce réglage n'a pas été enregistré — réessaie.", "That setting didn't save — give it another try."), "error");
               });
             }} /><span className="switch-track" /></span>
@@ -2897,14 +2618,18 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
         </div>
       </section>
 
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.13s" }}>
+        <button className="sec-toggle" aria-expanded={showKnows} onClick={() => setShowKnows((v) => !v)}>
+          <h3>{L("Ce qu'Otto sait sur toi", "What Otto knows about you")}</h3>
+          <span className={`caret ${showKnows ? "open" : ""}`} aria-hidden="true">›</span>
+        </button>
+        {showKnows && <div className="settings-reveal"><p className="settings-hint">{L("Otto remplit ça au fil du temps. Tu peux tout modifier.", "Otto fills this in over time. You can edit anything.")}</p><ProfileEditor /></div>}
+      </section>
+
       {(() => {
-        // Not a claimed number — counted straight from each task's own audit trail (kind: "guardrail").
-        // Only shown once it's actually happened at least once: a brand-new account showing "0" would read
-        // as a hollow promise, not evidence. The raw expandable activity log this summary used to sit above
-        // was removed — the count alone is the useful trust signal; the line-by-line log wasn't.
         const guardrailCount = tasks.flatMap((t) => t.audit || []).filter((a) => a.kind === "guardrail").length;
         return guardrailCount > 0 ? (
-          <section className="settings-sec reveal" style={{ ["--d" as any]: "0.14s" }}>
+          <section className="settings-sec reveal" style={{ ["--d" as any]: "0.15s" }}>
             <p className="settings-hint guardrail-stat">
               <span aria-hidden="true">✦</span> {L(
                 `Otto a refusé de faire ton travail à ta place ${guardrailCount} fois — et a fait un guide à la place.`,
@@ -2915,164 +2640,6 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
         ) : null;
       })()}
 
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.15s" }}>
-        <button className="sec-toggle" aria-expanded={showKnows} onClick={() => setShowKnows((v) => !v)}>
-          <h3>{L("Ce qu'Otto sait sur toi", "What Otto knows about you")}</h3>
-          <span className={`caret ${showKnows ? "open" : ""}`} aria-hidden="true">›</span>
-        </button>
-        {showKnows && <div className="settings-reveal"><p className="settings-hint">{L("Otto remplit ça au fil du temps. Tu peux tout modifier.", "Otto fills this in over time. You can edit anything.")}</p><ProfileEditor /></div>}
-      </section>
-
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.16s" }}>
-        <button className="sec-toggle" aria-expanded={showPersonalization} onClick={() => setShowPersonalization((v) => !v)}>
-          <h3>{L("Personnalisation", "Personalization")}</h3>
-          <span className={`caret ${showPersonalization ? "open" : ""}`} aria-hidden="true">›</span>
-        </button>
-        {showPersonalization && <div className="settings-reveal">
-        {/* Full transparency for everything Otto has learned — per direct instruction. Every line below
-            comes from a REAL, already-running personalization mechanism (7 bandits + pattern recognition),
-            never invented for display — a bandit with no evidence yet simply contributes no line, same
-            calm/quiet posture as the rest of this section. This is what actually makes "personalization" a
-            checkable claim instead of an invisible one: the learned preference is legible, not just acted on. */}
-        {patterns && (patterns.predictedEngagement || patterns.weakSubjects.length > 0 || Object.values(patterns.bandits).some(Boolean)) ? (
-          <div className="modal-row">
-            <span className="lbl">{L("Ce qu'Otto a appris de toi", "What Otto's learned about you")}</span>
-            <span className="val settings-hint">
-              <ul className="personalization-list">
-                {patterns.predictedEngagement ? (
-                  <li>{L(
-                    `Tu es généralement le plus actif ${["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"][patterns.predictedEngagement.weekday]} vers ${patterns.predictedEngagement.hour}h.`,
-                    `You're usually most active around ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][patterns.predictedEngagement.weekday]} at ${patterns.predictedEngagement.hour}:00.`,
-                  )}</li>
-                ) : null}
-                {patterns.weakSubjects.length ? (
-                  <li>{L(`Pourrait valoir une révision : ${patterns.weakSubjects.join(", ")}.`, `Might be worth reviewing: ${patterns.weakSubjects.join(", ")}.`)}</li>
-                ) : null}
-                {patterns.bandits.pomodoro?.armId && patterns.bandits.pomodoro.armId !== "none" ? (
-                  <li>{L(`Séances de travail : des blocs de ${patterns.bandits.pomodoro.armId.replace("/", " min / ")} min de pause te réussissent le mieux.`, `Study sessions: ${patterns.bandits.pomodoro.armId.replace("/", "-minute blocks with a ")}-minute break tend to work best for you.`)}</li>
-                ) : null}
-                {patterns.bandits.flashcards?.armId && patterns.bandits.flashcards.armId !== "standard" ? (
-                  <li>{L(
-                    patterns.bandits.flashcards.armId === "concise" ? "Fiches : tu retiens mieux avec des cartes courtes et directes." : "Fiches : tu retiens mieux avec des cartes plus détaillées.",
-                    patterns.bandits.flashcards.armId === "concise" ? "Flashcards: you retain best with short, punchy cards." : "Flashcards: you retain best with more detailed cards.",
-                  )}</li>
-                ) : null}
-                {patterns.bandits.granularity?.armId === "granular" ? (
-                  <li>{L("Tâches : découper en étapes plus petites t'aide à démarrer plus vite.", "Tasks: breaking work into smaller steps helps you start sooner.")}</li>
-                ) : null}
-                {patterns.bandits.density?.armId && patterns.bandits.density.armId !== "cozy" ? (
-                  <li>{L(
-                    patterns.bandits.density.armId === "compact" ? "Affichage : une interface plus compacte te convient mieux." : "Affichage : une interface plus aérée te convient mieux.",
-                    patterns.bandits.density.armId === "compact" ? "Display: a more compact layout suits you better." : "Display: a more spacious layout suits you better.",
-                  )}</li>
-                ) : null}
-                {patterns.bandits.ordering?.armId && patterns.bandits.ordering.armId !== "urgency-first" ? (
-                  <li>{L(
-                    patterns.bandits.ordering.armId === "quick-wins-first" ? "Tableau de bord : tu avances mieux en commençant par les tâches rapides." : "Tableau de bord : tu avances mieux avec les tâches réparties équitablement entre matières.",
-                    patterns.bandits.ordering.armId === "quick-wins-first" ? "Dashboard: you make more progress starting with quick wins." : "Dashboard: you make more progress with tasks balanced evenly across subjects.",
-                  )}</li>
-                ) : null}
-                {patterns.bandits.audio?.armId && patterns.bandits.audio.armId !== "silence" ? (
-                  <li>{L(`Ambiance : le bruit ${patterns.bandits.audio.armId === "brown" ? "brun" : patterns.bandits.audio.armId === "pink" ? "rose" : "blanc"} t'aide à rester concentré.`, `Ambience: ${patterns.bandits.audio.armId} noise helps you stay focused.`)}</li>
-                ) : null}
-                {patterns.bandits.chatstyle?.armId && patterns.bandits.chatstyle.armId !== "concise" ? (
-                  <li>{L(
-                    patterns.bandits.chatstyle.armId === "socratic" ? "Chat avec Otto : tu progresses mieux quand Otto pose des questions plutôt que d'expliquer directement." : "Chat avec Otto : tu progresses mieux avec des exemples résolus en parallèle.",
-                    patterns.bandits.chatstyle.armId === "socratic" ? "Chat with Otto: you do best when Otto asks questions rather than explaining directly." : "Chat with Otto: you do best with a parallel worked example.",
-                  )}</li>
-                ) : null}
-              </ul>
-            </span>
-          </div>
-        ) : null}
-        {/* Per-subject mastery — the same aggregateSubjectSignals data behind the "might be worth reviewing"
-            line above, now shown in full (every subject with enough attempts, not just the weak ones), plus
-            the subject-specific focus-time reads (shared/types.ts's learnedProductiveHourForSubject) once
-            there's enough per-subject evidence. Real data only — nothing renders below the cold-start floor. */}
-        {patterns && (patterns.subjectMastery?.length > 0 || patterns.subjectFocus?.length > 0) ? (
-          <div className="modal-row">
-            <span className="lbl">{L("Par matière", "By subject")}</span>
-            <span className="val settings-hint">
-              <ul className="personalization-list">
-                {(patterns.subjectMastery || []).map((s: { subject: string; correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }) => (
-                  <li key={s.subject}>{L(
-                    `${s.subject} : ${Math.round(s.correctRate * 100)} % de bonnes réponses sur ${s.attempts} tentatives${s.trend ? ` (${s.trend === "up" ? "en progrès" : s.trend === "down" ? "en baisse" : "stable"} ${s.trend === "up" ? "↑" : s.trend === "down" ? "↓" : "→"})` : ""}.`,
-                    `${s.subject}: ${Math.round(s.correctRate * 100)}% correct over ${s.attempts} attempts${s.trend ? ` (${s.trend === "up" ? "improving" : s.trend === "down" ? "slipping" : "steady"} ${s.trend === "up" ? "↑" : s.trend === "down" ? "↓" : "→"})` : ""}.`,
-                  )}</li>
-                ))}
-                {(patterns.subjectFocus || []).map((s: { subject: string; peak: { hour: number; confidence: number } }) => (
-                  <li key={`focus-${s.subject}`}>{L(
-                    `Tu es le plus concentré en ${s.subject} vers ${s.peak.hour}h.`,
-                    `You focus best on ${s.subject} around ${s.peak.hour}:00.`,
-                  )}</li>
-                ))}
-              </ul>
-            </span>
-          </div>
-        ) : null}
-        {/* Study & concentration — the aggregate numbers behind the Pomodoro/ambience lines above: how much
-            you've actually studied and how focused those sessions were, not just which cadence works.
-            Sourced from the same recordMetric points Study Mode already sends on every session end
-            (server/store.ts's getStudyMetricsSummary) — real data only, same quiet posture: nothing renders
-            until there's at least one real session in the window. */}
-        {patterns?.studyMetrics && patterns.studyMetrics.totalSessions > 0 ? (
-          <div className="modal-row">
-            <span className="lbl">{L("Étude et concentration", "Study & concentration")}</span>
-            <span className="val settings-hint">
-              <ul className="personalization-list">
-                <li>{L(
-                  `${patterns.studyMetrics.totalSessions} séance${patterns.studyMetrics.totalSessions > 1 ? "s" : ""} de travail sur les ${patterns.studyMetrics.windowDays} derniers jours, pour un total de ${Math.round(patterns.studyMetrics.totalStudySeconds / 60)} min.`,
-                  `${patterns.studyMetrics.totalSessions} study session${patterns.studyMetrics.totalSessions > 1 ? "s" : ""} in the last ${patterns.studyMetrics.windowDays} days, ${Math.round(patterns.studyMetrics.totalStudySeconds / 60)} min total.`,
-                )}</li>
-                {patterns.studyMetrics.avgIdleRatio !== null ? (
-                  <li>{L(
-                    `Temps resté actif pendant les séances : environ ${Math.round((1 - patterns.studyMetrics.avgIdleRatio) * 100)} %.`,
-                    `Time spent actively working during sessions: about ${Math.round((1 - patterns.studyMetrics.avgIdleRatio) * 100)}%.`,
-                  )}</li>
-                ) : null}
-                {patterns.studyMetrics.earlyExitRate !== null && patterns.studyMetrics.earlyExitRate > 0 ? (
-                  <li>{L(
-                    `${Math.round(patterns.studyMetrics.earlyExitRate * 100)} % des séances se sont terminées avant la durée prévue.`,
-                    `${Math.round(patterns.studyMetrics.earlyExitRate * 100)}% of sessions ended before the planned length.`,
-                  )}</li>
-                ) : null}
-                {patterns.studyMetrics.pomodoroCyclesCompleted > 0 ? (
-                  <li>{L(
-                    `${patterns.studyMetrics.pomodoroCyclesCompleted} cycle${patterns.studyMetrics.pomodoroCyclesCompleted > 1 ? "s" : ""} Pomodoro travail/pause terminé${patterns.studyMetrics.pomodoroCyclesCompleted > 1 ? "s" : ""}.`,
-                    `${patterns.studyMetrics.pomodoroCyclesCompleted} completed Pomodoro work/break cycle${patterns.studyMetrics.pomodoroCyclesCompleted > 1 ? "s" : ""}.`,
-                  )}</li>
-                ) : null}
-                {patterns.studyMetrics.totalBreakSeconds > 0 ? (
-                  <li>{L(
-                    `${Math.round(patterns.studyMetrics.totalBreakSeconds / 60)} min de pause au total.`,
-                    `${Math.round(patterns.studyMetrics.totalBreakSeconds / 60)} min of breaks total.`,
-                  )}</li>
-                ) : null}
-                {patterns.studyMetrics.avgFocusScore !== null ? (
-                  <li>{L(
-                    `Score de concentration moyen (caméra) : ${patterns.studyMetrics.avgFocusScore}/100 sur ${patterns.studyMetrics.focusSessionCount} séance${patterns.studyMetrics.focusSessionCount > 1 ? "s" : ""}.`,
-                    `Average focus score (webcam): ${patterns.studyMetrics.avgFocusScore}/100 across ${patterns.studyMetrics.focusSessionCount} session${patterns.studyMetrics.focusSessionCount > 1 ? "s" : ""}.`,
-                  )}</li>
-                ) : null}
-                {patterns.studyMetrics.avgGazeOnScreenPct !== null ? (
-                  <li>{L(
-                    `Regard sur l'écran : ${patterns.studyMetrics.avgGazeOnScreenPct}% du temps en moyenne.`,
-                    `Gaze on screen: ${patterns.studyMetrics.avgGazeOnScreenPct}% of the time on average.`,
-                  )}</li>
-                ) : null}
-              </ul>
-            </span>
-          </div>
-        ) : null}
-        </div>}
-      </section>
-
-      {/* "How Otto sees you" — full visibility + one-click reset for profile.studentModel, the AI-synthesized
-          running read of this student (server/jobs.ts refreshes it once/day at most, only if there's been
-          real activity — see shouldRefreshStudentModel). This is the most surveillance-adjacent field in the
-          app (AI-authored ABOUT the student, not self-reported like grades/errorLog) — full transparency +
-          a genuinely destructive reset here is required, not optional, same posture as the error log/usage
-          breakdown sections above. */}
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.18s" }}>
         <button className="sec-toggle" aria-expanded={showStudentModel} onClick={() => setShowStudentModel((v) => !v)}>
           <h3>{L("Comment Otto te voit", "How Otto sees you")}</h3>
@@ -3081,8 +2648,8 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
         {showStudentModel && (
           <div className="settings-reveal">
             <p className="settings-hint">{L(
-              "Mis à jour au plus une fois par jour à partir de ton activité. Jamais partagé, jamais utilisé pour te noter.",
-              "Updated at most once a day from your activity. Never shared, never used to grade you."
+              "Mis à jour au plus une fois par jour à partir de tes sessions de tuteur et ton activité. Jamais partagé, jamais utilisé pour te noter.",
+              "Updated at most once a day from your tutor sessions and activity. Never shared, never used to grade you."
             )}</p>
             {profile?.studentModel?.summary ? (
               <>
@@ -3094,103 +2661,6 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
                 }}>{L("Réinitialiser", "Reset")}</button>
               </>
             ) : <p className="settings-hint">{L("Pas encore assez d'activité pour ça.", "Not enough activity yet.")}</p>}
-          </div>
-        )}
-      </section>
-
-      {/* Focus Analytics — concentration tracking from camera sessions */}
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.21s" }}>
-        <button className="sec-toggle" aria-expanded={showFocusAnalytics} onClick={() => setShowFocusAnalytics((v) => !v)}>
-          <h3>{L("Analyse de concentration", "Focus Analytics")}</h3>
-          <span className={`caret ${showFocusAnalytics ? "open" : ""}`} aria-hidden="true">›</span>
-        </button>
-        {showFocusAnalytics && (
-          <div className="settings-reveal">
-            <p className="settings-hint">{L(
-              "Données de suivi de concentration de tes sessions d'étude avec caméra. Traitées localement, jamais partagées.",
-              "Concentration tracking data from your camera-enabled study sessions. Processed locally, never shared."
-            )}</p>
-            {focusStats ? (
-              <>
-                <div className="focus-stats-grid">
-                  <div className="focus-stat-card">
-                    <span className="focus-stat-label">{L("Concentration moyenne", "Avg concentration")}</span>
-                    <span className="focus-stat-value">{focusStats.avgConcentration}%</span>
-                  </div>
-                  <div className="focus-stat-card">
-                    <span className="focus-stat-label">{L("Sessions suivies", "Tracked sessions")}</span>
-                    <span className="focus-stat-value">{focusStats.totalTrackedSessions}</span>
-                  </div>
-                  <div className="focus-stat-card">
-                    <span className="focus-stat-label">{L("Pic d'attention", "Peak focus hour")}</span>
-                    <span className="focus-stat-value">{focusStats.peakFocusHour}:00</span>
-                  </div>
-                  <div className="focus-stat-card">
-                    <span className="focus-stat-label">{L("Stabilité", "Stability")}</span>
-                    <span className="focus-stat-value">{L(focusStats.focusStability || "—", focusStats.focusStability || "—")}</span>
-                  </div>
-                </div>
-                
-                {focusStats.insights && focusStats.insights.length > 0 && (
-                  <div className="focus-insights">
-                    <h4>{L("Observations", "Insights")}</h4>
-                    <ul>
-                      {focusStats.insights.map((insight, i) => (
-                        <li key={i}>{insight}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                
-                {focusStats.recommendations && focusStats.recommendations.length > 0 && (
-                  <div className="focus-recommendations">
-                    <h4>{L("Recommandations", "Recommendations")}</h4>
-                    <ul>
-                      {focusStats.recommendations.map((rec, i) => (
-                        <li key={i}>{rec}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                
-                {focusStats.subjectFocus && Object.keys(focusStats.subjectFocus).length > 0 && (
-                  <div className="focus-subject-breakdown">
-                    <h4>{L("Focus par matière", "Focus by subject")}</h4>
-                    {Object.entries(focusStats.subjectFocus).map(([subject, avg]) => (
-                      <div key={subject} className="focus-subject-row">
-                        <span className="focus-subject-name">{subject}</span>
-                        <span className="focus-subject-bar">
-                          <div className="focus-subject-fill" style={{ width: `${avg}%` }} />
-                          <span className="focus-subject-value">{Math.round(avg)}%</span>
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                
-                {focusSessions && focusSessions.length > 0 && (
-                  <div className="focus-sessions-list">
-                    <h4>{L("Sessions récentes", "Recent sessions")}</h4>
-                    {focusSessions.slice(0, 10).map((session) => (
-                      <div key={session.id} className="focus-session-item">
-                        <div className="focus-session-main">
-                          <span className="focus-session-subject">{session.subject || L("Général", "General")}</span>
-                          <span className="focus-session-duration">{session.duration} min</span>
-                        </div>
-                        <div className="focus-session-metrics">
-                          <span className="focus-session-concentration" style={{ color: session.avgConcentration >= 70 ? "#34c759" : session.avgConcentration >= 50 ? "#ff9f0a" : "#ff3b30" }}>
-                            {session.avgConcentration}%
-                          </span>
-                          <span className="focus-session-quality">{L(session.quality, session.quality)}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </>
-            ) : (
-              <p className="settings-hint">{L("Pas encore de sessions suivies.", "No tracked sessions yet.")}</p>
-            )}
           </div>
         )}
       </section>

@@ -3622,10 +3622,26 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   color: var(--ink);
   cursor: pointer;
   list-style: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  user-select: none;
 }
 
 .faq-item-simple summary::-webkit-details-marker {
   display: none;
+}
+
+.faq-item-simple summary::after {
+  content: "+";
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--ink-2);
+  margin-left: 12px;
+}
+
+.faq-item-simple[open] summary::after {
+  content: "−";
 }
 
 .faq-item-simple p {
