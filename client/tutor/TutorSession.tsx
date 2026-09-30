@@ -37,7 +37,7 @@ async function dismissWithRetry(taskId: string): Promise<void> {
  *  dismissed silently, not memorialized). Ending a session generates a short summary from the board + chat
  *  (see tutorSessions.ts), saves it locally, and dismisses the task so the next start creates a fresh one.
  *  Past session summaries are shown in a collapsible strip. */
-export function TutorSession({ userId }: { userId: string | null }) {
+export function TutorSession({ userId, onExit }: { userId: string | null; onExit: () => void }) {
   const L = useLang();
   const [task, setTask] = useState<WebTask | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -74,6 +74,9 @@ export function TutorSession({ userId }: { userId: string | null }) {
   // the chat: with voice on, the student's eyes are on the board, so "am I being heard?" has to
   // be answerable where they're actually looking.
   const [voiceState, setVoiceState] = useState({ listening: false, speaking: false, voiceModeOn: false, interim: "" });
+  // Desmos replaces the board pane entirely while open (see the board pane's render below) — lifted up here
+  // (was local to TutorDesmos) so this component can branch between <BoardArtifact> and <TutorDesmos>.
+  const [desmosOpen, setDesmosOpen] = useState(false);
   const handleVoiceState = useCallback((s: { listening: boolean; speaking: boolean; voiceModeOn: boolean; interim: string }) => setVoiceState(s), []);
   // StrictMode guard for the mount peek below (a double-invoke would just be a wasted duplicate GET, but
   // the guard also keeps the read strictly once-per-mount). Runs once per component lifetime.
@@ -187,6 +190,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
         setSessionStart(null);
         setPendingActiveSession(null);
         setShowHistory(true);
+        setDesmosOpen(false);
       }, INACTIVITY_MS);
     };
     const activityEvents = ["mousedown", "keydown", "scroll", "touchstart"] as const;
@@ -274,6 +278,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
       // The ended session must not come back as a "Reprendre" offer on the landing below.
       setPendingActiveSession(null);
       setShowHistory(true);
+      setDesmosOpen(false);
     } finally {
       setEndingSession(false);
     }
@@ -310,6 +315,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
       artifacts: [],
     });
     setSessionStart(new Date().toISOString());
+    setDesmosOpen(false);
   }, [pendingActiveSession, userId]);
 
   const startNewSession = useCallback(async () => {
@@ -355,6 +361,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
           artifacts: [],
         });
         setSessionStart(new Date().toISOString());
+        setDesmosOpen(false);
       }
       setPendingActiveSession(null);
     } catch {
@@ -364,9 +371,18 @@ export function TutorSession({ userId }: { userId: string | null }) {
     }
   }, [selectedSubject, startingSession, pendingActiveSession, sessionStart, saveAndClose, userId, L]);
 
+  // The Tutor route hides the app's usual sidebar/topbar entirely (reported live: it should be a full-
+  // screen, focused surface) — this is the ONE way back to Tasks that replaces it, present on every one of
+  // this component's screens (error, landing, active session) so it's never actually a dead end.
+  const backButton = (
+    <button type="button" className="tutor-back-btn" onClick={onExit} aria-label={L("Retour aux tâches", "Back to tasks")}>
+      ← Otto
+    </button>
+  );
+
   if (loadError) {
     return (
-      <main className="list-wrap"><div className="empty-state">
+      <main className="list-wrap">{backButton}<div className="empty-state">
         <h3>{L("Impossible de démarrer la séance", "Couldn't start the session")}</h3>
         <button className="btn primary" onClick={() => { mountFetchStartedRef.current = false; peekForActiveSession(); }}>{L("Réessayer", "Try again")}</button>
       </div></main>
@@ -377,6 +393,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
   if (!task) {
     return (
       <main className="list-wrap tutor-landing">
+        {backButton}
         <div className="tutor-landing-inner">
           <div className="tutor-hero-kicker">{L("Le tutorat qui te rend autonome", "Tutoring that makes you independent")}</div>
           <h2>{L("Apprendre en réfléchissant", "Learn by thinking")}</h2>
@@ -528,6 +545,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
     <main className={`tutor-session${voiceState.voiceModeOn ? " voice-primary" : ""}`}>
       <section className="tutor-chat" aria-label={L("Discuter avec Otto", "Ask Otto")}>
         <div className="tutor-pane-title">
+          {backButton}
           <span>{L("Demande à Otto", "Ask Otto")}</span>
           <button className="btn ghost tutor-end-btn" disabled={endingSession} onClick={() => void endSession()}>
             {endingSession ? L("Fin…", "Ending…") : L("Terminer la séance", "End session")}
@@ -550,12 +568,13 @@ export function TutorSession({ userId }: { userId: string | null }) {
       </section>
       <section className="tutor-board" aria-label={L("Tableau", "Board")}>
         <div className="tutor-pane-title">
-          <span>{L("Le tableau", "Board")}</span>
+          <span>{desmosOpen ? L("Desmos", "Desmos") : L("Le tableau", "Board")}</span>
           {/* Voice state lives on the BOARD pane: in voice-first mode this is the pane the student is
               actually looking at. Kept small and inline in the pane title (reported: the earlier full-width
               orb banner was too big/intrusive) — a compact status dot + label is enough to answer "am I
-              being heard / is Otto talking" without taking over the pane. */}
-          {voiceState.voiceModeOn ? (
+              being heard / is Otto talking" without taking over the pane. Hidden while Desmos has replaced
+              the board — the pill only matters when the student's actually looking at the board/chat. */}
+          {voiceState.voiceModeOn && !desmosOpen ? (
             <span className={`tutor-voice-pill${voiceState.speaking ? " speaking" : voiceState.listening ? " listening" : ""}`} role="status">
               {voiceState.speaking
                 ? L("Otto parle…", "Otto is speaking…")
@@ -565,12 +584,21 @@ export function TutorSession({ userId }: { userId: string | null }) {
               {voiceState.listening && voiceState.interim ? <span className="tutor-voice-interim">{voiceState.interim}</span> : null}
             </span>
           ) : null}
+          {/* The tutor's Desmos place, reachable from the board pane's own header — opening it REPLACES the
+              board entirely (see the branch below) rather than squeezing a small iframe in above it
+              (reported live: that felt cramped). Closing it restores the board exactly as it was; the
+              board's own state is never touched by opening/closing Desmos. */}
+          {!desmosOpen && (
+            <button type="button" className="btn ghost xs tutor-desmos-open" onClick={() => setDesmosOpen(true)}>
+              <span className="tutor-desmos-glyph" aria-hidden>ƒ</span> {L("Desmos", "Desmos")}
+            </button>
+          )}
         </div>
-        {/* The tutor's Desmos place — the tools the student can USE mid-lesson (graphing, scientific,
-            geometry, four-function), embedded above the board so the figure tool sits with the lesson's
-            visuals. Student-opened only, like every other manual surface in the tutor. */}
-        <TutorDesmos />
-        <div className="tutor-board-body"><BoardArtifact task={task} writing={sending} /></div>
+        {desmosOpen ? (
+          <TutorDesmos onClose={() => setDesmosOpen(false)} />
+        ) : (
+          <div className="tutor-board-body"><BoardArtifact task={task} writing={sending} /></div>
+        )}
       </section>
     </main>
   );

@@ -9,7 +9,11 @@
 // (script-src is 'self' + cdn.jsdelivr.net only). The iframe keeps a single embedding contract across
 // both surfaces and needs no CSP change.
 
-/** The four public Desmos calculators, each on its own public embed URL. Order = default tab order. */
+// ONE calculator only (was four, tab-switched) — reported live: the Tutor's Desmos place should offer a
+// single tool, not a picker. Graphing is the default kept: most versatile, and what "Desmos" means to most
+// students by default (plot a function, find a root, read behavior) — covers far more of what actually
+// comes up mid-lesson than the scientific/geometry/four-function variants did. Study Mode's own
+// DesmosArtifact.tsx (client/study/artifacts/) is untouched — this only shrinks the TUTOR's own picker.
 export const DESMOS_TOOLS = [
   {
     id: "graphing",
@@ -18,33 +22,6 @@ export const DESMOS_TOOLS = [
     hint: [
       "Trace des fonctions, trouve les racines, regarde les variations.",
       "Plot functions, find roots, watch the behavior.",
-    ],
-  },
-  {
-    id: "scientific",
-    path: "https://www.desmos.com/scientific",
-    label: ["Scientifique", "Scientific"],
-    hint: [
-      "Calculs, puissances, logs, pourcentages — la calculatrice d'examen.",
-      "Calculations, powers, logs, percentages — the exam calculator.",
-    ],
-  },
-  {
-    id: "geometry",
-    path: "https://www.desmos.com/geometry",
-    label: ["Géométrie", "Geometry"],
-    hint: [
-      "Construis des figures, mesure angles et longueurs, déplace les points.",
-      "Build figures, measure angles and lengths, drag the points.",
-    ],
-  },
-  {
-    id: "fourfunction",
-    path: "https://www.desmos.com/fourfunction",
-    label: ["Opérations", "Four-function"],
-    hint: [
-      "Les quatre opérations, sans distraction.",
-      "Just the four operations, nothing else.",
     ],
   },
 ] as const;

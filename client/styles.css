@@ -6356,8 +6356,25 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .tutor-session { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 0.55fr) minmax(0, 1.45fr); gap: 20px; padding: 20px 24px; height: calc(100vh - 64px); box-sizing: border-box; }
 .tutor-chat, .tutor-board { display: flex; flex-direction: column; min-height: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .tutor-pane-title { padding: 12px 18px; font-weight: 600; border-bottom: 1px solid var(--line); }
+/* The one way back to Tasks now that Tutor hides the app's sidebar/topbar entirely (reported live: Tutor
+   should be a full-screen, focused surface) — present on every one of TutorSession's screens. */
+.tutor-back-btn { flex: 0 0 auto; background: none; border: none; font-family: inherit; font-weight: 700; font-size: 14px; color: var(--ink-2); cursor: pointer; padding: 4px 6px 4px 0; margin-right: 4px; }
+.tutor-back-btn:hover { color: var(--ink); }
+.tutor-landing .tutor-back-btn { position: absolute; top: 16px; left: 20px; }
+.tutor-landing { position: relative; }
 .tutor-chat-body, .tutor-board-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px; max-height: calc(100vh - 200px); }
-.tutor-board-body { overflow: auto; }
+/* Worksheet ruled lines — reported live: a short session's board showed one entry, then a large stark-white
+   empty area filling the rest of the pane, reading as broken UI rather than "a page with room on it". A
+   subtle repeating horizontal-line background (a real notebook-paper cue, not an image asset) on the
+   SCROLLING pane itself means blank space below short content still reads as part of the page — it shows
+   through past wherever the actual content ends, no layout change needed to "fill" anything. Kept very low
+   contrast so it never competes with entry text; identical rhythm to a real ruled page (32px, matching this
+   pane's own vertical rhythm roughly). */
+.tutor-board-body {
+  overflow: auto;
+  background-image: repeating-linear-gradient(to bottom, transparent, transparent 31px, color-mix(in srgb, var(--line) 55%, transparent) 32px);
+}
+@media (prefers-contrast: more) { .tutor-board-body { background-image: none; } }
 .tutor-start { padding: 16px; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; border-bottom: 1px solid var(--line); }
 .tutor-start p { margin: 0; font-size: 1.1rem; }
 @media (max-width: 800px) { .tutor-session { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; height: auto; min-height: calc(100vh - 64px); } }
@@ -6409,24 +6426,20 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .sm-board-problem-pinned { margin: 4px 4px 14px; box-shadow: var(--shadow-md, 0 4px 16px rgba(0,0,0,.08)); border-color: var(--accent); border-width: 1.5px; }
 .tutor-board .sm-board-problem-pinned { margin: 4px 4px 18px; }
 
-/* ── Tutor Session: Desmos tools panel (the student-usable Desmos place) ──────
-   Sits at the top of the board pane, above the board body: collapsed it's one quiet toggle, expanded it
-   puts the live calculator between the pane header and the board so the figure tool pairs with the
-   lesson's visuals. */
-.tutor-desmos { flex: 0 0 auto; border-bottom: 1px solid var(--line); background: var(--surface); }
-.tutor-desmos-toggle { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 16px; background: none; border: none; font-family: inherit; font-size: 13px; font-weight: 600; color: var(--ink-2); cursor: pointer; }
-.tutor-desmos-toggle:hover { color: var(--ink); }
-.tutor-desmos-glyph { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: var(--radius-pill); background: var(--accent-soft); color: var(--accent); font-size: 12px; font-style: italic; font-weight: 700; }
-.tutor-desmos-chev { margin-left: auto; font-size: 11px; }
-.tutor-desmos-panel { display: flex; flex-direction: column; }
-.tutor-desmos-tabs { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 0 16px 8px; }
-.tutor-desmos-tab { padding: 4px 10px; border: 1px solid var(--line); border-radius: var(--radius-pill); background: none; font-family: inherit; font-size: 12px; font-weight: 600; color: var(--ink-2); cursor: pointer; }
-.tutor-desmos-tab.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+/* ── Tutor Session: Desmos (the student-usable Desmos place) ──────────────────
+   REPLACES the board pane entirely while open (reported live: squeezing a small iframe in above the board
+   felt cramped) — opened via a small button in the board pane's own title bar, closed via its own header's
+   "back to board" control. One calculator only (see desmosTools.ts) — no tab row. */
+.tutor-desmos-open { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; }
+.tutor-desmos-glyph { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: var(--radius-pill); background: var(--accent-soft); color: var(--accent); font-size: 11px; font-style: italic; font-weight: 700; flex: 0 0 auto; }
+.tutor-desmos-full { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.tutor-desmos-full-header { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--line); font-weight: 600; font-size: 13px; }
 .tutor-desmos-pop { margin-left: auto; font-size: 12px; color: var(--ink-2); text-decoration: none; }
 .tutor-desmos-pop:hover { color: var(--accent); }
-.tutor-desmos-frame-wrap { position: relative; height: min(52vh, 460px); }
-.tutor-desmos-frame { width: 100%; height: 100%; border: none; }
-.tutor-desmos-hint { margin: 0; padding: 6px 16px; font-size: 12px; color: var(--ink-2); border-top: 1px solid var(--line); }
+.tutor-desmos-close { flex: 0 0 auto; }
+.tutor-desmos-full-frame-wrap { flex: 1; min-height: 0; position: relative; }
+.tutor-desmos-frame { width: 100%; height: 100%; border: none; display: block; }
+.tutor-desmos-hint { margin: 0; padding: 6px 16px; font-size: 12px; color: var(--ink-2); border-top: 1px solid var(--line); flex: 0 0 auto; }
 
 /* THE BOARD AS A WORKSHEET — the board is a drafted lesson document, not a card feed. Header block (date +
    subject), quiet numbered sections in the margin, glyphs instead of badges, write-in animation for newly

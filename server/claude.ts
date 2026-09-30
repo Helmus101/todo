@@ -410,10 +410,24 @@ const NO_MARKDOWN_LINE = `\n\nPLAIN TEXT: task titles, "why", steps, context, sy
 // versa) — the reply should match what THEY just wrote, not silently answer back in the other language.
 // Appended AFTER languageLine in those two prompts specifically; task titles/steps/etc elsewhere still
 // always follow the fixed profile language.
+// Reproduced live: a conversation that correctly answered in English for several turns (matching the
+// student's own English messages) suddenly flipped to full French mid-conversation, right after two
+// consecutive short, language-neutral student replies ("i dont know", "i dont know" — a phrase that reads
+// the same regardless of which language the exchange is actually in). The rule as first written judged
+// language from ONLY "the student's own latest message" — fine when that message has real content to read,
+// but a short generic reply carries no language signal at all, and the model fell back to the strongly-worded
+// base LANGUAGE instruction (French) instead of the conversation's actual established language. Fixed by
+// making the rule explicit about what to do with a language-ambiguous message: keep using whatever language
+// THIS CONVERSATION has already been running in — never reset to the profile default just because the
+// newest message alone doesn't obviously signal one language over the other.
 const CHAT_LANGUAGE_OVERRIDE = `\n\nCHAT LANGUAGE: the LANGUAGE instruction above is the default, but for this ` +
-  `chat reply specifically, answer in whichever language the student's OWN latest message is actually written ` +
-  `in (French or English) — even if that's not their profile's usual language. If they switch languages ` +
-  `mid-conversation, follow the switch.\n`;
+  `chat reply specifically, answer in whichever language this conversation has actually been happening in — ` +
+  `even if that's not the profile's usual language. Judge this from the CONVERSATION AS A WHOLE (the message ` +
+  `history above, not just the newest line): if the student's latest message clearly signals a language, ` +
+  `follow it (and follow a genuine mid-conversation switch); but a short, generic reply that exists the same ` +
+  `in both languages — "idk", "ok", "yes", a bare number, "i dont know" — carries NO language signal on its ` +
+  `own, so on one of those, stay in whatever language the last few real turns were already in. NEVER reset to ` +
+  `the profile default mid-conversation just because the newest message alone is ambiguous.\n`;
 
 export function languageLine(p?: Profile): string {
   const lang = p?.language === "en" ? "en" : "fr";
@@ -5981,7 +5995,10 @@ const PRIMER_CLOSING_REMINDER =
   `asking one sharp question aimed at THEIR specific misconception first? If this is a new question/error ` +
   `and you haven't diagnosed yet, ask — don't explain. (2) Are you talking like a real person to a teenager ` +
   `(short, direct, respectful) rather than a lecture or a children's-book voice? (3) Is this reply short — ` +
-  `one idea, not a wall of text?`;
+  `one idea, not a wall of text? (4) LANGUAGE: what language has the student actually been writing in THIS ` +
+  `conversation (check their last few messages, not just their profile default)? Reproduced live: a chat that ` +
+  `correctly answered in English for several turns suddenly switched to French mid-conversation for no reason ` +
+  `— reply in the SAME language they've been using, every turn, even deep into a long exchange.`;
 
 /**
  * Reply in a per-task coaching thread. Grounded in that ONE task's own context/steps/why so the student
@@ -6671,14 +6688,16 @@ export async function chatAboutTask(
     `a fully finished one (the completion effect: doing the last step is where the learning happens), and ` +
     `they'll answer it in chat anyway. A problem for THEM to answer inline goes through CREATE_PROBLEM (it ` +
     `has the answer-checking), not here.\n\n` +
-    `THE DESMOS TOOLS ARE ONE CLICK AWAY — ROUTE THEM THERE. Directly above the board sits "Outils Desmos": the ` +
-    `full Desmos family (graphing, scientific, geometry, four-function) embedded live in the session, ready to ` +
-    `use. When what they need is a CURVE — trace a function, find where it crosses zero, test their own graph ` +
-    `guess, check their calculator steps — send them there with a concrete task ("ouvre les outils Desmos, tape ` +
-    `la fonction et dis-moi ce que tu vois entre 0 et 2"): a graph they operate themselves beats one they merely ` +
-    `watch, and it's the figure form board text can't give. If they ask for "des", "la calculatrice", a plot, or ` +
-    `to check a graph, that's this panel — never pretend to graph in chat. Don't write chat fake-graphs (slopes ` +
-    `guessed from memory): have them LOOK and report what the tool shows.\n\n` +
+    `DESMOS IS ONE CLICK AWAY — ROUTE THEM THERE. A small "Desmos" button in the board pane's own header opens ` +
+    `the real Desmos graphing calculator, taking over that pane until they close it (it temporarily replaces ` +
+    `the board view, not a small embed alongside it). When what they need is a CURVE — trace a function, find ` +
+    `where it crosses zero, test their own graph guess, check a calculation — send them there with a concrete ` +
+    `task ("ouvre Desmos, trace la fonction et dis-moi ce que tu vois entre 0 et 2"): a graph they operate ` +
+    `themselves beats one they merely watch, and it's the figure form board text can't give. If they ask for ` +
+    `"des", "la calculatrice", a plot, or to check a graph, that's this tool — never pretend to graph in chat. ` +
+    `Don't write chat fake-graphs (slopes guessed from memory): have them LOOK and report what the tool shows. ` +
+    `It's ONE calculator (graphing) — don't reference "scientific"/"geometry"/"four-function" variants, ` +
+    `they no longer exist here.\n\n` +
 
     `KEEP GETTING SMARTER ABOUT THEM: use "remember" whenever they mention something durable, worth knowing ` +
     `next time — a recurring struggle with a specific topic, a professor's grading quirk or class pattern ` +

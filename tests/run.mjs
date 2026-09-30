@@ -3079,28 +3079,28 @@ section("Tutor Desmos tools — the student-usable place (contract + pins)");
   // echoGuard/speechErrors are; the panel and wiring are pinned by source, the way this file pins
   // TutorSession behavior everywhere else.
   const { DESMOS_TOOLS, desmosToolUrl, isDesmosEmbedUrl } = await import("../client/tutor/desmosTools.ts");
-  check("the four public Desmos calculators are the tool family", DESMOS_TOOLS.length === 4 && DESMOS_TOOLS.map((t) => t.id).join(",") === "graphing,scientific,geometry,fourfunction");
-  check("each tool carries a real desmos.com embed path and bilingual label", DESMOS_TOOLS.every((t) => /^https:\/\/www\.desmos\.com\//.test(t.path) && t.label.length === 2 && t.hint.length === 2));
-  check("desmosToolUrl resolves each id (and falls back to graphing)", desmosToolUrl("scientific") === "https://www.desmos.com/scientific" && desmosToolUrl("nope" || "graphing") === "https://www.desmos.com/calculator");
-  check("the embed allowlist accepts exactly the four calculator pages (any other URL is refused)", ["https://www.desmos.com/calculator", "https://desmos.com/geometry", "https://www.desmos.com/fourfunction/"].every(isDesmosEmbedUrl) && !["http://www.desmos.com/calculator", "https://evil.test/calculator", "https://www.desmos.com/calculator/abc123", "javascript:alert(1)"].some(isDesmosEmbedUrl));
+  check("ONE Desmos calculator only (graphing) — the tab picker was dropped", DESMOS_TOOLS.length === 1 && DESMOS_TOOLS[0].id === "graphing" && DESMOS_TOOLS[0].path === "https://www.desmos.com/calculator");
+  check("the tool carries a real desmos.com embed path and bilingual label", DESMOS_TOOLS.every((t) => /^https:\/\/www\.desmos\.com\//.test(t.path) && t.label.length === 2 && t.hint.length === 2));
+  check("desmosToolUrl resolves the id (and falls back to graphing)", desmosToolUrl("graphing") === "https://www.desmos.com/calculator" && desmosToolUrl("nope") === "https://www.desmos.com/calculator");
+  // isDesmosEmbedUrl still validates all four URL shapes — a shared contract with Study Mode's own
+  // DesmosArtifact.tsx, which is untouched; only the Tutor's own exposed tool list shrank to one.
+  check("the embed allowlist still accepts all four calculator page shapes (shared contract with Study Mode)", ["https://www.desmos.com/calculator", "https://desmos.com/geometry", "https://www.desmos.com/fourfunction/"].every(isDesmosEmbedUrl) && !["http://www.desmos.com/calculator", "https://evil.test/calculator", "https://www.desmos.com/calculator/abc123", "javascript:alert(1)"].some(isDesmosEmbedUrl));
 
   const tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
   const desmosCompSrc = readFileSync(new URL("../client/tutor/TutorDesmos.tsx", import.meta.url), "utf8");
-  check("the board pane renders the Desmos panel (the tutor's one place for it)", /<TutorDesmos \/>/.test(tutorSrc) && tutorSrc.indexOf("<TutorDesmos />") < tutorSrc.indexOf("tutor-board-body"));
+  check("opening Desmos REPLACES the board pane's content (not a panel above it)", /desmosOpen \? \(\s*<TutorDesmos/.test(tutorSrc) && /\) : \(/.test(tutorSrc));
+  check("closing Desmos is wired back to the board via onClose", /onClose=\{\(\) => setDesmosOpen\(false\)\}/.test(tutorSrc) && /onClose \}: \{ onClose: \(\) => void \}/.test(desmosCompSrc));
   check("the panel embeds Desmos in a sandboxed iframe, never top-navigation", (/sandbox="([^"]*)"/.exec(desmosCompSrc) || [])[1] === "allow-scripts allow-same-origin allow-popups" && /allow="fullscreen"/.test(desmosCompSrc));
-  check("switching tools remounts the iframe via key (each calculator starts clean)", /key=\{toolId\}/.test(desmosCompSrc));
-  check("the panel is collapsed until the student opens it (manual, like the rest of the tutor)", /useState\(false\)/.test(desmosCompSrc) && /aria-expanded=\{open\}/.test(desmosCompSrc));
-  check("every tab comes from the shared tool family, not a hand-typed URL", /DESMOS_TOOLS\.map/.test(desmosCompSrc) && /desmosToolUrl\(toolId\)/.test(desmosCompSrc) && !/src="https:\/\/www\.desmos/.test(desmosCompSrc));
+  check("no tab-switcher UI remains — one tool, no tablist", !/role="tablist"/.test(desmosCompSrc) && !/tutor-desmos-tab\b/.test(desmosCompSrc));
+  check("the embed URL comes from the shared tool family, not a hand-typed URL", /desmosToolUrl\(tool\.id\)/.test(desmosCompSrc) && !/src="https:\/\/www\.desmos/.test(desmosCompSrc));
   const stylesSrc2 = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
-  check("the Desmos panel styles exist", /\.tutor-desmos-toggle/.test(stylesSrc2) && /\.tutor-desmos-frame/.test(stylesSrc2) && /\.tutor-desmos-tab\.on/.test(stylesSrc2));
+  check("the Desmos full-pane styles exist", /\.tutor-desmos-full\b/.test(stylesSrc2) && /\.tutor-desmos-frame\b/.test(stylesSrc2) && !/\.tutor-desmos-tab\.on/.test(stylesSrc2));
 
-  // The tutor prompt must route students to the panel — otherwise the tool is a shelf decoration. Pinned
-  // in the BOARD block (the Desmos toggle sits directly above the board pane), where the guidance about
-  // the session's visual surfaces lives.
+  // The tutor prompt must route students to the tool — otherwise it's a shelf decoration.
   const claudeSrc6 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
-  const desmosPrompt = claudeSrc6.slice(claudeSrc6.indexOf("THE DESMOS TOOLS ARE ONE CLICK AWAY"), claudeSrc6.indexOf("KEEP GETTING SMARTER ABOUT THEM"));
-  check("the tutor prompt routes students to the Desmos panel with a concrete task", /THE DESMOS TOOLS ARE ONE CLICK AWAY/.test(claudeSrc6) && /ouvre les outils Desmos/.test(desmosPrompt));
-  check("the prompt names the tool family the panel actually offers", /graphing, scientific, geometry, four-function/.test(desmosPrompt));
+  const desmosPrompt = claudeSrc6.slice(claudeSrc6.indexOf("DESMOS IS ONE CLICK AWAY"), claudeSrc6.indexOf("KEEP GETTING SMARTER ABOUT THEM"));
+  check("the tutor prompt routes students to Desmos with a concrete task", /DESMOS IS ONE CLICK AWAY/.test(claudeSrc6) && /ouvre Desmos/.test(desmosPrompt));
+  check("the prompt reflects the single-calculator reality, not the old four-tool family", /ONE calculator \(graphing\)/.test(desmosPrompt) && !/graphing, scientific, geometry, four-function/.test(desmosPrompt));
   check("the prompt bans fake chat graphs — the student operates the real tool", /never pretend to graph in chat/.test(desmosPrompt));
   const desmosArtifactSrc = readFileSync(new URL("../client/study/artifacts/DesmosArtifact.tsx", import.meta.url), "utf8");
   check("the embed contract matches Study Mode's existing artifact (sandbox, no top-navigation)", /sandbox="allow-scripts allow-same-origin allow-popups"/.test(desmosArtifactSrc));

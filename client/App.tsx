@@ -957,8 +957,10 @@ export function App() {
     <LangContext.Provider value={status?.language === "en" ? "en" : "fr"}>
     <NotifyContext.Provider value={notify}>
     <div className="app">
-      {/* Sidebar */}
-      <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
+      {/* Sidebar — hidden in Tutor: that screen is meant to be a full-screen, focused surface (reported
+          live), not the dashboard's usual chrome. TutorSession gets its own small back control instead
+          (onExit prop above) so there's still exactly one way out, just not the full nav. */}
+      {route !== "tutor" && <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
         <div className="sidebar-brand">
           <Logo size={20} /> Otto
         </div>
@@ -1024,31 +1026,30 @@ export function App() {
             </span>
           </a>
         </div>
-      </aside>
+      </aside>}
 
-      {/* Mobile sidebar toggle */}
-      <button 
-        className="sidebar-toggle" 
+      {/* Mobile sidebar toggle — also hidden in Tutor, same reasoning as the sidebar itself. */}
+      {route !== "tutor" && <button
+        className="sidebar-toggle"
         onClick={() => setSidebarOpen(!sidebarOpen)}
         aria-label="Toggle sidebar"
       >
         {sidebarOpen ? <X /> : <Menu />}
-      </button>
+      </button>}
 
       {/* Main content area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <header className="topbar">
+        {route !== "tutor" && <header className="topbar">
           <div className="topbar-title">{(() => {
             if (route === "settings") return en ? "Settings" : "Réglages";
             if (route === "log") return en ? "Journal" : "Journal";
             if (route === "study") return en ? "Study" : "Réviser";
-            if (route === "tutor") return en ? "Tutor" : "Tuteur";
             if (route === "errorlog") return en ? "Error log" : "Erreurs";
             return en ? "Tasks" : "Tâches";
           })()}</div>
           <div className="spacer" />
           {(route === "" || route === "tasks" || route.startsWith("task/")) && (status.googleConnected || status.pronoteConnected) && <button className="btn ghost" disabled={busy} onClick={() => void generate()}>{busy ? (status?.language === "en" ? "Searching…" : "Recherche…") : (status?.language === "en" ? "Refresh" : "Actualiser")}</button>}
-        </header>
+        </header>}
 
       {/* Hoisted out of the dashboard-only branch below (where it used to live, inside the `route ===
           "settings" ? ... : (...)` ternary's else-arm) so it renders on EVERY route, not just /tasks —
@@ -1069,7 +1070,7 @@ export function App() {
       ) : route === "log" ? (
         <StudyLogPage lang={status?.language} tasks={tasks} status={status} />
       ) : route === "tutor" ? (
-        <TutorSession userId={status?.user || null} />
+        <TutorSession userId={status?.user || null} onExit={() => navigate("tasks")} />
       ) : route === "study" ? (
         <StandaloneStudyEntry tasks={tasks} setTasks={setTasks} status={status} notify={notify} navigate={navigate} />
       ) : route === "errorlog" ? (
