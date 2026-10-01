@@ -83,7 +83,7 @@ export function ToolsDrawer({ template, onClose, onAddTool, onAddLink, backgroun
           />
           <button className="sm-btn sm-btn-ghost sm-btn-sm" onClick={submitLink} disabled={!linkUrl.trim()}>{L("Ouvrir", "Open")}</button>
         </div>
-        {linkError && <p className="sm-bg-filename" style={{ color: "var(--danger, #c0392b)" }}>{linkError}</p>}
+        {linkError && <p className="sm-bg-filename" style={{ color: "var(--vermilion)" }}>{linkError}</p>}
 
         <div className="sm-tools-divider">{L("Ajouter un outil", "Add a tool")}</div>
         <div className="sm-tools-grid">

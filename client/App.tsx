@@ -142,9 +142,10 @@ const STUDY_MODE_ENABLED = false;
 
 /** The Otto mark — an "O" (for Otto) with a checkmark inside it, not a separate badge bolted onto a
  *  generic shape: the letter and the "done" meaning read as ONE mark, not two ideas glued together. The
- *  ring inherits currentColor (ink, inverts in dark mode); the checkmark is always the warm orange brand
- *  accent (#EA580C), the one fixed accent color across the whole app — it's the one thing that never
- *  changes regardless of theme, same as every other accent use elsewhere. Deliberately legible at
+ *  ring inherits currentColor (ink, inverts in dark mode); the checkmark is always the warm orange
+ *  --brand-mark token — a narrowly-scoped single-purpose color (just this mark), deliberately NOT a
+ *  second general-purpose UI accent (the rest of the app has exactly one: --accent, blue) — so it never
+ *  changes regardless of theme, unlike --accent which does swap for dark mode. Deliberately legible at
  *  favicon size: a checkmark stays readable
  *  at 16px in a way finer geometric detail doesn't, which the previous half-moon-cut-by-a-line mark wasn't
  *  reliably (it read as a blank shape at tab-icon scale, per direct feedback). */
@@ -152,7 +153,7 @@ function Logo({ size = 22 }: { size?: number }) {
   return (
     <svg className="logo" width={size} height={size} viewBox="0 0 48 48" fill="none" aria-hidden="true">
       <circle cx="24" cy="24" r="18" stroke="currentColor" strokeWidth="4" fill="none" />
-      <path d="M15 25 L21 31 L33 17" stroke="#EA580C" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <path d="M15 25 L21 31 L33 17" stroke="var(--brand-mark)" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
     </svg>
   );
 }
@@ -3225,7 +3226,7 @@ function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status
     reset: L("Choisis un nouveau mot de passe", "Choose a new password"),
   };
   const subs: Record<typeof mode, string> = {
-    signup: L("Deux champs et c'est parti — tu connectes Pronote ensuite.", "Two fields and you're in — connect Pronote next."),
+    signup: L("30 secondes pour t'inscrire — tu connectes Pronote ensuite.", "30 seconds to sign up — connect Pronote next."),
     login: L("Connecte-toi pour reprendre où tu en étais.", "Log in to pick up where Otto left off."),
     forgot: L("On t'envoie un lien pour en choisir un nouveau.", "We'll email you a link to pick a new one."),
     reset: L("Ce lien ne fonctionne qu'une seule fois.", "This link only works once."),
@@ -3311,78 +3312,8 @@ function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status
   );
 }
 
-/** A real, interactive 3-step demonstration of the Apple-style progressive disclosure workflow */
-function Walkthrough({ lang }: { lang: "fr" | "en" }) {
-  const en = lang === "en";
-  const L = (fr: string, e: string) => (en ? e : fr);
-  const STAGES = [
-    { n: "01", label: L("Lecture & Synthèse", "Smart Scan") },
-    { n: "02", label: L("Préparation du plan", "Focal Plan") },
-    { n: "03", label: L("Action de l'élève", "Your Action") },
-  ] as const;
-  const [stage, setStage] = useState(0);
-  const [done, setDone] = useState(false);
-  const go = (i: number) => { setStage(i); if (i !== 2) setDone(false); };
-
-  return (
-    <div className="walkthrough">
-      <div className="walk-tabs segmented-control" role="tablist" aria-label={L("Étapes de fonctionnement", "How it works stages")}>
-        {STAGES.map((s, i) => (
-          <button key={i} type="button" role="tab" aria-selected={stage === i}
-            className={`walk-tab segmented-item ${stage === i ? "active" : ""}`} onClick={() => go(i)}>
-            <span className="walk-tab-n">{s.n}</span> <span className="walk-tab-label">{s.label}</span>
-          </button>
-        ))}
-      </div>
-
-      <div className="walk-panel glass-panel">
-        {stage === 0 && (
-          <div className="walk-scan">
-            <div className="walk-row"><span className="chip chip-accent">{L("Maths", "Math")}</span><span className="walk-row-text">{L("Contrôle vendredi — Suites numériques & récurrence", "Test Friday — Sequences & Induction")}</span><span className="walk-check">✓ {L("analysé", "analyzed")}</span></div>
-            <div className="walk-row"><span className="chip chip-muted">{L("Physique", "Physics")}</span><span className="walk-row-text">{L("DM à rendre lundi — Lois de Newton & mécanique", "Homework due Monday — Newton's Laws")}</span><span className="walk-check">✓ {L("analysé", "analyzed")}</span></div>
-            <div className="walk-row"><span className="chip chip-muted">{L("Philo", "Philosophy")}</span><span className="walk-row-text">{L("Dissertation — La liberté est-elle une illusion ?", "Essay — Is free will an illusion?")}</span><span className="walk-check">✓ {L("analysé", "analyzed")}</span></div>
-            <p className="walk-caption">{L("Otto analyse tes cours et isole ce qui demande ton attention aujourd'hui. Zéro bruit, priorité absolue.", "Otto filters the signal from the noise, surfacing only what demands your focus today.")}</p>
-          </div>
-        )}
-        {stage === 1 && (
-          <div className="walk-card">
-            <div className="card-header-line">
-              <div className="card-title">{L("Réviser le contrôle de Maths", "Prepare for Friday's Math Exam")}</div>
-              <span className="chip chip-bad">{L("Priorité haute", "High Priority")}</span>
-            </div>
-            <h4 className="walk-h">{L("Contexte & Sources", "Context & Sources")} <span className="chip chip-muted">Pronote · Drive</span></h4>
-            <p className="context-text">{L("Évaluation coefficient 4 sur les suites numériques. Fiche de révision synthétisée et 3 exercices clés sélectionnés.", "High-weight assessment on sequence limits. Synthesized revision sheet and 3 key exercises selected.")}</p>
-            <h4 className="walk-h">{L("Prêt pour toi", "Ready for you")}</h4>
-            <ul className="bullets"><li>{L("Fiche synthétique : définitions clés, formules indispensables, méthode type", "Key formulas, definitions, and step-by-step problem-solving methods")}</li></ul>
-            <p className="walk-caption">{L("Toutes les ressources sont condensées et prêtes. Tu attaques directement l'essentiel.", "Everything is organized and ready so you can focus 100% of your energy on learning.")}</p>
-          </div>
-        )}
-        {stage === 2 && (
-          <div className="walk-card">
-            <p className="walk-draft-body">
-              <span className="step-num">1</span> {L("Relire la synthèse du cours (10 min)", "Review core concepts & formulas (10 min)")}<br/>
-              <span className="step-num">2</span> {L("Résoudre l'exercice type #3 (15 min)", "Solve representative problem #3 (15 min)")}<br/>
-              <span className="step-num">3</span> {L("Auto-évaluation avec le corrigé détaillé (5 min)", "Self-check against the solution guide (5 min)")}
-            </p>
-            {!done ? (
-              <button className="btn primary send-btn" onClick={() => setDone(true)}>{L("Valider l'étape", "Complete step")}</button>
-            ) : (
-              <button className="btn primary send-btn sent" disabled>{L("Validé ✓", "Completed ✓")}</button>
-            )}
-            <p className="walk-caption">{done ? L("C'est toi qui comprends et valides. Otto reste le guide.", "Your active effort, your mastery. Otto provides the path.") : L("Un guidage pas à pas : tu restes l'acteur de ta réussite.", "Step-by-step guidance keeping you in the driver's seat.")}</p>
-          </div>
-        )}
-      </div>
-
-      <div className="walk-nav">
-        <button className="btn ghost" disabled={stage === 0} onClick={() => go(stage - 1)}>{L("← Précédent", "← Previous")}</button>
-        <button className="btn ghost" disabled={stage === STAGES.length - 1} onClick={() => go(stage + 1)}>{L("Étape suivante →", "Next step →")}</button>
-      </div>
-    </div>
-  );
-}
-
-/** Marketing landing (signed out, route /). Apple Design aesthetic with elevated typography and copywriting. */
+/** Marketing landing (signed out, route /). Plain white canvas, sharp positioning — one screen per
+ *  idea, nothing decorative. Deliberately text-only: no product mock, no demo window. */
 // Exported (not just used internally) so scripts/prerender-landing.tsx can render it in isolation at build
 // time — the only piece of this whole SPA that gets static HTML pre-baked into dist/index.html, since it's
 // the only screen a logged-out visitor or a non-JS crawler/link-unfurler ever needs to see real content
@@ -3390,24 +3321,6 @@ function Walkthrough({ lang }: { lang: "fr" | "en" }) {
 export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChange: (v: "fr" | "en") => void }) {
   const en = lang === "en";
   const L = (fr: string, e: string) => (en ? e : fr);
-  const DRAFT = L(
-    "1. Relire la synthèse (10 min)  2. Faire l'exercice #3 (15 min)  3. Vérifier la correction (5 min)",
-    "1. Review key formulas (10 min)  2. Complete problem #3 (15 min)  3. Check solution guide (5 min)",
-  );
-  const [typed, setTyped] = useState("");
-  const reduced = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-  useReveal();
-
-  useEffect(() => {
-    setTyped("");
-    if (reduced) { setTyped(DRAFT); return; }
-    let i = 0; const start = setTimeout(function tick() {
-      i++; setTyped(DRAFT.slice(0, i));
-      if (i < DRAFT.length) setTimeout(tick, 24 + (DRAFT[i] === " " ? 35 : 0));
-    }, 800);
-    return () => clearTimeout(start);
-  }, [reduced, DRAFT]);
 
   return (
     <div className="landing landing-simple">
@@ -3429,8 +3342,8 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
 
         <p className="hero-sub-simple">
           {L(
-            "Otto synchronise Pronote et tes agendas pour transformer tes devoirs et contrôles en un plan quotidien simple — avec un tuteur IA Socratique qui t'aide sur ce que tu ne comprends pas encore.",
-            "Otto syncs Pronote and your calendars to turn homework and exams into a simple daily plan — with a Socratic AI tutor for concepts you don't master yet.",
+            "Tes devoirs et contrôles deviennent un plan quotidien clair — et un tuteur t'aide sur ce que tu ne comprends pas encore.",
+            "Homework and exams become a clear daily plan — with a tutor for what you don't understand yet.",
           )}
         </p>
 
@@ -3443,16 +3356,16 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
       {/* Simple Features */}
       <section className="features-simple">
         <div className="feature-simple">
-          <h3>{L("Tuteur Socratique IA", "Socratic AI Tutor")}</h3>
-          <p>{L("Un tuteur qui t'aide sur les notions difficiles par des questions guidées, sans jamais faire les devoirs à ta place.", "A tutor that guides you through tough concepts with questions, never doing your work for you.")}</p>
+          <h3>{L("Tuteur Socratique", "Socratic tutor")}</h3>
+          <p>{L("Des questions guidées sur les notions difficiles — jamais les devoirs faits à ta place.", "Guided questions on tough concepts — never the homework done for you.")}</p>
         </div>
         <div className="feature-simple">
-          <h3>{L("Détection & Plan Proactif", "Proactive Detection & Plan")}</h3>
-          <p>{L("Importe tes devoirs depuis Pronote et organise automatiquement tes étapes de travail de la journée.", "Imports your homework from Pronote to auto-organize your step-by-step daily plan.")}</p>
+          <h3>{L("Plan quotidien", "Daily plan")}</h3>
+          <p>{L("Tes devoirs importés, découpés en étapes courtes, dans le bon ordre.", "Homework imported, split into short steps, in the right order.")}</p>
         </div>
         <div className="feature-simple">
-          <h3>{L("Répétition Espacée & Quiz", "Spaced Repetition & Quizzes")}</h3>
-          <p>{L("Génère des fiches de révision et des quiz optimisés après chaque séance pour une mémorisation durable.", "Auto-generates flashcards and quizzes optimized for long-term retention after study sessions.")}</p>
+          <h3>{L("Répétition espacée", "Spaced repetition")}</h3>
+          <p>{L("Fiches et quiz qui reviennent juste avant que tu oublies.", "Flashcards and quizzes that return right before you'd forget.")}</p>
         </div>
       </section>
 
@@ -3511,18 +3424,14 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
         </div>
       </section>
 
-      {/* Footer — kept but simplified */}
+      {/* Footer — one row: brand, links, copyright */}
       <footer className="landing-foot-simple">
         <div className="foot-top-simple">
-          <div className="foot-brand-simple">
-            <span className="brand"><Logo size={20} /> <span className="brand-name">Otto</span></span>
-          </div>
+          <span className="brand"><Logo size={20} /> <span className="brand-name">Otto</span></span>
           <nav className="foot-group-simple">
             <a href="/privacy">{L("Confidentialité", "Privacy")}</a>
             <a href="/terms">{L("Conditions", "Terms")}</a>
           </nav>
-        </div>
-        <div className="foot-bottom-simple">
           <span>© 2026 Otto</span>
         </div>
       </footer>
@@ -3569,7 +3478,7 @@ function UnlimitedPage({ status, onDone }: { status: ConnectionStatus; onDone: (
         <a className="legal-back" href="/">← {en ? "Back to Otto" : "Retour à Otto"}</a>
       </main>
       <footer className="legal-foot">
-        <span className="foot-mit">© 2026 Otto · {en ? "Crafted with Apple Design Principles" : "Conçu avec les principes Apple Design"}</span>
+        <span className="foot-mit">© 2026 Otto</span>
       </footer>
     </div>
   );
@@ -3599,7 +3508,7 @@ function LegalPageBody({ kind }: { kind: "privacy" | "terms" }) {
         <a className="legal-back" href="/">{L("← Retour à Otto", "← Back to Otto")}</a>
       </main>
       <footer className="legal-foot">
-        <span className="foot-mit">© 2026 Otto · {L("Conçu avec les principes Apple Design", "Crafted with Apple Design Principles")}</span>
+        <span className="foot-mit">© 2026 Otto</span>
       </footer>
     </div>
   );
@@ -3795,7 +3704,7 @@ function ResearchPageBody() {
         <a className="legal-back" href="/">{L("← Retour à Otto", "← Back to Otto")}</a>
       </main>
       <footer className="legal-foot">
-        <span className="foot-mit">© 2026 Otto · {L("Conçu avec les principes Apple Design", "Crafted with Apple Design Principles")}</span>
+        <span className="foot-mit">© 2026 Otto</span>
       </footer>
     </div>
   );

@@ -8,7 +8,7 @@
   },
   "regions": ["cdg1"],
   "crons": [
-    { "path": "/api/cron/drain", "schedule": "0 12 * * *" }
+    { "path": "/api/cron/drain", "schedule": "30 15 * * *" }
   ],
   "rewrites": [
     { "source": "/api/:path*", "destination": "/api" },

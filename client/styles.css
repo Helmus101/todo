@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   Otto — Apple-inspired design system.
-   Fluid interfaces, spring animations, translucency, and refined typography following
-   Apple's Human Interface Guidelines and WWDC design talks.
+   Otto — minimalist design system (Tally.so inspired).
+   Clean white canvas, near-black ink, one restrained accent colour — plain, legible,
+   deliberately unadorned rather than skeuomorphic. See the :root palette below.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* Import Inter font for Apple-like typography with optical sizing. 450/550/650 added alongside the original four (400/500/
@@ -27,15 +27,16 @@
   --line-soft: #F4F4F5;
   --line-glass: #E4E4E7;
   
-  /* Accent: blue primary, orange secondary */
+  /* Accent: ONE restrained blue, everywhere in the UI (buttons, highlights, focus states) — see the
+     "one accent color" rule. --brand-mark is deliberately NOT a second UI accent: it's the fixed orange
+     used only for the Logo's checkmark, the same across every theme (never swapped for dark mode, unlike
+     --accent above), so it stays its own narrowly-named token instead of masquerading as --accent-2. */
   --accent: #2563EB;
   --accent-hover: #1D4ED8;
   --accent-active: #1E40AF;
   --accent-soft: rgba(37, 99, 235, 0.06);
   --accent-rgb: 37, 99, 235;
-  --accent-2: #EA580C;
-  --accent-2-soft: rgba(234, 88, 12, 0.08);
-  --accent-2-rgb: 234, 88, 12;
+  --brand-mark: #EA580C;
   --focus-ring: var(--accent);
   
   --bg-2: #F4F4F5;
@@ -139,10 +140,7 @@
     --accent-active: #1D4ED8;
     --accent-soft: rgba(96, 165, 250, 0.1);
     --accent-rgb: 96, 165, 250;
-    --accent-2: #FB923C;
-    --accent-2-soft: rgba(251, 146, 60, 0.1);
-    --accent-2-rgb: 251, 146, 60;
-    
+
     --bg-2: #27272A;
     --bg-3: #3F3F46;
     --vermilion: #F87171;
@@ -1679,39 +1677,6 @@ input:focus, textarea:focus {
 .history-list li { font-size: var(--text-sm); color: var(--ink-2); line-height: 1.5; }
 .history-when { color: var(--ink-3); margin-right: 6px; }
 
-/* Landing-page interactive walkthrough — reuses card/chip/sendable classes so what a visitor sees here
-   is the real product's shape, not a bespoke mockup that could drift out of sync with it. */
-.walkthrough { margin-top: var(--space-6); }
-.walk-tabs { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-4); }
-.walk-tab {
-  display: flex; align-items: center; gap: var(--space-2); padding: 10px 16px; border-radius: var(--radius);
-  border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); font-size: var(--text-base);
-  font-weight: var(--weight-medium); cursor: pointer; 
-  /* Apple Design §1 — instant feedback on interaction */
-  transition: border-color var(--duration-instant) var(--ease-spring), color var(--duration-instant) var(--ease-spring), background var(--duration-instant) var(--ease-spring);
-}
-.walk-tab:hover { color: var(--ink-1); background: var(--hover-wash); }
-.walk-tab:active { transform: scale(0.97); }
-.walk-tab.active { border-color: var(--accent); color: var(--accent); }
-.walk-tab-n { font-size: var(--text-xs); font-weight: 700; opacity: 0.6; }
-.walk-panel {
-  border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
-  padding: 22px; min-height: 180px;
-}
-.walk-scan { display: flex; flex-direction: column; gap: 10px; }
-.walk-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: var(--text-base); }
-/* min-width was 200px — inside a 320px viewport that, plus the fixed-width chip/check sibling, didn't
-   leave room to fit and forced horizontal overflow instead of wrapping. flex:1 with min-width:0 still
-   grows to fill the row on wider screens; the text itself wraps internally when it must. */
-.walk-row-text { color: var(--ink-2); flex: 1; min-width: 0; }
-.walk-check { font-size: 12px; color: var(--accent); font-weight: 600; white-space: nowrap; }
-.walk-caption { margin-top: 14px; font-size: var(--text-sm); color: var(--ink-3); }
-.walk-card .card-title { font-size: var(--text-md); font-weight: var(--weight-semibold); margin-bottom: var(--space-2); }
-.walk-h { font-size: var(--text-sm); text-transform: uppercase; letter-spacing: .02em; color: var(--ink-3); margin: 16px 0 6px; }
-.walk-draft-body { font-size: var(--text-base); line-height: 1.6; color: var(--ink-2); margin: 4px 0 14px; }
-.walk-nav { display: flex; justify-content: space-between; margin-top: 14px; }
-@media (max-width: 640px) { .walk-tabs { flex-direction: column; } }
-
 .links { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; }
 .links a { font-size: 13px; font-weight: var(--weight-medium); color: var(--accent); }
 .links a:hover { text-decoration: underline; }
@@ -2614,17 +2579,6 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   font-size: 13.5px;
   font-weight: var(--weight-semibold);
 }
-.demo-sub-tag {
-  font-size: 10.5px;
-  font-weight: var(--weight-bold);
-  padding: 2px 7px;
-  border-radius: var(--radius-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.demo-sub-tag.maths   { background: var(--accent-2-soft); color: var(--accent-2); }
-.demo-sub-tag.physics { background: rgba(255, 149, 0, 0.12); color: var(--amber); }
-.demo-sub-tag.philo   { background: rgba(52, 199, 89, 0.12); color: var(--ok); }
 .demo-task-name {
   flex: 1;
   color: var(--ink);
@@ -2954,139 +2908,6 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   font-size: 14px;
   color: var(--ink-2);
   line-height: 1.55;
-}
-
-/* ─── Segmented Walkthrough ────────────────────────────────────────────────── */
-.walkthrough {
-  margin-top: var(--space-6);
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.segmented-control {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 4px;
-  padding: 4px;
-  border-radius: var(--radius-pill);
-  background: var(--bg-2);
-  border: 1px solid var(--line-soft);
-}
-.segmented-item {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 10px 14px;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  border: none;
-  font-size: 13.5px;
-  font-weight: var(--weight-medium);
-  color: var(--ink-2);
-  cursor: pointer;
-  /* Apple Design §1 — instant feedback on interaction */
-  transition: all var(--duration-instant) var(--ease-spring);
-}
-.segmented-item.active {
-  background: var(--surface);
-  color: var(--ink);
-  font-weight: var(--weight-semibold);
-  box-shadow: var(--shadow-sm);
-}
-.segmented-item:active {
-  transform: scale(0.97);
-}
-.walk-tab-n {
-  font-family: var(--mono);
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--accent);
-}
-
-.walk-panel {
-  padding: 24px;
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  box-shadow: var(--shadow-card);
-}
-.walk-scan {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.walk-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  font-size: 13.5px;
-}
-.walk-row-text {
-  flex: 1;
-  font-weight: var(--weight-medium);
-  color: var(--ink);
-}
-.walk-check {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--ok);
-}
-.walk-caption {
-  margin-top: 14px;
-  font-size: 13.5px;
-  color: var(--ink-2);
-  line-height: 1.5;
-}
-
-.walk-card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.card-header-line {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-.walk-h {
-  font-size: 12.5px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--ink-3);
-  margin-top: 8px;
-}
-.walk-draft-body {
-  font-size: 14px;
-  line-height: 1.7;
-  color: var(--ink);
-  padding: 14px;
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-}
-.step-num {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--accent);
-  color: #fff;
-  font-size: 11px;
-  font-weight: 700;
-  margin-right: 6px;
-}
-
-.walk-nav {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 8px;
 }
 
 /* ─── Research list — deliberately plain (no card/shadow/icon) to read as a citation, not a pitch ────── */
@@ -5477,7 +5298,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
  .sm-camera-video-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 8px; color: #fff; background: rgba(0,0,0,0.45); font-size: var(--text-xs); pointer-events: none; }
 
   .sm-camera-live-note { color: var(--ink-3); font-size: var(--text-xs); text-align: center; flex-shrink: 0; }
-  .sm-camera-error { color: var(--danger, #c0392b) !important; margin-top: var(--space-3) !important; }
+  .sm-camera-error { color: var(--vermilion) !important; margin-top: var(--space-3) !important; }
   .sm-camera-live .sm-btn { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
 
   /* ML loading / error overlays */
