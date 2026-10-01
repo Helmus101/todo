@@ -118,7 +118,7 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
       const response = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, lang: lang.slice(0, 2).toLowerCase() }),
       });
       // The barge-in cancel() landed while this fetch was in flight — this utterance is dead, don't
       // speak it and DON'T fall back to browser TTS (that would undo the interruption).

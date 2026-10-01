@@ -3333,7 +3333,7 @@ app.delete("/api/profile/:category/:index", requireAuth, async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de supprimer ça — réessaie.", "Couldn't delete that — try again.") }); }
 });
 
-// ── Study Mode ─────────────────────────────────────────────────────────────
+// ── Study Mode ────────────────────────────────────────────────────────���────
 // Get study session history
 app.get("/api/study/sessions", requireAuth, async (req, res) => {
   try {
@@ -3466,11 +3466,13 @@ const TTS_VOICE_BY_LANG: Record<string, string> = {
 const DEFAULT_TTS_VOICE = "en-US-AriaNeural";
 
 app.post("/api/tts", requireAuth, async (req, res) => {
-  const { text } = req.body;
+  const { text, lang: requestedLang } = req.body;
   if (!text || typeof text !== "string") { res.status(400).json({ error: M(req, "le texte est requis", "text is required") }); return; }
   if (!process.env.FREETTS_API_KEY) { res.status(501).json({ error: M(req, "Synthèse vocale non configurée", "TTS not configured") }); return; }
 
-  const voice = TTS_VOICE_BY_LANG[req.session.profile?.language || ""] || DEFAULT_TTS_VOICE;
+  const profileLang = req.session.profile?.language || "";
+  const lang = requestedLang === "fr" || requestedLang === "en" ? requestedLang : profileLang;
+  const voice = TTS_VOICE_BY_LANG[lang] || DEFAULT_TTS_VOICE;
   const key = process.env.FREETTS_API_KEY;
   try {
     // Step 1: request synthesis. Two retry voices on 4xx: the exact configured name could be retired by
