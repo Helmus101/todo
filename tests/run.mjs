@@ -860,8 +860,32 @@ check("...and NOT on the previous day (the timezone round-trip bug)", !wlTz.days
 section("trackLine vocabulary");
 check("mentions CAS/IA vocabulary regardless of profile", /CAS/.test(trackLine({ track: "ib" })) && /IA/.test(trackLine(undefined)));
 check("mentions Grand Oral / BFI vocabulary regardless of profile", /Grand Oral/.test(trackLine({})) && /BFI/.test(trackLine(undefined)));
-check("same output no matter what's in the (now-unused) track field", trackLine({ track: "ib" }) === trackLine(undefined) && trackLine({ track: "bac" }) === trackLine({}));
+// track now DOES change the output — see examStyleLine's own section below (IB/AP question-format
+// guidance). "bac"/unset/{} genuinely are identical (neither triggers an IB or AP block); "ib" differs
+// from them precisely because it adds that block, which the next section pins directly.
+check("bac and unset/{} track produce identical output (neither is IB or AP)", trackLine({ track: "bac" }) === trackLine({}) && trackLine({ track: "bac" }) === trackLine(undefined));
+check("ib track genuinely changes the output vs unset (adds exam-style guidance)", trackLine({ track: "ib" }) !== trackLine(undefined));
 check("no yearLevel line when profile has none", !/YEAR\/GRADE LEVEL/.test(trackLine(undefined)) && !/YEAR\/GRADE LEVEL/.test(trackLine({})));
+
+section("examStyleLine (via trackLine) — IB/AP/SAT/ACT question-format guidance (source pin)");
+{
+  const ibOut = trackLine({ track: "ib" });
+  check("IB block gives real command terms, not generic phrasing", /command terms/i.test(ibOut) && /"Evaluate"/.test(ibOut) && /"Describe"/.test(ibOut));
+  check("IB block mentions mark allocations and HL/SL depth", /\[2\]/.test(ibOut) && /HL means more depth/.test(ibOut));
+  check("IB block does NOT leak into a bac/unset profile", !/command terms/i.test(trackLine({ track: "bac" })) && !/command terms/i.test(trackLine(undefined)));
+
+  const apOut = trackLine({ track: "ap" });
+  check("AP block specifies FIVE MCQ options (A-E), not the generic 3-4", /FIVE options/.test(apOut) && /A-E/.test(apOut));
+  check("AP block distinguishes MCQ from FRQ with lettered, point-valued parts", /FRQ/.test(apOut) && /\(a\), \(b\), \(c\)/.test(apOut));
+  check("AP block does NOT leak into an IB or bac/unset profile", !/FRQ/.test(ibOut) && !/FRQ/.test(trackLine(undefined)));
+
+  // SAT/ACT guidance is NOT track-gated — it's always present, since it's the TASK (not the student's
+  // curriculum) that determines whether it applies; the model reads the task's own title/subject to decide.
+  const anyOut = trackLine(undefined);
+  check("SAT format guidance (evidence pairing, grid-in) is always present regardless of track", /grid-in/i.test(anyOut) && /best evidence for the answer to the previous question/.test(anyOut));
+  check("ACT format guidance (no evidence-pairing, dedicated Science section) is always present", /ACT:/.test(anyOut) && /SCIENCE section/.test(anyOut));
+  check("SAT and ACT guidance is identical across tracks (not curriculum-specific)", trackLine({ track: "ib" }).includes("GRID-IN") === trackLine({ track: "ap" }).includes("GRID-IN"));
+}
 check("yearLevel, when set, is injected verbatim for content calibration", trackLine({ yearLevel: "Terminale" }).includes("Terminale") && /YEAR\/GRADE LEVEL/.test(trackLine({ yearLevel: "Terminale" })));
 check("always tells the model not to state the obvious", /DON'T STATE THE OBVIOUS/.test(trackLine(undefined)));
 
@@ -1232,7 +1256,10 @@ section("Onboarding — short but complete (source pins)");
   const src = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
   const obStart = src.indexOf("function Onboarding(");
   const ob = src.slice(obStart, src.indexOf("/** Dedicated login", obStart));
-  check("onboarding runs exactly 5 steps", /const OB_STEPS = 5;/.test(src));
+  // Was 5 — bumped to 6 fixing a real bug: step 5 (the personalized "you're all set" done screen) existed
+  // in the JSX but nothing ever advanced to it, so it was dead/unreachable code and the progress dots
+  // undercounted by one. Now step 4's finish button actually advances into it instead of exiting directly.
+  check("onboarding runs exactly 6 steps (0-5, including the done screen)", /const OB_STEPS = 6;/.test(src));
   check("one connect step hosts BOTH Pronote and Google tiles (no second connect screen)", (ob.match(/<PronoteTile /g) || []).length === 1 && (ob.match(/<GoogleTiles /g) || []).length === 1);
   check("no leftover step bodies beyond OB_STEPS", !/step === 6 [\s\S]*step === 11/.test(ob));
   check("the feature tour covers Tasks, Journal, Error log and Tutor in ONE screen", /ob-tour-row/.test(ob) && (ob.match(/ob-tour-row/g) || []).length === 5 && /Journal/.test(ob) && /Error log/.test(ob));

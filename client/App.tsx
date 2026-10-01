@@ -208,6 +208,17 @@ const firstName = (user?: string) => {
   return local ? local.charAt(0).toUpperCase() + local.slice(1) : "";
 };
 
+/** Grows a textarea to fit its content on every keystroke, up to its CSS max-height (where overflow-y:auto
+ *  takes over and it scrolls instead of growing forever) — pairs with .errorlog-textarea's small one-line
+ *  min-height. Reset to "auto" before reading scrollHeight each time, or a textarea that's SHRUNK (deleted
+ *  text) would stay stuck at its previous, taller height — scrollHeight only ever reports the content's
+ *  actual size against the CURRENT height, not the natural one. */
+function autoGrowTextarea(e: React.FormEvent<HTMLTextAreaElement>): void {
+  const el = e.currentTarget;
+  el.style.height = "auto";
+  el.style.height = `${el.scrollHeight}px`;
+}
+
 // Survives a PronoteTile remount (e.g. navigating away from Settings and back) — see its own comment on
 // `optimistic` for why plain component state wasn't enough. sessionStorage (not localStorage): this is a
 // per-tab "trust my own recent action over a possibly-lagging read" signal, not something that should
@@ -1342,10 +1353,11 @@ export function App() {
  *  viewport (it rendered pinned to the top of the outer card instead of centered on screen). Portaling both
  *  modals to `<body>` sidesteps that entirely, for every popup, not just nested ones. */
 
-/** The IB "big project" milestone breakdown (Extended Essay/TOK/CAS/IA — see isBigIbProject in
- *  server/claude.ts) surfaced at DASHBOARD level, not just as a badge buried inside one task's step
- *  list. Entirely client-derived from tasks already in state — no fetch, no server endpoint — so it's
- *  a silent no-op for a BFI/other-track student (their tasks simply never have `targetDate` steps). */
+/** LEGACY SUPPORT ONLY: the IB "big project" milestone breakdown (Extended Essay/TOK/CAS/IA) this surfaced
+ *  was removed by direct request — server/claude.ts's writeStepsFromContext no longer ever creates a new
+ *  `targetDate` step, for IB or anything else. Kept so a task that already has `targetDate` steps from
+ *  before that change still renders correctly; entirely client-derived from tasks already in state (no
+ *  fetch, no server endpoint), so it's a permanent no-op for every task going forward. */
 function Milestones({ tasks }: { tasks: WebTask[] }) {
   const L = useLang();
   const [showAll, setShowAll] = useState(false);
@@ -1714,9 +1726,9 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
   // Track: onboarding's copy has always claimed this is "changeable any time in Settings" — it wasn't
   // actually wired up here, so that claim was false for anyone past onboarding. Same optimistic-save
   // pattern as language above.
-  const [track, setTrackState] = useState<"ib" | "bac" | "other" | undefined>(profile?.track);
+  const [track, setTrackState] = useState<"ib" | "ap" | "bac" | "other" | undefined>(profile?.track);
   useEffect(() => { setTrackState(profile?.track); }, [profile?.track]);
-  const saveTrack = async (v: "ib" | "bac" | "other") => {
+  const saveTrack = async (v: "ib" | "ap" | "bac" | "other") => {
     const prev = track;
     setTrackState(v);
     try { onChanged?.(await api.setProfilePreference("track", v)); }
@@ -1754,17 +1766,18 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
         </div>
       </div>
       <div className="set-row">
-        <span className="set-text"><b>{L("Ton parcours", "Your track")}</b><span className="settings-hint">{L("Vocabulaire et intégrations proposées. Pas en Bac ou IB (collège, etc.) ? Choisis « Autre ».", "Vocabulary and integrations offered. Not doing Bac or IB (middle school, etc.)? Pick \"Other\".")}</span></span>
+        <span className="set-text"><b>{L("Ton parcours", "Your track")}</b><span className="settings-hint">{L("Vocabulaire, intégrations proposées, et le style des exercices/quiz générés. Pas en Bac, IB ou AP (collège, etc.) ? Choisis « Autre ».", "Vocabulary, integrations offered, and the style of generated exercises/quizzes. Not doing Bac, IB, or AP (middle school, etc.)? Pick \"Other\".")}</span></span>
         <div className="lang-toggle">
           <button type="button" className={`btn xs ${track === "bac" ? "" : "ghost"}`} aria-pressed={track === "bac"} onClick={() => void saveTrack("bac")}>{L("Bac", "Bac")}</button>
           <button type="button" className={`btn xs ${track === "ib" ? "" : "ghost"}`} aria-pressed={track === "ib"} onClick={() => void saveTrack("ib")}>IB</button>
+          <button type="button" className={`btn xs ${track === "ap" ? "" : "ghost"}`} aria-pressed={track === "ap"} onClick={() => void saveTrack("ap")}>AP</button>
           <button type="button" className={`btn xs ${track === "other" ? "" : "ghost"}`} aria-pressed={track === "other"} onClick={() => void saveTrack("other")}>{L("Autre", "Other")}</button>
         </div>
       </div>
       <label className="set-row">
         <span className="set-text"><b>{L("Ta classe / ton année", "Your year/grade")}</b><span className="settings-hint">{L("Aide Otto à caler la difficulté des fiches et exercices sur ton niveau exact.", "Helps Otto match revision sheets and exercises to your exact level.")}</span></span>
         <input className="addinput" style={{ maxWidth: 160 }} maxLength={40}
-          placeholder={track === "ib" ? L("ex. DP1", "e.g. DP1") : track === "other" ? L("ex. 5ème", "e.g. Grade 7") : L("ex. Terminale", "e.g. Terminale")}
+          placeholder={track === "ib" ? L("ex. DP1", "e.g. DP1") : track === "ap" ? L("ex. Junior", "e.g. Junior year") : track === "other" ? L("ex. 5ème", "e.g. Grade 7") : L("ex. Terminale", "e.g. Terminale")}
           value={yearLevel} onChange={(e) => setYearLevelState(e.target.value)}
           onBlur={() => void saveYearLevel()} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
       </label>
@@ -1975,9 +1988,9 @@ function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
         <div className="addrow">
           <input className="addinput sm" placeholder={L("Matière (ex : Physique)", "Subject (e.g. Physics)")} value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={60} />
         </div>
-        <textarea className="studylog-textarea" rows={2} placeholder={L("Quelle était la question ?", "What was the question?")} value={question} onChange={(e) => setQuestion(e.target.value)} maxLength={500} />
-        <textarea className="studylog-textarea" rows={2} placeholder={L("Qu'as-tu eu faux ?", "What did you get wrong?")} value={mistake} onChange={(e) => setMistake(e.target.value)} maxLength={500} />
-        <textarea className="studylog-textarea" rows={2} placeholder={L("Que faire la prochaine fois ?", "What to do next time?")} value={fix} onChange={(e) => setFix(e.target.value)} maxLength={500} />
+        <textarea className="errorlog-textarea" rows={1} placeholder={L("Quelle était la question ?", "What was the question?")} value={question} onChange={(e) => setQuestion(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
+        <textarea className="errorlog-textarea" rows={1} placeholder={L("Qu'as-tu eu faux ?", "What did you get wrong?")} value={mistake} onChange={(e) => setMistake(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
+        <textarea className="errorlog-textarea" rows={1} placeholder={L("Que faire la prochaine fois ?", "What to do next time?")} value={fix} onChange={(e) => setFix(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
         <button type="button" className="btn primary" disabled={saving || !subject.trim() || !question.trim()} onClick={() => void add()}>
           {saving ? L("Enregistrement…", "Saving…") : L("Ajouter au journal", "Add to log")}
         </button>
@@ -2599,7 +2612,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
         <h3>{L("Sources", "Sources")}</h3>
         <p className="settings-hint">{L("Otto lit ces sources et prépare le travail — ", "Otto reads these sources and preps the work — ")}<b>{L("il n'envoie et ne rend jamais rien à ta place", "it never sends or hands anything in for you")}</b>.</p>
         <PronoteTile status={status} onStatusUpdate={onStatusUpdate} />
-        <GoogleTiles onChanged={onChanged} restricted={profile?.track !== "ib" && profile?.track !== "other"} />
+        <GoogleTiles onChanged={onChanged} restricted={profile?.track !== "ib" && profile?.track !== "ap" && profile?.track !== "other"} />
       </section>
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.09s" }}>
@@ -2945,7 +2958,12 @@ function GoogleTiles({ onChanged, restricted = true }: { onChanged?: () => void;
  *  welcome + name ��� how it works → connect Pronote → preferences → done. Pronote's connect opens in a new
  *  tab; we re-check on focus so the tile flips to ✓ when the user comes back. Shown once after sign-up;
  *  finishing (or "Skip") clears the otto-onboard flag. */
-const OB_STEPS = 5;
+// 6 screens, steps 0-5 (name, track, tour step 3, tour step 4, "where to find things", done). Was 5 while
+// step 5 (the personalized "you're all set" done screen, with the student's name + Pronote-aware copy)
+// existed in the JSX below but nothing ever advanced to it — step 4's button called onDone directly, so
+// that screen was dead code: unreachable, and the progress dots undercounted by one. Fixed by actually
+// advancing through it instead of deleting it; it's a better finish than exiting straight from step 4.
+const OB_STEPS = 6;
 /** Otto Lycée v2: onboarding is FIVE short steps — name → track+language → what Otto does → connect
  *  everything (Pronote + Google on ONE step) → one-screen feature tour with a direct start action. v1 ran 12 screens, most of
  *  them full-page essays about one feature each (Study Mode, tutor, flashcards, automation); every extra
@@ -2987,11 +3005,11 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
   // student who picked "ib" on step 1 and refreshed mid-onboarding (their track already saved server-side
   // by then) would see step 3's pronoteIsPrimary computed from a null track again, i.e. the wrong (primary)
   // Pronote copy for an IB student.
-  const [track, setTrackState] = useState<"ib" | "bac" | "other" | null>(() => {
-    try { return (localStorage.getItem("otto-onboard-track") as "ib" | "bac" | "other" | null) || null; }
+  const [track, setTrackState] = useState<"ib" | "ap" | "bac" | "other" | null>(() => {
+    try { return (localStorage.getItem("otto-onboard-track") as "ib" | "ap" | "bac" | "other" | null) || null; }
     catch { return null; }
   });
-  const setTrack = (t: "ib" | "bac" | "other" | null) => {
+  const setTrack = (t: "ib" | "ap" | "bac" | "other" | null) => {
     setTrackState(t);
     try { if (t) localStorage.setItem("otto-onboard-track", t); else localStorage.removeItem("otto-onboard-track"); } catch { /* best-effort */ }
   };
@@ -3013,7 +3031,7 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
     if (n) { try { await api.setProfile("name", n); await onStatus(); } catch { notify(L("Prénom non enregistré — tu peux le refaire dans Réglages.", "Name didn't save — you can set it later in Settings."), "error"); } }
     setStep(1);
   };
-  const saveTrack = async (t: "ib" | "bac" | "other") => {
+  const saveTrack = async (t: "ib" | "ap" | "bac" | "other") => {
     setTrack(t);
     try { await api.setProfilePreference("track", t); await onStatus(); } catch { notify(L("Parcours non enregistré — tu peux le refaire dans Réglages.", "Track didn't save — you can set it later in Settings."), "error"); }
     // Used to jump straight to step 2 here — but the year-level field below lives on this SAME step, so
@@ -3027,9 +3045,10 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
   // at all (Google Classroom, Managebac, Toddle, or just email/calendar are far more common internationally).
   // Previously hardcoded `false` regardless of the track picked in step 1 — every student, including "bac"
   // ones who'd just chosen Pronote as their real primary source, saw the non-primary "if you have one"
-  // copy. Derive it from the actual selection: primary unless the student is explicitly on IB (unset track
-  // still defaults to primary, same as the "bac"/unset framing the comment above already describes).
-  const pronoteIsPrimary = track !== "ib";
+  // copy. Derive it from the actual selection: primary unless the student is explicitly on IB or AP (unset
+  // track still defaults to primary, same as the "bac"/unset framing the comment above already describes).
+  // AP is a US College Board program — like IB, essentially never on Pronote (a French national tool).
+  const pronoteIsPrimary = track !== "ib" && track !== "ap";
 
   return (
     <div className="onboard-overlay" role="dialog" aria-modal="true">
@@ -3062,6 +3081,7 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
             <div className="onboard-apps">
               <button type="button" className={`btn xs ob-track-btn ${track === "bac" ? "" : "ghost"}`} onClick={() => void saveTrack("bac")}>{L("Bac français (lycée)", "French Bac (lycée)")}</button>
               <button type="button" className={`btn xs ob-track-btn ${track === "ib" ? "" : "ghost"}`} onClick={() => void saveTrack("ib")}>IB</button>
+              <button type="button" className={`btn xs ob-track-btn ${track === "ap" ? "" : "ghost"}`} onClick={() => void saveTrack("ap")}>AP</button>
               <button type="button" className={`btn xs ob-track-btn ${track === "other" ? "" : "ghost"}`} onClick={() => void saveTrack("other")}>{L("Autre (collège, etc.)", "Other (middle school, etc.)")}</button>
             </div>
             <p className="onboard-lead" style={{ marginTop: 20 }}>{L("Ta langue", "Your language")}</p>
@@ -3138,7 +3158,7 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
             <p className="muted small">{L("Le Tuteur explique, donne des indices et t'aide à avancer.", "Tutor explains, gives hints, and helps you move forward.")}</p>
             <div className="onboard-actions onboard-actions-split">
               <button className="btn ghost" onClick={() => setStep(3)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={onDone}>{L("C'est parti", "Start here")}</button>
+              <button className="btn primary big" onClick={() => setStep(5)}>{L("C'est parti", "Start here")}</button>
             </div>
           </div>
         )}

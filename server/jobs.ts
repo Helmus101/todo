@@ -224,9 +224,11 @@ async function processSweep(job: store.Job): Promise<string> {
       }
     } catch { /* best-effort */ }
   }
-  // A big IB project's milestone steps (targetDate set — see isBigIbProject/writeStepsFromContext in
-  // claude.ts) get re-dated here if one slipped, so a missed research-question deadline doesn't just sit
-  // stale — the remaining milestones shift out to stay realistic. Deterministic, no AI call (replanMilestones).
+  // LEGACY SUPPORT ONLY: the "big IB project" milestone feature (dated sub-steps for an Extended Essay/
+  // TOK/CAS/IA, via step.targetDate) was removed by direct request — writeStepsFromContext (claude.ts) no
+  // longer creates new targetDate steps for any task, IB or otherwise. This loop still re-dates whatever
+  // targetDate steps already exist on tasks created BEFORE that change, so a missed research-question
+  // deadline on one of those doesn't just sit stale. It's a permanent no-op for every task going forward.
   for (const t of next) {
     if (isHandled(t.status) || !t.steps?.some((s) => s.targetDate)) continue;
     const { steps, changed } = replanMilestones(t.steps, new Date(), tzOf(profile));

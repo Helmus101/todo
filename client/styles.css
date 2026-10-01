@@ -6175,6 +6175,17 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   padding: 12px 14px; font-size: 14.5px; line-height: 1.6; font-family: inherit; resize: vertical;
 }
 .studylog-textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); outline: none; }
+/* Error log's three fields used to share .studylog-textarea, whose 260px min-height is sized for the big
+   daily journal entry — reported live as three giant empty boxes for what's usually a one-line question/
+   mistake/fix. Starts at one line and grows with the content instead (see the onInput handler at each call
+   site), capped so a genuinely long entry still scrolls rather than taking over the page. No manual resize
+   handle — the auto-grow IS the resize, a drag handle fighting it would feel broken. */
+.errorlog-textarea {
+  width: 100%; min-height: 38px; max-height: 200px; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--surface); padding: 9px 12px; font-size: 14.5px; line-height: 1.5; font-family: inherit;
+  resize: none; overflow-y: auto; transition: height 0.1s ease;
+}
+.errorlog-textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); outline: none; }
 .studylog-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 .studylog-summary-sec { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--line-soft); }
 .studylog-summary-sec h3 { font-size: var(--text-md); font-weight: var(--weight-semibold); margin-bottom: 8px; }

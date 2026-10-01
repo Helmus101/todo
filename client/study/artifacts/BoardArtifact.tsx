@@ -121,12 +121,24 @@ function DiagramOpSVG({ op }: { op: DiagramOp }) {
           {op.yLabel ? <text x={op.x + 4} y={op.y + 10} fontSize={12} stroke="none">{op.yLabel}</text> : null}
         </g>
       );
-    case "equation":
+    case "equation": {
       // Generous, uncapped-looking box (foreignObject can't auto-size to its HTML content in SVG) — KaTeX
       // content is left-aligned and vertically centered inside it via CSS (.sm-board-eq below) so a short
       // equation doesn't look adrift in a huge box and a long one still has real room.
+      //
+      // Two fixes to a real "doesn't work well for diagrams" complaint: (1) width used to be a bare
+      // `800 - x`, so an equation placed anywhere past x≈600 got squeezed into a shrinking sliver (down to
+      // nothing at x=800) instead of a usable box — now guaranteed a MIN_W-wide box by pulling its left
+      // edge back when there isn't enough room to the right, same way a tooltip flips sides near a screen
+      // edge. (2) height was a flat 70px, too short for anything with vertical structure — a fraction,
+      // a sum/integral with limits, an exponent stack — so real math routinely got visually clipped
+      // against whatever was drawn below it on the board. Taller now, and still overflow:visible
+      // (.sm-board-eq-box) as a second line of defense for the rare equation taller even than that.
+      const MIN_W = 220;
+      const x = Math.min(Math.max(0, op.x - 10), Math.max(0, 800 - MIN_W));
+      const width = 800 - x;
       return (
-        <foreignObject x={Math.max(0, op.x - 10)} y={Math.max(0, op.y - 30)} width={800 - Math.max(0, op.x - 10)} height={70}>
+        <foreignObject x={x} y={Math.max(0, op.y - 36)} width={width} height={96}>
           {/* No xmlns needed — React renders this div straight into the live DOM (not serialized XML), same
               as any other JSX inside an SVG foreignObject. */}
           <div className="sm-board-eq-box">
@@ -134,6 +146,7 @@ function DiagramOpSVG({ op }: { op: DiagramOp }) {
           </div>
         </foreignObject>
       );
+    }
     default:
       return null;
   }

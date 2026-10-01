@@ -485,7 +485,57 @@ export function trackLine(p?: Profile): string {
     `level plainly already knows (restating the question, defining a term two years below their level, ` +
     `"remember to read the instructions carefully"). Every line should teach, remind of something genuinely ` +
     `easy to forget, or move the work forward — cut anything that's just filler restating what's already known.\n`;
-  return vocab + yearLine + noObvious;
+  return vocab + yearLine + noObvious + examStyleLine(p);
+}
+
+/** Program-specific QUESTION-FORMAT knowledge for every quiz/flashcard/practice-problem generator that
+ *  cites "VOCABULARY/track above" (CREATE_QUIZ_TOOL, CREATE_PROBLEM_TOOL, makeDeck's prompt, etc.) — direct
+ *  request: "make sure you know what AP style or IB style or SAT style or ACT style questions are." Without
+ *  this, "match the rigor of a real exam" is an instruction the model has no concrete format to follow —
+ *  each program's actual question shape is real, specific, and genuinely different from the others, not
+ *  just "harder" or "easier." track-gated (IB/AP) for the two curriculum-level blocks; the SAT/ACT block is
+ *  NOT gated on track at all — a Bac or IB student can still have a "SAT prep" task (common for students
+ *  applying internationally), and the task's own title/subject (always in context already) is what tells
+ *  the model which one actually applies here, not the student's day-to-day curriculum. */
+function examStyleLine(p?: Profile): string {
+  const ib = p?.track === "ib"
+    ? `\nIB-STYLE QUESTIONS, when writing a quiz/problem/flashcard back for an IB student: use real IB ` +
+      `COMMAND TERMS, not generic phrasing — "State"/"Define"/"Outline" (short factual, low cognitive demand), ` +
+      `"Describe"/"Explain" (give an account, show reasoning — the bulk of most papers), "Analyse"/"Discuss"/ ` +
+      `"Evaluate"/"To what extent..." (extended response, weigh evidence/viewpoints — HL and essay-type ` +
+      `questions). Mirror the real paper structure for the subject: Sciences/Maths split into short ` +
+      `data-based/calculation questions (Paper 1/2 style, often no calculator on part of it) vs one longer ` +
+      `structured multi-part question building from easy to hard sub-parts (a), (b), (c); Humanities/English ` +
+      `lean on source/extract-based analysis and essay prompts with a command term, not multiple-choice. ` +
+      `Include a mark allocation in brackets when it's natural to ("[2]", "[2 marks]") — IB questions are ` +
+      `always worth stated points, never ungraded trivia. HL means more depth/an extra sub-part, not just ` +
+      `"harder wording" of the same SL question.\n`
+    : "";
+  const ap = p?.track === "ap"
+    ? `\nAP-STYLE QUESTIONS, when writing a quiz/problem/flashcard back for an AP student: match College ` +
+      `Board's own two formats, never a generic quiz shape. MCQ: exactly FIVE options (A-E, not 3-4), one ` +
+      `single-skill-focused stem per question, no partial credit framing — distractors are real misconceptions, ` +
+      `not throwaway wrong answers. FRQ (free response): a multi-part structured prompt, each part lettered ` +
+      `(a), (b), (c)... with its OWN explicit point value, each part demanding a full justification/shown ` +
+      `work, not just a final number — AP rubrics score the reasoning, not only the answer, so "show your ` +
+      `work" is load-bearing, not boilerplate. Match the subject's real AP question shape: AP Calc/Physics ` +
+      `FRQs want full derivations with units; AP Lang/Lit want a thesis-driven analysis or argument prompt ` +
+      `off a given passage/claim, not a fact-recall question; AP Bio/Chem/Env Sci FRQs are usually data/ ` +
+      `experiment-based ("explain the result in the graph above").\n`
+    : "";
+  const satAct = `\nIF THE TASK ITSELF IS SAT OR ACT PREP (the title/subject says so — this applies ` +
+    `regardless of the student's own curriculum/track, e.g. a Bac or IB student prepping for a US ` +
+    `application): use THAT exam's real format, the two are genuinely different, not interchangeable. SAT: ` +
+    `Reading/Writing is evidence-based — a main comprehension question is often immediately followed by a ` +
+    `paired "which choice provides the best evidence for the answer to the previous question" question, ` +
+    `and Writing tests grammar/rhetoric IN a given passage, not standalone grammar rules; Math splits ` +
+    `calculator/no-calculator, is mostly 4-option MCQ, but roughly a fifth of math questions are GRID-IN ` +
+    `(student produces a numeric answer, no options at all). ACT: straightforward single-best-answer MCQ ` +
+    `throughout (4 options for English/Reading/Science, 5 for Math), no evidence-pairing like the SAT, ` +
+    `faster pace (more questions per minute than the SAT, so keep practice items quick to read) — and ACT ` +
+    `has a dedicated SCIENCE section (data/graph interpretation and experimental-design reasoning from short ` +
+    `passages, not recall of science facts) that the SAT has no equivalent of at all.\n`;
+  return ib + ap + satAct;
 }
 
 /** VARK, presentation only — NEVER difficulty, depth, or what gets taught (see Profile.learningStyle doc
@@ -2084,7 +2134,7 @@ const DRAW_ON_BOARD_TOOL = {
         text: { type: "string", description: "label only: the text itself, kept short (a variable, a value, a name)" },
         size: { type: "string", enum: ["sm", "md", "lg"] },
         xLabel: { type: "string" }, yLabel: { type: "string" },
-        latex: { type: "string", description: "equation only: raw LaTeX, NO surrounding $ or \\( \\) delimiters — e.g. \\frac{2}{x-1} + \\frac{3}{x+2} = \\frac{5x+1}{(x-1)(x+2)}. Rendered by KaTeX as real typeset math (stacked fractions, exponents, roots), not text." },
+        latex: { type: "string", description: "equation only: raw LaTeX, NO surrounding $ or \\( \\) delimiters — e.g. \\frac{2}{x-1} + \\frac{3}{x+2} = \\frac{5x+1}{(x-1)(x+2)}. Rendered by KaTeX as real typeset math (stacked fractions, exponents, roots), not text. Takes real vertical room around its (x,y) — a fraction, exponent, or stacked expression is TALLER than a plain label, so leave clear space above and below it (roughly 40px above, 60px below the point you give) rather than placing a line/shape right where its box will render." },
         color: { type: "string", description: "optional hex color; defaults to the board's ink color if omitted" },
       }, required: ["op"] },
     },
@@ -5460,10 +5510,6 @@ export async function writeStepsFromContext(
           `STEP 5: Identify unrelated tasks discovered during research\n` +
           `Did the research uncover other actionable items that are NOT part of "${task.title}"?\n` +
           `Examples: "Send Weave reply", "Confirm IEO finals date". These become separate tasks, not steps.\n\n` +
-          `STEP 6: Decide if this is a BIG project\n` +
-          `Is this a multi-week/multi-stage project (essay, dissertation, IB Extended Essay/TOK/CAS/IA)?\n` +
-          `If YES: create milestones with targetDates (YYYY-MM-DD)\n` +
-          `If NO: create ordinary steps (2-5 meaningful actions, 3 is ideal for most tasks)\n\n` +
           `CRITICAL RULES:\n` +
           `1. The TASK TITLE is the objective — never lose sight of it\n` +
           `2. CONTEXT is supporting information only — never let it become the objective\n` +
@@ -5477,8 +5523,7 @@ export async function writeStepsFromContext(
           `  "definitionOfDone": "concrete success criteria for this exact task",\n` +
           `  "contextRelevance": "brief explanation of which gathered context is relevant and why",\n` +
           `  "artifacts": [{"title": "...", "type": "note|flashcards|quiz|outline|checklist|reference|draft|summary|evidence_bank|other", "status": "created|needed|not_needed", "description": "..."}],\n` +
-          `  "isBigProject": true|false,\n` +
-          `  "steps": [{"text": "...", "minutes": 15, "doneWhen": "...", "checkpoint": "...", "difficulty": "easy|medium|hard", "targetDate": "YYYY-MM-DD" (big only), "automatable": false (ALWAYS false for user steps), "dependsOn": 0 (ordinary only), "url": "..." (ordinary only, optional), "question": "..." (ordinary only, optional), "options": ["..."] (ordinary only, optional)}],\n` +
+          `  "steps": [{"text": "...", "minutes": 15, "doneWhen": "...", "checkpoint": "...", "difficulty": "easy|medium|hard", "automatable": false (ALWAYS false for user steps), "dependsOn": 0, "url": "..." (optional), "question": "..." (optional), "options": ["..."] (optional)}],\n` +
           `  "separateTasks": [{"title": "...", "reason": "..."}]\n` +
           `}\n\n` +
           `IMPORTANT: All steps must have automatable=false — these are USER steps only. Otto's internal work goes in artifacts.`,
@@ -5492,7 +5537,17 @@ export async function writeStepsFromContext(
       return { steps: fallbackSteps, artifacts: [] };
     }
 
-    const bigProject = typeof out.isBigProject === "boolean" ? out.isBigProject : keywordHit;
+    // Removed by direct request: the "big IB project" milestone-breakdown (dated sub-steps for Extended
+    // Essay/TOK/CAS/IA, via targetDate) used to be triggered here. Forced off going forward — every task,
+    // IB project or not, now takes the ordinary step path below (same one every other task type already
+    // uses). The model is no longer asked for "isBigProject"/"targetDate" at all (see the prompt above), so
+    // this isn't reading stale data, it's just never turning the old branch back on. `keywordHit` above
+    // still exists (it also gates whether this call runs at all when there's no context — unrelated to the
+    // milestone feature, kept so a genuinely big/complex task still gets a real planning call rather than
+    // silently falling back when there's nothing to research). Pre-existing tasks that already have
+    // targetDate steps from before this change are untouched — replanMilestones (server/milestones.ts)
+    // still keeps those working; this only stops NEW ones from being created.
+    const bigProject = false;
     const definitionOfDone = out.definitionOfDone || task.goal || task.why;
     
     // Log the re-anchoring process

@@ -266,9 +266,12 @@ export interface Profile {
   // no absolute timestamp) — this is the single stamp shouldRefreshStudentModel compares against
   // studentModel.basedOnActivityAt to skip refreshing an inactive account for $0 cost.
   lastTutorActivityAt?: string;
-  // Which track this student is on — drives AI vocabulary (isBigIbProject/trackLine in claude.ts) and
-  // unlocks the milestone/big-project breakdown for IB (EE/IA/TOK/CAS). Set from Settings.
-  track?: "ib" | "bac" | "other";
+  // Which program this student is on — drives AI vocabulary (trackLine in claude.ts) AND the default
+  // question/assessment STYLE Otto generates (quizzes, practice problems, exam-prep questions): IB uses
+  // command terms and mark-scheme-style rubrics, AP uses College Board MCQ/FRQ conventions — see
+  // examStyleLine in claude.ts. "ap" added alongside "ib" (they're two distinct programs, not one "IB or
+  // similar" bucket) by direct request. Set from Settings.
+  track?: "ib" | "ap" | "bac" | "other";
   /** The student's actual school year/grade — e.g. "Terminale", "Grade 10", "DP1", "Year 12". Free text,
    *  not an enum: year-level names aren't standardized across the systems Otto supports, and forcing one
    *  system's labels onto another would be wrong for half the audience. This is what lets Otto tell a
@@ -482,7 +485,7 @@ export function normalizeProfile(p: any): Profile {
         })).filter((m: MilestoneEntry) => m.subject && m.topic && m.label)).slice(0, 300)
       : undefined,
     lastTutorActivityAt: typeof p?.lastTutorActivityAt === "string" ? p.lastTutorActivityAt : undefined,
-    track: ["ib", "bac", "other"].includes(p?.track) ? p.track : undefined,
+    track: ["ib", "ap", "bac", "other"].includes(p?.track) ? p.track : undefined,
     yearLevel: typeof p?.yearLevel === "string" ? p.yearLevel.trim().slice(0, 40) || undefined : undefined,
     learningStyle: ["visual", "auditory", "reading", "kinesthetic", "mixed"].includes(p?.learningStyle) ? p.learningStyle : undefined,
     focusStats: p?.focusStats && typeof p.focusStats === "object" ? {

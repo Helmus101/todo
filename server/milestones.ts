@@ -10,9 +10,11 @@ function localDay(now: Date, timezone?: string): string {
 }
 
 /**
- * Deterministic, no-AI re-plan for a big IB project's milestone steps (Extended Essay, TOK, CAS, an IA —
- * see `isBigIbProject` in server/claude.ts, which is the only place `targetDate` ever gets set on a step).
- * Ordinary tasks' steps never have `targetDate`, so this is a no-op for them.
+ * LEGACY SUPPORT ONLY — the "big IB project" milestone feature this served (Extended Essay, TOK, CAS, an
+ * IA) was removed by direct request; writeStepsFromContext (server/claude.ts) no longer ever sets
+ * `targetDate` on a new step, for IB or any other task. This function still re-plans `targetDate` steps
+ * that were already created before that change, so a task that already has them keeps working correctly.
+ * Every task created from now on has no `targetDate` steps at all, so this is a permanent no-op for them.
  *
  * Walks the steps in order. The first UNDONE step whose `targetDate` is in the past snaps to today (it's
  * due now) and records how many days it slipped by; every undone step AFTER it shifts by that same amount,
