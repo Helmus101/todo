@@ -1232,7 +1232,7 @@ section("Onboarding — short but complete (source pins)");
   const src = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
   const obStart = src.indexOf("function Onboarding(");
   const ob = src.slice(obStart, src.indexOf("/** Dedicated login", obStart));
-  check("onboarding runs exactly 6 steps", /const OB_STEPS = 6;/.test(src));
+  check("onboarding runs exactly 5 steps", /const OB_STEPS = 5;/.test(src));
   check("one connect step hosts BOTH Pronote and Google tiles (no second connect screen)", (ob.match(/<PronoteTile /g) || []).length === 1 && (ob.match(/<GoogleTiles /g) || []).length === 1);
   check("no leftover step bodies beyond OB_STEPS", !/step === 6 [\s\S]*step === 11/.test(ob));
   check("the feature tour covers Tasks, Journal, Error log and Tutor in ONE screen", /ob-tour-row/.test(ob) && (ob.match(/ob-tour-row/g) || []).length === 5 && /Journal/.test(ob) && /Error log/.test(ob));
