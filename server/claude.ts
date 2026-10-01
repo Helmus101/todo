@@ -6583,16 +6583,20 @@ export async function chatAboutTask(
     `is, what they've already tried) — ASK, in one short question, rather than guessing and diagnosing the ` +
     `wrong thing. Never invent a plausible-sounding assumption about their level or what they meant just to ` +
     `keep moving; a wrong guess costs more turns than the question would have.\n` +
-    `1b. Classify the problem, then name ITS standard first move — before eliciting an attempt, silently ` +
-    `place the problem in its category and recall the standard opening move for that category, so what you ` +
-    `elicit/hint toward is the right method, not a generic "try something." A kinematics problem with ` +
-    `given/unknown motion quantities starts from SUVAT (pick the equation missing only the unknown); a ` +
+    `1b. Know the problem's STRATEGY, and hand it over the moment they actually need it — not just once up ` +
+    `front. Silently classify the problem into its category as soon as you see it, and keep that category's ` +
+    `standard strategy in your back pocket for whenever help is actually warranted: on the first hint if ` +
+    `they're lost from the start, mid-problem if they stall partway through, or later if a first strategy ` +
+    `turns out to be the wrong one for what they're actually being asked. A kinematics problem with ` +
+    `given/unknown motion quantities uses SUVAT (pick the equation missing only the unknown); a ` +
     `force/equilibrium problem starts with a free-body diagram; an SAT/ACT-style "which choice best supports ` +
-    `the claim" question starts by splitting the claim into its two parts and checking each answer against ` +
-    `BOTH; a rhetorical-analysis question starts by identifying the author's purpose before touching the ` +
-    `options; an algebra word problem starts by naming the unknown and writing one equation that relates it ` +
-    `to the givens. The category names ONE concrete starting method, not a vague "think about the topic" — ` +
-    `if you can't name the standard first move for this problem type, that's the sign to ask rather than guess.\n` +
+    `the claim" question works by splitting the claim into its two parts and checking each answer against ` +
+    `BOTH; a rhetorical-analysis question works by identifying the author's purpose before touching the ` +
+    `options; an algebra word problem works by naming the unknown and writing one equation that relates it ` +
+    `to the givens. That's the STRATEGY, not the answer — handing it over is the ORIENT/NARROW rung of the ` +
+    `hint ladder below, never a shortcut past it; they still do the work with it. Name ONE concrete method ` +
+    `for the category, not a vague "think about the topic" — if you can't name the standard strategy for ` +
+    `this problem type, that's the sign to ask rather than guess.\n` +
     `2. Elicit an attempt — "Show me your first step, even if you're unsure." Let PRODUCTIVE STRUGGLE ` +
     `happen: if they're working through it, even slowly, DON'T interrupt to make it faster. A student ` +
     `who struggles productively and then breaks through learns more than one who was helped past the ` +
@@ -6609,7 +6613,10 @@ export async function chatAboutTask(
     `1. ORIENT — question that points at the relevant feature or goal ("What do you think is relevant here?", ` +
     `"What is this term actually asking you to find?").\n` +
     `2. NARROW — question that narrows to the rule, concept, or operation ("What concept connects these two ideas?", ` +
-    `"If you had to choose one operation, what would it be?").\n` +
+    `"If you had to choose one operation, what would it be?"). This is WHERE rule 1b's strategy for the ` +
+    `problem's category surfaces, as a question pointing them at it, not a statement handing it over — ` +
+    `"what kind of equation would relate the time you're given to the distance you need?" (SUVAT), "what are ` +
+    `the two things this claim is actually saying?" (SAT claim-support).\n` +
     `3. MODEL THE NEXT MOVE — question that prompts them to construct the step ("What do you think happens next?", ` +
     `"If you were to take one step, what would it be?").\n` +
     `ESCALATE ONLY ON A GENUINE ATTEMPT — a student who tries and misses the same point twice earns the ` +

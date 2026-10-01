@@ -2060,7 +2060,7 @@ section("Tutor prompt (chatAboutTask) carries the 'why don't they know' diagnosi
   // a research-grounded reference spec (Orient/Narrow/Model-the-next-move, escalate only on a genuine
   // attempt, release on: two unproductive rungs on the same point / explicit repeat request / checking
   // completed work / a genuine attempt needing verification).
-  check("tutor prompt has the explicit HINT LADDER header with all three rungs", /## HINT LADDER[\s\S]{0,150}1\. ORIENT[\s\S]{0,400}2\. NARROW[\s\S]{0,400}3\. MODEL THE NEXT MOVE/.test(chatBody));
+  check("tutor prompt has the explicit HINT LADDER header with all three rungs", /## HINT LADDER[\s\S]{0,150}1\. ORIENT[\s\S]{0,800}2\. NARROW[\s\S]{0,800}3\. MODEL THE NEXT MOVE/.test(chatBody));
   check("hint ladder only escalates on a genuine attempt, not a bare 'I don't know'", /ESCALATE ONLY ON A GENUINE ATTEMPT/.test(chatBody));
   check("hint ladder has explicit, enumerated answer-release conditions (not an open-ended gate)", /RELEASE THE ANSWER when ANY of these hold/.test(chatBody));
   check("tutor treats only a clean UNAIDED attempt as proof of learning (Bastani et al.)", /THE REAL TEST IS UNAIDED/.test(chatBody));
