@@ -1993,7 +1993,10 @@ section("Granularity ladder — taskNeedsStepList gate + size-tiered brief promp
   check("a trivial admin task does NOT need a step list", !taskNeedsStepList({ title: "Send the signed form back to the office", why: "Deadline Friday" }));
   check("a bookings/coordinating logistics task keeps its steps", taskNeedsStepList({ title: "Lock dates, bookings and an Arctic-ready itinerary", why: "Trip prep", taskType: "logistics" }));
   check("assessment prep keeps its steps", taskNeedsStepList({ title: "Prepare for the in-class History essay on Russia", why: "In-class essay Oct 9", taskType: "prepare_assessment" }));
-  check("review/practice/learn taskTypes keep their steps", taskNeedsStepList({ title: "Anything", why: "x", taskType: "review" }) && taskNeedsStepList({ title: "Anything", why: "x", taskType: "practice" }) && taskNeedsStepList({ title: "Anything", why: "x", taskType: "learn" }));
+  // "learn_understand" (not "learn" — a real TaskType enum string mismatch this round fixed: the old
+  // literal could never match the real enum value, so a learn_understand task without a lucky keyword hit
+  // silently fell through to the keyword checks instead of being force-kept).
+  check("review/practice/learn_understand taskTypes keep their steps", taskNeedsStepList({ title: "Anything", why: "x", taskType: "review" }) && taskNeedsStepList({ title: "Anything", why: "x", taskType: "practice" }) && taskNeedsStepList({ title: "Anything", why: "x", taskType: "learn_understand" }));
   check("a multi-week project keeps its steps even untyped", taskNeedsStepList({ title: "Extended Essay first draft", why: "Due March" }));
   check("an assessment keyword in a plain errand title keeps its steps", taskNeedsStepList({ title: "Register for the Math test", why: "Admin form" }));
   // Source pins: the step-4 prompt sizes the plan, runTask gates the output, the note prompt tiers briefs.
@@ -2111,6 +2114,21 @@ check("computes 'in N days' correctly for a future date", /in 3 days/.test(dueLi
 const yesterday = new Date(Date.now() - 86_400_000).toISOString();
 check("flags a past due date as already past", /already past/i.test(dueLine(yesterday)));
 check("tells the model to compute from this, not guess", /do the math from this/i.test(dueLine(inThreeDays)));
+// Accuracy pass: a Pronote deadline near midnight used to compare against the SERVER's local timezone
+// (UTC on Vercel) instead of the student's — a real off-by-one-day risk, since many Pronote deadlines are
+// literally stored as "00:00" on the due date. `now` is injectable (same pattern as estimateWhen/
+// forcedDueToday elsewhere in this codebase) specifically so this is a deterministic test, not a
+// real-wall-clock-dependent one.
+{
+  // "now" = Jan 15, 23:30 UTC. "due" = Jan 16, 00:30 UTC — one hour later, genuinely the NEXT calendar day
+  // in UTC. But in Paris (UTC+1 in January), both instants fall on Jan 16: 00:30 and 01:30 local — the
+  // SAME calendar day, so a Paris student's deadline is already "TODAY" at the moment "now" is UTC-Jan-15.
+  const now = new Date("2026-01-15T23:30:00Z");
+  const due = new Date("2026-01-16T00:30:00Z");
+  check("in UTC, this due instant is correctly read as tomorrow", /TOMORROW/.test(dueLine(due.toISOString(), "UTC", now)));
+  check("the SAME instant, in the account's own timezone (Paris), is already today — this is the exact bug class that was reproduced live", /TODAY/.test(dueLine(due.toISOString(), "Europe/Paris", now)));
+  check("defaults to UTC when no timezone is given (never throws)", typeof dueLine(due.toISOString(), undefined, now) === "string");
+}
 
 // ── Prompt content — pins the academic-research + specificity instructions (house style: trackLine
 // vocabulary above is already tested this same way) ───────────────────────────────────────────────────
@@ -2418,6 +2436,23 @@ section("revealsAnswer — studyHelp's code-level backstop against leaking the r
   check("flags a reply containing the quiz's correct option text, case-insensitive", revealsAnswer("Yeah it's definitely MITOCHONDRIA", "Mitochondria"));
   check("does NOT flag a reply discussing method without stating the answer", !revealsAnswer("Look at what part of the cell makes energy — what's that structure called?", "Mitochondria"));
   check("skips very short answers to avoid trivial false positives (e.g. answer is 'x' or a single digit)", !revealsAnswer("x is what we're solving for here", "x"));
+}
+
+section("generate() — handled/dismissed titles sorted by recency before being capped for the classifier (source pin)");
+{
+  // Reported live: a task dismissed one day came back days later. Root cause traced to generate()'s own
+  // `handled` list (what gets told to classifyCandidates as "don't recreate these") being capped to the
+  // classifier's prompt (handledTitles.slice(0, 30)) WITHOUT first sorting by recency — an item dismissed
+  // minutes ago could lose its spot in that cap to an older dismissal sitting earlier in the raw task array.
+  // Same fix shape as pruneHandled's own sort (tasks.ts), which exists for the identical reason.
+  const src = readFileSync(new URL("../server/tasks.ts", import.meta.url), "utf8");
+  const start = src.indexOf("export async function generate(");
+  const handledIdx = src.indexOf("const handled = existing", start);
+  const body = src.slice(handledIdx, src.indexOf("\n  // …and what's currently ACTIVE", handledIdx));
+  check("the handled list is sorted by updatedAt/createdAt before being mapped", /\.sort\(\(a, b\) => \(b\.updatedAt \|\| b\.createdAt \|\| ""\)\.localeCompare\(a\.updatedAt \|\| a\.createdAt \|\| ""\)\)/.test(body));
+  const sortIdx = body.indexOf(".sort(");
+  const mapIdx = body.indexOf(".map(");
+  check("the sort runs BEFORE the map (so recency is set before shaping the object), not after", sortIdx > 0 && mapIdx > sortIdx);
 }
 
 section("forceWeekCoverage — everything due this week gets a task, no matter what the classifier decided");

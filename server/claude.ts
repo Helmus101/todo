@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards, TaskQuiz, TaskProblem, BoardEntry, DiagramOp, DailyPracticeProblem, ThemeTokens, WebTask, TaskType, InfoRequirement, TaskArtifact, SeparateTask, TaskObjective } from "../shared/types.ts";
 import { validateThemeTokens } from "../shared/types.ts";
-import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject } from "../shared/types.ts";
+import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
@@ -641,7 +641,13 @@ export function isBigIbProject(_profile: Profile | undefined, title: string, why
  *  directions: any study/assessment/project signal (taskType or keyword) keeps the full list, so a
  *  genuinely complex plan is never flattened — only shapes with NO multi-step signal at all get trimmed. */
 export function taskNeedsStepList(task: { title: string; why: string; goal?: string; taskType?: string }): boolean {
-  if (task.taskType && ["learn", "review", "practice", "prepare_assessment"].includes(task.taskType)) return true;
+  // Was "learn" — the real TaskType enum value (shared/types.ts) is "learn_understand"; the typo meant this
+  // branch could never actually match a learn_understand task, silently falling through to the keyword/
+  // parts checks below instead of being force-kept outright. Those checks happen to catch most real
+  // learn_understand tasks too (they usually mention "revis"/"prepare"/etc.), which is likely why this went
+  // unnoticed — but a learn_understand task whose title/why genuinely named none of those keywords could
+  // have been wrongly trimmed to one step.
+  if (task.taskType && ["learn_understand", "review", "practice", "prepare_assessment"].includes(task.taskType)) return true;
   const text = `${task.title} ${task.why} ${task.goal || ""}`;
   if (BIG_PROJECT_RE.test(text)) return true;
   if (/test|exam|quiz|assess|interrogation|[ée]valuation|contr[ôo]le|dissert|essay|expos[ée]|present|projet|project|extended|revis|prepare|pr[ée]par/i.test(text)) return true;
@@ -924,8 +930,25 @@ function academicBlock(a?: AcademicContext): string {
  *  Before this existed, the énoncé was read by the classifier and then dropped, so a run only ever saw
  *  "Physique homework" — which is exactly why fiches came out generic ("revoir le cours") instead of
  *  being about mécanique du point. */
-export function assignmentBlock(t: { source?: string; sourceSubject?: string; sourceDetail?: string; sourceDue?: string }): string {
-  const fmt = (iso?: string) => { if (!iso) return ""; try { return new Date(iso).toLocaleDateString("fr-FR", { day: "numeric", month: "short" }); } catch { return iso; } };
+// Duplicated from server/tasks.ts's own localDayOf (not imported — tasks.ts imports FROM claude.ts, so the
+// reverse import would be circular; tasks.ts's own comment on localDayOf notes the same constraint for
+// jobs.ts). Returns the calendar day (YYYY-MM-DD) an instant falls on IN THE GIVEN TIMEZONE, not the
+// server's — see dueLine's own comment for the live-relevant bug this fixes.
+function localDayOf(iso: string, timezone?: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  try { return new Intl.DateTimeFormat("en-CA", { timeZone: timezone || "UTC", year: "numeric", month: "2-digit", day: "2-digit" }).format(d); }
+  catch { return d.toISOString().slice(0, 10); }
+}
+
+export function assignmentBlock(t: { source?: string; sourceSubject?: string; sourceDetail?: string; sourceDue?: string }, timezone?: string): string {
+  // Was `new Date(iso).toLocaleDateString("fr-FR", ...)` with no `timeZone` — defaults to the SERVER's local
+  // timezone (UTC on Vercel, regardless of the "cdg1" region — AWS Lambda runs UTC unless TZ is set), not
+  // the student's. A Pronote deadline near midnight Paris time (common — many are literally "00:00" on the
+  // due date) could show the WRONG calendar date here, off by one from what the student sees in Pronote
+  // itself. Explicit `timeZone` makes this match the account's own timezone (tzOf(profile), same source of
+  // truth server/tasks.ts/jobs.ts already use for every other "what day is it for this student" decision).
+  const fmt = (iso?: string) => { if (!iso) return ""; try { return new Date(iso).toLocaleDateString("fr-FR", { day: "numeric", month: "short", timeZone: timezone || "UTC" }); } catch { return iso; } };
   if (!t.sourceDetail?.trim()) {
     // No énoncé text yet (e.g. a bare Pronote test placeholder) — still worth telling the model the SUBJECT
     // when it's a trusted, structured fact (Pronote is the only source where sourceSubject is a real course
@@ -953,17 +976,30 @@ export function assignmentBlock(t: { source?: string; sourceSubject?: string; so
 /** This task's own due date, ALWAYS shown when known — unlike assignmentBlock above (which only renders at
  *  all when the full énoncé text exists), a deadline is worth surfacing even on a bare Pronote test or a
  *  calendar event with no assignment text attached. The days-until is computed HERE, server-side, rather
- *  than left for the model to work out from two raw dates �� asking an LLM to do its own date arithmetic
+ *  than left for the model to work out from two raw dates — asking an LLM to do its own date arithmetic
  *  ("today is Tuesday the 9th, due the 18th, so...") is exactly the kind of simple calculation it gets
- *  wrong often enough to not trust blind; handing it the literal number closes that gap outright. */
-export function dueLine(sourceDue?: string): string {
+ *  wrong often enough to not trust blind; handing it the literal number closes that gap outright.
+ *  Was `due.setHours(0,0,0,0)` / `new Date().setHours(0,0,0,0)` — both operate in the SERVER's local
+ *  timezone (UTC on Vercel), not the student's, so "today" and the due date's own calendar day could each
+ *  silently shift by a day relative to what the student actually sees in Pronote (most concretely: a
+ *  deadline stored as midnight Paris time is 22:00/23:00 UTC the PREVIOUS day — comparing raw UTC-midnight
+ *  timestamps instead of real calendar days in the account's timezone could call that "today" one day late,
+ *  or "tomorrow" when Pronote already shows it as due today). Calendar-day subtraction via localDayOf (the
+ *  same Intl-based, timezone-aware pattern server/tasks.ts and server/jobs.ts already use for every other
+ *  "what day is it for this student" decision) fixes this at the source instead of patching the symptom. */
+export function dueLine(sourceDue?: string, timezone?: string, now: Date = new Date()): string {
   if (!sourceDue) return "";
-  const due = new Date(sourceDue);
-  if (isNaN(due.getTime())) return "";
-  const days = Math.round((due.setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 86_400_000);
+  if (isNaN(new Date(sourceDue).getTime())) return "";
+  const dueDay = localDayOf(sourceDue, timezone);
+  const todayDay = localDayOf(now.toISOString(), timezone);
+  if (!dueDay || !todayDay) return "";
+  // Both are plain YYYY-MM-DD strings with no time-of-day left to misinterpret — parsing as UTC here is
+  // just arithmetic on two calendar dates, not a timezone decision (that decision already happened inside
+  // localDayOf, once, correctly).
+  const days = Math.round((Date.parse(`${dueDay}T00:00:00Z`) - Date.parse(`${todayDay}T00:00:00Z`)) / 86_400_000);
   const when = days === 0 ? "TODAY" : days === 1 ? "TOMORROW" : days === -1 ? "YESTERDAY (already past)"
     : days < 0 ? `${-days} days ago (already past)` : `in ${days} days`;
-  const dateStr = new Date(sourceDue).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+  const dateStr = new Date(sourceDue).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: timezone || "UTC" });
   return `\nTHIS TASK IS DUE: ${dateStr} — ${when}. If they ask how much time they have, do the math from this, not from a guess.\n`;
 }
 
@@ -4364,7 +4400,7 @@ export async function runTask(
   const focusBlock = focus?.trim()
     ? `\nFOCUS FOR THIS RUN — this is what the run is actually for; where it conflicts with the general plan, it wins:\n${focus.trim().slice(0, 1500)}\n`
     : "";
-  const baseCtx = profileBlock(profile) + assignmentBlock(task) + academicBlock(academic) + (personalization?.inApp || "") + focusBlock;
+  const baseCtx = profileBlock(profile) + assignmentBlock(task, tzOf(profile)) + academicBlock(academic) + (personalization?.inApp || "") + focusBlock;
   const langLine = languageLine(profile) + trackLine(profile) + personalContextLine(profile) + studentModelLine(profile) +
     learningStyleLine(profile) + errorLogLine(profile, task.sourceSubject, personalization?.subjectSignal) +
     recentJournalLine(personalization?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(personalization?.notNeeded);
@@ -5301,7 +5337,7 @@ export async function writeStepsFromContext(
           `CORE INVARIANT: The task title is the OBJECTIVE. The Definition of Done is the SUCCESS CONDITION. ` +
           `The context below is SUPPORTING INFORMATION only. Never let the context become the objective.\n\n` +
           `${context.trim() ? `CONTEXT GATHERED (supporting information only — not the objective):\n${context}` : "No research was needed for this one — plan it from the task itself."}${linksBlock}${didBlock}` +
-          assignmentBlock(task) + profileBlock(profile) + `\n\n` +
+          assignmentBlock(task, tzOf(profile)) + profileBlock(profile) + `\n\n` +
           languageLine(profile) + trackLine(profile) + nowBlock() +
           `NEW ARCHITECTURE: TWO-STEP PLANNING — Otto's Internal Steps → User's Visible Steps\n\n` +
           `STEP 1: Re-anchor to the ORIGINAL TASK\n` +
@@ -6463,7 +6499,7 @@ export async function chatAboutTask(
   // student, every task, every turn — so it belongs FIRST, where it can actually be cached; the volatile
   // per-request context goes last, right next to the equally-volatile TASK block it keeps company with
   // anyway.
-  const dynamicContext = nowBlock() + dueLine(task.sourceDue) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine;
+  const dynamicContext = nowBlock() + dueLine(task.sourceDue, tzOf(profile)) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine;
   const sys =
     (opts?.primer ? PRIMER_PERSONA : "") +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
@@ -6819,10 +6855,6 @@ export async function chatAboutTask(
     `underneath it. The silence after the question is always where the thinking happens; if you fill it, there's ` +
     `nothing left for them to do. A reply that ends in a question mark and stops there is almost always the ` +
     `right shape.\n` +
-    `ALWAYS PUT QUESTIONS AT THE END — Never pin a question at the top of your reply. The logical flow ` +
-    `matters: your reasoning or explanation should come first, then the question at the end. This keeps the ` +
-    `conversation coherent and prevents the illogical "here's a question, then here's some unrelated text" ` +
-    `pattern.\n` +
     `NO HALLUCINATED REFERENCES — When you reference something from the student's question or task, ` +
     `verify it's actually there. Don't reference "the diagram" or "the second option" if those don't exist in ` +
     `the text. Hallucinating references breaks trust and makes you unreliable.\n` +
@@ -7141,7 +7173,7 @@ export async function chatAboutTask(
     contextAwarenessBlock +
     dynamicContext +
     `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}${boardBlock}${objectivesBlock}` +
-    assignmentBlock(task) + profileBlock(profile) + academicBlock(academic) + materialsBlock(opts?.materials) +
+    assignmentBlock(task, tzOf(profile)) + profileBlock(profile) + academicBlock(academic) + materialsBlock(opts?.materials) +
     PRIMER_CLOSING_REMINDER;
   // 10, not the whole thread: every one of these is resent verbatim on every turn AND every intra-turn
   // tool-loop round (up to CHAT_MAX_ROUNDS) — a long-running chat's cost scales with this window, not just

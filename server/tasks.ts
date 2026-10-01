@@ -1038,9 +1038,18 @@ export function setReviewSetDeckIdsToday(profile: Profile, deckIds: string[], no
 }
 
 export async function generate(existing: WebTask[], profile: Profile, extras?: AgentTools, userEmail?: string): Promise<WebTask[]> {
-  // Tell the generator what's already finished/dismissed so it never resurfaces a handled to-do.
+  // Tell the generator what's already finished/dismissed so it never resurfaces a handled to-do. Sorted by
+  // recency (most recently actioned first) BEFORE the cap below truncates it — same reasoning as
+  // pruneHandled's own sort (see its comment on "the exact 'I dismissed this and it came right back' failure
+  // mode"): `existing` isn't guaranteed to already be in recency order by the time this runs, and this list
+  // gets capped to the classifier's prompt (handledTitles.slice(0, 30) below) — without sorting first, an
+  // item dismissed minutes ago could lose its spot in that cap to an OLDER dismissal that happens to sit
+  // earlier in `existing`, meaning the one thing most likely to be freshly dismissed is exactly the one most
+  // at risk of silently dropping out of "don't recreate this" and resurfacing on the next sweep. Reproduced
+  // live: a task dismissed one day came back days later.
   const handled = existing
     .filter((t) => t.status === "done" || t.status === "dismissed")
+    .sort((a, b) => (b.updatedAt || b.createdAt || "").localeCompare(a.updatedAt || a.createdAt || ""))
     .map((t) => ({
       title: t.title,
       why: t.why,
