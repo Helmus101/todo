@@ -596,6 +596,31 @@ export function recentJournalLine(entries: { date: string; text: string }[] | un
     `Otto they've actually been studying/learning lately; use it to know where they already are, not to quote it back:\n` +
     picked.map((e) => `- ${e.date}: "${e.text.slice(0, 300)}"`).join("\n") + "\n";
 }
+/** The name the student themselves typed in Settings ("What should Otto call you?") — self-disclosed for
+ *  exactly this purpose, unlike the rest of profile.name's uses which profileBlock deliberately keeps out
+ *  of the model's hands (see that function's own comment on data minimization for a minor's real identity
+ *  pulled from elsewhere, e.g. an email signature). Chat used to hardcode the literal name "Will" for every
+ *  student regardless of what they'd actually set — reported live as Otto calling a student "Will" while
+ *  Settings showed their real chosen name. Fixed by using the name they gave for this exact purpose instead
+ *  of a made-up placeholder; silent when unset rather than inventing one. */
+function studentNameLine(name?: string): string {
+  return name ? `\nCall the student "${name}" when addressing them directly — that's the name they gave Otto for this.\n` : "";
+}
+/** profile.sessions — short end-of-session recaps written by the tutor itself via the "remember" tool
+ *  (category 'session', see REMEMBER_TOOL), so a LATER chat — even on a completely different task — opens
+ *  already knowing what the last one actually covered, instead of starting cold. Same free-text
+ *  subject-name filter as recentJournalLine (sessions aren't structurally tagged by subject either), and
+ *  same "fall back to the newest ones if nothing matches" posture. Direct request: "at the end of each
+ *  session create a short summary" so a future session already knows this. */
+export function sessionRecapLine(sessions: string[] | undefined, subject: string | undefined): string {
+  if (!sessions?.length) return "";
+  const bySubject = subject ? sessions.filter((s) => s.toLowerCase().includes(subject.toLowerCase())) : [];
+  const picked = (bySubject.length ? bySubject : sessions).slice(-3).reverse();
+  if (!picked.length) return "";
+  return `\nWHAT THE LAST FEW SESSIONS COVERED (your own end-of-session recaps — this is how you remember ` +
+    `them across tasks and days; open by building on this, don't re-ask what they just told you last time):\n` +
+    picked.map((s) => `- ${s}`).join("\n") + "\n";
+}
 /** Flashcards on THIS task sitting at Leitner box 1 (gotten wrong / never advanced) — weakCardFronts
  *  (server/tasks.ts) already computes this exact signal for the study-journal week/month summaries; this is
  *  the same logic inlined here (not imported — tasks.ts already imports FROM claude.ts, so importing tasks.ts
@@ -4325,7 +4350,7 @@ export interface RunOutput {
   unknowns?: string[];
 }
 
-const REMEMBER_TOOL = { name: "remember", description: "Save a durable fact about WHO THIS PERSON IS for future tasks. category: 'name' (what to call them — save it the moment you learn their name, e.g. from their email signature or how others address them; fact = just the name), 'preference' (how they work/write), 'person' (a key relationship), 'project' (an ongoing effort), 'course' (a class/course-specific pattern that should compound over the term/degree — a professor's grading style or communication quirks, how far ahead of THIS course's deadlines the student actually starts work, what kind of feedback they got, e.g. 'BIO 201 — Prof. Martinez wants a topic sentence in every paragraph' or 'Starts CS 101 problem sets ~2 days before due and it stresses them out'), or 'about' (a one-line summary of them).", input_schema: { type: "object", properties: { category: { type: "string", enum: ["name", "about", "preference", "person", "project", "course"] }, fact: { type: "string" } }, required: ["category", "fact"] } };
+const REMEMBER_TOOL = { name: "remember", description: "Save a durable fact about WHO THIS PERSON IS for future tasks. category: 'name' (what to call them — save it the moment you learn their name, e.g. from their email signature or how others address them; fact = just the name), 'preference' (how they work/write), 'person' (a key relationship), 'project' (an ongoing effort), 'course' (a class/course-specific pattern that should compound over the term/degree — a professor's grading style or communication quirks, how far ahead of THIS course's deadlines the student actually starts work, what kind of feedback they got, e.g. 'BIO 201 — Prof. Martinez wants a topic sentence in every paragraph' or 'Starts CS 101 problem sets ~2 days before due and it stresses them out'), 'about' (a one-line summary of them), or 'session' (a short recap of what just happened THIS session — call this once, right as a session wraps up: the student is leaving, the task is done, or the conversation has clearly reached a natural stopping point. fact = subject + what was worked on + where they landed + what's still shaky, e.g. 'Physique — worked SUVAT for projectile motion, landed the range calculation; still mixing up which component stays constant.' This is what makes a LATER session, possibly on a different task, pick up like you remember them instead of starting cold — so write it from THIS session's actual content, never a generic 'studied physics').", input_schema: { type: "object", properties: { category: { type: "string", enum: ["name", "about", "preference", "person", "project", "course", "session"] }, fact: { type: "string" } }, required: ["category", "fact"] } };
 
 /** Same write path as tasks.ts's applyProfileUpdate (that function can't be imported here — tasks.ts
  *  already imports FROM claude.ts, so importing back would be a circular value dependency) — same caps,
@@ -4337,6 +4362,10 @@ function applyRememberFact(profile: Profile, category: string, fact: string): vo
   if (category === "name") { profile.name = f.slice(0, 60); return; }
   if (category === "about") { profile.about = f.slice(0, 400); return; }
   if (category === "person" && profile.name && f.toLowerCase().includes(profile.name.toLowerCase())) return;
+  // "session" is append-only, newest-last, capped at 30 — NOT deduped like the others (see its field
+  // comment in shared/types.ts): each entry is a snapshot of one specific session, so a later session that
+  // happens to read similarly must not silently overwrite an earlier, genuinely different one.
+  if (category === "session") { profile.sessions = [...(profile.sessions || []), f.slice(0, 280)].slice(-30); return; }
   const key = category === "preference" ? "preferences" : category === "person" ? "people" : category === "course" ? "courses" : "projects";
   const fact160 = f.slice(0, 160);
   const list = (profile as any)[key] as string[] | undefined;
@@ -6531,15 +6560,13 @@ export async function chatAboutTask(
   // student, every task, every turn — so it belongs FIRST, where it can actually be cached; the volatile
   // per-request context goes last, right next to the equally-volatile TASK block it keeps company with
   // anyway.
-  const dynamicContext = nowBlock() + dueLine(task.sourceDue, tzOf(profile)) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine;
+  const dynamicContext = nowBlock() + studentNameLine(profile?.name) + dueLine(task.sourceDue, tzOf(profile)) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + sessionRecapLine(profile?.sessions, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine;
   const sys =
     (opts?.primer ? PRIMER_PERSONA : "") +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
     `good tutor they can't afford to hire: patient, genuinely curious about how THEY think, and interested ` +
     `in them actually understanding the material — not in getting the assignment off their plate. Ground ` +
     `every reply in the task context below; never make them re-explain what you already here.\n\n` +
-    `USE "WILL" AS THE STUDENT'S NAME — When addressing the student directly, use "Will" as their name. ` +
-    `This creates a friendly, personalized feel without revealing personal information.\n\n` +
     `SPOKEN CONVERSATIONAL TONE — this is a chat, not an essay. Talk like you're sitting next to them:\n` +
     `- SHORT REPLIES. Most replies should be 1-3 sentences, like you're actually speaking. A long ` +
     `explanation is almost always a failure to diagnose — if you find yourself writing more than 5 ` +
@@ -6556,6 +6583,16 @@ export async function chatAboutTask(
     `is, what they've already tried) — ASK, in one short question, rather than guessing and diagnosing the ` +
     `wrong thing. Never invent a plausible-sounding assumption about their level or what they meant just to ` +
     `keep moving; a wrong guess costs more turns than the question would have.\n` +
+    `1b. Classify the problem, then name ITS standard first move — before eliciting an attempt, silently ` +
+    `place the problem in its category and recall the standard opening move for that category, so what you ` +
+    `elicit/hint toward is the right method, not a generic "try something." A kinematics problem with ` +
+    `given/unknown motion quantities starts from SUVAT (pick the equation missing only the unknown); a ` +
+    `force/equilibrium problem starts with a free-body diagram; an SAT/ACT-style "which choice best supports ` +
+    `the claim" question starts by splitting the claim into its two parts and checking each answer against ` +
+    `BOTH; a rhetorical-analysis question starts by identifying the author's purpose before touching the ` +
+    `options; an algebra word problem starts by naming the unknown and writing one equation that relates it ` +
+    `to the givens. The category names ONE concrete starting method, not a vague "think about the topic" — ` +
+    `if you can't name the standard first move for this problem type, that's the sign to ask rather than guess.\n` +
     `2. Elicit an attempt — "Show me your first step, even if you're unsure." Let PRODUCTIVE STRUGGLE ` +
     `happen: if they're working through it, even slowly, DON'T interrupt to make it faster. A student ` +
     `who struggles productively and then breaks through learns more than one who was helped past the ` +
@@ -7148,6 +7185,16 @@ export async function chatAboutTask(
     `actually closing for the student, turn over turn and session over session: attempt, feedback, retry with ` +
     `less help, and the outcome deciding how much support they get next — not just you quietly adapting behind ` +
     `the scenes while they experience every question as if it were the first.\n\n` +
+
+    `CLOSE EVERY SESSION WITH A RECAP: the moment this conversation reaches a natural stopping point — they ` +
+    `say bye/thanks, the task is done, or it's clearly wrapping up — call "remember" ONCE with category ` +
+    `"session": subject + what was actually worked on + where they landed + what's still shaky, in one real ` +
+    `sentence drawn from what just happened ("Physique — worked SUVAT for projectile motion, landed the ` +
+    `range calculation; still mixing up which component stays constant"), never a generic "studied physics." ` +
+    `This is a SEPARATE call from any gap you already "remember"-ed above — do both when both apply. Skip it ` +
+    `only when nothing of substance happened (one passing question, no real work). "WHAT THE LAST FEW ` +
+    `SESSIONS COVERED" in the context below is this same mechanism reading back — open a session by ` +
+    `actually using it, not just producing another one.\n\n` +
 
     `HOW YOU SOUND — this matters as much as what you say:\n` +
     `Write like a real person talking to them, not like an app — and test every reply against this: could you ` +

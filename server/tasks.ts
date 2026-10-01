@@ -685,6 +685,11 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     people: dedupeFacts([...(p1.people || []), ...(p2.people || [])]),
     projects: dedupeFacts([...(p1.projects || []), ...(p2.projects || [])]),
     courses: dedupeFacts([...(p1.courses || []), ...(p2.courses || [])]),
+    // Exact-string dedupe only (not dedupeFacts' fuzzy sameFact) — two genuinely different session recaps
+    // can read similarly, and unlike the other fact lists a session entry is a snapshot, not a restatable
+    // fact, so collapsing near-duplicates would lose a real one. Order isn't reconstructable across two
+    // devices without per-entry timestamps, so this just unions and caps rather than trying to re-sort.
+    sessions: [...new Set([...(p1.sessions || []), ...(p2.sessions || [])])].slice(-30),
     paused: pausedSide.paused,
     pausedAt: pausedSide.pausedAt,
     // Sticky once granted on EITHER side — a stale copy that predates the claim must never un-grant it.

@@ -35,6 +35,11 @@ export interface Profile {
   preferences: string[];  // e.g. "concise emails", "no meetings before 10am"
   people: string[];       // key people + relationship ("Sarah — my manager")
   projects: string[];     // ongoing projects / goals
+  sessions: string[];     // short end-of-tutoring-session recaps ("Physique — worked SUVAT for projectile
+                          // motion, landed it; still shaky on vector decomposition") — distinct from
+                          // `courses` (a standing pattern that holds for the whole term) in that each entry
+                          // is a snapshot of ONE session, so the newest ones are what should actually
+                          // surface, not deduped against older ones the way a restated preference would be.
 
   // === Primer-specific fields (Phase 1 foundation) ===
   // Developmental position - per-domain level, not a single "grade"
@@ -332,7 +337,7 @@ export interface FocusSession {
 function newId(): string {
   return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
-export function emptyProfile(): Profile { return { about: "", preferences: [], people: [], projects: [], courses: [] }; }
+export function emptyProfile(): Profile { return { about: "", preferences: [], people: [], projects: [], courses: [], sessions: [] }; }
 
 /** Self-heals an already-duplicated grade history on every normalize — a Pronote sync is meant to keep ONE
  *  live row per subject (see applyPronoteGrades, server/pronote.ts), but a bug there used to generate a
@@ -379,6 +384,10 @@ export function normalizeProfile(p: any): Profile {
     people: dedupeFacts(arr(p?.people)),
     projects: dedupeFacts(arr(p?.projects)),
     courses: dedupeFacts(arr(p?.courses)),
+    // NOT deduped like the other fact lists — each entry is a snapshot of ONE session, not a restated
+    // standing fact, so two genuinely different sessions that happen to read similarly (sameFact is fuzzy)
+    // must not collapse into one. Capped here instead, newest last so a simple .slice(-N) keeps recency.
+    sessions: arr(p?.sessions).slice(-30),
     unlimited: !!p?.unlimited,
     paused: !!p?.paused,
     pausedAt: typeof p?.pausedAt === "string" ? p.pausedAt : undefined,

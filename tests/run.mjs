@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem, detectLang, visionReady, describeWhiteboard, academicBlock } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem, detectLang, visionReady, describeWhiteboard, academicBlock, sessionRecapLine } from "../server/claude.ts";
 import { evaluateArithmetic, parseNumber, findArithmeticClaims, hasArithmetic } from "../server/arithmetic.ts";
 import { isLikelyEcho, createEchoFilter, normalizeForEcho } from "../client/voice/echoGuard.ts";
 import { speechErrorMessage } from "../client/voice/speechErrors.ts";
@@ -3228,6 +3228,24 @@ section("milestoneLine — surfaces per-topic progress into the tutor's chat con
   check("case-insensitive subject match", milestoneLine(profile, "maths").includes("quadratics"));
   check("doesn't leak a different subject's milestone in", !milestoneLine(profile, "Maths").includes("subjonctif"));
   check("undefined profile → empty, never throws", milestoneLine(undefined, "Maths") === "");
+}
+
+section("sessionRecapLine — cross-session memory from the tutor's own end-of-session 'remember' recaps");
+{
+  const sessions = [
+    "Maths — worked through quadratics, landed factoring; still shaky on the discriminant.",
+    "Français — reviewed subjonctif triggers after 'il faut que'.",
+    "Physique — worked SUVAT for projectile motion, landed the range calculation; still mixing up which component stays constant.",
+  ];
+  check("no sessions → empty", sessionRecapLine(undefined, "Maths") === "");
+  check("empty list → empty", sessionRecapLine([], "Maths") === "");
+  const physique = sessionRecapLine(sessions, "Physique");
+  check("matched subject surfaces its own recap", physique.includes("SUVAT"));
+  check("case-insensitive subject match", sessionRecapLine(sessions, "physique").includes("SUVAT"));
+  check("doesn't leak an unrelated subject's recap when a match exists", !physique.includes("subjonctif"));
+  const noMatch = sessionRecapLine(sessions, "Histoire");
+  check("no subject match → falls back to the most recent sessions rather than going empty", noMatch.includes("SUVAT"));
+  check("no subject given → still returns the most recent recaps", sessionRecapLine(sessions, undefined).includes("SUVAT"));
 }
 
 section("milestonesBySubject — grouping/ordering for the tutor-context and UI readers");
