@@ -2045,7 +2045,7 @@ const CREATE_FLASHCARDS_TOOL = {
 // student DISCRIMINATE between plausible answers, which is what actually exposes a shaky notion.
 const CREATE_QUIZ_TOOL = {
   name: "CREATE_QUIZ",
-  description: "Create an in-app multiple-choice quiz attached to this task — the student answers each question, gets immediate feedback with a one-line explanation, and a score at the end. Use this to CHECK UNDERSTANDING before a contrôle (which parts of the chapter aren't solid), where CREATE_FLASHCARDS is for drilling raw recall. NEVER turn the student's OWN assigned exercise into a quiz — write NEW questions on the same notion.",
+  description: "Create an in-app multiple-choice quiz attached to this task — the student answers each question, gets immediate feedback with a one-line explanation, and a score at the end. Use this to CHECK UNDERSTANDING before a contrôle (which parts of the chapter aren't solid), where CREATE_FLASHCARDS is for drilling raw recall. NEVER turn the student's OWN assigned exercise into a quiz — write NEW questions on the same notion. MATCH THE REAL EXAM'S SHAPE, not a generic quiz — see the IB/AP/SAT/ACT question-format guidance above (examStyleLine) for the student's actual program/exam and follow IT, including option count (each question's own `options` field below says what that means).",
   input_schema: { type: "object", properties: {
     title: { type: "string", description: "short label shown on the button, e.g. 'Quiz — Mécanique du point'" },
     questions: {
@@ -2053,7 +2053,7 @@ const CREATE_QUIZ_TOOL = {
       description: "Around 8-12 by default when the student didn't name a number, adapted to the actual task (a single short notion needs fewer, a whole chapter needs more) and to the student (more if they're stress-testing understanding before a contrôle, fewer for a quick check). If the student named a SPECIFIC number, make exactly that many, up to 50 IN THIS ONE CALL — 50 is a hard technical ceiling (this single reply's token budget), not a product opinion, so never attempt more than 50 in one call no matter how high the student's number is. If they asked for more than 50, make exactly 50 now, say plainly in your reply that this is the first 50 of the N they asked for, and offer to make the rest in a follow-up message — never silently hand back a smaller quiz with no explanation. On subject matter: never placeholders, never the student's own assigned exercise reworded. WRITE THESE LIKE THE REAL THING, not generic trivia: match the phrasing, question types, and rigor of an actual contrôle/bac/IB paper for this subject and level (see VOCABULARY/track above for which) — a maths question should require the same steps a real exam question would, a history question should ask for analysis/argument the way a real dissertation prompt does, not just a fact lookup, unless the notion genuinely IS a fact lookup. Calibrate difficulty to THIS student: if their profile shows a grade for this subject, weak (well below the class/scale norm) means start with more foundational/scaffolded questions before harder ones; strong means skip the easy ones and go straight to exam-level rigor. No signal either way → assume mid-level exam difficulty, not a beginner quiz.",
       items: { type: "object", properties: {
         q: { type: "string", description: "the question — one clear sentence. Every question in this quiz must test a DIFFERENT sub-notion, formula, or skill — never two questions that are really the same question with the numbers/wording swapped (e.g. two separate 'solve for x' questions using the same technique on a trivially different equation). If the topic only genuinely supports fewer distinct angles than the requested count, make FEWER questions rather than pad with near-duplicates — a shorter quiz of all-distinct questions beats a longer one with repeats." },
-        options: { type: "array", description: "3-4 answer options. EXACTLY ONE is correct; the wrong ones must be genuinely plausible (a common misconception, an off-by-one, the right idea applied to the wrong case). An obviously-silly option teaches nothing.", items: { type: "string" } },
+        options: { type: "array", description: "3-4 answer options by default; EXACTLY 5 (lettered A-E in substance, though the UI numbers them) for an AP-track student — see the AP block above, College Board MCQs are always 5-option, never 4. EXACTLY ONE is correct either way; the wrong ones must be genuinely plausible (a common misconception, an off-by-one, the right idea applied to the wrong case). An obviously-silly option teaches nothing.", items: { type: "string" } },
         correct: { type: "number", description: "0-based index into options of the CORRECT one" },
         why: { type: "string", description: "one line on why that answer is right — this is what makes the quiz teach instead of just score" },
       }, required: ["q", "options", "correct"] },
@@ -2063,10 +2063,10 @@ const CREATE_QUIZ_TOOL = {
 
 const CREATE_PROBLEM_TOOL = {
   name: "CREATE_PROBLEM",
-  description: "Create ONE standalone practice problem displayed INLINE in the chat itself (not a chip that opens elsewhere) — the student answers right there in the thread and you help them through it. Use this when a single focused exercise is the best way to help (a quick check, a worked example to try, a 'try this one' moment), where CREATE_QUIZ would be a whole set. THINK OF THIS AS A MEASUREMENT, NOT JUST PRACTICE: before writing it, be clear what uncertainty about THIS student you're actually trying to resolve right now — do they have the concept or did they just memorize a formula's shape? is the error a slip or a real misconception? can they apply it to a new case, not just the one you walked through? Pick the smallest problem that would tell them (and you) apart between those possibilities, rather than a generic 'another one of the same'. Can be multiple-choice (give options + correct index) or free-response (give an answer string). NEVER use the student's OWN assigned exercise — write a NEW problem on the same notion. Include a one-line 'why' explanation (shown after they answer) and optionally a hint.",
+  description: "Create ONE standalone practice problem displayed INLINE in the chat itself (not a chip that opens elsewhere) — the student answers right there in the thread and you help them through it. Use this when a single focused exercise is the best way to help (a quick check, a worked example to try, a 'try this one' moment), where CREATE_QUIZ would be a whole set. THINK OF THIS AS A MEASUREMENT, NOT JUST PRACTICE: before writing it, be clear what uncertainty about THIS student you're actually trying to resolve right now — do they have the concept or did they just memorize a formula's shape? is the error a slip or a real misconception? can they apply it to a new case, not just the one you walked through? Pick the smallest problem that would tell them (and you) apart between those possibilities, rather than a generic 'another one of the same'. Can be multiple-choice (give options + correct index) or free-response (give an answer string). NEVER use the student's OWN assigned exercise — write a NEW problem on the same notion. Include a one-line 'why' explanation (shown after they answer) and optionally a hint. MATCH THE REAL EXAM'S SHAPE — see the IB/AP/SAT/ACT guidance above (examStyleLine): an IB extended-response or AP FRQ is free-response mode with the FULL multi-part prompt (lettered (a), (b), (c)..., each part's point value stated) written straight into `question` as one structured block — this tool's single-answer-string grading then applies to the FINAL part only; walk the earlier parts with them in chat rather than silently grading only the last line with no comment on the rest.",
   input_schema: { type: "object", properties: {
-    question: { type: "string", description: "the question/prompt — one clear sentence or a short problem statement. Match the phrasing, format, and rigor of an actual exam/contrôle question for this subject and level (see VOCABULARY/track above), not generic trivia." },
-    options: { type: "array", description: "MCQ mode: 2-4 answer options. EXACTLY ONE is correct; the wrong ones must be genuinely plausible. Omit entirely for free-response mode.", items: { type: "string" } },
+    question: { type: "string", description: "the question/prompt — one clear sentence, OR a full multi-part structured prompt (IB/AP extended-response/FRQ style — lettered sub-parts with their own point values) when the student's program calls for one. Match the phrasing, format, and rigor of an actual exam/contrôle question for this subject and level (see VOCABULARY/track/exam-style above), not generic trivia." },
+    options: { type: "array", description: "MCQ mode: 2-4 answer options by default; EXACTLY 5 for an AP-track student (College Board MCQs are always 5-option — see the AP block above). EXACTLY ONE is correct; the wrong ones must be genuinely plausible. Omit entirely for free-response mode (this is also the mode for any IB/AP multi-part structured question — see above).", items: { type: "string" } },
     correct: { type: "number", description: "MCQ mode only: 0-based index into options of the CORRECT one" },
     answer: { type: "string", description: "Free-response mode only: the expected answer. Checked loosely (trimmed, case-insensitive). Omit for MCQ mode." },
     why: { type: "string", description: "one line on why the answer is right — this is what makes the problem teach instead of just score" },
@@ -2234,7 +2234,12 @@ export function makeQuiz(input: any): { quiz: TaskQuiz } | { error: string } {
         kept.push({ text, wasCorrect: i === correctIdx });
       });
       const correct = kept.findIndex((o) => o.wasCorrect);
-      if (kept.length < 2 || kept.length > 4 || correct < 0) return null;
+      // Was `> 4` — silently REJECTED (dropped the whole question, not just trimmed it) any 5-option
+      // question, which is exactly what the AP-track exam-style guidance (examStyleLine/CREATE_QUIZ_TOOL's
+      // own schema) now explicitly asks the model to write. The schema said 5 while this validator still
+      // only ever accepted up to 4 — raised to match, so an AP question doesn't get silently thrown away
+      // after the model correctly followed the instruction to write one.
+      if (kept.length < 2 || kept.length > 5 || correct < 0) return null;
       const why = item?.why ? String(item.why).trim().slice(0, 300) : undefined;
       return { q, options: kept.map((o) => o.text), correct, ...(why ? { why } : {}) };
     })
@@ -2243,7 +2248,7 @@ export function makeQuiz(input: any): { quiz: TaskQuiz } | { error: string } {
     // should get it, not an arbitrary product-level ceiling. This is a sanity backstop only, matching the
     // tool description's own 50-per-call technical ceiling.
     .slice(0, 50) as TaskQuiz["questions"];
-  if (!questions.length) return { error: "ERROR: no valid questions (each needs a question, 2-4 distinct options, and a `correct` index pointing at one of them)." };
+  if (!questions.length) return { error: "ERROR: no valid questions (each needs a question, 2-5 distinct options, and a `correct` index pointing at one of them)." };
   return { quiz: { id: randomUUID(), title, questions, createdAt: new Date().toISOString() } };
 }
 
@@ -2251,7 +2256,10 @@ export function makeQuiz(input: any): { quiz: TaskQuiz } | { error: string } {
  *  Can be MCQ (options + correct index) or free-response (answer string). At least one of the two modes
  *  must be valid; a `why` explanation is strongly encouraged (it's what makes the problem teach). */
 export function makeProblem(input: any): { problem: TaskProblem } | { error: string } {
-  const question = String(input?.question || "").trim().slice(0, 600);
+  // 600 chars fit "one clear sentence" but would chop a genuine IB extended-response/AP FRQ multi-part
+  // prompt ((a)/(b)/(c), each with its own point value) mid-sentence — same reasoning, same raised cap, as
+  // makeQuiz's own `q` field above.
+  const question = String(input?.question || "").trim().slice(0, 1500);
   if (!question) return { error: "ERROR: a problem needs a non-empty question." };
   const why = input?.why ? String(input.why).trim().slice(0, 300) : undefined;
   const hint = input?.hint ? String(input.hint).trim().slice(0, 300) : undefined;

@@ -2196,6 +2196,11 @@ const manyQuestions = Array.from({ length: 60 }, (_, i) => ({ q: `q${i}`, option
 check("questions capped at 50 (sanity backstop, matches CREATE_QUIZ's 50-per-call ceiling)", makeQuiz({ title: "Q", questions: manyQuestions }).quiz.questions.length === 50);
 check("all-invalid questions produce an error, no artifact", "error" in makeQuiz({ title: "Q", questions: [{ q: "", options: [], correct: 0 }] }));
 check("a question left with only 1 surviving option (after dedupe) is dropped", "error" in makeQuiz({ title: "Q", questions: [{ q: "x?", options: ["a", "a", "a"], correct: 0 }] }));
+// Was `> 4` — silently dropped any 5-option question outright, directly contradicting the AP exam-style
+// guidance (examStyleLine) that explicitly asks for 5-option MCQs. Raised to 5 so an AP question the model
+// correctly wrote doesn't just vanish.
+check("a 5-option AP-style question is KEPT, not silently dropped", "quiz" in makeQuiz({ title: "Q", questions: [{ q: "x?", options: ["a", "b", "c", "d", "e"], correct: 4 }] }) && makeQuiz({ title: "Q", questions: [{ q: "x?", options: ["a", "b", "c", "d", "e"], correct: 4 }] }).quiz.questions[0].options.length === 5);
+check("a 6-option question is still rejected (5 is the real ceiling, not unlimited)", "error" in makeQuiz({ title: "Q", questions: [{ q: "x?", options: ["a", "b", "c", "d", "e", "f"], correct: 0 }] }));
 
 section("makeNote / makeDeck validation");
 check("an empty/whitespace-only note body is rejected (was silently accepted before this pass)", "error" in makeNote({ title: "x", body: "   " }));
