@@ -1503,7 +1503,11 @@ export function aiReady(): boolean {
 // what "describe what the student drew" needs. This never touches DEEPSEEK_API_KEY/aiReady() — a student
 // without GEMINI_API_KEY configured on the server simply doesn't see the "send to Otto" affordance; nothing
 // else in the app depends on it.
-const GEMINI_MODEL = "gemini-2.0-flash";
+// Was "gemini-2.0-flash" — deprecated server-side by Google (reproduced live: a real request came back
+// 404 "This model ... is no longer available"). "flash-lite" over the newer flagship "flash" the error
+// message pointed at, since cheap was the explicit point of using Gemini for this one feature at all —
+// Google's own deprecation message always recommends its newest/most capable model, not its cheapest one.
+const GEMINI_MODEL = "gemini-3.5-flash-lite";
 export function visionReady(): boolean {
   return !!process.env.GEMINI_API_KEY;
 }
@@ -1547,15 +1551,32 @@ export async function describeWhiteboard(dataUrl: string): Promise<{ description
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       console.error(`[vision] Gemini request failed: ${res.status} ${body.slice(0, 300)}`);
-      return { error: "Couldn't read the whiteboard just now — try again in a moment." };
+      // The first real deployment of this feature hit a 422 with no way to tell WHY from the client side —
+      // this function already swallowed Gemini's own error detail into a generic line, so the only way to
+      // diagnose it was server log access nobody necessarily has handy. Surface a short, safe snippet of the
+      // actual upstream reason (a bad/misconfigured key, an unenabled API, a quota limit — never a secret,
+      // just Gemini's own error message) so a failure is self-diagnosable from the chat bubble itself.
+      let detail = "";
+      try { detail = JSON.parse(body)?.error?.message || ""; } catch { /* non-JSON error body */ }
+      return { error: `Couldn't read the whiteboard (${res.status}${detail ? `: ${detail.slice(0, 200)}` : ""}) — try again in a moment.` };
     }
     const json: any = await res.json();
+    // Same reasoning as the !res.ok branch above: a 200 with no usable text can ALSO have a real, specific
+    // reason (Gemini blocked the response on safety grounds, or hit its own output-token cap before writing
+    // anything) — surface that instead of the one-size-fits-all "couldn't make out anything" guess whenever
+    // it's available, so this is diagnosable without server log access here too.
+    const blockReason = json?.promptFeedback?.blockReason;
+    const finishReason = json?.candidates?.[0]?.finishReason;
     const description = String(json?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
-    if (!description) return { error: "Couldn't make out anything on the whiteboard — try drawing it a bit bigger/clearer." };
+    if (!description) {
+      if (blockReason) return { error: `The whiteboard image was blocked (${blockReason}) — try a different drawing.` };
+      if (finishReason && finishReason !== "STOP") return { error: `Couldn't finish reading the whiteboard (${finishReason}) — try again.` };
+      return { error: "Couldn't make out anything on the whiteboard — try drawing it a bit bigger/clearer." };
+    }
     return { description: description.slice(0, 2000) };
   } catch (e: any) {
     console.error(`[vision] Gemini request threw: ${e?.message || e}`);
-    return { error: "Couldn't read the whiteboard just now — try again in a moment." };
+    return { error: `Couldn't read the whiteboard just now (${e?.message || "network error"}) — try again in a moment.` };
   }
 }
 
