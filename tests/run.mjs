@@ -11,7 +11,7 @@ import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToIt
 import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, normalizeWhen, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, validateThemeTokens, normalizeProfile, milestonesBySubject } from "../shared/types.ts";
 import { sweepDueForDay, localDay, sweepDue, shouldRefreshStudentModel, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp } from "../server/workload.ts";
-import { stripHtml, applyPronoteGrades, isPrivateOrReservedIp } from "../server/pronote.ts";
+import { stripHtml, applyPronoteGrades, isPrivateOrReservedIp, assertSafeExternalUrl } from "../server/pronote.ts";
 import { connectionColumnUpdates } from "../server/store.ts";
 import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, contextKey, chooseArm, computeReward, computeCardReward, computeLatencyReward, updatePosterior, leadingArm } from "../server/bandit.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, subjectFrequency, orderingBoost, twoMinuteRuleBoost } from "../server/patterns.ts";
@@ -1735,6 +1735,25 @@ section("isPrivateOrReservedIp — SSRF guard for the student-supplied Pronote c
   check("blocks an IPv4-mapped private address", isPrivateOrReservedIp("::ffff:10.0.0.1"));
   check("rejects garbage input rather than treating it as safe", isPrivateOrReservedIp("not-an-ip"));
 }
+
+section("assertSafeExternalUrl — the real guard function, now reused by /api/study/extract-text too (security pass)");
+{
+  // Exported specifically so server/index.ts's extract-text route could reuse it rather than re-implement
+  // the same check — this pins that the exported function still rejects exactly what it always rejected.
+  // Only exercises paths that don't need a real DNS lookup (scheme/literal-IP/localhost), so this stays
+  // offline-safe like every other test here — the hostname-resolution branch is covered by
+  // isPrivateOrReservedIp's own direct tests above, which is the part that function actually calls.
+  const rejects = async (url) => { try { await assertSafeExternalUrl(url); return false; } catch { return true; } };
+  const accepts = async (url) => { try { await assertSafeExternalUrl(url); return true; } catch { return false; } };
+  check("rejects a non-http(s) scheme", await rejects("file:///etc/passwd"));
+  check("rejects a literal loopback IP", await rejects("http://127.0.0.1/"));
+  check("rejects the cloud metadata IP", await rejects("http://169.254.169.254/latest/meta-data"));
+  check("rejects a literal RFC1918 address", await rejects("http://192.168.1.1/"));
+  check("rejects 'localhost' by name (no DNS lookup needed to catch this one)", await rejects("http://localhost:3000/"));
+  check("rejects garbage that isn't a parseable URL at all", await rejects("not a url"));
+  check("accepts a literal public IP (no DNS lookup needed on this path)", await accepts("https://8.8.8.8/"));
+}
+
 section("connectPronote — SSRF guard is wired in before the outbound login request (source pin)");
 {
   const src = readFileSync(new URL("../server/pronote.ts", import.meta.url), "utf8");
@@ -1745,6 +1764,33 @@ section("connectPronote — SSRF guard is wired in before the outbound login req
   const loginIdx = body.indexOf("pronote.loginCredentials(");
   check("connectPronote calls the SSRF guard on the normalized url", guardIdx > urlIdx && urlIdx >= 0);
   check("the guard runs BEFORE the real outbound login request, not after", guardIdx > 0 && loginIdx > guardIdx);
+}
+section("runPronoteSessionOnce — re-validates the stored URL on the credential-fallback path too (security pass, source pin)");
+{
+  // The token-refresh path reuses a URL that was only validated ONCE, at connect time — a hostname that
+  // resolved safely then isn't guaranteed to resolve safely on every later call (DNS rebinding). The
+  // credential-fallback branch is the one that re-sends the real stored password, so it's the one that
+  // must re-check, even though the cheaper token-only attempt above it doesn't.
+  const src = readFileSync(new URL("../server/pronote.ts", import.meta.url), "utf8");
+  const fnStart = src.indexOf("async function runPronoteSessionOnce<T>(");
+  const fnBody = src.slice(fnStart, src.indexOf("\nasync function flagNeedsReconnect", fnStart));
+  const guardIdx = fnBody.indexOf("assertSafeExternalUrl(stored.url)");
+  const credLoginIdx = fnBody.indexOf("pronote.loginCredentials(");
+  check("re-validates stored.url before the credential-fallback login", guardIdx > 0 && credLoginIdx > guardIdx);
+}
+section("/api/study/extract-text — reuses the same SSRF guard, not a second unguarded fetch (security pass, source pin)");
+{
+  // This route fetches an arbitrary user-supplied URL — same risk class as the Pronote connect flow, which
+  // already had the guard. It used to only check the URL started with http(s):// and nothing else, meaning
+  // an authenticated student could point it at an internal address and get the response handed back as
+  // "extracted text." Pin that the guard call is actually there, before the real fetch, not just in a comment.
+  const src = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const start = src.indexOf('app.post("/api/study/extract-text"');
+  const body = src.slice(start, src.indexOf("\n}));", start) + 5);
+  const guardIdx = body.indexOf("assertSafeExternalUrl(url)");
+  const fetchIdx = body.indexOf("await fetch(url,");
+  check("the route calls the SSRF guard on the submitted url", guardIdx > 0);
+  check("the guard runs BEFORE the real outbound fetch, not after", guardIdx > 0 && fetchIdx > guardIdx);
 }
 section("Pronote connection durability — connection columns + uncached reads (source pins)");
 {

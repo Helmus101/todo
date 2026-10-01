@@ -8,7 +8,11 @@ import session from "express-session";
 import bcrypt from "bcryptjs";
 // A fixed dummy hash to compare against on login when the account doesn't exist — see the login route's
 // own comment (timing side-channel fix). Computed once at boot (bcrypt is deliberately slow; not per-request).
-const DUMMY_PASS_HASH = bcrypt.hashSync("otto-dummy-password-for-timing-safety", 10);
+// Cost 12 here and at every hashSync call below — bumped from 10 in a security pass. Safe for EXISTING
+// users: bcrypt encodes its own cost factor inside the stored hash string, so an old cost-10 row still
+// verifies correctly against compareSync (it reads the embedded cost, not this constant); only a NEW hash
+// (new signup, password reset) is computed at cost 12. No migration needed, no behavior change for anyone.
+const DUMMY_PASS_HASH = bcrypt.hashSync("otto-dummy-password-for-timing-safety", 12);
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
@@ -481,7 +485,7 @@ app.post("/api/auth/signup", rateLimit(6, 60 * 60_000), ah(async (req, res) => {
   
   if (!cloudEnabled()) { res.status(500).json({ error: M(req, "Le stockage des comptes n'est pas configuré sur le serveur (Supabase).", "Account storage isn't configured on the server (Supabase).") }); return; }
   if (await getUser(email)) { res.status(409).json({ error: M(req, "Un compte existe déjà avec cet email — connecte-toi plutôt.", "An account with that email already exists — log in instead.") }); return; }
-  if (!(await createUser(email, bcrypt.hashSync(password, 10)))) { res.status(500).json({ error: M(req, "Impossible de créer le compte.", "Couldn't create the account.") }); return; }
+  if (!(await createUser(email, bcrypt.hashSync(password, 12)))) { res.status(500).json({ error: M(req, "Impossible de créer le compte.", "Couldn't create the account.") }); return; }
   void mirrorAuthUser(email, password); // best-effort — shows the account in Supabase's own Auth tab too
   // Regenerate the session id on every privilege change (login/signup) — never write the authenticated
   // user onto a pre-existing session id. Without this, a session id fixed on a victim's browser BEFORE
@@ -608,7 +612,7 @@ app.post("/api/auth/reset-password", rateLimit(10, 60 * 60_000), ah(async (req, 
   if (!cloudEnabled()) { res.status(500).json({ error: M(req, "Le stockage des comptes n'est pas configuré sur le serveur (Supabase).", "Account storage isn't configured on the server (Supabase).") }); return; }
   const u = await getUserByResetToken(token);
   if (!u) { res.status(400).json({ error: M(req, "Ce lien de réinitialisation est invalide ou a expiré — refais-en la demande.", "This reset link is invalid or has expired — request a new one.") }); return; }
-  if (!(await setPassHash(u.email, bcrypt.hashSync(password, 10)))) { res.status(500).json({ error: M(req, "Impossible de réinitialiser le mot de passe — réessaie.", "Couldn't reset the password — try again.") }); return; }
+  if (!(await setPassHash(u.email, bcrypt.hashSync(password, 12)))) { res.status(500).json({ error: M(req, "Impossible de réinitialiser le mot de passe — réessaie.", "Couldn't reset the password — try again.") }); return; }
   void recordEvent(u.email, "password_reset", {});
   // Log the student straight in — same session-fixation-safe regenerate as signup/login above, so a reset
   // link doubles as an immediate "you're back in" instead of a second manual login right after.
@@ -2405,6 +2409,12 @@ function stripHtmlToText(html: string): string {
 app.post("/api/study/extract-text", requireAuth, rateLimit(30, 60_000), ah(async (req, res) => {
   const url = String(req.body?.url || "").trim();
   if (!/^https?:\/\//i.test(url)) { res.status(400).json({ error: M(req, "URL invalide.", "Invalid URL.") }); return; }
+  // Same SSRF guard the Pronote connect flow uses for the identical risk: an authenticated student could
+  // otherwise point this at an internal address (cloud metadata, an internal service) and have the server
+  // fetch it on their behalf, handing the response back as "extracted text." Checks scheme + both a literal
+  // IP and the DNS-resolved address against private/reserved ranges — a normal-looking hostname isn't
+  // enough to trust on its own (DNS rebinding).
+  try { await pronoteSvc.assertSafeExternalUrl(url); } catch { res.status(400).json({ error: M(req, "URL invalide.", "Invalid URL.") }); return; }
   try {
     const gdoc = url.match(GDOC_URL_RE);
     if (gdoc) {

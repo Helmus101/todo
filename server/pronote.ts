@@ -156,7 +156,7 @@ export function isPrivateOrReservedIp(ip: string): boolean {
   }
   return true; // not a recognizable IP at all — refuse rather than guess
 }
-async function assertSafeExternalUrl(rawUrl: string): Promise<void> {
+export async function assertSafeExternalUrl(rawUrl: string): Promise<void> {
   let parsed: URL;
   try { parsed = new URL(rawUrl); } catch { throw new Error("URL invalide."); }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("URL invalide — seuls http(s) sont acceptés.");
@@ -339,6 +339,17 @@ async function runPronoteSessionOnce<T>(email: string, fn: (session: pronote.Ses
     if (!stored.password) {
       // Pre-existing connections made before the password-fallback fix have no stored password to fall
       // back to, so there's no second attempt to wait on — same behavior as before: flag immediately.
+      await flagNeedsReconnect(email, stored, tokenErr, { immediate: true });
+      return undefined;
+    }
+    // Re-run the SSRF guard here, not just once at connect time: this branch is the one that sends the
+    // real stored PASSWORD over the wire to `stored.url` (the token-only loginToken attempt above doesn't
+    // carry that same weight). `stored.url` was validated once, at connectPronote — a hostname that
+    // resolved safely then isn't guaranteed to resolve safely now (DNS rebinding, or a record that changes
+    // between connect and every later re-login) — so the one call that actually re-sends the password gets
+    // re-checked against the same guard, not an indefinite one-time trust in a URL set months ago.
+    try { await assertSafeExternalUrl(stored.url); } catch (e: any) {
+      console.warn("[pronote] stored URL failed the SSRF re-check on credential fallback:", e?.message || e);
       await flagNeedsReconnect(email, stored, tokenErr, { immediate: true });
       return undefined;
     }
