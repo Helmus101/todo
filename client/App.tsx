@@ -3134,7 +3134,7 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
               <div className="ob-tour-row"><b>{L("Tuteur", "Tutor")}</b><span>{L("Pose une question : Otto explique et donne des indices.", "Ask a question about your work: Otto explains and gives hints, but never the answer.")}</span></div>
               <div className="ob-tour-row"><b>{L("Réglages", "Settings")}</b><span>{L("Gère tes connexions, ta langue et ton parcours.", "Connections, language, track — everything changes here.")}</span></div>
             </div>
-            <p className="muted small">{L("Mode Étude ajoute minuteur, musique et notes.", "Study Mode (the Study button) adds a timer, music and notes when you sit down to work.")}</p>
+            <p className="muted small">{L("Le Tuteur explique, donne des indices et t'aide à avancer.", "Tutor explains, gives hints, and helps you move forward.")}</p>
             <div className="onboard-actions onboard-actions-split">
               <button className="btn ghost" onClick={() => setStep(3)}>{L("Retour", "Back")}</button>
               <button className="btn primary big" onClick={onDone}>{L("C'est parti", "Start here")}</button>
