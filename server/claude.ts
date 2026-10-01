@@ -909,7 +909,7 @@ function profileBlock(p?: Profile): string {
  *  (classifyCandidates) already sees these as separate items, but a task's OWN execution/chat previously
  *  only saw `profile.grades`; this gives it the same real, dated homework/exam picture so it can weigh
  *  "what else is due" (e.g. don't suggest cramming the night before a Physique test) without guessing. */
-function academicBlock(a?: AcademicContext): string {
+export function academicBlock(a?: AcademicContext): string {
   if (!a) return "";
   const parts: string[] = [];
   const fmt = (iso: string) => { try { return new Date(iso).toLocaleDateString("fr-FR", { day: "numeric", month: "short" }); } catch { return iso; } };
@@ -919,7 +919,18 @@ function academicBlock(a?: AcademicContext): string {
   if (a.tests?.length) {
     parts.push(`Upcoming tests/exams (from Pronote): ${a.tests.map((t) => `${t.subject} (${fmt(t.deadline)})`).join("; ")}`);
   }
-  return parts.length ? `\nTHEIR CURRENT PRONOTE WORKLOAD — use this to judge real urgency/conflicts, never invent or assume beyond it:\n${parts.map((x) => `- ${x}`).join("\n")}\n` : "";
+  // Reported live: a "plan a birthday gift" task's brief included "Check Pronote for the Russia/USSR
+  // History test" as a literal checklist item — an unrelated subject's test, pulled straight out of THIS
+  // block, written into content that has nothing to do with it. profileBlock (above) already has the
+  // equivalent guard for people/projects ("never license to write a step about a different person/project
+  // just because it's named here") — this block handled the identical risk with no guard at all until now.
+  return parts.length ? `\nTHEIR CURRENT PRONOTE WORKLOAD — use this ONLY to judge real urgency/conflicts for ` +
+    `THIS task (e.g. don't suggest cramming the night before a test that's really due, or scheduling a ` +
+    `multi-hour errand for an evening already packed with homework) — never invent or assume beyond it, and ` +
+    `NEVER let an item from this list become a step, checklist entry, or any other content inside a brief/` +
+    `note/artifact unless this task is actually ABOUT that homework or test. A different subject's test date ` +
+    `can justify WHEN you schedule something here; it does not belong WRITTEN INTO what you're producing.\n` +
+    `${parts.map((x) => `- ${x}`).join("\n")}\n` : "";
 }
 
 /** The source item's OWN words for THIS task — for Pronote, the teacher's assignment text. Distinct from
@@ -1903,7 +1914,7 @@ const CREATE_NOTE_TOOL = {
   description: "Create a SHORT in-app brief/note attached to this task — a quick checklist, reference sheet, or outline the student opens in a popup right on the card. No account, no approval, nothing external. Use this by default for anything short; only create a real Google Doc/Sheet/Slides when the content is genuinely long-form or needs to leave the app.",
   input_schema: { type: "object", properties: {
     title: { type: "string", description: "short label shown on the button, e.g. 'Fiche de révision — Suites numériques'" },
-    body: { type: "string", description: "the real content, in markdown (headings, **bold**, bullet/numbered lists, and a GFM pipe table — `| col | col |` with a `|---|---|` separator row — when the content is naturally tabular, e.g. a timing/schedule breakdown) — this IS the brief, not a placeholder. Be concise throughout: short lines, no padding, no restating the task title/why back at the student, no filler sentences before getting to substance — every line should earn its place. Most briefs should read in under a minute (roughly 100-200 words, or a short table) — a brief that runs long is usually restating things the student already knows or padding a thin point with extra sentences; if the genuinely necessary content is longer than that (a real multi-part checklist, a full itinerary), let it run, but never pad TOWARD a length. If you make a table, every cell must actually be filled in with real content — NEVER leave a column blank/empty for the student to fill in later (e.g. a 'your own example' or 'your answer' column with nothing in it); a note is something the student reads, not a form they complete, so either fill every cell yourself with a genuine, specific answer or drop that column entirely. This includes the case where the source material needed to fill a row (an extract/text you don't actually have) is missing — do NOT publish an empty template grid with blank rows waiting for it; state in one line what's missing and skip the table entirely, then send the actual filled table in a follow-up once you have the real content. NEVER include a markdown link whose URL you made up (this app has no domain of its own for notes/tasks — a link like otto.ai/... or similar is always fabricated, never real) — only ever a URL copied verbatim from an actual source (a task's own link/attachment, or a real web_search result). Plain text with no link is always fine when you don't have a real one." },
+    body: { type: "string", description: "the real content, STRICTLY SCOPED TO THIS TASK — reported live: a 'plan a birthday gift' brief included a checklist item to 'check Pronote for the Russia/USSR History test,' an entirely unrelated subject pulled in from ambient calendar/workload context. Other things going on (a different subject's test, another task's deadline) can justify a scheduling choice IN this content ('do this on the 7th, not test-eve') but must never appear as their own fact/item/checklist entry — if it's not about THIS task's own subject, it doesn't belong in the body at all. In markdown (headings, **bold**, bullet/numbered lists, and a GFM pipe table — `| col | col |` with a `|---|---|` separator row — when the content is naturally tabular, e.g. a timing/schedule breakdown) — this IS the brief, not a placeholder. Be concise throughout: short lines, no padding, no restating the task title/why back at the student, no filler sentences before getting to substance — every line should earn its place. Most briefs should read in under a minute (roughly 100-200 words, or a short table) — a brief that runs long is usually restating things the student already knows or padding a thin point with extra sentences; if the genuinely necessary content is longer than that (a real multi-part checklist, a full itinerary), let it run, but never pad TOWARD a length. If you make a table, every cell must actually be filled in with real content — NEVER leave a column blank/empty for the student to fill in later (e.g. a 'your own example' or 'your answer' column with nothing in it); a note is something the student reads, not a form they complete, so either fill every cell yourself with a genuine, specific answer or drop that column entirely. This includes the case where the source material needed to fill a row (an extract/text you don't actually have) is missing — do NOT publish an empty template grid with blank rows waiting for it; state in one line what's missing and skip the table entirely, then send the actual filled table in a follow-up once you have the real content. NEVER include a markdown link whose URL you made up (this app has no domain of its own for notes/tasks — a link like otto.ai/... or similar is always fabricated, never real) — only ever a URL copied verbatim from an actual source (a task's own link/attachment, or a real web_search result). Plain text with no link is always fine when you don't have a real one." },
   }, required: ["title", "body"] },
 };
 

@@ -1518,6 +1518,10 @@ input:focus, textarea:focus {
   max-height: 360px;
   overflow: auto;
 }
+/* Ask Otto, moved up from the bottom of the card to right under the hero and restyled from a transparent
+   `btn ghost` — reported live as too easy to miss for something meant to be "one glance away." Full-width so
+   it reads as a real, inviting action on the card, not a small aside next to other buttons. */
+.tf-ask-otto { display: block; width: 100%; margin-top: var(--space-3); text-align: center; }
 .tf-panels { display: flex; flex-direction: column; margin-top: var(--space-3); }
 .disclosure { border-top: 1px solid var(--line-soft); }
 .disclosure:last-child { border-bottom: 1px solid var(--line-soft); }

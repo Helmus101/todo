@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem, detectLang, visionReady, describeWhiteboard } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem, detectLang, visionReady, describeWhiteboard, academicBlock } from "../server/claude.ts";
 import { evaluateArithmetic, parseNumber, findArithmeticClaims, hasArithmetic } from "../server/arithmetic.ts";
 import { isLikelyEcho, createEchoFilter, normalizeForEcho } from "../client/voice/echoGuard.ts";
 import { speechErrorMessage } from "../client/voice/speechErrors.ts";
@@ -2132,6 +2132,19 @@ check("tells the model to compute from this, not guess", /do the math from this/
 
 // ── Prompt content — pins the academic-research + specificity instructions (house style: trackLine
 // vocabulary above is already tested this same way) ───────────────────────────────────────────────────
+section("academicBlock — cross-task context must inform scheduling, never bleed into unrelated content (source pin)");
+{
+  // Reported live: a "plan Airy's birthday gift" task's brief included "Check Pronote for the Russia/USSR
+  // History test" as its own checklist item — an entirely unrelated subject, pulled straight out of this
+  // block's Pronote-workload context. profileBlock already had the equivalent guard for people/projects
+  // ("never license to write a step about a different person/project just because it's named here"); this
+  // block had no such guard until this fix.
+  const block = academicBlock({ homework: [], tests: [{ subject: "History", deadline: new Date().toISOString() }] });
+  check("still surfaces the real Pronote data (not neutered into nothing)", /History/.test(block));
+  check("explicitly instructs: only for scheduling judgment, never written into unrelated content", /ONLY to judge real urgency\/conflicts/i.test(block) && /NEVER let an item from this list become a step/i.test(block));
+  check("names the actual reported failure as the thing being guarded against (checklist/note/artifact bleed)", /checklist entry|any other content inside a brief/i.test(block));
+}
+
 section("PLAN_ONLY_OVERRIDE — academic research guidance");
 check("tells the model to research the NOTION, not just admin logistics", /notion/i.test(PLAN_ONLY_OVERRIDE));
 check("explicitly forbids fetching the answer key", /corrigé/i.test(PLAN_ONLY_OVERRIDE));

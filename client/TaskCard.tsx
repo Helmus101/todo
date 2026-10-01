@@ -610,6 +610,18 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
         onTask={onTask}
       />
 
+      {/* Was a plain `btn ghost` at the very bottom of the card, past steps/prepared/board — its OWN comment
+          called it "the core feature," but a transparent, muted-gray button buried below everything else is
+          the opposite of prominent; reported live as too easy to miss. Moved right under the hero (the one
+          thing to do right now) and restyled to actually read as a real, inviting action — help on this
+          specific task should be one unmissable tap away, not something you find after scrolling past the
+          step list. */}
+      {!isDone ? (
+        <button type="button" className="btn primary xs tf-ask-otto" onClick={() => setOpenChat(true)}>
+          💬 {L("Demander à Otto — besoin d'aide ?", "Ask Otto — need help?")}
+        </button>
+      ) : null}
+
       {/* The anti-procrastination hook: the smallest possible first move, small enough it's hard to say
           no to (see FIRST ACTION in server/claude.ts) — a stuck student needs permission to start, not
           another item on the plan, so this sits BELOW the hero (which is the real current step) rather
@@ -660,11 +672,6 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
         <div className="tf-board-inline">
           <BoardArtifact task={task} />
         </div>
-      ) : null}
-
-      {/* (E) the tutor — never behind a disclosure; it's the core feature and it has to be one glance away. */}
-      {!isDone ? (
-        <button type="button" className="btn ghost" onClick={() => setOpenChat(true)}>{L("Demander à Otto", "Ask Otto")}</button>
       ) : null}
 
       {openChat ? (
