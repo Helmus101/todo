@@ -2941,12 +2941,12 @@ function GoogleTiles({ onChanged, restricted = true }: { onChanged?: () => void;
 }
 
 /** First-run ONBOARDING for a brand-new account — the ONE place Otto is explained. A guided 5-step overlay:
- *  welcome + name → how it works → connect Pronote → preferences → done. Pronote's connect opens in a new
+ *  welcome + name ��� how it works → connect Pronote → preferences → done. Pronote's connect opens in a new
  *  tab; we re-check on focus so the tile flips to ✓ when the user comes back. Shown once after sign-up;
  *  finishing (or "Skip") clears the otto-onboard flag. */
-const OB_STEPS = 6;
-/** Otto Lycée v2: onboarding is SIX short steps — name → track+language → what Otto does → connect
- *  everything (Pronote + Google on ONE step) → one-screen feature tour → done. v1 ran 12 screens, most of
+const OB_STEPS = 5;
+/** Otto Lycée v2: onboarding is FIVE short steps — name → track+language → what Otto does → connect
+ *  everything (Pronote + Google on ONE step) → one-screen feature tour with a direct start action. v1 ran 12 screens, most of
  *  them full-page essays about one feature each (Study Mode, tutor, flashcards, automation); every extra
  *  screen is dropout for a lycéen who just wants to see the app. The per-feature detail those screens
  *  carried lives in each feature's own first-time hint instead (FirstTimeHint, client/ui.tsx), shown when
@@ -3044,7 +3044,7 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
         {step === 0 && (
           <div className="onboard-step">
             <h2>{L("Bienvenue sur Otto", "Welcome to Otto")}</h2>
-            <p className="onboard-lead">{L("Otto lit tes devoirs, contrôles et mails, transforme tout ça en un plan clair pour aujourd'hui, et t'aide à démarrer — sans jamais faire le travail à ta place. Connecte Pronote, Gmail, ou ajoute tes tâches à la main.", "Otto reads your homework, tests and emails, turns them into a clear plan for today, and helps you get started — never doing the work for you. Connect Pronote, Gmail, or add tasks by hand.")}</p>
+            <p className="onboard-lead">{L("Otto lit tes devoirs, contrôles et mails, transforme tout ça en un plan clair pour aujourd'hui, et t'aide à démarrer — sans jamais faire le travail à ta place. Connecte Pronote, Gmail, ou ajoute tes tâches à la main.", "Otto turns homework, tests, and emails into a clear plan — without doing the work for you. Connect a source or add tasks yourself.")}</p>
             <label className="field onboard-name"><span>{L("Comment veux-tu qu'Otto t'appelle ?", "What should Otto call you?")}</span>
               <input className="addinput" placeholder={L("Ton prénom (optionnel)", "Your first name (optional)")} value={name} maxLength={60} autoFocus
                 onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void saveName(); }} />
@@ -3128,16 +3128,16 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
           <div className="onboard-step">
             <h2>{L("Où trouver quoi", "Where to find things")}</h2>
             <div className="ob-tour">
-              <div className="ob-tour-row"><b>{L("Tâches", "Tasks")}</b><span>{L("Ton plan du jour — Otto scanne Pronote/Gmail chaque matin et range tout par priorité. Coche, et c'est fait.", "Your plan for today — Otto scans Pronote/Gmail every morning and sorts it by priority. Tick it off, done.")}</span></div>
-              <div className="ob-tour-row"><b>{L("Journal", "Journal")}</b><span>{L("Note en une ligne ce que tu as appris — Otto le transforme en fiches de révision.", "Log in one line what you learned — Otto turns it into flashcards.")}</span></div>
-              <div className="ob-tour-row"><b>{L("Erreurs", "Error log")}</b><span>{L("Note chaque erreur précise (question, ta réponse, la bonne) — avant un contrôle, Otto cible tes révisions dessus.", "Log each precise mistake (question, your answer, the right one) — before a test, Otto targets your revision on them.")}</span></div>
-              <div className="ob-tour-row"><b>{L("Tuteur", "Tutor")}</b><span>{L("Pose une question sur ton devoir : Otto explique et donne des indices, mais jamais la réponse.", "Ask a question about your work: Otto explains and gives hints, but never the answer.")}</span></div>
-              <div className="ob-tour-row"><b>{L("Réglages", "Settings")}</b><span>{L("Connexions, langue, parcours — tout se change ici.", "Connections, language, track — everything changes here.")}</span></div>
+              <div className="ob-tour-row"><b>{L("Tâches", "Tasks")}</b><span>{L("Ton plan du jour, trié par priorité. Ouvre une tâche pour commencer.", "Your plan for today — Otto scans Pronote/Gmail every morning and sorts it by priority. Tick it off, done.")}</span></div>
+              <div className="ob-tour-row"><b>{L("Journal", "Journal")}</b><span>{L("Garde une trace de ce que tu apprends.", "Log in one line what you learned — Otto turns it into flashcards.")}</span></div>
+              <div className="ob-tour-row"><b>{L("Erreurs", "Error log")}</b><span>{L("Enregistre tes erreurs pour savoir quoi réviser.", "Log each precise mistake (question, your answer, the right one) — before a test, Otto targets your revision on them.")}</span></div>
+              <div className="ob-tour-row"><b>{L("Tuteur", "Tutor")}</b><span>{L("Pose une question : Otto explique et donne des indices.", "Ask a question about your work: Otto explains and gives hints, but never the answer.")}</span></div>
+              <div className="ob-tour-row"><b>{L("Réglages", "Settings")}</b><span>{L("Gère tes connexions, ta langue et ton parcours.", "Connections, language, track — everything changes here.")}</span></div>
             </div>
-            <p className="muted small">{L("Mode Étude (le bouton Studier) ajoute minuteur, musique et notes quand tu te mets au travail.", "Study Mode (the Study button) adds a timer, music and notes when you sit down to work.")}</p>
+            <p className="muted small">{L("Mode Étude ajoute minuteur, musique et notes.", "Study Mode (the Study button) adds a timer, music and notes when you sit down to work.")}</p>
             <div className="onboard-actions onboard-actions-split">
               <button className="btn ghost" onClick={() => setStep(3)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(5)}>{L("Suivant", "Next")}</button>
+              <button className="btn primary big" onClick={onDone}>{L("C'est parti", "Start here")}</button>
             </div>
           </div>
         )}
