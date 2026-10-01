@@ -171,15 +171,18 @@ export function AskOttoPanel({
   // impossible: abort() killed the recognizer, so nothing the student said while Otto spoke was ever
   // heard). Echo from the speakers is handled by isLikelyEcho above, not by deafness. When barge-in is
   // OFF (Study Mode / per-task chats), keep the old pause-and-resume behavior: safer against echo on
-  // devices without headphones, and there's nothing to interrupt anyway. The 400ms settle delay before
-  // reopening stays for the non-barge-in path (see TaskCard.tsx's identical effect for the full history).
+  // devices without headphones, and there's nothing to interrupt anyway. Reported live: the mic should
+  // pick back up the instant Otto stops, not after a noticeable pause — shortened from 400ms to 80ms,
+  // just enough for the audio hardware to actually stop outputting before the mic reopens (go to 0 and a
+  // genuinely echo-y setup with no headphones could catch the last few ms of playback as a false result;
+  // 80ms is below what a student perceives as a delay but still past that window in practice).
   const wasSpeakingRef = useRef(false);
   useEffect(() => {
     if (!voiceModeOn || bargeIn) return;
     if (synth.speaking && !wasSpeakingRef.current) {
       recog.abort();
     } else if (!synth.speaking && wasSpeakingRef.current) {
-      const t = setTimeout(() => { if (voiceModeOn && !synth.speaking) recog.start(); }, 400);
+      const t = setTimeout(() => { if (voiceModeOn && !synth.speaking) recog.start(); }, 80);
       wasSpeakingRef.current = synth.speaking;
       return () => clearTimeout(t);
     }

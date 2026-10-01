@@ -6303,18 +6303,28 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 /* ── Tutor Session: Whiteboard (student draws, Otto reads it) ──────────────────
    REPLACES the chat pane while open, same posture as Desmos replacing the board — a drawing surface needs
    the full pane, not a cramped strip. Closing without sending discards the drawing (nothing persists). */
-.tutor-whiteboard { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.tutor-whiteboard-toolbar { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.tutor-whiteboard { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 0; }
+.tutor-whiteboard-toolbar { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+/* Tool buttons (pen/eraser/text) read as ONE group, tight gap between them; the swatch/clear/close that
+   follow are each their own action, so they get the wider 10px toolbar gap instead — a plain divider marks
+   the seam rather than relying on spacing alone to imply it. */
+.tutor-whiteboard-tool-group { display: flex; align-items: center; gap: 4px; }
+.tutor-whiteboard-toolbar-divider { width: 1px; height: 22px; background: var(--line); margin: 0 2px; }
 .tutor-whiteboard-toolbar .btn.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
-.tutor-whiteboard-color { width: 26px; height: 26px; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-xs); cursor: pointer; background: none; }
-.tutor-whiteboard-canvas-wrap { position: relative; flex: 1; min-height: 0; display: flex; }
-.tutor-whiteboard-canvas { flex: 1; min-height: 0; width: 100%; background: #FFFFFF; touch-action: none; cursor: crosshair; }
-/* Positioned at the click point in DISPLAY pixels (see PendingText's own comment) — transform shifts it up
-   so the typed baseline lines up with where the click landed, same spot fillText then bakes it into. */
-.tutor-whiteboard-text-input { position: absolute; transform: translateY(-2px); background: transparent; border: 1px dashed var(--line); font: 15px sans-serif; padding: 1px 3px; min-width: 60px; outline: none; }
-.tutor-whiteboard-footer { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-top: 1px solid var(--line); }
-.tutor-whiteboard-hint { font-size: 12px; color: var(--ink-2); flex: 1; min-width: 0; }
-.tutor-whiteboard-error { font-size: 12px; color: var(--vermilion); flex: 1; min-width: 0; }
+.tutor-whiteboard-color { width: 28px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-xs); cursor: pointer; background: none; }
+/* The canvas now sits INSET with its own border/shadow/rounding instead of flush against the pane edges —
+   reported live: the board felt cramped/flat against the chrome around it. The padding here is the margin
+   that creates that inset; the canvas element itself stays a plain white rect, radius'd to match. */
+.tutor-whiteboard-canvas-wrap { position: relative; flex: 1; min-height: 0; display: flex; padding: 16px; background: var(--bg-2); }
+.tutor-whiteboard-canvas { flex: 1; min-height: 0; width: 100%; background: #FFFFFF; touch-action: none; cursor: crosshair; border-radius: var(--radius-sm); border: 1px solid var(--line); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06); }
+/* Positioned at the click point in DISPLAY pixels (see PendingText's own comment), offset by the canvas's
+   own inset padding above so it lands on the exact spot clicked, not shifted by the wrapper's margin.
+   transform shifts it up so the typed baseline lines up with where the click landed, same spot fillText
+   then bakes it into. */
+.tutor-whiteboard-text-input { position: absolute; transform: translate(16px, calc(16px - 2px)); background: transparent; border: 1px dashed var(--line); border-radius: var(--radius-xs); font: 15px sans-serif; padding: 2px 5px; min-width: 60px; outline: none; }
+.tutor-whiteboard-footer { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--line); }
+.tutor-whiteboard-hint { font-size: 12px; color: var(--ink-2); flex: 1; min-width: 0; line-height: 1.4; }
+.tutor-whiteboard-error { font-size: 12px; color: var(--vermilion); flex: 1; min-width: 0; line-height: 1.4; }
 
 /* THE BOARD AS A WORKSHEET — the board is a drafted lesson document, not a card feed. Header block (date +
    subject), quiet numbered sections in the margin, glyphs instead of badges, write-in animation for newly

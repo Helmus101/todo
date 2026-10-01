@@ -77,6 +77,24 @@ export function useSpeechRecognition({ lang, onResult, onInterim, onError }: Use
   // wanted this to stop." Without this distinction, mic-always-on mode would silently go dead the moment
   // Chrome's own session cap or a transient network hiccup ended the underlying recognizer.
   const keepAliveRef = useRef(false);
+  // Reported live: a short mid-thought breath ("so the derivative of x squared... is 2x") was getting cut
+  // into two separate sent messages — the browser's own pause-detection marks a result `isFinal` on any
+  // brief silence, which is far shorter than a natural thinking pause. Don't act on a final result the
+  // instant it lands: buffer it and wait a bit for more speech. If nothing more arrives, flush as one
+  // message; if another final (or renewed interim activity) arrives first, append to the SAME buffer and
+  // restart the wait — so one real pause mid-utterance joins into one message instead of firing early.
+  const pendingFinalRef = useRef("");
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushPending = useCallback(() => {
+    if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
+    const text = pendingFinalRef.current.trim();
+    pendingFinalRef.current = "";
+    if (text) onResultRef.current(text);
+  }, []);
+  const scheduleFlush = useCallback(() => {
+    if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
+    flushTimerRef.current = setTimeout(flushPending, 900);
+  }, [flushPending]);
 
   const createAndStart = useCallback(() => {
     if (!Ctor) return;
@@ -93,7 +111,10 @@ export function useSpeechRecognition({ lang, onResult, onInterim, onError }: Use
         const r = e.results[i];
         if (r.isFinal) {
           const text = r[0].transcript.trim();
-          if (text) onResultRef.current(text);
+          if (text) {
+            pendingFinalRef.current = pendingFinalRef.current ? `${pendingFinalRef.current} ${text}` : text;
+            scheduleFlush();
+          }
         } else {
           interim += r[0].transcript;
         }
@@ -102,6 +123,10 @@ export function useSpeechRecognition({ lang, onResult, onInterim, onError }: Use
       // Live interim text out (barge-in channel) — trimmed, and "" when nothing is pending so callers
       // can treat empty as "no speech in flight".
       onInterimRef.current?.(interim.trim());
+      // Fresh speech arriving while a final result is still buffered (mid-thought, they kept going before
+      // the flush timer fired) extends the wait — otherwise the buffered half could still flush out from
+      // under them right as they resume talking.
+      if (interim.trim() && pendingFinalRef.current) scheduleFlush();
     };
     rec.onerror = (e) => {
       // "no-speech" fires constantly in always-on mode (every silent gap) — not a real error, just Chrome's
@@ -131,6 +156,7 @@ export function useSpeechRecognition({ lang, onResult, onInterim, onError }: Use
       if (recRef.current !== rec) return;
       setInterimTranscript("");
       onInterimRef.current?.("");
+      flushPending(); // don't lose a trailing utterance still waiting out its debounce when the session ends
       if (keepAliveRef.current) {
         // The recognizer stopped on its own (session cap / blip) but the app still wants to be listening —
         // restart transparently. A brief microtask delay avoids some browsers' "already started" race when
@@ -183,6 +209,11 @@ export function useSpeechRecognition({ lang, onResult, onInterim, onError }: Use
     recRef.current?.abort();
     setListening(false);
     setInterimTranscript("");
+    // Discard, don't flush — abort() is an intentional "stop hearing me now" (voice mode off, barge-in
+    // cancelling Otto), and the async onend this triggers must not resurrect a half-said utterance after
+    // the fact. Clear the timer directly rather than via flushPending, which would send it.
+    if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
+    pendingFinalRef.current = "";
   }, []);
 
   useEffect(() => () => abort(), [abort]);

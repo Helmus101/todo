@@ -3395,7 +3395,10 @@ section("Tutor Desmos tools — the student-usable place (contract + pins)");
 
   const tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
   const desmosCompSrc = readFileSync(new URL("../client/tutor/TutorDesmos.tsx", import.meta.url), "utf8");
-  check("opening Desmos REPLACES the board pane's content (not a panel above it)", /desmosOpen \? \(\s*<TutorDesmos/.test(tutorSrc) && /\) : \(/.test(tutorSrc));
+  // Desmos stays MOUNTED once opened (hidden via inline style, not unmounted) so a reopen doesn't reload
+  // the iframe and lose whatever the student graphed — see TutorSession's own comment on why `hidden` the
+  // attribute isn't used (stylesheet specificity could override it) in favor of an inline display toggle.
+  check("opening Desmos REPLACES the board pane's content, kept mounted (not unmounted) once opened", /desmosOpen \|\| desmosEverOpenedRef\.current \? \(/.test(tutorSrc) && /display: desmosOpen \? "contents" : "none"/.test(tutorSrc));
   check("closing Desmos is wired back to the board via onClose", /onClose=\{\(\) => setDesmosOpen\(false\)\}/.test(tutorSrc) && /onClose \}: \{ onClose: \(\) => void \}/.test(desmosCompSrc));
   check("the panel embeds Desmos in a sandboxed iframe, never top-navigation", (/sandbox="([^"]*)"/.exec(desmosCompSrc) || [])[1] === "allow-scripts allow-same-origin allow-popups" && /allow="fullscreen"/.test(desmosCompSrc));
   check("no tab-switcher UI remains — one tool, no tablist", !/role="tablist"/.test(desmosCompSrc) && !/tutor-desmos-tab\b/.test(desmosCompSrc));

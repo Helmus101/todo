@@ -140,12 +140,16 @@ export function TutorWhiteboard({ onClose, onSend }: TutorWhiteboardProps) {
   return (
     <div className="tutor-whiteboard">
       <div className="tutor-whiteboard-toolbar">
-        <button type="button" className={`btn xs ghost${tool === "pen" ? " active" : ""}`} onClick={() => setTool("pen")}>✏ {L("Stylo", "Pen")}</button>
-        <button type="button" className={`btn xs ghost${tool === "eraser" ? " active" : ""}`} onClick={() => setTool("eraser")}>◻ {L("Gomme", "Erase")}</button>
-        <button type="button" className={`btn xs ghost${tool === "text" ? " active" : ""}`} onClick={() => setTool("text")}>🔤 {L("Texte", "Text")}</button>
+        <div className="tutor-whiteboard-tool-group">
+          <button type="button" className={`btn xs ghost${tool === "pen" ? " active" : ""}`} onClick={() => setTool("pen")}>✏ {L("Stylo", "Pen")}</button>
+          <button type="button" className={`btn xs ghost${tool === "eraser" ? " active" : ""}`} onClick={() => setTool("eraser")}>◻ {L("Gomme", "Erase")}</button>
+          <button type="button" className={`btn xs ghost${tool === "text" ? " active" : ""}`} onClick={() => setTool("text")}>🔤 {L("Texte", "Text")}</button>
+        </div>
+        <div className="tutor-whiteboard-toolbar-divider" aria-hidden />
         <input type="color" value={color} onChange={(e) => setColor(e.target.value)} className="tutor-whiteboard-color" aria-label={L("Couleur", "Color")} />
         <button type="button" className="btn xs ghost" onClick={clear} disabled={!hasInk}>{L("Effacer tout", "Clear")}</button>
-        <button type="button" className="btn xs ghost" onClick={onClose}>{L("← Retour au chat", "← Back to chat")}</button>
+        <div className="tutor-whiteboard-toolbar-divider" aria-hidden />
+        <button type="button" className="btn xs ghost" onClick={onClose}>{L("← Retour au tableau", "← Back to board")}</button>
       </div>
       <div className="tutor-whiteboard-canvas-wrap">
         <canvas

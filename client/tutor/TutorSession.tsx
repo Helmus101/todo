@@ -73,10 +73,17 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
   // Desmos replaces the board pane entirely while open (see the board pane's render below) — lifted up here
   // (was local to TutorDesmos) so this component can branch between <BoardArtifact> and <TutorDesmos>.
   const [desmosOpen, setDesmosOpen] = useState(false);
-  // The whiteboard REPLACES the chat pane while open (Desmos above does the same to the board pane) — a
-  // student drawing their work needs the full pane, not a cramped strip; closing it (without sending)
-  // discards the drawing, same as TutorWhiteboard's own posture.
+  // Once Desmos has been opened at all this session, it stays mounted (hidden, not removed) from then on —
+  // see the board pane's render below for why: an iframe that's removed and re-added reloads from scratch.
+  const desmosEverOpenedRef = useRef(false);
+  if (desmosOpen) desmosEverOpenedRef.current = true;
+  // The whiteboard REPLACES the board pane while open (reported live: it should take over the board, not
+  // the chat — drawing is visual work, same pane Desmos uses, not the conversation). Mutually exclusive
+  // with Desmos (openWhiteboard/openDesmos below enforce it) — only one replaces the board at a time.
+  // Closing it (without sending) discards the drawing, same as TutorWhiteboard's own posture.
   const [whiteboardOpen, setWhiteboardOpen] = useState(false);
+  const openWhiteboard = useCallback(() => { setDesmosOpen(false); setWhiteboardOpen(true); }, []);
+  const openDesmos = useCallback(() => { setWhiteboardOpen(false); setDesmosOpen(true); }, []);
   const handleVoiceState = useCallback((s: { listening: boolean; speaking: boolean; voiceModeOn: boolean; interim: string }) => setVoiceState(s), []);
   // StrictMode guard for the mount peek below (a double-invoke would just be a wasted duplicate GET, but
   // the guard also keeps the read strictly once-per-mount). Runs once per component lifetime.
@@ -160,6 +167,7 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
         setShowHistory(true);
         setDesmosOpen(false);
         setWhiteboardOpen(false);
+        desmosEverOpenedRef.current = false;
       }, INACTIVITY_MS);
     };
     const activityEvents = ["mousedown", "keydown", "scroll", "touchstart"] as const;
@@ -253,6 +261,7 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
       setShowHistory(true);
       setDesmosOpen(false);
       setWhiteboardOpen(false);
+      desmosEverOpenedRef.current = false;
     } finally {
       setEndingSession(false);
     }
@@ -293,6 +302,7 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
     setSessionStart(new Date().toISOString());
     setDesmosOpen(false);
     setWhiteboardOpen(false);
+    desmosEverOpenedRef.current = false;
   }, [pendingActiveSession, userId]);
 
   const startNewSession = useCallback(async () => {
@@ -338,6 +348,7 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
         setSessionStart(new Date().toISOString());
         setDesmosOpen(false);
         setWhiteboardOpen(false);
+        desmosEverOpenedRef.current = false;
       }
       setPendingActiveSession(null);
     } catch {
@@ -511,20 +522,73 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
       <section className="tutor-chat" aria-label={L("Discuter avec Otto", "Ask Otto")}>
         <div className="tutor-pane-title">
           {backButton}
-          <span>{whiteboardOpen ? L("Tableau blanc", "Whiteboard") : L("Demande à Otto", "Ask Otto")}</span>
-          {/* Lets the student SHOW Otto their own work (a diagram, a worked attempt) instead of only
-              describing it in words — reported ask: "make sure the tutor can process images from a
-              whiteboard." Hidden entirely when the server has no vision provider configured (GEMINI_API_KEY
-              — see server/claude.ts's describeWhiteboard), since the button would otherwise just 503 every
-              time; DeepSeek itself has no image input at all, this calls a separate provider for just this. */}
-          {visionReady && !whiteboardOpen && (
-            <button type="button" className="btn ghost xs" onClick={() => setWhiteboardOpen(true)}>
-              ✏ {L("Tableau blanc", "Whiteboard")}
-            </button>
-          )}
+          <span>{L("Demande à Otto", "Ask Otto")}</span>
           <button className="btn ghost tutor-end-btn" disabled={endingSession} onClick={() => void endSession()}>
             {endingSession ? L("Fin…", "Ending…") : L("Terminer la séance", "End session")}
           </button>
+        </div>
+        {fresh && (
+          <div className="tutor-start">
+            <p>{L("Salut ! Je suis Otto, ton tuteur. On travaille ensemble sur ce que tu veux apprendre ?", "Hi! I'm Otto, your tutor. Ready to work on whatever you'd like to learn?")}</p>
+          </div>
+        )}
+        {/* Reported live: the mic should be off while Otto is speaking, not open for interruption — no
+            `bargeIn` prop below, so this falls back to AskOttoPanel's standard pause-mic-during-TTS
+            behavior (abort the recognizer the moment speech starts, restart it ~400ms after it ends). A
+            deliberate reversal of the earlier barge-in feature for the Tutor specifically. */}
+        <div className="tutor-chat-body">
+          <AskOttoPanel
+            task={task} currentStep={undefined} input={input} setInput={setInput} sending={sending}
+            error={error} pendingMsg={pendingMsg} onSend={(o, v) => void send(o, v)}
+            onOpenNote={noop} onOpenDeck={noop} onOpenQuiz={noop}
+            emptyText="" placeholder={L("Écris ici…", "Type here…")}
+            onVoiceStateChange={handleVoiceState}
+          />
+        </div>
+      </section>
+      <section className="tutor-board" aria-label={L("Tableau", "Board")}>
+        <div className="tutor-pane-title">
+          <span>{whiteboardOpen ? L("Tableau blanc", "Whiteboard") : desmosOpen ? L("Desmos", "Desmos") : L("Le tableau", "Board")}</span>
+          {/* Voice state lives on the BOARD pane: in voice-first mode this is the pane the student is
+              actually looking at. Kept small and inline in the pane title (reported: the earlier full-width
+              orb banner was too big/intrusive) — a compact status dot + label is enough to answer "am I
+              being heard / is Otto talking" without taking over the pane. Hidden whenever Desmos/the
+              whiteboard has replaced the board — the pill only matters when the student's actually looking
+              at the board itself. */}
+          {voiceState.voiceModeOn && !desmosOpen && !whiteboardOpen ? (
+            <span className={`tutor-voice-pill${voiceState.speaking ? " speaking" : voiceState.listening ? " listening" : ""}`} role="status">
+              {voiceState.speaking
+                ? L("Otto parle…", "Otto is speaking…")
+                : voiceState.listening
+                  ? L("Je t'écoute…", "Listening…")
+                  : L("Voix activée", "Voice on")}
+              {voiceState.listening && voiceState.interim ? <span className="tutor-voice-interim">{voiceState.interim}</span> : null}
+            </span>
+          ) : null}
+          {/* Lets the student SHOW Otto their own work (a diagram, a worked attempt) instead of only
+              describing it in words — reported ask: "make sure the tutor can process images from a
+              whiteboard." Hidden entirely when the server has no vision provider configured (GEMINI_API_KEY
+              — see server/claude.ts's describeWhiteboard). Moved here from the chat pane's header (reported
+              live: drawing should replace the BOARD, not the chat — the board is the visual-work pane, the
+              chat is the conversation; opening it here matches Desmos's own "replaces the board" place
+              instead of taking over the conversation surface). Mutually exclusive with Desmos — only one
+              replacement of the board at a time. */}
+          {!desmosOpen && !whiteboardOpen && visionReady && (
+            <button type="button" className="btn ghost xs" onClick={openWhiteboard}>
+              ✏ {L("Tableau blanc", "Whiteboard")}
+            </button>
+          )}
+          {/* The tutor's Desmos place, reachable from the board pane's own header — opening it REPLACES the
+              board entirely (see the branch below) rather than squeezing a small iframe in above it
+              (reported live: that felt cramped). Closing it restores the board exactly as it was; the
+              board's own state is never touched by opening/closing Desmos. The iframe itself stays mounted
+              under the hood even while hidden (see the wrapper below) — reported live: reopening Desmos used
+              to reload a blank calculator, throwing away whatever the student had graphed. */}
+          {!desmosOpen && !whiteboardOpen && (
+            <button type="button" className="btn ghost xs tutor-desmos-open" onClick={openDesmos}>
+              <span className="tutor-desmos-glyph" aria-hidden>ƒ</span> {L("Desmos", "Desmos")}
+            </button>
+          )}
         </div>
         {whiteboardOpen ? (
           <TutorWhiteboard
@@ -539,64 +603,12 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
           />
         ) : (
           <>
-            {fresh && (
-              <div className="tutor-start">
-                <p>{L("Salut ! Je suis Otto, ton tuteur. On travaille ensemble sur ce que tu veux apprendre ?", "Hi! I'm Otto, your tutor. Ready to work on whatever you'd like to learn?")}</p>
-              </div>
-            )}
-            {/* Reported live: the mic should be off while Otto is speaking, not open for interruption — no
-                `bargeIn` prop below, so this falls back to AskOttoPanel's standard pause-mic-during-TTS
-                behavior (abort the recognizer the moment speech starts, restart it ~400ms after it ends). A
-                deliberate reversal of the earlier barge-in feature for the Tutor specifically. */}
-            <div className="tutor-chat-body">
-              <AskOttoPanel
-                task={task} currentStep={undefined} input={input} setInput={setInput} sending={sending}
-                error={error} pendingMsg={pendingMsg} onSend={(o, v) => void send(o, v)}
-                onOpenNote={noop} onOpenDeck={noop} onOpenQuiz={noop}
-                emptyText="" placeholder={L("Écris ici…", "Type here…")}
-                onVoiceStateChange={handleVoiceState}
-              />
-            </div>
-          </>
-        )}
-      </section>
-      <section className="tutor-board" aria-label={L("Tableau", "Board")}>
-        <div className="tutor-pane-title">
-          <span>{desmosOpen ? L("Desmos", "Desmos") : L("Le tableau", "Board")}</span>
-          {/* Voice state lives on the BOARD pane: in voice-first mode this is the pane the student is
-              actually looking at. Kept small and inline in the pane title (reported: the earlier full-width
-              orb banner was too big/intrusive) — a compact status dot + label is enough to answer "am I
-              being heard / is Otto talking" without taking over the pane. Hidden while Desmos has replaced
-              the board — the pill only matters when the student's actually looking at the board/chat. */}
-          {voiceState.voiceModeOn && !desmosOpen ? (
-            <span className={`tutor-voice-pill${voiceState.speaking ? " speaking" : voiceState.listening ? " listening" : ""}`} role="status">
-              {voiceState.speaking
-                ? L("Otto parle…", "Otto is speaking…")
-                : voiceState.listening
-                  ? L("Je t'écoute…", "Listening…")
-                  : L("Voix activée", "Voice on")}
-              {voiceState.listening && voiceState.interim ? <span className="tutor-voice-interim">{voiceState.interim}</span> : null}
-            </span>
-          ) : null}
-          {/* The tutor's Desmos place, reachable from the board pane's own header — opening it REPLACES the
-              board entirely (see the branch below) rather than squeezing a small iframe in above it
-              (reported live: that felt cramped). Closing it restores the board exactly as it was; the
-              board's own state is never touched by opening/closing Desmos. */}
-          {!desmosOpen && (
-            <button type="button" className="btn ghost xs tutor-desmos-open" onClick={() => setDesmosOpen(true)}>
-              <span className="tutor-desmos-glyph" aria-hidden>ƒ</span> {L("Desmos", "Desmos")}
-            </button>
-          )}
-        </div>
-        {desmosOpen ? (
-          <TutorDesmos onClose={() => setDesmosOpen(false)} />
-        ) : (
-          <>
             {/* Today's focus: the session's SET_OBJECTIVES checklist, distinct from the board's own single
                 "focus" entry (one sentence of narrative framing). Shown as a compact strip above the board
                 itself so progress is visible at a glance without taking over the pane the way a full section
-                would — a long humanities session especially benefits from seeing "2 of 6 done" at a glance. */}
-            {!!task.objectives?.length && (
+                would — a long humanities session especially benefits from seeing "2 of 6 done" at a glance.
+                Hidden while Desmos is showing (still mounted below it, just not visible). */}
+            {!desmosOpen && !!task.objectives?.length && (
               <div className="tutor-objectives" aria-label={L("Objectifs de la séance", "Today's focus")}>
                 <div className="tutor-objectives-head">
                   <span>{L("Objectifs du jour", "Today's focus")}</span>
@@ -614,7 +626,19 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
                 </ul>
               </div>
             )}
-            <div className="tutor-board-body"><BoardArtifact task={task} writing={sending} /></div>
+            <div className="tutor-board-body" style={{ display: desmosOpen ? "none" : undefined }}>
+              <BoardArtifact task={task} writing={sending} />
+            </div>
+            {/* Always mounted (never conditionally rendered) once opened once this session — only VISIBILITY
+                toggles via inline style, which inline style always wins over the stylesheet's own display
+                rule regardless of selector specificity, unlike the `hidden` attribute. An iframe that gets
+                removed from the DOM and re-added reloads from scratch; one that's just hidden keeps running,
+                so the student's graph survives toggling back to the board and back to Desmos again. */}
+            {desmosOpen || desmosEverOpenedRef.current ? (
+              <div style={{ display: desmosOpen ? "contents" : "none" }}>
+                <TutorDesmos onClose={() => setDesmosOpen(false)} />
+              </div>
+            ) : null}
           </>
         )}
       </section>
