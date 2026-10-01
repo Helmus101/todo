@@ -6,6 +6,7 @@ import { useLang, TaskModal } from "../ui.tsx";
 import { AskOttoPanel } from "../study/AskOttoPanel.tsx";
 import { BoardArtifact } from "../study/artifacts/BoardArtifact.tsx";
 import { TutorDesmos } from "./TutorDesmos.tsx";
+import { TutorWhiteboard } from "./TutorWhiteboard.tsx";
 import { buildSessionSummary, saveTutorSession, getTutorSessions, type TutorSessionSummary } from "./tutorSessions.ts";
 
 // A dismiss that silently fails (a network blip, a momentary 429) used to just be swallowed — the session
@@ -37,7 +38,7 @@ async function dismissWithRetry(taskId: string): Promise<void> {
  *  dismissed silently, not memorialized). Ending a session generates a short summary from the board + chat
  *  (see tutorSessions.ts), saves it locally, and dismisses the task so the next start creates a fresh one.
  *  Past session summaries are shown in a collapsible strip. */
-export function TutorSession({ userId, onExit }: { userId: string | null; onExit: () => void }) {
+export function TutorSession({ userId, onExit, visionReady }: { userId: string | null; onExit: () => void; visionReady: boolean }) {
   const L = useLang();
   const [task, setTask] = useState<WebTask | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -72,6 +73,10 @@ export function TutorSession({ userId, onExit }: { userId: string | null; onExit
   // Desmos replaces the board pane entirely while open (see the board pane's render below) — lifted up here
   // (was local to TutorDesmos) so this component can branch between <BoardArtifact> and <TutorDesmos>.
   const [desmosOpen, setDesmosOpen] = useState(false);
+  // The whiteboard REPLACES the chat pane while open (Desmos above does the same to the board pane) — a
+  // student drawing their work needs the full pane, not a cramped strip; closing it (without sending)
+  // discards the drawing, same as TutorWhiteboard's own posture.
+  const [whiteboardOpen, setWhiteboardOpen] = useState(false);
   const handleVoiceState = useCallback((s: { listening: boolean; speaking: boolean; voiceModeOn: boolean; interim: string }) => setVoiceState(s), []);
   // StrictMode guard for the mount peek below (a double-invoke would just be a wasted duplicate GET, but
   // the guard also keeps the read strictly once-per-mount). Runs once per component lifetime.
@@ -154,6 +159,7 @@ export function TutorSession({ userId, onExit }: { userId: string | null; onExit
         setPendingActiveSession(null);
         setShowHistory(true);
         setDesmosOpen(false);
+        setWhiteboardOpen(false);
       }, INACTIVITY_MS);
     };
     const activityEvents = ["mousedown", "keydown", "scroll", "touchstart"] as const;
@@ -246,6 +252,7 @@ export function TutorSession({ userId, onExit }: { userId: string | null; onExit
       setPendingActiveSession(null);
       setShowHistory(true);
       setDesmosOpen(false);
+      setWhiteboardOpen(false);
     } finally {
       setEndingSession(false);
     }
@@ -285,6 +292,7 @@ export function TutorSession({ userId, onExit }: { userId: string | null; onExit
     });
     setSessionStart(new Date().toISOString());
     setDesmosOpen(false);
+    setWhiteboardOpen(false);
   }, [pendingActiveSession, userId]);
 
   const startNewSession = useCallback(async () => {
@@ -329,6 +337,7 @@ export function TutorSession({ userId, onExit }: { userId: string | null; onExit
         });
         setSessionStart(new Date().toISOString());
         setDesmosOpen(false);
+        setWhiteboardOpen(false);
       }
       setPendingActiveSession(null);
     } catch {
@@ -502,29 +511,54 @@ export function TutorSession({ userId, onExit }: { userId: string | null; onExit
       <section className="tutor-chat" aria-label={L("Discuter avec Otto", "Ask Otto")}>
         <div className="tutor-pane-title">
           {backButton}
-          <span>{L("Demande à Otto", "Ask Otto")}</span>
+          <span>{whiteboardOpen ? L("Tableau blanc", "Whiteboard") : L("Demande à Otto", "Ask Otto")}</span>
+          {/* Lets the student SHOW Otto their own work (a diagram, a worked attempt) instead of only
+              describing it in words — reported ask: "make sure the tutor can process images from a
+              whiteboard." Hidden entirely when the server has no vision provider configured (GEMINI_API_KEY
+              — see server/claude.ts's describeWhiteboard), since the button would otherwise just 503 every
+              time; DeepSeek itself has no image input at all, this calls a separate provider for just this. */}
+          {visionReady && !whiteboardOpen && (
+            <button type="button" className="btn ghost xs" onClick={() => setWhiteboardOpen(true)}>
+              ✏ {L("Tableau blanc", "Whiteboard")}
+            </button>
+          )}
           <button className="btn ghost tutor-end-btn" disabled={endingSession} onClick={() => void endSession()}>
             {endingSession ? L("Fin…", "Ending…") : L("Terminer la séance", "End session")}
           </button>
         </div>
-        {fresh && (
-          <div className="tutor-start">
-            <p>{L("Salut ! Je suis Otto, ton tuteur. On travaille ensemble sur ce que tu veux apprendre ?", "Hi! I'm Otto, your tutor. Ready to work on whatever you'd like to learn?")}</p>
-          </div>
-        )}
-        {/* Reported live: the mic should be off while Otto is speaking, not open for interruption — no
-            `bargeIn` prop below, so this falls back to AskOttoPanel's standard pause-mic-during-TTS
-            behavior (abort the recognizer the moment speech starts, restart it ~400ms after it ends). A
-            deliberate reversal of the earlier barge-in feature for the Tutor specifically. */}
-        <div className="tutor-chat-body">
-          <AskOttoPanel
-            task={task} currentStep={undefined} input={input} setInput={setInput} sending={sending}
-            error={error} pendingMsg={pendingMsg} onSend={(o, v) => void send(o, v)}
-            onOpenNote={noop} onOpenDeck={noop} onOpenQuiz={noop}
-            emptyText="" placeholder={L("Écris ici…", "Type here…")}
-            onVoiceStateChange={handleVoiceState}
+        {whiteboardOpen ? (
+          <TutorWhiteboard
+            onClose={() => setWhiteboardOpen(false)}
+            onSend={(description) => {
+              // Framed as the student's own message (shown verbatim in their chat bubble, same as if they'd
+              // typed it) rather than a hidden side-channel — the student should see exactly what Otto is
+              // being told their drawing shows, so a bad transcription is visible/correctable in the thread
+              // itself instead of silently steering the conversation.
+              void send(L(`Voici ce que j'ai dessiné : ${description}`, `Here's what I drew: ${description}`));
+            }}
           />
-        </div>
+        ) : (
+          <>
+            {fresh && (
+              <div className="tutor-start">
+                <p>{L("Salut ! Je suis Otto, ton tuteur. On travaille ensemble sur ce que tu veux apprendre ?", "Hi! I'm Otto, your tutor. Ready to work on whatever you'd like to learn?")}</p>
+              </div>
+            )}
+            {/* Reported live: the mic should be off while Otto is speaking, not open for interruption — no
+                `bargeIn` prop below, so this falls back to AskOttoPanel's standard pause-mic-during-TTS
+                behavior (abort the recognizer the moment speech starts, restart it ~400ms after it ends). A
+                deliberate reversal of the earlier barge-in feature for the Tutor specifically. */}
+            <div className="tutor-chat-body">
+              <AskOttoPanel
+                task={task} currentStep={undefined} input={input} setInput={setInput} sending={sending}
+                error={error} pendingMsg={pendingMsg} onSend={(o, v) => void send(o, v)}
+                onOpenNote={noop} onOpenDeck={noop} onOpenQuiz={noop}
+                emptyText="" placeholder={L("Écris ici…", "Type here…")}
+                onVoiceStateChange={handleVoiceState}
+              />
+            </div>
+          </>
+        )}
       </section>
       <section className="tutor-board" aria-label={L("Tableau", "Board")}>
         <div className="tutor-pane-title">

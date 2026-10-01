@@ -70,6 +70,10 @@ try {
     // the guard sits BEHIND auth, same as every other task/study route, not reachable pre-login.
     const extractText = await req("/api/study/extract-text", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: "https://example.com" }) });
     check("POST /api/study/extract-text → 401 (auth checked before the URL is ever touched)", extractText.status === 401);
+
+    // Tutor whiteboard vision — auth checked before visionReady()/GEMINI_API_KEY is ever looked at.
+    const readWhiteboard = await req("/api/tutor/read-whiteboard", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ image: "data:image/png;base64,abc" }) });
+    check("POST /api/tutor/read-whiteboard → 401 (auth checked first)", readWhiteboard.status === 401);
   }
 
   console.log("— Malformed request bodies — the error-handling middleware must return JSON, never crash the process");

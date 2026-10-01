@@ -266,6 +266,11 @@ export const api = {
   // response), never surfaced as an error to the student — the material is already usable without this,
   // it's a pure enhancement.
   studyExtractText: (url: string): Promise<{ text: string }> => post("/api/study/extract-text", { url }).catch(() => ({ text: "" })),
+  // Tutor whiteboard → text: `image` is a PNG data URL (canvas.toDataURL()). Unlike studyExtractText this
+  // is NOT best-effort-swallowed — a failed read (vision not configured, a blank canvas, a Gemini hiccup)
+  // needs to reach the student as a real message ("nothing's configured" / "try drawing it bigger"), not
+  // silently vanish, since this is the one thing they actually asked Otto to look at.
+  readWhiteboard: (image: string): Promise<{ description: string }> => post("/api/tutor/read-whiteboard", { image }),
   // Personalization bandit (see server/bandit.ts) — v1 target: Pomodoro length. Both best-effort from the
   // caller's side too: a failure here should never block starting or ending a study session.
   pomodoroSuggestion: (): Promise<{ enabled: boolean; workMinutes: number; breakMinutes: number; coldStart: boolean }> =>

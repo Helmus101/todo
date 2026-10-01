@@ -1597,6 +1597,7 @@ export interface ConnectionStatus {
   pronoteNeedsReconnect?: boolean; // the stored token is dead (expired/revoked) — reads silently return
     // empty otherwise, so this is the only signal that "connected" doesn't mean "actually working"
   aiReady: boolean;           // DEEPSEEK_API_KEY present
+  visionReady?: boolean;      // GEMINI_API_KEY present — gates the Tutor whiteboard's "send to Otto" button
   googleConfigured: boolean;  // Composio configured (COMPOSIO_API_KEY) — powers Google + every integration
   cloud: boolean;             // Supabase configured → accounts + state persist
   paused: boolean;            // "pause all AI usage" toggle — client skips auto-run/generate while true

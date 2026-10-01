@@ -1068,7 +1068,7 @@ export function App() {
       ) : route === "log" ? (
         <StudyLogPage lang={status?.language} tasks={tasks} status={status} />
       ) : route === "tutor" ? (
-        <TutorSession userId={status?.user || null} onExit={() => navigate("tasks")} />
+        <TutorSession userId={status?.user || null} onExit={() => navigate("tasks")} visionReady={!!status?.visionReady} />
       ) : route === "study" ? (
         <StandaloneStudyEntry tasks={tasks} setTasks={setTasks} status={status} notify={notify} navigate={navigate} />
       ) : route === "errorlog" ? (

@@ -427,7 +427,14 @@ const CHAT_LANGUAGE_OVERRIDE = `\n\nCHAT LANGUAGE: the LANGUAGE instruction abov
   `follow it (and follow a genuine mid-conversation switch); but a short, generic reply that exists the same ` +
   `in both languages — "idk", "ok", "yes", a bare number, "i dont know" — carries NO language signal on its ` +
   `own, so on one of those, stay in whatever language the last few real turns were already in. NEVER reset to ` +
-  `the profile default mid-conversation just because the newest message alone is ambiguous.\n`;
+  `the profile default mid-conversation just because the newest message alone is ambiguous.\n` +
+  `THE VERY FIRST MESSAGE OF A SESSION IS NOT AN EXCEPTION — reproduced live: a session opening with a clear, ` +
+  `unambiguous English message ("can you help me understand derivatives") still got a French reply, because ` +
+  `with no history yet it's easy to lean on the profile default instead of the one real signal available. ` +
+  `On message one there IS no "conversation as a whole" to fall back on — the student's own wording is the ` +
+  `ONLY signal, and when it clearly indicates a language, that's what decides it, full stop, the same as any ` +
+  `later turn. Only fall back to the profile default when message one is ITSELF short/generic enough to carry ` +
+  `no signal (e.g. just "salut" or "hey").\n`;
 
 export function languageLine(p?: Profile): string {
   const lang = p?.language === "en" ? "en" : "fr";
@@ -1441,6 +1448,70 @@ export function aiReady(): boolean {
   return !!process.env[USING_NVIDIA ? "NVIDIA_API_KEY" : "DEEPSEEK_API_KEY"];
 }
 
+// Whiteboard vision — a SEPARATE provider from the rest of this file on purpose. DeepSeek (the model behind
+// every other AI call here) is text-only: its chat/completions endpoint has no image input at all, confirmed
+// directly against the live API (a request with an image_url content block). Gemini Flash was picked
+// specifically for this one feature: genuinely cheap per image (a free tier covers casual use, and paid
+// usage is a fraction of a cent per snapshot) and strong at reading handwriting/diagrams/equations — exactly
+// what "describe what the student drew" needs. This never touches DEEPSEEK_API_KEY/aiReady() — a student
+// without GEMINI_API_KEY configured on the server simply doesn't see the "send to Otto" affordance; nothing
+// else in the app depends on it.
+const GEMINI_MODEL = "gemini-2.0-flash";
+export function visionReady(): boolean {
+  return !!process.env.GEMINI_API_KEY;
+}
+
+/** Reads an 800x600-ish whiteboard snapshot (a data URL, e.g. "data:image/png;base64,...") and returns a
+ *  plain-text transcription of what's actually drawn — never an interpretation or a solved answer; that's
+ *  the tutor's job once the transcription reaches it as a normal chat message (same "one model per
+ *  concern" posture as the rest of this file: this function's only job is "what does the image show",
+ *  exactly like stripHtmlToText's "what does the page say" in server/index.ts). Returns an error string
+ *  (never throws) so the route can hand the student an honest, specific failure. */
+export async function describeWhiteboard(dataUrl: string): Promise<{ description: string } | { error: string }> {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return { error: "Whiteboard reading isn't configured on this server." };
+  const match = /^data:(image\/(?:png|jpeg|jpg|webp));base64,(.+)$/.exec(dataUrl);
+  if (!match) return { error: "That doesn't look like a real image — try drawing something first." };
+  const [, mimeType, base64] = match;
+  // A blank/near-blank canvas (nothing drawn, or just a stray dot) still produces a "valid" PNG — catch it
+  // here on SIZE before spending a real API call on nothing. A completely empty 800x600 PNG is tiny (a few
+  // hundred bytes of flat-color compression); anything with real ink is reliably much larger.
+  if (base64.length < 400) return { error: "The whiteboard looks empty — draw something first." };
+  try {
+    const res = await retryRequest(() => fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        signal: AbortSignal.timeout(20_000),
+        body: JSON.stringify({
+          contents: [{ parts: [
+            { text: "Transcribe exactly what is drawn/written on this whiteboard — any text, numbers, " +
+              "equations, diagrams, or shapes. Be literal and factual: describe what's actually there, " +
+              "including the shape/layout of any diagram, not what it might mean or whether it's correct. " +
+              "If it's a math expression, transcribe it precisely (e.g. \"x^2 + 3x - 4 = 0\", not a vague " +
+              "paraphrase). If the board is genuinely blank or illegible, say so plainly instead of guessing." },
+            { inline_data: { mime_type: mimeType, data: base64 } },
+          ] }],
+          generationConfig: { maxOutputTokens: 500, temperature: 0.1 },
+        }),
+      },
+    ), 2, 500);
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.error(`[vision] Gemini request failed: ${res.status} ${body.slice(0, 300)}`);
+      return { error: "Couldn't read the whiteboard just now — try again in a moment." };
+    }
+    const json: any = await res.json();
+    const description = String(json?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+    if (!description) return { error: "Couldn't make out anything on the whiteboard — try drawing it a bit bigger/clearer." };
+    return { description: description.slice(0, 2000) };
+  } catch (e: any) {
+    console.error(`[vision] Gemini request threw: ${e?.message || e}`);
+    return { error: "Couldn't read the whiteboard just now — try again in a moment." };
+  }
+}
+
 /** Pull token usage from an AI response, INCLUDING the cache-hit portion of the prompt tokens (dramatically
  *  cheaper on DeepSeek — see callCostUsd). DeepSeek exposes it as `prompt_cache_hit_tokens` and/or the
  *  OpenAI-shaped `prompt_tokens_details.cached_tokens`; read both defensively — NVIDIA's NIM endpoints don't
@@ -1520,6 +1591,28 @@ async function retryRequest<T>(fn: () => Promise<T>, retries = 3, delayMs = 1000
  *  see the >120-word compression round in chatAboutTask). Whitespace-delimited runs of non-space. */
 export function countWords(text: string): number {
   return (text.trim().match(/\S+/g) || []).length;
+}
+
+// Code-level backstop for a reproduced-live language-drift bug that TWO separate prompt-only fixes
+// (CHAT_LANGUAGE_OVERRIDE, PRIMER_CLOSING_REMINDER) failed to fully close: a session opened with a clearly
+// English message got a French reply, and even after that, several SUBSEQUENT clearly-English messages kept
+// getting French replies back — not an occasional drift, a majority-wrong run. Prompt wording alone clearly
+// isn't reliable enough on its own here, so this mirrors the same pattern already used for arithmetic
+// (CoVe, an independent deterministic check) and facts (Kadavath, verify-or-hedge): detect the mismatch in
+// code, force ONE corrective round, rather than trust the model to have judged it right the first time.
+const FR_SIGNAL = /[àâäéèêëîïôöùûüçœ]|\b(c'est|qu'|j'ai|n'|je|tu|il|elle|nous|vous|ils|elles|le|la|les|un|une|des|est|sont|avec|dans|pour|pas|mais|donc|alors|parce|qui|que|quoi|où|ça|très|bien|alors|déjà|encore)\b/gi;
+const EN_SIGNAL = /\b(the|is|are|what|why|how|you|your|you're|i'm|dont|don't|doesn't|didn't|isn't|understand|help|explain|this|that|with|because|which|and|not|just|like|get|got|lost|simple|simply|please|thanks|yeah|okay|now|next)\b/gi;
+/** Confident-only language guess: "unknown" (never "en"/"fr" on a weak signal) unless one language's signal
+ *  count clearly dominates the other's — a short/generic message ("idk", "ok", a bare number) that exists
+ *  identically in both languages must stay "unknown" rather than flip a coin, same philosophy as
+ *  CHAT_LANGUAGE_OVERRIDE's own "carries no language signal" carve-out. Pure; unit-tested in tests/run.mjs. */
+export function detectLang(text: string): "en" | "fr" | "unknown" {
+  const fr = (text.match(FR_SIGNAL) || []).length;
+  const en = (text.match(EN_SIGNAL) || []).length;
+  if (fr === 0 && en === 0) return "unknown";
+  if (fr >= 2 && fr > en * 1.5) return "fr";
+  if (en >= 2 && en > fr * 1.5) return "en";
+  return "unknown";
 }
 
 // Reproduced live: a chat reply that mid-sentence starts showing the model's own raw tool-call plumbing —
@@ -6446,6 +6539,14 @@ export async function chatAboutTask(
     `mentioned) — a concrete analogy beats an abstract definition every time.\n` +
     `- Make explanations adjustable: offer "quick intuition", "visual example", "formal explanation", ` +
     `or "exam-style method" when they're confused and one approach isn't landing.\n\n` +
+    `WHITEBOARD SNAPSHOTS: the student can draw on a whiteboard and send it to you — when they do, their ` +
+    `chat message starts with "Here's what I drew:" / "Voici ce que j'ai dessiné :" followed by a plain-text ` +
+    `transcription of what's actually on it (produced by a separate image-reading step, not written by you). ` +
+    `Treat it exactly like any other attempt they show you — diagnose it, don't comment on the mechanism ` +
+    `("I see you used the whiteboard" is noise; just respond to the math/diagram itself). The transcription is ` +
+    `occasionally imperfect (messy handwriting, an ambiguous symbol) — if something in it looks internally ` +
+    `inconsistent or doesn't parse as real content, ask them to confirm rather than confidently diagnosing a ` +
+    `transcription error as a mathematical one.\n\n` +
     (opts?.voiceMode
       ? `VOICE MODE: this reply is being READ ALOUD by text-to-speech, not read on screen — answer in at ` +
         `most 2-3 short spoken sentences. NEVER use markdown (headings, bold markers, bullet lists, tables — ` +
@@ -7144,6 +7245,18 @@ export async function chatAboutTask(
     let arithCorrected = false;
     let factCorrected = false;
     let lengthRetried = false;
+    let langCorrected = false;
+    // Computed ONCE per turn (not per round): the language the student is actually writing in right now,
+    // falling back through recent history when the newest message alone carries no signal (a bare "ok",
+    // "idk", a number) — same anchor CHAT_LANGUAGE_OVERRIDE's prompt wording already asks the model to use.
+    // "unknown" (checked message AND history both ambiguous) disables the check entirely for this turn —
+    // never force a "correction" based on a guess.
+    let studentLang = detectLang(message);
+    if (studentLang === "unknown") {
+      for (let i = history.length - 1; i >= 0 && studentLang === "unknown"; i--) {
+        if (history[i].role === "user") studentLang = detectLang(history[i].text);
+      }
+    }
     for (let round = 0; round < CHAT_MAX_ROUNDS; round++) {
       if (result.tokens.in + result.tokens.out > CHAT_TOKEN_CEILING) {
         // Reproduced live: a big tool-call payload (e.g. a large flashcard deck) plus the growing
@@ -7303,7 +7416,20 @@ export async function chatAboutTask(
           messages.push({ role: "user", content: "Your draft states a specific fact (an attribution, invention, or dated event) as certain, but you haven't verified it this turn. Either web_search it now and keep the claim WITH the verified detail, or rewrite that sentence with honest uncertainty (\"de mémoire, je peux me tromper\"). If the fact isn't load-bearing for the tutoring move, drop it. Same short spoken tone, don't mention this correction." });
           continue;
         }
-        // (3) LENGTH BACKSTOP (TALE): the 45-word budget is prompt-side; this catches the draft that
+        // (3) LANGUAGE MISMATCH — code-level backstop (see detectLang's own comment for why: prompt wording
+        // alone, tried twice, wasn't reliable enough). Only fires on a CONFIDENT mismatch in both
+        // directions (the student's established language AND the draft's language both clearly detected,
+        // and different) — never on an ambiguous draft (e.g. mostly numbers/symbols), same conservatism as
+        // every other check here.
+        const draftLang = studentLang !== "unknown" ? detectLang(textContent) : "unknown";
+        if (!langCorrected && !lastRound && studentLang !== "unknown" && draftLang !== "unknown" && draftLang !== studentLang) {
+          langCorrected = true;
+          console.log(`${new Date().toISOString()} [chat] round ${round}: draft is in ${draftLang} but the student is writing in ${studentLang} — asking for a same-content rewrite`);
+          messages.push({ role: "assistant", content: textContent });
+          messages.push({ role: "user", content: `That reply came out in the wrong language — the student is writing in ${studentLang === "fr" ? "French" : "English"}. Rewrite it in ${studentLang === "fr" ? "French" : "English"}, exact same content and tutoring move, don't mention this correction.` });
+          continue;
+        }
+        // (4) LENGTH BACKSTOP (TALE): the 45-word budget is prompt-side; this catches the draft that
         // ignored it entirely. Silent compression, once, non-voice only (voice mode has its own stricter
         // TTS ceiling and its own retry paths above).
         if (!lengthRetried && !lastRound && !opts?.voiceMode && countWords(textContent) > 120) {

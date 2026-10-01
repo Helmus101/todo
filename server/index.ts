@@ -19,7 +19,7 @@ import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, FocusSession } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
-import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType } from "./claude.ts";
+import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, setResetToken, getUserByResetToken, setPassHash, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken } from "./store.ts";
 import { sendTransactionalEmail } from "./mailer.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
@@ -973,6 +973,7 @@ app.get("/api/status", ah(async (req, res) => {
     pronoteConnected: pronoteStatus.connected,
     ...(pronoteStatus.needsReconnect ? { pronoteNeedsReconnect: true } : {}),
     aiReady: aiReady(),
+    visionReady: visionReady(),
     googleConfigured: integrations.integrationsReady(), // Composio is what powers Google + every integration now
     cloud: cloudEnabled(),
     paused: !!req.session.profile?.paused,
@@ -1382,7 +1383,14 @@ app.post("/api/tasks/cleanup-artifact-steps", requireAuth, rateLimit(2, 60_000),
 // Per-task coaching chat — grounded in that one task's own context/steps, so a student stuck on it can
 // talk it through with Otto without re-explaining the situation. Rate-limited + budget-gated like every
 // other interactive AI call; capped history (CHAT_CAP) keeps a long-running task's thread bounded.
-const CHAT_CAP = 60;
+// Was 60 — cost pass: this is how much RAW chat history gets resent to the model on EVERY single round of
+// EVERY turn, so it's the direct lever on a long session's growing per-call token cost (confirmed live: a
+// session's own tokens.in grows turn over turn as this history accumulates). Durable tutoring state (the
+// formulas/insights/diagrams actually worth remembering) already lives on the BOARD and in SET_OBJECTIVES,
+// which aren't capped this tightly — old raw chat phrasing beyond the last ~15 exchanges is mostly surface
+// narration the board has already distilled, not load-bearing context. Halved rather than cut further: still
+// comfortably covers "what did we just say two messages ago" continuity, which IS still needed turn to turn.
+const CHAT_CAP = 30;
 app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour discuter.", "AI is paused — resume it in Settings to chat.") }); return; }
   if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
@@ -2442,6 +2450,26 @@ app.post("/api/study/extract-text", requireAuth, rateLimit(30, 60_000), ah(async
   } catch {
     res.json({ text: "" }); // best-effort — never a hard error over an enhancement, matches pdfText.ts's own posture
   }
+}));
+
+// Whiteboard → tutor: the student draws (any freehand canvas, e.g. the Tutor's own whiteboard panel), the
+// client exports it as a PNG data URL, this reads it with Gemini Flash (see describeWhiteboard's own
+// comment for why a separate provider — DeepSeek has no image input at all) and hands back a plain-text
+// transcription for the CLIENT to then send into the normal text-only tutor chat as an ordinary message —
+// this route never talks to the tutor/DeepSeek itself, it only answers "what does the image show."
+// A canvas snapshot is bigger than a typical JSON body (a dense 800x600 PNG can run a few hundred KB once
+// base64-inflated by ~33%) — same bumped-limit pattern as /api/account/import, just smaller: nothing
+// resembling a real whiteboard sketch should ever approach 8mb.
+app.post("/api/tutor/read-whiteboard", requireAuth, rateLimit(15, 60_000), express.json({ limit: "8mb" }), ah(async (req, res) => {
+  if (!visionReady()) { res.status(503).json({ error: M(req, "La lecture du tableau blanc n'est pas configurée sur ce serveur.", "Whiteboard reading isn't configured on this server.") }); return; }
+  if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour continuer.", "AI is paused — resume it in Settings to continue.") }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
+  const image = String(req.body?.image || "");
+  if (!image) { res.status(400).json({ error: M(req, "Aucun dessin reçu.", "No drawing received.") }); return; }
+  const r = await describeWhiteboard(image);
+  if ("error" in r) { res.status(422).json({ error: r.error }); return; }
+  void recordEvent(req.session.user!, "whiteboard_read", {});
+  res.json({ description: r.description });
 }));
 
 // ── Personalization bandit (see server/bandit.ts + the approved plan) ──────────────────────────────────

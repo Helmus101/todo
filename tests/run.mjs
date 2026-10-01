@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem, detectLang, visionReady, describeWhiteboard } from "../server/claude.ts";
 import { evaluateArithmetic, parseNumber, findArithmeticClaims, hasArithmetic } from "../server/arithmetic.ts";
 import { isLikelyEcho, createEchoFilter, normalizeForEcho } from "../client/voice/echoGuard.ts";
 import { speechErrorMessage } from "../client/voice/speechErrors.ts";
@@ -1389,6 +1389,29 @@ section("isDuplicateProblem — content-level duplicate prevention for CREATE_PR
   check("worked examples end in a completion gap, not a finished line", /completion effect/.test(claudeSrc3) && /= \?/.test(claudeSrc3));
 }
 
+section("visionReady / describeWhiteboard — the Tutor whiteboard's vision step (server/claude.ts)");
+{
+  // GEMINI_API_KEY is a SEPARATE provider from DEEPSEEK_API_KEY/aiReady() on purpose — DeepSeek has no image
+  // input at all (confirmed directly against its live API), so whiteboard-reading is deliberately gated on
+  // its own key rather than piggybacking on aiReady(). Save/restore so this doesn't leak into other tests.
+  const savedKey = process.env.GEMINI_API_KEY;
+  try {
+    delete process.env.GEMINI_API_KEY;
+    check("visionReady is false with no key configured", visionReady() === false);
+    const r1 = await describeWhiteboard("data:image/png;base64,abc123");
+    check("describeWhiteboard refuses up front when not configured, never attempts a network call", "error" in r1 && /configured/i.test(r1.error));
+
+    process.env.GEMINI_API_KEY = "test-key-not-a-real-one";
+    check("visionReady is true once a key is set", visionReady() === true);
+    const r2 = await describeWhiteboard("not a data url at all");
+    check("a malformed data URL is rejected before any network call", "error" in r2 && /doesn't look like a real image/i.test(r2.error));
+    const r3 = await describeWhiteboard("data:image/png;base64,abc");
+    check("a suspiciously tiny payload (a blank canvas) is rejected before any network call", "error" in r3 && /empty/i.test(r3.error));
+  } finally {
+    if (savedKey === undefined) delete process.env.GEMINI_API_KEY; else process.env.GEMINI_API_KEY = savedKey;
+  }
+}
+
 section("chatAboutTask's empty-completion fallback — wording matches what actually landed (source pin)");
 {
   // Reported live: a DRAW_ON_BOARD call succeeded (a free-body diagram, exactly what was asked for), but
@@ -2213,6 +2236,15 @@ check("does NOT flag ordinary analysis prose", !CHAT_ASSERTS_FACT.test("So the a
 check("does NOT flag a method explanation with a year in it", !CHAT_ASSERTS_FACT.test("In 1665 the plague closed Cambridge — but for the exam, what matters is the method."));
 check("does NOT flag generic history chatter without a claim verb", !CHAT_ASSERTS_FACT.test("Le théâtre du 17e siècle, c'est tout un monde."));
 
+section("detectLang — confident-only language guess, the code-level backstop for the live-reproduced language-drift bug");
+check("clearly English", detectLang("can you help me understand derivatives, like what even is a derivative") === "en");
+check("clearly English, a stuck/confused message", detectLang("i dont get it, none of this makes sense to me, its all just confusing symbols") === "en");
+check("clearly French", detectLang("j'ai sauté direct aux symboles, on les oublie, tu es en voiture") === "fr");
+check("clearly French, with diacritics", detectLang("c'est très bien, tu as déjà vu ça en cours non ?") === "fr");
+check("a bare short generic reply carries no signal either way", detectLang("idk") === "unknown" && detectLang("ok") === "unknown" && detectLang("42") === "unknown");
+check("empty string is unknown", detectLang("") === "unknown");
+check("a short ambiguous reply that happens to share a word doesn't false-positive", detectLang("yes") === "unknown");
+
 section("countWords + the chat length backstop (TALE budget, silent compression round)");
 check("countWords counts whitespace-delimited words", countWords("un deux trois") === 3 && countWords("  a  b ") === 2 && countWords("") === 0);
 {
@@ -2226,6 +2258,9 @@ check("countWords counts whitespace-delimited words", countWords("un deux trois"
   check("arith verification: gated, latched, corrective round before finish", /!arithCorrected && !lastRound/.test(noToolBody) && /arithCorrected = true;/.test(noToolBody) && /Independent recomputation of your draft/.test(noToolBody));
   check("fact verification: verify-or-hedge, skipped when web_search already ran this turn", /!factCorrected && !lastRound && CHAT_ASSERTS_FACT\.test\(textContent\)/.test(noToolBody) && /web search\|Recherche web/.test(noToolBody));
   check("length backstop: >120 words, once, non-voice only", /!lengthRetried && !lastRound && !opts\?\.voiceMode && countWords\(textContent\) > 120/.test(noToolBody));
+  // Code-level backstop added after prompt-only fixes (CHAT_LANGUAGE_OVERRIDE) were reproduced live as
+  // insufficient — a session got a majority-wrong-language run despite clearly English input every turn.
+  check("language mismatch: gated, latched, corrective round before finish", /!langCorrected && !lastRound && studentLang !== "unknown" && draftLang !== "unknown" && draftLang !== studentLang/.test(noToolBody) && /langCorrected = true;/.test(noToolBody) && /came out in the wrong language/.test(noToolBody));
   check("the tool path has NO truth pass (final drafts never exit there)", (() => {
     const toolIdx = src.indexOf("messages.push({ role: \"assistant\", content: textContent, tool_calls: toolCalls });");
     const boardNudgeIdx = src.indexOf("if (!boardNudgeDone && !lastRound && shouldNudgeBoardWrite(");
