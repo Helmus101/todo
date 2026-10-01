@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem } from "../server/claude.ts";
 import { evaluateArithmetic, parseNumber, findArithmeticClaims, hasArithmetic } from "../server/arithmetic.ts";
 import { isLikelyEcho, createEchoFilter, normalizeForEcho } from "../client/voice/echoGuard.ts";
 import { speechErrorMessage } from "../client/voice/speechErrors.ts";
@@ -1315,7 +1315,11 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   check("the old duplicated inline filter/render block is really gone", (boardSrc.match(/deduplicate by id to prevent duplicates/g) || []).length === 0);
   // Problems never had the id-dedupe the entries block always had — a double-responded turn stacked the
   // same problem twice. Dedupe happens BEFORE the merge, and the merged flow is the only render path.
-  check("problems are deduped by id before the flow merge, same as entries", /dedupedProblems = problems\.filter\(\(p, i, arr\) => arr\.findIndex\(x => x\.id === p\.id\) === i\)/.test(boardSrc));
+  check("problems are deduped by id before the flow merge, same as entries", /\.filter\(\(p, i, arr\) => arr\.findIndex\(x => x\.id === p\.id\) === i\)/.test(boardSrc));
+  // Added alongside server/claude.ts's isDuplicateProblem — a content-level (normalized question text)
+  // dedupe too, so a board saved before that server-side fix existed doesn't still render the same
+  // question twice (once unanswered, once answered — reproduced live).
+  check("problems are ALSO deduped by normalized question text, preferring whichever copy has answer state", /normQ\(x\.question\) === normQ\(p\.question\)/.test(boardSrc) && /hasState/.test(boardSrc));
   // Reported live: "problems on board show twice" — the "Problème actuel / Current problem" block always
   // rendered the LATEST problem, and the show-all list below rendered ALL of them again, so the newest
   // problem appeared twice (and a one-problem board showed its only problem twice, period). "Current
@@ -1354,6 +1358,22 @@ section("isDuplicateBoardEntry — content-level duplicate prevention for board 
   check("genuinely different text is NOT a duplicate (no fuzzy matching)", !isDuplicateBoardEntry([onBoard], { text: "a = F/m" }));
   check("same text under a different kind is NOT a duplicate", !isDuplicateBoardEntry([onBoard], { text: "F = ma", kind: "insight" }));
   check("an empty/whitespace write never counts as a duplicate", !isDuplicateBoardEntry([onBoard], { text: "   " }));
+}
+
+section("isDuplicateProblem — content-level duplicate prevention for CREATE_PROBLEM (server/claude.ts)");
+{
+  // Reproduced live: the exact same practice problem appeared TWICE on a board — once unanswered, once
+  // already answered — because a turn that already successfully called CREATE_PROBLEM then failed its own
+  // final reply (the empty-completion/token-ceiling bug, fixed separately), so a later turn made the exact
+  // same problem again from scratch, unaware the first one had landed. Unlike a diagram (which legitimately
+  // gets redrawn under the same caption to ADD something), there's no legitimate reason to make the same
+  // problem twice.
+  const existing = [{ id: "1", question: "A 12 kg suitcase sits at rest on a rough ramp inclined at 20° — find the friction force.", options: ["40 N", "66 N"], correct: 0, createdAt: new Date().toISOString() }];
+  check("an identical re-ask is caught", isDuplicateProblem(existing, { question: existing[0].question }));
+  check("whitespace/case differences are still caught", isDuplicateProblem(existing, { question: `  ${existing[0].question.toUpperCase()}  ` }));
+  check("genuinely different question text is NOT a duplicate", !isDuplicateProblem(existing, { question: "A different problem entirely about momentum." }));
+  check("an empty question never counts as a duplicate", !isDuplicateProblem(existing, { question: "   " }));
+  check("an empty existing list never flags a duplicate", !isDuplicateProblem([], { question: existing[0].question }));
 
   const claudeSrc3 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
   // Exactly 2 call-syntax occurrences: the export signature + the single call site in WRITE_TO_BOARD's

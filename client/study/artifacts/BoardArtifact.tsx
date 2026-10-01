@@ -250,11 +250,34 @@ export function BoardArtifact({ task, writing }: BoardArtifactProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const entries = task.board || [];
   const problems = task.problems || [];
+  const [showHint, setShowHint] = useState<{ [key: string]: boolean }>({});
+  const [problemState, setProblemState] = useState<{ [key: string]: { picked: number | null; textAnswer: string; submitted: boolean } }>({});
+
   // Content-level dedupe on RENDER (by id): sync merges (tasks.ts's unionStudyArtifacts) and a
   // double-responded turn can hand back an array containing the same entry/problem twice. Entries drop
   // kind:"focus" (pinned above as the board's header strip) and any legacy kind:"problem" rows (problems
   // render as flow items from task.problems — never twice). Every problem surface reads the DEDUPED list.
-  const dedupedProblems = problems.filter((p, i, arr) => arr.findIndex(x => x.id === p.id) === i);
+  // ALSO dedupes by normalized question text — defense-in-depth for a board saved before server/claude.ts's
+  // own CREATE_PROBLEM dedupe (isDuplicateProblem) existed: reproduced live, the exact same question
+  // appeared twice, once unanswered and once already answered, because the model called CREATE_PROBLEM
+  // again without knowing an earlier, identical call had already landed. The server fix stops a NEW
+  // duplicate from being created; this stops an already-duplicated board from rendering one. Prefers
+  // whichever duplicate the student actually has state recorded against (answered/picked/hinted) over a
+  // bare first-occurrence pick — dropping the ANSWERED copy in favor of an untouched one would silently
+  // show their already-correct answer as a fresh, unanswered question.
+  const normQ = (s: string) => s.toLowerCase().replace(/```[a-z]*|[`*]{1,3}|^\s*[-•]\s+/gm, "").replace(/\s+/g, " ").trim();
+  const hasState = (id: string) => {
+    const st = problemState[id];
+    return !!st && (st.picked !== null || st.submitted || !!st.textAnswer) || !!showHint[id];
+  };
+  const dedupedProblems = problems
+    .filter((p, i, arr) => arr.findIndex(x => x.id === p.id) === i)
+    .filter((p, i, arr) => {
+      const dupes = arr.filter(x => normQ(x.question) === normQ(p.question));
+      if (dupes.length < 2) return true;
+      const withState = dupes.find(x => hasState(x.id));
+      return (withState || dupes[0]).id === p.id;
+    });
   const latestFocus = [...entries].reverse().find((e) => e.kind === "focus");
   const flowEntries = entries
     .filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i)
@@ -271,9 +294,6 @@ export function BoardArtifact({ task, writing }: BoardArtifactProps) {
     return items;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entries.length, problems.length]);
-
-  const [showHint, setShowHint] = useState<{ [key: string]: boolean }>({});
-  const [problemState, setProblemState] = useState<{ [key: string]: { picked: number | null; textAnswer: string; submitted: boolean } }>({});
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "nearest" });

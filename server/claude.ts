@@ -2110,6 +2110,25 @@ export function isDuplicateBoardEntry(existing: BoardEntry[], incoming: { text?:
   return existing.some((e) => (inKind === undefined || kindOf(e.kind) === inKind) && norm(e.text) === inText);
 }
 
+/** True when an incoming CREATE_PROBLEM call would create a content-identical copy of a problem that's
+ *  already there — unlike a diagram (which legitimately gets redrawn under the same caption to add
+ *  something — see isDuplicateBoardEntry's own comment), there is no such legitimate case for a second
+ *  practice problem with the same question: CREATE_PROBLEM's own description already says "ONE standalone
+ *  practice problem," so a repeat is always a mistake, not an intentional update. Reproduced live: a long
+ *  session's board showed the exact same question twice — once unanswered, once answered — because a turn
+ *  that already called CREATE_PROBLEM successfully failed its OWN final reply (the empty-completion/
+ *  token-ceiling bug), the student never saw it got made, and a later turn made it again from scratch.
+ *  Comparison is on normalized `question` text only (same normalization as isDuplicateBoardEntry) — options/
+ *  answer/hint are ignored, since a reworded option on an otherwise-identical question is still the same
+ *  problem being recreated, not a genuinely new one. Pure; unit-tested in tests/run.mjs. */
+export function isDuplicateProblem(existing: TaskProblem[], incoming: { question?: unknown }): boolean {
+  const norm = (s: string) => s.toLowerCase().replace(/```[a-z]*|[`*]{1,3}|^\s*[-•]\s+/gm, "").replace(/\s+/g, " ").trim();
+  const raw = typeof incoming?.question === "string" ? incoming.question : "";
+  if (!norm(raw)) return false;
+  const inText = norm(raw);
+  return existing.some((p) => norm(p.question) === inText);
+}
+
 /** True when a finished chat reply is exactly the moment the board's reasoning-trace rule exists for:
  *  Otto just CONFIRMED the student's own step was right ("Yes — exactly that", "bien joué", "parfait")
  *  and there's real math in play — but nothing was written to the board this turn. This is the live-reported
@@ -7334,6 +7353,11 @@ export async function chatAboutTask(
           else { const r = makeQuiz(input); if ("error" in r) content = r.error; else { result.quizzes.push(r.quiz); content = JSON.stringify({ ok: true, id: r.quiz.id, count: r.quiz.questions.length }); logAudit("artifact", fr ? `Quiz créé : « ${r.quiz.title} » (${r.quiz.questions.length} questions)` : `Quiz created: "${r.quiz.title}" (${r.quiz.questions.length} questions)`); } }
         } else if (name === "CREATE_PROBLEM") {
           if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
+          // Same content-level dedupe as WRITE_TO_BOARD (isDuplicateBoardEntry) — checked against BOTH what
+          // the student already sees (opts.currentProblems, delivered live every turn) and what this same
+          // turn already made (result.problems), so a repeat is caught whether it's an old or a brand-new
+          // duplicate.
+          else if (isDuplicateProblem([...(opts?.currentProblems || []), ...result.problems], input)) content = "DUPLICATE: that exact problem is already on the board — it's already there for them to answer, don't make it again.";
           else { const r = makeProblem(input); if ("error" in r) content = r.error; else { result.problems.push(r.problem); content = JSON.stringify({ ok: true, id: r.problem.id }); logAudit("artifact", fr ? `Problème créé : « ${r.problem.question.slice(0, 60)} »` : `Problem created: "${r.problem.question.slice(0, 60)}"`); } }
         } else if (name === "WRITE_TO_BOARD") {
           // Deliberately NOT gated by madeEnough/CHAT_MAX_ARTIFACTS — a board entry is meant to be cheap
