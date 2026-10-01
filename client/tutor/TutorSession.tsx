@@ -80,8 +80,14 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
   // The whiteboard REPLACES the board pane while open (reported live: it should take over the board, not
   // the chat — drawing is visual work, same pane Desmos uses, not the conversation). Mutually exclusive
   // with Desmos (openWhiteboard/openDesmos below enforce it) — only one replaces the board at a time.
-  // Closing it (without sending) discards the drawing, same as TutorWhiteboard's own posture.
   const [whiteboardOpen, setWhiteboardOpen] = useState(false);
+  // Same "stays mounted once opened" treatment as desmosEverOpenedRef above, and for the same reason an
+  // unmount would be wrong here too: reported live, closing the whiteboard without sending used to throw
+  // the drawing away outright — a real accidental-close/detour losing real unsubmitted work. Keeping the
+  // component mounted (hidden, not unmounted) means the canvas's own drawn pixels just survive; only an
+  // actual send clears it (see TutorWhiteboard's own `send`).
+  const whiteboardEverOpenedRef = useRef(false);
+  if (whiteboardOpen) whiteboardEverOpenedRef.current = true;
   const openWhiteboard = useCallback(() => { setDesmosOpen(false); setWhiteboardOpen(true); }, []);
   const openDesmos = useCallback(() => { setWhiteboardOpen(false); setDesmosOpen(true); }, []);
   const handleVoiceState = useCallback((s: { listening: boolean; speaking: boolean; voiceModeOn: boolean; interim: string }) => setVoiceState(s), []);
@@ -168,6 +174,7 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
         setDesmosOpen(false);
         setWhiteboardOpen(false);
         desmosEverOpenedRef.current = false;
+        whiteboardEverOpenedRef.current = false;
       }, INACTIVITY_MS);
     };
     const activityEvents = ["mousedown", "keydown", "scroll", "touchstart"] as const;
@@ -262,6 +269,7 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
       setDesmosOpen(false);
       setWhiteboardOpen(false);
       desmosEverOpenedRef.current = false;
+      whiteboardEverOpenedRef.current = false;
     } finally {
       setEndingSession(false);
     }
@@ -303,6 +311,7 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
     setDesmosOpen(false);
     setWhiteboardOpen(false);
     desmosEverOpenedRef.current = false;
+    whiteboardEverOpenedRef.current = false;
   }, [pendingActiveSession, userId]);
 
   const startNewSession = useCallback(async () => {
@@ -349,6 +358,7 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
         setDesmosOpen(false);
         setWhiteboardOpen(false);
         desmosEverOpenedRef.current = false;
+        whiteboardEverOpenedRef.current = false;
       }
       setPendingActiveSession(null);
     } catch {
@@ -590,57 +600,62 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
             </button>
           )}
         </div>
-        {whiteboardOpen ? (
-          <TutorWhiteboard
-            onClose={() => setWhiteboardOpen(false)}
-            onSend={(description) => {
-              // Framed as the student's own message (shown verbatim in their chat bubble, same as if they'd
-              // typed it) rather than a hidden side-channel — the student should see exactly what Otto is
-              // being told their drawing shows, so a bad transcription is visible/correctable in the thread
-              // itself instead of silently steering the conversation.
-              void send(L(`Voici ce que j'ai dessiné : ${description}`, `Here's what I drew: ${description}`));
-            }}
-          />
-        ) : (
-          <>
-            {/* Today's focus: the session's SET_OBJECTIVES checklist, distinct from the board's own single
-                "focus" entry (one sentence of narrative framing). Shown as a compact strip above the board
-                itself so progress is visible at a glance without taking over the pane the way a full section
-                would — a long humanities session especially benefits from seeing "2 of 6 done" at a glance.
-                Hidden while Desmos is showing (still mounted below it, just not visible). */}
-            {!desmosOpen && !!task.objectives?.length && (
-              <div className="tutor-objectives" aria-label={L("Objectifs de la séance", "Today's focus")}>
-                <div className="tutor-objectives-head">
-                  <span>{L("Objectifs du jour", "Today's focus")}</span>
-                  <span className="tutor-objectives-progress">
-                    {task.objectives.filter((o) => o.done).length}/{task.objectives.length}
-                  </span>
-                </div>
-                <ul className="tutor-objectives-list">
-                  {task.objectives.map((o) => (
-                    <li key={o.id} className={o.done ? "done" : ""}>
-                      <span className="tutor-objectives-check" aria-hidden>{o.done ? "✓" : ""}</span>
-                      {o.label}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            <div className="tutor-board-body" style={{ display: desmosOpen ? "none" : undefined }}>
-              <BoardArtifact task={task} writing={sending} />
+        {/* Board, Desmos, and the whiteboard are SIBLINGS now, not a nested ternary — each one that's ever
+            been opened this session stays mounted permanently (hidden via inline style, never unmounted)
+            so its own state survives toggling away and back: Desmos's iframe keeps running instead of
+            reloading blank, and the whiteboard's canvas keeps its drawn pixels instead of a close silently
+            discarding real unsubmitted work (both reported live). Only one is ever visible at a time. */}
+        {/* Today's focus: the session's SET_OBJECTIVES checklist, distinct from the board's own single
+            "focus" entry (one sentence of narrative framing). Shown as a compact strip above the board
+            itself so progress is visible at a glance without taking over the pane the way a full section
+            would — a long humanities session especially benefits from seeing "2 of 6 done" at a glance.
+            Hidden while Desmos/the whiteboard is showing (board stays mounted below it, just not visible). */}
+        {!desmosOpen && !whiteboardOpen && !!task.objectives?.length && (
+          <div className="tutor-objectives" aria-label={L("Objectifs de la séance", "Today's focus")}>
+            <div className="tutor-objectives-head">
+              <span>{L("Objectifs du jour", "Today's focus")}</span>
+              <span className="tutor-objectives-progress">
+                {task.objectives.filter((o) => o.done).length}/{task.objectives.length}
+              </span>
             </div>
-            {/* Always mounted (never conditionally rendered) once opened once this session — only VISIBILITY
-                toggles via inline style, which inline style always wins over the stylesheet's own display
-                rule regardless of selector specificity, unlike the `hidden` attribute. An iframe that gets
-                removed from the DOM and re-added reloads from scratch; one that's just hidden keeps running,
-                so the student's graph survives toggling back to the board and back to Desmos again. */}
-            {desmosOpen || desmosEverOpenedRef.current ? (
-              <div style={{ display: desmosOpen ? "contents" : "none" }}>
-                <TutorDesmos onClose={() => setDesmosOpen(false)} />
-              </div>
-            ) : null}
-          </>
+            <ul className="tutor-objectives-list">
+              {task.objectives.map((o) => (
+                <li key={o.id} className={o.done ? "done" : ""}>
+                  <span className="tutor-objectives-check" aria-hidden>{o.done ? "✓" : ""}</span>
+                  {o.label}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
+        <div className="tutor-board-body" style={{ display: desmosOpen || whiteboardOpen ? "none" : undefined }}>
+          <BoardArtifact task={task} writing={sending} />
+        </div>
+        {/* Always mounted (never conditionally rendered) once opened once this session — only VISIBILITY
+            toggles via inline style, which inline style always wins over the stylesheet's own display
+            rule regardless of selector specificity, unlike the `hidden` attribute. An iframe that gets
+            removed from the DOM and re-added reloads from scratch; one that's just hidden keeps running,
+            so the student's graph survives toggling back to the board and back to Desmos again. */}
+        {desmosOpen || desmosEverOpenedRef.current ? (
+          <div style={{ display: desmosOpen ? "contents" : "none" }}>
+            <TutorDesmos onClose={() => setDesmosOpen(false)} />
+          </div>
+        ) : null}
+        {/* Same mounted-once-opened treatment, same reason — see TutorWhiteboard's own doc comment. */}
+        {whiteboardOpen || whiteboardEverOpenedRef.current ? (
+          <div style={{ display: whiteboardOpen ? "contents" : "none" }}>
+            <TutorWhiteboard
+              onClose={() => setWhiteboardOpen(false)}
+              onSend={(description) => {
+                // Framed as the student's own message (shown verbatim in their chat bubble, same as if
+                // they'd typed it) rather than a hidden side-channel — the student should see exactly what
+                // Otto is being told their drawing shows, so a bad transcription is visible/correctable in
+                // the thread itself instead of silently steering the conversation.
+                void send(L(`Voici ce que j'ai dessiné : ${description}`, `Here's what I drew: ${description}`));
+              }}
+            />
+          </div>
+        ) : null}
       </section>
     </main>
   );

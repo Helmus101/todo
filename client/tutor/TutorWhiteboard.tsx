@@ -22,8 +22,13 @@ interface PendingText { displayX: number; displayY: number; value: string; }
 /** A freehand canvas scoped to the Tutor, separate from Study Mode's WhiteboardArtifact (which is tied to
  *  that feature's own ArtifactState persistence and has no export/send capability at all — see the repo
  *  investigation that found no toDataURL/toBlob anywhere). This one's only job is "draw, then hand a PNG
- *  snapshot to the vision-reading endpoint" — nothing here is saved/persisted; closing it without sending
- *  discards the drawing, same as a real whiteboard. */
+ *  snapshot to the vision-reading endpoint" — nothing here is saved server-side. Reported live: closing it
+ *  without sending used to discard the drawing outright, which lost real unsubmitted work on an accidental
+ *  close or a detour to check something else. Fixed not in this component but in its PARENT (TutorSession) —
+ *  same fix shape as Desmos's own "stays mounted" persistence: once opened, this component is kept mounted
+ *  (hidden, not unmounted) rather than destroyed on close, so the canvas's own drawn pixels simply survive
+ *  closing and reopening. Only an actual successful send clears it (see `send` below) — that's the one case
+ *  where starting fresh on the next visit is actually correct. */
 export function TutorWhiteboard({ onClose, onSend }: TutorWhiteboardProps) {
   const L = useLang();
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -129,6 +134,8 @@ export function TutorWhiteboard({ onClose, onSend }: TutorWhiteboardProps) {
       const dataUrl = canvasRef.current.toDataURL("image/png");
       const { description } = await api.readWhiteboard(dataUrl);
       onSend(description);
+      clear(); // sent for real — start the next visit clean, unlike an unsent drawing (see TutorSession: the
+               // component now stays mounted across close/reopen specifically so THAT case survives)
       onClose();
     } catch (e: any) {
       setError(e?.status != null ? e.message : L("La lecture du tableau a échoué — réessaie.", "Couldn't read the whiteboard — try again."));
