@@ -81,11 +81,16 @@ function ReasoningTrace({ text, en }: { text: string; en: boolean }) {
  *  throws on malformed LaTeX (a model slip, an unbalanced brace); caught here so ONE bad equation renders as
  *  its raw source instead of blanking the whole board entry or crashing the canvas. `strict: false` because
  *  a tutoring model's LaTeX is rarely publication-clean (stray spacing, a non-standard macro) and KaTeX's
- *  default strict mode throws console warnings-as-errors for things that still render fine visually. */
+ *  default strict mode throws console warnings-as-errors for things that still render fine visually.
+ *  `trust: false` is KaTeX's own default (not set here for any OTHER value), made explicit rather than
+ *  implied — this output goes straight into dangerouslySetInnerHTML below, and `trust: false` is what
+ *  disables KaTeX's own url/\href-style macros that would otherwise let an equation smuggle in an
+ *  attacker-controlled link or resource; `latex` here is model-generated text the student doesn't control
+ *  directly, but there's no reason to ever opt into trusting it. */
 function Equation({ latex }: { latex: string }) {
   const html = useMemo(() => {
-    try { return katex.renderToString(latex, { throwOnError: true, strict: false, displayMode: true }); }
-    catch { try { return katex.renderToString(latex, { throwOnError: false, strict: false, displayMode: true }); } catch { return null; } }
+    try { return katex.renderToString(latex, { throwOnError: true, strict: false, trust: false, displayMode: true }); }
+    catch { try { return katex.renderToString(latex, { throwOnError: false, strict: false, trust: false, displayMode: true }); } catch { return null; } }
   }, [latex]);
   if (html === null) return <span className="sm-board-eq-fallback">{latex}</span>;
   return <span className="sm-board-eq" dangerouslySetInnerHTML={{ __html: html }} />;

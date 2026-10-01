@@ -65,6 +65,11 @@ try {
 
     const chat = await req("/api/tasks/does-not-exist/chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: "hi" }) });
     check("POST /api/tasks/:id/chat → 401 (checked before task lookup)", chat.status === 401);
+
+    // Added in the security pass that also added the SSRF guard to this route (server/index.ts) — confirms
+    // the guard sits BEHIND auth, same as every other task/study route, not reachable pre-login.
+    const extractText = await req("/api/study/extract-text", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: "https://example.com" }) });
+    check("POST /api/study/extract-text → 401 (auth checked before the URL is ever touched)", extractText.status === 401);
   }
 
   console.log("— Malformed request bodies — the error-handling middleware must return JSON, never crash the process");
@@ -101,6 +106,27 @@ try {
 
     const noConsent = await req("/api/auth/signup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "a@b.com", password: "longenoughpassword" }) });
     check("missing RGPD Art.8 age/parent consent → 400, never silently accepted", noConsent.status === 400);
+  }
+
+  // Previously uncovered by this suite — same zero-config pattern as signup/login above: input validation
+  // runs before the Supabase check, so it's testable here; the Supabase-dependent path still asserts the
+  // documented clean typed error rather than a crash.
+  console.log("— Password reset flow — input validation + 'Supabase not configured' clean error");
+  {
+    const badEmail = await req("/api/auth/forgot-password", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "not-an-email" }) });
+    check("forgot-password: invalid email → 400", badEmail.status === 400);
+
+    const forgot = await req("/api/auth/forgot-password", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "smoke-test@example.com" }) });
+    check("forgot-password: valid email, no Supabase → 500 with the documented message", forgot.status === 500 && /supabase/i.test(forgot.body?.error || ""));
+
+    const noToken = await req("/api/auth/reset-password", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "longenoughpassword" }) });
+    check("reset-password: missing token → 400", noToken.status === 400);
+
+    const shortPassword = await req("/api/auth/reset-password", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: "whatever", password: "short" }) });
+    check("reset-password: too-short password → 400", shortPassword.status === 400);
+
+    const reset = await req("/api/auth/reset-password", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: "whatever", password: "longenoughpassword" }) });
+    check("reset-password: valid shape, no Supabase → 500 with the documented message", reset.status === 500 && /supabase/i.test(reset.body?.error || ""));
   }
 } finally {
   server.close();
