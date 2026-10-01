@@ -1416,10 +1416,16 @@ const DEEPSEEK_MODEL = USING_NVIDIA
 // `message.content` empty and silently returning chatAboutTask's generic fallback ("I'm here — what
 // part of this is giving you trouble?") on EVERY message, not just when the model was actually stuck.
 // producing a visible bug — but it's still worth closing before it causes one.
-// chat: 8000 (was 2000) — DeepSeek v4 is a REASONING model, its thinking tokens count against max_tokens.
-// A plain "just talking" turn still only spends ~200 tokens; this is a CEILING for the rare turn that
-// thinks, calls a tool, then emits a 12-question quiz with explanations — a real payload that size would
-// silently truncate at 2000. CHAT_MAX_ROUNDS/CHAT_TOKEN_CEILING (near chatAboutTask) bound the real cost.
+// chat: 12000 (was 8000, originally 2000) — DeepSeek v4 is a REASONING model, its thinking tokens count
+// against max_tokens. A plain "just talking" turn still only spends ~200 tokens; this is a CEILING for the
+// rare turn that thinks hard (a multi-step physics follow-up with a long conversation + board history
+// already in context), calls a tool, then has to reason AGAIN to synthesize the spoken reply around the
+// tool's result. Reproduced live: a tutoring session mid-inclined-plane-problem hit the empty-completion
+// retry path (chatAboutTask's own comment on it) on THREE consecutive turns in a row, each one having just
+// drawn a real diagram/board entry, then failing to produce any reply text at all even after two retries —
+// 8000 wasn't consistently enough headroom for reasoning-about-a-tool-result on top of an already-large
+// conversation. CHAT_MAX_ROUNDS/CHAT_TOKEN_CEILING (near chatAboutTask) bound the real cost per turn, so
+// this only raises the ceiling for the turns that actually need it, same reasoning as every other OUT bump.
 // studylog was 8000 — confirmed live truncating on a real dense multi-subject entry (4 subjects, mixed
 // French/English): the prompt told the model "no cap, 25-40+ cards for a dense entry" with no ceiling, so
 // a genuinely dense entry's completion (DeepSeek's own reasoning tokens ALSO count against max_tokens,
@@ -1429,7 +1435,7 @@ const DEEPSEEK_MODEL = USING_NVIDIA
 // "no cap") and the route-level error surfacing this budget bump pairs with.
 // rescue was 5000 (< run's 8000) — backwards for a pass whose whole job is to recover from the main pass
 // truncating: it was structurally MORE likely to truncate too, not less. Raised to match run's ceiling.
-const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 8000, pick: 4000, refine: 3000, steps: 1500, chat: 8000, studylog: 14000, theme: 2000, studentModel: 2000, artifact: 8000 } as const;
+const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 8000, pick: 4000, refine: 3000, steps: 1500, chat: 12000, studylog: 14000, theme: 2000, studentModel: 2000, artifact: 8000 } as const;
 
 export function aiReady(): boolean {
   return !!process.env[USING_NVIDIA ? "NVIDIA_API_KEY" : "DEEPSEEK_API_KEY"];
@@ -6070,7 +6076,17 @@ export interface ChatResult {
 // reply just now"), even though nothing actually crashed. Raised to give a multi-lookup turn real headroom.
 const CHAT_MAX_ROUNDS = 7;
 const CHAT_MAX_ARTIFACTS = 2;
-const CHAT_TOKEN_CEILING = 40_000;
+// Was 40_000 — reproduced live as the actual cause of a run of "Otto couldn't reply"/generic-fallback
+// turns mid-session, NOT reasoning-token exhaustion (that's OUT.chat's own concern): a single round's
+// tokens.in alone was already 44-49k in a moderately-progressed tutoring conversation (large static system
+// prompt + growing board/chat history, most of it cache-discounted but still counted here) — meaning ONE
+// round could already exceed the old 40k ceiling, so ANY turn that legitimately needed a second round (the
+// board-claim correction, the length backstop, a tool call then a synthesis round) hit this ceiling
+// immediately and fell straight to the empty-reply fallback, even though nothing was actually runaway. The
+// ceiling's job is to catch a genuinely pathological turn (a tool-call loop that never converges), not to
+// trip on the SECOND round of an ordinary conversation — raised to give real headroom for 2-3 full rounds
+// at current typical per-round cost, the realistic shape of a legitimate corrective loop.
+const CHAT_TOKEN_CEILING = 150_000;
 
 /** "The Primer" mode (Tutor Session): prepended to chatAboutTask's system prompt, so it OUTRANKS the
  *  generic homework-helper framing below it wherever the two differ. Inspired by A Young Lady's Illustrated
@@ -7070,14 +7086,23 @@ export async function chatAboutTask(
       // else a chat turn genuinely fails (server/index.ts's own 500 path, client/StudyMode.tsx's catch) —
       // consistent, and doesn't put words in the student's mouth about what's "giving them trouble".
       // BUT: if a tool call earlier in THIS SAME turn already produced something real (a problem, a board
-      // write) before the final text-generation round came back empty — reproduced live: a CREATE_PROBLEM
-      // landed fine, then the follow-up completion synthesizing a reply around it came back empty, and the
-      // student saw a flat "Otto couldn't reply" with a new exercise having silently appeared with no
-      // acknowledgment at all — say so honestly instead of pretending nothing happened.
-      const madeSomething = result.problems.length > 0 || result.board.length > 0;
-      result.reply = madeSomething
+      // write, a diagram) before the final text-generation round came back empty — reproduced live: a
+      // CREATE_PROBLEM landed fine, then the follow-up completion synthesizing a reply around it came back
+      // empty, and the student saw a flat "Otto couldn't reply" with a new exercise having silently
+      // appeared with no acknowledgment at all — say so honestly instead of pretending nothing happened.
+      // Worded to match what ACTUALLY landed: a flat "here's an exercise" shown after a DRAW_ON_BOARD (e.g.
+      // "draw the new free body diagram") was a real, reported mismatch — the one thing the student asked
+      // for (a diagram) existed, but the message talked about a different thing (an exercise) instead.
+      const madeProblem = result.problems.length > 0;
+      const madeDiagram = result.board.some((e) => e.kind === "diagram");
+      const madeBoardOnly = !madeProblem && result.board.length > 0;
+      result.reply = madeProblem
         ? (fr ? "Voilà un exercice — regarde le tableau." : "Here's an exercise — check the board.")
-        : (fr ? "Otto n'a pas pu répondre tout de suite — réessaie dans un instant." : "Otto couldn't reply just now — try again in a moment.");
+        : madeDiagram
+          ? (fr ? "Voilà le schéma — regarde le tableau." : "Here's the diagram — check the board.")
+          : madeBoardOnly
+            ? (fr ? "C'est noté au tableau — regarde par là." : "Noted it on the board — take a look.")
+            : (fr ? "Otto n'a pas pu répondre tout de suite — réessaie dans un instant." : "Otto couldn't reply just now — try again in a moment.");
     } else {
       result.reply = cleaned;
     }
@@ -7151,8 +7176,12 @@ export async function chatAboutTask(
         // never adds latency/cost to the normal path.
         console.log(`${new Date().toISOString()} [chat] round ${round}: empty completion, retrying once with tools stripped`);
         try {
+          // Bumped budget on this retry (was a flat OUT.chat, same as the attempt that just failed) — if
+          // THAT budget wasn't enough for reasoning-about-a-tool-result once, resending the identical
+          // ceiling and hoping for a shorter reasoning pass is optimism, not a real second chance. 1.5x
+          // gives the retry actual extra headroom instead of just re-rolling the same dice.
           const retryRes: any = await retryRequest(() => client.chat.completions.create({
-            model: actualModel, max_tokens: OUT.chat, temperature: 0.6,
+            model: actualModel, max_tokens: Math.round(OUT.chat * 1.5), temperature: 0.6,
             messages: [...apiMessages, { role: "user" as const, content: "Reply in plain words now — no tool use." }],
           }), 1, 400);
           const u = usageOf(retryRes);
@@ -7162,11 +7191,12 @@ export async function chatAboutTask(
           // items) can still come back empty here — reasoning through how to SYNTHESIZE all of it can itself
           // exhaust max_tokens, even with tools stripped. One more attempt, explicitly asking for the
           // shortest possible answer, needs far less headroom to actually fit — this is what used to reach
-          // the user as a hard "Otto couldn't reply" 502 despite nothing having actually failed.
+          // the user as a hard "Otto couldn't reply" 502 despite nothing having actually failed. Budget
+          // bumped again (2x base) for the same reason as the retry above.
           if (!textContent.trim()) {
             console.log(`${new Date().toISOString()} [chat] round ${round}: second empty completion, retrying once more asking for ONE short sentence`);
             const shortRes: any = await retryRequest(() => client.chat.completions.create({
-              model: actualModel, max_tokens: OUT.chat, temperature: 0.6,
+              model: actualModel, max_tokens: OUT.chat * 2, temperature: 0.6,
               messages: [...apiMessages, { role: "user" as const, content: "Reply in ONE short sentence only — just the single most useful fact/answer, no explanation, no formatting." }],
             }), 1, 400);
             const u2 = usageOf(shortRes);

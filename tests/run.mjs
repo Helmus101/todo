@@ -1307,9 +1307,11 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   // Reported live: the board-entries JSX existed TWICE in this file (a merge accident) — every entry the
   // tutor wrote rendered twice. The dedupe-by-id inside each copy couldn't catch it: both copies matched
   // the same entries. This pin counts the actual render sites so a future merge can't reintroduce it.
-  // `flowItems.filter(...).map(` (not bare `flowItems.map(`) since the pinned active-problem card excludes
-  // itself from the flow before mapping, so it's never rendered twice — see BoardArtifact's `activeProblem`.
-  check("board items render through the ONE merged flow, never a separate problem section", (boardSrc.match(/flowItems\.filter\(/g) || []).length === 1 && (boardSrc.match(/\)\.map\(\(item/g) || []).length === 1 && !/flowEntries\.map\(/.test(boardSrc) && !/dedupedProblems\.map\(/.test(boardSrc));
+  // Bare `flowItems.map(` — a prior version pinned the current unanswered problem in its own card and
+  // excluded it from this flow with a `.filter(...)` first; reverted (reported live: pinning a problem
+  // above even the day's focus line broke the board's top-to-bottom reading order), so every item, problems
+  // included, renders through this one unfiltered map again.
+  check("board items render through the ONE merged flow, never a separate problem section", (boardSrc.match(/flowItems\.map\(\(item/g) || []).length === 1 && !/flowItems\.filter\(/.test(boardSrc) && !/flowEntries\.map\(/.test(boardSrc) && !/dedupedProblems\.map\(/.test(boardSrc));
   check("the old duplicated inline filter/render block is really gone", (boardSrc.match(/deduplicate by id to prevent duplicates/g) || []).length === 0);
   // Problems never had the id-dedupe the entries block always had — a double-responded turn stacked the
   // same problem twice. Dedupe happens BEFORE the merge, and the merged flow is the only render path.
@@ -1367,6 +1369,20 @@ section("isDuplicateBoardEntry — content-level duplicate prevention for board 
   check("worked examples end in a completion gap, not a finished line", /completion effect/.test(claudeSrc3) && /= \?/.test(claudeSrc3));
 }
 
+section("chatAboutTask's empty-completion fallback — wording matches what actually landed (source pin)");
+{
+  // Reported live: a DRAW_ON_BOARD call succeeded (a free-body diagram, exactly what was asked for), but
+  // the follow-up text-synthesis completion came back empty after retries, and the student saw a flat
+  // "Here's an exercise — check the board" — talking about a DIFFERENT artifact kind than the one that
+  // actually appeared. Pin that the fallback branches on what was actually made (problem vs. diagram vs.
+  // a plain board write), not one fixed "exercise" string regardless of kind.
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const start = src.indexOf("const finish = (reply: string): ChatResult => {");
+  const body = src.slice(start, src.indexOf("\n  };", start));
+  check("branches on madeProblem", /madeProblem/.test(body));
+  check("branches on madeDiagram separately from a plain board write", /madeDiagram/.test(body) && /madeBoardOnly/.test(body));
+  check("the diagram branch doesn't say 'exercise'", /Here's the diagram/.test(body) && !/madeDiagram[\s\S]{0,80}exercise/i.test(body));
+}
 section("shouldNudgeBoardWrite — a confirmed student math step must land on the board (server/claude.ts)");
 {
   // The live-reported miss, verbatim: Otto confirmed the student's own trig step in chat and wrote nothing
