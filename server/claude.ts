@@ -6076,17 +6076,18 @@ export interface ChatResult {
 // reply just now"), even though nothing actually crashed. Raised to give a multi-lookup turn real headroom.
 const CHAT_MAX_ROUNDS = 7;
 const CHAT_MAX_ARTIFACTS = 2;
-// Was 40_000 — reproduced live as the actual cause of a run of "Otto couldn't reply"/generic-fallback
-// turns mid-session, NOT reasoning-token exhaustion (that's OUT.chat's own concern): a single round's
-// tokens.in alone was already 44-49k in a moderately-progressed tutoring conversation (large static system
-// prompt + growing board/chat history, most of it cache-discounted but still counted here) — meaning ONE
-// round could already exceed the old 40k ceiling, so ANY turn that legitimately needed a second round (the
-// board-claim correction, the length backstop, a tool call then a synthesis round) hit this ceiling
-// immediately and fell straight to the empty-reply fallback, even though nothing was actually runaway. The
-// ceiling's job is to catch a genuinely pathological turn (a tool-call loop that never converges), not to
-// trip on the SECOND round of an ordinary conversation — raised to give real headroom for 2-3 full rounds
-// at current typical per-round cost, the realistic shape of a legitimate corrective loop.
-const CHAT_TOKEN_CEILING = 150_000;
+// Was 40_000, then 150_000 — reproduced live BOTH times as the actual cause of a run of "Otto couldn't
+// reply"/generic-fallback turns mid-session, NOT reasoning-token exhaustion (that's OUT.chat's own concern):
+// a single round's tokens.in scales with how much the session has ALREADY accumulated (chat history + every
+// board entry get resent in full every round, up to the 60-item caps in localChatBoard.ts/server/index.ts),
+// so a real, long-running tutoring session (many diagrams, several practice problems in) can cost well over
+// 150k for just the rounds a single turn needs — 150k turned out to be exactly the same mistake as 40k, just
+// delayed to later in a session instead of fixed. The actual, durable backstop against a genuinely runaway
+// turn is CHAT_DEADLINE_MS below (a flat 120s wall-clock cap on the WHOLE call, independent of token count)
+// — THAT'S what should be catching a pathological loop, not this ceiling tripping on an ordinary long
+// session's ordinary cost. Raised well above any realistic per-turn cost so it stops being the thing that
+// fails first; CHAT_MAX_ROUNDS (7) and the deadline are what actually bound a turn now.
+const CHAT_TOKEN_CEILING = 500_000;
 
 /** "The Primer" mode (Tutor Session): prepended to chatAboutTask's system prompt, so it OUTRANKS the
  *  generic homework-helper framing below it wherever the two differ. Inspired by A Young Lady's Illustrated
