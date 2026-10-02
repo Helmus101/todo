@@ -8,6 +8,7 @@
     { "name": "SUPABASE_SERVICE_KEY", "description": "Supabase service-role key (supabase.com → Settings → API) — pairs with SUPABASE_URL.", "requiredAtBoot": false },
     { "name": "COMPOSIO_API_KEY", "description": "Composio API key (app.composio.dev) — enables the Gmail/Calendar/Drive connect flows.", "requiredAtBoot": false },
     { "name": "CREDENTIAL_ENCRYPTION_KEY", "description": "32-byte hex key (openssl rand -hex 32) — encrypts stored credentials like the Pronote token. Dev boots without it (plaintext, warned).", "requiredAtBoot": false },
-    { "name": "SESSION_SECRET", "description": "Random string for cookie-session signing. Dev boots without it; required in production.", "requiredAtBoot": false }
+    { "name": "SESSION_SECRET", "description": "Random string for cookie-session signing. Dev boots without it; required in production.", "requiredAtBoot": false },
+    { "name": "FREETTS_API_KEY", "description": "FreeTTS API key (freetts.org → Dashboard) — powers text-to-speech for Otto's voice in chat. Without it, TTS falls back to the browser's built-in speech (lower quality but still works).", "requiredAtBoot": false }
   ]
 }
