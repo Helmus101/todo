@@ -100,17 +100,23 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
     // Known Chrome bug: speechSynthesis.speak() silently does nothing for a chunk — no onstart, no onend,
     // no onerror, the browser just drops it — most often right after a cancel(), or after the tab/engine
     // has sat idle a while. Without a watchdog that chunk (and everything queued after it) goes mute
-    // forever: nothing ever fires to advance the queue or flip `speaking` back to false, which live read as
-    // "TTS doesn't always happen, then the mic still comes back on" (voiceModeOn's mic-resume effect in
-    // AskOttoPanel.tsx fires off onend, which never fired — wait, the OPPOSITE: speaking stays stuck true,
-    // the mic never reopens) when it fires, and as a silently skipped reply when onend's "if a later speak()
-    // bumped generation" case doesn't apply. Give each chunk 400ms to confirm it actually started; if
-    // nothing fired, treat it as dropped and move on rather than hanging the whole queue on one bad chunk.
+    // forever. BUT a first cut of this watchdog (plain "no onstart within 400ms = dropped") was ITSELF a
+    // regression, reported live as "now it's not speaking to answer at all": `onstart` isn't guaranteed by
+    // every voice even when speech genuinely is about to play — a remote/cloud voice in particular can take
+    // longer than 400ms to actually begin, and firing early there means skipping queued content that was
+    // never actually stuck, just slow. Ask the engine itself before concluding it's dropped: if
+    // `speechSynthesis.speaking`/`.pending` still shows activity, this chunk is still legitimately in
+    // flight — keep waiting, not skip. Only advance when the engine agrees nothing is happening at all.
     let started = false;
-    const watchdog = setTimeout(() => { if (!started && !cancelledRef.current) speakNext(); }, 400);
+    const checkWatchdog = () => {
+      if (started || cancelledRef.current) return;
+      if (window.speechSynthesis.speaking || window.speechSynthesis.pending) { watchdog = setTimeout(checkWatchdog, 400); return; }
+      speakNext();
+    };
+    let watchdog = setTimeout(checkWatchdog, 400);
     utter.onstart = () => { started = true; clearTimeout(watchdog); };
-    utter.onend = () => { clearTimeout(watchdog); if (!cancelledRef.current) speakNext(); };
-    utter.onerror = () => { clearTimeout(watchdog); if (!cancelledRef.current) speakNext(); };
+    utter.onend = () => { started = true; clearTimeout(watchdog); if (!cancelledRef.current) speakNext(); };
+    utter.onerror = () => { started = true; clearTimeout(watchdog); if (!cancelledRef.current) speakNext(); };
     window.speechSynthesis.speak(utter);
   }, [lang, pickVoice]);
 
