@@ -24,7 +24,7 @@ import { BreakScreen } from "./BreakScreen.tsx";
 import { EndSessionModal } from "./EndSessionModal.tsx";
 import { SubtaskSubmit } from "./SubtaskSubmit.tsx";
 import { api } from "../api.ts";
-import { appendLocalChat, appendLocalBoard, appendLocalProblems, getLocalThread } from "../localChatBoard.ts";
+import { getLocalThread } from "../localChatBoard.ts";
 import { NoisePlayer, type NoiseType } from "./noise.ts";
 import { tileWithinBounds } from "./tileLayout.ts";
 import { extractPdfText } from "./pdfText.ts";
@@ -266,15 +266,15 @@ export const AUDIO_OPTIONS: { id: NoiseType; label: [string, string] }[] = [
 
 // ── Main StudyMode component ───────────────────────────────────────────────────
 export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, language = "fr", betaFeatures = false }: StudyModeProps) {
-  // Same defensive read-through as TaskCard.tsx's TaskFocus (see its own comment) — chat/board/problems are
-  // local-only now, so read them straight from local storage here rather than trust the `task` prop to
-  // already carry the latest copy.
+  // Same cloud-is-authoritative read-through as TaskCard.tsx's TaskFocus (see its own comment) —
+  // chat/board/problems are cloud-persisted again now; local storage is only a fallback for whichever
+  // field is still empty in the cloud copy (a conversation from the local-only era that never synced).
   const local = getLocalThread(taskProp.id, userId ?? null);
-  const task = (local.chat.length || local.board.length || local.problems.length)
+  const task = (!taskProp.chat?.length && local.chat.length) || (!taskProp.board?.length && local.board.length) || (!taskProp.problems?.length && local.problems.length)
     ? { ...taskProp,
-        ...(local.chat.length ? { chat: local.chat } : {}),
-        ...(local.board.length ? { board: local.board } : {}),
-        ...(local.problems.length ? { problems: local.problems } : {}) }
+        ...(!taskProp.chat?.length && local.chat.length ? { chat: local.chat } : {}),
+        ...(!taskProp.board?.length && local.board.length ? { board: local.board } : {}),
+        ...(!taskProp.problems?.length && local.problems.length ? { problems: local.problems } : {}) }
     : taskProp;
   const [phase, setPhase] = useState<"setup" | "session">("setup");
   const [env, setEnv] = useState<StudyEnvironment | null>(null);
@@ -1096,11 +1096,10 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
     const materials = env.materials.filter((m) => m.text?.trim()).map((m) => ({ label: m.label, text: m.text! }));
     setChatInput(""); setChatSending(true); setChatError(null); setPendingMsg(message);
     try {
-      const { task: updated, chatDelta, board, problems } = await api.chat(task.id, message, task.chat || [], task.board || [], task.problems || [], stepIndex, materials.length ? materials : undefined, voiceMode, canvasMode);
-      const chat = appendLocalChat(task.id, chatDelta, userId ?? null);
-      const newBoard = appendLocalBoard(task.id, board, userId ?? null);
-      const newProblems = appendLocalProblems(task.id, problems, userId ?? null);
-      onTaskUpdate({ ...task, ...updated, chat, board: newBoard, problems: newProblems });
+      // `updated` is the full, authoritative cloud copy now — chat/board/problems are cloud-persisted
+      // again (server/index.ts's chat route), so no local-storage write is needed on the normal path.
+      const { task: updated } = await api.chat(task.id, message, task.chat || [], task.board || [], task.problems || [], stepIndex, materials.length ? materials : undefined, voiceMode, canvasMode);
+      onTaskUpdate({ ...task, ...updated });
       // Auto-open new quizzes on the canvas — when the tutor creates a quiz mid-conversation, pop it open
       // on the desk immediately (the student doesn't have to find and click the chip). Also opens a
       // scratchpad alongside so they can work through problems by hand, like a real exam desk.
@@ -1124,10 +1123,10 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
       // Same idea for the Board — if Otto wrote something new to it this turn, surface it (find-or-focus,
       // not a new artifact every time) rather than leaving the student to notice it was updated on their
       // own. This is what makes "always accessible" actually mean something beyond "reachable if you go
-      // looking" — the first time it's genuinely relevant, it comes to them.
-      // `board`/`problems` are this turn's local-only delta — `updated` is the cloud task, which never carries
-      // new board writes anymore (see localChatBoard.ts), so comparing its length never fired.
-      if (board.length || problems.length) openOrFocusBoard();
+      // looking" — the first time it's genuinely relevant, it comes to them. `updated` is the full cloud
+      // array now (board/problems are cloud-persisted again), so compare against the PRE-call counts to
+      // detect this turn's growth, same pattern as newQuizzes just above.
+      if ((updated.board?.length || 0) > (task.board?.length || 0) || (updated.problems?.length || 0) > (task.problems?.length || 0)) openOrFocusBoard();
     } catch (e: any) {
       setChatError(e?.message || "Couldn't send that — try again.");
       setChatInput(message);

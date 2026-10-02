@@ -643,7 +643,7 @@ export const AUDIT_CAP = 20;
 // Board entries (kept separate from ARTIFACT_CAP-limited note/flashcard/quiz chips) — a real tutoring
 // session can rack up a couple dozen short board writes, and this is the ONE running record of what Otto
 // actually wrote/summarized during a session, so it gets a more generous cap than the other artifact types.
-const BOARD_MERGE_CAP = 60;
+export const BOARD_MERGE_CAP = 60;
 function unionStudyArtifacts(winner: WebTask, loser: WebTask): Partial<Pick<WebTask, "notes" | "flashcards" | "quizzes" | "board" | "problems">> | null {
   const merge = <T extends { id: string }>(a: T[] | undefined, b: T[] | undefined, atOf: (x: T) => string, cap: number): T[] | undefined => {
     if (!b?.length) return undefined;                       // nothing on the losing side → keep winner's

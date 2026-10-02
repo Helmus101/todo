@@ -1566,15 +1566,6 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     if (out.flashcards.length) t.flashcards = [...(t.flashcards || []), ...out.flashcards].slice(-tasks.ARTIFACT_CAP);
     if (out.quizzes.length) t.quizzes = [...(t.quizzes || []), ...out.quizzes].slice(-tasks.ARTIFACT_CAP);
     if (out.audit.length) t.audit = [...(t.audit || []), ...out.audit].slice(-tasks.AUDIT_CAP);
-    // Chat, board entries, and practice problems (created via chat/board — see BoardArtifact.tsx) are
-    // LOCAL-ONLY now, by direct request: never written onto `t`, never part of what commit() persists to
-    // the cloud account row. The browser sent its own `history` above and is what appends this turn's new
-    // messages/board writes to ITS OWN local storage (client/localChatBoard.ts) — this response just hands
-    // back the delta for it to store. `t.updatedAt` still bumps (notes/flashcards/quizzes/audit above are
-    // still real cloud changes worth reflecting), but t.chat/t.board/t.problems are deliberately left alone
-    // — untouched here, so any legacy cloud copy just stops growing rather than being force-cleared.
-    t.updatedAt = now;
-    await commit(req);
     const newChat = [
       { role: "user" as const, text: message, at: now, ...(stepIndex != null ? { stepIndex, stepText: t.steps![stepIndex].text.slice(0, 80) } : {}) },
       { role: "assistant" as const, text: out.reply, at: now,
@@ -1582,6 +1573,17 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
         ...(t.evidence?.length ? { sources: t.evidence.slice(0, 8).map((source) => ({ label: source.label, url: source.url })) } : {}),
         ...(out.guardrailTripped ? { guardrail: true } : {}) },
     ];
+    // Chat, board entries, and practice problems used to be LOCAL-ONLY (never written onto `t`, by an
+    // earlier direct request) — reversed by a later direct request: tutor sessions (and every other chat)
+    // must survive in the cloud like everything else, not just in this one browser's localStorage. Same
+    // CAP/merge conventions the rest of this route already uses (ARTIFACT_CAP for problems, CHAT_CAP/
+    // BOARD_MERGE_CAP mirroring tasks.ts's own cross-device merge caps so a single-device append here
+    // never exceeds what a later multi-device MERGE would also cap it to).
+    if (newChat.length) t.chat = [...(t.chat || []), ...newChat].slice(-CHAT_CAP);
+    if (out.board.length) t.board = [...(t.board || []), ...out.board].slice(-tasks.BOARD_MERGE_CAP);
+    if (out.problems.length) t.problems = [...(t.problems || []), ...out.problems].slice(-tasks.ARTIFACT_CAP);
+    t.updatedAt = now;
+    await commit(req);
     res.json({ reply: out.reply, chatDelta: newChat, board: out.board, problems: out.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped, task: t });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || M(req, "échec de la discussion", "chat failed") });

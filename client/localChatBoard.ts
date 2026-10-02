@@ -73,28 +73,29 @@ export function getLocalThread(taskId: string, userId: string | null = null): Lo
  *  the server response does, that's exactly that transitional case — copy it into local storage once so it
  *  survives, rather than silently losing every past conversation the moment this shipped. */
 export function hydrateLocalThreads(list: WebTask[], userId: string | null = null): WebTask[] {
+  // Cloud is authoritative again now (chat/board/problems are cloud-persisted — see server/index.ts's
+  // chat route) — local storage is consulted ONLY as a fallback for whichever field the cloud copy still
+  // doesn't have (a conversation entirely from the local-only era that never made it to the server), and
+  // is never written back to here anymore (that "migrate cloud into local" direction was the old,
+  // now-backwards priority — cloud should stay the one copy that matters, not get siphoned into a
+  // per-browser store).
   const all = readAll(userId);
-  let migrated = false;
-  const out = list.map((t) => {
+  return list.map((t) => {
     const local = all[t.id];
-    if (local?.chat?.length || local?.board?.length || local?.problems?.length || local?.objectives?.length) {
-      return {
-        ...t,
-        ...(local.chat?.length ? { chat: local.chat } : {}),
-        ...(local.board?.length ? { board: local.board } : {}),
-        ...(local.problems?.length ? { problems: local.problems } : {}),
-        ...(local.objectives?.length ? { objectives: local.objectives } : {}),
-      };
-    }
-    // Nothing local yet — if the server still has legacy cloud data for this task, capture it now.
-    if (t.chat?.length || t.board?.length || t.problems?.length) {
-      all[t.id] = { chat: t.chat || [], board: t.board || [], problems: t.problems || [], objectives: [] };
-      migrated = true;
-    }
-    return t;
+    if (!local) return t;
+    const needsChat = !t.chat?.length && local.chat?.length;
+    const needsBoard = !t.board?.length && local.board?.length;
+    const needsProblems = !t.problems?.length && local.problems?.length;
+    const needsObjectives = !t.objectives?.length && local.objectives?.length;
+    if (!needsChat && !needsBoard && !needsProblems && !needsObjectives) return t;
+    return {
+      ...t,
+      ...(needsChat ? { chat: local.chat } : {}),
+      ...(needsBoard ? { board: local.board } : {}),
+      ...(needsProblems ? { problems: local.problems } : {}),
+      ...(needsObjectives ? { objectives: local.objectives } : {}),
+    };
   });
-  if (migrated) writeAll(all, userId);
-  return out;
 }
 
 /** Append this turn's new user+assistant messages, returning the updated (capped) array — call sites store

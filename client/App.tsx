@@ -527,9 +527,10 @@ export function App() {
     // function) — which, from the outside, looked exactly like "my task got deleted" when the error
     // boundary reset the tree. Treat anything non-array as "no update," never crash the app over it.
     if (!Array.isArray(incoming)) return prev;
-    // Chat/board/problems are local-only now (never sent to the cloud account — see localChatBoard.ts's
-    // own comment) — overlay this browser's local copy onto every server-fetched task here, the one choke
-    // point every "fresh list from the server" path (initial load, polling, sync) already runs through.
+    // Chat/board/problems are cloud-persisted again (server/index.ts's chat route) — this only overlays
+    // this browser's local copy for whichever field the cloud copy is still missing (see
+    // hydrateLocalThreads' own comment), the one choke point every "fresh list from the server" path
+    // (initial load, polling, sync) already runs through.
     incoming = hydrateLocalThreads(incoming, status?.user || null);
     const now = Date.now();
     // Prune opportunistically so this Map can't grow unbounded over a long session — every entry is either
@@ -2544,7 +2545,15 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
       let parsed: any;
       try { parsed = JSON.parse(text); }
       catch { throw new Error(L("Ce fichier n'est pas un export Otto valide.", "That file isn't a valid Otto export.")); }
-      const result = await api.importData(parsed);
+      // Reported live: 413 (Payload Too Large) uploading a real export — this app runs on Vercel, whose
+      // serverless functions hard-cap the request body at 4.5MB regardless of what express.json({limit})
+      // allows server-side, so a big exported file never even reaches the route. GET /api/account/export
+      // bundles jobs/events into the file too (added for GDPR Art.15 completeness — a full access request
+      // covers more than just profile/tasks), but POST /api/account/import only ever reads `profile`/
+      // `tasks` (see that route's own body) — jobs/events can be a large chunk of a long-lived account's
+      // export and are pure dead weight here. Strip them before upload: same import result, smaller body,
+      // no server-side change needed.
+      const result = await api.importData({ profile: parsed.profile, tasks: parsed.tasks });
       notify(L(`Importé — ${result.tasksAfter} tâches, ${result.errorLogAfter} erreurs au total.`, `Imported — ${result.tasksAfter} tasks, ${result.errorLogAfter} error-log entries in total now.`));
       loadProfile();
       onChanged();

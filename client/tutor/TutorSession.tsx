@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { WebTask } from "../../shared/types.ts";
 import { api } from "../api.ts";
-import { appendLocalChat, appendLocalBoard, appendLocalProblems, setLocalObjectives, getLocalThread } from "../localChatBoard.ts";
+import { setLocalObjectives, getLocalThread } from "../localChatBoard.ts";
 import { useLang, TaskModal } from "../ui.tsx";
 import { AskOttoPanel } from "../study/AskOttoPanel.tsx";
 import { BoardArtifact } from "../study/artifacts/BoardArtifact.tsx";
@@ -200,20 +200,16 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
       // CREATE_PROBLEM (individual, inline, answerable right on the board) instead — the only artifact this
       // screen actually knows how to show.
       const response = await api.chat(task.id, message, task.chat || [], task.board || [], task.problems || [], undefined, undefined, voiceMode, true, true, task.objectives || []);
-      const { task: updated, chatDelta, board, problems, objectives } = response;
-      const chat = appendLocalChat(task.id, chatDelta, userId);
-      const newBoard = appendLocalBoard(task.id, board, userId);
-      const newProblems = appendLocalProblems(task.id, problems, userId);
+      const { task: updated, objectives } = response;
       // objectives is only ever the FULL replacement list (SET_OBJECTIVES' own contract), or undefined
       // when Otto didn't touch it this turn — never overwrite the existing list with an empty one.
       const newObjectives = objectives?.length ? setLocalObjectives(task.id, objectives, userId) : (task.objectives || []);
+      // chat/board/problems are cloud-persisted again now (server/index.ts's chat route) — `updated`
+      // already carries the full, authoritative arrays, no local-storage write needed.
       // Only update relevant fields, preserve context/steps/links from before
       setTask({
         ...task,
         ...updated,
-        chat,
-        board: newBoard,
-        problems: newProblems,
         objectives: newObjectives,
         // Don't overwrite context/steps/links with irrelevant data
         context: task.context || "",
@@ -224,15 +220,9 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
       // If the error response contains board or problems, apply them before showing error
       const errorData = e?.response?.data || e?.data;
       if (errorData?.board || errorData?.problems) {
-        const chat = appendLocalChat(task.id, errorData.chatDelta || [], userId);
-        const newBoard = appendLocalBoard(task.id, errorData.board || [], userId);
-        const newProblems = appendLocalProblems(task.id, errorData.problems || [], userId);
         setTask({
           ...task,
           ...errorData.task,
-          chat,
-          board: newBoard,
-          problems: newProblems,
           // Preserve context/steps/links
           context: task.context || "",
           steps: task.steps || [],
@@ -280,18 +270,14 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
   // first, and what happens next is their choice.
   const resumeActiveSession = useCallback(() => {
     if (!pendingActiveSession) return;
-    // Load chat, board, problems from localStorage — via getLocalThread, localChatBoard.ts's real API.
-    // This used to guess at raw per-task localStorage keys that module has never written (it keeps ONE
-    // combined map under a single per-user key instead, not one key per task), so every resume
-    // silently loaded EMPTY chat/board/problems regardless of how much was actually said — the student hit
-    // "Reprendre" and landed back on a blank session with all their prior conversation gone. Falls back to
-    // whatever's on the task object itself only if the local thread is genuinely empty (e.g. a legacy/other-
-    // device session with nothing local to overlay).
+    // chat/board/problems are cloud-persisted again now, so the task object itself is authoritative —
+    // localStorage (getLocalThread) is only consulted as a fallback for whichever field is still empty in
+    // the cloud copy (a session from the local-only era that never made it to the server).
     const local = getLocalThread(pendingActiveSession.id, userId);
-    const chat = local.chat.length ? local.chat : (pendingActiveSession.chat || []);
-    const board = local.board.length ? local.board : (pendingActiveSession.board || []);
-    const problems = local.problems.length ? local.problems : (pendingActiveSession.problems || []);
-    const objectives = local.objectives.length ? local.objectives : (pendingActiveSession.objectives || []);
+    const chat = pendingActiveSession.chat?.length ? pendingActiveSession.chat : local.chat;
+    const board = pendingActiveSession.board?.length ? pendingActiveSession.board : local.board;
+    const problems = pendingActiveSession.problems?.length ? pendingActiveSession.problems : local.problems;
+    const objectives = pendingActiveSession.objectives?.length ? pendingActiveSession.objectives : local.objectives;
     // Only load relevant fields from the task, ignore irrelevant ones
     setTask({
       ...pendingActiveSession,

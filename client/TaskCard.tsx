@@ -24,7 +24,7 @@ import { createEchoFilter } from "./voice/echoGuard.ts";
 import { useSpeechSynthesis } from "./voice/useSpeechSynthesis.ts";
 import { useVoiceModePref } from "./voice/useVoiceModePref.ts";
 import { BoardArtifact } from "./study/artifacts/BoardArtifact.tsx";
-import { appendLocalChat, appendLocalBoard, appendLocalProblems, getLocalThread } from "./localChatBoard.ts";
+import { getLocalThread } from "./localChatBoard.ts";
 import { VoiceControls } from "./voice/VoiceControls.tsx";
 
 /**
@@ -326,18 +326,18 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
    *  shared browser can't leak one student's conversations into another's after a sign-out/sign-in. */
   userId?: string | null;
 }) {
-  // Defensive read-through, independent of whether the `tasks` list upstream (App.tsx) already hydrated
-  // this task from local storage: chat/board/problems are local-only now, and this is the actual place
-  // they're displayed, so read them straight from local storage here rather than trust every upstream path
-  // to have already merged it in. Reported live as "chat still deletes" — this can't fix a bug in how a
-  // message got lost from storage, but it does close off "the message IS in storage but this render is
-  // looking at a stale/un-hydrated copy of the task" as a way for it to look deleted.
+  // Chat/board/problems are cloud-persisted again now (by direct request — they were local-only for a
+  // while, see the chat route's own comment in server/index.ts), so the cloud copy on `taskProp` is
+  // authoritative going forward. Local storage is read ONLY as a one-time fallback for whichever of the
+  // three is still empty in the cloud copy — covers a conversation that happened entirely during the
+  // local-only window and never made it to the server, so it isn't silently lost on this one device. Once
+  // a field has anything in the cloud, local is never consulted for it again.
   const local = getLocalThread(taskProp.id, userId ?? null);
-  const task = (local.chat.length || local.board.length || local.problems.length)
+  const task = (!taskProp.chat?.length && local.chat.length) || (!taskProp.board?.length && local.board.length) || (!taskProp.problems?.length && local.problems.length)
     ? { ...taskProp,
-        ...(local.chat.length ? { chat: local.chat } : {}),
-        ...(local.board.length ? { board: local.board } : {}),
-        ...(local.problems.length ? { problems: local.problems } : {}) }
+        ...(!taskProp.chat?.length && local.chat.length ? { chat: local.chat } : {}),
+        ...(!taskProp.board?.length && local.board.length ? { board: local.board } : {}),
+        ...(!taskProp.problems?.length && local.problems.length ? { problems: local.problems } : {}) }
     : taskProp;
   const L = useLang();
   const notify = useNotify();
@@ -508,16 +508,14 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
     if (!message || chatSending) return;
     const stepIndex = chatStep; // captured before clearing
     setChatInput(""); setChatSending(true); setChatError(null); setPendingMsg(message); setChatStep(null);
-    // Merge the WHOLE returned task (steps/notes/decks/quizzes are still cloud-synced), then layer this
-    // turn's chat/board/problems on top from LOCAL storage — those three are local-only now (never sent to
-    // the cloud account, see localChatBoard.ts), so the server response only carries this turn's delta,
-    // not the full arrays.
+    // The returned task is now the full, authoritative cloud copy — chat/board/problems are cloud-
+    // persisted again (server/index.ts's chat route appends+caps them onto `t` before commit), so `updated`
+    // already carries the complete arrays, not just this turn's delta. No local-storage write needed on
+    // the normal path anymore; see TaskFocus's own read-through comment for the local-only-era fallback
+    // this leaves in place for anything that never made it to the cloud.
     try {
-      const { task: updated, chatDelta, board, problems } = await api.chat(task.id, message, task.chat || [], task.board || [], task.problems || [], stepIndex ?? undefined, undefined, voiceMode);
-      const chat = appendLocalChat(task.id, chatDelta, userId ?? null);
-      const newBoard = appendLocalBoard(task.id, board, userId ?? null);
-      const newProblems = appendLocalProblems(task.id, problems, userId ?? null);
-      onTask({ ...task, ...updated, chat, board: newBoard, problems: newProblems });
+      const { task: updated } = await api.chat(task.id, message, task.chat || [], task.board || [], task.problems || [], stepIndex ?? undefined, undefined, voiceMode);
+      onTask({ ...task, ...updated });
     }
     catch (e: any) { setChatError(e?.message || L("Envoi impossible — réessaie.", "Couldn't send that — try again.")); setChatInput(message); }
     finally { setChatSending(false); setPendingMsg(null); }
