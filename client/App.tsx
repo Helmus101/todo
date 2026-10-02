@@ -3023,7 +3023,7 @@ const GOOGLE_LYCEE_APPS = ["gmail", "googlecalendar", "googledrive"];
 // than actually wanted — the curated set is Google Workspace (all of it, not just the 3-app Lycée subset —
 // Docs/Sheets/Slides matter for building study materials) plus Notion, alongside Pronote which is its own
 // separate tile. Not the whole catalog.
-const GOOGLE_EXPANDED_APPS = ["gmail", "googlecalendar", "googledrive", "googledocs", "googlesheets", "googleslides", "notion"];
+const GOOGLE_EXPANDED_APPS = ["gmail", "googlecalendar", "googledrive", "googledocs", "googlesheets", "googleslides"];
 const GOOGLE_APP_BLURBS: Record<string, string> = {
   gmail: "Emails de profs, clubs, associations — Otto ne fait qu'y répondre en brouillon, jamais d'envoi automatique.",
   googlecalendar: "Événements et échéances à venir, pour préparer ce qui arrive.",

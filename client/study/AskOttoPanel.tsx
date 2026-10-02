@@ -208,11 +208,14 @@ export function AskOttoPanel({
     const chat = task.chat || [];
     if (chat.length > spokenCountRef.current) {
       const last = chat[chat.length - 1];
-      if (voiceModeOn && last?.role === "assistant") synth.speak(last.text);
+      if (voiceModeOn && last?.role === "assistant") {
+        console.log("[tts] speaking assistant message:", last.text.slice(0, 60));
+        synth.speak(last.text);
+      }
     }
     spokenCountRef.current = chat.length;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [task.chat?.length, voiceModeOn]);
+  }, [task.chat?.length, voiceModeOn, synth]);
   // Grows up to 3 lines (CSS max-height on .sm-ai-input) then scrolls internally — was a single-line
   // <input>, so anything longer than one line just scrolled sideways out of view while typing. Re-measured
   // on every `input` change (typing AND a programmatic clear after send), not just onChange, so sending a

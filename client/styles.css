@@ -1903,40 +1903,36 @@ input:focus, textarea:focus {
 /* ─── Apple Settings — iOS Grouped Inset Cards ─────────────────────────────── */
 .settings-page {
   width: 100%;
-  max-width: 660px;
+  max-width: 720px;
   margin: 0;
-  /* Same fix as .list-wrap above: anchored near the sidebar, not dead-centered in the whole viewport. */
   padding: clamp(32px, 6vh, 88px) clamp(16px, 5vw, 64px) 120px;
-  /* Apple Design §4 — spring animation for entrance */
   animation: appleRise var(--duration-spring) var(--ease-spring) backwards;
 }
 .settings-title {
   font-family: var(--display);
-  font-size: clamp(28px, 5vw, 38px);
+  font-size: clamp(32px, 5vw, 42px);
   font-weight: 700;
-  /* Apple Design §15 — negative tracking on large headings */
   letter-spacing: var(--tracking-tighter);
-  /* Apple Design §15 — tight leading on large text */
   line-height: 1.05;
   color: var(--ink);
-  margin-bottom: var(--space-5);
+  margin-bottom: var(--space-6);
 }
-.settings { display: flex; flex-direction: column; }
+.settings { display: flex; flex-direction: column; gap: var(--space-4); }
 
 .settings-sec {
-  padding: 28px 32px;
-  margin-bottom: var(--space-5);
+  padding: 32px 36px;
   background: var(--surface-glass);
   border: 1px solid var(--line-soft);
   border-radius: var(--radius-lg);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
-  /* Apple Design §12 — glass material */
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
   backdrop-filter: blur(var(--blur)) saturate(180%);
   -webkit-backdrop-filter: blur(var(--blur)) saturate(180%);
-  /* Apple Design §4 — spring transitions for interactive elements */
   transition: transform var(--duration-base) var(--ease-spring), box-shadow var(--duration-base) var(--ease-spring);
 }
-.settings-sec:hover { box-shadow: 0 4px 18px rgba(0, 0, 0, 0.05); }
+.settings-sec:hover { 
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06), 0 2px 6px rgba(0, 0, 0, 0.03);
+  transform: translateY(-1px);
+}
 
 /* Account identity card — the single most-looked-at row in Settings (who am I, is it syncing), pulled out
    of the plain label/value row pattern so it reads at a glance instead of blending into the list below it. */
@@ -1987,18 +1983,17 @@ input:focus, textarea:focus {
 }
 .settings-sec h3 {
   font-family: var(--display);
-  font-size: 11.5px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--accent);
-  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--ink);
+  margin: 0 0 16px;
 }
 .settings-hint {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--ink-2);
-  line-height: 1.5;
-  margin-bottom: 4px;
+  line-height: 1.6;
+  margin-bottom: 16px;
 }
 .student-model-text {
   font-size: 14px;
@@ -2032,7 +2027,7 @@ input:focus, textarea:focus {
   width: 100%;
   background: none;
   border: none;
-  padding: 8px 0;
+  padding: 4px 0;
   cursor: pointer;
   text-align: left;
   border-radius: var(--radius-sm);
@@ -2040,18 +2035,17 @@ input:focus, textarea:focus {
 }
 .sec-toggle:hover { background: var(--bg-2); }
 .sec-toggle h3 { margin: 0; }
-.sec-toggle .caret { color: var(--ink-3); font-size: 20px; line-height: 1; /* Apple Design §4 — spring transition for caret rotation */ transition: transform var(--duration-base) var(--ease-spring); }
+.sec-toggle .caret { color: var(--accent); font-size: 22px; line-height: 1; transition: transform var(--duration-base) var(--ease-spring); }
 .sec-toggle .caret.open { transform: rotate(90deg); }
 .settings-reveal {
-  padding-top: 16px;
-  /* Apple Design §4 — spring animation for reveal */
+  padding-top: 20px;
   animation: appleRise var(--duration-base) var(--ease-spring);
 }
 
-.modal-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 12px 4px; margin: 0 -4px; border-radius: var(--radius-sm); transition: background var(--duration-base) var(--ease-spring); }
+.modal-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 16px 8px; margin: 0 -8px; border-radius: var(--radius-sm); transition: background var(--duration-base) var(--ease-spring); }
 .modal-row + .modal-row { border-top: 1px solid var(--line-soft); }
 .modal-row:hover { background: var(--bg-2); }
-.modal-row .lbl { font-size: 13.5px; color: var(--ink-2); font-weight: var(--weight-medium); }
+.modal-row .lbl { font-size: 14px; color: var(--ink); font-weight: var(--weight-medium); }
 .modal-row .val { font-size: 14px; font-weight: var(--weight-semibold); text-align: right; color: var(--ink); }
 
 .set-list { display: flex; flex-direction: column; }
