@@ -1699,6 +1699,23 @@ section("Client-side i18n completeness — client/study/ hardcoded English strin
   check("CameraArtifact's aria-label is bilingual, not hardcoded English", !/aria-label="[A-Z]/.test(camera));
 }
 
+section("App() — the local flashcard/quiz backup save-effect never writes a STALE account's decks into a DIFFERENT account's local storage key (source pin)");
+{
+  // The actual cross-account leak (a write bug, not a read bug): if `status.user` changes to a new account
+  // before `tasks` has actually been refetched for it (session merely expired rather than an explicit
+  // sign-out, or a delete-account/new-signup in close succession), a [tasks, status?.user]-keyed effect can
+  // fire with userId already pointing at the NEW account but `tasks` still holding the OLD account's decks
+  // — writing them straight into the new account's localDecks/localQuizzes key. Fixed with a render-time
+  // (not effect-time) flag: reordering effects or adding a `loaded` check doesn't work here because a
+  // sibling effect's setState can't retroactively un-stale a closure already executing in the same flush.
+  const appSrc = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const start = appSrc.indexOf("export function App(");
+  const body = appSrc.slice(start, appSrc.indexOf("\nexport function ", start + 10));
+  check("userJustChanged is computed inline during render (a ref comparison), not inside a useEffect", /const prevUserRef = useRef\(status\?\.user \?\? null\);\s*const userJustChanged = prevUserRef\.current !== \(status\?\.user \?\? null\);\s*prevUserRef\.current = status\?\.user \?\? null;/.test(body));
+  check("the deck/quiz save-effect bails out on the exact render the account identity changed", /if \(userJustChanged\) return;/.test(body));
+  check("userJustChanged is in that effect's own dependency array (re-evaluated every relevant render)", /\}, \[tasks, status\?\.user, userJustChanged\]\);/.test(body));
+}
+
 section("FlashcardsLibraryPage — local deck/quiz cache refreshes immediately on account switch, not just on focus (source pin)");
 {
   // Reported live as a genuine cross-account data leak: `decks`/`quizzes` are seeded via a useState LAZY

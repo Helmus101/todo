@@ -395,19 +395,38 @@ export function App() {
     try { return localStorage.getItem("otto-skip-connect") === "1"; } catch { return false; }
   });
   const [tasks, setTasks] = useState<WebTask[]>(CACHED_TASKS);
+  // THE actual cross-account leak (not a read bug — a WRITE bug): tracks whether `status.user` just changed
+  // on the render that's about to commit, computed SYNCHRONOUSLY during render (not inside an effect) so
+  // it's already correct by the time any effect below runs. Why this can't just be a second useEffect: when
+  // an account switch happens without signOut() having cleared `tasks` first (session merely expired, or a
+  // delete-account/new-signup in close succession), React can land BOTH "status.user changed" and "tasks is
+  // still the OLD account's array" in the SAME render — a `[tasks, status?.user]`-keyed effect fires with
+  // userId already pointing at the NEW account but `tasks` still holding the OLD account's decks, and
+  // (reported live, confirmed by tracing it) the save-effect below wrote the OLD account's flashcard decks
+  // straight into the NEW account's local storage key. Reordering effects or adding a `loaded` check doesn't
+  // fix this: a sibling effect's setState call can't retroactively un-stale a closure that's already
+  // executing in the same flush. Computing this flag inline during render, before any effect runs, is what
+  // makes it reliable — see the save-effect's own guard just below.
+  const prevUserRef = useRef(status?.user ?? null);
+  const userJustChanged = prevUserRef.current !== (status?.user ?? null);
+  prevUserRef.current = status?.user ?? null;
   // Every flashcard deck Otto has ever generated gets mirrored to this browser's localStorage (see
   // client/localDecks.ts) — a real DB write already happens server-side, but this is a local backup so a
   // deck survives (viewable, if not reviewable-with-progress-sync) even through a sync hiccup or briefly
   // being offline. Cheap: saveDeckLocally no-ops on content that's already saved, and this only runs when
   // the task list actually changes.
   useEffect(() => {
+    // Skip the one render where the account identity just changed — `tasks` here may still be a stale
+    // array left over from the PREVIOUS account (see userJustChanged's own comment above). The very next
+    // render (once `tasks` has actually been cleared/refetched for the new account) runs this normally.
+    if (userJustChanged) return;
     const userId = status?.user || null;
     for (const t of tasks) {
       const logDate = t.source === "studylog" && t.logDate && !t.logDate.includes(":") ? t.logDate : undefined;
       for (const deck of t.flashcards || []) saveDeckLocally(t.id, t.title, deck, logDate, userId);
       for (const quiz of t.quizzes || []) saveQuizLocally(t.id, t.title, quiz, logDate, userId);
     }
-  }, [tasks, status?.user]);
+  }, [tasks, status?.user, userJustChanged]);
   const [loaded, setLoaded] = useState(false);   // server truth arrived (cached list may be stale until then)
   const [scanning, setScanning] = useState(false); // the daily background sweep is running
   const [busy, setBusy] = useState(false);
