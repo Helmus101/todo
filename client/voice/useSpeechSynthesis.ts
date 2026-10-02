@@ -111,6 +111,7 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
     const checkWatchdog = () => {
       if (started || cancelledRef.current) return;
       if (window.speechSynthesis.speaking || window.speechSynthesis.pending) { watchdog = setTimeout(checkWatchdog, 400); return; }
+      console.warn("[tts] browser speechSynthesis silently dropped a chunk, skipping it:", next.slice(0, 60));
       speakNext();
     };
     let watchdog = setTimeout(checkWatchdog, 400);
@@ -160,18 +161,22 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
         useBrowserTTS(text);
       };
       await audio.play();
-    } catch {
+    } catch (e) {
       // FreeTTS failed or endpoint unavailable — fallback to browser TTS (still generation-gated: a
-      // cancel() during the failed attempt must not resurrect speech through the fallback path).
+      // cancel() during the failed attempt must not resurrect speech through the fallback path). Logged,
+      // not silent: "the speaker just isn't working" with nothing in the console was genuinely undebuggable
+      // live — a blocked autoplay (NotAllowedError), a 501 from /api/tts (no FREETTS_API_KEY configured),
+      // and a network drop all used to look identical to the student (silence), with no trace of which one.
+      console.warn("[tts] FreeTTS path failed, falling back to browser speechSynthesis:", e);
       if (generationRef.current !== myGeneration) return;
       useBrowserTTS(text);
     }
   }, [useBrowserTTS]);
 
   const speak = useCallback((text: string) => {
-    if (!supported) return;
+    if (!supported) { console.warn("[tts] speak() called but speechSynthesis isn't supported in this browser"); return; }
     const speakableText = toSpeakableText(text);
-    if (!speakableText.trim()) return;
+    if (!speakableText.trim()) { console.warn("[tts] speak() called but the reply had nothing speakable after stripping markdown:", text.slice(0, 60)); return; }
     cancelledRef.current = false;
     // New utterance = new generation: invalidates any pre-cancel async continuation still in flight.
     const myGeneration = ++generationRef.current;
