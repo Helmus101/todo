@@ -5675,8 +5675,8 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .sm-typing-dots i:nth-child(2) { animation-delay: 0.15s; }
 .sm-typing-dots i:nth-child(3) { animation-delay: 0.3s; }
 .sm-typing-slow { font-size: 12px; color: var(--ink-3); animation: fadeIn 0.3s var(--ease); }
-@media (prefers-reduced-motion: reduce) { .sm-typing-dots i { animation: none !important; opacity: 0.5; } }
-.sm-ai-error { margin: 0 var(--space-3); font-size: var(--text-sm); color: var(--ink); background: var(--bg-2); border-radius: var(--radius-sm); padding: 8px 10px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+@media (prefers-reduced-motion: reduce) { .sm-typing-dots i { animation: none !important; opacity: 0.5; } }  .sm-ai-error { margin: 0 var(--space-3); font-size: var(--text-sm); color: var(--ink); background: var(--bg-2); border-radius: var(--radius-sm); padding: 8px 10px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .sm-ai-tts-note { margin: 0 var(--space-3); font-size: var(--text-xs); color: var(--ink-2, #667); opacity: 0.85; padding: 4px 10px; }
 .sm-audio-tracks { display: grid; gap: var(--space-2); }
 .sm-audio-track {
   min-height: 42px;

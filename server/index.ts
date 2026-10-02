@@ -48,7 +48,12 @@ declare module "express-session" {
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PORT = Number(process.env.PORT || 8788);
+const PORT = Number(process.env.PORT) > 0 ? Number(process.env.PORT) : 8788;
+// The `> 0` guard matters: `Number("0") || 8788` is 0 (a non-empty string is truthy, so the || never
+// fires) and `listen(0)` binds a random ephemeral port — observed live under a sandbox shell exporting
+// PORT=0, where the server "started" fine but nothing could ever reach it (the dev client's wait-on
+// timed out, the preview proxy had no target). A 0/NaN/negative PORT is always a misconfiguration here,
+// never intentional — this app has no caller that wants an OS-assigned port.
 const PROD = process.env.NODE_ENV === "production";
 
 // Fail closed: required environment variables in production
@@ -135,7 +140,18 @@ const CSP = [
   // data: — PDF.js (pdfjs-dist) embeds subsetted fonts as data: URIs when rendering PDFs in Study Mode;
   // without this, every rendered PDF page silently drops its text glyphs (CSP blocks the data: font before
   // it ever loads, no console error a student would notice — just "the PDF text looks wrong").
-  "font-src 'self' data:",
+  // https://fonts.gstatic.com: Inter loads from Google Fonts' CSS (@import in client/styles.css) — the CSS
+  // itself comes from fonts.googleapis.com (style-src) but the .woff2 files live on fonts.gstatic.com.
+  // Missing here while vercel.json's copy of this CSP already had it: on the self-hosted/Docker path
+  // (where THIS header is the one actually served) every page silently rendered in a fallback font.
+  "font-src 'self' data: https://fonts.gstatic.com",
+  // 'self' blob: data: — FreeTTS speech (server/index.ts's /api/tts) reaches the client as a same-page
+  // blob: URL handed to an <audio> element (useSpeechSynthesis.ts). Once ANY media-src is set it replaces
+  // the default-src fallback entirely (same iframe-like override trap as frame-src above), so without this
+  // directive every voice reply was blocked before a single byte decoded — no console error a student
+  // would notice, just "the tutor doesn't talk" (the <audio> element's onerror path already blamed exactly
+  // this line's absence). data: kept for any data:-URI audio the browser fallback may synthesize.
+  "media-src 'self' blob: data:",
   "base-uri 'self'",
   "form-action 'self'",
   "frame-ancestors 'none'",
@@ -3528,7 +3544,11 @@ const DEFAULT_TTS_VOICE = "en-US-AriaNeural";
 app.post("/api/tts", requireAuth, async (req, res) => {
   const { text, lang: requestedLang } = req.body;
   if (!text || typeof text !== "string") { res.status(400).json({ error: M(req, "le texte est requis", "text is required") }); return; }
-  if (!process.env.FREETTS_API_KEY) { res.status(501).json({ error: M(req, "Synthèse vocale non configurée", "TTS not configured") }); return; }
+  // Loud, not silent: a deployment missing FREETTS_API_KEY used to 501 with NOTHING in the server logs —
+  // the client's fallback made every failure look identical (silence), and the operator had no signal
+  // their voice feature was dead-on-arrival (reported live as "the key was never used" confusion).
+  // console.warn (not reportError) — an env-var omission is a config problem, not an exception.
+  if (!process.env.FREETTS_API_KEY) { console.warn("[tts] FREETTS_API_KEY not set — returning 501; the client will fall back to browser speechSynthesis."); res.status(501).json({ error: M(req, "Synthèse vocale non configurée", "TTS not configured") }); return; }
 
   const profileLang = req.session.profile?.language || "";
   const lang = requestedLang === "fr" || requestedLang === "en" ? requestedLang : profileLang;
@@ -3540,6 +3560,10 @@ app.post("/api/tts", requireAuth, async (req, res) => {
     // multilingual sibling (always GA), then to ANY fr-FR/en-US GA voice from the live catalogue.
     let fileId: string | undefined;
     let audioUrl: string | undefined;
+    // The LAST upstream HTTP status seen — logged on total failure below, so a dead key (401), an empty
+    // quota (402/429), or a vendor outage (5xx) is diagnosable from the server log alone instead of all
+    // of them collapsing into one status-less "synthesis failed" line.
+    let lastUpstreamStatus: number | undefined;
     const attempt = async (v: string): Promise<{ ok: true; audioUrl: string } | { ok: false; status: number }> => {
       const synth = await fetch("https://freetts.org/api/v1/tts", {
         method: "POST",
@@ -3547,7 +3571,7 @@ app.post("/api/tts", requireAuth, async (req, res) => {
         body: JSON.stringify({ text: text.slice(0, 4500), voice: v, outputFormat: "audio/mp3" }),
         signal: AbortSignal.timeout(20_000),
       });
-      if (!synth.ok) return { ok: false, status: synth.status };
+      if (!synth.ok) { lastUpstreamStatus = synth.status; return { ok: false, status: synth.status }; }
       const meta = await synth.json() as { audio_url?: string };
       return meta.audio_url ? { ok: true, audioUrl: meta.audio_url } : { ok: false, status: 502 };
     };
@@ -3560,7 +3584,10 @@ app.post("/api/tts", requireAuth, async (req, res) => {
       if (r.status !== 400 && r.status !== 422) break; // quota/auth/outage — voice retrying won't help
     }
     if (!audioUrl) {
-      console.error(`[tts] FreeTTS synthesis failed for voice ${voice}`);
+      // Status in the message: 401 = key invalid/revoked, 402/429 = quota, 5xx = vendor outage. Sentry
+      // too — this is the path where "voice silently stopped working" lived for weeks with no trace.
+      console.error(`[tts] FreeTTS synthesis failed for voice ${voice} (last upstream status: ${lastUpstreamStatus ?? "none"})`);
+      reportError("tts-synthesis-failed", new Error(`FreeTTS synthesis failed for voice ${voice}`), { lastUpstreamStatus, lang, voice });
       res.status(500).json({ error: M(req, "Échec de la génération vocale", "TTS generation failed") });
       return;
     }
@@ -3569,6 +3596,7 @@ app.post("/api/tts", requireAuth, async (req, res) => {
     const audio = await fetch(audioUrl, { headers: { "x-api-key": key }, signal: AbortSignal.timeout(20_000) });
     if (!audio.ok) {
       console.error(`[tts] FreeTTS audio fetch error: ${audio.status}`);
+      reportError("tts-audio-fetch-failed", new Error(`FreeTTS audio fetch failed: ${audio.status}`), { status: audio.status });
       res.status(500).json({ error: M(req, "Échec de la requête vocale", "TTS request failed") });
       return;
     }

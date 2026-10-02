@@ -307,6 +307,15 @@ export function AskOttoPanel({
       ) : null}
       {/* Real mic failure surfacing (permission denied, no mic, network) — previously silent. */}
       {micError ? <div className="sm-ai-error" role="alert">{L(micError[0], micError[1])}</div> : null}
+      {/* TTS diagnostic (useSpeechSynthesis's lastDiagnostic): which speech path actually ran and, when it
+          fell back, WHY. Voice failures were the last fully-silent surface in this panel — a 501 from a
+          missing server key, a CSP-blocked audio element, and a vendor outage all looked like "Otto just
+          doesn't talk," indistinguishable from voice mode doing nothing at all. Muted one-liner (not an
+          alert): speech DID happen via the fallback, so this explains rather than alarms. Only while voice
+          mode is on, so the line never appears in text-only sessions. */}
+      {voiceModeOn && synth.lastDiagnostic ? (
+        <div className="sm-ai-tts-note" role="status">{synth.lastDiagnostic}</div>
+      ) : null}
 
       <div className="sm-ai-input-row">
         <textarea

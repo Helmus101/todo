@@ -23,7 +23,9 @@ const quietProxy = (proxy: any) => {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   // 127.0.0.1 (not "localhost") so the proxy doesn't try IPv6 ::1 first and get ECONNREFUSED.
-  const apiTarget = `http://127.0.0.1:${env.PORT || "8788"}`;
+  // Same `> 0` guard as server/index.ts: a shell-exported PORT=0 made this `http://127.0.0.1:0`,
+  // a proxy target that can never answer.
+  const apiTarget = `http://127.0.0.1:${Number(env.PORT) > 0 ? Number(env.PORT) : "8788"}`;
   return {
     plugins: [react()],
     root: ".",
