@@ -8,7 +8,7 @@ import { saveQuizLocally, getAllLocalQuizzes, clearLocalQuizzes, getLocalQuiz } 
 // the cloud still owns, safe to drop; chat/board are the ONLY copy (local-only, by direct request), so
 // clearing them on sign-out would permanently destroy conversation history the moment someone logs out.
 // Keyed by userId same as the others, so a different account signing in on the same browser never sees it.
-import { hydrateLocalThreads } from "./localChatBoard.ts";
+import { hydrateLocalThreads, clearLocalChatBoard } from "./localChatBoard.ts";
 import { pushError } from "./errorLog.ts";
 import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard, PageInfoHint } from "./ui.tsx";
 import { t } from "./i18n.ts";
@@ -196,6 +196,24 @@ function usePathRoute(): [string, (r: string) => void] {
 const CACHED_STATUS: ConnectionStatus | null = (() => {
   try { return JSON.parse(localStorage.getItem("weave-status") || "null"); } catch { return null; }
 })();
+
+/** Shared by sign-out AND account deletion — both end an identity on this browser and must leave NO trace
+ *  of it behind for whoever's on this account next (another account signing up/in on the same device, or
+ *  this same browser after a delete). Account deletion used to skip this entirely: it only called the
+ *  server-side erasure and navigated to "/", leaving every one of these caches sitting in localStorage
+ *  completely untouched — a fresh signup right after, on the same browser, would start by briefly showing
+ *  the JUST-DELETED account's cached tasks/status (CACHED_TASKS/CACHED_STATUS above read these exact keys
+ *  at module-load time) until the real fetch overwrote them. The per-account stores (decks/quizzes/chat-
+ *  board) are already namespaced by userId and so can't leak into a DIFFERENT account's reads even when
+ *  left behind, but clearing them too is the honest behavior for "delete my account" — local traces should
+ *  go, not just the server row. Module-level (not inside App()) so SettingsPage's own delete-account
+ *  handler can call it too, without threading it through as a prop. */
+function clearAllLocalAccountData(userId: string | null): void {
+  try { ["otto-tasks", "weave-status", "otto-seen-tasks", "otto-lastgen", "otto-onboard", "otto-onboard-step", "otto-onboard-track"].forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
+  clearLocalDecks(userId);
+  clearLocalQuizzes(userId);
+  clearLocalChatBoard(userId);
+}
 
 const GREETING = (lang?: "fr" | "en") => {
   const h = new Date().getHours();
@@ -757,10 +775,7 @@ export function App() {
     lastAuthenticatedStatusRef.current = null;
     setStatus(null);
     try { await api.logout(); } catch { /* ignore */ }
-    try { ["otto-tasks", "weave-status", "otto-seen-tasks", "otto-lastgen", "otto-onboard", "otto-onboard-step", "otto-onboard-track"].forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
-    const userId = status?.user || null;
-    clearLocalDecks(userId);
-    clearLocalQuizzes(userId);
+    clearAllLocalAccountData(status?.user || null);
     setTasks([]); setLoaded(false); generatedOnce.current = false; navigate(""); void loadStatus();
   };
 
@@ -852,7 +867,17 @@ export function App() {
     return (
       <LangContext.Provider value={preLoginLang}>
         {route === "login" || route === "signup" || route === "reset-password"
-          ? <LoginPage status={status} lang={preLoginLang} onLangChange={setLandingLang} onDone={async (isNew) => { signedOutRef.current = false; if (isNew) { await onNewAccount(); startOnboard(); } await loadStatus(); navigate("tasks"); }} initialMode={route === "signup" ? "signup" : route === "reset-password" ? "reset" : "login"} />
+          ? <LoginPage status={status} lang={preLoginLang} onLangChange={setLandingLang} onDone={async (isNew) => {
+              signedOutRef.current = false;
+              // Defensive, same reasoning as clearAllLocalAccountData's own comment: a brand-new account
+              // has no business trusting ANY pre-existing local cache on this browser (a previous account
+              // that was deleted/signed-out-of incompletely, e.g. the session merely expired rather than
+              // an explicit sign-out). loadStatus()/the tasks fetch right after overwrite the in-memory
+              // state regardless, so this mainly protects the NEXT reload (closing and reopening the tab)
+              // from starting on stale data again.
+              if (isNew) { clearAllLocalAccountData(null); await onNewAccount(); startOnboard(); }
+              await loadStatus(); navigate("tasks");
+            }} initialMode={route === "signup" ? "signup" : route === "reset-password" ? "reset" : "login"} />
           : route === "unlimited"
           ? <LoginPage status={status} lang={preLoginLang} onLangChange={setLandingLang} onDone={async () => { signedOutRef.current = false; await loadStatus(); navigate("unlimited"); }} initialMode="login" />
           : route === "" || route === "/"
@@ -2626,7 +2651,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
             onClick={async () => {
               if (!window.confirm(L("Supprimer ton compte Otto (tâches, profil, connexions) ? Irréversible.", "Delete your Otto account (tasks, profile, connections)? This can't be undone."))) return;
               setDeletingAccount(true);
-              try { await api.deleteAccount(); window.location.href = "/"; }
+              try { await api.deleteAccount(); clearAllLocalAccountData(status.user || null); window.location.href = "/"; }
               catch (e: any) { setDeletingAccount(false); notify(e?.message || L("Impossible de supprimer le compte — réessaie.", "Couldn't delete the account — try again."), "error"); }
             }}
           >{deletingAccount ? L("Suppression…", "Deleting…") : L("Tout supprimer", "Delete everything")}</button>
