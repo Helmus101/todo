@@ -97,8 +97,20 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
     // A hair faster than the 1.0 default reads as more natural/conversational for short spoken replies —
     // browser TTS at exactly 1.0 tends to sound slightly plodding.
     utter.rate = 1.05;
-    utter.onend = () => { if (!cancelledRef.current) speakNext(); };
-    utter.onerror = () => { if (!cancelledRef.current) speakNext(); };
+    // Known Chrome bug: speechSynthesis.speak() silently does nothing for a chunk — no onstart, no onend,
+    // no onerror, the browser just drops it — most often right after a cancel(), or after the tab/engine
+    // has sat idle a while. Without a watchdog that chunk (and everything queued after it) goes mute
+    // forever: nothing ever fires to advance the queue or flip `speaking` back to false, which live read as
+    // "TTS doesn't always happen, then the mic still comes back on" (voiceModeOn's mic-resume effect in
+    // AskOttoPanel.tsx fires off onend, which never fired — wait, the OPPOSITE: speaking stays stuck true,
+    // the mic never reopens) when it fires, and as a silently skipped reply when onend's "if a later speak()
+    // bumped generation" case doesn't apply. Give each chunk 400ms to confirm it actually started; if
+    // nothing fired, treat it as dropped and move on rather than hanging the whole queue on one bad chunk.
+    let started = false;
+    const watchdog = setTimeout(() => { if (!started && !cancelledRef.current) speakNext(); }, 400);
+    utter.onstart = () => { started = true; clearTimeout(watchdog); };
+    utter.onend = () => { clearTimeout(watchdog); if (!cancelledRef.current) speakNext(); };
+    utter.onerror = () => { clearTimeout(watchdog); if (!cancelledRef.current) speakNext(); };
     window.speechSynthesis.speak(utter);
   }, [lang, pickVoice]);
 
@@ -110,7 +122,10 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
     window.speechSynthesis.cancel();
     queueRef.current = sentences;
     setSpeaking(true);
-    speakNext();
+    // A speak() landing in the same tick as the cancel() above is another known Chrome race — the engine is
+    // still tearing down the previous (possibly empty) queue and drops the new speak() silently. A tiny
+    // deferral lets that teardown actually finish first.
+    setTimeout(() => { if (!cancelledRef.current) speakNext(); }, 30);
   }, [supported, speakNext]);
 
   const speakViaFreeTTS = useCallback(async (text: string, myGeneration: number) => {
