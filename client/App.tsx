@@ -2537,30 +2537,67 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
   const [paused, setPausedLocal] = useState(status.paused);
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [importingData, setImportingData] = useState(false);
+  const [importProgress, setImportProgress] = useState<[number, number] | null>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
+  // Splits `tasks` into byte-budgeted batches and uploads them as SEPARATE import requests — each one
+  // still goes through POST /api/account/import's existing MERGE logic (mergeTaskLists/mergeProfileStates,
+  // server/index.ts), so sending the same account's data in 5 pieces instead of 1 produces the exact same
+  // end state; the route has no idea it's being fed incrementally. Needed because a single request still
+  // hit Vercel's hard 4.5MB-per-function-invocation body cap (separate from and un-raisable by
+  // express.json({limit})) even after stripping jobs/events — reported live on a real, chat/board-heavy
+  // account (tutor sessions are cloud-persisted again now, so a long-lived account's export legitimately
+  // grew past the old no-chat baseline this cap was never hit at before). 3.5MB per batch, not 4.5: real
+  // headroom under the hard cap for JSON-escaping overhead and the profile object riding along in every
+  // batch, not a number to push closer to the edge.
+  const MAX_IMPORT_BATCH_BYTES = 3_500_000;
+  function splitImportBatches(profile: unknown, allTasks: unknown[]): unknown[][] {
+    const encoder = new TextEncoder();
+    const baseSize = encoder.encode(JSON.stringify({ profile, tasks: [] })).length;
+    const batches: unknown[][] = [];
+    let current: unknown[] = [];
+    let currentSize = baseSize;
+    for (const t of allTasks) {
+      const taskSize = encoder.encode(JSON.stringify(t)).length;
+      if (current.length && currentSize + taskSize > MAX_IMPORT_BATCH_BYTES) {
+        batches.push(current);
+        current = [];
+        currentSize = baseSize;
+      }
+      current.push(t);
+      currentSize += taskSize;
+      // One single task bigger than the whole budget (a genuinely huge chat/board history on one task) —
+      // still send it alone rather than looping forever trying to split further; the server's own caps
+      // (CHAT_CAP/BOARD_MERGE_CAP/ARTIFACT_CAP) bound how big one task can realistically get regardless.
+    }
+    if (current.length) batches.push(current);
+    return batches.length ? batches : [[]]; // profile-only import (no tasks at all) still gets one request
+  }
   const onImportFile = async (file: File) => {
     setImportingData(true);
+    setImportProgress(null);
     try {
       const text = await file.text();
       let parsed: any;
       try { parsed = JSON.parse(text); }
       catch { throw new Error(L("Ce fichier n'est pas un export Otto valide.", "That file isn't a valid Otto export.")); }
-      // Reported live: 413 (Payload Too Large) uploading a real export — this app runs on Vercel, whose
-      // serverless functions hard-cap the request body at 4.5MB regardless of what express.json({limit})
-      // allows server-side, so a big exported file never even reaches the route. GET /api/account/export
-      // bundles jobs/events into the file too (added for GDPR Art.15 completeness — a full access request
-      // covers more than just profile/tasks), but POST /api/account/import only ever reads `profile`/
-      // `tasks` (see that route's own body) — jobs/events can be a large chunk of a long-lived account's
-      // export and are pure dead weight here. Strip them before upload: same import result, smaller body,
-      // no server-side change needed.
-      const result = await api.importData({ profile: parsed.profile, tasks: parsed.tasks });
-      notify(L(`Importé — ${result.tasksAfter} tâches, ${result.errorLogAfter} erreurs au total.`, `Imported — ${result.tasksAfter} tasks, ${result.errorLogAfter} error-log entries in total now.`));
+      // jobs/events ride along in a full export for GDPR Art.15 completeness, but POST /api/account/import
+      // only ever reads `profile`/`tasks` (see that route's own body) — pure dead weight here, dropped
+      // before even computing batches below.
+      const allTasks: unknown[] = Array.isArray(parsed.tasks) ? parsed.tasks : [];
+      const batches = splitImportBatches(parsed.profile, allTasks);
+      let result: { ok: boolean; tasksAfter: number; errorLogAfter: number } | undefined;
+      for (let i = 0; i < batches.length; i++) {
+        if (batches.length > 1) setImportProgress([i + 1, batches.length]);
+        result = await api.importData({ profile: parsed.profile, tasks: batches[i] });
+      }
+      notify(L(`Importé — ${result!.tasksAfter} tâches, ${result!.errorLogAfter} erreurs au total.`, `Imported — ${result!.tasksAfter} tasks, ${result!.errorLogAfter} error-log entries in total now.`));
       loadProfile();
       onChanged();
     } catch (e: any) {
       notify(e?.message || L("Impossible d'importer ce fichier — réessaie.", "Couldn't import that file — try again."), "error");
     } finally {
       setImportingData(false);
+      setImportProgress(null);
       if (importFileRef.current) importFileRef.current.value = "";
     }
   };
@@ -2598,7 +2635,9 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
             <input ref={importFileRef} type="file" accept="application/json" style={{ display: "none" }}
               onChange={(e) => { const f = e.target.files?.[0]; if (f) void onImportFile(f); }} />
             <button type="button" className="btn xs ghost" disabled={importingData} onClick={() => importFileRef.current?.click()}>
-              {importingData ? L("Import en cours…", "Importing…") : L("Importer un export Otto", "Import an Otto export")}
+              {importingData
+                ? (importProgress ? L(`Import en cours… (${importProgress[0]}/${importProgress[1]})`, `Importing… (${importProgress[0]}/${importProgress[1]})`) : L("Import en cours…", "Importing…"))
+                : L("Importer un export Otto", "Import an Otto export")}
             </button>
           </span>
         </div>
