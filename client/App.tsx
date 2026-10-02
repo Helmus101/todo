@@ -1477,6 +1477,7 @@ function DueReviews({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] }) {
           <FlashcardDeck
             deck={openDeckObj}
             taskId={openTask.id}
+            onlyIndices={due.filter((d) => d.deckId === openDeckObj.id).map((d) => d.cardIndex)}
             onReview={(cardIndex, correct) => {
               void api.reviewFlashcard(openTask.id, openDeckObj.id, cardIndex, correct).catch(() => {});
               // Mark it complete immediately — reported live that a reviewed card stayed showing as "due"

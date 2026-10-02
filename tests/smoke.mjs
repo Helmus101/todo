@@ -74,6 +74,13 @@ try {
     // Tutor whiteboard vision — auth checked before visionReady()/GEMINI_API_KEY is ever looked at.
     const readWhiteboard = await req("/api/tutor/read-whiteboard", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ image: "data:image/png;base64,abc" }) });
     check("POST /api/tutor/read-whiteboard → 401 (auth checked first)", readWhiteboard.status === 401);
+
+    // Account export/import — the project-to-project migration path (export from one Supabase project,
+    // import into a fresh account on another). Auth checked before either ever touches storage.
+    const exportGet = await req("/api/account/export");
+    check("GET /api/account/export → 401 (not 500)", exportGet.status === 401);
+    const importPost = await req("/api/account/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ profile: {}, tasks: [] }) });
+    check("POST /api/account/import → 401 (checked before the body is ever validated)", importPost.status === 401);
   }
 
   console.log("— Malformed request bodies — the error-handling middleware must return JSON, never crash the process");

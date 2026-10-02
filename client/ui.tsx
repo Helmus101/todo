@@ -763,7 +763,17 @@ function loadDeckProgress(deckId: string): { i: number; right: number[]; wrong: 
     return { i: p.i, right: p.right, wrong: p.wrong };
   } catch { return null; }
 }
-export function FlashcardDeck({ deck, onReview, onNotNeeded, taskId, onAllCorrect }: { deck: TaskFlashcards; onReview?: (cardIndex: number, correct: boolean) => void; onNotNeeded?: (cardIndex: number) => void; taskId?: string; onAllCorrect?: () => void }) {
+export function FlashcardDeck({ deck, onReview, onNotNeeded, taskId, onAllCorrect, onlyIndices }: { deck: TaskFlashcards; onReview?: (cardIndex: number, correct: boolean) => void; onNotNeeded?: (cardIndex: number) => void; taskId?: string; onAllCorrect?: () => void;
+  /** Restricts the review pass to exactly these card indices (still excludes `notNeeded` ones) instead of
+   *  every card in the deck — the DueReviews cross-task view (App.tsx) needs this: a deck's spaced-
+   *  repetition schedule (nextLeitnerReview, shared/types.ts) can have most of its cards sitting on a
+   *  "Known" box not due for another week, with only a few actually due today. Without this, opening that
+   *  deck from a due-review chip re-ran the WHOLE deck (including the ones correctly NOT due yet) — the
+   *  entire point of "known cards don't need to come back for a while" silently undone the moment the
+   *  student clicked through from the due-review view, even though the spacing math itself was correct.
+   *  Omitted (undefined) means the normal "browse/review this whole deck" behavior, unchanged. */
+  onlyIndices?: number[];
+}) {
   const L = useLang();
   const saved = useRef(loadDeckProgress(deck.id)).current;
   const [i, setI] = useState(saved?.i ?? 0);
@@ -795,7 +805,7 @@ export function FlashcardDeck({ deck, onReview, onNotNeeded, taskId, onAllCorrec
   // Cards already marked "not something I need to learn" (card.notNeeded) never enter the pass at all; ones
   // marked during THIS pass land in `dropped` and leave the score's denominator. Frozen at mount so a server
   // re-render mid-pass can't shift which card position `i` points at.
-  const baseSeq = useRef(deck.cards.map((_, idx) => idx).filter((idx) => !deck.cards[idx].notNeeded)).current;
+  const baseSeq = useRef(deck.cards.map((_, idx) => idx).filter((idx) => !deck.cards[idx].notNeeded && (!onlyIndices || onlyIndices.includes(idx)))).current;
   const [dropped, setDropped] = useState<number[]>([]);
   const inScope = baseSeq.length - dropped.length;
   const seqLen = retryQueue ? retryQueue.length : baseSeq.length;

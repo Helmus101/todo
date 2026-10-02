@@ -655,6 +655,20 @@ app.post("/api/account/delete", requireAuth, rateLimit(5, 60_000), async (req, r
   // the account row being gone, which is the actual point of a deletion audit trail.
   console.warn(`[audit] account_deleted: ${email}`);
   try {
+    // Disconnect every third-party link BEFORE erasing Otto's own rows — reported live: deleting an
+    // account and signing up again with the SAME email immediately showed Gmail/Calendar/Drive already
+    // connected. deleteAccount (store.ts) only ever wiped OTTO'S OWN tables; it never told Composio to drop
+    // the OAuth grant, which Composio keeps keyed by this exact email regardless of whether Otto still has
+    // an account row for it — so the grant just sat there, live, waiting for literally anyone who signed up
+    // with that email next (not even necessarily the same person). This is also the actual RGPD erasure
+    // gap, not just a UX one: "delete my account" has to mean Otto stops holding a live grant to the
+    // person's Gmail/Calendar/Drive/Pronote, not just that Otto's own copy of their data is gone.
+    // Best-effort/parallel — a stuck Composio/Pronote call must never block the erasure itself from
+    // completing; each failure is swallowed (nothing left to report it to once the account row is gone).
+    await Promise.all([
+      ...integrations.CATALOG.map((c) => integrations.disconnect(c.key, email).catch(() => {})),
+      pronoteSvc.disconnectPronote(email).catch(() => {}),
+    ]);
     const result = await deleteAccount(email);
     // Only destroy the session on a confirmed result — destroying it on a thrown error (below) would make
     // an account that's still fully intact server-side look deleted client-side, with no way back in to
