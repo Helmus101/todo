@@ -36,6 +36,11 @@ export interface UseSpeechSynthesis {
   speaking: boolean;
   speak: (text: string) => void;
   cancel: () => void;
+  /** Human-readable trace of what the LAST speak() attempt actually did — which path it used and, when it
+   *  failed, why. Surfaced in Settings' "Test the speaker" row: repeated rounds of "the speaker doesn't
+   *  work" were impossible to act on because every distinct failure (missing server API key, CSP blocking
+   *  blob: audio, no installed voices, autoplay policy) looked identical from the outside — silence. */
+  lastDiagnostic: string | null;
 }
 
 /** Text-to-speech via FreeTTS (freetts.org) if available, falling back to the browser's built-in
@@ -44,6 +49,7 @@ export interface UseSpeechSynthesis {
 export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
   const supported = typeof window !== "undefined" && "speechSynthesis" in window;
   const [speaking, setSpeaking] = useState(false);
+  const [lastDiagnostic, setLastDiagnostic] = useState<string | null>(null);
   const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
   const queueRef = useRef<string[]>([]);
   const cancelledRef = useRef(false);
@@ -132,9 +138,17 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
   }, [lang, pickVoice]);
 
   const useBrowserTTS = useCallback((text: string) => {
-    if (!supported) return;
+    if (!supported) { console.error("[tts] FINAL FALLBACK FAILED: this browser has no speechSynthesis at all — nothing can be spoken."); setLastDiagnostic("This browser has no speech synthesis at all."); return; }
     const sentences = toSentences(toSpeakableText(text));
-    if (!sentences.length) return;
+    if (!sentences.length) { console.error("[tts] FINAL FALLBACK FAILED: nothing speakable left after stripping markdown.", text.slice(0, 80)); setLastDiagnostic("The reply had nothing speakable in it."); return; }
+    if (!voicesRef.current.length) {
+      // getVoices() is populated asynchronously — an early call (before `onvoiceschanged`) legitimately
+      // sees an empty list. Re-read it here rather than trusting the possibly-too-early load in the effect.
+      voicesRef.current = window.speechSynthesis.getVoices();
+      if (!voicesRef.current.length) { console.warn("[tts] the browser reports ZERO installed voices — speech may silently do nothing."); setLastDiagnostic("Browser speech is being used, but this device reports no installed voices."); }
+    }
+    console.info(`[tts] speaking via browser speechSynthesis (${sentences.length} chunk(s), ${voicesRef.current.length} voices available)`);
+    if (voicesRef.current.length) setLastDiagnostic(`Using this browser's built-in speech (${voicesRef.current.length} voices available).`);
     cancelledRef.current = false;
     window.speechSynthesis.cancel();
     queueRef.current = sentences;
@@ -146,46 +160,64 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
   }, [supported, speakNext]);
 
   const speakViaFreeTTS = useCallback(async (text: string, myGeneration: number) => {
+    // ONE-SHOT fallback guard. A blocked/failed audio element fires BOTH `audio.onerror` AND rejects the
+    // `audio.play()` promise — so the old code called useBrowserTTS twice for one failure, and the second
+    // call's `speechSynthesis.cancel()` tore down the utterance the first call had just started. Two
+    // fallbacks racing each other produced silence, which is precisely the "it still doesn't work" symptom
+    // left over after the CSP fix below. Whichever failure signal lands first wins; the rest are no-ops.
+    let fellBack = false;
+    const fallBack = (why: string, detail?: unknown) => {
+      if (fellBack || generationRef.current !== myGeneration) return;
+      fellBack = true;
+      console.warn(`[tts] FreeTTS path unavailable (${why}) — falling back to the browser's own speechSynthesis.`, detail ?? "");
+      setLastDiagnostic(`Otto's own voice is unavailable (${why}); using the browser's built-in speech instead.`);
+      useBrowserTTS(text);
+    };
     try {
       // Goes through client/api.ts's req(), NOT a bare fetch — that's what attaches the x-csrf-token
-      // header every other mutating POST in the app needs. A bare fetch here (the original bug) 403'd on
+      // header every other mutating POST in the app needs. A bare fetch here (an earlier bug) 403'd on
       // every single call in production, always silently falling back to browser TTS.
+      console.info(`[tts] requesting FreeTTS audio (${text.length} chars, lang=${lang})`);
       const response = await api.ttsAudio(text, lang.slice(0, 2).toLowerCase());
       // The barge-in cancel() landed while this fetch was in flight — this utterance is dead, don't
       // speak it and DON'T fall back to browser TTS (that would undo the interruption).
       if (generationRef.current !== myGeneration) return;
-      if (!response.ok) throw new Error("FreeTTS failed");
+      if (!response.ok) {
+        // 501 = FREETTS_API_KEY isn't configured on the server (very common: the key lives in a local .env
+        // that was never added to the production environment); 403 = CSRF; 500 = the vendor itself failed.
+        const detail = await response.text().catch(() => "");
+        fallBack(`/api/tts returned HTTP ${response.status}`, detail.slice(0, 200));
+        return;
+      }
       const blob = await response.blob();
+      if (!blob.size) { fallBack("/api/tts returned an empty audio body"); return; }
       const url = URL.createObjectURL(blob);
       if (audioRef.current) URL.revokeObjectURL(audioRef.current.src);
       const audio = new Audio(url);
       audioRef.current = audio;
-      audio.onplay = () => { if (generationRef.current === myGeneration) setSpeaking(true); };
+      audio.onplay = () => { if (generationRef.current === myGeneration) { console.info("[tts] FreeTTS audio playing"); setLastDiagnostic("Working — playing Otto's own voice."); setSpeaking(true); } };
       audio.onended = () => { if (generationRef.current === myGeneration) { setSpeaking(false); URL.revokeObjectURL(url); } };
       audio.onerror = () => {
         if (generationRef.current !== myGeneration) return;
         setSpeaking(false);
         URL.revokeObjectURL(url);
-        // Fallback to browser TTS on audio error
-        useBrowserTTS(text);
+        // The classic cause here is a Content-Security-Policy with no `media-src` allowing `blob:` — the
+        // element is blocked before a single byte is decoded, with no other symptom. See vercel.json.
+        fallBack("the <audio> element errored (CSP media-src blocking blob:? corrupt audio?)", audio.error);
       };
       await audio.play();
     } catch (e) {
-      // FreeTTS failed or endpoint unavailable — fallback to browser TTS (still generation-gated: a
-      // cancel() during the failed attempt must not resurrect speech through the fallback path). Logged,
-      // not silent: "the speaker just isn't working" with nothing in the console was genuinely undebuggable
-      // live — a blocked autoplay (NotAllowedError), a 501 from /api/tts (no FREETTS_API_KEY configured),
-      // and a network drop all used to look identical to the student (silence), with no trace of which one.
-      console.warn("[tts] FreeTTS path failed, falling back to browser speechSynthesis:", e);
-      if (generationRef.current !== myGeneration) return;
-      useBrowserTTS(text);
+      // Network drop, a rejected play() (Chrome's autoplay policy → NotAllowedError), or a CSP block.
+      // Logged, never silent: a blocked autoplay, a 501 from /api/tts, and a network failure used to look
+      // identical to the student (silence), with nothing anywhere saying which one it actually was.
+      fallBack(e instanceof Error ? `${e.name}: ${e.message}` : "unknown error", e);
     }
-  }, [useBrowserTTS]);
+  }, [useBrowserTTS, lang]);
 
   const speak = useCallback((text: string) => {
-    if (!supported) { console.warn("[tts] speak() called but speechSynthesis isn't supported in this browser"); return; }
+    if (!supported) { console.warn("[tts] speak() called but speechSynthesis isn't supported in this browser"); setLastDiagnostic("This browser doesn't support speech at all."); return; }
     const speakableText = toSpeakableText(text);
-    if (!speakableText.trim()) { console.warn("[tts] speak() called but the reply had nothing speakable after stripping markdown:", text.slice(0, 60)); return; }
+    if (!speakableText.trim()) { console.warn("[tts] speak() called but the reply had nothing speakable after stripping markdown:", text.slice(0, 60)); setLastDiagnostic("That reply had nothing speakable in it."); return; }
     cancelledRef.current = false;
     // New utterance = new generation: invalidates any pre-cancel async continuation still in flight.
     const myGeneration = ++generationRef.current;
@@ -212,5 +244,5 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
 
   useEffect(() => () => cancel(), [cancel]);
 
-  return { supported, speaking, speak, cancel };
+  return { supported, speaking, speak, cancel, lastDiagnostic };
 }

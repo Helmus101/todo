@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useState, useCallback, useContext, useRef, type Dispatch, type SetStateAction } from "react";
 import type { WebTask, ConnectionStatus, Profile, TaskFlashcards, FocusSession } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight, sortWithinQuadrant, errorLogBySubject, milestonesBySubject } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
@@ -16,6 +16,7 @@ import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
 import { TutorSession } from "./tutor/TutorSession.tsx";
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
+import { useSpeechSynthesis } from "./voice/useSpeechSynthesis.ts";
 import { 
   LayoutDashboard,
   BookOpen,
@@ -2724,6 +2725,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
             }} /><span className="switch-track" /></span>
           </label>
           <PreferencesFields profile={profile} onChanged={(p) => { setProfile(p); onChanged(); }} />
+          <SpeakerTestRow />
         </div>
       </section>
 
@@ -2767,6 +2769,37 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
 /** Pronote (French school portal) — no OAuth exists for it, so this is a credential form instead of a
  *  redirect link. The password is sent once to connect and never stored (see server/pronote.ts); only a
  *  rotating token comes back. Reads homework due dates into the to-do list — nothing is ever written back. */
+/** "Test the speaker" — plays one short line through the EXACT same path Otto's spoken replies use, and
+ *  reports what actually happened. Added after several rounds of "the text-to-speech still doesn't work"
+ *  that were impossible to act on: every distinct cause (the server's TTS key missing, a CSP blocking
+ *  blob: audio, no installed system voices, the browser's autoplay policy) presents identically as
+ *  silence, with nothing on screen to tell them apart. Now one tap says which one it is. */
+function SpeakerTestRow() {
+  const L = useLang();
+  const en = useContext(LangContext) === "en";
+  const synth = useSpeechSynthesis(en ? "en-US" : "fr-FR");
+  const [tested, setTested] = useState(false);
+  if (!synth.supported) return null;
+  return (
+    <div className="set-row">
+      <span className="set-text">
+        <b>{L("Tester le son", "Test the speaker")}</b>
+        <span className="settings-hint">
+          {tested && synth.lastDiagnostic
+            ? synth.lastDiagnostic
+            : L("Vérifie qu'Otto peut bien te parler à voix haute.", "Check that Otto can actually speak out loud.")}
+        </span>
+      </span>
+      <button type="button" className="btn xs ghost" disabled={synth.speaking} onClick={() => {
+        setTested(true);
+        synth.speak(L("Bonjour, c'est Otto. Si tu entends ceci, le son fonctionne.", "Hi, it's Otto. If you can hear this, the speaker works."));
+      }}>
+        {synth.speaking ? L("Lecture…", "Playing…") : L("Tester", "Test")}
+      </button>
+    </div>
+  );
+}
+
 function PronoteTile({ status: mainStatus, onStatusUpdate, onChanged }: { status?: ConnectionStatus | null; onStatusUpdate?: () => void; onChanged?: () => void } = {}) {
   const L = useLang();
   const notify = useNotify();

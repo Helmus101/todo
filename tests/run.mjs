@@ -1847,6 +1847,18 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   const apiSrc = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
   check("useSpeechSynthesis's FreeTTS call goes through api.ttsAudio (CSRF-safe), not a bare fetch", /api\.ttsAudio\(/.test(ttsSynthSrc) && !/fetch\("\/api\/tts"/.test(ttsSynthSrc));
   check("api.ttsAudio is wired through req() (the CSRF-token-attaching path), not a bare fetch", /ttsAudio:.*req\("\/api\/tts"/.test(apiSrc.replace(/\n/g, " ")));
+  // THE production-only TTS killer: Otto's own voice plays through `new Audio(URL.createObjectURL(blob))`,
+  // i.e. a blob: URL. Audio/video elements are governed by CSP's `media-src`, which falls back to
+  // `default-src 'self'` when absent — and 'self' does NOT match the blob: scheme. With no media-src, the
+  // browser blocked every spoken reply in production before a byte was decoded, while dev (Vite sends no
+  // CSP at all) worked fine, which is exactly why this survived several rounds of "it still doesn't work."
+  const vercelCfg = readFileSync(new URL("../vercel.json", import.meta.url), "utf8");
+  const csp = JSON.parse(vercelCfg).headers.flatMap((h) => h.headers).find((h) => h.key === "Content-Security-Policy")?.value || "";
+  check("CSP allows blob: audio (media-src) — without it every spoken reply is blocked in production only", /media-src[^;]*blob:/.test(csp));
+  // A blocked/failed <audio> fires BOTH onerror AND rejects play() — two fallbacks racing, where the
+  // second one's speechSynthesis.cancel() tears down the utterance the first just started. Silence.
+  check("the FreeTTS→browser fallback is one-shot (onerror and a rejected play() can't both fire it)", /let fellBack = false;/.test(ttsSynthSrc) && /if \(fellBack \|\| generationRef\.current !== myGeneration\) return;/.test(ttsSynthSrc));
+  check("every TTS failure path leaves a diagnostic the UI can show, not just silence", /lastDiagnostic/.test(ttsSynthSrc) && /setLastDiagnostic/.test(ttsSynthSrc));
   check("voice auto-start is guarded on SpeechRecognition support (Firefox stays text-first)", /recogSupportedRef\.current/.test(askOttoSrc));
 }
 
