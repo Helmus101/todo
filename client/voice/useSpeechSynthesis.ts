@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { api } from "../api.ts";
 
 /** Strip the markdown Otto's replies use (headings, bold/italic emphasis markers, [links](url), GFM table
  *  pipes, bullet markers) down to plain readable prose — read aloud verbatim, "hashtag hashtag" and literal
@@ -91,9 +92,18 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
     const next = queueRef.current.shift();
     if (!next) { setSpeaking(false); return; }
     const utter = new SpeechSynthesisUtterance(next);
-    utter.lang = lang;
     const voice = pickVoice();
-    if (voice) utter.voice = voice;
+    if (voice) {
+      utter.voice = voice;
+      utter.lang = voice.lang; // match the voice's own reported lang exactly, not our requested one
+    } else {
+      // No installed voice matches `lang` at all (e.g. no French voice pack on an English-OS machine) —
+      // setting utter.lang to an unmatched value is a known SILENT failure mode on some engines (no
+      // onstart/onend/onerror, nothing ever plays, no error either). Leaving `lang` unset lets the engine
+      // fall back to its own default voice instead of refusing to speak — a reply in the wrong accent
+      // still beats total silence.
+      console.warn(`[tts] no installed voice matches "${lang}" — using the browser's default voice instead`);
+    }
     // A hair faster than the 1.0 default reads as more natural/conversational for short spoken replies —
     // browser TTS at exactly 1.0 tends to sound slightly plodding.
     utter.rate = 1.05;
@@ -137,11 +147,10 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
 
   const speakViaFreeTTS = useCallback(async (text: string, myGeneration: number) => {
     try {
-      const response = await fetch("/api/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, lang: lang.slice(0, 2).toLowerCase() }),
-      });
+      // Goes through client/api.ts's req(), NOT a bare fetch — that's what attaches the x-csrf-token
+      // header every other mutating POST in the app needs. A bare fetch here (the original bug) 403'd on
+      // every single call in production, always silently falling back to browser TTS.
+      const response = await api.ttsAudio(text, lang.slice(0, 2).toLowerCase());
       // The barge-in cancel() landed while this fetch was in flight — this utterance is dead, don't
       // speak it and DON'T fall back to browser TTS (that would undo the interruption).
       if (generationRef.current !== myGeneration) return;

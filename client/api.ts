@@ -453,4 +453,14 @@ export const api = {
   saveStudySession: (session: Partial<StudySession>): Promise<StudySession> => post("/api/study/session", session),
   studyProfile: (): Promise<StudyProfile> => req("/api/study/profile").then(j),
   saveStudyProfile: (profile: Partial<StudyProfile>): Promise<StudyProfile> => post("/api/study/profile", profile),
+  // Text-to-speech (FreeTTS) — returns the raw Response (caller reads .blob()), not parsed JSON. Reported
+  // live: the speaker "just never working" in production turned out to be useSpeechSynthesis.ts calling a
+  // bare `fetch("/api/tts", ...)` directly instead of going through this module's `req()` — which is the
+  // ONLY thing that attaches the x-csrf-token header every other mutating POST in the app relies on. In
+  // production (CSRF enforcement is skipped only in dev, see requireAuth in server/index.ts) that made
+  // EVERY /api/tts call 403 before it ever reached FreeTTS, silently and consistently, every single time —
+  // not a flaky network thing, not a voice/lang issue, just a request that was never actually authenticated
+  // the way the server requires it to be.
+  ttsAudio: (text: string, lang: string): Promise<Response> =>
+    req("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, lang }) }),
 };

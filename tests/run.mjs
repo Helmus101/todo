@@ -1838,6 +1838,15 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   check("the mic is paused during generation too, not just during speech (reported: mic stayed open the whole time a reply was generating)", /busy && !wasBusyRef\.current/.test(askOttoSrc) && /recog\.abort\(\);/.test(askOttoSrc));
   check("live interim text cancels the TTS mid-sentence (≥2 words, echo-filtered)", /onInterim: \(text\) =>/.test(askOttoSrc) && /echoFilterRef\.current\.isEcho\(text\)/.test(askOttoSrc) && /text\.trim\(\)\.split\(\/\\s\+\/\)\.length >= 2\) synth\.cancel\(\)/.test(askOttoSrc));
   check("the recognition hook exposes the live interim channel", /onInterim\?: \(text: string\) => void;/.test(recogSrc) && /onInterimRef\.current\?\.\(interim\.trim\(\)\)/.test(recogSrc));
+  // Reported live: "the speaker is still not working" — root cause was useSpeechSynthesis.ts calling a bare
+  // `fetch("/api/tts", ...)` instead of going through client/api.ts's req(), which is the ONLY thing that
+  // attaches the x-csrf-token header every other mutating POST needs. In production (CSRF enforcement is
+  // skipped only in dev — requireAuth, server/index.ts) that 403'd on EVERY call, always silently falling
+  // back to browser TTS — not flaky, just consistently broken in a way that looked like "the API."
+  const ttsSynthSrc = readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8");
+  const apiSrc = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
+  check("useSpeechSynthesis's FreeTTS call goes through api.ttsAudio (CSRF-safe), not a bare fetch", /api\.ttsAudio\(/.test(ttsSynthSrc) && !/fetch\("\/api\/tts"/.test(ttsSynthSrc));
+  check("api.ttsAudio is wired through req() (the CSRF-token-attaching path), not a bare fetch", /ttsAudio:.*req\("\/api\/tts"/.test(apiSrc.replace(/\n/g, " ")));
   check("voice auto-start is guarded on SpeechRecognition support (Firefox stays text-first)", /recogSupportedRef\.current/.test(askOttoSrc));
 }
 
