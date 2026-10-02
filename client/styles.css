@@ -1927,15 +1927,56 @@ input:focus, textarea:focus {
   padding: 28px 32px;
   margin-bottom: var(--space-5);
   background: var(--surface-glass);
-  border: none;
+  border: 1px solid var(--line-soft);
   border-radius: var(--radius-lg);
-  box-shadow: none;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
   /* Apple Design §12 — glass material */
   backdrop-filter: blur(var(--blur)) saturate(180%);
   -webkit-backdrop-filter: blur(var(--blur)) saturate(180%);
   /* Apple Design §4 — spring transitions for interactive elements */
   transition: transform var(--duration-base) var(--ease-spring), box-shadow var(--duration-base) var(--ease-spring);
 }
+.settings-sec:hover { box-shadow: 0 4px 18px rgba(0, 0, 0, 0.05); }
+
+/* Account identity card — the single most-looked-at row in Settings (who am I, is it syncing), pulled out
+   of the plain label/value row pattern so it reads at a glance instead of blending into the list below it. */
+.acct-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  margin-bottom: 8px;
+  background: var(--bg-2);
+  border-radius: var(--radius);
+}
+.acct-avatar {
+  flex: none;
+  width: 40px; height: 40px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 16px;
+}
+.acct-id { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.acct-email { font-size: 14.5px; font-weight: var(--weight-semibold); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acct-sync { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-3); }
+.acct-sync-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); flex: none; }
+.acct-sync.on { color: var(--accent); }
+.acct-sync.on .acct-sync-dot { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+
+/* Visually fences off the one truly destructive action in Settings so it never reads as "just another row". */
+.danger-zone {
+  margin-top: 8px;
+  padding: 2px 16px;
+  border: 1px solid color-mix(in srgb, var(--vermilion) 25%, var(--line-soft));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--vermilion) 5%, transparent);
+}
+.danger-zone .modal-row { border-top: none; }
+.danger-zone .lbl { display: flex; flex-direction: column; gap: 2px; color: var(--ink); font-weight: var(--weight-semibold); }
 .settings-sec h2 {
   font-family: var(--display);
   font-size: 17px;
@@ -2007,15 +2048,17 @@ input:focus, textarea:focus {
   animation: appleRise var(--duration-base) var(--ease-spring);
 }
 
-.modal-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 12px 0; }
+.modal-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 12px 4px; margin: 0 -4px; border-radius: var(--radius-sm); transition: background var(--duration-base) var(--ease-spring); }
 .modal-row + .modal-row { border-top: 1px solid var(--line-soft); }
+.modal-row:hover { background: var(--bg-2); }
 .modal-row .lbl { font-size: 13.5px; color: var(--ink-2); font-weight: var(--weight-medium); }
 .modal-row .val { font-size: 14px; font-weight: var(--weight-semibold); text-align: right; color: var(--ink); }
 
 .set-list { display: flex; flex-direction: column; }
-.set-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: 14px 0; min-height: 54px; }
+.set-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: 14px 4px; margin: 0 -4px; min-height: 54px; border-radius: var(--radius-sm); transition: background var(--duration-base) var(--ease-spring); }
 .set-row + .set-row { border-top: 1px solid var(--line-soft); }
 label.set-row { cursor: pointer; }
+label.set-row:hover { background: var(--bg-2); }
 label.set-row.disabled { cursor: default; opacity: 0.5; }
 .set-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .set-text > b { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); }

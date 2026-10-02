@@ -2650,7 +2650,17 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.03s" }}>
         <h3>{L("Compte", "Account")}</h3>
-        <div className="modal-row"><span className="lbl">{status.user}{status.cloud ? L(" · synchronisé", " · synced") : ""}</span><button className="btn xs danger" onClick={() => void onSignOut()}>{L("Se déconnecter", "Sign out")}</button></div>
+        <div className="acct-card">
+          <span className="acct-avatar" aria-hidden="true">{(status.user || "?").charAt(0).toUpperCase()}</span>
+          <div className="acct-id">
+            <span className="acct-email">{status.user}</span>
+            <span className={`acct-sync ${status.cloud ? "on" : ""}`}>
+              <span className="acct-sync-dot" aria-hidden="true" />
+              {status.cloud ? L("Synchronisé", "Synced") : L("Hors ligne", "Not synced")}
+            </span>
+          </div>
+          <button className="btn xs ghost" onClick={() => void onSignOut()}>{L("Se déconnecter", "Sign out")}</button>
+        </div>
         <div className="modal-row"><span className="lbl">{L("Confidentialité", "Privacy")}</span><span className="val">{L("Ton mot de passe Pronote est chiffré et jamais revendu. ", "Your Pronote password is encrypted and never resold. ")}<a href="/privacy">{L("Détails →", "Details →")}</a></span></div>
         <div className="modal-row"><span className="lbl">{L("Mentions légales", "Legal")}</span><span className="val"><a href="/privacy">{L("Confidentialité", "Privacy")}</a> · <a href="/terms">{L("CGU", "Terms")}</a></span></div>
         <div className="modal-row">
@@ -2675,18 +2685,20 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
             </button>
           </span>
         </div>
-        <div className="modal-row">
-          <span className="lbl">{L("Supprimer le compte", "Delete account")}</span>
-          <button
-            className="btn xs danger"
-            disabled={deletingAccount}
-            onClick={async () => {
-              if (!window.confirm(L("Supprimer ton compte Otto (tâches, profil, connexions) ? Irréversible.", "Delete your Otto account (tasks, profile, connections)? This can't be undone."))) return;
-              setDeletingAccount(true);
-              try { await api.deleteAccount(); clearAllLocalAccountData(status.user || null); window.location.href = "/"; }
-              catch (e: any) { setDeletingAccount(false); notify(e?.message || L("Impossible de supprimer le compte — réessaie.", "Couldn't delete the account — try again."), "error"); }
-            }}
-          >{deletingAccount ? L("Suppression…", "Deleting…") : L("Tout supprimer", "Delete everything")}</button>
+        <div className="danger-zone">
+          <div className="modal-row">
+            <span className="lbl">{L("Supprimer le compte", "Delete account")}<span className="settings-hint" style={{ margin: 0 }}>{L("Tâches, profil, connexions — irréversible.", "Tasks, profile, connections — can't be undone.")}</span></span>
+            <button
+              className="btn xs danger"
+              disabled={deletingAccount}
+              onClick={async () => {
+                if (!window.confirm(L("Supprimer ton compte Otto (tâches, profil, connexions) ? Irréversible.", "Delete your Otto account (tasks, profile, connections)? This can't be undone."))) return;
+                setDeletingAccount(true);
+                try { await api.deleteAccount(); clearAllLocalAccountData(status.user || null); window.location.href = "/"; }
+                catch (e: any) { setDeletingAccount(false); notify(e?.message || L("Impossible de supprimer le compte — réessaie.", "Couldn't delete the account — try again."), "error"); }
+              }}
+            >{deletingAccount ? L("Suppression…", "Deleting…") : L("Tout supprimer", "Delete everything")}</button>
+          </div>
         </div>
       </section>
 
