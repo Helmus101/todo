@@ -75,6 +75,14 @@ const key = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY ||
 const TABLE = "weave_web_state";
 
 const client: SupabaseClient | null = url && key ? createClient(url, key, { auth: { persistSession: false } }) : null;
+// Dedicated anon key for password VERIFICATION ONLY (signInWithPassword) — kept separate from `key` above
+// (which prefers the service key for every other table read/write) because signInWithPassword is a
+// stateful auth call, never run on the shared, long-lived `client` above (see verifyAuthPassword below for
+// why: a module-level client is reused across every concurrent request from every user, and a stateful
+// auth method on it would let one request's sign-in state leak into another's). Falls back to the service
+// key if no anon key is configured — works the same way against GoTrue's password-grant endpoint, just
+// not the documented convention.
+const authKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || key;
 // Secrets (refresh tokens, password hashes) live in these tables. With the ANON key + the permissive dev RLS
 // policy they're readable by anyone holding that key — fine locally, NOT for production. So: FAIL CLOSED in
 // production (don't boot with a secret-exposing config), and warn loudly in dev. Fix is SUPABASE_SERVICE_KEY
@@ -88,7 +96,6 @@ if (client && !process.env.SUPABASE_SERVICE_KEY) {
 }
 
 export const cloudEnabled = (): boolean => !!client;
-const USERS = "weave_web_users";
 const SESSIONS = "weave_web_sessions";
 
 /** Bypass-cache read of a session's csrfToken, straight from Supabase — used by requireAuth (server/index.ts)
@@ -188,83 +195,97 @@ export async function makeSessionStore(): Promise<session.Store | undefined> {
 }
 
 /** Look up an account by email → its bcrypt hash (or null if no such user / cloud off). */
-export async function getUser(email: string): Promise<{ email: string; pass_hash: string } | null> {
+// ── Auth — real Supabase Auth, not a side table ──────────────────────────────────────────────
+// Login/signup used to verify against a homegrown `weave_web_users` table (email + bcrypt hash),
+// with Supabase Auth only ever receiving a best-effort COPY of the signup (the old mirrorAuthUser)
+// so accounts were merely visible in the dashboard's Auth tab — never actually read back. That
+// table is gone now; Supabase Auth's own admin API is the real, only credential store.
+
+/** Find an account's Supabase Auth user by email. Single shared lookup — signup's duplicate-check,
+ *  the password-reset flow, and account deletion all go through this ONE function.
+ *  SCALING NOTE: listUsers() paginates (default ~50/page); perPage:1000 raises that ceiling cheaply
+ *  without needing real pagination. Fine for this app's current/expected account volume — revisit
+ *  with a proper paginated/filtered lookup if that ever stops being true. */
+export async function findAuthUserByEmail(email: string): Promise<{ id: string; email: string } | null> {
   if (!client) return null;
   try {
-    const { data } = await client.from(USERS).select("email,pass_hash").eq("email", email).maybeSingle();
-    return data ? { email: data.email, pass_hash: data.pass_hash } : null;
-  } catch (e) { console.warn("[store] getUser threw:", (e as any)?.message || e); return null; }
+    const { data, error } = await client.auth.admin.listUsers({ perPage: 1000 } as any);
+    if (error) { console.warn("[store] findAuthUserByEmail failed:", error.message); return null; }
+    const match = data.users.find((u) => u.email?.toLowerCase() === email.toLowerCase());
+    return match ? { id: match.id, email: match.email! } : null;
+  } catch (e) { console.warn("[store] findAuthUserByEmail threw:", (e as any)?.message || e); return null; }
 }
 
-/** Create an account. Returns false if it already exists or the write fails. */
-export async function createUser(email: string, passHash: string): Promise<boolean> {
+/** Create the real Supabase Auth account. `email_confirm: true` — Otto's own RGPD age/consent
+ *  checkbox flow is the actual gate on signing up (see /api/auth/signup), not Supabase's email-
+ *  confirmation loop, so the account is usable immediately rather than stuck awaiting a confirm
+ *  email Otto doesn't otherwise send. Returns false on any failure, INCLUDING "already exists" —
+ *  callers that need to tell those apart should check findAuthUserByEmail first (the signup route
+ *  does, to return its own 409 with its own copy). */
+export async function createAuthUser(email: string, password: string): Promise<boolean> {
   if (!client) return false;
-  try {
-    const { error } = await client.from(USERS).insert({ email, pass_hash: passHash });
-    if (error) { console.warn("[store] createUser failed:", error.message); return false; }
-    return true;
-  } catch (e) { console.warn("[store] createUser threw:", (e as any)?.message || e); return false; }
-}
-
-/** Stamp a one-time password-reset token on the account, replacing any prior one (only the latest link a
- *  student requested should ever work — an old, possibly-forwarded email shouldn't stay valid forever).
- *  Best-effort like the rest of this file's writes — a failure here just means the email never goes out,
- *  never a half-applied reset. */
-export async function setResetToken(email: string, token: string, expiresAt: string): Promise<boolean> {
-  if (!client) return false;
-  try {
-    const { error } = await client.from(USERS).update({ reset_token: token, reset_token_expires_at: expiresAt }).eq("email", email);
-    if (error) { console.warn("[store] setResetToken failed:", error.message); return false; }
-    return true;
-  } catch (e) { console.warn("[store] setResetToken threw:", (e as any)?.message || e); return false; }
-}
-
-/** Look up the account a still-valid (not expired) reset token belongs to. Expiry is checked here (not just
- *  trusted from the token alone) so a stale row left behind by an unused request can never be replayed. */
-export async function getUserByResetToken(token: string): Promise<{ email: string } | null> {
-  if (!client || !token) return null;
-  try {
-    const { data } = await client.from(USERS).select("email,reset_token_expires_at").eq("reset_token", token).maybeSingle();
-    if (!data || !data.reset_token_expires_at || Date.parse(data.reset_token_expires_at) < Date.now()) return null;
-    return { email: data.email };
-  } catch (e) { console.warn("[store] getUserByResetToken threw:", (e as any)?.message || e); return null; }
-}
-
-/** Set a new password hash and clear the reset token in the same write — a used (or expired) token must
- *  never work a second time. */
-export async function setPassHash(email: string, passHash: string): Promise<boolean> {
-  if (!client) return false;
-  try {
-    const { error } = await client.from(USERS).update({ pass_hash: passHash, reset_token: null, reset_token_expires_at: null }).eq("email", email);
-    if (error) { console.warn("[store] setPassHash failed:", error.message); return false; }
-    return true;
-  } catch (e) { console.warn("[store] setPassHash threw:", (e as any)?.message || e); return false; }
-}
-
-/**
- * Mirror the signup into Supabase's own Auth users table (Authentication tab in the dashboard), so accounts
- * are visible there too — not just in `weave_web_users`. Otto's actual login still runs on its own bcrypt
- * table above (that's what sessions are keyed off), so this is a best-effort side-write: the admin API
- * needs the service-role key, and any failure here (key missing, email already mirrored, Auth not enabled)
- * must never block or roll back the real signup.
- */
-export async function mirrorAuthUser(email: string, password: string): Promise<void> {
-  if (!client || !process.env.SUPABASE_SERVICE_KEY) return;
   try {
     const { error } = await client.auth.admin.createUser({ email, password, email_confirm: true });
-    if (error && !/already been registered|already exists/i.test(error.message)) {
-      console.warn("[store] mirrorAuthUser failed:", error.message);
-    }
-  } catch (e) { console.warn("[store] mirrorAuthUser threw:", (e as any)?.message || e); }
+    if (error) { console.warn("[store] createAuthUser failed:", error.message); return false; }
+    return true;
+  } catch (e) { console.warn("[store] createAuthUser threw:", (e as any)?.message || e); return false; }
 }
 
-/** Remove the mirrored Supabase Auth user on account deletion, so erasure covers the Auth table too. */
-export async function deleteAuthUser(email: string): Promise<void> {
-  if (!client || !process.env.SUPABASE_SERVICE_KEY) return;
+/** Verify a password against Supabase Auth — the actual login check. Deliberately a FRESH,
+ *  throwaway client (persistSession/autoRefreshToken both off), never the shared module-level
+ *  `client` above: signInWithPassword is a STATEFUL auth call (unlike the stateless admin.* calls
+ *  used elsewhere in this file), and `client` is one long-lived instance reused across every
+ *  concurrent request from every different user — running a stateful auth method on it would risk
+ *  one request's sign-in state leaking into another's. */
+export async function verifyAuthPassword(email: string, password: string): Promise<boolean> {
+  if (!url || !authKey) return false;
   try {
-    const { data, error } = await client.auth.admin.listUsers();
-    if (error) { console.warn("[store] deleteAuthUser lookup failed:", error.message); return; }
-    const match = data.users.find((u) => u.email?.toLowerCase() === email.toLowerCase());
+    const throwaway = createClient(url, authKey, { auth: { persistSession: false, autoRefreshToken: false } });
+    const { error } = await throwaway.auth.signInWithPassword({ email, password });
+    return !error;
+  } catch (e) { console.warn("[store] verifyAuthPassword threw:", (e as any)?.message || e); return false; }
+}
+
+/** Set a new password on an already-identified Supabase Auth user (by id, from
+ *  findAuthUserByEmail) — the password-reset confirm step's final action. */
+export async function setAuthPassword(userId: string, password: string): Promise<boolean> {
+  if (!client) return false;
+  try {
+    const { error } = await client.auth.admin.updateUserById(userId, { password });
+    if (error) { console.warn("[store] setAuthPassword failed:", error.message); return false; }
+    return true;
+  } catch (e) { console.warn("[store] setAuthPassword threw:", (e as any)?.message || e); return false; }
+}
+
+/** One-time password-reset tokens — in-memory, not a table: a token lives 30 minutes (see
+ *  /api/auth/forgot-password), so losing the Map on a server restart just means "request a new
+ *  link," never real data loss. Mirrors this same file's existing in-memory-fallback posture for
+ *  the job queue (see further down) rather than adding a table for a 30-minute-lived value. */
+const resetTokens = new Map<string, { email: string; expiresAt: number }>();
+
+/** Stamp a one-time password-reset token, replacing any prior one for this email — only the latest
+ *  link a student requested should ever work. */
+export function setResetToken(email: string, token: string, expiresAt: string): void {
+  for (const [t, v] of resetTokens) if (v.email === email) resetTokens.delete(t);
+  resetTokens.set(token, { email, expiresAt: Date.parse(expiresAt) });
+}
+
+/** Look up the account a still-valid (not expired) reset token belongs to, and consume it (a used
+ *  token must never work a second time — same one-shot guarantee the old DB column's clear-on-use
+ *  gave). */
+export function consumeResetToken(token: string): { email: string } | null {
+  const v = resetTokens.get(token);
+  if (!v) return null;
+  resetTokens.delete(token);
+  if (v.expiresAt < Date.now()) return null;
+  return { email: v.email };
+}
+
+/** Remove the Supabase Auth user on account deletion — the real erasure now, not a mirror cleanup. */
+export async function deleteAuthUser(email: string): Promise<void> {
+  if (!client) return;
+  try {
+    const match = await findAuthUserByEmail(email);
     if (match) await client.auth.admin.deleteUser(match.id);
   } catch (e) { console.warn("[store] deleteAuthUser threw:", (e as any)?.message || e); }
 }
@@ -650,7 +671,7 @@ export async function deleteAccount(email: string): Promise<{ ok: boolean; error
   if (!client || !email) return { ok: false, errors: ["cloud storage not configured"] };
   const errors: string[] = [];
   const tables: [string, string][] = [
-    [TABLE, "email"], [USERS, "email"], [JOBS, "user_email"], [EVENTS, "user_email"],
+    [TABLE, "email"], [JOBS, "user_email"], [EVENTS, "user_email"],
   ];
   for (const [table, col] of tables) {
     try {
@@ -660,9 +681,10 @@ export async function deleteAccount(email: string): Promise<{ ok: boolean; error
   }
   // Sessions aren't keyed by email (sid is the primary key, email lives inside the serialized `sess` jsonb) —
   // best-effort text match rather than a full table scan/parse; a stray orphaned session row here is inert
-  // (it can't authenticate as anyone once weave_web_users no longer has this email) but worth attempting.
+  // (it can't authenticate as anyone once deleteAuthUser below has removed the real Supabase Auth account)
+  // but worth attempting.
   try { await client.from(SESSIONS).delete().ilike("sess", `%${email}%`); } catch { /* best-effort, non-fatal */ }
-  await deleteAuthUser(email); // remove the mirrored Supabase Auth row too — best-effort, never blocks erasure
+  await deleteAuthUser(email); // the actual credential erasure now, not a mirror cleanup — best-effort, never blocks the rest
   return { ok: errors.length === 0, errors };
 }
 

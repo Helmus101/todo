@@ -46,7 +46,10 @@ const main = async () => {
     try {
       const { createClient } = await import("@supabase/supabase-js");
       const sb = createClient(sbUrl, sbKey);
-      const { data, error } = await sb.from("weave_web_users").select("email");
+      // weave_web_users (the old homegrown accounts table) is gone — Supabase Auth is the real
+      // credential store now, and weave_web_state (one row per account) is still the right place
+      // to pull known account emails from for this diagnostic.
+      const { data, error } = await sb.from("weave_web_state").select("email");
       if (error) console.log("  (supabase users read error:", error.message, ")");
       console.log("\n=== Otto account emails (the userIds the app uses) ===\n ", (data || []).map((u: any) => u.email));
       for (const u of data || []) if (u?.email) candidates.add(String(u.email));

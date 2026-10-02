@@ -63,6 +63,10 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Clears the build-time prerendered Landing markup immediately for a returning logged-in visitor —
+         must run BEFORE self-heal.js/the module script, synchronously, so it executes during initial HTML
+         parsing rather than waiting on the full JS bundle. See the file's own comment for the full story. -->
+    <script src="/hide-stale-landing.js"></script>
     <!-- Self-heal after a deploy — externalized (not inline) so the CSP can stay script-src 'self'. -->
     <script src="/self-heal.js"></script>
     <script type="module" src="/client/main.tsx"></script>

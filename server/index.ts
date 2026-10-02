@@ -5,14 +5,6 @@ import express from "express";
 import type { RequestHandler } from "express";
 import compression from "compression";
 import session from "express-session";
-import bcrypt from "bcryptjs";
-// A fixed dummy hash to compare against on login when the account doesn't exist — see the login route's
-// own comment (timing side-channel fix). Computed once at boot (bcrypt is deliberately slow; not per-request).
-// Cost 12 here and at every hashSync call below — bumped from 10 in a security pass. Safe for EXISTING
-// users: bcrypt encodes its own cost factor inside the stored hash string, so an old cost-10 row still
-// verifies correctly against compareSync (it reads the embedded cost, not this constant); only a NEW hash
-// (new signup, password reset) is computed at cost 12. No migration needed, no behavior change for anyone.
-const DUMMY_PASS_HASH = bcrypt.hashSync("otto-dummy-password-for-timing-safety", 12);
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
@@ -20,7 +12,7 @@ import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, Fo
 import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard } from "./claude.ts";
-import { loadState, saveState, cloudEnabled, getUser, createUser, setResetToken, getUserByResetToken, setPassHash, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken } from "./store.ts";
+import { loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken } from "./store.ts";
 import { sendTransactionalEmail } from "./mailer.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, subjectFrequency, orderingBoost, weakSubjectBoost, twoMinuteRuleBoost, stallNudgeLine } from "./patterns.ts";
@@ -484,9 +476,8 @@ app.post("/api/auth/signup", rateLimit(6, 60 * 60_000), ah(async (req, res) => {
   }
   
   if (!cloudEnabled()) { res.status(500).json({ error: M(req, "Le stockage des comptes n'est pas configuré sur le serveur (Supabase).", "Account storage isn't configured on the server (Supabase).") }); return; }
-  if (await getUser(email)) { res.status(409).json({ error: M(req, "Un compte existe déjà avec cet email — connecte-toi plutôt.", "An account with that email already exists — log in instead.") }); return; }
-  if (!(await createUser(email, bcrypt.hashSync(password, 12)))) { res.status(500).json({ error: M(req, "Impossible de créer le compte.", "Couldn't create the account.") }); return; }
-  void mirrorAuthUser(email, password); // best-effort — shows the account in Supabase's own Auth tab too
+  if (await findAuthUserByEmail(email)) { res.status(409).json({ error: M(req, "Un compte existe déjà avec cet email — connecte-toi plutôt.", "An account with that email already exists — log in instead.") }); return; }
+  if (!(await createAuthUser(email, password))) { res.status(500).json({ error: M(req, "Impossible de créer le compte.", "Couldn't create the account.") }); return; }
   // Regenerate the session id on every privilege change (login/signup) — never write the authenticated
   // user onto a pre-existing session id. Without this, a session id fixed on a victim's browser BEFORE
   // they sign up (e.g. planted via an unrelated XSS/subdomain trick) would become a live authenticated
@@ -539,18 +530,19 @@ app.post("/api/auth/signup", rateLimit(6, 60 * 60_000), ah(async (req, res) => {
 app.post("/api/auth/login", rateLimit(10, 15 * 60_000), ah(async (req, res) => {
   const email = normEmail(req.body?.email);
   const password = String(req.body?.password || "");
-  // Without this, getUser() always returns null when Supabase isn't configured (e.g. local dev with no
-  // .env set up) and login falls straight through to "Wrong email or password" — sending you down the
-  // wrong path (retyping/resetting a password that was never the actual problem). Same check signup has.
+  // Without this, verifyAuthPassword() always returns false when Supabase isn't configured (e.g. local dev
+  // with no .env set up) and login falls straight through to "Wrong email or password" — sending you down
+  // the wrong path (retyping/resetting a password that was never the actual problem). Same check signup has.
   if (!cloudEnabled()) { res.status(500).json({ error: M(req, "Le stockage des comptes n'est pas configuré sur le serveur (Supabase) — la connexion ne peut pas fonctionner tant que ce n'est pas réglé.", "Account storage isn't configured on the server (Supabase) — sign-in can't work until that's set.") }); return; }
-  const u = await getUser(email);
-  // Timing side-channel fix: bcrypt.compareSync used to be skipped entirely when `u` is null (no such
-  // account), so a login attempt for a NONEXISTENT email returned near-instantly while a real email with a
-  // wrong password paid the full bcrypt cost — an attacker measuring response latency could enumerate valid
-  // account emails despite an identical response body. Always run bcrypt against SOME hash (a real one, or
-  // this fixed dummy) so a nonexistent account takes the same time as a wrong password on a real one.
-  const validPassword = bcrypt.compareSync(password, u?.pass_hash || DUMMY_PASS_HASH);
-  if (!u || !validPassword) {
+  // Verified against Supabase Auth directly now (verifyAuthPassword, server/store.ts) — no more bcrypt
+  // compare against a hash Otto stored itself. The old timing-side-channel guard here (always running
+  // bcrypt against a fixed dummy hash so a nonexistent account took the same time as a wrong password on a
+  // real one) is dropped: that defense was specific to bcrypt's own deliberately-slow compare being
+  // skippable, and this call unconditionally hits Supabase's own signInWithPassword endpoint either way —
+  // worth a manual real-vs-fake-email timing spot-check after deploying, since that specific guarantee
+  // can't be verified without live credentials.
+  const validPassword = await verifyAuthPassword(email, password);
+  if (!validPassword) {
     void recordEvent(email, "login_failed", {}); // never the password — email only, for brute-force visibility
     res.status(401).json({ error: M(req, "Email ou mot de passe incorrect.", "Wrong email or password.") });
     return;
@@ -583,36 +575,37 @@ app.post("/api/auth/forgot-password", rateLimit(5, 60 * 60_000), ah(async (req, 
   if (!validEmail(email)) { res.status(400).json({ error: M(req, "Entre un email valide.", "Enter a valid email.") }); return; }
   if (!cloudEnabled()) { res.status(500).json({ error: M(req, "Le stockage des comptes n'est pas configuré sur le serveur (Supabase).", "Account storage isn't configured on the server (Supabase).") }); return; }
   try {
-    const u = await getUser(email);
+    const u = await findAuthUserByEmail(email);
     if (u) {
       const token = randomBytes(32).toString("hex");
       const expiresAt = new Date(Date.now() + 30 * 60_000).toISOString(); // 30 min — short-lived, a fresh request is one click away
-      if (await setResetToken(email, token, expiresAt)) {
-        const link = `${process.env.PUBLIC_URL || "https://hiotto.vercel.app"}/reset-password?token=${token}`;
-        const en = req.body?.lang !== "fr";
-        const html = en
-          ? `<p>Someone (hopefully you) asked to reset your Otto password. This link works once and expires in 30 minutes.</p><p><a href="${link}">Reset your password →</a></p><p>If this wasn't you, you can safely ignore this email — your password hasn't changed.</p>`
-          : `<p>Quelqu'un (toi, on espère) a demandé à réinitialiser ton mot de passe Otto. Ce lien fonctionne une seule fois et expire dans 30 minutes.</p><p><a href="${link}">Réinitialiser ton mot de passe →</a></p><p>Si ce n'était pas toi, tu peux ignorer cet e-mail — ton mot de passe n'a pas changé.</p>`;
-        void sendTransactionalEmail(email, en ? "Reset your Otto password" : "Réinitialise ton mot de passe Otto", html);
-        void recordEvent(email, "password_reset_requested", {});
-      }
+      setResetToken(email, token, expiresAt);
+      const link = `${process.env.PUBLIC_URL || "https://hiotto.vercel.app"}/reset-password?token=${token}`;
+      const en = req.body?.lang !== "fr";
+      const html = en
+        ? `<p>Someone (hopefully you) asked to reset your Otto password. This link works once and expires in 30 minutes.</p><p><a href="${link}">Reset your password →</a></p><p>If this wasn't you, you can safely ignore this email — your password hasn't changed.</p>`
+        : `<p>Quelqu'un (toi, on espère) a demandé à réinitialiser ton mot de passe Otto. Ce lien fonctionne une seule fois et expire dans 30 minutes.</p><p><a href="${link}">Réinitialiser ton mot de passe →</a></p><p>Si ce n'était pas toi, tu peux ignorer cet e-mail — ton mot de passe n'a pas changé.</p>`;
+      void sendTransactionalEmail(email, en ? "Reset your Otto password" : "Réinitialise ton mot de passe Otto", html);
+      void recordEvent(email, "password_reset_requested", {});
     }
   } catch (e: any) { reportError("auth-forgot-password", e, { email }); /* still respond ok:true below — never leak account existence via a failure path either */ }
   res.json({ ok: true });
 }));
 
 // Password reset — confirm step. The token itself (unguessable, 32 random bytes, single-use, 30-min expiry
-// — see setResetToken/getUserByResetToken in store.ts) IS the authentication for this request; no session
-// required, matching how the emailed link is meant to be opened straight from a signed-out state.
+// — see setResetToken/consumeResetToken in store.ts, an in-memory Map now, not a table) IS the
+// authentication for this request; no session required, matching how the emailed link is meant to be
+// opened straight from a signed-out state.
 app.post("/api/auth/reset-password", rateLimit(10, 60 * 60_000), ah(async (req, res) => {
   const token = String(req.body?.token || "");
   const password = String(req.body?.password || "");
   if (!token) { res.status(400).json({ error: M(req, "Lien de réinitialisation manquant ou invalide.", "Missing or invalid reset link.") }); return; }
   if (password.length < 8 || password.length > 200) { res.status(400).json({ error: M(req, "Le mot de passe doit contenir entre 8 et 200 caractères.", "Password must be between 8 and 200 characters.") }); return; }
   if (!cloudEnabled()) { res.status(500).json({ error: M(req, "Le stockage des comptes n'est pas configuré sur le serveur (Supabase).", "Account storage isn't configured on the server (Supabase).") }); return; }
-  const u = await getUserByResetToken(token);
+  const u = consumeResetToken(token);
   if (!u) { res.status(400).json({ error: M(req, "Ce lien de réinitialisation est invalide ou a expiré — refais-en la demande.", "This reset link is invalid or has expired — request a new one.") }); return; }
-  if (!(await setPassHash(u.email, bcrypt.hashSync(password, 12)))) { res.status(500).json({ error: M(req, "Impossible de réinitialiser le mot de passe — réessaie.", "Couldn't reset the password — try again.") }); return; }
+  const authUser = await findAuthUserByEmail(u.email);
+  if (!authUser || !(await setAuthPassword(authUser.id, password))) { res.status(500).json({ error: M(req, "Impossible de réinitialiser le mot de passe — réessaie.", "Couldn't reset the password — try again.") }); return; }
   void recordEvent(u.email, "password_reset", {});
   // Log the student straight in — same session-fixation-safe regenerate as signup/login above, so a reset
   // link doubles as an immediate "you're back in" instead of a second manual login right after.

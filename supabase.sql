@@ -42,28 +42,16 @@ alter table weave_web_state add column if not exists "studyProfile" jsonb; -- St
 alter table weave_web_state drop column if exists studysessions;
 alter table weave_web_state drop column if exists studyprofile;
 
--- SECURE BY DEFAULT: `weave_web_users.pass_hash` and the `google`/`profile` columns are SECRETS. This file
--- enables RLS with NO public policy, so the anon key can read/write NOTHING. Production runs the server with
--- SUPABASE_SERVICE_KEY, which bypasses RLS — that's the only credential that should ever touch these tables.
+-- SECURE BY DEFAULT: the `google`/`profile` columns are SECRETS. This file enables RLS with NO public
+-- policy, so the anon key can read/write NOTHING. Production runs the server with SUPABASE_SERVICE_KEY,
+-- which bypasses RLS — that's the only credential that should ever touch these tables.
 -- (For local dev with ONLY the anon key, uncomment the DEV-ONLY block at the very bottom of this file.)
 
--- Email/password accounts. Profile + tasks above are keyed by this account's email.
-create table if not exists weave_web_users (
-  email text primary key,
-  pass_hash text not null,
-  created_at timestamptz not null default now(),
-  reset_token text,                          -- one-time password-reset token (see server/store.ts's setResetToken/getUserByResetToken) — null when no reset is pending
-  reset_token_expires_at timestamptz         -- expiry for the token above; a request past this is treated as invalid
-);
--- If you created this table from an earlier version, add the newer columns:
-alter table weave_web_users add column if not exists reset_token text;
-alter table weave_web_users add column if not exists reset_token_expires_at timestamptz;
--- Reset tokens are looked up by value (getUserByResetToken), not by email — index it, and only the
--- (rare, small) subset of rows that actually have a pending reset, so the index stays cheap.
-create index if not exists weave_web_users_reset_token on weave_web_users (reset_token) where reset_token is not null;
-alter table weave_web_users enable row level security;
--- Remove any permissive policy an older run of this file created.
-drop policy if exists "weave_web_users server access" on weave_web_users;
+-- Email/password accounts used to live in a `weave_web_users` table here (email + bcrypt pass_hash,
+-- a homegrown reset-token pair) — removed: Supabase Auth's own admin API (server/store.ts's
+-- findAuthUserByEmail/createAuthUser/verifyAuthPassword/setAuthPassword) is the real credential store
+-- now, not a side table Otto maintained itself. Password-reset tokens are in-memory server-side
+-- (30-minute-lived, a restart just means "request a new link" — no table needed for that).
 
 -- The Express server is the trust boundary (it only reads/writes the OAuth-verified user's row), and it
 -- connects with the service role — so no public policy is needed or wanted here.
@@ -180,7 +168,6 @@ drop policy if exists "weave_web_session_outcomes server access" on weave_web_se
 -- secret tables (password hashes, OAuth tokens) — acceptable only on a throwaway local project. In
 -- production the server uses SUPABASE_SERVICE_KEY (bypasses RLS) and boots refuse without it, so leave
 -- this commented out. Uncomment ONLY for anon-key local development:
---   create policy "weave_web_users server access"    on weave_web_users    for all using (true) with check (true);
 --   create policy "weave_web_state server access"    on weave_web_state    for all using (true) with check (true);
 --   create policy "weave_web_sessions server access" on weave_web_sessions for all using (true) with check (true);
 --   create policy "weave_web_jobs server access"       on weave_web_jobs       for all using (true) with check (true);
