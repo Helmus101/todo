@@ -151,7 +151,20 @@ app.use((req, res, next) => {
   if (PROD) res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   next();
 });
-app.use(express.json({ limit: "1mb" }));
+// Skips this tight global default for the handful of routes that declare their OWN larger limit further
+// down (account import, whiteboard vision) — reported live as a 413 on a real 1.8MB account export despite
+// that route's own `express.json({ limit: "20mb" })`. Root cause: Express runs body-parser middleware in
+// REGISTRATION order, and a middleware that reads the request body can only do so once — this global
+// parser ran FIRST on every request regardless of path, so for those two routes it was already rejecting
+// (and consuming) the body before their own, later, bigger-limit parser ever got a chance to run. The
+// larger per-route limit was dead code the whole time, not a real override. Keeping the global default
+// tight (1mb is plenty for every other route — profile edits, chat messages, preferences) is deliberate:
+// only the specific routes that genuinely need more get it, not every endpoint by default.
+const LARGE_BODY_ROUTES = new Set(["/api/account/import", "/api/tutor/read-whiteboard"]);
+app.use((req, res, next) => {
+  if (LARGE_BODY_ROUTES.has(req.path)) return next();
+  express.json({ limit: "1mb" })(req, res, next);
+});
 // PROD already fails closed above if SESSION_SECRET is unset (see the boot check). This fallback only
 // ever runs in a misconfigured non-PROD deployment — it must NOT be a fixed string: the old default
 // ("dev-insecure-secret-change-me") is sitting in every public clone of this repo, so any deployment

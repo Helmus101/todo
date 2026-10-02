@@ -1736,18 +1736,6 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
     try { onChanged?.(await api.setProfilePreference("track", v)); }
     catch (e: any) { setTrackState(prev); notify(e?.message || L("Ça n'a pas été enregistré — réessaie.", "That didn't save — give it another try."), "error"); }
   };
-  // Learning style — fully read by the tutor prompt (learningStyleLine, server/claude.ts) since it was
-  // built, but had NO write path anywhere until now: the field was architecturally complete and permanently
-  // empty. Same optimistic-save pattern as track/language above. "mixed"/unset both mean "no preference" —
-  // offered as an explicit choice so a student can consciously opt out, not just leave it blank.
-  const [learningStyle, setLearningStyleState] = useState<"visual" | "auditory" | "reading" | "kinesthetic" | "mixed" | undefined>(profile?.learningStyle);
-  useEffect(() => { setLearningStyleState(profile?.learningStyle); }, [profile?.learningStyle]);
-  const saveLearningStyle = async (v: "visual" | "auditory" | "reading" | "kinesthetic" | "mixed") => {
-    const prev = learningStyle;
-    setLearningStyleState(v);
-    try { onChanged?.(await api.setProfilePreference("learningStyle", v)); }
-    catch (e: any) { setLearningStyleState(prev); notify(e?.message || L("Ça n'a pas été enregistré — réessaie.", "That didn't save — give it another try."), "error"); }
-  };
   // Year/grade level — free text (see Profile.yearLevel's doc comment for why not a dropdown). Local draft
   // state so typing doesn't round-trip on every keystroke; saved on blur/Enter like other free-text fields.
   const [yearLevel, setYearLevelState] = useState(profile?.yearLevel || "");
@@ -1783,16 +1771,6 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
           value={yearLevel} onChange={(e) => setYearLevelState(e.target.value)}
           onBlur={() => void saveYearLevel()} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
       </label>
-      <div className="set-row">
-        <span className="set-text"><b>{L("Comment tu apprends le mieux", "How you learn best")}</b><span className="settings-hint">{L("Otto adapte comment il explique — jamais ce qu'il explique.", "Otto adapts how it explains — never what it explains.")}</span></span>
-        <select className="addinput sm" style={{ maxWidth: 180 }} value={learningStyle || "mixed"} onChange={(e) => void saveLearningStyle(e.target.value as any)}>
-          <option value="mixed">{L("Pas de préférence", "No preference")}</option>
-          <option value="visual">{L("Visuel", "Visual")}</option>
-          <option value="auditory">{L("Auditif", "Auditory")}</option>
-          <option value="reading">{L("Lecture/écriture", "Reading/writing")}</option>
-          <option value="kinesthetic">{L("En pratiquant", "Hands-on")}</option>
-        </select>
-      </div>
     </>
   );
 }
@@ -2542,13 +2520,12 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
   // Splits `tasks` into byte-budgeted batches and uploads them as SEPARATE import requests — each one
   // still goes through POST /api/account/import's existing MERGE logic (mergeTaskLists/mergeProfileStates,
   // server/index.ts), so sending the same account's data in 5 pieces instead of 1 produces the exact same
-  // end state; the route has no idea it's being fed incrementally. Needed because a single request still
-  // hit Vercel's hard 4.5MB-per-function-invocation body cap (separate from and un-raisable by
-  // express.json({limit})) even after stripping jobs/events — reported live on a real, chat/board-heavy
-  // account (tutor sessions are cloud-persisted again now, so a long-lived account's export legitimately
-  // grew past the old no-chat baseline this cap was never hit at before). 3.5MB per batch, not 4.5: real
-  // headroom under the hard cap for JSON-escaping overhead and the profile object riding along in every
-  // batch, not a number to push closer to the edge.
+  // end state; the route has no idea it's being fed incrementally. Originally added suspecting a Vercel
+  // platform body-size cap — the REAL cause of the reported 413 (on a file as small as 1.8MB) turned out to
+  // be a global `express.json({limit:"1mb"})` in server/index.ts running before this route's own 20mb
+  // parser ever got a chance to (now fixed — that route is excluded from the global one). Kept anyway as a
+  // defensive measure for a genuinely huge export (tutor sessions are cloud-persisted again now, so a
+  // long-lived, chat-heavy account's export can still grow large) — just no longer the primary fix.
   const MAX_IMPORT_BATCH_BYTES = 3_500_000;
   function splitImportBatches(profile: unknown, allTasks: unknown[]): unknown[][] {
     const encoder = new TextEncoder();
@@ -2653,23 +2630,6 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
               catch (e: any) { setDeletingAccount(false); notify(e?.message || L("Impossible de supprimer le compte — réessaie.", "Couldn't delete the account — try again."), "error"); }
             }}
           >{deletingAccount ? L("Suppression…", "Deleting…") : L("Tout supprimer", "Delete everything")}</button>
-        </div>
-      </section>
-
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.05s" }}>
-        <h3>{L("Otto AI", "Otto AI")}</h3>
-        <p className="settings-hint">{L("L'IA d'Otto t'accompagne sur les notions que tu ne maîtrises pas encore :", "Otto's AI guides you on concepts you don't master yet:")}</p>
-        <div className="modal-row">
-          <span className="lbl">{L("Tuteur personnalisé", "Personalized tutor")}</span>
-          <span className="val">{L("Un tuteur Socratique qui s'adapte à ton niveau et t'aide sur les notions difficiles.", "A Socratic tutor that adapts to your level and helps with difficult concepts.")}</span>
-        </div>
-        <div className="modal-row">
-          <span className="lbl">{L("Détection proactive", "Proactive detection")}</span>
-          <span className="val">{L("Otto détecte tes devoirs sur Pronote et les décompose en étapes claires automatiquement.", "Otto detects your homework from Pronote and breaks it into clear steps automatically.")}</span>
-        </div>
-        <div className="modal-row">
-          <span className="lbl">{L("Répétition espacée", "Spaced repetition")}</span>
-          <span className="val">{L("Crée des fiches et des quiz basés sur tout ton travail pour une mémorisation durable.", "Creates flashcards and quizzes based on all your work for durable memorization.")}</span>
         </div>
       </section>
 

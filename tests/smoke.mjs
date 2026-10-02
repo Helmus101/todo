@@ -81,6 +81,21 @@ try {
     check("GET /api/account/export → 401 (not 500)", exportGet.status === 401);
     const importPost = await req("/api/account/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ profile: {}, tasks: [] }) });
     check("POST /api/account/import → 401 (checked before the body is ever validated)", importPost.status === 401);
+
+    // Reported live: a real ~1.8MB account export 413'd on import despite that route's own
+    // express.json({limit:"20mb"}) — root cause was a GLOBAL express.json({limit:"1mb"}) earlier in the
+    // middleware chain consuming (and rejecting) the body first, since Express runs body-parsers in
+    // registration order and a stream can only be read once. The route's own bigger limit was dead code.
+    // Fixed by excluding this route (and the whiteboard-vision one) from the global parser. Body-parsing
+    // happens BEFORE requireAuth (it's a plain, path-unconditional app.use mounted ahead of every route),
+    // so this is testable fully logged out: a big body on the now-excluded route must NOT 413, while the
+    // same big body on an ordinary route must still 413 — confirming the global 1mb cap is still real
+    // everywhere it's actually supposed to apply, not accidentally disabled everywhere.
+    const bigBody = JSON.stringify({ profile: {}, tasks: [], pad: "x".repeat(1_200_000) });
+    const bigImport = await req("/api/account/import", { method: "POST", headers: { "content-type": "application/json" }, body: bigBody });
+    check("a >1MB body on /api/account/import is NOT rejected by the global 1mb cap (gets to auth instead)", bigImport.status === 401);
+    const bigOrdinary = await req("/api/tasks/generate", { method: "POST", headers: { "content-type": "application/json" }, body: bigBody });
+    check("the SAME >1MB body on an ordinary route (not in the large-body allowlist) still 413s", bigOrdinary.status === 413);
   }
 
   console.log("— Malformed request bodies — the error-handling middleware must return JSON, never crash the process");
