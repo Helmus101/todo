@@ -71,6 +71,44 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
     return () => { window.speechSynthesis.onvoiceschanged = null; };
   }, [supported]);
 
+  // Chrome bug: speechSynthesis stops firing onend after ~15s of continuous speech, leaving the queue
+  // stuck mid-utterance forever. A periodic pause+resume keeps the engine alive. Started when speaking
+  // begins, cleared when it ends or is cancelled.
+  const resumeTimerRef = useRef<number | null>(null);
+  const startResumeHack = useCallback(() => {
+    if (resumeTimerRef.current) return;
+    resumeTimerRef.current = window.setInterval(() => {
+      if (window.speechSynthesis.speaking) {
+        window.speechSynthesis.pause();
+        window.speechSynthesis.resume();
+      }
+    }, 10_000);
+  }, []);
+  const stopResumeHack = useCallback(() => {
+    if (resumeTimerRef.current) { clearInterval(resumeTimerRef.current); resumeTimerRef.current = null; }
+  }, []);
+
+  // Wait for voices to populate — getVoices() returns [] on first call in Chrome; the real list arrives
+  // asynchronously via onvoiceschanged. Without waiting, the first speak() after page load uses no voice
+  // and silently produces nothing on many browsers. Resolves as soon as voices appear, or after 2s.
+  const voicesReadyRef = useRef(false);
+  const waitForVoices = useCallback((): Promise<void> => {
+    if (voicesReadyRef.current && voicesRef.current.length) return Promise.resolve();
+    voicesRef.current = window.speechSynthesis.getVoices();
+    if (voicesRef.current.length) { voicesReadyRef.current = true; return Promise.resolve(); }
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { resolve(); }, 2000);
+      const handler = () => {
+        voicesRef.current = window.speechSynthesis.getVoices();
+        if (voicesRef.current.length) { voicesReadyRef.current = true; }
+        clearTimeout(timer);
+        window.speechSynthesis.removeEventListener("voiceschanged", handler);
+        resolve();
+      };
+      window.speechSynthesis.addEventListener("voiceschanged", handler, { once: true });
+    });
+  }, []);
+
   // Prefer an actually-good-sounding voice over whatever the browser defaults to (often a dated local
   // "espeak"-quality voice) — score by: exact language match beats base-language-only match; a named
   // network/cloud voice (Chrome's "Google …", Edge/Safari's "Natural"/"Enhanced"/"Premium" voices) beats a
@@ -96,7 +134,7 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
 
   const speakNext = useCallback(() => {
     const next = queueRef.current.shift();
-    if (!next) { setSpeaking(false); return; }
+    if (!next) { setSpeaking(false); stopResumeHack(); return; }
     const utter = new SpeechSynthesisUtterance(next);
     const voice = pickVoice();
     if (voice) {
@@ -131,19 +169,22 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
       speakNext();
     };
     let watchdog = setTimeout(checkWatchdog, 400);
-    utter.onstart = () => { started = true; clearTimeout(watchdog); };
-    utter.onend = () => { started = true; clearTimeout(watchdog); if (!cancelledRef.current) speakNext(); };
-    utter.onerror = () => { started = true; clearTimeout(watchdog); if (!cancelledRef.current) speakNext(); };
+    utter.onstart = () => { started = true; clearTimeout(watchdog); startResumeHack(); };
+    utter.onend = () => { started = true; clearTimeout(watchdog); if (!cancelledRef.current) speakNext(); else stopResumeHack(); };
+    utter.onerror = () => { started = true; clearTimeout(watchdog); if (!cancelledRef.current) speakNext(); else stopResumeHack(); };
     window.speechSynthesis.speak(utter);
-  }, [lang, pickVoice]);
+  }, [lang, pickVoice, startResumeHack, stopResumeHack]);
 
-  const useBrowserTTS = useCallback((text: string) => {
+  const useBrowserTTS = useCallback(async (text: string) => {
     if (!supported) { console.error("[tts] FINAL FALLBACK FAILED: this browser has no speechSynthesis at all — nothing can be spoken."); setLastDiagnostic("This browser has no speech synthesis at all."); return; }
     const sentences = toSentences(toSpeakableText(text));
     if (!sentences.length) { console.error("[tts] FINAL FALLBACK FAILED: nothing speakable left after stripping markdown.", text.slice(0, 80)); setLastDiagnostic("The reply had nothing speakable in it."); return; }
+    // Wait for voices to populate before speaking — getVoices() returns [] on first call in Chrome, and
+    // speaking with no voice selected is a silent no-op on many engines. Up to 2s wait; after that we
+    // proceed anyway (some browsers speak with a default voice even when getVoices() is empty).
+    await waitForVoices();
+    if (cancelledRef.current) return; // barge-in landed while we were waiting for voices
     if (!voicesRef.current.length) {
-      // getVoices() is populated asynchronously — an early call (before `onvoiceschanged`) legitimately
-      // sees an empty list. Re-read it here rather than trusting the possibly-too-early load in the effect.
       voicesRef.current = window.speechSynthesis.getVoices();
       if (!voicesRef.current.length) { console.warn("[tts] the browser reports ZERO installed voices — speech may silently do nothing."); setLastDiagnostic("Browser speech is being used, but this device reports no installed voices."); }
     }
@@ -157,7 +198,7 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
     // still tearing down the previous (possibly empty) queue and drops the new speak() silently. A tiny
     // deferral lets that teardown actually finish first.
     setTimeout(() => { if (!cancelledRef.current) speakNext(); }, 30);
-  }, [supported, speakNext]);
+  }, [supported, speakNext, waitForVoices]);
 
   const speakViaFreeTTS = useCallback(async (text: string, myGeneration: number) => {
     // ONE-SHOT fallback guard. A blocked/failed audio element fires BOTH `audio.onerror` AND rejects the
@@ -228,6 +269,7 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
   const cancel = useCallback(() => {
     if (!supported) return;
     cancelledRef.current = true;
+    stopResumeHack();
     // Bump the generation FIRST: every in-flight /api/tts fetch and pending play() from the current
     // utterance becomes a no-op the moment it resolves, so an interruption mid-fetch actually stays
     // interrupted instead of the speech starting over the student's head.
@@ -240,7 +282,7 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
       audioRef.current = null;
     }
     setSpeaking(false);
-  }, [supported]);
+  }, [supported, stopResumeHack]);
 
   useEffect(() => () => cancel(), [cancel]);
 
