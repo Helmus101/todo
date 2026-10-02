@@ -1830,7 +1830,12 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   // Barge-in v2 (real interruption): the mic STAYS OPEN while Otto speaks and interim text streams in
   // live — the old version aborted the recognizer during TTS, which made interruption structurally
   // impossible (no audio reaches a dead mic). Echo from the speakers is classified textually.
-  check("mic stays open during speech when barge-in is on (pause-the-mic is gated off)", /if \(!voiceModeOn \|\| bargeIn\) return;/.test(askOttoSrc));
+  // Updated for the "mic should be off while Otto's reply is generating" fix: pause-the-mic now also
+  // covers the `sending` (generating) window, not just `synth.speaking` — but barge-in's exemption from
+  // the SPEAKING half must survive that change (there's still nothing to interrupt before speech exists,
+  // so `sending` pauses the mic even with bargeIn on; only the speaking half stays gated off by bargeIn).
+  check("mic stays open during speech when barge-in is on (pause-the-mic is gated off for the speaking half)", /const busy = sending \|\| \(!bargeIn && synth\.speaking\);/.test(askOttoSrc));
+  check("the mic is paused during generation too, not just during speech (reported: mic stayed open the whole time a reply was generating)", /busy && !wasBusyRef\.current/.test(askOttoSrc) && /recog\.abort\(\);/.test(askOttoSrc));
   check("live interim text cancels the TTS mid-sentence (≥2 words, echo-filtered)", /onInterim: \(text\) =>/.test(askOttoSrc) && /echoFilterRef\.current\.isEcho\(text\)/.test(askOttoSrc) && /text\.trim\(\)\.split\(\/\\s\+\/\)\.length >= 2\) synth\.cancel\(\)/.test(askOttoSrc));
   check("the recognition hook exposes the live interim channel", /onInterim\?: \(text: string\) => void;/.test(recogSrc) && /onInterimRef\.current\?\.\(interim\.trim\(\)\)/.test(recogSrc));
   check("voice auto-start is guarded on SpeechRecognition support (Firefox stays text-first)", /recogSupportedRef\.current/.test(askOttoSrc));

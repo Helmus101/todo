@@ -176,19 +176,30 @@ export function AskOttoPanel({
   // just enough for the audio hardware to actually stop outputting before the mic reopens (go to 0 and a
   // genuinely echo-y setup with no headphones could catch the last few ms of playback as a false result;
   // 80ms is below what a student perceives as a delay but still past that window in practice).
-  const wasSpeakingRef = useRef(false);
+  // Reported live: the mic stayed OPEN the whole time Otto's reply was being generated (the `sending`
+  // window, before any speech exists) — only `synth.speaking` paused it, so the recognizer kept listening
+  // (and could pick up stray noise/an accidental second message) for however long the AI call took. "Busy"
+  // now covers BOTH phases — generating AND speaking — for the pause-and-resume (non-barge-in) case. There
+  // is never anything to barge INTO before speech starts, so `sending` pauses the mic even when `bargeIn`
+  // is on; barge-in's whole point (staying open so the student can interrupt) only applies once Otto is
+  // actually talking. Deriving `busy` fresh from current state (not "did speech ever start") also means
+  // this self-heals if TTS silently never starts (unsupported browser, empty reply, a swallowed failure):
+  // the moment `sending` goes false with speech never having started, `busy` is already false and the mic
+  // resumes right away — it can never get stuck off waiting for a speech event that's never coming.
+  const wasBusyRef = useRef(false);
   useEffect(() => {
-    if (!voiceModeOn || bargeIn) return;
-    if (synth.speaking && !wasSpeakingRef.current) {
+    if (!voiceModeOn) return;
+    const busy = sending || (!bargeIn && synth.speaking);
+    if (busy && !wasBusyRef.current) {
       recog.abort();
-    } else if (!synth.speaking && wasSpeakingRef.current) {
-      const t = setTimeout(() => { if (voiceModeOn && !synth.speaking) recog.start(); }, 80);
-      wasSpeakingRef.current = synth.speaking;
+    } else if (!busy && wasBusyRef.current) {
+      const t = setTimeout(() => { if (voiceModeOn && !sending && !(!bargeIn && synth.speaking)) recog.start(); }, 80);
+      wasBusyRef.current = busy;
       return () => clearTimeout(t);
     }
-    wasSpeakingRef.current = synth.speaking;
+    wasBusyRef.current = busy;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [synth.speaking, voiceModeOn, bargeIn]);
+  }, [sending, synth.speaking, voiceModeOn, bargeIn]);
   // Speak the reply once it arrives — tracked by chat length so a re-render (not a new message) never
   // re-triggers it, and so turning voice mode on mid-conversation only speaks FUTURE replies, not the
   // whole history at once.
