@@ -2577,6 +2577,22 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
           <span className="lbl">{L("Tes données", "Your data")}</span>
           <span className="val"><a href={api.exportDataUrl()} download>{L("Télécharger mes données", "Download my data")}</a></span>
         </div>
+        {/* Reported live: "i don't see import place" — the handler/state (onImportFile, importFileRef,
+            importingData) were fully built but nothing in this render ever used them, so the whole feature
+            was invisible. Same pattern as the export row above: a plain link-styled trigger for the actual
+            hidden file input, which does the real work. Typically used right after importing a GET
+            /api/account/export file from a DIFFERENT account/project (see server/index.ts's own comment on
+            that route) — e.g. moving to a freshly created Supabase project. */}
+        <div className="modal-row">
+          <span className="lbl">{L("Importer des données", "Import data")}</span>
+          <span className="val">
+            <input ref={importFileRef} type="file" accept="application/json" style={{ display: "none" }}
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) void onImportFile(f); }} />
+            <button type="button" className="btn xs ghost" disabled={importingData} onClick={() => importFileRef.current?.click()}>
+              {importingData ? L("Import en cours…", "Importing…") : L("Importer un export Otto", "Import an Otto export")}
+            </button>
+          </span>
+        </div>
         <div className="modal-row">
           <span className="lbl">{L("Supprimer le compte", "Delete account")}</span>
           <button
