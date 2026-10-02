@@ -1842,8 +1842,21 @@ function FlashcardsLibraryPage({ lang, tasks, embedded, userId }: { lang?: "fr" 
   const [openQuizId, setOpenQuizId] = useState<string | null>(null);
   // Local storage isn't reactive — refresh the list on focus so a deck/quiz generated in another tab (or
   // just now, before this page was opened) shows up without needing a full reload.
+  //
+  // Reported live as a genuine cross-account leak: `decks`/`quizzes` above are seeded via a useState LAZY
+  // initializer, which only ever runs on this component's very first mount. Signing out and into a
+  // DIFFERENT account is an SPA-style soft reset (App.tsx's signOut — no full page reload), so if this
+  // component instance survives that transition (React keeps it mounted since the tree shape around it
+  // didn't change), its `decks` state kept showing the FIRST account's locally-cached flashcard decks
+  // indefinitely — this effect's own cleanup/re-run on `userId` changing only re-pointed the FOCUS listener
+  // at the new id, it never actually re-fetched immediately. A plain account switch inside the same tab
+  // never fires a real window blur/focus cycle, so the stale list could sit there until the student
+  // happened to tab away and back. Calling refresh() directly here (not just registering it for later)
+  // closes that gap — it now re-reads local storage under the CURRENT userId the instant that id changes,
+  // not just on the next incidental focus event.
   useEffect(() => {
     const refresh = () => { setDecks(getAllLocalDecks(userId)); setQuizzes(getAllLocalQuizzes(userId)); };
+    refresh();
     window.addEventListener("focus", refresh);
     return () => window.removeEventListener("focus", refresh);
   }, [userId]);

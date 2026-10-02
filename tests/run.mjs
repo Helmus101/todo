@@ -1699,6 +1699,23 @@ section("Client-side i18n completeness — client/study/ hardcoded English strin
   check("CameraArtifact's aria-label is bilingual, not hardcoded English", !/aria-label="[A-Z]/.test(camera));
 }
 
+section("FlashcardsLibraryPage — local deck/quiz cache refreshes immediately on account switch, not just on focus (source pin)");
+{
+  // Reported live as a genuine cross-account data leak: `decks`/`quizzes` are seeded via a useState LAZY
+  // initializer (runs once, at first mount, only) from account-scoped local storage. Signing out and into a
+  // DIFFERENT account is an SPA-style soft reset (no full page reload — see signOut in this same file), so
+  // if this component survives that transition already mounted, its state kept showing the FIRST account's
+  // cached flashcard decks — the effect below only re-pointed a window-FOCUS listener at the new userId, it
+  // never actually re-read local storage until the next incidental focus event (which a same-tab account
+  // switch never naturally triggers). Fixed by calling refresh() directly in the effect body, so it re-runs
+  // the instant `userId` itself changes, not only later on focus.
+  const appSrc = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const start = appSrc.indexOf("function FlashcardsLibraryPage(");
+  const body = appSrc.slice(start, appSrc.indexOf("\nfunction ", start + 10));
+  check("refresh() is called immediately in the effect body (not just registered for later)", /const refresh = \(\) => \{[^}]*\};\s*refresh\(\);\s*window\.addEventListener\("focus", refresh\)/.test(body));
+  check("the effect re-runs when userId changes (refresh reads account-scoped local storage)", /\}, \[userId\]\);/.test(body));
+}
+
 section("DueReviews (Journal tab) — capped at 3 decks/day (source pin)");
 {
   // Reported live: a student with accumulated review debt saw every single overdue deck stacked at the top
