@@ -538,6 +538,26 @@ function examStyleLine(p?: Profile): string {
   return ib + ap + satAct;
 }
 
+/** Direct request: tutoring/content generation should be grounded in the student's real, vetted
+ *  curriculum, not generic AI knowledge of "a topic by that name." Gated like examStyleLine above —
+ *  IB and AP have well-known, stable PUBLIC syllabi the model genuinely knows; Bac's spécialité system is
+ *  more fragmented across subjects/years with no single canonical document to point at, so forcing the
+ *  same "use the real syllabus subtopic names" instruction there risks the model inventing a fake-official-
+ *  sounding term with more confidence, not less — worse than saying nothing. No new syllabus database:
+ *  this leans entirely on the model's own training knowledge of real IB/AP syllabi, per explicit scoping
+ *  (a hardcoded topic tree per subject/track would be a much bigger, ongoing-maintenance project).
+ *  Subject-scoped (not folded into trackLine itself): trackLine has no subject parameter and is called
+ *  from 15+ sites file-wide; this is only called where a subject is already in scope (chat/quiz/flashcard/
+ *  problem generation), so the signature doesn't need to change everywhere. */
+export function syllabusGroundingLine(p?: Profile, subject?: string): string {
+  if (!subject || (p?.track !== "ib" && p?.track !== "ap")) return "";
+  const program = p?.track === "ib" ? "IB" : "AP";
+  return `\n\nSYLLABUS GROUNDING: ground this ${subject} content in the real ${program} syllabus's own ` +
+    `subtopic names/sequencing (e.g. IB Chemistry: "Enthalpy", "Entropy and spontaneity" under ` +
+    `Thermodynamics — not "energy stuff"), not a generic guess. Unsure of the exact wording? Say so or use ` +
+    `plain language — a confident fake syllabus term is worse than an honest plain one.\n`;
+}
+
 /** VARK, presentation only — NEVER difficulty, depth, or what gets taught (see Profile.learningStyle doc
  *  comment). Deliberately soft ("when it fits naturally") rather than a rigid format mandate: VARK's evidence
  *  as a *learning-outcome* predictor is weak, but honoring a stated presentation preference costs nothing. */
@@ -562,6 +582,26 @@ export function learningStyleLine(p?: Profile): string {
       `question or dumb down content to fit.\n`,
   };
   return "\n\n" + (by[style] || "");
+}
+
+/** Student-selectable PACING for how much scaffolding the tutor gives when stuck — a different axis from
+ *  learningStyle above (that's presentation/FORM; this is how much is shown on the way to the student's
+ *  own next move). Undefined/unset: Otto's own judgment per the hint ladder, unchanged from before this
+ *  preference existed. CRITICAL: neither value ever licenses giving the direct answer — that's enforced
+ *  unconditionally elsewhere (the HINT LADDER's "never release the final answer outright" rule, which this
+ *  must never contradict); this only adjusts the SIZE of each step on the way there. */
+export function hintDensityLine(p?: Profile): string {
+  if (p?.hintDensity === "steps") {
+    return `\n\nPACING PREFERENCE: walk this student through things step by step — lean on the ORIENT/NARROW ` +
+      `rungs, smaller intermediate questions over a terse hint. Still never the direct answer — just ` +
+      `smaller, more numerous steps on the way there.\n`;
+  }
+  if (p?.hintDensity === "hints") {
+    return `\n\nPACING PREFERENCE: this student wants just a hint, not a full walkthrough — favor one pointed ` +
+      `nudge (MODEL THE NEXT MOVE) over multiple orienting questions, then hand it back. Still never the ` +
+      `direct answer — just fewer, terser steps on the way there.\n`;
+  }
+  return "";
 }
 // "Stories tuned to her life" — the one piece of Neal Stephenson's Primer that's directly buildable here:
 // when explaining something new, reach for an analogy or example rooted in what THIS student is actually
@@ -4567,7 +4607,7 @@ export async function runTask(
     ? `\nFOCUS FOR THIS RUN — this is what the run is actually for; where it conflicts with the general plan, it wins:\n${focus.trim().slice(0, 1500)}\n`
     : "";
   const baseCtx = profileBlock(profile) + assignmentBlock(task, tzOf(profile)) + academicBlock(academic) + (personalization?.inApp || "") + focusBlock;
-  const langLine = languageLine(profile) + trackLine(profile) + personalContextLine(profile) + studentModelLine(profile) +
+  const langLine = languageLine(profile) + trackLine(profile) + syllabusGroundingLine(profile, task.sourceSubject) + personalContextLine(profile) + studentModelLine(profile) +
     learningStyleLine(profile) + errorLogLine(profile, task.sourceSubject, personalization?.subjectSignal) +
     recentJournalLine(personalization?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(personalization?.notNeeded);
   const nowLine = nowBlock();
@@ -5504,7 +5544,7 @@ export async function writeStepsFromContext(
           `The context below is SUPPORTING INFORMATION only. Never let the context become the objective.\n\n` +
           `${context.trim() ? `CONTEXT GATHERED (supporting information only — not the objective):\n${context}` : "No research was needed for this one — plan it from the task itself."}${linksBlock}${didBlock}` +
           assignmentBlock(task, tzOf(profile)) + profileBlock(profile) + `\n\n` +
-          languageLine(profile) + trackLine(profile) + nowBlock() +
+          languageLine(profile) + trackLine(profile) + syllabusGroundingLine(profile, task.sourceSubject) + nowBlock() +
           `NEW ARCHITECTURE: TWO-STEP PLANNING — Otto's Internal Steps → User's Visible Steps\n\n` +
           `STEP 1: Re-anchor to the ORIGINAL TASK\n` +
           `The task title is the objective: "${task.title}"\n` +
@@ -6549,6 +6589,20 @@ const PRIMER_CLOSING_REMINDER =
  * can never send, draft, delete, or modify anything through it. Whatever `extras` this function receives
  * MUST already be read-only-scoped by the caller — this function does not scope it itself.
  */
+// Cheap, local, conservative heuristic for the tool-narrowing latency fix above chatAboutTask's `tools`
+// construction. Biased toward INCLUDING the artifact tools (false negatives are the only acceptable
+// failure mode — a wrongly-INCLUDED tool costs tokens, a wrongly-EXCLUDED one costs a feature that turn).
+// Exported for direct unit testing.
+const ARTIFACT_KEYWORDS = /flashcard|fiche|quiz|carte|résum|note|deck|exercice|questionnaire|quizz|révis|study ?card|practice ?problem/i;
+export function wantsArtifactTools(message: string, history: { role: "user" | "assistant"; text: string }[]): boolean {
+  const recent = `${history.slice(-2).map((h) => h.text).join(" ")} ${message}`;
+  if (ARTIFACT_KEYWORDS.test(recent)) return true;
+  // Short (≤6 words) with no question mark reads as small talk/acknowledgement ("ok merci", "got it",
+  // "d'accord") — exactly the turns where attaching 4 unused tool schemas costs tokens for nothing.
+  // Anything longer or that asks a question stays on the safe (included) side.
+  const words = message.trim().split(/\s+/).filter(Boolean);
+  return !(words.length > 0 && words.length <= 6 && !message.includes("?"));
+}
 export async function chatAboutTask(
   task: { title: string; why: string; context?: string; steps?: { text: string; done?: boolean; substeps?: { text: string; done: boolean }[] }[]; source?: string; sourceDetail?: string; sourceSubject?: string; sourceDue?: string; flashcards?: TaskFlashcards[]; quizzes?: TaskQuiz[] },
   history: { role: "user" | "assistant"; text: string }[],
@@ -6687,7 +6741,7 @@ export async function chatAboutTask(
   // student, every task, every turn — so it belongs FIRST, where it can actually be cached; the volatile
   // per-request context goes last, right next to the equally-volatile TASK block it keeps company with
   // anyway.
-  const dynamicContext = nowBlock() + studentNameLine(profile?.name) + dueLine(task.sourceDue, tzOf(profile)) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + sessionRecapLine(profile?.sessions, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine;
+  const dynamicContext = nowBlock() + studentNameLine(profile?.name) + dueLine(task.sourceDue, tzOf(profile)) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + syllabusGroundingLine(profile, task.sourceSubject) + learningStyleLine(profile) + hintDensityLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + sessionRecapLine(profile?.sessions, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine;
   const sys =
     (opts?.primer ? PRIMER_PERSONA : "") +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
@@ -6696,8 +6750,10 @@ export async function chatAboutTask(
     `every reply in the task context below; never make them re-explain what you already here.\n\n` +
     `SPOKEN CONVERSATIONAL TONE — this is a chat, not an essay. Talk like you're sitting next to them:\n` +
     `- SHORT REPLIES. Most replies should be 1-3 sentences, like you're actually speaking. A long ` +
-    `explanation is almost always a failure to diagnose — if you find yourself writing more than 5 ` +
-    `sentences, stop: you're lecturing, not tutoring. Break it into one step and let THEM take the next.\n` +
+    `explanation is almost always a failure to diagnose — if you find yourself writing more than 3 ` +
+    `sentences, stop: you're lecturing, not tutoring. Break it into one step and let THEM take the next. ` +
+    `Direct instruction, no exceptions for "but this topic needs more setup" — the fix for a topic that ` +
+    `needs more setup is MORE short turns, never one longer one.\n` +
     `- NO ESSAYS. Never produce a wall of text. If the full explanation needs 4+ paragraphs, give ONE ` +
     `micro-prompt or ONE step right now and wait for them. Micro-prompts ("predict the next step before ` +
     `I continue") actively fight passive reading.\n` +
@@ -6749,11 +6805,17 @@ export async function chatAboutTask(
     `ESCALATE ONLY ON A GENUINE ATTEMPT — a student who tries and misses the same point twice earns the ` +
     `next rung; a student who just repeats "I don't know"/"just tell me" with no attempt does NOT — meet ` +
     `that with the SAME rung rephrased, or an easier on-ramp to it, never a promotion.\n` +
-    `RELEASE THE ANSWER when ANY of these hold: (a) two rungs of the ladder were used on the SAME point ` +
-    `and neither landed — show the worked step yourself rather than inventing a fourth rung; (b) they ` +
-    `explicitly ask again for the answer AFTER that; (c) they're checking work they already completed, not ` +
-    `asking you to do it; (d) they've made a genuine attempt and are asking you to verify or finish it. A ` +
-    `worked example released this way is help, not failure — never turn it into an endless gate.\n\n` +
+    `NEVER RELEASE THE FINAL ANSWER OUTRIGHT, even after repeated failed attempts — this is the same rule ` +
+    `Rule 3 and THE LINE YOU NEVER CROSS set below, and this ladder must never license an exception to it. ` +
+    `If two rungs on the SAME point haven't landed, don't invent a fourth rung AND don't hand over the ` +
+    `answer either — instead break the point into a smaller, more concrete sub-question, or walk through a ` +
+    `DIFFERENT worked example (same method, a different number/scenario) and ask them to apply it to their ` +
+    `own problem. If they explicitly re-ask for the answer, redirect per THE LINE YOU NEVER CROSS below — ` +
+    `don't cave, and don't let repetition make you more generous. Two cases are NOT "releasing the answer" ` +
+    `and stay fine exactly as before: (c) they're checking work they already completed, not asking you to ` +
+    `do it — confirm or correct it, don't withhold; (d) they've made a genuine attempt and are asking you to ` +
+    `verify it or finish a mechanical last step (e.g. the arithmetic after they've set up the equation) — ` +
+    `finishing a near-complete attempt is help, not giving the answer to a problem they haven't done.\n\n` +
     `ICAP — THE ENGAGEMENT HIERARCHY: interactive > constructive > active > passive. Typing a question ` +
     `and reading the answer is passive — the shallowest learning. Explaining their reasoning out loud to a ` +
     `tutor who responds to it is interactive — the deepest. Every reply should push them one rung UP this ` +
@@ -6860,7 +6922,9 @@ export async function chatAboutTask(
     `visible, not hidden.\n` +
     `CHALLENGE ASSUMPTIONS DIRECTLY. "What are you assuming here?" "Is that always true, or just in this ` +
     `case?" "What would break this argument?" Make them defend their reasoning. The best learning happens ` +
-    `when assumptions are exposed and tested, not when they go unexamined.\n` +
+    `when assumptions are exposed and tested, not when they go unexamined. Rotate the phrasing — "how do ` +
+    `you know that's true?", "what would convince you otherwise?", "what's the strongest case AGAINST your ` +
+    `own claim?" — so this doesn't become a scripted catchphrase.\n` +
     `1. DIAGNOSE BEFORE EXPLAINING — ALWAYS, not just when they say "I'm stuck". Even a direct factual question ` +
     `("what's the difference between X and Y?") gets a quick check first, not an instant lecture: what do they ` +
     `already think, or what's their best guess, or where in their own work does this come up. A tutor who ` +
@@ -6959,7 +7023,9 @@ export async function chatAboutTask(
     `hiding behind a correct answer (they got the right number but for the wrong reason). Don't do this every ` +
     `single turn, but do it regularly — especially when they've just arrived at a step that worked, since ` +
     `that's exactly when they're most likely to think they understand when they don't. An answer they can't ` +
-    `justify is a guess that happened to land.\n` +
+    `justify is a guess that happened to land. Occasionally, push one step further: ask them to voice the ` +
+    `OPPOSING position — "if someone disagreed here, what would they say, and why are they wrong?" ` +
+    `Weighing a real counter-argument is what separates understanding a claim from defending it.\n` +
     `5. BUILD ON WHAT THEY KNOW, AND MAKE PROGRESS VISIBLE. Connect to something in their context — an earlier ` +
     `step they already finished, a subject they're stronger in, the class material referenced in the task. ` +
     `When it naturally fits (not every turn), briefly tie back to something from earlier in THIS thread ` +
@@ -7041,7 +7107,10 @@ export async function chatAboutTask(
     `across sessions, not one meeting them for the first time. Never by reciting facts about them, and never ` +
     `in a way that reads as being watched. Over weeks and months this compounds: you're not just answering ` +
     `today's question, you're helping them get better at reasoning through problems and judging their own ` +
-    `work so they need you less over time — treat that as the actual long-run goal, not a slogan.\n\n` +
+    `work so they need you less over time — treat that as the actual long-run goal, not a slogan.\n` +
+    `10b. CLOSE A RESOLVED PROBLEM WITH ONE REFLECTIVE QUESTION, SOMETIMES. Same cadence as 4b — only right ` +
+    `after something genuinely resolved. One brief question: "what made that click?", "what would you do ` +
+    `differently starting over?" Skip it for a quick/trivial exchange, it'll feel forced.\n\n` +
     `11. HANDLE OFF-TOPIC QUESTIONS NATURALLY. If the student asks something completely unrelated to this ` +
     `task (e.g. "who is Annie?", "what time is it in Tokyo?"), DON'T just reply with a generic "I'm here — ` +
     `what part of this is giving you trouble?" — that reads like a broken bot. Instead: (a) if it's a quick ` +
@@ -7414,9 +7483,18 @@ export async function chatAboutTask(
   // CREATE_FLASHCARDS instead — same "don't just trust the model" posture as the CHAT_DOES_WORK/
   // CHAT_STATES_ANSWER guardrails, applied here by removing the tool entirely rather than catching it
   // after the fact.
+  // Latency lever: CREATE_NOTE/CREATE_FLASHCARDS/CREATE_QUIZ/REMEMBER's JSON schemas are ~10.3k chars
+  // (~2.6k tokens) combined, resent IDENTICALLY on every round of the tool-loop regardless of whether
+  // this turn has anything to do with them — a real, confirmed per-round cost on top of the already
+  // large static prompt. Conservative and reversible: only drops them on a turn that's clearly short/
+  // conversational with no artifact-ish keyword; a wrongly-dropped tool just means the model can't call
+  // it THIS round, not a permanent loss — the student's next message is evaluated fresh. The tools that
+  // stay ALWAYS available either way (board-writing, objectives, search, calc, a focused problem) are
+  // core to live tutoring and/or already cheap.
+  const includeArtifactTools = wantsArtifactTools(message, history);
   const tools = opts?.canvasMode
-    ? [CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, SET_OBJECTIVES_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, REMEMBER_TOOL, ...(readOnlyExtras?.tools || [])]
-    : [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL, CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, SET_OBJECTIVES_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, REMEMBER_TOOL, ...(readOnlyExtras?.tools || [])];
+    ? [CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, SET_OBJECTIVES_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])]
+    : [...(includeArtifactTools ? [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL] : []), CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, SET_OBJECTIVES_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])];
   const empty = (): ChatResult => ({ reply: "", notes: [], flashcards: [], quizzes: [], problems: [], board: [], audit: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false });
   const result = empty();
   const logAudit = (kind: AuditEvent["kind"], label: string) => result.audit.push({ at: new Date().toISOString(), kind, label });

@@ -285,6 +285,15 @@ export interface Profile {
    *  is strong). It may only select the FORM an explanation takes — e.g. diagram-first vs. a worked example
    *  vs. reading-first — never the substance or the level. No consumer reads this yet (groundwork). */
   learningStyle?: "visual" | "auditory" | "reading" | "kinesthetic" | "mixed";
+  /** How much scaffolding the tutor gives when the student is stuck, student-selectable in Settings —
+   *  a DIFFERENT axis from `learningStyle` above (that's presentation/FORM; this is PACING/how much the
+   *  tutor walks through vs. just nudges). "steps" = walk through the reasoning step by step before
+   *  handing it back for the next move; "hints" = a single pointed hint, then hand it straight back.
+   *  Undefined = Otto's own judgment call per the hint ladder (server/claude.ts), same as today. NEITHER
+   *  value ever changes whether the tutor gives the direct answer — that's enforced unconditionally
+   *  elsewhere (the HINT LADDER's "never release the final answer outright" rule) and is not configurable
+   *  by this preference; it only adjusts HOW MUCH is shown on the way there. */
+  hintDensity?: "steps" | "hints";
   /** Aggregated face tracking concentration and focus telemetry statistics over past study sessions. */
   focusStats?: {
     totalTrackedSessions: number;
@@ -488,6 +497,7 @@ export function normalizeProfile(p: any): Profile {
     track: ["ib", "ap", "bac", "other"].includes(p?.track) ? p.track : undefined,
     yearLevel: typeof p?.yearLevel === "string" ? p.yearLevel.trim().slice(0, 40) || undefined : undefined,
     learningStyle: ["visual", "auditory", "reading", "kinesthetic", "mixed"].includes(p?.learningStyle) ? p.learningStyle : undefined,
+    hintDensity: ["steps", "hints"].includes(p?.hintDensity) ? p.hintDensity : undefined,
     focusStats: p?.focusStats && typeof p.focusStats === "object" ? {
       totalTrackedSessions: Number(p.focusStats.totalTrackedSessions) || 0,
       avgConcentration: Math.min(100, Math.max(0, Number(p.focusStats.avgConcentration) || 0)),
@@ -557,6 +567,57 @@ export function milestonesBySubject(list: NonNullable<Profile["milestones"]> | u
     entries: [...entries].sort((a, b) => Date.parse(b.achievedAt) - Date.parse(a.achievedAt)),
   })).sort((a, b) => b.entries.length - a.entries.length);
 }
+// Tunable weights for subjectMastery below — a product-judgment placeholder, not a derived constant.
+// Named/exported so they're trivially adjustable later without hunting through the formula itself.
+export const MASTERY_LEITNER_WEIGHT = 0.6;
+export const MASTERY_MILESTONE_WEIGHT = 0.4;
+// Milestones older than this contribute ~nothing to the recency score (linear decay to 0) — an
+// achievement from months ago says little about CURRENT mastery, unlike a flashcard's Leitner box
+// (which already encodes recency via spaced-repetition scheduling).
+const MASTERY_MILESTONE_DECAY_DAYS = 90;
+// How many "fresh" (near-zero-decay) milestones it takes to max out the milestone half of the score —
+// a single recent "got it" shouldn't alone read as full subject mastery.
+const MASTERY_MILESTONES_FOR_FULL_SCORE = 3;
+/** Direct request: "clear progress metrics" per subject, based purely on tutor-session activity — NOT
+ *  grades (explicitly excluded: grades are Pronote/manual-sourced and lag real activity, unrelated to
+ *  what the tutor has actually seen the student do). Combines two EXISTING signals, no new tracked
+ *  state: (1) the Leitner "known" ratio across that subject's flashcards (shared/types.ts's own
+ *  nextLeitnerReview box field, already written on every card review) and (2) a recency-weighted count
+ *  of that subject's milestones (milestonesBySubject above — qualitative "what's clicked" log).
+ *  Returns null (never a fabricated 0%) when NEITHER signal has any data for this subject — a subject
+ *  never touched via Otto's tutor/flashcards shouldn't claim "0% mastery", that's just "no data yet".
+ *  Gracefully degrades to whichever single signal IS available when only one exists, renormalizing the
+ *  weight instead of silently treating the missing one as 0. */
+export function subjectMastery(tasks: WebTask[], milestones: Profile["milestones"] | undefined, subject: string, now: Date = new Date()): number | null {
+  const subjectKey = subject.toLowerCase();
+  let totalCards = 0;
+  let knownCards = 0;
+  for (const t of tasks) {
+    if ((t.sourceSubject || "").toLowerCase() !== subjectKey) continue;
+    for (const deck of t.flashcards || []) {
+      for (const card of deck.cards) {
+        if (card.notNeeded) continue; // excluded from every other "still shaky"/scoring signal too
+        totalCards++;
+        if (card.review?.box === 2) knownCards++;
+      }
+    }
+  }
+  const leitnerRatio = totalCards > 0 ? knownCards / totalCards : null;
+
+  const subjectEntries = (milestones || []).filter((m) => m.subject.toLowerCase() === subjectKey);
+  let milestoneWeight = 0;
+  for (const m of subjectEntries) {
+    const daysAgo = (now.getTime() - Date.parse(m.achievedAt)) / 86_400_000;
+    milestoneWeight += Math.max(0, 1 - daysAgo / MASTERY_MILESTONE_DECAY_DAYS);
+  }
+  const milestoneScore = subjectEntries.length > 0 ? Math.min(1, milestoneWeight / MASTERY_MILESTONES_FOR_FULL_SCORE) : null;
+
+  if (leitnerRatio === null && milestoneScore === null) return null;
+  if (leitnerRatio === null) return milestoneScore;
+  if (milestoneScore === null) return leitnerRatio;
+  return MASTERY_LEITNER_WEIGHT * leitnerRatio + MASTERY_MILESTONE_WEIGHT * milestoneScore;
+}
+
 /** Is this a resolvable IANA timezone? (Intl throws on an unknown zone.) */
 export function isValidTz(tz: string): boolean {
   try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); return true; } catch { return false; }
@@ -1219,6 +1280,11 @@ export interface WebTask {
    *  each SET_OBJECTIVES call (not append-only), so the list always reflects Otto's current read of progress
    *  rather than accumulating stale/superseded objectives across a long session. */
   objectives?: TaskObjective[];
+  /** Subject mastery (see subjectMastery below), 0-1 or null for "no data yet" — never fabricated. Set
+   *  server-side only on /api/study/free (session start/resume), not on the hot, frequently-polled
+   *  /api/tasks or kick routes, so this doesn't add per-poll CPU cost to paths that were just trimmed
+   *  for egress. Computed fresh each time a session starts; not itself persisted/durable state. */
+  mastery?: number | null;
   /** ONE free-response practice problem for the day's math/physics/science themes (Study Journal daily
    *  entries only — see generateDailyStudyCards in server/claude.ts) — deliberately NOT multiple choice:
    *  the student types their own answer and it's checked against `answer` (see practiceAnswerMatches

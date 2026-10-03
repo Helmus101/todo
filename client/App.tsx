@@ -1833,6 +1833,17 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
     try { onChanged?.(await api.setProfilePreference("track", v)); }
     catch (e: any) { setTrackState(prev); notify(e?.message || L("Ça n'a pas été enregistré — réessaie.", "That didn't save — give it another try."), "error"); }
   };
+  // Hint density — a DIFFERENT axis from learningStyle (VARK, presentation-only): this is how much the
+  // tutor walks through vs. just nudges when the student is stuck. Never changes whether the direct
+  // answer is given (that's unconditionally never, server-side) — only how much scaffolding leads there.
+  const [hintDensity, setHintDensityState] = useState<"steps" | "hints" | undefined>(profile?.hintDensity);
+  useEffect(() => { setHintDensityState(profile?.hintDensity); }, [profile?.hintDensity]);
+  const saveHintDensity = async (v: "steps" | "hints") => {
+    const prev = hintDensity;
+    setHintDensityState(v);
+    try { onChanged?.(await api.setProfilePreference("hintDensity", v)); }
+    catch (e: any) { setHintDensityState(prev); notify(e?.message || L("Ça n'a pas été enregistré — réessaie.", "That didn't save — give it another try."), "error"); }
+  };
   // Year/grade level — free text (see Profile.yearLevel's doc comment for why not a dropdown). Local draft
   // state so typing doesn't round-trip on every keystroke; saved on blur/Enter like other free-text fields.
   const [yearLevel, setYearLevelState] = useState(profile?.yearLevel || "");
@@ -1859,6 +1870,13 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
           <button type="button" className={`btn xs ${track === "ib" ? "" : "ghost"}`} aria-pressed={track === "ib"} onClick={() => void saveTrack("ib")}>IB</button>
           <button type="button" className={`btn xs ${track === "ap" ? "" : "ghost"}`} aria-pressed={track === "ap"} onClick={() => void saveTrack("ap")}>AP</button>
           <button type="button" className={`btn xs ${track === "other" ? "" : "ghost"}`} aria-pressed={track === "other"} onClick={() => void saveTrack("other")}>{L("Autre", "Other")}</button>
+        </div>
+      </div>
+      <div className="set-row">
+        <span className="set-text"><b>{L("Style d'accompagnement", "Learning style")}</b><span className="settings-hint">{L("Quand tu bloques : Otto t'accompagne pas à pas, ou te donne juste un indice et te laisse continuer. Il ne te donnera jamais directement la réponse, quel que soit ton choix.", "When you're stuck: Otto walks through it with you step by step, or just gives a hint and hands it back to you. Either way, it never just gives you the direct answer.")}</span></span>
+        <div className="lang-toggle">
+          <button type="button" className={`btn xs ${hintDensity === "steps" ? "" : "ghost"}`} aria-pressed={hintDensity === "steps"} onClick={() => void saveHintDensity("steps")}>{L("Pas à pas", "All the steps")}</button>
+          <button type="button" className={`btn xs ${hintDensity === "hints" ? "" : "ghost"}`} aria-pressed={hintDensity === "hints"} onClick={() => void saveHintDensity("hints")}>{L("Juste un indice", "Just a hint")}</button>
         </div>
       </div>
       <label className="set-row">

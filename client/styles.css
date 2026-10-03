@@ -6387,6 +6387,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .tutor-objectives { flex: 0 0 auto; padding: 10px 12px 8px; border-bottom: 1px solid var(--line-soft); }
 .tutor-objectives-head { display: flex; align-items: baseline; justify-content: space-between; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-2); margin-bottom: 6px; }
 .tutor-objectives-progress { font-variant-numeric: tabular-nums; }
+.tutor-objectives-mastery { font-weight: 500; text-transform: none; letter-spacing: normal; color: var(--ink-3); }
 .tutor-objectives-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .tutor-objectives-list li { display: flex; align-items: baseline; gap: 8px; font-size: 13px; color: var(--ink); line-height: 1.4; }
 .tutor-objectives-list li.done { color: var(--ink-2); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--ink-2) 50%, transparent); }

@@ -21,6 +21,12 @@ export interface TutorSessionSummary {
   chat?: NonNullable<WebTask["chat"]>;
   summary: string;          // a short auto-generated recap
   subject?: string;         // the subject selected when starting the session
+  // Final tally of task.objectives at session end (SET_OBJECTIVES tool, see shared/types.ts) — the
+  // live "Today's focus" checklist already tracks these during the session; this just persists the
+  // final counts so the Past-sessions list can show "what did I cover" at a glance. Both undefined for
+  // a session with no objectives set at all (not every session gets them), not a fabricated 0/0.
+  objectivesCompleted?: number;
+  objectivesTotal?: number;
 }
 
 const BASE_KEY = "otto-tutor-sessions";

@@ -87,20 +87,42 @@ const THINKING_WORDS = [
   "Establishing relationships", "Generating hypotheses", "Refining the model", "Resolving inconsistencies",
   "Finalizing the synthesis",
 ];
-/** Cycles through THINKING_WORDS at a fixed interval while `active` — one shared hook so every chat surface
- *  (TaskCard.tsx's TaskChat, AskOttoPanel.tsx) shows the same "Otto is working" vibe instead of each
- *  reimplementing its own timer. Starts at a random offset each time it activates so two chats open at once
- *  (or the same chat across two messages) don't visibly march in lockstep. Returns null while inactive so
- *  callers can render nothing/fall back to a plain "…" instead of a stale leftover word. */
+// Second/third tiers for a genuinely long wait (chatAboutTask can run up to CHAT_DEADLINE_MS, ~2min, once
+// tool rounds + correction retries stack up) — same playful single-word-jargon register as THINKING_WORDS
+// above, not a tone shift into a generic "please wait" — but honest about elapsed time instead of cycling
+// the SAME "just started" vibe for two straight minutes, which was the actual "feels slow" complaint (the
+// AI call itself isn't faster, but the student stops being misled about how much longer to expect).
+const STILL_WORKING_WORDS = [
+  "Double-checking", "Cross-verifying", "Working through the details", "Still reasoning through it",
+  "Tracing it back", "Checking the logic", "Making sure this lands right", "Taking a closer look",
+];
+const TAKING_LONGER_WORDS = [
+  "Still working on a thorough answer", "This one's taking a bit longer", "Nearly there",
+  "Pulling together a solid answer", "Almost ready",
+];
+const THINKING_BAND_MS = 8_000;
+const STILL_WORKING_BAND_MS = 25_000;
+/** Cycles through a time-aware word band at a fixed interval while `active` — one shared hook so every
+ *  chat surface (TaskCard.tsx's TaskChat, AskOttoPanel.tsx) shows the same "Otto is working" vibe instead
+ *  of each reimplementing its own timer. Starts at a random offset each time it activates so two chats
+ *  open at once (or the same chat across two messages) don't visibly march in lockstep. Returns null while
+ *  inactive so callers can render nothing/fall back to a plain "…" instead of a stale leftover word. */
 export function useThinkingWord(active: boolean, intervalMs = 1400): string | null {
   const [i, setI] = useState(0);
+  const [elapsedMs, setElapsedMs] = useState(0);
   useEffect(() => {
-    if (!active) return;
+    if (!active) { setElapsedMs(0); return; }
+    const startedAt = Date.now();
     setI(Math.floor(Math.random() * THINKING_WORDS.length));
-    const id = setInterval(() => setI((v) => (v + 1) % THINKING_WORDS.length), intervalMs);
+    const id = setInterval(() => {
+      setElapsedMs(Date.now() - startedAt);
+      setI((v) => v + 1);
+    }, intervalMs);
     return () => clearInterval(id);
   }, [active, intervalMs]);
-  return active ? THINKING_WORDS[i] : null;
+  if (!active) return null;
+  const words = elapsedMs >= STILL_WORKING_BAND_MS ? TAKING_LONGER_WORDS : elapsedMs >= THINKING_BAND_MS ? STILL_WORKING_WORDS : THINKING_WORDS;
+  return words[i % words.length];
 }
 
 /** Today as a bare "YYYY-MM-DD" — for comparing against a milestone's targetDate (same bare-string

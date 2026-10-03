@@ -15,6 +15,8 @@ import { stripHtml, applyPronoteGrades, isPrivateOrReservedIp, assertSafeExterna
 import { connectionColumnUpdates } from "../server/store.ts";
 import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, contextKey, chooseArm, computeReward, computeCardReward, computeLatencyReward, updatePosterior, leadingArm } from "../server/bandit.ts";
 import { trimFreeTTSWatermark } from "../server/ttsTrim.ts";
+import { wantsArtifactTools } from "../server/claude.ts";
+import { subjectMastery } from "../shared/types.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, subjectFrequency, orderingBoost, twoMinuteRuleBoost } from "../server/patterns.ts";
 
 let pass = 0, fail = 0;
@@ -1806,7 +1808,9 @@ section("/api/study/free — resumes an active freestudy session by default, onl
   const src = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
   const start = src.indexOf('app.post("/api/study/free"');
   const body = src.slice(start, src.indexOf("}));", start) + 4);
-  check("resumes (returns the list unchanged) when an active freestudy task already exists and fresh wasn't requested", /const active = list\.find\(\(t\) => t\.source === "freestudy" && !isHandled\(t\.status\)\);/.test(body) && /if \(active\) \{ res\.json\(list\); return; \}/.test(body));
+  // Grew a mastery-stamp side effect on `active` (not a structural change to "resume" itself) when the
+  // per-subject mastery metric shipped — still resumes the SAME task list, just with one extra field set.
+  check("resumes (returns the list, with a mastery stamp on the active task) when an active freestudy task already exists and fresh wasn't requested", /const active = list\.find\(\(t\) => t\.source === "freestudy" && !isHandled\(t\.status\)\);/.test(body) && /if \(active\) \{[\s\S]{0,200}res\.json\(list\); return;\s*\}/.test(body));
   check("fresh:true still forces the old dismiss-and-mint-new behavior", /const fresh = req\.body\?\.fresh === true;/.test(body));
   const apiSrc = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
   // (fresh?: boolean — optional, so a passive call sends no fresh flag; the route later grew a subject
@@ -2230,13 +2234,18 @@ section("Tutor prompt (chatAboutTask) carries the 'why don't they know' diagnosi
   check("tutor prompt distinguishes never-learned/forgot/cant-start/dont-understand-the-question before responding to 'I don't know'", /"I DON'T KNOW" IS NOT ONE THING/.test(chatBody));
   check("tutor prompt repairs a prerequisite gap instead of re-explaining the advanced skill built on it", /that prerequisite gap is the actual problem/.test(chatBody));
   check("tutor prompt has an explicit mastery-stop rule (perform + explain-why + transfer → move on)", /KNOW WHEN TO STOP TEACHING/.test(chatBody));
-  // Explicit 3-rung hint ladder + numeric escalation/release conditions, restructured this round to match
-  // a research-grounded reference spec (Orient/Narrow/Model-the-next-move, escalate only on a genuine
-  // attempt, release on: two unproductive rungs on the same point / explicit repeat request / checking
-  // completed work / a genuine attempt needing verification).
+  // Explicit 3-rung hint ladder (Orient/Narrow/Model-the-next-move, escalate only on a genuine attempt).
+  // The ladder USED TO have a "RELEASE THE ANSWER" escape hatch (two unproductive rungs on the same point,
+  // or an explicit repeat request) that directly contradicted Rule 3 / THE LINE YOU NEVER CROSS elsewhere
+  // in this same prompt ("never state the conclusion yourself," "never cave to repetition") — reported
+  // live as the tutor sometimes just giving the answer. Removed per direct instruction ("never give
+  // answers automatically... ask socratic questions"); checking already-completed work or finishing a
+  // near-complete attempt's last mechanical step are still fine (that's verifying, not answering FOR them).
   check("tutor prompt has the explicit HINT LADDER header with all three rungs", /## HINT LADDER[\s\S]{0,150}1\. ORIENT[\s\S]{0,800}2\. NARROW[\s\S]{0,800}3\. MODEL THE NEXT MOVE/.test(chatBody));
   check("hint ladder only escalates on a genuine attempt, not a bare 'I don't know'", /ESCALATE ONLY ON A GENUINE ATTEMPT/.test(chatBody));
-  check("hint ladder has explicit, enumerated answer-release conditions (not an open-ended gate)", /RELEASE THE ANSWER when ANY of these hold/.test(chatBody));
+  check("hint ladder no longer has an answer-release escape hatch that contradicts 'never give the answer'", !/RELEASE THE ANSWER when ANY of these hold/.test(chatBody));
+  check("hint ladder explicitly says never to release the final answer outright, even after repeated failed attempts", /NEVER RELEASE THE FINAL ANSWER OUTRIGHT, even after repeated failed attempts/.test(chatBody));
+  check("a stuck student gets a different worked example or a smaller sub-question, never the answer itself", /DIFFERENT worked example/.test(chatBody));
   check("tutor treats only a clean UNAIDED attempt as proof of learning (Bastani et al.)", /THE REAL TEST IS UNAIDED/.test(chatBody));
   check("voice mode writes spoken notation to the board instead of leaving it unwritten", /THE BOARD IS THE ONLY PLACE THEY EVER SEE THE ACTUAL NOTATION/.test(chatBody));
   // Reported live: a reply cut off mid-sentence ("One version with a twist, to make sure the method
@@ -3703,6 +3712,114 @@ section("Terms/Privacy links open in a new tab from the signup form (source pin 
   const legalLine = appSrcLegal.slice(appSrcLegal.indexOf('<div className="login-legal">'), appSrcLegal.indexOf('<div className="login-legal">') + 400);
   check("the Terms link opens in a new tab instead of unmounting the signup form", /<a href="\/terms" target="_blank" rel="noopener">/.test(legalLine));
   check("the Privacy link opens in a new tab instead of unmounting the signup form", /<a href="\/privacy" target="_blank" rel="noopener">/.test(legalLine));
+}
+
+section("subjectMastery — per-subject mastery from tutor-session activity only, never a fabricated 0%");
+{
+  const mkTask = (subject, cards) => ({ id: "t1", sourceSubject: subject, flashcards: [{ id: "d1", title: "d", cards, createdAt: "2026-01-01T00:00:00Z" }] });
+  const now = new Date("2026-01-01T00:00:00Z");
+  check("no data at all for the subject → null, not 0", subjectMastery([mkTask("Other", [])], [], "Chemistry", now) === null);
+  check("flashcards only (no milestones) → pure Leitner ratio", subjectMastery([mkTask("Chemistry", [{ front: "a", back: "b", review: { seen: 1, correct: 1, box: 2 } }, { front: "c", back: "d", review: { seen: 1, correct: 0, box: 1 } }])], [], "Chemistry", now) === 0.5);
+  check("milestones only (no flashcards) → pure milestone recency score, capped at 1", subjectMastery([mkTask("Chemistry", [])], [{ subject: "Chemistry", topic: "x", label: "x", achievedAt: now.toISOString() }, { subject: "Chemistry", topic: "y", label: "y", achievedAt: now.toISOString() }, { subject: "Chemistry", topic: "z", label: "z", achievedAt: now.toISOString() }], "Chemistry", now) === 1);
+  check("notNeeded cards are excluded from the Leitner ratio, same as every other scoring signal", subjectMastery([mkTask("Chemistry", [{ front: "a", back: "b", review: { box: 2 }, notNeeded: true }, { front: "c", back: "d", review: { box: 1 } }])], [], "Chemistry", now) === 0);
+  check("both signals present → a weighted composite strictly between the two individual scores", (() => {
+    const m = subjectMastery([mkTask("Chemistry", [{ front: "a", back: "b", review: { box: 2 } }])], [{ subject: "Chemistry", topic: "x", label: "x", achievedAt: new Date(now.getTime() - 200 * 86_400_000).toISOString() }], "Chemistry", now);
+    return typeof m === "number" && m > 0 && m <= 1;
+  })());
+  check("subject matching is case-insensitive (matches sourceSubject's own normalization elsewhere)", subjectMastery([mkTask("chemistry", [{ front: "a", back: "b", review: { box: 2 } }])], [], "Chemistry", now) === 1);
+}
+
+section("Track-grounded curriculum content — syllabusGroundingLine gated like examStyleLine (source pin)");
+{
+  const claudeSrcSyl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const sylFn = claudeSrcSyl.slice(claudeSrcSyl.indexOf("Direct request: tutoring/content generation"), claudeSrcSyl.indexOf("/** VARK, presentation only"));
+  check("syllabusGroundingLine is gated to IB/AP only, thin/none for bac/other (confirmed with the user)", /p\?\.track !== "ib" && p\?\.track !== "ap"\)\) return "";/.test(sylFn));
+  check("syllabusGroundingLine leans on the model's own knowledge, explicitly no hardcoded syllabus database", /No new syllabus database/.test(sylFn));
+  check("the tutor chat's dynamicContext calls syllabusGroundingLine alongside trackLine", /trackLine\(profile\) \+ syllabusGroundingLine\(profile, task\.sourceSubject\)/.test(claudeSrcSyl));
+}
+
+section("TOK-inspired Socratic additions — extend existing rules, never contradict the HINT LADDER fix (source pins)");
+{
+  const claudeSrcTok = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("CHALLENGE ASSUMPTIONS now rotates through TOK-style meta-questions (evidence/counter-evidence/strongest objection)", claudeSrcTok.includes("what's the strongest case AGAINST your") && claudeSrcTok.includes("own claim?"));
+  check("rule 4b occasionally asks the student to voice a counterclaim, not just justify their own step", claudeSrcTok.includes("ask them to voice the") && claudeSrcTok.includes("OPPOSING position"));
+  check("a new 10b prompts brief reflection after a problem resolves, same not-every-turn cadence as 4b", /10b\. CLOSE A RESOLVED PROBLEM WITH ONE REFLECTIVE QUESTION, SOMETIMES/.test(claudeSrcTok));
+  check("none of the new Socratic additions reintroduce the removed answer-release escape hatch", !/RELEASE THE ANSWER when ANY of these hold/.test(claudeSrcTok));
+}
+
+section("Tutor session mastery + objectives summary — surfaced without a fabricated 0% (source pins)");
+{
+  const serverSrcMastery = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const freeRoute = serverSrcMastery.slice(serverSrcMastery.indexOf('app.post("/api/study/free"'), serverSrcMastery.indexOf('app.post("/api/study/free"') + 2500);
+  check("mastery is computed only on session start/resume (/api/study/free), not on a hot polled route", /subjectMastery\(list, req\.session\.profile\?\.milestones, /.test(freeRoute));
+
+  const tutorSrcMastery = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  check("the Today's-focus panel only renders mastery when it's an actual number, never a fabricated 0%", /typeof task\.mastery === "number"/.test(tutorSrcMastery));
+  check("the Past-sessions list distinguishes 'no objectives were set' from an explicit 0\\/N", /typeof s\.objectivesTotal === "number"/.test(tutorSrcMastery));
+}
+
+section("hintDensity preference — new axis, distinct from learningStyle, never licenses a direct answer (source pins)");
+{
+  const serverSrcHint = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  check("the /api/profile/preference route accepts hintDensity with the right allow-list", /key === "hintDensity" && \["steps", "hints"\]\.includes\(value\)/.test(serverSrcHint));
+  // Real pre-existing bug, fixed alongside this feature: the UI (Settings AND onboarding) has always
+  // offered an "AP" track button, but this route's allow-list omitted "ap" — clicking it silently never
+  // saved. Caught while wiring hintDensity next to it in the same preference route.
+  check("the track preference route now accepts 'ap' (UI has always offered an AP button; this route silently dropped it before)", /key === "track" && \["ib", "ap", "bac", "other"\]\.includes\(value\)/.test(serverSrcHint));
+
+  const typesSrcHint = readFileSync(new URL("../shared/types.ts", import.meta.url), "utf8");
+  check("Profile.hintDensity is sanitized through the same allow-list as the write route", /hintDensity: \["steps", "hints"\]\.includes\(p\?\.hintDensity\) \? p\.hintDensity : undefined,/.test(typesSrcHint));
+
+  const claudeSrcHint = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const hintFn = claudeSrcHint.slice(claudeSrcHint.indexOf("export function hintDensityLine"), claudeSrcHint.indexOf("// \"Stories tuned to her life\""));
+  check("hintDensityLine never mentions giving the direct answer — only pacing/step-size language", !/the answer\b/i.test(hintFn.replace(/never the direct answer|never the answer/gi, "")));
+  check("hintDensityLine explicitly says the direct answer is still never given, under either setting", /Still never the direct answer/.test(hintFn) || /still never the\s*direct answer/.test(hintFn));
+  check("chatAboutTask's dynamicContext includes hintDensityLine", /learningStyleLine\(profile\) \+ hintDensityLine\(profile\)/.test(claudeSrcHint));
+
+  const appSrcHint = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  check("Settings has a hint-density toggle row, distinct from the learningStyle VARK field", /saveHintDensity\("steps"\)/.test(appSrcHint) && /saveHintDensity\("hints"\)/.test(appSrcHint));
+}
+
+section("Tutor reply length — tightened the existing SHORT REPLIES trigger (source pin)");
+{
+  const claudeSrcLen = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("the SHORT REPLIES rule's trigger is tightened to match its own 1-3 sentence target (was a looser 5-sentence trigger)", claudeSrcLen.includes("if you find yourself writing more than 3") && claudeSrcLen.includes("sentences, stop"));
+  check("the existing PRIMER_CLOSING_REMINDER LENGTH check is untouched (still reinforces the same 1-3 sentence rule)", claudeSrcLen.includes("this genuinely 1-3 sentences?"));
+}
+
+section("wantsArtifactTools — latency fix: narrow the tool list only on a clearly short/conversational turn");
+{
+  check("a clear flashcard request keeps the artifact tools", wantsArtifactTools("tu peux me faire des flashcards sur ça ?", []) === true);
+  check("a quiz request (English) keeps the artifact tools", wantsArtifactTools("can you quiz me on this chapter", []) === true);
+  check("short small talk with no keyword drops the artifact tools", wantsArtifactTools("ok merci", []) === false);
+  check("a bare acknowledgement drops the artifact tools", wantsArtifactTools("got it", []) === false);
+  check("a short message that's still a QUESTION keeps the artifact tools (biased toward inclusion)", wantsArtifactTools("et après ?", []) === true);
+  check("a longer conversational message with no keyword still keeps the artifact tools (only ≤6 words drops)", wantsArtifactTools("yeah that makes sense I think I understand it now", []) === true);
+  check("an artifact keyword in RECENT HISTORY (not just the current message) still keeps the tools", wantsArtifactTools("ok", [{ role: "user", text: "can you make me a quiz on this" }]) === true);
+  check("empty message doesn't crash and stays on the safe/included side", wantsArtifactTools("", []) === true);
+}
+
+section("Tool-narrowing latency fix — core tutoring tools are NEVER dropped by the heuristic (source pin)");
+{
+  const claudeSrcTools = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const toolsBlock = claudeSrcTools.slice(claudeSrcTools.indexOf("const includeArtifactTools = wantsArtifactTools"), claudeSrcTools.indexOf("const empty = (): ChatResult"));
+  for (const core of ["WRITE_TO_BOARD_TOOL", "DRAW_ON_BOARD_TOOL", "SET_OBJECTIVES_TOOL", "WEB_SEARCH_TOOL", "CREATE_CALC_TOOL", "CREATE_PROBLEM_TOOL"]) {
+    check(`${core} is listed unconditionally (not inside the includeArtifactTools ternary) in both branches`, (toolsBlock.match(new RegExp(core, "g")) || []).length === 2 && !new RegExp(`includeArtifactTools \\? \\[[^\\]]*${core}`).test(toolsBlock));
+  }
+  check("only the 4 artifact/remember tools are gated behind includeArtifactTools", /includeArtifactTools \? \[CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL\]/.test(toolsBlock) && /includeArtifactTools \? \[REMEMBER_TOOL\]/.test(toolsBlock));
+}
+
+section("useThinkingWord — time-banded wording so a long wait stops implying 'almost done' (source pin)");
+{
+  // Not unit-testable as a plain function (it's a stateful React hook, setInterval/useEffect-based) — this
+  // codebase's test suite has no React test renderer, so pin the band structure/thresholds in source
+  // instead, same as other UI-behavior checks in this file.
+  const uiSrcThink = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8");
+  const hookFn = uiSrcThink.slice(uiSrcThink.indexOf("export function useThinkingWord"), uiSrcThink.indexOf("export function useThinkingWord") + 1200);
+  check("three word bands exist: THINKING_WORDS (fresh), STILL_WORKING_WORDS, TAKING_LONGER_WORDS", /STILL_WORKING_WORDS/.test(uiSrcThink) && /TAKING_LONGER_WORDS/.test(uiSrcThink));
+  check("elapsed time (not just a flat cycling interval) determines which band is shown", /elapsedMs >= STILL_WORKING_BAND_MS/.test(hookFn) && /elapsedMs >= THINKING_BAND_MS/.test(hookFn));
+  check("elapsed time resets to 0 when the hook goes inactive, so a NEW turn starts fresh in the first band", /if \(!active\) \{ setElapsedMs\(0\); return; \}/.test(hookFn));
+  check("returns null while inactive, same as before (callers rely on this)", /if \(!active\) return null;/.test(hookFn));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

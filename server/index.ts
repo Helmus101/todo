@@ -10,7 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, FocusSession } from "../shared/types.ts";
-import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY } from "../shared/types.ts";
+import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY, subjectMastery } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken, getAdminMetrics } from "./store.ts";
@@ -2424,7 +2424,10 @@ app.post("/api/study/free", requireAuth, rateLimit(20, 60_000), ah(async (req, r
     // header comment; a remount is just as often a route re-render or a StrictMode double-invoke as an
     // explicit "new session" request).
     const active = list.find((t) => t.source === "freestudy" && !isHandled(t.status));
-    if (active) { res.json(list); return; }
+    if (active) {
+      if (active.sourceSubject) active.mastery = subjectMastery(list, req.session.profile?.milestones, active.sourceSubject);
+      res.json(list); return;
+    }
   }
   
   // Fresh mode: only dismiss sessions for the specified subject, or all if no subject
@@ -2447,6 +2450,7 @@ app.post("/api/study/free", requireAuth, rateLimit(20, 60_000), ah(async (req, r
     urgency: 0, importance: 0, quadrant: e.quadrant, score: e.score, status: "needs_review",
     createdAt: now, anchorKey: `freestudy:${id}`,
     sourceSubject: subject,
+    mastery: subject ? subjectMastery(list, req.session.profile?.milestones, subject) : undefined,
   };
   list.push(t);
   req.session.tasks = list;
@@ -3082,12 +3086,17 @@ app.post("/api/profile/preference", requireAuth, async (req, res) => {
     } else if (key === "language" && (value === "fr" || value === "en")) {
       p.language = value;
       p.languageSetAt = new Date().toISOString();
-    } else if (key === "track" && ["ib", "bac", "other"].includes(value)) {
+    } else if (key === "track" && ["ib", "ap", "bac", "other"].includes(value)) {
+      // "ap" was missing from this allow-list even though the type (shared/types.ts), the Settings AND
+      // onboarding UI both offer an "AP" button, and examStyleLine/syllabusGroundingLine (claude.ts) both
+      // gate real content on p.track === "ap" — a student clicking "AP" silently failed to ever save it.
       p.track = value; p.preferencesUpdatedAt = new Date().toISOString();
     } else if (key === "learningStyle" && ["visual", "auditory", "reading", "kinesthetic", "mixed"].includes(value)) {
       // Fully wired for a while on the READ side (learningStyleLine, claude.ts) but had no write path at
       // all until now — a student could never actually set it, so the field sat permanently empty.
       p.learningStyle = value; p.preferencesUpdatedAt = new Date().toISOString();
+    } else if (key === "hintDensity" && ["steps", "hints"].includes(value)) {
+      p.hintDensity = value; p.preferencesUpdatedAt = new Date().toISOString();
     } else if (key === "yearLevel" && typeof value === "string" && value.trim()) {
       p.yearLevel = value.trim().slice(0, 40); p.preferencesUpdatedAt = new Date().toISOString();
     } else {

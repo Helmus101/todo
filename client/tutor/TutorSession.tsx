@@ -145,6 +145,8 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
       chat,
       summary,
       subject: task.sourceSubject,
+      objectivesCompleted: task.objectives?.length ? task.objectives.filter((o) => o.done).length : undefined,
+      objectivesTotal: task.objectives?.length || undefined,
     };
     saveTutorSession(sessionSummary, userId);
     setPastSessions(getTutorSessions(userId));
@@ -445,7 +447,14 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
                       <div className="tutor-history-summary">
                         <div className="tutor-history-summary-heading">
                           <span>{L("Ce qu'on a travaillé", "What we worked on")}</span>
-                          <span className="tutor-history-message-count">{s.messageCount} {L("messages", "messages")}</span>
+                          <span className="tutor-history-message-count">
+                            {s.messageCount} {L("messages", "messages")}
+                            {/* Undefined (no objectives were ever set this session) vs. "0/3" are different
+                                facts — only render when objectivesTotal is actually a number. */}
+                            {typeof s.objectivesTotal === "number" && (
+                              <> · {s.objectivesCompleted ?? 0}/{s.objectivesTotal} {L("objectifs", "objectives")}</>
+                            )}
+                          </span>
                         </div>
                         <div className="tutor-history-topic">
                           {s.subject && <span className="tutor-history-subject-pill">{s.subject}</span>}
@@ -599,7 +608,16 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
         {!desmosOpen && !whiteboardOpen && !!task.objectives?.length && (
           <div className="tutor-objectives" aria-label={L("Objectifs de la séance", "Today's focus")}>
             <div className="tutor-objectives-head">
-              <span>{L("Objectifs du jour", "Today's focus")}</span>
+              <span>
+                {L("Objectifs du jour", "Today's focus")}
+                {/* Subject mastery — null means "no data yet" (never a fabricated 0%), so it's simply
+                    omitted rather than shown as a misleading score for a subject just started. */}
+                {typeof task.mastery === "number" && (
+                  <span className="tutor-objectives-mastery">
+                    {" "}· {L("maîtrise", "mastery")} {Math.round(task.mastery * 100)}%
+                  </span>
+                )}
+              </span>
               <span className="tutor-objectives-progress">
                 {task.objectives.filter((o) => o.done).length}/{task.objectives.length}
               </span>
