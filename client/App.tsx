@@ -667,7 +667,15 @@ export function App() {
   // serialize budget/sweep behind the task-list fetch for no reason, adding its full round-trip to time-
   // to-first-paint of unrelated UI (the budget banner, the sweep indicator). Fire all three at once.
   useEffect(() => {
-    if (!connected) return;
+    // A student who skipped connecting Google/Pronote (skippedConnect, see the ConnectCard gate below)
+    // stays permanently `!connected` by design — Otto still works for them via manually-added tasks and
+    // tutoring. But `loaded` (which controls the dashboard's loading skeleton) was ONLY ever flipped true
+    // inside syncTasks/sweepIfDue/generate, all of which this effect is the sole auto-trigger for — so a
+    // skip-connect student with zero manually-added tasks never fired any of them, and the "Pulling up your
+    // day…" skeleton (TaskSkeleton, gated on `live.length === 0 && (busy || !loaded)`) spun forever with no
+    // request ever in flight to resolve it. Reported live as "stuck on pulling up your day with no tasks."
+    // There's nothing to sync from the server for a never-connected account, so just flip loaded directly.
+    if (!connected) { setLoaded(true); return; }
     void syncTasks(); void loadBudget(); void sweepIfDue();
   }, [connected, status?.aiReady, syncTasks, sweepIfDue, loadBudget]);
 

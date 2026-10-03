@@ -3681,5 +3681,16 @@ section("Focus/visibility resync removed — only the Pronote keepalive stays on
   check("the focus/visibility handler still touches Pronote's session to keep a connected token alive", /if \(status\?\.pronoteConnected\) void api\.pronoteTouch\(\);/.test(onFn));
 }
 
+section("'Pulling up your day' no longer spins forever for a skip-connect account with zero tasks (source pin)");
+{
+  // Reported live: a student who skipped connecting Google/Pronote AND has zero manually-added tasks saw
+  // the loading skeleton forever. Root cause: `loaded` was only ever flipped true inside syncTasks/
+  // sweepIfDue/generate, and the ONLY effect that auto-calls those is gated on `connected` — which is
+  // permanently false for a skip-connect account, so `loaded` never had a chance to become true.
+  const appSrcLoaded = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const loadedEffect = appSrcLoaded.slice(appSrcLoaded.indexOf("useEffect(() => {\n    // A student who skipped connecting"), appSrcLoaded.indexOf("}, [connected, status?.aiReady, syncTasks, sweepIfDue, loadBudget]);") + 1);
+  check("the connected-gated sync effect flips `loaded` directly when the account never connected anything, instead of leaving it permanently false", /if \(!connected\) \{ setLoaded\(true\); return; \}/.test(loadedEffect));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
