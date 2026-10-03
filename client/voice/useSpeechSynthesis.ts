@@ -64,7 +64,17 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
   const [lastDiagnostic, setLastDiagnostic] = useState<string | null>(null);
   const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
   const queueRef = useRef<string[]>([]);
-  const cancelledRef = useRef(false);
+  // A generation counter, not a shared boolean (the OLD cancelledRef design) — the boolean had a real,
+  // confirmed race: a NEW speak() call reset it to false (to un-cancel for the new session) BEFORE the
+  // PREVIOUS utterance's async onend/onerror had actually fired. That stale handler then read the just-
+  // reset "false" and called speakNext() itself, racing the new session's own deferred speakNext() call
+  // and consuming/corrupting the new queue — reported live as "sometimes TTS stops working," specifically
+  // whenever a new reply arrived while the previous one was still mid-queue (the common case, not an edge
+  // case). Each speak()/cancel() call now bumps this counter and captures the value at call time; every
+  // handler (onend/onerror/watchdog) closes over that captured value and checks it against the CURRENT
+  // counter before acting — a stale handler from a superseded session can never affect the new one, no
+  // matter when its async callback actually fires.
+  const genRef = useRef(0);
 
   useEffect(() => {
     if (!supported) return;
@@ -97,7 +107,8 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
       .sort((a, b) => b.s - a.s)[0]?.v;
   }, [lang]);
 
-  const speakNext = useCallback(() => {
+  const speakNext = useCallback((gen: number) => {
+    if (genRef.current !== gen) return; // superseded by a newer speak()/cancel() — never act on a stale session
     const next = queueRef.current.shift();
     if (!next) { setSpeaking(false); return; }
     const utter = new SpeechSynthesisUtterance(next);
@@ -128,15 +139,15 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
     // flight — keep waiting, not skip. Only advance when the engine agrees nothing is happening at all.
     let started = false;
     const checkWatchdog = () => {
-      if (started || cancelledRef.current) return;
+      if (started || genRef.current !== gen) return;
       if (window.speechSynthesis.speaking || window.speechSynthesis.pending) { watchdog = setTimeout(checkWatchdog, 400); return; }
       console.warn("[tts] browser speechSynthesis silently dropped a chunk, skipping it:", next.slice(0, 60));
-      speakNext();
+      speakNext(gen);
     };
     let watchdog = setTimeout(checkWatchdog, 400);
     utter.onstart = () => { started = true; clearTimeout(watchdog); };
-    utter.onend = () => { started = true; clearTimeout(watchdog); if (!cancelledRef.current) speakNext(); };
-    utter.onerror = () => { started = true; clearTimeout(watchdog); if (!cancelledRef.current) speakNext(); };
+    utter.onend = () => { started = true; clearTimeout(watchdog); if (genRef.current === gen) speakNext(gen); };
+    utter.onerror = () => { started = true; clearTimeout(watchdog); if (genRef.current === gen) speakNext(gen); };
     window.speechSynthesis.speak(utter);
   }, [lang, pickVoice]);
 
@@ -150,16 +161,23 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
       voicesRef.current = window.speechSynthesis.getVoices();
       if (!voicesRef.current.length) { console.warn("[tts] the browser reports ZERO installed voices — speech may silently do nothing."); setLastDiagnostic("Browser speech is being used, but this device reports no installed voices."); }
     }
+    // Devtools-only, not setLastDiagnostic: this fires on every single NORMAL successful speak, not just a
+    // fallback/failure — surfacing it as a user-visible note (sm-ai-tts-note's whole point is explaining a
+    // failure/fallback, see its own comment at the render site) turned the happy path into constant noise
+    // ("Using this browser's built-in speech...") instead of only speaking up when something's actually
+    // wrong. Reported live as unwanted.
     console.info(`[tts] speaking via browser speechSynthesis (${sentences.length} chunk(s), ${voicesRef.current.length} voices available)`);
-    if (voicesRef.current.length) setLastDiagnostic(`Using this browser's built-in speech (${voicesRef.current.length} voices available).`);
-    cancelledRef.current = false;
+    // Bump FIRST, before cancel() — this is what makes any in-flight PREVIOUS utterance's eventual async
+    // onend/onerror a no-op (it captured the old generation number, which no longer matches genRef.current)
+    // instead of racing this new session's own speakNext() call. See genRef's own doc comment above.
+    const gen = ++genRef.current;
     window.speechSynthesis.cancel();
     queueRef.current = sentences;
     setSpeaking(true);
     // A speak() landing in the same tick as the cancel() above is another known Chrome race — the engine is
     // still tearing down the previous (possibly empty) queue and drops the new speak() silently. A tiny
     // deferral lets that teardown actually finish first.
-    setTimeout(() => { if (!cancelledRef.current) speakNext(); }, 30);
+    setTimeout(() => { if (genRef.current === gen) speakNext(gen); }, 30);
   }, [supported, speakNext]);
 
   const speak = useCallback((text: string) => {
@@ -171,7 +189,7 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
 
   const cancel = useCallback(() => {
     if (!supported) return;
-    cancelledRef.current = true;
+    genRef.current++; // invalidate any in-flight session so its stale handlers become no-ops
     queueRef.current = [];
     window.speechSynthesis.cancel();
     setSpeaking(false);

@@ -3071,6 +3071,18 @@ section("practiceAnswerMatches — loose-but-not-fuzzy free-response checking");
   check("a negative fraction is parsed correctly", practiceAnswerMatches("-7/2", "-3.5"));
   check("a genuinely wrong fraction still fails", !practiceAnswerMatches("7/2", "3"));
   check("a fraction answer with a unit still matches via the leading-number fallback", practiceAnswerMatches("7/2 m", "3.5 m"));
+  // Reported live: the prompt tells students they may type the plain-text word "pi" for π, but the matcher
+  // had zero notion of π in any form — every pi-valued trig/radian answer was marked wrong no matter how
+  // it was typed. The reported example: "5pi/6" vs a stored correct answer of "5π/6".
+  check("the word 'pi' matches the symbol 'π' written the same way (student types the plain-text word)", practiceAnswerMatches("5pi/6", "5π/6"));
+  check("the symbol 'π' matches the word 'pi' the other way around too", practiceAnswerMatches("5π/6", "5pi/6"));
+  check("bare 'pi' matches the numeric value of π", practiceAnswerMatches("pi", String(Math.PI)));
+  check("'2pi' (coefficient, no space) matches 2π", practiceAnswerMatches("2pi", String(2 * Math.PI)));
+  check("'pi/4' (no coefficient) matches π/4", practiceAnswerMatches("pi/4", String(Math.PI / 4)));
+  check("'-pi/6' (negative, no coefficient digit) matches -π/6", practiceAnswerMatches("-pi/6", String(-Math.PI / 6)));
+  check("a pi-valued answer with a unicode minus sign still matches", practiceAnswerMatches("−pi/6", String(-Math.PI / 6)));
+  check("a genuinely wrong pi-valued answer still fails", !practiceAnswerMatches("pi/6", "5π/6"));
+  check("'pi' alone is never confused with the unrelated word 'pit' or similar", !practiceAnswerMatches("pit", String(Math.PI)));
 }
 
 section("looksLikeStem / makePracticeProblem — daily practice-problem generation gate + validation");
@@ -3820,6 +3832,32 @@ section("useThinkingWord — time-banded wording so a long wait stops implying '
   check("elapsed time (not just a flat cycling interval) determines which band is shown", /elapsedMs >= STILL_WORKING_BAND_MS/.test(hookFn) && /elapsedMs >= THINKING_BAND_MS/.test(hookFn));
   check("elapsed time resets to 0 when the hook goes inactive, so a NEW turn starts fresh in the first band", /if \(!active\) \{ setElapsedMs\(0\); return; \}/.test(hookFn));
   check("returns null while inactive, same as before (callers rely on this)", /if \(!active\) return null;/.test(hookFn));
+}
+
+section("TTS diagnostic no longer shows noise on every normal successful speak (source pin)");
+{
+  // Reported live as unwanted: "Using this browser's built-in speech (N voices available)" fired via
+  // setLastDiagnostic on EVERY successful speak, not just a failure/fallback — sm-ai-tts-note's whole
+  // point is explaining a failure, so this turned the happy path into constant visible noise.
+  const ttsSrcNoise = readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8");
+  check("the normal-success path no longer calls setLastDiagnostic with the built-in-speech note", !/setLastDiagnostic\(`Using this browser's built-in speech/.test(ttsSrcNoise));
+  check("real failure diagnostics (no speechSynthesis, no voices, nothing speakable) are still set", /setLastDiagnostic\("This browser has no speech synthesis at all\."\)/.test(ttsSrcNoise) && /setLastDiagnostic\("Browser speech is being used, but this device reports no installed voices\."\)/.test(ttsSrcNoise));
+}
+
+section("TTS 'sometimes stops working' — generation-counter race fix (source pin)");
+{
+  // Reported live: intermittent (not constant) TTS silence/skipped speech. Root cause confirmed: the old
+  // cancelledRef (a single shared boolean) was reset to false synchronously at the START of every new
+  // speak() call, BEFORE the previous utterance's async onend/onerror had necessarily fired — that stale
+  // handler then read the just-reset "false" and called speakNext() itself, racing the new session's own
+  // deferred speakNext() and corrupting/skipping the new queue. Fires specifically when a new reply
+  // arrives while the previous one is still mid-queue — the common case, explaining "sometimes."
+  const ttsSrcRace = readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8");
+  check("the old single shared cancelledRef boolean is gone", !/cancelledRef/.test(ttsSrcRace.replace(/\/\/.*old cancelledRef.*/gi, "")));
+  check("a generation counter exists instead, bumped on every new speak() and cancel()", /const genRef = useRef\(0\);/.test(ttsSrcRace) && /const gen = \+\+genRef\.current;/.test(ttsSrcRace) && /genRef\.current\+\+; \/\/ invalidate any in-flight session/.test(ttsSrcRace));
+  check("speakNext bails immediately if its captured generation has been superseded", /const speakNext = useCallback\(\(gen: number\) => \{\s*\n\s*if \(genRef\.current !== gen\) return;/.test(ttsSrcRace));
+  check("the watchdog and onend/onerror handlers all check the SAME captured generation, not a shared mutable flag", /if \(started \|\| genRef\.current !== gen\) return;/.test(ttsSrcRace) && (ttsSrcRace.match(/genRef\.current === gen\) speakNext\(gen\)/g) || []).length >= 2);
+  check("the deferred post-cancel speakNext call also checks the captured generation before firing", /setTimeout\(\(\) => \{ if \(genRef\.current === gen\) speakNext\(gen\); \}, 30\);/.test(ttsSrcRace));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

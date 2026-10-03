@@ -1630,10 +1630,35 @@ export function validateThemeTokens(raw: unknown): ThemeTokens {
 function normalizeMinus(s: string): string {
   return s.replace(/[−‐-―－]/g, "-");
 }
+// π support: makePracticeProblem/generateDailyPracticeProblem's own prompt (server/claude.ts) explicitly
+// tells the student they may type the plain-text word "pi" for π — but neither Number() nor the plain
+// fraction regex below has any notion of π, so EVERY pi-valued answer (any trig/radian problem, e.g.
+// "5π/6") was silently marked wrong no matter how the student wrote it. Reported live. Handled as its own
+// pattern, not folded into the a/b fraction regex above, since "5pi/6" is coefficient·π÷denominator — a
+// different shape than a plain "a/b" fraction (the numerator here isn't itself a number). Covers the forms
+// the AI's own prompt + a student's natural typing would actually produce: "pi", "-pi", "2pi", "5pi/6",
+// "pi/4" — and the literal symbol "π" (normalized to the word "pi" first, so one code path handles both).
+function parsePi(s: string): number {
+  const t = s.replace(/π/g, "pi");
+  const coefOf = (raw: string): number => (raw === "" ? 1 : raw === "-" ? -1 : Number(raw));
+  const overDen = t.match(/^(-?\d*(?:\.\d+)?)\s*pi\s*\/\s*(-?\d+(?:\.\d+)?)$/i);
+  if (overDen) {
+    const coef = coefOf(overDen[1]), den = Number(overDen[2]);
+    if (Number.isFinite(coef) && Number.isFinite(den) && den !== 0) return (coef * Math.PI) / den;
+  }
+  const bare = t.match(/^(-?\d*(?:\.\d+)?)\s*pi$/i);
+  if (bare) {
+    const coef = coefOf(bare[1]);
+    if (Number.isFinite(coef)) return coef * Math.PI;
+  }
+  return NaN;
+}
 function parseNumericOrFraction(s: string): number {
   const cleaned = normalizeMinus(s).replace(/,/g, "");
   const direct = Number(cleaned);
   if (Number.isFinite(direct)) return direct;
+  const pi = parsePi(cleaned);
+  if (Number.isFinite(pi)) return pi;
   const frac = cleaned.match(/^(-?\d+(?:\.\d+)?)\s*\/\s*(-?\d+(?:\.\d+)?)$/);
   if (frac) {
     const num = Number(frac[1]), den = Number(frac[2]);
