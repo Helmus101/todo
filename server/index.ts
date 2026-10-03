@@ -2678,7 +2678,14 @@ app.post("/api/tasks/:id/step/:index/expand", requireAuth, rateLimit(20, 60_000)
     if (substeps.length) {
       step.substeps = substeps;
       task.updatedAt = new Date().toISOString();
-      await commit(req);
+      // awaitCloud, NOT the default fire-and-forget: this costs a paid AI call and is rate-limited to
+      // 20/min — exactly the low-frequency/high-value profile commit() documents for awaiting the cloud
+      // write. The detached default made the substeps serverless-fragile: the response carried them
+      // (session copy), but on Vercel the background cloud write could freeze mid-flight and never land —
+      // then the cron drain (cloud-only, no session) rebuilt the task WITHOUT the substeps and committed
+      // it with a NEWER updatedAt, legitimately overwriting the client seconds later. Reported live as
+      // "breaking down a task shows the substeps for two seconds and then they hide".
+      await commit(req, { awaitCloud: true });
     }
     res.json(req.session.tasks || []);
   } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de découper cette étape — réessaie.", "Couldn't break this step down — try again.") }); }
@@ -2696,11 +2703,12 @@ app.post("/api/tasks/:id/step/:index/substep/:subIndex/done", requireAuth, rateL
   // success. Every sibling route (confirm/dismiss/step-done) already 404s on a missing target; this one
   // was missed.
   if (!task || !sub) { res.status(404).json({ error: M(req, "Sous-étape introuvable — elle a peut-être déjà changé ailleurs.", "Sub-step not found — it may have already changed elsewhere.") }); return; }
-  try {
-    sub.done = done;
-    task.updatedAt = new Date().toISOString();
-    await commit(req);
-    res.json(req.session.tasks || []);
+  try {      sub.done = done;
+      task.updatedAt = new Date().toISOString();
+      // awaitCloud — same substeps-vanish reasoning as the expand route above: a sub-step tick lost to a
+      // frozen background write would resurrect as UNdone on the next cloud-only rebuild.
+      await commit(req, { awaitCloud: true });
+      res.json(req.session.tasks || []);
   } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer cette sous-étape — réessaie.", "Couldn't save this sub-step — try again.") }); }
 });
 // Let Otto just answer an automatable sub-action (see expandStep's `automatable` classification) instead

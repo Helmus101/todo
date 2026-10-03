@@ -3257,6 +3257,7 @@ export async function regenerateStepsWithScaffolding(
           `5. Unrelated tasks become separate tasks, not steps\n` +
           `6. Each user step must directly move toward the Definition of Done\n` +
           `7. Generate the MINIMUM required user steps — not everything that could be done\n\n` +
+          LEARNING_SCIENCE_RULES + `\n` +
           `Return ONLY this JSON:\n` +
           `{\n` +
           `  "definitionOfDone": "concrete success criteria for this exact task",\n` +
@@ -5508,6 +5509,7 @@ export async function writeStepsFromContext(
           `ATTEMPT (retake, log mistakes, fix what was wrong, redo until clean) must come AFTER the step ` +
           `where that attempt happens, never before it (reported live: "log misses, then retake" was ` +
           `generated as step 1, before "sit a timed set" as step 2 — backwards, nothing to log yet)\n\n` +
+          LEARNING_SCIENCE_RULES + `\n` +
           `- Directly contribute to the Definition of Done for "${task.title}"\n` +
           `- Be something the student must do (not Otto)\n` +
           `- Be concrete and actionable (not "research X" or "find Y") UNLESS rule 9 above applies\n` +
@@ -5526,6 +5528,7 @@ export async function writeStepsFromContext(
           `5. Unrelated tasks become separate tasks, not steps\n` +
           `6. Each user step must directly move toward the Definition of Done\n` +
           `7. Generate the MINIMUM required user steps — not everything that could be done\n\n` +
+          LEARNING_SCIENCE_RULES + `\n` +
           `Return ONLY this JSON:\n` +
           `{\n` +
           `  "definitionOfDone": "concrete success criteria for this exact task",\n` +
@@ -5664,6 +5667,20 @@ export async function writeStepsFromContext(
  *  only (a "Détailler cette étape" button), never generated automatically — most steps are fine as-is,
  *  and forcing every step through this would bury the plan in sub-lists nobody asked for. Persisted on
  *  the step itself by the caller (server/index.ts), not returned as throwaway chat text. */
+// Evidence-based study-step shaping, injected into every prompt that generates or breaks down the
+// student's own steps (writeStepsFromContext's user steps + expandStep's substeps). Rooted in established
+// findings from learning science (testing effect, desirable difficulties, distributed practice,
+// interleaving) — the whole point of this app's "execution" half is that doing the tasks actually makes
+// the student LEARN, so the generated work must follow what research says produces learning rather than
+// what merely looks organized. Kept as ONE shared const so the three surfaces can't drift apart.
+const LEARNING_SCIENCE_RULES =
+  `LEARNING SCIENCE (shape the steps so they actually produce learning, not just organized busywork):\n` +
+  `a) ACTIVE RECALL over re-reading: prefer steps where the student PRODUCES something (write from memory, self-explain aloud, solve a timed set). If a step says "read X", pair it with what they must DO with X (summarize X from memory, answer N questions on X).\n` +
+  `b) 10-25 MINUTE CHUNKS: keep each step's minutes inside that band; something genuinely longer is either split into its natural parts or explicitly one long-haul session.\n` +
+  `c) CHECKABLE doneWhen: observable and countable ("8/10 on a timed set", "two paragraphs written from memory") — never "feel ready" or "understand X".\n` +
+  `d) SPACED RETRIEVAL: for memorization-heavy material (vocab, dates, formulas, verb conjugations), include ONE short re-test step ~1-3 days after the first pass (set its targetDate when the deadline allows).\n` +
+  `e) PRODUCTIVE STRUGGLE FIRST: the student's own attempt comes BEFORE consulting solutions or Otto's notes — Otto's artifacts (summaries, decks) exist to be tested against, not copied.\n`;
+
 export async function expandStep(
   task: { title: string; why: string; goal?: string; context?: string; sourceDetail?: string; sourceSubject?: string; steps?: TaskStep[] },
   step: { text: string },
@@ -5722,6 +5739,7 @@ export async function expandStep(
           `Otto's context names" beats "review the dates").\n` +
           `- NAME THE CONCRETE CUE when the context/source material gives you one — the actual page, document, ` +
           `deck, or site to open, not a generic "your notes"/"the material".\n\n` +
+          LEARNING_SCIENCE_RULES + `\n` +
           `ANCHOR IN THE TASK'S CONTEXT: the substeps must serve the DEFINITION OF DONE and use the CONTEXT ` +
           `and SOURCE MATERIAL above — ground every sub-action in what this specific task actually needs, ` +
           `not a generic breakdown of the step's verb. If the DEFINITION OF DONE names specific deliverables ` +

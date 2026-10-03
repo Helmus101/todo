@@ -1221,7 +1221,7 @@ export function PracticeProblemCard({ problem, taskId, onAnswered }: { problem: 
 // both at once. Only the TOP of the stack responds; closing it pops back to whichever modal was underneath.
 const modalStack: (() => void)[] = [];
 
-export function TaskModal({ onClose, children, nested, title }: { onClose: () => void; children: ReactNode; nested?: boolean; title?: string }) {
+export function TaskModal({ onClose, children, nested, title, wide }: { onClose: () => void; children: ReactNode; nested?: boolean; title?: string; wide?: boolean }) {
   // Closing used to unmount instantly (a hard cut, no exit motion) while opening got a full pop-in —
   // asymmetric and the one modal-close moment in the app that read as unpolished. Mirror the entrance:
   // play a quick close animation, THEN unmount. The animation itself is now a real `motion.div` spring
@@ -1334,7 +1334,7 @@ export function TaskModal({ onClose, children, nested, title }: { onClose: () =>
           quiz's own <h3>, or TaskFocus's <h2>) in whatever markup that component chooses, so there's no
           reliable element to point an id at from here — the caller passes the same text as a plain string
           instead. Falls back to a generic name so the dialog is never announced completely unlabelled. */}
-      <motion.div ref={panelRef} className={`task-modal ${nested ? "nested" : ""}`} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={title || L("Détails", "Details")} tabIndex={-1} {...panelMotion}>
+      <motion.div ref={panelRef} className={`task-modal ${nested ? "nested" : ""} ${wide ? "wide" : ""}`} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={title || L("Détails", "Details")} tabIndex={-1} {...panelMotion}>
         <button className={`task-modal-x ${nested ? "nested" : ""}`} onClick={doClose} aria-label={L("Fermer", "Close")}>✕</button>
         {children}
       </motion.div>

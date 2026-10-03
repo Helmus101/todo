@@ -524,6 +524,10 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
   // words before sending. Prefilled + focused, NOT auto-sent — they almost always want to add "je bloque
   // sur la partie b", and auto-sending would burn a paid call on text they didn't write themselves.
   const askAboutStep = (i: number, text: string) => {
+    // MUST open the popup too: the chat input lives inside the Ask Otto modal, so prefilling+focus with
+    // the popup closed was literally invisible (focus() on an unmounted ref = no-op) — reported live as
+    // "the help button doesn't work". Opening it makes the prefilled, step-scoped draft visible.
+    setOpenChat(true);
     setChatStep(i);
     setChatInput(L(`Aide-moi avec : ${text}`, `Help me with: ${text}`));
     chatInputRef.current?.focus();
@@ -575,7 +579,8 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
         {(task.nudgeLine || task.why) ? <p className="tf-why">{stripStrayMarkdown(task.nudgeLine || task.why)}</p> : null}
         {sourceAttributionLine(task, cardEn) ? <p className="card-source-attribution">{sourceAttributionLine(task, cardEn)}</p> : null}
         <div className="tf-meta">
-          {task.taskType ? <span className="chip chip-tasktype">{task.taskType.replace(/_/g, " ")}</span> : null}
+          {/* taskType deliberately NOT shown ("flashcards"/"practice_problem" read like internal debug
+              metadata, not anything a student chose) — the header keeps subject · date · quadrant · status. */}
           {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
           {taskDateLabel(task, L) ? <span className={`when ${(deadlineEpoch(task.when) - Date.now()) / 86_400_000 <= 3 ? "when-soon" : ""}`}>{taskDateLabel(task, L)}</span> : null}
           {!isDone ? <span className={`card-quadrant card-quadrant-${task.quadrant}`}>{quadrantLabel(task.quadrant, cardEn)}</span> : null}
@@ -656,7 +661,7 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
             open={openPanel === "steps"} onToggle={() => togglePanel("steps")}>
             <StepList task={task} steps={steps} decided={decided} setDecided={setDecided}
               onStepDone={markStepDone} onUndo={undoStep}
-              onAsk={askAboutStep} onChange={onChange} onTask={onTask} onAnswer={answerStep} answering={answering} />
+              onAsk={askAboutStep} onTask={onTask} onAnswer={answerStep} answering={answering} />
           </Disclosure>
         ) : null}
       </div>
@@ -673,7 +678,7 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
       ) : null}
 
       {openChat ? (
-        <TaskModal onClose={() => setOpenChat(false)} nested title={L("Demander à Otto", "Ask Otto")}>
+        <TaskModal onClose={() => setOpenChat(false)} nested wide title={L("Demander à Otto", "Ask Otto")}>
           <TaskChat
             task={task} input={chatInput} setInput={setChatInput} sending={chatSending} error={chatError}
             pendingMsg={pendingMsg} slow={chatSlow} verySlow={chatVerySlow} onSend={sendChat}
@@ -982,19 +987,30 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
 
 /* ─────────────────────────────── panels ─────────────────────────────── */
 
-function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk, onChange, onTask, onAnswer, answering }: {
+function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk, onTask, onAnswer, answering }: {
   task: WebTask; steps: TaskStep[];
   decided: Record<number, string>; setDecided: Dispatch<SetStateAction<Record<number, string>>>;
   onStepDone: (i: number) => void; onUndo: (i: number) => void; onAsk: (i: number, text: string) => void;
-  onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void;
+  onTask: (t: WebTask) => void;
   onAnswer: (i: number, answer: string) => void; answering: number | null;
 }) {
   const L = useLang();
   const notify = useNotify();
   const [expanding, setExpanding] = useState<number | null>(null);
+  // Both routes answer with the FULL server task list; we apply ONLY this task's entry, via onTask
+  // (merge-by-id + localMutations stamp) — never onChange(list), which is wired straight to setTasks and
+  // would wholesale-replace the dashboard with this response, letting a request that was already in
+  // flight BEFORE the expand (kick tick, poll) clobber the fresh substeps the moment it resolves. Same
+  // bug class the file documents at setStepDoneLocal: "MUST be onTask, never onChange" — expand/runSubstep
+  // were the last two call sites still doing it, reported live as "the breakdown shows for two seconds,
+  // then hides".
+  const applyTaskFromList = (list: WebTask[]) => {
+    const t = Array.isArray(list) ? list.find((x) => x.id === task.id) : undefined;
+    if (t) onTask(t);
+  };
   const expandStep = async (i: number) => {
     setExpanding(i);
-    try { onChange(await api.expandStep(task.id, i)); }
+    try { applyTaskFromList(await api.expandStep(task.id, i)); }
     catch (e: any) { notify(e?.message || L("Impossible de détailler cette étape.", "Couldn't break this step down."), "error"); }
     finally { setExpanding((cur) => (cur === i ? null : cur)); }
   };
@@ -1005,7 +1021,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
   const runSubstep = async (i: number, subIndex: number) => {
     const key = `${i}-${subIndex}`;
     setRunningSub(key);
-    try { onChange(await api.runSubstep(task.id, i, subIndex)); }
+    try { applyTaskFromList(await api.runSubstep(task.id, i, subIndex)); }
     catch (e: any) { notify(e?.message || L("Otto n'a pas réussi à répondre.", "Otto couldn't get an answer."), "error"); }
     finally { setRunningSub((cur) => (cur === key ? null : cur)); }
   };
@@ -1018,7 +1034,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
     // onTask merges by id — onChange([...]) here would replace the ENTIRE task list with this one task
     // (onChange is wired straight to App.tsx's setTasks, which takes it as a literal new array, not a patch).
     onTask({ ...task, steps: optimistic });
-    try { onChange(await api.substepDone(task.id, i, subIndex, done)); }
+    try { applyTaskFromList(await api.substepDone(task.id, i, subIndex, done)); }
     catch (e: any) {
       onTask(task); // revert the optimistic flip
       notify(e?.message || L("Impossible d'enregistrer cette sous-étape.", "Couldn't save this sub-step."), "error");
@@ -1033,7 +1049,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
     let res: WebTask[] | null = null;
     try {
       for (const i of idxs) if (steps[i].automatable) res = await api.stepDone(task.id, i, true, L("Ouvert ↗", "Opened ↗"));
-      if (res) onChange(res);
+      if (res) applyTaskFromList(res); // same merge-by-id rule as expand/runSubstep — never wholesale setTasks
     } catch (e: any) {
       // The tabs already opened (that part can't fail) — only the "mark done" half failed, so say so
       // without implying the tabs themselves didn't open.

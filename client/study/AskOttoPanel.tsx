@@ -24,13 +24,6 @@ interface AskOttoPanelProps {
   /** Optional overrides (Tutor Session) for the empty-state line and input placeholder. */
   emptyText?: string;
   placeholder?: string;
-  /** Tutor Session only — a spoken lesson is the whole premise of that surface (unlike a normal per-task
-   *  chat, which is text-first with voice as an opt-in extra), so it starts the session already listening
-   *  instead of making the student find and tap the mic toggle themselves. Applied once, on mount, via the
-   *  SAME toggle a manual tap would use — never forces it back on if the student explicitly turns it off.
-   *  Requested, not guaranteed: browsers with no SpeechRecognition (Firefox) stay text-first — voiceModeOn
-   *  is never force-enabled where there's no microphone support at all. */
-  startInVoiceMode?: boolean;
   /** Tutor Session only — reports the voice loop's state upward ({@link TutorSession}) so the BOARD pane
    *  (not just the chat's mic button) can show Listening…/Speaking…/Voice on. In a voice-first session the
    *  student's eyes are on the board, not the chat input — the state indicator has to live where they look. */
@@ -72,7 +65,7 @@ function arithmeticMismatches(text: string): { raw: string; lhs: string; claimed
 // other drawers, so the title bar/close/drag/resize handles all come from ArtifactCanvas's generic wrapper.
 export function AskOttoPanel({
   task, currentStep, input, setInput, sending, error, pendingMsg, onSend,
-  onOpenNote, onOpenDeck, onOpenQuiz, emptyText, placeholder, startInVoiceMode, onVoiceStateChange, bargeIn,
+  onOpenNote, onOpenDeck, onOpenQuiz, emptyText, placeholder, onVoiceStateChange, bargeIn,
 }: AskOttoPanelProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -83,20 +76,10 @@ export function AskOttoPanel({
   const speechLang = en ? "en-US" : "fr-FR";
   const synth = useSpeechSynthesis(speechLang);
   const [voiceModeOn, toggleVoiceMode] = useVoiceModePref();
-  // Applied once — a ref (not state) so it can never re-fire and fight a student who deliberately turns
-  // voice mode back off mid-session.
-  const autoVoiceAppliedRef = useRef(false);
-  const recogSupportedRef = useRef(false);
-  useEffect(() => {
-    // Only flip the pref when SpeechRecognition actually exists here — force-enabling voice mode on
-    // Firefox (no recognition support; VoiceControls hides itself) would leave the student in a state
-    // where Otto speaks but can never hear them, with no mic button to turn it off with.
-    if (startInVoiceMode && !voiceModeOn && !autoVoiceAppliedRef.current && recogSupportedRef.current) {
-      autoVoiceAppliedRef.current = true;
-      toggleVoiceMode();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [startInVoiceMode]);
+  // NO auto-enable, ever: voice mode (mic + auto-speak) starts OFF on every load and only an explicit tap
+  // on the mic button turns it on — see useVoiceModePref.ts's product-rule comment. A mount effect that
+  // flipped the pref on automatically used to live here; removed along with the persisted pref itself so
+  // no code path can open the microphone without the student tapping it.
   const L = useLang();
   // Fires per detected utterance while listening — ignore a stray recognition result that lands while a
   // previous message is still in flight rather than firing a second send on top of it.
@@ -144,9 +127,6 @@ export function AskOttoPanel({
     else if (!synth.speaking && wasSpeakingEchoRef.current) echoFilterRef.current.speechEnded();
     wasSpeakingEchoRef.current = synth.speaking;
   }, [synth.speaking, task]);
-  // Assigned only AFTER recog exists — the mount-time autoVoice effect above reads this ref (it must never
-  // touch recog directly: recog is declared below that effect, so a direct use would be a TDZ crash).
-  recogSupportedRef.current = recog.supported;
   // Report voice-loop state upward (board-pane pill in Tutor Session) on every change. Fired from an
   // effect, not inline in render, so a parent setState during this child's render never happens.
   useEffect(() => {

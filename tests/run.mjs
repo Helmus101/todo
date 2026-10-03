@@ -1607,6 +1607,13 @@ section("isLikelyEcho — textual echo discrimination for real barge-in (client/
   }
   check("watermark trimmer refuses short audio (a cut there would eat real speech)", trimFreeTTSWatermark(mkMp3Stream(100)) === null && trimFreeTTSWatermark(mkMp3Stream(207)) === null);
   check("watermark trimmer fail-opens on garbage input (serves original audio)", trimFreeTTSWatermark(Buffer.alloc(4096, 0x00)) === null);
+  // The mic is NEVER on by default: voice mode (always-listening + auto-speak) starts OFF on every page
+  // load and only an explicit tap on the mic button turns it on — no localStorage restore, no auto-enable
+  // prop. The pref used to persist ("otto-voice-mode"), so any reload silently re-opened the microphone
+  // without fresh consent.
+  const voiceModeSrc = readFileSync(new URL("../client/voice/useVoiceModePref.ts", import.meta.url), "utf8");
+  check("voice mode ALWAYS starts OFF on load (useState(false); nothing restored from storage)", /useState\(false\)/.test(voiceModeSrc) && !/getItem\(/.test(voiceModeSrc));
+  check("no auto-enable path exists (the startInVoiceMode mount effect is gone)", !/startInVoiceMode/.test(readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8")));
   // Client STT/TTS language wiring: every voice surface must pass fr-FR when the app is French.
   const panelSrc = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
   check("the tutor voice panel binds BOTH STT and TTS to the app language (fr-FR in French)", /speechLang = en \? "en-US" : "fr-FR"/.test(panelSrc) && /useSpeechSynthesis\(speechLang\)/.test(panelSrc) && /lang: speechLang/.test(panelSrc));
@@ -1841,6 +1848,39 @@ section("/api/study/free — resumes an active freestudy session by default, onl
   check("resumeActiveSession reads local chat/board/problems via getLocalThread (the real API), never guessed raw keys", /const local = getLocalThread\(pendingActiveSession\.id, userId\)/.test(tutorSrc) && !/otto-chat-\$\{/.test(tutorSrc) && !/otto-board-\$\{/.test(tutorSrc) && !/otto-problems-\$\{/.test(tutorSrc));
 }
 
+section("Task UX: breakdowns don't vanish, Help opens the chat, popup is bigger, steps follow learning science (source pins)");
+{
+  // Reported live: "breaking down a task shows the substeps for two seconds and then they hide". Two
+  // layers, both pinned here. SERVER: the expand route committed with the default fire-and-forget cloud
+  // write, which on Vercel serverless can freeze before landing — the cron drain (cloud-only) then
+  // rebuilt the task WITHOUT the substeps and committed it with a newer updatedAt, legitimately
+  // overwriting the client. CLIENT: expand/runSubstep applied the response via wholesale setTasks
+  // (onChange), the file's own documented anti-pattern, with no localMutations race stamp.
+  const serverSrc2 = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const expandStart = serverSrc2.indexOf('app.post("/api/tasks/:id/step/:index/expand"');
+  const expandBody = serverSrc2.slice(expandStart, expandStart + 2200);
+  check("expand route AWAITS the cloud write (substeps survive a serverless freeze + cron rebuild)", /await commit\(req, \{ awaitCloud: true \}\)/.test(expandBody));
+  const subDoneStart = serverSrc2.indexOf('app.post("/api/tasks/:id/step/:index/substep/:subIndex/done"');
+  const subDoneBody = serverSrc2.slice(subDoneStart, subDoneStart + 1200);
+  check("substep-done route awaits the cloud write too (a tick can't resurrect as undone)", /await commit\(req, \{ awaitCloud: true \}\)/.test(subDoneBody));
+  const taskCardSrc = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
+  const stepListBody = taskCardSrc.slice(taskCardSrc.indexOf("function StepList"), taskCardSrc.indexOf("function PreparedPanel"));
+  check("expand/runSubstep apply via merge-by-id onTask, never wholesale setTasks", /applyTaskFromList\(await api\.expandStep/.test(stepListBody) && /applyTaskFromList\(await api\.runSubstep/.test(stepListBody) && !/onChange\(await api\.expandStep/.test(stepListBody));
+  // Reported live: "the help button doesn't work" — askAboutStep prefilled+focused a chat input that
+  // lives inside the (closed) Ask Otto modal, so the tap was literally invisible.
+  check("tapping a step's Help OPENS the Ask Otto popup (with the step pre-referenced)", /const askAboutStep[\s\S]*?setOpenChat\(true\);/.test(taskCardSrc));
+  // Reported live: "make the chat popup bigger" — the Ask Otto popup opts into TaskModal's `wide` size.
+  const uiSrc = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8");
+  const stylesSrc = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
+  check("TaskModal supports `wide` and the Ask Otto popup uses it", /wide\?: boolean/.test(uiSrc) && uiSrc.includes('wide ? "wide" : ""') && /<TaskModal[\s\S]*?nested wide title=\{L\("Demander à Otto"/.test(taskCardSrc));
+  check("the wide popup actually gets a bigger CSS size", /\.task-modal\.wide \{/.test(stylesSrc) && /max-width: min\(760px, 94vw\)/.test(stylesSrc));
+  // Learning science in generation: the shared rules block must be wired into every prompt that
+  // generates or breaks down the student's own steps.
+  const claudeSrc = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const rulesCount = (claudeSrc.match(/LEARNING_SCIENCE_RULES/g) || []).length;
+  check("learning-science rules exist and are injected into ALL THREE generation prompts (plan + scaffold + substeps)", rulesCount >= 4 && /ACTIVE RECALL over re-reading/.test(claudeSrc) && /SPACED RETRIEVAL/.test(claudeSrc) && /PRODUCTIVE STRUGGLE FIRST/.test(claudeSrc));
+}
+
 section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto-on), and the board survives ending a session (source pins)");
 {
   const tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
@@ -1850,7 +1890,7 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   // voice-primary layout) still activates the moment they turn it on themselves.
   check("Tutor Session does NOT auto-enable voice (no startInVoiceMode prop, no wantVoice forcing)", !/startInVoiceMode=/.test(tutorSrc) && !/setWantVoice/.test(tutorSrc));
   const askOtto = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
-  check("startInVoiceMode (where a caller still passes it) is applied exactly once (a ref-gated effect, never fights a deliberate manual toggle-off)", /autoVoiceAppliedRef/.test(askOtto));
+  check("AskOttoPanel has NO voice auto-enable left (zero toggleVoiceMode() call sites — the button only passes the handler)", !/autoVoiceAppliedRef/.test(askOtto) && (askOtto.match(/toggleVoiceMode\(\)/g) || []).length === 0);
   // Direct request: "make sure when end tutor session board is saved and users can see what was worked on" —
   // ending used to only save a FLATTENED TEXT preview (boardEntries: string[]) of the board, losing any
   // diagram/equation structure; the real board is now saved too and reopenable.
@@ -1900,7 +1940,9 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   // second one's speechSynthesis.cancel() tears down the utterance the first just started. Silence.
   check("the FreeTTS→browser fallback is one-shot (onerror and a rejected play() can't both fire it)", /let fellBack = false;/.test(ttsSynthSrc) && /if \(fellBack \|\| generationRef\.current !== myGeneration\) return;/.test(ttsSynthSrc));
   check("every TTS failure path leaves a diagnostic the UI can show, not just silence", /lastDiagnostic/.test(ttsSynthSrc) && /setLastDiagnostic/.test(ttsSynthSrc));
-  check("voice auto-start is guarded on SpeechRecognition support (Firefox stays text-first)", /recogSupportedRef\.current/.test(askOttoSrc));
+  // Voice mode is tap-only now: with no auto-start anywhere, the old "auto-start guarded on SpeechRecognition
+  // support" concern (never force-enable Firefox, which has no recognizer) is moot by construction.
+  check("voice mode never auto-starts (tap-only everywhere — Firefox stays text-first by construction)", !/recogSupportedRef/.test(askOttoSrc) && !/autoVoiceAppliedRef/.test(askOttoSrc));
 }
 
 section("isPrivateOrReservedIp — SSRF guard for the student-supplied Pronote connect URL");

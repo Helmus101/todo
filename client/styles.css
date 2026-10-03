@@ -1147,6 +1147,18 @@ input:focus, textarea:focus {
   padding: 8px 20px 20px;
 }
 .task-modal-x.nested { top: 12px; right: 12px; }
+/* The Ask Otto chat popup: 480px was cramped for a conversation with markdown tables/artifact chips —
+   reported live as "make the chat popup bigger". Only surfaces that opt in via TaskModal's `wide` prop
+   (currently the task chat) grow; every other nested popup keeps its compact width. The height floor
+   gives the thread room to actually be readable instead of scrolling two lines at a time, still clamped
+   so it never overflows a short laptop screen. */
+.task-modal.wide {
+  max-width: min(760px, 94vw);
+  min-height: min(72vh, 620px);
+  display: flex;
+  flex-direction: column;
+}
+.task-modal.wide > :last-child { flex: 1; min-height: 0; }
 
 .note-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
 /* Audit log — what Otto actually did, so it's verifiable rather than just claimed. Kept to ink/bg-2 tones
