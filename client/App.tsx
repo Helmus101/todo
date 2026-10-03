@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useContext, useRef, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useState, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
 import type { WebTask, ConnectionStatus, Profile, TaskFlashcards, FocusSession } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight, sortWithinQuadrant, errorLogBySubject, milestonesBySubject } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
@@ -16,7 +16,6 @@ import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
 import { TutorSession } from "./tutor/TutorSession.tsx";
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
-import { useSpeechSynthesis } from "./voice/useSpeechSynthesis.ts";
 import { 
   LayoutDashboard,
   BookOpen,
@@ -2400,7 +2399,7 @@ function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebT
 
   return (
     <main className="list-wrap studylog-page">
-      <h1 className="list-head">{L("Journal d'apprentissage", "Study journal")}</h1>
+      <h1 className="list-head">{L("Journal d'apprentissage", "Journal")}</h1>
       <p className="dash-line">{L("Note ce que tu as appris aujourd'hui — Otto en fait des cartes de révision.", "Note what you learned today — Otto turns it into flashcards.")}</p>
 
       {/* Same .seg/.seg-btn segmented-control pattern as Pronote's Student/Parent picker — one visual
@@ -2733,7 +2732,6 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
             }} /><span className="switch-track" /></span>
           </label>
           <PreferencesFields profile={profile} onChanged={(p) => { setProfile(p); onChanged(); }} />
-          <SpeakerTestRow />
         </div>
       </section>
 
@@ -2777,36 +2775,6 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
 /** Pronote (French school portal) — no OAuth exists for it, so this is a credential form instead of a
  *  redirect link. The password is sent once to connect and never stored (see server/pronote.ts); only a
  *  rotating token comes back. Reads homework due dates into the to-do list — nothing is ever written back. */
-/** "Test the speaker" — plays one short line through the EXACT same path Otto's spoken replies use, and
- *  reports what actually happened. Added after several rounds of "the text-to-speech still doesn't work"
- *  that were impossible to act on: every distinct cause (the server's TTS key missing, a CSP blocking
- *  blob: audio, no installed system voices, the browser's autoplay policy) presents identically as
- *  silence, with nothing on screen to tell them apart. Now one tap says which one it is. */
-function SpeakerTestRow() {
-  const L = useLang();
-  const en = useContext(LangContext) === "en";
-  const synth = useSpeechSynthesis(en ? "en-US" : "fr-FR");
-  const [tested, setTested] = useState(false);
-  if (!synth.supported) return null;
-  return (
-    <div className="set-row">
-      <span className="set-text">
-        <b>{L("Tester le son", "Test the speaker")}</b>
-        <span className="settings-hint">
-          {tested && synth.lastDiagnostic
-            ? synth.lastDiagnostic
-            : L("Vérifie qu'Otto peut bien te parler à voix haute.", "Check that Otto can actually speak out loud.")}
-        </span>
-      </span>
-      <button type="button" className="btn xs ghost" disabled={synth.speaking} onClick={() => {
-        setTested(true);
-        synth.speak(L("Bonjour, c'est Otto. Si tu entends ceci, le son fonctionne.", "Hi, it's Otto. If you can hear this, the speaker works."));
-      }}>
-        {synth.speaking ? L("Lecture…", "Playing…") : L("Tester", "Test")}
-      </button>
-    </div>
-  );
-}
 
 function PronoteTile({ status: mainStatus, onStatusUpdate, onChanged }: { status?: ConnectionStatus | null; onStatusUpdate?: () => void; onChanged?: () => void } = {}) {
   const L = useLang();
@@ -3099,8 +3067,9 @@ function GoogleTiles({ onChanged, restricted = true }: { onChanged?: () => void;
 // that screen was dead code: unreachable, and the progress dots undercounted by one. Fixed by actually
 // advancing through it instead of deleting it; it's a better finish than exiting straight from step 4.
 const OB_STEPS = 6;
-/** Otto Lycée v2: onboarding is FIVE short steps — name → track+language → what Otto does → connect
- *  everything (Pronote + Google on ONE step) → one-screen feature tour with a direct start action. v1 ran 12 screens, most of
+/** Otto Lycée v2: onboarding is SIX short steps — name → track+language → what Otto does → connect
+ *  everything (Pronote + Google on ONE step) → one-screen feature tour with a direct start action → a final
+ *  personalized "you're all set" closing screen. v1 ran 12 screens, most of
  *  them full-page essays about one feature each (Study Mode, tutor, flashcards, automation); every extra
  *  screen is dropout for a lycéen who just wants to see the app. The per-feature detail those screens
  *  carried lives in each feature's own first-time hint instead (FirstTimeHint, client/ui.tsx), shown when
@@ -3820,7 +3789,7 @@ function ResearchPageBody() {
         <p>
           {L(
             "Chaque carte de révision qu'Otto crée vit dans une des cases d'un système Leitner : une carte que tu rates reste en case 1 et revient vite ; une carte que tu réussis avance d'une case et revient plus tard. Le but n'est pas de te faire revoir tout, tout le temps — c'est de faire réapparaître chaque carte juste avant le moment où tu l'aurais oubliée, ni trop tôt (perte de temps sur ce que tu sais déjà) ni trop tard (la carte a eu le temps de s'effacer). Le résumé hebdomadaire du Journal d'apprentissage utilise le même mécanisme : il pondère automatiquement vers ce que tu as le plus raté cette semaine, pas vers un mélange aléatoire.",
-            "Every flashcard Otto creates lives in one of several Leitner boxes: a card you get wrong stays in box 1 and comes back soon; a card you get right moves up a box and comes back later. The point isn't to make you review everything constantly — it's to resurface each card right before you would have forgotten it: not so early it wastes time on something you already know, not so late the card has already faded. The weekly Study Journal summary uses the exact same mechanism: it automatically weights toward whatever you got wrong most that week, not a random mix.",
+            "Every flashcard Otto creates lives in one of several Leitner boxes: a card you get wrong stays in box 1 and comes back soon; a card you get right moves up a box and comes back later. The point isn't to make you review everything constantly — it's to resurface each card right before you would have forgotten it: not so early it wastes time on something you already know, not so late the card has already faded. The weekly Journal summary uses the exact same mechanism: it automatically weights toward whatever you got wrong most that week, not a random mix.",
           )}
         </p>
 

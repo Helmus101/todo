@@ -1173,12 +1173,12 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
   // ── Phone block ───────────────────────────────────────────────────────────
   if (isPhone) {
     return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh", padding: "32px", textAlign: "center", backgroundColor: "#0f0f0f", color: "#e0e0e0" }}>
-        <h2 style={{ marginBottom: "12px", fontWeight: 600 }}>{language === "en" ? "Study Mode requires a larger screen" : "Le mode révision demande un écran plus grand"}</h2>
-        <p style={{ color: "#888", lineHeight: 1.6, maxWidth: "300px" }}>{language === "en"
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh", padding: "32px", textAlign: "center", backgroundColor: "var(--bg)", color: "var(--ink)" }}>
+        <h2 style={{ marginBottom: "12px", fontWeight: 600, fontFamily: "var(--display)", letterSpacing: "var(--tracking-tight)" }}>{language === "en" ? "Study Mode requires a larger screen" : "Le mode révision demande un écran plus grand"}</h2>
+        <p style={{ color: "var(--ink-2)", lineHeight: 1.6, maxWidth: "300px" }}>{language === "en"
           ? "Study Mode is designed for laptop and iPad. Continue using Otto on this device, and switch to a larger screen to start a study session."
           : "Le mode révision est conçu pour l'ordinateur et l'iPad. Continue d'utiliser Otto sur cet appareil, et passe à un écran plus grand pour lancer une session."}</p>
-        <button onClick={onExit} style={{ marginTop: "24px", padding: "12px 24px", borderRadius: "8px", border: "1px solid #333", background: "none", color: "#e0e0e0", cursor: "pointer" }}>{language === "en" ? "← Back to tasks" : "← Retour aux tâches"}</button>
+        <button onClick={onExit} style={{ marginTop: "24px", padding: "12px 24px", borderRadius: "var(--radius-sm)", border: "1px solid var(--line)", background: "none", color: "var(--ink)", cursor: "pointer" }}>{language === "en" ? "← Back to tasks" : "← Retour aux tâches"}</button>
       </div>
     );
   }
@@ -1261,9 +1261,10 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
       }}>
         {focusCamera.enabled && focusCamera.tracking.status === "ready" && (
           <div style={{
-            display: "flex", alignItems: "center", gap: "6px", padding: "4px 10px", borderRadius: "20px",
-            background: "rgba(0,0,0,0.5)", backdropFilter: "blur(8px)", fontSize: "12px", color: "#e0e0e0",
-            pointerEvents: "none",
+            display: "flex", alignItems: "center", gap: "6px", padding: "4px 10px", borderRadius: "var(--radius-pill)",
+            background: "var(--surface-glass)", border: "1px solid var(--line-glass)",
+            backdropFilter: "blur(var(--blur)) saturate(180%)", WebkitBackdropFilter: "blur(var(--blur)) saturate(180%)",
+            fontSize: "12px", color: "var(--ink)", pointerEvents: "none",
           }}>
             <span style={{ fontSize: "16px" }}>
               {focusCamera.tracking.concentration >= 70 ? "🎯" : focusCamera.tracking.concentration >= 40 ? "◐" : "○"}
@@ -1275,9 +1276,11 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
         <button
           onClick={() => focusCamera.enabled ? focusCamera.stopCamera() : void focusCamera.startCamera()}
           style={{
-            padding: "4px 10px", borderRadius: "20px", border: "1px solid rgba(255,255,255,0.15)",
-            background: focusCamera.enabled ? "rgba(80,200,120,0.2)" : "rgba(0,0,0,0.5)",
-            backdropFilter: "blur(8px)", fontSize: "12px", color: "#e0e0e0", cursor: "pointer",
+            padding: "4px 10px", borderRadius: "var(--radius-pill)",
+            border: focusCamera.enabled ? "1px solid var(--ok)" : "1px solid var(--line-glass)",
+            background: focusCamera.enabled ? "color-mix(in srgb, var(--ok) 15%, var(--surface-glass))" : "var(--surface-glass)",
+            backdropFilter: "blur(var(--blur)) saturate(180%)", WebkitBackdropFilter: "blur(var(--blur)) saturate(180%)",
+            fontSize: "12px", color: "var(--ink)", cursor: "pointer",
           }}
           title={language === "en" ? "Toggle focus tracking (webcam)" : "Suivi de concentration (caméra)"}
         >

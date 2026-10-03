@@ -6263,8 +6263,19 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 /* The board is the lesson's real document — give it the larger half even at rest (chat is the input
    surface, the board is what accumulates and matters); voice mode pushes the ratio further still. */
 .tutor-session { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 0.55fr) minmax(0, 1.45fr); gap: 20px; padding: 20px 24px; height: calc(100vh - 64px); box-sizing: border-box; }
-.tutor-chat, .tutor-board { display: flex; flex-direction: column; min-height: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
-.tutor-pane-title { padding: 12px 18px; font-weight: 600; border-bottom: 1px solid var(--line); }
+/* Glass-card treatment matching .settings-sec — these were the plainest-looking panes in the app (flat
+   border, no shadow) next to Settings' already-polished cards; same tokens, no new design language. */
+.tutor-chat, .tutor-board {
+  display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+  background: var(--surface-glass);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
+  backdrop-filter: blur(var(--blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(180%);
+  transition: border-color var(--duration-base) var(--ease-spring), box-shadow var(--duration-base) var(--ease-spring);
+}
+.tutor-pane-title { padding: 12px 18px; font-weight: 600; border-bottom: 1px solid var(--line-soft); }
 /* The one way back to Tasks now that Tutor hides the app's sidebar/topbar entirely (reported live: Tutor
    should be a full-screen, focused surface) — present on every one of TutorSession's screens. */
 .tutor-back-btn { flex: 0 0 auto; background: none; border: none; font-family: inherit; font-weight: 700; font-size: 14px; color: var(--ink-2); cursor: pointer; padding: 4px 6px 4px 0; margin-right: 4px; }
@@ -6272,6 +6283,20 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .tutor-landing .tutor-back-btn { position: absolute; top: 16px; left: 20px; }
 .tutor-landing { position: relative; }
 .tutor-chat-body, .tutor-board-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px; max-height: calc(100vh - 200px); }
+/* Thin, theme-matched scrollbar for the app's longest-scrolling inner panes — no ::-webkit-scrollbar rule
+   existed anywhere before this, so these showed the bare OS scrollbar next to otherwise fully custom-styled
+   chrome. Scoped to these specific `overflow-y: auto` containers rather than overridden globally (the
+   Journal/study-log page, by contrast, scrolls at the document level, not an inner div, so it's left to the
+   OS's native page scrollbar rather than forcing an unrelated selector to match nothing). */
+.tutor-chat-body::-webkit-scrollbar, .tutor-board-body::-webkit-scrollbar { width: 8px; }
+.tutor-chat-body::-webkit-scrollbar-track, .tutor-board-body::-webkit-scrollbar-track { background: transparent; }
+.tutor-chat-body::-webkit-scrollbar-thumb, .tutor-board-body::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--ink-3) 40%, transparent);
+  border-radius: var(--radius-pill);
+}
+.tutor-chat-body::-webkit-scrollbar-thumb:hover, .tutor-board-body::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--ink-2) 50%, transparent);
+}
 /* Worksheet ruled lines — reported live: a short session's board showed one entry, then a large stark-white
    empty area filling the rest of the pane, reading as broken UI rather than "a page with room on it". A
    subtle repeating horizontal-line background (a real notebook-paper cue, not an image asset) on the
@@ -6286,7 +6311,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 @media (prefers-contrast: more) { .tutor-board-body { background-image: none; } }
 /* Today's focus — the SET_OBJECTIVES checklist, a compact strip above the board body (not a full section,
    which would compete with the board itself for attention). */
-.tutor-objectives { flex: 0 0 auto; padding: 10px 12px 8px; border-bottom: 1px solid var(--line); }
+.tutor-objectives { flex: 0 0 auto; padding: 10px 12px 8px; border-bottom: 1px solid var(--line-soft); }
 .tutor-objectives-head { display: flex; align-items: baseline; justify-content: space-between; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-2); margin-bottom: 6px; }
 .tutor-objectives-progress { font-variant-numeric: tabular-nums; }
 .tutor-objectives-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -6539,9 +6564,17 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 /* Tutor landing page */
 .tutor-subject-select { margin: 16px 0; }
 .tutor-subject-select label { display: block; font-size: 0.9rem; color: var(--ink-2); margin-bottom: 6px; }
-.tutor-subject-select select { width: 100%; max-width: 300px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--ink); font-size: 0.95rem; cursor: pointer; }
-.tutor-subject-select select:hover { border-color: var(--ink-2); }
-.tutor-subject-select select:focus { outline: none; border-color: var(--ink); }
+/* The only native <select> in the app — appearance:none + a custom chevron so it stops reading as leftover
+   default HTML next to everything else being custom-styled; hover/focus brought in line with the accent
+   token every other interactive control in the app already uses, instead of a plain ink-colored border. */
+.tutor-subject-select select {
+  width: 100%; max-width: 300px; padding: 8px 36px 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%2371717A' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 14px center;
+  color: var(--ink); font-size: 0.95rem; cursor: pointer; appearance: none; -webkit-appearance: none;
+  transition: border-color var(--duration-base) var(--ease-spring), box-shadow var(--duration-base) var(--ease-spring);
+}
+.tutor-subject-select select:hover { border-color: var(--accent); }
+.tutor-subject-select select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
 
 /* Board problem mode toggle */
 .sm-board-problem-mode-toggle { display: flex; gap: 8px; margin-bottom: 12px; }

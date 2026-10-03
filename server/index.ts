@@ -700,7 +700,8 @@ app.post("/api/account/delete", requireAuth, rateLimit(5, 60_000), async (req, r
     // being fixed (Express 4 never responds to an unhandled rejection in a route handler).
     req.session.destroy(() => res.json(result));
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || M(req, "Impossible de supprimer le compte — réessaie.", "Couldn't delete the account — try again.") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de supprimer le compte — réessaie.", "Couldn't delete the account — try again.") });
   }
 });
 
@@ -725,7 +726,8 @@ app.get("/api/account/export", requireAuth, rateLimit(5, 60_000), async (req, re
     res.setHeader("Content-Disposition", `attachment; filename="otto-data-${email}.json"`);
     res.json({ email, exportedAt: new Date().toISOString(), profile: state.profile, tasks: state.tasks, connections, jobs, events });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || M(req, "Impossible d'exporter tes données — réessaie.", "Couldn't export your data — try again.") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'exporter tes données — réessaie.", "Couldn't export your data — try again.") });
   }
 });
 
@@ -762,7 +764,8 @@ app.post("/api/account/import", requireAuth, rateLimit(5, 60_000), express.json(
     void recordEvent(email, "account_imported", { message: `Imported ${incomingTasks.length} tasks` });
     res.json({ ok: true, tasksAfter: mergedTasks.length, errorLogAfter: mergedProfile.errorLog?.length || 0 });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || M(req, "Impossible d'importer ce fichier — réessaie.", "Couldn't import that file — try again.") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'importer ce fichier — réessaie.", "Couldn't import that file — try again.") });
   }
 });
 
@@ -832,7 +835,8 @@ app.post("/api/integrations/pronote/connect", requireAuth, rateLimit(8, 15 * 60_
       } catch { /* best-effort */ }
     }
     res.status(result.ok ? 200 : 400).json(result);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de se connecter à Pronote — réessaie.", "Couldn't connect to Pronote — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de se connecter à Pronote — réessaie.", "Couldn't connect to Pronote — try again.") }); }
 });
 // Upcoming tests for the dashboard's exam countdown strip — a plain read, separate from the task pipeline
 // (a test already has/will have a task, but the countdown needs the raw subject+date list to lay out as a
@@ -864,7 +868,8 @@ app.post("/api/integrations/pronote/disconnect", requireAuth, async (req, res) =
     await pronoteSvc.disconnectPronote(req.session.user!);
     pronoteSvc.invalidatePronoteStatus(req.session.user!);
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de déconnecter Pronote — réessaie.", "Couldn't disconnect Pronote — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de déconnecter Pronote — réessaie.", "Couldn't disconnect Pronote — try again.") }); }
 });
 // Read-only: the raw Pronote grade averages, for anything that just wants to display them.
 app.post("/api/pronote/grades/sync", requireAuth, rateLimit(6, 60_000), async (req, res) => {
@@ -876,7 +881,8 @@ app.post("/api/pronote/grades/sync", requireAuth, rateLimit(6, 60_000), async (r
     await commit(req);
     res.json({ grades: live, synced: true });
   } catch (e: any) {
-    res.status(502).json({ error: e?.message || M(req, "Impossible de récupérer les notes depuis Pronote.", "Could not pull grades from Pronote.") });
+    console.error(e);
+    res.status(502).json({ error: M(req, "Impossible de récupérer les notes depuis Pronote.", "Could not pull grades from Pronote.") });
   }
 });
 app.get("/api/pronote/grades", requireAuth, async (req, res) => {
@@ -935,7 +941,8 @@ app.post("/api/integrations/blackbaud/connect-mock", requireAuth, rateLimit(10, 
 }));
 app.post("/api/integrations/blackbaud/disconnect", requireAuth, async (req, res) => {
   try { await blackbaudSvc.disconnectBlackbaud(req.session.user!); res.json({ ok: true }); }
-  catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de déconnecter — réessaie.", "Couldn't disconnect — try again.") }); }
+  catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de déconnecter — réessaie.", "Couldn't disconnect — try again.") }); }
 });
 // Deterministic "this week" workload view — no AI call, just real Pronote homework/tests + open tasks
 // bucketed by day with a relative effort heuristic (see server/workload.ts). Cheap enough to recompute
@@ -966,7 +973,8 @@ app.post("/api/integrations/:app/disconnect", requireAuth, async (req, res) => {
     void recordMetric(req.session.user!, "integration_disconnected", 1, app2);
     await saveSession(req);
     res.json(result);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de déconnecter — réessaie.", "Couldn't disconnect — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de déconnecter — réessaie.", "Couldn't disconnect — try again.") }); }
 });
 
 // Disconnect a specific account by ID (for multi-account support)
@@ -982,7 +990,8 @@ app.post("/api/integrations/:app/disconnect/:accountId", requireAuth, async (req
     integrations.invalidateTools(req.session.user!);
     await saveSession(req);
     res.json(result);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de déconnecter — réessaie.", "Couldn't disconnect — try again.") }); return; }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de déconnecter — réessaie.", "Couldn't disconnect — try again.") }); return; }
 });
 
 // ── Status ──────────────────────────────────────────────────────────────────
@@ -1062,7 +1071,8 @@ app.post("/api/settings/unlimited", requireAuth, async (req, res) => {
     void recordEvent(req.session.user!, "settings_changed", { message: "unlimited enabled" });
     await commit(req);
     res.json(p);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer — réessaie.", "Couldn't save — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'enregistrer — réessaie.", "Couldn't save — try again.") }); }
 });
 
 app.post("/api/settings/pause", requireAuth, async (req, res) => {
@@ -1074,7 +1084,8 @@ app.post("/api/settings/pause", requireAuth, async (req, res) => {
     void recordMetric(req.session.user!, "ai_paused_toggled", p.paused ? 1 : 0);
     await commit(req);
     res.json(p);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer — réessaie.", "Couldn't save — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'enregistrer — réessaie.", "Couldn't save — try again.") }); }
 });
 
 // Live integration check — create → verify → clean up against the REAL connected account, on the user's
@@ -1084,7 +1095,8 @@ app.post("/api/settings/smoke", requireAuth, rateLimit(3, 60_000), async (req, r
     const results = await integrations.runSmokeTest(req.session.user!);
     void recordEvent(req.session.user!, "smoke_test", { message: `${results.filter((r) => r.ok).length}/${results.length} checks passed` });
     res.json(results);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "échec de la vérification d'intégration", "integration check failed") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "échec de la vérification d'intégration", "integration check failed") }); }
 });
 
 // ── Tasks ─────────────────────────────────────────────────────────────────────
@@ -1261,7 +1273,8 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, 
     // Responds directly instead of calling next(err) — bypasses the global route-catchall (below) that
     // would otherwise report this to Sentry, so it needs its own call here.
     reportError("tasks-generate", e);
-    res.status(500).json({ error: e?.message || M(req, "échec de la génération", "generate failed") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "échec de la génération", "generate failed") });
   }
 });
 
@@ -1325,7 +1338,8 @@ app.post("/api/tasks", requireAuth, rateLimit(20, 60_000), async (req, res) => {
     }
     res.json(req.session.tasks);
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || M(req, "Impossible d'ajouter cette tâche — réessaie.", "Couldn't add that task — try again.") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'ajouter cette tâche — réessaie.", "Couldn't add that task — try again.") });
   }
 });
 
@@ -1342,7 +1356,8 @@ app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 60_000), async (req
     tasks.applyRefinement(req.session.tasks || [], t.id, refined);
     await commit(req);
     res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'affiner cette tâche — réessaie.", "Couldn't refine that task — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'affiner cette tâche — réessaie.", "Couldn't refine that task — try again.") }); }
 });
 
 // Regenerate steps for an existing task using the new architecture
@@ -1390,7 +1405,8 @@ app.post("/api/tasks/:id/regenerate", requireAuth, rateLimit(5, 60_000), async (
     res.json(req.session.tasks || []);
   } catch (e: any) {
     console.error("[tasks] regenerate error:", e);
-    res.status(500).json({ error: e?.message || M(req, "Impossible de régénérer les étapes — réessaie.", "Couldn't regenerate steps — try again.") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de régénérer les étapes — réessaie.", "Couldn't regenerate steps — try again.") });
   }
 });
 
@@ -1413,7 +1429,8 @@ app.post("/api/tasks/cleanup-artifact-steps", requireAuth, rateLimit(2, 60_000),
     res.json({ cleaned: totalCleaned, tasks: req.session.tasks || [] });
   } catch (e: any) {
     console.error("[tasks] cleanup error:", e);
-    res.status(500).json({ error: e?.message || M(req, "Impossible de nettoyer les étapes — réessaie.", "Couldn't cleanup steps — try again.") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de nettoyer les étapes — réessaie.", "Couldn't cleanup steps — try again.") });
   }
 });
 
@@ -1616,7 +1633,8 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     await commit(req);
     res.json({ reply: out.reply, chatDelta: newChat, board: out.board, problems: out.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped, task: t });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || M(req, "échec de la discussion", "chat failed") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "échec de la discussion", "chat failed") });
   }
 });
 
@@ -1711,7 +1729,8 @@ const runViaJob = async (req: express.Request, res: express.Response, type: "exe
     // directly instead of calling next(err), so it bypasses the global route-catchall's Sentry reporting.
     // Needs its own call here to cover this whole action surface.
     reportError("tasks-job-action", e, { type, taskId: id });
-    res.status(500).json({ error: e?.message || M(req, "échec de l'exécution", "run failed") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "échec de l'exécution", "run failed") });
   }
 };
 
@@ -1762,7 +1781,8 @@ app.post("/api/tasks/:id/confirm", requireAuth, rateLimit(60, 60_000), async (re
     void recordMetric(req.session.user!, "task_completed", 1, task.source || "n/a");
     if (task.shownAt) void recordMetric(req.session.user!, "task_time_to_completion_seconds", (Date.now() - Date.parse(task.shownAt)) / 1000, task.source || "n/a");
     res.json(req.session.tasks || []);
-  } catch (e: any) { reportError("tasks-confirm", e, { taskId: id }); res.status(500).json({ error: e?.message || M(req, "Impossible de confirmer cette tâche — réessaie.", "Couldn't confirm that task — try again.") }); }
+  } catch (e: any) { reportError("tasks-confirm", e, { taskId: id }); console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de confirmer cette tâche — réessaie.", "Couldn't confirm that task — try again.") }); }
 });
 app.post("/api/tasks/:id/reject", requireAuth, rateLimit(60, 60_000), async (req, res) => {
   const id = String(req.params.id);
@@ -1772,7 +1792,8 @@ app.post("/api/tasks/:id/reject", requireAuth, rateLimit(60, 60_000), async (req
     tasks.reject(req.session.tasks || [], id);
     await commit(req);
     res.json(req.session.tasks || []);
-  } catch (e: any) { reportError("tasks-reject", e, { taskId: id }); res.status(500).json({ error: e?.message || M(req, "Impossible de rejeter cette tâche — réessaie.", "Couldn't reject that task — try again.") }); }
+  } catch (e: any) { reportError("tasks-reject", e, { taskId: id }); console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de rejeter cette tâche — réessaie.", "Couldn't reject that task — try again.") }); }
 });
 app.post("/api/tasks/:id/dismiss", requireAuth, rateLimit(60, 60_000), async (req, res) => {
   const id = String(req.params.id);
@@ -1785,7 +1806,8 @@ app.post("/api/tasks/:id/dismiss", requireAuth, rateLimit(60, 60_000), async (re
     void recordEvent(req.session.user!, "dismissed", { taskId: id, message: "You dismissed it — similar tasks won't come back" });
     void recordMetric(req.session.user!, "task_dismissed", 1, task.source || "n/a");
     res.json(req.session.tasks || []);
-  } catch (e: any) { reportError("tasks-dismiss", e, { taskId: id }); res.status(500).json({ error: e?.message || M(req, "Impossible d'ignorer cette tâche — réessaie.", "Couldn't dismiss that task — try again.") }); }
+  } catch (e: any) { reportError("tasks-dismiss", e, { taskId: id }); console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'ignorer cette tâche — réessaie.", "Couldn't dismiss that task — try again.") }); }
 });
 // Auto-do ONE automatable step (focused agent run over the connected apps) — through the job queue, same
 // as full runs, so it's durably locked and audited. Enqueue-and-return, NOT enqueue-and-drain: a step run
@@ -1847,7 +1869,8 @@ app.post("/api/tasks/:id/step/:index/done", requireAuth, rateLimit(60, 60_000), 
     }
     await commit(req);
     res.json(req.session.tasks || []);
-  } catch (e: any) { reportError("tasks-step-done", e); res.status(500).json({ error: e?.message || M(req, "Impossible de mettre à jour l'étape — réessaie.", "Couldn't update the step — try again.") }); }
+  } catch (e: any) { reportError("tasks-step-done", e); console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de mettre à jour l'étape — réessaie.", "Couldn't update the step — try again.") }); }
 });
 // Record one flashcard review — advances/resets its Leitner box and schedules the next `dueAt` (see
 // nextLeitnerReview in shared/types.ts). Deterministic, no AI call. This is what turns flashcard decks from
@@ -2175,7 +2198,8 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
     // old studylog artifacts on every call — see its own comment — so that no longer needs to happen here.)
     await commit(req, { awaitCloud: true });
     res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de créer des cartes à partir de ça — réessaie.", "Couldn't make flashcards from that — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de créer des cartes à partir de ça — réessaie.", "Couldn't make flashcards from that — try again.") }); }
 }));
 app.get("/api/studylog/week", requireAuth, ah(async (req, res) => {
   const start = String(req.query.start || "");
@@ -2279,7 +2303,8 @@ app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 60_000), ah(as
     } catch { /* best-effort — the deck above already succeeded regardless */ }
     await commit(req, { awaitCloud: true });
     res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de créer le résumé de la semaine — réessaie.", "Couldn't build the week summary — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de créer le résumé de la semaine — réessaie.", "Couldn't build the week summary — try again.") }); }
 }));
 
 // YYYY-MM of the month containing `dateStr` — used to group weekly decks (keyed by their Monday) into a
@@ -2366,7 +2391,8 @@ app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 60_000), ah(a
     } catch { /* best-effort — the deck above already succeeded regardless */ }
     await commit(req, { awaitCloud: true });
     res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de créer le résumé du mois — réessaie.", "Couldn't build the month summary — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de créer le résumé du mois — réessaie.", "Couldn't build the month summary — try again.") }); }
 }));
 
 // A "just let me start studying" entry point — the full StudyMode workspace (StudyMode.tsx) and the /tutor
@@ -2589,7 +2615,8 @@ app.post("/api/ui/theme-personalize", requireAuth, rateLimit(5, 60_000), ah(asyn
     profile.preferencesUpdatedAt = new Date().toISOString();
     await commit(req);
     res.json({ customTheme: profile.customTheme });
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de personnaliser ton thème — réessaie.", "Couldn't personalize your theme — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de personnaliser ton thème — réessaie.", "Couldn't personalize your theme — try again.") }); }
 }));
 app.post("/api/ui/theme-reset", requireAuth, ah(async (req, res) => {
   const profile = req.session.profile ||= emptyProfile();
@@ -2644,7 +2671,8 @@ app.post("/api/study/session-outcome", requireAuth, rateLimit(30, 60_000), ah(as
       void recordSessionOutcome({ userEmail: email, decisionKey: "density", arm: densityArmId, context: key, reward, at: new Date().toISOString() });
     }
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer ça — ça n'affectera pas ta session.", "Couldn't record that — it won't affect your session.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'enregistrer ça — ça n'affectera pas ta session.", "Couldn't record that — it won't affect your session.") }); }
 }));
 
 // Generic, flexible metrics ingestion ��� deliberately an open `name` string (not a fixed enum route per
@@ -2688,7 +2716,8 @@ app.post("/api/tasks/:id/step/:index/expand", requireAuth, rateLimit(20, 60_000)
       await commit(req, { awaitCloud: true });
     }
     res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de découper cette étape — réessaie.", "Couldn't break this step down — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de découper cette étape — réessaie.", "Couldn't break this step down — try again.") }); }
 });
 // Tick/untick one sub-step — independent of the parent step's own "done" (see the Profile.grades-style
 // comment on TaskStep.substeps: a working checklist, not a completion gate).
@@ -2709,7 +2738,8 @@ app.post("/api/tasks/:id/step/:index/substep/:subIndex/done", requireAuth, rateL
       // frozen background write would resurrect as UNdone on the next cloud-only rebuild.
       await commit(req, { awaitCloud: true });
       res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer cette sous-étape — réessaie.", "Couldn't save this sub-step — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'enregistrer cette sous-étape — réessaie.", "Couldn't save this sub-step — try again.") }); }
 });
 // Let Otto just answer an automatable sub-action (see expandStep's `automatable` classification) instead
 // of the student having to look it up themselves — a read-only web search + synthesis, no permissioned
@@ -2732,7 +2762,8 @@ app.post("/api/tasks/:id/step/:index/substep/:subIndex/run", requireAuth, rateLi
     task.updatedAt = new Date().toISOString();
     await commit(req);
     res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Otto n'a pas réussi à répondre.", "Otto couldn't come up with a reply.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Otto n'a pas réussi à répondre.", "Otto couldn't come up with a reply.") }); }
 });
 // "Move to a lighter day" from the workload widget — a manual, reversible nudge (never AI-driven): the
 // student picks the day, Otto just relabels the task's own `when` and re-scores it, same deadline-urgency
@@ -2759,7 +2790,8 @@ app.post("/api/tasks/:id/reschedule", requireAuth, rateLimit(60, 60_000), async 
     tasks.applyDeadlineUrgency([task]);
     await commit(req);
     res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de déplacer cette tâche — réessaie.", "Couldn't move that task — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de déplacer cette tâche — réessaie.", "Couldn't move that task — try again.") }); }
 });
 
 // One-click send: fire a reviewed Gmail draft / composed Slack message — USER-confirmed, the ONLY send path.
@@ -2780,7 +2812,8 @@ app.post("/api/tasks/:id/send/:index", requireAuth, rateLimit(10, 60_000), async
       void recordEvent(req.session.user!, "sent", { taskId: t.id, message: `${s.label}${s.to ? ` → ${s.to}` : ""}` });
     }
     res.json(t);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'envoyer — réessaie.", "Couldn't send — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'envoyer — réessaie.", "Couldn't send — try again.") }); }
 });
 // Manual edit of an unsent draft — the user typing directly into the draft box, not an AI rewrite (that's
 // /revise). For Gmail this pushes the edit to the REAL draft (GMAIL_SEND_DRAFT sends whatever's live in
@@ -2802,7 +2835,8 @@ app.post("/api/tasks/:id/sendable/:index/edit", requireAuth, rateLimit(30, 60_00
     t.updatedAt = new Date().toISOString();
     await commit(req);
     res.json(t);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer ta modification — réessaie.", "Couldn't save your edit — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'enregistrer ta modification — réessaie.", "Couldn't save your edit — try again.") }); }
 });
 
 // ── Jobs + timeline (the durable execution layer's public surface) ────────────
@@ -2879,7 +2913,8 @@ app.post("/api/jobs/kick", requireAuth, rateLimit(60, 60_000), async (req, res) 
     }
     const [active, activeTaskIds] = await Promise.all([countActiveJobs(email), activeJobTaskIds(email)]);
     res.json({ processed: out.processed, failed: out.failed, active, activeTaskIds, tasks: responseTasks });
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "échec du déclenchement", "kick failed") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "échec du déclenchement", "kick failed") }); }
 });
 
 // Background drain — called by Vercel Cron (Authorization: Bearer $CRON_SECRET) once a day (vercel.json;
@@ -2904,7 +2939,8 @@ app.get("/api/cron/drain", async (req, res) => {
     // (jobs.ts's "cron-tick-skip"), but cronTick() ITSELF throwing (the whole drain never even starting)
     // was previously invisible outside Vercel's own logs.
     reportError("cron-drain", e);
-    res.status(500).json({ error: e?.message || M(req, "échec du traitement", "drain failed") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "échec du traitement", "drain failed") });
   }
 });
 
@@ -2927,7 +2963,8 @@ app.get("/api/cron/status", requireAuth, async (req, res) => {
       queued: activeJobs,
       cronConfigured: !!process.env.CRON_SECRET,
     });
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "échec de la vérification du statut", "status failed") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "échec de la vérification du statut", "status failed") }); }
 });
 
 // AI token usage for the signed-in user — read from the CLOUD (not the session), so usage racked up by
@@ -2945,7 +2982,8 @@ app.get("/api/usage", requireAuth, async (req, res) => {
       // costing money" is an answerable question instead of one opaque total (see addUsage's own comment).
       byCategory: u?.monthByCategory || {},
     });
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "échec de la récupération de l'utilisation", "usage failed") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "échec de la récupération de l'utilisation", "usage failed") }); }
 });
 
 // ── Profile (who the user is) — available once logged in ───────────────────────
@@ -2965,7 +3003,8 @@ app.post("/api/profile", requireAuth, async (req, res) => {
     }
     await commit(req);
     res.json(p);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer — réessaie.", "Couldn't save — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'enregistrer — réessaie.", "Couldn't save — try again.") }); }
 });
 app.post("/api/profile/preference", requireAuth, async (req, res) => {
   try {
@@ -3025,7 +3064,8 @@ app.post("/api/profile/preference", requireAuth, async (req, res) => {
     }
     await commit(req);
     res.json(p);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer — réessaie.", "Couldn't save — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'enregistrer — réessaie.", "Couldn't save — try again.") }); }
 });
 // Per-subject grades — self-reported (Pronote's read API doesn't expose grades), so Otto can weigh which
 // subject actually needs attention, not just what's due soonest. Upsert by subject name (case-insensitive).
@@ -3087,7 +3127,8 @@ app.delete("/api/profile/grade/:key", requireAuth, async (req, res) => {
     if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
     await commit(req);
     res.json(p);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de supprimer cette note — réessaie.", "Couldn't delete that grade — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de supprimer cette note — réessaie.", "Couldn't delete that grade — try again.") }); }
 });
 // Manually-logged exams/deadlines — the Pronote-less equivalent of Pronote's test list (server/pronote.ts),
 // for a student whose school doesn't use it at all (most IB/international schools). Merged into the SAME
@@ -3132,7 +3173,8 @@ app.post("/api/focus/session", requireAuth, async (req, res) => {
     res.json({ success: true, stats: p.focusStats });
   } catch (e: any) {
     console.error("Failed to save focus session:", e);
-    res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer la session — réessaie.", "Couldn't save session — try again.") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'enregistrer la session — réessaie.", "Couldn't save session — try again.") });
   }
 });
 
@@ -3147,7 +3189,8 @@ app.get("/api/focus/stats", requireAuth, async (req, res) => {
     recalculateFocusStats(p);
     res.json({ stats: p.focusStats });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || M(req, "Impossible de charger les statistiques — réessaie.", "Couldn't load stats — try again.") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de charger les statistiques — réessaie.", "Couldn't load stats — try again.") });
   }
 });
 
@@ -3163,7 +3206,8 @@ app.get("/api/focus/sessions", requireAuth, async (req, res) => {
     const sessions = (p.focusSessions || []).slice(-limit).reverse();
     res.json({ sessions });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || M(req, "Impossible de charger les sessions — réessaie.", "Couldn't load sessions — try again.") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de charger les sessions — réessaie.", "Couldn't load sessions — try again.") });
   }
 });
 
@@ -3176,7 +3220,8 @@ app.get("/api/focus/schedule-suggestion", requireAuth, async (req, res) => {
     const suggestion = generateSchedulingSuggestion({ sourceSubject: subject || undefined, difficulty: difficulty || undefined }, p);
     res.json({ suggestion });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || M(req, "Impossible de générer une suggestion — réessaie.", "Couldn't generate suggestion — try again.") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de générer une suggestion — réessaie.", "Couldn't generate suggestion — try again.") });
   }
 });
 
@@ -3188,7 +3233,8 @@ app.get("/api/focus/artifact-recommendation", requireAuth, async (req, res) => {
     const recommendation = recommendArtifactType(subject, p);
     res.json({ recommendation });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || M(req, "Impossible de générer une recommandation — réessaie.", "Couldn't generate recommendation — try again.") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de générer une recommandation — réessaie.", "Couldn't generate recommendation — try again.") });
   }
 });
 
@@ -3352,7 +3398,8 @@ app.delete("/api/profile/exam/:id", requireAuth, async (req, res) => {
     if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
     await commit(req);
     res.json(p);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de supprimer cet examen — réessaie.", "Couldn't remove that exam — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de supprimer cet examen — réessaie.", "Couldn't remove that exam — try again.") }); }
 });
 // Error log — a student-maintained record of specific mistakes (question / what went wrong / what to do
 // next), grouped by subject client-side (see errorLogBySubject, shared/types.ts). Same accumulate-forever,
@@ -3377,7 +3424,8 @@ app.delete("/api/profile/errorlog/:id", requireAuth, async (req, res) => {
     if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
     await commit(req);
     res.json(p);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de supprimer cette entrée — réessaie.", "Couldn't remove that entry — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de supprimer cette entrée — réessaie.", "Couldn't remove that entry — try again.") }); }
 });
 // Reset Otto's synthesized "read" on this student (profile.studentModel) — same transparency posture as
 // errorLog/usage above: this is the most surveillance-adjacent field in the app (an AI-authored read of how
@@ -3392,7 +3440,8 @@ app.delete("/api/profile/student-model", requireAuth, async (req, res) => {
     if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
     await commit(req);
     res.json(p);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de réinitialiser — réessaie.", "Couldn't reset — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de réinitialiser — réessaie.", "Couldn't reset — try again.") }); }
 });
 // Wipe everything Otto has learned (restart from zero memory). The agent rebuilds it over time via `remember`.
 app.delete("/api/profile", requireAuth, async (req, res) => {
@@ -3400,7 +3449,8 @@ app.delete("/api/profile", requireAuth, async (req, res) => {
     req.session.profile = emptyProfile();
     await commit(req);
     res.json(tasks.stripProfileForResponse(req.session.profile));
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de réinitialiser ton profil — réessaie.", "Couldn't reset your profile — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de réinitialiser ton profil — réessaie.", "Couldn't reset your profile — try again.") }); }
 });
 app.delete("/api/profile/:category/:index", requireAuth, async (req, res) => {
   const p = (req.session.profile ||= emptyProfile());
@@ -3415,7 +3465,8 @@ app.delete("/api/profile/:category/:index", requireAuth, async (req, res) => {
     (p as any)[k].splice(i, 1);
     await commit(req);
     res.json(tasks.stripProfileForResponse(p));
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de supprimer ça — réessaie.", "Couldn't delete that — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de supprimer ça — réessaie.", "Couldn't delete that — try again.") }); }
 });
 
 // ── Study Mode ────────────────────────────────────────────────────────���────
@@ -3428,7 +3479,8 @@ app.get("/api/study/sessions", requireAuth, async (req, res) => {
     } else {
       res.json([]);
     }
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de charger les sessions d'étude.", "Couldn't load study sessions.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de charger les sessions d'étude.", "Couldn't load study sessions.") }); }
 });
 
 // Create/save a study session
@@ -3478,7 +3530,8 @@ app.post("/api/study/session", requireAuth, async (req, res) => {
     
     await saveState(email, { profile: current.profile, tasks: current.tasks, studySessions: trimmedSessions }, { throwOnError: true });
     res.json(session);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer la session d'étude.", "Couldn't save study session.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'enregistrer la session d'étude.", "Couldn't save study session.") }); }
 });
 
 // Get study profile
@@ -3490,7 +3543,8 @@ app.get("/api/study/profile", requireAuth, async (req, res) => {
     } else {
       res.json({ userId: req.session.user, updatedAt: new Date().toISOString() });
     }
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de charger le profil d'étude.", "Couldn't load study profile.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de charger le profil d'étude.", "Couldn't load study profile.") }); }
 });
 
 // Update study profile
@@ -3531,7 +3585,8 @@ app.post("/api/study/profile", requireAuth, async (req, res) => {
     
     await saveState(email, { profile: current.profile, tasks: current.tasks, studyProfile: updated }, { throwOnError: true });
     res.json(updated);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer le profil d'étude.", "Couldn't save study profile.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'enregistrer le profil d'étude.", "Couldn't save study profile.") }); }
 });
 
 // ── Text-to-speech via FreeTTS ──────────────────────────────────────────────
