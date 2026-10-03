@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState, useContext, useCallback } from "react";
 import type { WebTask } from "../../shared/types.ts";
-import { renderChatText, useThinkingWord, useLang, LangContext, CondensedUserMessage, FirstTimeHint } from "../ui.tsx";
+import { renderChatText, useThinkingWord, useLang, LangContext, CondensedUserMessage, FirstTimeHint, useNotify } from "../ui.tsx";
 import { useSpeechRecognition } from "../voice/useSpeechRecognition.ts";
 import { useSpeechSynthesis } from "../voice/useSpeechSynthesis.ts";
 import { useVoiceModePref } from "../voice/useVoiceModePref.ts";
@@ -8,6 +8,8 @@ import { VoiceControls } from "../voice/VoiceControls.tsx";
 import { createEchoFilter } from "../voice/echoGuard.ts";
 import { findArithmeticClaims } from "../../server/arithmetic.ts";
 import { InlineProblem } from "./InlineProblem.tsx";
+import { extractPdfText } from "./pdfText.ts";
+import { api } from "../api.ts";
 
 interface AskOttoPanelProps {
   task: WebTask;
@@ -98,6 +100,47 @@ export function AskOttoPanel({
   // after it, and drops a verbatim repeat of the just-spoken reply regardless of timing.
   const echoFilterRef = useRef(createEchoFilter());
   const [micError, setMicError] = useState<[string, string] | null>(null);
+  // File attach — "upload a file into the tutor" (a PDF worksheet, a photo of an exercise, a plain text
+  // note): three file types need three different extraction paths, but all three land the same way —
+  // appended into the textarea as quoted context ahead of whatever the student types, so they can still
+  // add their own question on top before sending, nothing auto-sends on its own.
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [attaching, setAttaching] = useState(false);
+  const notify = useNotify();
+  const MAX_ATTACH_CHARS = 6000;
+  const appendAttachment = (label: string, text: string) => {
+    const block = `[${label}]\n"""\n${text.trim().slice(0, MAX_ATTACH_CHARS)}\n"""\n\n`;
+    setInput(block + input);
+  };
+  const onAttachFile = async (file: File) => {
+    setAttaching(true);
+    try {
+      if (file.type === "application/pdf") {
+        const text = await extractPdfText(file);
+        if (!text) { notify(L("Impossible de lire ce PDF (page scannée sans texte ?).", "Couldn't read that PDF (a scanned page with no text layer?)."), "error"); return; }
+        appendAttachment(file.name, text);
+      } else if (file.type.startsWith("image/")) {
+        const dataUrl: string = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(file);
+        });
+        const { description } = await api.readPhoto(dataUrl);
+        appendAttachment(file.name, description);
+      } else if (file.type.startsWith("text/") || /\.(txt|md)$/i.test(file.name)) {
+        appendAttachment(file.name, await file.text());
+      } else {
+        notify(L("Type de fichier non pris en charge — PDF, image ou texte uniquement.", "Unsupported file type — PDF, image, or plain text only."), "error");
+        return;
+      }
+      inputRef.current?.focus();
+    } catch (e: any) {
+      notify(e?.message || L("Impossible de lire ce fichier — réessaie.", "Couldn't read that file — try again."), "error");
+    } finally {
+      setAttaching(false);
+    }
+  };
   const recog = useSpeechRecognition({
     lang: speechLang,
     onResult: (text) => {
@@ -316,13 +359,29 @@ export function AskOttoPanel({
           disabled={sending}
           autoFocus
         />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/pdf,image/png,image/jpeg,image/webp,text/plain,.md"
+          style={{ display: "none" }}
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) void onAttachFile(f); e.target.value = ""; }}
+        />
+        <button
+          type="button"
+          className="sm-btn sm-btn-ghost sm-btn-sm sm-ai-attach-btn"
+          disabled={attaching || sending}
+          onClick={() => fileInputRef.current?.click()}
+          title={L("Joindre un fichier (PDF, image, texte)", "Attach a file (PDF, image, text)")}
+        >
+          {attaching ? "…" : "📎"}
+        </button>
         <VoiceControls
           supported={recog.supported}
           voiceModeOn={voiceModeOn}
           listening={recog.listening}
           speaking={synth.speaking}
           interimTranscript={recog.interimTranscript}
-          onToggle={toggleVoiceMode}
+          onToggle={() => { synth.unlock(); toggleVoiceMode(); }}
           en={en}
         />
         <button className="sm-btn sm-btn-primary" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending || !input.trim()}>

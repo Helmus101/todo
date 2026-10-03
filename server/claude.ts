@@ -1593,16 +1593,20 @@ export function visionReady(): boolean {
  *  concern" posture as the rest of this file: this function's only job is "what does the image show",
  *  exactly like stripHtmlToText's "what does the page say" in server/index.ts). Returns an error string
  *  (never throws) so the route can hand the student an honest, specific failure. */
-export async function describeWhiteboard(dataUrl: string): Promise<{ description: string } | { error: string }> {
+/** Shared Gemini vision call — both describeWhiteboard (a canvas drawing) and describeUploadedPhoto (a
+ *  student-supplied photo of an exercise/document, used by the Tutor's file-upload attach button) need the
+ *  exact same request/error-handling shape and only differ in the instruction text and the "looks empty"
+ *  size heuristic's label. One implementation, two thin callers, instead of ~60 duplicated lines. */
+async function describeImageWithGemini(dataUrl: string, instruction: string, emptyLabel: string, blockedLabel: string): Promise<{ description: string } | { error: string }> {
   const key = process.env.GEMINI_API_KEY;
-  if (!key) return { error: "Whiteboard reading isn't configured on this server." };
+  if (!key) return { error: "Reading images isn't configured on this server." };
   const match = /^data:(image\/(?:png|jpeg|jpg|webp));base64,(.+)$/.exec(dataUrl);
-  if (!match) return { error: "That doesn't look like a real image — try drawing something first." };
+  if (!match) return { error: "That doesn't look like a real image." };
   const [, mimeType, base64] = match;
   // A blank/near-blank canvas (nothing drawn, or just a stray dot) still produces a "valid" PNG — catch it
   // here on SIZE before spending a real API call on nothing. A completely empty 800x600 PNG is tiny (a few
-  // hundred bytes of flat-color compression); anything with real ink is reliably much larger.
-  if (base64.length < 400) return { error: "The whiteboard looks empty — draw something first." };
+  // hundred bytes of flat-color compression); anything with real content is reliably much larger.
+  if (base64.length < 400) return { error: `The ${emptyLabel} looks empty.` };
   try {
     const res = await retryRequest(() => fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`,
@@ -1612,14 +1616,10 @@ export async function describeWhiteboard(dataUrl: string): Promise<{ description
         signal: AbortSignal.timeout(20_000),
         body: JSON.stringify({
           contents: [{ parts: [
-            { text: "Transcribe exactly what is drawn/written on this whiteboard — any text, numbers, " +
-              "equations, diagrams, or shapes. Be literal and factual: describe what's actually there, " +
-              "including the shape/layout of any diagram, not what it might mean or whether it's correct. " +
-              "If it's a math expression, transcribe it precisely (e.g. \"x^2 + 3x - 4 = 0\", not a vague " +
-              "paraphrase). If the board is genuinely blank or illegible, say so plainly instead of guessing." },
+            { text: instruction },
             { inline_data: { mime_type: mimeType, data: base64 } },
           ] }],
-          generationConfig: { maxOutputTokens: 500, temperature: 0.1 },
+          generationConfig: { maxOutputTokens: 1200, temperature: 0.1 },
         }),
       },
     ), 2, 500);
@@ -1633,7 +1633,7 @@ export async function describeWhiteboard(dataUrl: string): Promise<{ description
       // just Gemini's own error message) so a failure is self-diagnosable from the chat bubble itself.
       let detail = "";
       try { detail = JSON.parse(body)?.error?.message || ""; } catch { /* non-JSON error body */ }
-      return { error: `Couldn't read the whiteboard (${res.status}${detail ? `: ${detail.slice(0, 200)}` : ""}) — try again in a moment.` };
+      return { error: `Couldn't read the ${emptyLabel} (${res.status}${detail ? `: ${detail.slice(0, 200)}` : ""}) — try again in a moment.` };
     }
     const json: any = await res.json();
     // Same reasoning as the !res.ok branch above: a 200 with no usable text can ALSO have a real, specific
@@ -1644,15 +1644,49 @@ export async function describeWhiteboard(dataUrl: string): Promise<{ description
     const finishReason = json?.candidates?.[0]?.finishReason;
     const description = String(json?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
     if (!description) {
-      if (blockReason) return { error: `The whiteboard image was blocked (${blockReason}) — try a different drawing.` };
-      if (finishReason && finishReason !== "STOP") return { error: `Couldn't finish reading the whiteboard (${finishReason}) — try again.` };
-      return { error: "Couldn't make out anything on the whiteboard — try drawing it a bit bigger/clearer." };
+      if (blockReason) return { error: `${blockedLabel} (${blockReason}) — try a different image.` };
+      if (finishReason && finishReason !== "STOP") return { error: `Couldn't finish reading the ${emptyLabel} (${finishReason}) — try again.` };
+      return { error: `Couldn't make out anything in the ${emptyLabel} — try a bigger/clearer one.` };
     }
     return { description: description.slice(0, 2000) };
   } catch (e: any) {
     console.error(`[vision] Gemini request threw: ${e?.message || e}`);
-    return { error: `Couldn't read the whiteboard just now (${e?.message || "network error"}) — try again in a moment.` };
+    return { error: `Couldn't read the ${emptyLabel} just now (${e?.message || "network error"}) — try again in a moment.` };
   }
+}
+
+/** Reads an 800x600-ish whiteboard snapshot (a data URL, e.g. "data:image/png;base64,...") and returns a
+ *  plain-text transcription of what's actually drawn — never an interpretation or a solved answer; that's
+ *  the tutor's job once the transcription reaches it as a normal chat message (same "one model per
+ *  concern" posture as the rest of this file: this function's only job is "what does the image show",
+ *  exactly like stripHtmlToText's "what does the page say" in server/index.ts). Returns an error string
+ *  (never throws) so the route can hand the student an honest, specific failure. */
+export async function describeWhiteboard(dataUrl: string): Promise<{ description: string } | { error: string }> {
+  return describeImageWithGemini(
+    dataUrl,
+    "Transcribe exactly what is drawn/written on this whiteboard — any text, numbers, " +
+      "equations, diagrams, or shapes. Be literal and factual: describe what's actually there, " +
+      "including the shape/layout of any diagram, not what it might mean or whether it's correct. " +
+      "If it's a math expression, transcribe it precisely (e.g. \"x^2 + 3x - 4 = 0\", not a vague " +
+      "paraphrase). If the board is genuinely blank or illegible, say so plainly instead of guessing.",
+    "whiteboard", "The whiteboard image was blocked",
+  );
+}
+
+/** Reads a student-supplied photo (an exercise sheet, a textbook page, a handwritten note, a diagram) —
+ *  the Tutor's file-upload attach button for a quick "here's the question" phone-camera shot, no PDF/typed
+ *  text required. Same literal-transcription posture as describeWhiteboard: this only reports what the
+ *  image SHOWS, never solves it or interprets it — that's the tutor's job once the transcription reaches
+ *  it as normal chat context. */
+export async function describeUploadedPhoto(dataUrl: string): Promise<{ description: string } | { error: string }> {
+  return describeImageWithGemini(
+    dataUrl,
+    "Transcribe exactly what this photo shows — all text, numbers, equations, diagrams, tables, or " +
+      "handwriting, in reading order. Be literal and factual: describe what's actually there, not what it " +
+      "might mean. If it's a math/science exercise, transcribe every part/question precisely. If the image " +
+      "is blurry, cut off, or illegible in places, say so plainly for those parts instead of guessing.",
+    "image", "The image was blocked",
+  );
 }
 
 /** Pull token usage from an AI response, INCLUDING the cache-hit portion of the prompt tokens (dramatically

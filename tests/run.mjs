@@ -1890,7 +1890,10 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   // voice-primary layout) still activates the moment they turn it on themselves.
   check("Tutor Session does NOT auto-enable voice (no startInVoiceMode prop, no wantVoice forcing)", !/startInVoiceMode=/.test(tutorSrc) && !/setWantVoice/.test(tutorSrc));
   const askOtto = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
-  check("AskOttoPanel has NO voice auto-enable left (zero toggleVoiceMode() call sites — the button only passes the handler)", !/autoVoiceAppliedRef/.test(askOtto) && (askOtto.match(/toggleVoiceMode\(\)/g) || []).length === 0);
+  // Exactly ONE toggleVoiceMode() call site is allowed: inside the mic button's own onClick (a real user
+  // gesture, also where synth.unlock() pre-arms speechSynthesis — see the TTS section below). Anywhere
+  // else would mean voice got turned on without the student tapping anything.
+  check("AskOttoPanel has NO voice auto-enable left (toggleVoiceMode() only ever called from the mic button's own click handler)", !/autoVoiceAppliedRef/.test(askOtto) && (askOtto.match(/toggleVoiceMode\(\)/g) || []).length === 1 && /onToggle=\{\(\) => \{ synth\.unlock\(\); toggleVoiceMode\(\); \}\}/.test(askOtto));
   // Direct request: "make sure when end tutor session board is saved and users can see what was worked on" —
   // ending used to only save a FLATTENED TEXT preview (boardEntries: string[]) of the board, losing any
   // diagram/equation structure; the real board is now saved too and reopenable.
@@ -1919,27 +1922,24 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   check("the mic is paused during generation too, not just during speech (reported: mic stayed open the whole time a reply was generating)", /busy && !wasBusyRef\.current/.test(askOttoSrc) && /recog\.abort\(\);/.test(askOttoSrc));
   check("live interim text cancels the TTS mid-sentence (≥2 words, echo-filtered)", /onInterim: \(text\) =>/.test(askOttoSrc) && /echoFilterRef\.current\.isEcho\(text\)/.test(askOttoSrc) && /text\.trim\(\)\.split\(\/\\s\+\/\)\.length >= 2\) synth\.cancel\(\)/.test(askOttoSrc));
   check("the recognition hook exposes the live interim channel", /onInterim\?: \(text: string\) => void;/.test(recogSrc) && /onInterimRef\.current\?\.\(interim\.trim\(\)\)/.test(recogSrc));
-  // Reported live: "the speaker is still not working" — root cause was useSpeechSynthesis.ts calling a bare
-  // `fetch("/api/tts", ...)` instead of going through client/api.ts's req(), which is the ONLY thing that
-  // attaches the x-csrf-token header every other mutating POST needs. In production (CSRF enforcement is
-  // skipped only in dev — requireAuth, server/index.ts) that 403'd on EVERY call, always silently falling
-  // back to browser TTS — not flaky, just consistently broken in a way that looked like "the API."
+  // TTS history: a third-party vendor (FreeTTS) used to be tried FIRST, browser speechSynthesis as
+  // fallback. Reported live, repeatedly, across several rounds of fixes (a bare fetch missing the CSRF
+  // header, then a CSP missing media-src for blob: audio, then a one-shot-fallback race) — each real, each
+  // fixed, and STILL "TTS sometimes works, sometimes doesn't" kept recurring, because the vendor path's
+  // failure surface (network call, API key, CSRF, CSP, vendor uptime) was simply larger than a pure client-
+  // side feature needs. Flipped to browser speechSynthesis as the ONLY path: zero network calls, no API
+  // key, no CSP concern at all (the Web Speech API isn't an <audio> element, so media-src never applies).
   const ttsSynthSrc = readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8");
-  const apiSrc = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
-  check("useSpeechSynthesis's FreeTTS call goes through api.ttsAudio (CSRF-safe), not a bare fetch", /api\.ttsAudio\(/.test(ttsSynthSrc) && !/fetch\("\/api\/tts"/.test(ttsSynthSrc));
-  check("api.ttsAudio is wired through req() (the CSRF-token-attaching path), not a bare fetch", /ttsAudio:.*req\("\/api\/tts"/.test(apiSrc.replace(/\n/g, " ")));
-  // THE production-only TTS killer: Otto's own voice plays through `new Audio(URL.createObjectURL(blob))`,
-  // i.e. a blob: URL. Audio/video elements are governed by CSP's `media-src`, which falls back to
-  // `default-src 'self'` when absent — and 'self' does NOT match the blob: scheme. With no media-src, the
-  // browser blocked every spoken reply in production before a byte was decoded, while dev (Vite sends no
-  // CSP at all) worked fine, which is exactly why this survived several rounds of "it still doesn't work."
-  const vercelCfg = readFileSync(new URL("../vercel.json", import.meta.url), "utf8");
-  const csp = JSON.parse(vercelCfg).headers.flatMap((h) => h.headers).find((h) => h.key === "Content-Security-Policy")?.value || "";
-  check("CSP allows blob: audio (media-src) — without it every spoken reply is blocked in production only", /media-src[^;]*blob:/.test(csp));
-  // A blocked/failed <audio> fires BOTH onerror AND rejects play() — two fallbacks racing, where the
-  // second one's speechSynthesis.cancel() tears down the utterance the first just started. Silence.
-  check("the FreeTTS→browser fallback is one-shot (onerror and a rejected play() can't both fire it)", /let fellBack = false;/.test(ttsSynthSrc) && /if \(fellBack \|\| generationRef\.current !== myGeneration\) return;/.test(ttsSynthSrc));
+  check("TTS no longer depends on a server round trip at all (no fetch/api call in the speak path)", !/api\.ttsAudio/.test(ttsSynthSrc) && !/fetch\("\/api\/tts"/.test(ttsSynthSrc));
+  check("speak() goes straight to the browser's own speechSynthesis, no vendor fallback chain", /useBrowserTTS\(speakableText\);/.test(ttsSynthSrc) && !/speakViaFreeTTS/.test(ttsSynthSrc));
   check("every TTS failure path leaves a diagnostic the UI can show, not just silence", /lastDiagnostic/.test(ttsSynthSrc) && /setLastDiagnostic/.test(ttsSynthSrc));
+  // The very FIRST speak() of a session can get silently blocked by a browser's autoplay/gesture policy
+  // since Otto's replies always arrive async (a network round trip), never inside the click that triggered
+  // them — unlock() plays a silent empty utterance directly inside a real click handler to pre-arm the
+  // engine for every speak() call for the rest of that session.
+  check("a gesture-triggered unlock() exists to pre-arm speechSynthesis before the first real reply", /const unlock = useCallback/.test(ttsSynthSrc) && /new SpeechSynthesisUtterance\(""\)/.test(ttsSynthSrc));
+  const askOttoSrcTts = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
+  check("the mic toggle's onClick calls synth.unlock() before toggling voice mode (a real user gesture)", /onToggle=\{\(\) => \{ synth\.unlock\(\); toggleVoiceMode\(\); \}\}/.test(askOttoSrcTts));
   // Voice mode is tap-only now: with no auto-start anywhere, the old "auto-start guarded on SpeechRecognition
   // support" concern (never force-enable Firefox, which has no recognizer) is moot by construction.
   check("voice mode never auto-starts (tap-only everywhere — Firefox stays text-first by construction)", !/recogSupportedRef/.test(askOttoSrc) && !/autoVoiceAppliedRef/.test(askOttoSrc));

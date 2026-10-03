@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "../api.ts";
 
 /** Strip the markdown Otto's replies use (headings, bold/italic emphasis markers, [links](url), GFM table
  *  pipes, bullet markers) down to plain readable prose — read aloud verbatim, "hashtag hashtag" and literal
@@ -36,6 +35,14 @@ export interface UseSpeechSynthesis {
   speaking: boolean;
   speak: (text: string) => void;
   cancel: () => void;
+  /** Call this from INSIDE a real click handler (never from an effect/async callback) before the first
+   *  ever speak() of a session — e.g. the mic toggle's onClick. Browsers' autoplay policy allows an
+   *  `<audio>` element to play without a fresh user gesture for the rest of the page's life ONCE one has
+   *  successfully played during an actual gesture — but Otto's own replies always arrive asynchronously
+   *  (a network round-trip, then TTS fetch), never inside the click that triggered them, so the very FIRST
+   *  reply of a session could get silently blocked by the browser (NotAllowedError) with nothing visibly
+   *  different about it — "TTS just doesn't work sometimes" was this, specifically on the first turn. */
+  unlock: () => void;
   /** Human-readable trace of what the LAST speak() attempt actually did — which path it used and, when it
    *  failed, why. Surfaced in Settings' "Test the speaker" row: repeated rounds of "the speaker doesn't
    *  work" were impossible to act on because every distinct failure (missing server API key, CSP blocking
@@ -43,9 +50,14 @@ export interface UseSpeechSynthesis {
   lastDiagnostic: string | null;
 }
 
-/** Text-to-speech via FreeTTS (freetts.org) if available, falling back to the browser's built-in
- *  `speechSynthesis`. FreeTTS uses the "brian" voice for natural speech; the browser fallback picks a
- *  matching voice by language (fr-FR/en-US, matching the app's own language toggle). */
+/** Text-to-speech via the browser's own built-in `speechSynthesis` — every major browser (Chrome, Edge,
+ *  Safari, Firefox) ships this with voices for both French and English pre-installed by the OS, so
+ *  `lang` ("fr-FR" or "en-US", passed in by the caller based on the app's own language toggle) just works
+ *  without any extra setup. See `speak()`'s own comment for why this is the ONLY path now — a third-party
+ *  TTS vendor (FreeTTS) used to be tried first and this was the fallback; that was flipped after repeated
+ *  live reports of "TTS sometimes works, sometimes doesn't" traced back to the vendor path's much larger
+ *  failure surface (network call, API key, CSRF, CSP) — see git history on this file for that code if a
+ *  nicer-sounding voice is ever worth re-introducing as a deliberate, carefully-raced opt-in upgrade. */
 export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
   const supported = typeof window !== "undefined" && "speechSynthesis" in window;
   const [speaking, setSpeaking] = useState(false);
@@ -53,15 +65,6 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
   const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
   const queueRef = useRef<string[]>([]);
   const cancelledRef = useRef(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  // Barge-in generation counter: FreeTTS is an async fetch-then-play pipeline, and the old cancel() only
-  // paused an ALREADY-PLAYING audio element — a cancel() landing while the /api/tts fetch was still in
-  // flight (or before play() resolved) was silently ignored: the fetch resolved anyway, play() started,
-  // onplay flipped speaking back to true, and Otto kept talking AFTER being interrupted (plus the flag
-  // could stay true forever if play() settled late — the voice loop wedged waiting for speech that never
-  // ends). Each speak() bumps the generation; an async continuation checks it before speaking and before
-  // flipping state, so anything still resolving from a pre-cancel speak() becomes a no-op.
-  const generationRef = useRef(0);
 
   useEffect(() => {
     if (!supported) return;
@@ -159,90 +162,37 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
     setTimeout(() => { if (!cancelledRef.current) speakNext(); }, 30);
   }, [supported, speakNext]);
 
-  const speakViaFreeTTS = useCallback(async (text: string, myGeneration: number) => {
-    // ONE-SHOT fallback guard. A blocked/failed audio element fires BOTH `audio.onerror` AND rejects the
-    // `audio.play()` promise — so the old code called useBrowserTTS twice for one failure, and the second
-    // call's `speechSynthesis.cancel()` tore down the utterance the first call had just started. Two
-    // fallbacks racing each other produced silence, which is precisely the "it still doesn't work" symptom
-    // left over after the CSP fix below. Whichever failure signal lands first wins; the rest are no-ops.
-    let fellBack = false;
-    const fallBack = (why: string, detail?: unknown) => {
-      if (fellBack || generationRef.current !== myGeneration) return;
-      fellBack = true;
-      console.warn(`[tts] FreeTTS path unavailable (${why}) — falling back to the browser's own speechSynthesis.`, detail ?? "");
-      setLastDiagnostic(`Otto's own voice is unavailable (${why}); using the browser's built-in speech instead.`);
-      useBrowserTTS(text);
-    };
-    try {
-      // Goes through client/api.ts's req(), NOT a bare fetch — that's what attaches the x-csrf-token
-      // header every other mutating POST in the app needs. A bare fetch here (an earlier bug) 403'd on
-      // every single call in production, always silently falling back to browser TTS.
-      console.info(`[tts] requesting FreeTTS audio (${text.length} chars, lang=${lang})`);
-      const response = await api.ttsAudio(text, lang.slice(0, 2).toLowerCase());
-      // The barge-in cancel() landed while this fetch was in flight — this utterance is dead, don't
-      // speak it and DON'T fall back to browser TTS (that would undo the interruption).
-      if (generationRef.current !== myGeneration) return;
-      if (!response.ok) {
-        // 501 = FREETTS_API_KEY isn't configured on the server (very common: the key lives in a local .env
-        // that was never added to the production environment); 403 = CSRF; 500 = the vendor itself failed.
-        const detail = await response.text().catch(() => "");
-        fallBack(`/api/tts returned HTTP ${response.status}`, detail.slice(0, 200));
-        return;
-      }
-      const blob = await response.blob();
-      if (!blob.size) { fallBack("/api/tts returned an empty audio body"); return; }
-      const url = URL.createObjectURL(blob);
-      if (audioRef.current) URL.revokeObjectURL(audioRef.current.src);
-      const audio = new Audio(url);
-      audioRef.current = audio;
-      audio.onplay = () => { if (generationRef.current === myGeneration) { console.info("[tts] FreeTTS audio playing"); setLastDiagnostic("Working — playing Otto's own voice."); setSpeaking(true); } };
-      audio.onended = () => { if (generationRef.current === myGeneration) { setSpeaking(false); URL.revokeObjectURL(url); } };
-      audio.onerror = () => {
-        if (generationRef.current !== myGeneration) return;
-        setSpeaking(false);
-        URL.revokeObjectURL(url);
-        // The classic cause here is a Content-Security-Policy with no `media-src` allowing `blob:` — the
-        // element is blocked before a single byte is decoded, with no other symptom. See vercel.json.
-        fallBack("the <audio> element errored (CSP media-src blocking blob:? corrupt audio?)", audio.error);
-      };
-      await audio.play();
-    } catch (e) {
-      // Network drop, a rejected play() (Chrome's autoplay policy → NotAllowedError), or a CSP block.
-      // Logged, never silent: a blocked autoplay, a 501 from /api/tts, and a network failure used to look
-      // identical to the student (silence), with nothing anywhere saying which one it actually was.
-      fallBack(e instanceof Error ? `${e.name}: ${e.message}` : "unknown error", e);
-    }
-  }, [useBrowserTTS, lang]);
-
   const speak = useCallback((text: string) => {
     if (!supported) { console.warn("[tts] speak() called but speechSynthesis isn't supported in this browser"); setLastDiagnostic("This browser doesn't support speech at all."); return; }
     const speakableText = toSpeakableText(text);
     if (!speakableText.trim()) { console.warn("[tts] speak() called but the reply had nothing speakable after stripping markdown:", text.slice(0, 60)); setLastDiagnostic("That reply had nothing speakable in it."); return; }
-    cancelledRef.current = false;
-    // New utterance = new generation: invalidates any pre-cancel async continuation still in flight.
-    const myGeneration = ++generationRef.current;
-    // Try FreeTTS first, fallback to browser TTS
-    void speakViaFreeTTS(speakableText, myGeneration);
-  }, [supported, speakViaFreeTTS]);
+    useBrowserTTS(speakableText);
+  }, [supported, useBrowserTTS]);
 
   const cancel = useCallback(() => {
     if (!supported) return;
     cancelledRef.current = true;
-    // Bump the generation FIRST: every in-flight /api/tts fetch and pending play() from the current
-    // utterance becomes a no-op the moment it resolves, so an interruption mid-fetch actually stays
-    // interrupted instead of the speech starting over the student's head.
-    generationRef.current++;
     queueRef.current = [];
     window.speechSynthesis.cancel();
-    if (audioRef.current) {
-      audioRef.current.pause();
-      if (audioRef.current.src) URL.revokeObjectURL(audioRef.current.src);
-      audioRef.current = null;
-    }
     setSpeaking(false);
+  }, [supported]);
+
+  // See this hook's own interface doc on `unlock` for why this exists: speechSynthesis.speak() can be
+  // silently blocked by a browser's autoplay/gesture policy on the very FIRST call of a page's life if
+  // that call doesn't happen inside a real user gesture — and Otto's replies always arrive async (a
+  // network round trip), never inside the click that triggered them. An empty, silent utterance spoken
+  // directly inside a click handler "unlocks" the engine for every subsequent speak() call that session,
+  // same mechanism browsers use to unlock <audio>/<video> autoplay on first interaction.
+  const unlock = useCallback(() => {
+    if (!supported) return;
+    try {
+      const warm = new SpeechSynthesisUtterance("");
+      warm.volume = 0;
+      window.speechSynthesis.speak(warm);
+    } catch { /* best-effort — a failure here just means speak() might need a retry later, not fatal */ }
   }, [supported]);
 
   useEffect(() => () => cancel(), [cancel]);
 
-  return { supported, speaking, speak, cancel, lastDiagnostic };
+  return { supported, speaking, speak, cancel, unlock, lastDiagnostic };
 }

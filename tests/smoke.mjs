@@ -75,6 +75,10 @@ try {
     const readWhiteboard = await req("/api/tutor/read-whiteboard", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ image: "data:image/png;base64,abc" }) });
     check("POST /api/tutor/read-whiteboard → 401 (auth checked first)", readWhiteboard.status === 401);
 
+    // The Tutor's file-upload attach button (a photo with no text layer) — same auth-before-vision shape.
+    const readPhoto = await req("/api/tutor/read-photo", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ image: "data:image/png;base64,abc" }) });
+    check("POST /api/tutor/read-photo → 401 (auth checked first)", readPhoto.status === 401);
+
     // Account export/import — the project-to-project migration path (export from one Supabase project,
     // import into a fresh account on another). Auth checked before either ever touches storage.
     const exportGet = await req("/api/account/export");

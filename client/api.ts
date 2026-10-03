@@ -271,6 +271,7 @@ export const api = {
   // needs to reach the student as a real message ("nothing's configured" / "try drawing it bigger"), not
   // silently vanish, since this is the one thing they actually asked Otto to look at.
   readWhiteboard: (image: string): Promise<{ description: string }> => post("/api/tutor/read-whiteboard", { image }),
+  readPhoto: (image: string): Promise<{ description: string }> => post("/api/tutor/read-photo", { image }),
   // Personalization bandit (see server/bandit.ts) — v1 target: Pomodoro length. Both best-effort from the
   // caller's side too: a failure here should never block starting or ending a study session.
   pomodoroSuggestion: (): Promise<{ enabled: boolean; workMinutes: number; breakMinutes: number; coldStart: boolean }> =>

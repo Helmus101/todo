@@ -12,7 +12,7 @@ import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, FocusSession } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
-import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard } from "./claude.ts";
+import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken } from "./store.ts";
 import { sendTransactionalEmail } from "./mailer.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
@@ -177,7 +177,7 @@ app.use((req, res, next) => {
 // larger per-route limit was dead code the whole time, not a real override. Keeping the global default
 // tight (1mb is plenty for every other route — profile edits, chat messages, preferences) is deliberate:
 // only the specific routes that genuinely need more get it, not every endpoint by default.
-const LARGE_BODY_ROUTES = new Set(["/api/account/import", "/api/tutor/read-whiteboard"]);
+const LARGE_BODY_ROUTES = new Set(["/api/account/import", "/api/tutor/read-whiteboard", "/api/tutor/read-photo"]);
 app.use((req, res, next) => {
   if (LARGE_BODY_ROUTES.has(req.path)) return next();
   express.json({ limit: "1mb" })(req, res, next);
@@ -2534,6 +2534,23 @@ app.post("/api/tutor/read-whiteboard", requireAuth, rateLimit(15, 60_000), expre
   const r = await describeWhiteboard(image);
   if ("error" in r) { res.status(422).json({ error: r.error }); return; }
   void recordEvent(req.session.user!, "whiteboard_read", {});
+  res.json({ description: r.description });
+}));
+
+// The Tutor's file-upload attach button — a photo of an exercise/textbook page/handwritten note, read with
+// the same vision model as the whiteboard (describeUploadedPhoto, server/claude.ts), then handed to the
+// chat as plain text context. Images only here; PDFs are extracted client-side (client/study/pdfText.ts,
+// no server round trip needed) and plain text files are read directly in the browser — this route exists
+// specifically for the case neither of those cover: a phone-camera photo with no text layer at all.
+app.post("/api/tutor/read-photo", requireAuth, rateLimit(15, 60_000), express.json({ limit: "8mb" }), ah(async (req, res) => {
+  if (!visionReady()) { res.status(503).json({ error: M(req, "La lecture d'image n'est pas configurée sur ce serveur.", "Image reading isn't configured on this server.") }); return; }
+  if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour continuer.", "AI is paused — resume it in Settings to continue.") }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
+  const image = String(req.body?.image || "");
+  if (!image) { res.status(400).json({ error: M(req, "Aucune image reçue.", "No image received.") }); return; }
+  const r = await describeUploadedPhoto(image);
+  if ("error" in r) { res.status(422).json({ error: r.error }); return; }
+  void recordEvent(req.session.user!, "photo_read", {});
   res.json({ description: r.description });
 }));
 
