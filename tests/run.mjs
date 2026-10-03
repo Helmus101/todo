@@ -3591,5 +3591,27 @@ section("Tutor Desmos tools — the student-usable place (contract + pins)");
   check("the embed contract matches Study Mode's existing artifact (sandbox, no top-navigation)", /sandbox="allow-scripts allow-same-origin allow-popups"/.test(desmosArtifactSrc));
 }
 
+section("generateWeeklyStudyDeck / generateMonthlyStudyDeck — the spaced-repetition weak/known signal survives the concise fallback tier (source pin)");
+{
+  // Reported live: "weekly and monthly flashcards keep repeating stuff that's already very learned, not
+  // what's actually from journal entries or not yet learned." Root cause: both functions built a
+  // `spacedBlock` telling the model which concepts are weak (box 0-1, needs the most space) vs. already
+  // "Known" (box 2+, needs the least) — but only attached it to the PRIMARY attempt's user message
+  // (`concise ? "" : spacedBlock`). The concise fallback tier fires often in practice (DeepSeek v4's
+  // reasoning tokens routinely eat the primary attempt's budget), so on a real fraction of actual decks
+  // the one signal steering the model away from re-surfacing already-known material was silently absent,
+  // leaving it to default toward whatever was most salient across entries — typically the simpler,
+  // well-practiced concepts, not what needed review. Fixed: spacedBlock is now unconditional, and the
+  // concise system prompt text itself also mentions weighting toward weak concepts (previously it didn't
+  // even reference the signal conceptually in that branch).
+  const claudeSrcWM = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const weeklyFn = claudeSrcWM.slice(claudeSrcWM.indexOf("export async function generateWeeklyStudyDeck"), claudeSrcWM.indexOf("export async function generateWeeklyQuiz"));
+  const monthlyFn = claudeSrcWM.slice(claudeSrcWM.indexOf("export async function generateMonthlyStudyDeck"), claudeSrcWM.indexOf("export async function generateMonthlyQuiz"));
+  check("weekly deck's user-message spacedBlock is no longer stripped on the concise retry", weeklyFn.includes('entriesBlock}` + spacedBlock') && !/entriesBlock}` \+\s*\(concise \? "" : spacedBlock\)/.test(weeklyFn));
+  check("monthly deck's user-message spacedBlock is no longer stripped on the concise retry", monthlyFn.includes('weeksBlock}` + spacedBlock') && !/weeksBlock}` \+\s*\(concise \? "" : spacedBlock\)/.test(monthlyFn));
+  check("the weekly CONCISE system prompt now also tells the model to weight toward weak/unlearned concepts", /CONCISE week-end-review[\s\S]*?WEIGHT TOWARD[\s\S]*?box 0-1/.test(weeklyFn));
+  check("the monthly CONCISE system prompt now also tells the model to weight toward weak/unlearned concepts", /CONCISE month-end-review[\s\S]*?WEIGHT TOWARD[\s\S]*?box 0-1/.test(monthlyFn));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

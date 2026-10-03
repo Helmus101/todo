@@ -4069,7 +4069,10 @@ export async function generateWeeklyStudyDeck(entries: { date: string; logText: 
           (concise
             ? `Build a CONCISE week-end-review flashcard deck from a student's daily "what I learned" entries — ` +
               `merge near-duplicate ideas across days, cover the week's distinct concepts, short precise backs, ` +
-              `no worked solutions, no quiz. At most 25 cards. ${CARD_STYLE_RULE}`
+              `no worked solutions, no quiz. At most 25 cards. WEIGHT TOWARD what the spaced-repetition signal ` +
+              `below marks as never-tested-or-still-"Learning" (box 0-1) — a short concise deck is exactly ` +
+              `where it matters MOST to spend the limited card budget on what didn't stick yet, not on "Known" ` +
+              `concepts that are already solid. ${CARD_STYLE_RULE}`
             : `You build a WEEK-END-REVIEW flashcard deck from a student's own daily "what I learned" entries. ` +
               `This is a SUMMARY across the whole week, not a re-dump of every daily card verbatim — merge near-` +
               `duplicate ideas from different days into one card, connect genuinely related concepts across days. ` +
@@ -4084,8 +4087,15 @@ export async function generateWeeklyStudyDeck(entries: { date: string; logText: 
               `time, not copy-pasted — since the whole point of a week-end review is catching what didn't stick ` +
               `the first time, not re-visiting everything evenly. ${CARD_STYLE_RULE}`) },
         { role: "user", content:
-          `THIS WEEK'S DAILY ENTRIES:\n${entriesBlock}` +
-          (concise ? "" : spacedBlock) +
+          // BUG, reported live: "weekly/monthly decks keep repeating stuff that's already very learned" —
+          // this spaced-repetition signal (which cards are weak vs. already-known) was being DROPPED
+          // entirely on the concise fallback tier (`concise ? "" : spacedBlock`). That fallback tier fires
+          // often in practice (DeepSeek v4's reasoning tokens routinely eat the primary attempt's budget —
+          // see generateDailyStudyCards' own comment on this), so the one signal telling the model to favor
+          // unlearned concepts was silently missing on a meaningful fraction of real weekly decks, leaving
+          // it free to just re-surface whatever was most salient across entries — which skews toward
+          // well-practiced, already-"Known" material, not what actually needs review. Always include it.
+          `THIS WEEK'S DAILY ENTRIES:\n${entriesBlock}` + spacedBlock +
           `\n\nReturn JSON: {"title": short label for the week's deck (≤8 words), "cards": [{"front": "...", "back": "..."}, ...]}.` },
       ],
     }));
@@ -4210,7 +4220,9 @@ export async function generateMonthlyStudyDeck(weeks: { label: string; cards: { 
           (concise
             ? `Build a CONCISE month-end-review flashcard deck from a student's weekly summary decks — merge ` +
               `near-duplicates across weeks, cover the month's distinct concepts, short precise backs, no ` +
-              `worked solutions, no quiz. At most 30 cards. ${CARD_STYLE_RULE}`
+              `worked solutions, no quiz. At most 30 cards. WEIGHT TOWARD what the spaced-repetition signal ` +
+              `below marks as never-tested-or-still-"Learning" (box 0-1), not "Known" concepts that are ` +
+              `already solid. ${CARD_STYLE_RULE}`
             : `You build a MONTH-END-REVIEW flashcard deck from a student's own weekly summary decks. Merge ` +
               `near-duplicate cards that show up across different weeks into one, and weight the space each ` +
               `concept gets using the spaced-repetition signal below, NOT evenly — but otherwise keep FULL ` +
@@ -4220,8 +4232,8 @@ export async function generateMonthlyStudyDeck(weeks: { label: string; cards: { 
               `whole month's material). ` +
               `${CARD_STYLE_RULE}`) },
         { role: "user", content:
-          `THIS MONTH'S WEEKLY DECKS:\n${weeksBlock}` +
-          (concise ? "" : spacedBlock) +
+          // Same fix as generateWeeklyStudyDeck's identical bug — see that function's own comment.
+          `THIS MONTH'S WEEKLY DECKS:\n${weeksBlock}` + spacedBlock +
           `\n\nReturn JSON: {"title": short label for the month's deck (≤8 words), "cards": [{"front": "...", "back": "..."}, ...]}.` },
       ],
     }));
