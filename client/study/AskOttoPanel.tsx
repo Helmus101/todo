@@ -242,7 +242,13 @@ export function AskOttoPanel({
                     : task.quizzes?.some((q) => q.id === a.id);
                   if (!exists) return null;
                   const open = a.kind === "note" ? onOpenNote : a.kind === "deck" ? onOpenDeck : onOpenQuiz;
-                  return <button key={a.id} type="button" className="sm-btn sm-btn-ghost sm-btn-sm" onClick={() => open(a.id, a.title)}>{a.title}</button>;
+                  const icon = a.kind === "note" ? "📝" : a.kind === "deck" ? "🗂️" : "✅";
+                  return (
+                    <button key={a.id} type="button" className="sm-ai-artifact-chip" onClick={() => open(a.id, a.title)}>
+                      <span className="sm-ai-artifact-chip-icon" aria-hidden="true">{icon}</span>
+                      {a.title}
+                    </button>
+                  );
                 })}
               </div>
             ) : null}
