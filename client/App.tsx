@@ -743,9 +743,9 @@ export function App() {
     if (!connected || !loaded || status?.paused) return;
     if (!hasActiveWork(tasks)) return;
     const tick = async () => {
-      // Backgrounded tabs don't need live updates within seconds — this loop runs every 10s while ANY job
-      // is in flight, uncached server-side (bypassCache: true, see /api/jobs/kick), so an unguarded
-      // background tab was a real, continuous Supabase egress + CPU cost for however long a job stayed
+      // Backgrounded tabs don't need live updates within seconds — this loop runs while ANY job is in
+      // flight, uncached server-side (bypassCache: true, see /api/jobs/kick), so an unguarded background
+      // tab was a real, continuous Supabase egress + CPU cost for however long a job stayed
       // queued/retrying, with no one watching. Confirmed as the dominant egress driver in a live audit.
       if (kicking.current || signedOutRef.current || document.hidden) return;
       kicking.current = true;
@@ -760,7 +760,11 @@ export function App() {
       finally { kicking.current = false; }
     };
     void tick();
-    const id = setInterval(tick, 10000);
+    // Was 10s — halved the request RATE (not just the per-request cost) per direct instruction to cut
+    // egress further. 20s still surfaces a finished/failed task well within one "is it done yet" glance,
+    // and runTask's own time-budget breaker (claude.ts) bounds a single job to ~90s anyway, so this isn't
+    // trading away meaningfully faster feedback — just fewer identical "still running" round-trips.
+    const id = setInterval(tick, 20000);
     // Catch up immediately when the tab regains focus, instead of waiting up to 10s for the next tick —
     // the guard above means a backgrounded tab may have missed several ticks entirely.
     const onVisible = () => { if (!document.hidden) void tick(); };
