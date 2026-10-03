@@ -465,6 +465,6 @@ export const api = {
   ttsAudio: (text: string, lang: string): Promise<Response> =>
     req("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, lang }) }),
   // Admin-only (server-side gated to one hardcoded email, see server/index.ts) — a 403 for anyone else.
-  adminMetrics: (): Promise<{ userCount: number; taskCount: number; tutorSessionCount: number; tutorMinutesTotal: number; tasksBySource: Record<string, number> }> =>
+  adminMetrics: (): Promise<{ userCount: number; taskCount: number; tutorSessionCount: number; tutorMinutesTotal: number; tasksBySource: Record<string, number>; byUser: { email: string; taskCount: number; tutorSessionCount: number; tutorMinutes: number }[] }> =>
     req("/api/admin/metrics").then(j),
 };

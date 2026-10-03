@@ -3626,6 +3626,15 @@ section("Admin metrics dashboard — gated to one hardcoded email, server AND cl
   check("non-admins get a clean 403, not a crash or a silent empty response", /if \(!isAdmin\(req\)\) \{ res\.status\(403\)/.test(serverSrcAdmin));
   check("the client nav link only renders for the admin email (defense in depth — the server is the real gate)", /isAdminUser\(status\?\.user\)/.test(appSrcAdmin) && /const ADMIN_EMAIL = "tjong\.willem@gmail\.com";/.test(appSrcAdmin));
   check("the /admin route itself is also gated client-side, not just the nav link", /route === "admin" && isAdminUser\(status\?\.user\)/.test(appSrcAdmin));
+  // Reported live: "should say 28 sessions but it says 91" — tutorSessionCount was counting every raw
+  // freestudy-source TASK, including ones opened and immediately abandoned (no message ever sent). The
+  // client's own history (TutorSession.tsx's saveAndClose) never even shows those — they fail its own
+  // "substance gate" (a real user message or board content) and get dismissed silently. The admin count
+  // needs the SAME gate, or it counts something the product itself doesn't consider a session.
+  const storeSrcAdmin = readFileSync(new URL("../server/store.ts", import.meta.url), "utf8");
+  const adminFn = storeSrcAdmin.slice(storeSrcAdmin.indexOf("export async function getAdminMetrics"));
+  check("tutor session counting applies the SAME substance gate as TutorSession.tsx's saveAndClose (a real message or board content)", /userMsgCount === 0 && board\.length === 0\) continue;/.test(adminFn));
+  check("byUser is sorted and per-account tutor minutes/sessions are tracked, not just the app-wide total", /byUser\.sort/.test(adminFn) && /userTutorSessions/.test(adminFn) && /userTutorMinutes/.test(adminFn));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

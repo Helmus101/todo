@@ -1999,10 +1999,18 @@ const ADMIN_EMAIL = "tjong.willem@gmail.com";
 function isAdminUser(email?: string | null): boolean {
   return (email || "").toLowerCase() === ADMIN_EMAIL;
 }
+type AdminUserRow = { email: string; taskCount: number; tutorSessionCount: number; tutorMinutes: number };
+type AdminSortKey = "email" | "taskCount" | "tutorSessionCount" | "tutorMinutes";
 function AdminPage() {
   const L = useLang();
-  const [metrics, setMetrics] = useState<{ userCount: number; taskCount: number; tutorSessionCount: number; tutorMinutesTotal: number; tasksBySource: Record<string, number> } | null>(null);
+  const [metrics, setMetrics] = useState<{ userCount: number; taskCount: number; tutorSessionCount: number; tutorMinutesTotal: number; tasksBySource: Record<string, number>; byUser: AdminUserRow[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<AdminSortKey>("taskCount");
+  const [sortDesc, setSortDesc] = useState(true);
+  const toggleSort = (key: AdminSortKey) => {
+    if (key === sortKey) setSortDesc((d) => !d);
+    else { setSortKey(key); setSortDesc(true); }
+  };
   const load = () => {
     setError(null);
     void api.adminMetrics().then(setMetrics).catch((e: any) => setError(e?.message || L("Impossible de charger les métriques.", "Couldn't load metrics.")));
@@ -2037,6 +2045,41 @@ function AdminPage() {
               {Object.entries(metrics.tasksBySource).sort((a, b) => b[1] - a[1]).map(([src, n]) => (
                 <div key={src} className="modal-row"><span className="lbl">{src}</span><span className="val">{n}</span></div>
               ))}
+            </div>
+          </section>
+          <section className="settings-sec" style={{ marginTop: "var(--space-5)" }}>
+            <h3>{L("Par utilisateur", "By user")}</h3>
+            <div className="admin-table-wrap">
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    {([
+                      ["email", "Utilisateur", "User"],
+                      ["taskCount", "Tâches", "Tasks"],
+                      ["tutorSessionCount", "Séances", "Sessions"],
+                      ["tutorMinutes", "Minutes", "Minutes"],
+                    ] as [AdminSortKey, string, string][]).map(([key, fr, en]) => (
+                      <th key={key} onClick={() => toggleSort(key)} className={sortKey === key ? "sorted" : ""}>
+                        {L(fr, en)}{sortKey === key ? (sortDesc ? " ↓" : " ↑") : ""}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...metrics.byUser].sort((a, b) => {
+                    const dir = sortDesc ? -1 : 1;
+                    if (sortKey === "email") return dir * a.email.localeCompare(b.email);
+                    return dir * (a[sortKey] - b[sortKey]);
+                  }).map((u) => (
+                    <tr key={u.email}>
+                      <td className="admin-table-email">{u.email}</td>
+                      <td>{u.taskCount}</td>
+                      <td>{u.tutorSessionCount}</td>
+                      <td>{u.tutorMinutes}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </section>
         </>

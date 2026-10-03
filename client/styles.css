@@ -2029,6 +2029,18 @@ input:focus, textarea:focus {
 }
 .admin-metric-value { font-family: var(--display); font-size: var(--text-2xl); font-weight: 700; letter-spacing: var(--tracking-tight); color: var(--ink); }
 .admin-metric-label { font-size: var(--text-sm); color: var(--ink-2); }
+.admin-table-wrap { overflow-x: auto; }
+.admin-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+.admin-table th {
+  text-align: right; padding: 8px 12px; font-weight: var(--weight-semibold); color: var(--ink-2);
+  border-bottom: 1px solid var(--line); cursor: pointer; user-select: none; white-space: nowrap;
+}
+.admin-table th:first-child, .admin-table td:first-child { text-align: left; }
+.admin-table th:hover { color: var(--ink); }
+.admin-table th.sorted { color: var(--accent); }
+.admin-table td { text-align: right; padding: 8px 12px; border-bottom: 1px solid var(--line-soft); color: var(--ink); font-variant-numeric: tabular-nums; }
+.admin-table-email { font-weight: var(--weight-medium); white-space: nowrap; }
+.admin-table tbody tr:hover { background: var(--bg-2); }
 .usage-breakdown-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; width: 100%; }
 .personalization-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .personalization-list li { position: relative; padding-left: 14px; font-size: 13.5px; color: var(--ink-2); }

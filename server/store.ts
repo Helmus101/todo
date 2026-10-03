@@ -993,12 +993,21 @@ export async function exportJobsAndEvents(userEmail: string): Promise<{ jobs: Jo
  *  below. Tutor session MINUTES are an ESTIMATE (span between a session's first and last chat message, not
  *  a tracked start/end) since Tutor sessions have no explicit duration field — see TaskFocus/TutorSession's
  *  own chat array, which is the only per-session timestamp signal that exists today. */
+export interface AdminUserMetrics {
+  email: string;
+  taskCount: number;
+  tutorSessionCount: number;
+  tutorMinutes: number;
+}
 export interface AdminMetrics {
   userCount: number;
   taskCount: number;
   tutorSessionCount: number;
   tutorMinutesTotal: number;
   tasksBySource: Record<string, number>;
+  /** Per-account breakdown — sorted by taskCount descending (the most active accounts first, the view
+   *  this dashboard actually gets used for: "who's using it, how much"). */
+  byUser: AdminUserMetrics[];
 }
 const ADMIN_METRICS_ACCOUNT_LIMIT = 5000;
 export async function getAdminMetrics(): Promise<AdminMetrics | null> {
@@ -1011,21 +1020,40 @@ export async function getAdminMetrics(): Promise<AdminMetrics | null> {
     let tutorSessionCount = 0;
     let tutorMinutesTotal = 0;
     const tasksBySource: Record<string, number> = {};
+    const byUser: AdminUserMetrics[] = [];
     for (const row of rows) {
+      const email = String((row as any).email || "unknown");
       const tasks: any[] = Array.isArray((row as any).tasks) ? (row as any).tasks : [];
       taskCount += tasks.length;
+      let userTutorSessions = 0;
+      let userTutorMinutes = 0;
       for (const t of tasks) {
         const src = String(t?.source || "unknown");
         tasksBySource[src] = (tasksBySource[src] || 0) + 1;
         if (src === "freestudy") {
-          tutorSessionCount++;
+          // SAME substance gate TutorSession.tsx's saveAndClose uses to decide whether a session is even
+          // worth keeping (a real user message or board content) — reported live: without this, the count
+          // included every opened-and-immediately-abandoned session (tapped into Tutor, closed before
+          // sending anything), which the client never shows in its own history at all. That inflated a
+          // real "28 sessions" to "91" — tracking raw freestudy TASKS, not actual tutor SESSIONS.
           const chat: any[] = Array.isArray(t?.chat) ? t.chat : [];
+          const board: any[] = Array.isArray(t?.board) ? t.board : [];
+          const userMsgCount = chat.filter((m) => m?.role === "user").length;
+          if (userMsgCount === 0 && board.length === 0) continue;
+          tutorSessionCount++;
+          userTutorSessions++;
           const times = chat.map((m) => Date.parse(m?.at || "")).filter((n) => Number.isFinite(n));
-          if (times.length >= 2) tutorMinutesTotal += Math.max(0, (Math.max(...times) - Math.min(...times)) / 60000);
+          if (times.length >= 2) {
+            const minutes = Math.max(0, (Math.max(...times) - Math.min(...times)) / 60000);
+            tutorMinutesTotal += minutes;
+            userTutorMinutes += minutes;
+          }
         }
       }
+      byUser.push({ email, taskCount: tasks.length, tutorSessionCount: userTutorSessions, tutorMinutes: Math.round(userTutorMinutes) });
     }
-    return { userCount: rows.length, taskCount, tutorSessionCount, tutorMinutesTotal: Math.round(tutorMinutesTotal), tasksBySource };
+    byUser.sort((a, b) => b.taskCount - a.taskCount);
+    return { userCount: rows.length, taskCount, tutorSessionCount, tutorMinutesTotal: Math.round(tutorMinutesTotal), tasksBySource, byUser };
   } catch (e) {
     reportError("admin-metrics", e);
     return null;
