@@ -134,9 +134,12 @@ function fmtDay(iso: string, L?: (fr: string, en: string) => string): string {
 // themselves. Flip back to true to restore auto-do/Approve & Run/Send. Nothing execution-related is deleted.
 const EXECUTION_ENABLED = false;
 
-/** Temporary: Study Mode's entry points (the sidebar "Réviser"/"Study" item and the per-task Study Mode
- *  buttons) are hidden while the tutor rework is underway. Nothing is deleted — the /study route still
- *  works by URL, and flipping this back to true restores every button and the nav item. */
+/** Study Mode's in-app entry points — the sidebar "Réviser"/"Study" item and the per-task Study Mode
+ *  buttons — are OFF by design: the /study URL is its ONE entry point (product call: "bring it back,
+ *  but not as a tab — only accessible by going to the /study page"). Nothing is deleted and the route
+ *  is fully alive either way: /study renders StandaloneStudyEntry (the complete StudyMode workspace,
+ *  no task anchor). Flip to true to restore the tab + buttons — and update run.mjs's pins, which pin
+ *  this flag false as the intended state. */
 const STUDY_MODE_ENABLED = false;
 
 
@@ -280,11 +283,16 @@ const navigate = (r: string) => {
   const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
   const vtDocument = document as Document & { startViewTransition?: (cb: () => void) => { finished: Promise<void>; ready: Promise<void>; updateCallbackDone: Promise<void> } };
   if (reduceMotion || typeof vtDocument.startViewTransition !== "function") { go(); return; }
-  // A transition's `finished` (and `ready`) promise REJECTS with AbortError when a newer transition starts
-  // before it settles — expected/benign on a fast double-click or rapid sidebar navigation, but with no
-  // handler attached it surfaced as a real "Unhandled promise rejection" in production (Sentry/console).
-  // The transition itself still runs/cross-fades correctly; only the settlement promise is ever rejected.
-  vtDocument.startViewTransition(go).finished.catch(() => {});
+  // Both of a transition's settlement promises can reject benignly when a newer transition starts first
+  // (expected on fast double-clicks / rapid sidebar navigation — the transition still runs/cross-fades
+  // correctly; only the promise is rejected): `finished` on some skip paths, and `ready` with the exact
+  // "Transition was skipped. New ViewTransition started" AbortError reported live from production. With
+  // no handler attached either surfaces as an "Unhandled promise rejection" in the console/Sentry.
+  // updateCallbackDone is deliberately NOT silenced — go() has no async work, so a rejection there would
+  // be a real bug worth surfacing.
+  const vt = vtDocument.startViewTransition(go);
+  vt.finished.catch(() => {});
+  vt.ready.catch(() => {});
 };
 
 // Last-known task list — hydrates the dashboard INSTANTLY on open (server truth replaces it right after).
