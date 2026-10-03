@@ -79,6 +79,12 @@ try {
     const readPhoto = await req("/api/tutor/read-photo", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ image: "data:image/png;base64,abc" }) });
     check("POST /api/tutor/read-photo → 401 (auth checked first)", readPhoto.status === 401);
 
+    // Admin metrics dashboard — gated to one hardcoded email (server/index.ts's isAdmin). Auth is checked
+    // BEFORE the admin check, so logged-out still 401s rather than leaking a 403 "you're not the admin"
+    // (which would at least confirm the route exists and requires a specific identity to someone probing).
+    const adminMetrics = await req("/api/admin/metrics");
+    check("GET /api/admin/metrics → 401 when logged out (auth checked before the admin check)", adminMetrics.status === 401);
+
     // Account export/import — the project-to-project migration path (export from one Supabase project,
     // import into a fresh account on another). Auth checked before either ever touches storage.
     const exportGet = await req("/api/account/export");

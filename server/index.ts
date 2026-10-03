@@ -13,7 +13,7 @@ import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, Fo
 import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto } from "./claude.ts";
-import { loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken } from "./store.ts";
+import { loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken, getAdminMetrics } from "./store.ts";
 import { sendTransactionalEmail } from "./mailer.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, subjectFrequency, orderingBoost, weakSubjectBoost, twoMinuteRuleBoost, stallNudgeLine } from "./patterns.ts";
@@ -3694,6 +3694,23 @@ app.post("/api/tts", requireAuth, async (req, res) => {
     console.error(`[tts] error: ${e?.message}`);
     res.status(500).json({ error: M(req, "Échec de la requête vocale", "TTS request failed") });
   }
+});
+
+// Admin metrics dashboard — gated to a single hardcoded account, not a role/permission system (there is
+// exactly one admin, this is a class project, not a product with a team of operators). Deliberately an
+// EXACT, case-insensitive email match rather than any kind of role flag on the profile/session — a role
+// flag would be one more piece of state that could drift or get copied into another account's row; a
+// literal constant here can't leak or be granted to anyone by accident.
+const ADMIN_EMAIL = "tjong.willem@gmail.com";
+function isAdmin(req: express.Request): boolean {
+  return (req.session.user || "").toLowerCase() === ADMIN_EMAIL;
+}
+app.get("/api/admin/metrics", requireAuth, async (req, res) => {
+  if (!isAdmin(req)) { res.status(403).json({ error: M(req, "Accès refusé.", "Access denied.") }); return; }
+  if (!cloudEnabled()) { res.status(500).json({ error: M(req, "Supabase n'est pas configuré.", "Supabase isn't configured.") }); return; }
+  const metrics = await getAdminMetrics();
+  if (!metrics) { res.status(500).json({ error: M(req, "Impossible de charger les métriques — réessaie.", "Couldn't load metrics — try again.") }); return; }
+  res.json(metrics);
 });
 
 // ── Static (production) ─────────────────────────────────────────────────────

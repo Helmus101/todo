@@ -186,9 +186,15 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
   const unlock = useCallback(() => {
     if (!supported) return;
     try {
-      const warm = new SpeechSynthesisUtterance("");
+      // A non-empty string, not "" — an EMPTY utterance is a known browser trigger for the speech queue
+      // getting stuck (no onend ever fires for it), which would silently block every REAL utterance queued
+      // after it. Cancel right after speak(): what unlocks the engine is the synchronous speak() CALL
+      // happening inside this real click handler, not the utterance actually finishing — immediately
+      // clearing the queue afterward means this warm-up can never itself become the stuck thing.
+      const warm = new SpeechSynthesisUtterance(" ");
       warm.volume = 0;
       window.speechSynthesis.speak(warm);
+      window.speechSynthesis.cancel();
     } catch { /* best-effort — a failure here just means speak() might need a retry later, not fatal */ }
   }, [supported]);
 

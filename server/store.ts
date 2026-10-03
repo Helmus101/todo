@@ -984,3 +984,50 @@ export async function exportJobsAndEvents(userEmail: string): Promise<{ jobs: Jo
     events: memEvents.filter((e) => e.user_email === userEmail),
   };
 }
+
+/** Aggregate, app-wide usage metrics for the admin dashboard (gated to a single hardcoded email in
+ *  server/index.ts's route — this function itself does no access control, it's a pure data query). Pulls
+ *  every account's `tasks` column in one shot rather than one query per account: this app's expected scale
+ *  (a class of students, not a production SaaS) makes a single bounded SELECT the simplest correct choice;
+ *  revisit with a real SQL aggregate (a Postgres view/RPC) if the account count ever approaches the limit
+ *  below. Tutor session MINUTES are an ESTIMATE (span between a session's first and last chat message, not
+ *  a tracked start/end) since Tutor sessions have no explicit duration field — see TaskFocus/TutorSession's
+ *  own chat array, which is the only per-session timestamp signal that exists today. */
+export interface AdminMetrics {
+  userCount: number;
+  taskCount: number;
+  tutorSessionCount: number;
+  tutorMinutesTotal: number;
+  tasksBySource: Record<string, number>;
+}
+const ADMIN_METRICS_ACCOUNT_LIMIT = 5000;
+export async function getAdminMetrics(): Promise<AdminMetrics | null> {
+  if (!client) return null;
+  try {
+    const { data, error } = await client.from(TABLE).select("email, tasks").limit(ADMIN_METRICS_ACCOUNT_LIMIT);
+    if (error) { console.warn("[store] getAdminMetrics failed:", error.message); return null; }
+    const rows = data || [];
+    let taskCount = 0;
+    let tutorSessionCount = 0;
+    let tutorMinutesTotal = 0;
+    const tasksBySource: Record<string, number> = {};
+    for (const row of rows) {
+      const tasks: any[] = Array.isArray((row as any).tasks) ? (row as any).tasks : [];
+      taskCount += tasks.length;
+      for (const t of tasks) {
+        const src = String(t?.source || "unknown");
+        tasksBySource[src] = (tasksBySource[src] || 0) + 1;
+        if (src === "freestudy") {
+          tutorSessionCount++;
+          const chat: any[] = Array.isArray(t?.chat) ? t.chat : [];
+          const times = chat.map((m) => Date.parse(m?.at || "")).filter((n) => Number.isFinite(n));
+          if (times.length >= 2) tutorMinutesTotal += Math.max(0, (Math.max(...times) - Math.min(...times)) / 60000);
+        }
+      }
+    }
+    return { userCount: rows.length, taskCount, tutorSessionCount, tutorMinutesTotal: Math.round(tutorMinutesTotal), tasksBySource };
+  } catch (e) {
+    reportError("admin-metrics", e);
+    return null;
+  }
+}

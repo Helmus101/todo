@@ -1078,6 +1078,16 @@ export function App() {
             <SettingsIcon />
             {status?.language === "en" ? "Settings" : "Réglages"}
           </a>
+          {isAdminUser(status?.user) && (
+            <a
+              className={`sidebar-item ${route === "admin" ? "active" : ""}`}
+              href="/admin"
+              onClick={() => setSidebarOpen(false)}
+            >
+              <BarChart3 />
+              Admin
+            </a>
+          )}
         </nav>
         <div className="sidebar-footer">
           <a className="sidebar-user" href="/settings" onClick={() => setSidebarOpen(false)}>
@@ -1107,6 +1117,7 @@ export function App() {
             if (route === "log") return en ? "Journal" : "Journal";
             if (route === "study") return en ? "Study" : "Réviser";
             if (route === "errorlog") return en ? "Error log" : "Erreurs";
+            if (route === "admin") return "Admin";
             return en ? "Tasks" : "Tâches";
           })()}</div>
           <div className="spacer" />
@@ -1137,6 +1148,8 @@ export function App() {
         <StandaloneStudyEntry tasks={tasks} setTasks={setTasks} status={status} notify={notify} navigate={navigate} />
       ) : route === "errorlog" ? (
         <MistakeLogPage lang={status?.language} />
+      ) : route === "admin" && isAdminUser(status?.user) ? (
+        <AdminPage />
       ) : !status.googleConnected && !status.pronoteConnected && !skippedConnect ? (
         <main className="list-wrap"><ConnectCard status={status} onSkip={() => {
           setSkippedConnect(true);
@@ -1979,6 +1992,59 @@ function FlashcardsLibraryPage({ lang, tasks, embedded, userId }: { lang?: "fr" 
  *  subject (errorLogBySubject, shared/types.ts — subjects with the most entries surface first, since that's
  *  where mistakes are piling up). Fetches its own profile copy rather than threading one down from
  *  Settings — this tab needs to work as a standalone destination, not only reachable via Settings. */
+/** Admin-only usage dashboard — access is enforced SERVER-SIDE (server/index.ts's isAdmin, one hardcoded
+ *  email), this component only decides whether to render the nav link/route at all; a non-admin hitting
+ *  /admin directly would just get a 403 from the API and see the error state below, never real data. */
+const ADMIN_EMAIL = "tjong.willem@gmail.com";
+function isAdminUser(email?: string | null): boolean {
+  return (email || "").toLowerCase() === ADMIN_EMAIL;
+}
+function AdminPage() {
+  const L = useLang();
+  const [metrics, setMetrics] = useState<{ userCount: number; taskCount: number; tutorSessionCount: number; tutorMinutesTotal: number; tasksBySource: Record<string, number> } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const load = () => {
+    setError(null);
+    void api.adminMetrics().then(setMetrics).catch((e: any) => setError(e?.message || L("Impossible de charger les métriques.", "Couldn't load metrics.")));
+  };
+  useEffect(() => { load(); }, []);
+  const cards: { label: [string, string]; value: string }[] = metrics ? [
+    { label: ["Utilisateurs", "Users"], value: String(metrics.userCount) },
+    { label: ["Tâches", "Tasks"], value: String(metrics.taskCount) },
+    { label: ["Séances de tuteur", "Tutor sessions"], value: String(metrics.tutorSessionCount) },
+    { label: ["Minutes de tuteur (total)", "Tutor minutes (total)"], value: String(metrics.tutorMinutesTotal) },
+  ] : [];
+  return (
+    <main className="list-wrap">
+      <h1 className="list-head">{L("Admin", "Admin")}</h1>
+      {error ? (
+        <p className="rewrite-error">{error} <button type="button" className="btn xs ghost" onClick={load}>{L("Réessayer", "Retry")}</button></p>
+      ) : !metrics ? (
+        <p className="settings-hint">{L("Chargement…", "Loading…")}</p>
+      ) : (
+        <>
+          <div className="admin-metric-grid">
+            {cards.map((c, i) => (
+              <div key={i} className="admin-metric-card">
+                <span className="admin-metric-value">{c.value}</span>
+                <span className="admin-metric-label">{L(c.label[0], c.label[1])}</span>
+              </div>
+            ))}
+          </div>
+          <section className="settings-sec" style={{ marginTop: "var(--space-5)" }}>
+            <h3>{L("Tâches par source", "Tasks by source")}</h3>
+            <div className="set-list">
+              {Object.entries(metrics.tasksBySource).sort((a, b) => b[1] - a[1]).map(([src, n]) => (
+                <div key={src} className="modal-row"><span className="lbl">{src}</span><span className="val">{n}</span></div>
+              ))}
+            </div>
+          </section>
+        </>
+      )}
+    </main>
+  );
+}
+
 function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
   const L = useLang();
   const notify = useNotify();

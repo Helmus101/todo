@@ -1937,7 +1937,11 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   // since Otto's replies always arrive async (a network round trip), never inside the click that triggered
   // them — unlock() plays a silent empty utterance directly inside a real click handler to pre-arm the
   // engine for every speak() call for the rest of that session.
-  check("a gesture-triggered unlock() exists to pre-arm speechSynthesis before the first real reply", /const unlock = useCallback/.test(ttsSynthSrc) && /new SpeechSynthesisUtterance\(""\)/.test(ttsSynthSrc));
+  check("a gesture-triggered unlock() exists to pre-arm speechSynthesis before the first real reply", /const unlock = useCallback/.test(ttsSynthSrc) && /new SpeechSynthesisUtterance\(" "\)/.test(ttsSynthSrc));
+  // An EMPTY-string utterance is a known trigger for the native speech queue getting stuck (no onend ever
+  // fires for it) — which would silently block every real utterance queued after it. This exact mistake
+  // was introduced and caught within this same feature's own first cut.
+  check("unlock() never queues an EMPTY-string utterance (a known stuck-queue trigger)", !/new SpeechSynthesisUtterance\(""\)/.test(ttsSynthSrc));
   const askOttoSrcTts = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
   check("the mic toggle's onClick calls synth.unlock() before toggling voice mode (a real user gesture)", /onToggle=\{\(\) => \{ synth\.unlock\(\); toggleVoiceMode\(\); \}\}/.test(askOttoSrcTts));
   // Voice mode is tap-only now: with no auto-start anywhere, the old "auto-start guarded on SpeechRecognition
@@ -3611,6 +3615,17 @@ section("generateWeeklyStudyDeck / generateMonthlyStudyDeck — the spaced-repet
   check("monthly deck's user-message spacedBlock is no longer stripped on the concise retry", monthlyFn.includes('weeksBlock}` + spacedBlock') && !/weeksBlock}` \+\s*\(concise \? "" : spacedBlock\)/.test(monthlyFn));
   check("the weekly CONCISE system prompt now also tells the model to weight toward weak/unlearned concepts", /CONCISE week-end-review[\s\S]*?WEIGHT TOWARD[\s\S]*?box 0-1/.test(weeklyFn));
   check("the monthly CONCISE system prompt now also tells the model to weight toward weak/unlearned concepts", /CONCISE month-end-review[\s\S]*?WEIGHT TOWARD[\s\S]*?box 0-1/.test(monthlyFn));
+}
+
+section("Admin metrics dashboard — gated to one hardcoded email, server AND client (source pins)");
+{
+  const serverSrcAdmin = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const appSrcAdmin = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  check("the server route requires auth before the admin check (no route ever does real work pre-auth)", /app\.get\("\/api\/admin\/metrics", requireAuth,/.test(serverSrcAdmin));
+  check("the admin check is an exact, case-insensitive email match — not a role flag on the profile", /const ADMIN_EMAIL = "tjong\.willem@gmail\.com";/.test(serverSrcAdmin) && /\(req\.session\.user \|\| ""\)\.toLowerCase\(\) === ADMIN_EMAIL/.test(serverSrcAdmin));
+  check("non-admins get a clean 403, not a crash or a silent empty response", /if \(!isAdmin\(req\)\) \{ res\.status\(403\)/.test(serverSrcAdmin));
+  check("the client nav link only renders for the admin email (defense in depth — the server is the real gate)", /isAdminUser\(status\?\.user\)/.test(appSrcAdmin) && /const ADMIN_EMAIL = "tjong\.willem@gmail\.com";/.test(appSrcAdmin));
+  check("the /admin route itself is also gated client-side, not just the nav link", /route === "admin" && isAdminUser\(status\?\.user\)/.test(appSrcAdmin));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

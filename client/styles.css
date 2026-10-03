@@ -2019,6 +2019,16 @@ input:focus, textarea:focus {
 }
 .modal-row-usage-breakdown { align-items: flex-start; }
 .density-picker { display: flex; gap: 6px; }
+/* Admin dashboard metric cards — same glass-card language as Settings/Tutor (reuse, not a new style). */
+.admin-metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--space-4); }
+.admin-metric-card {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: var(--space-4) var(--space-5);
+  background: var(--surface-glass); border: 1px solid var(--line-soft); border-radius: var(--radius-lg);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
+}
+.admin-metric-value { font-family: var(--display); font-size: var(--text-2xl); font-weight: 700; letter-spacing: var(--tracking-tight); color: var(--ink); }
+.admin-metric-label { font-size: var(--text-sm); color: var(--ink-2); }
 .usage-breakdown-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; width: 100%; }
 .personalization-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .personalization-list li { position: relative; padding-left: 14px; font-size: 13.5px; color: var(--ink-2); }
