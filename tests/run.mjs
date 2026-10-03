@@ -3637,5 +3637,49 @@ section("Admin metrics dashboard — gated to one hardcoded email, server AND cl
   check("byUser is sorted and per-account tutor minutes/sessions are tracked, not just the app-wide total", /byUser\.sort/.test(adminFn) && /userTutorSessions/.test(adminFn) && /userTutorMinutes/.test(adminFn));
 }
 
+section("Kick loop egress/CPU fix — hidden-tab guard, trimmed payload, ETag (source pins)");
+{
+  const appSrcKick = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const kickEffect = appSrcKick.slice(appSrcKick.indexOf("const hasActiveWork = (list: WebTask[])"), appSrcKick.indexOf("Manual ↻ Refresh"));
+  check("kick's tick bails while the tab is hidden, same as the other polling timers in this file", /kicking\.current \|\| signedOutRef\.current \|\| document\.hidden\) return;/.test(kickEffect));
+  check("kick catches up immediately on regaining visibility instead of waiting for the next 10s tick", /visibilitychange.*onVisible|onVisible.*visibilitychange/s.test(kickEffect) && /if \(!document\.hidden\) void tick\(\);/.test(kickEffect));
+
+  const serverSrcKick = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const kickStart = serverSrcKick.indexOf('app.post("/api/jobs/kick"');
+  const kickRoute = serverSrcKick.slice(kickStart, serverSrcKick.indexOf('app.get("/api/cron/drain"', kickStart));
+  check("kick strips chat/board/problems/objectives before sending — this fires every 10s for the lifetime of any active job", /const \{ chat, board, problems, objectives, \.\.\.rest \} = t;/.test(kickRoute));
+  check("kick sets an ETag and honors If-None-Match, same pattern as /api/status and /api/tasks", /res\.setHeader\("ETag", etag\);[\s\S]*?if \(req\.headers\["if-none-match"\] === etag\) \{ res\.status\(304\)\.end\(\); return; \}/.test(kickRoute));
+
+  const apiSrcKick = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
+  check("api.kick() opts into the same ETag-cache path req() uses for GETs, so a 304 costs 0 bytes client-side too", /req\("\/api\/jobs\/kick", \{ method: "POST" \}, undefined, undefined, true\)/.test(apiSrcKick));
+}
+
+section("Flashcard/quiz/journal local caches are account-scoped (source pins — cross-account leak fix)");
+{
+  // Reported live: "flashcards are still being saved in a different account even though it was never
+  // associated with that account." Root cause: otto-studylog-week/month, otto-deck, and otto-quiz
+  // localStorage keys were keyed only by date/deck-id/quiz-id, NOT by userId — a GLOBAL key any account
+  // signed into the same browser reads/writes. Same bug class localDecks.ts/localChatBoard.ts/
+  // localQuizzes.ts already fixed for their own stores; this closes the remaining gaps.
+  const appSrcLeak = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const uiSrcLeak = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8");
+  check("studylog week cache key includes userId, not just the date", /function studylogWeekKey\(userId: string \| null, monday: string\): string \{ return `\$\{STUDYLOG_CACHE_PREFIX\}\$\{userId \|\| "anon"\}:\$\{monday\}`; \}/.test(appSrcLeak));
+  check("studylog month cache key includes userId, not just the month", /function studylogMonthKey\(userId: string \| null, month: string\): string \{ return `\$\{STUDYLOG_MONTH_CACHE_PREFIX\}\$\{userId \|\| "anon"\}:\$\{month\}`; \}/.test(appSrcLeak));
+  check("FlashcardDeck's review-progress key includes userId, not just the deck id", /function deckProgressKey\(deckId: string, userId: string \| null\): string \{ return `otto-deck:\$\{userId \|\| "anon"\}:\$\{deckId\}`; \}/.test(uiSrcLeak));
+  check("QuizPlayer's progress key includes userId, not just the quiz id", /function quizProgressKey\(quizId: string, userId: string \| null\): string \{ return `otto-quiz:\$\{userId \|\| "anon"\}:\$\{quizId\}`; \}/.test(uiSrcLeak));
+  const clearFn = appSrcLeak.slice(appSrcLeak.indexOf("function clearAllLocalAccountData"), appSrcLeak.indexOf("const GREETING ="));
+  check("sign-out/delete sweeps the studylog week/month, deck-progress, and quiz-progress caches for this user, not just the three pre-existing per-account stores", /otto-deck:\$\{userId \|\| "anon"\}:/.test(clearFn) && /otto-quiz:\$\{userId \|\| "anon"\}:/.test(clearFn) && /STUDYLOG_CACHE_PREFIX/.test(clearFn) && /STUDYLOG_MONTH_CACHE_PREFIX/.test(clearFn));
+}
+
+section("Focus/visibility resync removed — only the Pronote keepalive stays on that heartbeat (source pin)");
+{
+  // Removed per direct instruction: 4 requests (tasks/status/budget/sweep) on every tab focus/visibility
+  // event was real, avoidable egress for something a manual reload already covers.
+  const appSrcFocus = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const onFn = appSrcFocus.slice(appSrcFocus.indexOf("const on = () => {"), appSrcFocus.indexOf("document.addEventListener(\"visibilitychange\", on);"));
+  check("the focus/visibility handler no longer re-syncs tasks/status/budget/sweep", !/void syncTasks\(\); void loadStatus\(\); void loadBudget\(\); void sweepIfDue\(\);/.test(onFn));
+  check("the focus/visibility handler still touches Pronote's session to keep a connected token alive", /if \(status\?\.pronoteConnected\) void api\.pronoteTouch\(\);/.test(onFn));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

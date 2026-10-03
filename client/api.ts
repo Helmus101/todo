@@ -74,7 +74,7 @@ function translateServerError(msg: string): string {
  *   2. fetch RESOLVES with a 5xx whose body is NOT JSON — that's the proxy's own error page, not a real
  *      server response. A genuine server error returns JSON {error} (content-type json) and is NOT retried.
  */
-async function req(url: string, init?: RequestInit, retries = 6, isCsrfRetry = false): Promise<Response> {
+async function req(url: string, init?: RequestInit, retries = 6, isCsrfRetry = false, cacheEtag = false): Promise<Response> {
   // Attach the CSRF token to every mutating request — GET/HEAD are read-only and exempt server-side too
   // (see requireAuth), so no point adding the header there. `csrfToken` is null before the first successful
   // /api/status call resolves — WAIT for that (via primeCsrfToken, see its own comment) rather than firing a
@@ -87,7 +87,11 @@ async function req(url: string, init?: RequestInit, retries = 6, isCsrfRetry = f
   }
   // ETag: attach If-None-Match on GET requests when we have a cached tag. A 304 response means nothing
   // changed — synthesize a Response from our cached body so callers never see 304 and need no changes.
-  if (method === "GET") {
+  // Also opted into by specific POST endpoints that poll on a fixed interval with no meaningful request
+  // body (e.g. kick) — their response is cacheable the same way a GET's is, it's just not idempotent
+  // server-side (it still does real work), so this only saves response BYTES, never the server-side call.
+  const etagable = method === "GET" || cacheEtag;
+  if (etagable) {
     const cached = etagCache.get(url);
     if (cached) {
       init = { ...init, headers: { ...(init?.headers || {}), "if-none-match": cached.etag } };
@@ -109,8 +113,8 @@ async function req(url: string, init?: RequestInit, retries = 6, isCsrfRetry = f
         const cached = etagCache.get(url);
         if (cached) return new Response(cached.body, { status: 200, headers: { "content-type": "application/json" } });
       }
-      // Cache the ETag + body for future GET requests to this URL.
-      if (method === "GET" && r.ok) {
+      // Cache the ETag + body for future requests to this URL (GET, or an opted-in POST — see `etagable` above).
+      if (etagable && r.ok) {
         const etag = r.headers.get("etag");
         if (etag) {
           const body = await r.clone().text();
@@ -130,14 +134,14 @@ async function req(url: string, init?: RequestInit, retries = 6, isCsrfRetry = f
             if (status?.csrfToken && status.csrfToken !== (init?.headers as any)?.["x-csrf-token"]) {
               const recoveredToken = String(status.csrfToken);
               csrfToken = recoveredToken;
-              return req(url, { ...init, headers: { ...(init?.headers || {}), "x-csrf-token": recoveredToken } }, retries, true);
+              return req(url, { ...init, headers: { ...(init?.headers || {}), "x-csrf-token": recoveredToken } }, retries, true, cacheEtag);
             }
           } catch { /* preserve the original 403 for the caller */ }
         }
       }
       // The normal path remains a one-shot retry when the server can echo the current token directly.
       if (r.status === 403 && !isCsrfRetry && freshToken && freshToken !== (init?.headers as any)?.["x-csrf-token"]) {
-        return req(url, { ...init, headers: { ...(init?.headers || {}), "x-csrf-token": freshToken } }, retries, true);
+        return req(url, { ...init, headers: { ...(init?.headers || {}), "x-csrf-token": freshToken } }, retries, true, cacheEtag);
       }
       if (r.status >= 500 && attempt < retries) {
         const ct = r.headers.get("content-type") || "";
@@ -197,7 +201,11 @@ export const api = {
   status: (): Promise<ConnectionStatus> => req("/api/status").then(j).then((s: ConnectionStatus) => { if (s.csrfToken) csrfToken = s.csrfToken; return s; }),
   signup: (email: string, password: string, consent: boolean, isChildAccount?: boolean, birthYear?: number, parentalConsent?: boolean) => 
     authPost("/api/auth/signup", { email, password, consent, isChildAccount, birthYear, parentalConsent }),
-  login: (email: string, password: string) => authPost("/api/auth/login", { email, password }),
+  // `lang` lets the server's pre-session reqLang()/M() pick the right language for a login FAILURE —
+  // there's no session/profile yet at that point, so it falls back to req.body.lang (defaulting to "fr"
+  // when absent). Without this, the error message could land in a different language than the login
+  // form itself (preLoginLang), which is the only language signal available before a session exists.
+  login: (email: string, password: string, lang: "fr" | "en") => authPost("/api/auth/login", { email, password, lang }),
   // Always resolves {ok:true} on a validly-formatted email — the server never reveals whether an account
   // actually exists (see server/index.ts's own comment on why), so the client can't and shouldn't try to
   // distinguish "sent" from "no such account" either.
@@ -448,7 +456,15 @@ export const api = {
     message: string,
   ): Promise<{ reply: string }> => post(`/api/tasks/${taskId}/study-help`, { card, history, message }),
   // Drain one queued job server-side and return the fresh task list + how many jobs remain active.
-  kick: (): Promise<{ processed: number; failed: number; active: number; activeTaskIds?: string[]; tasks: WebTask[] }> => post("/api/jobs/kick"),
+  // Omits `chat`/`board`/`problems`/`objectives` from each task (server/index.ts trims these before
+  // sending — the client's keepLocalHandled merge already falls back to localStorage for them) and is
+  // ETag-cached like a GET (see req()'s `cacheEtag` param) since this fires every 10s for the lifetime of
+  // any active job and most ticks see no change.
+  // The declared `tasks: WebTask[]` is a convenience lie about completeness, not correctness: every
+  // consumer (keepLocalHandled → hydrateLocalThreads) already treats chat/board/problems/objectives as
+  // optional and falls back to localStorage when absent, which is exactly what happens here.
+  kick: (): Promise<{ active: number; activeTaskIds?: string[]; tasks: WebTask[] }> =>
+    req("/api/jobs/kick", { method: "POST" }, undefined, undefined, true).then(j),
   // Study Mode API
   studySessions: (): Promise<StudySession[]> => req("/api/study/sessions").then(j),
   saveStudySession: (session: Partial<StudySession>): Promise<StudySession> => post("/api/study/session", session),

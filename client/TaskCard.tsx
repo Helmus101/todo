@@ -698,7 +698,7 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
       </div>
 
       <ArtifactPopups task={task} onTask={onTask} openNote={openNote} openDeck={openDeck} openQuiz={openQuiz}
-        setOpenNote={setOpenNote} setOpenDeck={setOpenDeck} setOpenQuiz={setOpenQuiz} />
+        setOpenNote={setOpenNote} setOpenDeck={setOpenDeck} setOpenQuiz={setOpenQuiz} userId={userId ?? null} />
     </div>
   );
 }
@@ -1610,9 +1610,9 @@ function SendableReview({ task, onTask }: {
 /** The note/deck/quiz viewers, mounted once for the whole focus view (both the chat chips and the
  *  "prepared" panel open them). A chip can reference an id ARTIFACT_CAP has since evicted — that renders
  *  as nothing rather than crashing. */
-function ArtifactPopups({ task, onTask, openNote, openDeck, openQuiz, setOpenNote, setOpenDeck, setOpenQuiz }: {
+function ArtifactPopups({ task, onTask, openNote, openDeck, openQuiz, setOpenNote, setOpenDeck, setOpenQuiz, userId }: {
   task: WebTask; onTask: (t: WebTask) => void; openNote: string | null; openDeck: string | null; openQuiz: string | null;
-  setOpenNote: (v: null) => void; setOpenDeck: (v: null) => void; setOpenQuiz: (v: null) => void;
+  setOpenNote: (v: null) => void; setOpenDeck: (v: null) => void; setOpenQuiz: (v: null) => void; userId: string | null;
 }) {
   const note = openNote ? task.notes?.find((x) => x.id === openNote) : null;
   const deck = openDeck ? task.flashcards?.find((x) => x.id === openDeck) : null;
@@ -1641,8 +1641,8 @@ function ArtifactPopups({ task, onTask, openNote, openDeck, openQuiz, setOpenNot
           </div>
         </TaskModal>
       ) : null}
-      {deck ? <TaskModal onClose={() => setOpenDeck(null)} nested title={deck.title}><FlashcardDeck deck={deck} onReview={onReview} onNotNeeded={onNotNeeded} taskId={task.id} onAllCorrect={() => setOpenDeck(null)} /></TaskModal> : null}
-      {quiz ? <TaskModal onClose={() => setOpenQuiz(null)} nested title={quiz.title}><QuizPlayer quiz={quiz} taskId={task.id} subject={task.sourceSubject} /></TaskModal> : null}
+      {deck ? <TaskModal onClose={() => setOpenDeck(null)} nested title={deck.title}><FlashcardDeck deck={deck} onReview={onReview} onNotNeeded={onNotNeeded} taskId={task.id} onAllCorrect={() => setOpenDeck(null)} userId={userId} /></TaskModal> : null}
+      {quiz ? <TaskModal onClose={() => setOpenQuiz(null)} nested title={quiz.title}><QuizPlayer quiz={quiz} taskId={task.id} subject={task.sourceSubject} userId={userId} /></TaskModal> : null}
     </>
   );
 }

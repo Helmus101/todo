@@ -754,16 +754,22 @@ function StudyHelpPanel({ taskId, card }: { taskId?: string; card: StudyHelpCard
 /** Drillable flashcard viewer (CREATE_FLASHCARDS): click flips the card, → marks it right and
  *  advances, ← marks it wrong and advances. Ends on a score summary with a restart. Keyboard-first so a
  *  student can drill an entire deck without touching the mouse. */
-function loadDeckProgress(deckId: string): { i: number; right: number[]; wrong: number[] } | null {
+// Keyed by userId too, same reasoning as localDecks.ts's deck-CONTENT store — a bare deck.id key is
+// GLOBAL across every account on this browser, so a different account landing on a deck that happens to
+// share an id (or just reading stale progress left behind by the account before it) would see/resume
+// someone else's review position. "anon" is the pre-fix key's effective namespace, so a signed-out caller
+// degrades to the old (still account-unscoped, but that's inherent to being signed out) behavior.
+function deckProgressKey(deckId: string, userId: string | null): string { return `otto-deck:${userId || "anon"}:${deckId}`; }
+function loadDeckProgress(deckId: string, userId: string | null): { i: number; right: number[]; wrong: number[] } | null {
   try {
-    const raw = localStorage.getItem(`otto-deck:${deckId}`);
+    const raw = localStorage.getItem(deckProgressKey(deckId, userId));
     if (!raw) return null;
     const p = JSON.parse(raw);
     if (!Number.isInteger(p?.i) || !Array.isArray(p?.right) || !Array.isArray(p?.wrong)) return null;
     return { i: p.i, right: p.right, wrong: p.wrong };
   } catch { return null; }
 }
-export function FlashcardDeck({ deck, onReview, onNotNeeded, taskId, onAllCorrect, onlyIndices }: { deck: TaskFlashcards; onReview?: (cardIndex: number, correct: boolean) => void; onNotNeeded?: (cardIndex: number) => void; taskId?: string; onAllCorrect?: () => void;
+export function FlashcardDeck({ deck, onReview, onNotNeeded, taskId, onAllCorrect, onlyIndices, userId }: { deck: TaskFlashcards; onReview?: (cardIndex: number, correct: boolean) => void; onNotNeeded?: (cardIndex: number) => void; taskId?: string; onAllCorrect?: () => void; userId?: string | null;
   /** Restricts the review pass to exactly these card indices (still excludes `notNeeded` ones) instead of
    *  every card in the deck — the DueReviews cross-task view (App.tsx) needs this: a deck's spaced-
    *  repetition schedule (nextLeitnerReview, shared/types.ts) can have most of its cards sitting on a
@@ -775,7 +781,7 @@ export function FlashcardDeck({ deck, onReview, onNotNeeded, taskId, onAllCorrec
   onlyIndices?: number[];
 }) {
   const L = useLang();
-  const saved = useRef(loadDeckProgress(deck.id)).current;
+  const saved = useRef(loadDeckProgress(deck.id, userId ?? null)).current;
   const [i, setI] = useState(saved?.i ?? 0);
   const [flipped, setFlipped] = useState(false);
   const [right, setRight] = useState<number[]>(saved?.right ?? []);
@@ -861,10 +867,10 @@ export function FlashcardDeck({ deck, onReview, onNotNeeded, taskId, onAllCorrec
   useEffect(() => {
     if (retryQueue) return;
     try {
-      if (done) { localStorage.removeItem(`otto-deck:${deck.id}`); return; }
-      localStorage.setItem(`otto-deck:${deck.id}`, JSON.stringify({ i, right, wrong }));
+      if (done) { localStorage.removeItem(deckProgressKey(deck.id, userId ?? null)); return; }
+      localStorage.setItem(deckProgressKey(deck.id, userId ?? null), JSON.stringify({ i, right, wrong }));
     } catch { /* private browsing / storage full — progress just won't survive a reload, not fatal */ }
-  }, [deck.id, i, right, wrong, done, retryQueue]);
+  }, [deck.id, userId, i, right, wrong, done, retryQueue]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (done) return;
@@ -962,9 +968,12 @@ export function FlashcardDeck({ deck, onReview, onNotNeeded, taskId, onAllCorrec
  *  the interaction — lock on pick, reveal the right answer, explain why — has nothing in common with a flip. */
 // Read once at mount time (lazy initializer) — never re-read after, so a later edit to this quiz's own
 // progress by THIS component doesn't loop back through localStorage on its own writes.
-function loadQuizProgress(quizId: string): { i: number; right: number[]; wrongIdx: number[]; order: number[] | null } | null {
+// Same account-scoping fix as FlashcardDeck's loadDeckProgress/deckProgressKey above — a bare quizId key
+// is global across every account on this browser.
+function quizProgressKey(quizId: string, userId: string | null): string { return `otto-quiz:${userId || "anon"}:${quizId}`; }
+function loadQuizProgress(quizId: string, userId: string | null): { i: number; right: number[]; wrongIdx: number[]; order: number[] | null } | null {
   try {
-    const raw = localStorage.getItem(`otto-quiz:${quizId}`);
+    const raw = localStorage.getItem(quizProgressKey(quizId, userId));
     if (!raw) return null;
     const p = JSON.parse(raw);
     if (!Number.isInteger(p?.i) || !Array.isArray(p?.right) || !Array.isArray(p?.wrongIdx)) return null;
@@ -1005,9 +1014,9 @@ function QuizWrongReflection({ subject, question }: { subject: string; question:
   );
 }
 
-export function QuizPlayer({ quiz, taskId, subject }: { quiz: TaskQuiz; taskId?: string; subject?: string }) {
+export function QuizPlayer({ quiz, taskId, subject, userId }: { quiz: TaskQuiz; taskId?: string; subject?: string; userId?: string | null }) {
   const L = useLang();
-  const saved = useRef(loadQuizProgress(quiz.id)).current;
+  const saved = useRef(loadQuizProgress(quiz.id, userId ?? null)).current;
   const [i, setI] = useState(saved?.i ?? 0);
   const [picked, setPicked] = useState<number | null>(null);
   const [right, setRight] = useState<number[]>(saved?.right ?? []);
@@ -1050,10 +1059,10 @@ export function QuizPlayer({ quiz, taskId, subject }: { quiz: TaskQuiz; taskId?:
   // mid-pick) — just enough that "I got interrupted" doesn't mean starting the whole quiz over.
   useEffect(() => {
     try {
-      if (done) { localStorage.removeItem(`otto-quiz:${quiz.id}`); return; }
-      localStorage.setItem(`otto-quiz:${quiz.id}`, JSON.stringify({ i, right, wrongIdx, order }));
+      if (done) { localStorage.removeItem(quizProgressKey(quiz.id, userId ?? null)); return; }
+      localStorage.setItem(quizProgressKey(quiz.id, userId ?? null), JSON.stringify({ i, right, wrongIdx, order }));
     } catch { /* private browsing / storage full — progress just won't survive a reload, not fatal */ }
-  }, [quiz.id, i, right, wrongIdx, order, done]);
+  }, [quiz.id, userId, i, right, wrongIdx, order, done]);
   // Only the "advance past a picked answer" shortcut remains — no number-key shortcut to PICK an answer:
   // that let a student cycle 1/2/3/4 blind without reading the options, defeating the point of a
   // discrimination check (see the tool's own doc comment above CREATE_QUIZ_TOOL). Enter deliberately does

@@ -216,6 +216,18 @@ function clearAllLocalAccountData(userId: string | null): void {
   clearLocalDecks(userId);
   clearLocalQuizzes(userId);
   clearLocalChatBoard(userId);
+  // Journal week/month caches and per-deck review progress are keyed `<prefix><userId>:<date-or-id>` (see
+  // their definitions below) — date/deck-id isn't known here, so sweep every localStorage key for this
+  // user's namespace rather than needing a list of dates/deck ids.
+  try {
+    const ns = [`${STUDYLOG_CACHE_PREFIX}${userId || "anon"}:`, `${STUDYLOG_MONTH_CACHE_PREFIX}${userId || "anon"}:`, `otto-deck:${userId || "anon"}:`, `otto-quiz:${userId || "anon"}:`];
+    const toRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && ns.some((p) => k.startsWith(p))) toRemove.push(k);
+    }
+    toRemove.forEach((k) => localStorage.removeItem(k));
+  } catch { /* ignore */ }
 }
 
 const GREETING = (lang?: "fr" | "en") => {
@@ -674,20 +686,20 @@ export function App() {
   const lastFocusSyncRef = useRef(0);
   useEffect(() => {
     if (!connected) return;
-    // Opportunistic Pronote keepalive — piggybacks on this same "app is actually open" heartbeat rather
-    // than a new timer; server/pronote.ts's touchPronoteSession gates the real work to at most once per
-    // few hours, so calling this every tick here costs nothing beyond one cheap request.
-    // Throttled to at most once per 60s — this fires on EVERY tab focus/visibilitychange event, and each
-    // firing is FOUR separate requests (tasks, status, budget, sweep-check). A student alt-tabbing back and
-    // forth a lot used to re-trigger all four every single time, which is real, avoidable egress on top of
-    // the interval poll above — a focus-driven refresh is about being more RESPONSIVE than the timer, not
-    // about firing literally every time the tab regains focus.
+    // Used to also re-sync tasks/status/budget/sweep on every tab focus/visibilitychange event (4 requests
+    // each time) — removed per direct instruction: that's real, avoidable egress for something a manual
+    // reload already covers, and this app doesn't promise live cross-tab sync on every alt-tab. Only the
+    // Pronote keepalive stays wired to this heartbeat — it's not about re-fetching Otto's own state, it's
+    // about not leaving a connected student's Pronote token idle long enough to die before the next real
+    // fetch or the once-daily cron would otherwise discover it's dead (see touchPronoteSession's own
+    // comment in server/pronote.ts). server/pronote.ts gates the real work to at most once per few hours,
+    // so calling this every tick here costs nothing beyond one cheap, mostly-no-op request.
     const on = () => {
       if (document.hidden || signedOutRef.current) return;
       const now = Date.now();
       if (now - lastFocusSyncRef.current < 120_000) return;
       lastFocusSyncRef.current = now;
-      void syncTasks(); void loadStatus(); void loadBudget(); void sweepIfDue(); if (status?.pronoteConnected) void api.pronoteTouch();
+      if (status?.pronoteConnected) void api.pronoteTouch();
     };
     document.addEventListener("visibilitychange", on);
     window.addEventListener("focus", on);
@@ -707,9 +719,9 @@ export function App() {
     // that, so this and the cache TTL bump are complementary, not redundant. 5 min still surfaces a new task
     // well within a normal session.
     const syncTick = setInterval(() => { if (!document.hidden && !signedOutRef.current) { void syncTasks(); void loadStatus(); } }, 10 * 60_000);
-    const fullTick = setInterval(on, 15 * 60_000); // periodic budget refresh + cadence-gated sweep check — was 5min
+    const fullTick = setInterval(on, 15 * 60_000); // periodic Pronote keepalive heartbeat — was also a budget/sweep refresh before that got removed above
     return () => { document.removeEventListener("visibilitychange", on); window.removeEventListener("focus", on); clearInterval(syncTick); clearInterval(fullTick); };
-  }, [connected, syncTasks, sweepIfDue, loadBudget, loadStatus, status?.pronoteConnected]);
+  }, [connected, syncTasks, loadStatus, status?.pronoteConnected]);
 
   // THE SERVER OWNS EXECUTION. The browser no longer decides what runs — sweeps queue execution jobs
   // server-side, cron drains them offline. While anything is queued/executing, the OPEN client "kicks"
@@ -731,7 +743,11 @@ export function App() {
     if (!connected || !loaded || status?.paused) return;
     if (!hasActiveWork(tasks)) return;
     const tick = async () => {
-      if (kicking.current || signedOutRef.current) return;
+      // Backgrounded tabs don't need live updates within seconds — this loop runs every 10s while ANY job
+      // is in flight, uncached server-side (bypassCache: true, see /api/jobs/kick), so an unguarded
+      // background tab was a real, continuous Supabase egress + CPU cost for however long a job stayed
+      // queued/retrying, with no one watching. Confirmed as the dominant egress driver in a live audit.
+      if (kicking.current || signedOutRef.current || document.hidden) return;
       kicking.current = true;
       try {
         const out = await api.kick();
@@ -745,7 +761,11 @@ export function App() {
     };
     void tick();
     const id = setInterval(tick, 10000);
-    return () => clearInterval(id);
+    // Catch up immediately when the tab regains focus, instead of waiting up to 10s for the next tick —
+    // the guard above means a backgrounded tab may have missed several ticks entirely.
+    const onVisible = () => { if (!document.hidden) void tick(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { clearInterval(id); document.removeEventListener("visibilitychange", onVisible); };
   }, [connected, loaded, status?.paused, hasActiveWork(tasks)]);
 
   // Manual ↻ Refresh: an on-demand FORCED sweep (bypasses the daily floor). The automatic daily sweep is
@@ -1966,6 +1986,7 @@ function FlashcardsLibraryPage({ lang, tasks, embedded, userId }: { lang?: "fr" 
           <FlashcardDeck
             deck={open.deck}
             taskId={open.taskId}
+            userId={userId}
             onReview={liveOwner ? (cardIndex, correct) => { void api.reviewFlashcard(open.taskId, open.deck.id, cardIndex, correct).catch(() => {}); } : undefined}
             onNotNeeded={liveOwner ? (cardIndex) => { void api.markFlashcardNotNeeded(open.taskId, open.deck.id, cardIndex).catch(() => {}); } : undefined}
             onAllCorrect={() => setOpenId(null)}
@@ -1979,7 +2000,7 @@ function FlashcardsLibraryPage({ lang, tasks, embedded, userId }: { lang?: "fr" 
               {L("Cette source a changé côté serveur — tu peux toujours réviser, mais ta progression ne sera pas synchronisée.", "This quiz's source has changed on the server — you can still review it, but progress won't sync.")}
             </p>
           ) : null}
-          <QuizPlayer quiz={openQuiz.quiz} taskId={liveQuizOwner ? openQuiz.taskId : undefined} />
+          <QuizPlayer quiz={openQuiz.quiz} taskId={liveQuizOwner ? openQuiz.taskId : undefined} userId={userId} />
         </TaskModal>
       ) : null}
     </Wrap>
@@ -2259,28 +2280,36 @@ function StandaloneStudyEntry({ tasks, setTasks, status, notify, navigate }: {
 // request resolves), then a background fetch reconciles with the server as the source of truth. Not a
 // replacement for server persistence (Leitner review state still lives server-side) — purely a fast local
 // mirror of what was last seen, same spirit as FlashcardDeck/QuizPlayer's own localStorage progress saves.
+// Keyed by userId + calendar date — NOT just the date. A date-only key is GLOBAL/shared across every
+// account that's ever signed into this browser during the same ISO week, so a different account signing
+// in right after would see account A's cached journal flashcards/quiz on mount (useState's initializer
+// reads this synchronously, before any network fetch resolves) — reported live as "flashcards saved in a
+// different account even though it was never associated with that account." Same scoping pattern as
+// localDecks.ts/localChatBoard.ts, which already fixed this exact bug class for their own caches.
 const STUDYLOG_CACHE_PREFIX = "otto-studylog-week:";
-function loadWeekCache(monday: string): { days: (WebTask | null)[]; summary: WebTask | null } | null {
+function studylogWeekKey(userId: string | null, monday: string): string { return `${STUDYLOG_CACHE_PREFIX}${userId || "anon"}:${monday}`; }
+function loadWeekCache(userId: string | null, monday: string): { days: (WebTask | null)[]; summary: WebTask | null } | null {
   try {
-    const raw = localStorage.getItem(STUDYLOG_CACHE_PREFIX + monday);
+    const raw = localStorage.getItem(studylogWeekKey(userId, monday));
     return raw ? JSON.parse(raw) : null;
   } catch { return null; }
 }
-function saveWeekCache(monday: string, data: { days: (WebTask | null)[]; summary: WebTask | null }): void {
-  try { localStorage.setItem(STUDYLOG_CACHE_PREFIX + monday, JSON.stringify(data)); } catch { /* storage full/private — cache is best-effort only */ }
+function saveWeekCache(userId: string | null, monday: string, data: { days: (WebTask | null)[]; summary: WebTask | null }): void {
+  try { localStorage.setItem(studylogWeekKey(userId, monday), JSON.stringify(data)); } catch { /* storage full/private — cache is best-effort only */ }
 }
 // Same local-mirror pattern as the week cache, for the month summary (deck + companion quiz) — this was
 // the one piece of the Journal that DIDN'T get a local copy, so its flashcards/quiz only ever showed up
 // after a fresh network round-trip instead of being "always accessible" like the daily/weekly ones.
 const STUDYLOG_MONTH_CACHE_PREFIX = "otto-studylog-month:";
-function loadMonthCache(month: string): { weeks: WebTask[]; summary: WebTask | null } | null {
+function studylogMonthKey(userId: string | null, month: string): string { return `${STUDYLOG_MONTH_CACHE_PREFIX}${userId || "anon"}:${month}`; }
+function loadMonthCache(userId: string | null, month: string): { weeks: WebTask[]; summary: WebTask | null } | null {
   try {
-    const raw = localStorage.getItem(STUDYLOG_MONTH_CACHE_PREFIX + month);
+    const raw = localStorage.getItem(studylogMonthKey(userId, month));
     return raw ? JSON.parse(raw) : null;
   } catch { return null; }
 }
-function saveMonthCache(month: string, data: { weeks: WebTask[]; summary: WebTask | null }): void {
-  try { localStorage.setItem(STUDYLOG_MONTH_CACHE_PREFIX + month, JSON.stringify(data)); } catch { /* best-effort */ }
+function saveMonthCache(userId: string | null, month: string, data: { weeks: WebTask[]; summary: WebTask | null }): void {
+  try { localStorage.setItem(studylogMonthKey(userId, month), JSON.stringify(data)); } catch { /* best-effort */ }
 }
 // REVERSAL: this used to prefer "whichever side actually has content" (server vs. local cache) on the
 // theory that a server response briefly showing no deck was more likely a stale read/merge race than a
@@ -2300,8 +2329,8 @@ function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebT
   // not one more thing in the sidebar to remember. Journal is the default view; Flashcards is a click away.
   const [tab, setTab] = useState<"journal" | "flashcards">("journal");
   const [monday, setMonday] = useState(() => mondayOf(todayIso()));
-  const [days, setDays] = useState<(WebTask | null)[]>(() => loadWeekCache(mondayOf(todayIso()))?.days || [null, null, null, null, null, null, null]);
-  const [summary, setSummary] = useState<WebTask | null>(() => loadWeekCache(mondayOf(todayIso()))?.summary || null);
+  const [days, setDays] = useState<(WebTask | null)[]>(() => loadWeekCache(status?.user || null, mondayOf(todayIso()))?.days || [null, null, null, null, null, null, null]);
+  const [summary, setSummary] = useState<WebTask | null>(() => loadWeekCache(status?.user || null, mondayOf(todayIso()))?.summary || null);
   const [loaded, setLoaded] = useState(false);
   // Mon=0..Sun=6 (the week now covers all 7 days, not just weekdays) — getUTCDay() is Sun=0..Sat=6, so
   // shifting by +6 mod 7 maps Mon(1)->0 ... Sat(6)->5, Sun(0)->6.
@@ -2351,8 +2380,8 @@ function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebT
   // its own calendar nav — riding the week nav keeps this simple (no second date picker) at the cost of
   // the month view following whichever week you're currently on.
   const month = monday.slice(0, 7);
-  const [monthWeeks, setMonthWeeks] = useState<WebTask[]>(() => loadMonthCache(mondayOf(todayIso()).slice(0, 7))?.weeks || []);
-  const [monthSummary, setMonthSummary] = useState<WebTask | null>(() => loadMonthCache(mondayOf(todayIso()).slice(0, 7))?.summary || null);
+  const [monthWeeks, setMonthWeeks] = useState<WebTask[]>(() => loadMonthCache(status?.user || null, mondayOf(todayIso()).slice(0, 7))?.weeks || []);
+  const [monthSummary, setMonthSummary] = useState<WebTask | null>(() => loadMonthCache(status?.user || null, mondayOf(todayIso()).slice(0, 7))?.summary || null);
   const [monthGenBusy, setMonthGenBusy] = useState(false);
 
   // Journal decks/quizzes live on their own synthetic studylog tasks, fetched through /api/studylog/* —
@@ -2380,7 +2409,7 @@ function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebT
   }, [monthSummary, userId]);
 
   const load = useCallback((m: string) => {
-    const cached = loadWeekCache(m);
+    const cached = loadWeekCache(status?.user || null, m);
     if (cached) { setDays(cached.days); setSummary(cached.summary); setLoaded(true); }
     else setLoaded(false);
     void api.studyLogWeek(m).then((r) => {
@@ -2392,7 +2421,7 @@ function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebT
       // nothing). richerTask stays useful for the .catch() branch below (a genuine fetch failure, where the
       // cache is the only copy there is at all) — just not here, where server truth already won the race.
       setDays(r.days); setSummary(r.summary); setLoaded(true);
-      saveWeekCache(m, { days: r.days, summary: r.summary });
+      saveWeekCache(status?.user || null, m, { days: r.days, summary: r.summary });
     }).catch(() => { if (!cached) { setLoaded(true); notify(en ? "Couldn't load this week." : "Impossible de charger la semaine.", "error"); } });
   }, [en, notify]);
   useEffect(() => { load(monday); }, [monday, load]);
@@ -2414,13 +2443,13 @@ function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebT
     else if (!editingDayRef.current) { setText(days[selected]?.logText || ""); }
   }, [selected, monday, days]);
   useEffect(() => {
-    const cached = loadMonthCache(month);
+    const cached = loadMonthCache(status?.user || null, month);
     if (cached) { setMonthWeeks(cached.weeks); setMonthSummary(cached.summary); }
     void api.studyLogMonth(month).then((r) => {
       // Same reasoning as the week load above — a successful response is authoritative, never overridden
       // by a stale local-only cache entry.
       setMonthWeeks(r.weeks); setMonthSummary(r.summary);
-      saveMonthCache(month, { weeks: r.weeks, summary: r.summary });
+      saveMonthCache(status?.user || null, month, { weeks: r.weeks, summary: r.summary });
     }).catch(() => {});
   }, [month]);
 
@@ -2434,7 +2463,7 @@ function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebT
       const fresh = list.find((t) => t.logDate === dates[selected]) || null;
       setDays((prev) => {
         const next = prev.map((d, i) => (i === selected ? fresh : d));
-        saveWeekCache(monday, { days: next, summary });
+        saveWeekCache(status?.user || null, monday, { days: next, summary });
         return next;
       });
       setEditingDay(false);
@@ -2455,7 +2484,7 @@ function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebT
       const list = await api.studyLogWeekSummary(monday);
       const fresh = list.find((t) => t.logDate === `week:${monday}`) || null;
       setSummary(fresh);
-      saveWeekCache(monday, { days, summary: fresh });
+      saveWeekCache(status?.user || null, monday, { days, summary: fresh });
       // Open it immediately — leaving the student to notice a button's label silently changed to "View
       // summary" and click it a SECOND time read as "nothing happened" after a real wait for generation.
       if (fresh?.flashcards?.length) setOpenDeckFor("summary");
@@ -2474,7 +2503,7 @@ function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebT
       const fresh = list.find((t) => t.id === dayTask.id);
       if (fresh) setDays((prev) => {
         const next = prev.map((d) => (d?.id === dayTask.id ? fresh : d));
-        saveWeekCache(monday, { days: next, summary });
+        saveWeekCache(status?.user || null, monday, { days: next, summary });
         return next;
       });
     }).catch(() => {});
@@ -2482,7 +2511,7 @@ function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebT
   const onSummaryReview = summary && summaryDeck ? (cardIndex: number, correct: boolean) => {
     void api.reviewFlashcard(summary.id, summaryDeck.id, cardIndex, correct).then((list) => {
       const fresh = list.find((t) => t.id === summary.id);
-      if (fresh) { setSummary(fresh); saveWeekCache(monday, { days, summary: fresh }); }
+      if (fresh) { setSummary(fresh); saveWeekCache(status?.user || null, monday, { days, summary: fresh }); }
     }).catch(() => {});
   } : undefined;
 
@@ -2491,7 +2520,7 @@ function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebT
   const onMonthReview = monthSummary && monthDeck ? (cardIndex: number, correct: boolean) => {
     void api.reviewFlashcard(monthSummary.id, monthDeck.id, cardIndex, correct).then((list) => {
       const fresh = list.find((t) => t.id === monthSummary.id);
-      if (fresh) { setMonthSummary(fresh); saveMonthCache(month, { weeks: monthWeeks, summary: fresh }); }
+      if (fresh) { setMonthSummary(fresh); saveMonthCache(status?.user || null, month, { weeks: monthWeeks, summary: fresh }); }
     }).catch(() => {});
   } : undefined;
   const genMonthSummary = async () => {
@@ -2500,7 +2529,7 @@ function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebT
       const list = await api.studyLogMonthSummary(month);
       const fresh = list.find((t) => t.logDate === `month:${month}`) || null;
       setMonthSummary(fresh);
-      saveMonthCache(month, { weeks: monthWeeks, summary: fresh });
+      saveMonthCache(status?.user || null, month, { weeks: monthWeeks, summary: fresh });
       if (fresh?.flashcards?.length) setOpenDeckFor("month");
     } catch (e: any) { notify(e?.message || (en ? "Couldn't build the month summary — try again." : "Impossible de créer le résumé mensuel — réessaie."), "error"); }
     finally { setMonthGenBusy(false); }
@@ -2553,7 +2582,7 @@ function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebT
                 <h3>{dayDeck.title}</h3>
                 <button type="button" className="btn xs ghost" onClick={() => setEditingDay(true)}>{L("Modifier l'entrée", "Edit entry")}</button>
               </div>
-              <FlashcardDeck deck={dayDeck} onReview={onDayReview} taskId={dayTask?.id} />
+              <FlashcardDeck deck={dayDeck} onReview={onDayReview} taskId={dayTask?.id} userId={status?.user || null} />
               {/* The quiz is only present when today's material genuinely called for discrimination-style
                   testing (server decides, not a guaranteed add-on) — so it may not exist even with a deck. */}
               {dayQuiz ? <button type="button" className="btn ghost" onClick={() => setOpenQuizFor("day")}>{L("Quiz", "Quiz")} ({dayQuiz.questions.length})</button> : null}
@@ -2646,19 +2675,19 @@ function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebT
       )}
 
       {openDeckFor === "summary" && summaryDeck ? (
-        <TaskModal onClose={() => setOpenDeckFor(null)} title={summaryDeck.title}><FlashcardDeck deck={summaryDeck} onReview={onSummaryReview} taskId={summary?.id} onAllCorrect={() => setOpenDeckFor(null)} /></TaskModal>
+        <TaskModal onClose={() => setOpenDeckFor(null)} title={summaryDeck.title}><FlashcardDeck deck={summaryDeck} onReview={onSummaryReview} taskId={summary?.id} onAllCorrect={() => setOpenDeckFor(null)} userId={status?.user || null} /></TaskModal>
       ) : null}
       {openDeckFor === "month" && monthDeck ? (
-        <TaskModal onClose={() => setOpenDeckFor(null)} title={monthDeck.title}><FlashcardDeck deck={monthDeck} onReview={onMonthReview} taskId={monthSummary?.id} onAllCorrect={() => setOpenDeckFor(null)} /></TaskModal>
+        <TaskModal onClose={() => setOpenDeckFor(null)} title={monthDeck.title}><FlashcardDeck deck={monthDeck} onReview={onMonthReview} taskId={monthSummary?.id} onAllCorrect={() => setOpenDeckFor(null)} userId={status?.user || null} /></TaskModal>
       ) : null}
       {openQuizFor === "day" && dayQuiz ? (
-        <TaskModal onClose={() => setOpenQuizFor(null)} title={dayQuiz.title}><QuizPlayer quiz={dayQuiz} taskId={dayTask?.id} /></TaskModal>
+        <TaskModal onClose={() => setOpenQuizFor(null)} title={dayQuiz.title}><QuizPlayer quiz={dayQuiz} taskId={dayTask?.id} userId={status?.user || null} /></TaskModal>
       ) : null}
       {openQuizFor === "summary" && summaryQuiz ? (
-        <TaskModal onClose={() => setOpenQuizFor(null)} title={summaryQuiz.title}><QuizPlayer quiz={summaryQuiz} taskId={summary?.id} /></TaskModal>
+        <TaskModal onClose={() => setOpenQuizFor(null)} title={summaryQuiz.title}><QuizPlayer quiz={summaryQuiz} taskId={summary?.id} userId={status?.user || null} /></TaskModal>
       ) : null}
       {openQuizFor === "month" && monthQuiz ? (
-        <TaskModal onClose={() => setOpenQuizFor(null)} title={monthQuiz.title}><QuizPlayer quiz={monthQuiz} taskId={monthSummary?.id} /></TaskModal>
+        <TaskModal onClose={() => setOpenQuizFor(null)} title={monthQuiz.title}><QuizPlayer quiz={monthQuiz} taskId={monthSummary?.id} userId={status?.user || null} /></TaskModal>
       ) : null}
       </>
       )}
@@ -3444,7 +3473,7 @@ function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status
     try {
       const r = mode === "signup" 
         ? await api.signup(email.trim(), pw, consent, isChildAccount, birthYear ? parseInt(birthYear) : undefined, parentalConsent) 
-        : await api.login(email.trim(), pw);
+        : await api.login(email.trim(), pw, en ? "en" : "fr");
       if (r.ok) onDone(mode === "signup"); else setErr(r.error || L("Une erreur est survenue.", "Something went wrong."));
     } catch {
       setErr(L("Impossible de contacter le serveur. Vérifie ta connexion et réessaie.", "Couldn't reach the server. Check your connection and try again."));

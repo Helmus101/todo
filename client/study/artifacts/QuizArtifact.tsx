@@ -16,7 +16,7 @@ export function QuizArtifact({ task, quizId, userId }: QuizArtifactProps) {
   if (!quiz) return <div className="sm-artifact-empty">{L("Ce quiz n'est plus disponible.", "This quiz is no longer available.")}</div>;
   return (
     <div className="sm-quiz-body">
-      <QuizPlayer quiz={quiz} taskId={task.id} />
+      <QuizPlayer quiz={quiz} taskId={task.id} userId={userId} />
     </div>
   );
 }

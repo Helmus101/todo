@@ -2929,7 +2929,25 @@ app.post("/api/jobs/kick", requireAuth, rateLimit(60, 60_000), async (req, res) 
       } catch { /* best-effort — fall back to whatever the session already has */ }
     }
     const [active, activeTaskIds] = await Promise.all([countActiveJobs(email), activeJobTaskIds(email)]);
-    res.json({ processed: out.processed, failed: out.failed, active, activeTaskIds, tasks: responseTasks });
+    // Trim the heaviest fields before this ships over the wire: this route fires every 10s for the entire
+    // duration any job is in flight, and chat/board/problems/objectives (full conversation history, canvas
+    // strokes, practice-problem state) can dwarf the rest of a task object. The client's keepLocalHandled
+    // merge (client/App.tsx) already falls back to localStorage for these exact fields whenever they're
+    // missing on an incoming task (see hydrateLocalThreads) — so omitting them here is a free win, not a
+    // behavior change. Confirmed via code audit that nothing downstream of api.kick() reads them.
+    const lightTasks = responseTasks.map((t: any) => {
+      const { chat, board, problems, objectives, ...rest } = t;
+      return rest;
+    });
+    const body = { active, activeTaskIds, tasks: lightTasks };
+    // ETag: this is a 10s poll loop for the entire lifetime of any active job — a hash-gated 304 means 0
+    // bytes egress on the common case where nothing changed between kicks (same pattern as /api/status
+    // and /api/tasks above).
+    const bodyJson = JSON.stringify(body);
+    const etag = `"${createHash("sha1").update(bodyJson).digest("hex").slice(0, 16)}"`;
+    res.setHeader("ETag", etag);
+    if (req.headers["if-none-match"] === etag) { res.status(304).end(); return; }
+    res.type("json").send(bodyJson);
   } catch (e: any) { console.error(e);
     res.status(500).json({ error: M(req, "échec du déclenchement", "kick failed") }); }
 });
