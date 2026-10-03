@@ -3692,5 +3692,18 @@ section("'Pulling up your day' no longer spins forever for a skip-connect accoun
   check("the connected-gated sync effect flips `loaded` directly when the account never connected anything, instead of leaving it permanently false", /if \(!connected\) \{ setLoaded\(true\); return; \}/.test(loadedEffect));
 }
 
+section("Terms/Privacy links open in a new tab from the signup form (source pin — in-progress signup state loss fix)");
+{
+  // Reported live during a Terms/Privacy audit: clicking these from the login/signup form navigated the
+  // SPA router's own click handler straight to /terms or /privacy, unmounting LoginPage and losing every
+  // typed field (email/password/consent/child-account fields) with no way back except restarting. The
+  // SPA router (usePathRoute) explicitly lets target="_blank" links fall through to normal browser nav,
+  // so opening in a new tab keeps the in-progress form alive in this tab.
+  const appSrcLegal = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const legalLine = appSrcLegal.slice(appSrcLegal.indexOf('<div className="login-legal">'), appSrcLegal.indexOf('<div className="login-legal">') + 400);
+  check("the Terms link opens in a new tab instead of unmounting the signup form", /<a href="\/terms" target="_blank" rel="noopener">/.test(legalLine));
+  check("the Privacy link opens in a new tab instead of unmounting the signup form", /<a href="\/privacy" target="_blank" rel="noopener">/.test(legalLine));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

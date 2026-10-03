@@ -3578,7 +3578,12 @@ function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status
             <button className="btn ghost" onClick={() => { setMode("login"); setErr(""); setResetSent(false); }}>{L("← Retour à la connexion", "← Back to login")}</button>
           )}
           <a className="login-back" href="/">{L("← Retour à l'accueil", "← Back to home")}</a>
-          <div className="login-legal">{L("En continuant, tu acceptes nos ", "By continuing you agree to our ")}<a href="/terms">{L("conditions", "Terms")}</a> {L("et notre", "&")} <a href="/privacy">{L("politique de confidentialité", "Privacy Policy")}</a>.</div>
+          {/* target="_blank" deliberately — these would otherwise fall through this file's own SPA router
+              (usePathRoute's click handler) which swaps the ENTIRE route to /terms or /privacy, unmounting
+              this form and losing every typed field (email/password/consent/child-account fields) with no
+              way back except restarting from scratch. Opening in a new tab keeps the signup form alive in
+              THIS tab while the policy opens in its own — reported live as a signup-abandonment risk. */}
+          <div className="login-legal">{L("En continuant, tu acceptes nos ", "By continuing you agree to our ")}<a href="/terms" target="_blank" rel="noopener">{L("conditions", "Terms")}</a> {L("et notre", "&")} <a href="/privacy" target="_blank" rel="noopener">{L("politique de confidentialité", "Privacy Policy")}</a>.</div>
           <div className="login-copyright">© 2026 Otto</div>
         </div>
       </main>
@@ -3634,12 +3639,12 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
           <p>{L("Des questions guidées sur les notions difficiles — jamais les devoirs faits à ta place.", "Guided questions on tough concepts — never the homework done for you.")}</p>
         </div>
         <div className="feature-simple">
-          <h3>{L("Plan quotidien", "Daily plan")}</h3>
-          <p>{L("Tes devoirs importés, découpés en étapes courtes, dans le bon ordre.", "Homework imported, split into short steps, in the right order.")}</p>
+          <h3>{L("Toujours un pas d'avance", "Always a step ahead")}</h3>
+          <p>{L("Otto repère tes devoirs et examens dans Gmail, Calendar et Pronote, et crée tes tâches avant même que tu y penses.", "Otto spots your homework and exams in Gmail, Calendar, and Pronote, and creates your tasks before you even think to.")}</p>
         </div>
         <div className="feature-simple">
-          <h3>{L("Répétition espacée", "Spaced repetition")}</h3>
-          <p>{L("Fiches et quiz qui reviennent juste avant que tu oublies.", "Flashcards and quizzes that return right before you'd forget.")}</p>
+          <h3>{L("Journal d'apprentissage", "Learning journal")}</h3>
+          <p>{L("Un résumé quotidien de ce que tu as appris, avec fiches et quiz de révision générés automatiquement.", "A daily summary of what you learned, with flashcards and quizzes generated automatically for review.")}</p>
         </div>
       </section>
 
