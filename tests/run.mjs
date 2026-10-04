@@ -4122,5 +4122,16 @@ section("HINT LADDER — a substitution's result must not be computed FOR the st
   check("it tells the model to split naming-the-next-computation from doing it, rather than banning naming it", claude.includes("Naming WHICH computation comes next is fine") && claude.includes("computing it FOR them in the same breath is not"));
 }
 
+section("HINT LADDER — a trailed-off/incomplete answer isn't license to finish their sentence AND jump ahead (source pin)");
+{
+  // Reported live ("draws conclusions too quickly"): student wrote "the normal force has to be bigger than"
+  // and stopped mid-thought. Otto's next line both finished that sentence for them AND jumped straight to
+  // the next concept ("the leftover has to be ma") — two things the student should have said themselves,
+  // handed over together because the first one trailed off instead of being met with "bigger than what?".
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("the prompt distinguishes a trailed-off answer from a finished wrong/right one", claude.includes("DON'T TREAT A TRAILED-OFF ANSWER AS A FINISHED ONE") && claude.includes('force has to be bigger than" with nothing after'));
+  check("it names the exact live failure: completing their sentence AND advancing the lesson in one breath", claude.includes("line both completed it for them AND jumped straight to the next concept") && claude.includes('the leftover has') && claude.includes('to be ma")'));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

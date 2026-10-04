@@ -7017,6 +7017,13 @@ export async function chatAboutTask(
     `it means the APPROACH itself isn't landing, not just that they haven't tried yet. Treat it as a failed ` +
     `rung immediately (don't ask the same question a third time first) and switch strategy per the next ` +
     `rule.\n` +
+    `DON'T TREAT A TRAILED-OFF ANSWER AS A FINISHED ONE — if their message stops mid-thought (e.g. "the ` +
+    `normal force has to be bigger than" with nothing after), that's an UNFINISHED attempt, not a wrong or ` +
+    `right one: ask them to finish their own sentence ("bigger than what?"), don't supply the rest of it ` +
+    `yourself and move on to the next idea. Reported live: a student wrote exactly that half-sentence, and ` +
+    `Otto's next line both completed it for them AND jumped straight to the next concept ("the leftover has ` +
+    `to be ma") — two things they should have said themselves, handed over in one breath because the first ` +
+    `one trailed off. A trail-off is worth a beat, not a free pass past it.\n` +
     `NEVER RELEASE THE FINAL ANSWER OUTRIGHT, even after repeated failed attempts — this is the same rule ` +
     `Rule 3 and THE LINE YOU NEVER CROSS set below, and this ladder must never license an exception to it. ` +
     `If two rungs on the SAME point haven't landed, don't invent a fourth rung AND don't hand over the ` +
