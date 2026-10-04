@@ -4185,6 +4185,15 @@ section("CREATE_INTERACTIVE — sandboxed, scoped to Study Mode, capped (source 
   const board = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
   check("the iframe's sandbox attribute is exactly \"allow-scripts\" (no allow-same-origin/allow-top-navigation/allow-popups)", /sandbox="allow-scripts"/.test(board));
   check("KIND_LABEL/KIND_GLYPH both have an 'interactive' entry", /interactive: \["Interactif", "Interactive"\]/.test(board) && /interactive: "◈"/.test(board));
+
+  // Direct instruction: "make sure artifacts aren't blank". The sandbox has NO allow-same-origin, so the
+  // parent can't inspect the frame to detect a blank scene — the guard has to run inside the frame itself.
+  check("the shell installs an in-frame error handler so a thrown scene shows a message, not a void", /addEventListener\('error'/.test(board) && /__otto_fallback/.test(board));
+  check("the shell also catches 'ran fine, drew nothing' after load (no painted canvas/svg/img and no text)", /querySelector\('canvas,svg,img,video'\)/.test(board) && /getBoundingClientRect\(\)\.height>8/.test(board));
+  check("the fallback tells the student what to do instead of showing an empty box", /This interactive didn't load/.test(board) && /Ask Otto to explain it in the chat instead/.test(board));
+
+  check("the tool's own prompt pushes no-library-first and requires a guarded fallback when one IS loaded", claude.includes("NEVER SHIP SOMETHING THAT CAN RENDER BLANK") && claude.includes("PREFER NO LIBRARY") && claude.includes("if (typeof THREE === 'undefined')"));
+  check("the prompt requires something visible on the first frame, before any interaction", claude.includes("Draw something visible on the FIRST"));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

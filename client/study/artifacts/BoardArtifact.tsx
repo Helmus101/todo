@@ -106,13 +106,44 @@ function Equation({ latex }: { latex: string }) {
  *  navigation/popups it can't navigate away or spawn windows either. `allow-scripts` alone is what the
  *  scene actually needs to run. The server already stripped any non-allowlisted <script src> and any
  *  nested <iframe>/<object>/<embed> (makeInteractiveEntry) before this ever reaches the client — this is
- *  the second, independent layer (sandbox attributes), not the only one. A broken/blank scene is
- *  self-contained inside its own box, same blast radius as Equation's own KaTeX fallback above. */
+ *  the second, independent layer (sandbox attributes), not the only one.
+ *
+ *  BLANK-PROOFING (direct instruction — "make sure artifacts aren't blank"): the worst failure mode here
+ *  isn't a broken scene, it's an EMPTY box that says nothing happened. The sandbox has no allow-same-origin,
+ *  so this component can't inspect the iframe's DOM from outside to detect that — the check has to live
+ *  INSIDE the frame. The shell below (our own code, not the model's) therefore installs an error handler
+ *  and a post-load emptiness check that replace a blank/failed scene with a visible explanation, so the
+ *  student always sees SOMETHING rather than a silent void. */
 function InteractiveFrame({ html }: { html: string }) {
-  const shell = useMemo(() => `<!doctype html><html><head><meta charset="utf-8" />` +
-    `<meta name="viewport" content="width=device-width, initial-scale=1" />` +
-    `<style>html,body{margin:0;padding:8px;box-sizing:border-box;font-family:system-ui,sans-serif;overflow:hidden;}` +
-    `*{box-sizing:border-box;}</style></head><body>${html}</body></html>`, [html]);
+  const shell = useMemo(() => {
+    // Our own guard script, injected around the model's html. Kept dependency-free and defensive: it runs
+    // before the scene (to catch load/runtime errors) and again after load (to catch "script ran, drew
+    // nothing" — a CDN that didn't answer, a WebGL context that wasn't granted, a silent early return).
+    const guard =
+      `(function(){var F=function(msg){try{var d=document.getElementById('__otto_fallback');if(!d)return;` +
+      `d.style.display='flex';var m=document.getElementById('__otto_fallback_msg');if(m&&msg)m.textContent=msg;}catch(e){}};` +
+      `window.addEventListener('error',function(e){F(e&&e.message?String(e.message).slice(0,160):'');},true);` +
+      `window.addEventListener('unhandledrejection',function(){F('');});` +
+      `window.addEventListener('load',function(){setTimeout(function(){try{` +
+      `var drawn=document.querySelector('canvas,svg,img,video');` +
+      `var painted=drawn&&drawn.getBoundingClientRect().height>8;` +
+      `var text=(document.body.innerText||'').replace(/\\s+/g,' ').trim();` +
+      `var own=document.getElementById('__otto_fallback');` +
+      `var ownText=own?(own.innerText||'').replace(/\\s+/g,' ').trim():'';` +
+      `if(!painted&&text.replace(ownText,'').length<2)F('');}catch(e){}},1500);});})();`;
+    const fallback =
+      `<div id="__otto_fallback" style="display:none;position:absolute;inset:0;align-items:center;` +
+      `justify-content:center;flex-direction:column;gap:6px;text-align:center;padding:16px;` +
+      `font:13px/1.5 system-ui,sans-serif;color:#71717A;background:#F4F4F5;">` +
+      `<div style="font-weight:600;color:#18181B;">This interactive didn't load</div>` +
+      `<div id="__otto_fallback_msg"></div>` +
+      `<div style="font-size:12px;">Ask Otto to explain it in the chat instead.</div></div>`;
+    return `<!doctype html><html><head><meta charset="utf-8" />` +
+      `<meta name="viewport" content="width=device-width, initial-scale=1" />` +
+      `<style>html,body{margin:0;padding:8px;box-sizing:border-box;font-family:system-ui,sans-serif;overflow:hidden;` +
+      `position:relative;height:100%;}*{box-sizing:border-box;}</style>` +
+      `<script>${guard}<\/script></head><body>${html}${fallback}</body></html>`;
+  }, [html]);
   return (
     <iframe
       className="sm-board-interactive-frame"

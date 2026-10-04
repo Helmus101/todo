@@ -2386,7 +2386,16 @@ const CREATE_INTERACTIVE_TOOL = {
     "shapes), p5.js (simulations), chart.js or plotly.js (interactive charts), jsxgraph (interactive " +
     "geometry). Any other script source gets stripped before this ever reaches the student. No network " +
     "calls beyond that one library, no forms, no navigation, no iframes of your own. Keep it small, fast, " +
-    "and focused on the one manipulation that matters — this is a focused manipulative, not an app.",
+    "and focused on the one manipulation that matters — this is a focused manipulative, not an app. " +
+    "NEVER SHIP SOMETHING THAT CAN RENDER BLANK — a blank box teaches nothing and is worse than no scene " +
+    "at all. So: (a) PREFER NO LIBRARY. Inline SVG + a few lines of plain JS, or CSS 3D transforms " +
+    "(transform-style:preserve-3d + rotate3d) for a rotatable object, always render; a CDN script is one " +
+    "more thing that can fail to answer. Only load a library when the scene genuinely can't be done " +
+    "without it. (b) If you DO load one, guard it: check the global exists " +
+    "(if (typeof THREE === 'undefined') { ...render a plain-text explanation... }) and wrap setup in " +
+    "try/catch, since WebGL in particular may be unavailable. (c) Draw something visible on the FIRST " +
+    "frame, before any interaction — never an empty canvas waiting for a click or a timer. (d) Label the " +
+    "scene's parts in the scene itself, so it still teaches even if interaction never happens.",
   input_schema: { type: "object", properties: {
     caption: { type: "string", description: "one short line describing the scene, shown as its title on the board" },
     html: { type: "string", description: "self-contained HTML/JS body implementing the scene — see the rules above" },
