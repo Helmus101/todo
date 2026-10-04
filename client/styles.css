@@ -5598,6 +5598,29 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   border: 1px solid var(--line);
   border-radius: var(--radius-xs);
 }
+/* Phone-only read-only task view (TaskReadOnly, client/TaskCard.tsx) — a task you can read, not work on.
+   Intentionally plain: no cards, no affordances that look tappable, since nothing here is. */
+.task-readonly { display: flex; flex-direction: column; gap: var(--space-3); }
+.task-readonly-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.task-readonly-why { margin: 0; color: var(--ink-2); font-size: var(--text-base); line-height: 1.55; }
+.task-readonly-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2);
+  margin: var(--space-2) 0 0; font-size: 11px; font-weight: 700; color: var(--ink-2);
+  text-transform: uppercase; letter-spacing: 0.07em;
+}
+.task-readonly-count { font-variant-numeric: tabular-nums; color: var(--ink-3); letter-spacing: 0; }
+.task-readonly-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.task-readonly-steps li { display: flex; gap: 10px; font-size: var(--text-base); line-height: 1.5; }
+.task-readonly-steps li.is-done .task-readonly-text { color: var(--ink-3); text-decoration: line-through; }
+.task-readonly-tick { flex: none; color: var(--accent); font-size: 13px; line-height: 1.5; }
+.task-readonly-steps li.is-done .task-readonly-tick { color: var(--ink-3); }
+.task-readonly-text { display: flex; flex-direction: column; gap: 2px; }
+.task-readonly-result { font-size: var(--text-xs); color: var(--ink-3); }
+.task-readonly-foot {
+  margin: var(--space-2) 0 0; padding-top: var(--space-3); border-top: 1px solid var(--line-soft);
+  font-size: var(--text-xs); color: var(--ink-3); line-height: 1.5;
+}
+
 .sm-board-interactive-frame {
   display: block;
   width: 100%;

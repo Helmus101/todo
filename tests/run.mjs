@@ -4068,20 +4068,29 @@ section("Chat bubble color — user bubble uses fixed saturated blue tokens, not
   check("tally.css still loads after styles.css (so this regression can recur if a color rule is re-added there)", mainTs.indexOf('"./styles.css"') < mainTs.indexOf('"./tally.css"'));
 }
 
-section("Phone restriction — iPhone-sized screens are limited to flashcard review, iPad is untouched (source pins)");
+section("Phone restriction — flashcard review + READ-ONLY tasks, no chat; iPad is untouched (source pins)");
 {
-  // "limit the things you can do on mobile... only see flashcards... not on the iPad" — useIsPhone's
-  // 767px breakpoint already excludes iPad (smallest portrait width 768px), reused here (and in
-  // StudyMode.tsx, which already had its own copy of this exact check) rather than adding a second
-  // device-detection mechanism.
+  // "limit the things you can do on mobile... not on the iPad" — useIsPhone's 767px breakpoint already
+  // excludes iPad (smallest portrait width 768px), reused here (and in StudyMode.tsx, which already had
+  // its own copy of this exact check) rather than adding a second device-detection mechanism.
+  // Refined by a later instruction: a phone should ALSO see the task list and "what it planned" — but
+  // purely as a view, with no chat and nothing to act on.
   const hook = readFileSync(new URL("../client/useIsPhone.ts", import.meta.url), "utf8");
   check("useIsPhone uses the 767px breakpoint (keeps iPad, min width 768px, OUT of 'phone')", /max-width:\s*767px/.test(hook));
   check("useIsPhone is reactive (matchMedia change listener), not a one-time read", /addEventListener\("change"/.test(hook));
 
   const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
   check("App.tsx imports the shared useIsPhone hook", /import \{ useIsPhone \} from "\.\/useIsPhone\.ts"/.test(app));
-  check("phone users are redirected away from any route outside the allowed set", /PHONE_ALLOWED_ROUTES\s*=\s*\["log", "settings"\]/.test(app) && /!PHONE_ALLOWED_ROUTES\.includes\(route\)\) navigate\("log"\)/.test(app));
-  check("the Tasks/Tutor/Study/Error log/Admin sidebar links are hidden on phone", /\{!isPhone && <a[\s\S]{0,200}href="\/tasks"/.test(app) && /\{!isPhone && <a[\s\S]{0,200}href="\/tutor"/.test(app) && /\{!isPhone && <a[\s\S]{0,200}href="\/errorlog"/.test(app));
+  check("tasks + flashcards + settings are reachable on phone; anything else redirects to the task list", /PHONE_ALLOWED_ROUTES\s*=\s*\["", "tasks", "log", "settings"\]/.test(app) && /r\.startsWith\("task\/"\)/.test(app) && /!phoneRouteAllowed\(route\)\) navigate\("tasks"\)/.test(app));
+  check("Tutor/Study/Error log/Admin stay hidden on phone, but Tasks does NOT", /\{!isPhone && <a[\s\S]{0,200}href="\/tutor"/.test(app) && /\{!isPhone && <a[\s\S]{0,200}href="\/errorlog"/.test(app) && !/\{!isPhone && <a[\s\S]{0,200}href="\/tasks"/.test(app));
+  // The point of the phone task view: READ it, don't work on it. No chat (TaskFocus owns the chat), no
+  // ticking steps off, no Study Mode, no dismiss, no add-task.
+  check("a phone opens TaskReadOnly instead of TaskFocus (which is where chat lives)", /isPhone \? \(\s*<TaskReadOnly task=\{openTask\} \/>/.test(app));
+  check("task rows on phone are view-only (readOnly) and can't launch Study Mode", /readOnly=\{isPhone\}/.test(app) && /STUDY_MODE_ENABLED && !isPhone \?/.test(app));
+  check("add-task and the refresh/generate action are hidden on phone", /\{!isPhone && <div className="dash-addtask">/.test(app) && /\{!isPhone && \(route === "" \|\| route === "tasks"/.test(app));
+  const card = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
+  check("TaskCardRow's readOnly hides the tick-off, Study Mode and dismiss controls", /!isDone && !readOnly \? \(/.test(card) && /!isDone && !readOnly && onEnterStudyMode/.test(card) && /!isDone && !leaving && !readOnly && <button className="card-x"/.test(card));
+  check("TaskReadOnly renders the plan (steps + done state) and has no chat/handlers at all", /export function TaskReadOnly/.test(card) && /task-readonly-steps/.test(card) && !/TaskReadOnly[\s\S]{0,2000}onClick/.test(card));
   check("StudyLogPage gets a phoneOnly prop and forces the flashcards tab when set", /StudyLogPage lang=\{status\?\.language\} tasks=\{tasks\} status=\{status\} phoneOnly=\{isPhone\}/.test(app) && /useState<"journal" \| "flashcards">\(phoneOnly \? "flashcards" : "journal"\)/.test(app));
 
   const studyMode = readFileSync(new URL("../client/study/StudyMode.tsx", import.meta.url), "utf8");

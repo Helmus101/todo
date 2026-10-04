@@ -166,9 +166,13 @@ function TaskPlanningPanel({ task }: { task: WebTask }) {
 
 /* ─────────────────────────────── collapsed row ─────────────────────────────── */
 
-export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isNew, index, onOpen, onEnterStudyMode }: {
+export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isNew, index, onOpen, onEnterStudyMode, readOnly }: {
   task: WebTask; onChange: (t: WebTask[]) => void; onTask?: (t: WebTask) => void; retrying?: boolean; onConfirmed?: (id: string) => void;
   isNew?: boolean; index?: number; onOpen: () => void; onEnterStudyMode?: () => void;
+  /** Phone (see useIsPhone): the row is a VIEW of the task, nothing more — no tick-off, no Study Mode, no
+   *  dismiss. Direct instruction: on a phone you should "just be able to see the tasks and what it planned",
+   *  not act on them. Opening the row still works; it lands on the read-only TaskReadOnly view below. */
+  readOnly?: boolean;
 }) {
   const L = useLang();
   const cardEn = useContext(LangContext) === "en";
@@ -234,7 +238,7 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
           real button itself (real visible content, not an invisible layer), which is the standard,
           maximally-compatible pattern every list-based mobile app uses. .card-check/.card-x moved to true
           siblings, since a <button> can't contain another <button>. */}
-      {!isDone ? (
+      {!isDone && !readOnly ? (
         <button type="button" className={`card-check ${leaving && leaveKind === "confirm" ? "checked" : ""}`}
           title={L("Marquer comme fait", "Mark as done")} aria-label={L(`Marquer « ${task.title} » comme faite`, `Mark "${task.title}" as done`)} disabled={leaving}
           onClick={() => void leave(() => api.confirm(task.id), "confirm", task)}>
@@ -244,7 +248,7 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
       {/* Study Mode button — any active task, not just ones that already have steps: it's a general
           workspace (materials, notes, chat with Otto) useful even before a plan exists yet, not something
           that should stay hidden while a task is still being generated/refined. */}
-      {!isDone && onEnterStudyMode && (
+      {!isDone && !readOnly && onEnterStudyMode && (
         <button type="button" className="card-study" title={L("Mode étude", "Study Mode")} aria-label={L(`Mode étude pour : ${task.title}`, `Study Mode for: ${task.title}`)} disabled={leaving} onClick={(e) => { e.stopPropagation(); onEnterStudyMode(); }}>
           <BookOpen aria-hidden="true" size={16} />
         </button>
@@ -276,7 +280,7 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
       </button>
       {/* Quick dismiss — remove a task in one click without opening it. Hover-revealed so the row stays clean.
           Hidden once the row is already leaving (dismissing or confirming) — a second click has nothing to do. */}
-      {!isDone && !leaving && <button className="card-x" title={L("Ignorer", "Dismiss")} aria-label={L(`Ignorer « ${task.title} »`, `Dismiss "${task.title}"`)} onClick={() => void leave(() => api.dismiss(task.id), "dismiss", task)}>×</button>}
+      {!isDone && !leaving && !readOnly && <button className="card-x" title={L("Ignorer", "Dismiss")} aria-label={L(`Ignorer « ${task.title} »`, `Dismiss "${task.title}"`)} onClick={() => void leave(() => api.dismiss(task.id), "dismiss", task)}>×</button>}
       {leaving && leaveKind === "confirm" ? <span className="confirm-check" aria-hidden="true">✓</span> : null}
     </div>
   );
@@ -314,6 +318,58 @@ export function TaskHero({ task, onOpen }: { task: WebTask; onOpen: () => void }
       <button type="button" className="btn primary big dash-hero-cta" onClick={onOpen}>
         {L("Continuer", "Continue")}
       </button>
+    </div>
+  );
+}
+
+/** PHONE ONLY — a task you can read but not touch. Deliberately NOT a "readOnly" mode threaded through
+ *  TaskFocus below: that component owns step-completion queueing, optimistic ticks, chat, artifact popups
+ *  and Study Mode entry, and gating every one of those from the inside would be a large, risky edit to the
+ *  most race-sensitive component in the app for no gain. This renders the same underlying data (what the
+ *  task is, when it's due, and the plan Otto wrote) straight from the WebTask, with no handlers at all.
+ *  Chat is absent on purpose — direct instruction, "no chat for the moment" on a phone. */
+export function TaskReadOnly({ task }: { task: WebTask }) {
+  const L = useLang();
+  const cardEn = useContext(LangContext) === "en";
+  const w = taskDateLabel(task, L);
+  const steps = task.steps || [];
+  const doneCount = steps.filter((s) => s.done).length;
+  return (
+    <div className="task-readonly">
+      {(task.sourceSubject || w) ? (
+        <div className="task-readonly-meta">
+          {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
+          {w ? <span className="when">{w}</span> : null}
+          <span className={`card-quadrant card-quadrant-${task.quadrant}`}>{quadrantLabel(task.quadrant, cardEn)}</span>
+        </div>
+      ) : null}
+      {task.goal ? <div className="task-goal-banner"><span className="task-goal-tag">{L("Objectif", "Goal")}:</span> {stripStrayMarkdown(task.goal)}</div> : null}
+      {(task.nudgeLine || task.why) ? <p className="task-readonly-why">{stripStrayMarkdown(task.nudgeLine || task.why)}</p> : null}
+      {steps.length ? (
+        <>
+          <h4 className="task-readonly-head">
+            {L("Le plan d'Otto", "Otto's plan")}
+            <span className="task-readonly-count">{doneCount}/{steps.length}</span>
+          </h4>
+          <ol className="task-readonly-steps">
+            {steps.map((s, i) => (
+              <li key={i} className={s.done ? "is-done" : ""}>
+                <span className="task-readonly-tick" aria-hidden="true">{s.done ? "✓" : "○"}</span>
+                <span className="task-readonly-text">
+                  {stripStrayMarkdown(s.text)}
+                  {s.result ? <span className="task-readonly-result">{stripStrayMarkdown(s.result)}</span> : null}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </>
+      ) : (
+        <p className="task-readonly-why">{L("Otto n'a pas encore écrit de plan pour celle-ci.", "Otto hasn't written a plan for this one yet.")}</p>
+      )}
+      <p className="task-readonly-foot">
+        {L("Sur téléphone, Otto est en lecture seule. Ouvre-le sur un ordinateur ou un iPad pour travailler dessus.",
+           "On a phone, Otto is read-only. Open it on a laptop or iPad to actually work on this.")}
+      </p>
     </div>
   );
 }

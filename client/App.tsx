@@ -13,7 +13,7 @@ import { pushError } from "./errorLog.ts";
 import { useIsPhone } from "./useIsPhone.ts";
 import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard, PageInfoHint } from "./ui.tsx";
 import { t } from "./i18n.ts";
-import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
+import { TaskCardRow, TaskFocus, TaskHero, TaskReadOnly } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
 import { TutorSession } from "./tutor/TutorSession.tsx";
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
@@ -407,15 +407,16 @@ export function App() {
   // still wins because it sets signedOutRef before calling the server.
   const lastAuthenticatedStatusRef = useRef<ConnectionStatus | null>(CACHED_STATUS?.loggedIn ? CACHED_STATUS : null);
   const [route] = usePathRoute();
-  // Phone-sized screens (iPhone, not iPad — see useIsPhone's 767px breakpoint) get the app cut down to
-  // flashcard review only. Reported live: most of the dashboard/tutor/study surfaces (dense step lists,
-  // the whiteboard, multi-pane layouts) don't work on a phone-sized screen, so rather than a broken
-  // experience on every route, the phone gets steered to the one thing that genuinely works small —
-  // reviewing flashcards (/log's "Cartes" tab) — plus Settings (sign out, language, etc).
+  // Phone-sized screens (iPhone, not iPad — see useIsPhone's 767px breakpoint) get a deliberately reduced
+  // app: review flashcards (/log's "Cartes" tab), and READ the task list — see what's there and what Otto
+  // planned — plus Settings. Everything that means actually working (chat, Study Mode's whiteboard, ticking
+  // steps off, the tutor) stays off the phone: those surfaces are dense multi-pane layouts that don't work
+  // at that size, and a half-working version of them is worse than a clean read-only one.
   const isPhone = useIsPhone();
-  const PHONE_ALLOWED_ROUTES = ["log", "settings"];
+  const PHONE_ALLOWED_ROUTES = ["", "tasks", "log", "settings"];
+  const phoneRouteAllowed = (r: string) => PHONE_ALLOWED_ROUTES.includes(r) || r.startsWith("task/");
   useEffect(() => {
-    if (isPhone && status?.loggedIn && !PHONE_ALLOWED_ROUTES.includes(route)) navigate("log");
+    if (isPhone && status?.loggedIn && !phoneRouteAllowed(route)) navigate("tasks");
   }, [isPhone, status?.loggedIn, route]);
   // Explicit escape hatch off ConnectCard's connect-wall (see its own comment + the gating condition
   // further down) — a student with nothing connected can choose to use Otto with manually-added tasks and
@@ -1070,7 +1071,7 @@ export function App() {
           <Logo size={20} /> Otto
         </div>
         <nav className="sidebar-nav">
-          {!isPhone && <a
+          <a
             className={`sidebar-item ${route === "" || route === "tasks" || route.startsWith("task/") ? "active" : ""}`}
             href="/tasks"
             onClick={() => setSidebarOpen(false)}
@@ -1078,7 +1079,7 @@ export function App() {
             <LayoutDashboard />
             {status?.language === "en" ? "Tasks" : "Tâches"}
             {live.length > 0 && <span className="sidebar-badge">{live.length}</span>}
-          </a>}
+          </a>
           <a
             className={`sidebar-item ${route === "log" ? "active" : ""}`}
             href="/log"
@@ -1164,7 +1165,7 @@ export function App() {
             return en ? "Tasks" : "Tâches";
           })()}</div>
           <div className="spacer" />
-          {(route === "" || route === "tasks" || route.startsWith("task/")) && (status.googleConnected || status.pronoteConnected) && <button className="btn ghost" disabled={busy} onClick={() => void generate()}>{busy ? (status?.language === "en" ? "Searching…" : "Recherche…") : (status?.language === "en" ? "Refresh" : "Actualiser")}</button>}
+          {!isPhone && (route === "" || route === "tasks" || route.startsWith("task/")) && (status.googleConnected || status.pronoteConnected) && <button className="btn ghost" disabled={busy} onClick={() => void generate()}>{busy ? (status?.language === "en" ? "Searching…" : "Recherche…") : (status?.language === "en" ? "Refresh" : "Actualiser")}</button>}
         </header>}
 
       {/* Hoisted out of the dashboard-only branch below (where it used to live, inside the `route ===
@@ -1275,7 +1276,9 @@ export function App() {
               (≥1024px) dash-grid places dash-rail beside dash-today+dash-more instead, sticky, so the
               workload/exam widgets stay ambient context, never blocking the hero. */}
           <div className="dash-grid">
-            <div className="dash-addtask"><AddTask onAdded={setTasks} /></div>
+            {/* Adding a task is an action, so it's off on a phone (read-only there — see
+                PHONE_ALLOWED_ROUTES above). */}
+            {!isPhone && <div className="dash-addtask"><AddTask onAdded={setTasks} /></div>}
 
             <div className="dash-today">
               {/* Until the first server response, an empty list means "still loading", not "all clear" —
@@ -1320,7 +1323,8 @@ export function App() {
                             onChange={setTasks}
                             onTask={patchTask}
                             onConfirmed={flagJustDone}
-                            onEnterStudyMode={STUDY_MODE_ENABLED ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
+                            onEnterStudyMode={STUDY_MODE_ENABLED && !isPhone ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
+                            readOnly={isPhone}
                           />
                         ))}
                       </div>
@@ -1364,7 +1368,8 @@ export function App() {
                                     onChange={setTasks}
                                     onTask={patchTask}
                                     onConfirmed={flagJustDone}
-                                    onEnterStudyMode={STUDY_MODE_ENABLED ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
+                                    onEnterStudyMode={STUDY_MODE_ENABLED && !isPhone ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
+                            readOnly={isPhone}
                                   />
                                 ))}
                               </div>
@@ -1387,7 +1392,8 @@ export function App() {
                                     onChange={setTasks}
                                     onTask={patchTask}
                                     onConfirmed={flagJustDone}
-                                    onEnterStudyMode={STUDY_MODE_ENABLED ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
+                                    onEnterStudyMode={STUDY_MODE_ENABLED && !isPhone ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
+                            readOnly={isPhone}
                                   />
                                 ))}
                               </div>
@@ -1430,16 +1436,23 @@ export function App() {
             if (!openTask || isHandled(openTask.status)) return null;
             return (
               <TaskModal onClose={() => navigate("")} title={openTask.title}>
-                <TaskFocus
-                  task={openTask}
-                  retrying={retryingIds.includes(openTask.id)}
-                  onChange={setTasks}
-                  onTask={patchTask}
-                  onConfirmed={flagJustDone}
-                  onLeft={() => navigate("")}
-                  onEnterStudyMode={STUDY_MODE_ENABLED ? () => { setStudyModeTask(openTask); navigate(`study/${openTask.id}`); } : undefined}
-                  userId={status?.user || null}
-                />
+                {/* Phone: a task is READ-ONLY (see PHONE_ALLOWED_ROUTES above) — TaskReadOnly shows the
+                    same task and the plan Otto wrote, with no chat and nothing to act on, instead of
+                    TaskFocus's full working surface. */}
+                {isPhone ? (
+                  <TaskReadOnly task={openTask} />
+                ) : (
+                  <TaskFocus
+                    task={openTask}
+                    retrying={retryingIds.includes(openTask.id)}
+                    onChange={setTasks}
+                    onTask={patchTask}
+                    onConfirmed={flagJustDone}
+                    onLeft={() => navigate("")}
+                    onEnterStudyMode={STUDY_MODE_ENABLED ? () => { setStudyModeTask(openTask); navigate(`study/${openTask.id}`); } : undefined}
+                    userId={status?.user || null}
+                  />
+                )}
               </TaskModal>
             );
           })()}
