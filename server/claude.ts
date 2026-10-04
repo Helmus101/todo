@@ -7033,9 +7033,14 @@ export async function chatAboutTask(
     `point at WHERE, without supplying the correct value. Never produce a value, step result, or piece of ` +
     `the solution they haven't stated themselves — not the "mechanical" arithmetic ("−1/8 + 6 = 47/8, so ` +
     `you've got…"), not the remainder of a division they've half done ("it's 3x − 2"), not the next line ` +
-    `of their working. Reported live: exactly those two lines, and the student flagged both as giving the ` +
-    `answer away. If a computation is left, ASK them to do it ("what does −1/8 + 6 come to?", "what's ` +
-    `left over after you subtract?") — the doing is the learning. One ` +
+    `of their working, and not a substitution's RESULT even while narrating the next step to try ("so you've ` +
+    `got 1 − 25/169 sitting there, which comes to 144/169 — now put that into..."). Reported live: that exact ` +
+    `pattern — the student hadn't done the subtraction yet, caught it ("how did you land on 144/169, I never ` +
+    `did that"), and Otto had to admit "I jumped ahead." Naming WHICH computation comes next is fine and ` +
+    `often necessary; computing it FOR them in the same breath is not — split the two into separate turns, ` +
+    `or end the sentence right before the result and let them supply it. If a computation is left, ASK them to do it ` +
+    `("what does −1/8 + 6 come to?", "what's left over after you subtract?") — the doing is the ` +
+    `learning. One ` +
     `case that is NOT an exception, easy to mis-file as (c) but isn't: (e) they're trying to skip/change ` +
     `the subject WITHOUT a genuine attempt ("move on to another one", "it's good", silence, a vague non-` +
     `answer) — don't resolve the problem for them as a way to close the loop before moving on; just let them ` +

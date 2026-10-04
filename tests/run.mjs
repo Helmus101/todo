@@ -4110,5 +4110,17 @@ section("leaksAnyProblemAnswer — board/diagram/chat-reply guard against statin
   check("CREATE_PROBLEM_TOOL's own description now spells out the exact failure mode with a concrete example (answer = final part only)", claude.includes("`answer` MUST be the FINAL lettered part's value ONLY") && claude.includes("e.g. '7/25'") && claude.includes("e.g. '-4/5'"));
 }
 
+section("HINT LADDER — a substitution's result must not be computed FOR the student while narrating the next step (source pin)");
+{
+  // Reported live: "so you've got 1 − 25/169 sitting there... Yeah, 144/169 — and in Q2 you want the positive
+  // root there." The student hadn't done that subtraction yet ("how did you land on 144 over 169 I never did
+  // any of that"), and Otto had to admit "I jumped ahead; you hadn't done that subtraction." This is the same
+  // "never produce a value they haven't stated themselves" rule as the −1/8+6 and 3x−2 cases already pinned
+  // below, extended to cover computing a named substitution's result rather than just asking for it.
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("the rule explicitly covers computing a substitution's result while narrating the next step", claude.includes("not a substitution's RESULT even while narrating the next step") && claude.includes("1 − 25/169 sitting there, which comes to 144/169"));
+  check("it tells the model to split naming-the-next-computation from doing it, rather than banning naming it", claude.includes("Naming WHICH computation comes next is fine") && claude.includes("computing it FOR them in the same breath is not"));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
