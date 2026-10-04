@@ -11,7 +11,7 @@ import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, FocusSession } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY, subjectMastery } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
-import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto, ttsReady, synthesizeSpeech, synthesizeSpeechFallback } from "./claude.ts";
+import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto, ttsReady, synthesizeSpeech, synthesizeSpeechFallback, synthesizeSpeechGoogleTranslate } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken, getAdminMetrics } from "./store.ts";
 import { sendTransactionalEmail } from "./mailer.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
@@ -3640,10 +3640,12 @@ app.post("/api/tts", requireAuth, rateLimit(120, 60_000), async (req, res) => {
   const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
   const lang = req.body?.lang === "fr" ? "fr" : "en";
   if (!text) { res.status(400).json({ error: M(req, "le texte est requis", "text is required") }); return; }
-  // Two free, keyless tiers before the client ever touches the browser's own voice (direct request: never
-  // use that as the primary experience). Gemini first (natural, detects language from the text itself);
-  // StreamElements (real Amazon Polly voices) covers the gap when Gemini's small preview-model quota is
-  // hit. Both failing is rare enough that the browser voice staying the true last resort is fine.
+  // Three free, keyless tiers before the client ever touches the browser's own voice (direct request:
+  // never use that as the primary experience). Gemini first (natural, detects language from the text
+  // itself); StreamElements (real Amazon Polly voices) covers Gemini's small preview-model quota; Google
+  // Translate's TTS endpoint (the same one the gTTS library has run in production for years) is the last,
+  // most battle-tested safety net. All three failing together is rare enough that the browser voice
+  // staying the true last resort is fine.
   if (ttsReady()) {
     const out = await synthesizeSpeech(text.slice(0, 1000));
     if (!("error" in out)) {
@@ -3657,14 +3659,22 @@ app.post("/api/tts", requireAuth, rateLimit(120, 60_000), async (req, res) => {
     console.warn("[tts] GEMINI_API_KEY not set — trying StreamElements directly.");
   }
   const fallback = await synthesizeSpeechFallback(text.slice(0, 1000), lang);
-  if ("error" in fallback) {
-    console.error(`[tts] both providers failed: ${fallback.error}`);
-    res.status(fallback.status === 429 ? 429 : 502).json({ error: M(req, "Échec de la génération vocale", "TTS generation failed") });
+  if (!("error" in fallback)) {
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.setHeader("Cache-Control", "no-store");
+    res.send(fallback.mp3);
+    return;
+  }
+  console.warn(`[tts] StreamElements failed, trying Google Translate: ${fallback.error}`);
+  const last = await synthesizeSpeechGoogleTranslate(text.slice(0, 1000), lang);
+  if ("error" in last) {
+    console.error(`[tts] all three providers failed: ${last.error}`);
+    res.status(last.status === 429 ? 429 : 502).json({ error: M(req, "Échec de la génération vocale", "TTS generation failed") });
     return;
   }
   res.setHeader("Content-Type", "audio/mpeg");
   res.setHeader("Cache-Control", "no-store");
-  res.send(fallback.mp3);
+  res.send(last.mp3);
 });
 
 // Admin metrics dashboard — gated to a single hardcoded account, not a role/permission system (there is

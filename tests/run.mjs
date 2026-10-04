@@ -17,7 +17,7 @@ import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_AR
 import { trimFreeTTSWatermark } from "../server/ttsTrim.ts";
 import { wantsArtifactTools } from "../server/claude.ts";
 import { rankVoices, cloudChunks } from "../client/voice/useSpeechSynthesis.ts";
-import { pcmToWav, leaksAnswer, scrubAnswerLeak, makeProblem as makeProblemLeak, makePracticeProblem as makePracticeLeak } from "../server/claude.ts";
+import { pcmToWav, leaksAnswer, scrubAnswerLeak, makeProblem as makeProblemLeak, makePracticeProblem as makePracticeLeak, wordWrapChunks } from "../server/claude.ts";
 import { lastMessageKey } from "../client/voice/replyKey.ts";
 import { subjectMastery } from "../shared/types.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, subjectFrequency, orderingBoost, twoMinuteRuleBoost } from "../server/patterns.ts";
@@ -1576,11 +1576,11 @@ section("isLikelyEcho — textual echo discrimination for real barge-in (client/
   // before ever giving up (see the section below). Language comes from the text itself for Gemini; the
   // fallback provider needs it explicitly for voice selection. Fail-loud in logs, fail-open to the client.
   const serverSrc = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
-  const ttsBody = serverSrc.slice(serverSrc.indexOf('app.post("/api/tts"'), serverSrc.indexOf('app.post("/api/tts"') + 1800);
+  const ttsBody = serverSrc.slice(serverSrc.indexOf('app.post("/api/tts"'), serverSrc.indexOf('app.post("/api/tts"') + 2200);
   check("TTS route is authenticated and rate-limited", /app\.post\("\/api\/tts", requireAuth, rateLimit\(/.test(serverSrc));
   check("TTS route uses Gemini (synthesizeSpeech), not the old FreeTTS vendor", /synthesizeSpeech\(/.test(ttsBody) && !/freetts\.org/.test(serverSrc));
   check("an unconfigured deployment skips straight to the fallback provider instead of failing immediately", /if \(ttsReady\(\)\) \{/.test(ttsBody) && /trying StreamElements directly/.test(ttsBody));
-  check("an upstream failure (of BOTH providers) is a clean 502/429 with a bilingual message", /Échec de la génération vocale/.test(ttsBody));
+  check("an upstream failure of ALL THREE providers is a clean 502/429 with a bilingual message", /Échec de la génération vocale/.test(ttsBody));
   check("the route serves playable audio (WAV from Gemini, MP3 from the fallback), never cached", /audio\/wav/.test(ttsBody) && /audio\/mpeg/.test(ttsBody) && /no-store/.test(ttsBody));
   check("request text is capped server-side", /text\.slice\(0, 1000\)/.test(ttsBody));
   // And exercised, not just pinned: synthetic MPEG2 Layer III streams (FreeTTS's own format:
@@ -3993,7 +3993,36 @@ section("TTS never falls straight to the browser voice — two free cloud tiers 
   const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
   const ttsRoute = idx.slice(idx.indexOf('app.post("/api/tts"'), idx.indexOf('app.post("/api/tts"') + 1800);
   check("the route tries Gemini first, and only calls the fallback provider when Gemini didn't return audio", /if \(ttsReady\(\)\) \{[\s\S]*?if \(!\("error" in out\)\)[\s\S]*?return;\s*\n\s*\}/.test(ttsRoute) && /synthesizeSpeechFallback\(/.test(ttsRoute));
-  check("the client only sees a failure (and falls back to the browser voice) once BOTH providers have failed", /const fallback = await synthesizeSpeechFallback/.test(ttsRoute) && /if \("error" in fallback\)/.test(ttsRoute));
+  check("the route tries StreamElements when Gemini fails, before giving up on it", /const fallback = await synthesizeSpeechFallback/.test(ttsRoute) && /if \(!\("error" in fallback\)\)/.test(ttsRoute));
+}
+
+section("TTS third tier (Google Translate / gTTS endpoint) — word-wrap chunking (unit tests)");
+{
+  // Google's endpoint caps request text at ~200 chars — reply text must be split WITHOUT losing words,
+  // unlike truncating at a hard character cut (which was the original, lossy approach considered here).
+  check("short text is a single chunk", wordWrapChunks("Hello there.", 180).length === 1);
+  check("long text is split without losing or reordering any words", wordWrapChunks(Array.from({ length: 40 }, (_, i) => `word${i}`).join(" "), 30).join(" ") === Array.from({ length: 40 }, (_, i) => `word${i}`).join(" "));
+  check("every chunk respects the max length", wordWrapChunks("the quick brown fox jumps over the lazy dog and keeps going for a while longer than one chunk allows", 20).every((c) => c.length <= 20));
+  check("a single pathological 'word' longer than max is truncated, not left to break the request", wordWrapChunks("a".repeat(50), 20)[0].length === 20);
+  check("empty input yields no chunks", wordWrapChunks("", 180).length === 0);
+}
+
+section("TTS route — three free tiers tried in order before ever reaching the browser voice (source pins)");
+{
+  // Reported live: Gemini AND StreamElements failed together on the same request (502, 502) — the classic
+  // symptom of a shared missing-header problem (no User-Agent on a server-side fetch), not two independent
+  // outages. Hardened with real browser headers, and added a THIRD, extremely battle-tested free provider
+  // (the exact endpoint the gTTS library has used in production for years) as one more safety net before
+  // the browser voice.
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("StreamElements requests now send a real browser User-Agent (the likely cause of the paired 502s)", /"User-Agent": BROWSER_UA/.test(claude));
+  check("a third provider exists (Google Translate's TTS endpoint)", /export async function synthesizeSpeechGoogleTranslate/.test(claude) && /translate\.google\.com\/translate_tts/.test(claude));
+  check("the third provider also sends a browser User-Agent", (claude.match(/"User-Agent": BROWSER_UA/g) || []).length >= 2);
+
+  const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const ttsRoute = idx.slice(idx.indexOf('app.post("/api/tts"'), idx.indexOf('app.post("/api/tts"') + 2200);
+  check("the route tries Gemini, then StreamElements, then Google Translate, in that order", /synthesizeSpeech\(/.test(ttsRoute) && ttsRoute.indexOf("synthesizeSpeechFallback(") < ttsRoute.indexOf("synthesizeSpeechGoogleTranslate(") && ttsRoute.indexOf("synthesizeSpeech(") < ttsRoute.indexOf("synthesizeSpeechFallback("));
+  check("the client only sees a failure (and falls back to the browser voice) once ALL THREE providers have failed", /if \("error" in last\)/.test(ttsRoute) && /all three providers failed/.test(ttsRoute));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -1701,10 +1701,16 @@ export async function synthesizeSpeech(text: string): Promise<{ wav: Buffer } | 
 // "best-effort second opinion," not foundation-grade — if IT fails too, the client's browser voice is the
 // true last resort, which still beats dead silence.
 const STREAMELEMENTS_VOICE: Record<string, string> = { fr: "Celine", en: "Joanna" };
+// A plain browser User-Agent: several free, undocumented TTS endpoints (this one included) quietly 403/502
+// a request that doesn't look like it came from a browser — a bare server-side fetch() sends no User-Agent
+// at all, which reads as a bot. Reported live: BOTH free tiers failed together on the same request, the
+// classic symptom of a shared missing-header problem rather than two unrelated outages.
+const BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 export async function synthesizeSpeechFallback(text: string, lang: string): Promise<{ mp3: Buffer } | { error: string; status: number }> {
   const voice = STREAMELEMENTS_VOICE[lang] || STREAMELEMENTS_VOICE.en;
   try {
     const res = await fetch(`https://api.streamelements.com/kappa/v2/speech?voice=${voice}&text=${encodeURIComponent(text)}`, {
+      headers: { "User-Agent": BROWSER_UA, "Referer": "https://streamelements.com/", "Accept": "audio/mpeg,*/*" },
       signal: AbortSignal.timeout(15_000),
     });
     const ct = res.headers.get("content-type") || "";
@@ -1717,6 +1723,43 @@ export async function synthesizeSpeechFallback(text: string, lang: string): Prom
     return { mp3: buf };
   } catch (e: any) {
     return { error: `StreamElements TTS request failed: ${e?.message || e}`, status: 504 };
+  }
+}
+
+// ── Third TTS tier (Google Translate's TTS endpoint) ────────────────────────────────────────────────────
+// The exact free, keyless endpoint the widely-used `gTTS` Python library has shipped against in production
+// for years — the most battle-tested "always works" option available with no account/key, which is why it
+// goes last: voice quality is a notch below Gemini/Polly, so it's a safety net, not a first choice. Google
+// caps each request at ~200 characters, so a reply is split into word-wrapped chunks and the resulting MP3
+// frames are concatenated — raw MP3 concatenation plays back correctly in every browser's <audio> element.
+const GOOGLE_TTS_CHUNK_MAX = 180;
+export function wordWrapChunks(text: string, max: number): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  const out: string[] = [];
+  let cur = "";
+  for (const w of words) {
+    const piece = w.length > max ? w.slice(0, max) : w; // pathological single "word" longer than max
+    if (cur && `${cur} ${piece}`.length > max) { out.push(cur); cur = piece; }
+    else cur = cur ? `${cur} ${piece}` : piece;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+export async function synthesizeSpeechGoogleTranslate(text: string, lang: string): Promise<{ mp3: Buffer } | { error: string; status: number }> {
+  const chunks = wordWrapChunks(text, GOOGLE_TTS_CHUNK_MAX);
+  if (!chunks.length) return { error: "nothing to speak", status: 400 };
+  try {
+    const buffers = await Promise.all(chunks.map(async (chunk) => {
+      const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(chunk)}&tl=${lang}&client=tw-ob`;
+      const res = await fetch(url, { headers: { "User-Agent": BROWSER_UA, "Referer": "https://translate.google.com/" }, signal: AbortSignal.timeout(10_000) });
+      if (!res.ok) throw Object.assign(new Error(`google translate tts ${res.status}`), { status: res.status });
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (!buf.length) throw new Error("empty audio chunk");
+      return buf;
+    }));
+    return { mp3: Buffer.concat(buffers) };
+  } catch (e: any) {
+    return { error: `Google Translate TTS failed: ${e?.message || e}`, status: e?.status || 502 };
   }
 }
 
