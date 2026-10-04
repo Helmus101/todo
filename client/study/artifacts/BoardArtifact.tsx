@@ -29,6 +29,7 @@ const KIND_LABEL: Record<string, [string, string]> = {
   definition: ["Définition", "Definition"],
   diagram: ["Figure", "Figure"],
   outline: ["Plan", "Outline"],
+  interactive: ["Interactif", "Interactive"],
 };
 
 // Quiet margin glyph per kind — a worksheet's annotations, not badges. Typographic on purpose (no icon
@@ -42,6 +43,7 @@ const KIND_GLYPH: Record<string, string> = {
   definition: "≡",
   diagram: "◫",
   outline: "▤",
+  interactive: "◈",
 };
 
 const LABEL_SIZE: Record<string, number> = { sm: 12, md: 14, lg: 18 };
@@ -95,6 +97,31 @@ function Equation({ latex }: { latex: string }) {
   }, [latex]);
   if (html === null) return <span className="sm-board-eq-fallback">{latex}</span>;
   return <span className="sm-board-eq" dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+/** An AI-authored interactive scene (CREATE_INTERACTIVE, server/claude.ts) — rendered in a sandboxed
+ *  iframe via `srcdoc`, DELIBERATELY without `allow-same-origin`, `allow-top-navigation`, or
+ *  `allow-popups`: without allow-same-origin the iframe's document is an opaque, unique origin, so its
+ *  script can't read this app's DOM/cookies/localStorage or call window.parent, and with no top-
+ *  navigation/popups it can't navigate away or spawn windows either. `allow-scripts` alone is what the
+ *  scene actually needs to run. The server already stripped any non-allowlisted <script src> and any
+ *  nested <iframe>/<object>/<embed> (makeInteractiveEntry) before this ever reaches the client — this is
+ *  the second, independent layer (sandbox attributes), not the only one. A broken/blank scene is
+ *  self-contained inside its own box, same blast radius as Equation's own KaTeX fallback above. */
+function InteractiveFrame({ html }: { html: string }) {
+  const shell = useMemo(() => `<!doctype html><html><head><meta charset="utf-8" />` +
+    `<meta name="viewport" content="width=device-width, initial-scale=1" />` +
+    `<style>html,body{margin:0;padding:8px;box-sizing:border-box;font-family:system-ui,sans-serif;overflow:hidden;}` +
+    `*{box-sizing:border-box;}</style></head><body>${html}</body></html>`, [html]);
+  return (
+    <iframe
+      className="sm-board-interactive-frame"
+      srcDoc={shell}
+      sandbox="allow-scripts"
+      title="interactive"
+      loading="lazy"
+    />
+  );
 }
 
 /** Pure mapping from one DiagramOp (shared/types.ts) to its SVG element — DRAW_ON_BOARD's real-figure
@@ -520,6 +547,11 @@ export function BoardArtifact({ task, writing }: BoardArtifactProps) {
                       </div>
                     ))}
                   </div>
+                </>
+              ) : e.kind === "interactive" && e.html ? (
+                <>
+                  <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>
+                  <InteractiveFrame html={e.html} />
                 </>
               ) : (
                 <>

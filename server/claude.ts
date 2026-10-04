@@ -2365,6 +2365,34 @@ const DRAW_ON_BOARD_TOOL = {
   }, required: ["caption", "ops"] },
 };
 
+// A GENUINELY interactive scene (drag/rotate/slide something to understand it), distinct from
+// DRAW_ON_BOARD's static SVG figures above. Scoped to Study Mode (canvas mode) only — the regular task
+// chat's popup modal is too narrow for a real embedded scene. Rendered in a sandboxed iframe with no
+// allow-same-origin (BoardArtifact.tsx) — the AI-authored HTML/JS can't read this app's DOM/cookies/
+// storage or navigate the parent window, the same posture this app's existing Desmos/PDF/video iframes
+// already use for lower-trust embedded content. This should be RARE: most "show me a graph" asks are
+// better served by DRAW_ON_BOARD's equation op or the existing Desmos button — reach for this only when
+// manipulation itself is the point.
+const CREATE_INTERACTIVE_TOOL = {
+  name: "CREATE_INTERACTIVE",
+  description: "Embed ONE genuinely interactive scene on the board — something the student DRAGS, " +
+    "ROTATES, or adjusts with a slider to understand it (a rotatable 3D solid, a spring-mass simulation, " +
+    "a parametric curve with a draggable parameter). Use this ONLY when manipulation is the actual point " +
+    "— if a static DRAW_ON_BOARD figure, a DRAW_ON_BOARD equation, or the student just opening Desmos " +
+    "would show the same thing just as well, use one of those instead; this tool should be rare, not a " +
+    "default reach for every graph. `html` is a self-contained HTML/JS BODY ONLY — no <html>/<head>/<body> " +
+    "wrapper, that's added for you. You may load AT MOST ONE library via " +
+    "<script src=\"https://cdn.jsdelivr.net/npm/...\"> or cdnjs.cloudflare.com — suggested: three.js (3D " +
+    "shapes), p5.js (simulations), chart.js or plotly.js (interactive charts), jsxgraph (interactive " +
+    "geometry). Any other script source gets stripped before this ever reaches the student. No network " +
+    "calls beyond that one library, no forms, no navigation, no iframes of your own. Keep it small, fast, " +
+    "and focused on the one manipulation that matters — this is a focused manipulative, not an app.",
+  input_schema: { type: "object", properties: {
+    caption: { type: "string", description: "one short line describing the scene, shown as its title on the board" },
+    html: { type: "string", description: "self-contained HTML/JS body implementing the scene — see the rules above" },
+  }, required: ["caption", "html"] },
+};
+
 // Replaces the WHOLE objectives list every call (like WRITE_TO_BOARD's kind:"focus", but structured and
 // checkable instead of one sentence). Called once when a session settles on today's topic (3-6 objectives),
 // and again — passing the SAME list back with `done` flags updated — the moment the student demonstrates one,
@@ -2741,6 +2769,37 @@ export function makeDiagramEntry(input: any): { entry: BoardEntry } | { error: s
   const ops = rawOps.map(validateDiagramOp).filter((o: DiagramOp | null): o is DiagramOp => o !== null);
   if (!ops.length) return { error: "ERROR: no valid ops after validation — check each op has its required fields (see the tool schema)." };
   return { entry: { id: randomUUID(), text: caption, kind: "diagram", diagram: ops, at: new Date().toISOString() } };
+}
+
+const MAX_INTERACTIVE_HTML_CHARS = 8000;
+// Script sources the sandboxed iframe may load a library from — the same CDN this app's own CSP already
+// whitelists for script-src (see vercel.json/server/index.ts), so nothing new is being trusted here that
+// isn't already trusted for the app's own code.
+const INTERACTIVE_SCRIPT_ALLOWLIST = ["https://cdn.jsdelivr.net/", "https://cdnjs.cloudflare.com/"];
+/** Strips anything out of an AI-authored interactive scene that shouldn't be there: a <script src> NOT
+ *  pointing at the allowlisted CDNs (any other source is dropped — the tag itself removed, not just its
+ *  src, since a scriptless <script> tag serves no purpose), and any nested <iframe>/<object>/<embed> tag
+ *  outright (defense in depth — the outer sandbox already blocks most of what those could do, but there's
+ *  no reason to let the model try). Regex-based, same posture as stripLeakedToolCallSyntax elsewhere in
+ *  this file — simple and defensive, not a full HTML parser (this content runs same-origin-less in a
+ *  sandboxed iframe either way, so a parser-evasion edge case here is not a privilege escalation). */
+function sanitizeInteractiveHtml(html: string): string {
+  return html
+    .replace(/<iframe\b[\s\S]*?<\/iframe>|<iframe\b[^>]*\/?>/gi, "")
+    .replace(/<object\b[\s\S]*?<\/object>/gi, "")
+    .replace(/<embed\b[^>]*\/?>/gi, "")
+    .replace(/<script\b([^>]*)\bsrc\s*=\s*["']([^"']*)["']([^>]*)>\s*<\/script>/gi, (whole, _pre, src) =>
+      INTERACTIVE_SCRIPT_ALLOWLIST.some((p) => src.startsWith(p)) ? whole : "");
+}
+
+export function makeInteractiveEntry(input: any): { entry: BoardEntry } | { error: string } {
+  const caption = String(input?.caption || "").trim().slice(0, 200);
+  if (!caption) return { error: "ERROR: caption is required." };
+  const rawHtml = String(input?.html || "").trim();
+  if (!rawHtml) return { error: "ERROR: html cannot be empty." };
+  if (rawHtml.length > MAX_INTERACTIVE_HTML_CHARS) return { error: `REJECTED: max ${MAX_INTERACTIVE_HTML_CHARS} characters — simplify the scene.` };
+  const html = sanitizeInteractiveHtml(rawHtml);
+  return { entry: { id: randomUUID(), text: caption, kind: "interactive", html, at: new Date().toISOString() } };
 }
 
 /** ONE free-response practice problem — validated the same defensive way as makeDeck/makeQuiz. Both
@@ -7743,7 +7802,7 @@ export async function chatAboutTask(
   // core to live tutoring and/or already cheap.
   const includeArtifactTools = wantsArtifactTools(message, history);
   const tools = opts?.canvasMode
-    ? [CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, SET_OBJECTIVES_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])]
+    ? [CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, CREATE_INTERACTIVE_TOOL, SET_OBJECTIVES_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])]
     : [...(includeArtifactTools ? [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL] : []), CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, SET_OBJECTIVES_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])];
   const empty = (): ChatResult => ({ reply: "", notes: [], flashcards: [], quizzes: [], problems: [], board: [], audit: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false });
   const result = empty();
@@ -8099,6 +8158,15 @@ export async function chatAboutTask(
           // state a value just as plainly as prose can.
           else if (leaksAnyProblemAnswer([input?.caption, ...(Array.isArray(input?.ops) ? input.ops.map((o: any) => `${o?.text || ""} ${o?.latex || ""}`) : [])].join(" "), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that figure states a problem's answer outright — redraw it without that value.";
           else { const r = makeDiagramEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Figure dessinée : « ${r.entry.text.slice(0, 60)} »` : `Diagram drawn: "${r.entry.text.slice(0, 60)}"`); } }
+        } else if (name === "CREATE_INTERACTIVE") {
+          // Own small cap, separate from WRITE_TO_BOARD/DRAW_ON_BOARD's — this is the heaviest entry kind
+          // (a whole embedded iframe), and a session needing more than a couple is almost certainly
+          // reaching for this as a default instead of the rare, deliberate tool it's meant to be.
+          if (result.board.filter((e) => e.kind === "interactive").length >= 2) content = "LIMIT: you've already created an interactive artifact this message — that's enough for one turn.";
+          // Same answer-leak guard as WRITE_TO_BOARD/DRAW_ON_BOARD above — an embedded scene's labels/text
+          // can state a value just as plainly as prose can.
+          else if (leaksAnyProblemAnswer(`${input?.caption || ""} ${input?.html || ""}`, [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that scene states a problem's answer outright — rebuild it without that value.";
+          else { const r = makeInteractiveEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Scène interactive créée : « ${r.entry.text.slice(0, 60)} »` : `Interactive scene created: "${r.entry.text.slice(0, 60)}"`); } }
         } else if (name === "SET_OBJECTIVES") {
           const r = makeObjectives(input);
           if ("error" in r) content = r.error;

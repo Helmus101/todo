@@ -17,7 +17,7 @@ import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_AR
 import { trimFreeTTSWatermark } from "../server/ttsTrim.ts";
 import { wantsArtifactTools } from "../server/claude.ts";
 import { rankVoices, cloudChunks } from "../client/voice/useSpeechSynthesis.ts";
-import { pcmToWav, leaksAnswer, scrubAnswerLeak, makeProblem as makeProblemLeak, makePracticeProblem as makePracticeLeak, wordWrapChunks, leaksAnyProblemAnswer } from "../server/claude.ts";
+import { pcmToWav, leaksAnswer, scrubAnswerLeak, makeProblem as makeProblemLeak, makePracticeProblem as makePracticeLeak, wordWrapChunks, leaksAnyProblemAnswer, makeInteractiveEntry } from "../server/claude.ts";
 import { lastMessageKey } from "../client/voice/replyKey.ts";
 import { subjectMastery } from "../shared/types.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, subjectFrequency, orderingBoost, twoMinuteRuleBoost } from "../server/patterns.ts";
@@ -4131,6 +4131,60 @@ section("HINT LADDER — a trailed-off/incomplete answer isn't license to finish
   const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
   check("the prompt distinguishes a trailed-off answer from a finished wrong/right one", claude.includes("DON'T TREAT A TRAILED-OFF ANSWER AS A FINISHED ONE") && claude.includes('force has to be bigger than" with nothing after'));
   check("it names the exact live failure: completing their sentence AND advancing the lesson in one breath", claude.includes("line both completed it for them AND jumped straight to the next concept") && claude.includes('the leftover has') && claude.includes('to be ma")'));
+}
+
+section("makeInteractiveEntry — CREATE_INTERACTIVE validation (allowlisted scripts, stripped iframes, size cap)");
+{
+  // New feature: AI-authored interactive/3D scenes on the board, rendered in a sandboxed iframe with no
+  // allow-same-origin. The server-side sanitizer is the FIRST layer (before the sandbox attributes even
+  // matter) — it must only allow a script from the same CDN this app's own CSP already trusts, and strip
+  // anything that tries to nest another frame.
+  check("a missing caption is rejected", "error" in makeInteractiveEntry({ html: "<div>hi</div>" }));
+  check("empty html is rejected", "error" in makeInteractiveEntry({ caption: "A scene", html: "" }));
+  check("oversized html is rejected", "error" in makeInteractiveEntry({ caption: "A scene", html: "x".repeat(8001) }));
+  check("ordinary html with no scripts passes through unchanged", (() => {
+    const r = makeInteractiveEntry({ caption: "A scene", html: "<svg><circle cx='1' cy='1' r='1'/></svg>" });
+    return "entry" in r && r.entry.html === "<svg><circle cx='1' cy='1' r='1'/></svg>" && r.entry.kind === "interactive" && r.entry.text === "A scene";
+  })());
+  check("a script from the allowlisted CDN (jsdelivr) survives", (() => {
+    const r = makeInteractiveEntry({ caption: "3D cone", html: "<script src=\"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js\"></script><div id=\"x\"></div>" });
+    return "entry" in r && r.entry.html.includes("cdn.jsdelivr.net/npm/three");
+  })());
+  check("a script from cdnjs also survives", (() => {
+    const r = makeInteractiveEntry({ caption: "Chart", html: "<script src=\"https://cdnjs.cloudflare.com/ajax/libs/chart.js/4.4.0/chart.umd.min.js\"></script>" });
+    return "entry" in r && r.entry.html.includes("cdnjs.cloudflare.com");
+  })());
+  check("a script from ANY other origin is stripped outright", (() => {
+    const r = makeInteractiveEntry({ caption: "Sketchy", html: "<script src=\"https://evil.example.com/steal.js\"></script><div>still here</div>" });
+    return "entry" in r && !r.entry.html.includes("evil.example.com") && r.entry.html.includes("still here");
+  })());
+  check("a nested iframe is stripped", (() => {
+    const r = makeInteractiveEntry({ caption: "Nested", html: "<div>before</div><iframe src=\"https://example.com\"></iframe><div>after</div>" });
+    return "entry" in r && !r.entry.html.includes("<iframe") && r.entry.html.includes("before") && r.entry.html.includes("after");
+  })());
+  check("nested object/embed tags are stripped too", (() => {
+    const r = makeInteractiveEntry({ caption: "Nested2", html: "<object data=\"x\"></object><embed src=\"y\"/>" });
+    return "entry" in r && !r.entry.html.includes("<object") && !r.entry.html.includes("<embed");
+  })());
+  check("CREATE_INTERACTIVE's answer-leak guard reuses leaksAnyProblemAnswer the same way WRITE_TO_BOARD/DRAW_ON_BOARD do", (() => {
+    const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+    return /name === "CREATE_INTERACTIVE"/.test(claude) && /leaksAnyProblemAnswer\(`\$\{input\?\.caption \|\| ""\} \$\{input\?\.html \|\| ""\}`/.test(claude);
+  })());
+}
+
+section("CREATE_INTERACTIVE — sandboxed, scoped to Study Mode, capped (source pins)");
+{
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("CREATE_INTERACTIVE is only added to the canvas-mode (Study Mode) tool list, not the regular task-chat one", (() => {
+    const canvasLine = claude.split("\n").find((l) => l.includes("CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, CREATE_INTERACTIVE_TOOL"));
+    const regularLine = claude.split("\n").find((l) => l.includes("CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL"));
+    return !!canvasLine && !!regularLine && !regularLine.includes("CREATE_INTERACTIVE");
+  })());
+  check("its own per-board cap is separate from WRITE_TO_BOARD/DRAW_ON_BOARD's", claude.includes('e.kind === "interactive").length >= 2'));
+
+  const board = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  check("the iframe's sandbox attribute is exactly \"allow-scripts\" (no allow-same-origin/allow-top-navigation/allow-popups)", /sandbox="allow-scripts"/.test(board));
+  check("KIND_LABEL/KIND_GLYPH both have an 'interactive' entry", /interactive: \["Interactif", "Interactive"\]/.test(board) && /interactive: "◈"/.test(board));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

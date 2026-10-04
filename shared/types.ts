@@ -1496,7 +1496,7 @@ export interface BoardEntry {
    *  (see `outline`) — for essay-based/humanities content (history causes, source analysis, an essay plan)
    *  where a flat sentence or a spatial diagram both fit poorly; math/science still reach for
    *  formula/diagram first. */
-  kind?: "note" | "instruction" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline";
+  kind?: "note" | "instruction" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "interactive";
   /** Present only when kind === "diagram" — the figure's shapes, rendered as SVG (BoardArtifact.tsx). Capped
    *  at 15 ops server-side (makeDiagramEntry, server/claude.ts): enough for a labeled triangle or a small
    *  graph, not enough to build a full illustration op-by-op. */
@@ -1508,6 +1508,12 @@ export interface BoardEntry {
    *  server-side (makeOutlineEntry) at 6 sections x 8 bullets — enough for a real essay plan, not a whole
    *  textbook chapter in one entry. */
   outline?: { heading: string; bullets: string[] }[];
+  /** Present only when kind === "interactive" — sanitized, self-contained HTML/JS (CREATE_INTERACTIVE
+   *  tool), rendered in a sandboxed iframe (BoardArtifact.tsx) with NO allow-same-origin: it cannot read
+   *  this app's DOM/cookies/storage or navigate the parent. See makeInteractiveEntry (server/claude.ts)
+   *  for the server-side script-source allowlist and tag-stripping that runs before this ever reaches
+   *  the client. */
+  html?: string;
   at: string;
 }
 
