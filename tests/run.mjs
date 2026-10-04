@@ -16,6 +16,7 @@ import { connectionColumnUpdates } from "../server/store.ts";
 import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, contextKey, chooseArm, computeReward, computeCardReward, computeLatencyReward, updatePosterior, leadingArm } from "../server/bandit.ts";
 import { trimFreeTTSWatermark } from "../server/ttsTrim.ts";
 import { wantsArtifactTools } from "../server/claude.ts";
+import { rankVoices } from "../client/voice/useSpeechSynthesis.ts";
 import { subjectMastery } from "../shared/types.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, subjectFrequency, orderingBoost, twoMinuteRuleBoost } from "../server/patterns.ts";
 
@@ -1935,7 +1936,7 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   // key, no CSP concern at all (the Web Speech API isn't an <audio> element, so media-src never applies).
   const ttsSynthSrc = readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8");
   check("TTS no longer depends on a server round trip at all (no fetch/api call in the speak path)", !/api\.ttsAudio/.test(ttsSynthSrc) && !/fetch\("\/api\/tts"/.test(ttsSynthSrc));
-  check("speak() goes straight to the browser's own speechSynthesis, no vendor fallback chain", /useBrowserTTS\(speakableText\);/.test(ttsSynthSrc) && !/speakViaFreeTTS/.test(ttsSynthSrc));
+  check("speak() goes straight to the browser's own speechSynthesis, no vendor fallback chain", /engine\.speak\(utter\)/.test(ttsSynthSrc) && !/speakViaFreeTTS/.test(ttsSynthSrc) && !/api\./.test(ttsSynthSrc));
   check("every TTS failure path leaves a diagnostic the UI can show, not just silence", /lastDiagnostic/.test(ttsSynthSrc) && /setLastDiagnostic/.test(ttsSynthSrc));
   // The very FIRST speak() of a session can get silently blocked by a browser's autoplay/gesture policy
   // since Otto's replies always arrive async (a network round trip), never inside the click that triggered
@@ -3846,56 +3847,38 @@ section("useThinkingWord — time-banded wording so a long wait stops implying '
   check("returns null while inactive, same as before (callers rely on this)", /if \(!active\) return null;/.test(hookFn));
 }
 
-section("TTS diagnostic no longer shows noise on every normal successful speak (source pin)");
+section("TTS rewrite — voice ranking prefers on-device voices (rankVoices unit tests)");
 {
-  // Reported live as unwanted: "Using this browser's built-in speech (N voices available)" fired via
-  // setLastDiagnostic on EVERY successful speak, not just a failure/fallback — sm-ai-tts-note's whole
-  // point is explaining a failure, so this turned the happy path into constant visible noise.
-  const ttsSrcNoise = readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8");
-  check("the normal-success path no longer calls setLastDiagnostic with the built-in-speech note", !/setLastDiagnostic\(`Using this browser's built-in speech/.test(ttsSrcNoise));
-  check("real failure diagnostics (no speechSynthesis, no voices, nothing speakable) are still set", /setLastDiagnostic\("This browser has no speech synthesis at all\."\)/.test(ttsSrcNoise) && /setLastDiagnostic\("Browser speech is being used, but this device reports no installed voices\."\)/.test(ttsSrcNoise));
+  // Reported live (repeatedly): voice mode stays on "Listening", never "Otto is speaking", even with a reply.
+  // Root causes in the old hook: it RANKED Chrome's network "Google …" voices first (they fail silently and
+  // cut out after ~15s), and on any utterance error it skipped to the next sentence — a failing voice
+  // drained the whole reply in milliseconds, so `speaking` only flickered and nothing was ever heard.
+  const v = (name, lang, localService, voiceURI = name) => ({ name, lang, localService, voiceURI });
+  const voices = [v("Google français", "fr-FR", false), v("Thomas", "fr-FR", true), v("Amélie", "fr-CA", true), v("Samantha", "en-US", true), v("Google US English", "en-US", false)];
+  check("an on-device exact-language voice beats Chrome's network 'Google' voice", rankVoices(voices, "fr-FR")[0].name === "Thomas");
+  check("an on-device same-base-language voice still beats a network exact-language voice", rankVoices([v("Google français", "fr-FR", false), v("Amélie", "fr-CA", true)], "fr-FR")[0].name === "Amélie");
+  check("a network voice is still used when it's the ONLY voice for the language", rankVoices([v("Google français", "fr-FR", false), v("Samantha", "en-US", true)], "fr-FR")[0].name === "Google français");
+  check("wrong-language voices are never returned", rankVoices([v("Samantha", "en-US", true)], "fr-FR").length === 0);
+  check("a voice that already failed this session is excluded from the ranking", rankVoices(voices, "fr-FR", new Set(["Thomas"]))[0].name === "Amélie");
+  check("an underscore-style lang tag (fr_FR, some Android builds) still matches", rankVoices([v("Local", "fr_FR", true)], "fr-FR").length === 1);
 }
 
-section("TTS 'sometimes stops working' — generation-counter race fix (source pin)");
+section("TTS rewrite — invariants: no silent drain, no stuck 'speaking', no stale callbacks, never left paused (source pins)");
 {
-  // Reported live: intermittent (not constant) TTS silence/skipped speech. Root cause confirmed: the old
-  // cancelledRef (a single shared boolean) was reset to false synchronously at the START of every new
-  // speak() call, BEFORE the previous utterance's async onend/onerror had necessarily fired — that stale
-  // handler then read the just-reset "false" and called speakNext() itself, racing the new session's own
-  // deferred speakNext() and corrupting/skipping the new queue. Fires specifically when a new reply
-  // arrives while the previous one is still mid-queue — the common case, explaining "sometimes."
-  const ttsSrcRace = readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8");
-  check("the old single shared cancelledRef boolean is gone", !/cancelledRef/.test(ttsSrcRace.replace(/\/\/.*old cancelledRef.*/gi, "")));
-  check("a generation counter exists instead, bumped on every new speak() and cancel()", /const genRef = useRef\(0\);/.test(ttsSrcRace) && /const gen = \+\+genRef\.current;/.test(ttsSrcRace) && /genRef\.current\+\+; \/\/ invalidate any in-flight session/.test(ttsSrcRace));
-  check("speakNext bails immediately if its captured generation has been superseded", /const speakNext = useCallback\(\(gen: number\) => \{\s*\n\s*if \(genRef\.current !== gen\) return;/.test(ttsSrcRace));
-  check("the watchdog and onend/onerror handlers all check the SAME captured generation, not a shared mutable flag", /if \(started \|\| genRef\.current !== gen\) return;/.test(ttsSrcRace) && (ttsSrcRace.match(/genRef\.current === gen\) speakNext\(gen\)/g) || []).length >= 2);
-  check("the deferred post-cancel speakNext call also checks the captured generation before firing", /setTimeout\(\(\) => \{ if \(genRef\.current === gen\) speakNext\(gen\); \}, 30\);/.test(ttsSrcRace));
-}
-
-section("TTS 'stops working at random times' — Chrome's ~15s stall bug (keepalive ping + watchdog ceiling, source pins)");
-{
-  // Reported live AGAIN after the generation-counter race fix — a different, well-documented root cause:
-  // Chrome/Chromium's speechSynthesis silently stalls after ~15s of continuous speech (speaking stays
-  // true forever, no event ever fires again). The old watchdog had no time ceiling, so it rescheduled
-  // itself every 400ms FOREVER once stalled, never recovering — and the stuck `speaking` state also kept
-  // voice-mode UIs' mic paused indefinitely (they gate on synth.speaking).
-  const ttsSrcStall = readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8");
-  check("a periodic pause()+resume() keepalive ping runs while speech is active (the standard Chrome-stall workaround)", /window\.speechSynthesis\.pause\(\);\s*\n\s*window\.speechSynthesis\.resume\(\);/.test(ttsSrcStall) && /setInterval\(\(\) => \{/.test(ttsSrcStall));
-  check("the keepalive ping is scoped to while speaking is true, not a permanent global timer", /if \(!supported \|\| !speaking\) return;/.test(ttsSrcStall));
-  check("the watchdog now has a hard time ceiling instead of rescheduling on 'speaking: true' forever", /const WATCHDOG_CEILING_MS = 15_000;/.test(ttsSrcStall) && /watchdogMs < WATCHDOG_CEILING_MS/.test(ttsSrcStall));
-  check("hitting the ceiling forces a real engine reset (cancel) before recovering, not just an internal skip", /try \{ window\.speechSynthesis\.cancel\(\); \} catch/.test(ttsSrcStall));
-}
-
-section("TTS 'breaks on mic off then back on' — unlock() now follows the genRef protocol too (source pins)");
-{
-  // Root cause: unlock()'s own raw window.speechSynthesis.speak()/cancel() pair bypassed the genRef
-  // generation-counter protocol everything else in this file uses — its cancel() could trigger a REAL
-  // in-flight utterance's onend/onerror and have it misread as still current, re-entering the speech
-  // queue from an unrelated caller, right as the mic-off effect was also cancelling the same utterance.
-  const ttsSrcUnlock = readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8");
-  const unlockFn = ttsSrcUnlock.slice(ttsSrcUnlock.indexOf("const unlock = useCallback"), ttsSrcUnlock.indexOf("const unlock = useCallback") + 1400);
-  check("unlock() bumps genRef before touching the engine, invalidating any real in-flight utterance's stale callbacks", /genRef\.current\+\+;/.test(unlockFn));
-  check("unlock() also resets the queue and speaking state, like cancel() does, in case it interrupted a real utterance", /queueRef\.current = \[\];/.test(unlockFn) && /setSpeaking\(false\);/.test(unlockFn));
+  const tts = readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8");
+  check("a failed chunk is retried once (re-queued at the front) instead of silently skipped", /if \(!item\.retried\) \{\s*\n\s*queueRef\.current\.unshift\(\{ text: item\.text, retried: true \}\);/.test(tts));
+  check("the voice that failed is excluded for the rest of the session, so the retry uses a different one", /badVoicesRef\.current\.add\(voice\.voiceURI\)/.test(tts));
+  check("a second failure is surfaced to the student (lastDiagnostic) instead of vanishing", /setLastDiagnostic\(fr\(\)\s*\n?\s*\? `La synthèse vocale a échoué/.test(tts));
+  check("the diagnostic is bilingual (follows the speech language, no FR/EN mixing)", /`Speech playback failed \(\$\{reason\}\)/.test(tts));
+  check("a normal successful speak never sets a diagnostic (no happy-path noise)", !/Using this browser's built-in speech/.test(tts));
+  check("every chunk has a START timeout (dropped utterance → retry, never hangs)", /setTimeout\(\(\) => settle\(true, "never-started"\), START_TIMEOUT_MS\)/.test(tts));
+  check("every started chunk has a RUN ceiling (onend never arriving can't leave speaking stuck true)", /runTimeoutMs\(item\.text\)/.test(tts) && /settle\(false, "timeout"\)/.test(tts));
+  check("settle() is idempotent — onend/onerror/timeouts can't double-advance the queue", /if \(settled\) return;\s*\n\s*settled = true;/.test(tts));
+  check("speak() and cancel() bump the generation; handlers check it before acting", /const gen = \+\+genRef\.current;/.test(tts) && /genRef\.current\+\+;/.test(tts) && /if \(genRef\.current !== gen\) return;/.test(tts));
+  check("a paused engine is resumed before speaking (a paused engine queues silently forever)", /if \(engine\.paused\) engine\.resume\(\);/.test(tts));
+  check("the risky pause()/resume() keepalive is gone (only needed for network voices, which are no longer preferred)", !/engine\.pause\(\)|speechSynthesis\.pause\(\)/.test(tts));
+  check("unlock() never touches an engine that's already speaking (no mic-toggle cross-talk)", /if \(engine\.speaking \|\| engine\.pending\) return;/.test(tts));
+  check("unlock() never queues an EMPTY utterance (a known stuck-queue trigger)", !/new SpeechSynthesisUtterance\(""\)/.test(tts));
 }
 
 section("MCQ-dodge no longer licenses an answer reveal (source pins — reported live, 'B — yes.'/'Yes — (0, 4]')");
