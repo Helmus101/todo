@@ -3708,6 +3708,54 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
         </div>
       </section>
 
+      {/* "Meet your tutor" — each block names something Otto actually does, not aspirational copy. Kept to
+          four: dropped Klar's "collaborate in shared courses" (Otto is a solo tutor, no shared-course
+          concept exists) rather than describe a feature that isn't real. */}
+      <section className="landing-sec-simple agent-features">
+        <div className="sec-header-simple">
+          <h2>{L("Ce qu'Otto fait vraiment.", "What Otto actually does.")}</h2>
+        </div>
+        <div className="agent-feature-grid">
+          <div className="agent-feature-card">
+            <h3>{L("Un tableau de séance, construit au fil de l'eau", "A session document, built as you go")}</h3>
+            <p>{L("Objectif du jour, formules, ton propre raisonnement — Otto écrit sur un tableau persistant pendant que vous parlez, pas juste dans le chat.", "Today's focus, formulas, your own reasoning — Otto writes to a persistent board as you talk, not just into the chat.")}</p>
+          </div>
+          <div className="agent-feature-card">
+            <h3>{L("Les sources, affichées — pas juste citées", "Sources shown, not just claimed")}</h3>
+            <p>{L("Quand Otto s'appuie sur une recherche, les sources utilisées apparaissent sous la réponse, cliquables.", "When Otto leans on a web search, the sources it used show up under the reply, clickable.")}</p>
+          </div>
+          <div className="agent-feature-card">
+            <h3>{L("Des scènes interactives, pas des captures d'écran", "Interactive scenes, not screenshots")}</h3>
+            <p>{L("Pour une notion qui se manipule — un solide en 3D, une courbe qu'on fait glisser — Otto construit une scène que tu touches, en plus des exercices et quiz habituels.", "For a notion that's better manipulated than described — a 3D solid, a curve you drag — Otto builds a scene you can touch, alongside the usual practice problems and quizzes.")}</p>
+          </div>
+          <div className="agent-feature-card">
+            <h3>{L("Une vraie voix, pas un robot", "A real voice, not a robot")}</h3>
+            <p>{L("Le mode vocal lit les réponses à voix haute avec une voix naturelle — utile en marchant, ou simplement pour écouter plutôt que lire.", "Voice mode reads replies aloud with a natural voice — useful on the move, or just to listen instead of read.")}</p>
+          </div>
+        </div>
+      </section>
+
+      {/* Integrations + security — real facts only, no certifications Otto doesn't hold. The grid mirrors
+          server/integrations.ts's actual CATALOG (Composio-backed) plus Pronote, which isn't Composio but
+          is the other real connection this app supports. */}
+      <section className="landing-sec-simple">
+        <div className="sec-header-simple">
+          <h2>{L("Connecté à ce que tu utilises déjà.", "Connected to what you already use.")}</h2>
+        </div>
+        <div className="integrations-grid">
+          {[
+            L("Gmail", "Gmail"), L("Google Calendar", "Google Calendar"), L("Google Docs", "Google Docs"),
+            L("Google Slides", "Google Slides"), L("Google Sheets", "Google Sheets"), L("Google Drive", "Google Drive"),
+            L("Notion", "Notion"), L("Pronote", "Pronote"),
+          ].map((name) => <span key={name} className="integration-pill">{name}</span>)}
+        </div>
+        <ul className="security-facts">
+          <li>{L("Tes identifiants Pronote sont chiffrés en AES-256-GCM — jamais stockés en clair.", "Your Pronote credentials are encrypted with AES-256-GCM — never stored in plain text.")}</li>
+          <li>{L("Gmail et Calendar sont connectés en lecture par défaut — Otto ne peut pas envoyer d'email ou modifier un événement sans ta confirmation.", "Gmail and Calendar connect read-first — Otto can't send an email or change an event without your confirmation.")}</li>
+          <li>{L("Tes données ne sont pas vendues, point.", "Your data isn't sold, full stop.")}</li>
+        </ul>
+      </section>
+
       {/* Research — kept but simplified */}
       <section className="landing-sec-simple">
         <div className="sec-header-simple">
@@ -3768,6 +3816,7 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
         <div className="foot-top-simple">
           <span className="brand"><Logo size={20} /> <span className="brand-name">Otto</span></span>
           <nav className="foot-group-simple">
+            <a href="/research">{L("Recherche", "Research")}</a>
             <a href="/privacy">{L("Confidentialité", "Privacy")}</a>
             <a href="/terms">{L("Conditions", "Terms")}</a>
           </nav>

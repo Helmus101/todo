@@ -4217,5 +4217,21 @@ section("CREATE_INTERACTIVE — sandboxed, scoped to Study Mode, capped (source 
   check("the prompt requires something visible on the first frame, before any interaction", claude.includes("Draw something visible on the FIRST"));
 }
 
+section("Landing page redesign — real features/integrations only, no fabricated testimonials or certifications (source pins)");
+{
+  // Direct instruction after reviewing a competitor's landing page: redesign Otto's, but explicitly WITHOUT
+  // inventing customer testimonials (fabricated reviews attributed to fictional people) or claiming
+  // certifications (SOC 2, ISO 27001, SAML SSO) this app doesn't hold — the user confirmed both calls.
+  const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const landing = app.slice(app.indexOf("export function Landing("), app.indexOf("// ── Legal pages"));
+  check("no fabricated testimonial content (no quote attributed to a named 'customer')", !/testimonial/i.test(landing));
+  check("no certifications this app doesn't hold (SOC 2 / ISO 27001 / SAML)", !/SOC\s*2/i.test(landing) && !/ISO\s*27001/i.test(landing) && !/SAML/i.test(landing));
+  // What replaced it: real, already-shipped features, and the real integrations catalog.
+  check("the feature grid names real, already-shipped capabilities (board, sources, interactive scenes, voice)", landing.includes("agent-feature-grid") && /tableau de séance|session document/.test(landing) && /scène|scene/i.test(landing) && /voix|voice/i.test(landing));
+  check("the integrations list matches server/integrations.ts's real CATALOG, not an invented one", landing.includes("integrations-grid") && landing.includes('L("Notion", "Notion")') && landing.includes('L("Pronote", "Pronote")'));
+  check("the security claims are checkable facts already true elsewhere in this app (AES-256-GCM, read-first OAuth)", landing.includes("AES-256-GCM") && /read-first|lecture par défaut/.test(landing));
+  check("the Research page (previously an orphan route, never linked) is now reachable from the footer", app.includes('href="/research"'));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
