@@ -4186,11 +4186,23 @@ section("CREATE_INTERACTIVE — sandboxed, scoped to Study Mode, capped (source 
   check("the iframe's sandbox attribute is exactly \"allow-scripts\" (no allow-same-origin/allow-top-navigation/allow-popups)", /sandbox="allow-scripts"/.test(board));
   check("KIND_LABEL/KIND_GLYPH both have an 'interactive' entry", /interactive: \["Interactif", "Interactive"\]/.test(board) && /interactive: "◈"/.test(board));
 
+  // THE bug that would have made every scene blank in production: a `srcdoc` iframe INHERITS the embedding
+  // page's CSP, and this app's script-src has no 'unsafe-inline' — so the model's script AND our own guard
+  // were both silently blocked. The scene is served from its own same-origin route instead, which carries
+  // its own policy. These pins exist so nobody "simplifies" it back to srcdoc.
+  check("the frame navigates to the /api/interactive route — never srcdoc (which inherits the app's CSP)", /src=\{`\/api\/interactive\//.test(board) && !/srcDoc/.test(board));
+  const idxSrc = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  check("the route serves the scene with its OWN csp and a relaxed X-Frame-Options", /app\.get\("\/api\/interactive\/:taskId\/:entryId"/.test(idxSrc) && /INTERACTIVE_SCENE_CSP/.test(idxSrc) && /"X-Frame-Options", "SAMEORIGIN"/.test(idxSrc));
+  check("the route 404s anything that isn't an interactive board entry on a task you own", /entry\.kind !== "interactive"/.test(idxSrc) && /req\.session\.tasks \|\| \[\]\)\.find/.test(idxSrc));
+  check("that scene CSP allows inline script + the two allowlisted CDNs, and nothing else out (connect-src 'none')", /script-src 'unsafe-inline' https:\/\/cdn\.jsdelivr\.net https:\/\/cdnjs\.cloudflare\.com/.test(claude) && /connect-src 'none'/.test(claude));
+  const vercel = readFileSync(new URL("../vercel.json", import.meta.url), "utf8");
+  check("vercel.json's edge headers EXCLUDE the scene route (they'd otherwise re-apply the app CSP + XFO: DENY and re-break it)", /\(\?!assets\/\|api\/interactive\/\)/.test(vercel));
+
   // Direct instruction: "make sure artifacts aren't blank". The sandbox has NO allow-same-origin, so the
   // parent can't inspect the frame to detect a blank scene — the guard has to run inside the frame itself.
-  check("the shell installs an in-frame error handler so a thrown scene shows a message, not a void", /addEventListener\('error'/.test(board) && /__otto_fallback/.test(board));
-  check("the shell also catches 'ran fine, drew nothing' after load (no painted canvas/svg/img and no text)", /querySelector\('canvas,svg,img,video'\)/.test(board) && /getBoundingClientRect\(\)\.height>8/.test(board));
-  check("the fallback tells the student what to do instead of showing an empty box", /This interactive didn't load/.test(board) && /Ask Otto to explain it in the chat instead/.test(board));
+  check("the served document installs an in-frame error handler so a thrown scene shows a message, not a void", /addEventListener\('error'/.test(claude) && /__otto_fallback/.test(claude));
+  check("it also catches 'ran fine, drew nothing' after load (no painted canvas/svg/img and no text)", /querySelector\('canvas,svg,img,video'\)/.test(claude) && /getBoundingClientRect\(\)\.height>8/.test(claude));
+  check("the fallback tells the student what to do instead of showing an empty box", /This interactive didn't load/.test(claude) && /Ask Otto to explain it in the chat instead/.test(claude));
 
   check("the tool's own prompt pushes no-library-first and requires a guarded fallback when one IS loaded", claude.includes("NEVER SHIP SOMETHING THAT CAN RENDER BLANK") && claude.includes("PREFER NO LIBRARY") && claude.includes("if (typeof THREE === 'undefined')"));
   check("the prompt requires something visible on the first frame, before any interaction", claude.includes("Draw something visible on the FIRST"));

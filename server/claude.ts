@@ -2801,6 +2801,57 @@ function sanitizeInteractiveHtml(html: string): string {
       INTERACTIVE_SCRIPT_ALLOWLIST.some((p) => src.startsWith(p)) ? whole : "");
 }
 
+/** The CSP served WITH an interactive scene (see /api/interactive in server/index.ts) — deliberately its
+ *  own, much tighter policy than the app's: no default-src at all, scripts only inline (the scene IS inline
+ *  code) plus the two allowlisted CDNs, and `connect-src 'none'` so a scene can't call anything out. This
+ *  is also the reason the scene is served from its own route instead of an iframe `srcdoc`: a srcdoc frame
+ *  INHERITS the embedding document's CSP, and the app's policy has no 'unsafe-inline' in script-src, so
+ *  every scene's script — the model's and our own guard alike — was silently blocked and the frame rendered
+ *  blank. A real same-origin navigation gets its own policy from these response headers instead. */
+export const INTERACTIVE_SCENE_CSP = [
+  "default-src 'none'",
+  "script-src 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com",
+  "script-src-elem 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com",
+  "style-src 'unsafe-inline'",
+  "img-src data: blob:",
+  "font-src data:",
+  "connect-src 'none'",
+  "form-action 'none'",
+  "base-uri 'none'",
+].join("; ");
+
+/** Wraps a validated scene's HTML into the full document actually served to the iframe. Everything outside
+ *  `${html}` is OURS, not the model's: a minimal reset, and a guard that makes a failed or empty scene say
+ *  so rather than render as a blank box (direct instruction — "make sure artifacts aren't blank"). The
+ *  parent can't detect blankness from outside: the frame is sandboxed with no allow-same-origin, so its DOM
+ *  is unreachable. Hence the check lives inside the frame. */
+export function interactiveSceneDocument(html: string): string {
+  const guard =
+    `(function(){var F=function(msg){try{var d=document.getElementById('__otto_fallback');if(!d)return;` +
+    `d.style.display='flex';var m=document.getElementById('__otto_fallback_msg');if(m&&msg)m.textContent=msg;}catch(e){}};` +
+    `window.addEventListener('error',function(e){F(e&&e.message?String(e.message).slice(0,160):'');},true);` +
+    `window.addEventListener('unhandledrejection',function(){F('');});` +
+    `window.addEventListener('load',function(){setTimeout(function(){try{` +
+    `var drawn=document.querySelector('canvas,svg,img,video');` +
+    `var painted=drawn&&drawn.getBoundingClientRect().height>8;` +
+    `var text=(document.body.innerText||'').replace(/\\s+/g,' ').trim();` +
+    `var own=document.getElementById('__otto_fallback');` +
+    `var ownText=own?(own.innerText||'').replace(/\\s+/g,' ').trim():'';` +
+    `if(!painted&&text.replace(ownText,'').length<2)F('');}catch(e){}},1500);});})();`;
+  const fallback =
+    `<div id="__otto_fallback" style="display:none;position:absolute;inset:0;align-items:center;` +
+    `justify-content:center;flex-direction:column;gap:6px;text-align:center;padding:16px;` +
+    `font:13px/1.5 system-ui,sans-serif;color:#71717A;background:#F4F4F5;">` +
+    `<div style="font-weight:600;color:#18181B;">This interactive didn't load</div>` +
+    `<div id="__otto_fallback_msg"></div>` +
+    `<div style="font-size:12px;">Ask Otto to explain it in the chat instead.</div></div>`;
+  return `<!doctype html><html><head><meta charset="utf-8" />` +
+    `<meta name="viewport" content="width=device-width, initial-scale=1" />` +
+    `<style>html,body{margin:0;padding:8px;box-sizing:border-box;font-family:system-ui,sans-serif;` +
+    `overflow:hidden;position:relative;height:100%;}*{box-sizing:border-box;}</style>` +
+    `<script>${guard}</` + `script></head><body>${html}${fallback}</body></html>`;
+}
+
 export function makeInteractiveEntry(input: any): { entry: BoardEntry } | { error: string } {
   const caption = String(input?.caption || "").trim().slice(0, 200);
   if (!caption) return { error: "ERROR: caption is required." };

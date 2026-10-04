@@ -11,7 +11,7 @@ import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, FocusSession } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY, subjectMastery } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
-import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto, ttsReady, synthesizeSpeech, synthesizeSpeechFallback, synthesizeSpeechGoogleTranslate } from "./claude.ts";
+import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto, ttsReady, synthesizeSpeech, synthesizeSpeechFallback, synthesizeSpeechGoogleTranslate, interactiveSceneDocument, INTERACTIVE_SCENE_CSP } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken, getAdminMetrics } from "./store.ts";
 import { sendTransactionalEmail } from "./mailer.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
@@ -1340,6 +1340,28 @@ app.post("/api/tasks", requireAuth, rateLimit(20, 60_000), async (req, res) => {
     console.error(e);
     res.status(500).json({ error: M(req, "Impossible d'ajouter cette tâche — réessaie.", "Couldn't add that task — try again.") });
   }
+});
+
+// ONE interactive board scene (CREATE_INTERACTIVE), served as its own HTML document for an iframe to
+// navigate to. Why a route instead of the iframe's own `srcdoc`: a srcdoc frame INHERITS the embedding
+// page's CSP, and this app's policy has no 'unsafe-inline' in script-src — so every scene's script (the
+// model's and our blank-guard alike) was silently blocked and the frame rendered empty. A real same-origin
+// navigation gets its own, much tighter policy from the headers below instead (INTERACTIVE_SCENE_CSP).
+// X-Frame-Options must also be relaxed from the global DENY, or our own same-origin iframe can't load it.
+// NOTE: vercel.json's headers rule re-applies the app CSP + X-Frame-Options: DENY at the EDGE to every path
+// it matches, which would undo both of those in production — its `source` regex therefore excludes
+// `api/interactive/` explicitly. Keep that exclusion in sync with this route's path (JSON can't hold a
+// comment saying so, which is why it's said here).
+// The frame itself still carries sandbox="allow-scripts" with NO allow-same-origin (BoardArtifact.tsx), so
+// the scene runs in an opaque origin regardless of what this document is allowed to do.
+app.get("/api/interactive/:taskId/:entryId", requireAuth, rateLimit(120, 60_000), (req, res) => {
+  const t = (req.session.tasks || []).find((x) => x.id === String(req.params.taskId));
+  const entry = (t?.board || []).find((e) => e.id === String(req.params.entryId));
+  if (!t || !entry || entry.kind !== "interactive" || !entry.html) { res.status(404).type("text/plain").send("Not found"); return; }
+  res.setHeader("Content-Security-Policy", INTERACTIVE_SCENE_CSP);
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  res.setHeader("Cache-Control", "no-store");
+  res.type("text/html; charset=utf-8").send(interactiveSceneDocument(entry.html));
 });
 
 // Refine an UNREFINED manual task (one added while AI was paused/unavailable) now that AI is back.
