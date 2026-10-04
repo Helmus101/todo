@@ -1233,7 +1233,7 @@ export function PracticeProblemCard({ problem, taskId, onAnswered }: { problem: 
         <p className={`practice-problem-verdict ${result.correct ? "correct" : "wrong"}`} role="status" aria-live="polite">
           {result.correct
             ? L("✓ Correct.", "✓ Correct.")
-            : L(`✗ Pas tout à fait — la bonne réponse : ${problem.answer}`, `✗ Not quite — the correct answer: ${problem.answer}`)}
+            : L("✗ Pas tout à fait — réessaie (l'indice d'Otto juste en dessous peut t'aider).", "✗ Not quite — try again (Otto's hint just below can help).")}
         </p>
       ) : null}
       {taskId ? (

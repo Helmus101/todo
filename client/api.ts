@@ -478,8 +478,10 @@ export const api = {
   // EVERY /api/tts call 403 before it ever reached FreeTTS, silently and consistently, every single time —
   // not a flaky network thing, not a voice/lang issue, just a request that was never actually authenticated
   // the way the server requires it to be.
-  ttsAudio: (text: string, lang: string): Promise<Response> =>
-    req("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, lang }) }),
+  // retries = 0: req()'s default 6 connection retries (with backoff) would delay the browser-voice fallback
+  // by seconds — for speech, falling back fast beats retrying. The caller passes a timeout signal.
+  ttsAudio: (text: string, lang: string, signal?: AbortSignal): Promise<Response> =>
+    req("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, lang }), signal }, 0),
   // Admin-only (server-side gated to one hardcoded email, see server/index.ts) — a 403 for anyone else.
   adminMetrics: (): Promise<{ userCount: number; taskCount: number; tutorSessionCount: number; tutorMinutesTotal: number; tasksBySource: Record<string, number>; byUser: { email: string; taskCount: number; tutorSessionCount: number; tutorMinutes: number }[] }> =>
     req("/api/admin/metrics").then(j),

@@ -1627,6 +1627,70 @@ export function visionReady(): boolean {
   return !!process.env.GEMINI_API_KEY;
 }
 
+// ── Gemini text-to-speech (the tutor's spoken voice) ────────────────────────────────────────────────────
+// Natural neural voice on the GEMINI_API_KEY already used for vision — no extra vendor account. The model
+// detects the spoken language from the text itself, so French replies come out in French and English
+// replies in English with no per-language voice table. Both are env-overridable so a model rename or a
+// different voice is a config change, not a deploy. The client falls back to the browser's own voice
+// whenever this fails, so an outage degrades the voice, never silences it.
+const GEMINI_TTS_MODEL = process.env.GEMINI_TTS_MODEL || "gemini-2.5-flash-preview-tts";
+const GEMINI_TTS_VOICE = process.env.GEMINI_TTS_VOICE || "Kore";
+export function ttsReady(): boolean {
+  return !!process.env.GEMINI_API_KEY;
+}
+/** Wrap raw little-endian PCM in a WAV header so an <audio> element can play it (Gemini returns bare PCM). */
+export function pcmToWav(pcm: Buffer, sampleRate: number, channels = 1, bitsPerSample = 16): Buffer {
+  const header = Buffer.alloc(44);
+  const byteRate = sampleRate * channels * (bitsPerSample / 8);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);            // fmt chunk size
+  header.writeUInt16LE(1, 20);             // PCM
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(channels * (bitsPerSample / 8), 32);
+  header.writeUInt16LE(bitsPerSample, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([header, pcm]);
+}
+/** Synthesize `text` to a playable WAV. Never throws; no retry (the client's fallback is faster than one). */
+export async function synthesizeSpeech(text: string): Promise<{ wav: Buffer } | { error: string; status: number }> {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return { error: "TTS not configured", status: 501 };
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-goog-api-key": key },
+      signal: AbortSignal.timeout(15_000),
+      body: JSON.stringify({
+        contents: [{ parts: [{ text }] }],
+        generationConfig: {
+          responseModalities: ["AUDIO"],
+          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: GEMINI_TTS_VOICE } } },
+        },
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      let detail = "";
+      try { detail = JSON.parse(body)?.error?.message || ""; } catch { /* non-JSON */ }
+      return { error: `Gemini TTS ${res.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`, status: res.status };
+    }
+    const json: any = await res.json();
+    const parts: any[] = json?.candidates?.[0]?.content?.parts || [];
+    const inline = parts.map((p) => p?.inlineData || p?.inline_data).find((d) => d?.data);
+    if (!inline) return { error: `Gemini TTS returned no audio (${json?.candidates?.[0]?.finishReason || json?.promptFeedback?.blockReason || "empty"})`, status: 502 };
+    const rate = Number(/rate=(\d+)/.exec(inline.mimeType || inline.mime_type || "")?.[1]) || 24000;
+    return { wav: pcmToWav(Buffer.from(inline.data, "base64"), rate) };
+  } catch (e: any) {
+    return { error: `Gemini TTS request failed: ${e?.message || e}`, status: 504 };
+  }
+}
+
 /** Reads an 800x600-ish whiteboard snapshot (a data URL, e.g. "data:image/png;base64,...") and returns a
  *  plain-text transcription of what's actually drawn — never an interpretation or a solved answer; that's
  *  the tutor's job once the transcription reaches it as a normal chat message (same "one model per
@@ -2145,7 +2209,7 @@ const CREATE_PROBLEM_TOOL = {
     answer: { type: "string", description: "Free-response mode only: the expected answer. Checked loosely (trimmed, case-insensitive). Omit for MCQ mode." },
     why: { type: "string", description: "one line on why the answer is right — this is what makes the problem teach instead of just score" },
     hint: { type: "string", description: "an optional hint the student can reveal before answering" },
-    format: { type: "string", description: "free-response mode only: guidance on expected format/units/notation (e.g. 'two decimal places, in m/s')" },
+    format: { type: "string", description: "free-response mode only: guidance on expected format/units/notation (e.g. 'two decimal places, in m/s'). NEVER use the real answer as an example — use a placeholder ('x = a') or a different value." },
   }, required: ["question"] },
 };
 
@@ -2329,6 +2393,25 @@ export function makeQuiz(input: any): { quiz: TaskQuiz } | { error: string } {
 /** A single standalone problem for inline chat display — validated the same defensive way as makeQuiz.
  *  Can be MCQ (options + correct index) or free-response (answer string). At least one of the two modes
  *  must be valid; a `why` explanation is strongly encouraged (it's what makes the problem teach). */
+/** True when guidance text (a problem's `format` or `hint`) contains the problem's own answer. Reported live:
+ *  a format line "the x-coordinate only, e.g. x = 3" where the answer WAS x = 3 — the example gave it away.
+ *  Matches the answer's core value (a leading "x =" and trailing "." stripped) as a standalone token, so
+ *  "3" doesn't match inside "13" or "3.5". Exported for unit tests. */
+export function leaksAnswer(text: string, answer: string): boolean {
+  const core = answer.trim().replace(/^[a-zθ]\s*=\s*/i, "").replace(/\.$/, "").trim();
+  if (!core) return false;
+  const esc = core.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s*");
+  return new RegExp(`(^|[^0-9a-z.])${esc}($|[^0-9a-z.]|\\.(?!\\d))`, "i").test(text);
+}
+/** Remove an answer leak from guidance text: drop the leaking "e.g./for example/par ex." clause first (keeps
+ *  the useful format instruction), and if the answer still shows, drop the text entirely. */
+export function scrubAnswerLeak(text: string | undefined, answer: string | undefined): string | undefined {
+  if (!text || !answer || !leaksAnswer(text, answer)) return text;
+  const withoutExample = text.replace(/[,;(]?\s*(?:e\.g\.|eg\b|for example|for instance|par ex(?:emple|\.)?|ex\s*:)[^;)\n]*\)?/gi, "").trim();
+  if (withoutExample && !leaksAnswer(withoutExample, answer)) return withoutExample;
+  return undefined;
+}
+
 export function makeProblem(input: any): { problem: TaskProblem } | { error: string } {
   // 600 chars fit "one clear sentence" but would chop a genuine IB extended-response/AP FRQ multi-part
   // prompt ((a)/(b)/(c), each with its own point value) mid-sentence — same reasoning, same raised cap, as
@@ -2336,8 +2419,8 @@ export function makeProblem(input: any): { problem: TaskProblem } | { error: str
   const question = String(input?.question || "").trim().slice(0, 1500);
   if (!question) return { error: "ERROR: a problem needs a non-empty question." };
   const why = input?.why ? String(input.why).trim().slice(0, 300) : undefined;
-  const hint = input?.hint ? String(input.hint).trim().slice(0, 300) : undefined;
-  const format = input?.format ? String(input.format).trim().slice(0, 200) : undefined;
+  let hint = input?.hint ? String(input.hint).trim().slice(0, 300) : undefined;
+  let format = input?.format ? String(input.format).trim().slice(0, 200) : undefined;
   // MCQ mode: options + correct index
   const rawOptions = Array.isArray(input?.options) ? input.options : [];
   const options = rawOptions.map((o: any) => String(o || "").trim().slice(0, 300)).filter(Boolean);
@@ -2346,6 +2429,13 @@ export function makeProblem(input: any): { problem: TaskProblem } | { error: str
   // Free-response mode: answer string
   const answer = input?.answer ? String(input.answer).trim().slice(0, 200) : undefined;
   if (!hasMCQ && !answer) return { error: "ERROR: a problem needs either MCQ (2+ options + correct index) or a free-response answer." };
+  // Never let the guidance give the answer away. Free-response: scrub format AND hint against the answer.
+  // MCQ: scrub against the correct option's text, but only when it's specific enough (3+ chars) not to
+  // false-positive on an ordinary number in the hint.
+  const secret = hasMCQ ? options[correctIdx] : answer;
+  const checkHint = !!secret && (!hasMCQ || secret.replace(/\s/g, "").length >= 3);
+  format = scrubAnswerLeak(format, secret);
+  if (checkHint) hint = scrubAnswerLeak(hint, secret);
   return {
     problem: {
       id: randomUUID(),
@@ -2548,7 +2638,7 @@ export function makePracticeProblem(input: any): { problem: DailyPracticeProblem
   const problem = String(input?.problem || "").trim().slice(0, 600);
   const answer = String(input?.answer || "").trim().slice(0, 200);
   if (!problem || !answer) return { error: "ERROR: a practice problem needs both a non-empty problem and answer." };
-  const format = input?.format ? String(input.format).trim().slice(0, 200) : undefined;
+  const format = scrubAnswerLeak(input?.format ? String(input.format).trim().slice(0, 200) : undefined, answer);
   return { problem: { id: randomUUID(), problem, answer, ...(format ? { format } : {}), createdAt: new Date().toISOString() } };
 }
 
@@ -6817,12 +6907,15 @@ export async function chatAboutTask(
     `answer either — instead break the point into a smaller, more concrete sub-question, or walk through a ` +
     `DIFFERENT worked example (same method, a different number/scenario) and ask them to apply it to their ` +
     `own problem. If they explicitly re-ask for the answer, redirect per THE LINE YOU NEVER CROSS below — ` +
-    `don't cave, and don't let repetition make you more generous. Two cases are NOT "releasing the answer" ` +
-    `and stay fine exactly as before: (c) they're checking work they already completed, not asking you to ` +
-    `do it — confirm or correct it, don't withhold; (d) they've made a genuine attempt and are asking you to ` +
-    `verify it or finish a mechanical last step (e.g. the arithmetic after they've set up the equation) — ` +
-    `finishing a near-complete attempt is help, not giving the answer to a problem they haven't done. One ` +
-    `case that is NOT an exception, easy to mis-file as (c)/(d) but isn't: (e) they're trying to skip/change ` +
+    `don't cave, and don't let repetition make you more generous. One case is NOT "releasing the answer": ` +
+    `(c) they state a result THEY worked out and want it checked — confirm it's right, or say it's wrong and ` +
+    `point at WHERE, without supplying the correct value. Never produce a value, step result, or piece of ` +
+    `the solution they haven't stated themselves — not the "mechanical" arithmetic ("−1/8 + 6 = 47/8, so ` +
+    `you've got…"), not the remainder of a division they've half done ("it's 3x − 2"), not the next line ` +
+    `of their working. Reported live: exactly those two lines, and the student flagged both as giving the ` +
+    `answer away. If a computation is left, ASK them to do it ("what does −1/8 + 6 come to?", "what's ` +
+    `left over after you subtract?") — the doing is the learning. One ` +
+    `case that is NOT an exception, easy to mis-file as (c) but isn't: (e) they're trying to skip/change ` +
     `the subject WITHOUT a genuine attempt ("move on to another one", "it's good", silence, a vague non-` +
     `answer) — don't resolve the problem for them as a way to close the loop before moving on; just let them ` +
     `move on with it genuinely unanswered. "Wrap up the loose end before switching" is a natural instinct to ` +
@@ -6906,8 +6999,8 @@ export async function chatAboutTask(
         `THEIR reasoning through it. This is the same tool as always (see THE BOARD section below), still ` +
         `available in this mode, separate from the problem itself.\n` +
         `- IF THEY TRY TO SKIP/MOVE ON WITHOUT A GENUINE ATTEMPT ("can you move on to another one", "it's ` +
-        `good", a vague non-answer, repeated avoidance) — this is NOT the HINT LADDER's (c)/(d) exceptions ` +
-        `(checking completed work / finishing a near-complete attempt), so don't resolve the problem FOR them ` +
+        `good", a vague non-answer, repeated avoidance) — this is NOT the HINT LADDER's (c) exception ` +
+        `(checking a result THEY stated), so don't resolve the problem FOR them ` +
         `as a way to close the loop before moving on. Let them skip it genuinely unanswered — acknowledge and ` +
         `open the next problem via CREATE_PROBLEM, never stating the resolved value or confirming which option ` +
         `was correct on the one they dodged. Reproduced live: repeated "move on"/vague replies eventually got ` +

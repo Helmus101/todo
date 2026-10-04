@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import katex from "katex";
 import type { WebTask, BoardEntry, TaskProblem, DiagramOp } from "../../../shared/types.ts";
+import { practiceAnswerMatches } from "../../../shared/types.ts";
 import { renderChatText, useLang, FirstTimeHint, stripStrayMarkdown } from "../../ui.tsx";
 
 // A guarded DYNAMIC import, not a static `import "katex/dist/katex.min.css"` — this module is also pulled
@@ -159,7 +160,7 @@ function DiagramOpSVG({ op }: { op: DiagramOp }) {
 interface ProblemBlockProps {
   problem: TaskProblem;
   sectionNumber: number;
-  state: { picked: number | null; textAnswer: string; submitted: boolean };
+  state: ProblemState;
   hintShown: boolean;
   isCorrect: boolean;
   onShowHint: () => void;
@@ -170,9 +171,18 @@ interface ProblemBlockProps {
   fresh?: boolean;
 }
 
+// A practice problem NEVER reveals its answer. Reported live ("it gives the answer, this should never
+// happen"): a wrong pick used to light up the correct option ✓ and show the full worked explanation, and a
+// wrong typed answer printed "Not quite — the answer was: …". Now a miss only says "try again" (the wrong
+// option is struck out, a typed answer stays editable); the ✓ and the explanation appear only once the
+// student gets it right themselves.
+type ProblemState = { picked: number | null; textAnswer: string; submitted: boolean; wrong?: number[] };
+
 function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onShowHint, onPick, onTextAnswer, onSubmit, en, fresh }: ProblemBlockProps) {
   const problemIsMCQ = Array.isArray(problem.options) && problem.options.length >= 2;
-  const answered = problemIsMCQ ? state.picked !== null : state.submitted;
+  const wrong = state.wrong || [];
+  const answered = problemIsMCQ ? state.picked !== null && state.picked === problem.correct : state.submitted && isCorrect;
+  const missed = !answered && (problemIsMCQ ? wrong.length > 0 : state.submitted);
   return (
     <div
       className={`sm-board-problem sm-board-writein${fresh ? " sm-board-reveal" : ""}`}
@@ -198,13 +208,13 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
       {problemIsMCQ ? (
         <div className="sm-board-problem-opts">
           {problem.options!.map((opt, oi) => {
-            const optState = !answered ? "" : oi === problem.correct ? "correct" : oi === state.picked ? "wrong" : "";
+            const optState = answered && oi === problem.correct ? "correct" : wrong.includes(oi) ? "wrong" : "";
             return (
               <button
                 key={oi}
                 type="button"
                 className={`quiz-opt ${optState}`}
-                disabled={answered}
+                disabled={answered || wrong.includes(oi)}
                 onClick={() => onPick(oi)}
               >
                 <span className="quiz-opt-text">{stripStrayMarkdown(opt)}</span>
@@ -217,11 +227,7 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
       ) : (
         <div className="sm-board-problem-free">
           {answered ? (
-            <div className={`sm-inline-problem-result ${isCorrect ? "correct" : "wrong"}`}>
-              {isCorrect
-                ? (en ? "Correct !" : "Correct!")
-                : (en ? `Not quite — the answer was: ${problem.answer}` : `Non — la réponse était : ${problem.answer}`)}
-            </div>
+            <div className="sm-inline-problem-result correct">{en ? "Correct!" : "Correct !"}</div>
           ) : (
             <div className="sm-inline-problem-input-row">
               <input
@@ -245,6 +251,13 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
           )}
         </div>
       )}
+      {missed ? (
+        <div className="sm-inline-problem-result wrong" role="status">
+          {problemIsMCQ
+            ? (en ? "Not quite — try another option." : "Pas tout à fait — essaie une autre réponse.")
+            : (en ? "Not quite — try again." : "Pas tout à fait — réessaie.")}
+        </div>
+      ) : null}
       {answered && problem.why ? (
         <div className="sm-inline-problem-why">{stripStrayMarkdown(problem.why)}</div>
       ) : null}
@@ -264,7 +277,7 @@ export function BoardArtifact({ task, writing }: BoardArtifactProps) {
   const entries = task.board || [];
   const problems = task.problems || [];
   const [showHint, setShowHint] = useState<{ [key: string]: boolean }>({});
-  const [problemState, setProblemState] = useState<{ [key: string]: { picked: number | null; textAnswer: string; submitted: boolean } }>({});
+  const [problemState, setProblemState] = useState<{ [key: string]: ProblemState }>({});
 
   // Content-level dedupe on RENDER (by id): sync merges (tasks.ts's unionStudyArtifacts) and a
   // double-responded turn can hand back an array containing the same entry/problem twice. Entries drop
@@ -281,7 +294,7 @@ export function BoardArtifact({ task, writing }: BoardArtifactProps) {
   const normQ = (s: string) => s.toLowerCase().replace(/```[a-z]*|[`*]{1,3}|^\s*[-•]\s+/gm, "").replace(/\s+/g, " ").trim();
   const hasState = (id: string) => {
     const st = problemState[id];
-    return !!st && (st.picked !== null || st.submitted || !!st.textAnswer) || !!showHint[id];
+    return !!st && (st.picked !== null || st.submitted || !!st.textAnswer || !!st.wrong?.length) || !!showHint[id];
   };
   const dedupedProblems = problems
     .filter((p, i, arr) => arr.findIndex(x => x.id === p.id) === i)
@@ -330,8 +343,14 @@ export function BoardArtifact({ task, writing }: BoardArtifactProps) {
   }, [flowItems]);
   const revealDuration = (text: string): number => Math.min(1.6, Math.max(0.5, text.length / 90));
 
-  const setProblemPicked = (problemId: string, picked: number | null) => {
-    setProblemState(prev => ({ ...prev, [problemId]: { ...prev[problemId] || { picked: null, textAnswer: "", submitted: false }, picked, submitted: false } }));
+  // A wrong pick is recorded (struck out) but never "answers" the problem — only the correct one does.
+  const setProblemPicked = (problem: TaskProblem, picked: number) => {
+    setProblemState(prev => {
+      const cur = prev[problem.id] || { picked: null, textAnswer: "", submitted: false };
+      return picked === problem.correct
+        ? { ...prev, [problem.id]: { ...cur, picked, submitted: false } }
+        : { ...prev, [problem.id]: { ...cur, wrong: [...(cur.wrong || []).filter(w => w !== picked), picked] } };
+    });
   };
 
   const setProblemTextAnswer = (problemId: string, textAnswer: string) => {
@@ -350,13 +369,12 @@ export function BoardArtifact({ task, writing }: BoardArtifactProps) {
   // jumping out of its place in that document to sit above even the day's focus line broke that reading
   // order for no real benefit. Reverted.
 
-  // Free-response check: trimmed, case-insensitive comparison
+  // Free-response check: the same lenient matcher as the journal's practice problem (shared/types.ts) —
+  // "5pi/6" = "5π/6", "7/2" = "3.5", "84" = "84 m". A plain string compare here marked those wrong.
   const checkFreeResponse = (problemId: string): boolean => {
     const problem = problems.find(p => p.id === problemId);
     if (!problem || !problem.answer) return false;
-    const state = getProblemState(problemId);
-    const normalize = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
-    return normalize(state.textAnswer) === normalize(problem.answer);
+    return practiceAnswerMatches(getProblemState(problemId).textAnswer, problem.answer);
   };
 
   const hint = (
@@ -439,7 +457,7 @@ export function BoardArtifact({ task, writing }: BoardArtifactProps) {
             hintShown={!!showHint[item.problem.id]}
             isCorrect={checkFreeResponse(item.problem.id)}
             onShowHint={() => setShowHint(prev => ({ ...prev, [item.problem!.id]: true }))}
-            onPick={(picked) => setProblemPicked(item.problem!.id, picked)}
+            onPick={(picked) => setProblemPicked(item.problem!, picked)}
             onTextAnswer={(text) => setProblemTextAnswer(item.problem!.id, text)}
             onSubmit={() => submitProblem(item.problem!.id)}
             en={en}

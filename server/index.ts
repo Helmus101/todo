@@ -1,6 +1,5 @@
 import "./env.ts"; // load web/.env + the repo-root .env (COMPOSIO_API_KEY etc.) — MUST be first
 import { initSentry, reportError } from "./sentry.ts";
-import { trimFreeTTSWatermark } from "./ttsTrim.ts";
 initSentry(); // before anything else can throw — no-op if SENTRY_DSN isn't set
 import express from "express";
 import type { RequestHandler } from "express";
@@ -12,7 +11,7 @@ import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, FocusSession } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY, subjectMastery } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
-import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto } from "./claude.ts";
+import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto, ttsReady, synthesizeSpeech } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken, getAdminMetrics } from "./store.ts";
 import { sendTransactionalEmail } from "./mailer.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
@@ -146,7 +145,7 @@ const CSP = [
   // Missing here while vercel.json's copy of this CSP already had it: on the self-hosted/Docker path
   // (where THIS header is the one actually served) every page silently rendered in a fallback font.
   "font-src 'self' data: https://fonts.gstatic.com",
-  // 'self' blob: data: — FreeTTS speech (server/index.ts's /api/tts) reaches the client as a same-page
+  // 'self' blob: data: — tutor speech (server/index.ts's /api/tts, Gemini TTS) reaches the client as a same-page
   // blob: URL handed to an <audio> element (useSpeechSynthesis.ts). Once ANY media-src is set it replaces
   // the default-src fallback entirely (same iframe-like override trap as frame-src above), so without this
   // directive every voice reply was blocked before a single byte decoded — no console error a student
@@ -3633,94 +3632,27 @@ app.post("/api/study/profile", requireAuth, async (req, res) => {
     res.status(500).json({ error: M(req, "Impossible d'enregistrer le profil d'étude.", "Couldn't save study profile.") }); }
 });
 
-// ── Text-to-speech via FreeTTS ──────────────────────────────────────────────
-// Voice per account language (verified live: the old hardcoded "brian" voice was ENGLISH — a French
-// account's tutor replies were spoken by an English voice, mangling the audio — AND the whole endpoint
-// 404s now: FreeTTS moved /api/speech → /api/v1/tts, requires a locale-shaped voice name ("brian" fails
-// its own validation pattern), authenticates via an `x-api-key` header instead of Bearer, and returns a
-// JSON {audio_url} the client must fetch separately). Flow: POST /api/v1/tts → GET the returned audio_url
-// (with the same key) → stream the mp3 back to the client. Voice choice: French accounts get a real
-// fr-FR neural voice; English keeps a good en-US one. Any upstream failure stays fail-open — the client's
-// useSpeechSynthesis already falls back to the browser's built-in TTS (which IS language-correct, it picks
-// a voice by the fr-FR/en-US lang passed in) whenever this route errors.
-const TTS_VOICE_BY_LANG: Record<string, string> = {
-  fr: "fr-FR-DeniseNeural",
-  en: "en-US-AriaNeural",
-};
-const DEFAULT_TTS_VOICE = "en-US-AriaNeural";
-
-app.post("/api/tts", requireAuth, async (req, res) => {
-  const { text, lang: requestedLang } = req.body;
-  if (!text || typeof text !== "string") { res.status(400).json({ error: M(req, "le texte est requis", "text is required") }); return; }
-  // Loud, not silent: a deployment missing FREETTS_API_KEY used to 501 with NOTHING in the server logs —
-  // the client's fallback made every failure look identical (silence), and the operator had no signal
-  // their voice feature was dead-on-arrival (reported live as "the key was never used" confusion).
-  // console.warn (not reportError) — an env-var omission is a config problem, not an exception.
-  if (!process.env.FREETTS_API_KEY) { console.warn("[tts] FREETTS_API_KEY not set — returning 501; the client will fall back to browser speechSynthesis."); res.status(501).json({ error: M(req, "Synthèse vocale non configurée", "TTS not configured") }); return; }
-
-  const profileLang = req.session.profile?.language || "";
-  const lang = requestedLang === "fr" || requestedLang === "en" ? requestedLang : profileLang;
-  const voice = TTS_VOICE_BY_LANG[lang] || DEFAULT_TTS_VOICE;
-  const key = process.env.FREETTS_API_KEY;
-  try {
-    // Step 1: request synthesis. Two retry voices on 4xx: the exact configured name could be retired by
-    // the vendor (their catalogue rotates — voices go Preview/GA/discontinued), so fall back to the
-    // multilingual sibling (always GA), then to ANY fr-FR/en-US GA voice from the live catalogue.
-    let fileId: string | undefined;
-    let audioUrl: string | undefined;
-    // The LAST upstream HTTP status seen — logged on total failure below, so a dead key (401), an empty
-    // quota (402/429), or a vendor outage (5xx) is diagnosable from the server log alone instead of all
-    // of them collapsing into one status-less "synthesis failed" line.
-    let lastUpstreamStatus: number | undefined;
-    const attempt = async (v: string): Promise<{ ok: true; audioUrl: string } | { ok: false; status: number }> => {
-      const synth = await fetch("https://freetts.org/api/v1/tts", {
-        method: "POST",
-        headers: { "x-api-key": key, "Content-Type": "application/json" },
-        body: JSON.stringify({ text: text.slice(0, 4500), voice: v, outputFormat: "audio/mp3" }),
-        signal: AbortSignal.timeout(20_000),
-      });
-      if (!synth.ok) { lastUpstreamStatus = synth.status; return { ok: false, status: synth.status }; }
-      const meta = await synth.json() as { audio_url?: string };
-      return meta.audio_url ? { ok: true, audioUrl: meta.audio_url } : { ok: false, status: 502 };
-    };
-    const fallbacks = voice === TTS_VOICE_BY_LANG.fr
-      ? ["fr-FR-VivienneMultilingualNeural", "fr-FR-EloiseNeural"]
-      : ["en-US-JennyNeural"];
-    for (const v of [voice, ...fallbacks]) {
-      const r = await attempt(v);
-      if (r.ok) { audioUrl = r.audioUrl; break; }
-      if (r.status !== 400 && r.status !== 422) break; // quota/auth/outage — voice retrying won't help
-    }
-    if (!audioUrl) {
-      // Status in the message: 401 = key invalid/revoked, 402/429 = quota, 5xx = vendor outage. Sentry
-      // too — this is the path where "voice silently stopped working" lived for weeks with no trace.
-      console.error(`[tts] FreeTTS synthesis failed for voice ${voice} (last upstream status: ${lastUpstreamStatus ?? "none"})`);
-      reportError("tts-synthesis-failed", new Error(`FreeTTS synthesis failed for voice ${voice}`), { lastUpstreamStatus, lang, voice });
-      res.status(500).json({ error: M(req, "Échec de la génération vocale", "TTS generation failed") });
-      return;
-    }
-    // Step 2: fetch the actual audio. (Only the audio_url's own origin is ever fetched — the URL comes
-    // from FreeTTS's own JSON response, never from the client.)
-    const audio = await fetch(audioUrl, { headers: { "x-api-key": key }, signal: AbortSignal.timeout(20_000) });
-    if (!audio.ok) {
-      console.error(`[tts] FreeTTS audio fetch error: ${audio.status}`);
-      reportError("tts-audio-fetch-failed", new Error(`FreeTTS audio fetch failed: ${audio.status}`), { status: audio.status });
-      res.status(500).json({ error: M(req, "Échec de la requête vocale", "TTS request failed") });
-      return;
-    }
-    const audioBuf = Buffer.from(await audio.arrayBuffer());
-    // freetts.org appends a spoken "Generated by FreeTTS" tag to every file (its JSON response
-    // even carries `"watermark":"end"`, and no request parameter turns it off — verified live).
-    // server/ttsTrim splices the watermark's frames out; null = couldn't parse confidently, so
-    // the audio goes out untouched (fail-open: a watermark beats no audio).
-    const trimmed = trimFreeTTSWatermark(audioBuf);
-    if (!trimmed) console.warn("[tts] watermark trim skipped (unparseable/short audio) — serving untrimmed");
-    res.setHeader("Content-Type", "audio/mpeg");
-    res.send(trimmed ?? audioBuf);
-  } catch (e: any) {
-    console.error(`[tts] error: ${e?.message}`);
-    res.status(500).json({ error: M(req, "Échec de la requête vocale", "TTS request failed") });
+// The tutor's spoken voice: Gemini TTS (see synthesizeSpeech in server/claude.ts). Called one chunk at a
+// time by client/voice/useSpeechSynthesis.ts, which falls back to the browser's own voice on ANY failure
+// here (501 unconfigured, upstream error, timeout) — so this route can fail loudly in the logs without ever
+// silencing Otto. Rate-limited generously: one reply is 1-3 chunks, and voice mode can go quickly.
+app.post("/api/tts", requireAuth, rateLimit(120, 60_000), async (req, res) => {
+  const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
+  if (!text) { res.status(400).json({ error: M(req, "le texte est requis", "text is required") }); return; }
+  if (!ttsReady()) {
+    console.warn("[tts] GEMINI_API_KEY not set — returning 501; the client falls back to browser speech.");
+    res.status(501).json({ error: M(req, "Synthèse vocale non configurée", "TTS not configured") });
+    return;
   }
+  const out = await synthesizeSpeech(text.slice(0, 1000));
+  if ("error" in out) {
+    console.error(`[tts] ${out.error}`);
+    res.status(out.status === 429 ? 429 : 502).json({ error: M(req, "Échec de la génération vocale", "TTS generation failed") });
+    return;
+  }
+  res.setHeader("Content-Type", "audio/wav");
+  res.setHeader("Cache-Control", "no-store");
+  res.send(out.wav);
 });
 
 // Admin metrics dashboard — gated to a single hardcoded account, not a role/permission system (there is
