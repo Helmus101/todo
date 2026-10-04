@@ -84,6 +84,24 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
     return () => { window.speechSynthesis.onvoiceschanged = null; };
   }, [supported]);
 
+  // Documented Chrome/Chromium bug: speechSynthesis silently stalls after ~15s of continuous speech (and
+  // sometimes after a tab is backgrounded) — `speaking` keeps reporting `true` but no further onstart/
+  // onend/onerror ever fires, as if the engine just forgot about the utterance. The long-standing, widely
+  // used workaround (several TTS libraries ship this) is a periodic pause()-immediately-followed-by-
+  // resume() while speech is active — this resets Chrome's internal stall timer without audibly
+  // interrupting playback. Paired with the watchdog's own time ceiling above as a second line of defense
+  // (this should prevent the stall from ever happening; the ceiling is the recovery path if it still does).
+  useEffect(() => {
+    if (!supported || !speaking) return;
+    const id = setInterval(() => {
+      if (window.speechSynthesis.speaking) {
+        window.speechSynthesis.pause();
+        window.speechSynthesis.resume();
+      }
+    }, 10_000);
+    return () => clearInterval(id);
+  }, [supported, speaking]);
+
   // Prefer an actually-good-sounding voice over whatever the browser defaults to (often a dated local
   // "espeak"-quality voice) — score by: exact language match beats base-language-only match; a named
   // network/cloud voice (Chrome's "Google …", Edge/Safari's "Natural"/"Enhanced"/"Premium" voices) beats a
@@ -138,10 +156,25 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
     // `speechSynthesis.speaking`/`.pending` still shows activity, this chunk is still legitimately in
     // flight — keep waiting, not skip. Only advance when the engine agrees nothing is happening at all.
     let started = false;
+    // Ceiling added alongside the keepalive ping below: without one, a genuinely WEDGED engine (Chrome's
+    // documented ~15s continuous-speech stall — `speaking` stays true forever, no event ever fires again)
+    // made this loop treat "speaking: true" as permanent proof of life and reschedule itself every 400ms
+    // FOREVER, never reaching the recovery speakNext() call below — reported live as "TTS just stops working
+    // at random times" (a permanent silence for the rest of the session, not just one skipped chunk; it also
+    // stuck `speaking` state true forever, which kept the mic paused indefinitely in voice-mode UIs that gate
+    // on it). The keepalive ping should prevent the stall from ever happening in the first place, but this
+    // ceiling is the actual recovery path if it still does (a different browser/engine quirk, a future Chrome
+    // change, etc.) — one real sentence essentially never legitimately takes 15s to even START.
+    let watchdogMs = 0;
+    const WATCHDOG_CEILING_MS = 15_000;
     const checkWatchdog = () => {
       if (started || genRef.current !== gen) return;
-      if (window.speechSynthesis.speaking || window.speechSynthesis.pending) { watchdog = setTimeout(checkWatchdog, 400); return; }
-      console.warn("[tts] browser speechSynthesis silently dropped a chunk, skipping it:", next.slice(0, 60));
+      watchdogMs += 400;
+      if (watchdogMs < WATCHDOG_CEILING_MS && (window.speechSynthesis.speaking || window.speechSynthesis.pending)) { watchdog = setTimeout(checkWatchdog, 400); return; }
+      console.warn(`[tts] browser speechSynthesis silently dropped a chunk (or wedged past ${WATCHDOG_CEILING_MS}ms), skipping it:`, next.slice(0, 60));
+      // The engine may still think it's mid-utterance even though it's actually wedged — force a real reset
+      // (not just move on internally) so the NEXT speakNext() isn't fighting the same stuck engine state.
+      try { window.speechSynthesis.cancel(); } catch { /* best-effort */ }
       speakNext(gen);
     };
     let watchdog = setTimeout(checkWatchdog, 400);

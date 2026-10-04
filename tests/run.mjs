@@ -3860,5 +3860,19 @@ section("TTS 'sometimes stops working' — generation-counter race fix (source p
   check("the deferred post-cancel speakNext call also checks the captured generation before firing", /setTimeout\(\(\) => \{ if \(genRef\.current === gen\) speakNext\(gen\); \}, 30\);/.test(ttsSrcRace));
 }
 
+section("TTS 'stops working at random times' — Chrome's ~15s stall bug (keepalive ping + watchdog ceiling, source pins)");
+{
+  // Reported live AGAIN after the generation-counter race fix — a different, well-documented root cause:
+  // Chrome/Chromium's speechSynthesis silently stalls after ~15s of continuous speech (speaking stays
+  // true forever, no event ever fires again). The old watchdog had no time ceiling, so it rescheduled
+  // itself every 400ms FOREVER once stalled, never recovering — and the stuck `speaking` state also kept
+  // voice-mode UIs' mic paused indefinitely (they gate on synth.speaking).
+  const ttsSrcStall = readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8");
+  check("a periodic pause()+resume() keepalive ping runs while speech is active (the standard Chrome-stall workaround)", /window\.speechSynthesis\.pause\(\);\s*\n\s*window\.speechSynthesis\.resume\(\);/.test(ttsSrcStall) && /setInterval\(\(\) => \{/.test(ttsSrcStall));
+  check("the keepalive ping is scoped to while speaking is true, not a permanent global timer", /if \(!supported \|\| !speaking\) return;/.test(ttsSrcStall));
+  check("the watchdog now has a hard time ceiling instead of rescheduling on 'speaking: true' forever", /const WATCHDOG_CEILING_MS = 15_000;/.test(ttsSrcStall) && /watchdogMs < WATCHDOG_CEILING_MS/.test(ttsSrcStall));
+  check("hitting the ceiling forces a real engine reset (cancel) before recovering, not just an internal skip", /try \{ window\.speechSynthesis\.cancel\(\); \} catch/.test(ttsSrcStall));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
