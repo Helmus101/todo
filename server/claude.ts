@@ -2287,7 +2287,7 @@ const CREATE_QUIZ_TOOL = {
 
 const CREATE_PROBLEM_TOOL = {
   name: "CREATE_PROBLEM",
-  description: "Create ONE standalone practice problem displayed INLINE in the chat itself (not a chip that opens elsewhere) — the student answers right there in the thread and you help them through it. Use this when a single focused exercise is the best way to help (a quick check, a worked example to try, a 'try this one' moment), where CREATE_QUIZ would be a whole set. THINK OF THIS AS A MEASUREMENT, NOT JUST PRACTICE: before writing it, be clear what uncertainty about THIS student you're actually trying to resolve right now — do they have the concept or did they just memorize a formula's shape? is the error a slip or a real misconception? can they apply it to a new case, not just the one you walked through? Pick the smallest problem that would tell them (and you) apart between those possibilities, rather than a generic 'another one of the same'. Can be multiple-choice (give options + correct index) or free-response (give an answer string). NEVER use the student's OWN assigned exercise — write a NEW problem on the same notion. Include a one-line 'why' explanation (shown after they answer) and optionally a hint. MATCH THE REAL EXAM'S SHAPE — see the IB/AP/SAT/ACT guidance above (examStyleLine): an IB extended-response or AP FRQ is free-response mode with the FULL multi-part prompt (lettered (a), (b), (c)..., each part's point value stated) written straight into `question` as one structured block — this tool's single-answer-string grading then applies to the FINAL part only; walk the earlier parts with them in chat rather than silently grading only the last line with no comment on the rest.",
+  description: "Create ONE standalone practice problem displayed INLINE in the chat itself (not a chip that opens elsewhere) — the student answers right there in the thread and you help them through it. Use this when a single focused exercise is the best way to help (a quick check, a worked example to try, a 'try this one' moment), where CREATE_QUIZ would be a whole set. THINK OF THIS AS A MEASUREMENT, NOT JUST PRACTICE: before writing it, be clear what uncertainty about THIS student you're actually trying to resolve right now — do they have the concept or did they just memorize a formula's shape? is the error a slip or a real misconception? can they apply it to a new case, not just the one you walked through? Pick the smallest problem that would tell them (and you) apart between those possibilities, rather than a generic 'another one of the same'. Can be multiple-choice (give options + correct index) or free-response (give an answer string). NEVER use the student's OWN assigned exercise — write a NEW problem on the same notion. Include a one-line 'why' explanation (shown after they answer) and optionally a hint. MATCH THE REAL EXAM'S SHAPE — see the IB/AP/SAT/ACT guidance above (examStyleLine): an IB extended-response or AP FRQ is free-response mode with the FULL multi-part prompt (lettered (a), (b), (c)..., each part's point value stated) written straight into `question` as one structured block — this tool's single-answer-string grading then applies to the FINAL part only; walk the earlier parts with them in chat rather than silently grading only the last line with no comment on the rest. `answer` MUST be the FINAL lettered part's value ONLY, never an earlier part's — even though an earlier part's value is itself a complete, correct answer to ITS OWN question. Concretely, for '(a) find cos θ [2]  (b) hence find cos 2θ [2]', `answer` is the (b) value (e.g. '7/25'), NEVER the (a) value (e.g. '-4/5') — setting it to the earlier part means the widget marks the WHOLE problem solved, and reveals `why` (which should explain the FULL chain, both parts), the instant the student states only the easier first part, before they've done the part that's actually testing them.",
   input_schema: { type: "object", properties: {
     question: { type: "string", description: "the question/prompt — one clear sentence, OR a full multi-part structured prompt (IB/AP extended-response/FRQ style — lettered sub-parts with their own point values) when the student's program calls for one. Match the phrasing, format, and rigor of an actual exam/contrôle question for this subject and level (see VOCABULARY/track/exam-style above), not generic trivia." },
     options: { type: "array", description: "MCQ mode: 2-4 answer options by default; EXACTLY 5 for an AP-track student (College Board MCQs are always 5-option — see the AP block above). EXACTLY ONE is correct; the wrong ones must be genuinely plausible. Omit entirely for free-response mode (this is also the mode for any IB/AP multi-part structured question — see above).", items: { type: "string" } },
@@ -2496,6 +2496,32 @@ export function scrubAnswerLeak(text: string | undefined, answer: string | undef
   const withoutExample = text.replace(/[,;(]?\s*(?:e\.g\.|eg\b|for example|for instance|par ex(?:emple|\.)?|ex\s*:)[^;)\n]*\)?/gi, "").trim();
   if (withoutExample && !leaksAnswer(withoutExample, answer)) return withoutExample;
   return undefined;
+}
+
+/** Every problem currently in play's "secret" value (free-response answer, or the correct MCQ option's
+ *  text) — the set of strings that must never appear, stated outright, anywhere OTHER than the problem
+ *  widget's own gated reveal (which only shows after the student genuinely gets it right there). Short
+ *  (<3 char) secrets are dropped, same reasoning as revealsAnswer: a single-character answer like "x" or
+ *  a bare "5" would false-positive on almost any text that happens to contain that character. */
+function problemSecrets(problems: TaskProblem[]): string[] {
+  return problems
+    .map((p) => (Array.isArray(p.options) && typeof p.correct === "number" ? p.options[p.correct] : p.answer))
+    .filter((s): s is string => !!s && s.trim().replace(/\s/g, "").length >= 3);
+}
+
+/** True when `text` states ANY current problem's answer outright. Reported live: the tutor Socratically
+ *  withheld a problem's answer in chat while separately writing a WRITE_TO_BOARD "summary" entry that
+ *  spelled out the full derivation INCLUDING the final value ("cos θ = −4/5. Then cos 2θ = ... = 7/25") —
+ *  a multi-part question (CREATE_PROBLEM's single-answer-string grading only covers the FINAL part, see
+ *  that tool's own description) while the student was still mid-way through an EARLIER part in chat. Every
+ *  other surface (CREATE_PROBLEM's own format/hint via leaksAnswer/scrubAnswerLeak, the MCQ/free-response
+ *  UI) was already guarded against this; board entries, diagram captions, and the chat reply itself were
+ *  not — this is the shared check closing that gap, used by both the WRITE_TO_BOARD/DRAW_ON_BOARD tool
+ *  handlers (reject and let the model rewrite) and chatAboutTask's own finish() (discard and substitute a
+ *  safe reply), the same two-tier posture CHAT_DOES_WORK/CHAT_STATES_ANSWER already use for other leaks. */
+export function leaksAnyProblemAnswer(text: string, problems: TaskProblem[]): boolean {
+  const secrets = problemSecrets(problems);
+  return secrets.some((s) => leaksAnswer(text, s));
 }
 
 export function makeProblem(input: any): { problem: TaskProblem } | { error: string } {
@@ -7725,6 +7751,20 @@ export async function chatAboutTask(
         ? "Je peux t'aider à débloquer ça, mais je ne vais pas le rédiger à ta place — cette partie est la tienne. On cherche un point de départ ensemble ?"
         : "I can help you get unstuck on this, but I won't write it for you — that part's yours. Want help finding a starting point instead?";
     }
+    // Same leak, different surface: the WRITE_TO_BOARD/DRAW_ON_BOARD tool calls are guarded against stating
+    // a problem's answer at creation time (see leaksAnyProblemAnswer), but the chat REPLY itself — plain
+    // prose, never a tool call — had no equivalent check. Reported live: a Socratic chat reply about an
+    // EARLIER part of a multi-part problem went on to state the LATER (still-unsolved) part's final value.
+    else if (leaksAnyProblemAnswer(reply, [...(opts?.currentProblems || []), ...result.problems])) {
+      result.notes = []; result.flashcards = []; result.quizzes = []; result.problems = []; result.board = [];
+      result.guardrailTripped = true;
+      logAudit("guardrail", fr
+        ? "La réponse donnait la solution d'un problème en cours — Otto a dit non et a reposé une question à la place."
+        : "The reply stated a problem's answer outright — Otto caught it and asked a question instead.");
+      reply = fr
+        ? "Je ne vais pas te donner cette valeur directement — qu'est-ce que tu obtiens si tu continues à partir de là où tu en es ?"
+        : "I won't hand you that value directly — what do you get if you carry on from where you are?";
+    }
     // 2400 (was 1200): a genuine tutoring turn — a method walked through step by step, or a parallel worked
     // example — legitimately runs longer than a one-line nudge, and truncating mid-explanation is worse than
     // no explanation. The prompt still pushes hard for SHORT by default; this only stops the rare long-but-
@@ -8033,11 +8073,19 @@ export async function chatAboutTask(
           // every turn) and what this same turn already wrote (result.board) — returning the guidance as
           // the tool result lets the model adapt mid-turn instead of burning the write.
           else if (isDuplicateBoardEntry([...(opts?.currentBoard || []), ...result.board], input)) content = "DUPLICATE: that exact entry is already on the board — refer to it in your reply instead of writing it again.";
+          // Reported live: a "summary" entry stated a problem's full worked answer (including a LATER part's
+          // value, e.g. "cos 2θ = 7/25") while the student was still working through an EARLIER part in
+          // chat — see leaksAnyProblemAnswer's own comment. Checked against every problem currently in play,
+          // same "both what they already see and what this turn made" scope as the duplicate check above.
+          else if (leaksAnyProblemAnswer(String(input?.text || ""), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that states a problem's answer outright — rewrite this entry without that value. The answer only shows once they solve the problem themselves, in its own widget.";
           else { const r = makeBoardEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Écrit au tableau : « ${r.entry.text.slice(0, 60)} »` : `Written to board: "${r.entry.text.slice(0, 60)}"`); } }
         } else if (name === "DRAW_ON_BOARD") {
           // Its own smaller cap, separate from WRITE_TO_BOARD's — a figure is heavier to render (SVG, not
           // text) and a turn with several genuine diagrams is already an unusual turn.
           if (result.board.filter((e) => e.kind === "diagram").length >= 3) content = "LIMIT: you've already drawn a few figures this message — that's enough for one turn.";
+          // Same answer-leak guard as WRITE_TO_BOARD above — a figure's caption or an equation/label op can
+          // state a value just as plainly as prose can.
+          else if (leaksAnyProblemAnswer([input?.caption, ...(Array.isArray(input?.ops) ? input.ops.map((o: any) => `${o?.text || ""} ${o?.latex || ""}`) : [])].join(" "), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that figure states a problem's answer outright — redraw it without that value.";
           else { const r = makeDiagramEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Figure dessinée : « ${r.entry.text.slice(0, 60)} »` : `Diagram drawn: "${r.entry.text.slice(0, 60)}"`); } }
         } else if (name === "SET_OBJECTIVES") {
           const r = makeObjectives(input);

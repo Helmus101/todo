@@ -17,7 +17,7 @@ import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_AR
 import { trimFreeTTSWatermark } from "../server/ttsTrim.ts";
 import { wantsArtifactTools } from "../server/claude.ts";
 import { rankVoices, cloudChunks } from "../client/voice/useSpeechSynthesis.ts";
-import { pcmToWav, leaksAnswer, scrubAnswerLeak, makeProblem as makeProblemLeak, makePracticeProblem as makePracticeLeak, wordWrapChunks } from "../server/claude.ts";
+import { pcmToWav, leaksAnswer, scrubAnswerLeak, makeProblem as makeProblemLeak, makePracticeProblem as makePracticeLeak, wordWrapChunks, leaksAnyProblemAnswer } from "../server/claude.ts";
 import { lastMessageKey } from "../client/voice/replyKey.ts";
 import { subjectMastery } from "../shared/types.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, subjectFrequency, orderingBoost, twoMinuteRuleBoost } from "../server/patterns.ts";
@@ -4086,6 +4086,28 @@ section("Phone restriction — iPhone-sized screens are limited to flashcard rev
 
   const studyMode = readFileSync(new URL("../client/study/StudyMode.tsx", import.meta.url), "utf8");
   check("StudyMode.tsx now reuses the shared useIsPhone hook instead of its own copy", /import \{ useIsPhone \} from "\.\.\/useIsPhone\.ts"/.test(studyMode) && /const isPhone = useIsPhone\(\);/.test(studyMode));
+}
+
+section("leaksAnyProblemAnswer — board/diagram/chat-reply guard against stating a problem's answer outright");
+{
+  // Reported live: a multi-part trig problem ("(a) find cos θ [2] (b) hence find cos 2θ [2]") — the chat
+  // Socratically withheld the answer, but a separate WRITE_TO_BOARD "summary" entry spelled out the FULL
+  // derivation including the still-unsolved part's final value ("cos θ = −4/5. Then cos 2θ = ... = 7/25").
+  // Every other surface (CREATE_PROBLEM's own format/hint, the MCQ/free-response UI) was already guarded by
+  // leaksAnswer/scrubAnswerLeak; board entries, diagram captions, and the chat reply itself were not.
+  const trig = { id: "p1", question: "(a) find cos θ [2]  (b) hence find cos 2θ [2]", answer: "7/25", why: "...", createdAt: "" };
+  check("a board 'summary' entry stating the final answer outright is caught", leaksAnyProblemAnswer("Then cos 2θ = 1 − 2sin²θ = 1 − 18/25 = 7/25.", [trig]));
+  check("plain prose mentioning the value without context is still caught (word-boundary match via leaksAnswer)", leaksAnyProblemAnswer("so cos 2theta = 7/25 overall", [trig]));
+  check("text that never states the value is NOT flagged", !leaksAnyProblemAnswer("Hence find cos 2θ using the double-angle formula — which version applies here?", [trig]));
+  check("an MCQ problem's correct OPTION text is also covered, not just free-response `answer`", leaksAnyProblemAnswer("it has to be 7/25 since cos is negative", [{ id: "p2", question: "q", options: ["1/4", "7/25", "3/5"], correct: 1, createdAt: "" }]));
+  check("a short (<3 char) secret is skipped — same false-positive guard as leaksAnswer/revealsAnswer", !leaksAnyProblemAnswer("the answer is 5 apples", [{ id: "p3", question: "q", answer: "5", createdAt: "" }]));
+  check("an unrelated problem's answer doesn't false-positive against a different problem's text", !leaksAnyProblemAnswer("cos theta is minus four fifths", [trig]));
+
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("WRITE_TO_BOARD rejects a leaking entry before it's ever created", /leaksAnyProblemAnswer\(String\(input\?\.text \|\| ""\), \[\.\.\.\(opts\?\.currentProblems \|\| \[\]\), \.\.\.result\.problems\]\)\) content = "REJECTED: that states a problem's answer outright/.test(claude));
+  check("DRAW_ON_BOARD checks both the caption and every op's text/latex for a leak", /input\.ops\.map\(\(o: any\) => `\$\{o\?\.text \|\| ""\} \$\{o\?\.latex \|\| ""\}`/.test(claude));
+  check("the chat reply itself gets the same backstop inside finish(), discarding artifacts like the CHAT_DOES_WORK guardrail does", /leaksAnyProblemAnswer\(reply, \[\.\.\.\(opts\?\.currentProblems \|\| \[\]\), \.\.\.result\.problems\]\)\)/.test(claude));
+  check("CREATE_PROBLEM_TOOL's own description now spells out the exact failure mode with a concrete example (answer = final part only)", claude.includes("`answer` MUST be the FINAL lettered part's value ONLY") && claude.includes("e.g. '7/25'") && claude.includes("e.g. '-4/5'"));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
