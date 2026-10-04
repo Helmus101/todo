@@ -1691,6 +1691,35 @@ export async function synthesizeSpeech(text: string): Promise<{ wav: Buffer } | 
   }
 }
 
+// ── Second TTS tier (StreamElements) ─────────────────────────────────────────────────────────────────────
+// Direct request: never fall through to the browser's own voice — it's the one thing this feature must
+// never sound like. Gemini's TTS preview model has a tiny quota (see the 429-backoff logic in
+// useSpeechSynthesis.ts) and this app has no budget for a paid vendor, so a SECOND free, keyless voice
+// covers exactly the gap Gemini's quota opens up: no account, no API key, no cost — a public endpoint
+// StreamElements exposes for its own stream-alert text-to-speech feature, proxying real Amazon Polly
+// neural voices (same quality tier as Gemini's, not a robotic fallback). No official SLA/docs, so this is
+// "best-effort second opinion," not foundation-grade — if IT fails too, the client's browser voice is the
+// true last resort, which still beats dead silence.
+const STREAMELEMENTS_VOICE: Record<string, string> = { fr: "Celine", en: "Joanna" };
+export async function synthesizeSpeechFallback(text: string, lang: string): Promise<{ mp3: Buffer } | { error: string; status: number }> {
+  const voice = STREAMELEMENTS_VOICE[lang] || STREAMELEMENTS_VOICE.en;
+  try {
+    const res = await fetch(`https://api.streamelements.com/kappa/v2/speech?voice=${voice}&text=${encodeURIComponent(text)}`, {
+      signal: AbortSignal.timeout(15_000),
+    });
+    const ct = res.headers.get("content-type") || "";
+    if (!res.ok || !ct.startsWith("audio/")) {
+      const body = await res.text().catch(() => "");
+      return { error: `StreamElements TTS ${res.status} (${ct || "no content-type"})${body ? `: ${body.slice(0, 150)}` : ""}`, status: res.status === 200 ? 502 : res.status };
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (!buf.length) return { error: "StreamElements TTS returned empty audio", status: 502 };
+    return { mp3: buf };
+  } catch (e: any) {
+    return { error: `StreamElements TTS request failed: ${e?.message || e}`, status: 504 };
+  }
+}
+
 /** Reads an 800x600-ish whiteboard snapshot (a data URL, e.g. "data:image/png;base64,...") and returns a
  *  plain-text transcription of what's actually drawn — never an interpretation or a solved answer; that's
  *  the tutor's job once the transcription reaches it as a normal chat message (same "one model per

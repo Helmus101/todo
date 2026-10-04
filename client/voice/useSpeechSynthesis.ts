@@ -104,9 +104,12 @@ const CLOUD_FETCH_TIMEOUT_MS = 8000;    // slower than this → speak with the b
 const START_TIMEOUT_MS = 4000;          // browser engine: a chunk that never starts is treated as dropped
 const runTimeoutMs = (text: string) => Math.max(8000, text.length * 110); // ceiling for one chunk once playing
 
-/** The tutor's voice. Primary: Gemini's neural voice via /api/tts (natural, fluid, French or English
- *  detected from the text). Fallback: the browser's own speechSynthesis, automatically, whenever the cloud
- *  voice fails, times out, isn't configured, or is blocked from playing.
+/** The tutor's voice, via one endpoint (/api/tts) that itself tries two free, keyless providers server-
+ *  side — Gemini's neural voice first, then Amazon Polly (via StreamElements) if Gemini's small preview-
+ *  model quota is hit (server/claude.ts's synthesizeSpeech/synthesizeSpeechFallback). Direct request: the
+ *  browser's own speechSynthesis is never the primary experience — it only speaks if BOTH of those fail,
+ *  time out, or the whole request is blocked from playing, which should be rare now that there are two
+ *  independent cloud tiers instead of one.
  *
  *  Invariants:
  *  - `speaking` can never get stuck true: every chunk ends via an end event, an error, or a timeout.

@@ -1572,16 +1572,16 @@ section("isLikelyEcho — textual echo discrimination for real barge-in (client/
   check("TaskChat is interruptible too (stateful echo filter, mic never paused during TTS)", /echoFilterRef\.current\.isEcho\(text\)/.test(taskCardSrc) && !/wasSpeakingRef/.test(taskCardSrc));
 
   // Voice pipeline (server/index.ts /api/tts): Gemini neural TTS on the existing GEMINI_API_KEY (replaced
-  // FreeTTS, whose vendor path was the flakiest part of voice). Language comes from the text itself, so a
-  // French reply is spoken in French and an English one in English. Fail-loud in logs, fail-open to the
-  // client (which then speaks with the browser voice).
+  // FreeTTS, whose vendor path was the flakiest part of voice), with a second free/keyless provider tried
+  // before ever giving up (see the section below). Language comes from the text itself for Gemini; the
+  // fallback provider needs it explicitly for voice selection. Fail-loud in logs, fail-open to the client.
   const serverSrc = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
-  const ttsBody = serverSrc.slice(serverSrc.indexOf('app.post("/api/tts"'), serverSrc.indexOf('app.post("/api/tts"') + 1500);
+  const ttsBody = serverSrc.slice(serverSrc.indexOf('app.post("/api/tts"'), serverSrc.indexOf('app.post("/api/tts"') + 1800);
   check("TTS route is authenticated and rate-limited", /app\.post\("\/api\/tts", requireAuth, rateLimit\(/.test(serverSrc));
   check("TTS route uses Gemini (synthesizeSpeech), not the old FreeTTS vendor", /synthesizeSpeech\(/.test(ttsBody) && !/freetts\.org/.test(serverSrc));
-  check("an unconfigured deployment returns 501 (client then disables the cloud voice for the session)", /res\.status\(501\)/.test(ttsBody));
-  check("an upstream failure is a clean 502/429 with a bilingual message (client falls back, never silent)", /Échec de la génération vocale/.test(ttsBody));
-  check("the route serves playable WAV audio, never cached", /audio\/wav/.test(ttsBody) && /no-store/.test(ttsBody));
+  check("an unconfigured deployment skips straight to the fallback provider instead of failing immediately", /if \(ttsReady\(\)\) \{/.test(ttsBody) && /trying StreamElements directly/.test(ttsBody));
+  check("an upstream failure (of BOTH providers) is a clean 502/429 with a bilingual message", /Échec de la génération vocale/.test(ttsBody));
+  check("the route serves playable audio (WAV from Gemini, MP3 from the fallback), never cached", /audio\/wav/.test(ttsBody) && /audio\/mpeg/.test(ttsBody) && /no-store/.test(ttsBody));
   check("request text is capped server-side", /text\.slice\(0, 1000\)/.test(ttsBody));
   // And exercised, not just pinned: synthetic MPEG2 Layer III streams (FreeTTS's own format:
   // 24 kHz ⇒ 576-sample ≈ 24 ms frames, 144-byte @ 48 kbps) verify the splice math. Real probed
@@ -3978,6 +3978,22 @@ section("Problem guidance never gives the answer away — format/hint 'e.g.' lea
   check("makeProblem (MCQ): a hint naming the correct option is dropped", mcq.problem && mcq.problem.hint === undefined);
   const daily = makePracticeLeak({ problem: "Solve 2x + 4 = 10.", answer: "3", format: "a single number, e.g. 3" });
   check("makePracticeProblem (journal): the leaking example is stripped", daily.problem && daily.problem.format === "a single number");
+}
+
+section("TTS never falls straight to the browser voice — two free cloud tiers tried server-side first (source pins)");
+{
+  // Direct request: the browser's own speechSynthesis must never be the primary voice. /api/tts now tries
+  // Gemini, then a second free/keyless provider (StreamElements → real Amazon Polly voices) before ever
+  // returning an error that would make the client fall back to the browser voice.
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("a second, keyless TTS provider exists (StreamElements/Polly), not just Gemini", /export async function synthesizeSpeechFallback/.test(claude) && /api\.streamelements\.com\/kappa\/v2\/speech/.test(claude));
+  check("the fallback provider has real voices for both app languages (fr and en)", /STREAMELEMENTS_VOICE: Record<string, string> = \{ fr: "Celine", en: "Joanna" \};/.test(claude));
+  check("the fallback provider validates it actually got audio back, not an error page with a 200", /ct\.startsWith\("audio\/"\)/.test(claude));
+
+  const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const ttsRoute = idx.slice(idx.indexOf('app.post("/api/tts"'), idx.indexOf('app.post("/api/tts"') + 1800);
+  check("the route tries Gemini first, and only calls the fallback provider when Gemini didn't return audio", /if \(ttsReady\(\)\) \{[\s\S]*?if \(!\("error" in out\)\)[\s\S]*?return;\s*\n\s*\}/.test(ttsRoute) && /synthesizeSpeechFallback\(/.test(ttsRoute));
+  check("the client only sees a failure (and falls back to the browser voice) once BOTH providers have failed", /const fallback = await synthesizeSpeechFallback/.test(ttsRoute) && /if \("error" in fallback\)/.test(ttsRoute));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
