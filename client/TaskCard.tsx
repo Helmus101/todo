@@ -22,6 +22,7 @@ import {
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
 import { createEchoFilter } from "./voice/echoGuard.ts";
 import { useSpeechSynthesis } from "./voice/useSpeechSynthesis.ts";
+import { lastMessageKey } from "./voice/replyKey.ts";
 import { useVoiceModePref } from "./voice/useVoiceModePref.ts";
 import { BoardArtifact } from "./study/artifacts/BoardArtifact.tsx";
 import { getLocalThread } from "./localChatBoard.ts";
@@ -1341,16 +1342,17 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
   // mic stays open during TTS and echo is handled textually (isLikelyEcho above). Pausing the recognizer
   // was the thing that made interruption impossible — no audio reaches a dead mic — and its settle-delay
   // reopen only existed to serve that pause. The voiceModeOn effect above still aborts on toggle-off.
-  const spokenCountRef = useRef(0);
+  // Keyed on the newest message's identity, not chat length — see lastMessageKey (chat cap bug).
+  const tailKey = lastMessageKey(task.chat);
+  const spokenKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    const chat = task.chat || [];
-    if (chat.length > spokenCountRef.current) {
-      const last = chat[chat.length - 1];
-      if (voiceModeOn && last?.role === "assistant") synth.speak(last.text);
-    }
-    spokenCountRef.current = chat.length;
+    if (spokenKeyRef.current === null) { spokenKeyRef.current = tailKey; return; }
+    if (tailKey === spokenKeyRef.current) return;
+    spokenKeyRef.current = tailKey;
+    const last = task.chat?.[task.chat.length - 1];
+    if (voiceModeOn && last?.role === "assistant") synth.speak(last.text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [task.chat?.length, voiceModeOn]);
+  }, [tailKey, voiceModeOn]);
   return (
     <section className="task-chat">
       <h3>{L("Demander à Otto", "Ask Otto")}</h3>

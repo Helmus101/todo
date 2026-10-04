@@ -3,6 +3,7 @@ import type { WebTask } from "../../shared/types.ts";
 import { renderChatText, useThinkingWord, useLang, LangContext, CondensedUserMessage, FirstTimeHint, useNotify } from "../ui.tsx";
 import { useSpeechRecognition } from "../voice/useSpeechRecognition.ts";
 import { useSpeechSynthesis } from "../voice/useSpeechSynthesis.ts";
+import { lastMessageKey } from "../voice/replyKey.ts";
 import { useVoiceModePref } from "../voice/useVoiceModePref.ts";
 import { VoiceControls } from "../voice/VoiceControls.tsx";
 import { createEchoFilter } from "../voice/echoGuard.ts";
@@ -223,22 +224,23 @@ export function AskOttoPanel({
     wasBusyRef.current = busy;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sending, synth.speaking, voiceModeOn, bargeIn]);
-  // Speak the reply once it arrives — tracked by chat length so a re-render (not a new message) never
-  // re-triggers it, and so turning voice mode on mid-conversation only speaks FUTURE replies, not the
-  // whole history at once.
-  const spokenCountRef = useRef(0);
+  // Speak each new assistant reply exactly once — keyed on the newest message's IDENTITY, not chat length
+  // (see lastMessageKey: the server's chat cap keeps the length constant once a session gets long, which
+  // silently stopped all speech). The key is tracked even while voice mode is off, so turning it on
+  // mid-conversation only speaks FUTURE replies, never the history.
+  const tailKey = lastMessageKey(task.chat);
+  const spokenKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    const chat = task.chat || [];
-    if (chat.length > spokenCountRef.current) {
-      const last = chat[chat.length - 1];
-      if (voiceModeOn && last?.role === "assistant") {
-        console.log("[tts] speaking assistant message:", last.text.slice(0, 60));
-        synth.speak(last.text);
-      }
+    if (spokenKeyRef.current === null) { spokenKeyRef.current = tailKey; return; } // first render: history
+    if (tailKey === spokenKeyRef.current) return;
+    spokenKeyRef.current = tailKey;
+    const last = task.chat?.[task.chat.length - 1];
+    if (voiceModeOn && last?.role === "assistant") {
+      console.log("[tts] speaking assistant message:", last.text.slice(0, 60));
+      synth.speak(last.text);
     }
-    spokenCountRef.current = chat.length;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [task.chat?.length, voiceModeOn, synth]);
+  }, [tailKey, voiceModeOn]);
   // Grows up to 3 lines (CSS max-height on .sm-ai-input) then scrolls internally — was a single-line
   // <input>, so anything longer than one line just scrolled sideways out of view while typing. Re-measured
   // on every `input` change (typing AND a programmatic clear after send), not just onChange, so sending a

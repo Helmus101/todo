@@ -17,6 +17,7 @@ import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_AR
 import { trimFreeTTSWatermark } from "../server/ttsTrim.ts";
 import { wantsArtifactTools } from "../server/claude.ts";
 import { rankVoices } from "../client/voice/useSpeechSynthesis.ts";
+import { lastMessageKey } from "../client/voice/replyKey.ts";
 import { subjectMastery } from "../shared/types.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, subjectFrequency, orderingBoost, twoMinuteRuleBoost } from "../server/patterns.ts";
 
@@ -3890,6 +3891,25 @@ section("MCQ-dodge no longer licenses an answer reveal (source pins — reported
   const claudeSrcDodge = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
   check("the HINT LADDER exception list now has a negative case (e) for evasion, distinct from (c)/(d)", /\(e\) they're trying to skip\/change ` \+\s*\n\s*`the subject WITHOUT a genuine attempt/.test(claudeSrcDodge) || claudeSrcDodge.includes("(e) they're trying to skip/change"));
   check("canvas mode explicitly says to let a dodged MCQ go unanswered rather than resolving it for them", claudeSrcDodge.includes("IF THEY TRY TO SKIP/MOVE ON WITHOUT A GENUINE ATTEMPT"));
+}
+
+section("TTS 'never works again' — speak trigger keyed on the newest message, not chat length (chat-cap bug)");
+{
+  // Reported live: after a while in a session TTS never worked again, with NOTHING in the console — speak()
+  // was never called. The server caps chat at CHAT_CAP=30 (server/index.ts); once a session hits it, every
+  // turn adds 2 messages and drops 2, so the length stays at 30 and `chat.length > spokenCount` was never
+  // true again. Both voice surfaces now key on the newest message's identity instead.
+  const mk = (n) => Array.from({ length: n }, (_, i) => ({ role: i % 2 ? "assistant" : "user", at: `2026-10-04T10:${String(i).padStart(2, "0")}:00Z`, text: `m${i}` }));
+  const atCap = mk(30);
+  const nextTurn = [...atCap, { role: "user", at: "2026-10-04T11:00:00Z", text: "q" }, { role: "assistant", at: "2026-10-04T11:00:05Z", text: "a" }].slice(-30);
+  check("a new reply at the chat cap changes the key even though the LENGTH is identical (30 → 30)", nextTurn.length === atCap.length && lastMessageKey(nextTurn) !== lastMessageKey(atCap));
+  check("an unchanged chat (a plain re-render) keeps the same key — no double-speak", lastMessageKey(mk(10)) === lastMessageKey(mk(10)));
+  check("empty/undefined chat yields an empty key, no crash", lastMessageKey(undefined) === "" && lastMessageKey([]) === "");
+  for (const [file, label] of [["../client/study/AskOttoPanel.tsx", "AskOttoPanel"], ["../client/TaskCard.tsx", "TaskCard"]]) {
+    const src = readFileSync(new URL(file, import.meta.url), "utf8");
+    check(`${label} no longer triggers speech on chat length`, !/spokenCountRef/.test(src) && !/\[task\.chat\?\.length, voiceModeOn/.test(src));
+    check(`${label} triggers speech on lastMessageKey, and skips history on first render`, /const tailKey = lastMessageKey\(task\.chat\);/.test(src) && /if \(spokenKeyRef\.current === null\) \{ spokenKeyRef\.current = tailKey; return; \}/.test(src));
+  }
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
