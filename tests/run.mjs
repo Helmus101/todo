@@ -1935,7 +1935,15 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   check("the cloud voice goes through api.ttsAudio (CSRF-safe req(), never a bare fetch)", /api\.ttsAudio\(/.test(ttsSynthSrc) && !/fetch\("\/api\/tts"/.test(ttsSynthSrc));
   check("a cloud fetch OR playback failure falls through to the browser voice for the rest of the reply", (ttsSynthSrc.match(/noteCloudFailure\(e\); speakWithBrowser\(gen, chunks\.slice\(i\)\);/g) || []).length === 2);
   check("a slow cloud voice times out and falls back instead of leaving the student waiting", /AbortSignal\.timeout\(CLOUD_FETCH_TIMEOUT_MS\)/.test(ttsSynthSrc));
-  check("an unconfigured (501) or repeatedly failing cloud voice is skipped for the rest of the session", /if \(status === 501 \|\| cloudFailsRef\.current >= 2\) cloudOffRef\.current = true;/.test(ttsSynthSrc));
+  check("an unconfigured (501) or repeatedly failing (non-quota) cloud voice is skipped for the rest of the session", /if \(status === 501 \|\| cloudFailsRef\.current >= 2\) \{\s*\n\s*cloudOffRef\.current = true;/.test(ttsSynthSrc));
+  // Reported live: Gemini's TTS preview model hit its per-minute quota during an ordinary tutoring
+  // conversation. A 429 is quota, not an outage — it resets shortly, so it gets a short, doubling backoff
+  // (not the permanent-for-the-session disable other failures get), and the chunking now sends as FEW
+  // requests as possible per reply (was 2 per reply: first sentence alone, then the rest) to burn quota
+  // more slowly in the first place.
+  check("a 429 gets a short, doubling backoff instead of permanently disabling the cloud voice", /if \(status === 429\) \{/.test(ttsSynthSrc) && /cloudBackoffMsRef\.current \* 2, 120_000\)/.test(ttsSynthSrc));
+  check("the cloud voice isn't retried again until the backoff window has actually passed", /Date\.now\(\) >= cloudBackoffUntilRef\.current/.test(ttsSynthSrc));
+  check("a real success resets both the failure count and the backoff duration", /cloudFailsRef\.current = 0; cloudBackoffMsRef\.current = 15_000;/.test(ttsSynthSrc));
   check("the browser fallback still speaks via speechSynthesis", /engine\.speak\(utter\)/.test(ttsSynthSrc) && !/speakViaFreeTTS/.test(ttsSynthSrc));
   check("every TTS failure path leaves a diagnostic the UI can show, not just silence", /lastDiagnostic/.test(ttsSynthSrc) && /setLastDiagnostic/.test(ttsSynthSrc));
   // The very FIRST speak() of a session can get silently blocked by a browser's autoplay/gesture policy
@@ -3919,12 +3927,17 @@ section("Gemini voice — WAV wrapping + fluid chunking (unit tests)");
   check("WAV = 44-byte header + the PCM payload", wav.length === 44 + pcm.length);
   check("RIFF/WAVE/fmt/data markers are in place", wav.toString("ascii", 0, 4) === "RIFF" && wav.toString("ascii", 8, 12) === "WAVE" && wav.toString("ascii", 12, 16) === "fmt " && wav.toString("ascii", 36, 40) === "data");
   check("sample rate, PCM format and data length are written correctly", wav.readUInt32LE(24) === 24000 && wav.readUInt16LE(20) === 1 && wav.readUInt32LE(40) === pcm.length && wav.readUInt32LE(4) === 36 + pcm.length);
-  // Chunking: first sentence alone (fast first audio), the rest joined (fluid intonation, fewer requests).
+  // Chunking: AS FEW REQUESTS AS POSSIBLE per reply — reported live, Gemini's TTS preview model hit its
+  // own per-minute quota (429) during an ordinary conversation, and the old "first sentence alone, then
+  // the rest" split sent 2 calls per reply, burning quota twice as fast for no benefit once rate-limited.
+  // Joined text is also what makes the neural voice sound fluid (a request per sentence resets intonation
+  // at every period).
   check("a one-sentence reply is one chunk", cloudChunks(["Bonjour."]).length === 1);
-  check("the first sentence is its own chunk; the rest are joined into one", JSON.stringify(cloudChunks(["A.", "B.", "C."])) === JSON.stringify(["A.", "B. C."]));
+  check("an ordinary multi-sentence reply is ONE chunk now (was 2 requests before this fix)", cloudChunks(["A.", "B.", "C."]).length === 1 && cloudChunks(["A.", "B.", "C."])[0] === "A. B. C.");
   const long = Array.from({ length: 12 }, (_, i) => `Sentence number ${i} is here and is moderately long.`);
   const chunks = cloudChunks(long);
-  check("a long reply is split into ~400-char chunks, nothing lost", chunks.slice(1).every((c) => c.length <= 400) && chunks.join(" ") === long.join(" "));
+  check("only a genuinely long reply splits at all, into ~1800-char chunks, nothing lost", chunks.every((c) => c.length <= 1800) && chunks.join(" ") === long.join(" "));
+  check("a long reply still splits into FEWER, bigger chunks than one-per-sentence would", chunks.length < long.length);
 }
 
 section("Answers are NEVER revealed — chat prompt and every practice-problem surface (source pins)");

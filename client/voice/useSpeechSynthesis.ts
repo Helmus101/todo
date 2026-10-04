@@ -27,16 +27,21 @@ function toSentences(text: string): string[] {
   return parts.length ? parts : (text.trim() ? [text.trim()] : []);
 }
 
-/** Group sentences into chunks for the cloud voice: the FIRST sentence on its own (short → its audio comes
- *  back fast, so Otto starts talking sooner), then the rest joined into ~400-char chunks. Joined text is
- *  what makes the neural voice sound fluid — per-sentence requests reset the intonation at every period.
- *  Exported for unit tests. */
+// Reported live: Gemini's TTS preview model has a small per-minute request quota, and the old "first
+// sentence alone, then the rest" splitting below sent 2 API calls per reply — roughly double the quota
+// burn for no real benefit once a 429 actually hit (the whole point of splitting was a faster-feeling
+// start, which doesn't matter if the request gets rate-limited instead). One call per reply now; only a
+// genuinely long reply (approaching the model's own request-size comfort zone) still splits, and even then
+// into as FEW chunks as possible rather than many small ones.
+const CLOUD_CHUNK_MAX_CHARS = 1800;
+/** Group sentences into as few chunks as possible (fewer requests = less quota burn), each ≤
+ *  CLOUD_CHUNK_MAX_CHARS. Joined text is also what makes the neural voice sound fluid — splitting on every
+ *  sentence resets the model's intonation at each period. Exported for unit tests. */
 export function cloudChunks(sentences: string[]): string[] {
-  if (sentences.length <= 1) return sentences.slice();
-  const out = [sentences[0]];
+  const out: string[] = [];
   let cur = "";
-  for (const s of sentences.slice(1)) {
-    if (cur && `${cur} ${s}`.length > 400) { out.push(cur); cur = s; }
+  for (const s of sentences) {
+    if (cur && `${cur} ${s}`.length > CLOUD_CHUNK_MAX_CHARS) { out.push(cur); cur = s; }
     else cur = cur ? `${cur} ${s}` : s;
   }
   if (cur) out.push(cur);
@@ -126,8 +131,10 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const stopPlaybackRef = useRef<(() => void) | null>(null);
   const urlsRef = useRef<string[]>([]);
-  const cloudOffRef = useRef(false);
+  const cloudOffRef = useRef(false);     // permanent for this page session (not configured / repeated non-quota failures)
+  const cloudBackoffUntilRef = useRef(0); // temporary — a 429 is quota, which resets on its own shortly
   const cloudFailsRef = useRef(0);
+  const cloudBackoffMsRef = useRef(15_000);
   const langRef = useRef(lang);
   langRef.current = lang;
 
@@ -222,13 +229,28 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
   }, [synthSupported, speakNext]);
 
   // ── Cloud voice (Gemini) ─────────────────────────────────────────────────────────────────────────────
+  // Reported live: Gemini's TTS preview model has a small per-minute quota, hit during an ordinary back-
+  // and-forth tutoring session. A 429 is quota, not an outage — it resets shortly, so it gets a short,
+  // doubling backoff (15s, 30s, 60s, capped at 2min) instead of the permanent-for-the-session disable
+  // other failures get. A genuinely dead/misconfigured service (501, or 2 NON-quota failures in a row)
+  // still disables permanently so every later reply doesn't pay a fetch delay for nothing.
   const noteCloudFailure = (err: any) => {
     const status = err?.status;
+    if (status === 429) {
+      cloudBackoffUntilRef.current = Date.now() + cloudBackoffMsRef.current;
+      cloudBackoffMsRef.current = Math.min(cloudBackoffMsRef.current * 2, 120_000);
+      console.warn(`[tts] cloud voice rate-limited (429) — using the browser voice for ${Math.round(cloudBackoffMsRef.current / 2000)}s, then retrying the cloud voice`);
+      return;
+    }
     cloudFailsRef.current++;
-    // 501 = not configured on this deployment; two failures in a row = service is down right now. Either
-    // way stop trying for this page session so every later reply starts instantly on the browser voice.
-    if (status === 501 || cloudFailsRef.current >= 2) cloudOffRef.current = true;
-    console.warn(`[tts] cloud voice failed (${err?.name === "TimeoutError" || err?.name === "AbortError" ? "timeout" : status ?? err?.message ?? "error"}) — using the browser voice${cloudOffRef.current ? " for the rest of this session" : ""}`);
+    // 501 = not configured on this deployment; two non-quota failures in a row = something's actually
+    // broken, not just a transient blip. Either way stop trying for this page session.
+    if (status === 501 || cloudFailsRef.current >= 2) {
+      cloudOffRef.current = true;
+      console.warn(`[tts] cloud voice failed (${err?.name === "TimeoutError" || err?.name === "AbortError" ? "timeout" : status ?? err?.message ?? "error"}) — using the browser voice for the rest of this session`);
+    } else {
+      console.warn(`[tts] cloud voice failed (${status ?? err?.message ?? "error"}) — using the browser voice for this reply`);
+    }
   };
 
   const fetchChunk = async (text: string): Promise<string> => {
@@ -262,8 +284,9 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
   });
 
   const speakWithCloud = useCallback(async (gen: number, sentences: string[]) => {
+    // Almost always ONE chunk now (see cloudChunks — fewer requests = less quota burn); fetched up front
+    // so a multi-chunk reply's later chunks download while the first one plays.
     const chunks = cloudChunks(sentences);
-    // Fetch every chunk up front: chunk 1 is short so it returns first; the rest download while it plays.
     const pending = chunks.map((c) => fetchChunk(c));
     pending.forEach((p) => p.catch(() => { /* handled in order below */ }));
     for (let i = 0; i < chunks.length; i++) {
@@ -271,7 +294,7 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
       try { url = await pending[i]; }
       catch (e) { if (genRef.current !== gen) return; noteCloudFailure(e); speakWithBrowser(gen, chunks.slice(i)); return; }
       if (genRef.current !== gen) return;
-      try { await playUrl(url, chunks[i]); cloudFailsRef.current = 0; }
+      try { await playUrl(url, chunks[i]); cloudFailsRef.current = 0; cloudBackoffMsRef.current = 15_000; }
       catch (e) { if (genRef.current !== gen) return; noteCloudFailure(e); speakWithBrowser(gen, chunks.slice(i)); return; }
       if (genRef.current !== gen) return;
     }
@@ -294,7 +317,7 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
     releaseUrls();
     setLastDiagnostic(null);
     setSpeaking(true);
-    const useCloud = audioSupported && !cloudOffRef.current;
+    const useCloud = audioSupported && !cloudOffRef.current && Date.now() >= cloudBackoffUntilRef.current;
     console.info(`[tts] speaking ${sentences.length} sentence(s) via ${useCloud ? "Gemini voice" : "browser voice"}`);
     if (useCloud) void speakWithCloud(gen, sentences);
     else speakWithBrowser(gen, sentences);
