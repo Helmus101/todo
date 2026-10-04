@@ -4025,5 +4025,17 @@ section("TTS route — three free tiers tried in order before ever reaching the 
   check("the client only sees a failure (and falls back to the browser voice) once ALL THREE providers have failed", /if \("error" in last\)/.test(ttsRoute) && /all three providers failed/.test(ttsRoute));
 }
 
+section("Clarity fixes — 'I'm not understanding' escalates, rephrasing isn't a different approach, explicit write-requests honored (source pins)");
+{
+  // Reported live: a sign-test ("try theta=phi=60 degrees...") got re-asked FOUR times with only cosmetic
+  // rewording while the student got visibly more lost ("I'm not understanding", "at what", "let's just
+  // move on"), and an explicit "can you just write on the board" request was answered with more chat text
+  // instead of an actual board entry.
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("an explicit 'I don't understand' is treated as its own escalation signal, distinct from a bare 'I don't know'", claude.includes('an explicit') && claude.includes('"I don\'t understand"/"I\'m not understanding" IS its own signal'));
+  check("rephrasing the same question is explicitly called out as NOT a different approach", claude.includes('rephrasing the SAME test/') && claude.includes("question in other words is NOT different"));
+  check("the write-to-board tool rule requires honoring an EXPLICIT written-anchor request the same turn", claude.includes("If the student EXPLICITLY") && claude.includes('asks you to write/put something on the board'));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
