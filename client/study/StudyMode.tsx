@@ -11,6 +11,7 @@ import type {
   FocusSessionMetrics,
 } from "./StudyTypes.ts";
 import { getEnvironmentByTask, saveEnvironment, saveSession, saveFile, getFile, deleteFile } from "./StudyDB.ts";
+import { useIsPhone } from "../useIsPhone.ts";
 import { startStudyBlocking, stopStudyBlocking } from "./extensionBridge.ts";
 import { StudySetup, type PomodoroChoice, type AudioChoice } from "./StudySetup.tsx";
 import { SessionHeader } from "./SessionHeader.tsx";
@@ -410,16 +411,7 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
   const totalSteps = task.steps?.length ?? 0;
 
   // ── Check if device is phone ──────────────────────────────────────────────
-  // Reactive (matchMedia listener), not a one-time innerWidth read at mount — a student rotating a phone
-  // or resizing a desktop window past the 768px line otherwise kept the stale verdict until the next
-  // unrelated re-render.
-  const [isPhone, setIsPhone] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches);
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 767px)");
-    const onChange = () => setIsPhone(mq.matches);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
+  const isPhone = useIsPhone();
 
   // ── Load or create environment ────────────────────────────────────────────
   useEffect(() => {

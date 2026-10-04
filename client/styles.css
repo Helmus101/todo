@@ -38,6 +38,11 @@
   --accent-rgb: 37, 99, 235;
   --brand-mark: #EA580C;
   --focus-ring: var(--accent);
+  /* Chat bubbles pair this with solid white text (never --ink), so it must stay a fixed, saturated blue in
+     BOTH themes — unlike --accent, which intentionally lightens in dark mode for buttons/links. White text
+     on that lightened accent reads as washed-out/grey instead of white, which is the opposite of legible. */
+  --chat-user-bg: #2563EB;
+  --chat-user-bg-2: #1D4ED8;
   
   --bg-2: #F4F4F5;
   --bg-3: #E4E4E7;
@@ -1629,7 +1634,7 @@ input:focus, textarea:focus {
 .chat-msg-toggle:hover { opacity: 1; }
 .chat-user {
   align-self: flex-end;
-  background: linear-gradient(180deg, var(--accent-hover) 0%, var(--accent) 100%);
+  background: linear-gradient(180deg, var(--chat-user-bg-2) 0%, var(--chat-user-bg) 100%);
   color: #fff;
   border-bottom-right-radius: 4px;
   box-shadow: 0 2px 8px rgba(var(--accent-rgb), 0.25);
@@ -5667,7 +5672,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 }
 .sm-ai-msg-user {
   margin-left: auto;
-  background: var(--accent);
+  background: var(--chat-user-bg);
   color: #fff;
   border-radius: 16px 16px 4px 16px;
 }

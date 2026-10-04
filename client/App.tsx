@@ -10,6 +10,7 @@ import { saveQuizLocally, getAllLocalQuizzes, clearLocalQuizzes, getLocalQuiz } 
 // Keyed by userId same as the others, so a different account signing in on the same browser never sees it.
 import { hydrateLocalThreads, clearLocalChatBoard } from "./localChatBoard.ts";
 import { pushError } from "./errorLog.ts";
+import { useIsPhone } from "./useIsPhone.ts";
 import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard, PageInfoHint } from "./ui.tsx";
 import { t } from "./i18n.ts";
 import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
@@ -406,6 +407,16 @@ export function App() {
   // still wins because it sets signedOutRef before calling the server.
   const lastAuthenticatedStatusRef = useRef<ConnectionStatus | null>(CACHED_STATUS?.loggedIn ? CACHED_STATUS : null);
   const [route] = usePathRoute();
+  // Phone-sized screens (iPhone, not iPad — see useIsPhone's 767px breakpoint) get the app cut down to
+  // flashcard review only. Reported live: most of the dashboard/tutor/study surfaces (dense step lists,
+  // the whiteboard, multi-pane layouts) don't work on a phone-sized screen, so rather than a broken
+  // experience on every route, the phone gets steered to the one thing that genuinely works small —
+  // reviewing flashcards (/log's "Cartes" tab) — plus Settings (sign out, language, etc).
+  const isPhone = useIsPhone();
+  const PHONE_ALLOWED_ROUTES = ["log", "settings"];
+  useEffect(() => {
+    if (isPhone && status?.loggedIn && !PHONE_ALLOWED_ROUTES.includes(route)) navigate("log");
+  }, [isPhone, status?.loggedIn, route]);
   // Explicit escape hatch off ConnectCard's connect-wall (see its own comment + the gating condition
   // further down) — a student with nothing connected can choose to use Otto with manually-added tasks and
   // tutoring only, instead of being hard-blocked behind "connect Pronote first." Per-device, not per-
@@ -1059,32 +1070,32 @@ export function App() {
           <Logo size={20} /> Otto
         </div>
         <nav className="sidebar-nav">
-          <a 
-            className={`sidebar-item ${route === "" || route === "tasks" || route.startsWith("task/") ? "active" : ""}`} 
+          {!isPhone && <a
+            className={`sidebar-item ${route === "" || route === "tasks" || route.startsWith("task/") ? "active" : ""}`}
             href="/tasks"
             onClick={() => setSidebarOpen(false)}
           >
             <LayoutDashboard />
             {status?.language === "en" ? "Tasks" : "Tâches"}
             {live.length > 0 && <span className="sidebar-badge">{live.length}</span>}
-          </a>
-          <a 
-            className={`sidebar-item ${route === "log" ? "active" : ""}`} 
+          </a>}
+          <a
+            className={`sidebar-item ${route === "log" ? "active" : ""}`}
             href="/log"
             onClick={() => setSidebarOpen(false)}
           >
             <BookOpen />
-            {status?.language === "en" ? "Journal" : "Journal"}
+            {isPhone ? (status?.language === "en" ? "Flashcards" : "Cartes") : (status?.language === "en" ? "Journal" : "Journal")}
           </a>
-          <a
+          {!isPhone && <a
             className={`sidebar-item ${route === "tutor" ? "active" : ""}`}
             href="/tutor"
             onClick={() => setSidebarOpen(false)}
           >
             <GraduationCap />
             {status?.language === "en" ? "Tutor" : "Tuteur"}
-          </a>
-          {STUDY_MODE_ENABLED && (
+          </a>}
+          {STUDY_MODE_ENABLED && !isPhone && (
             <a
               className={`sidebar-item ${route === "study" ? "active" : ""}`}
               href="/study"
@@ -1094,14 +1105,14 @@ export function App() {
               {status?.language === "en" ? "Study" : "Réviser"}
             </a>
           )}
-          <a
+          {!isPhone && <a
             className={`sidebar-item ${route === "errorlog" ? "active" : ""}`}
             href="/errorlog"
             onClick={() => setSidebarOpen(false)}
           >
             <AlertTriangle />
             {status?.language === "en" ? "Error log" : "Erreurs"}
-          </a>
+          </a>}
           <a
             className={`sidebar-item ${route === "settings" ? "active" : ""}`}
             href="/settings"
@@ -1110,7 +1121,7 @@ export function App() {
             <SettingsIcon />
             {status?.language === "en" ? "Settings" : "Réglages"}
           </a>
-          {isAdminUser(status?.user) && (
+          {!isPhone && isAdminUser(status?.user) && (
             <a
               className={`sidebar-item ${route === "admin" ? "active" : ""}`}
               href="/admin"
@@ -1146,7 +1157,7 @@ export function App() {
         {route !== "tutor" && <header className="topbar">
           <div className="topbar-title">{(() => {
             if (route === "settings") return en ? "Settings" : "Réglages";
-            if (route === "log") return en ? "Journal" : "Journal";
+            if (route === "log") return isPhone ? (en ? "Flashcards" : "Cartes") : (en ? "Journal" : "Journal");
             if (route === "study") return en ? "Study" : "Réviser";
             if (route === "errorlog") return en ? "Error log" : "Erreurs";
             if (route === "admin") return "Admin";
@@ -1173,7 +1184,7 @@ export function App() {
       {route === "settings" ? (
         <SettingsPage status={status} tasks={tasks} onSignOut={signOut} onChanged={loadStatus} onTasksChanged={setTasks} onStatusUpdate={loadStatus} />
       ) : route === "log" ? (
-        <StudyLogPage lang={status?.language} tasks={tasks} status={status} />
+        <StudyLogPage lang={status?.language} tasks={tasks} status={status} phoneOnly={isPhone} />
       ) : route === "tutor" ? (
         <TutorSession userId={status?.user || null} onExit={() => navigate("tasks")} visionReady={!!status?.visionReady} />
       ) : route === "study" ? (
@@ -2363,14 +2374,16 @@ function saveMonthCache(userId: string | null, month: string, data: { weeks: Web
 // the day had nothing. A successful server response is now trusted outright; the local cache is used ONLY
 // when the fetch itself fails (see load()'s .catch() below), never merged against a response that succeeded.
 
-function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebTask[]; status?: ConnectionStatus | null }) {
+function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" | "en"; tasks: WebTask[]; status?: ConnectionStatus | null; phoneOnly?: boolean }) {
   const L = useLang();
   const notify = useNotify();
   const en = lang === "en";
   // The flashcards library used to be its own top-level tab — folded in here instead, since every deck a
   // student reviews (Journal-generated or task-generated) belongs next to where they're already studying,
   // not one more thing in the sidebar to remember. Journal is the default view; Flashcards is a click away.
-  const [tab, setTab] = useState<"journal" | "flashcards">("journal");
+  // On a phone (phoneOnly), this page IS the flashcards library — writing a journal entry on a phone-sized
+  // screen is one of the things deliberately not offered there (see App.tsx's PHONE_ALLOWED_ROUTES comment).
+  const [tab, setTab] = useState<"journal" | "flashcards">(phoneOnly ? "flashcards" : "journal");
   const [monday, setMonday] = useState(() => mondayOf(todayIso()));
   const [days, setDays] = useState<(WebTask | null)[]>(() => loadWeekCache(status?.user || null, mondayOf(todayIso()))?.days || [null, null, null, null, null, null, null]);
   const [summary, setSummary] = useState<WebTask | null>(() => loadWeekCache(status?.user || null, mondayOf(todayIso()))?.summary || null);
@@ -2580,25 +2593,28 @@ function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebT
 
   return (
     <main className="list-wrap studylog-page">
-      <h1 className="list-head">{L("Journal d'apprentissage", "Journal")}</h1>
-      <p className="dash-line">{L("Note ce que tu as appris aujourd'hui — Otto en fait des cartes de révision.", "Note what you learned today — Otto turns it into flashcards.")}</p>
+      <h1 className="list-head">{phoneOnly ? L("Tes cartes", "Your flashcards") : L("Journal d'apprentissage", "Journal")}</h1>
+      <p className="dash-line">{phoneOnly
+        ? L("Révise tes cartes ici — le reste d'Otto marche mieux sur un plus grand écran.", "Review your flashcards here — the rest of Otto works better on a bigger screen.")
+        : L("Note ce que tu as appris aujourd'hui — Otto en fait des cartes de révision.", "Note what you learned today — Otto turns it into flashcards.")}</p>
 
       {/* Same .seg/.seg-btn segmented-control pattern as Pronote's Student/Parent picker — one visual
-          language for every binary switcher in the app, not a second bespoke tab style. */}
-      <div className="seg studylog-tabs" role="tablist">
+          language for every binary switcher in the app, not a second bespoke tab style. Hidden on phone:
+          there's only one tab to show there, so a switcher with one real destination is just clutter. */}
+      {!phoneOnly && <div className="seg studylog-tabs" role="tablist">
         <button type="button" role="tab" aria-selected={tab === "journal"} className={`seg-btn ${tab === "journal" ? "on" : ""}`} onClick={() => setTab("journal")}>{L("Journal", "Journal")}</button>
         <button type="button" role="tab" aria-selected={tab === "flashcards"} className={`seg-btn ${tab === "flashcards" ? "on" : ""}`} onClick={() => setTab("flashcards")}>{L("Cartes", "Flashcards")}</button>
-      </div>
+      </div>}
 
       {/* The spaced-repetition system (Leitner boxes, see nextLeitnerReview in shared/types.ts) was otherwise
           entirely invisible from Journal — the ONE place a student would expect to see "you have cards due
           for review," reported live as "i never see this." The cross-task /api/reviews/due signal already
           existed but was buried in the dashboard's "This week" popover, nowhere near the Journal tab where
           these decks actually live. */}
-      <DueReviews lang={lang} tasks={tasks} />
-      <MilestonesStrip lang={lang} />
+      {!phoneOnly && <DueReviews lang={lang} tasks={tasks} />}
+      {!phoneOnly && <MilestonesStrip lang={lang} />}
 
-      {tab === "flashcards" ? <FlashcardsLibraryPage lang={lang} tasks={tasks} embedded userId={status?.user || null} /> : (
+      {phoneOnly || tab === "flashcards" ? <FlashcardsLibraryPage lang={lang} tasks={tasks} embedded userId={status?.user || null} /> : (
       <>
       <div className="studylog-weeknav">
         <button type="button" className="btn xs ghost" onClick={() => setMonday(addDays(monday, -7))}>{"← " + L("Semaine préc.", "Prev week")}</button>

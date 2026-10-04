@@ -1818,7 +1818,7 @@ section("/api/study/free — resumes an active freestudy session by default, onl
   // delete the URL-only entry, and a well-meaning "restore" must not re-add a live tab/buttons without
   // consciously updating these pins.
   check("the /study route still renders StandaloneStudyEntry (the URL-only entry point)", /: route === "study" \? \(\s*<StandaloneStudyEntry/.test(appSrc));
-  check("Study Mode has no live sidebar tab (absent, or present but flag-gated)", !appSrc.includes('sidebar-item ${route === "study"') || /STUDY_MODE_ENABLED && \(\s*<a\s+className=\{`sidebar-item \$\{route === "study"/.test(appSrc));
+  check("Study Mode has no live sidebar tab (absent, or present but flag-gated)", !appSrc.includes('sidebar-item ${route === "study"') || /STUDY_MODE_ENABLED && !isPhone && \(\s*<a\s+className=\{`sidebar-item \$\{route === "study"/.test(appSrc));
   check("the Study Mode tab/buttons flag is actually OFF (/study stays URL-only by design)", /const STUDY_MODE_ENABLED = false;/.test(appSrc));
   // View Transitions on route swaps: a NEWER transition starting first rejects the older one's `ready`
   // (and sometimes `finished`) promise with a benign AbortError — reported live from production as an
@@ -4035,6 +4035,40 @@ section("Clarity fixes — 'I'm not understanding' escalates, rephrasing isn't a
   check("an explicit 'I don't understand' is treated as its own escalation signal, distinct from a bare 'I don't know'", claude.includes('an explicit') && claude.includes('"I don\'t understand"/"I\'m not understanding" IS its own signal'));
   check("rephrasing the same question is explicitly called out as NOT a different approach", claude.includes('rephrasing the SAME test/') && claude.includes("question in other words is NOT different"));
   check("the write-to-board tool rule requires honoring an EXPLICIT written-anchor request the same turn", claude.includes("If the student EXPLICITLY") && claude.includes('asks you to write/put something on the board'));
+}
+
+section("Chat bubble color — user bubble uses fixed saturated blue tokens, not the dark-mode-lightened --accent (source pins)");
+{
+  // Reported live: "text is grey on blue background". Root cause: dark mode lightens --accent to #60A5FA
+  // (for buttons/links) but the chat bubbles reused that same variable with white text — white-on-pastel-
+  // blue has very low contrast, which reads as grey. Fix: dedicated --chat-user-bg/--chat-user-bg-2 tokens
+  // that stay a fixed, saturated blue in BOTH themes (not redefined inside the dark-mode @media block).
+  const css = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
+  check("--chat-user-bg is defined as a fixed saturated blue in :root", /--chat-user-bg:\s*#2563EB/.test(css));
+  check(".chat-user (TaskCard's chat) uses --chat-user-bg, not the theme-lightened --accent", /\.chat-user\s*\{[^}]*--chat-user-bg-2[^}]*--chat-user-bg/s.test(css));
+  check(".sm-ai-msg-user (Study Mode's Ask Otto chat) uses --chat-user-bg, not --accent", /\.sm-ai-msg-user\s*\{[^}]*--chat-user-bg/s.test(css));
+  const darkBlock = css.slice(css.indexOf("@media (prefers-color-scheme: dark)"), css.indexOf("@media (prefers-color-scheme: dark)") + 1200);
+  check("--chat-user-bg is NOT redefined inside the dark-mode block (must stay fixed, unlike --accent)", !darkBlock.includes("--chat-user-bg"));
+}
+
+section("Phone restriction — iPhone-sized screens are limited to flashcard review, iPad is untouched (source pins)");
+{
+  // "limit the things you can do on mobile... only see flashcards... not on the iPad" — useIsPhone's
+  // 767px breakpoint already excludes iPad (smallest portrait width 768px), reused here (and in
+  // StudyMode.tsx, which already had its own copy of this exact check) rather than adding a second
+  // device-detection mechanism.
+  const hook = readFileSync(new URL("../client/useIsPhone.ts", import.meta.url), "utf8");
+  check("useIsPhone uses the 767px breakpoint (keeps iPad, min width 768px, OUT of 'phone')", /max-width:\s*767px/.test(hook));
+  check("useIsPhone is reactive (matchMedia change listener), not a one-time read", /addEventListener\("change"/.test(hook));
+
+  const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  check("App.tsx imports the shared useIsPhone hook", /import \{ useIsPhone \} from "\.\/useIsPhone\.ts"/.test(app));
+  check("phone users are redirected away from any route outside the allowed set", /PHONE_ALLOWED_ROUTES\s*=\s*\["log", "settings"\]/.test(app) && /!PHONE_ALLOWED_ROUTES\.includes\(route\)\) navigate\("log"\)/.test(app));
+  check("the Tasks/Tutor/Study/Error log/Admin sidebar links are hidden on phone", /\{!isPhone && <a[\s\S]{0,200}href="\/tasks"/.test(app) && /\{!isPhone && <a[\s\S]{0,200}href="\/tutor"/.test(app) && /\{!isPhone && <a[\s\S]{0,200}href="\/errorlog"/.test(app));
+  check("StudyLogPage gets a phoneOnly prop and forces the flashcards tab when set", /StudyLogPage lang=\{status\?\.language\} tasks=\{tasks\} status=\{status\} phoneOnly=\{isPhone\}/.test(app) && /useState<"journal" \| "flashcards">\(phoneOnly \? "flashcards" : "journal"\)/.test(app));
+
+  const studyMode = readFileSync(new URL("../client/study/StudyMode.tsx", import.meta.url), "utf8");
+  check("StudyMode.tsx now reuses the shared useIsPhone hook instead of its own copy", /import \{ useIsPhone \} from "\.\.\/useIsPhone\.ts"/.test(studyMode) && /const isPhone = useIsPhone\(\);/.test(studyMode));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
