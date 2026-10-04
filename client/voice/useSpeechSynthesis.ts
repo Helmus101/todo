@@ -237,6 +237,20 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
   const unlock = useCallback(() => {
     if (!supported) return;
     try {
+      // Bump genRef FIRST, same discipline as speak()/cancel() above — without this, the raw cancel()
+      // below could trigger a REAL in-flight utterance's onend/onerror (useSpeechSynthesis.ts's own
+      // speakNext closures check genRef, not "did unlock() touch anything") and have it read as still
+      // current, re-entering the speech queue from this unrelated caller. Confirmed live: skipping this
+      // was part of why "turn mic off then back on" could break TTS — unlock()'s own speak()/cancel() pair
+      // was invisible to the generation-counter protocol everything else in this file relies on.
+      genRef.current++;
+      // Also reset queue/speaking state exactly like cancel() does — bumping gen alone invalidates a real
+      // in-flight utterance's callbacks, but nothing else would ever clear its now-orphaned queued
+      // sentences or flip `speaking` back to false if this fires mid-speech (the ON toggle's unlock() call
+      // can land while the OFF toggle's own synth.cancel() effect hasn't run yet — see AskOttoPanel.tsx's
+      // onToggle comment).
+      queueRef.current = [];
+      setSpeaking(false);
       // A non-empty string, not "" — an EMPTY utterance is a known browser trigger for the speech queue
       // getting stuck (no onend ever fires for it), which would silently block every REAL utterance queued
       // after it. Cancel right after speak(): what unlocks the engine is the synchronous speak() CALL

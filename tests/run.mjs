@@ -1897,7 +1897,7 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   // Exactly ONE toggleVoiceMode() call site is allowed: inside the mic button's own onClick (a real user
   // gesture, also where synth.unlock() pre-arms speechSynthesis — see the TTS section below). Anywhere
   // else would mean voice got turned on without the student tapping anything.
-  check("AskOttoPanel has NO voice auto-enable left (toggleVoiceMode() only ever called from the mic button's own click handler)", !/autoVoiceAppliedRef/.test(askOtto) && (askOtto.match(/toggleVoiceMode\(\)/g) || []).length === 1 && /onToggle=\{\(\) => \{ synth\.unlock\(\); toggleVoiceMode\(\); \}\}/.test(askOtto));
+  check("AskOttoPanel has NO voice auto-enable left (toggleVoiceMode() only ever called from the mic button's own click handler)", !/autoVoiceAppliedRef/.test(askOtto) && (askOtto.match(/toggleVoiceMode\(\)/g) || []).length === 1 && /onToggle=\{\(\) => \{ if \(!voiceModeOn\) synth\.unlock\(\); toggleVoiceMode\(\); \}\}/.test(askOtto));
   // Direct request: "make sure when end tutor session board is saved and users can see what was worked on" —
   // ending used to only save a FLATTENED TEXT preview (boardEntries: string[]) of the board, losing any
   // diagram/equation structure; the real board is now saved too and reopenable.
@@ -1947,7 +1947,12 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   // was introduced and caught within this same feature's own first cut.
   check("unlock() never queues an EMPTY-string utterance (a known stuck-queue trigger)", !/new SpeechSynthesisUtterance\(""\)/.test(ttsSynthSrc));
   const askOttoSrcTts = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
-  check("the mic toggle's onClick calls synth.unlock() before toggling voice mode (a real user gesture)", /onToggle=\{\(\) => \{ synth\.unlock\(\); toggleVoiceMode\(\); \}\}/.test(askOttoSrcTts));
+  // Reported live: "TTS breaks specifically when I turn the mic off then back on" — unlock() firing
+  // unconditionally on EVERY toggle (including OFF) meant its own raw speak()/cancel() pair hit the real
+  // engine right as the real synth.cancel() effect (one render tick later) was ALSO cancelling an
+  // in-flight utterance — two uncoordinated callers, the documented Chrome trigger for a subsequent
+  // speak() silently never firing onstart. unlock() only matters before speaking, so only call it on ON.
+  check("the mic toggle only calls synth.unlock() when turning voice mode ON, not on every toggle", /onToggle=\{\(\) => \{ if \(!voiceModeOn\) synth\.unlock\(\); toggleVoiceMode\(\); \}\}/.test(askOttoSrcTts));
   // Voice mode is tap-only now: with no auto-start anywhere, the old "auto-start guarded on SpeechRecognition
   // support" concern (never force-enable Firefox, which has no recognizer) is moot by construction.
   check("voice mode never auto-starts (tap-only everywhere — Firefox stays text-first by construction)", !/recogSupportedRef/.test(askOttoSrc) && !/autoVoiceAppliedRef/.test(askOttoSrc));
@@ -2429,6 +2434,12 @@ check("catches a FR answer announcement", CHAT_STATES_ANSWER.test("La réponse e
 check("catches a FR MCQ conclusion", CHAT_STATES_ANSWER.test("C'est donc l'option B."));
 check("does NOT flag ordinary tutoring text with a number in it", !CHAT_STATES_ANSWER.test("That's the same rule we used on step 3 — try applying it here."));
 check("does NOT flag a focusing question", !CHAT_STATES_ANSWER.test("What do you think happens if you substitute that back in?"));
+// Reported live: a letter+dash+confirmation reveal ("B — yes.") confirmed the correct MCQ option without
+// ever matching the "the answer is"/"it's option X" phrase shapes above — same violation, shorter words.
+check("catches the shorter letter-confirmation reveal shape ('B — yes.')", CHAT_STATES_ANSWER.test("B — yes."));
+check("catches the letter-confirmation shape with a plain hyphen too", CHAT_STATES_ANSWER.test("B - correct."));
+check("catches the FR letter-confirmation reveal shape ('B — exact.')", CHAT_STATES_ANSWER.test("B — exact."));
+check("does NOT flag an ordinary sentence that happens to start with a single letter followed by other text", !CHAT_STATES_ANSWER.test("A good next step here is to substitute back in."));
 
 section("CHAT_CLAIMS_BOARD — catches Otto pointing at a board write that never happened");
 check("catches EN 'on your screen'", CHAT_CLAIMS_BOARD.test("The problem is on your screen now, just above."));
@@ -3773,14 +3784,14 @@ section("Tutor session mastery + objectives summary — surfaced without a fabri
 section("hintDensity preference — new axis, distinct from learningStyle, never licenses a direct answer (source pins)");
 {
   const serverSrcHint = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
-  check("the /api/profile/preference route accepts hintDensity with the right allow-list", /key === "hintDensity" && \["steps", "hints"\]\.includes\(value\)/.test(serverSrcHint));
+  check("the /api/profile/preference route accepts hintDensity with the right allow-list, including the slider's explicit 'balanced' middle position", /key === "hintDensity" && \["steps", "hints", "balanced"\]\.includes\(value\)/.test(serverSrcHint));
   // Real pre-existing bug, fixed alongside this feature: the UI (Settings AND onboarding) has always
   // offered an "AP" track button, but this route's allow-list omitted "ap" — clicking it silently never
   // saved. Caught while wiring hintDensity next to it in the same preference route.
   check("the track preference route now accepts 'ap' (UI has always offered an AP button; this route silently dropped it before)", /key === "track" && \["ib", "ap", "bac", "other"\]\.includes\(value\)/.test(serverSrcHint));
 
   const typesSrcHint = readFileSync(new URL("../shared/types.ts", import.meta.url), "utf8");
-  check("Profile.hintDensity is sanitized through the same allow-list as the write route", /hintDensity: \["steps", "hints"\]\.includes\(p\?\.hintDensity\) \? p\.hintDensity : undefined,/.test(typesSrcHint));
+  check("Profile.hintDensity is sanitized through the same allow-list as the write route", /hintDensity: \["steps", "hints", "balanced"\]\.includes\(p\?\.hintDensity\) \? p\.hintDensity : undefined,/.test(typesSrcHint));
 
   const claudeSrcHint = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
   const hintFn = claudeSrcHint.slice(claudeSrcHint.indexOf("export function hintDensityLine"), claudeSrcHint.indexOf("// \"Stories tuned to her life\""));
@@ -3789,7 +3800,8 @@ section("hintDensity preference — new axis, distinct from learningStyle, never
   check("chatAboutTask's dynamicContext includes hintDensityLine", /learningStyleLine\(profile\) \+ hintDensityLine\(profile\)/.test(claudeSrcHint));
 
   const appSrcHint = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
-  check("Settings has a hint-density toggle row, distinct from the learningStyle VARK field", /saveHintDensity\("steps"\)/.test(appSrcHint) && /saveHintDensity\("hints"\)/.test(appSrcHint));
+  check("Settings has a hint-density 3-position slider, distinct from the learningStyle VARK field", /hint-density-slider/.test(appSrcHint) && /type="range" min=\{0\} max=\{2\} step=\{1\}/.test(appSrcHint));
+  check("the slider's 3 stops map to hints/balanced/steps in that order", /const HINT_DENSITY_POSITIONS: \("hints" \| "balanced" \| "steps"\)\[\] = \["hints", "balanced", "steps"\];/.test(appSrcHint));
 }
 
 section("Tutor reply length — tightened the existing SHORT REPLIES trigger (source pin)");
@@ -3872,6 +3884,29 @@ section("TTS 'stops working at random times' — Chrome's ~15s stall bug (keepal
   check("the keepalive ping is scoped to while speaking is true, not a permanent global timer", /if \(!supported \|\| !speaking\) return;/.test(ttsSrcStall));
   check("the watchdog now has a hard time ceiling instead of rescheduling on 'speaking: true' forever", /const WATCHDOG_CEILING_MS = 15_000;/.test(ttsSrcStall) && /watchdogMs < WATCHDOG_CEILING_MS/.test(ttsSrcStall));
   check("hitting the ceiling forces a real engine reset (cancel) before recovering, not just an internal skip", /try \{ window\.speechSynthesis\.cancel\(\); \} catch/.test(ttsSrcStall));
+}
+
+section("TTS 'breaks on mic off then back on' — unlock() now follows the genRef protocol too (source pins)");
+{
+  // Root cause: unlock()'s own raw window.speechSynthesis.speak()/cancel() pair bypassed the genRef
+  // generation-counter protocol everything else in this file uses — its cancel() could trigger a REAL
+  // in-flight utterance's onend/onerror and have it misread as still current, re-entering the speech
+  // queue from an unrelated caller, right as the mic-off effect was also cancelling the same utterance.
+  const ttsSrcUnlock = readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8");
+  const unlockFn = ttsSrcUnlock.slice(ttsSrcUnlock.indexOf("const unlock = useCallback"), ttsSrcUnlock.indexOf("const unlock = useCallback") + 1400);
+  check("unlock() bumps genRef before touching the engine, invalidating any real in-flight utterance's stale callbacks", /genRef\.current\+\+;/.test(unlockFn));
+  check("unlock() also resets the queue and speaking state, like cancel() does, in case it interrupted a real utterance", /queueRef\.current = \[\];/.test(unlockFn) && /setSpeaking\(false\);/.test(unlockFn));
+}
+
+section("MCQ-dodge no longer licenses an answer reveal (source pins — reported live, 'B — yes.'/'Yes — (0, 4]')");
+{
+  // Reported live: a student repeatedly tried to skip/dodge an active MCQ practice problem ("move on to
+  // another one", "it's good", vague non-answers) and the tutor eventually resolved it FOR them anyway —
+  // neither the HINT LADDER's (c)/(d) exceptions nor canvas mode had any rule against treating "wrap up
+  // the loose end before switching" as valid license to reveal.
+  const claudeSrcDodge = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("the HINT LADDER exception list now has a negative case (e) for evasion, distinct from (c)/(d)", /\(e\) they're trying to skip\/change ` \+\s*\n\s*`the subject WITHOUT a genuine attempt/.test(claudeSrcDodge) || claudeSrcDodge.includes("(e) they're trying to skip/change"));
+  check("canvas mode explicitly says to let a dodged MCQ go unanswered rather than resolving it for them", claudeSrcDodge.includes("IF THEY TRY TO SKIP/MOVE ON WITHOUT A GENUINE ATTEMPT"));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

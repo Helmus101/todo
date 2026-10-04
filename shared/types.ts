@@ -285,15 +285,18 @@ export interface Profile {
    *  is strong). It may only select the FORM an explanation takes — e.g. diagram-first vs. a worked example
    *  vs. reading-first — never the substance or the level. No consumer reads this yet (groundwork). */
   learningStyle?: "visual" | "auditory" | "reading" | "kinesthetic" | "mixed";
-  /** How much scaffolding the tutor gives when the student is stuck, student-selectable in Settings —
-   *  a DIFFERENT axis from `learningStyle` above (that's presentation/FORM; this is PACING/how much the
-   *  tutor walks through vs. just nudges). "steps" = walk through the reasoning step by step before
-   *  handing it back for the next move; "hints" = a single pointed hint, then hand it straight back.
-   *  Undefined = Otto's own judgment call per the hint ladder (server/claude.ts), same as today. NEITHER
-   *  value ever changes whether the tutor gives the direct answer — that's enforced unconditionally
+  /** How much scaffolding the tutor gives when the student is stuck, student-selectable in Settings as a
+   *  3-position slider/bar — a DIFFERENT axis from `learningStyle` above (that's presentation/FORM; this
+   *  is PACING/how much the tutor walks through vs. just nudges). "steps" = walk through the reasoning
+   *  step by step before handing it back for the next move; "hints" = a single pointed hint, then hand it
+   *  straight back; "balanced" (the slider's middle/default position) = Otto's own judgment call per the
+   *  hint ladder (server/claude.ts), same as before this preference existed — an explicit value, not just
+   *  "unset," so the slider always has a definite position to render even for a brand-new account.
+   *  Undefined behaves identically to "balanced" (hintDensityLine returns "" for both). NEITHER "steps"
+   *  nor "hints" ever changes whether the tutor gives the direct answer — that's enforced unconditionally
    *  elsewhere (the HINT LADDER's "never release the final answer outright" rule) and is not configurable
    *  by this preference; it only adjusts HOW MUCH is shown on the way there. */
-  hintDensity?: "steps" | "hints";
+  hintDensity?: "steps" | "hints" | "balanced";
   /** Aggregated face tracking concentration and focus telemetry statistics over past study sessions. */
   focusStats?: {
     totalTrackedSessions: number;
@@ -497,7 +500,7 @@ export function normalizeProfile(p: any): Profile {
     track: ["ib", "ap", "bac", "other"].includes(p?.track) ? p.track : undefined,
     yearLevel: typeof p?.yearLevel === "string" ? p.yearLevel.trim().slice(0, 40) || undefined : undefined,
     learningStyle: ["visual", "auditory", "reading", "kinesthetic", "mixed"].includes(p?.learningStyle) ? p.learningStyle : undefined,
-    hintDensity: ["steps", "hints"].includes(p?.hintDensity) ? p.hintDensity : undefined,
+    hintDensity: ["steps", "hints", "balanced"].includes(p?.hintDensity) ? p.hintDensity : undefined,
     focusStats: p?.focusStats && typeof p.focusStats === "object" ? {
       totalTrackedSessions: Number(p.focusStats.totalTrackedSessions) || 0,
       avgConcentration: Math.min(100, Math.max(0, Number(p.focusStats.avgConcentration) || 0)),

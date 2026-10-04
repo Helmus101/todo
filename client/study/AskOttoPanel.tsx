@@ -381,7 +381,14 @@ export function AskOttoPanel({
           listening={recog.listening}
           speaking={synth.speaking}
           interimTranscript={recog.interimTranscript}
-          onToggle={() => { synth.unlock(); toggleVoiceMode(); }}
+          // unlock() only matters before the FIRST speak() of a session unlocks autoplay — calling it again
+          // on every OFF click too (previously unconditional) meant it fired its own raw
+          // speak()/cancel() pair on the real engine at the exact moment the real synth.cancel() effect
+          // (keyed on voiceModeOn, one render tick later) was ALSO about to cancel a real in-flight
+          // utterance — two uncoordinated callers hitting speechSynthesis back to back, the documented
+          // Chrome trigger for a subsequent speak() silently never firing onstart. Reported live as "TTS
+          // breaks specifically when I turn the mic off then back on." Only unlock on the ON transition.
+          onToggle={() => { if (!voiceModeOn) synth.unlock(); toggleVoiceMode(); }}
           en={en}
         />
         <button className="sm-btn sm-btn-primary" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending || !input.trim()}>

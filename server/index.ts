@@ -3095,7 +3095,7 @@ app.post("/api/profile/preference", requireAuth, async (req, res) => {
       // Fully wired for a while on the READ side (learningStyleLine, claude.ts) but had no write path at
       // all until now — a student could never actually set it, so the field sat permanently empty.
       p.learningStyle = value; p.preferencesUpdatedAt = new Date().toISOString();
-    } else if (key === "hintDensity" && ["steps", "hints"].includes(value)) {
+    } else if (key === "hintDensity" && ["steps", "hints", "balanced"].includes(value)) {
       p.hintDensity = value; p.preferencesUpdatedAt = new Date().toISOString();
     } else if (key === "yearLevel" && typeof value === "string" && value.trim()) {
       p.yearLevel = value.trim().slice(0, 40); p.preferencesUpdatedAt = new Date().toISOString();

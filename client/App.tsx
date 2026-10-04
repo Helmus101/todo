@@ -1836,9 +1836,13 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
   // Hint density — a DIFFERENT axis from learningStyle (VARK, presentation-only): this is how much the
   // tutor walks through vs. just nudges when the student is stuck. Never changes whether the direct
   // answer is given (that's unconditionally never, server-side) — only how much scaffolding leads there.
-  const [hintDensity, setHintDensityState] = useState<"steps" | "hints" | undefined>(profile?.hintDensity);
+  // A 3-position slider/bar, not two separate toggle buttons — "hints" (0) ↔ "balanced" (1, default) ↔
+  // "steps" (2). "balanced" is an explicit value (not just unset) so the slider always has a definite
+  // position to render, including for a brand-new account that's never touched this preference.
+  const HINT_DENSITY_POSITIONS: ("hints" | "balanced" | "steps")[] = ["hints", "balanced", "steps"];
+  const [hintDensity, setHintDensityState] = useState<"steps" | "hints" | "balanced" | undefined>(profile?.hintDensity);
   useEffect(() => { setHintDensityState(profile?.hintDensity); }, [profile?.hintDensity]);
-  const saveHintDensity = async (v: "steps" | "hints") => {
+  const saveHintDensity = async (v: "steps" | "hints" | "balanced") => {
     const prev = hintDensity;
     setHintDensityState(v);
     try { onChanged?.(await api.setProfilePreference("hintDensity", v)); }
@@ -1873,10 +1877,19 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
         </div>
       </div>
       <div className="set-row">
-        <span className="set-text"><b>{L("Style d'accompagnement", "Learning style")}</b><span className="settings-hint">{L("Quand tu bloques : Otto t'accompagne pas à pas, ou te donne juste un indice et te laisse continuer. Il ne te donnera jamais directement la réponse, quel que soit ton choix.", "When you're stuck: Otto walks through it with you step by step, or just gives a hint and hands it back to you. Either way, it never just gives you the direct answer.")}</span></span>
-        <div className="lang-toggle">
-          <button type="button" className={`btn xs ${hintDensity === "steps" ? "" : "ghost"}`} aria-pressed={hintDensity === "steps"} onClick={() => void saveHintDensity("steps")}>{L("Pas à pas", "All the steps")}</button>
-          <button type="button" className={`btn xs ${hintDensity === "hints" ? "" : "ghost"}`} aria-pressed={hintDensity === "hints"} onClick={() => void saveHintDensity("hints")}>{L("Juste un indice", "Just a hint")}</button>
+        <span className="set-text"><b>{L("Style d'accompagnement", "Learning style")}</b><span className="settings-hint">{L("Quand tu bloques : Otto te donne juste un indice, t'accompagne pas à pas, ou juge lui-même selon la situation. Il ne te donnera jamais directement la réponse, quel que soit ton choix.", "When you're stuck: Otto gives just a hint, walks through it step by step, or judges it case by case. Either way, it never just gives you the direct answer.")}</span></span>
+        <div className="hint-density-slider">
+          <input
+            type="range" min={0} max={2} step={1}
+            value={HINT_DENSITY_POSITIONS.indexOf(hintDensity || "balanced")}
+            onChange={(e) => void saveHintDensity(HINT_DENSITY_POSITIONS[Number(e.target.value)])}
+            aria-label={L("Style d'accompagnement", "Learning style")}
+          />
+          <div className="hint-density-slider-labels">
+            <span className={hintDensity === "hints" ? "active" : ""}>{L("Juste un indice", "Just a hint")}</span>
+            <span className={!hintDensity || hintDensity === "balanced" ? "active" : ""}>{L("Équilibré", "Balanced")}</span>
+            <span className={hintDensity === "steps" ? "active" : ""}>{L("Pas à pas", "All the steps")}</span>
+          </div>
         </div>
       </div>
       <label className="set-row">
