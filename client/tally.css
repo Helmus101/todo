@@ -694,10 +694,11 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
 }
 .step-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 
-/* Chat (Otto assistant) */
+/* Chat (Otto assistant) — color is owned by styles.css's .chat-user/.chat-assistant (the blue-bubble
+   redesign); this file used to also set color here from an older plain-text design, and since this
+   stylesheet loads AFTER styles.css (see main.tsx), its var(--ink-2) silently overrode styles.css's
+   `color: #fff` on every user bubble — grey text on a blue background, reported live. */
 .chat-msg { font-size: 14.5px; line-height: 1.55; }
-.chat-user { color: var(--ink-2); }
-.chat-assistant { color: var(--ink); }
 .chat-input {
   background: #FFFFFF;
   border: 1px solid var(--line);

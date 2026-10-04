@@ -4049,6 +4049,15 @@ section("Chat bubble color — user bubble uses fixed saturated blue tokens, not
   check(".sm-ai-msg-user (Study Mode's Ask Otto chat) uses --chat-user-bg, not --accent", /\.sm-ai-msg-user\s*\{[^}]*--chat-user-bg/s.test(css));
   const darkBlock = css.slice(css.indexOf("@media (prefers-color-scheme: dark)"), css.indexOf("@media (prefers-color-scheme: dark)") + 1200);
   check("--chat-user-bg is NOT redefined inside the dark-mode block (must stay fixed, unlike --accent)", !darkBlock.includes("--chat-user-bg"));
+  // The actual root cause (confirmed live, reproduced by diffing the built CSS): client/tally.css loads
+  // AFTER client/styles.css (see main.tsx's import order) and had its OWN leftover `.chat-user { color:
+  // var(--ink-2) }` rule from an older plain-text chat design — same selector, later in the cascade, so it
+  // silently won and overrode styles.css's `color: #fff`, independent of light/dark mode or the bubble
+  // background fix above. Changing only the background (as the first pass at this bug did) was not enough.
+  const tally = readFileSync(new URL("../client/tally.css", import.meta.url), "utf8");
+  check("tally.css no longer overrides .chat-user's text color (that stale rule was the actual bug)", !/\.chat-user\s*\{[^}]*color/.test(tally));
+  const mainTs = readFileSync(new URL("../client/main.tsx", import.meta.url), "utf8");
+  check("tally.css still loads after styles.css (so this regression can recur if a color rule is re-added there)", mainTs.indexOf('"./styles.css"') < mainTs.indexOf('"./tally.css"'));
 }
 
 section("Phone restriction — iPhone-sized screens are limited to flashcard review, iPad is untouched (source pins)");
