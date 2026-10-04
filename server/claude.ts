@@ -1658,9 +1658,14 @@ export function pcmToWav(pcm: Buffer, sampleRate: number, channels = 1, bitsPerS
   return Buffer.concat([header, pcm]);
 }
 /** Synthesize `text` to a playable WAV. Never throws; no retry (the client's fallback is faster than one). */
-export async function synthesizeSpeech(text: string): Promise<{ wav: Buffer } | { error: string; status: number }> {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) return { error: "TTS not configured", status: 501 };
+// Statuses worth one quick retry before giving up on Gemini and moving to the next tier: 429 (the small
+// preview-model quota resetting within seconds), and 500/503 (a transient upstream blip) — never 4xx like
+// 400/401/404, which a retry can't fix. Direct request ("make sure gemini always works"): most Gemini TTS
+// failures reported live have been exactly this kind of short-lived hiccup, not a real outage.
+const GEMINI_TTS_RETRY_STATUSES = new Set([429, 500, 503]);
+const GEMINI_TTS_RETRY_DELAY_MS = 1200;
+
+async function callGeminiTts(text: string, key: string): Promise<{ wav: Buffer } | { error: string; status: number }> {
   try {
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent`, {
       method: "POST",
@@ -1689,6 +1694,15 @@ export async function synthesizeSpeech(text: string): Promise<{ wav: Buffer } | 
   } catch (e: any) {
     return { error: `Gemini TTS request failed: ${e?.message || e}`, status: 504 };
   }
+}
+
+export async function synthesizeSpeech(text: string): Promise<{ wav: Buffer } | { error: string; status: number }> {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return { error: "TTS not configured", status: 501 };
+  const first = await callGeminiTts(text, key);
+  if (!("error" in first) || !GEMINI_TTS_RETRY_STATUSES.has(first.status)) return first;
+  await new Promise((resolve) => setTimeout(resolve, GEMINI_TTS_RETRY_DELAY_MS));
+  return callGeminiTts(text, key);
 }
 
 // ── Second TTS tier (StreamElements) ─────────────────────────────────────────────────────────────────────

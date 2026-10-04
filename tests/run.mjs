@@ -1933,18 +1933,16 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   // with the browser engine as an automatic fallback on ANY cloud failure. The old vendor failures (CSRF,
   // CSP, race) are each pinned elsewhere; here, pin that a cloud failure can never mean silence.
   check("the cloud voice goes through api.ttsAudio (CSRF-safe req(), never a bare fetch)", /api\.ttsAudio\(/.test(ttsSynthSrc) && !/fetch\("\/api\/tts"/.test(ttsSynthSrc));
-  check("a cloud fetch OR playback failure falls through to the browser voice for the rest of the reply", (ttsSynthSrc.match(/noteCloudFailure\(e\); speakWithBrowser\(gen, chunks\.slice\(i\)\);/g) || []).length === 2);
-  check("a slow cloud voice times out and falls back instead of leaving the student waiting", /AbortSignal\.timeout\(CLOUD_FETCH_TIMEOUT_MS\)/.test(ttsSynthSrc));
-  check("an unconfigured (501) or repeatedly failing (non-quota) cloud voice is skipped for the rest of the session", /if \(status === 501 \|\| cloudFailsRef\.current >= 2\) \{\s*\n\s*cloudOffRef\.current = true;/.test(ttsSynthSrc));
-  // Reported live: Gemini's TTS preview model hit its per-minute quota during an ordinary tutoring
-  // conversation. A 429 is quota, not an outage — it resets shortly, so it gets a short, doubling backoff
-  // (not the permanent-for-the-session disable other failures get), and the chunking now sends as FEW
-  // requests as possible per reply (was 2 per reply: first sentence alone, then the rest) to burn quota
-  // more slowly in the first place.
-  check("a 429 gets a short, doubling backoff instead of permanently disabling the cloud voice", /if \(status === 429\) \{/.test(ttsSynthSrc) && /cloudBackoffMsRef\.current \* 2, 120_000\)/.test(ttsSynthSrc));
-  check("the cloud voice isn't retried again until the backoff window has actually passed", /Date\.now\(\) >= cloudBackoffUntilRef\.current/.test(ttsSynthSrc));
-  check("a real success resets both the failure count and the backoff duration", /cloudFailsRef\.current = 0; cloudBackoffMsRef\.current = 15_000;/.test(ttsSynthSrc));
-  check("the browser fallback still speaks via speechSynthesis", /engine\.speak\(utter\)/.test(ttsSynthSrc) && !/speakViaFreeTTS/.test(ttsSynthSrc));
+  check("a slow cloud voice times out rather than leaving the student waiting forever", /AbortSignal\.timeout\(CLOUD_FETCH_TIMEOUT_MS\)/.test(ttsSynthSrc));
+  // Direct request: "dont ever revert to browser" — a failed cloud fetch/playback must NEVER fall through
+  // to speechSynthesis (the whole three-tier server chain already tried Gemini, StreamElements, and Google
+  // Translate by the time this throws). One quick client-side retry absorbs a transient blip; past that,
+  // the reply's audio is silently skipped (lastDiagnostic set) rather than switching voices mid-session.
+  check("a cloud chunk gets exactly one quick retry before being given up on", /CLOUD_RETRY_DELAY_MS/.test(ttsSynthSrc) && /await sleep\(CLOUD_RETRY_DELAY_MS\)/.test(ttsSynthSrc));
+  check("a cloud fetch failure never falls through to the browser voice — it's skipped silently instead", !/noteCloudFailure/.test(ttsSynthSrc) && !/speakWithBrowser\(gen, chunks/.test(ttsSynthSrc) && /skipping this reply's audio \(never the browser voice\)/.test(ttsSynthSrc));
+  check("a cloud playback failure is also skipped silently, never the browser voice", /playback-failed/.test(ttsSynthSrc));
+  check("speak() only ever uses the browser voice when there's literally no <audio> element to play cloud audio with", /const useCloud = audioSupported;/.test(ttsSynthSrc));
+  check("the browser fallback (the no-<audio>-support edge case) still speaks via speechSynthesis", /engine\.speak\(utter\)/.test(ttsSynthSrc) && !/speakViaFreeTTS/.test(ttsSynthSrc));
   check("every TTS failure path leaves a diagnostic the UI can show, not just silence", /lastDiagnostic/.test(ttsSynthSrc) && /setLastDiagnostic/.test(ttsSynthSrc));
   // The very FIRST speak() of a session can get silently blocked by a browser's autoplay/gesture policy
   // since Otto's replies always arrive async (a network round trip), never inside the click that triggered
@@ -3938,6 +3936,16 @@ section("Gemini voice — WAV wrapping + fluid chunking (unit tests)");
   const chunks = cloudChunks(long);
   check("only a genuinely long reply splits at all, into ~1800-char chunks, nothing lost", chunks.every((c) => c.length <= 1800) && chunks.join(" ") === long.join(" "));
   check("a long reply still splits into FEWER, bigger chunks than one-per-sentence would", chunks.length < long.length);
+}
+
+section("Gemini TTS gets one quick retry on a transient failure before falling to the next tier (source pins)");
+{
+  // Direct request: "make sure gemini always works" — most live Gemini TTS failures have been transient
+  // (429 quota, or a momentary 500/503), not real outages, so one quick retry absorbs them before this tier
+  // is counted as failed and the route moves on to StreamElements/Google Translate.
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("429/500/503 are retried once (never a real 4xx like 400/401/404, which a retry can't fix)", /GEMINI_TTS_RETRY_STATUSES = new Set\(\[429, 500, 503\]\)/.test(claude));
+  check("synthesizeSpeech actually retries via callGeminiTts before giving up", /const first = await callGeminiTts\(text, key\);/.test(claude) && /return callGeminiTts\(text, key\);/.test(claude));
 }
 
 section("Answers are NEVER revealed — chat prompt and every practice-problem surface (source pins)");

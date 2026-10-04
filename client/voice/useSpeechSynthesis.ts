@@ -100,26 +100,26 @@ export interface UseSpeechSynthesis {
 
 type QueueItem = { text: string; retried: boolean };
 
-const CLOUD_FETCH_TIMEOUT_MS = 8000;    // slower than this → speak with the browser voice instead
+const CLOUD_FETCH_TIMEOUT_MS = 8000;    // slower than this → treat the attempt as failed
+const CLOUD_RETRY_DELAY_MS = 1200;      // one quick retry on a transient blip before giving up on a chunk
 const START_TIMEOUT_MS = 4000;          // browser engine: a chunk that never starts is treated as dropped
 const runTimeoutMs = (text: string) => Math.max(8000, text.length * 110); // ceiling for one chunk once playing
 
-/** The tutor's voice, via one endpoint (/api/tts) that itself tries two free, keyless providers server-
- *  side — Gemini's neural voice first, then Amazon Polly (via StreamElements) if Gemini's small preview-
- *  model quota is hit (server/claude.ts's synthesizeSpeech/synthesizeSpeechFallback). Direct request: the
- *  browser's own speechSynthesis is never the primary experience — it only speaks if BOTH of those fail,
- *  time out, or the whole request is blocked from playing, which should be rare now that there are two
- *  independent cloud tiers instead of one.
+/** The tutor's voice, via one endpoint (/api/tts) that itself tries three free, keyless providers server-
+ *  side — Gemini's neural voice first, then Amazon Polly (via StreamElements), then Google Translate's TTS
+ *  endpoint (server/claude.ts's synthesizeSpeech/synthesizeSpeechFallback/synthesizeSpeechGoogleTranslate).
+ *  Direct, explicit request: the browser's own speechSynthesis must NEVER be used as a silent substitute for
+ *  a failed cloud voice — "the voice is terrible" was the whole reason the three-tier cloud chain exists.
+ *  The ONE exception is a browser that has no <audio> element at all (ancient/unusual — `audioSupported`
+ *  false): there is then no way to play cloud audio of any kind, so speechSynthesis is the only voice this
+ *  code could possibly produce, not a quality trade-off.
  *
  *  Invariants:
  *  - `speaking` can never get stuck true: every chunk ends via an end event, an error, or a timeout.
- *  - Speech never silently disappears: a cloud failure falls through to the browser voice for the rest of
- *    the reply; a browser chunk that fails is retried once with another voice; only a failure of BOTH is
- *    surfaced (lastDiagnostic).
+ *  - A failed cloud request gets ONE quick retry (transient network blips happen); if that also fails,
+ *    the reply is silently skipped (lastDiagnostic set) rather than ever switching to the browser voice.
  *  - Stale work can't touch a newer reply: every speak()/cancel() bumps `genRef`, and every async step
- *    re-checks the generation it started with before doing anything.
- *  - A cloud voice that's down/unconfigured is skipped for the rest of the page session, so a dead service
- *    doesn't add a fetch delay before every reply. */
+ *    re-checks the generation it started with before doing anything. */
 export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
   const synthSupported = typeof window !== "undefined" && "speechSynthesis" in window && typeof window.SpeechSynthesisUtterance !== "undefined";
   const audioSupported = typeof window !== "undefined" && typeof window.Audio !== "undefined";
@@ -134,10 +134,6 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const stopPlaybackRef = useRef<(() => void) | null>(null);
   const urlsRef = useRef<string[]>([]);
-  const cloudOffRef = useRef(false);     // permanent for this page session (not configured / repeated non-quota failures)
-  const cloudBackoffUntilRef = useRef(0); // temporary — a 429 is quota, which resets on its own shortly
-  const cloudFailsRef = useRef(0);
-  const cloudBackoffMsRef = useRef(15_000);
   const langRef = useRef(lang);
   langRef.current = lang;
 
@@ -231,32 +227,10 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
     speakNext(gen);
   }, [synthSupported, speakNext]);
 
-  // ── Cloud voice (Gemini) ─────────────────────────────────────────────────────────────────────────────
-  // Reported live: Gemini's TTS preview model has a small per-minute quota, hit during an ordinary back-
-  // and-forth tutoring session. A 429 is quota, not an outage — it resets shortly, so it gets a short,
-  // doubling backoff (15s, 30s, 60s, capped at 2min) instead of the permanent-for-the-session disable
-  // other failures get. A genuinely dead/misconfigured service (501, or 2 NON-quota failures in a row)
-  // still disables permanently so every later reply doesn't pay a fetch delay for nothing.
-  const noteCloudFailure = (err: any) => {
-    const status = err?.status;
-    if (status === 429) {
-      cloudBackoffUntilRef.current = Date.now() + cloudBackoffMsRef.current;
-      cloudBackoffMsRef.current = Math.min(cloudBackoffMsRef.current * 2, 120_000);
-      console.warn(`[tts] cloud voice rate-limited (429) — using the browser voice for ${Math.round(cloudBackoffMsRef.current / 2000)}s, then retrying the cloud voice`);
-      return;
-    }
-    cloudFailsRef.current++;
-    // 501 = not configured on this deployment; two non-quota failures in a row = something's actually
-    // broken, not just a transient blip. Either way stop trying for this page session.
-    if (status === 501 || cloudFailsRef.current >= 2) {
-      cloudOffRef.current = true;
-      console.warn(`[tts] cloud voice failed (${err?.name === "TimeoutError" || err?.name === "AbortError" ? "timeout" : status ?? err?.message ?? "error"}) — using the browser voice for the rest of this session`);
-    } else {
-      console.warn(`[tts] cloud voice failed (${status ?? err?.message ?? "error"}) — using the browser voice for this reply`);
-    }
-  };
+  // ── Cloud voice (Gemini → StreamElements → Google Translate, all server-side) ───────────────────────────
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  const fetchChunk = async (text: string): Promise<string> => {
+  const fetchChunkOnce = async (text: string): Promise<string> => {
     const r = await api.ttsAudio(text, langRef.current.slice(0, 2), AbortSignal.timeout(CLOUD_FETCH_TIMEOUT_MS));
     if (!r.ok) { const e: any = new Error(`tts ${r.status}`); e.status = r.status; throw e; }
     const blob = await r.blob();
@@ -264,6 +238,19 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
     const url = URL.createObjectURL(blob);
     urlsRef.current.push(url);
     return url;
+  };
+
+  // One quick retry on a transient failure (dropped connection, momentary 429/502) before giving up on this
+  // chunk — the server has already tried three providers internally by the time this throws, so a second
+  // failure in a row means something's genuinely down for this request, not worth a longer retry loop.
+  const fetchChunk = async (text: string, gen: number): Promise<string> => {
+    try { return await fetchChunkOnce(text); }
+    catch (e) {
+      console.warn(`[tts] cloud voice request failed, retrying once: ${(e as any)?.status ?? (e as any)?.message ?? e}`);
+      await sleep(CLOUD_RETRY_DELAY_MS);
+      if (genRef.current !== gen) throw e;
+      return fetchChunkOnce(text);
+    }
   };
 
   const playUrl = (url: string, text: string): Promise<void> => new Promise((resolve, reject) => {
@@ -290,21 +277,35 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
     // Almost always ONE chunk now (see cloudChunks — fewer requests = less quota burn); fetched up front
     // so a multi-chunk reply's later chunks download while the first one plays.
     const chunks = cloudChunks(sentences);
-    const pending = chunks.map((c) => fetchChunk(c));
+    const pending = chunks.map((c) => fetchChunk(c, gen));
     pending.forEach((p) => p.catch(() => { /* handled in order below */ }));
     for (let i = 0; i < chunks.length; i++) {
       let url: string;
       try { url = await pending[i]; }
-      catch (e) { if (genRef.current !== gen) return; noteCloudFailure(e); speakWithBrowser(gen, chunks.slice(i)); return; }
+      catch (e) {
+        if (genRef.current !== gen) return;
+        console.warn(`[tts] cloud voice failed twice — skipping this reply's audio (never the browser voice): ${(e as any)?.status ?? (e as any)?.message ?? e}`);
+        failedEverywhere("cloud-unavailable");
+        releaseUrls();
+        setSpeaking(false);
+        return;
+      }
       if (genRef.current !== gen) return;
-      try { await playUrl(url, chunks[i]); cloudFailsRef.current = 0; cloudBackoffMsRef.current = 15_000; }
-      catch (e) { if (genRef.current !== gen) return; noteCloudFailure(e); speakWithBrowser(gen, chunks.slice(i)); return; }
+      try { await playUrl(url, chunks[i]); }
+      catch (e) {
+        if (genRef.current !== gen) return;
+        console.warn(`[tts] cloud audio failed to play — skipping this reply's audio (never the browser voice): ${(e as any)?.message ?? e}`);
+        failedEverywhere("playback-failed");
+        releaseUrls();
+        setSpeaking(false);
+        return;
+      }
       if (genRef.current !== gen) return;
     }
     releaseUrls();
     setSpeaking(false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [speakWithBrowser]);
+  }, []);
 
   // ── Public API ───────────────────────────────────────────────────────────────────────────────────────
   const speak = useCallback((text: string) => {
@@ -320,8 +321,12 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
     releaseUrls();
     setLastDiagnostic(null);
     setSpeaking(true);
-    const useCloud = audioSupported && !cloudOffRef.current && Date.now() >= cloudBackoffUntilRef.current;
-    console.info(`[tts] speaking ${sentences.length} sentence(s) via ${useCloud ? "Gemini voice" : "browser voice"}`);
+    // Cloud voice whenever an <audio> element exists at all — the ONLY case that falls to the browser's own
+    // voice is a browser with no <audio> support, where no cloud audio could ever play regardless of the
+    // three-tier server chain's success. See this file's top-of-hook comment for why a cloud FAILURE never
+    // falls through to the browser voice (that's handled inside speakWithCloud instead, as a silent skip).
+    const useCloud = audioSupported;
+    console.info(`[tts] speaking ${sentences.length} sentence(s) via ${useCloud ? "cloud voice" : "browser voice (no <audio> support)"}`);
     if (useCloud) void speakWithCloud(gen, sentences);
     else speakWithBrowser(gen, sentences);
   // eslint-disable-next-line react-hooks/exhaustive-deps
