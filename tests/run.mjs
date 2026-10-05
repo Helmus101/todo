@@ -1,6 +1,6 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
-import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor } from "../server/tasks.ts";
+import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor, attachLocationLinks, googleMapsDirectionsUrl } from "../server/tasks.ts";
 import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem, detectLang, visionReady, describeWhiteboard, academicBlock, sessionRecapLine } from "../server/claude.ts";
 import { evaluateArithmetic, parseNumber, findArithmeticClaims, hasArithmetic } from "../server/arithmetic.ts";
 import { isLikelyEcho, createEchoFilter, normalizeForEcho } from "../client/voice/echoGuard.ts";
@@ -521,6 +521,33 @@ const allDayEvs = calendarToItems({ items: [
 ] }, NOW);
 check("today's all-day event survives past UTC midnight", allDayEvs.some((e) => e.externalId === "allday1"));
 check("a genuinely past all-day event is still dropped", !allDayEvs.some((e) => e.externalId === "alldayOld"));
+
+// Direct request: "it should already prep a google maps link" for a task like "Check route to 70 rue du
+// Théâtre, Paris 75015" — a Calendar event's own `location` field is a real, structured address, so this
+// reads it directly instead of asking the AI classifier to transcribe an address out of free text (a wrong
+// address in a maps link actively sends the student to the wrong place).
+const withLocation = calendarToItems({ items: [
+  { id: "appt1", summary: "Dentist", start: { dateTime: "2026-07-19T15:00:00Z" }, location: "70 rue du Théâtre, Paris 75015" },
+  { id: "appt2", summary: "No address", start: { dateTime: "2026-07-19T16:00:00Z" } },
+] }, NOW);
+check("calendarToItems carries the event's own location field", withLocation.find((e) => e.externalId === "appt1")?.location === "70 rue du Théâtre, Paris 75015");
+check("an event with no location field gets none", withLocation.find((e) => e.externalId === "appt2")?.location === undefined);
+
+section("attachLocationLinks — a Calendar event's address gets a Google Maps link, deterministically");
+{
+  check("googleMapsDirectionsUrl builds a real, correctly-encoded Google Maps directions URL", googleMapsDirectionsUrl("70 rue du Théâtre, Paris 75015") === "https://www.google.com/maps/dir/?api=1&destination=70%20rue%20du%20Th%C3%A9%C3%A2tre%2C%20Paris%2075015");
+  const mkTask = (anchorKey, links) => ({ id: anchorKey, title: "t", why: "w", source: "calendar", risk: "low", urgency: 0.5, importance: 0.5, quadrant: "do", score: 0.5, status: "ready", createdAt: "now", anchorKey, links });
+  const t1 = mkTask("calendar:appt1", []);
+  attachLocationLinks([t1], [{ anchorKey: "calendar:appt1", location: "70 rue du Théâtre, Paris 75015" }]);
+  check("a task matching the event's anchorKey gets the maps link attached", t1.links.some((l) => l.url.includes("google.com/maps/dir") && l.url.includes("70%20rue")));
+  const t2 = mkTask("calendar:appt2", []);
+  attachLocationLinks([t2], [{ anchorKey: "calendar:appt2" }]);
+  check("a task whose source item has no location gets nothing added", t2.links.length === 0);
+  const t3 = mkTask("calendar:appt3", [{ label: "Open", url: "https://www.google.com/maps/dir/?api=1&destination=existing" }]);
+  attachLocationLinks([t3], [{ anchorKey: "calendar:appt3", location: "a different address" }]);
+  check("idempotent — a task that already has a maps link doesn't get a second one", t3.links.length === 1);
+  check("the label is the generic 'Open' so the client's own linkKind relabels it as Directions/Itinéraire from the URL", t1.links.find((l) => l.url.includes("maps")).label === "Open");
+}
 const thread = (labels, ts) => ({ sourceApp: "gmail", externalId: "t1", anchorKey: "gmail:t1", title: "Budget question", snippet: "…", sender: "a@b.com", timestamp: ts, labels });
 const replied = dedupeByThread([thread(["inbox"], "2026-07-18T10:00:00Z"), thread(["sent"], "2026-07-18T14:00:00Z")]);
 check("user's newer reply wins (thread handled)", replied.length === 1 && replied[0].labels.includes("sent"));
