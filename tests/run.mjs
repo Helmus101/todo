@@ -4347,5 +4347,19 @@ section("HINT LADDER — a conceptual carryover between parts must be asked, not
   check("it gives the question to ask instead of the assertion to avoid", claude.includes('does μ depend on the angle, or on') && claude.includes('"μ came out') && claude.includes("the surfaces haven't changed, so μ is still tan 20° at 25°"));
 }
 
+section("WRITE_TO_BOARD must not get ahead of the chat — only record a step once the student has actually reached it (source pin)");
+{
+  // Reported live: "it just derived the forces automatically, it should ask user to do it normally" — the
+  // board already showed the finished net-force expression ('F_net down slope = mg sin25 - mg cos25 *
+  // tan20') while the chat was still walking the student through deriving exactly that, piece by piece.
+  // leaksAnyProblemAnswer doesn't catch this: there's no CREATE_PROBLEM answer being leaked, just the
+  // board racing ahead of the Socratic pacing on a live derivation with no stored "answer" to check against
+  // — this needed its own explicit rule on the tool itself, distinct from the answer-leak guard.
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("WRITE_TO_BOARD's own description forbids writing a later step before the student reaches it", claude.includes("NEVER GET AHEAD OF THE CHAT") && claude.includes("never a later step of the SAME derivation they haven't reached yet"));
+  check("it cites the exact live failure (the finished F_net line written while chat was still deriving it)", claude.includes("F_net down slope = mg sin25 - mg cos25 * tan20") && claude.includes("the board had done the derivation FOR them"));
+  check("it gives the concrete fix: ask the question first, write the entry after they answer", claude.includes("ask the question first and write the entry after they answer it"));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
