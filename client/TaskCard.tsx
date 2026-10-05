@@ -27,6 +27,7 @@ import { useVoiceModePref } from "./voice/useVoiceModePref.ts";
 import { BoardArtifact } from "./study/artifacts/BoardArtifact.tsx";
 import { getLocalThread } from "./localChatBoard.ts";
 import { VoiceControls } from "./voice/VoiceControls.tsx";
+import { TAB_GROUP, openTab } from "./ui.tsx";
 
 /**
  * The leave animation + API call for finishing or dismissing a task. Extracted so the collapsed row and the
@@ -311,7 +312,6 @@ export function TaskHero({ task, onOpen }: { task: WebTask; onOpen: () => void }
           {task.taskType ? <span className="chip chip-tasktype">{task.taskType.replace(/_/g, " ")}</span> : null}
           {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
           {w ? <span className="when">{w}</span> : null}
-          <span className={`card-quadrant card-quadrant-${task.quadrant}`}>{quadrantLabel(task.quadrant, cardEn)}</span>
           {showChip ? <span className={`chip chip-${showChip.tone}`}>{showChip.label}</span> : null}
         </div>
       ) : null}
@@ -786,15 +786,6 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
           />
         </TaskModal>
       ) : null}
-
-      {/* (F) the quiet exit. "C'est bon" lives in the hero's done state, not down here. */}
-      <div className="tf-foot">
-        {isDone ? (
-          <span className="done-footer">{task.status === "dismissed" ? L("Ignorée", "Dismissed") : L("Terminée", "Done")}{task.updatedAt ? ` ${relTime(task.updatedAt, L)}` : ""}</span>
-        ) : (
-          <button className="btn xs ghost" title={L("Retirer cette tâche", "Remove this task")} onClick={() => void leave(() => api.dismiss(task.id), "dismiss", task)}>{L("Ignorer", "Dismiss")}</button>
-        )}
-      </div>
 
       <ArtifactPopups task={task} onTask={onTask} openNote={openNote} openDeck={openDeck} openQuiz={openQuiz}
         setOpenNote={setOpenNote} setOpenDeck={setOpenDeck} setOpenQuiz={setOpenQuiz} userId={userId ?? null} />

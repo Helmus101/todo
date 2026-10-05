@@ -13,7 +13,7 @@ import { pushError } from "./errorLog.ts";
 import { useIsPhone } from "./useIsPhone.ts";
 import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard, PageInfoHint } from "./ui.tsx";
 import { t } from "./i18n.ts";
-import { TaskCardRow, TaskFocus, TaskHero, TaskReadOnly } from "./TaskCard.tsx";
+import { TaskCardRow, TaskFocus, TaskReadOnly } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
 import { TutorSession } from "./tutor/TutorSession.tsx";
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
@@ -1038,14 +1038,6 @@ export function App() {
   // areas (dash-today vs dash-more) instead of one inline block — the whole point of the two-zone
   // dashboard is that Today is never sitting behind anything else, including the rail widgets on mobile.
   const focusToday = live.slice(0, 3);
-  // The spotlight is the actual #1-ranked task (sortWithinQuadrant's own ordering — Eisenhower quadrant,
-  // then soonest deadline, then VIP, then freshest), full stop. This USED to skip over the true top task
-  // in favor of the highest-ranked task that was already clickable (needs_review/failed), reasoning that
-  // a queued/executing task's [Continue] button would be a dead end — but it isn't: opening it shows
-  // TaskFocus's own legitimate "Otto prépare ça…" waiting state, not a blank screen. That override meant
-  // "your next priority" could silently jump to a LESS urgent task just because it happened to be ready
-  // sooner — the opposite of what the top spot is supposed to mean.
-  const heroTask = focusToday[0];
   const restToday = focusToday.slice(1);
   const laterToday = live.slice(3, 6);
   const canWait = live.slice(6);
@@ -1216,11 +1208,6 @@ export function App() {
                 ? (doneToday > 0 ? T("dashboard.doneForToday") : T("dashboard.allCaughtUp"))
                 : (T("dashboard.thingsLeft", { count: live.length, plural: live.length > 1 ? "s" : "" }) +
                    (doneToday > 0 ? T("dashboard.alreadyDone", { count: doneToday, plural: doneToday > 1 ? "s" : "" }) : "") + ".")}
-              {live.length > 0 && heroTask ? (
-                <span className="dash-next">
-                  {T("dashboard.nextUp", { title: heroTask.title })}
-                </span>
-              ) : null}
               {/* One status signal at a time, in priority order — overdue outranks in-progress work,
                   which outranks a routine scan — instead of stacking every pill that happens to apply. */}
               {overdueCount > 0 ? (
@@ -1268,11 +1255,10 @@ export function App() {
               <button className="btn xs ghost" onClick={() => navigate("settings")}>{en ? "Settings" : "Réglages"}</button>
             </div>
           )}
-          {/* Two-zone dashboard: Today (dash-today, now led by the TaskHero spotlight) is the main event —
-              it comes FIRST on both mobile and desktop (via CSS `order`/`grid-row`, not DOM position, so
-              the JSX below doesn't need to move), ahead of add-task and the rail widgets. On desktop
-              (≥1024px) dash-grid places dash-rail beside dash-today+dash-more instead, sticky, so the
-              workload/exam widgets stay ambient context, never blocking the hero. */}
+          {/* Two-zone dashboard: Today (dash-today) is the main event — it comes FIRST on both mobile
+              and desktop (via CSS `order`/`grid-row`, not DOM position, so the JSX below doesn't need to
+              move), ahead of add-task and the rail widgets. On desktop (≥1024px) dash-grid places dash-rail
+              beside dash-today+dash-more instead, sticky, so the workload/exam widgets stay ambient context. */}
           <div className="dash-grid">
             {/* Adding a task is an action, so it's off on a phone (read-only there — see
                 PHONE_ALLOWED_ROUTES above). */}
@@ -1300,45 +1286,29 @@ export function App() {
                 );
               })() : (
                 <div className={`list-focus-wrap ${settled ? "settled" : ""}`}>
-                  {/* The dashboard's one headline moment — no "Today"/"Top N" label needed above it, the
-                      greeting already says "this is today" and the hero itself says what matters most.
-                      Everything else today still shows, just quieter, underneath. */}
-                  <TaskHero key={heroTask.id} task={heroTask} onOpen={() => navigate(`task/${heroTask.id}`)} />
-                  {restToday.length > 0 && (
-                    <div className="focus-group dash-also-today">
-                      <div className="focus-group-head">
-                        <span className="focus-title">{en ? "Also today" : "Aussi aujourd'hui"}</span>
-                      </div>
-                      <div className="list">
-                        {restToday.map((t, i) => (
-                          <TaskCardRow
-                            key={t.id}
-                            task={t}
-                            index={i}
-                            retrying={retryingIds.includes(t.id)}
-                            isNew={!seenTasks.has(t.id) && !isHandled(t.status) && !isInFlight(t.status)}
-                            onOpen={() => navigate(`task/${t.id}`)}
-                            onChange={setTasks}
-                            onTask={patchTask}
-                            onConfirmed={flagJustDone}
-                            onEnterStudyMode={STUDY_MODE_ENABLED && !isPhone ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
-                            readOnly={isPhone}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  <div className="list">
+                    {focusToday.map((t, i) => (
+                      <TaskCardRow
+                        key={t.id}
+                        task={t}
+                        index={i}
+                        retrying={retryingIds.includes(t.id)}
+                        isNew={!seenTasks.has(t.id) && !isHandled(t.status) && !isInFlight(t.status)}
+                        onOpen={() => navigate(`task/${t.id}`)}
+                        onChange={setTasks}
+                        onTask={patchTask}
+                        onConfirmed={flagJustDone}
+                        onEnterStudyMode={STUDY_MODE_ENABLED && !isPhone ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
+                        readOnly={isPhone}
+                      />
+                    ))}
+                  </div>
                 </div>
               )}
-            </div>
 
             <div className="dash-more">
               {live.length > 0 && (laterToday.length > 0 || canWait.length > 0) && (
                 <div className={`list-focus-wrap ${settled ? "settled" : ""}`}>
-                  {/* "Later" used to always render here, unconditionally — hero + "Also today" + "Later"
-                      meant up to 6 rows shown before anything ever collapsed, reported live as feeling
-                      crowded past 5. Later now shares the SAME "see more" gate as "Can wait" — a normal day
-                      shows at most hero + "Also today" (≤3 rows) before a single click reveals the rest. */}
                   {(laterToday.length > 0 || canWait.length > 0) && (
                     <div className="focus-group">
                       {!showAllTasks ? (
@@ -1410,7 +1380,7 @@ export function App() {
                   <div className="done-list">{(showCompleted ? completed : completed.slice(0, 8)).map((t) => (
                     // A real <button>: reopening a finished task was mouse-only, and this row is the ONLY
                     // way back into one.
-                    <button type="button" key={t.id} className={`done-row ${t.id === justDoneId ? "just-done" : ""}`} onClick={() => navigate(`task/${t.id}`)} title={t.synthesis || t.why}>
+                    <button type="button" key={t.id} className={`done-row ${t.id === justDoneId ? "just-done" : ""}`} onClick={() => navigate(`task/${t.id}`)} title={t.synopsis || t.why}>
                       <span className="done-check" aria-hidden="true">✓</span>
                       <span className="done-title">{t.title}</span>
                       <span className="done-when">{relTime(t.updatedAt || t.createdAt, (fr, enS) => en ? enS : fr)}</span>
@@ -1423,6 +1393,7 @@ export function App() {
               )}
             </div>
           </div>
+        </div>
           {/* Task detail opens as a modal over the list — click a row (live or completed) to open it. */}
           {(() => {
             const openTask = openId ? tasks.find((t) => t.id === openId) : null;
