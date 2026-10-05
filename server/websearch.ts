@@ -1,21 +1,39 @@
 /**
- * Web search for task agents and study help — parallelized multi-provider search engine.
- * Queries DuckDuckGo HTML, DuckDuckGo Lite, Wikipedia REST API, and DDG Instant Answer concurrently
- * via Promise.allSettled. Fast, resilient, keyless, and deduplicated.
+ * Web search for task agents and study help — a real search API first, keyless scrapers as fallback.
  *
- * Wikipedia is deliberately a FALL-BACK provider, not an equal peer: the general-web providers (DDG
- * HTML/Lite) are the real query-matched results — Wikipedia's own `srsearch` is a loose keyword match
+ * PRIMARY: Exa (https://exa.ai) — a proper search API built for AI agents, JSON in / JSON out, no
+ * HTML scraping to break. Free tier (recurring monthly credits, no card) covers a few thousand
+ * queries; set EXA_API_KEY to enable it. When the key is set, Exa is the only general-web provider
+ * consulted — one fast, reliable, query-matched call instead of three fragile scraped ones.
+ *
+ * FALLBACK (no key, or Exa errored/empty): the old keyless stack — DuckDuckGo HTML, DuckDuckGo Lite,
+ * DDG Instant Answer and Wikipedia, all regex-scraped/loose-match and genuinely fragile. DDG's HTML
+ * endpoint now serves an anti-bot 202 challenge page that parses to ZERO results with no error thrown
+ * (202 counts as ok), which is exactly how searches silently came back empty. The scrapers are kept
+ * so search still works with zero config, but the real API is what makes it reliable.
+ *
+ * Wikipedia stays a FALL-BACK provider, not an equal peer: its `srsearch` is a loose keyword match
  * that happily returns a tangentially-related article (an unrelated person/place/topic that merely
- * shares a word with the query). When DDG scraping is having a bad day (bot-blocked, layout drift —
- * both regex-scraped, so genuinely fragile), Wikipedia used to end up as MOST of the results by sheer
- * concurrency, which is why real usage skewed "it's always Wikipedia" even though this function never
- * hard-codes it as a source. Now: general-web results are always listed first, Wikipedia only fills in
- * the remaining slots (capped small), and only for hits that actually share real vocabulary with the
- * query — see wikipediaSearch's own relevance filter below.
+ * shares a word with the query) — see wikipediaSearch's own relevance filter below.
  */
 export async function webSearch(query: string): Promise<{ title: string; url: string; snippet: string }[]> {
   const q = query.trim();
   if (!q) return [];
+
+  // Primary: Exa — when configured, it replaces the whole keyless general-web stack (which is down
+  // more often than not these days). An empty-but-successful response still falls through to the
+  // keyless providers below, so a cap-exhausted or odd day degrades to the old behavior, not to nothing.
+  const exaKey = (process.env.EXA_API_KEY || "").trim();
+  if (exaKey) {
+    try {
+      const exaResults = await exaSearch(q, exaKey);
+      if (exaResults.length) return exaResults.slice(0, 10);
+    } catch (err) {
+      console.warn(
+        `${new Date().toISOString()} [websearch] Exa search failed (${err instanceof Error ? err.message : err}) — falling back to keyless providers`
+      );
+    }
+  }
 
   const [generalSettled, wikiSettled] = await Promise.allSettled([
     Promise.allSettled([duckDuckGoHtml(q), duckDuckGoLite(q), duckDuckGoInstant(q)]),
@@ -42,7 +60,46 @@ export async function webSearch(query: string): Promise<{ title: string; url: st
     for (const item of wikiSettled.value.slice(0, 2)) add(item);
   }
 
+  // Never let a total miss be silent again — the empty-202-challenge-page bug produced exactly this
+  // with zero logs. When there's no Exa key, the warning doubles as the pointer to the fix.
+  if (!combined.length) {
+    console.warn(
+      `${new Date().toISOString()} [websearch] all providers returned 0 results for "${q.slice(0, 100)}"` +
+        (exaKey ? "" : " — set EXA_API_KEY for a real search API (DDG scraping is frequently bot-blocked)")
+    );
+  }
+
   return combined.slice(0, 10);
+}
+
+// ── Provider 0: Exa search API (primary; requires EXA_API_KEY) ──────────────
+// Request shape per Exa's canonical guidance: query + type "auto" + bare highlights — nothing else.
+// numResults defaults to 10 (exactly what we want); bare highlights:true auto-selects excerpt length;
+// don't stack text/summary or set category/domain filters — this is a general web-search tool.
+async function exaSearch(query: string, key: string): Promise<{ title: string; url: string; snippet: string }[]> {
+  const res = await fetch("https://api.exa.ai/search", {
+    method: "POST",
+    headers: { "x-api-key": key, "content-type": "application/json" },
+    body: JSON.stringify({
+      query,
+      type: "auto",
+      contents: { highlights: true },
+    }),
+    signal: AbortSignal.timeout(9000),
+  });
+  if (!res.ok) throw new Error(`exa ${res.status}`);
+  const json = await res.json() as any;
+  return (Array.isArray(json?.results) ? json.results : [])
+    .filter((r: unknown) => r && typeof r === "object")
+    .map((r: any) => ({
+      title: String(r.title || ""),
+      url: String(r.url || ""),
+      snippet: (Array.isArray(r.highlights) && r.highlights.length ? r.highlights.join(" … ") : String(r.text || ""))
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 300),
+    }))
+    .filter((x: { title: string; url: string }) => x.title && x.url);
 }
 
 // ── Provider 1: DuckDuckGo HTML ─────────────────────────────────────────────

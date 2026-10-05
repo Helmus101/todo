@@ -20,6 +20,7 @@ import { rankVoices, cloudChunks } from "../client/voice/useSpeechSynthesis.ts";
 import { pcmToWav, leaksAnswer, scrubAnswerLeak, makeProblem as makeProblemLeak, makePracticeProblem as makePracticeLeak, wordWrapChunks, leaksAnyProblemAnswer, makeInteractiveEntry } from "../server/claude.ts";
 import { lastMessageKey } from "../client/voice/replyKey.ts";
 import { subjectMastery } from "../shared/types.ts";
+import { COURSES, findCourse, normText, subjectMatches, matchesUnit, unitMastery, courseProgress, nextUnitToWork, masteryBand, UNIT_MASTERED_AT, orderCoursesForProfile, normalizeEnrolledCourses, unitObjectives } from "../shared/courses.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, subjectFrequency, orderingBoost, twoMinuteRuleBoost } from "../server/patterns.ts";
 
 let pass = 0, fail = 0;
@@ -3757,6 +3758,71 @@ section("subjectMastery — per-subject mastery from tutor-session activity only
     return typeof m === "number" && m > 0 && m <= 1;
   })());
   check("subject matching is case-insensitive (matches sourceSubject's own normalization elsewhere)", subjectMastery([mkTask("chemistry", [{ front: "a", back: "b", review: { box: 2 } }])], [], "Chemistry", now) === 1);
+}
+
+section("Courses — built-in catalog integrity (built-in syllabi, AI units on demand — per scoping)");
+{
+  check("the catalog covers all three tracks the app supports (bac + ib + ap)", ["bac", "ib", "ap"].every((tr) => COURSES.some((c) => c.tracks.includes(tr))));
+  check("course ids are unique", new Set(COURSES.map((c) => c.id)).size === COURSES.length);
+  check("every course has ≥3 units with unique ids inside it", COURSES.every((c) => c.units.length >= 3 && new Set(c.units.map((u2) => u2.id)).size === c.units.length));
+  check("every unit has bilingual titles, ≥1 topic and ≥1 keyword", COURSES.every((c) => c.units.every((u2) => u2.title.fr && u2.title.en && u2.topics.length >= 1 && u2.topics.every((t) => t.fr && t.en) && u2.keywords.length >= 1)));
+  check("every course carries non-empty track + subject-alias lists", COURSES.every((c) => c.tracks.length >= 1 && c.subjects.length >= 1 && c.subjects.every((s) => s.trim())));
+  check("findCourse returns the right course and undefined for unknown ids", findCourse("maths-tle")?.subject === "Math" && findCourse("nope") === undefined);
+}
+
+section("Courses — unitMastery/courseProgress: mastery signals only, never a fabricated 0%");
+{
+  const course = {
+    id: "test", subject: "Chemistry", tracks: ["bac"], yearLevels: ["Seconde"], subjects: ["chemistry", "chimie"],
+    title: { fr: "Chimie", en: "Chemistry" },
+    units: [
+      { id: "u1", title: { fr: "Acides", en: "Acids" }, topics: [{ fr: "pH", en: "pH" }], keywords: ["acide", "ph", "acid"] },
+      { id: "u2", title: { fr: "Titrages", en: "Titrations" }, topics: [{ fr: "Titrage", en: "Titration" }], keywords: ["titrage", "titration"] },
+    ],
+  };
+  const now = new Date("2026-01-01T00:00:00Z");
+  const mkTask = (subject, cards) => ({ id: "t1", sourceSubject: subject, flashcards: [{ id: "d1", title: "d", cards, createdAt: "2026-01-01T00:00:00Z" }] });
+  const unit1 = course.units[0];
+
+  check("a unit nobody has touched → null (not started), never 0", unitMastery([mkTask("Chemistry", [])], [], course, unit1, now).mastery === null);
+  check("cards whose text mentions the unit feed the Leitner ratio", unitMastery([mkTask("Chimie", [{ front: "Qu'est-ce qu'un acide fort ?", back: "b", review: { box: 2 } }, { front: "pH", back: "b", review: { box: 1 } }])], [], course, unit1, now).mastery === 0.5);
+  check("cards for a DIFFERENT unit don't count toward this one", unitMastery([mkTask("Chemistry", [{ front: "Comment réaliser un titrage ?", back: "b", review: { box: 2 } }])], [], course, unit1, now).mastery === null);
+  check("notNeeded cards are excluded, same as subjectMastery", unitMastery([mkTask("Chemistry", [{ front: "acide", back: "b", review: { box: 2 }, notNeeded: true }, { front: "pH", back: "b", review: { box: 1 } }])], [], course, unit1, now).mastery === 0);
+  check("plural tolerance: a milestone topic mentioning 'acides' (s-plural) still matches the 'acide' keyword", unitMastery([], [{ subject: "Chemistry", topic: "les acides forts", label: "acide fort", achievedAt: now.toISOString() }], course, unit1, now).mastery > 0);
+  check("milestones for another subject are ignored", unitMastery([], [{ subject: "Math", topic: "acide", label: "x", achievedAt: now.toISOString() }], course, unit1, now).mastery === null);
+  check("subject matching is accent/case-insensitive both ways (Pronote FR ↔ tutor EN)", subjectMatches("Chimie", course) && subjectMatches("chemistry", course) && !subjectMatches("Math", course));
+  check("accent-stripping normalization (dérivée ≡ derivee)", normText("La dérivée") === "la derivee" && matchesUnit("La dérivée d'une fonction", { keywords: ["derivee"] }));
+
+  const p = courseProgress([mkTask("Chemistry", [{ front: "acide", back: "b", review: { box: 2 } }])], [], course, now);
+  check("courseProgress pct averages only the units with data", p.pct === 1 && p.touched === 1);
+  check("nextUnitToWork prefers the first untouched unit in course order", nextUnitToWork(p)?.unit.id === "u2");
+  const pEmpty = courseProgress([], [], course, now);
+  check("no data anywhere → pct null, next unit is the first one", pEmpty.pct === null && nextUnitToWork(pEmpty)?.unit.id === "u1");
+  check("masteryBand: null → new, below 0.8 → learning, at/above → mastered", masteryBand(null) === "new" && masteryBand(0.5) === "learning" && masteryBand(UNIT_MASTERED_AT) === "mastered");
+}
+
+section("Courses — real-catalog matching + enrollment + unit seeding");
+{
+  const now = new Date("2026-01-01T00:00:00Z");
+  const mkTask = (subject, cards) => ({ id: "t1", sourceSubject: subject, flashcards: [{ id: "d1", title: "d", cards, createdAt: "2026-01-01T00:00:00Z" }] });
+  const mathsTle = findCourse("maths-tle");
+  const limUnit = mathsTle.units.find((u2) => u2.id === "limites");
+  check("real catalog: a flashcard about limites matches its unit through the Pronote-style subject spelling", unitMastery([mkTask("Maths", [{ front: "Comment calculer une limite en l'infini ?", back: "…", review: { box: 2 } }])], [], mathsTle, limUnit, now).mastery === 1);
+  const maths1re = findCourse("maths-1re");
+  const derUnit = maths1re.units.find((u2) => u2.id === "derivation");
+  check("real catalog: a completed tutor-session milestone (recorded on session end) drives a unit's mastery", unitMastery([], [{ subject: "Mathématiques", topic: "dérivation d'une fonction composée", label: "dérivation", achievedAt: now.toISOString() }], maths1re, derUnit, now).mastery > 0);
+
+  check("normalizeEnrolledCourses drops unknown ids and duplicates, preserves order", JSON.stringify(normalizeEnrolledCourses(["maths-tle", "nope", "maths-tle", "ib-physics"])) === JSON.stringify(["maths-tle", "ib-physics"]));
+  check("normalizeEnrolledCourses tolerates non-arrays (old/corrupt profile data)", JSON.stringify(normalizeEnrolledCourses(undefined)) === "[]");
+
+  const unit = findCourse("maths-tle").units[0];
+  const fr = unitObjectives(unit, "fr");
+  const en = unitObjectives(unit, "en");
+  check("unitObjectives seeds 1-6 bilingual objectives straight from the unit's topics", fr.length >= 1 && fr.length <= 6 && fr[0] === unit.topics[0].fr && en[0] === unit.topics[0].en);
+
+  const ordered = orderCoursesForProfile(COURSES, { track: "bac", yearLevel: "Terminale" });
+  check("orderCoursesForProfile puts the student's own track + year first", ordered[0].tracks.includes("bac") && ordered[0].yearLevels.some((y) => y.toLowerCase() === "terminale"));
+  check("orderCoursesForProfile never drops any course (ordering only, not a filter)", ordered.length === COURSES.length);
 }
 
 section("Track-grounded curriculum content — syllabusGroundingLine gated like examStyleLine (source pin)");
