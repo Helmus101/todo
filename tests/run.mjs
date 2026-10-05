@@ -4333,5 +4333,19 @@ section("TTS timeout retune — a slow Gemini must not abort the whole fallback 
   check("the client's fetch timeout now comfortably exceeds Gemini's worst case (7s + one 7s retry) plus a full StreamElements attempt", /CLOUD_FETCH_TIMEOUT_MS = 25_000/.test(ttsSynthSrc));
 }
 
+section("HINT LADDER — a conceptual carryover between parts must be asked, not asserted (source pin)");
+{
+  // Reported live: "it already calculated the friction and forces, it didn't ask the user" — a 20°/25°
+  // inclined-plane problem where μ = tan20° carries over to the 25° case because μ depends on the surfaces,
+  // not the angle. The student asked "how am I supposed to know that", and Otto answered its own question
+  // ("μ came out as tan 20°, and the surfaces haven't changed, so μ is still tan 20° at 25°") instead of
+  // turning the reason into a question. Same "never hand over what they haven't stated" rule as the
+  // mechanical-arithmetic and substitution-result cases already pinned above, extended to a carried-over
+  // CONCEPTUAL fact, not just a computed number.
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("the rule explicitly covers a conceptual carryover between parts, not just arithmetic", claude.includes("THIS ALSO COVERS A CONCEPTUAL CARRYOVER, not just arithmetic") && claude.includes("μ is the same at 25° because it depends on the"));
+  check("it gives the question to ask instead of the assertion to avoid", claude.includes('does μ depend on the angle, or on') && claude.includes('"μ came out') && claude.includes("the surfaces haven't changed, so μ is still tan 20° at 25°"));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

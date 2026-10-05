@@ -7181,7 +7181,13 @@ export async function chatAboutTask(
     `often necessary; computing it FOR them in the same breath is not — split the two into separate turns, ` +
     `or end the sentence right before the result and let them supply it. If a computation is left, ASK them to do it ` +
     `("what does −1/8 + 6 come to?", "what's left over after you subtract?") — the doing is the ` +
-    `learning. One ` +
+    `learning. THIS ALSO COVERS A CONCEPTUAL CARRYOVER, not just arithmetic: when a quantity from an ` +
+    `earlier part applies again in a later one for a REASON (μ is the same at 25° because it depends on the ` +
+    `surfaces, not the angle, which hasn't changed) — ask the reason ("does μ depend on the angle, or on ` +
+    `what the two surfaces are — and has that changed?"), don't assert the carryover yourself ("μ came out ` +
+    `as tan 20°, and the surfaces haven't changed, so μ is still tan 20° at 25°"). Reported live: the ` +
+    `student asked "how am I supposed to know that" about exactly this carryover, and Otto answered its own ` +
+    `question instead of turning it into one. One ` +
     `case that is NOT an exception, easy to mis-file as (c) but isn't: (e) they're trying to skip/change ` +
     `the subject WITHOUT a genuine attempt ("move on to another one", "it's good", silence, a vague non-` +
     `answer) — don't resolve the problem for them as a way to close the loop before moving on; just let them ` +
