@@ -26,7 +26,6 @@
     { "source": "/sitemap.xml", "destination": "/sitemap.xml" },
     { "source": "/llms.txt", "destination": "/llms.txt" },
     { "source": "/og-image.png", "destination": "/og-image.png" },
-    { "source": "/otto-tabs-extension.zip", "destination": "/otto-tabs-extension.zip" },
     { "source": "/:path*", "destination": "/index.html" }
   ],
   "headers": [

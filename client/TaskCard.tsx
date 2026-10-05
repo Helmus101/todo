@@ -334,6 +334,21 @@ export function TaskReadOnly({ task }: { task: WebTask }) {
   const w = taskDateLabel(task, L);
   const steps = task.steps || [];
   const doneCount = steps.filter((s) => s.done).length;
+  const preparedCount = (task.notes?.length || 0) + (task.flashcards?.length || 0) + (task.quizzes?.length || 0) + (task.links?.length || 0) + (task.did?.length || 0);
+  const linkKind = (u?: string) => {
+    const s = u || "";
+    if (/docs\.google\.com\/document/.test(s)) return L("Document", "Doc");
+    if (/docs\.google\.com\/spreadsheets/.test(s)) return L("Feuille", "Sheet");
+    if (/docs\.google\.com\/presentation/.test(s)) return L("Diapositives", "Slides");
+    if (/docs\.google\.com\/forms|forms\.gle/.test(s)) return L("Formulaire", "Form");
+    if (/mail\.google\.com/.test(s)) return /#drafts/.test(s) ? L("Brouillon", "Draft") : L("Email", "Email");
+    if (/calendar\.google\.com/.test(s)) return L("Événement", "Event");
+    if (/drive\.google\.com/.test(s)) return L("Fichier", "File");
+    if (/maps\.google\.com|google\.com\/maps/.test(s)) return L("Itinéraire", "Directions");
+    if (/^tel:/.test(s)) return L("Appel", "Call");
+    if (/notion\.so/.test(s)) return "Notion";
+    try { return u ? new URL(u).hostname.replace(/^www\./, "") : ""; } catch { return ""; }
+  };
   return (
     <div className="task-readonly">
       {(task.sourceSubject || w) ? (
@@ -366,6 +381,50 @@ export function TaskReadOnly({ task }: { task: WebTask }) {
       ) : (
         <p className="task-readonly-why">{L("Otto n'a pas encore écrit de plan pour celle-ci.", "Otto hasn't written a plan for this one yet.")}</p>
       )}
+      {/* Artifacts, links, and board - now visible on mobile */}
+      {preparedCount > 0 ? (
+        <div className="tf-prepared-inline">
+          {task.did?.length ? (
+            <>
+              <span className="prepared-label">{L("Fait", "Done")}</span>
+              <ul className="bullets">{task.did.map((d, i) => <li key={i}>{stripStrayMarkdown(d)}</li>)}</ul>
+            </>
+          ) : null}
+          {(task.notes?.length || task.flashcards?.length || task.quizzes?.length) ? (
+            <>
+              <span className="prepared-label">{L("Créé pour toi", "Made for you")}</span>
+              <div className="note-chips prepared-chips">
+                {task.notes?.map((n) => (
+                  <div key={n.id} className="note-chip" style={{ pointerEvents: "none" }}>
+                    <span className="note-chip-icon" aria-hidden="true">▤</span>
+                    <span className="note-chip-text"><span className="note-chip-title">{n.title}</span><span className="note-chip-meta">{L("Fiche", "Note")}</span></span>
+                  </div>
+                ))}
+                {task.flashcards?.map((f) => (
+                  <div key={f.id} className="note-chip" style={{ pointerEvents: "none" }}>
+                    <span className="note-chip-icon" aria-hidden="true">❏</span>
+                    <span className="note-chip-text"><span className="note-chip-title">{f.title}</span><span className="note-chip-meta">{L(`${f.cards.length} cartes`, `${f.cards.length} cards`)}</span></span>
+                  </div>
+                ))}
+                {task.quizzes?.map((qz) => (
+                  <div key={qz.id} className="note-chip" style={{ pointerEvents: "none" }}>
+                    <span className="note-chip-icon" aria-hidden="true">?</span>
+                    <span className="note-chip-text"><span className="note-chip-title">{qz.title}</span><span className="note-chip-meta">{L(`${qz.questions.length} questions`, `${qz.questions.length} questions`)}</span></span>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : null}
+          {task.links?.length ? (
+            <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url} onClick={(e) => { e.preventDefault(); openTab(l.url, TAB_GROUP); }}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url)) || L("Ouvrir le lien", "Open link")} ↗</a></li>)}</ul>
+          ) : null}
+        </div>
+      ) : null}
+      {(task.board?.length || task.problems?.length) ? (
+        <div className="tf-board-inline">
+          <BoardArtifact task={task} />
+        </div>
+      ) : null}
       <p className="task-readonly-foot">
         {L("Sur téléphone, Otto est en lecture seule. Ouvre-le sur un ordinateur ou un iPad pour travailler dessus.",
            "On a phone, Otto is read-only. Open it on a laptop or iPad to actually work on this.")}
@@ -519,27 +578,10 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
   const [chatStep, setChatStep] = useState<number | null>(null);
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
-  const chatContainerRef = useRef<HTMLDivElement | null>(null);
-  const userScrolledRef = useRef(false);
-  
-  // Auto-scroll to bottom only if user hasn't deliberately scrolled up
-  useEffect(() => {
-    const container = chatContainerRef.current;
-    if (!container) return;
-    
-    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
-    
-    if (isNearBottom) {
-      chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-    }
-  }, [task.chat?.length, chatSending]);
-  
-  // Track user scroll intention
-  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    const container = e.currentTarget;
-    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
-    userScrolledRef.current = !isNearBottom;
-  }, []);
+  // (The old autoscroll effect that lived here is gone — it read a chatContainerRef that was never
+  // attached to any DOM node, so it early-returned on every run and never scrolled anything. The real
+  // always-scroll-to-bottom now lives inside TaskChat below, next to the actual thread container and
+  // its end marker.)
   // Grows up to 3 lines (CSS max-height on .chat-input) then scrolls internally — was a single-line <input>,
   // so anything longer than one line just scrolled sideways out of view while typing. Re-measured on every
   // `chatInput` change (typing AND the programmatic clear after send), so sending correctly shrinks it back.
@@ -957,7 +999,6 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
   return (
     <div className="step-hero">
       <div className="step-hero-top">
-        <span className="hero-kicker">{L("À faire maintenant", "Do this now")}</span>
         {s.difficulty ? (
           <span className={`step-diff step-diff-${s.difficulty}`}>
             {s.difficulty === "easy" ? L("Facile", "Easy") : s.difficulty === "hard" ? L("Difficile", "Hard") : L("Moyen", "Medium")}
@@ -1325,10 +1366,7 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
         </>
       ) : null}
       {task.links?.length ? (
-        // A plain <a target="_blank"> here opened a tab the extension's Study Mode site-block then
-        // immediately redirected to blocked.html (see background.js's doOpenInGroup for why) — going
-        // through openTab() instead allowlists this exact host first when the extension is present, same
-        // fix as TaskDetailDrawer.tsx's own source links.
+        // openTab() opens via window.open with noopener (see client/ui.tsx).
         <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url} onClick={(e) => { e.preventDefault(); openTab(l.url, TAB_GROUP); }}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url, L)) || L("Ouvrir le lien", "Open link")} ↗</a></li>)}</ul>
       ) : null}
     </>
@@ -1347,12 +1385,24 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
   const en = L("fr", "en") === "en";
   const thinkingWord = useThinkingWord(sending);
   const speechLang = en ? "en-US" : "fr-FR";
-  const chatContainerRef = useRef<HTMLDivElement | null>(null);
-  const userScrolledRef = useRef(false);
-  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    const container = e.currentTarget;
-    userScrolledRef.current = container.scrollHeight - container.scrollTop - container.clientHeight >= 100;
-  }, []);
+  // AUTO-SCROLL — ALWAYS: the thread lands on its newest message when it opens, and every new turn (the
+  // student's own message, the pending echo, Otto's reply, the typing indicator) keeps the bottom in
+  // view. Nothing scrolled it before: the only autoscroll effect lived in the PARENT and read a
+  // chatContainerRef that was never attached to any DOM node, so a student opening a task with history
+  // always landed at the TOP of the conversation and had to scroll down to see Otto's last answer.
+  // Anchored on the thread's end marker with block:"nearest" — it scrolls the thread's own 260px
+  // scroller (and, only if needed, an outer panel) the minimum amount to bring the newest message in.
+  const chatMountedRef = useRef(false);
+  useEffect(() => {
+    if (!chatMountedRef.current) {
+      chatMountedRef.current = true;
+      // Two frames: the messages (markdown, artifact chips) haven't laid out on first paint, so the end
+      // marker still sits high — scrolling now would land mid-history instead of at the bottom.
+      const raf = requestAnimationFrame(() => requestAnimationFrame(() => endRef.current?.scrollIntoView({ block: "nearest" })));
+      return () => cancelAnimationFrame(raf);
+    }
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [task.chat?.length, sending, pendingMsg]);
   const synth = useSpeechSynthesis(speechLang);
   const [voiceModeOn, toggleVoiceMode] = useVoiceModePref();
   const sendingRef = useRef(sending);
@@ -1414,7 +1464,7 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
       <h3>{L("Demander à Otto", "Ask Otto")}</h3>
       {/* role="log" so a screen reader announces replies as they arrive — the thread updates without any
           navigation, so without this a blind student would never know an answer had come back. */}
-      <div className="chat-thread" role="log" aria-live="polite" aria-label={L("Conversation avec Otto", "Conversation with Otto")} ref={chatContainerRef} onScroll={handleScroll}>
+      <div className="chat-thread" role="log" aria-live="polite" aria-label={L("Conversation avec Otto", "Conversation with Otto")}>
         {!task.chat?.length && !pendingMsg ? (
           <p className="muted small">{L("Dis-lui ce qui bloque. Il explique, il ne donne pas la réponse.", "Say what's blocking you. It'll explain — not hand you the answer.")}</p>
         ) : task.chat?.map((m, i) => (

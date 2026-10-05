@@ -1,10 +1,8 @@
 import { useState, useRef, useCallback } from "react";
 import { useSmClose, SmSurface, SmBackdrop, useLang } from "../ui.tsx";
-import { hasExtension } from "./extensionBridge.ts";
 
-// How long the End button must be held before it actually fires. Only meaningfully enforced (as a real
-// "commit to this" gesture, not just a stylistic delay) when the extension is installed and sites are
-// genuinely blocked — see EndSessionModal's own comment on why it stays consistent either way.
+// How long the End button must be held before it actually fires — a real "commit to this" gesture, not
+// just a stylistic delay.
 const LONG_PRESS_MS = 1500;
 
 interface EndSessionModalProps {
@@ -22,11 +20,8 @@ interface EndSessionModalProps {
 // is a nudge toward reflection, not exit friction for its own sake.
 //
 // EXCEPT the End button itself: it now requires a LONG PRESS (hold LONG_PRESS_MS), not a click. This is
-// the deliberate "commit to actually stopping" gesture the extension's site-blocking feature (see
-// extensionBridge.ts) is built around — a stray/accidental click must never be enough to unblock everything
-// mid-session, only a genuine hold. Kept as a hold-to-confirm REGARDLESS of whether the extension is
-// installed (hasExtension()) — consistent behavior either way is better than the button's whole interaction
-// model silently changing depending on an install the student may not even know exists.
+// the deliberate "commit to actually stopping" gesture — a stray/accidental click must never be enough
+// to end a session mid-reflection, only a genuine hold.
 export function EndSessionModal({ completedSteps, totalSteps, elapsed, formatTime, onContinue, onEnd }: EndSessionModalProps) {
   const L = useLang();
   const [finished, setFinished] = useState("");
@@ -124,14 +119,11 @@ export function EndSessionModal({ completedSteps, totalSteps, elapsed, formatTim
             <span className="sm-btn-hold-fill" aria-hidden="true" />
             <span className="sm-btn-hold-label">
               {holding
-                ? (hasExtension() ? L("Continue d'appuyer pour débloquer et terminer…", "Keep holding to unblock & end…") : L("Continue d'appuyer pour terminer…", "Keep holding to end…"))
+                ? L("Continue d'appuyer pour terminer…", "Keep holding to end…")
                 : L("Maintenir pour terminer", "Hold to end session")}
             </span>
           </button>
         </div>
-        {hasExtension() && (
-          <p className="sm-modal-hold-hint">{L("Les autres sites restent bloqués tant que ce bouton n'est pas maintenu.", "Other sites stay blocked until you hold this button to end.")}</p>
-        )}
       </SmSurface>
     </SmBackdrop>
   );

@@ -16,7 +16,7 @@ services:
     environment:
       - NODE_ENV=development
       # npm run dev = concurrently "tsx watch server/index.ts" (hot server reload) + "vite" (HMR)
-      # (predev zip-extension.sh gracefully skips when `zip` is not installed in the image).
+      # (zip-extension.sh was removed with the Chrome extension; nothing to skip anymore).
       # npm install is a no-op when node_modules is already up to date with the lockfile.
     command: ["sh", "-ec", "npm install --no-audit --no-fund && exec npm run dev"]
     healthcheck:

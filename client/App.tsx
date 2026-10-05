@@ -126,9 +126,7 @@ function fmtDay(iso: string, L?: (fr: string, en: string) => string): string {
   return isNaN(d.getTime()) ? iso : d.toLocaleDateString(L?.("fr-FR", "en-US"), { month: "short", day: "numeric" });
 }
 
-// Open a URL in a new tab. Prefers the Otto Chrome extension (web/extension/) — it sets a DOM flag and
-// relays postMessage to chrome.tabs.create, so tabs can open UNATTENDED during auto-do. Without it, falls
-// back to window.open (works on a user click).
+// Open a URL in a new tab. Tabs open via window.open (see client/ui.tsx's openTab).
 // Temporary: Otto still generates, ranks, and breaks tasks into steps, but does not auto-run or offer
 // one-click execution of them — the card shows the plan as a checklist for the user to work through
 // themselves. Flip back to true to restore auto-do/Approve & Run/Send. Nothing execution-related is deleted.

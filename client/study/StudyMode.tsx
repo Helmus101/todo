@@ -12,7 +12,6 @@ import type {
 } from "./StudyTypes.ts";
 import { getEnvironmentByTask, saveEnvironment, saveSession, saveFile, getFile, deleteFile } from "./StudyDB.ts";
 import { useIsPhone } from "../useIsPhone.ts";
-import { startStudyBlocking, stopStudyBlocking } from "./extensionBridge.ts";
 import { StudySetup, type PomodoroChoice, type AudioChoice } from "./StudySetup.tsx";
 import { SessionHeader } from "./SessionHeader.tsx";
 import { ArtifactCanvas } from "./ArtifactCanvas.tsx";
@@ -721,7 +720,6 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
     setElapsedSeconds(0);
     setPhaseSeconds(0);
     setPhase("session");
-    startStudyBlocking(); // no-op if the Otto Tabs extension isn't installed — see extensionBridge.ts
     enterFullscreen(); // called synchronously from the Start button's click, so the browser's user-gesture requirement is satisfied
     const logId = crypto.randomUUID();
     setSessionLog({
@@ -771,18 +769,15 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
     updateEnv({ sessionStatus: "active" });
   }, [updateEnv, resumeMusicAfterBreak]);
 
-  // ── End session ───────────────────────────────────────────────────────────
-  // `unblockSites` defaults to true (the official End flow always unblocks) but is explicitly false when
-  // this same function is reused for the header's plain back-arrow exit (see onBack below) — reported live
+  // ── End session ──────────────────────────────────────────────────────
+  // This same function is reused for the header's plain back-arrow exit (see onBack below) — reported live
   // as session time, task-completion, and camera-focus metrics ALL going unrecorded (and the RL bandit
   // never getting a reward) for that exit path, because this entire function — the ONLY place any of that
   // reporting happens — used to run exclusively from EndSessionModal's long-press-gated button. A plain
   // back-click is almost certainly how most students actually leave; silently skipping this for that case
-  // meant most real session data never reached the bandit or Focus Analytics at all, not just the rare
-  // long-press path. Site-blocking itself stays gated on the deliberate long-press (per
-  // extensionBridge.ts's own comment: "closing the tab or reloading mid-session does NOT bypass the
-  // block") — only the analytics/reward reporting below is now shared between both exits.
-  const endSession = useCallback(async (review?: { finished?: string; confusing?: string; nextStep?: string }, unblockSites = true) => {
+  // meant most real session data never reached the bandit or Focus Analytics at all. Both exits now share
+  // the full analytics/reward reporting below.
+  const endSession = useCallback(async (review?: { finished?: string; confusing?: string; nextStep?: string }) => {
     if (timerRef.current) clearInterval(timerRef.current);
     noiseRef.current?.stop();
     stopCustomAudio();
@@ -790,9 +785,6 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
     // Stop the focus camera before unmounting so useFocusCamera's stopCamera saves the focus session
     // to /api/focus/session (the cleanup-only effect just stops the stream, skipping that save).
     focusCamera.stopCamera();
-    // Only for the official End flow — see the comment above this function for why a casual back-exit
-    // must NOT do this. No-op if the extension isn't installed.
-    if (unblockSites) stopStudyBlocking();
     if (env) {
       const acc = faceMetricsAccumulatorRef.current;
       const focusMetrics = acc.count > 0 ? {
@@ -1227,7 +1219,7 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
         // own comment for why that silently dropped most real session data. Calls the SAME reporting
         // endSession uses, just without unblocking sites (that stays gated on the deliberate long-press
         // End action) and without a review prompt (this is a casual exit, not the reflective End flow).
-        onBack={() => { void endSession(undefined, false); }}
+        onBack={() => { void endSession(); }}
         onSubmitStep={() => setShowSubtaskSubmit(true)}
         isFullscreen={isFullscreen}
         onToggleFullscreen={() => (isFullscreen ? exitFullscreen() : enterFullscreen())}
