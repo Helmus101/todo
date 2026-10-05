@@ -412,7 +412,7 @@ export function App() {
   // at that size, and a half-working version of them is worse than a clean read-only one.
   const isPhone = useIsPhone();
   const PHONE_ALLOWED_ROUTES = ["", "tasks", "log", "settings"];
-  const phoneRouteAllowed = (r: string) => PHONE_ALLOWED_ROUTES.includes(r) || r.startsWith("task/");
+  const phoneRouteAllowed = (r: string) => PHONE_ALLOWED_ROUTES.includes(r) || r.startsWith("task/") || r.startsWith("tutor/session/");
   useEffect(() => {
     if (isPhone && status?.loggedIn && !phoneRouteAllowed(route)) navigate("tasks");
   }, [isPhone, status?.loggedIn, route]);
@@ -1056,7 +1056,7 @@ export function App() {
       {/* Sidebar — hidden in Tutor: that screen is meant to be a full-screen, focused surface (reported
           live), not the dashboard's usual chrome. TutorSession gets its own small back control instead
           (onExit prop above) so there's still exactly one way out, just not the full nav. */}
-      {route !== "tutor" && <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
+      {!route.startsWith("tutor") && <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
         <div className="sidebar-brand">
           <Logo size={20} /> Otto
         </div>
@@ -1079,7 +1079,7 @@ export function App() {
             {isPhone ? (status?.language === "en" ? "Flashcards" : "Cartes") : (status?.language === "en" ? "Journal" : "Journal")}
           </a>
           {!isPhone && <a
-            className={`sidebar-item ${route === "tutor" ? "active" : ""}`}
+            className={`sidebar-item ${route === "tutor" || route.startsWith("tutor/session/") ? "active" : ""}`}
             href="/tutor"
             onClick={() => setSidebarOpen(false)}
           >
@@ -1135,7 +1135,7 @@ export function App() {
       </aside>}
 
       {/* Mobile sidebar toggle — also hidden in Tutor, same reasoning as the sidebar itself. */}
-      {route !== "tutor" && <button
+      {!route.startsWith("tutor") && <button
         className="sidebar-toggle"
         onClick={() => setSidebarOpen(!sidebarOpen)}
         aria-label="Toggle sidebar"
@@ -1145,13 +1145,14 @@ export function App() {
 
       {/* Main content area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        {route !== "tutor" && <header className="topbar">
+        {!route.startsWith("tutor") && <header className="topbar">
           <div className="topbar-title">{(() => {
             if (route === "settings") return en ? "Settings" : "Réglages";
             if (route === "log") return isPhone ? (en ? "Flashcards" : "Cartes") : (en ? "Journal" : "Journal");
             if (route === "study") return en ? "Study" : "Réviser";
             if (route === "errorlog") return en ? "Error log" : "Erreurs";
             if (route === "admin") return "Admin";
+            if (route.startsWith("tutor/session/")) return en ? "Tutor Session" : "Séance de tutorat";
             return en ? "Tasks" : "Tâches";
           })()}</div>
           <div className="spacer" />
@@ -1178,6 +1179,8 @@ export function App() {
         <StudyLogPage lang={status?.language} tasks={tasks} status={status} phoneOnly={isPhone} />
       ) : route === "tutor" ? (
         <TutorSession userId={status?.user || null} onExit={() => navigate("tasks")} visionReady={!!status?.visionReady} />
+      ) : route.startsWith("tutor/session/") ? (
+        <TutorSession userId={status?.user || null} onExit={() => navigate("tasks")} visionReady={!!status?.visionReady} sessionId={route.split("/")[3]} />
       ) : route === "study" ? (
         <StandaloneStudyEntry tasks={tasks} setTasks={setTasks} status={status} notify={notify} navigate={navigate} />
       ) : route === "errorlog" ? (
@@ -3631,166 +3634,107 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
   const L = (fr: string, e: string) => (en ? e : fr);
 
   return (
-    <div className="landing landing-simple">
-      {/* Simple Navigation */}
-      <header className="landing-nav-simple">
-        <span className="brand"><Logo size={20} /> <span className="brand-name">Otto</span></span>
-        <nav className="landing-navlinks">
-          <button type="button" className="lang-toggle" onClick={() => onLangChange(en ? "fr" : "en")} aria-label={en ? "Changer de langue" : "Switch language"}>{en ? "FR" : "EN"}</button>
-          <a className="btn ghost" href="/login">{L("Se connecter", "Log in")}</a>
-          <a className="btn primary" href="/signup">{L("Commencer", "Get started")}</a>
+    <div className="landing landing-framer">
+      {/* Framer-style Navigation */}
+      <header className="landing-nav-framer">
+        <span className="brand-framer"><Logo size={20} /> <span className="brand-name-framer">otto</span></span>
+        <nav className="landing-navlinks-framer">
+          <a href="#features" className="nav-link-framer">{L("Our approach", "Notre approche")}</a>
+          <button type="button" className="lang-toggle-framer" onClick={() => onLangChange(en ? "fr" : "en")} aria-label={en ? "Changer de langue" : "Switch language"}>{en ? "FR" : "EN"}</button>
+          <a className="btn ghost-framer" href="/login">{L("Log in", "Se connecter")}</a>
         </nav>
       </header>
 
-      {/* Hero Section - Simplified */}
-      <main className="hero-simple">
-        <h1 className="hero-title-simple">
-          {en ? <>Your studies, <span className="tally-highlight">under control</span>.</> : <>Ton lycée, <span className="tally-highlight">sous contrôle</span>.</>}
+      {/* Hero Section */}
+      <main className="hero-framer">
+        <h1 className="hero-title-framer">
+          {en ? "Less busywork. More understanding." : "Moins de travail. Plus de compréhension."}
         </h1>
 
-        <p className="hero-sub-simple">
-          {L(
-            "Tes devoirs et contrôles deviennent un plan quotidien clair — et un tuteur t'aide sur ce que tu ne comprends pas encore.",
-            "Homework and exams become a clear daily plan — with a tutor for what you don't understand yet.",
-          )}
+        <p className="hero-sub-framer">
+          {en
+            ? "Your school day, organized. Your questions, worked through. Otto brings proactive planning and personal tutoring together."
+            : "Ta journée d'école, organisée. Tes questions, résolues. Otto réunit la planification proactive et le tutorat personnel."}
         </p>
 
-        <div className="hero-cta-simple">
-          <a className="btn primary big" href="/signup">{L("Commencer gratuitement", "Get started for free")}</a>
-          <a className="btn ghost big" href="/login">{L("Se connecter", "Log in")}</a>
+        <div className="hero-cta-framer">
+          <a className="btn primary-framer" href="/signup">{en ? "Open Otto" : "Ouvrir Otto"}</a>
         </div>
+
+        <p className="hero-tagline-framer">
+          {en ? "A study companion, not a shortcut." : "Un compagnon d'étude, pas un raccourci."}
+        </p>
+
+        <a href="#features" className="hero-demo-link-framer">
+          {en ? "Explore the demo — Tasks and tutoring, together." : "Explorer la démo — Tâches et tutorat, ensemble."}
+        </a>
       </main>
 
-      {/* Simple Features */}
-      <section className="features-simple">
-        <div className="feature-simple">
-          <h3>{L("Tuteur Socratique", "Socratic tutor")}</h3>
-          <p>{L("Des questions guidées sur les notions difficiles — jamais les devoirs faits à ta place.", "Guided questions on tough concepts — never the homework done for you.")}</p>
+      {/* Two-column Feature Section */}
+      <section id="features" className="features-framer">
+        <div className="feature-column-framer">
+          <div className="feature-number-framer">01</div>
+          <h2 className="feature-title-framer">{en ? "PROACTIVE TASKS" : "TÂCHES PROACTIVES"}</h2>
+          <h3 className="feature-heading-framer">
+            {en ? "Your day, already sorted." : "Ta journée, déjà organisée."}
+          </h3>
+          <p className="feature-desc-framer">
+            {en
+              ? "Pronote, Gmail, Calendar, Drive — they all become priorities, with materials and steps ready before you sit down."
+              : "Pronote, Gmail, Calendar, Drive — tout devient priorité, avec les matériaux et les étapes prêts avant même que tu t'installes."}
+          </p>
+
+          {/* Sample Task Card */}
+          <div className="sample-task-framer">
+            <div className="sample-task-subject-framer">
+              {en ? "MATHEMATICS · TOMORROW" : "MATHÉMATIQUES · DEMAIN"}
+            </div>
+            <h4 className="sample-task-title-framer">
+              {en ? "Get ready for derivatives" : "Prépare-toi aux dérivées"}
+            </h4>
+            <p className="sample-task-meta-framer">
+              {en ? "15 min review · 2 practice questions" : "15 min de révision · 2 questions d'exercice"}
+            </p>
+          </div>
         </div>
-        <div className="feature-simple">
-          <h3>{L("Toujours un pas d'avance", "Always a step ahead")}</h3>
-          <p>{L("Otto repère tes devoirs et examens dans Gmail, Calendar et Pronote, et crée tes tâches avant même que tu y penses.", "Otto spots your homework and exams in Gmail, Calendar, and Pronote, and creates your tasks before you even think to.")}</p>
-        </div>
-        <div className="feature-simple">
-          <h3>{L("Journal d'apprentissage", "Learning journal")}</h3>
-          <p>{L("Un résumé quotidien de ce que tu as appris, avec fiches et quiz de révision générés automatiquement.", "A daily summary of what you learned, with flashcards and quizzes generated automatically for review.")}</p>
+
+        <div className="feature-column-framer">
+          <div className="feature-number-framer">02</div>
+          <h2 className="feature-title-framer">{en ? "PERSONAL TUTOR" : "TUTEUR PERSONNEL"}</h2>
+          <h3 className="feature-heading-framer">
+            {en ? "A nudge. Not the answer." : "Un coup de pouce. Pas la réponse."}
+          </h3>
+          <p className="feature-desc-framer">
+            {en
+              ? "Stuck on a concept? Otto asks questions, adapts its approach, and helps you find your own way through."
+              : "Bloqué sur un concept ? Otto pose des questions, adapte son approche et t'aide à trouver ton propre chemin."}
+          </p>
+
+          {/* Sample Tutor Interaction */}
+          <div className="sample-tutor-framer">
+            <div className="sample-tutor-label-framer">
+              {en ? "OTTO / YOUR TUTOR" : "OTTO / TON TUTEUR"}
+            </div>
+            <p className="sample-tutor-question-framer">
+              {en ? "What does the slope tell us about how this function changes?" : "Que nous dit la pente sur la façon dont cette fonction change ?"}
+            </p>
+            <p className="sample-tutor-prompt-framer">
+              {en ? "Start with your observations — what do you notice?" : "Commence par tes observations — que remarques-tu ?"}
+            </p>
+          </div>
         </div>
       </section>
 
-      {/* "Meet your tutor" — each block names something Otto actually does, not aspirational copy. Kept to
-          four: dropped Klar's "collaborate in shared courses" (Otto is a solo tutor, no shared-course
-          concept exists) rather than describe a feature that isn't real. */}
-      <section className="landing-sec-simple agent-features">
-        <div className="sec-header-simple">
-          <h2>{L("Ce qu'Otto fait vraiment.", "What Otto actually does.")}</h2>
+      {/* Footer */}
+      <footer className="landing-footer-framer">
+        <div className="footer-brand-framer">
+          otto · {en ? "Made for learning, not shortcuts." : "Fait pour apprendre, pas pour tricher."}
         </div>
-        <div className="agent-feature-grid">
-          <div className="agent-feature-card">
-            <h3>{L("Un tableau de séance, construit au fil de l'eau", "A session document, built as you go")}</h3>
-            <p>{L("Objectif du jour, formules, ton propre raisonnement — Otto écrit sur un tableau persistant pendant que vous parlez, pas juste dans le chat.", "Today's focus, formulas, your own reasoning — Otto writes to a persistent board as you talk, not just into the chat.")}</p>
-          </div>
-          <div className="agent-feature-card">
-            <h3>{L("Les sources, affichées — pas juste citées", "Sources shown, not just claimed")}</h3>
-            <p>{L("Quand Otto s'appuie sur une recherche, les sources utilisées apparaissent sous la réponse, cliquables.", "When Otto leans on a web search, the sources it used show up under the reply, clickable.")}</p>
-          </div>
-          <div className="agent-feature-card">
-            <h3>{L("Des scènes interactives, pas des captures d'écran", "Interactive scenes, not screenshots")}</h3>
-            <p>{L("Pour une notion qui se manipule — un solide en 3D, une courbe qu'on fait glisser — Otto construit une scène que tu touches, en plus des exercices et quiz habituels.", "For a notion that's better manipulated than described — a 3D solid, a curve you drag — Otto builds a scene you can touch, alongside the usual practice problems and quizzes.")}</p>
-          </div>
-          <div className="agent-feature-card">
-            <h3>{L("Une vraie voix, pas un robot", "A real voice, not a robot")}</h3>
-            <p>{L("Le mode vocal lit les réponses à voix haute avec une voix naturelle — utile en marchant, ou simplement pour écouter plutôt que lire.", "Voice mode reads replies aloud with a natural voice — useful on the move, or just to listen instead of read.")}</p>
-          </div>
-        </div>
-      </section>
-
-      {/* Integrations + security — real facts only, no certifications Otto doesn't hold. The grid mirrors
-          server/integrations.ts's actual CATALOG (Composio-backed) plus Pronote, which isn't Composio but
-          is the other real connection this app supports. */}
-      <section className="landing-sec-simple">
-        <div className="sec-header-simple">
-          <h2>{L("Connecté à ce que tu utilises déjà.", "Connected to what you already use.")}</h2>
-        </div>
-        <div className="integrations-grid">
-          {[
-            L("Gmail", "Gmail"), L("Google Calendar", "Google Calendar"), L("Google Docs", "Google Docs"),
-            L("Google Slides", "Google Slides"), L("Google Sheets", "Google Sheets"), L("Google Drive", "Google Drive"),
-            L("Notion", "Notion"), L("Pronote", "Pronote"),
-          ].map((name) => <span key={name} className="integration-pill">{name}</span>)}
-        </div>
-        <ul className="security-facts">
-          <li>{L("Tes identifiants Pronote sont chiffrés en AES-256-GCM — jamais stockés en clair.", "Your Pronote credentials are encrypted with AES-256-GCM — never stored in plain text.")}</li>
-          <li>{L("Gmail et Calendar sont connectés en lecture par défaut — Otto ne peut pas envoyer d'email ou modifier un événement sans ta confirmation.", "Gmail and Calendar connect read-first — Otto can't send an email or change an event without your confirmation.")}</li>
-          <li>{L("Tes données ne sont pas vendues, point.", "Your data isn't sold, full stop.")}</li>
-        </ul>
-      </section>
-
-      {/* Research — kept but simplified */}
-      <section className="landing-sec-simple">
-        <div className="sec-header-simple">
-          <h2>{L("Construit sur des méthodes éprouvées.", "Built on proven methods.")}</h2>
-        </div>
-        <dl className="research-list-simple">
-          <div className="research-row-simple">
-            <dt>{L("Questionnement socratique", "Socratic questioning")}</dt>
-            <dd>{L("Te fait construire la réponse toi-même au lieu de te la donner toute faite.", "Guides you to build the answer yourself instead of handing it over.")}</dd>
-          </div>
-          <div className="research-row-simple">
-            <dt>{L("Système Leitner", "Leitner system")}</dt>
-            <dd>{L("Fait réapparaître les cartes de révision juste avant le moment où tu les oublierais.", "Resurfaces flashcards right before you would forget them.")}</dd>
-          </div>
-          <div className="research-row-simple">
-            <dt>{L("Matrice d'Eisenhower", "Eisenhower matrix")}</dt>
-            <dd>{L("Priorise tes tâches selon leur réelle urgence et importance pour tes objectifs.", "Prioritizes your tasks by true urgency and importance for your goals.")}</dd>
-          </div>
-        </dl>
-      </section>
-
-      {/* FAQ — kept but simplified */}
-      <section className="landing-sec-simple">
-        <div className="sec-header-simple">
-          <h2>{L("Questions fréquentes.", "Frequently asked questions.")}</h2>
-        </div>
-        <div className="faq-list-simple">
-          <details className="faq-item-simple">
-            <summary>{L("Est-ce qu'Otto fait mes devoirs à ma place ?", "Does Otto do my homework for me?")}</summary>
-            <p>{L("Non — Otto détecte tout travail noté et produit à la place une fiche méthodologique et des questions d'entraînement.", "No — Otto detects graded work and provides step-by-step methodologies and practice questions instead.")}</p>
-          </details>
-          <details className="faq-item-simple">
-            <summary>{L("Comment fonctionne le tuteur IA ?", "How does the AI tutor work?")}</summary>
-            <p>{L("Le tuteur t'explique les concepts inconnus et te guide pas à pas pour résoudre tes exercices, sans jamais donner la réponse directement.", "The tutor explains unknown concepts and guides you step-by-step to solve exercises, without giving the direct answer.")}</p>
-          </details>
-          <details className="faq-item-simple">
-            <summary>{L("Je suis en filière IB ou Bac, est-ce adapté ?", "Does Otto work for IB or French Bac students?")}</summary>
-            <p>{L("Absolument. Otto gère Pronote, Google Calendar/Gmail ainsi que les filières IB (HL/SL, TOK, CAS, EE) et Bac.", "Yes. Otto supports Pronote, Google Calendar/Gmail, as well as IB (HL/SL, TOK, CAS, EE) and French Bac subjects.")}</p>
-          </details>
-          <details className="faq-item-simple">
-            <summary>{L("Mes identifiants Pronote sont-ils sécurisés ?", "Are my Pronote credentials safe?")}</summary>
-            <p>{L("Tes identifiants sont chiffrés en AES-256-GCM et ne sont jamais stockés en clair ni revendus.", "Your credentials are encrypted using AES-256-GCM and never stored in plain text or sold.")}</p>
-          </details>
-        </div>
-      </section>
-
-      {/* CTA Banner — kept but simplified */}
-      <section className="cta-band-simple">
-        <h2>{L("Reprends le contrôle de tes études.", "Take command of your coursework.")}</h2>
-        <p>{L("Connecte ton Pronote ou ton agenda en 30 secondes.", "Connect your school agenda in 30 seconds.")}</p>
-        <div className="cta-actions-simple">
-          <a className="btn primary big" href="/signup">{L("Commencer gratuitement", "Get started for free")}</a>
-        </div>
-      </section>
-
-      {/* Footer — one row: brand, links, copyright */}
-      <footer className="landing-foot-simple">
-        <div className="foot-top-simple">
-          <span className="brand"><Logo size={20} /> <span className="brand-name">Otto</span></span>
-          <nav className="foot-group-simple">
-            <a href="/research">{L("Recherche", "Research")}</a>
-            <a href="/privacy">{L("Confidentialité", "Privacy")}</a>
-            <a href="/terms">{L("Conditions", "Terms")}</a>
-          </nav>
-          <span>© 2026 Otto</span>
-        </div>
+        <nav className="footer-links-framer">
+          <a href="/privacy">{en ? "Privacy" : "Confidentialité"}</a>
+          <a href="/terms">{en ? "Terms" : "Conditions"}</a>
+          <a href="/unlimited">{en ? "Unlimited" : "Illimité"}</a>
+        </nav>
       </footer>
     </div>
   );

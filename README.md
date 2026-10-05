@@ -135,6 +135,12 @@ A full-screen AI tutor interface for interactive learning sessions.
 - **Desmos Integration**: Graphing calculator for math/physics
 - **Adaptive**: Otto adapts approach when something isn't working
 - **Guardrails**: Same protections as task chat — never does graded work for you
+- **Session History**: Past sessions are saved locally with board and chat for review
+- **Deep Links**: Each session has a unique URL (`/tutor/session/<id>`) for direct access
+
+**Session Routing**:
+- `/tutor` — Landing page to start a new session or resume an active one
+- `/tutor/session/<id>` — Direct link to view a specific past session's board and chat
 
 **Desktop Only**: Full-screen, hides sidebar navigation.
 

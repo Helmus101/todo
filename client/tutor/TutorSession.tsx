@@ -38,7 +38,7 @@ async function dismissWithRetry(taskId: string): Promise<void> {
  *  dismissed silently, not memorialized). Ending a session generates a short summary from the board + chat
  *  (see tutorSessions.ts), saves it locally, and dismisses the task so the next start creates a fresh one.
  *  Past session summaries are shown in a collapsible strip. */
-export function TutorSession({ userId, onExit, visionReady }: { userId: string | null; onExit: () => void; visionReady: boolean }) {
+export function TutorSession({ userId, onExit, visionReady, sessionId }: { userId: string | null; onExit: () => void; visionReady: boolean; sessionId?: string }) {
   const L = useLang();
   const [task, setTask] = useState<WebTask | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -122,6 +122,20 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
   useEffect(() => {
     setPastSessions(getTutorSessions(userId));
   }, [userId]);
+
+  // If a sessionId is provided via route, load that session from history
+  useEffect(() => {
+    if (sessionId && userId) {
+      const sessions = getTutorSessions(userId);
+      const session = sessions.find((s) => s.id === sessionId);
+      if (session) {
+        // Load the session in review mode - show board and chat
+        setOpenBoardSession(session);
+        setOpenChatSession(session);
+        setShowHistory(true);
+      }
+    }
+  }, [sessionId, userId]);
 
   const saveAndClose = useCallback((task: WebTask, startedAt: string) => {
     const chat = task.chat || [];
@@ -478,6 +492,9 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
                           present for a session ended after this was added; an older saved session has no
                           `board` field to reopen. */}
                       <div className="tutor-history-actions">
+                        <a href={`/tutor/session/${s.id}`} className="btn ghost xs tutor-history-view-board">
+                          {L("Voir la séance", "View session")}
+                        </a>
                         {!!s.board?.length && (
                           <button type="button" className="btn ghost xs tutor-history-view-board" onClick={() => setOpenBoardSession(s)}>
                             {L("Voir le tableau", "View board")}

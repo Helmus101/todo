@@ -15,8 +15,8 @@
    Typography now uses Inter for Apple-like feel with optical sizing and proper tracking. */
 
 :root {
-  /* Minimalist palette — Tally.so inspired: clean white canvas, near-black ink, one restrained accent */
-  --bg: #FAFAFA;
+  /* Minimalist palette — Framer-inspired: clean white canvas, near-black ink, orange accent */
+  --bg: #FFFFFF;
   --surface: #FFFFFF;
   --surface-raised: #FFFFFF;
   --surface-glass: #FFFFFF;
@@ -26,23 +26,18 @@
   --line: #E4E4E7;
   --line-soft: #F4F4F5;
   --line-glass: #E4E4E7;
-  
-  /* Accent: ONE restrained blue, everywhere in the UI (buttons, highlights, focus states) — see the
-     "one accent color" rule. --brand-mark is deliberately NOT a second UI accent: it's the fixed orange
-     used only for the Logo's checkmark, the same across every theme (never swapped for dark mode, unlike
-     --accent above), so it stays its own narrowly-named token instead of masquerading as --accent-2. */
-  --accent: #2563EB;
-  --accent-hover: #1D4ED8;
-  --accent-active: #1E40AF;
-  --accent-soft: rgba(37, 99, 235, 0.06);
-  --accent-rgb: 37, 99, 235;
-  --brand-mark: #EA580C;
+
+  /* Accent: Orange as primary accent color for buttons, highlights, focus states */
+  --accent: #FF6B00;
+  --accent-hover: #E65A00;
+  --accent-active: #CC5200;
+  --accent-soft: rgba(255, 107, 0, 0.08);
+  --accent-rgb: 255, 107, 0;
+  --brand-mark: #FF6B00;
   --focus-ring: var(--accent);
-  /* Chat bubbles pair this with solid white text (never --ink), so it must stay a fixed, saturated blue in
-     BOTH themes — unlike --accent, which intentionally lightens in dark mode for buttons/links. White text
-     on that lightened accent reads as washed-out/grey instead of white, which is the opposite of legible. */
-  --chat-user-bg: #2563EB;
-  --chat-user-bg-2: #1D4ED8;
+  /* Chat bubbles use orange with white text */
+  --chat-user-bg: #FF6B00;
+  --chat-user-bg-2: #E65A00;
   
   --bg-2: #F4F4F5;
   --bg-3: #E4E4E7;
@@ -3520,6 +3515,310 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   letter-spacing: -0.02em;
   color: var(--ink);
   line-height: 1.2;
+}
+
+/* ─── Framer-style Landing Page ───────────────────────────────────────────── */
+.landing-framer {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: #FFFFFF;
+  position: relative;
+}
+
+.landing-nav-framer {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 64px;
+  padding: 0 clamp(24px, 5vw, 64px);
+  background: #FFFFFF;
+  border-bottom: 1px solid #E4E4E7;
+}
+
+.brand-framer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 16px;
+  letter-spacing: -0.02em;
+  color: #18181B;
+  text-decoration: none;
+}
+
+.brand-name-framer {
+  font-family: var(--display);
+  font-weight: 600;
+  text-transform: lowercase;
+}
+
+.landing-navlinks-framer {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.nav-link-framer {
+  font-size: 14px;
+  font-weight: 500;
+  color: #71717A;
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.nav-link-framer:hover {
+  color: #18181B;
+}
+
+.lang-toggle-framer {
+  height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #71717A;
+  background: #F4F4F5;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.lang-toggle-framer:hover {
+  background: #E4E4E7;
+}
+
+.btn.ghost-framer {
+  height: 36px;
+  padding: 0 16px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #18181B;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.btn.ghost-framer:hover {
+  background: #F4F4F5;
+}
+
+.btn.primary-framer {
+  height: 44px;
+  padding: 0 24px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #FFFFFF;
+  background: #FF6B00;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.btn.primary-framer:hover {
+  background: #E65A00;
+}
+
+.hero-framer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(80px, 20vh, 160px) 24px;
+  text-align: center;
+  max-width: 680px;
+  margin: 0 auto;
+}
+
+.hero-title-framer {
+  font-family: var(--display);
+  font-size: clamp(36px, 6vw, 56px);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  color: #18181B;
+  margin-bottom: 24px;
+}
+
+.hero-sub-framer {
+  font-size: clamp(16px, 2.5vw, 18px);
+  line-height: 1.6;
+  color: #71717A;
+  margin-bottom: 32px;
+  max-width: 520px;
+}
+
+.hero-cta-framer {
+  margin-bottom: 24px;
+}
+
+.hero-tagline-framer {
+  font-size: 14px;
+  color: #A1A1AA;
+  margin-bottom: 16px;
+}
+
+.hero-demo-link-framer {
+  font-size: 14px;
+  color: #71717A;
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.hero-demo-link-framer:hover {
+  color: #FF6B00;
+}
+
+.features-framer {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 48px;
+  padding: 80px 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+@media (min-width: 768px) {
+  .features-framer {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.feature-column-framer {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.feature-number-framer {
+  font-size: 48px;
+  font-weight: 700;
+  color: #E4E4E7;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.feature-title-framer {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #FF6B00;
+  margin-bottom: 8px;
+}
+
+.feature-heading-framer {
+  font-size: 24px;
+  font-weight: 600;
+  color: #18181B;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+  margin-bottom: 12px;
+}
+
+.feature-desc-framer {
+  font-size: 15px;
+  color: #71717A;
+  line-height: 1.6;
+  margin-bottom: 24px;
+}
+
+.sample-task-framer {
+  padding: 24px;
+  background: #F4F4F5;
+  border-radius: 12px;
+  border: 1px solid #E4E4E7;
+}
+
+.sample-task-subject-framer {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #71717A;
+  margin-bottom: 8px;
+}
+
+.sample-task-title-framer {
+  font-size: 18px;
+  font-weight: 600;
+  color: #18181B;
+  margin-bottom: 8px;
+  letter-spacing: -0.01em;
+}
+
+.sample-task-meta-framer {
+  font-size: 14px;
+  color: #71717A;
+}
+
+.sample-tutor-framer {
+  padding: 24px;
+  background: #F4F4F5;
+  border-radius: 12px;
+  border: 1px solid #E4E4E7;
+}
+
+.sample-tutor-label-framer {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #71717A;
+  margin-bottom: 12px;
+}
+
+.sample-tutor-question-framer {
+  font-size: 16px;
+  font-weight: 500;
+  color: #18181B;
+  margin-bottom: 8px;
+  line-height: 1.5;
+}
+
+.sample-tutor-prompt-framer {
+  font-size: 14px;
+  color: #71717A;
+  line-height: 1.5;
+  font-style: italic;
+}
+
+.landing-footer-framer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 32px 24px;
+  border-top: 1px solid #E4E4E7;
+  font-size: 13px;
+  color: #71717A;
+}
+
+.footer-brand-framer {
+  font-weight: 500;
+}
+
+.footer-links-framer {
+  display: flex;
+  gap: 24px;
+}
+
+.footer-links-framer a {
+  color: #71717A;
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.footer-links-framer a:hover {
+  color: #FF6B00;
 }
 
 .research-list-simple {
