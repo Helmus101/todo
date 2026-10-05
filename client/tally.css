@@ -1587,6 +1587,31 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
   .btn:hover { background: var(--hover-wash); border-color: var(--bg-3); }
   .card-check { background: var(--surface); border-color: var(--bg-3); }
   .deck-btn-wrong { background: var(--surface); border-color: var(--line); }
+  /* Landing / login / legal surfaces — re-themed above with literal #FFFFFF backgrounds OUTSIDE the dark
+     token block, and no dark override rescued them: in dark mode the tokens flip to a near-black canvas
+     with light ink while these stayed white — a white nav bar with near-white brand/link text, a white
+     login card, white FAQ cards on a black page. Same tokens as the app-shell rescues above, so these
+     pages now track the theme like everything else. */
+  .landing-simple, .login-page { background: var(--bg); }
+  .landing-nav-simple, .landing-nav.glass-nav, .login-card,
+  .faq-item-simple, .lang-toggle { background: var(--surface); }
+  .faq-item-simple:hover { border-color: var(--bg-3); }
+  /* Active segment of the pill switcher — same story: literal white chip, light-ink label once the
+     tokens flip. */
+  .segmented-control button.active { background: var(--surface); }
+}
+
+/* ─── Forced colors (Windows High Contrast) ─────────────────────────────── */
+/* styles.css deliberately uses `outline` for :focus-visible because box-shadow is DROPPED entirely in
+   forced-colors mode — the Tally focus ring above (`outline: none; box-shadow: …`) made keyboard focus
+   invisible exactly for the users who need it most. Highlight is the UA's system focus color; a solid
+   outline is the only ring guaranteed to survive forced colors. */
+@media (forced-colors: active) {
+  :focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+    box-shadow: none;
+  }
 }
 
 /* ─── Mobile refinements ────────────────────────────────────────────────── */
@@ -1600,6 +1625,9 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
   }
   .dash-hero { padding: 22px 20px; }
   .settings-sec { padding: 20px 18px; }
+  /* Five footer items (brand, 3 links, ©) in one space-between row squeeze into an unreadable line at
+     phone widths — stack them, centered, matching the landing's own column rhythm. */
+  .foot-top-simple { flex-direction: column; align-items: center; gap: 12px; }
   .card { padding: 14px 14px 14px 18px; }
   .card-x, .card-study { opacity: 1; }
   .toast { top: 12px; left: 12px; right: 12px; transform: none; max-width: none; }
