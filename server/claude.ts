@@ -1639,7 +1639,11 @@ export function visionReady(): boolean {
 // different voice is a config change, not a deploy. The client falls back to the browser's own voice
 // whenever this fails, so an outage degrades the voice, never silences it.
 const GEMINI_TTS_MODEL = process.env.GEMINI_TTS_MODEL || "gemini-2.5-flash-preview-tts";
-const GEMINI_TTS_VOICE = process.env.GEMINI_TTS_VOICE || "Kore";
+// "Kore" (the SDK's own example default) reads firm/female — direct request for a better male voice.
+// "Charon" is Google's documented "Informative" male voice, a clear, even register that fits a tutor
+// explaining something, as opposed to e.g. "Puck" (Upbeat/energetic) or "Fenrir" (Excitable), which read
+// as more hype than a calm explanation calls for.
+const GEMINI_TTS_VOICE = process.env.GEMINI_TTS_VOICE || "Charon";
 export function ttsReady(): boolean {
   return !!process.env.GEMINI_API_KEY;
 }
@@ -1726,7 +1730,10 @@ export async function synthesizeSpeech(text: string): Promise<{ wav: Buffer } | 
 // neural voices (same quality tier as Gemini's, not a robotic fallback). No official SLA/docs, so this is
 // "best-effort second opinion," not foundation-grade — if IT fails too, the client's browser voice is the
 // true last resort, which still beats dead silence.
-const STREAMELEMENTS_VOICE: Record<string, string> = { fr: "Celine", en: "Joanna" };
+// Matching Gemini's switch to a male voice above — this is the fallback tier, so it should sound like the
+// same tutor, not switch gender when Gemini's quota is hit. "Mathieu"/"Matthew" are the standard male
+// neural Polly voices for fr/en (StreamElements proxies Amazon Polly).
+const STREAMELEMENTS_VOICE: Record<string, string> = { fr: "Mathieu", en: "Matthew" };
 // A plain browser User-Agent: several free, undocumented TTS endpoints (this one included) quietly 403/502
 // a request that doesn't look like it came from a browser — a bare server-side fetch() sends no User-Agent
 // at all, which reads as a bot. Reported live: BOTH free tiers failed together on the same request, the

@@ -16,7 +16,7 @@ import { connectionColumnUpdates } from "../server/store.ts";
 import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, contextKey, chooseArm, computeReward, computeCardReward, computeLatencyReward, updatePosterior, leadingArm } from "../server/bandit.ts";
 import { trimFreeTTSWatermark } from "../server/ttsTrim.ts";
 import { wantsArtifactTools } from "../server/claude.ts";
-import { rankVoices, cloudChunks } from "../client/voice/useSpeechSynthesis.ts";
+import { rankVoices, cloudChunks, toSpeakableText } from "../client/voice/useSpeechSynthesis.ts";
 import { pcmToWav, leaksAnswer, scrubAnswerLeak, makeProblem as makeProblemLeak, makePracticeProblem as makePracticeLeak, wordWrapChunks, leaksAnyProblemAnswer, makeInteractiveEntry } from "../server/claude.ts";
 import { lastMessageKey } from "../client/voice/replyKey.ts";
 import { subjectMastery } from "../shared/types.ts";
@@ -4061,7 +4061,7 @@ section("TTS never falls straight to the browser voice — two free cloud tiers 
   // returning an error that would make the client fall back to the browser voice.
   const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
   check("a second, keyless TTS provider exists (StreamElements/Polly), not just Gemini", /export async function synthesizeSpeechFallback/.test(claude) && /api\.streamelements\.com\/kappa\/v2\/speech/.test(claude));
-  check("the fallback provider has real voices for both app languages (fr and en)", /STREAMELEMENTS_VOICE: Record<string, string> = \{ fr: "Celine", en: "Joanna" \};/.test(claude));
+  check("the fallback provider has real voices for both app languages (fr and en)", /STREAMELEMENTS_VOICE: Record<string, string> = \{ fr: "Mathieu", en: "Matthew" \};/.test(claude));
   check("the fallback provider validates it actually got audio back, not an error page with a 200", /ct\.startsWith\("audio\/"\)/.test(claude));
 
   const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
@@ -4359,6 +4359,23 @@ section("WRITE_TO_BOARD must not get ahead of the chat — only record a step on
   check("WRITE_TO_BOARD's own description forbids writing a later step before the student reaches it", claude.includes("NEVER GET AHEAD OF THE CHAT") && claude.includes("never a later step of the SAME derivation they haven't reached yet"));
   check("it cites the exact live failure (the finished F_net line written while chat was still deriving it)", claude.includes("F_net down slope = mg sin25 - mg cos25 * tan20") && claude.includes("the board had done the derivation FOR them"));
   check("it gives the concrete fix: ask the question first, write the entry after they answer", claude.includes("ask the question first and write the entry after they answer it"));
+}
+
+section("TTS voice — switched to a male voice on both cloud tiers, arrows read as a word (source pins)");
+{
+  // Direct request: "use a better male voice" — Gemini's default (Kore, Firm/female-leaning) and
+  // StreamElements' default (Joanna/Celine, both female) both switched to a male voice, so the tutor
+  // doesn't change gender mid-session if Gemini's quota is hit and the route falls to the next tier.
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("Gemini's default voice is now Charon (male, Informative), not Kore", /GEMINI_TTS_VOICE \|\| "Charon"/.test(claude) && !/GEMINI_TTS_VOICE \|\| "Kore"/.test(claude));
+  check("StreamElements' fallback voices are also male (Mathieu/Matthew), not Celine/Joanna", /STREAMELEMENTS_VOICE: Record<string, string> = \{ fr: "Mathieu", en: "Matthew" \};/.test(claude));
+
+  // Direct request: "make sure here it doesn't say the arrow but replaces by word" — a worked-math arrow
+  // ("t² = 9.18 → t = 3.03 s") either got read literally as "arrow" or mangled by the TTS engine.
+  check("a unicode arrow is read as a word, not a symbol", toSpeakableText("t² = 9.18 → t = 3.03 s") === "t² = 9.18 gives t = 3.03 s");
+  check("an ASCII '->' arrow is also replaced", toSpeakableText("x -> y") === "x gives y");
+  check("a '=>' arrow is also replaced", toSpeakableText("A => B") === "A gives B");
+  check("spacing around the substituted word is normal regardless of how tight the arrow was in source", toSpeakableText("a→b") === "a gives b");
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

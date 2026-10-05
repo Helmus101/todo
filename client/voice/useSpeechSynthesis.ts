@@ -3,8 +3,8 @@ import { api } from "../api.ts";
 
 /** Strip the markdown Otto's replies use (headings, bold/italic emphasis markers, [links](url), GFM table
  *  pipes, bullet markers) down to plain readable prose — read aloud verbatim, "hashtag hashtag" and literal
- *  pipe/asterisk characters would be nonsense. */
-function toSpeakableText(md: string): string {
+ *  pipe/asterisk characters would be nonsense. Exported for unit tests. */
+export function toSpeakableText(md: string): string {
   return md
     .replace(/```[\s\S]*?```/g, " ")                 // code blocks — not worth reading aloud
     .replace(/`([^`]+)`/g, "$1")                      // inline code
@@ -16,6 +16,12 @@ function toSpeakableText(md: string): string {
     .replace(/^\s{0,3}\d+[.)]\s+/gm, "")               // numbered list markers
     .replace(/\|/g, ", ")                              // table pipes → a pause, not a literal bar
     .replace(/^\s{0,3}:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*$/gm, "") // table separator rows
+    // Reported live: an arrow in worked math ("t² = 9.18 → t = 3.03 s") either got read literally as
+    // "arrow" or mangled by the TTS engine — neither sounds like a tutor talking. Arrows in this app's chat
+    // always mean "leads to"/"therefore", so that's the word substituted, same meaning read aloud as on
+    // screen. Checked before the generic whitespace collapse below so the substituted word gets normal
+    // spacing on both sides regardless of how tightly the arrow was set in the source text.
+    .replace(/\s*(?:->|=>|→|⇒)\s*/g, " gives ")
     .replace(/[ \t]+/g, " ")
     .trim();
 }
