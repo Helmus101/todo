@@ -1380,7 +1380,7 @@ export function App() {
                   <div className="done-list">{(showCompleted ? completed : completed.slice(0, 8)).map((t) => (
                     // A real <button>: reopening a finished task was mouse-only, and this row is the ONLY
                     // way back into one.
-                    <button type="button" key={t.id} className={`done-row ${t.id === justDoneId ? "just-done" : ""}`} onClick={() => navigate(`task/${t.id}`)} title={t.synopsis || t.why}>
+                    <button type="button" key={t.id} className={`done-row ${t.id === justDoneId ? "just-done" : ""}`} onClick={() => navigate(`task/${t.id}`)} title={t.synthesis || t.why}>
                       <span className="done-check" aria-hidden="true">✓</span>
                       <span className="done-title">{t.title}</span>
                       <span className="done-when">{relTime(t.updatedAt || t.createdAt, (fr, enS) => en ? enS : fr)}</span>

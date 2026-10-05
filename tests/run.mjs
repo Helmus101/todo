@@ -4156,7 +4156,9 @@ section("Phone restriction — flashcard review + READ-ONLY tasks, no chat; iPad
   check("add-task and the refresh/generate action are hidden on phone", /\{!isPhone && <div className="dash-addtask">/.test(app) && /\{!isPhone && \(route === "" \|\| route === "tasks"/.test(app));
   const card = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
   check("TaskCardRow's readOnly hides the tick-off, Study Mode and dismiss controls", /!isDone && !readOnly \? \(/.test(card) && /!isDone && !readOnly && onEnterStudyMode/.test(card) && /!isDone && !leaving && !readOnly && <button className="card-x"/.test(card));
-  check("TaskReadOnly renders the plan (steps + done state) and has no chat/handlers at all", /export function TaskReadOnly/.test(card) && /task-readonly-steps/.test(card) && !/TaskReadOnly[\s\S]{0,2000}onClick/.test(card));
+  // "no chat for the moment" is the explicit constraint here, not "no interaction at all" — opening a link
+  // (added later) is still a read of the task, not an action ON it, same spirit as the rest of this view.
+  check("TaskReadOnly renders the plan (steps + done state) and has no chat (TaskChat/sendChat) at all", /export function TaskReadOnly/.test(card) && /task-readonly-steps/.test(card) && !/TaskReadOnly[\s\S]{0,4000}<TaskChat/.test(card) && !/TaskReadOnly[\s\S]{0,4000}sendChat/.test(card));
   check("StudyLogPage gets a phoneOnly prop and forces the flashcards tab when set", /StudyLogPage lang=\{status\?\.language\} tasks=\{tasks\} status=\{status\} phoneOnly=\{isPhone\}/.test(app) && /useState<"journal" \| "flashcards">\(phoneOnly \? "flashcards" : "journal"\)/.test(app));
 
   const studyMode = readFileSync(new URL("../client/study/StudyMode.tsx", import.meta.url), "utf8");
@@ -4297,6 +4299,22 @@ section("Landing page redesign — real features/integrations only, no fabricate
   check("the integrations list matches server/integrations.ts's real CATALOG, not an invented one", landing.includes("integrations-grid") && landing.includes('L("Notion", "Notion")') && landing.includes('L("Pronote", "Pronote")'));
   check("the security claims are checkable facts already true elsewhere in this app (AES-256-GCM, read-first OAuth)", landing.includes("AES-256-GCM") && /read-first|lecture par défaut/.test(landing));
   check("the Research page (previously an orphan route, never linked) is now reachable from the footer", app.includes('href="/research"'));
+}
+
+section("Task detail view — removed the big bold current-step hero, 'To get started', and the 'Done' bullet log (source pins)");
+{
+  // Direct instruction: remove three duplicated surfaces from each task's detail view (TaskFocus) — the
+  // big bold hero for the ordinary current step, "To get started" (task.firstAction), and the "Done"
+  // section (task.did's bullet log) — each of these restated something StepList/the artifact chips already
+  // show. Other StepHero states (done/waiting/failed/a draft to send/all-complete/no-steps-yet) are kept:
+  // those carry real actions (Retry, Run now, Looks good, a draft review) that exist nowhere else.
+  const card = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
+  check("StepHero's ordinary current-step branch (after `const s = steps[currentIdx]`) is gone — it now returns null there", /remove the big bold hero for the ordinary "here's the current step" case/.test(card) && !/const s = steps\[currentIdx\];\s*\n\s*const gatesAnother/.test(card));
+  check("StepHero's other states (done/waiting/failed/sendable/complete/empty) are all still there", /hero-done/.test(card) && /hero-waiting/.test(card) && /hero-failed/.test(card) && /hero-sendable/.test(card) && /hero-complete/.test(card) && /hero-empty/.test(card));
+  check("the 'To get started' / firstAction paragraph is removed from TaskFocus's render", !/first-action-label/.test(card) && card.includes('remove "To get started" (task.firstAction)'));
+  check("task.firstAction itself is untouched server-side — only the render was removed", card.includes("task.firstAction itself (server/claude.ts)") && card.includes("is left alone — only this render is removed"));
+  check("the 'Done' bullet log (task.did) is removed from PreparedPanel (TaskFocus's artifact section)", card.includes('remove the "Done" section') && !/\{artifactCount > 0 \? <span className="prepared-label">\{L\("Fait", "Done"\)\}/.test(card));
+  check("StepList (every step, current one included, with its own full controls) is untouched — nothing lost, just de-duplicated", /function StepList\(/.test(card) && /onStepDone\(i\)/.test(card));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

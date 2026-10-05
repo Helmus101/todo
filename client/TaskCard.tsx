@@ -27,7 +27,6 @@ import { useVoiceModePref } from "./voice/useVoiceModePref.ts";
 import { BoardArtifact } from "./study/artifacts/BoardArtifact.tsx";
 import { getLocalThread } from "./localChatBoard.ts";
 import { VoiceControls } from "./voice/VoiceControls.tsx";
-import { TAB_GROUP, openTab } from "./ui.tsx";
 
 /**
  * The leave animation + API call for finishing or dismissing a task. Extracted so the collapsed row and the
@@ -703,7 +702,13 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
         <div className="deck-progress-bar"><div className="deck-progress-fill" style={{ width: `${(doneCount / steps.length) * 100}%` }} /></div>
       ) : null}
 
-      {/* (C) the hero — the single thing to do right now. */}
+      {/* (C) the hero — but NOT for an ordinary "here's the current step" display (direct instruction:
+          remove the big bold hero for the first/current step — StepList right below already shows every
+          step, current one included, so this was the same content twice). StepHero still renders for every
+          OTHER state (done/waiting/failed/a draft to send/all-steps-complete/no-steps-yet) — those convey
+          something StepList can't (a Retry/Run-now/Looks-good button, a draft review, a failure message),
+          so they stay. See StepHero's own last branch (the one after `const s = steps[currentIdx]`) for
+          exactly what got suppressed. */}
       <StepHero
         task={task} steps={steps} currentIdx={currentIdx} isDone={isDone} cStatus={cStatus}
         retrying={retrying} running={running} decided={decided} setDecided={setDecided}
@@ -724,24 +729,10 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
         </button>
       ) : null}
 
-      {/* The anti-procrastination hook: the smallest possible first move, small enough it's hard to say
-          no to (see FIRST ACTION in server/claude.ts) — a stuck student needs permission to start, not
-          another item on the plan, so this sits BELOW the hero (which is the real current step) rather
-          than competing with it for the "one thing to do" spot. */}
-      {task.firstAction && !isDone ? (
-        <p className="first-action">
-          <span className="first-action-label">{L("Pour démarrer", "To get started")}</span>
-          {task.firstAction.text}
-          {/* The 2-minute rule (GTD): anything genuinely this quick shouldn't get filed away for later at
-              all — say so plainly instead of just stating a duration, so the badge itself is the nudge to
-              knock it out right now rather than something to schedule. */}
-          {task.firstAction.minutes ? (
-            task.firstAction.minutes <= 2
-              ? <span className="first-action-minutes quick-win">{L("2 min — fais-le maintenant", "2 min — just do it now")}</span>
-              : <span className="first-action-minutes">~{task.firstAction.minutes} {L("min", "min")}</span>
-          ) : null}
-        </p>
-      ) : null}
+      {/* Direct instruction: remove "To get started" (task.firstAction) — same reasoning as removing the
+          current-step hero above: the step it names is already the current/next entry in StepList below,
+          so this was a second place pointing at the same thing. task.firstAction itself (server/claude.ts)
+          is left alone — only this render is removed. */}
 
       {/* "What Otto prepared" used to live behind a collapsed disclosure, same tier as "All steps" — easy to
           miss entirely on a task that's mostly notable FOR what got made (a brief, a deck). It's not a big
@@ -985,93 +976,11 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
     );
   }
 
-  const s = steps[currentIdx];
-  const gatesAnother = steps.some((o, j) => j !== currentIdx && o.dependsOn === currentIdx);
-  return (
-    <div className="step-hero">
-      <div className="step-hero-top">
-        {s.difficulty ? (
-          <span className={`step-diff step-diff-${s.difficulty}`}>
-            {s.difficulty === "easy" ? L("Facile", "Easy") : s.difficulty === "hard" ? L("Difficile", "Hard") : L("Moyen", "Medium")}
-          </span>
-        ) : null}
-      </div>
-      <p className="hero-step">{withInlineLinks(s.text)}</p>
-      {/* NOTE: doneWhen is no longer displayed on individual steps - it belongs on the main task's Definition of Done */}
-      {/* NOTE: checkpoint is no longer displayed on individual steps - it belongs on the main task's Definition of Done */}
-      {s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate, L)}`, `by ${fmtDate(s.targetDate, L)}`)}</span> : null}
-      {s.minutes ? <SessionTimer key={currentIdx} minutes={s.minutes} /> : null}
-      {s.result ? <span className="step-result note">{s.result}</span> : null}
-      {/* A step Otto can DO but is missing ONE piece of info for (server sets `question`, optionally
-          `options` — see the "submit" tool schema in server/claude.ts) — this used to be computed and
-          stored with no UI at all, so the step just sat there with a generic input and no indication of
-          what was actually needed. The question IS the label now, tap-to-answer when there are likely
-          answers, free text always available as a fallback. Answering RUNS the step (api.runStep), since
-          it's automatable — different from the plain "what did you decide" box below. */}
-      {s.question ? (
-        <div className="step-question">
-          <p className="step-question-text">{withInlineLinks(s.question)}</p>
-          {s.options?.length ? (
-            <div className="step-question-opts">
-              {s.options.map((opt, oi) => (
-                <button key={oi} type="button" className="btn xs" disabled={answering === currentIdx} onClick={() => onAnswer(currentIdx, opt)}>{opt}</button>
-              ))}
-              {answering === currentIdx ? <span className="card-spin" aria-hidden="true" /> : null}
-            </div>
-          ) : null}
-          <input
-            className="step-input"
-            placeholder={s.options?.length ? L("Ou écris ta propre réponse…", "Or type your own answer…") : L("Écris ta réponse…", "Type your answer…")}
-            value={decided[currentIdx] || ""}
-            disabled={answering === currentIdx}
-            onChange={(e) => setDecided((d) => ({ ...d, [currentIdx]: e.target.value }))}
-            onKeyDown={(e) => { if (e.key === "Enter") onAnswer(currentIdx, decided[currentIdx] || ""); }}
-          />
-        </div>
-      ) : gatesAnother && !s.automatable ? (
-        <>
-        {/* "What did you decide?" only when this step GATES a later one — then it feeds that next step. A
-            persistent label (not just a placeholder, which vanishes once typing starts) so it stays clear
-            this is required to move on, not optional extra info. */}
-        <label className="step-input-label" htmlFor="step-input-hero">{L("Optionnel — note ce que tu as décidé :", "Optional — note what you decided:")}</label>
-        <input
-          id="step-input-hero"
-          className="step-input"
-          placeholder={L("ex : j'ai choisi le sujet X…", "e.g. I picked topic X…")}
-          value={decided[currentIdx] || ""}
-          onChange={(e) => setDecided((d) => ({ ...d, [currentIdx]: e.target.value }))}
-          onKeyDown={(e) => { if (e.key === "Enter") onStepDone(currentIdx); }}
-        />
-        </>
-      ) : null}
-      {/* One button, not three: a step with a link opens it (and — if nothing further is needed from the
-          user — marks itself done in the same click); otherwise it flips to "Done" once opened. A step
-          with no link is just "Done". "I'm stuck" is dropped here — the tutor chat right below is always
-          one glance away, so a dedicated help button on every step was one more thing competing for
-          attention for a path that already exists. */}
-      {/* A step with a question answers THROUGH that box above (which runs the step) — a separate "C'est
-          fait" here would let it be marked done without ever actually answering, so it's dropped. */}
-      {!s.question ? (
-        <div className="hero-acts">
-          {s.url && !(openedIdx === currentIdx) ? (
-            <button
-              className="btn primary"
-              title={s.url}
-              onClick={() => {
-                openTab(s.url!, TAB_GROUP);
-                if (s.automatable) onStepDone(currentIdx);
-                else setOpenedIdx(currentIdx);
-              }}
-            >
-              {L(`Ouvrir ${linkKind(s.url, L) || "le lien"} ↗`, `Open ${linkKind(s.url, L) || "link"} ↗`)}
-            </button>
-          ) : (
-            <button className="btn primary" onClick={() => onStepDone(currentIdx)}>{L("C'est fait", "Done")}</button>
-          )}
-        </div>
-      ) : null}
-    </div>
-  );
+  // Direct instruction: remove the big bold hero for the ordinary "here's the current step" case —
+  // StepList (the "All steps" disclosure right below) already shows every step, current one included, with
+  // its own full mark-done/question-answer/decide UI (see that component), so this was the same content
+  // and the same controls duplicated in two places on the same card.
+  return null;
 }
 
 /* ─────────────────────────────── panels ─────────────────────────────── */
@@ -1315,12 +1224,10 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
   const hiddenCount = allChips.length - visibleChips.length;
   return (
     <>
-      {task.did?.length ? (
-        <>
-          {artifactCount > 0 ? <span className="prepared-label">{L("Fait", "Done")}</span> : null}
-          <ul className="bullets">{task.did.map((d, i) => <li key={i}>{withInlineLinks(d)}</li>)}</ul>
-        </>
-      ) : null}
+      {/* Direct instruction: remove the "Done" section (task.did's bullet log of what Otto did) from each
+          task's detail view — the artifact chips right below already show what got made; this was a second,
+          plain-text echo of mostly the same thing. task.did itself is untouched (still written server-side,
+          still shown on TaskReadOnly's phone-only read view), only this render is removed. */}
       {/* In-app notes, flashcard decks and quizzes — no external tab, they open right here in a popup.
           Row-card layout (icon badge + title + meta) rather than an inline pill: these are real artifacts
           worth a proper tap target, not tags, and stacking them makes it obvious there are several. The
