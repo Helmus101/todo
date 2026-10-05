@@ -165,7 +165,6 @@ Account and application configuration.
   - Notion (hidden, server-side only)
 - **Study Preferences**:
   - Enable/disable Study Mode
-  - Extension download (Otto Tabs Chrome extension)
 - **Account**:
   - Export all data (tasks, jobs, connections — never tokens/passwords)
   - Delete account (instant, permanent, clears all local data)
@@ -220,16 +219,6 @@ Each artifact type has its own interactive viewer:
 - **Image**: Image viewer
 - **Sticky Notes**: Post-it style notes
 - **Scratchpad**: Free-form drawing
-
-### Chrome Extension (Optional)
-**Otto Tabs Extension** (downloadable from Settings):
-
-**Features**:
-- **Tab Grouping**: Steps of type "open a page" automatically open tabs, grouped in an "Otto" tab group
-- **Site Blocking**: During Study Mode, blocks navigation to sites outside the app (configurable whitelist)
-- **Optional**: Without extension, app uses `window.open` and doesn't block anything
-
-**Installation**: Download from Settings → unzip → Chrome → Extensions → Developer mode → Load unpacked
 
 ## What Otto Does / Doesn't Do
 
@@ -337,7 +326,6 @@ client/          React app (Vite)
 client/study/    Study Mode — full-screen workspace, tools, artifacts (local-first, IndexedDB)
 server/          Express API, job queue, AI agent, integrations
 shared/          Types + pure functions shared client & server
-extension/       Otto Tabs Chrome extension (MV3)
 tests/           Pure function test suite (npm test)
 supabase.sql     Postgres schema + RLS
 ```
