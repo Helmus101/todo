@@ -1668,14 +1668,21 @@ export function pcmToWav(pcm: Buffer, sampleRate: number, channels = 1, bitsPerS
 // 400/401/404, which a retry can't fix. Direct request ("make sure gemini always works"): most Gemini TTS
 // failures reported live have been exactly this kind of short-lived hiccup, not a real outage.
 const GEMINI_TTS_RETRY_STATUSES = new Set([429, 500, 503]);
-const GEMINI_TTS_RETRY_DELAY_MS = 1200;
+const GEMINI_TTS_RETRY_DELAY_MS = 800;
+// Reported live: a slow Gemini response (this used to wait up to 15s) blew straight through the CLIENT's
+// own fetch timeout, which aborts the whole /api/tts request — killing StreamElements/Google Translate's
+// chance to answer too, since they're later steps in the SAME request, never reached once the client gives
+// up. Gemini failing fast matters more here than Gemini succeeding slowly: 7s (plus one 7s retry on a
+// transient status) still leaves real time for the two fallback tiers inside the client's own budget (see
+// CLOUD_FETCH_TIMEOUT_MS, client/voice/useSpeechSynthesis.ts) instead of eating almost all of it.
+const GEMINI_TTS_TIMEOUT_MS = 7_000;
 
 async function callGeminiTts(text: string, key: string): Promise<{ wav: Buffer } | { error: string; status: number }> {
   try {
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-goog-api-key": key },
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(GEMINI_TTS_TIMEOUT_MS),
       body: JSON.stringify({
         contents: [{ parts: [{ text }] }],
         generationConfig: {
@@ -1730,7 +1737,10 @@ export async function synthesizeSpeechFallback(text: string, lang: string): Prom
   try {
     const res = await fetch(`https://api.streamelements.com/kappa/v2/speech?voice=${voice}&text=${encodeURIComponent(text)}`, {
       headers: { "User-Agent": BROWSER_UA, "Referer": "https://streamelements.com/", "Accept": "audio/mpeg,*/*" },
-      signal: AbortSignal.timeout(15_000),
+      // Same "fail fast, there's another tier waiting" reasoning as Gemini's own timeout above — this used
+      // to be 15s, which alone could eat the client's entire fetch budget before Google Translate ever got
+      // a turn.
+      signal: AbortSignal.timeout(8_000),
     });
     const ct = res.headers.get("content-type") || "";
     if (!res.ok || !ct.startsWith("audio/")) {

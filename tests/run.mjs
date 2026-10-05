@@ -4317,5 +4317,21 @@ section("Task detail view — removed the big bold current-step hero, 'To get st
   check("StepList (every step, current one included, with its own full controls) is untouched — nothing lost, just de-duplicated", /function StepList\(/.test(card) && /onStepDone\(i\)/.test(card));
 }
 
+section("TTS timeout retune — a slow Gemini must not abort the whole fallback chain before it gets to run (source pins)");
+{
+  // Reported live, with console logs: "signal timed out" twice in a row, then "skipping this reply's audio"
+  // — total silence on a reply. Root cause: the client's own fetch timeout (8s) was SHORTER than Gemini's
+  // own per-call timeout (15s) plus its one retry (another 15s) — the client gave up and aborted the whole
+  // /api/tts request before the server-side fallback chain (StreamElements, Google Translate) ever got a
+  // turn, since they're later steps in that SAME request. Fix: Gemini fails fast server-side (so the chain
+  // actually reaches the fallback tiers quickly), and the client's own timeout is long enough to let a
+  // realistic worst-case single-tier delay finish instead of cutting it off mid-flight.
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("Gemini's own per-call timeout is short enough to leave real time for the fallback tiers (was 15s)", /GEMINI_TTS_TIMEOUT_MS = 7_000/.test(claude));
+  check("StreamElements' timeout was also brought down from 15s for the same reason", /signal: AbortSignal\.timeout\(8_000\)/.test(claude));
+  const ttsSynthSrc = readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8");
+  check("the client's fetch timeout now comfortably exceeds Gemini's worst case (7s + one 7s retry) plus a full StreamElements attempt", /CLOUD_FETCH_TIMEOUT_MS = 25_000/.test(ttsSynthSrc));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

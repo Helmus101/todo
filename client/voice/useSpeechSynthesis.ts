@@ -100,7 +100,14 @@ export interface UseSpeechSynthesis {
 
 type QueueItem = { text: string; retried: boolean };
 
-const CLOUD_FETCH_TIMEOUT_MS = 8000;    // slower than this → treat the attempt as failed
+// Reported live: a slow Gemini response blew through the OLD 8s value here, which aborts the whole
+// /api/tts request client-side — killing StreamElements/Google Translate's chance to answer too, since
+// they're later steps in the SAME server-side request and never get reached once the client gives up.
+// Sized to comfortably cover the worst CURRENT single-tier latency (Gemini: up to ~15s across its own
+// 7s-timeout + one 7s retry on a transient status, server/claude.ts) plus a full StreamElements attempt
+// (8s) after it — long enough that the fallback chain this whole feature exists for actually gets to run,
+// short enough it isn't a one-minute wait before the student hears anything or nothing.
+const CLOUD_FETCH_TIMEOUT_MS = 25_000;  // slower than this → treat the attempt as failed
 const CLOUD_RETRY_DELAY_MS = 1200;      // one quick retry on a transient blip before giving up on a chunk
 const START_TIMEOUT_MS = 4000;          // browser engine: a chunk that never starts is treated as dropped
 const runTimeoutMs = (text: string) => Math.max(8000, text.length * 110); // ceiling for one chunk once playing
