@@ -28,9 +28,9 @@
   --line-glass: #E4E4E7;
 
   /* Accent: Orange as primary accent color for buttons, highlights, focus states */
-  --accent: #FF6B00;
-  --accent-hover: #E65A00;
-  --accent-active: #CC5200;
+  --accent: #ff6a2a;
+  --accent-hover: #f05d20;
+  --accent-active: #d94f18;
   --accent-soft: rgba(255, 107, 0, 0.08);
   --accent-rgb: 255, 107, 0;
   --brand-mark: #FF6B00;
@@ -53,7 +53,7 @@
   --radius-sm: 8px;
   --radius: 10px;
   --radius-lg: 12px;
-  --radius-xl: 16px;
+  --radius-xl: 14px;
   --radius-pill: 9999px;
   
   /* Generous spacing scale */
@@ -81,9 +81,9 @@
   --weight-semibold: 600;
   --weight-bold: 700;
   
-  --tracking-tight: -0.01em;
-  --tracking-tighter: -0.02em;
-  --tracking-display: -0.025em;
+  --tracking-tight: 0;
+  --tracking-tighter: 0;
+  --tracking-display: 0;
   
   /* Calm easing */
   --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
@@ -99,10 +99,10 @@
   --duration-spring: 300ms;
   
   /* Minimal shadows — barely-there depth */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-card-hover: 0 2px 8px rgba(0, 0, 0, 0.06);
-  --shadow-pop: 0 4px 24px rgba(0, 0, 0, 0.08);
+  --shadow-sm: none;
+  --shadow-card: none;
+  --shadow-card-hover: none;
+  --shadow-pop: 0 10px 30px rgba(24, 24, 27, 0.08);
   --shadow-glow: 0 0 0 3px var(--accent-soft);
   
   /* Solid surfaces, no glass */
@@ -6834,6 +6834,540 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .tutor-desmos-close { flex: 0 0 auto; }
 .tutor-desmos-full-frame-wrap { flex: 1; min-height: 0; position: relative; }
 .tutor-desmos-frame { width: 100%; height: 100%; border: none; display: block; }
+
+/* ─── Framer reference pass — quiet white canvas, text nav, ruled sections ─── */
+.main-shell {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: visible;
+}
+
+.app {
+  background: var(--bg);
+  display: block;
+}
+
+.sidebar {
+  display: none;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  height: 92px;
+  padding: 0 clamp(24px, 13vw, 384px);
+  background: rgba(255, 255, 255, 0.92);
+  border-bottom: 0;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.topbar-brand {
+  color: var(--ink);
+  font-size: 22px;
+  font-weight: 750;
+  line-height: 1;
+  text-decoration: none;
+}
+
+.topbar-brand:hover {
+  color: var(--accent);
+}
+
+.topbar-nav {
+  display: flex;
+  align-items: center;
+  gap: clamp(18px, 2vw, 32px);
+}
+
+.topbar-nav a {
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.topbar-nav a.active,
+.topbar-nav a:hover {
+  color: var(--accent);
+}
+
+.topbar .btn {
+  margin-left: 6px;
+}
+
+.topbar-title {
+  display: none;
+}
+
+.sidebar-toggle {
+  display: none;
+  background: #4f4f52;
+  color: #fff;
+  box-shadow: 0 8px 22px rgba(24, 24, 27, 0.18);
+}
+
+.list-wrap,
+.settings-page {
+  max-width: 1250px;
+  margin: 0 auto;
+  padding: clamp(76px, 10vh, 140px) clamp(24px, 6vw, 96px) 130px;
+}
+
+.dash-head,
+.settings-page > .settings-title,
+.settings-page > .settings-subtitle {
+  max-width: 1040px;
+}
+
+.dash-head {
+  margin-bottom: 52px;
+}
+
+.dash-date,
+.settings-sec h3,
+.feature-title-framer,
+.sample-task-subject-framer,
+.sample-tutor-label-framer {
+  letter-spacing: 0;
+}
+
+.list-head,
+.settings-title {
+  font-family: var(--display);
+  font-size: clamp(42px, 5vw, 72px);
+  font-weight: 760;
+  line-height: 1.04;
+  letter-spacing: 0;
+  margin: 0 0 26px;
+}
+
+.dash-date {
+  margin: 0 0 18px;
+  color: var(--ink-2);
+  font-size: clamp(20px, 2vw, 28px);
+  font-weight: 500;
+  text-transform: none;
+}
+
+.dash-line,
+.dash-momentum,
+.settings-subtitle {
+  color: var(--ink-2);
+  font-size: clamp(20px, 2vw, 28px);
+  line-height: 1.45;
+  max-width: 840px;
+}
+
+.dash-progress {
+  height: 10px;
+  margin-top: 42px;
+  max-width: 920px;
+  background: #efefef;
+  border-radius: 99px;
+}
+
+.dash-progress-fill,
+.deck-progress-fill {
+  background: var(--accent);
+}
+
+.dash-grid,
+.dash-today,
+.dash-more,
+.list-focus-wrap,
+.list,
+.focus-group,
+.completed-section {
+  max-width: 100%;
+}
+
+.dash-addtask {
+  max-width: 1040px;
+  margin-bottom: 42px;
+}
+
+.add-task,
+.add-task form,
+.quick-add,
+.task-create {
+  max-width: 1040px;
+}
+
+.card {
+  min-height: 0;
+  padding: 30px 0 32px;
+  gap: 22px;
+  border-radius: 0;
+  background: transparent;
+}
+
+.card + .card,
+.completed-section,
+.settings-sec,
+.errorlog-group {
+  border-top: 1px solid var(--line);
+}
+
+.card::before {
+  display: none;
+}
+
+@media (hover: hover) {
+  .card:hover {
+    background: transparent;
+  }
+
+  .card:hover .card-title {
+    color: var(--accent);
+  }
+}
+
+.card-check {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  border-color: #dcdcdc;
+}
+
+.card-title {
+  font-size: clamp(22px, 2.2vw, 30px);
+  font-weight: 730;
+  line-height: 1.18;
+  letter-spacing: 0;
+}
+
+.card-sub {
+  margin-top: 14px;
+  color: var(--ink-2);
+  font-size: clamp(18px, 1.6vw, 25px);
+  line-height: 1.45;
+  -webkit-line-clamp: 3;
+}
+
+.card-subject,
+.card-quadrant,
+.focus-title,
+.completed-head {
+  color: var(--ink-2);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.when,
+.when-soon {
+  color: var(--ink-2);
+  font-weight: 500;
+}
+
+.btn,
+.btn.ghost,
+.btn.primary,
+.show-more-btn {
+  min-height: 52px;
+  padding: 0 24px;
+  border-radius: var(--radius-pill);
+  border-color: transparent;
+  box-shadow: none;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.btn.primary,
+.btn.primary-framer,
+.deck-btn-right {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.btn.primary:hover,
+.btn.primary-framer:hover {
+  background: var(--accent-hover);
+}
+
+.btn.ghost,
+.show-more-btn {
+  background: #f6f6f6;
+  color: var(--ink-2);
+}
+
+.btn.ghost:hover,
+.show-more-btn:hover {
+  background: #eeeeee;
+  color: var(--ink);
+}
+
+input,
+textarea,
+select,
+.errorlog-textarea {
+  min-height: 58px;
+  border-radius: 14px;
+  border-color: #e6e6e8;
+  background: #f7f7f8;
+  font-size: 22px;
+  color: var(--ink);
+}
+
+textarea,
+.errorlog-textarea {
+  min-height: 108px;
+  padding: 18px 22px;
+}
+
+input:focus,
+textarea:focus,
+.errorlog-textarea:focus {
+  border-color: #d8d8da;
+  box-shadow: none;
+}
+
+.settings-page {
+  max-width: 1250px;
+}
+
+.settings-sec {
+  padding: 34px 0;
+  background: transparent;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.settings-sec:hover {
+  box-shadow: none;
+  transform: none;
+}
+
+.settings-sec h2 {
+  font-size: clamp(24px, 2.4vw, 32px);
+  letter-spacing: 0;
+}
+
+.settings-hint {
+  color: var(--ink-2);
+  font-size: 18px;
+  line-height: 1.55;
+}
+
+.acct-card,
+.student-model-text,
+.study-help-panel {
+  background: transparent;
+  border: 0;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.errorlog-addform {
+  max-width: 100%;
+  gap: 22px;
+}
+
+.errorlog-group {
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  border-radius: 0;
+}
+
+.errorlog-group-head {
+  padding: 24px 0;
+  background: transparent;
+}
+
+.tutor-landing .list-wrap,
+.tutor-landing {
+  max-width: 1250px;
+}
+
+.tutor-landing-inner {
+  min-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.tutor-hero-kicker {
+  display: none;
+}
+
+.tutor-landing h1 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(46px, 5vw, 68px);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.tutor-landing-sub {
+  color: var(--ink-2);
+  font-size: clamp(20px, 2vw, 28px);
+}
+
+.tutor-subject-select {
+  width: min(920px, 100%);
+  margin-top: 34px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 38px;
+  background: #fff;
+}
+
+.tutor-subject-select select {
+  background: transparent;
+  border: 0;
+  min-height: 58px;
+}
+
+.tutor-session {
+  height: auto;
+  min-height: calc(100vh - 92px);
+  grid-template-columns: minmax(260px, 0.34fr) minmax(0, 1fr);
+  gap: clamp(48px, 7vw, 120px);
+  padding: clamp(64px, 9vh, 120px) clamp(24px, 10vw, 260px);
+}
+
+.tutor-chat,
+.tutor-board {
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.tutor-pane-title {
+  border-bottom: 0;
+  padding: 0 0 28px;
+  color: var(--ink-2);
+}
+
+.tutor-chat-body,
+.tutor-board-body {
+  padding: 0;
+  max-height: none;
+}
+
+.tutor-board .sm-board-body {
+  max-width: none;
+  padding: 0;
+}
+
+.landing-nav-framer {
+  height: 92px;
+  padding: 0 clamp(24px, 14vw, 408px);
+  border-bottom: 0;
+}
+
+.brand-framer .logo {
+  display: none;
+}
+
+.brand-framer {
+  color: var(--accent);
+  font-size: 22px;
+  font-weight: 750;
+}
+
+.hero-framer {
+  max-width: 1100px;
+  padding-top: clamp(120px, 22vh, 250px);
+  padding-bottom: clamp(120px, 22vh, 220px);
+}
+
+.hero-title-framer {
+  max-width: 960px;
+  font-size: clamp(58px, 7vw, 112px);
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.hero-sub-framer {
+  max-width: 650px;
+  font-size: clamp(20px, 2vw, 28px);
+  line-height: 1.35;
+}
+
+.features-framer {
+  max-width: 1250px;
+  padding: 100px clamp(24px, 6vw, 96px);
+  border-top: 1px solid var(--line);
+}
+
+.feature-number-framer {
+  display: none;
+}
+
+.sample-task-framer,
+.sample-tutor-framer {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 28px 0 0;
+}
+
+@media (max-width: 900px) {
+  .topbar,
+  .landing-nav-framer {
+    height: auto;
+    min-height: 72px;
+    padding: 18px 20px;
+    align-items: flex-start;
+  }
+
+  .topbar-nav,
+  .landing-navlinks-framer {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 12px 18px;
+  }
+
+  .topbar-nav a {
+    font-size: 14px;
+  }
+
+  .list-wrap,
+  .settings-page {
+    padding: 56px 22px 110px;
+  }
+
+  .list-head,
+  .settings-title,
+  .hero-title-framer {
+    font-size: clamp(42px, 13vw, 64px);
+  }
+
+  .dash-line,
+  .dash-momentum,
+  .dash-date,
+  .settings-subtitle {
+    font-size: 20px;
+  }
+
+  .card {
+    padding: 24px 0;
+  }
+
+  .card-title {
+    font-size: 23px;
+  }
+
+  .card-sub {
+    font-size: 18px;
+  }
+
+  .tutor-session {
+    grid-template-columns: 1fr;
+    padding: 42px 22px 90px;
+  }
+}
 .tutor-desmos-hint { margin: 0; padding: 6px 16px; font-size: 12px; color: var(--ink-2); border-top: 1px solid var(--line); flex: 0 0 auto; }
 
 /* ── Tutor Session: Whiteboard (student draws, Otto reads it) ──────────────────

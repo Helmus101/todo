@@ -1144,18 +1144,18 @@ export function App() {
       </button>}
 
       {/* Main content area */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div className="main-shell">
         {!route.startsWith("tutor") && <header className="topbar">
-          <div className="topbar-title">{(() => {
-            if (route === "settings") return en ? "Settings" : "Réglages";
-            if (route === "log") return isPhone ? (en ? "Flashcards" : "Cartes") : (en ? "Journal" : "Journal");
-            if (route === "study") return en ? "Study" : "Réviser";
-            if (route === "errorlog") return en ? "Error log" : "Erreurs";
-            if (route === "admin") return "Admin";
-            if (route.startsWith("tutor/session/")) return en ? "Tutor Session" : "Séance de tutorat";
-            return en ? "Tasks" : "Tâches";
-          })()}</div>
+          <a className="topbar-brand" href="/tasks" aria-label="Otto">otto</a>
           <div className="spacer" />
+          <nav className="topbar-nav" aria-label={en ? "Main navigation" : "Navigation principale"}>
+            <a className={route === "" || route === "tasks" || route.startsWith("task/") ? "active" : ""} href="/tasks">{en ? "Today" : "Aujourd'hui"}</a>
+            {!isPhone && <a className={route === "tutor" || route.startsWith("tutor/session/") ? "active" : ""} href="/tutor">{en ? "Tutor" : "Tuteur"}</a>}
+            <a className={route === "log" ? "active" : ""} href="/log">{isPhone ? (en ? "Flashcards" : "Cartes") : (en ? "Journal" : "Journal")}</a>
+            {!isPhone && <a className={route === "errorlog" ? "active" : ""} href="/errorlog">{en ? "Mistakes" : "Erreurs"}</a>}
+            <a className={route === "settings" ? "active" : ""} href="/settings">{en ? "Settings" : "Réglages"}</a>
+            {!isPhone && isAdminUser(status?.user) && <a className={route === "admin" ? "active" : ""} href="/admin">Admin</a>}
+          </nav>
           {!isPhone && (route === "" || route === "tasks" || route.startsWith("task/")) && (status.googleConnected || status.pronoteConnected) && <button className="btn ghost" disabled={busy} onClick={() => void generate()}>{busy ? (status?.language === "en" ? "Searching…" : "Recherche…") : (status?.language === "en" ? "Refresh" : "Actualiser")}</button>}
         </header>}
 
