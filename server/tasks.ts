@@ -363,10 +363,22 @@ function looseDup(a: string, b: string): boolean {
  *  per-task blobs (a full conversation thread can be several KB; audit is N-entry JSON) and are never
  *  needed again once a task is done/dismissed. Only the most-recent 3 audit entries are retained so the
  *  completed-task card can still show its last outcome without shipping the full history. */
+/** A sortable recency string for a task whatever shape its timestamp was stored in. Stored/synced tasks
+ *  have been seen with `updatedAt`/`createdAt` as a number (epoch ms) or a Date-like object, not only an ISO
+ *  string — calling `.localeCompare` on those threw "is not a function" and aborted the whole sweep. */
+export function recencyStamp(t: { updatedAt?: unknown; createdAt?: unknown }): string {
+  for (const v of [t.updatedAt, t.createdAt]) {
+    if (typeof v === "string" && v) return v;
+    if (typeof v === "number" && Number.isFinite(v)) return new Date(v).toISOString();
+    if (v instanceof Date && !Number.isNaN(v.getTime())) return v.toISOString();
+  }
+  return "";
+}
+
 export function pruneHandled(list: WebTask[], keep: number): WebTask[] {
   const active = list.filter((t) => t.status !== "done" && t.status !== "dismissed");
   const handled = list.filter((t) => t.status === "done" || t.status === "dismissed")
-    .sort((a, b) => (b.updatedAt || b.createdAt || "").localeCompare(a.updatedAt || a.createdAt || ""))
+    .sort((a, b) => recencyStamp(b).localeCompare(recencyStamp(a)))
     .slice(0, keep)
     .map((t) => ({ ...t, chat: undefined, audit: t.audit?.slice(-3) }));
   return [...active, ...handled];
@@ -1054,7 +1066,7 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
   // live: a task dismissed one day came back days later.
   const handled = existing
     .filter((t) => t.status === "done" || t.status === "dismissed")
-    .sort((a, b) => (b.updatedAt || b.createdAt || "").localeCompare(a.updatedAt || a.createdAt || ""))
+    .sort((a, b) => recencyStamp(b).localeCompare(recencyStamp(a)))
     .map((t) => ({
       title: t.title,
       why: t.why,

@@ -5056,7 +5056,10 @@ export async function runTask(
     console.log(`${new Date().toISOString()} [ai] step 1: asking for useful tools`);
     const availableToolNames = extras?.tools?.map((t) => t.name).filter(Boolean) || [];
     const allTools = [...new Set([...availableToolNames, "web_search"])]; // web_search is always available
-    const toolsOut = await ask(
+    // With no connected integrations the only tool on offer is web_search — asking a reasoning model to
+    // "pick the most useful of: web_search" is a pure wasted round-trip (seconds of latency per task, the
+    // common case for a student who hasn't connected anything). Only ask when there's an actual choice.
+    const toolsOut = allTools.length > 1 ? await ask(
       `You are helping a student with this task.\n` +
       `TASK: "${task.title}"\n` +
       `WHY: "${task.why}"\n` +
@@ -5070,7 +5073,7 @@ export async function runTask(
       // into max_tokens regardless of how small the actual output is — see ask()'s own comment). Even this
       // tiny payload needs real headroom.
       600,
-    );
+    ) : { usefulTools: ["web_search"] };
     const usefulTools: string[] = toolsOut.usefulTools || [];
     console.log(`${new Date().toISOString()} [ai] step 1 result: usefulTools=${usefulTools.join(",")}`);
     if (!usefulTools.length) {
@@ -5565,7 +5568,10 @@ export async function runTask(
       }
     }
 
-    for (const artReq of requestedArtifacts) {
+    // The deck, quiz and note are independent of each other (all read the same finished `context`), so they
+    // are generated CONCURRENTLY — a task that wants all three used to wait for three reasoning-model calls
+    // back to back. Results land in whatever order they finish; each only appends to its own list.
+    await Promise.all(requestedArtifacts.map(async (artReq) => {
       console.log(`${new Date().toISOString()} [ai] step 5: creating artifact of type ${artReq.type}`);
       if (artReq.type === "flashcards" || artReq.type === "flashcard") {
         const deckOut = await ask(
@@ -5698,7 +5704,7 @@ export async function runTask(
           console.error(`${new Date().toISOString()} [ai] step 5: failed to create note`);
         }
       }
-    }
+    }));
     if (!requestedArtifacts.length) {
       audit.push({ at: new Date().toISOString(), kind: "guardrail", label: `artifact: skipped (not needed)` });
     }
