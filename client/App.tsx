@@ -3875,13 +3875,11 @@ function TermsBody() {
   );
 }
 
-/** /research — the long-form version of the landing page's compact "Research" list (see the `landing-sec`
- *  with `sec-kicker`="Recherche"/"Research" in Landing()). That section stays a 4-line citation on purpose
- *  (a methodology reference, not a pitch); this page is where someone who actually wants the detail can
- *  read it. Grounded in the REAL implementation, not generic claims — cites actual function/file names
- *  the same way DOES_STUDENT_WORK is cited elsewhere in this app's own public-facing copy, so every claim
- *  here is checkable against the code, not marketing. Same LegalPage wrapper pattern (own LangContext,
- *  reachable logged-out) since it's public and has nothing to do with an authenticated session. */
+/** /research — the philosophy page, linked from the landing nav's "Our approach". The landing's compact
+ *  "Research" list stays a 4-line citation on purpose; this page is the mission statement plus the four
+ *  methods, one short user-facing paragraph each — deliberately NO file/function names here (reported:
+ *  naming internals reads like the page is talking to a computer, not to a student). Same wrapper pattern
+ *  as the legal pages (own LangContext, reachable logged-out) since it's public. */
 function ResearchPage({ lang }: { lang?: string }) {
   return (
     <LangContext.Provider value={lang === "en" ? "en" : "fr"}>
@@ -3906,46 +3904,40 @@ function ResearchPageBody() {
         <h1 className="research-title">{L("Fait pour apprendre, pas pour tricher.", "Made for learning, not shortcuts.")}</h1>
         <p className="research-intro">
           {L(
-            "La plupart des « tuteurs IA » sont un chatbot générique avec un prompt système qui dit « sois pédagogique ». Ça tient rarement : sous la pression (« allez, donne-moi juste la réponse »), le modèle finit par céder. Otto est construit différemment — sur quatre méthodes pédagogiques précises, chacune avec un mécanisme concret dans le code, pas juste une instruction qu'on espère suivie.",
-            "Most \"AI tutors\" are a generic chatbot with a system prompt that says \"be pedagogical.\" That rarely holds up — under real pressure (\"come on, just give me the answer\"), the model eventually caves. Otto is built differently: on four specific pedagogical methods, each backed by an actual mechanism in the code, not just an instruction it's hoped will be followed.",
+            "La plupart des tuteurs IA promettent d'enseigner. Sous la pression, ils donnent la réponse. Otto est construit sur quatre méthodes qui rendent plus difficile de donner la réponse que t'aider à apprendre.",
+            "Most AI tutors promise to teach. Under pressure, they hand over the answer. Otto is built on four methods that make handing over the answer harder than helping you learn.",
           )}
         </p>
 
         <section className="research-sec">
           <p className="research-sec-kicker" aria-hidden>01</p>
           <h2 className="research-sec-title">{L("Le questionnement socratique", "Socratic questioning")}</h2>
-        <p>
-          {L(
-            "La règle centrale du tuteur d'Otto s'appelle en interne « HAND BACK THE THINKING » : une fois le raisonnement construit avec l'élève, c'est TOUJOURS à lui de prononcer la conclusion — jamais à Otto. Concrètement, le prompt du tuteur (`chatAboutTask` dans `server/claude.ts`) impose un cycle en 6 étapes à chaque échange : fixer l'objectif, obtenir une tentative de l'élève, diagnostiquer où ça coince (pas juste QUE ça coince — identifier l'erreur précise et le raisonnement erroné derrière), donner UN seul indice à la fois, exiger que l'élève reformule avec ses propres mots, puis ajuster l'échange suivant. Un « focalisateur » (une question qui pousse l'élève à choisir lui-même la piste) est toujours préféré à un « entonnoir » (une question qui ne laisse qu'un seul mot à compléter) — la nuance est appliquée dans le prompt avec des exemples concrets des deux, précisément parce qu'un modèle de langage a naturellement tendance à entonner : ça paraît utile, mais ça empêche l'élève de vraiment réfléchir.",
-            "The core rule of Otto's tutor is internally called \"HAND BACK THE THINKING\": once the reasoning has been built together with the student, it's ALWAYS the student who states the conclusion — never Otto. Concretely, the tutor prompt (`chatAboutTask` in `server/claude.ts`) enforces a 6-step loop on every exchange: set the goal, elicit an attempt, diagnose where it's actually breaking down (not just THAT it's wrong — the specific error and the flawed reasoning underneath it), give exactly one hint at a time, require the student to explain it back in their own words, then adjust the next exchange. A \"focusing\" question (one that makes the student choose their own next move) is always preferred over a \"funneling\" one (one that leaves only a single word to fill in) — the distinction is spelled out in the prompt with concrete examples of both, precisely because a language model naturally drifts toward funneling: it feels helpful, but it does the thinking for the student instead of letting them do it.",
-          )}
-        </p>
         <p className="research-sec-body">
           {L(
-            "Ce n'est pas qu'une instruction dans un prompt : c'est aussi vérifié après coup. Si Otto écrit malgré tout une conclusion à la place de l'élève (« la réponse est D », « c'est donc Paris »), un filtre programmatique (`CHAT_STATES_ANSWER`) détecte la phrase, jette la réponse, et la remplace par une redirection. Et si l'élève insiste après un refus (« allez, donne-moi juste la réponse »), le prompt interdit explicitement de céder davantage à la répétition qu'à la première demande — la pression n'est jamais traitée comme une nouvelle preuve qu'il faut craquer.",
-            "This isn't just a prompt instruction — it's also checked after the fact. If Otto still writes a conclusion for the student (\"the answer is D,\" \"so it's Paris\"), a programmatic filter (`CHAT_STATES_ANSWER`) catches the phrasing, discards the reply, and substitutes a redirect. And if the student pushes again after being turned down (\"come on, just tell me\"), the prompt explicitly forbids getting any more lenient with repetition than on the first ask — pressure is never treated as new evidence that it's time to give in.",
+            "Otto ne donne jamais la conclusion — c'est toi qui la trouves. Il repère exactement où tu bloques, donne un seul indice à la fois, puis te demande de reformuler avec tes mots. Et s'il commence à glisser vers la réponse toute faite, un garde-fou intégré l'arrête et le redirige.",
+            "Otto never states the conclusion — you do. It finds exactly where you're stuck, gives one hint at a time, then asks you to say it back in your own words. And if it ever drifts toward just handing over the answer, a built-in guardrail stops it and redirects.",
           )}
         </p>
         </section>
 
         <section className="research-sec">
           <p className="research-sec-kicker" aria-hidden>02</p>
-          <h2 className="research-sec-title">{L("La répétition espacée (système Leitner)", "Spaced repetition (the Leitner system)")}</h2>
+          <h2 className="research-sec-title">{L("La répétition espacée", "Spaced repetition")}</h2>
         <p className="research-sec-body">
           {L(
-            "Chaque carte de révision qu'Otto crée vit dans une des cases d'un système Leitner : une carte que tu rates reste en case 1 et revient vite ; une carte que tu réussis avance d'une case et revient plus tard. Le but n'est pas de te faire revoir tout, tout le temps — c'est de faire réapparaître chaque carte juste avant le moment où tu l'aurais oubliée, ni trop tôt (perte de temps sur ce que tu sais déjà) ni trop tard (la carte a eu le temps de s'effacer). Le résumé hebdomadaire du Journal d'apprentissage utilise le même mécanisme : il pondère automatiquement vers ce que tu as le plus raté cette semaine, pas vers un mélange aléatoire.",
-            "Every flashcard Otto creates lives in one of several Leitner boxes: a card you get wrong stays in box 1 and comes back soon; a card you get right moves up a box and comes back later. The point isn't to make you review everything constantly — it's to resurface each card right before you would have forgotten it: not so early it wastes time on something you already know, not so late the card has already faded. The weekly Journal summary uses the exact same mechanism: it automatically weights toward whatever you got wrong most that week, not a random mix.",
+            "Chaque carte revient juste avant que tu l'aurais oubliée — ni plus tôt, ni plus tard. Celles que tu rates reviennent vite ; celles que tu connais s'éloignent.",
+            "Every card comes back right before you'd forget it — not sooner, not later. The ones you miss return quickly; the ones you know drift further away.",
           )}
         </p>
         </section>
 
         <section className="research-sec">
           <p className="research-sec-kicker" aria-hidden>03</p>
-          <h2 className="research-sec-title">{L("La hiérarchie d'engagement (ICAP)", "The engagement hierarchy (ICAP)")}</h2>
+          <h2 className="research-sec-title">{L("La hiérarchie de l'engagement", "The engagement hierarchy")}</h2>
         <p className="research-sec-body">
           {L(
-            "Le modèle ICAP (Chi & Wylie) classe l'apprentissage en quatre niveaux d'engagement croissants — Passif, Actif, Constructif, Interactif — et montre que plus l'élève est engagé activement, plus l'apprentissage est profond. Taper une question et lire la réponse est passif : c'est le niveau le plus superficiel, même si la réponse est juste. Expliquer son raisonnement à voix haute à un tuteur qui réagit vraiment est interactif — le niveau le plus profond. Le prompt du tuteur d'Otto applique cette hiérarchie explicitement : chaque réponse doit pousser l'élève UN cran plus haut sur cette échelle, jamais plus bas. Une réponse qui donne la solution et s'arrête là est classée « passive » dans le prompt — même si la solution est correcte — précisément parce que ICAP prédit qu'elle n'apprend presque rien.",
-            "The ICAP framework (Chi & Wylie) ranks learning across four increasing levels of engagement — Passive, Active, Constructive, Interactive — and shows that deeper engagement produces deeper learning. Typing a question and reading the answer is passive: the shallowest level, even when the answer is correct. Explaining your reasoning out loud to a tutor that actually responds to it is interactive — the deepest level. Otto's tutor prompt applies this hierarchy explicitly: every reply must push the student ONE rung up that ladder, never down. A reply that just hands over the answer and stops is explicitly classified as \"passive\" in the prompt — even when the answer is right — precisely because ICAP predicts it teaches almost nothing.",
+            "Lire une réponse n'apprend presque rien. Expliquer son raisonnement à voix haute apprend le plus. Chaque réponse d'Otto est écrite pour te faire monter d'un cran — jamais descendre.",
+            "Reading an answer teaches you almost nothing. Explaining your reasoning out loud teaches you the most. Every Otto reply is written to pull you one level deeper — never shallower.",
           )}
         </p>
         </section>
@@ -3955,8 +3947,8 @@ function ResearchPageBody() {
           <h2 className="research-sec-title">{L("La matrice d'Eisenhower", "The Eisenhower matrix")}</h2>
         <p className="research-sec-body">
           {L(
-            "Ta liste « Aujourd'hui » n'est pas triée par date d'arrivée ni par date limite brute — chaque tâche reçoit un score d'urgence et un score d'importance, et la matrice d'Eisenhower (urgent/important) détermine dans quel quadrant elle tombe : Faire maintenant, Planifier, Déléguer, ou Peut attendre. Un devoir dû demain mais mineur ne prend pas le pas sur une révision de contrôle majeur dû dans 3 jours si ce contrôle compte plus — le score combine les deux axes, pas juste l'échéance. Et l'urgence n'est pas figée au moment où la tâche apparaît : elle grimpe mécaniquement à mesure que l'échéance approche (`applyDeadlineUrgency`), pour que rien ne s'endorme tranquillement en bas de la liste jusqu'à la veille.",
-            "Your \"Today\" list isn't sorted by arrival order or by raw deadline — every task gets an urgency score and an importance score, and the Eisenhower matrix (urgent/important) determines which quadrant it lands in: Do now, Schedule, Delegate, or Can wait. A minor assignment due tomorrow doesn't automatically outrank a major test review due in 3 days if that test actually matters more — the score combines both axes, not just the deadline. And urgency isn't frozen at the moment a task first appears: it climbs mechanically as the deadline nears (`applyDeadlineUrgency`), so nothing quietly sits at the bottom of the list until the night before.",
+            "Ta journée n'est pas une pile triée par échéance. Chaque tâche est notée pour l'urgence et l'importance — et re-notée à mesure que les dates approchent — pour que la bonne chose reste en haut.",
+            "Your day isn't a pile sorted by deadline. Every task is scored for urgency and importance — and re-scored as deadlines approach — so the right thing stays on top.",
           )}
         </p>
         </section>
@@ -3965,8 +3957,8 @@ function ResearchPageBody() {
           <h2 className="research-sec-title">{L("Ce que ça ne veut pas dire", "What this doesn't mean")}</h2>
           <p className="research-sec-body">
             {L(
-              "Ces méthodes réduisent le risque qu'Otto fasse le travail à ta place ou explique mal — elles ne l'éliminent pas. Un modèle de langage reste un modèle de langage : il peut se tromper, mal diagnostiquer, ou (rarement) laisser passer une réponse qu'il n'aurait pas dû donner malgré les filtres. C'est pour ça qu'Otto affiche un badge visible sur chaque échange où un garde-fou s'est déclenché, plutôt que de prétendre que le système est infaillible.",
-              "These methods reduce the risk of Otto doing the work for you or explaining something badly — they don't eliminate it. A language model is still a language model: it can be wrong, misdiagnose something, or (rarely) let through a reply it shouldn't have despite the filters. That's why Otto shows a visible badge on any exchange where a guardrail actually tripped, rather than claiming the system is infallible.",
+              "Otto peut se tromper — un modèle de langage reste un modèle de langage. Alors chaque fois qu'un garde-fou se déclenche, Otto l'affiche sur l'échange, au lieu de prétendre qu'il est infaillible.",
+              "Otto can still be wrong — a language model is a language model. So whenever a guardrail fires, Otto says so right on the exchange, instead of claiming to be infallible.",
             )}
           </p>
         </section>

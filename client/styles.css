@@ -3951,22 +3951,23 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
    Mission statement up top in the serif display face (Baskervville, same as the landing hero), then
    numbered sections separated by hairlines — the landing's "01 / PROACTIVE TASKS" editorial rhythm
    carried into long-form. */
-.research-main { width: 100%; max-width: 720px; margin: 0 auto; padding: clamp(48px, 9vh, 96px) 24px 80px; }
+.research-main { width: 100%; max-width: 680px; margin: 0 auto; padding: clamp(56px, 12vh, 128px) 24px 96px; }
 .research-title {
   font-family: var(--font-serif);
-  font-size: clamp(34px, 5.4vw, 56px);
+  font-size: clamp(36px, 5.6vw, 60px);
   font-weight: 400;
   line-height: 1.08;
   letter-spacing: -0.01em;
   color: var(--ink);
-  margin: 14px 0 0;
+  margin: 18px 0 0;
 }
-.research-intro { font-size: 17px; line-height: 1.6; color: var(--ink-2); margin-top: 22px; max-width: 60ch; }
-.research-sec { margin-top: clamp(36px, 6vh, 56px); border-top: 1px solid var(--line); padding-top: clamp(28px, 5vh, 44px); }
-.research-sec-kicker { font-family: var(--font-serif); font-size: 15px; color: var(--accent); margin: 0 0 6px; font-variant-numeric: tabular-nums; }
-.research-sec-title { font-family: var(--display); font-size: clamp(22px, 3vw, 28px); font-weight: 650; letter-spacing: var(--tracking-tight); line-height: 1.2; color: var(--ink); margin: 0 0 12px; }
-.research-sec p { font-size: 15.5px; line-height: 1.65; color: var(--ink-2); margin: 0 0 14px; max-width: 64ch; }
-.research-sec-closing { margin-top: clamp(36px, 6vh, 56px); }
+.research-intro { font-size: 18px; line-height: 1.65; color: var(--ink-2); margin-top: 28px; max-width: 52ch; }
+/* Generous air between sections — the page should breathe like the landing, not pack like an article. */
+.research-sec { margin-top: clamp(56px, 10vh, 96px); border-top: 1px solid var(--line); padding-top: clamp(36px, 6vh, 60px); }
+.research-sec-kicker { font-family: var(--font-serif); font-size: 16px; color: var(--accent); margin: 0 0 10px; font-variant-numeric: tabular-nums; }
+.research-sec-title { font-family: var(--display); font-size: clamp(24px, 3.2vw, 30px); font-weight: 650; letter-spacing: var(--tracking-tight); line-height: 1.2; color: var(--ink); margin: 0 0 16px; }
+.research-sec p { font-size: 16.5px; line-height: 1.7; color: var(--ink-2); margin: 0; max-width: 56ch; }
+.research-sec-closing { margin-top: clamp(56px, 10vh, 96px); }
 
 .legal { width: 100%; max-width: 680px; margin: 0 auto; padding: clamp(40px, 7vh, 72px) 24px 96px; }
 .legal h1 { font-family: var(--display); font-size: clamp(1.8rem, 4vw, 2.4rem); font-weight: 700; /* Apple Design §15 — negative tracking on headings */ letter-spacing: var(--tracking-tight); margin-bottom: var(--space-5); }
