@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { Pencil, Highlighter, Eraser, Type, Undo2, Redo2, Trash2, Hand, Send } from "lucide-react";
 import { api } from "../api.ts";
 import { useLang } from "../ui.tsx";
@@ -46,11 +46,20 @@ function paint(ctx: CanvasRenderingContext2D, items: Item[], w: number, h: numbe
  *  vision endpoint (same path as before — nothing is stored server-side). The "hand" tool lets pointer
  *  events fall through so the board underneath can still be scrolled. Stays mounted for the whole session so
  *  the drawing survives toggling Desmos. */
-export function TutorCanvas({ visionReady, hidden, onSend, onDesmos }: { visionReady: boolean; hidden: boolean; onSend: (description: string) => void; onDesmos: () => void }) {
+export interface TutorCanvasHandle {
+  /** True when there is ink Otto hasn't seen yet. */
+  hasUnseenInk: () => boolean;
+  /** Reads the unseen ink (vision) and returns Otto's description of it, or null when there's nothing new /
+   *  vision isn't available / the read failed. Marks the ink as seen on success so it's never sent twice. */
+  readUnseenInk: () => Promise<string | null>;
+}
+
+export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean; hidden: boolean; onSend: (description: string) => void; onDesmos: () => void }>(function TutorCanvas({ visionReady, hidden, onSend, onDesmos }, handleRef) {
   const L = useLang();
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const items = useRef<Item[]>([]);
+  const inkStamp = useRef(0);
   const redo = useRef<Item[]>([]);
   const live = useRef<Extract<Item, { kind: "stroke" }> | null>(null);
   const size = useRef({ w: 0, h: 0 });
@@ -90,7 +99,7 @@ export function TutorCanvas({ visionReady, hidden, onSend, onDesmos }: { visionR
   useEffect(() => { if (typing) textRef.current?.focus(); }, [typing]);
 
   const pos = (e: React.PointerEvent): Pt => { const r = canvasRef.current!.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
-  const commit = (it: Item) => { items.current.push(it); redo.current = []; setVersion((v) => v + 1); setError(null); };
+  const commit = (it: Item) => { inkStamp.current++; items.current.push(it); redo.current = []; setVersion((v) => v + 1); setError(null); };
   const commitText = () => {
     const t = typing; setTyping(null);
     if (t && t.value.trim()) { commit({ kind: "text", color, size: 22, x: t.x, y: t.y, value: t.value.trim() }); repaint(); }
@@ -133,28 +142,44 @@ export function TutorCanvas({ visionReady, hidden, onSend, onDesmos }: { visionR
     if (s) { commit(s); repaint(); }
   };
 
-  const undo = () => { const it = items.current.pop(); if (it) { redo.current.push(it); setVersion((v) => v + 1); repaint(); } };
-  const redoFn = () => { const it = redo.current.pop(); if (it) { items.current.push(it); setVersion((v) => v + 1); repaint(); } };
-  const clear = () => { items.current = []; redo.current = []; live.current = null; setTyping(null); setVersion((v) => v + 1); repaint(); };
+  const undo = () => { const it = items.current.pop(); if (it) { inkStamp.current++; redo.current.push(it); setVersion((v) => v + 1); repaint(); } };
+  const redoFn = () => { const it = redo.current.pop(); if (it) { inkStamp.current++; items.current.push(it); setVersion((v) => v + 1); repaint(); } };
+  const clear = () => { inkStamp.current++; items.current = []; redo.current = []; live.current = null; setTyping(null); setVersion((v) => v + 1); repaint(); };
 
   const hasInk = items.current.some((i) => i.kind === "text" || i.tool !== "eraser");
   void version;
+
+  // Ink counts as "seen" once Otto has read it. `inkStamp` changes on every committed edit, so an unchanged
+  // board is never re-sent with the next message.
+  const seenStamp = useRef(0);
+  const readInk = async (): Promise<string> => {
+    const c = canvasRef.current!;
+    // Flatten onto white: the canvas is transparent (it sits over the board), but the vision model
+    // needs dark ink on a plain light background to read handwriting reliably.
+    const flat = document.createElement("canvas");
+    flat.width = c.width; flat.height = c.height;
+    const f = flat.getContext("2d")!;
+    f.fillStyle = "#FFFFFF"; f.fillRect(0, 0, flat.width, flat.height);
+    f.drawImage(c, 0, 0);
+    const { description } = await api.readWhiteboard(flat.toDataURL("image/png"));
+    seenStamp.current = inkStamp.current;
+    return description;
+  };
+  useImperativeHandle(handleRef, () => ({
+    hasUnseenInk: () => visionReady && !!canvasRef.current && items.current.some((i) => i.kind === "text" || i.tool !== "eraser") && inkStamp.current !== seenStamp.current,
+    readUnseenInk: async () => {
+      if (!visionReady || !canvasRef.current || !items.current.some((i) => i.kind === "text" || i.tool !== "eraser") || inkStamp.current === seenStamp.current) return null;
+      try { return await readInk(); } catch { return null; }
+    },
+  }));
 
   const show = async () => {
     const c = canvasRef.current;
     if (!c || !hasInk || sending) return;
     setSending(true); setError(null);
     try {
-      // Flatten onto white: the canvas is transparent (it sits over the board), but the vision model
-      // needs dark ink on a plain light background to read handwriting reliably.
-      const flat = document.createElement("canvas");
-      flat.width = c.width; flat.height = c.height;
-      const f = flat.getContext("2d")!;
-      f.fillStyle = "#FFFFFF"; f.fillRect(0, 0, flat.width, flat.height);
-      f.drawImage(c, 0, 0);
-      const { description } = await api.readWhiteboard(flat.toDataURL("image/png"));
+      const description = await readInk();
       onSend(description);
-      clear();
     } catch (e: any) {
       setError(e?.status != null ? e.message : L("Otto n'a pas pu lire ton tableau — réessaie.", "Otto couldn't read your board — try again."));
     } finally { setSending(false); }
@@ -206,4 +231,4 @@ export function TutorCanvas({ visionReady, hidden, onSend, onDesmos }: { visionR
       {error && <div className="tc-error" role="alert" style={{ pointerEvents: "auto" }}>{error}</div>}
     </div>
   );
-}
+});

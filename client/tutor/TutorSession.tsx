@@ -6,7 +6,7 @@ import { useLang, TaskModal, formatMath } from "../ui.tsx";
 import { AskOttoPanel } from "../study/AskOttoPanel.tsx";
 import { BoardArtifact } from "../study/artifacts/BoardArtifact.tsx";
 import { TutorDesmos } from "./TutorDesmos.tsx";
-import { TutorCanvas } from "./TutorCanvas.tsx";
+import { TutorCanvas, type TutorCanvasHandle } from "./TutorCanvas.tsx";
 import { buildSessionSummary, saveTutorSession, getTutorSessions, type TutorSessionSummary } from "./tutorSessions.ts";
 
 // A dismiss that silently fails (a network blip, a momentary 429) used to just be swallowed — the session
@@ -188,11 +188,16 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
     };
   }, [sessionStart, task, saveAndClose]);
 
+  const canvasRef = useRef<TutorCanvasHandle>(null);
   const send = useCallback(async (override?: string, voiceMode?: boolean) => {
-    const message = (override ?? input).trim();
+    let message = (override ?? input).trim();
     if (!message || sending || !task) return;
     setInput(""); setSending(true); setError(null); setPendingMsg(message);
     try {
+      // Anything new on the whiteboard rides along with the message — draw, then just say "is this right?"
+      // like you would to a person leaning over your page; no separate "send drawing" step needed.
+      const seen = await canvasRef.current?.readUnseenInk();
+      if (seen) message += "\n\n" + L(`[Ce que j'ai écrit/dessiné sur le tableau : ${seen}]`, `[What I wrote/drew on the board: ${seen}]`);
       // canvasMode: true — the Tutor UI has no way to OPEN a note/flashcard-deck/quiz artifact (onOpenNote/
       // onOpenDeck/onOpenQuiz are all no-ops below, since this screen is chat+board, not the task list's
       // artifact viewer). Without this flag the full tool set was still offered server-side, so the model
@@ -245,6 +250,22 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
       setSending(false); setPendingMsg(null);
     }
   }, [input, sending, task, userId, L]);
+
+  // Each answer to a board exercise goes to Otto as a short automatic message so he reacts like a person
+  // (the board only marks right/wrong). Queued while a reply is in flight so none is dropped.
+  const resultsRef = useRef<string[]>([]);
+  const [resultTick, setResultTick] = useState(0);
+  const onProblemResult = useCallback((r: { given: string; correct: boolean; attempt: number }) => {
+    resultsRef.current.push(L(
+      `[Exercice] J'ai répondu « ${r.given.slice(0, 120)} » — ${r.correct ? "juste" : "faux"} (essai n°${r.attempt}).`,
+      `[Exercise] I answered "${r.given.slice(0, 120)}" — marked ${r.correct ? "right" : "wrong"} (try #${r.attempt}).`));
+    setResultTick((n) => n + 1);
+  }, [L]);
+  useEffect(() => {
+    if (sending || !task || !resultsRef.current.length) return;
+    void send(resultsRef.current.shift()!);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resultTick, sending, task?.id]);
 
   const endSession = useCallback(async () => {
     if (!task || !sessionStart) return;
@@ -520,6 +541,27 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
   const noop = () => {};
   const fresh = !task.chat?.length && !pendingMsg;
   const objDone = task.objectives?.filter((o) => o.done).length ?? 0;
+  // Zero-friction start (blank-page friction is what makes students abandon AI tutors): Otto "speaks first"
+  // instantly, no model call. If this subject has a past session, the opener is a retrieval question about
+  // it — recalling beats re-reading — otherwise a plain, specific invitation. One-tap starters follow.
+  const lastSame = pastSessions.find((s) => s.subject && s.subject === task.sourceSubject && s.summary && s.summary !== "Session completed");
+  const lastTopic = lastSame?.summary.split(" — ")[0].split("\n")[0].slice(0, 90);
+  const subj = task.sourceSubject;
+  const openerText = lastTopic
+    ? L(`Salut ! La dernière fois on a bossé : « ${lastTopic} ». Qu'est-ce que tu en retiens ? Ou dis-moi sur quoi tu bloques aujourd'hui.`, `Hey! Last time we worked on: "${lastTopic}". What do you still remember? Or tell me what's tripping you up today.`)
+    : subj
+      ? L(`Salut ! Sur quoi tu bloques en ${subj} ? Écris, dessine ou parle — je t'écoute.`, `Hey! What's tripping you up in ${subj}? Type, draw or just talk — I'm listening.`)
+      : L("Salut ! Sur quoi tu bloques ? Écris, dessine ou parle.", "Hey! What are you stuck on? Type, draw or just talk.");
+  const starters = [
+    { label: L("Je bloque sur un exercice", "I'm stuck on a problem"), text: L("Je bloque sur un exercice.", "I'm stuck on a problem.") },
+    { label: L("Explique-moi un cours", "Teach me a topic"), text: L("J'aimerais comprendre un chapitre.", "I'd like to understand a topic.") },
+    { label: L("Interroge-moi", "Quiz me"), text: L("Interroge-moi pour voir ce que je sais.", "Quiz me to see what I know.") },
+  ];
+  const followUps = [
+    { label: L("💡 Un indice", "💡 Hint"), text: L("Tu peux me donner un petit indice ?", "Can I have a small hint?") },
+    { label: L("🤔 Je suis perdu", "🤔 I'm lost"), text: L("Je suis perdu — on peut y aller plus doucement ?", "I'm lost — can we go smaller?") },
+    { label: L("➡ Un autre", "➡ Another one"), text: L("Compris ! Donne-m'en un autre à essayer.", "Got it! Give me another to try.") },
+  ];
   // Gauth-style stage: ONE big canvas (Otto's lesson board with the student's ink over it) and Otto himself
   // as just an avatar docked at the bottom — no transcript. The student talks (or types) to the avatar and
   // sees only Otto's latest answer; everything worth keeping lands on the board instead of scrolling away
@@ -541,7 +583,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
       </header>
       <section className="ts-canvas" aria-label={L("Tableau", "Board")}>
         <div className="tutor-board-body ts-board-body" style={{ display: desmosOpen ? "none" : undefined }}>
-          <BoardArtifact task={task} writing={sending} />
+          <BoardArtifact task={task} writing={sending} onProblemResult={onProblemResult} />
         </div>
         {/* Desmos stays mounted once opened (an iframe that's removed reloads blank, losing the student's graph). */}
         {desmosOpen || desmosEverOpenedRef.current ? (
@@ -550,6 +592,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
           </div>
         ) : null}
         <TutorCanvas
+          ref={canvasRef}
           visionReady={visionReady}
           hidden={desmosOpen}
           onDesmos={openDesmos}
@@ -562,7 +605,8 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
           task={task} currentStep={undefined} input={input} setInput={setInput} sending={sending}
           error={error} pendingMsg={pendingMsg} onSend={(o, v) => void send(o, v)}
           onOpenNote={noop} onOpenDeck={noop} onOpenQuiz={noop}
-          emptyText={L("Pose-moi une question ou montre-moi ton travail.", "Ask me anything or show me your work.")}
+          emptyText={openerText}
+          quickReplies={fresh ? starters : followUps}
           placeholder={L("Parle ou écris à Otto…", "Talk or type to Otto…")}
           onVoiceStateChange={handleVoiceState}
         />

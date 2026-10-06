@@ -23,9 +23,37 @@ import { subjectMastery } from "../shared/types.ts";
 import { COURSES, findCourse, normText, subjectMatches, matchesUnit, unitMastery, courseProgress, nextUnitToWork, masteryBand, UNIT_MASTERED_AT, orderCoursesForProfile, normalizeEnrolledCourses, unitObjectives } from "../shared/courses.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, subjectFrequency, orderingBoost, twoMinuteRuleBoost } from "../server/patterns.ts";
 
+import { tightenForChat, countWords as countWordsT } from "../server/claude.ts";
 let pass = 0, fail = 0;
 const check = (name, cond) => { cond ? pass++ : (fail++, console.log("  FAIL:", name)); };
 const section = (name) => console.log(`— ${name}`);
+
+// ── Tutor speed + voice: local reply tightening, no extra model round-trip ─────
+section("Primer replies — tightenForChat keeps it short and keeps the closing question");
+{
+  const short = "Mm, close. What happens to the sign when you move it across?";
+  check("short reply untouched", tightenForChat(short) === short);
+  const long = "So here is the thing about quadratics and why they matter in real life. " + "They show up everywhere from projectiles to profit curves and that is honestly a lot to take in at once. ".repeat(4) + "First you factor, then you set each factor to zero, then you check both roots against the original. Which two numbers multiply to 6 and add to -5?";
+  const out = tightenForChat(long);
+  check("long reply cut to ~70 words", countWordsT(out) <= 75);
+  check("closing question survives", /Which two numbers multiply to 6 and add to -5\?$/.test(out));
+  check("cuts at a sentence boundary", /[.?!]$/.test(out));
+  check("two-sentence reply left alone", tightenForChat("One. Two?") === "One. Two?");
+}
+section("Primer chat — thinking toggle with safe fallback, persona leads with human/short rules (source pins)");
+{
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("fast chat helper retries without `thinking` on a rejecting provider", /thinkingToggleRejected = true/.test(src) && /type: "disabled"/.test(src));
+  check("primer persona opens with the sound-like-a-person block", /SOUND LIKE A PERSON, ANSWER LIKE ONE/.test(src));
+  check("persona pushes small interactive scenes (show, don't tell)", /SHOW, DON'T TELL/.test(src));
+  check("persona handles automatic exercise results + whiteboard readings like a person", /EXERCISE RESULTS ARRIVE AS/.test(src) && /THEIR WHITEBOARD ARRIVES AS/.test(src) && /GOOD EXERCISES/.test(src));
+  check("persona honours one-tap replies and retrieval-first returns", /ONE-TAP REPLIES/.test(src) && /RETRIEVAL OVER RE-EXPLAINING/.test(src));
+  const tut = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  check("tutor dock offers one-tap starters + follow-ups and a recall opener from the last session", /quickReplies=\{fresh \? starters : followUps\}/.test(tut) && /What do you still remember/.test(tut));
+  const board = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  check("board reports every exercise attempt to the tutor (never the correct answer)", /onProblemResult\?\.\(\{ problem, given, correct, attempt \}\)/.test(board) && /\[Exercise\] I answered/.test(tut));
+  check("new whiteboard ink rides along with the next message (no separate send step)", /readUnseenInk\(\)/.test(tut) && /What I wrote\/drew on the board/.test(tut));
+}
 
 // ── Generation gates ──────────────────────────────────────────────────────────
 section("parseGenerated grounding gates");
