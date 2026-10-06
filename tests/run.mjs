@@ -24,25 +24,21 @@ import { COURSES, findCourse, normText, subjectMatches, matchesUnit, unitMastery
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, subjectFrequency, orderingBoost, twoMinuteRuleBoost } from "../server/patterns.ts";
 
 import { compileExpr } from "../shared/mathExpr.ts";
-import { makeGraphEntry, workingEntryFor, earlierDigest, promptEntryFor } from "../server/claude.ts";
+import { makeGraphEntry, earlierDigest, isSubstantiveStep } from "../server/claude.ts";
 import { tightenForChat, countWords as countWordsT } from "../server/claude.ts";
 let pass = 0, fail = 0;
 const check = (name, cond) => { cond ? pass++ : (fail++, console.log("  FAIL:", name)); };
 const section = (name) => console.log(`— ${name}`);
 
 // ── Tutor speed + voice: local reply tightening, no extra model round-trip ─────
-section("Board shows the student's working — workingEntryFor logs real steps, never chatter/questions");
+section("Board = the reasoning, not a transcript (source pins)");
 {
-  const w = workingEntryFor("x² − 5x + 6 = 0 so (x−2)(x−3) = 0", []);
-  check("a step with math becomes a 'working' entry", !!w && w.kind === "working" && /\(x−2\)/.test(w.text));
-  check("a longer reasoning statement counts", !!workingEntryFor("I think I need to move the six across first and then factor it", []));
-  const skip = ["ok", "yes!", "Salut", "can you give me a hint?", "I don't know", "Can I have a small hint?", "I'm lost — can we go smaller?", "Got it! Give me another to try.", "[Exercise] I answered \"4\" — marked wrong (try #1).", "short", "what is a root?"];
-  check("chatter, chips, questions and auto-messages are never logged", skip.every((m) => workingEntryFor(m, []) === null));
-  check("the drawing-reading block isn't logged as typed working", workingEntryFor("[What I wrote/drew on the board: a parabola with roots at 2 and 3]", []) === null);
-  check("an identical working line isn't logged twice", workingEntryFor("x = 2 or x = 3", [w, { id: "z", kind: "working", text: "x = 2 or x = 3", at: "" }]) === null);
-  check("long input is capped", workingEntryFor("a = b + c ".repeat(30), []).text.length <= 220);
   const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
-  check("the chat turn logs the student's working when Otto wrote nothing (primer only, no model call)", /opts\?\.primer && !result\.guardrailTripped && result\.board\.length === 0/.test(src) && /workingEntryFor\(message/.test(src));
+  check("the board never echoes the student's message or Otto's question (no auto-logging)", !/workingEntryFor|promptEntryFor/.test(src));
+  check("a step, result or reasoning line counts as substantive", ["x² − 5x + 6 = 0 so (x−2)(x−3) = 0", "I think I need to move the six across first and then factor it", "the answer is 12"].every(isSubstantiveStep));
+  check("questions, chips, acks, don't-knows and auto-messages do not", ["ok", "Salut", "what is a root?", "Can I have a small hint?", "I'm lost — can we go smaller?", "I don't know", "[Exercise] I answered \"4\" — marked wrong (try #1).", "[What I wrote/drew on the board: a wavy line]", "hmm"].every((m) => !isSubstantiveStep(m)));
+  check("a corrective round asks the tutor (not the app) to write the reasoning + helpful formula when a step produced no board write", /reasoningNudgeDone = true/.test(src) && /call WRITE_TO_BOARD ONCE: kind \\"summary\\"/.test(src) && /isSubstantiveStep\(message\)/.test(src));
+  check("persona asks for the move + why + result in its own words and forbids quoting the chat", /THE BOARD IS THE WORKING — THE REASONING, NOT A TRANSCRIPT/.test(src) && /NEVER copy what the student typed/.test(src));
 }
 section("Tutor stage — End session always ends; the stage is screen-height with ONE scroller the ink lives on (source pins)");
 {
@@ -54,7 +50,7 @@ section("Tutor stage — End session always ends; the stage is screen-height wit
   check("the board component's own scroller is neutralised in the stage so the ink canvas is on the one real scroller", /\.ts-board-body \.sm-board-body \{ overflow: visible;/.test(css) && /createPortal\(/.test(readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8")));
   check("'Show Otto' lets the student say what to look at (note travels with the drawing)", /tc-ask/.test(readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8")) && /onSend=\{\(description, note\)/.test(tut));
 }
-section("Tutor memory — earlier turns are condensed, not forgotten; the board keeps Otto's questions");
+section("Tutor memory — earlier turns are condensed, not forgotten");
 {
   const older = [{ role: "user", text: "I'm stuck on factoring x² − 5x + 6" }, { role: "assistant", text: "Which two numbers multiply to 6 and add to −5? Take your time." }, { role: "user", text: "[Exercise] I answered \"4\" — marked wrong (try #1)." }];
   const d = earlierDigest(older);
@@ -62,9 +58,6 @@ section("Tutor memory — earlier turns are condensed, not forgotten; the board 
   check("digest keeps only the first sentence of Otto's turns and tells the model not to re-explain", !/Take your time/.test(d) && /don't re-explain/.test(d));
   check("digest is capped, newest lines win", (() => { const many = Array.from({ length: 200 }, (_, i) => ({ role: "user", text: `message number ${i} about something` })); const out = earlierDigest(many, 600); return out.length < 800 && /number 199/.test(out) && !/number 0 /.test(out); })());
   check("nothing older gives an empty digest", earlierDigest([]) === "");
-  const q = promptEntryFor("Nice. So what happens to the sign when you move it across?", [], 3);
-  check("Otto's closing question becomes an 'instruction' board entry", !!q && q.kind === "instruction" && /^So what happens/.test(q.text));
-  check("no prompt entry for turn 1, statements, long text or duplicates", promptEntryFor("Hi! What are you working on?", [], 0) === null && promptEntryFor("Good. Now carry on.", [], 3) === null && promptEntryFor("x ".repeat(120) + "?", [], 3) === null && promptEntryFor("Fine. What next?", [{ id: "a", kind: "instruction", text: "What next?", at: "" }], 3) === null);
   const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
   check("primer turns get a 24-message window plus the digest (non-primer stays 10)", /const histWindow = opts\?\.primer \? 24 : 10;/.test(src) && /earlierDigest\(history\.slice\(0, -histWindow\)\)/.test(src));
   check("the server keeps up to 60 messages of thread", /const CHAT_CAP = 60;/.test(readFileSync(new URL("../server/index.ts", import.meta.url), "utf8")));
@@ -114,12 +107,14 @@ section("Primer chat — thinking toggle with safe fallback, persona leads with 
   check("primer persona opens with the sound-like-a-person block", /SOUND LIKE A PERSON, ANSWER LIKE ONE/.test(src));
   check("persona pushes small interactive scenes (show, don't tell)", /SHOW, DON'T TELL/.test(src));
   check("persona handles automatic exercise results + whiteboard readings like a person", /EXERCISE RESULTS ARRIVE AS/.test(src) && /THEIR WHITEBOARD ARRIVES AS/.test(src) && /GOOD EXERCISES/.test(src));
-  check("persona tells the tutor to write on the board most turns", /WRITE ON THE BOARD EVERY TURN/.test(src));
+  
   check("persona honours one-tap replies and retrieval-first returns", /ONE-TAP REPLIES/.test(src) && /RETRIEVAL OVER RE-EXPLAINING/.test(src));
   const tut = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
-  check("tutor dock offers one-tap starters + follow-ups and a recall opener from the last session", /quickReplies=\{fresh \? starters : followUps\}/.test(tut) && /What do you still remember/.test(tut));
+  check("tutor dock offers one-tap starters + follow-ups and a recall opener from the last session", /quickReplies=\{fresh \? starters : justFinishedExercise \? nextChips : followUps\}/.test(tut) && /What do you still remember/.test(tut));
   const board = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
   check("board reports every exercise attempt to the tutor (never the correct answer)", /onProblemResult\?\.\(\{ problem, given, correct, attempt \}\)/.test(board) && /\[Exercise\] I answered/.test(tut));
+  check("finishing an exercise offers 'another / harder / go over the idea / something else' and the tutor asks instead of auto-creating the next problem", /justFinishedExercise \? nextChips/.test(tut) && /ASK what they want to do now/.test(readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8")) && /let THEM choose/.test(readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8")));
+  check("automatic exercise results wait for the reply to settle and go out batched (never replacing the answer being read)", /resultsRef\.current\.splice\(0\)\.join/.test(tut) && /if \(sending \|\| voiceState\.speaking\) return;/.test(tut));
   check("new whiteboard ink rides along with the next message (no separate send step)", /readUnseenInk\(\)/.test(tut) && /What I wrote\/drew on the board/.test(tut));
 }
 
@@ -1555,8 +1550,7 @@ section("isDuplicateProblem — content-level duplicate prevention for CREATE_PR
   // branch. DRAW_ON_BOARD is deliberately NOT gated — redrawing a whole figure with additions is the
   // tool's documented contract. (A third site, or zero, means someone moved or duplicated the gate.)
   const gateCount = (claudeSrc3.match(/isDuplicateBoardEntry\(/g) || []).length; // export + call site
-  // …plus workingEntryFor's own dedupe of the student's logged working lines (a third, intentional site).
-  check("the duplicate gate lives ONLY on WRITE_TO_BOARD and the working-log (DRAW_ON_BOARD redraws are legitimate)", gateCount === 4 && /isDuplicateBoardEntry\(existing, \{ text, kind: "working" \}\)/.test(claudeSrc3));
+  check("the duplicate gate lives ONLY on WRITE_TO_BOARD (DRAW_ON_BOARD redraws are legitimate)", gateCount === 2);
   check("WRITE_TO_BOARD checks BOTH the live board and this turn's earlier writes", /isDuplicateBoardEntry\(\[\.\.\.\(opts\?\.currentBoard \|\| \[\]\), \.\.\.result\.board\], input\)/.test(claudeSrc3));
   check("a caught duplicate returns adaptive guidance, not an error", /DUPLICATE: that exact entry is already on the board/.test(claudeSrc3));
   check("the prompt tells the model to look before writing", /BEFORE YOU WRITE, LOOK\./.test(claudeSrc3));
@@ -4498,5 +4492,7 @@ section("TTS voice — switched to a male voice on both cloud tiers, arrows read
   check("spacing around the substituted word is normal regardless of how tight the arrow was in source", toSpeakableText("a→b") === "a gives b");
 }
 
+const { runTutorSim } = await import("./tutor-sim.mjs");
+await runTutorSim(check, section);
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

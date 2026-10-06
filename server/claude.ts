@@ -2692,7 +2692,7 @@ export function makeProblem(input: any): { problem: TaskProblem } | { error: str
   };
 }
 
-const BOARD_KINDS = new Set(["note", "instruction", "formula", "summary", "focus", "insight", "definition", "outline", "working"]);
+const BOARD_KINDS = new Set(["note", "instruction", "formula", "summary", "focus", "insight", "definition", "outline"]);
 const MAX_OUTLINE_SECTIONS = 6;
 const MAX_OUTLINE_BULLETS = 8;
 export function makeBoardEntry(input: any): { entry: BoardEntry } | { error: string } {
@@ -2812,30 +2812,6 @@ export function shouldNudgeBoardWrite(reply: string, lastStudentMessage: string,
   return /^\s*(yes|yeah|yep|exactly|correct|right|nice|perfect|well done|good|bravo|spot on|nailed it|(you(?:'ve)? )?got it( right)?|absolutely|that'?s (it|right|correct)|oui|ouais|exact|exactement|c'est (ça|ca|exact|correct)|parfait|bien joué|très bien|nickel|voilà|tout à fait)\b/i.test(reply.trim());
 }
 
-/** The student's own working, logged on the board with NO model call: the board should read as the working of
- *  the session as it happens (their steps, in order), not a page that only fills when Otto decides to write.
- *  Returns an entry for a substantive statement — a step, a result, a line of reasoning — and null for
- *  everything else (questions to Otto, one-tap chips, acknowledgements, automatic exercise/whiteboard
- *  messages, "I don't know"). It's the student's own words, so it can never state an answer for them. Pure. */
-export function workingEntryFor(message: string, existing: BoardEntry[]): BoardEntry | null {
-  const raw = String(message || "")
-    .replace(/\[(?:Exercise|Exercice)\][^\n]*/g, " ")
-    .replace(/\[(?:What I wrote\/drew on the board|Ce que j'ai écrit\/dessiné sur le tableau)[\s\S]*?\]/g, " ")
-    .replace(/(?:Here's what I drew|Voici ce que j'ai dessiné)\s*:[\s\S]*$/i, " ")
-    .replace(/\s+/g, " ").trim();
-  if (raw.length < 6 || raw.length > 400) return null;
-  const words = raw.split(/\s+/).length;
-  const mathy = /[=^√π²³±×÷≤≥<>]|\d\s*[-+*/x]\s*\d|\b\d+[a-z]\b/i.test(raw);
-  if (/^\s*(ok(ay)?|oui|non|yes|no|yeah|merci|thanks?|thank you|d'accord|compris|got it|i see|je vois|hi|hello|salut|bonjour|hey)\b[\s.!]*$/i.test(raw)) return null;
-  if (/(can i have a small hint|i'm lost|got it! give me another|i'm stuck on a problem|i'd like to understand a topic|quiz me|un petit indice|je suis perdu|donne-m'en un autre|je bloque sur un exercice|interroge-moi|comprendre un chapitre)/i.test(raw)) return null;
-  if (/\b(i don'?t know|idk|je ne sais pas|je sais pas|no idea|aucune id[ée]e)\b/i.test(raw) && words < 8) return null;
-  if (/\?\s*$/.test(raw) && !/=/.test(raw)) return null; // a question for Otto, not working
-  if (!mathy && words < 6) return null;
-  const text = raw.length > 220 ? `${raw.slice(0, 217).trimEnd()}…` : raw;
-  if (isDuplicateBoardEntry(existing, { text, kind: "working" })) return null;
-  return { id: randomUUID(), text, kind: "working", at: new Date().toISOString() };
-}
-
 /** Everything in the thread that falls OUTSIDE the model's verbatim window, condensed to one line per message
  *  (newest kept when over budget) — so a long session never "forgets" what was already covered and re-explains
  *  it. Deterministic, no model call. Returns "" when there's nothing older. Pure; unit-tested. */
@@ -2855,18 +2831,25 @@ export function earlierDigest(older: { role: string; text: string }[], maxChars 
   return `EARLIER IN THIS SESSION (condensed, oldest first — this is already DONE: don't re-explain it or re-ask it, build on it):\n${kept.join("\n")}`;
 }
 
-/** Otto's own question, logged on the board as the "next prompt" when the model wrote nothing there this turn —
- *  with the student's logged working (workingEntryFor) the board then reads as the session's working, in order,
- *  and stays a durable memory of what was asked. Only a closing question of a sane length; never a greeting
- *  (turn 1) and never a duplicate. Pure. */
-export function promptEntryFor(reply: string, existing: BoardEntry[], turnIndex: number): BoardEntry | null {
-  if (turnIndex < 1) return null;
-  const text = String(reply || "").replace(/```[\s\S]*?```/g, " ").replace(/[*_`#>]/g, "").replace(/\s+/g, " ").trim();
-  const sentences = text.split(/(?<=[.!?…])\s+/).filter(Boolean);
-  const q = sentences[sentences.length - 1];
-  if (!q || !/\?\s*$/.test(q) || q.length < 12 || q.length > 170) return null;
-  if (isDuplicateBoardEntry(existing, { text: q, kind: "instruction" })) return null;
-  return { id: randomUUID(), text: q, kind: "instruction", at: new Date().toISOString() };
+
+/** True when the student just CONTRIBUTED something worth recording — a step, a result, a line of reasoning —
+ *  as opposed to a question, a one-tap chip, an acknowledgement, "I don't know" or an automatic message.
+ *  Used only to decide whether Otto should be asked (never a model-free copy) to put the reasoning on the
+ *  board. Pure; unit-tested. */
+export function isSubstantiveStep(message: string): boolean {
+  const raw = String(message || "")
+    .replace(/\[(?:Exercise|Exercice)\][^\n]*/g, " ")
+    .replace(/\[(?:What I wrote\/drew on the board|Ce que j'ai écrit\/dessiné sur le tableau)[\s\S]*?\]/g, " ")
+    .replace(/(?:Here's what I drew|Voici ce que j'ai dessiné)\s*:[\s\S]*$/i, " ")
+    .replace(/\s+/g, " ").trim();
+  if (raw.length < 6) return false;
+  const words = raw.split(/\s+/).length;
+  const mathy = /[=^√π²³±×÷≤≥<>]|\d/.test(raw); // any number or operator: a result or a calculation
+  if (/^\s*(ok(ay)?|oui|non|yes|no|yeah|merci|thanks?|thank you|d'accord|compris|got it|i see|je vois|hi|hello|salut|bonjour|hey)\b[\s.!]*$/i.test(raw)) return false;
+  if (/(can i have a small hint|i'm lost|got it! give me another|i'm stuck on a problem|i'd like to understand a topic|quiz me|un petit indice|je suis perdu|donne-m'en un autre|je bloque sur un exercice|interroge-moi|comprendre un chapitre)/i.test(raw)) return false;
+  if (/\b(i don'?t know|idk|je ne sais pas|je sais pas|no idea|aucune id[ée]e)\b/i.test(raw) && words < 8) return false;
+  if (/\?\s*$/.test(raw) && !/=/.test(raw)) return false;
+  return mathy || words >= 6;
 }
 
 const MAX_DIAGRAM_OPS = 15;
@@ -7087,13 +7070,15 @@ const PRIMER_PERSONA =
   `happens to the vertex?"). Keep each scene SMALL (under ~60 lines, plain SVG + inline JS, no library unless ` +
   `truly needed) so it appears fast, with the thing being varied labelled. Don't build one for something a ` +
   `sentence or a quick DRAW_ON_BOARD figure already makes clear.\n` +
-  `- WRITE ON THE BOARD EVERY TURN, not just when stuck: the board is the shared page you're building together, ` +
-  `so most turns should leave ONE short new entry there (in the same step as your reply — tool call plus ` +
-  `message, no extra turn). Safe to write immediately: the problem's givens and what's asked, the goal, a ` +
-  `key term the first time it comes up, a step THEY just said or derived (credit it — "your step: …"), the ` +
-  `next small thing to try as an instruction, a one-line recap after a breakthrough. Equations and formulas ` +
-  `go through DRAW_ON_BOARD's equation op so they typeset; steps of reasoning stay one line each. What you ` +
-  `don't write: a step they haven't reached yet, and never the answer.\n` +
+  `- THE BOARD IS THE WORKING — THE REASONING, NOT A TRANSCRIPT. Most turns, leave ONE short entry (same step as ` +
+  `your reply: tool call plus message, no extra turn) that records the THINKING so far in your own words: the ` +
+  `move that was made, WHY it works, and what it gave — e.g. "Factor: find two numbers with product 6 and sum ` +
+  `−5 → −2, −3, so (x−2)(x−3) = 0" or "Both factors can't be 0 together, so each gives a root". Use ` +
+  `kind "summary" for a running line of reasoning (their steps, credited), "formula" for a rule in play, ` +
+  `"definition" for a key term, "insight" for their aha, "instruction" for the next small thing to try. Equations ` +
+  `typeset via DRAW_ON_BOARD's equation op. NEVER copy what the student typed or what you just said into the ` +
+  `board word for word — a quote of the chat is noise; the board adds structure, the why and the result. Only ` +
+  `what has actually been reached: never a step they haven't got to, never the answer.\n` +
   `- GRAPHS: for anything that is a FUNCTION or data trend (parabolas and a/b/c, amplitude/period, exponentials, ` +
   `transformations, motion graphs, a line of best fit; also bar charts, histograms and 3D surfaces z=f(x,y)) use GRAPH_ON_BOARD, not CREATE_INTERACTIVE — it's instant, ` +
   `always renders, and gives the student real sliders and a hover readout. Plot the FAMILY or the setup, never ` +
@@ -7105,9 +7090,11 @@ const PRIMER_PERSONA =
   `told you what they gave and whether it was right — they did NOT type it, so don't thank them or quote the ` +
   `bracket. React like a person watching over their shoulder. WRONG: never reveal the answer or say "marked ` +
   `wrong"; ask what made that one look right, or ask for just their first step. A second miss: shrink the ` +
-  `step or give ONE hint. RIGHT first try: a short real reaction, then make them say WHY it works (or stretch ` +
-  `them with a slightly harder CREATE_PROBLEM). RIGHT after struggling: name what changed in how they ` +
-  `thought. Still 1-2 sentences.\n` +
+  `step or give ONE hint. RIGHT first try: a short real reaction, then make them say WHY it works. RIGHT after ` +
+  `struggling: name what changed in how they thought. Either way, once they have it, DON'T make the next ` +
+  `exercise yourself — ASK what they want to do now, in one short line with 2-3 concrete options ("another one ` +
+  `like it, a harder one, or go back over the idea? or something else?"). Only create the next problem after ` +
+  `they choose. Still 1-2 sentences.\n` +
   `- THEIR WHITEBOARD ARRIVES AS "[What I wrote/drew on the board: …]": a machine reading of their ` +
   `handwriting/drawing, so treat it as THEIR work — point at the specific line or step you're reacting to ` +
   `("your second line — what happened to the 3?") instead of generalities. If the reading looks garbled or ` +
@@ -7578,9 +7565,10 @@ export async function chatAboutTask(
         `screen; only actually re-describe it if they say they genuinely can't see it at all (a real ` +
         `rendering problem, not just not having looked).\n` +
         `- Once the Feynman check (rule 4) confirms they've actually got it — not just gotten the right answer, ` +
-        `but can explain why — say so plainly, THEN immediately offer or make the next problem via CREATE_PROBLEM ` +
-        `(same skill if they were shaky, a step up if they were solid). Never end a turn on "solved!" with ` +
-        `nothing queued next — the whole point of this mode is a continuous stream of practice, not one-and-done.\n` +
+        `but can explain why — say so plainly, THEN ask what they want to do next in one short line with a few concrete ` +
+        `options (another like it, a harder one, go back over the idea, something else) — let THEM choose; make the ` +
+        `next CREATE_PROBLEM only once they have (same skill if they were shaky, a step up if they were solid). ` +
+        `Never end a turn on a bare "solved!" with nothing offered next.\n` +
         `- WRITE_TO_BOARD is especially useful here: a formula they'll need mid-problem, a short instruction ` +
         `to get them moving ("essaie la première étape, je regarde"), or once they've solved one, a summary of ` +
         `THEIR reasoning through it. This is the same tool as always (see THE BOARD section below), still ` +
@@ -8245,15 +8233,6 @@ export async function chatAboutTask(
     // claimed to prevent. truncateCleanly backs up to the last sentence end (falling back to the last word
     // boundary if there's no sentence break inside the cap) and marks the cut with an ellipsis, so a
     // response is never handed back looking like it broke mid-thought.
-    // Log the student's own substantive step on the board when Otto wrote nothing there this turn (no model
-    // call) — see workingEntryFor. Skipped when a guardrail wiped the turn.
-    if (opts?.primer && !result.guardrailTripped && result.board.length === 0) {
-      const w = workingEntryFor(message, opts?.currentBoard || []);
-      if (w) result.board.push(w);
-      // ...and Otto's closing question as the board's "next prompt" — together they read as the working so far.
-      const q = promptEntryFor(reply, [...(opts?.currentBoard || []), ...result.board], history.length);
-      if (q && (w || history.length >= 2)) result.board.push(q);
-    }
     const cleaned = truncateCleanly(reply.trim(), 2400);
     if (!cleaned) {
       result.error = true;
@@ -8292,6 +8271,19 @@ export async function chatAboutTask(
     // model that keeps doing it can't spin the loop.
     let boardClaimCorrected = false;
     let boardNudgeDone = false;
+    let reasoningNudgeDone = false;
+    // Tutor only: the student just contributed a step and Otto wrote NOTHING on the board — one corrective round
+    // to put THEIR reasoning (and any helpful formula) there, in Otto's own words. Latched to once per turn;
+    // skipped on the first message, while a guardrail has wiped the turn, and for non-substantive input. Used by
+    // BOTH the plain-text path and the after-tool-calls path. Returns true when it queued the round.
+    const nudgeReasoning = (draft: string, round: number, lastRound: boolean): boolean => {
+      if (!(opts?.primer && !reasoningNudgeDone && !boardNudgeDone && !lastRound && history.length >= 1 && result.board.length === 0 && !result.guardrailTripped && isSubstantiveStep(message))) return false;
+      reasoningNudgeDone = true;
+      console.log(`${new Date().toISOString()} [chat] round ${round}: student contributed a step but nothing is on the board — asking for the reasoning entry`);
+      messages.push({ role: "assistant", content: draft });
+      messages.push({ role: "user", content: "The student just contributed a step, but nothing was added to the board this turn. Before you reply, call WRITE_TO_BOARD ONCE: kind \"summary\" — THEIR reasoning so far in your own words (the move they made, why it works, what it gave), e.g. \"Factor: two numbers with product 6 and sum −5 → −2, −3\". If a formula or rule that would genuinely help is in play and not on the board yet, add it too (real math through DRAW_ON_BOARD's equation op). Never quote their message word for word, never write a step they haven't reached or the final answer. Then send your short reply again." });
+      return true;
+    };
     let truncationRetried = false;
     // Latches for the post-reply truth pass below (each fires at most ONCE per turn, same shape as the
     // board-claim fix): one corrective round when the draft asserts arithmetic that doesn't recompute,
@@ -8489,6 +8481,7 @@ export async function chatAboutTask(
         // ignored it entirely. Silent compression, once, non-voice only (voice mode has its own stricter
         // TTS ceiling and its own retry paths above).
         if (opts?.primer && countWords(textContent) > 70) textContent = tightenForChat(textContent);
+        if (nudgeReasoning(textContent, round, lastRound)) continue;
         if (!lengthRetried && !lastRound && !opts?.voiceMode && countWords(textContent) > 120) {
           lengthRetried = true;
           console.log(`${new Date().toISOString()} [chat] round ${round}: draft is ${countWords(textContent)} words — asking for a compressed rewrite`);
@@ -8617,6 +8610,7 @@ export async function chatAboutTask(
       // own trig step in chat and wrote nothing, so the board never showed THEIR reasoning or the formula
       // in play). ONE corrective round, latched, same shape as that fix: add the entry, or continue
       // unchanged if the exchange genuinely produced nothing board-worthy.
+      if (nudgeReasoning(textContent, round, lastRound)) continue;
       if (!boardNudgeDone && !lastRound && shouldNudgeBoardWrite(textContent, message, result.board.length > 0)) {
         boardNudgeDone = true;
         console.log(`${new Date().toISOString()} [chat] round ${round}: reply confirms the student's math step but nothing was written to the board — asking for the write`);
