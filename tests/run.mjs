@@ -1,6 +1,6 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
-import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor, attachLocationLinks, googleMapsDirectionsUrl } from "../server/tasks.ts";
+import { recencyStamp, dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor, attachLocationLinks, googleMapsDirectionsUrl } from "../server/tasks.ts";
 import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem, detectLang, visionReady, describeWhiteboard, academicBlock, sessionRecapLine } from "../server/claude.ts";
 import { evaluateArithmetic, parseNumber, findArithmeticClaims, hasArithmetic } from "../server/arithmetic.ts";
 import { isLikelyEcho, createEchoFilter, normalizeForEcho } from "../client/voice/echoGuard.ts";
@@ -53,6 +53,18 @@ section("Primer chat — thinking toggle with safe fallback, persona leads with 
   const board = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
   check("board reports every exercise attempt to the tutor (never the correct answer)", /onProblemResult\?\.\(\{ problem, given, correct, attempt \}\)/.test(board) && /\[Exercise\] I answered/.test(tut));
   check("new whiteboard ink rides along with the next message (no separate send step)", /readUnseenInk\(\)/.test(tut) && /What I wrote\/drew on the board/.test(tut));
+}
+
+section("recencyStamp / pruneHandled — a non-string timestamp must never abort a sweep");
+{
+  check("string passes through", recencyStamp({ updatedAt: "2026-01-02T00:00:00.000Z" }) === "2026-01-02T00:00:00.000Z");
+  check("falls back to createdAt", recencyStamp({ createdAt: "2026-01-01T00:00:00.000Z" }) === "2026-01-01T00:00:00.000Z");
+  check("epoch number becomes ISO", recencyStamp({ updatedAt: 1767225600000 }) === "2026-01-01T00:00:00.000Z");
+  check("Date object becomes ISO", recencyStamp({ createdAt: new Date("2026-03-04T05:06:07.000Z") }) === "2026-03-04T05:06:07.000Z");
+  check("garbage becomes empty string", recencyStamp({ updatedAt: {}, createdAt: null }) === "");
+  const mk = (id, u) => ({ id, title: id, why: "", source: "gmail", risk: "low", urgency: 0, importance: 0, quadrant: "do", score: 0, status: "done", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: u });
+  const kept = pruneHandled([mk("a", 1767225600000), mk("b", "2026-02-01T00:00:00.000Z"), mk("c", { weird: true })], 2);
+  check("pruneHandled survives mixed timestamp types and keeps the newest", kept.length === 2 && kept[0].id === "b");
 }
 
 // ── Generation gates ──────────────────────────────────────────────────────────
@@ -2725,7 +2737,7 @@ section("generate() — handled/dismissed titles sorted by recency before being 
   const start = src.indexOf("export async function generate(");
   const handledIdx = src.indexOf("const handled = existing", start);
   const body = src.slice(handledIdx, src.indexOf("\n  // …and what's currently ACTIVE", handledIdx));
-  check("the handled list is sorted by updatedAt/createdAt before being mapped", /\.sort\(\(a, b\) => \(b\.updatedAt \|\| b\.createdAt \|\| ""\)\.localeCompare\(a\.updatedAt \|\| a\.createdAt \|\| ""\)\)/.test(body));
+  check("the handled list is sorted by updatedAt/createdAt before being mapped", /\.sort\(\(a, b\) => recencyStamp\(b\)\.localeCompare\(recencyStamp\(a\)\)\)/.test(body));
   const sortIdx = body.indexOf(".sort(");
   const mapIdx = body.indexOf(".map(");
   check("the sort runs BEFORE the map (so recency is set before shaping the object), not after", sortIdx > 0 && mapIdx > sortIdx);
