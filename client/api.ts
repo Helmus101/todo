@@ -411,12 +411,6 @@ export const api = {
   // "you just have no profile facts yet," and a caller like ProfileEditor's "Chargement…" state could sit
   // there resolved-but-empty forever with no way to tell the user anything went wrong. Now it only rethrows;
   // callers show a real "couldn't load" state and offer retry (see ProfileEditor/SettingsPage in App.tsx).
-  courseEnroll: (body: { catalogId?: string; name?: string; level?: string }): Promise<Profile> => post("/api/courses/enroll", body).then(normalizeProfile),
-  courseRemove: (id: string): Promise<Profile> => req(`/api/courses/${encodeURIComponent(id)}`, { method: "DELETE" }).then(j).then(normalizeProfile),
-  courseSession: (body: { subject: string; courseId?: string; unitId?: string; minutes: number; text: string }): Promise<{ credited: { courseId: string; unitId: string } | null; profile: Profile }> =>
-    post("/api/courses/session", body).then((r: any) => ({ ...r, profile: normalizeProfile(r.profile) })),
-  courseQuiz: (courseId: string, unitId: string): Promise<{ questions: { q: string; options: string[]; answer: number; why: string }[] }> => post("/api/courses/quiz", { courseId, unitId }),
-  courseQuizResult: (courseId: string, unitId: string, score: number): Promise<Profile> => post("/api/courses/quiz-result", { courseId, unitId, score }).then(normalizeProfile),
   profile: (): Promise<Profile> => req("/api/profile").then(j).then(normalizeProfile),
   setProfile: (category: string, value: string): Promise<Profile> => post("/api/profile", { category, value }).then(normalizeProfile),
   setProfilePreference: (key: string, value: any): Promise<Profile> => post("/api/profile/preference", { key, value }).then(normalizeProfile),

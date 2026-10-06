@@ -526,128 +526,15 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
   // in a chat log. The full conversation is still saved with the session for the history view.
   return (
     <main className={`tutor-stage${voiceState.voiceModeOn ? " voice-on" : ""}`}>
-      <header className="ts-bar">
-        {backButton}
-        <span className="ts-title">{task.sourceSubject || L("Séance", "Session")}</span>
+      {/* Same breadcrumb chrome as the rest of the Tutor ("All sessions / Subject … End session"). */}
+      <header className="ts-bar tutor-crumbbar">
+        <button type="button" className="tutor-crumb-link" onClick={onExit}>{L("Toutes les séances", "All sessions")}</button>
+        {task.sourceSubject ? <span className="tutor-crumb-subject">{task.sourceSubject}</span> : null}
         {!!task.objectives?.length && (
           <span className="ts-chip" title={task.objectives.map((o) => `${o.done ? "✓" : "○"} ${o.label}`).join("\n")}>
             ◎ {objDone}/{task.objectives.length}{typeof task.mastery === "number" ? ` · ${Math.round(task.mastery * 100)}%` : ""}
           </span>
-    <main className={`tutor-session${voiceState.voiceModeOn ? " voice-primary" : ""}`}>
-      {/* The prototype's session chrome: breadcrumb left ("All sessions / Mathematics"), End session right. */}
-      <div className="tutor-crumbbar">
-        <button type="button" className="tutor-crumb-link" onClick={onExit}>{L("Toutes les séances", "All sessions")}</button>
-        {task.sourceSubject ? <span className="tutor-crumb-subject">{task.sourceSubject}</span> : null}
-        <button className="btn ghost tutor-end-btn" disabled={endingSession} onClick={() => void endSession()}>
-          {endingSession ? L("Fin…", "Ending…") : L("Terminer la séance", "End session")}
-        </button>
-      </div>
-      <section className="tutor-chat" aria-label={L("Discuter avec Otto", "Ask Otto")}>
-        <div className="tutor-chat-face-wrap">
-          <div className="tutor-face" aria-hidden><span className="tutor-face-eye" /><span className="tutor-face-eye" /></div>
-          <p className="tutor-chat-status">{sending || pendingMsg ? L("Otto réfléchit", "Otto is thinking") : L("Otto est là", "Otto is here")}</p>
-        </div>
-        {fresh && (
-          <div className="tutor-start">
-            <p>{L("Je suis là. Dis-moi où tu bloques, et on trouvera le chemin.", "I'm here. Tell me where you got stuck, and we'll find a way through.")}</p>
-          </div>
         )}
-        {/* Reported live: the mic should be off while Otto is speaking, not open for interruption — no
-            `bargeIn` prop below, so this falls back to AskOttoPanel's standard pause-mic-during-TTS
-            behavior (abort the recognizer the moment speech starts, restart it ~400ms after it ends). A
-            deliberate reversal of the earlier barge-in feature for the Tutor specifically. */}
-        <div className="tutor-chat-body">
-          <AskOttoPanel
-            task={task} currentStep={undefined} input={input} setInput={setInput} sending={sending}
-            error={error} pendingMsg={pendingMsg} onSend={(o, v) => void send(o, v)}
-            onOpenNote={noop} onOpenDeck={noop} onOpenQuiz={noop}
-            emptyText="" placeholder={L("Écris ici…", "Type here…")}
-            onVoiceStateChange={handleVoiceState}
-          />
-        </div>
-      </section>
-      <section className="tutor-board" aria-label={L("Tableau", "Board")}>
-        <div className="tutor-pane-title">
-          <span className="micro-label">{whiteboardOpen ? L("Tableau blanc", "Whiteboard") : desmosOpen ? L("Desmos", "Desmos") : L("Tableau", "Board")}</span>
-          {/* Voice state lives on the BOARD pane: in voice-first mode this is the pane the student is
-              actually looking at. Kept small and inline in the pane title (reported: the earlier full-width
-              orb banner was too big/intrusive) — a compact status dot + label is enough to answer "am I
-              being heard / is Otto talking" without taking over the pane. Hidden whenever Desmos/the
-              whiteboard has replaced the board — the pill only matters when the student's actually looking
-              at the board itself. */}
-          {voiceState.voiceModeOn && !desmosOpen && !whiteboardOpen ? (
-            <span className={`tutor-voice-pill${voiceState.speaking ? " speaking" : voiceState.listening ? " listening" : ""}`} role="status">
-              {voiceState.speaking
-                ? L("Otto parle…", "Otto is speaking…")
-                : voiceState.listening
-                  ? L("Je t'écoute…", "Listening…")
-                  : L("Voix activée", "Voice on")}
-              {voiceState.listening && voiceState.interim ? <span className="tutor-voice-interim">{voiceState.interim}</span> : null}
-            </span>
-          ) : null}
-          {/* Lets the student SHOW Otto their own work (a diagram, a worked attempt) instead of only
-              describing it in words — reported ask: "make sure the tutor can process images from a
-              whiteboard." Hidden entirely when the server has no vision provider configured (GEMINI_API_KEY
-              — see server/claude.ts's describeWhiteboard). Moved here from the chat pane's header (reported
-              live: drawing should replace the BOARD, not the chat — the board is the visual-work pane, the
-              chat is the conversation; opening it here matches Desmos's own "replaces the board" place
-              instead of taking over the conversation surface). Mutually exclusive with Desmos — only one
-              replacement of the board at a time. */}
-          {!desmosOpen && !whiteboardOpen && visionReady && (
-            <button type="button" className="btn ghost xs" onClick={openWhiteboard}>
-              ✏ {L("Tableau blanc", "Whiteboard")}
-            </button>
-          )}
-          {/* The tutor's Desmos place, reachable from the board pane's own header — opening it REPLACES the
-              board entirely (see the branch below) rather than squeezing a small iframe in above it
-              (reported live: that felt cramped). Closing it restores the board exactly as it was; the
-              board's own state is never touched by opening/closing Desmos. The iframe itself stays mounted
-              under the hood even while hidden (see the wrapper below) — reported live: reopening Desmos used
-              to reload a blank calculator, throwing away whatever the student had graphed. */}
-          {!desmosOpen && !whiteboardOpen && (
-            <button type="button" className="btn ghost xs tutor-desmos-open" onClick={openDesmos}>
-              <span className="tutor-desmos-glyph" aria-hidden>ƒ</span> {L("Desmos", "Desmos")}
-            </button>
-          )}
-        </div>
-        {/* Board, Desmos, and the whiteboard are SIBLINGS now, not a nested ternary — each one that's ever
-            been opened this session stays mounted permanently (hidden via inline style, never unmounted)
-            so its own state survives toggling away and back: Desmos's iframe keeps running instead of
-            reloading blank, and the whiteboard's canvas keeps its drawn pixels instead of a close silently
-            discarding real unsubmitted work (both reported live). Only one is ever visible at a time. */}
-        {/* Today's focus: the session's SET_OBJECTIVES checklist, distinct from the board's own single
-            "focus" entry (one sentence of narrative framing). Shown as a compact strip above the board
-            itself so progress is visible at a glance without taking over the pane the way a full section
-            would — a long humanities session especially benefits from seeing "2 of 6 done" at a glance.
-            Hidden while Desmos/the whiteboard is showing (board stays mounted below it, just not visible). */}
-        {!desmosOpen && !whiteboardOpen && !!task.objectives?.length && (
-          <div className="tutor-objectives" aria-label={L("Objectifs de la séance", "Today's focus")}>
-            <div className="tutor-objectives-head">
-              <span>
-                {L("Objectifs du jour", "Today's focus")}
-                {/* Subject mastery — null means "no data yet" (never a fabricated 0%), so it's simply
-                    omitted rather than shown as a misleading score for a subject just started. */}
-                {typeof task.mastery === "number" && (
-                  <span className="tutor-objectives-mastery">
-                    {" "}· {L("maîtrise", "mastery")} {Math.round(task.mastery * 100)}%
-                  </span>
-                )}
-              </span>
-              <span className="tutor-objectives-progress">
-                {task.objectives.filter((o) => o.done).length}/{task.objectives.length}
-              </span>
-            </div>
-            <ul className="tutor-objectives-list">
-              {task.objectives.map((o) => (
-                <li key={o.id} className={o.done ? "done" : ""}>
-                  <span className="tutor-objectives-check" aria-hidden>{o.done ? "✓" : ""}</span>
-                  {o.label}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-        <span className="ts-spacer" />
         <button className="btn ghost tutor-end-btn" disabled={endingSession} onClick={() => void endSession()}>
           {endingSession ? L("Fin…", "Ending…") : L("Terminer la séance", "End session")}
         </button>
