@@ -253,9 +253,14 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
   }, [input, sending, task, userId, L]);
 
   // Each answer to a board exercise goes to Otto as a short automatic message so he reacts like a person
-  // (the board only marks right/wrong). Queued while a reply is in flight so none is dropped.
+  // (the board only marks right/wrong). They must never INTERRUPT: sent the instant a reply landed, a second
+  // reply would replace the one the student is still reading or hearing. So they wait until no reply is in
+  // flight, Otto has stopped speaking and things have been quiet for a moment, then go out as ONE batched
+  // message (several quick answers = one reaction, not a stack of replies).
   const resultsRef = useRef<string[]>([]);
   const [resultTick, setResultTick] = useState(0);
+  const sendRef = useRef(send);
+  sendRef.current = send;
   const onProblemResult = useCallback((r: { given: string; correct: boolean; attempt: number }) => {
     resultsRef.current.push(L(
       `[Exercice] J'ai répondu « ${r.given.slice(0, 120)} » — ${r.correct ? "juste" : "faux"} (essai n°${r.attempt}).`,
@@ -263,10 +268,14 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
     setResultTick((n) => n + 1);
   }, [L]);
   useEffect(() => {
-    if (sending || !task || !resultsRef.current.length) return;
-    void send(resultsRef.current.shift()!);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resultTick, sending, task?.id]);
+    if (!task || !resultsRef.current.length) return;
+    if (sending || voiceState.speaking) return; // re-evaluated when either settles
+    const t = setTimeout(() => {
+      if (!resultsRef.current.length) return;
+      void sendRef.current(resultsRef.current.splice(0).join("\n"));
+    }, 3000);
+    return () => clearTimeout(t);
+  }, [resultTick, sending, voiceState.speaking, task?.id]);
 
   const endSession = useCallback(async () => {
     if (!task || endingSession) return;
@@ -561,6 +570,16 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
     { label: L("Explique-moi un cours", "Teach me a topic"), text: L("J'aimerais comprendre un chapitre.", "I'd like to understand a topic.") },
     { label: L("Interroge-moi", "Quiz me"), text: L("Interroge-moi pour voir ce que je sais.", "Quiz me to see what I know.") },
   ];
+  // Right after the student has completed an exercise: offer the next move as one-tap choices (Otto also asks
+  // what they'd like to do — see the persona's EXERCISE RESULTS rule) instead of leaving them at a bare "solved".
+  const lastUserMsg = [...(task.chat || [])].reverse().find((m) => m.role === "user")?.text || "";
+  const justFinishedExercise = /^\[(?:Exercise|Exercice)\]/.test(lastUserMsg) && /\b(marked right|juste)\b/.test(lastUserMsg);
+  const nextChips = [
+    { label: L("➡ Un autre", "➡ Another one"), text: L("J'en veux un autre comme celui-là.", "Another one like it, please.") },
+    { label: L("⬆ Plus dur", "⬆ Harder"), text: L("Donne-m'en un plus difficile.", "Give me a harder one.") },
+    { label: L("🔁 Revoir l'idée", "🔁 Go over the idea"), text: L("Reprenons l'idée derrière cet exercice.", "Let's go back over the idea behind that one.") },
+    { label: L("💬 Autre chose", "💬 Something else"), text: L("Je voudrais faire autre chose.", "I'd like to do something else.") },
+  ];
   const followUps = [
     { label: L("💡 Un indice", "💡 Hint"), text: L("Tu peux me donner un petit indice ?", "Can I have a small hint?") },
     { label: L("🤔 Je suis perdu", "🤔 I'm lost"), text: L("Je suis perdu — on peut y aller plus doucement ?", "I'm lost — can we go smaller?") },
@@ -611,7 +630,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
           error={error} pendingMsg={pendingMsg} onSend={(o, v) => void send(o, v)}
           onOpenNote={noop} onOpenDeck={noop} onOpenQuiz={noop}
           emptyText={openerText}
-          quickReplies={fresh ? starters : followUps}
+          quickReplies={fresh ? starters : justFinishedExercise ? nextChips : followUps}
           placeholder={L("Parle ou écris à Otto…", "Talk or type to Otto…")}
           onVoiceStateChange={handleVoiceState}
         />
