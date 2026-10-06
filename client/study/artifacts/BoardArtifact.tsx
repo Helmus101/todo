@@ -429,10 +429,11 @@ export function BoardArtifact({ task, writing }: BoardArtifactProps) {
           {task.sourceSubject ? <span className="sm-board-header-subject">{task.sourceSubject}</span> : null}
         </div>
         <div className="sm-board-empty">
-          {L(
-            "Le document de séance se construira ici — objectif du jour, définitions, formules, déclics, résumés — dès que ce sera utile.",
-            "The session document will build here — today's focus, definitions, formulas, insights, summaries — whenever it's useful.",
-          )}
+          {/* The prototype's board empty state: two big serif lines with a quiet promise under them —
+              the page reads as an invitation, not as an error message about missing content. */}
+          <p className="sm-board-empty-line">{L("Travaillons ça ensemble.", "Let's work it out, together.")}</p>
+          <p className="sm-board-empty-line">{L("Qu'aimerais-tu mieux comprendre ?", "What would you like to understand better?")}</p>
+          <p className="sm-board-empty-sub">{L("On construit l'explication ensemble, une idée à la fois.", "We'll build the explanation together. One idea at a time.")}</p>
         </div>
         {writing ? (
           <div className="sm-board-drafting" role="status" aria-live="polite">

@@ -483,15 +483,6 @@ input:focus, textarea:focus {
   animation: pageIn var(--duration-spring) var(--ease) backwards;
 }
 .dash-head { margin-bottom: var(--space-6); }
-/* The prototype's date line ("Monday, 5 October") — an uppercase micro-label above the big title. */
-.dash-date { 
-  margin: 0 0 10px; 
-  font-size: 12px; 
-  letter-spacing: 0.08em; 
-  color: var(--ink-2); 
-  font-weight: var(--weight-semibold);
-  text-transform: uppercase; 
-}
 /* Continues the same sentence-line as .dash-line's count, naming what's actually next — plain text, not a
    pill (only real status signals like overdue/working get pill treatment). */
 .dash-next { color: var(--ink-2); }
@@ -735,7 +726,7 @@ input:focus, textarea:focus {
 /* The prototype's progress row: a taller rounded orange bar with a plain-sentence caption below it
    ("1 of 3 complete · A good start.") instead of the old hairline-thin strip. */
 .dash-progress {
-  margin-top: 18px;
+  margin-top: 0;
   height: 8px;
   border-radius: var(--radius-pill);
   background: var(--bg-2);
@@ -745,7 +736,8 @@ input:focus, textarea:focus {
   animation: appleRise var(--duration-spring) var(--ease-spring) 0.1s backwards;
 }
 .dash-progress-caption {
-  margin-top: 8px;
+  /* The prototype puts this line ABOVE the bar, not under it. */
+  margin: 18px 0 10px;
   font-size: 13px;
   color: var(--ink-2);
 }
@@ -760,12 +752,11 @@ input:focus, textarea:focus {
   box-shadow: none;
   animation: appleRise var(--duration-spring) var(--ease) 0.05s backwards;
 }
+/* The prototype leads the hero with the subject as a quiet gray line, not an orange label. */
 .dash-hero-kicker {
-  font-size: 11.5px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--accent);
+  font-size: 13px;
+  font-weight: var(--weight-medium);
+  color: var(--ink-2);
   margin-bottom: var(--space-2);
 }
 .dash-hero-title {
@@ -798,6 +789,17 @@ input:focus, textarea:focus {
   gap: var(--space-2);
   margin-top: var(--space-3);
 }
+/* The prototype's numbered plan preview under the CTA ("01 / Review the derivative rules"). */
+.dash-hero-steps {
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dash-hero-steps li { display: flex; gap: 10px; align-items: baseline; font-size: 14px; color: var(--ink-2); }
+.dash-hero-step-num { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
 /* Minimalist meta line — the subject + due date carry the context; the quadrant label is
    noise on top of them, so it doesn't render at any width. */
 .dash-hero-meta .card-quadrant { display: none; }
@@ -3945,6 +3947,27 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 }
 
 /* ─── Legal pages ──────────────────────────────────────────────────────────── */
+/* ─── /research — the philosophy page, typeset like the landing, not a plain article ───
+   Mission statement up top in the serif display face (Baskervville, same as the landing hero), then
+   numbered sections separated by hairlines — the landing's "01 / PROACTIVE TASKS" editorial rhythm
+   carried into long-form. */
+.research-main { width: 100%; max-width: 720px; margin: 0 auto; padding: clamp(48px, 9vh, 96px) 24px 80px; }
+.research-title {
+  font-family: var(--font-serif);
+  font-size: clamp(34px, 5.4vw, 56px);
+  font-weight: 400;
+  line-height: 1.08;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin: 14px 0 0;
+}
+.research-intro { font-size: 17px; line-height: 1.6; color: var(--ink-2); margin-top: 22px; max-width: 60ch; }
+.research-sec { margin-top: clamp(36px, 6vh, 56px); border-top: 1px solid var(--line); padding-top: clamp(28px, 5vh, 44px); }
+.research-sec-kicker { font-family: var(--font-serif); font-size: 15px; color: var(--accent); margin: 0 0 6px; font-variant-numeric: tabular-nums; }
+.research-sec-title { font-family: var(--display); font-size: clamp(22px, 3vw, 28px); font-weight: 650; letter-spacing: var(--tracking-tight); line-height: 1.2; color: var(--ink); margin: 0 0 12px; }
+.research-sec p { font-size: 15.5px; line-height: 1.65; color: var(--ink-2); margin: 0 0 14px; max-width: 64ch; }
+.research-sec-closing { margin-top: clamp(36px, 6vh, 56px); }
+
 .legal { width: 100%; max-width: 680px; margin: 0 auto; padding: clamp(40px, 7vh, 72px) 24px 96px; }
 .legal h1 { font-family: var(--display); font-size: clamp(1.8rem, 4vw, 2.4rem); font-weight: 700; /* Apple Design §15 — negative tracking on headings */ letter-spacing: var(--tracking-tight); margin-bottom: var(--space-5); }
 .legal h2 { font-family: var(--display); font-size: 16px; font-weight: var(--weight-semibold); /* Apple Design §15 — negative tracking on headings */ letter-spacing: var(--tracking-tight); margin: 30px 0 8px; }
@@ -5756,13 +5779,23 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .sm-board-empty {
   height: 100%;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
   justify-content: center;
   padding: var(--space-5);
-  text-align: center;
-  color: var(--ink-3);
-  font-size: var(--text-sm);
+  text-align: left;
 }
+/* The prototype's board invitation — two big serif lines (Baskervville, like the landing display type)
+   with a quiet gray promise under them. */
+.sm-board-empty-line {
+  margin: 0 0 18px;
+  font-family: var(--font-serif);
+  font-size: clamp(26px, 3.4vw, 40px);
+  line-height: 1.18;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.sm-board-empty-sub { margin: 6px 0 0; color: var(--ink-2); font-size: 1.02rem; }
 /* No gap here — entries are separated by their own border-bottom hairline now (see .sm-board-entry below),
    so the page reads as one continuous document flowing downward, not a stack of individually-spaced cards. */
 .sm-board-body { height: 100%; overflow: auto; padding: var(--space-4); display: flex; flex-direction: column; }
@@ -6812,7 +6845,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 /* Tutor landing (no active session): the prototype's centered column — cream-circle face, big serif-
    weight title "Hi, I'm Otto.", one question line, subject select + orange pill. */
 .tutor-landing { display: flex; align-items: center; justify-content: center; padding: 60px 20px; min-height: calc(100vh - 60px); }
-.tutor-landing-inner { max-width: 460px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 22px; }
+.tutor-landing-inner { max-width: 640px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 22px; }
 /* The cream face — the prototype's single illustration (two dots, no mouth). CSS-only, no asset. */
 .tutor-face {
   width: 72px; height: 72px; border-radius: 50%;
@@ -6821,15 +6854,21 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   flex: none;
 }
 .tutor-face-eye { width: 7px; height: 9px; border-radius: 3px; background: var(--ink); }
-.tutor-landing-title { margin: 0; font-size: clamp(2.2rem, 5vw, 2.8rem); letter-spacing: var(--tracking-display); font-weight: 650; color: var(--ink); }
+/* The prototype sets the tutor landing title in the same serif display face as the landing hero
+   ("Hi, I'm Otto." in Baskervville) — the app's one other place the serif is allowed. */
+.tutor-landing-title { margin: 0; font-family: var(--font-serif); font-size: clamp(2.2rem, 5vw, 2.8rem); letter-spacing: 0; font-weight: 400; color: var(--ink); }
 .tutor-landing-sub { max-width: 420px; margin: 0; color: var(--ink-2); font-size: 1.1rem; line-height: 1.6; }
-.tutor-subject-select { width: 100%; max-width: 320px; text-align: left; }
-.tutor-subject-select label { display: block; text-align: left; margin-bottom: 8px; font-size: 0.85rem; font-weight: 600; color: var(--ink-2); }
-.tutor-subject-select select { width: 100%; padding: 12px 16px; font-size: 1rem; }
-.tutor-start-btn { font-size: 1.05rem; padding: 13px 32px; font-weight: 600; width: 100%; max-width: 320px; }
-.tutor-start-actions { display: flex; flex-direction: column; align-items: center; gap: 10px; width: 100%; }
-@media (max-width: 560px) { .tutor-start-actions .tutor-start-btn { width: 100%; } }
-
+/* The prototype's start row: one wide pill — subject select left, orange "Start a session" right. */
+.tutor-start-row {
+  display: flex; align-items: center; gap: 10px; width: 100%; max-width: 640px;
+  padding: 8px 8px 8px 24px; border: 1px solid var(--line); border-radius: var(--radius-pill);
+  background: var(--surface);
+}
+.tutor-start-select {
+  flex: 1; min-width: 0; border: none; background: transparent; font-size: 1rem; color: var(--ink);
+  padding: 10px 4px; outline: none; cursor: pointer; font-family: inherit;
+}
+.tutor-start-btn { flex: none; font-size: 1.05rem; padding: 13px 28px; font-weight: 600; }
 /* End-session button in the breadcrumb bar */
 .tutor-pane-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .tutor-end-btn { font-size: 13px; padding: 6px 16px; font-weight: 500; }

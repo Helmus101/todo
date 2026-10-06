@@ -418,34 +418,33 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
             </div>
           )}
 
-          {/* Always show subject selector so you can create a new session even when one is active */}
-          <div className="tutor-subject-select">
-            <label className="micro-label" htmlFor="tutor-subject-select">{L("Matière", "Subject")}</label>
+          {/* Always show subject selector so you can create a new session even when one is active —
+              rendered as the prototype's single wide pill: subject select left, orange "Start a session"
+              button right, no separate label above. The gate stays (the button is disabled until a
+              subject is picked) but the affordance is always visible. */}
+          <div className="tutor-start-row">
             <select
               id="tutor-subject-select"
               value={selectedSubject}
               onChange={(e) => setSelectedSubject(e.target.value)}
-              className="btn ghost"
+              className="tutor-start-select"
+              aria-label={L("Matière", "Subject")}
             >
               <option value="">{L("Choisir une matière", "Choose a subject")}</option>
               {COMMON_SUBJECTS.map((subj) => (
                 <option key={subj} value={subj}>{subj}</option>
               ))}
             </select>
-          </div>
-
-          {/* Start appears only once a subject is picked */}
-          {selectedSubject && (
             <button
               className="btn primary tutor-start-btn"
               onClick={() => void startNewSession()}
-              disabled={startingSession}
+              disabled={startingSession || !selectedSubject}
             >
               {startingSession
                 ? L("Démarrage…", "Starting…")
                 : L("Commencer une séance", "Start a session")}
             </button>
-          )}
+          </div>
 
           {pastSessions.length > 0 && (
             <div className="tutor-past-sessions">

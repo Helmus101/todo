@@ -298,10 +298,16 @@ export function TaskHero({ task, onOpen }: { task: WebTask; onOpen: () => void }
   const chip = statusChip(task, false, cardEn);
   const showChip = chip && chip.tone === "attention" ? chip : null;
   const w = taskDateLabel(task, L);
+  // The prototype's hero previews the plan as a numbered list ("01 / Review the derivative rules") under
+  // the CTA — read-only; the real step controls stay in the task detail view. First three is a preview,
+  // not the whole plan.
+  const heroSteps = (task.steps || []).filter((s) => s.text?.trim()).slice(0, 3);
 
   return (
     <div className="dash-hero">
-      <div className="dash-hero-kicker">{L("Ta priorité", "Your next priority")}</div>
+      {/* The prototype leads with the subject ("Mathematics"); fall back to the priority label when a
+          task has no subject. */}
+      <div className="dash-hero-kicker">{task.sourceSubject || L("Ta priorité", "Your next priority")}</div>
       <h2 className="dash-hero-title">{stripStrayMarkdown(task.title)}</h2>
       {task.goal ? <div className="task-goal-banner"><span className="task-goal-tag">{L("Objectif", "Goal")}:</span> {stripStrayMarkdown(task.goal)}</div> : null}
       {(task.nudgeLine || task.why) ? <p className="dash-hero-why">{stripStrayMarkdown(task.nudgeLine || task.why)}</p> : null}
@@ -315,8 +321,18 @@ export function TaskHero({ task, onOpen }: { task: WebTask; onOpen: () => void }
         </div>
       ) : null}
       <button type="button" className="btn primary big dash-hero-cta" onClick={onOpen}>
-        {L("Continuer", "Continue")}
+        {L("Avance dessus avec Otto", "Work through this with Otto")}
       </button>
+      {!!heroSteps.length && (
+        <ol className="dash-hero-steps">
+          {heroSteps.map((s, i) => (
+            <li key={i}>
+              <span className="dash-hero-step-num" aria-hidden>{String(i + 1).padStart(2, "0")}</span>
+              <span>{stripStrayMarkdown(s.text)}</span>
+            </li>
+          ))}
+        </ol>
+      )}
     </div>
   );
 }
