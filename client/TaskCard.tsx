@@ -292,9 +292,15 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
  * are what say "look here first," not a box. Everything else today's list has (chips, spinner, dismiss)
  * stays on the quiet `TaskCardRow`s underneath; duplicating that chrome here would just be more noise
  * around the one thing meant to stand out. */
-export function TaskHero({ task, onOpen }: { task: WebTask; onOpen: () => void }) {
+export function TaskHero({ task, onOpen, onChange, onTask, onConfirmed, readOnly }: {
+  task: WebTask; onOpen: () => void;
+  onChange: (t: WebTask[]) => void; onTask?: (t: WebTask) => void; onConfirmed?: (id: string) => void; readOnly?: boolean;
+}) {
   const L = useLang();
   const cardEn = useContext(LangContext) === "en";
+  // Same confirm machinery as the rows (useTaskLeave) so the hero's "Done for now" checkbox behaves
+  // identically to a row checkbox: optimistic status flip, hold-then-remove animation, rollback on error.
+  const { leaving, leave } = useTaskLeave(task.id, { onChange, onTask, onConfirmed });
   const chip = statusChip(task, false, cardEn);
   const showChip = chip && chip.tone === "attention" ? chip : null;
   const w = taskDateLabel(task, L);
@@ -304,7 +310,7 @@ export function TaskHero({ task, onOpen }: { task: WebTask; onOpen: () => void }
   const heroSteps = (task.steps || []).filter((s) => s.text?.trim()).slice(0, 3);
 
   return (
-    <div className="dash-hero">
+    <div className={`dash-hero ${leaving ? "confirming" : ""}`}>
       {/* The prototype leads with the subject ("Mathematics"); fall back to the priority label when a
           task has no subject. */}
       <div className="dash-hero-kicker">{task.sourceSubject || L("Ta priorité", "Your next priority")}</div>
@@ -323,6 +329,14 @@ export function TaskHero({ task, onOpen }: { task: WebTask; onOpen: () => void }
       <button type="button" className="btn primary big dash-hero-cta" onClick={onOpen}>
         {L("Avance dessus avec Otto", "Work through this with Otto")}
       </button>
+      {/* The prototype's quiet "Done for now" checkbox under the CTA — same optimistic confirm as the
+          rows, so the task animates away exactly like a row confirm would. */}
+      {!readOnly && (
+        <label className="dash-hero-done">
+          <input type="checkbox" disabled={leaving} onChange={() => void leave(() => api.confirm(task.id), "confirm", task)} />
+          <span>{L("Fait pour l'instant", "Done for now")}</span>
+        </label>
+      )}
       {!!heroSteps.length && (
         <ol className="dash-hero-steps">
           {heroSteps.map((s, i) => (
@@ -333,6 +347,11 @@ export function TaskHero({ task, onOpen }: { task: WebTask; onOpen: () => void }
           ))}
         </ol>
       )}
+      {/* Same destination as the CTA (the task detail view) — the prototype's quiet secondary access to
+          the plan and Otto's prepared materials. */}
+      <button type="button" className="btn ghost dash-hero-plan" onClick={onOpen}>
+        {L("Voir le plan et les documents", "View plan & materials")}
+      </button>
     </div>
   );
 }

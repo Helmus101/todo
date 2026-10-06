@@ -13,7 +13,7 @@ import { pushError } from "./errorLog.ts";
 import { useIsPhone } from "./useIsPhone.ts";
 import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard, PageInfoHint } from "./ui.tsx";
 import { t } from "./i18n.ts";
-import { TaskCardRow, TaskFocus, TaskReadOnly } from "./TaskCard.tsx";
+import { TaskCardRow, TaskFocus, TaskHero, TaskReadOnly } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
 import { TutorSession } from "./tutor/TutorSession.tsx";
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
@@ -1235,25 +1235,39 @@ export function App() {
                     <p>{en ? "You're all caught up — Otto's still keeping an eye on your Pronote." : "Tu es à jour — Otto continue de surveiller ton Pronote."}</p>
                   </div>
                 );
-              })() : (
+              })(              ) : (
                 <div className={`list-focus-wrap ${settled ? "settled" : ""}`}>
-                  <div className="list">
-                    {focusToday.map((t, i) => (
-                      <TaskCardRow
-                        key={t.id}
-                        task={t}
-                        index={i}
-                        retrying={retryingIds.includes(t.id)}
-                        isNew={!seenTasks.has(t.id) && !isHandled(t.status) && !isInFlight(t.status)}
-                        onOpen={() => navigate(`task/${t.id}`)}
-                        onChange={setTasks}
-                        onTask={patchTask}
-                        onConfirmed={flagJustDone}
-                        onEnterStudyMode={STUDY_MODE_ENABLED && !isPhone ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
-                        readOnly={isPhone}
-                      />
-                    ))}
-                  </div>
+                  {/* The prototype's hero: ONE spotlight task (subject kicker, big title, CTA, "Done for
+                      now", numbered plan preview) — the rest of today's tasks stay rows below it. */}
+                  {focusToday[0] && (
+                    <TaskHero
+                      task={focusToday[0]}
+                      onOpen={() => navigate(`task/${focusToday[0].id}`)}
+                      onChange={setTasks}
+                      onTask={patchTask}
+                      onConfirmed={flagJustDone}
+                      readOnly={isPhone}
+                    />
+                  )}
+                  {restToday.length > 0 && (
+                    <div className="list">
+                      {restToday.map((t, i) => (
+                        <TaskCardRow
+                          key={t.id}
+                          task={t}
+                          index={i + 1}
+                          retrying={retryingIds.includes(t.id)}
+                          isNew={!seenTasks.has(t.id) && !isHandled(t.status) && !isInFlight(t.status)}
+                          onOpen={() => navigate(`task/${t.id}`)}
+                          onChange={setTasks}
+                          onTask={patchTask}
+                          onConfirmed={flagJustDone}
+                          onEnterStudyMode={STUDY_MODE_ENABLED && !isPhone ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
+                          readOnly={isPhone}
+                        />
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -3690,9 +3704,9 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
         <nav className="footer-links-framer">
           <a href="/privacy">{en ? "Privacy" : "Confidentialité"}</a>
           <a href="/terms">{en ? "Terms" : "Conditions"}</a>
-          <a href="/unlimited">{en ? "Unlimited" : "Illimité"}</a>
           {/* Not in the prototype's footer, but /research is this landing's long-form "Research" section —
-              dropping the link during the restyle would orphan the page entirely. */}
+              dropping the link during the restyle would orphan the page entirely. (The /unlimited page
+              stays reachable through its own routes; it's just not a footer link any more.) */}
           <a href="/research">{en ? "Research" : "Recherche"}</a>
         </nav>
       </footer>

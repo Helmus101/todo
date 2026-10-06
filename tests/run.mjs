@@ -4331,7 +4331,7 @@ section("Landing page redesign — prototype copy, real features only, no fabric
   check("the two-column prototype section names the two real halves of the product (proactive tasks + personal tutor)", landing.includes("features-framer") && /PROACTIVE TASKS/.test(landing) && /PERSONAL TUTOR/.test(landing));
   check("the sample cards use the prototype's honest examples (derivatives task, slope question)", /Get ready for derivatives/.test(landing) && /What does the slope tell us/.test(landing));
   check("the hero copy matches the prototype (Less busywork. More understanding.)", /Less busywork\. More understanding\./.test(landing));
-  check("the footer keeps Privacy/Terms/Unlimited and the Research page stays reachable", landing.includes('href="/unlimited"') && app.includes('href="/research"'));
+  check("the footer keeps Privacy/Terms (+ Research, not Unlimited) and the Research page stays reachable", landing.includes('href="/terms"') && landing.includes('href="/research"') && !landing.includes('href="/unlimited"'));
 }
 
 section("Task detail view — removed the big bold current-step hero, 'To get started', and the 'Done' bullet log (source pins)");

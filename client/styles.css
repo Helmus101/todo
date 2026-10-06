@@ -800,6 +800,15 @@ input:focus, textarea:focus {
 }
 .dash-hero-steps li { display: flex; gap: 10px; align-items: baseline; font-size: 14px; color: var(--ink-2); }
 .dash-hero-step-num { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+/* The prototype's quiet "Done for now" checkbox under the CTA. */
+.dash-hero-done { display: flex; align-items: center; gap: 10px; margin-top: var(--space-3); font-size: 14px; color: var(--ink-2); cursor: pointer; }
+.dash-hero-done input { width: 17px; height: 17px; accent-color: var(--accent); cursor: pointer; flex: none; }
+.dash-hero-done:hover span { color: var(--ink); }
+/* Quiet secondary access to the plan — the prototype's "View plan & materials". */
+.dash-hero-plan { margin-top: var(--space-3); align-self: flex-start; font-size: 14px; padding: 10px 20px; }
+/* When confirmed, the hero animates away like a row confirm — softer, it's a big block. */
+.dash-hero.confirming { animation: heroConfirm var(--duration-slow) var(--ease) forwards; pointer-events: none; }
+@keyframes heroConfirm { to { opacity: 0; transform: scale(0.98); } }
 /* Minimalist meta line — the subject + due date carry the context; the quadrant label is
    noise on top of them, so it doesn't render at any width. */
 .dash-hero-meta .card-quadrant { display: none; }
@@ -6564,20 +6573,21 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .studylog-weeklabel { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--ink-2); }
 /* 7 columns (Mon..Sun) — the Journal covers the full week now, not just weekdays. Tighter gap/padding than
    the old 5-column layout so a week still fits one row on a normal phone width without wrapping. */
-.studylog-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+/* The prototype's week strip: plain text tabs ("Mon 5"), active day in the orange — not boxed buttons. */
+.studylog-days { display: flex; gap: clamp(12px, 2.5vw, 24px); }
 .studylog-day-btn {
-  display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 3px;
-  border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); cursor: pointer;
-  font-size: 11.5px; font-weight: var(--weight-medium); color: var(--ink-2);
-  transition: border-color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease);
+  display: flex; flex-direction: row; align-items: baseline; gap: 5px; padding: 4px 0;
+  border: none; border-radius: 0; background: none; cursor: pointer;
+  font-size: 13.5px; font-weight: var(--weight-semibold); color: var(--ink-3);
+  transition: color var(--duration-fast) var(--ease);
 }
 @media (max-width: 380px) {
-  .studylog-days { gap: 3px; }
-  .studylog-day-btn { padding: 6px 2px; font-size: 10px; }
-  .studylog-day-date { font-size: 9.5px; }
+  .studylog-days { gap: 10px; }
+  .studylog-day-btn { font-size: 12px; }
+  .studylog-day-date { font-size: 11px; }
 }
-.studylog-day-btn:hover { border-color: var(--ink-3); }
-.studylog-day-btn.active { border-color: var(--accent); color: var(--ink); background: var(--accent-soft); }
+.studylog-day-btn:hover { color: var(--ink-2); }
+.studylog-day-btn.active { color: var(--accent); }
 .studylog-day-btn.has-entry span:first-child::after { content: " •"; color: var(--accent); }
 .studylog-day-date { color: var(--ink-3); font-size: 11px; }
 .studylog-editor-toolbar {
@@ -6891,18 +6901,23 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 
 /* Past sessions history (collapsible) */
 .tutor-past-sessions { width: 100%; text-align: left; margin-top: 32px; }
-.tutor-history-toggle { background: var(--surface); border: 1px solid var(--line); color: var(--ink); font-size: 0.95rem; cursor: pointer; padding: 12px 16px; font-family: inherit; border-radius: var(--radius-md); font-weight: 600; display: flex; align-items: center; justify-content: space-between; transition: all 0.2s ease; }
-.tutor-history-toggle:hover { background: var(--surface-hover); border-color: var(--ink-2); }
+/* The prototype renders past sessions as a section: plain heading over a hairline, then quiet rows —
+   not a boxed collapsible. The toggle keeps its collapse behaviour, just dressed as the heading. */
+.tutor-history-toggle { background: none; border: none; border-bottom: 1px solid var(--line); border-radius: 0; color: var(--ink); font-size: 1.3rem; cursor: pointer; padding: 0 0 14px; font-family: inherit; font-weight: 650; display: flex; align-items: baseline; justify-content: space-between; width: 100%; text-align: left; }
+.tutor-history-toggle:hover { background: none; border-color: var(--ink-3); }
 .tutor-history-list { list-style: none; padding: 0; margin: 16px 0 0; display: flex; flex-direction: column; gap: 12px; }
-.tutor-history-item { border: 1px solid var(--line); border-radius: var(--radius-md); padding: 16px; text-align: left; background: var(--surface); transition: all 0.2s ease; }
-.tutor-history-item:hover { border-color: var(--accent-soft); box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+.tutor-history-item { border: none; border-bottom: 1px solid var(--line); border-radius: 0; padding: 18px 0; text-align: left; background: none; }
+.tutor-history-item:hover { border-color: var(--ink-3); box-shadow: none; background: none; }
 .tutor-history-date { font-size: 0.85rem; color: var(--ink-2); margin-bottom: 8px; display: flex; align-items: center; gap: 8px; font-weight: 500; }
 .tutor-history-subject { font-size: 0.8rem; color: var(--accent); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
 .tutor-history-summary { font-size: 0.95rem; font-weight: 500; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; }
 .tutor-history-summary-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; color: var(--ink-2); font-size: 0.8rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
 .tutor-history-message-count { flex: 0 0 auto; color: var(--ink-3); font-size: 0.8rem; font-weight: 600; letter-spacing: 0; text-transform: none; }
-.tutor-history-topic { display: flex; align-items: flex-start; gap: 8px; line-height: 1.5; font-size: 0.95rem; color: var(--ink); }
-.tutor-history-subject-pill { flex: 0 0 auto; padding: 3px 10px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); font-size: 0.8rem; font-weight: 700; line-height: 1.4; text-transform: uppercase; letter-spacing: 0.04em; }
+/* The row's title IS the session topic — big and semibold, like the prototype's "Understanding
+   derivatives", with the subject demoted to quiet text before it. */
+.tutor-history-topic { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; line-height: 1.35; font-size: 1.25rem; font-weight: 650; color: var(--ink); }
+.tutor-history-subject-pill { flex: 0 0 auto; padding: 0; border-radius: 0; background: none; color: var(--ink-2); font-size: 0.95rem; font-weight: 500; line-height: 1.4; text-transform: none; letter-spacing: 0; }
+.tutor-history-subject-pill::after { content: " ·"; color: var(--ink-3); }
 .tutor-history-takeaways { margin-top: 12px; padding-top: 12px; border-top: 1px solid color-mix(in srgb, var(--line) 70%, transparent); }
 .tutor-history-section-label { margin-bottom: 6px; color: var(--ink-2); font-size: 0.8rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
 .tutor-history-board { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
