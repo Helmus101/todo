@@ -2832,6 +2832,26 @@ export function earlierDigest(older: { role: string; text: string }[], maxChars 
 }
 
 
+/** True when the student just CONTRIBUTED something worth recording — a step, a result, a line of reasoning —
+ *  as opposed to a question, a one-tap chip, an acknowledgement, "I don't know" or an automatic message.
+ *  Used only to decide whether Otto should be asked (never a model-free copy) to put the reasoning on the
+ *  board. Pure; unit-tested. */
+export function isSubstantiveStep(message: string): boolean {
+  const raw = String(message || "")
+    .replace(/\[(?:Exercise|Exercice)\][^\n]*/g, " ")
+    .replace(/\[(?:What I wrote\/drew on the board|Ce que j'ai écrit\/dessiné sur le tableau)[\s\S]*?\]/g, " ")
+    .replace(/(?:Here's what I drew|Voici ce que j'ai dessiné)\s*:[\s\S]*$/i, " ")
+    .replace(/\s+/g, " ").trim();
+  if (raw.length < 6) return false;
+  const words = raw.split(/\s+/).length;
+  const mathy = /[=^√π²³±×÷≤≥<>]|\d/.test(raw); // any number or operator: a result or a calculation
+  if (/^\s*(ok(ay)?|oui|non|yes|no|yeah|merci|thanks?|thank you|d'accord|compris|got it|i see|je vois|hi|hello|salut|bonjour|hey)\b[\s.!]*$/i.test(raw)) return false;
+  if (/(can i have a small hint|i'm lost|got it! give me another|i'm stuck on a problem|i'd like to understand a topic|quiz me|un petit indice|je suis perdu|donne-m'en un autre|je bloque sur un exercice|interroge-moi|comprendre un chapitre)/i.test(raw)) return false;
+  if (/\b(i don'?t know|idk|je ne sais pas|je sais pas|no idea|aucune id[ée]e)\b/i.test(raw) && words < 8) return false;
+  if (/\?\s*$/.test(raw) && !/=/.test(raw)) return false;
+  return mathy || words >= 6;
+}
+
 const MAX_DIAGRAM_OPS = 15;
 const clampCoord = (n: unknown, lo: number, hi: number): number => Math.max(lo, Math.min(hi, Number.isFinite(Number(n)) ? Number(n) : 0));
 const clampX = (n: unknown) => clampCoord(n, 0, 800);
@@ -8248,6 +8268,7 @@ export async function chatAboutTask(
     // model that keeps doing it can't spin the loop.
     let boardClaimCorrected = false;
     let boardNudgeDone = false;
+    let reasoningNudgeDone = false;
     let truncationRetried = false;
     // Latches for the post-reply truth pass below (each fires at most ONCE per turn, same shape as the
     // board-claim fix): one corrective round when the draft asserts arithmetic that doesn't recompute,
@@ -8573,6 +8594,16 @@ export async function chatAboutTask(
       // own trig step in chat and wrote nothing, so the board never showed THEIR reasoning or the formula
       // in play). ONE corrective round, latched, same shape as that fix: add the entry, or continue
       // unchanged if the exchange genuinely produced nothing board-worthy.
+      // Tutor only: the student just contributed a step and Otto wrote NOTHING on the board — one corrective
+      // round to put THEIR reasoning (and any helpful formula) there, in Otto's own words. Latched to once per
+      // turn; skipped on the first message, while a guardrail has wiped the turn, and for non-substantive input.
+      if (opts?.primer && !reasoningNudgeDone && !boardNudgeDone && !lastRound && history.length >= 1 && result.board.length === 0 && !result.guardrailTripped && isSubstantiveStep(message)) {
+        reasoningNudgeDone = true;
+        console.log(`${new Date().toISOString()} [chat] round ${round}: student contributed a step but nothing is on the board — asking for the reasoning entry`);
+        messages.push({ role: "assistant", content: textContent });
+        messages.push({ role: "user", content: "The student just contributed a step, but nothing was added to the board this turn. Before you reply, call WRITE_TO_BOARD ONCE: kind \"summary\" — THEIR reasoning so far in your own words (the move they made, why it works, what it gave), e.g. \"Factor: two numbers with product 6 and sum −5 → −2, −3\". If a formula or rule that would genuinely help is in play and not on the board yet, add it too (real math through DRAW_ON_BOARD's equation op). Never quote their message word for word, never write a step they haven't reached or the final answer. Then send your short reply again." });
+        continue;
+      }
       if (!boardNudgeDone && !lastRound && shouldNudgeBoardWrite(textContent, message, result.board.length > 0)) {
         boardNudgeDone = true;
         console.log(`${new Date().toISOString()} [chat] round ${round}: reply confirms the student's math step but nothing was written to the board — asking for the write`);

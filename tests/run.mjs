@@ -24,7 +24,7 @@ import { COURSES, findCourse, normText, subjectMatches, matchesUnit, unitMastery
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, subjectFrequency, orderingBoost, twoMinuteRuleBoost } from "../server/patterns.ts";
 
 import { compileExpr } from "../shared/mathExpr.ts";
-import { makeGraphEntry, earlierDigest } from "../server/claude.ts";
+import { makeGraphEntry, earlierDigest, isSubstantiveStep } from "../server/claude.ts";
 import { tightenForChat, countWords as countWordsT } from "../server/claude.ts";
 let pass = 0, fail = 0;
 const check = (name, cond) => { cond ? pass++ : (fail++, console.log("  FAIL:", name)); };
@@ -35,6 +35,9 @@ section("Board = the reasoning, not a transcript (source pins)");
 {
   const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
   check("the board never echoes the student's message or Otto's question (no auto-logging)", !/workingEntryFor|promptEntryFor/.test(src));
+  check("a step, result or reasoning line counts as substantive", ["x² − 5x + 6 = 0 so (x−2)(x−3) = 0", "I think I need to move the six across first and then factor it", "the answer is 12"].every(isSubstantiveStep));
+  check("questions, chips, acks, don't-knows and auto-messages do not", ["ok", "Salut", "what is a root?", "Can I have a small hint?", "I'm lost — can we go smaller?", "I don't know", "[Exercise] I answered \"4\" — marked wrong (try #1).", "[What I wrote/drew on the board: a wavy line]", "hmm"].every((m) => !isSubstantiveStep(m)));
+  check("a corrective round asks the tutor (not the app) to write the reasoning + helpful formula when a step produced no board write", /reasoningNudgeDone = true/.test(src) && /call WRITE_TO_BOARD ONCE: kind \\"summary\\"/.test(src) && /isSubstantiveStep\(message\)/.test(src));
   check("persona asks for the move + why + result in its own words and forbids quoting the chat", /THE BOARD IS THE WORKING — THE REASONING, NOT A TRANSCRIPT/.test(src) && /NEVER copy what the student typed/.test(src));
 }
 section("Tutor stage — End session always ends; the stage is screen-height with ONE scroller the ink lives on (source pins)");
