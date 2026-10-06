@@ -1,4 +1,5 @@
 // Shared task model — imported by both the Express backend and the React client.
+import { normalizeCourses, type EnrolledCourse } from "./courses.ts";
 
 export type Quadrant = "do" | "schedule" | "delegate" | "later";
 
@@ -234,6 +235,8 @@ export interface Profile {
   // reporting a small `PronoteTestItem`, `subject`, and `deadline` is the same low-friction pattern as the
   // `grades` self-report above, not a new mechanism.
   manualExams?: { id: string; subject: string; deadline: string }[];
+  // Courses the student follows (shared/courses.ts) — progress is derived from tutor sessions + unit quizzes.
+  enrolledCourses?: EnrolledCourse[];
   // A student-maintained log of specific mistakes — "what question, what I got wrong, what to do about it
   // next time" — grouped by subject (see errorLogBySubject below). Distinct from journal flashcards
   // (client/App.tsx's StudyLogPage): a flashcard is "review this fact again"; an error-log entry is "here's
@@ -470,6 +473,7 @@ export function normalizeProfile(p: any): Profile {
           deadline: typeof e?.deadline === "string" ? e.deadline : "",
         })).filter((e: { subject: string; deadline: string }) => e.subject && e.deadline).slice(0, 100)
       : undefined,
+    enrolledCourses: normalizeCourses(p?.enrolledCourses),
     errorLog: Array.isArray(p?.errorLog)
       ? p.errorLog.map((e: any) => ({
           id: typeof e?.id === "string" && e.id ? e.id : newId(),

@@ -11,7 +11,8 @@ import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, FocusSession } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY, subjectMastery } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
-import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto, ttsReady, synthesizeSpeech, synthesizeSpeechFallback, synthesizeSpeechGoogleTranslate, interactiveSceneDocument, INTERACTIVE_SCENE_CSP } from "./claude.ts";
+import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto, ttsReady, synthesizeSpeech, synthesizeSpeechFallback, synthesizeSpeechGoogleTranslate, interactiveSceneDocument, INTERACTIVE_SCENE_CSP, generateCourseOutline, generateUnitQuiz, matchSessionToUnit } from "./claude.ts";
+import { findCatalog, enrollFromCatalog, unitsFromNames, creditSession, creditQuiz, matchCourseForSubject } from "../shared/courses.ts";
 import { loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken, getAdminMetrics } from "./store.ts";
 import { sendTransactionalEmail } from "./mailer.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
@@ -3206,6 +3207,96 @@ app.post("/api/profile/exam", requireAuth, ah(async (req, res) => {
   if (!subject || !/^\d{4}-\d{2}-\d{2}/.test(deadline)) { res.status(400).json({ error: M(req, "la matière et une vraie échéance sont requises", "subject and a real deadline are required") }); return; }
   const list = (p.manualExams ||= []);
   list.push({ id: randomUUID(), subject, deadline });
+  await commit(req);
+  res.json(p);
+}));
+// ── Courses ──────────────────────────────────────────────────────────────────────────────────────────────
+// Enroll in a subject (catalog id, or a custom name whose outline the AI drafts), then every tutor session
+// is credited toward it via /api/courses/session — progress is derived from real work, never ticked by hand.
+app.post("/api/courses/enroll", requireAuth, rateLimit(20, 60_000), ah(async (req, res) => {
+  const p = (req.session.profile ||= emptyProfile());
+  const list = (p.enrolledCourses ||= []);
+  if (list.length >= 12) { res.status(400).json({ error: M(req, "Tu suis déjà 12 cours — retires-en un d'abord.", "You're already following 12 courses — remove one first.") }); return; }
+  const catalogId = String(req.body?.catalogId || "");
+  if (catalogId) {
+    const c = findCatalog(catalogId);
+    if (!c) { res.status(404).json({ error: M(req, "Cours introuvable.", "Course not found.") }); return; }
+    if (!list.some((x) => x.id === c.id)) list.push(enrollFromCatalog(c));
+    await commit(req); res.json(p); return;
+  }
+  const name = String(req.body?.name || "").trim().slice(0, 80);
+  const level = String(req.body?.level || "").trim().slice(0, 30) || undefined;
+  if (!name) { res.status(400).json({ error: M(req, "Donne un nom de cours.", "Give the course a name.") }); return; }
+  let names: string[] = Array.isArray(req.body?.units) ? req.body.units.map((x: unknown) => String(x)) : [];
+  if (names.filter((x) => x.trim()).length < 3) {
+    if (!aiReady() || overBudget(req)) { res.status(503).json({ error: M(req, "Impossible de générer le plan du cours pour l'instant.", "Can't draft the course outline right now.") }); return; }
+    const o = await generateCourseOutline(name, level, p);
+    if (!o) { res.status(502).json({ error: M(req, "Otto n'a pas réussi à écrire le plan — réessaie.", "Otto couldn't draft the outline — try again.") }); return; }
+    addUsage(p, o.tokens, "other");
+    names = o.units;
+  }
+  const units = unitsFromNames(names);
+  list.push({ id: `custom-${randomUUID().slice(0, 8)}`, name, level, track: p.track, units, progress: {}, enrolledAt: new Date().toISOString() });
+  await commit(req);
+  res.json(p);
+}));
+app.delete("/api/courses/:id", requireAuth, async (req, res) => {
+  try {
+    const p = (req.session.profile ||= emptyProfile());
+    const id = decodeURIComponent(String(req.params.id || ""));
+    p.enrolledCourses = (p.enrolledCourses || []).filter((c) => c.id !== id);
+    if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
+    await commit(req);
+    res.json(p);
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de retirer ce cours — réessaie.", "Couldn't remove that course — try again.") }); }
+});
+// A tutor session ended: credit it. `unitId` (session launched from a unit) credits that unit directly; a free
+// session on a subject that matches an enrolled course is matched to a unit by a small best-effort AI call.
+app.post("/api/courses/session", requireAuth, rateLimit(30, 60_000), ah(async (req, res) => {
+  const p = (req.session.profile ||= emptyProfile());
+  const courses = p.enrolledCourses || [];
+  const minutes = Number(req.body?.minutes) || 0;
+  const subject = String(req.body?.subject || "").slice(0, 80);
+  const courseId = String(req.body?.courseId || "");
+  const course = courses.find((c) => c.id === courseId) || matchCourseForSubject(courses, subject);
+  if (!course) { res.json({ credited: null, profile: p }); return; }
+  let unitId = String(req.body?.unitId || "");
+  if (!course.units.some((x) => x.id === unitId)) {
+    unitId = "";
+    const text = String(req.body?.text || "");
+    if (aiReady() && !overBudget(req)) {
+      const m = await matchSessionToUnit(course.name, course.units, text, p);
+      if (m) { addUsage(p, m.tokens, "other"); unitId = m.unitId || ""; }
+    }
+  }
+  let credited: { courseId: string; unitId: string } | null = null;
+  if (unitId) {
+    const next = creditSession(course, unitId, minutes);
+    if (next !== course) { p.enrolledCourses = courses.map((c) => (c.id === course.id ? next : c)); credited = { courseId: course.id, unitId }; }
+  }
+  await commit(req);
+  res.json({ credited, profile: p });
+}));
+app.post("/api/courses/quiz", requireAuth, rateLimit(20, 60_000), ah(async (req, res) => {
+  const p = (req.session.profile ||= emptyProfile());
+  const course = (p.enrolledCourses || []).find((c) => c.id === String(req.body?.courseId || ""));
+  const unit = course?.units.find((x) => x.id === String(req.body?.unitId || ""));
+  if (!course || !unit) { res.status(404).json({ error: M(req, "Unité introuvable.", "Unit not found.") }); return; }
+  if (!aiReady() || overBudget(req)) { res.status(503).json({ error: M(req, "Le quiz n'est pas disponible pour l'instant.", "The quiz isn't available right now.") }); return; }
+  const q = await generateUnitQuiz(course.name, unit.name, p);
+  if (!q) { res.status(502).json({ error: M(req, "Otto n'a pas réussi à écrire le quiz — réessaie.", "Otto couldn't write the quiz — try again.") }); return; }
+  addUsage(p, q.tokens, "other");
+  await commit(req);
+  res.json({ questions: q.questions });
+}));
+app.post("/api/courses/quiz-result", requireAuth, rateLimit(30, 60_000), ah(async (req, res) => {
+  const p = (req.session.profile ||= emptyProfile());
+  const courses = p.enrolledCourses || [];
+  const course = courses.find((c) => c.id === String(req.body?.courseId || ""));
+  const score = Number(req.body?.score);
+  if (!course || !Number.isFinite(score)) { res.status(400).json({ error: M(req, "Résultat invalide.", "Invalid result.") }); return; }
+  p.enrolledCourses = courses.map((c) => (c.id === course.id ? creditQuiz(c, String(req.body?.unitId || ""), score) : c));
   await commit(req);
   res.json(p);
 }));
