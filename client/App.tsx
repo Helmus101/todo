@@ -3479,23 +3479,28 @@ function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status
       setBusy(false);
     }
   };
+  // The two main modes use the prototype's auth copy verbatim (login "Welcome back." · signup "A clearer
+  // day starts here."); forgot/reset keep their own explanatory copy — the prototype doesn't design those
+  // states. French adapted through L() as everywhere else.
   const titles: Record<typeof mode, string> = {
-    signup: L("Crée ton compte", "Create your account"),
-    login: L("Content de te revoir", "Welcome back"),
+    signup: L("Une journée plus claire commence ici.", "A clearer day starts here."),
+    login: L("Content de te revoir.", "Welcome back."),
     forgot: L("Mot de passe oublié", "Forgot password"),
     reset: L("Choisis un nouveau mot de passe", "Choose a new password"),
   };
   const subs: Record<typeof mode, string> = {
-    signup: L("30 secondes pour t'inscrire — tu connectes Pronote ensuite.", "30 seconds to sign up — connect Pronote next."),
-    login: L("Connecte-toi pour reprendre où tu en étais.", "Log in to pick up where Otto left off."),
+    signup: L("Un agenda qui s'organise. Un tuteur qui t'explique.", "Meet your planner. Find your tutor."),
+    login: L("Un peu de clarté t'attend.", "A little clarity is waiting for you."),
     forgot: L("On t'envoie un lien pour en choisir un nouveau.", "We'll email you a link to pick a new one."),
     reset: L("Ce lien ne fonctionne qu'une seule fois.", "This link only works once."),
   };
   return (
     <div className="login-page">
-      <header className="landing-nav glass-nav">
-        <a className="brand" href="/"><Logo size={20} /> Otto</a>
-        <button type="button" className="lang-toggle" onClick={() => onLangChange(en ? "fr" : "en")}>{en ? "FR" : "EN"}</button>
+      {/* Same nav chrome as the landing page (landing-nav-framer) — the prototype's public pages share
+          one shell: lowercase "otto" wordmark left, language toggle right. */}
+      <header className="landing-nav-framer">
+        <a className="brand-framer" href="/"><Logo size={20} /> <span className="brand-name-framer">otto</span></a>
+        <button type="button" className="lang-toggle-framer" onClick={() => onLangChange(en ? "fr" : "en")} aria-label={en ? "Changer de langue" : "Switch language"}>{en ? "FR" : "EN"}</button>
       </header>
       <main className="login-main">
         <div className="login-card">
@@ -3688,6 +3693,9 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
           <a href="/privacy">{en ? "Privacy" : "Confidentialité"}</a>
           <a href="/terms">{en ? "Terms" : "Conditions"}</a>
           <a href="/unlimited">{en ? "Unlimited" : "Illimité"}</a>
+          {/* Not in the prototype's footer, but /research is this landing's long-form "Research" section —
+              dropping the link during the restyle would orphan the page entirely. */}
+          <a href="/research">{en ? "Research" : "Recherche"}</a>
         </nav>
       </footer>
     </div>

@@ -416,7 +416,10 @@ input:focus, textarea:focus {
    expands and collapses on scroll. 100dvh (dynamic viewport height) tracks the REAL visible area; kept as
    a fallback pair since older browsers don't support dvh at all. Matches the pattern the task modal
    already used correctly (styles.css .task-modal). */
-.app { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: row; }
+/* Column: the single topnav header stacks above the page content (the old sidebar made this a row; it's
+   gone — a row here would lay the header and the content side-by-side and squeeze the page into a
+   narrow column on the right). */
+.app { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
 .spacer { flex: 1; }
 
 /* ─── Top nav — the prototype's single shell (replaces the old sidebar+topbar) ────
@@ -2248,23 +2251,19 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .login-page { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; background: var(--bg); position: relative; }
 .login-main { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; }
 .login-card {
-  width: min(400px, 100%);
-  background: var(--surface-glass);
-  border: 1px solid var(--line-glass);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-pop);
-  /* Apple Design §12 — glass material */
-  backdrop-filter: blur(var(--blur-lg)) saturate(190%);
-  -webkit-backdrop-filter: blur(var(--blur-lg)) saturate(190%);
+  /* The prototype's auth pages are a flat white column — no glass card floating on a tinted page.
+     Same width and rhythm as before, just the material swapped for the page itself. */
+  width: min(420px, 100%);
   padding: 32px 28px;
   display: flex;
   flex-direction: column;
   gap: 16px;
-  /* Apple Design §4 — spring animation for entrance */
-  animation: appleRise var(--duration-spring) var(--ease-spring);
+  animation: pageIn var(--duration-spring) var(--ease) backwards;
 }
-.login-title { font-family: var(--display); font-size: var(--text-xl); font-weight: 700; /* Apple Design §15 — negative tracking on headings */ letter-spacing: var(--tracking-tight); color: var(--ink); }
-.login-sub { font-size: 14px; color: var(--ink-2); margin-top: -8px; line-height: 1.5; }
+/* Same headline scale as every other page title (.list-head) — the prototype's "Welcome back." /
+   "A clearer day starts here." are statement-sized, not form-label-sized. */
+.login-title { font-family: var(--display); font-size: clamp(30px, 5.4vw, 46px); font-weight: 650; letter-spacing: var(--tracking-display); line-height: 1.1; color: var(--ink); }
+.login-sub { font-size: 15px; color: var(--ink-2); margin-top: -6px; line-height: 1.55; }
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field span { font-size: 12.5px; font-weight: var(--weight-semibold); color: var(--ink-2); letter-spacing: -0.01em; }
 .field input { height: 44px; border-radius: var(--radius-sm); }
