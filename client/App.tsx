@@ -13,7 +13,7 @@ import { pushError } from "./errorLog.ts";
 import { useIsPhone } from "./useIsPhone.ts";
 import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard, PageInfoHint } from "./ui.tsx";
 import { t } from "./i18n.ts";
-import { TaskCardRow, TaskFocus, TaskHero, TaskReadOnly } from "./TaskCard.tsx";
+import { TaskCardRow, TaskFocus, TaskReadOnly } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
 import { TutorSession } from "./tutor/TutorSession.tsx";
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
@@ -1020,13 +1020,8 @@ export function App() {
   // afternoon, Willem." next to "Ensuite : ...") for an English-language account. Deriving the same way
   // GREETING/todayLong already do keeps every dashboard string in this function on one real source.
   const T = (key: string, vars?: Record<string, string | number>) => t(key, en ? "en" : "fr", vars);
-  // Split ONCE, outside the render tree, so "Today" and "Later/Can wait" can land in different grid
-  // areas (dash-today vs dash-more) instead of one inline block — the whole point of the two-zone
-  // dashboard is that Today is never sitting behind anything else, including the rail widgets on mobile.
+  // Show first 3 tasks, rest behind "show more"
   const focusToday = live.slice(0, 3);
-  const restToday = focusToday.slice(1);
-  const laterToday = live.slice(3, 6);
-  const canWait = live.slice(6);
   // Today's real momentum — the ALL-TIME done count only ever grows, so a bar based on it would sit near
   // full forever and mean nothing. What a student actually wants to see is "how much of TODAY is left".
   const doneToday = completed.filter((t) => (t.updatedAt || t.createdAt || "").slice(0, 10) === todayIso()).length;
@@ -1237,25 +1232,14 @@ export function App() {
                 );
               })(              ) : (
                 <div className={`list-focus-wrap ${settled ? "settled" : ""}`}>
-                  {/* The prototype's hero: ONE spotlight task (subject kicker, big title, CTA, "Done for
-                      now", numbered plan preview) — the rest of today's tasks stay rows below it. */}
-                  {focusToday[0] && (
-                    <TaskHero
-                      task={focusToday[0]}
-                      onOpen={() => navigate(`task/${focusToday[0].id}`)}
-                      onChange={setTasks}
-                      onTask={patchTask}
-                      onConfirmed={flagJustDone}
-                      readOnly={isPhone}
-                    />
-                  )}
-                  {restToday.length > 0 && (
+                  {/* All tasks shown as equal-sized cards, no spotlight */}
+                  {focusToday.length > 0 && (
                     <div className="list">
-                      {restToday.map((t, i) => (
+                      {focusToday.map((t, i) => (
                         <TaskCardRow
                           key={t.id}
                           task={t}
-                          index={i + 1}
+                          index={i}
                           retrying={retryingIds.includes(t.id)}
                           isNew={!seenTasks.has(t.id) && !isHandled(t.status) && !isInFlight(t.status)}
                           onOpen={() => navigate(`task/${t.id}`)}
@@ -1272,70 +1256,35 @@ export function App() {
               )}
 
             <div className="dash-more">
-              {live.length > 0 && (laterToday.length > 0 || canWait.length > 0) && (
+              {live.length > 3 && (
                 <div className={`list-focus-wrap ${settled ? "settled" : ""}`}>
-                  {(laterToday.length > 0 || canWait.length > 0) && (
-                    <div className="focus-group">
-                      {!showAllTasks ? (
-                        <button className="btn xs ghost show-more-btn" onClick={() => setShowAllTasks(true)}>
-                          {en
-                            ? `See ${laterToday.length + canWait.length} more task${laterToday.length + canWait.length > 1 ? "s" : ""}…`
-                            : `Voir ${laterToday.length + canWait.length} tâche${laterToday.length + canWait.length > 1 ? "s" : ""} de plus…`}
-                        </button>
-                      ) : (
-                        <>
-                          {laterToday.length > 0 && (
-                            <>
-                              <div className="focus-group-head">
-                                <span className="focus-title">{en ? "Later" : "Plus tard"}</span>
-                              </div>
-                              <div className="list">
-                                {laterToday.map((t, i) => (
-                                  <TaskCardRow
-                                    key={t.id}
-                                    task={t}
-                                    index={i}
-                                    retrying={retryingIds.includes(t.id)}
-                                    isNew={!seenTasks.has(t.id) && !isHandled(t.status) && !isInFlight(t.status)}
-                                    onOpen={() => navigate(`task/${t.id}`)}
-                                    onChange={setTasks}
-                                    onTask={patchTask}
-                                    onConfirmed={flagJustDone}
-                                    onEnterStudyMode={STUDY_MODE_ENABLED && !isPhone ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
+                  <div className="focus-group">
+                    {!showAllTasks ? (
+                      <button className="btn xs ghost show-more-btn" onClick={() => setShowAllTasks(true)}>
+                        {en
+                          ? `See ${live.length - 3} more task${live.length - 3 > 1 ? "s" : ""}…`
+                          : `Voir ${live.length - 3} tâche${live.length - 3 > 1 ? "s" : ""} de plus…`}
+                      </button>
+                    ) : (
+                      <div className="list">
+                        {live.slice(3).map((t, i) => (
+                          <TaskCardRow
+                            key={t.id}
+                            task={t}
+                            index={i + 3}
+                            retrying={retryingIds.includes(t.id)}
+                            isNew={!seenTasks.has(t.id) && !isHandled(t.status) && !isInFlight(t.status)}
+                            onOpen={() => navigate(`task/${t.id}`)}
+                            onChange={setTasks}
+                            onTask={patchTask}
+                            onConfirmed={flagJustDone}
+                            onEnterStudyMode={STUDY_MODE_ENABLED && !isPhone ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
                             readOnly={isPhone}
-                                  />
-                                ))}
-                              </div>
-                            </>
-                          )}
-                          {canWait.length > 0 && (
-                            <>
-                              <div className="focus-group-head">
-                                <span className="focus-title">{en ? "Can wait" : "Peut attendre"}</span>
-                              </div>
-                              <div className="list">
-                                {canWait.map((t, i) => (
-                                  <TaskCardRow
-                                    key={t.id}
-                                    task={t}
-                                    index={i}
-                                    retrying={retryingIds.includes(t.id)}
-                                    isNew={!seenTasks.has(t.id) && !isHandled(t.status) && !isInFlight(t.status)}
-                                    onOpen={() => navigate(`task/${t.id}`)}
-                                    onChange={setTasks}
-                                    onTask={patchTask}
-                                    onConfirmed={flagJustDone}
-                                    onEnterStudyMode={STUDY_MODE_ENABLED && !isPhone ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
-                            readOnly={isPhone}
-                                  />
-                                ))}
-                              </div>
-                            </>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  )}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
               {completed.length > 0 && (
