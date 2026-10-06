@@ -55,6 +55,12 @@ section("Primer chat — thinking toggle with safe fallback, persona leads with 
   check("new whiteboard ink rides along with the next message (no separate send step)", /readUnseenInk\(\)/.test(tut) && /What I wrote\/drew on the board/.test(tut));
 }
 
+section("runTask execution speed — no pointless tool-pick call, artifacts built concurrently (source pins)");
+{
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("tool-selection call is skipped when web_search is the only tool", /const toolsOut = allTools\.length > 1 \? await ask\(/.test(src) && /: \{ usefulTools: \["web_search"\] \};/.test(src));
+  check("deck/quiz/note generation runs concurrently", /await Promise\.all\(requestedArtifacts\.map\(async \(artReq\) => \{/.test(src));
+}
 section("recencyStamp / pruneHandled — a non-string timestamp must never abort a sweep");
 {
   check("string passes through", recencyStamp({ updatedAt: "2026-01-02T00:00:00.000Z" }) === "2026-01-02T00:00:00.000Z");
