@@ -7094,3 +7094,25 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   .tc-show { bottom: 280px; }
 }
 @media (prefers-reduced-motion: reduce) { .otto-face, .tutor-face-eye, .otto-ripple, .otto-dots { animation: none !important; } }
+
+/* Board graph (GRAPH_ON_BOARD) + ==highlight== marks */
+.sm-graph { margin: 6px 0 4px; }
+.sm-graph-svg { width: 100%; height: auto; max-width: 620px; display: block; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); touch-action: none; }
+.sm-graph-grid { stroke: var(--line-soft); stroke-width: 1; }
+.sm-graph-axis { stroke: var(--ink-3); stroke-width: 1.4; }
+.sm-graph-tick { fill: var(--ink-3); font-size: 11px; font-family: var(--mono); }
+.sm-graph-axislabel { fill: var(--ink-2); font-size: 12px; font-style: italic; }
+.sm-graph-hover { stroke: var(--ink-3); stroke-dasharray: 3 3; }
+.sm-graph-pt { fill: var(--surface); stroke: var(--ink); stroke-width: 2; }
+.sm-graph-ptlabel { fill: var(--ink); font-size: 12px; font-weight: 600; paint-order: stroke; stroke: var(--surface); stroke-width: 3px; }
+.sm-graph-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px; font-size: 13px; color: var(--ink-2); }
+.sm-graph-leg { display: inline-flex; align-items: center; gap: 6px; }
+.sm-graph-leg i { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+.sm-graph-leg em { font-style: normal; font-family: var(--mono); font-size: 12px; color: var(--ink-3); }
+.sm-graph-sliders { display: grid; gap: 8px; margin-top: 10px; max-width: 620px; }
+.sm-graph-slider { display: grid; grid-template-columns: 110px 1fr; align-items: center; gap: 12px; font-size: 13px; color: var(--ink-2); }
+.sm-graph-slider b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.sm-graph-slider input[type=range] { width: 100%; accent-color: var(--accent); }
+mark.otto-mark { background: linear-gradient(transparent 12%, color-mix(in srgb, #FACC15 55%, transparent) 12%, color-mix(in srgb, #FACC15 55%, transparent) 92%, transparent 92%); color: inherit; padding: 0 2px; border-radius: 3px; background-repeat: no-repeat; animation: otto-mark-in .5s ease-out both; }
+@keyframes otto-mark-in { from { background-size: 0% 100%; } to { background-size: 100% 100%; } }
+@media (prefers-reduced-motion: reduce) { mark.otto-mark { animation: none; } }

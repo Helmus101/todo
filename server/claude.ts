@@ -1,7 +1,8 @@
 import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
-import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards, TaskQuiz, TaskProblem, BoardEntry, DiagramOp, DailyPracticeProblem, ThemeTokens, WebTask, TaskType, InfoRequirement, TaskArtifact, SeparateTask, TaskObjective } from "../shared/types.ts";
+import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards, TaskQuiz, TaskProblem, BoardEntry, DiagramOp, GraphSpec, DailyPracticeProblem, ThemeTokens, WebTask, TaskType, InfoRequirement, TaskArtifact, SeparateTask, TaskObjective } from "../shared/types.ts";
 import { validateThemeTokens } from "../shared/types.ts";
+import { compileExpr } from "../shared/mathExpr.ts";
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
@@ -2844,6 +2845,84 @@ export function makeDiagramEntry(input: any): { entry: BoardEntry } | { error: s
   if (!ops.length) return { error: "ERROR: no valid ops after validation — check each op has its required fields (see the tool schema)." };
   return { entry: { id: randomUUID(), text: caption, kind: "diagram", diagram: ops, at: new Date().toISOString() } };
 }
+
+const GRAPH_COLORS = ["blue", "red", "green", "orange", "purple", "ink"] as const;
+/** Validate a GRAPH_ON_BOARD request: every expression must compile (shared/mathExpr.ts, no eval) and produce
+ *  real numbers somewhere in the window, params are single letters, ranges are sane. Errors are written for
+ *  the MODEL to read and retry from. */
+export function makeGraphEntry(input: any): { entry: BoardEntry } | { error: string } {
+  const caption = String(input?.caption || "").trim().slice(0, 200);
+  if (!caption) return { error: "ERROR: caption is required." };
+  const num = (v: any) => (typeof v === "number" && Number.isFinite(v) ? v : Number.isFinite(Number(v)) && v !== "" && v != null ? Number(v) : NaN);
+  const xmin = num(input?.xmin), xmax = num(input?.xmax);
+  if (!(xmin < xmax) || xmax - xmin > 10000) return { error: "ERROR: xmin and xmax are required numbers with xmin < xmax (span ≤ 10000)." };
+  let ymin: number | undefined = num(input?.ymin), ymax: number | undefined = num(input?.ymax);
+  if (Number.isNaN(ymin) || Number.isNaN(ymax) || !(ymin < ymax)) { ymin = undefined; ymax = undefined; }
+  const rawParams = Array.isArray(input?.params) ? input.params.slice(0, 3) : [];
+  const params: NonNullable<GraphSpec["params"]> = [];
+  for (const rp of rawParams) {
+    const name = String(rp?.name || "").trim().toLowerCase();
+    if (!/^[a-df-wyz]$/.test(name)) return { error: `ERROR: slider name "${name}" must be a single letter other than x and e (e.g. a, b, k, m).` };
+    if (params.some((q) => q.name === name)) return { error: `ERROR: slider "${name}" is declared twice.` };
+    const min = num(rp?.min), max = num(rp?.max);
+    if (!(min < max)) return { error: `ERROR: slider "${name}" needs min < max.` };
+    const value = Math.min(max, Math.max(min, Number.isFinite(num(rp?.value)) ? num(rp?.value) : (min + max) / 2));
+    const step = Number.isFinite(num(rp?.step)) && num(rp?.step) > 0 ? num(rp?.step) : (max - min) / 40;
+    params.push({ name, min, max, value, step, label: rp?.label ? String(rp.label).trim().slice(0, 40) : undefined });
+  }
+  const vars = ["x", ...params.map((q) => q.name)];
+  const base: Record<string, number> = Object.fromEntries(params.map((q) => [q.name, q.value]));
+  const fns: GraphSpec["fns"] = [];
+  for (const rf of (Array.isArray(input?.fns) ? input.fns : []).slice(0, 4)) {
+    const expr = String(rf?.expr || "").trim().replace(/^y\s*=\s*/i, "").replace(/^f\(x\)\s*=\s*/i, "");
+    const c = compileExpr(expr, vars);
+    if ("error" in c) return { error: `ERROR: can't plot "${expr}": ${c.error}. Use plain math in x${params.length ? ` and ${params.map((q) => q.name).join(", ")}` : ""} (e.g. "2*x^2 - 3*x + 1", "sin(2x)", "sqrt(x)").` };
+    let finite = 0;
+    for (let i = 0; i <= 40; i++) if (Number.isFinite(c.fn({ ...base, x: xmin + ((xmax - xmin) * i) / 40 }))) finite++;
+    if (finite < 5) return { error: `ERROR: "${expr}" has no real values in x ∈ [${xmin}, ${xmax}] — widen the window or fix the expression.` };
+    fns.push({ expr, label: rf?.label ? String(rf.label).trim().slice(0, 40) : undefined, color: (GRAPH_COLORS as readonly string[]).includes(rf?.color) ? rf.color : GRAPH_COLORS[fns.length % 5], dashed: rf?.dashed === true ? true : undefined });
+  }
+  const points = (Array.isArray(input?.points) ? input.points : []).slice(0, 12)
+    .map((pt: any) => ({ x: num(pt?.x), y: num(pt?.y), label: pt?.label ? String(pt.label).trim().slice(0, 30) : undefined }))
+    .filter((pt: { x: number; y: number }) => Number.isFinite(pt.x) && Number.isFinite(pt.y));
+  if (!fns.length && !points.length) return { error: "ERROR: give at least one function in `fns` or some `points`." };
+  const graph: GraphSpec = {
+    fns, params: params.length ? params : undefined, xmin, xmax, ymin, ymax,
+    points: points.length ? points : undefined, connect: input?.connect === true && points.length > 1 ? true : undefined,
+    xLabel: input?.xLabel ? String(input.xLabel).trim().slice(0, 20) : undefined, yLabel: input?.yLabel ? String(input.yLabel).trim().slice(0, 20) : undefined,
+  };
+  return { entry: { id: randomUUID(), text: caption, kind: "graph", graph, at: new Date().toISOString() } };
+}
+
+const GRAPH_ON_BOARD_TOOL = {
+  name: "GRAPH_ON_BOARD",
+  description: "Plot a REAL graph on the board that the student can play with: one to four functions of x, optional " +
+    "sliders (up to 3) so they can drag a parameter and watch the curve change, and optional marked points (a root, " +
+    "a vertex, data). Reach for this whenever a picture of a function or a data trend teaches faster than words — " +
+    "parabolas and how a, b, c move them, trig amplitude/period, exponentials, transformations, a line of best fit, " +
+    "motion graphs. It is fast and always renders (unlike CREATE_INTERACTIVE), so prefer it over a hand-drawn " +
+    "DRAW_ON_BOARD graph. Expressions are plain math: x, the slider letters, + - * / ^, parentheses, pi, e, and " +
+    "sin cos tan sqrt abs ln log exp (e.g. \"a*x^2 + b*x + c\", \"sin(k*x)\", \"2^x\"). Choose a window that shows the " +
+    "interesting part. DON'T plot the exact answer to a problem the student is still working on — plot the family " +
+    "or the setup and ask what they notice. Then ask ONE question about what moving it shows.",
+  input_schema: { type: "object", properties: {
+    caption: { type: "string", description: "one short line titling the graph (and what to try, e.g. 'Drag a — what happens to the opening?')" },
+    fns: { type: "array", description: "1-4 functions of x", items: { type: "object", properties: {
+      expr: { type: "string", description: "e.g. \"a*x^2 + b*x + c\"" },
+      label: { type: "string", description: "short legend text, e.g. 'y = ax²+bx+c'" },
+      color: { type: "string", enum: ["blue", "red", "green", "orange", "purple", "ink"] },
+      dashed: { type: "boolean" },
+    }, required: ["expr"] } },
+    params: { type: "array", description: "optional sliders", items: { type: "object", properties: {
+      name: { type: "string", description: "single letter, not x or e" }, min: { type: "number" }, max: { type: "number" }, value: { type: "number" }, step: { type: "number" }, label: { type: "string" },
+    }, required: ["name", "min", "max", "value"] } },
+    xmin: { type: "number" }, xmax: { type: "number" },
+    ymin: { type: "number", description: "optional; omit to auto-fit" }, ymax: { type: "number" },
+    points: { type: "array", description: "optional marked points / data", items: { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, label: { type: "string" } }, required: ["x", "y"] } },
+    connect: { type: "boolean", description: "join the points with a line (a data plot)" },
+    xLabel: { type: "string" }, yLabel: { type: "string" },
+  }, required: ["caption", "xmin", "xmax"] },
+};
 
 const MAX_INTERACTIVE_HTML_CHARS = 8000;
 // Script sources the sandboxed iframe may load a library from — the same CDN this app's own CSP already
@@ -6883,12 +6962,19 @@ const PRIMER_PERSONA =
   `("hm, what if we try…"). One idea per message. No lists, no headings, no bold walls.\n` +
   `- Use the board for anything they'd otherwise have to remember (a formula, a given, a diagram) INSTEAD of ` +
   `reading it out in the bubble. Keep the bubble for the conversation.\n` +
-  `- SHOW, DON'T TELL: when an idea is spatial or dynamic (vectors, graphs of a family of functions, forces, ` +
-  `waves, orbits, probability, geometry, circuits, reactions, a process with moving parts), prefer a small ` +
-  `CREATE_INTERACTIVE scene the student can drag/slide right on the board, then ask what they notice as they ` +
-  `move it ("slide a — what happens to the vertex?"). Keep each scene SMALL (under ~60 lines, plain SVG + ` +
-  `inline JS, no library unless truly needed) so it appears fast, with the thing being varied labelled. Don't ` +
-  `build one for something a sentence or a quick DRAW_ON_BOARD figure already makes clear.\n` +
+  `- SHOW, DON'T TELL: when an idea is spatial or dynamic (vectors, forces, waves, orbits, probability, ` +
+  `geometry, circuits, reactions, a process with moving parts), prefer a small CREATE_INTERACTIVE scene the ` +
+  `student can drag/slide right on the board, then ask what they notice as they move it ("slide a — what ` +
+  `happens to the vertex?"). Keep each scene SMALL (under ~60 lines, plain SVG + inline JS, no library unless ` +
+  `truly needed) so it appears fast, with the thing being varied labelled. Don't build one for something a ` +
+  `sentence or a quick DRAW_ON_BOARD figure already makes clear.\n` +
+  `- GRAPHS: for anything that is a FUNCTION or data trend (parabolas and a/b/c, amplitude/period, exponentials, ` +
+  `transformations, motion graphs, a line of best fit) use GRAPH_ON_BOARD, not CREATE_INTERACTIVE — it's instant, ` +
+  `always renders, and gives the student real sliders and a hover readout. Plot the FAMILY or the setup, never ` +
+  `the answer to what they're solving, then ask ONE question about what moving it shows.\n` +
+  `- HIGHLIGHT: whenever you point at part of a passage, a problem statement or THEIR working, put the quote ` +
+  `on the board (WRITE_TO_BOARD) with the key bit marked ==like this== (double equals) — it renders as a ` +
+  `highlighter. One or two marks at most; in chat too when you say "look at ==this part==".\n` +
   `- EXERCISE RESULTS ARRIVE AS "[Exercise] …" / "[Exercice] …" MESSAGES: the board just marked an answer and ` +
   `told you what they gave and whether it was right — they did NOT type it, so don't thank them or quote the ` +
   `bracket. React like a person watching over their shoulder. WRONG: never reveal the answer or say "marked ` +
@@ -7981,8 +8067,8 @@ export async function chatAboutTask(
   // core to live tutoring and/or already cheap.
   const includeArtifactTools = wantsArtifactTools(message, history);
   const tools = opts?.canvasMode
-    ? [CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, CREATE_INTERACTIVE_TOOL, SET_OBJECTIVES_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])]
-    : [...(includeArtifactTools ? [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL] : []), CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, SET_OBJECTIVES_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])];
+    ? [CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, CREATE_INTERACTIVE_TOOL, SET_OBJECTIVES_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])]
+    : [...(includeArtifactTools ? [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL] : []), CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, SET_OBJECTIVES_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])];
   const empty = (): ChatResult => ({ reply: "", notes: [], flashcards: [], quizzes: [], problems: [], board: [], audit: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false });
   const result = empty();
   const logAudit = (kind: AuditEvent["kind"], label: string) => result.audit.push({ at: new Date().toISOString(), kind, label });
@@ -8338,6 +8424,10 @@ export async function chatAboutTask(
           // state a value just as plainly as prose can.
           else if (leaksAnyProblemAnswer([input?.caption, ...(Array.isArray(input?.ops) ? input.ops.map((o: any) => `${o?.text || ""} ${o?.latex || ""}`) : [])].join(" "), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that figure states a problem's answer outright — redraw it without that value.";
           else { const r = makeDiagramEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Figure dessinée : « ${r.entry.text.slice(0, 60)} »` : `Diagram drawn: "${r.entry.text.slice(0, 60)}"`); } }
+        } else if (name === "GRAPH_ON_BOARD") {
+          if (result.board.filter((e) => e.kind === "graph").length >= 2) content = "LIMIT: you've already put a couple of graphs on the board this message — that's enough for one turn.";
+          else if (leaksAnyProblemAnswer([input?.caption, ...(Array.isArray(input?.fns) ? input.fns.map((f: any) => f?.label || "") : [])].join(" "), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that graph's caption or labels state a problem's answer — title it by what to explore, not by the result.";
+          else { const r = makeGraphEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Graphique : « ${r.entry.text.slice(0, 60)} »` : `Graph: "${r.entry.text.slice(0, 60)}"`); } }
         } else if (name === "CREATE_INTERACTIVE") {
           // Own small cap, separate from WRITE_TO_BOARD/DRAW_ON_BOARD's — this is the heaviest entry kind
           // (a whole embedded iframe), and a session needing more than a couple is almost certainly

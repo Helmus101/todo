@@ -456,8 +456,10 @@ export { formatMath };
  *  enough (no need for a full markdown library just for this). */
 /** `**bold**` → <b>. Module-scope (not a closure inside renderNoteBody) so renderChatText can reuse it. */
 function boldify(s: string): ReactNode {
-  const parts = s.split(/(\*\*[^*]+\*\*)/g);
-  return parts.map((p, i) => (p.startsWith("**") && p.endsWith("**") ? <b key={i}>{p.slice(2, -2)}</b> : p));
+  // **bold** and ==highlight== (the tutor marks the key part of a passage/problem/working with ==…==).
+  const parts = s.split(/(\*\*[^*]+\*\*|==[^=\n]+==)/g);
+  return parts.map((p, i) => (p.startsWith("**") && p.endsWith("**") ? <b key={i}>{p.slice(2, -2)}</b>
+    : p.length > 4 && p.startsWith("==") && p.endsWith("==") ? <mark key={i} className="otto-mark">{p.slice(2, -2)}</mark> : p));
 }
 
 // A GFM-style pipe row: "| a | b | c |" (leading/trailing pipes optional). Splits on unescaped `|`.

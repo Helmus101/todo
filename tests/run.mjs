@@ -23,12 +23,36 @@ import { subjectMastery } from "../shared/types.ts";
 import { COURSES, findCourse, normText, subjectMatches, matchesUnit, unitMastery, courseProgress, nextUnitToWork, masteryBand, UNIT_MASTERED_AT, orderCoursesForProfile, normalizeEnrolledCourses, unitObjectives } from "../shared/courses.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, subjectFrequency, orderingBoost, twoMinuteRuleBoost } from "../server/patterns.ts";
 
+import { compileExpr } from "../shared/mathExpr.ts";
+import { makeGraphEntry } from "../server/claude.ts";
 import { tightenForChat, countWords as countWordsT } from "../server/claude.ts";
 let pass = 0, fail = 0;
 const check = (name, cond) => { cond ? pass++ : (fail++, console.log("  FAIL:", name)); };
 const section = (name) => console.log(`— ${name}`);
 
 // ── Tutor speed + voice: local reply tightening, no extra model round-trip ─────
+section("Tutor graphs — safe expression compiler + GRAPH_ON_BOARD validation");
+{
+  const ev = (src, vars, v) => { const c = compileExpr(src, vars); return "fn" in c ? c.fn(v) : c.error; };
+  check("precedence + unary minus", ev("2 + 3*4", ["x"], { x: 0 }) === 14 && ev("-x^2", ["x"], { x: 3 }) === -9);
+  check("right-assoc power, 2^-x", ev("2^3^2", ["x"], { x: 0 }) === 512 && ev("2^-x", ["x"], { x: 1 }) === 0.5);
+  check("implicit multiplication", ev("2x", ["x"], { x: 4 }) === 8 && ev("3(x+1)", ["x"], { x: 1 }) === 6 && ev("a x^2", ["x", "a"], { x: 2, a: 3 }) === 12);
+  check("functions + constants", Math.abs(ev("sin(pi/2)", ["x"], {}) - 1) < 1e-12 && Math.abs(ev("ln(e)", ["x"], {}) - 1) < 1e-12 && ev("sqrt(16)", ["x"], {}) === 4);
+  check("unicode math input", ev("x²", ["x"], { x: 3 }) === 9 && Math.abs(ev("sin(π)", ["x"], {})) < 1e-12);
+  check("rejects code / unknown names / bad syntax", ["alert(1)", "x; y", "constructor", "x +", "(x", "foo(x)", "x.y"].every((s) => typeof ev(s, ["x"], { x: 1 }) === "string"));
+  check("a function name needs parentheses", typeof ev("sin x", ["x"], { x: 1 }) === "string");
+  const ok = makeGraphEntry({ caption: "Drag a", xmin: -5, xmax: 5, fns: [{ expr: "y = a*x^2 + 1" }], params: [{ name: "a", min: -3, max: 3, value: 1 }] });
+  check("valid graph becomes a graph entry", "entry" in ok && ok.entry.kind === "graph" && ok.entry.graph.fns[0].expr === "a*x^2 + 1" && ok.entry.graph.params[0].name === "a");
+  check("unknown slider letter is explained", /unknown name/.test(makeGraphEntry({ caption: "c", xmin: -1, xmax: 1, fns: [{ expr: "k*x" }] }).error || ""));
+  check("empty window / no real values rejected", "error" in makeGraphEntry({ caption: "c", xmin: 2, xmax: 1, fns: [{ expr: "x" }] }) && "error" in makeGraphEntry({ caption: "c", xmin: -5, xmax: -1, fns: [{ expr: "sqrt(x)" }] }));
+  check("bad slider names rejected (x, e, multi-letter)", ["x", "e", "ab"].every((n) => "error" in makeGraphEntry({ caption: "c", xmin: 0, xmax: 1, fns: [{ expr: "x" }], params: [{ name: n, min: 0, max: 1, value: 0 }] })));
+  check("points-only data plot allowed, capped to 4 fns", "entry" in makeGraphEntry({ caption: "data", xmin: 0, xmax: 10, points: [{ x: 1, y: 2 }, { x: 3, y: 5 }], connect: true }) && makeGraphEntry({ caption: "c", xmin: 0, xmax: 1, fns: Array(8).fill({ expr: "x" }) }).entry.graph.fns.length === 4);
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const ui = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8");
+  const board = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  check("tutor has GRAPH_ON_BOARD in both tool sets + handler", (src.match(/GRAPH_ON_BOARD_TOOL/g) || []).length >= 3 && /name === "GRAPH_ON_BOARD"/.test(src));
+  check("board renders graph entries; ==highlight== renders as a mark and is stripped for speech", /<GraphBlock spec=\{e\.graph\}/.test(board) && /otto-mark/.test(ui) && /==\(\[\^=\\n\]\+\)==/.test(readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8")));
+}
 section("Primer replies — tightenForChat keeps it short and keeps the closing question");
 {
   const short = "Mm, close. What happens to the sign when you move it across?";
@@ -4331,7 +4355,7 @@ section("CREATE_INTERACTIVE — sandboxed, scoped to Study Mode, capped (source 
 {
   const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
   check("CREATE_INTERACTIVE is only added to the canvas-mode (Study Mode) tool list, not the regular task-chat one", (() => {
-    const canvasLine = claude.split("\n").find((l) => l.includes("CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, CREATE_INTERACTIVE_TOOL"));
+    const canvasLine = claude.split("\n").find((l) => l.includes("CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, CREATE_INTERACTIVE_TOOL"));
     const regularLine = claude.split("\n").find((l) => l.includes("CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL"));
     return !!canvasLine && !!regularLine && !regularLine.includes("CREATE_INTERACTIVE");
   })());

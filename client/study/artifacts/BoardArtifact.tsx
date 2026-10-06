@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import katex from "katex";
 import type { WebTask, BoardEntry, TaskProblem, DiagramOp } from "../../../shared/types.ts";
 import { practiceAnswerMatches } from "../../../shared/types.ts";
+import { GraphBlock } from "./GraphBlock.tsx";
 import { renderChatText, useLang, FirstTimeHint, stripStrayMarkdown } from "../../ui.tsx";
 
 // A guarded DYNAMIC import, not a static `import "katex/dist/katex.min.css"` — this module is also pulled
@@ -34,6 +35,7 @@ const KIND_LABEL: Record<string, [string, string]> = {
   diagram: ["Figure", "Figure"],
   outline: ["Plan", "Outline"],
   interactive: ["Interactif", "Interactive"],
+  graph: ["Graphique", "Graph"],
 };
 
 // Quiet margin glyph per kind — a worksheet's annotations, not badges. Typographic on purpose (no icon
@@ -48,6 +50,7 @@ const KIND_GLYPH: Record<string, string> = {
   diagram: "◫",
   outline: "▤",
   interactive: "◈",
+  graph: "◠",
 };
 
 const LABEL_SIZE: Record<string, number> = { sm: 12, md: 14, lg: 18 };
@@ -561,6 +564,11 @@ export function BoardArtifact({ task, writing, onProblemResult }: BoardArtifactP
                       </div>
                     ))}
                   </div>
+                </>
+              ) : e.kind === "graph" && e.graph ? (
+                <>
+                  <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>
+                  <GraphBlock spec={e.graph} />
                 </>
               ) : e.kind === "interactive" && e.html ? (
                 <>
