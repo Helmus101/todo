@@ -1482,6 +1482,14 @@ export type DiagramOp =
 /** A function graph the tutor puts on the board (GRAPH_ON_BOARD). Expressions are plain math in x and the
  *  slider parameters ("a*x^2 + b*x + c", "sin(k x)"), compiled by shared/mathExpr.ts — never eval'd. */
 export interface GraphSpec {
+  /** "function" (default): curves y = f(x). "bars": a labelled bar chart. "histogram": raw numbers binned.
+   *  "surface": a rotatable 3D surface z = f(x, y). */
+  kind?: "function" | "bars" | "histogram" | "surface";
+  bars?: { label: string; value: number }[];
+  data?: number[];
+  bins?: number;
+  /** surface only: z as an expression in x, y (and the slider params); the x/y window is xmin..xmax × ymin..ymax. */
+  z?: string;
   fns: { expr: string; label?: string; color?: "blue" | "red" | "green" | "orange" | "purple" | "ink"; dashed?: boolean }[];
   /** Up to 3 sliders the student can drag; each is a single-letter name usable in every expression. */
   params?: { name: string; min: number; max: number; value: number; step?: number; label?: string }[];
@@ -1510,7 +1518,7 @@ export interface BoardEntry {
    *  (see `outline`) — for essay-based/humanities content (history causes, source analysis, an essay plan)
    *  where a flat sentence or a spatial diagram both fit poorly; math/science still reach for
    *  formula/diagram first. */
-  kind?: "note" | "instruction" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "interactive" | "graph";
+  kind?: "note" | "instruction" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "interactive" | "graph" | "working";
   /** Present only when kind === "diagram" — the figure's shapes, rendered as SVG (BoardArtifact.tsx). Capped
    *  at 15 ops server-side (makeDiagramEntry, server/claude.ts): enough for a labeled triangle or a small
    *  graph, not enough to build a full illustration op-by-op. */

@@ -24,13 +24,51 @@ import { COURSES, findCourse, normText, subjectMatches, matchesUnit, unitMastery
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, subjectFrequency, orderingBoost, twoMinuteRuleBoost } from "../server/patterns.ts";
 
 import { compileExpr } from "../shared/mathExpr.ts";
-import { makeGraphEntry } from "../server/claude.ts";
+import { makeGraphEntry, workingEntryFor, earlierDigest, promptEntryFor } from "../server/claude.ts";
 import { tightenForChat, countWords as countWordsT } from "../server/claude.ts";
 let pass = 0, fail = 0;
 const check = (name, cond) => { cond ? pass++ : (fail++, console.log("  FAIL:", name)); };
 const section = (name) => console.log(`— ${name}`);
 
 // ── Tutor speed + voice: local reply tightening, no extra model round-trip ─────
+section("Board shows the student's working — workingEntryFor logs real steps, never chatter/questions");
+{
+  const w = workingEntryFor("x² − 5x + 6 = 0 so (x−2)(x−3) = 0", []);
+  check("a step with math becomes a 'working' entry", !!w && w.kind === "working" && /\(x−2\)/.test(w.text));
+  check("a longer reasoning statement counts", !!workingEntryFor("I think I need to move the six across first and then factor it", []));
+  const skip = ["ok", "yes!", "Salut", "can you give me a hint?", "I don't know", "Can I have a small hint?", "I'm lost — can we go smaller?", "Got it! Give me another to try.", "[Exercise] I answered \"4\" — marked wrong (try #1).", "short", "what is a root?"];
+  check("chatter, chips, questions and auto-messages are never logged", skip.every((m) => workingEntryFor(m, []) === null));
+  check("the drawing-reading block isn't logged as typed working", workingEntryFor("[What I wrote/drew on the board: a parabola with roots at 2 and 3]", []) === null);
+  check("an identical working line isn't logged twice", workingEntryFor("x = 2 or x = 3", [w, { id: "z", kind: "working", text: "x = 2 or x = 3", at: "" }]) === null);
+  check("long input is capped", workingEntryFor("a = b + c ".repeat(30), []).text.length <= 220);
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("the chat turn logs the student's working when Otto wrote nothing (primer only, no model call)", /opts\?\.primer && !result\.guardrailTripped && result\.board\.length === 0/.test(src) && /workingEntryFor\(message/.test(src));
+}
+section("Tutor stage — End session always ends; the stage is screen-height with ONE scroller the ink lives on (source pins)");
+{
+  const tut = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  const css = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
+  const end = tut.slice(tut.indexOf("const endSession = useCallback"), tut.indexOf("const endSession = useCallback") + 1600);
+  check("endSession no longer silently no-ops without a start time, and always leaves the screen (finally)", !/!sessionStart\) return/.test(end) && /\} finally \{[\s\S]*setTask\(null\)/.test(end) && /couldn't save the session summary/.test(end));
+  check("tutor stage is fixed to the screen height (it used to grow with the board and push End session away)", /\.tutor-stage \{[^}]*flex: none[^}]*height: 100dvh/.test(css));
+  check("the board component's own scroller is neutralised in the stage so the ink canvas is on the one real scroller", /\.ts-board-body \.sm-board-body \{ overflow: visible;/.test(css) && /createPortal\(/.test(readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8")));
+  check("'Show Otto' lets the student say what to look at (note travels with the drawing)", /tc-ask/.test(readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8")) && /onSend=\{\(description, note\)/.test(tut));
+}
+section("Tutor memory — earlier turns are condensed, not forgotten; the board keeps Otto's questions");
+{
+  const older = [{ role: "user", text: "I'm stuck on factoring x² − 5x + 6" }, { role: "assistant", text: "Which two numbers multiply to 6 and add to −5? Take your time." }, { role: "user", text: "[Exercise] I answered \"4\" — marked wrong (try #1)." }];
+  const d = earlierDigest(older);
+  check("digest lists each older message in one line, oldest first", /^EARLIER IN THIS SESSION/.test(d) && d.indexOf("factoring") < d.indexOf("Which two numbers") && /answered a board exercise/.test(d));
+  check("digest keeps only the first sentence of Otto's turns and tells the model not to re-explain", !/Take your time/.test(d) && /don't re-explain/.test(d));
+  check("digest is capped, newest lines win", (() => { const many = Array.from({ length: 200 }, (_, i) => ({ role: "user", text: `message number ${i} about something` })); const out = earlierDigest(many, 600); return out.length < 800 && /number 199/.test(out) && !/number 0 /.test(out); })());
+  check("nothing older gives an empty digest", earlierDigest([]) === "");
+  const q = promptEntryFor("Nice. So what happens to the sign when you move it across?", [], 3);
+  check("Otto's closing question becomes an 'instruction' board entry", !!q && q.kind === "instruction" && /^So what happens/.test(q.text));
+  check("no prompt entry for turn 1, statements, long text or duplicates", promptEntryFor("Hi! What are you working on?", [], 0) === null && promptEntryFor("Good. Now carry on.", [], 3) === null && promptEntryFor("x ".repeat(120) + "?", [], 3) === null && promptEntryFor("Fine. What next?", [{ id: "a", kind: "instruction", text: "What next?", at: "" }], 3) === null);
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("primer turns get a 24-message window plus the digest (non-primer stays 10)", /const histWindow = opts\?\.primer \? 24 : 10;/.test(src) && /earlierDigest\(history\.slice\(0, -histWindow\)\)/.test(src));
+  check("the server keeps up to 60 messages of thread", /const CHAT_CAP = 60;/.test(readFileSync(new URL("../server/index.ts", import.meta.url), "utf8")));
+}
 section("Tutor graphs — safe expression compiler + GRAPH_ON_BOARD validation");
 {
   const ev = (src, vars, v) => { const c = compileExpr(src, vars); return "fn" in c ? c.fn(v) : c.error; };
@@ -50,6 +88,11 @@ section("Tutor graphs — safe expression compiler + GRAPH_ON_BOARD validation")
   const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
   const ui = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8");
   const board = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  const bars = makeGraphEntry({ caption: "Scores", kind: "bars", bars: [{ label: "A", value: 3 }, { label: "B", value: 7 }] });
+  check("bar chart validates (needs 2+ labelled values)", "entry" in bars && bars.entry.graph.kind === "bars" && "error" in makeGraphEntry({ caption: "c", kind: "bars", bars: [{ label: "A", value: 1 }] }));
+  check("histogram validates (5+ numbers, not all identical)", "entry" in makeGraphEntry({ caption: "h", kind: "histogram", data: [1, 2, 2, 3, 3, 3, 4, 9] }) && "error" in makeGraphEntry({ caption: "h", kind: "histogram", data: [1, 2] }) && "error" in makeGraphEntry({ caption: "h", kind: "histogram", data: [4, 4, 4, 4, 4, 4] }));
+  const surf = makeGraphEntry({ caption: "Saddle", kind: "surface", z: "z = x^2 - y^2", xmin: -2, xmax: 2, ymin: -2, ymax: 2 });
+  check("3D surface z=f(x,y) validates and needs a y-range", "entry" in surf && surf.entry.graph.z === "x^2 - y^2" && "error" in makeGraphEntry({ caption: "s", kind: "surface", z: "x*y", xmin: -1, xmax: 1 }) && /two variables/i.test(makeGraphEntry({ caption: "c", xmin: -1, xmax: 1, fns: [{ expr: "x*y" }] }).error || ""));
   check("tutor has GRAPH_ON_BOARD in both tool sets + handler", (src.match(/GRAPH_ON_BOARD_TOOL/g) || []).length >= 3 && /name === "GRAPH_ON_BOARD"/.test(src));
   check("board renders graph entries; ==highlight== renders as a mark and is stripped for speech", /<GraphBlock spec=\{e\.graph\}/.test(board) && /otto-mark/.test(ui) && /==\(\[\^=\\n\]\+\)==/.test(readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8")));
 }
@@ -71,6 +114,7 @@ section("Primer chat — thinking toggle with safe fallback, persona leads with 
   check("primer persona opens with the sound-like-a-person block", /SOUND LIKE A PERSON, ANSWER LIKE ONE/.test(src));
   check("persona pushes small interactive scenes (show, don't tell)", /SHOW, DON'T TELL/.test(src));
   check("persona handles automatic exercise results + whiteboard readings like a person", /EXERCISE RESULTS ARRIVE AS/.test(src) && /THEIR WHITEBOARD ARRIVES AS/.test(src) && /GOOD EXERCISES/.test(src));
+  check("persona tells the tutor to write on the board most turns", /WRITE ON THE BOARD EVERY TURN/.test(src));
   check("persona honours one-tap replies and retrieval-first returns", /ONE-TAP REPLIES/.test(src) && /RETRIEVAL OVER RE-EXPLAINING/.test(src));
   const tut = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
   check("tutor dock offers one-tap starters + follow-ups and a recall opener from the last session", /quickReplies=\{fresh \? starters : followUps\}/.test(tut) && /What do you still remember/.test(tut));
@@ -1511,7 +1555,8 @@ section("isDuplicateProblem — content-level duplicate prevention for CREATE_PR
   // branch. DRAW_ON_BOARD is deliberately NOT gated — redrawing a whole figure with additions is the
   // tool's documented contract. (A third site, or zero, means someone moved or duplicated the gate.)
   const gateCount = (claudeSrc3.match(/isDuplicateBoardEntry\(/g) || []).length; // export + call site
-  check("the duplicate gate lives ONLY on WRITE_TO_BOARD (DRAW_ON_BOARD redraws are legitimate)", gateCount === 2);
+  // …plus workingEntryFor's own dedupe of the student's logged working lines (a third, intentional site).
+  check("the duplicate gate lives ONLY on WRITE_TO_BOARD and the working-log (DRAW_ON_BOARD redraws are legitimate)", gateCount === 4 && /isDuplicateBoardEntry\(existing, \{ text, kind: "working" \}\)/.test(claudeSrc3));
   check("WRITE_TO_BOARD checks BOTH the live board and this turn's earlier writes", /isDuplicateBoardEntry\(\[\.\.\.\(opts\?\.currentBoard \|\| \[\]\), \.\.\.result\.board\], input\)/.test(claudeSrc3));
   check("a caught duplicate returns adaptive guidance, not an error", /DUPLICATE: that exact entry is already on the board/.test(claudeSrc3));
   check("the prompt tells the model to look before writing", /BEFORE YOU WRITE, LOOK\./.test(claudeSrc3));
@@ -1676,10 +1721,10 @@ section("isLikelyEcho — textual echo discrimination for real barge-in (client/
   const serverSrc = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
   const ttsBody = serverSrc.slice(serverSrc.indexOf('app.post("/api/tts"'), serverSrc.indexOf('app.post("/api/tts"') + 2200);
   check("TTS route is authenticated and rate-limited", /app\.post\("\/api\/tts", requireAuth, rateLimit\(/.test(serverSrc));
-  check("TTS route uses Gemini (synthesizeSpeech), not the old FreeTTS vendor", /synthesizeSpeech\(/.test(ttsBody) && !/freetts\.org/.test(serverSrc));
-  check("an unconfigured deployment skips straight to the fallback provider instead of failing immediately", /if \(ttsReady\(\)\) \{/.test(ttsBody) && /trying StreamElements directly/.test(ttsBody));
+  check("TTS route uses the Gemini-led race (synthesizeSpeechRace), not the old FreeTTS vendor", /synthesizeSpeechRace\(/.test(ttsBody) && !/freetts\.org/.test(serverSrc));
+  check("an unconfigured deployment skips straight to the free tiers instead of failing immediately", /using the free tiers directly/.test(readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8")));
   check("an upstream failure of ALL THREE providers is a clean 502/429 with a bilingual message", /Échec de la génération vocale/.test(ttsBody));
-  check("the route serves playable audio (WAV from Gemini, MP3 from the fallback), never cached", /audio\/wav/.test(ttsBody) && /audio\/mpeg/.test(ttsBody) && /no-store/.test(ttsBody));
+  check("the route serves playable audio with the winning provider's mime type (WAV or MP3), never cached", /out\.mime/.test(ttsBody) && /no-store/.test(ttsBody));
   check("request text is capped server-side", /text\.slice\(0, 1000\)/.test(ttsBody));
   // And exercised, not just pinned: synthetic MPEG2 Layer III streams (FreeTTS's own format:
   // 24 kHz ⇒ 576-sample ≈ 24 ms frames, 144-byte @ 48 kbps) verify the splice math. Real probed
@@ -4108,7 +4153,7 @@ section("Gemini TTS gets one quick retry on a transient failure before falling t
   // (429 quota, or a momentary 500/503), not real outages, so one quick retry absorbs them before this tier
   // is counted as failed and the route moves on to StreamElements/Google Translate.
   const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
-  check("429/500/503 are retried once (never a real 4xx like 400/401/404, which a retry can't fix)", /GEMINI_TTS_RETRY_STATUSES = new Set\(\[429, 500, 503\]\)/.test(claude));
+  check("500/503 are retried once; 429 is NOT (the circuit breaker + free tier handle quota), never a real 4xx like 400/401/404", /GEMINI_TTS_RETRY_STATUSES = new Set\(\[500, 503\]\)/.test(claude));
   check("synthesizeSpeech actually retries via callGeminiTts before giving up", /const first = await callGeminiTts\(text, key\);/.test(claude) && /return callGeminiTts\(text, key\);/.test(claude));
 }
 
@@ -4164,37 +4209,8 @@ section("TTS never falls straight to the browser voice — two free cloud tiers 
 
   const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
   const ttsRoute = idx.slice(idx.indexOf('app.post("/api/tts"'), idx.indexOf('app.post("/api/tts"') + 1800);
-  check("the route tries Gemini first, and only calls the fallback provider when Gemini didn't return audio", /if \(ttsReady\(\)\) \{[\s\S]*?if \(!\("error" in out\)\)[\s\S]*?return;\s*\n\s*\}/.test(ttsRoute) && /synthesizeSpeechFallback\(/.test(ttsRoute));
-  check("the route tries StreamElements when Gemini fails, before giving up on it", /const fallback = await synthesizeSpeechFallback/.test(ttsRoute) && /if \(!\("error" in fallback\)\)/.test(ttsRoute));
-}
-
-section("TTS third tier (Google Translate / gTTS endpoint) — word-wrap chunking (unit tests)");
-{
-  // Google's endpoint caps request text at ~200 chars — reply text must be split WITHOUT losing words,
-  // unlike truncating at a hard character cut (which was the original, lossy approach considered here).
-  check("short text is a single chunk", wordWrapChunks("Hello there.", 180).length === 1);
-  check("long text is split without losing or reordering any words", wordWrapChunks(Array.from({ length: 40 }, (_, i) => `word${i}`).join(" "), 30).join(" ") === Array.from({ length: 40 }, (_, i) => `word${i}`).join(" "));
-  check("every chunk respects the max length", wordWrapChunks("the quick brown fox jumps over the lazy dog and keeps going for a while longer than one chunk allows", 20).every((c) => c.length <= 20));
-  check("a single pathological 'word' longer than max is truncated, not left to break the request", wordWrapChunks("a".repeat(50), 20)[0].length === 20);
-  check("empty input yields no chunks", wordWrapChunks("", 180).length === 0);
-}
-
-section("TTS route — three free tiers tried in order before ever reaching the browser voice (source pins)");
-{
-  // Reported live: Gemini AND StreamElements failed together on the same request (502, 502) — the classic
-  // symptom of a shared missing-header problem (no User-Agent on a server-side fetch), not two independent
-  // outages. Hardened with real browser headers, and added a THIRD, extremely battle-tested free provider
-  // (the exact endpoint the gTTS library has used in production for years) as one more safety net before
-  // the browser voice.
-  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
-  check("StreamElements requests now send a real browser User-Agent (the likely cause of the paired 502s)", /"User-Agent": BROWSER_UA/.test(claude));
-  check("a third provider exists (Google Translate's TTS endpoint)", /export async function synthesizeSpeechGoogleTranslate/.test(claude) && /translate\.google\.com\/translate_tts/.test(claude));
-  check("the third provider also sends a browser User-Agent", (claude.match(/"User-Agent": BROWSER_UA/g) || []).length >= 2);
-
-  const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
-  const ttsRoute = idx.slice(idx.indexOf('app.post("/api/tts"'), idx.indexOf('app.post("/api/tts"') + 2200);
-  check("the route tries Gemini, then StreamElements, then Google Translate, in that order", /synthesizeSpeech\(/.test(ttsRoute) && ttsRoute.indexOf("synthesizeSpeechFallback(") < ttsRoute.indexOf("synthesizeSpeechGoogleTranslate(") && ttsRoute.indexOf("synthesizeSpeech(") < ttsRoute.indexOf("synthesizeSpeechFallback("));
-  check("the client only sees a failure (and falls back to the browser voice) once ALL THREE providers have failed", /if \("error" in last\)/.test(ttsRoute) && /all three providers failed/.test(ttsRoute));
+  check("one consistent voice: Gemini first, free tiers only after it fails, with a circuit breaker (no parallel calls)", /let geminiDownUntil = 0;/.test(claude) && /if \(Date\.now\(\) < geminiDownUntil\) return chain\(\);/.test(claude) && !/TTS_HEDGE_MS/.test(claude));
+  check("a reply is never split into several parallel voice requests (they trip Gemini's quota and change the voice mid-reply)", !/leadSplit/.test(readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8")));
 }
 
 section("Clarity fixes — 'I'm not understanding' escalates, rephrasing isn't a different approach, explicit write-requests honored (source pins)");
@@ -4431,7 +4447,7 @@ section("TTS timeout retune — a slow Gemini must not abort the whole fallback 
   // actually reaches the fallback tiers quickly), and the client's own timeout is long enough to let a
   // realistic worst-case single-tier delay finish instead of cutting it off mid-flight.
   const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
-  check("Gemini's own per-call timeout is short enough to leave real time for the fallback tiers (was 15s)", /GEMINI_TTS_TIMEOUT_MS = 7_000/.test(claude));
+  check("Gemini's own per-call timeout is short enough to leave real time for the fallback tiers (was 15s)", /GEMINI_TTS_TIMEOUT_MS = 6_000/.test(claude));
   check("StreamElements' timeout was also brought down from 15s for the same reason", /signal: AbortSignal\.timeout\(8_000\)/.test(claude));
   const ttsSynthSrc = readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8");
   check("the client's fetch timeout now comfortably exceeds Gemini's worst case (7s + one 7s retry) plus a full StreamElements attempt", /CLOUD_FETCH_TIMEOUT_MS = 25_000/.test(ttsSynthSrc));

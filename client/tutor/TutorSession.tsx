@@ -140,7 +140,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
       startTime: startedAt,
       endTime: new Date().toISOString(),
       messageCount: userMsgCount,
-      boardEntries: board.map((b) => b.text.trim()).filter(Boolean),
+      boardEntries: board.map((b) => String(b?.text ?? "").trim()).filter(Boolean),
       // The FULL board (kind labels, diagrams, equations — everything BoardArtifact needs), saved as-is so
       // "Voir le tableau" reopens it exactly as it looked when the session ended.
       board: task.board || [],
@@ -189,6 +189,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
   }, [sessionStart, task, saveAndClose]);
 
   const canvasRef = useRef<TutorCanvasHandle>(null);
+  const [surfaceEl, setSurfaceEl] = useState<HTMLDivElement | null>(null);
   const send = useCallback(async (override?: string, voiceMode?: boolean) => {
     let message = (override ?? input).trim();
     if (!message || sending || !task) return;
@@ -268,12 +269,16 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
   }, [resultTick, sending, task?.id]);
 
   const endSession = useCallback(async () => {
-    if (!task || !sessionStart) return;
+    if (!task || endingSession) return;
     setEndingSession(true);
     try {
-      saveAndClose(task, sessionStart);
+      // Ending must ALWAYS end: a failure while saving the history summary (storage full, an odd board entry)
+      // or while dismissing the task server-side must never leave the student stuck on a button that does
+      // nothing. Every step is best-effort; the screen is left no matter what.
+      try { saveAndClose(task, sessionStart || task.createdAt || new Date().toISOString()); } catch (e) { console.warn("[tutor] couldn't save the session summary:", e); }
       // Dismiss the freestudy task so the next start creates a fresh one.
-      await dismissWithRetry(task.id);
+      try { await dismissWithRetry(task.id); } catch { /* ghost-cleanup in peekForActiveSession covers it */ }
+    } finally {
       setTask(null);
       setSessionStart(null);
       // The ended session must not come back as a "Reprendre" offer on the landing below.
@@ -281,10 +286,9 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
       setShowHistory(true);
       setDesmosOpen(false);
       desmosEverOpenedRef.current = false;
-    } finally {
       setEndingSession(false);
     }
-  }, [task, sessionStart, saveAndClose]);
+  }, [task, sessionStart, endingSession, saveAndClose]);
 
   // Resume (explicit): the only way an existing session reopens — the student clicks "Reprendre" on the
   // landing. Opening /tutor by itself never puts them back into a session; the landing always comes
@@ -582,7 +586,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
         </button>
       </header>
       <section className="ts-canvas" aria-label={L("Tableau", "Board")}>
-        <div className="tutor-board-body ts-board-body" style={{ display: desmosOpen ? "none" : undefined }}>
+        <div className="tutor-board-body ts-board-body" ref={setSurfaceEl} style={{ display: desmosOpen ? "none" : undefined }}>
           <BoardArtifact task={task} writing={sending} onProblemResult={onProblemResult} />
         </div>
         {/* Desmos stays mounted once opened (an iframe that's removed reloads blank, losing the student's graph). */}
@@ -595,8 +599,9 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
           ref={canvasRef}
           visionReady={visionReady}
           hidden={desmosOpen}
-          onDesmos={openDesmos}
-          onSend={(description) => void send(L(`Voici ce que j'ai dessiné : ${description}`, `Here's what I drew: ${description}`))}
+          surface={surfaceEl}
+          onDesmos={() => setDesmosOpen((o) => !o)}
+          onSend={(description, note) => void send((note ? note + "\n\n" : "") + L(`Voici ce que j'ai dessiné : ${description}`, `Here's what I drew: ${description}`))}
         />
       </section>
       <div className="ts-dock">

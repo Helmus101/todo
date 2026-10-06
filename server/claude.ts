@@ -1673,7 +1673,7 @@ export function pcmToWav(pcm: Buffer, sampleRate: number, channels = 1, bitsPerS
 // preview-model quota resetting within seconds), and 500/503 (a transient upstream blip) — never 4xx like
 // 400/401/404, which a retry can't fix. Direct request ("make sure gemini always works"): most Gemini TTS
 // failures reported live have been exactly this kind of short-lived hiccup, not a real outage.
-const GEMINI_TTS_RETRY_STATUSES = new Set([429, 500, 503]);
+const GEMINI_TTS_RETRY_STATUSES = new Set([500, 503]);
 const GEMINI_TTS_RETRY_DELAY_MS = 800;
 // Reported live: a slow Gemini response (this used to wait up to 15s) blew straight through the CLIENT's
 // own fetch timeout, which aborts the whole /api/tts request — killing StreamElements/Google Translate's
@@ -1681,7 +1681,7 @@ const GEMINI_TTS_RETRY_DELAY_MS = 800;
 // up. Gemini failing fast matters more here than Gemini succeeding slowly: 7s (plus one 7s retry on a
 // transient status) still leaves real time for the two fallback tiers inside the client's own budget (see
 // CLOUD_FETCH_TIMEOUT_MS, client/voice/useSpeechSynthesis.ts) instead of eating almost all of it.
-const GEMINI_TTS_TIMEOUT_MS = 7_000;
+const GEMINI_TTS_TIMEOUT_MS = 6_000;
 
 async function callGeminiTts(text: string, key: string): Promise<{ wav: Buffer } | { error: string; status: number }> {
   try {
@@ -1721,6 +1721,33 @@ export async function synthesizeSpeech(text: string): Promise<{ wav: Buffer } | 
   if (!("error" in first) || !GEMINI_TTS_RETRY_STATUSES.has(first.status)) return first;
   await new Promise((resolve) => setTimeout(resolve, GEMINI_TTS_RETRY_DELAY_MS));
   return callGeminiTts(text, key);
+}
+
+/** The tutor's voice: ONE consistent voice, and fast failure. Gemini's neural voice goes first; when it fails
+ *  (quota/blip) the free tiers (StreamElements → Google Translate) answer instead. Two things keep that from
+ *  sounding broken:
+ *  - A circuit breaker: after a Gemini failure the route goes STRAIGHT to the free tiers for a short window, so
+ *    consecutive replies use ONE voice during a quota spell instead of flipping Gemini/Polly/Gemini per reply,
+ *    and the student isn't made to wait on a Gemini call that's known to be failing.
+ *  - No parallel hedging and no multi-request replies: two simultaneous Gemini calls burn its tiny per-minute
+ *    quota, which is exactly what made voices change mid-reply and replies cut off.
+ *  Never throws. */
+let geminiDownUntil = 0;
+export async function synthesizeSpeechRace(text: string, lang: string): Promise<{ audio: Buffer; mime: string } | { error: string; status: number }> {
+  const chain = async (): Promise<{ audio: Buffer; mime: string } | { error: string; status: number }> => {
+    const f = await synthesizeSpeechFallback(text, lang);
+    if (!("error" in f)) return { audio: f.mp3, mime: "audio/mpeg" };
+    console.warn(`[tts] StreamElements failed, trying Google Translate: ${f.error}`);
+    const g = await synthesizeSpeechGoogleTranslate(text, lang);
+    return "error" in g ? g : { audio: g.mp3, mime: "audio/mpeg" };
+  };
+  if (!process.env.GEMINI_API_KEY) { console.warn("[tts] GEMINI_API_KEY not set — using the free tiers directly."); return chain(); }
+  if (Date.now() < geminiDownUntil) return chain();
+  const r = await synthesizeSpeech(text);
+  if (!("error" in r)) return { audio: r.wav, mime: "audio/wav" };
+  geminiDownUntil = Date.now() + (r.status === 429 ? 60_000 : 20_000);
+  console.warn(`[tts] Gemini failed (${r.error}) — using the free tiers for the next ${r.status === 429 ? 60 : 20}s`);
+  return chain();
 }
 
 // ── Second TTS tier (StreamElements) ─────────────────────────────────────────────────────────────────────
@@ -2665,7 +2692,7 @@ export function makeProblem(input: any): { problem: TaskProblem } | { error: str
   };
 }
 
-const BOARD_KINDS = new Set(["note", "instruction", "formula", "summary", "focus", "insight", "definition", "outline"]);
+const BOARD_KINDS = new Set(["note", "instruction", "formula", "summary", "focus", "insight", "definition", "outline", "working"]);
 const MAX_OUTLINE_SECTIONS = 6;
 const MAX_OUTLINE_BULLETS = 8;
 export function makeBoardEntry(input: any): { entry: BoardEntry } | { error: string } {
@@ -2785,6 +2812,63 @@ export function shouldNudgeBoardWrite(reply: string, lastStudentMessage: string,
   return /^\s*(yes|yeah|yep|exactly|correct|right|nice|perfect|well done|good|bravo|spot on|nailed it|(you(?:'ve)? )?got it( right)?|absolutely|that'?s (it|right|correct)|oui|ouais|exact|exactement|c'est (ça|ca|exact|correct)|parfait|bien joué|très bien|nickel|voilà|tout à fait)\b/i.test(reply.trim());
 }
 
+/** The student's own working, logged on the board with NO model call: the board should read as the working of
+ *  the session as it happens (their steps, in order), not a page that only fills when Otto decides to write.
+ *  Returns an entry for a substantive statement — a step, a result, a line of reasoning — and null for
+ *  everything else (questions to Otto, one-tap chips, acknowledgements, automatic exercise/whiteboard
+ *  messages, "I don't know"). It's the student's own words, so it can never state an answer for them. Pure. */
+export function workingEntryFor(message: string, existing: BoardEntry[]): BoardEntry | null {
+  const raw = String(message || "")
+    .replace(/\[(?:Exercise|Exercice)\][^\n]*/g, " ")
+    .replace(/\[(?:What I wrote\/drew on the board|Ce que j'ai écrit\/dessiné sur le tableau)[\s\S]*?\]/g, " ")
+    .replace(/(?:Here's what I drew|Voici ce que j'ai dessiné)\s*:[\s\S]*$/i, " ")
+    .replace(/\s+/g, " ").trim();
+  if (raw.length < 6 || raw.length > 400) return null;
+  const words = raw.split(/\s+/).length;
+  const mathy = /[=^√π²³±×÷≤≥<>]|\d\s*[-+*/x]\s*\d|\b\d+[a-z]\b/i.test(raw);
+  if (/^\s*(ok(ay)?|oui|non|yes|no|yeah|merci|thanks?|thank you|d'accord|compris|got it|i see|je vois|hi|hello|salut|bonjour|hey)\b[\s.!]*$/i.test(raw)) return null;
+  if (/(can i have a small hint|i'm lost|got it! give me another|i'm stuck on a problem|i'd like to understand a topic|quiz me|un petit indice|je suis perdu|donne-m'en un autre|je bloque sur un exercice|interroge-moi|comprendre un chapitre)/i.test(raw)) return null;
+  if (/\b(i don'?t know|idk|je ne sais pas|je sais pas|no idea|aucune id[ée]e)\b/i.test(raw) && words < 8) return null;
+  if (/\?\s*$/.test(raw) && !/=/.test(raw)) return null; // a question for Otto, not working
+  if (!mathy && words < 6) return null;
+  const text = raw.length > 220 ? `${raw.slice(0, 217).trimEnd()}…` : raw;
+  if (isDuplicateBoardEntry(existing, { text, kind: "working" })) return null;
+  return { id: randomUUID(), text, kind: "working", at: new Date().toISOString() };
+}
+
+/** Everything in the thread that falls OUTSIDE the model's verbatim window, condensed to one line per message
+ *  (newest kept when over budget) — so a long session never "forgets" what was already covered and re-explains
+ *  it. Deterministic, no model call. Returns "" when there's nothing older. Pure; unit-tested. */
+export function earlierDigest(older: { role: string; text: string }[], maxChars = 1800): string {
+  const lines = older
+    .map((m) => {
+      const clean = String(m.text || "").replace(/\[(?:Exercise|Exercice)\][^\n]*/g, "(answered a board exercise)").replace(/\[(?:What I wrote\/drew on the board|Ce que j'ai écrit\/dessiné sur le tableau)[\s\S]*?\]/g, "(showed their whiteboard)").replace(/\s+/g, " ").trim();
+      if (!clean) return "";
+      const firstSentence = m.role === "assistant" ? (clean.match(/^.*?[.!?](?:\s|$)/)?.[0] ?? clean) : clean;
+      return `- ${m.role === "assistant" ? "Otto" : "Student"}: ${firstSentence.slice(0, 130)}`;
+    })
+    .filter(Boolean);
+  const kept: string[] = [];
+  let used = 0;
+  for (let i = lines.length - 1; i >= 0; i--) { if (used + lines[i].length + 1 > maxChars) break; kept.unshift(lines[i]); used += lines[i].length + 1; }
+  if (!kept.length) return "";
+  return `EARLIER IN THIS SESSION (condensed, oldest first — this is already DONE: don't re-explain it or re-ask it, build on it):\n${kept.join("\n")}`;
+}
+
+/** Otto's own question, logged on the board as the "next prompt" when the model wrote nothing there this turn —
+ *  with the student's logged working (workingEntryFor) the board then reads as the session's working, in order,
+ *  and stays a durable memory of what was asked. Only a closing question of a sane length; never a greeting
+ *  (turn 1) and never a duplicate. Pure. */
+export function promptEntryFor(reply: string, existing: BoardEntry[], turnIndex: number): BoardEntry | null {
+  if (turnIndex < 1) return null;
+  const text = String(reply || "").replace(/```[\s\S]*?```/g, " ").replace(/[*_`#>]/g, "").replace(/\s+/g, " ").trim();
+  const sentences = text.split(/(?<=[.!?…])\s+/).filter(Boolean);
+  const q = sentences[sentences.length - 1];
+  if (!q || !/\?\s*$/.test(q) || q.length < 12 || q.length > 170) return null;
+  if (isDuplicateBoardEntry(existing, { text: q, kind: "instruction" })) return null;
+  return { id: randomUUID(), text: q, kind: "instruction", at: new Date().toISOString() };
+}
+
 const MAX_DIAGRAM_OPS = 15;
 const clampCoord = (n: unknown, lo: number, hi: number): number => Math.max(lo, Math.min(hi, Number.isFinite(Number(n)) ? Number(n) : 0));
 const clampX = (n: unknown) => clampCoord(n, 0, 800);
@@ -2854,6 +2938,26 @@ export function makeGraphEntry(input: any): { entry: BoardEntry } | { error: str
   const caption = String(input?.caption || "").trim().slice(0, 200);
   if (!caption) return { error: "ERROR: caption is required." };
   const num = (v: any) => (typeof v === "number" && Number.isFinite(v) ? v : Number.isFinite(Number(v)) && v !== "" && v != null ? Number(v) : NaN);
+  const kind: NonNullable<GraphSpec["kind"]> = ["bars", "histogram", "surface"].includes(input?.kind) ? input.kind : "function";
+  const label = (v: any, n: number) => (v ? String(v).trim().slice(0, n) : undefined);
+  const mk = (graph: GraphSpec): { entry: BoardEntry } => ({ entry: { id: randomUUID(), text: caption, kind: "graph", graph, at: new Date().toISOString() } });
+  const axes = { xLabel: label(input?.xLabel, 20), yLabel: label(input?.yLabel, 20) };
+
+  if (kind === "bars") {
+    const bars = (Array.isArray(input?.bars) ? input.bars : []).slice(0, 14)
+      .map((b: any) => ({ label: String(b?.label ?? "").trim().slice(0, 24), value: num(b?.value) }))
+      .filter((b: { label: string; value: number }) => b.label && Number.isFinite(b.value));
+    if (bars.length < 2) return { error: "ERROR: a bar chart needs `bars`: at least 2 items like {label, value}." };
+    return mk({ kind, bars, fns: [], xmin: 0, xmax: 1, ...axes });
+  }
+  if (kind === "histogram") {
+    const data = (Array.isArray(input?.data) ? input.data : []).slice(0, 500).map(num).filter((n: number) => Number.isFinite(n));
+    if (data.length < 5) return { error: "ERROR: a histogram needs `data`: at least 5 numbers." };
+    if (Math.min(...data) === Math.max(...data)) return { error: "ERROR: all the data values are identical — nothing to bin." };
+    const bins = Math.round(num(input?.bins));
+    return mk({ kind, data, bins: bins >= 2 && bins <= 40 ? bins : undefined, fns: [], xmin: 0, xmax: 1, ...axes });
+  }
+
   const xmin = num(input?.xmin), xmax = num(input?.xmax);
   if (!(xmin < xmax) || xmax - xmin > 10000) return { error: "ERROR: xmin and xmax are required numbers with xmin < xmax (span ≤ 10000)." };
   let ymin: number | undefined = num(input?.ymin), ymax: number | undefined = num(input?.ymax);
@@ -2862,41 +2966,48 @@ export function makeGraphEntry(input: any): { entry: BoardEntry } | { error: str
   const params: NonNullable<GraphSpec["params"]> = [];
   for (const rp of rawParams) {
     const name = String(rp?.name || "").trim().toLowerCase();
-    if (!/^[a-df-wyz]$/.test(name)) return { error: `ERROR: slider name "${name}" must be a single letter other than x and e (e.g. a, b, k, m).` };
+    if (!/^[a-df-wz]$/.test(name)) return { error: `ERROR: slider name "${name}" must be a single letter other than x, y and e (e.g. a, b, k, m).` };
     if (params.some((q) => q.name === name)) return { error: `ERROR: slider "${name}" is declared twice.` };
     const min = num(rp?.min), max = num(rp?.max);
     if (!(min < max)) return { error: `ERROR: slider "${name}" needs min < max.` };
     const value = Math.min(max, Math.max(min, Number.isFinite(num(rp?.value)) ? num(rp?.value) : (min + max) / 2));
     const step = Number.isFinite(num(rp?.step)) && num(rp?.step) > 0 ? num(rp?.step) : (max - min) / 40;
-    params.push({ name, min, max, value, step, label: rp?.label ? String(rp.label).trim().slice(0, 40) : undefined });
+    params.push({ name, min, max, value, step, label: label(rp?.label, 40) });
   }
-  const vars = ["x", ...params.map((q) => q.name)];
   const base: Record<string, number> = Object.fromEntries(params.map((q) => [q.name, q.value]));
+
+  if (kind === "surface") {
+    if (ymin === undefined || ymax === undefined) return { error: "ERROR: a surface needs ymin and ymax (the y-range of the x-y plane) as well as xmin/xmax." };
+    const zExpr = String(input?.z || "").trim().replace(/^z\s*=\s*/i, "").replace(/^f\(x\s*,\s*y\)\s*=\s*/i, "");
+    const c = compileExpr(zExpr, ["x", "y", ...params.map((q) => q.name)]);
+    if ("error" in c) return { error: `ERROR: can't plot z = "${zExpr}": ${c.error}. Use plain math in x, y${params.length ? ` and ${params.map((q) => q.name).join(", ")}` : ""} (e.g. "x^2 + y^2", "sin(x)*cos(y)").` };
+    let finite = 0;
+    for (let i = 0; i <= 8; i++) for (let j = 0; j <= 8; j++) if (Number.isFinite(c.fn({ ...base, x: xmin + ((xmax - xmin) * i) / 8, y: ymin + ((ymax - ymin) * j) / 8 }))) finite++;
+    if (finite < 20) return { error: `ERROR: z = "${zExpr}" has almost no real values on that x-y window — widen it or fix the expression.` };
+    return mk({ kind, z: zExpr, fns: [], params: params.length ? params : undefined, xmin, xmax, ymin, ymax, ...axes });
+  }
+
+  const vars = ["x", ...params.map((q) => q.name)];
   const fns: GraphSpec["fns"] = [];
   for (const rf of (Array.isArray(input?.fns) ? input.fns : []).slice(0, 4)) {
     const expr = String(rf?.expr || "").trim().replace(/^y\s*=\s*/i, "").replace(/^f\(x\)\s*=\s*/i, "");
     const c = compileExpr(expr, vars);
-    if ("error" in c) return { error: `ERROR: can't plot "${expr}": ${c.error}. Use plain math in x${params.length ? ` and ${params.map((q) => q.name).join(", ")}` : ""} (e.g. "2*x^2 - 3*x + 1", "sin(2x)", "sqrt(x)").` };
+    if ("error" in c) return { error: `ERROR: can't plot "${expr}": ${c.error}. Use plain math in x${params.length ? ` and ${params.map((q) => q.name).join(", ")}` : ""} (e.g. "2*x^2 - 3*x + 1", "sin(2x)", "sqrt(x)"). A function of TWO variables needs kind "surface".` };
     let finite = 0;
     for (let i = 0; i <= 40; i++) if (Number.isFinite(c.fn({ ...base, x: xmin + ((xmax - xmin) * i) / 40 }))) finite++;
     if (finite < 5) return { error: `ERROR: "${expr}" has no real values in x ∈ [${xmin}, ${xmax}] — widen the window or fix the expression.` };
-    fns.push({ expr, label: rf?.label ? String(rf.label).trim().slice(0, 40) : undefined, color: (GRAPH_COLORS as readonly string[]).includes(rf?.color) ? rf.color : GRAPH_COLORS[fns.length % 5], dashed: rf?.dashed === true ? true : undefined });
+    fns.push({ expr, label: label(rf?.label, 40), color: (GRAPH_COLORS as readonly string[]).includes(rf?.color) ? rf.color : GRAPH_COLORS[fns.length % 5], dashed: rf?.dashed === true ? true : undefined });
   }
   const points = (Array.isArray(input?.points) ? input.points : []).slice(0, 12)
-    .map((pt: any) => ({ x: num(pt?.x), y: num(pt?.y), label: pt?.label ? String(pt.label).trim().slice(0, 30) : undefined }))
+    .map((pt: any) => ({ x: num(pt?.x), y: num(pt?.y), label: label(pt?.label, 30) }))
     .filter((pt: { x: number; y: number }) => Number.isFinite(pt.x) && Number.isFinite(pt.y));
   if (!fns.length && !points.length) return { error: "ERROR: give at least one function in `fns` or some `points`." };
-  const graph: GraphSpec = {
-    fns, params: params.length ? params : undefined, xmin, xmax, ymin, ymax,
-    points: points.length ? points : undefined, connect: input?.connect === true && points.length > 1 ? true : undefined,
-    xLabel: input?.xLabel ? String(input.xLabel).trim().slice(0, 20) : undefined, yLabel: input?.yLabel ? String(input.yLabel).trim().slice(0, 20) : undefined,
-  };
-  return { entry: { id: randomUUID(), text: caption, kind: "graph", graph, at: new Date().toISOString() } };
+  return mk({ kind: "function", fns, params: params.length ? params : undefined, xmin, xmax, ymin, ymax, points: points.length ? points : undefined, connect: input?.connect === true && points.length > 1 ? true : undefined, ...axes });
 }
 
 const GRAPH_ON_BOARD_TOOL = {
   name: "GRAPH_ON_BOARD",
-  description: "Plot a REAL graph on the board that the student can play with: one to four functions of x, optional " +
+  description: "Put a REAL chart on the board that the student can play with. kind \"function\" (default): one to four functions of x, optional " +
     "sliders (up to 3) so they can drag a parameter and watch the curve change, and optional marked points (a root, " +
     "a vertex, data). Reach for this whenever a picture of a function or a data trend teaches faster than words — " +
     "parabolas and how a, b, c move them, trig amplitude/period, exponentials, transformations, a line of best fit, " +
@@ -2904,9 +3015,17 @@ const GRAPH_ON_BOARD_TOOL = {
     "DRAW_ON_BOARD graph. Expressions are plain math: x, the slider letters, + - * / ^, parentheses, pi, e, and " +
     "sin cos tan sqrt abs ln log exp (e.g. \"a*x^2 + b*x + c\", \"sin(k*x)\", \"2^x\"). Choose a window that shows the " +
     "interesting part. DON'T plot the exact answer to a problem the student is still working on — plot the family " +
-    "or the setup and ask what they notice. Then ask ONE question about what moving it shows.",
+    "or the setup and ask what they notice. Then ask ONE question about what moving it shows. Other kinds: \"bars\" " +
+    "to compare quantities (a labelled bar chart), \"histogram\" for the shape of a data set (give the raw numbers), " +
+    "and \"surface\" for a function of TWO variables, z = f(x, y) — a 3D plot the student drags to rotate (add sliders " +
+    "to morph it).",
   input_schema: { type: "object", properties: {
     caption: { type: "string", description: "one short line titling the graph (and what to try, e.g. 'Drag a — what happens to the opening?')" },
+    kind: { type: "string", enum: ["function", "bars", "histogram", "surface"], description: "function (default): curves y=f(x). bars: a labelled bar chart (needs `bars`). histogram: raw numbers binned (needs `data`). surface: a rotatable 3D plot z=f(x,y) (needs `z`, xmin/xmax AND ymin/ymax)." },
+    bars: { type: "array", description: "kind bars: 2-14 items", items: { type: "object", properties: { label: { type: "string" }, value: { type: "number" } }, required: ["label", "value"] } },
+    data: { type: "array", description: "kind histogram: the raw numbers (5-500)", items: { type: "number" } },
+    bins: { type: "number", description: "kind histogram: bin count 2-40 (omit to auto)" },
+    z: { type: "string", description: "kind surface: z as an expression in x and y (and slider letters), e.g. \"x^2 - y^2\", \"sin(x)*cos(y)\"" },
     fns: { type: "array", description: "1-4 functions of x", items: { type: "object", properties: {
       expr: { type: "string", description: "e.g. \"a*x^2 + b*x + c\"" },
       label: { type: "string", description: "short legend text, e.g. 'y = ax²+bx+c'" },
@@ -2921,7 +3040,7 @@ const GRAPH_ON_BOARD_TOOL = {
     points: { type: "array", description: "optional marked points / data", items: { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, label: { type: "string" } }, required: ["x", "y"] } },
     connect: { type: "boolean", description: "join the points with a line (a data plot)" },
     xLabel: { type: "string" }, yLabel: { type: "string" },
-  }, required: ["caption", "xmin", "xmax"] },
+  }, required: ["caption"] },
 };
 
 const MAX_INTERACTIVE_HTML_CHARS = 8000;
@@ -6968,8 +7087,15 @@ const PRIMER_PERSONA =
   `happens to the vertex?"). Keep each scene SMALL (under ~60 lines, plain SVG + inline JS, no library unless ` +
   `truly needed) so it appears fast, with the thing being varied labelled. Don't build one for something a ` +
   `sentence or a quick DRAW_ON_BOARD figure already makes clear.\n` +
+  `- WRITE ON THE BOARD EVERY TURN, not just when stuck: the board is the shared page you're building together, ` +
+  `so most turns should leave ONE short new entry there (in the same step as your reply — tool call plus ` +
+  `message, no extra turn). Safe to write immediately: the problem's givens and what's asked, the goal, a ` +
+  `key term the first time it comes up, a step THEY just said or derived (credit it — "your step: …"), the ` +
+  `next small thing to try as an instruction, a one-line recap after a breakthrough. Equations and formulas ` +
+  `go through DRAW_ON_BOARD's equation op so they typeset; steps of reasoning stay one line each. What you ` +
+  `don't write: a step they haven't reached yet, and never the answer.\n` +
   `- GRAPHS: for anything that is a FUNCTION or data trend (parabolas and a/b/c, amplitude/period, exponentials, ` +
-  `transformations, motion graphs, a line of best fit) use GRAPH_ON_BOARD, not CREATE_INTERACTIVE — it's instant, ` +
+  `transformations, motion graphs, a line of best fit; also bar charts, histograms and 3D surfaces z=f(x,y)) use GRAPH_ON_BOARD, not CREATE_INTERACTIVE — it's instant, ` +
   `always renders, and gives the student real sliders and a hover readout. Plot the FAMILY or the setup, never ` +
   `the answer to what they're solving, then ask ONE question about what moving it shows.\n` +
   `- HIGHLIGHT: whenever you point at part of a passage, a problem statement or THEIR working, put the quote ` +
@@ -6990,6 +7116,9 @@ const PRIMER_PERSONA =
   `last. Say a short lead-in in the bubble ("try this one"), then CREATE_PROBLEM; don't read it out. Make the ` +
   `wrong MCQ options the mistakes THIS student is likely to make (a sign slip, a swapped formula), so a wrong ` +
   `pick tells you something. Always give a one-line "why" and a hint that nudges without answering.\n\n` +
+  `- MEMORY: you can see "EARLIER IN THIS SESSION" and what's already on the board — treat all of it as DONE. Never ` +
+  `re-explain, re-define or re-ask something already covered; refer back to it in a few words ("like the sign ` +
+  `trick from before") and move on to the next step.\n` +
   `- ONE-TAP REPLIES: the student may send "Can I have a small hint?", "I'm lost — can we go smaller?" or ` +
   `"Got it! Give me another to try." — honour them literally: a hint is ONE nudge on the ladder (never the ` +
   `answer); "lost" means shrink to the smallest next step and check what they already know; "another" means a ` +
@@ -7157,7 +7286,8 @@ export async function chatAboutTask(
   const boardBlock = (boardEntries.length || currentProblems.length)
     ? `\nWHAT'S CURRENTLY ON THE BOARD (the visible surface next to this chat — you can see it, the student ` +
       `can see it, don't ask them to describe it back to you; a NEW WRITE_TO_BOARD call adds to this, it ` +
-      `never replaces it):\n` +
+      `never replaces it). Everything listed here is ALREADY DONE or already asked — never redo or re-explain ` +
+      `it; continue from the LAST entry:\n` +
       boardEntries.map((e) => `- [${e.kind || "note"}] ${e.text}` +
         (e.kind === "outline" && e.outline?.length ? "\n" + e.outline.map((s) => `  · ${s.heading}: ${s.bullets.join("; ")}`).join("\n") : "")
       ).join("\n") +
@@ -8036,9 +8166,15 @@ export async function chatAboutTask(
   // message count. 10 turns is still enough for rule 5's "tie back to something from earlier in THIS
   // thread" and the Feynman-loop follow-up (rule 4) to work in practice; a real tutoring exchange rarely
   // needs to reference something from 12+ messages ago.
+  // The Tutor's thread is made of many short turns (one-tap chips, automatic exercise/whiteboard messages), so
+  // 10 messages was only ~3 real exchanges — the model forgot what was done and re-explained it. Primer turns
+  // get a 24-message verbatim window PLUS a one-line-per-message digest of everything older (earlierDigest).
+  const histWindow = opts?.primer ? 24 : 10;
+  const digestText = opts?.primer ? earlierDigest(history.slice(0, -histWindow)) : "";
   const messages: any[] = [
     { role: "system", content: sys },
-    ...history.slice(-10).map((h) => ({ role: h.role, content: h.text })),
+    ...(digestText ? [{ role: "system", content: digestText }] : []),
+    ...history.slice(-histWindow).map((h) => ({ role: h.role, content: h.text })),
     { role: "user", content: message },
   ];
   const client = deepseekClient();
@@ -8109,6 +8245,15 @@ export async function chatAboutTask(
     // claimed to prevent. truncateCleanly backs up to the last sentence end (falling back to the last word
     // boundary if there's no sentence break inside the cap) and marks the cut with an ellipsis, so a
     // response is never handed back looking like it broke mid-thought.
+    // Log the student's own substantive step on the board when Otto wrote nothing there this turn (no model
+    // call) — see workingEntryFor. Skipped when a guardrail wiped the turn.
+    if (opts?.primer && !result.guardrailTripped && result.board.length === 0) {
+      const w = workingEntryFor(message, opts?.currentBoard || []);
+      if (w) result.board.push(w);
+      // ...and Otto's closing question as the board's "next prompt" — together they read as the working so far.
+      const q = promptEntryFor(reply, [...(opts?.currentBoard || []), ...result.board], history.length);
+      if (q && (w || history.length >= 2)) result.board.push(q);
+    }
     const cleaned = truncateCleanly(reply.trim(), 2400);
     if (!cleaned) {
       result.error = true;
