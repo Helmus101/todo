@@ -292,16 +292,28 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
  * are what say "look here first," not a box. Everything else today's list has (chips, spinner, dismiss)
  * stays on the quiet `TaskCardRow`s underneath; duplicating that chrome here would just be more noise
  * around the one thing meant to stand out. */
-export function TaskHero({ task, onOpen }: { task: WebTask; onOpen: () => void }) {
+export function TaskHero({ task, onOpen, onChange, onTask, onConfirmed, readOnly }: {
+  task: WebTask; onOpen: () => void;
+  onChange: (t: WebTask[]) => void; onTask?: (t: WebTask) => void; onConfirmed?: (id: string) => void; readOnly?: boolean;
+}) {
   const L = useLang();
   const cardEn = useContext(LangContext) === "en";
+  // Same confirm machinery as the rows (useTaskLeave) so the hero's "Done for now" checkbox behaves
+  // identically to a row checkbox: optimistic status flip, hold-then-remove animation, rollback on error.
+  const { leaving, leave } = useTaskLeave(task.id, { onChange, onTask, onConfirmed });
   const chip = statusChip(task, false, cardEn);
   const showChip = chip && chip.tone === "attention" ? chip : null;
   const w = taskDateLabel(task, L);
+  // The prototype's hero previews the plan as a numbered list ("01 / Review the derivative rules") under
+  // the CTA — read-only; the real step controls stay in the task detail view. First three is a preview,
+  // not the whole plan.
+  const heroSteps = (task.steps || []).filter((s) => s.text?.trim()).slice(0, 3);
 
   return (
-    <div className="dash-hero">
-      <div className="dash-hero-kicker">{L("Ta priorité", "Your next priority")}</div>
+    <div className={`dash-hero ${leaving ? "confirming" : ""}`}>
+      {/* The prototype leads with the subject ("Mathematics"); fall back to the priority label when a
+          task has no subject. */}
+      <div className="dash-hero-kicker">{task.sourceSubject || L("Ta priorité", "Your next priority")}</div>
       <h2 className="dash-hero-title">{stripStrayMarkdown(task.title)}</h2>
       {task.goal ? <div className="task-goal-banner"><span className="task-goal-tag">{L("Objectif", "Goal")}:</span> {stripStrayMarkdown(task.goal)}</div> : null}
       {(task.nudgeLine || task.why) ? <p className="dash-hero-why">{stripStrayMarkdown(task.nudgeLine || task.why)}</p> : null}
@@ -311,12 +323,34 @@ export function TaskHero({ task, onOpen }: { task: WebTask; onOpen: () => void }
           {task.taskType ? <span className="chip chip-tasktype">{task.taskType.replace(/_/g, " ")}</span> : null}
           {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
           {w ? <span className="when">{w}</span> : null}
-          <span className={`card-quadrant card-quadrant-${task.quadrant}`}>{quadrantLabel(task.quadrant, cardEn)}</span>
           {showChip ? <span className={`chip chip-${showChip.tone}`}>{showChip.label}</span> : null}
         </div>
       ) : null}
       <button type="button" className="btn primary big dash-hero-cta" onClick={onOpen}>
-        {L("Continuer", "Continue")}
+        {L("Avance dessus avec Otto", "Work through this with Otto")}
+      </button>
+      {/* The prototype's quiet "Done for now" checkbox under the CTA — same optimistic confirm as the
+          rows, so the task animates away exactly like a row confirm would. */}
+      {!readOnly && (
+        <label className="dash-hero-done">
+          <input type="checkbox" disabled={leaving} onChange={() => void leave(() => api.confirm(task.id), "confirm", task)} />
+          <span>{L("Fait pour l'instant", "Done for now")}</span>
+        </label>
+      )}
+      {!!heroSteps.length && (
+        <ol className="dash-hero-steps">
+          {heroSteps.map((s, i) => (
+            <li key={i}>
+              <span className="dash-hero-step-num" aria-hidden>{String(i + 1).padStart(2, "0")}</span>
+              <span>{stripStrayMarkdown(s.text)}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+      {/* Same destination as the CTA (the task detail view) — the prototype's quiet secondary access to
+          the plan and Otto's prepared materials. */}
+      <button type="button" className="btn ghost dash-hero-plan" onClick={onOpen}>
+        {L("Voir le plan et les documents", "View plan & materials")}
       </button>
     </div>
   );
@@ -334,6 +368,21 @@ export function TaskReadOnly({ task }: { task: WebTask }) {
   const w = taskDateLabel(task, L);
   const steps = task.steps || [];
   const doneCount = steps.filter((s) => s.done).length;
+  const preparedCount = (task.notes?.length || 0) + (task.flashcards?.length || 0) + (task.quizzes?.length || 0) + (task.links?.length || 0) + (task.did?.length || 0);
+  const linkKind = (u?: string) => {
+    const s = u || "";
+    if (/docs\.google\.com\/document/.test(s)) return L("Document", "Doc");
+    if (/docs\.google\.com\/spreadsheets/.test(s)) return L("Feuille", "Sheet");
+    if (/docs\.google\.com\/presentation/.test(s)) return L("Diapositives", "Slides");
+    if (/docs\.google\.com\/forms|forms\.gle/.test(s)) return L("Formulaire", "Form");
+    if (/mail\.google\.com/.test(s)) return /#drafts/.test(s) ? L("Brouillon", "Draft") : L("Email", "Email");
+    if (/calendar\.google\.com/.test(s)) return L("Événement", "Event");
+    if (/drive\.google\.com/.test(s)) return L("Fichier", "File");
+    if (/maps\.google\.com|google\.com\/maps/.test(s)) return L("Itinéraire", "Directions");
+    if (/^tel:/.test(s)) return L("Appel", "Call");
+    if (/notion\.so/.test(s)) return "Notion";
+    try { return u ? new URL(u).hostname.replace(/^www\./, "") : ""; } catch { return ""; }
+  };
   return (
     <div className="task-readonly">
       {(task.sourceSubject || w) ? (
@@ -366,6 +415,50 @@ export function TaskReadOnly({ task }: { task: WebTask }) {
       ) : (
         <p className="task-readonly-why">{L("Otto n'a pas encore écrit de plan pour celle-ci.", "Otto hasn't written a plan for this one yet.")}</p>
       )}
+      {/* Artifacts, links, and board - now visible on mobile */}
+      {preparedCount > 0 ? (
+        <div className="tf-prepared-inline">
+          {task.did?.length ? (
+            <>
+              <span className="prepared-label">{L("Fait", "Done")}</span>
+              <ul className="bullets">{task.did.map((d, i) => <li key={i}>{stripStrayMarkdown(d)}</li>)}</ul>
+            </>
+          ) : null}
+          {(task.notes?.length || task.flashcards?.length || task.quizzes?.length) ? (
+            <>
+              <span className="prepared-label">{L("Créé pour toi", "Made for you")}</span>
+              <div className="note-chips prepared-chips">
+                {task.notes?.map((n) => (
+                  <div key={n.id} className="note-chip" style={{ pointerEvents: "none" }}>
+                    <span className="note-chip-icon" aria-hidden="true">▤</span>
+                    <span className="note-chip-text"><span className="note-chip-title">{n.title}</span><span className="note-chip-meta">{L("Fiche", "Note")}</span></span>
+                  </div>
+                ))}
+                {task.flashcards?.map((f) => (
+                  <div key={f.id} className="note-chip" style={{ pointerEvents: "none" }}>
+                    <span className="note-chip-icon" aria-hidden="true">❏</span>
+                    <span className="note-chip-text"><span className="note-chip-title">{f.title}</span><span className="note-chip-meta">{L(`${f.cards.length} cartes`, `${f.cards.length} cards`)}</span></span>
+                  </div>
+                ))}
+                {task.quizzes?.map((qz) => (
+                  <div key={qz.id} className="note-chip" style={{ pointerEvents: "none" }}>
+                    <span className="note-chip-icon" aria-hidden="true">?</span>
+                    <span className="note-chip-text"><span className="note-chip-title">{qz.title}</span><span className="note-chip-meta">{L(`${qz.questions.length} questions`, `${qz.questions.length} questions`)}</span></span>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : null}
+          {task.links?.length ? (
+            <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url} onClick={(e) => { e.preventDefault(); openTab(l.url, TAB_GROUP); }}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url)) || L("Ouvrir le lien", "Open link")} ↗</a></li>)}</ul>
+          ) : null}
+        </div>
+      ) : null}
+      {(task.board?.length || task.problems?.length) ? (
+        <div className="tf-board-inline">
+          <BoardArtifact task={task} />
+        </div>
+      ) : null}
       <p className="task-readonly-foot">
         {L("Sur téléphone, Otto est en lecture seule. Ouvre-le sur un ordinateur ou un iPad pour travailler dessus.",
            "On a phone, Otto is read-only. Open it on a laptop or iPad to actually work on this.")}
@@ -519,27 +612,10 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
   const [chatStep, setChatStep] = useState<number | null>(null);
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
-  const chatContainerRef = useRef<HTMLDivElement | null>(null);
-  const userScrolledRef = useRef(false);
-  
-  // Auto-scroll to bottom only if user hasn't deliberately scrolled up
-  useEffect(() => {
-    const container = chatContainerRef.current;
-    if (!container) return;
-    
-    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
-    
-    if (isNearBottom) {
-      chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-    }
-  }, [task.chat?.length, chatSending]);
-  
-  // Track user scroll intention
-  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    const container = e.currentTarget;
-    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
-    userScrolledRef.current = !isNearBottom;
-  }, []);
+  // (The old autoscroll effect that lived here is gone — it read a chatContainerRef that was never
+  // attached to any DOM node, so it early-returned on every run and never scrolled anything. The real
+  // always-scroll-to-bottom now lives inside TaskChat below, next to the actual thread container and
+  // its end marker.)
   // Grows up to 3 lines (CSS max-height on .chat-input) then scrolls internally — was a single-line <input>,
   // so anything longer than one line just scrolled sideways out of view while typing. Re-measured on every
   // `chatInput` change (typing AND the programmatic clear after send), so sending correctly shrinks it back.
@@ -661,7 +737,13 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
         <div className="deck-progress-bar"><div className="deck-progress-fill" style={{ width: `${(doneCount / steps.length) * 100}%` }} /></div>
       ) : null}
 
-      {/* (C) the hero — the single thing to do right now. */}
+      {/* (C) the hero — but NOT for an ordinary "here's the current step" display (direct instruction:
+          remove the big bold hero for the first/current step — StepList right below already shows every
+          step, current one included, so this was the same content twice). StepHero still renders for every
+          OTHER state (done/waiting/failed/a draft to send/all-steps-complete/no-steps-yet) — those convey
+          something StepList can't (a Retry/Run-now/Looks-good button, a draft review, a failure message),
+          so they stay. See StepHero's own last branch (the one after `const s = steps[currentIdx]`) for
+          exactly what got suppressed. */}
       <StepHero
         task={task} steps={steps} currentIdx={currentIdx} isDone={isDone} cStatus={cStatus}
         retrying={retrying} running={running} decided={decided} setDecided={setDecided}
@@ -682,24 +764,10 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
         </button>
       ) : null}
 
-      {/* The anti-procrastination hook: the smallest possible first move, small enough it's hard to say
-          no to (see FIRST ACTION in server/claude.ts) — a stuck student needs permission to start, not
-          another item on the plan, so this sits BELOW the hero (which is the real current step) rather
-          than competing with it for the "one thing to do" spot. */}
-      {task.firstAction && !isDone ? (
-        <p className="first-action">
-          <span className="first-action-label">{L("Pour démarrer", "To get started")}</span>
-          {task.firstAction.text}
-          {/* The 2-minute rule (GTD): anything genuinely this quick shouldn't get filed away for later at
-              all — say so plainly instead of just stating a duration, so the badge itself is the nudge to
-              knock it out right now rather than something to schedule. */}
-          {task.firstAction.minutes ? (
-            task.firstAction.minutes <= 2
-              ? <span className="first-action-minutes quick-win">{L("2 min — fais-le maintenant", "2 min — just do it now")}</span>
-              : <span className="first-action-minutes">~{task.firstAction.minutes} {L("min", "min")}</span>
-          ) : null}
-        </p>
-      ) : null}
+      {/* Direct instruction: remove "To get started" (task.firstAction) — same reasoning as removing the
+          current-step hero above: the step it names is already the current/next entry in StepList below,
+          so this was a second place pointing at the same thing. task.firstAction itself (server/claude.ts)
+          is left alone — only this render is removed. */}
 
       {/* "What Otto prepared" used to live behind a collapsed disclosure, same tier as "All steps" — easy to
           miss entirely on a task that's mostly notable FOR what got made (a brief, a deck). It's not a big
@@ -744,15 +812,6 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
           />
         </TaskModal>
       ) : null}
-
-      {/* (F) the quiet exit. "C'est bon" lives in the hero's done state, not down here. */}
-      <div className="tf-foot">
-        {isDone ? (
-          <span className="done-footer">{task.status === "dismissed" ? L("Ignorée", "Dismissed") : L("Terminée", "Done")}{task.updatedAt ? ` ${relTime(task.updatedAt, L)}` : ""}</span>
-        ) : (
-          <button className="btn xs ghost" title={L("Retirer cette tâche", "Remove this task")} onClick={() => void leave(() => api.dismiss(task.id), "dismiss", task)}>{L("Ignorer", "Dismiss")}</button>
-        )}
-      </div>
 
       <ArtifactPopups task={task} onTask={onTask} openNote={openNote} openDeck={openDeck} openQuiz={openQuiz}
         setOpenNote={setOpenNote} setOpenDeck={setOpenDeck} setOpenQuiz={setOpenQuiz} userId={userId ?? null} />
@@ -952,94 +1011,11 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
     );
   }
 
-  const s = steps[currentIdx];
-  const gatesAnother = steps.some((o, j) => j !== currentIdx && o.dependsOn === currentIdx);
-  return (
-    <div className="step-hero">
-      <div className="step-hero-top">
-        <span className="hero-kicker">{L("À faire maintenant", "Do this now")}</span>
-        {s.difficulty ? (
-          <span className={`step-diff step-diff-${s.difficulty}`}>
-            {s.difficulty === "easy" ? L("Facile", "Easy") : s.difficulty === "hard" ? L("Difficile", "Hard") : L("Moyen", "Medium")}
-          </span>
-        ) : null}
-      </div>
-      <p className="hero-step">{withInlineLinks(s.text)}</p>
-      {/* NOTE: doneWhen is no longer displayed on individual steps - it belongs on the main task's Definition of Done */}
-      {/* NOTE: checkpoint is no longer displayed on individual steps - it belongs on the main task's Definition of Done */}
-      {s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate, L)}`, `by ${fmtDate(s.targetDate, L)}`)}</span> : null}
-      {s.minutes ? <SessionTimer key={currentIdx} minutes={s.minutes} /> : null}
-      {s.result ? <span className="step-result note">{s.result}</span> : null}
-      {/* A step Otto can DO but is missing ONE piece of info for (server sets `question`, optionally
-          `options` — see the "submit" tool schema in server/claude.ts) — this used to be computed and
-          stored with no UI at all, so the step just sat there with a generic input and no indication of
-          what was actually needed. The question IS the label now, tap-to-answer when there are likely
-          answers, free text always available as a fallback. Answering RUNS the step (api.runStep), since
-          it's automatable — different from the plain "what did you decide" box below. */}
-      {s.question ? (
-        <div className="step-question">
-          <p className="step-question-text">{withInlineLinks(s.question)}</p>
-          {s.options?.length ? (
-            <div className="step-question-opts">
-              {s.options.map((opt, oi) => (
-                <button key={oi} type="button" className="btn xs" disabled={answering === currentIdx} onClick={() => onAnswer(currentIdx, opt)}>{opt}</button>
-              ))}
-              {answering === currentIdx ? <span className="card-spin" aria-hidden="true" /> : null}
-            </div>
-          ) : null}
-          <input
-            className="step-input"
-            placeholder={s.options?.length ? L("Ou écris ta propre réponse…", "Or type your own answer…") : L("Écris ta réponse…", "Type your answer…")}
-            value={decided[currentIdx] || ""}
-            disabled={answering === currentIdx}
-            onChange={(e) => setDecided((d) => ({ ...d, [currentIdx]: e.target.value }))}
-            onKeyDown={(e) => { if (e.key === "Enter") onAnswer(currentIdx, decided[currentIdx] || ""); }}
-          />
-        </div>
-      ) : gatesAnother && !s.automatable ? (
-        <>
-        {/* "What did you decide?" only when this step GATES a later one — then it feeds that next step. A
-            persistent label (not just a placeholder, which vanishes once typing starts) so it stays clear
-            this is required to move on, not optional extra info. */}
-        <label className="step-input-label" htmlFor="step-input-hero">{L("Optionnel — note ce que tu as décidé :", "Optional — note what you decided:")}</label>
-        <input
-          id="step-input-hero"
-          className="step-input"
-          placeholder={L("ex : j'ai choisi le sujet X…", "e.g. I picked topic X…")}
-          value={decided[currentIdx] || ""}
-          onChange={(e) => setDecided((d) => ({ ...d, [currentIdx]: e.target.value }))}
-          onKeyDown={(e) => { if (e.key === "Enter") onStepDone(currentIdx); }}
-        />
-        </>
-      ) : null}
-      {/* One button, not three: a step with a link opens it (and — if nothing further is needed from the
-          user — marks itself done in the same click); otherwise it flips to "Done" once opened. A step
-          with no link is just "Done". "I'm stuck" is dropped here — the tutor chat right below is always
-          one glance away, so a dedicated help button on every step was one more thing competing for
-          attention for a path that already exists. */}
-      {/* A step with a question answers THROUGH that box above (which runs the step) — a separate "C'est
-          fait" here would let it be marked done without ever actually answering, so it's dropped. */}
-      {!s.question ? (
-        <div className="hero-acts">
-          {s.url && !(openedIdx === currentIdx) ? (
-            <button
-              className="btn primary"
-              title={s.url}
-              onClick={() => {
-                openTab(s.url!, TAB_GROUP);
-                if (s.automatable) onStepDone(currentIdx);
-                else setOpenedIdx(currentIdx);
-              }}
-            >
-              {L(`Ouvrir ${linkKind(s.url, L) || "le lien"} ↗`, `Open ${linkKind(s.url, L) || "link"} ↗`)}
-            </button>
-          ) : (
-            <button className="btn primary" onClick={() => onStepDone(currentIdx)}>{L("C'est fait", "Done")}</button>
-          )}
-        </div>
-      ) : null}
-    </div>
-  );
+  // Direct instruction: remove the big bold hero for the ordinary "here's the current step" case —
+  // StepList (the "All steps" disclosure right below) already shows every step, current one included, with
+  // its own full mark-done/question-answer/decide UI (see that component), so this was the same content
+  // and the same controls duplicated in two places on the same card.
+  return null;
 }
 
 /* ─────────────────────────────── panels ─────────────────────────────── */
@@ -1283,12 +1259,10 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
   const hiddenCount = allChips.length - visibleChips.length;
   return (
     <>
-      {task.did?.length ? (
-        <>
-          {artifactCount > 0 ? <span className="prepared-label">{L("Fait", "Done")}</span> : null}
-          <ul className="bullets">{task.did.map((d, i) => <li key={i}>{withInlineLinks(d)}</li>)}</ul>
-        </>
-      ) : null}
+      {/* Direct instruction: remove the "Done" section (task.did's bullet log of what Otto did) from each
+          task's detail view — the artifact chips right below already show what got made; this was a second,
+          plain-text echo of mostly the same thing. task.did itself is untouched (still written server-side,
+          still shown on TaskReadOnly's phone-only read view), only this render is removed. */}
       {/* In-app notes, flashcard decks and quizzes — no external tab, they open right here in a popup.
           Row-card layout (icon badge + title + meta) rather than an inline pill: these are real artifacts
           worth a proper tap target, not tags, and stacking them makes it obvious there are several. The
@@ -1325,10 +1299,7 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
         </>
       ) : null}
       {task.links?.length ? (
-        // A plain <a target="_blank"> here opened a tab the extension's Study Mode site-block then
-        // immediately redirected to blocked.html (see background.js's doOpenInGroup for why) — going
-        // through openTab() instead allowlists this exact host first when the extension is present, same
-        // fix as TaskDetailDrawer.tsx's own source links.
+        // openTab() opens via window.open with noopener (see client/ui.tsx).
         <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url} onClick={(e) => { e.preventDefault(); openTab(l.url, TAB_GROUP); }}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url, L)) || L("Ouvrir le lien", "Open link")} ↗</a></li>)}</ul>
       ) : null}
     </>
@@ -1347,12 +1318,24 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
   const en = L("fr", "en") === "en";
   const thinkingWord = useThinkingWord(sending);
   const speechLang = en ? "en-US" : "fr-FR";
-  const chatContainerRef = useRef<HTMLDivElement | null>(null);
-  const userScrolledRef = useRef(false);
-  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    const container = e.currentTarget;
-    userScrolledRef.current = container.scrollHeight - container.scrollTop - container.clientHeight >= 100;
-  }, []);
+  // AUTO-SCROLL — ALWAYS: the thread lands on its newest message when it opens, and every new turn (the
+  // student's own message, the pending echo, Otto's reply, the typing indicator) keeps the bottom in
+  // view. Nothing scrolled it before: the only autoscroll effect lived in the PARENT and read a
+  // chatContainerRef that was never attached to any DOM node, so a student opening a task with history
+  // always landed at the TOP of the conversation and had to scroll down to see Otto's last answer.
+  // Anchored on the thread's end marker with block:"nearest" — it scrolls the thread's own 260px
+  // scroller (and, only if needed, an outer panel) the minimum amount to bring the newest message in.
+  const chatMountedRef = useRef(false);
+  useEffect(() => {
+    if (!chatMountedRef.current) {
+      chatMountedRef.current = true;
+      // Two frames: the messages (markdown, artifact chips) haven't laid out on first paint, so the end
+      // marker still sits high — scrolling now would land mid-history instead of at the bottom.
+      const raf = requestAnimationFrame(() => requestAnimationFrame(() => endRef.current?.scrollIntoView({ block: "nearest" })));
+      return () => cancelAnimationFrame(raf);
+    }
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [task.chat?.length, sending, pendingMsg]);
   const synth = useSpeechSynthesis(speechLang);
   const [voiceModeOn, toggleVoiceMode] = useVoiceModePref();
   const sendingRef = useRef(sending);
@@ -1414,7 +1397,7 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
       <h3>{L("Demander à Otto", "Ask Otto")}</h3>
       {/* role="log" so a screen reader announces replies as they arrive — the thread updates without any
           navigation, so without this a blind student would never know an answer had come back. */}
-      <div className="chat-thread" role="log" aria-live="polite" aria-label={L("Conversation avec Otto", "Conversation with Otto")} ref={chatContainerRef} onScroll={handleScroll}>
+      <div className="chat-thread" role="log" aria-live="polite" aria-label={L("Conversation avec Otto", "Conversation with Otto")}>
         {!task.chat?.length && !pendingMsg ? (
           <p className="muted small">{L("Dis-lui ce qui bloque. Il explique, il ne donne pas la réponse.", "Say what's blocking you. It'll explain — not hand you the answer.")}</p>
         ) : task.chat?.map((m, i) => (

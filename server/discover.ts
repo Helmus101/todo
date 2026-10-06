@@ -28,6 +28,10 @@ export interface SourceItem {
   /** Pronote only: the school subject as Pronote names it ("Physique-Chimie"). Carried onto the task as
    *  `sourceSubject` so the run can shape the artifact per subject (formulas vs timeline vs vocab deck). */
   subject?: string;
+  /** Calendar only: the event's own `location` field (a real address/venue, not inferred from free text) —
+   *  carried as its own field, not just folded into `snippet`, so tasks.ts can attach a Google Maps link
+   *  deterministically (see attachLocationLinks) without re-parsing it out of prose. */
+  location?: string;
 }
 
 // Deterministic noise filters — mass mail never even reaches the model.
@@ -116,6 +120,7 @@ export function calendarToItems(data: any, now: number = Date.now(), account?: {
       labels: ["event"],
       accountId: account?.id,
       accountEmail: account?.email,
+      location: e?.location ? String(e.location).trim().slice(0, 200) : undefined,
     };
   }).filter((x): x is SourceItem => !!x);
 }

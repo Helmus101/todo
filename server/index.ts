@@ -1102,14 +1102,43 @@ app.post("/api/settings/smoke", requireAuth, rateLimit(3, 60_000), async (req, r
 // ── Tasks ─────────────────────────────────────────────────────────────────────
 // Reconcile with the cloud copy on every load, so a task finished on ANOTHER device/tab never shows
 // undone here (and never gets pointlessly re-run by this device's auto-run).
+/** O(n) "did the merge actually change anything" check — the same cheap id/updatedAt/status signature
+ *  mergeTaskLists' fast path uses to skip its O(n²) dedupe. Deliberately NOT a reference check: the fast
+ *  path returns the FIRST argument (the cloud copy) when the lists are identical, which is a different
+ *  object than the session's copy even when not a single field differs. */
+const sameTasksSignature = (a: WebTask[], b: WebTask[]): boolean => {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  const byId = new Map(b.map((t) => [t.id, t]));
+  for (const t of a) {
+    const o = byId.get(t.id);
+    if (!o || t.updatedAt !== o.updatedAt || t.status !== o.status) return false;
+  }
+  return true;
+};
+
 app.get("/api/tasks", requireAuth, async (req, res) => {
+  // Set when this poll actually changed something (a cloud reconciliation, or a first-exposure
+  // shownAt/orderingArmId stamp) — the gate for persisting the session at the bottom. Unchanged polls
+  // skip the Supabase write entirely.
+  let tasksChanged = false;
+  // Per-poll ordering boosts, held per task id and applied to the OUTGOING copies only (see withNudge
+  // below) — never written back onto req.session.tasks.
+  const boosts = new Map<string, number>();
   try {
     if (req.session.user && cloudEnabled()) {
+      const sessionTasks = req.session.tasks || [];
       const cloud = await loadState(req.session.user);
-      req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
-      // The client only needs the merged LIST — persisting the reconciled session is bookkeeping that
-      // can happen after the response goes out (saveSession never rejects, so this is safe to fire-and-forget).
-      void saveSession(req);
+      const merged = mergeTasks(cloud.tasks || [], sessionTasks);
+      // Reconcile the session copy only when the cloud copy actually differs. The overwhelmingly common
+      // poll lands with both copies identical, and upserting the FULL session blob (profile + every task
+      // + chat history) to Supabase on every /api/tasks tick was a real per-poll CPU + egress cost for a
+      // write that carried zero new data. Skipping is safe: every durable change already lives in the
+      // cloud row — the session copy is a cache that re-derives the same union on the next real merge.
+      if (!sameTasksSignature(merged, sessionTasks)) {
+        req.session.tasks = merged;
+        tasksChanged = true;
+      }
     }
   } catch { /* best-effort — fall back to the session copy */ }
   if (req.session.tasks) {
@@ -1153,20 +1182,36 @@ app.get("/api/tasks", requireAuth, async (req, res) => {
       // position relative to its neighbors) never shifts just because the account is now in a different
       // ordering-bandit bucket than when it first appeared. Only a task that hasn't been shown yet uses
       // the current session's arm.
-      for (const t of live) t.score = (t.score || 0) + orderingBoost(t, t.orderingArmId || orderingArm, subjectFreq) + weakSubjectBoost(t, weakSubjects, subjectSignals) + twoMinuteRuleBoost(t);
-      for (const t of req.session.tasks) { if (!t.shownAt && !isHandled(t.status)) { t.shownAt = now; t.orderingArmId = orderingArm; } }
+      // Boosts are computed per request and applied RESPONSE-ONLY below. They used to be added straight
+      // into t.score here — which re-ran on EVERY poll, so a live task's persisted score grew by up to
+      // +0.3 per tick: the ETag on this route never matched (every poll shipped the full body), every
+      // poll also wrote the inflated scores back to Supabase, and the drift eventually reshuffled
+      // near-tied tasks ("the order keeps randomly changing"). The same deterministic boost applied once
+      // per request produces the identical intended ordering — without compounding.
+      for (const t of live) boosts.set(t.id, orderingBoost(t, t.orderingArmId || orderingArm, subjectFreq) + weakSubjectBoost(t, weakSubjects, subjectSignals) + twoMinuteRuleBoost(t));
+      for (const t of req.session.tasks) { if (!t.shownAt && !isHandled(t.status)) { t.shownAt = now; t.orderingArmId = orderingArm; tasksChanged = true; } }
     } catch {
-      for (const t of req.session.tasks) { if (!t.shownAt && !isHandled(t.status)) t.shownAt = now; }
+      for (const t of req.session.tasks) { if (!t.shownAt && !isHandled(t.status)) { t.shownAt = now; tasksChanged = true; } }
     }
   }
+  // Deferred session persist — only when THIS poll actually changed something (see tasksChanged above;
+  // saveSession never rejects, so this stays safe to fire-and-forget).
+  if (tasksChanged) void saveSession(req);
   // Spark-vs-facilitator nudge (patterns.ts's stallNudgeLine) — computed fresh on every request, never
   // stored: it depends on "how many days since shown", which changes on its own even with nothing else
   // touched. Attached only to the OUTGOING copy, never written back onto req.session.tasks, so it can never
   // leak into cloud storage or a cross-device merge.
-  const withNudge = (req.session.tasks || []).map((t) =>
-    !isHandled(t.status) ? { ...t, nudgeLine: stallNudgeLine(t, req.session.profile) || undefined } : t);
-  // ETag: 4-second poll loops hit this on every tick — a hash-gated 304 means 0 bytes egress on the
-  // overwhelming-majority of polls where nothing actually changed since the last fetch.
+  const withNudge = (req.session.tasks || []).map((t) => {
+    if (isHandled(t.status)) return t;
+    // Apply this request's ordering boost to the OUTGOING copy only (see the boosts map above) — the
+    // persisted score stays the clean Eisenhower base, so the boost can't compound poll over poll.
+    const boost = boosts.get(t.id) || 0;
+    return { ...t, ...(boost ? { score: (t.score || 0) + boost } : {}), nudgeLine: stallNudgeLine(t, req.session.profile) || undefined };
+  });
+  // ETag: poll loops hit this on every tick — a hash-gated 304 means 0 bytes egress on the
+  // overwhelming-majority of polls where nothing actually changed since the last fetch. (Only true now
+  // that the ordering boosts are response-only — while they mutated persisted scores on every poll, the
+  // body changed every tick and every poll paid the full payload.)
   const tasksJson = JSON.stringify(withNudge);
   const etag = `"${createHash("sha1").update(tasksJson).digest("hex").slice(0, 16)}"`;
   res.setHeader("ETag", etag);

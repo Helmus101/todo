@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { WebTask } from "../../shared/types.ts";
 import { api } from "../api.ts";
 import { setLocalObjectives, getLocalThread } from "../localChatBoard.ts";
-import { useLang, TaskModal } from "../ui.tsx";
+import { useLang, TaskModal, formatMath } from "../ui.tsx";
 import { AskOttoPanel } from "../study/AskOttoPanel.tsx";
 import { BoardArtifact } from "../study/artifacts/BoardArtifact.tsx";
 import { TutorDesmos } from "./TutorDesmos.tsx";
@@ -38,7 +38,7 @@ async function dismissWithRetry(taskId: string): Promise<void> {
  *  dismissed silently, not memorialized). Ending a session generates a short summary from the board + chat
  *  (see tutorSessions.ts), saves it locally, and dismisses the task so the next start creates a fresh one.
  *  Past session summaries are shown in a collapsible strip. */
-export function TutorSession({ userId, onExit, visionReady }: { userId: string | null; onExit: () => void; visionReady: boolean }) {
+export function TutorSession({ userId, onExit, visionReady, sessionId }: { userId: string | null; onExit: () => void; visionReady: boolean; sessionId?: string }) {
   const L = useLang();
   const [task, setTask] = useState<WebTask | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -110,6 +110,20 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
   useEffect(() => {
     setPastSessions(getTutorSessions(userId));
   }, [userId]);
+
+  // If a sessionId is provided via route, load that session from history
+  useEffect(() => {
+    if (sessionId && userId) {
+      const sessions = getTutorSessions(userId);
+      const session = sessions.find((s) => s.id === sessionId);
+      if (session) {
+        // Load the session in review mode - show board and chat
+        setOpenBoardSession(session);
+        setOpenChatSession(session);
+        setShowHistory(true);
+      }
+    }
+  }, [sessionId, userId]);
 
   const saveAndClose = useCallback((task: WebTask, startedAt: string) => {
     const chat = task.chat || [];
@@ -336,12 +350,12 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
     }
   }, [selectedSubject, startingSession, pendingActiveSession, sessionStart, saveAndClose, userId, L]);
 
-  // The Tutor route hides the app's usual sidebar/topbar entirely (reported live: it should be a full-
-  // screen, focused surface) — this is the ONE way back to Tasks that replaces it, present on every one of
-  // this component's screens (error, landing, active session) so it's never actually a dead end.
+  // The Tutor route hides the app's top nav entirely (it's a focused, full-screen surface) — this is the
+  // ONE way back to Tasks that replaces it, present on the landing and error screens (the active session
+  // uses the breadcrumb bar's "All sessions" link instead).
   const backButton = (
     <button type="button" className="tutor-back-btn" onClick={onExit} aria-label={L("Retour aux tâches", "Back to tasks")}>
-      ← Otto
+      ← {L("Toutes les séances", "All sessions")}
     </button>
   );
 
@@ -360,9 +374,11 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
       <main className="list-wrap tutor-landing">
         {backButton}
         <div className="tutor-landing-inner">
-          <div className="tutor-hero-kicker">{L("Le tutorat qui te rend autonome", "Tutoring that makes you independent")}</div>
-          <h2>{L("Apprendre en réfléchissant", "Learn by thinking")}</h2>
-          <p className="tutor-landing-sub">{L("Otto ne fait pas le travail à ta place. Il t'aide à essayer, à expliquer ton raisonnement et à transférer ce que tu apprends.", "Otto won't do the work for you. He helps you try, explain your reasoning, and transfer what you learn.")}</p>
+          {/* The prototype's cream-circle face — two dots, no mouth. The one illustration the whole
+              design system allows, reused on the landing and the session screens. */}
+          <div className="tutor-face" aria-hidden><span className="tutor-face-eye" /><span className="tutor-face-eye" /></div>
+          <h2 className="tutor-landing-title">{L("Salut, moi c'est Otto.", "Hi, I'm Otto.")}</h2>
+          <p className="tutor-landing-sub">{L("Qu'est-ce que tu veux comprendre aujourd'hui ?", "What would you like to understand today?")}</p>
 
           {/* If there's an active session, show resume option */}
           {pendingActiveSession && (
@@ -382,39 +398,38 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
             </div>
           )}
 
-          {/* Always show subject selector so you can create a new session even when one is active */}
-          <div className="tutor-subject-select">
-            <label htmlFor="tutor-subject-select">{L("Sur quelle matière veux-tu travailler ?", "Which subject do you want to work on?")}</label>
+          {/* Always show subject selector so you can create a new session even when one is active —
+              rendered as the prototype's single wide pill: subject select left, orange "Start a session"
+              button right, no separate label above. The gate stays (the button is disabled until a
+              subject is picked) but the affordance is always visible. */}
+          <div className="tutor-start-row">
             <select
               id="tutor-subject-select"
               value={selectedSubject}
               onChange={(e) => setSelectedSubject(e.target.value)}
-              className="btn ghost"
+              className="tutor-start-select"
+              aria-label={L("Matière", "Subject")}
             >
               <option value="">{L("Choisir une matière", "Choose a subject")}</option>
               {COMMON_SUBJECTS.map((subj) => (
                 <option key={subj} value={subj}>{subj}</option>
               ))}
             </select>
-          </div>
-
-          {/* Start appears only once a subject is picked */}
-          {selectedSubject && (
             <button
               className="btn primary tutor-start-btn"
               onClick={() => void startNewSession()}
-              disabled={startingSession}
+              disabled={startingSession || !selectedSubject}
             >
               {startingSession
                 ? L("Démarrage…", "Starting…")
-                : L("Commencer une séance de ", "Start a ") + selectedSubject + L("", " session")}
+                : L("Commencer une séance", "Start a session")}
             </button>
-          )}
+          </div>
 
           {pastSessions.length > 0 && (
             <div className="tutor-past-sessions">
               <button className="tutor-history-toggle" onClick={() => setShowHistory((v) => !v)}>
-                {showHistory ? "▼ " : "▶ "}{L("Séances précédentes", "Past sessions")} ({pastSessions.length})
+                {showHistory ? "▼ " : "▶ "}{L("Nos séances passées", "Our past sessions")} ({pastSessions.length})
               </button>
               {showHistory && (
                 <ul className="tutor-history-list">
@@ -438,7 +453,7 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
                         </div>
                         <div className="tutor-history-topic">
                           {s.subject && <span className="tutor-history-subject-pill">{s.subject}</span>}
-                          <span>{s.summary.split(" — ")[0]}</span>
+                          <span>{formatMath(s.summary.split(" — ")[0])}</span>
                         </div>
                         {/* Board at a glance — the first few things Otto actually wrote that session, as the
                             compact scannable record (the full reopenable board is one click below). Capped at
@@ -447,9 +462,11 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
                           <div className="tutor-history-takeaways">
                             <div className="tutor-history-section-label">{L("Le tableau en bref", "Board at a glance")}</div>
                             <ul className="tutor-history-board">
-                              {s.boardEntries.filter(Boolean).slice(0, 3).map((line, bi) => (
-                                <li key={bi}>{line.length > 140 ? `${line.slice(0, 140)}…` : line}</li>
-                              ))}
+                              {s.boardEntries.filter(Boolean).slice(0, 3).map((line, bi) => {
+                                const formattedLine = formatMath(line);
+                                const displayLine = formattedLine.length > 140 ? `${formattedLine.slice(0, 140)}…` : formattedLine;
+                                return <li key={bi}>{displayLine}</li>;
+                              })}
                             </ul>
                           </div>
                         )}
@@ -458,6 +475,9 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
                           present for a session ended after this was added; an older saved session has no
                           `board` field to reopen. */}
                       <div className="tutor-history-actions">
+                        <a href={`/tutor/session/${s.id}`} className="btn ghost xs tutor-history-view-board">
+                          {L("Voir la séance", "View session")}
+                        </a>
                         {!!s.board?.length && (
                           <button type="button" className="btn ghost xs tutor-history-view-board" onClick={() => setOpenBoardSession(s)}>
                             {L("Voir le tableau", "View board")}
@@ -513,6 +533,119 @@ export function TutorSession({ userId, onExit, visionReady }: { userId: string |
           <span className="ts-chip" title={task.objectives.map((o) => `${o.done ? "✓" : "○"} ${o.label}`).join("\n")}>
             ◎ {objDone}/{task.objectives.length}{typeof task.mastery === "number" ? ` · ${Math.round(task.mastery * 100)}%` : ""}
           </span>
+    <main className={`tutor-session${voiceState.voiceModeOn ? " voice-primary" : ""}`}>
+      {/* The prototype's session chrome: breadcrumb left ("All sessions / Mathematics"), End session right. */}
+      <div className="tutor-crumbbar">
+        <button type="button" className="tutor-crumb-link" onClick={onExit}>{L("Toutes les séances", "All sessions")}</button>
+        {task.sourceSubject ? <span className="tutor-crumb-subject">{task.sourceSubject}</span> : null}
+        <button className="btn ghost tutor-end-btn" disabled={endingSession} onClick={() => void endSession()}>
+          {endingSession ? L("Fin…", "Ending…") : L("Terminer la séance", "End session")}
+        </button>
+      </div>
+      <section className="tutor-chat" aria-label={L("Discuter avec Otto", "Ask Otto")}>
+        <div className="tutor-chat-face-wrap">
+          <div className="tutor-face" aria-hidden><span className="tutor-face-eye" /><span className="tutor-face-eye" /></div>
+          <p className="tutor-chat-status">{sending || pendingMsg ? L("Otto réfléchit", "Otto is thinking") : L("Otto est là", "Otto is here")}</p>
+        </div>
+        {fresh && (
+          <div className="tutor-start">
+            <p>{L("Je suis là. Dis-moi où tu bloques, et on trouvera le chemin.", "I'm here. Tell me where you got stuck, and we'll find a way through.")}</p>
+          </div>
+        )}
+        {/* Reported live: the mic should be off while Otto is speaking, not open for interruption — no
+            `bargeIn` prop below, so this falls back to AskOttoPanel's standard pause-mic-during-TTS
+            behavior (abort the recognizer the moment speech starts, restart it ~400ms after it ends). A
+            deliberate reversal of the earlier barge-in feature for the Tutor specifically. */}
+        <div className="tutor-chat-body">
+          <AskOttoPanel
+            task={task} currentStep={undefined} input={input} setInput={setInput} sending={sending}
+            error={error} pendingMsg={pendingMsg} onSend={(o, v) => void send(o, v)}
+            onOpenNote={noop} onOpenDeck={noop} onOpenQuiz={noop}
+            emptyText="" placeholder={L("Écris ici…", "Type here…")}
+            onVoiceStateChange={handleVoiceState}
+          />
+        </div>
+      </section>
+      <section className="tutor-board" aria-label={L("Tableau", "Board")}>
+        <div className="tutor-pane-title">
+          <span className="micro-label">{whiteboardOpen ? L("Tableau blanc", "Whiteboard") : desmosOpen ? L("Desmos", "Desmos") : L("Tableau", "Board")}</span>
+          {/* Voice state lives on the BOARD pane: in voice-first mode this is the pane the student is
+              actually looking at. Kept small and inline in the pane title (reported: the earlier full-width
+              orb banner was too big/intrusive) — a compact status dot + label is enough to answer "am I
+              being heard / is Otto talking" without taking over the pane. Hidden whenever Desmos/the
+              whiteboard has replaced the board — the pill only matters when the student's actually looking
+              at the board itself. */}
+          {voiceState.voiceModeOn && !desmosOpen && !whiteboardOpen ? (
+            <span className={`tutor-voice-pill${voiceState.speaking ? " speaking" : voiceState.listening ? " listening" : ""}`} role="status">
+              {voiceState.speaking
+                ? L("Otto parle…", "Otto is speaking…")
+                : voiceState.listening
+                  ? L("Je t'écoute…", "Listening…")
+                  : L("Voix activée", "Voice on")}
+              {voiceState.listening && voiceState.interim ? <span className="tutor-voice-interim">{voiceState.interim}</span> : null}
+            </span>
+          ) : null}
+          {/* Lets the student SHOW Otto their own work (a diagram, a worked attempt) instead of only
+              describing it in words — reported ask: "make sure the tutor can process images from a
+              whiteboard." Hidden entirely when the server has no vision provider configured (GEMINI_API_KEY
+              — see server/claude.ts's describeWhiteboard). Moved here from the chat pane's header (reported
+              live: drawing should replace the BOARD, not the chat — the board is the visual-work pane, the
+              chat is the conversation; opening it here matches Desmos's own "replaces the board" place
+              instead of taking over the conversation surface). Mutually exclusive with Desmos — only one
+              replacement of the board at a time. */}
+          {!desmosOpen && !whiteboardOpen && visionReady && (
+            <button type="button" className="btn ghost xs" onClick={openWhiteboard}>
+              ✏ {L("Tableau blanc", "Whiteboard")}
+            </button>
+          )}
+          {/* The tutor's Desmos place, reachable from the board pane's own header — opening it REPLACES the
+              board entirely (see the branch below) rather than squeezing a small iframe in above it
+              (reported live: that felt cramped). Closing it restores the board exactly as it was; the
+              board's own state is never touched by opening/closing Desmos. The iframe itself stays mounted
+              under the hood even while hidden (see the wrapper below) — reported live: reopening Desmos used
+              to reload a blank calculator, throwing away whatever the student had graphed. */}
+          {!desmosOpen && !whiteboardOpen && (
+            <button type="button" className="btn ghost xs tutor-desmos-open" onClick={openDesmos}>
+              <span className="tutor-desmos-glyph" aria-hidden>ƒ</span> {L("Desmos", "Desmos")}
+            </button>
+          )}
+        </div>
+        {/* Board, Desmos, and the whiteboard are SIBLINGS now, not a nested ternary — each one that's ever
+            been opened this session stays mounted permanently (hidden via inline style, never unmounted)
+            so its own state survives toggling away and back: Desmos's iframe keeps running instead of
+            reloading blank, and the whiteboard's canvas keeps its drawn pixels instead of a close silently
+            discarding real unsubmitted work (both reported live). Only one is ever visible at a time. */}
+        {/* Today's focus: the session's SET_OBJECTIVES checklist, distinct from the board's own single
+            "focus" entry (one sentence of narrative framing). Shown as a compact strip above the board
+            itself so progress is visible at a glance without taking over the pane the way a full section
+            would — a long humanities session especially benefits from seeing "2 of 6 done" at a glance.
+            Hidden while Desmos/the whiteboard is showing (board stays mounted below it, just not visible). */}
+        {!desmosOpen && !whiteboardOpen && !!task.objectives?.length && (
+          <div className="tutor-objectives" aria-label={L("Objectifs de la séance", "Today's focus")}>
+            <div className="tutor-objectives-head">
+              <span>
+                {L("Objectifs du jour", "Today's focus")}
+                {/* Subject mastery — null means "no data yet" (never a fabricated 0%), so it's simply
+                    omitted rather than shown as a misleading score for a subject just started. */}
+                {typeof task.mastery === "number" && (
+                  <span className="tutor-objectives-mastery">
+                    {" "}· {L("maîtrise", "mastery")} {Math.round(task.mastery * 100)}%
+                  </span>
+                )}
+              </span>
+              <span className="tutor-objectives-progress">
+                {task.objectives.filter((o) => o.done).length}/{task.objectives.length}
+              </span>
+            </div>
+            <ul className="tutor-objectives-list">
+              {task.objectives.map((o) => (
+                <li key={o.id} className={o.done ? "done" : ""}>
+                  <span className="tutor-objectives-check" aria-hidden>{o.done ? "✓" : ""}</span>
+                  {o.label}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
         <span className="ts-spacer" />
         <button className="btn ghost tutor-end-btn" disabled={endingSession} onClick={() => void endSession()}>

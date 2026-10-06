@@ -260,27 +260,24 @@ export function fmtWhen(when: string, L?: (fr: string, en: string) => string): s
   return s;
 }
 
-// Open a URL in a new tab. Prefers the Otto Chrome extension (web/extension/) — it sets a DOM flag and
-// relays postMessage to chrome.tabs.create, so tabs can open UNATTENDED during auto-do. Without it, falls
-// back to window.open (works on a user click).
-export const TAB_GROUP = "Otto"; // all tabs Otto opens go into this one named group
-const extPresent = () => document.documentElement.getAttribute("data-weave-ext") === "1";
-// Open one or many tabs. With the extension, they go into a NAMED tab group (per task); without it,
-// window.open (no grouping possible from a plain page).
-export function openTab(url: string, group?: string) {
-  if (extPresent()) window.postMessage({ type: "weave-open-tab", url, group }, window.location.origin);
-  else window.open(url, "_blank", "noopener");
+// Open a URL in a new tab via window.open (with noopener so the opened page can't reach back into this
+// one via window.opener).
+// Kept as a label for the (formerly extension-managed) Otto tab group; grouping now happens only in the
+// browser's own tab UI. The optional group args are accepted and ignored so callers don't have to change.
+export const TAB_GROUP = "Otto";
+export function openTab(url: string, _group?: string) {
+  window.open(url, "_blank", "noopener");
 }
-export function openTabs(urls: string[], group?: string) {
+export function openTabs(urls: string[], _group?: string) {
   if (!urls.length) return;
-  if (extPresent()) window.postMessage({ type: "weave-open-tabs", urls, group }, window.location.origin);
-  else urls.forEach((u) => window.open(u, "_blank", "noopener"));
+  urls.forEach((u) => window.open(u, "_blank", "noopener"));
 }
 
 // Auto-open created documents (Doc/Sheet/Slides) when a task finishes — handy, but capped so you're never
-// flooded with tabs, only via the extension (a plain window.open would be popup-blocked without a click),
-// and EACH doc opens at most ONCE EVER. The opened-URL set is PERSISTED (localStorage) so reopening the app
-// never re-opens the same tabs again. Toggle in Settings (default ON).
+// flooded with tabs. Browser popup blockers usually reject window.open without a user click, so in practice
+// this only fires for opens that happen in a user-gesture context; EACH doc still opens at most ONCE EVER.
+// The opened-URL set is PERSISTED (localStorage) so reopening the app never re-opens the same tabs again.
+// Toggle in Settings (default ON).
 const DOC_RE = /docs\.google\.com\/(document|spreadsheets|presentation)/i;
 const OPENED_KEY = "otto-opened-docs";
 const openedDocs: Set<string> = (() => { try { return new Set<string>(JSON.parse(localStorage.getItem(OPENED_KEY) || "[]")); } catch { return new Set(); } })();
@@ -291,7 +288,7 @@ const markDocsOpened = (urls: string[]) => {
 let sessionDocsOpened = 0;               // burst control: cap how many open within one session load
 const SESSION_DOC_CAP = 4;               // ceiling on auto-opened docs per session load
 const PER_TASK_DOC_CAP = 2;              // and per task
-// Auto-opening created docs is OFF by default — it needs the Tabs extension, so it's opt-in ("1" = on).
+// Auto-opening created docs is OFF by default — it's opt-in ("1" = on).
 const autoOpenDocsOn = () => { try { return localStorage.getItem("otto-autoopen-docs") === "1"; } catch { return false; } };
 
 /** Auto-open the docs a finished task created, respecting every cap. Encapsulated here (rather than inlined
@@ -451,6 +448,8 @@ function formatMath(text: string): string {
   s = s.replace(/_\{([^{}]*)\}/g, (_, g) => scriptify(g, SUBSCRIPT, "_"));
   return s.replace(/[{}]/g, "").replace(/ {2,}/g, " ").trim();
 }
+
+export { formatMath };
 
 /** Light markdown → JSX for an in-app note (CREATE_NOTE's body): headings, **bold**, and bullet/numbered
  *  lists. Never sent anywhere — this only ever renders inside the popup, so a small hand-rolled pass is

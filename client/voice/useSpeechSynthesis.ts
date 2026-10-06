@@ -3,8 +3,8 @@ import { api } from "../api.ts";
 
 /** Strip the markdown Otto's replies use (headings, bold/italic emphasis markers, [links](url), GFM table
  *  pipes, bullet markers) down to plain readable prose — read aloud verbatim, "hashtag hashtag" and literal
- *  pipe/asterisk characters would be nonsense. */
-function toSpeakableText(md: string): string {
+ *  pipe/asterisk characters would be nonsense. Exported for unit tests. */
+export function toSpeakableText(md: string): string {
   return md
     .replace(/```[\s\S]*?```/g, " ")                 // code blocks — not worth reading aloud
     .replace(/`([^`]+)`/g, "$1")                      // inline code
@@ -16,6 +16,12 @@ function toSpeakableText(md: string): string {
     .replace(/^\s{0,3}\d+[.)]\s+/gm, "")               // numbered list markers
     .replace(/\|/g, ", ")                              // table pipes → a pause, not a literal bar
     .replace(/^\s{0,3}:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*$/gm, "") // table separator rows
+    // Reported live: an arrow in worked math ("t² = 9.18 → t = 3.03 s") either got read literally as
+    // "arrow" or mangled by the TTS engine — neither sounds like a tutor talking. Arrows in this app's chat
+    // always mean "leads to"/"therefore", so that's the word substituted, same meaning read aloud as on
+    // screen. Checked before the generic whitespace collapse below so the substituted word gets normal
+    // spacing on both sides regardless of how tightly the arrow was set in the source text.
+    .replace(/\s*(?:->|=>|→|⇒)\s*/g, " gives ")
     .replace(/[ \t]+/g, " ")
     .trim();
 }
@@ -100,7 +106,14 @@ export interface UseSpeechSynthesis {
 
 type QueueItem = { text: string; retried: boolean };
 
-const CLOUD_FETCH_TIMEOUT_MS = 8000;    // slower than this → treat the attempt as failed
+// Reported live: a slow Gemini response blew through the OLD 8s value here, which aborts the whole
+// /api/tts request client-side — killing StreamElements/Google Translate's chance to answer too, since
+// they're later steps in the SAME server-side request and never get reached once the client gives up.
+// Sized to comfortably cover the worst CURRENT single-tier latency (Gemini: up to ~15s across its own
+// 7s-timeout + one 7s retry on a transient status, server/claude.ts) plus a full StreamElements attempt
+// (8s) after it — long enough that the fallback chain this whole feature exists for actually gets to run,
+// short enough it isn't a one-minute wait before the student hears anything or nothing.
+const CLOUD_FETCH_TIMEOUT_MS = 25_000;  // slower than this → treat the attempt as failed
 const CLOUD_RETRY_DELAY_MS = 1200;      // one quick retry on a transient blip before giving up on a chunk
 const START_TIMEOUT_MS = 4000;          // browser engine: a chunk that never starts is treated as dropped
 const runTimeoutMs = (text: string) => Math.max(8000, text.length * 110); // ceiling for one chunk once playing

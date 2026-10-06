@@ -1,34 +1,36 @@
 /* ────────────────────────────────────────────────────────────────────────────
-   Tally-inspired UI — full application theme.
-   Clean white canvas, near-black ink, orange CTA (#EA580C), warm orange highlight
-   (#EA580C), Inter typography, 10px radii, hairline borders.
-   Loaded AFTER styles.css (see main.tsx) so it wins the cascade.
+   Otto prototype UI — full application theme.
+   Warm white canvas, near-black ink (#1D1D1F), graphite secondary (#6E6E73),
+   warm orange CTA (#FF752B) — tokens extracted from the Otto Framer prototype's
+   live computed styles. Inter typography, hairline borders, pill buttons.
+   Loaded AFTER styles.css (see main.tsx) so it wins the cascade; its token block
+   mirrors styles.css's so both files stay in lockstep.
    ──────────────────────────────────────────────────────────────────────────── */
 
 /* ─── Tokens ─────────────────────────────────────────────────────────────── */
 :root {
-  --bg: #FAFAFA;
+  --bg: #FFFFFF;
   --surface: #FFFFFF;
   --surface-raised: #FFFFFF;
   --surface-glass: #FFFFFF;
-  --ink: #18181B;
-  --ink-2: #52525B;
+  --ink: #1D1D1F;
+  --ink-2: #6E6E73;
   --ink-3: #A1A1AA;
-  --line: #E4E4E7;
+  --line: #E5E5EA;
   --line-soft: #F4F4F5;
-  --line-glass: #E4E4E7;
-  --accent: #2563EB;
-  --accent-hover: #1D4ED8;
-  --accent-active: #1E40AF;
-  --accent-soft: rgba(37, 99, 235, 0.06);
-  --accent-rgb: 37, 99, 235;
-  --accent-2: #EA580C;
-  --accent-2-soft: rgba(234, 88, 12, 0.08);
-  --accent-2-rgb: 234, 88, 12;
-  --focus-ring: rgba(37, 99, 235, 0.3);
-  --bg-2: #F4F4F5;
-  --bg-3: #E4E4E7;
-  --graphite: #71717A;
+  --line-glass: #E5E5EA;
+  --accent: #FF752B;
+  --accent-hover: #F26A22;
+  --accent-active: #E05A18;
+  --accent-soft: rgba(255, 117, 43, 0.10);
+  --accent-rgb: 255, 117, 43;
+  --accent-2: #FF752B;
+  --accent-2-soft: rgba(255, 117, 43, 0.10);
+  --accent-2-rgb: 255, 117, 43;
+  --focus-ring: rgba(255, 117, 43, 0.35);
+  --bg-2: #F5F5F4;
+  --bg-3: #EBEBEA;
+  --graphite: #6E6E73;
   --radius-2xs: 4px;
   --radius-xs: 6px;
   --radius-sm: 8px;
@@ -56,43 +58,8 @@
   --amber: #F59E0B;
 }
 
-/* Dark mode — clean, minimal dark palette */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0A0A0B;
-    --surface: #18181B;
-    --surface-raised: #27272A;
-    --surface-glass: #18181B;
-    --ink: #FAFAFA;
-    --ink-2: #A1A1AA;
-    --ink-3: #71717A;
-    --line: #27272A;
-    --line-soft: #1F1F23;
-    --line-glass: #27272A;
-    --accent: #60A5FA;
-    --accent-hover: #2563EB;
-    --accent-active: #1D4ED8;
-    --accent-soft: rgba(96, 165, 250, 0.1);
-    --accent-rgb: 96, 165, 250;
-    --accent-2: #FB923C;
-    --accent-2-soft: rgba(251, 146, 60, 0.1);
-    --accent-2-rgb: 251, 146, 60;
-    --bg-2: #27272A;
-    --bg-3: #3F3F46;
-    --bar: #0A0A0B;
-    --hover-wash: #27272A;
-    --bg-rgb: 10, 10, 11;
-    --glass-border: #27272A;
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-    --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.3);
-    --shadow-card-hover: 0 2px 8px rgba(0, 0, 0, 0.4);
-    --shadow-pop: 0 4px 24px rgba(0, 0, 0, 0.5);
-    --vermilion: #F87171;
-    --ok: #4ADE80;
-    --warn: #FBBF24;
-    --amber: #FBBF24;
-  }
-}
+/* Light-only — the Framer prototype is a white-on-white design. The former dark-mode
+   override block was removed in the restyle to the prototype (git history keeps it). */
 
 /* ─── Orange highlight (signature squiggly underline) ───────────────────── */
 .tally-highlight {
@@ -107,7 +74,7 @@
   right: -2px;
   bottom: -2px;
   height: 10px;
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 12' preserveAspectRatio='none'%3E%3Cpath d='M2 8 Q 25 2, 50 7 T 100 6 T 150 7 T 198 5' stroke='%23EA580C' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat center / 100% 100%;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 12' preserveAspectRatio='none'%3E%3Cpath d='M2 8 Q 25 2, 50 7 T 100 6 T 150 7 T 198 5' stroke='%23FF752B' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat center / 100% 100%;
   pointer-events: none;
 }
 
@@ -121,7 +88,7 @@ body {
 a { color: var(--accent); }
 a:hover { color: var(--accent-hover); }
 
-::selection { background: rgba(37, 99, 235, 0.12); }
+::selection { background: rgba(255, 117, 43, 0.14); }
 
 /* Focus rings — Tally uses a soft blue ring */
 :focus-visible {
@@ -367,63 +334,8 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
 /* ─── App shell ──────────────────────────────────────────────────────────── */
 .app { background: #FFFFFF; }
 
-/* Sidebar — Tally-style: flat white, hairline divider, compact nav */
-.sidebar {
-  width: 230px;
-  background: #FFFFFF;
-  border-right: 1px solid var(--line);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  padding: 20px 12px;
-  transition: none;
-}
-.sidebar-brand {
-  font-weight: 700;
-  font-size: 17px;
-  letter-spacing: -0.02em;
-  color: var(--ink);
-  padding: 4px 12px;
-  margin-bottom: 20px;
-}
-.sidebar-nav { gap: 2px; }
-.sidebar-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-radius: var(--radius-sm);
-  color: var(--ink-2);
-  font-size: 14px;
-  font-weight: 500;
-  text-decoration: none;
-  transition: background var(--duration-fast) ease, color var(--duration-fast) ease;
-  will-change: auto;
-}
-.sidebar-item:hover {
-  background: var(--bg-2);
-  color: var(--ink);
-}
-.sidebar-item:active { transform: none; }
-.sidebar-item.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 600;
-}
-.sidebar-item svg { width: 17px; height: 17px; }
-.sidebar-badge {
-  background: var(--accent);
-  font-weight: 600;
-  border-radius: var(--radius-pill);
-}
-
-/* Topbar — flat white hairline */
-.topbar {
-  background: #FFFFFF;
-  border-bottom: 1px solid var(--line);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  transition: none;
-}
+/* Navigation lives in the single top nav (styles.css .topnav*) — the old sidebar+topbar
+   chrome was removed in the restyle to the Framer prototype. */
 
 /* Content column — a touch wider, Tally centers forms with generous margins */
 .list-wrap, .settings-page {
@@ -713,11 +625,6 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
 
 /* ─── Settings — Tally form look: white card sections, hairline rows ────── */
 .settings-page { width: 100%; max-width: 660px; margin: 0 auto; }
-.settings-title {
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  font-size: clamp(26px, 4vw, 32px);
-}
 .settings-sec {
   background: #FFFFFF;
   border: 1px solid var(--line);
@@ -875,13 +782,6 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
 
 /* ─── Mobile ────────────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
-  .sidebar { border-right: 1px solid var(--line); width: 260px; }
-  .sidebar-toggle {
-    background: var(--accent);
-    color: #fff;
-    border-radius: 50%;
-    box-shadow: var(--shadow-pop);
-  }
   .hero-title-simple { font-size: 32px; }
   .hero-sub-simple { font-size: 16px; }
   .features-simple { gap: 28px; }
@@ -927,125 +827,8 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
 *::-webkit-scrollbar-thumb { background: var(--bg-3); border-radius: 3px; }
 *::-webkit-scrollbar-thumb:hover { background: var(--ink-3); }
 
-/* ─── Sidebar — refined spacing, sectioned nav, footer ──────────────────── */
-.sidebar {
-  width: 240px;
-  padding: 24px 14px 16px;
-  display: flex;
-  flex-direction: column;
-}
-.sidebar-brand {
-  padding: 2px 10px 0;
-  margin-bottom: 28px;
-  font-size: 16px;
-}
-.sidebar-brand .logo { color: var(--ink); }
-.sidebar-nav {
-  gap: 2px;
-  flex: 1;
-}
-.sidebar-item {
-  padding: 9px 12px;
-  font-size: 14px;
-  line-height: 1;
-  gap: 11px;
-  border-radius: var(--radius-sm);
-  min-height: 36px;
-}
-.sidebar-item svg {
-  width: 18px;
-  height: 18px;
-  stroke-width: 1.75;
-  flex-shrink: 0;
-}
-.sidebar-item.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 600;
-}
-.sidebar-item.active svg { stroke-width: 2; }
-.sidebar-badge {
-  min-width: 18px;
-  height: 18px;
-  font-size: 10px;
-  padding: 0 5px;
-}
-
-/* ─── Sidebar footer — user profile ─────────────────────────────────────── */
-.sidebar-footer {
-  margin-top: auto;
-  padding-top: 16px;
-  border-top: 1px solid var(--line-soft);
-}
-.sidebar-user {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  text-decoration: none;
-  transition: background var(--duration-fast) ease;
-}
-.sidebar-user:hover { background: var(--bg-2); }
-.sidebar-user-avatar {
-  width: 32px;
-  height: 32px;
-  min-width: 32px;
-  border-radius: 50%;
-  background: var(--accent);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-.sidebar-user-info {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  overflow: hidden;
-}
-.sidebar-user-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sidebar-user-email {
-  font-size: 11px;
-  color: var(--ink-3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* ─── Topbar — taller, cleaner, right-aligned actions ───────────────────── */
-.topbar {
-  height: 56px;
-  height: calc(56px + env(safe-area-inset-top));
-  padding-left: calc(28px + env(safe-area-inset-left));
-  padding-right: calc(28px + env(safe-area-inset-right));
-  background: var(--bg);
-  border-bottom: 1px solid var(--line);
-}
-.topbar-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--ink);
-  letter-spacing: -0.01em;
-}
-.topbar .btn.ghost {
-  font-size: 14px;
-  font-weight: 500;
-  padding: 7px 14px;
-  border-radius: var(--radius-sm);
-}
-
-/* ─── Content column — generous, centered, breathable ───────────────────── */
+/* The old sidebar/topbar chrome was removed in the restyle to the Framer prototype —
+   navigation is now the single top nav (styles.css .topnav*). Content is centered too. */
 .list-wrap {
   max-width: 720px;
   margin: 0 auto;
@@ -1405,12 +1188,6 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
 .toast.error .toast-x:hover { background: rgba(255,255,255,0.1); }
 
 /* ─── Settings — refined form sections ──────────────────────────────────── */
-.settings-title {
-  font-size: clamp(24px, 4vw, 30px);
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  margin-bottom: 28px;
-}
 .settings-sec {
   padding: 24px 28px;
   margin-bottom: 16px;
@@ -1544,49 +1321,20 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
 .disclosure-label { font-size: 14px; }
 
 /* ─── Dark mode refinements ─────────────────────────────────────────────── */
-@media (prefers-color-scheme: dark) {
-  .app { background: var(--bg); }
-  .topbar { background: var(--bg); border-bottom-color: var(--line); }
-  .sidebar { background: var(--surface); border-right-color: var(--line); }
-  .card { background: var(--surface); border-color: var(--line); }
-  .card:hover { border-color: var(--bg-3); box-shadow: var(--shadow-card); }
-  .card + .card { border-top-color: var(--line); }
-  .add-task-row { background: var(--surface); border-color: var(--line); }
-  .add-task-row:hover { border-color: var(--bg-3); }
-  .dash-hero { background: var(--surface); border-color: var(--line); }
-  .dash-hero:hover { border-color: var(--bg-3); }
-  .settings-sec { background: var(--surface); border-color: var(--line); }
-  .settings-sec:hover { border-color: var(--bg-3); }
-  .connect-card { background: var(--surface); border-color: var(--line); }
-  .int-tile, .int-acct { background: var(--surface); border-color: var(--line); }
-  .int-tile:hover, .int-acct:hover { border-color: var(--bg-3); }
-  .empty-state { background: var(--surface); border-color: var(--line); }
-  .toast { background: var(--surface); border-color: var(--line); }
-  .toast.error { background: #1a1a1a; border-color: #1a1a1a; }
-  .show-more-btn { background: var(--surface); border-color: var(--line); }
-  .show-more-btn:hover { background: var(--hover-wash); }
-  .intro.paused-banner { background: var(--surface); border-color: var(--line); }
-  .step-hero, .task-chat, .walk-panel, .task-plan-panel { background: var(--surface); border-color: var(--line); }
-  .studylog-day-cards { background: var(--surface); border-color: var(--line); }
-  .errorlog-entry { background: var(--surface); border-color: var(--line); }
-  .deck-card-face, .deck-card-back { background: var(--surface); border-color: var(--line); }
-  .study-mode-start, .sm-modal, .sm-drawer { background: var(--surface); border-color: var(--line); }
-  .study-help-panel { background: var(--surface); border-color: var(--line); }
-  .first-action { background: var(--surface); border-color: var(--line); }
-  .week-fab { background: var(--surface); border-color: var(--line); }
-  .page-info-hint { background: var(--surface); border-color: var(--line); }
-  .note-chip { background: var(--surface); border-color: var(--line); }
-  .sidebar-footer { border-top-color: var(--line); }
-  .sidebar-user:hover { background: var(--hover-wash); }
-  .quiz-mistake-textarea { background: var(--surface); border-color: var(--line); }
-  .step-input { background: var(--surface); border-color: var(--line); }
-  .chat-input { background: var(--surface); border-color: var(--line); }
-  .study-help-input { background: var(--surface); border-color: var(--line); }
-  input, textarea, select { background: var(--surface); }
-  .btn { background: var(--surface); border-color: var(--line); color: var(--ink); }
-  .btn:hover { background: var(--hover-wash); border-color: var(--bg-3); }
-  .card-check { background: var(--surface); border-color: var(--bg-3); }
-  .deck-btn-wrong { background: var(--surface); border-color: var(--line); }
+/* Light-only: the token-level dark block above was removed with the restyle to the Framer
+   prototype (a white-on-white design); this component-level block went with it. */
+
+/* ─── Forced colors (Windows High Contrast) ─────────────────────────────── */
+/* styles.css deliberately uses `outline` for :focus-visible because box-shadow is DROPPED entirely in
+   forced-colors mode — the Tally focus ring above (`outline: none; box-shadow: …`) made keyboard focus
+   invisible exactly for the users who need it most. Highlight is the UA's system focus color; a solid
+   outline is the only ring guaranteed to survive forced colors. */
+@media (forced-colors: active) {
+  :focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+    box-shadow: none;
+  }
 }
 
 /* ─── Mobile refinements ────────────────────────────────────────────────── */
@@ -1594,12 +1342,11 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
   .list-wrap, .settings-page {
     padding: clamp(24px, 4vh, 40px) 20px 100px;
   }
-  .topbar {
-    padding-left: calc(20px + env(safe-area-inset-left));
-    padding-right: calc(20px + env(safe-area-inset-right));
-  }
   .dash-hero { padding: 22px 20px; }
   .settings-sec { padding: 20px 18px; }
+  /* Five footer items (brand, 3 links, ©) in one space-between row squeeze into an unreadable line at
+     phone widths — stack them, centered, matching the landing's own column rhythm. */
+  .foot-top-simple { flex-direction: column; align-items: center; gap: 12px; }
   .card { padding: 14px 14px 14px 18px; }
   .card-x, .card-study { opacity: 1; }
   .toast { top: 12px; left: 12px; right: 12px; transform: none; max-width: none; }

@@ -1,6 +1,6 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
-import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor } from "../server/tasks.ts";
+import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor, attachLocationLinks, googleMapsDirectionsUrl } from "../server/tasks.ts";
 import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem, detectLang, visionReady, describeWhiteboard, academicBlock, sessionRecapLine } from "../server/claude.ts";
 import { evaluateArithmetic, parseNumber, findArithmeticClaims, hasArithmetic } from "../server/arithmetic.ts";
 import { isLikelyEcho, createEchoFilter, normalizeForEcho } from "../client/voice/echoGuard.ts";
@@ -16,10 +16,11 @@ import { connectionColumnUpdates } from "../server/store.ts";
 import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, contextKey, chooseArm, computeReward, computeCardReward, computeLatencyReward, updatePosterior, leadingArm } from "../server/bandit.ts";
 import { trimFreeTTSWatermark } from "../server/ttsTrim.ts";
 import { wantsArtifactTools } from "../server/claude.ts";
-import { rankVoices, cloudChunks } from "../client/voice/useSpeechSynthesis.ts";
+import { rankVoices, cloudChunks, toSpeakableText } from "../client/voice/useSpeechSynthesis.ts";
 import { pcmToWav, leaksAnswer, scrubAnswerLeak, makeProblem as makeProblemLeak, makePracticeProblem as makePracticeLeak, wordWrapChunks, leaksAnyProblemAnswer, makeInteractiveEntry } from "../server/claude.ts";
 import { lastMessageKey } from "../client/voice/replyKey.ts";
 import { subjectMastery } from "../shared/types.ts";
+import { COURSES, findCourse, normText, subjectMatches, matchesUnit, unitMastery, courseProgress, nextUnitToWork, masteryBand, UNIT_MASTERED_AT, orderCoursesForProfile, normalizeEnrolledCourses, unitObjectives } from "../shared/courses.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, subjectFrequency, orderingBoost, twoMinuteRuleBoost } from "../server/patterns.ts";
 
 let pass = 0, fail = 0;
@@ -520,6 +521,33 @@ const allDayEvs = calendarToItems({ items: [
 ] }, NOW);
 check("today's all-day event survives past UTC midnight", allDayEvs.some((e) => e.externalId === "allday1"));
 check("a genuinely past all-day event is still dropped", !allDayEvs.some((e) => e.externalId === "alldayOld"));
+
+// Direct request: "it should already prep a google maps link" for a task like "Check route to 70 rue du
+// Théâtre, Paris 75015" — a Calendar event's own `location` field is a real, structured address, so this
+// reads it directly instead of asking the AI classifier to transcribe an address out of free text (a wrong
+// address in a maps link actively sends the student to the wrong place).
+const withLocation = calendarToItems({ items: [
+  { id: "appt1", summary: "Dentist", start: { dateTime: "2026-07-19T15:00:00Z" }, location: "70 rue du Théâtre, Paris 75015" },
+  { id: "appt2", summary: "No address", start: { dateTime: "2026-07-19T16:00:00Z" } },
+] }, NOW);
+check("calendarToItems carries the event's own location field", withLocation.find((e) => e.externalId === "appt1")?.location === "70 rue du Théâtre, Paris 75015");
+check("an event with no location field gets none", withLocation.find((e) => e.externalId === "appt2")?.location === undefined);
+
+section("attachLocationLinks — a Calendar event's address gets a Google Maps link, deterministically");
+{
+  check("googleMapsDirectionsUrl builds a real, correctly-encoded Google Maps directions URL", googleMapsDirectionsUrl("70 rue du Théâtre, Paris 75015") === "https://www.google.com/maps/dir/?api=1&destination=70%20rue%20du%20Th%C3%A9%C3%A2tre%2C%20Paris%2075015");
+  const mkTask = (anchorKey, links) => ({ id: anchorKey, title: "t", why: "w", source: "calendar", risk: "low", urgency: 0.5, importance: 0.5, quadrant: "do", score: 0.5, status: "ready", createdAt: "now", anchorKey, links });
+  const t1 = mkTask("calendar:appt1", []);
+  attachLocationLinks([t1], [{ anchorKey: "calendar:appt1", location: "70 rue du Théâtre, Paris 75015" }]);
+  check("a task matching the event's anchorKey gets the maps link attached", t1.links.some((l) => l.url.includes("google.com/maps/dir") && l.url.includes("70%20rue")));
+  const t2 = mkTask("calendar:appt2", []);
+  attachLocationLinks([t2], [{ anchorKey: "calendar:appt2" }]);
+  check("a task whose source item has no location gets nothing added", t2.links.length === 0);
+  const t3 = mkTask("calendar:appt3", [{ label: "Open", url: "https://www.google.com/maps/dir/?api=1&destination=existing" }]);
+  attachLocationLinks([t3], [{ anchorKey: "calendar:appt3", location: "a different address" }]);
+  check("idempotent — a task that already has a maps link doesn't get a second one", t3.links.length === 1);
+  check("the label is the generic 'Open' so the client's own linkKind relabels it as Directions/Itinéraire from the URL", t1.links.find((l) => l.url.includes("maps")).label === "Open");
+}
 const thread = (labels, ts) => ({ sourceApp: "gmail", externalId: "t1", anchorKey: "gmail:t1", title: "Budget question", snippet: "…", sender: "a@b.com", timestamp: ts, labels });
 const replied = dedupeByThread([thread(["inbox"], "2026-07-18T10:00:00Z"), thread(["sent"], "2026-07-18T14:00:00Z")]);
 check("user's newer reply wins (thread handled)", replied.length === 1 && replied[0].labels.includes("sent"));
@@ -3760,6 +3788,71 @@ section("subjectMastery — per-subject mastery from tutor-session activity only
   check("subject matching is case-insensitive (matches sourceSubject's own normalization elsewhere)", subjectMastery([mkTask("chemistry", [{ front: "a", back: "b", review: { box: 2 } }])], [], "Chemistry", now) === 1);
 }
 
+section("Courses — built-in catalog integrity (built-in syllabi, AI units on demand — per scoping)");
+{
+  check("the catalog covers all three tracks the app supports (bac + ib + ap)", ["bac", "ib", "ap"].every((tr) => COURSES.some((c) => c.tracks.includes(tr))));
+  check("course ids are unique", new Set(COURSES.map((c) => c.id)).size === COURSES.length);
+  check("every course has ≥3 units with unique ids inside it", COURSES.every((c) => c.units.length >= 3 && new Set(c.units.map((u2) => u2.id)).size === c.units.length));
+  check("every unit has bilingual titles, ≥1 topic and ≥1 keyword", COURSES.every((c) => c.units.every((u2) => u2.title.fr && u2.title.en && u2.topics.length >= 1 && u2.topics.every((t) => t.fr && t.en) && u2.keywords.length >= 1)));
+  check("every course carries non-empty track + subject-alias lists", COURSES.every((c) => c.tracks.length >= 1 && c.subjects.length >= 1 && c.subjects.every((s) => s.trim())));
+  check("findCourse returns the right course and undefined for unknown ids", findCourse("maths-tle")?.subject === "Math" && findCourse("nope") === undefined);
+}
+
+section("Courses — unitMastery/courseProgress: mastery signals only, never a fabricated 0%");
+{
+  const course = {
+    id: "test", subject: "Chemistry", tracks: ["bac"], yearLevels: ["Seconde"], subjects: ["chemistry", "chimie"],
+    title: { fr: "Chimie", en: "Chemistry" },
+    units: [
+      { id: "u1", title: { fr: "Acides", en: "Acids" }, topics: [{ fr: "pH", en: "pH" }], keywords: ["acide", "ph", "acid"] },
+      { id: "u2", title: { fr: "Titrages", en: "Titrations" }, topics: [{ fr: "Titrage", en: "Titration" }], keywords: ["titrage", "titration"] },
+    ],
+  };
+  const now = new Date("2026-01-01T00:00:00Z");
+  const mkTask = (subject, cards) => ({ id: "t1", sourceSubject: subject, flashcards: [{ id: "d1", title: "d", cards, createdAt: "2026-01-01T00:00:00Z" }] });
+  const unit1 = course.units[0];
+
+  check("a unit nobody has touched → null (not started), never 0", unitMastery([mkTask("Chemistry", [])], [], course, unit1, now).mastery === null);
+  check("cards whose text mentions the unit feed the Leitner ratio", unitMastery([mkTask("Chimie", [{ front: "Qu'est-ce qu'un acide fort ?", back: "b", review: { box: 2 } }, { front: "pH", back: "b", review: { box: 1 } }])], [], course, unit1, now).mastery === 0.5);
+  check("cards for a DIFFERENT unit don't count toward this one", unitMastery([mkTask("Chemistry", [{ front: "Comment réaliser un titrage ?", back: "b", review: { box: 2 } }])], [], course, unit1, now).mastery === null);
+  check("notNeeded cards are excluded, same as subjectMastery", unitMastery([mkTask("Chemistry", [{ front: "acide", back: "b", review: { box: 2 }, notNeeded: true }, { front: "pH", back: "b", review: { box: 1 } }])], [], course, unit1, now).mastery === 0);
+  check("plural tolerance: a milestone topic mentioning 'acides' (s-plural) still matches the 'acide' keyword", unitMastery([], [{ subject: "Chemistry", topic: "les acides forts", label: "acide fort", achievedAt: now.toISOString() }], course, unit1, now).mastery > 0);
+  check("milestones for another subject are ignored", unitMastery([], [{ subject: "Math", topic: "acide", label: "x", achievedAt: now.toISOString() }], course, unit1, now).mastery === null);
+  check("subject matching is accent/case-insensitive both ways (Pronote FR ↔ tutor EN)", subjectMatches("Chimie", course) && subjectMatches("chemistry", course) && !subjectMatches("Math", course));
+  check("accent-stripping normalization (dérivée ≡ derivee)", normText("La dérivée") === "la derivee" && matchesUnit("La dérivée d'une fonction", { keywords: ["derivee"] }));
+
+  const p = courseProgress([mkTask("Chemistry", [{ front: "acide", back: "b", review: { box: 2 } }])], [], course, now);
+  check("courseProgress pct averages only the units with data", p.pct === 1 && p.touched === 1);
+  check("nextUnitToWork prefers the first untouched unit in course order", nextUnitToWork(p)?.unit.id === "u2");
+  const pEmpty = courseProgress([], [], course, now);
+  check("no data anywhere → pct null, next unit is the first one", pEmpty.pct === null && nextUnitToWork(pEmpty)?.unit.id === "u1");
+  check("masteryBand: null → new, below 0.8 → learning, at/above → mastered", masteryBand(null) === "new" && masteryBand(0.5) === "learning" && masteryBand(UNIT_MASTERED_AT) === "mastered");
+}
+
+section("Courses — real-catalog matching + enrollment + unit seeding");
+{
+  const now = new Date("2026-01-01T00:00:00Z");
+  const mkTask = (subject, cards) => ({ id: "t1", sourceSubject: subject, flashcards: [{ id: "d1", title: "d", cards, createdAt: "2026-01-01T00:00:00Z" }] });
+  const mathsTle = findCourse("maths-tle");
+  const limUnit = mathsTle.units.find((u2) => u2.id === "limites");
+  check("real catalog: a flashcard about limites matches its unit through the Pronote-style subject spelling", unitMastery([mkTask("Maths", [{ front: "Comment calculer une limite en l'infini ?", back: "…", review: { box: 2 } }])], [], mathsTle, limUnit, now).mastery === 1);
+  const maths1re = findCourse("maths-1re");
+  const derUnit = maths1re.units.find((u2) => u2.id === "derivation");
+  check("real catalog: a completed tutor-session milestone (recorded on session end) drives a unit's mastery", unitMastery([], [{ subject: "Mathématiques", topic: "dérivation d'une fonction composée", label: "dérivation", achievedAt: now.toISOString() }], maths1re, derUnit, now).mastery > 0);
+
+  check("normalizeEnrolledCourses drops unknown ids and duplicates, preserves order", JSON.stringify(normalizeEnrolledCourses(["maths-tle", "nope", "maths-tle", "ib-physics"])) === JSON.stringify(["maths-tle", "ib-physics"]));
+  check("normalizeEnrolledCourses tolerates non-arrays (old/corrupt profile data)", JSON.stringify(normalizeEnrolledCourses(undefined)) === "[]");
+
+  const unit = findCourse("maths-tle").units[0];
+  const fr = unitObjectives(unit, "fr");
+  const en = unitObjectives(unit, "en");
+  check("unitObjectives seeds 1-6 bilingual objectives straight from the unit's topics", fr.length >= 1 && fr.length <= 6 && fr[0] === unit.topics[0].fr && en[0] === unit.topics[0].en);
+
+  const ordered = orderCoursesForProfile(COURSES, { track: "bac", yearLevel: "Terminale" });
+  check("orderCoursesForProfile puts the student's own track + year first", ordered[0].tracks.includes("bac") && ordered[0].yearLevels.some((y) => y.toLowerCase() === "terminale"));
+  check("orderCoursesForProfile never drops any course (ordering only, not a filter)", ordered.length === COURSES.length);
+}
+
 section("Track-grounded curriculum content — syllabusGroundingLine gated like examStyleLine (source pin)");
 {
   const claudeSrcSyl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
@@ -3996,7 +4089,7 @@ section("TTS never falls straight to the browser voice — two free cloud tiers 
   // returning an error that would make the client fall back to the browser voice.
   const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
   check("a second, keyless TTS provider exists (StreamElements/Polly), not just Gemini", /export async function synthesizeSpeechFallback/.test(claude) && /api\.streamelements\.com\/kappa\/v2\/speech/.test(claude));
-  check("the fallback provider has real voices for both app languages (fr and en)", /STREAMELEMENTS_VOICE: Record<string, string> = \{ fr: "Celine", en: "Joanna" \};/.test(claude));
+  check("the fallback provider has real voices for both app languages (fr and en)", /STREAMELEMENTS_VOICE: Record<string, string> = \{ fr: "Mathieu", en: "Matthew" \};/.test(claude));
   check("the fallback provider validates it actually got audio back, not an error page with a 200", /ct\.startsWith\("audio\/"\)/.test(claude));
 
   const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
@@ -4046,14 +4139,16 @@ section("Clarity fixes — 'I'm not understanding' escalates, rephrasing isn't a
   check("the write-to-board tool rule requires honoring an EXPLICIT written-anchor request the same turn", claude.includes("If the student EXPLICITLY") && claude.includes('asks you to write/put something on the board'));
 }
 
-section("Chat bubble color — user bubble uses fixed saturated blue tokens, not the dark-mode-lightened --accent (source pins)");
+section("Chat bubble color — user bubble uses dedicated fixed-saturation tokens, not the theme-dependent --accent (source pins)");
 {
-  // Reported live: "text is grey on blue background". Root cause: dark mode lightens --accent to #60A5FA
-  // (for buttons/links) but the chat bubbles reused that same variable with white text — white-on-pastel-
-  // blue has very low contrast, which reads as grey. Fix: dedicated --chat-user-bg/--chat-user-bg-2 tokens
-  // that stay a fixed, saturated blue in BOTH themes (not redefined inside the dark-mode @media block).
+  // Reported live: "text is grey on blue background". Root cause: dark mode lightened --accent
+  // (for buttons/links) but the chat bubbles reused that same variable with white text — white-on-pastel
+  // had very low contrast, which read as grey. Fix: dedicated --chat-user-bg/--chat-user-bg-2 tokens with
+  // a fixed saturation regardless of theme. (Restyle note: the suite went light-only and the accent went
+  // orange in the Framer-prototype restyle, so the "fixed" value is now the suite orange #FF752B — the
+  // pins below still assert exactly what matters: a literal fixed value, and no dark-mode redefinition.)
   const css = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
-  check("--chat-user-bg is defined as a fixed saturated blue in :root", /--chat-user-bg:\s*#2563EB/.test(css));
+  check("--chat-user-bg is defined as a fixed literal hex in :root (not a var() reference)", /--chat-user-bg:\s*#[0-9A-Fa-f]{6}\s*;/.test(css));
   check(".chat-user (TaskCard's chat) uses --chat-user-bg, not the theme-lightened --accent", /\.chat-user\s*\{[^}]*--chat-user-bg-2[^}]*--chat-user-bg/s.test(css));
   check(".sm-ai-msg-user (Study Mode's Ask Otto chat) uses --chat-user-bg, not --accent", /\.sm-ai-msg-user\s*\{[^}]*--chat-user-bg/s.test(css));
   const darkBlock = css.slice(css.indexOf("@media (prefers-color-scheme: dark)"), css.indexOf("@media (prefers-color-scheme: dark)") + 1200);
@@ -4088,10 +4183,14 @@ section("Phone restriction — flashcard review + READ-ONLY tasks, no chat; iPad
   // ticking steps off, no Study Mode, no dismiss, no add-task.
   check("a phone opens TaskReadOnly instead of TaskFocus (which is where chat lives)", /isPhone \? \(\s*<TaskReadOnly task=\{openTask\} \/>/.test(app));
   check("task rows on phone are view-only (readOnly) and can't launch Study Mode", /readOnly=\{isPhone\}/.test(app) && /STUDY_MODE_ENABLED && !isPhone \?/.test(app));
-  check("add-task and the refresh/generate action are hidden on phone", /\{!isPhone && <div className="dash-addtask">/.test(app) && /\{!isPhone && \(route === "" \|\| route === "tasks"/.test(app));
+  // (Restyled to the Framer prototype: the old topbar's Refresh ghost button is gone — the generate
+  // action now lives only in the dashboard's own empty states, and add-task stayed phone-hidden.)
+  check("add-task and the refresh/generate action are hidden on phone", /\{!isPhone && <div className="dash-addtask">/.test(app) && !/\{!isPhone && \(route === "" \|\| route === "tasks"/.test(app));
   const card = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
   check("TaskCardRow's readOnly hides the tick-off, Study Mode and dismiss controls", /!isDone && !readOnly \? \(/.test(card) && /!isDone && !readOnly && onEnterStudyMode/.test(card) && /!isDone && !leaving && !readOnly && <button className="card-x"/.test(card));
-  check("TaskReadOnly renders the plan (steps + done state) and has no chat/handlers at all", /export function TaskReadOnly/.test(card) && /task-readonly-steps/.test(card) && !/TaskReadOnly[\s\S]{0,2000}onClick/.test(card));
+  // "no chat for the moment" is the explicit constraint here, not "no interaction at all" — opening a link
+  // (added later) is still a read of the task, not an action ON it, same spirit as the rest of this view.
+  check("TaskReadOnly renders the plan (steps + done state) and has no chat (TaskChat/sendChat) at all", /export function TaskReadOnly/.test(card) && /task-readonly-steps/.test(card) && !/TaskReadOnly[\s\S]{0,4000}<TaskChat/.test(card) && !/TaskReadOnly[\s\S]{0,4000}sendChat/.test(card));
   check("StudyLogPage gets a phoneOnly prop and forces the flashcards tab when set", /StudyLogPage lang=\{status\?\.language\} tasks=\{tasks\} status=\{status\} phoneOnly=\{isPhone\}/.test(app) && /useState<"journal" \| "flashcards">\(phoneOnly \? "flashcards" : "journal"\)/.test(app));
 
   const studyMode = readFileSync(new URL("../client/study/StudyMode.tsx", import.meta.url), "utf8");
@@ -4218,20 +4317,99 @@ section("CREATE_INTERACTIVE — sandboxed, scoped to Study Mode, capped (source 
   check("the prompt requires something visible on the first frame, before any interaction", claude.includes("Draw something visible on the FIRST"));
 }
 
-section("Landing page redesign — real features/integrations only, no fabricated testimonials or certifications (source pins)");
+section("Landing page redesign — prototype copy, real features only, no fabricated testimonials or certifications (source pins)");
 {
   // Direct instruction after reviewing a competitor's landing page: redesign Otto's, but explicitly WITHOUT
   // inventing customer testimonials (fabricated reviews attributed to fictional people) or claiming
   // certifications (SOC 2, ISO 27001, SAML SSO) this app doesn't hold — the user confirmed both calls.
+  // Later restyled to the Otto Framer prototype: the long feature/integrations grids were replaced by the
+  // prototype's two-column "01/PROACTIVE TASKS · 02/PERSONAL TUTOR" section with honest sample cards —
+  // still real, still nothing fabricated; the prototype's copy is the marketing now.
   const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
   const landing = app.slice(app.indexOf("export function Landing("), app.indexOf("// ── Legal pages"));
   check("no fabricated testimonial content (no quote attributed to a named 'customer')", !/testimonial/i.test(landing));
   check("no certifications this app doesn't hold (SOC 2 / ISO 27001 / SAML)", !/SOC\s*2/i.test(landing) && !/ISO\s*27001/i.test(landing) && !/SAML/i.test(landing));
-  // What replaced it: real, already-shipped features, and the real integrations catalog.
-  check("the feature grid names real, already-shipped capabilities (board, sources, interactive scenes, voice)", landing.includes("agent-feature-grid") && /tableau de séance|session document/.test(landing) && /scène|scene/i.test(landing) && /voix|voice/i.test(landing));
-  check("the integrations list matches server/integrations.ts's real CATALOG, not an invented one", landing.includes("integrations-grid") && landing.includes('L("Notion", "Notion")') && landing.includes('L("Pronote", "Pronote")'));
-  check("the security claims are checkable facts already true elsewhere in this app (AES-256-GCM, read-first OAuth)", landing.includes("AES-256-GCM") && /read-first|lecture par défaut/.test(landing));
-  check("the Research page (previously an orphan route, never linked) is now reachable from the footer", app.includes('href="/research"'));
+  check("the two-column prototype section names the two real halves of the product (proactive tasks + personal tutor)", landing.includes("features-framer") && /PROACTIVE TASKS/.test(landing) && /PERSONAL TUTOR/.test(landing));
+  check("the sample cards use the prototype's honest examples (derivatives task, slope question)", /Get ready for derivatives/.test(landing) && /What does the slope tell us/.test(landing));
+  check("the hero copy matches the prototype (Less busywork. More understanding.)", /Less busywork\. More understanding\./.test(landing));
+  check("the footer keeps Privacy/Terms (+ Research, not Unlimited) and the Research page stays reachable", landing.includes('href="/terms"') && landing.includes('href="/research"') && !landing.includes('href="/unlimited"'));
+}
+
+section("Task detail view — removed the big bold current-step hero, 'To get started', and the 'Done' bullet log (source pins)");
+{
+  // Direct instruction: remove three duplicated surfaces from each task's detail view (TaskFocus) — the
+  // big bold hero for the ordinary current step, "To get started" (task.firstAction), and the "Done"
+  // section (task.did's bullet log) — each of these restated something StepList/the artifact chips already
+  // show. Other StepHero states (done/waiting/failed/a draft to send/all-complete/no-steps-yet) are kept:
+  // those carry real actions (Retry, Run now, Looks good, a draft review) that exist nowhere else.
+  const card = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
+  check("StepHero's ordinary current-step branch (after `const s = steps[currentIdx]`) is gone — it now returns null there", /remove the big bold hero for the ordinary "here's the current step" case/.test(card) && !/const s = steps\[currentIdx\];\s*\n\s*const gatesAnother/.test(card));
+  check("StepHero's other states (done/waiting/failed/sendable/complete/empty) are all still there", /hero-done/.test(card) && /hero-waiting/.test(card) && /hero-failed/.test(card) && /hero-sendable/.test(card) && /hero-complete/.test(card) && /hero-empty/.test(card));
+  check("the 'To get started' / firstAction paragraph is removed from TaskFocus's render", !/first-action-label/.test(card) && card.includes('remove "To get started" (task.firstAction)'));
+  check("task.firstAction itself is untouched server-side — only the render was removed", card.includes("task.firstAction itself (server/claude.ts)") && card.includes("is left alone — only this render is removed"));
+  check("the 'Done' bullet log (task.did) is removed from PreparedPanel (TaskFocus's artifact section)", card.includes('remove the "Done" section') && !/\{artifactCount > 0 \? <span className="prepared-label">\{L\("Fait", "Done"\)\}/.test(card));
+  check("StepList (every step, current one included, with its own full controls) is untouched — nothing lost, just de-duplicated", /function StepList\(/.test(card) && /onStepDone\(i\)/.test(card));
+}
+
+section("TTS timeout retune — a slow Gemini must not abort the whole fallback chain before it gets to run (source pins)");
+{
+  // Reported live, with console logs: "signal timed out" twice in a row, then "skipping this reply's audio"
+  // — total silence on a reply. Root cause: the client's own fetch timeout (8s) was SHORTER than Gemini's
+  // own per-call timeout (15s) plus its one retry (another 15s) — the client gave up and aborted the whole
+  // /api/tts request before the server-side fallback chain (StreamElements, Google Translate) ever got a
+  // turn, since they're later steps in that SAME request. Fix: Gemini fails fast server-side (so the chain
+  // actually reaches the fallback tiers quickly), and the client's own timeout is long enough to let a
+  // realistic worst-case single-tier delay finish instead of cutting it off mid-flight.
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("Gemini's own per-call timeout is short enough to leave real time for the fallback tiers (was 15s)", /GEMINI_TTS_TIMEOUT_MS = 7_000/.test(claude));
+  check("StreamElements' timeout was also brought down from 15s for the same reason", /signal: AbortSignal\.timeout\(8_000\)/.test(claude));
+  const ttsSynthSrc = readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8");
+  check("the client's fetch timeout now comfortably exceeds Gemini's worst case (7s + one 7s retry) plus a full StreamElements attempt", /CLOUD_FETCH_TIMEOUT_MS = 25_000/.test(ttsSynthSrc));
+}
+
+section("HINT LADDER — a conceptual carryover between parts must be asked, not asserted (source pin)");
+{
+  // Reported live: "it already calculated the friction and forces, it didn't ask the user" — a 20°/25°
+  // inclined-plane problem where μ = tan20° carries over to the 25° case because μ depends on the surfaces,
+  // not the angle. The student asked "how am I supposed to know that", and Otto answered its own question
+  // ("μ came out as tan 20°, and the surfaces haven't changed, so μ is still tan 20° at 25°") instead of
+  // turning the reason into a question. Same "never hand over what they haven't stated" rule as the
+  // mechanical-arithmetic and substitution-result cases already pinned above, extended to a carried-over
+  // CONCEPTUAL fact, not just a computed number.
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("the rule explicitly covers a conceptual carryover between parts, not just arithmetic", claude.includes("THIS ALSO COVERS A CONCEPTUAL CARRYOVER, not just arithmetic") && claude.includes("μ is the same at 25° because it depends on the"));
+  check("it gives the question to ask instead of the assertion to avoid", claude.includes('does μ depend on the angle, or on') && claude.includes('"μ came out') && claude.includes("the surfaces haven't changed, so μ is still tan 20° at 25°"));
+}
+
+section("WRITE_TO_BOARD must not get ahead of the chat — only record a step once the student has actually reached it (source pin)");
+{
+  // Reported live: "it just derived the forces automatically, it should ask user to do it normally" — the
+  // board already showed the finished net-force expression ('F_net down slope = mg sin25 - mg cos25 *
+  // tan20') while the chat was still walking the student through deriving exactly that, piece by piece.
+  // leaksAnyProblemAnswer doesn't catch this: there's no CREATE_PROBLEM answer being leaked, just the
+  // board racing ahead of the Socratic pacing on a live derivation with no stored "answer" to check against
+  // — this needed its own explicit rule on the tool itself, distinct from the answer-leak guard.
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("WRITE_TO_BOARD's own description forbids writing a later step before the student reaches it", claude.includes("NEVER GET AHEAD OF THE CHAT") && claude.includes("never a later step of the SAME derivation they haven't reached yet"));
+  check("it cites the exact live failure (the finished F_net line written while chat was still deriving it)", claude.includes("F_net down slope = mg sin25 - mg cos25 * tan20") && claude.includes("the board had done the derivation FOR them"));
+  check("it gives the concrete fix: ask the question first, write the entry after they answer", claude.includes("ask the question first and write the entry after they answer it"));
+}
+
+section("TTS voice — switched to a male voice on both cloud tiers, arrows read as a word (source pins)");
+{
+  // Direct request: "use a better male voice" — Gemini's default (Kore, Firm/female-leaning) and
+  // StreamElements' default (Joanna/Celine, both female) both switched to a male voice, so the tutor
+  // doesn't change gender mid-session if Gemini's quota is hit and the route falls to the next tier.
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("Gemini's default voice is now Charon (male, Informative), not Kore", /GEMINI_TTS_VOICE \|\| "Charon"/.test(claude) && !/GEMINI_TTS_VOICE \|\| "Kore"/.test(claude));
+  check("StreamElements' fallback voices are also male (Mathieu/Matthew), not Celine/Joanna", /STREAMELEMENTS_VOICE: Record<string, string> = \{ fr: "Mathieu", en: "Matthew" \};/.test(claude));
+
+  // Direct request: "make sure here it doesn't say the arrow but replaces by word" — a worked-math arrow
+  // ("t² = 9.18 → t = 3.03 s") either got read literally as "arrow" or mangled by the TTS engine.
+  check("a unicode arrow is read as a word, not a symbol", toSpeakableText("t² = 9.18 → t = 3.03 s") === "t² = 9.18 gives t = 3.03 s");
+  check("an ASCII '->' arrow is also replaced", toSpeakableText("x -> y") === "x gives y");
+  check("a '=>' arrow is also replaced", toSpeakableText("A => B") === "A gives B");
+  check("spacing around the substituted word is normal regardless of how tight the arrow was in source", toSpeakableText("a→b") === "a gives b");
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

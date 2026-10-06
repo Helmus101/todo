@@ -901,7 +901,13 @@ export const PLAN_ONLY_OVERRIDE =
   `(ONLY durable knowledge: vocabulary, definitions, formulas, dates, names, or other discrete front→back facts ` +
   `the student must memorize. Flashcards are NOT a generic format for homework, exercises, literary analysis, ` +
   `essay prompts, reading assignments, project deliverables, plans, or questions requiring an original response. ` +
-  `For those, use CREATE_NOTE or CREATE_QUIZ when appropriate, or create nothing), and CREATE_QUIZ for a multiple-choice ` +
+  `For those, use CREATE_NOTE or CREATE_QUIZ when appropriate, or create nothing). IMPORTANT: when creating ` +
+  `flashcards, PRIORITIZE THE STUDENT'S JOURNAL CONTENT over generic curriculum material. Use the context ` +
+  `from THEIR RECENT STUDY JOURNAL to base cards on what they've actually been learning and practicing — the ` +
+  `topics, concepts, and problems they've explicitly studied. Only fall back to broader curriculum content when ` +
+  `the journal doesn't cover the topic yet. This ensures cards test what they're actively working on, not ` +
+  `material they haven't encountered. LANGUAGE MATCHING: If the journal entry is in French, the flashcard must be in French. ` +
+  `If it's in English, the flashcard must be in English. Match the language of each specific journal section, not force everything into one language), and CREATE_QUIZ for a multiple-choice ` +
   `self-check (NEW questions on the notion, with a one-line explanation each — for CHECKING whether a chapter ` +
   `is actually solid before a contrôle, not for memorizing facts). Pick per subject: a language/vocab/ ` +
   `a genuine knowledge/vocab/definitions/history-dates topic → CREATE_FLASHCARDS; a homework/exercise/literary ` +
@@ -1634,7 +1640,11 @@ export function visionReady(): boolean {
 // different voice is a config change, not a deploy. The client falls back to the browser's own voice
 // whenever this fails, so an outage degrades the voice, never silences it.
 const GEMINI_TTS_MODEL = process.env.GEMINI_TTS_MODEL || "gemini-2.5-flash-preview-tts";
-const GEMINI_TTS_VOICE = process.env.GEMINI_TTS_VOICE || "Kore";
+// "Kore" (the SDK's own example default) reads firm/female — direct request for a better male voice.
+// "Charon" is Google's documented "Informative" male voice, a clear, even register that fits a tutor
+// explaining something, as opposed to e.g. "Puck" (Upbeat/energetic) or "Fenrir" (Excitable), which read
+// as more hype than a calm explanation calls for.
+const GEMINI_TTS_VOICE = process.env.GEMINI_TTS_VOICE || "Charon";
 export function ttsReady(): boolean {
   return !!process.env.GEMINI_API_KEY;
 }
@@ -1663,14 +1673,21 @@ export function pcmToWav(pcm: Buffer, sampleRate: number, channels = 1, bitsPerS
 // 400/401/404, which a retry can't fix. Direct request ("make sure gemini always works"): most Gemini TTS
 // failures reported live have been exactly this kind of short-lived hiccup, not a real outage.
 const GEMINI_TTS_RETRY_STATUSES = new Set([429, 500, 503]);
-const GEMINI_TTS_RETRY_DELAY_MS = 1200;
+const GEMINI_TTS_RETRY_DELAY_MS = 800;
+// Reported live: a slow Gemini response (this used to wait up to 15s) blew straight through the CLIENT's
+// own fetch timeout, which aborts the whole /api/tts request — killing StreamElements/Google Translate's
+// chance to answer too, since they're later steps in the SAME request, never reached once the client gives
+// up. Gemini failing fast matters more here than Gemini succeeding slowly: 7s (plus one 7s retry on a
+// transient status) still leaves real time for the two fallback tiers inside the client's own budget (see
+// CLOUD_FETCH_TIMEOUT_MS, client/voice/useSpeechSynthesis.ts) instead of eating almost all of it.
+const GEMINI_TTS_TIMEOUT_MS = 7_000;
 
 async function callGeminiTts(text: string, key: string): Promise<{ wav: Buffer } | { error: string; status: number }> {
   try {
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-goog-api-key": key },
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(GEMINI_TTS_TIMEOUT_MS),
       body: JSON.stringify({
         contents: [{ parts: [{ text }] }],
         generationConfig: {
@@ -1714,7 +1731,10 @@ export async function synthesizeSpeech(text: string): Promise<{ wav: Buffer } | 
 // neural voices (same quality tier as Gemini's, not a robotic fallback). No official SLA/docs, so this is
 // "best-effort second opinion," not foundation-grade — if IT fails too, the client's browser voice is the
 // true last resort, which still beats dead silence.
-const STREAMELEMENTS_VOICE: Record<string, string> = { fr: "Celine", en: "Joanna" };
+// Matching Gemini's switch to a male voice above — this is the fallback tier, so it should sound like the
+// same tutor, not switch gender when Gemini's quota is hit. "Mathieu"/"Matthew" are the standard male
+// neural Polly voices for fr/en (StreamElements proxies Amazon Polly).
+const STREAMELEMENTS_VOICE: Record<string, string> = { fr: "Mathieu", en: "Matthew" };
 // A plain browser User-Agent: several free, undocumented TTS endpoints (this one included) quietly 403/502
 // a request that doesn't look like it came from a browser — a bare server-side fetch() sends no User-Agent
 // at all, which reads as a bot. Reported live: BOTH free tiers failed together on the same request, the
@@ -1725,7 +1745,10 @@ export async function synthesizeSpeechFallback(text: string, lang: string): Prom
   try {
     const res = await fetch(`https://api.streamelements.com/kappa/v2/speech?voice=${voice}&text=${encodeURIComponent(text)}`, {
       headers: { "User-Agent": BROWSER_UA, "Referer": "https://streamelements.com/", "Accept": "audio/mpeg,*/*" },
-      signal: AbortSignal.timeout(15_000),
+      // Same "fail fast, there's another tier waiting" reasoning as Gemini's own timeout above — this used
+      // to be 15s, which alone could eat the client's entire fetch budget before Google Translate ever got
+      // a turn.
+      signal: AbortSignal.timeout(8_000),
     });
     const ct = res.headers.get("content-type") || "";
     if (!res.ok || !ct.startsWith("audio/")) {
@@ -2251,7 +2274,7 @@ const CREATE_NOTE_TOOL = {
 // gets the short version.
 const CREATE_FLASHCARDS_TOOL = {
   name: "CREATE_FLASHCARDS",
-  description: "Create an in-app flashcard deck attached to this task — for drilling vocabulary, definitions, formulas, dates, or any front→back recall. Use this INSTEAD OF CREATE_NOTE for discrete facts to memorize, not a checklist. SCOPE: only content THIS student is actually expected to know for this course at their level — what the assignment/material names, or the core notions of the topic; never adjacent, advanced, or obscure detail their teacher wouldn't test. A card they can't answer because it was never part of their course reads as a gap that isn't one. NEVER make cards about the assessment itself — how many parts/sections an exam has, how many marks a part is worth, what format/timing it follows, what to bring, logistics. Reported live: a deck for an Economics test opened with 'Paper 1 has two parts. What is each one asking for, and how many marks?' — that's exam trivia, not economics; every card must test the SUBJECT-MATTER CONCEPTS AND KNOWLEDGE the exam covers (definitions, mechanisms, relationships, applications), never the exam's own structure. If the context lists cards the student marked as 'not something I need to learn', never make cards on those or similar content.",
+  description: "Create an in-app flashcard deck attached to this task — for drilling vocabulary, definitions, formulas, dates, or any front→back recall. Use this INSTEAD OF CREATE_NOTE for discrete facts to memorize, not a checklist. SCOPE: only content THIS student is actually expected to know for this course at their level — what the assignment/material names, or the core notions of the topic; never adjacent, advanced, or obscure detail their teacher wouldn't test. A card they can't answer because it was never part of their course reads as a gap that isn't one. NEVER make cards about the assessment itself — how many parts/sections an exam has, how many marks a part is worth, what format/timing it follows, what to bring, logistics. Reported live: a deck for an Economics test opened with 'Paper 1 has two parts. What is each one asking for, and how many marks?' — that's exam trivia, not economics; every card must test the SUBJECT-MATTER CONCEPTS AND KNOWLEDGE the exam covers (definitions, mechanisms, relationships, applications), never the exam's own structure. If the context lists cards the student marked as 'not something I need to learn', never make cards on those or similar content. CRITICAL: ALWAYS BASE FLASHCARDS ON THE STUDENT'S JOURNAL FIRST. Check the 'THEIR RECENT STUDY JOURNAL' section in the context — if it exists and mentions this subject/topic, ALL cards must be drawn from what the student has explicitly studied and written about in their journal. ONLY use broader curriculum material if: (1) the journal is completely empty, OR (2) the journal has no entries related to this subject/topic at all. Never guess or assume what they're studying — if you don't see it in their journal, don't make cards about it unless the journal is truly empty. LANGUAGE MATCHING: If the journal entry is in French, the flashcard must be in French. If it's in English, the flashcard must be in English. A single deck can mix languages (e.g., French history cards alongside English science cards) ONLY if the student's journal entries themselves mix languages — match the language of each specific journal section, not force everything into one language.",
   input_schema: { type: "object", properties: {
     title: { type: "string", description: "short label shown on the button, e.g. 'Vocabulaire — Chapitre 4'" },
     cards: {
@@ -2306,7 +2329,7 @@ const CREATE_PROBLEM_TOOL = {
 // the student's own reasoning once they've worked through something. Not scoped to practice problems.
 const WRITE_TO_BOARD_TOOL = {
   name: "WRITE_TO_BOARD",
-  description: "Write ONE short entry onto the student's persistent tutor Board — a visible, always-accessible surface separate from the chat thread, NOT limited to practice problems. The board is a document being BUILT entry by entry across the session: it opens with the day's focus, collects the key definitions and formulas as they come up, credits the student's own insights, and ends with a summary of their reasoning. Each call adds ONE short, focused entry — never a wall of text; the next thing gets its own entry later as the session moves on. What belongs here is decided by one test: would the student otherwise have to hold it in their head, or scroll back through chat to find it? (given values and the goal, a formula in play, the cases a problem splits into, a diagram, the sub-goal they're on, a key term's gloss, their own insight). Anything that fails that test stays in chat. Don't narrate that you're writing it ('let me jot that down') — just call the tool.",
+  description: "Write ONE short entry onto the student's persistent tutor Board — a visible, always-accessible surface separate from the chat thread, NOT limited to practice problems. The board is a document being BUILT entry by entry across the session: it opens with the day's focus, collects the key definitions and formulas as they come up, credits the student's own insights, and ends with a summary of their reasoning. Each call adds ONE short, focused entry — never a wall of text; the next thing gets its own entry later as the session moves on. What belongs here is decided by one test: would the student otherwise have to hold it in their head, or scroll back through chat to find it? (given values and the goal, a formula in play, the cases a problem splits into, a diagram, the sub-goal they're on, a key term's gloss, their own insight). Anything that fails that test stays in chat. Don't narrate that you're writing it ('let me jot that down') — just call the tool. NEVER GET AHEAD OF THE CHAT: a 'summary'/'formula'/'note' entry records a step ONLY once the student has actually said/derived it in chat THAT turn — never a later step of the SAME derivation they haven't reached yet, even symbolically with no numbers (reported live: the board already showed 'F_net down slope = mg sin25 - mg cos25 * tan20' as a finished line while the chat was still walking the student through deriving exactly that, one piece at a time — the board had done the derivation FOR them, just quietly, on a different surface than chat). If you're tempted to write the NEXT formula before asking the question that gets them there, ask the question first and write the entry after they answer it.",
   input_schema: { type: "object", properties: {
     text: { type: "string", description: "the entry itself — plain text/light markdown, ONE idea, in KEYWORDS AND STRUCTURE rather than prose: ~25 words of prose max, and fewer is better. Write the skeleton of the idea, never a restatement of what you just said in chat (a board that repeats your sentences measurably hurts learning — the redundancy effect). Annotate like handwritten notes: 'term = plain gloss' on its own line; relationships as arrows ('A --pushes--> B'); contrasts stacked with '<-' margin asides ('NOT x <- what you'd expect' / 'BUT y <- the actual point'); dash lines for anything sequential, one idea each. Anything with REAL SPATIAL POSITION — a shape, a triangle, a number line, points on axes — belongs in DRAW_ON_BOARD instead, which renders an actual figure. For kind:'outline' this is just a one-line title (the sections go in `outline` below) — for anything else, reserve a fenced ASCII block here for genuinely textual structure (a small table) where neither a real drawing nor an outline fits. ANY such ASCII sketch MUST be wrapped in a triple-backtick code fence (```\\n...\\n```) — the board renders a fenced block as monospace, preserving every space exactly as typed; UNFENCED text gets trimmed line by line and the whole shape collapses into a flat line with no structure left." },
     kind: { type: "string", enum: ["note", "instruction", "formula", "summary", "focus", "insight", "definition", "outline"], description: "styling/role hint: 'focus' ONCE to open a session's document — today's arc, where you start and what you're building toward; 'instruction' for a directive to start/try something; 'definition' the first time a key term comes up — the term in **bold**, then a plain-language definition; 'formula' for a plain fact/rule worth keeping visible in words (not real math notation — for an actual expression/equation with a fraction, exponent, or root, use DRAW_ON_BOARD's 'equation' op instead, which typesets it for real instead of describing it in text); 'insight' when the STUDENT has a genuine aha in their own words — credit them by name ('Will's insight: ...'); 'summary' for a recap of the STUDENT's reasoning; 'outline' for headed, bulleted structure — a timeline, the causes/effects of an event, a source's key points, an essay's section-by-section plan (REQUIRES the separate `outline` field below, with real sections and bullets — this is the DEFAULT reach for history/literature/language-arts/social-science content instead of trying to force it into a flat sentence); 'note' for anything else. Defaults to 'note' if omitted." },
@@ -7166,7 +7189,13 @@ export async function chatAboutTask(
     `often necessary; computing it FOR them in the same breath is not — split the two into separate turns, ` +
     `or end the sentence right before the result and let them supply it. If a computation is left, ASK them to do it ` +
     `("what does −1/8 + 6 come to?", "what's left over after you subtract?") — the doing is the ` +
-    `learning. One ` +
+    `learning. THIS ALSO COVERS A CONCEPTUAL CARRYOVER, not just arithmetic: when a quantity from an ` +
+    `earlier part applies again in a later one for a REASON (μ is the same at 25° because it depends on the ` +
+    `surfaces, not the angle, which hasn't changed) — ask the reason ("does μ depend on the angle, or on ` +
+    `what the two surfaces are — and has that changed?"), don't assert the carryover yourself ("μ came out ` +
+    `as tan 20°, and the surfaces haven't changed, so μ is still tan 20° at 25°"). Reported live: the ` +
+    `student asked "how am I supposed to know that" about exactly this carryover, and Otto answered its own ` +
+    `question instead of turning it into one. One ` +
     `case that is NOT an exception, easy to mis-file as (c) but isn't: (e) they're trying to skip/change ` +
     `the subject WITHOUT a genuine attempt ("move on to another one", "it's good", silence, a vague non-` +
     `answer) — don't resolve the problem for them as a way to close the loop before moving on; just let them ` +

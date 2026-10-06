@@ -1,170 +1,354 @@
-# Otto Lycée — Ton Pronote devient 3 choses à faire aujourd'hui.
+# Otto Lycée — Your Pronote becomes 3 things to do today.
 
-**Otto lit Pronote, Gmail, Calendar et Drive, et te laisse seulement ce qui a besoin de toi. Il prépare le travail, jamais à ta place. Il n'envoie rien sans ton OK. Il ne fait jamais tes devoirs.**
+**Otto reads Pronote, Gmail, Calendar and Drive, and leaves you only what needs you. It prepares the work, never instead of you. It sends nothing without your OK. It never does your homework.**
 
-> Pensé pour le lycée français (Seconde / Première / Terminale). Open source (MIT). Self-hostable. Coût plafonné.
+> Designed for French high school (Seconde / Première / Terminale). Open source (MIT). Self-hostable. Cost-capped.
 
-## Le problème
+## Features Overview
 
-Dimanche 19h. Pronote affiche 11 devoirs, 2 contrôles, 3 mails de profs dans Gmail, 2 PDF dans Drive. Tu paniques, tu ouvres TikTok.
+Otto is a task management and study assistant that integrates with your school and productivity tools to help you stay organized and focused.
 
-Les to-do lists classiques te demandent de tout retaper toi-même. Les IA qui "font tout à ta place" te font tricher — et flippent tes parents.
+### Core Integrations
 
-## Ce que fait Otto
+Otto connects to 4 services only:
 
-Otto tourne même quand ton ordi est fermé — un job queue durable (Supabase) le fait travailler en arrière-plan. La vérification automatique (Pronote + Gmail + Calendar + Drive) est fixée à une fois par jour, 16h heure locale ; un rafraîchissement manuel marche à tout moment. **En pratique, cette fois par jour est garantie par le cron serveur** (`server/jobs.ts`) — sur le plan gratuit ("Hobby") de Vercel, un cron ne peut tourner qu'une fois par 24h, donc c'est la seule exécution garantie quel que soit l'appareil ; ouvrir l'app dans la journée déclenche aussi ce check si ce n'est pas déjà fait, et une extension Chrome/Android installée peut occasionnellement en obtenir une de plus via l'API Periodic Background Sync du navigateur (best-effort, non garanti, absent sur iOS). Pour une vérification plus fréquente que 1x/jour en production, passe au plan Vercel Pro (cron plus fin) ou héberge ailleurs avec ton propre planificateur.
+1. **Pronote** — Homework, tests (flagged "test" in the schedule), dates. Non-official connection (Index Éducation has no public API); your password is used once then never stored — an encrypted token (AES-256-GCM) replaces it.
+2. **Gmail** — Teacher emails, invitations, Classroom links. Otto only replies in draft, never auto-sends.
+3. **Google Calendar** — Tests, free slots for revision.
+4. **Google Drive** — Class materials, study guides, corrections shared by teachers — to enrich your revision notes.
 
-**4 intégrations, 4 seulement :**
+Notion is supported server-side but intentionally hidden from the interface for now — each additional connection is friction for a high schooler without professional Gmail. No other integrations (GitHub, Slack, Linear, etc.) are supported: the surface is intentionally limited to Google Workspace, Notion, and Pronote.
 
-1. **Pronote** — Devoirs, contrôles (flag "test" de l'emploi du temps), dates. Connexion non-officielle (Index Éducation n'a pas d'API publique) ; ton mot de passe sert une seule fois puis n'est jamais conservé — un jeton chiffré (AES-256-GCM) le remplace ensuite.
-2. **Gmail** — Mails de profs, convocations, liens Classroom. Otto ne fait qu'y répondre en brouillon, jamais d'envoi automatique.
-3. **Google Calendar** — Contrôles, créneaux libres pour réviser.
-4. **Google Drive** — Cours, fiches, corrections partagés par tes profs — pour enrichir tes fiches de révision.
+## Pages and Navigation
 
-Notion est supporté côté serveur mais volontairement caché de l'interface pour l'instant — chaque connexion en plus est un frein pour un lycéen qui n'a pas de Gmail pro. Aucune autre intégration (GitHub, Slack, Linear, etc.) n'est supportée : la surface reste volontairement limitée à Google Workspace, Notion et Pronote.
+### Public Pages (No Login Required)
 
-**Et il te rend : Aujourd'hui — 3 cartes, pas 20.** Le reste attend son tour dans "Plus tard" et "Peut attendre".
+#### Landing Page (`/`)
+- **Purpose**: Introduction to Otto
+- **Features**: 
+  - Explains what Otto does
+  - Language toggle (French/English)
+  - Call-to-action to sign up or log in
+  - Marketing copy about the problem (overwhelmed by homework) and solution
 
-## Mode Étude
+#### Login/Signup (`/login`, `/signup`)
+- **Purpose**: Account authentication
+- **Features**:
+  - Email/password login
+  - Email signup with name and preferred language
+  - Password reset option (`/reset-password`)
+  - Remembers language preference across signup
 
-Un bureau de travail plein écran, sans navigateur ni onglets à jongler : clique "Étudier" sur une tâche et tout ce qu'il faut pour l'avancer arrive sur un seul bureau — matériaux (PDF, liens, fiches/decks/quiz qu'Otto a déjà préparés), notes, brouillon libre, minuteur (dont Pomodoro auto), fond d'écran perso, et une petite sélection d'outils ouverts à la demande (calculatrice, Desmos, dictionnaire bilingue, tableau blanc, post-it, générateur de citations APA/MLA/Chicago). "Demander à Otto" y fonctionne comme un vrai tuteur socratique — il pose des questions, s'adapte quand une approche ne marche pas, jamais la réponse directe (mêmes garde-fous que sur la carte de tâche) — et écrit à l'occasion sur le **Tableau**, une surface toujours visible où se construit, entrée par entrée, un vrai document de séance : objectif du jour, définitions et formules clés, tes propres déclics, résumé de ton raisonnement une fois un exercice résolu. Tout est sauvegardé en local (IndexedDB pour le bureau, `localStorage` pour la conversation et le tableau — jamais envoyés au cloud) par tâche, donc tu retrouves ton bureau exactement comme tu l'as laissé, sur cet appareil.
+#### Unlimited Page (`/unlimited`)
+- **Purpose**: Information about premium/unlimited features
+- **Features**: 
+  - Describes the unlimited plan
+  - Upgrade option
 
-## Journal d'apprentissage
+#### Legal Pages
+- **Privacy Policy (`/privacy`)** — GDPR-compliant privacy policy
+- **Terms of Service (`/terms`)** — Terms and conditions
+- **Research Page (`/research`)** — Information about Otto's research methodology
 
-Un onglet Lundi-Vendredi : une case de texte libre par jour, "qu'est-ce que j'ai appris aujourd'hui ?". Dès que tu enregistres, Otto en tire automatiquement des cartes de révision. En fin de semaine, un résumé à la demande regroupe la semaine dans un deck pondéré vers ce que tu as le plus raté — pour réviser en priorité ce qui coince vraiment, pas tout au hasard. Ces decks utilisent exactement la même interface de révision (répétition espacée, Leitner) que n'importe quel autre deck de fiches, donc une carte du Journal apparaît dans tes révisions dues comme les autres, sans système séparé.
+### Authenticated Pages (Login Required)
 
-## Ce qu'Otto fait / ne fait PAS
+#### Tasks Dashboard (`/tasks` or `/`)
+The main dashboard showing your tasks sorted by priority (Eisenhower matrix: urgent/important → do, schedule, delegate, can wait).
 
-C'est la question qu'on nous pose partout : "creepy", "ça va faire mes devoirs à ma place ?"
+**Features**:
+- **Task List**: All active tasks sorted by quadrant (Today's top 3, Later, Can wait)
+- **Task Cards**: Each task shows:
+  - Title and deadline
+  - Subject (e.g., Mathematics, History)
+  - Quadrant label (Do now, This week, Later, Can wait)
+  - Status chip (Working, Queued, Failed, etc.)
+  - Study Mode button (desktop only)
+  - Checkmark to mark done
+  - Dismiss button (x)
+- **Progress Bar**: Shows today's completion progress
+- **Status Indicators**: 
+  - Overdue milestones count
+  - "Otto is working on X" indicator
+  - Scanning indicator
+- **Refresh Button**: Manual trigger to scan Pronote/Gmail/Calendar/Drive
+- **Completed Section**: List of completed tasks (expandable)
+- **Task Modal**: Click any task to see:
+  - Full task details
+  - Steps checklist (with individual checkmarks)
+  - "Do this now" hero section (current step)
+  - Prepared artifacts (notes, flashcards, quizzes)
+  - Links (materials)
+  - Board (tutor's session document)
+  - "Ask Otto" chat button
+  - Dismiss button
 
-**✅ Otto FAIT (travail réversible) :**
-- Fiche de révision (plan, définitions, formules) à partir de Pronote + Drive
-- Checklist découpée en petites étapes de 10-15 min
-- Liste de sources / vidéos ciblées
-- Brouillon de mail au prof (JAMAIS envoyé sans ton tap)
+**Mobile Behavior**: Tasks are read-only on mobile — you can view the plan, steps, artifacts, links, and board, but cannot mark steps done or interact with the AI.
 
-**🔒 Otto ne fait JAMAIS sans toi :**
-- Envoyer un mail, inviter à un événement Calendar, supprimer un fichier → un tap d'approbation obligatoire, à chaque fois.
+#### Journal / Flashcards (`/log`)
+A learning journal with spaced repetition flashcard review.
 
-**🎓 Otto REFUSE de faire :**
-- Dissertation rédigée, exercice corrigé, réponse de contrôle. Le document créé est un guide ; l'exercice reste une étape que TU fais. C'est une règle appliquée dans le code (pas juste une promesse dans ce README) — voir `DOES_STUDENT_WORK` dans `server/claude.ts`.
+**Features**:
+- **Weekly View**: Monday-Friday with a free-text entry box for each day ("What did I learn today?")
+- **Automatic Card Generation**: When you save a journal entry, Otto automatically generates flashcards from it
+- **Weekly Summary**: At week's end, generates a weighted deck focused on what you struggled with most
+- **Review Interface**: 
+  - Leitner box system (box 1, 2, 3) for spaced repetition
+  - Swipe to mark cards as correct/incorrect
+  - Visual progress indicators
+- **Language Matching**: Flashcards match the language of the journal entry (French → French cards, English → English cards, mixed → mixed)
+- **Milestone Tracking**: Shows "milestones" (concepts you've mastered) from your journal
 
-## Stack
+**Mobile Label**: Shown as "Flashcards" on mobile, "Journal" on desktop.
 
-- **Backend :** Node + Express (TypeScript), job queue durable Supabase (Postgres)
-- **Frontend :** Vite + React (TypeScript)
-- **IA :** [DeepSeek](https://deepseek.com) via l'API compatible OpenAI
-- **Intégrations :** [Composio](https://composio.dev) pour Gmail/Calendar/Drive ; module Pronote maison (`pawnote`, non-officiel) avec token chiffré AES-256-GCM
-- **Storage :** [Supabase](https://supabase.com) (Postgres, idéalement hébergé en EU) — recommandé, RGPD-friendly
+#### Study Mode (`/study/<task-id>`)
+A full-screen focused workspace for studying a specific task.
 
-## Démarrage rapide
+**Features**:
+- **Session Setup**: Choose session duration (25min, 45min, 60min, 90min, custom), Pomodoro timer, focus goals
+- **Main Workspace**:
+  - **Materials Drawer**: PDFs, links, notes, flashcards, quizzes prepared by Otto
+  - **Free Notes**: Simple text editor for your own notes
+  - **Scratchpad**: Free-form drawing/sketching area
+  - **Sticky Notes**: Yellow post-it style notes
+  - **Board**: Otto's session document (focus of the day, definitions, formulas, your insights, reasoning summaries)
+  - **Ask Otto Panel**: Socratic tutoring chat — Otto asks questions, adapts when an approach doesn't work, never gives direct answers
+- **Tools Drawer** (on-demand):
+  - Calculator
+  - Desmos graphing calculator
+  - Bilingual dictionary (French-English)
+  - Whiteboard
+  - Citation generator (APA/MLA/Chicago)
+- **Focus Tracking**: Time spent on task vs. distractions
+- **Break Screen**: Appears when session ends with session summary
+- **Local-First**: All session data saved locally (IndexedDB) per task, not synced to cloud
+- **Custom Background**: Personal wallpaper option
+
+**Desktop Only**: Not available on mobile (desktop and iPad only).
+
+#### Tutor (`/tutor`)
+A full-screen AI tutor interface for interactive learning sessions.
+
+**Features**:
+- **Socratic Chat**: Otto asks questions, guides you through problems, never gives direct answers
+- **Real-time Voice**: Voice input/output for conversational learning
+- **Whiteboard**: Interactive drawing surface for visual explanations
+- **Desmos Integration**: Graphing calculator for math/physics
+- **Adaptive**: Otto adapts approach when something isn't working
+- **Guardrails**: Same protections as task chat — never does graded work for you
+- **Session History**: Past sessions are saved locally with board and chat for review
+- **Deep Links**: Each session has a unique URL (`/tutor/session/<id>`) for direct access
+
+**Session Routing**:
+- `/tutor` — Landing page to start a new session or resume an active one
+- `/tutor/session/<id>` — Direct link to view a specific past session's board and chat
+
+**Desktop Only**: Full-screen, hides sidebar navigation.
+
+#### Error Log (`/errorlog`)
+Track your mistakes for targeted review.
+
+**Features**:
+- **Mistake Entry**: Log questions you got wrong, what you answered, and the fix
+- **Subject Categorization**: Mistakes organized by subject
+- **Trend Tracking**: See if you're improving or declining in each subject
+- **Review Mode**: Focus on your recurring mistakes
+
+**Desktop Only**: Hidden on mobile.
+
+#### Settings (`/settings`)
+Account and application configuration.
+
+**Features**:
+- **Profile**:
+  - Name (what Otto calls you)
+  - Email
+  - Language (French/English)
+  - Grades per subject (affects task difficulty)
+  - Focus stats (peak focus hour)
+- **Integrations**:
+  - Connect/disconnect Pronote
+  - Connect/disconnect Google (Gmail, Calendar, Drive)
+  - Notion (hidden, server-side only)
+- **Study Preferences**:
+  - Enable/disable Study Mode
+- **Account**:
+  - Export all data (tasks, jobs, connections — never tokens/passwords)
+  - Delete account (instant, permanent, clears all local data)
+- **Pause/Unpause**: Stop or resume Otto's AI work
+- **Budget**: View monthly AI spend (capped per account)
+
+#### Admin (`/admin`)
+Admin dashboard for system administration.
+
+**Features**:
+- User management
+- System metrics
+- Usage statistics
+
+**Admin Only**: Only visible for admin users.
+
+## Special Features
+
+### Task Modal (Overlay)
+When you click a task from the dashboard, it opens in a modal overlay:
+
+**Desktop (TaskFocus)**:
+- Hero section with current step and action button
+- Steps checklist with individual completion
+- Prepared artifacts (notes, flashcards, quizzes) with chip-style buttons
+- Links section
+- Board (tutor's session document)
+- "Ask Otto" chat button
+- Dismiss/confirm buttons
+
+**Mobile (TaskReadOnly)**:
+- Read-only view of task details
+- Plan/steps display
+- Artifacts (notes, flashcards, quizzes, links)
+- Board display
+- "Read-only on phone" message
+
+### Study Mode Artifacts
+Each artifact type has its own interactive viewer:
+
+- **Notes**: Scrollable text notes
+- **Flashcards**: Spaced repetition deck with flip cards, Leitner system
+- **Quiz**: Multiple-choice quiz with immediate feedback and scoring
+- **Board**: Tutor's session document with entries (focus, definitions, formulas, insights, problems)
+- **Calculator**: Basic calculator
+- **Desmos**: Graphing calculator for math
+- **Dictionary**: Bilingual lookup
+- **Whiteboard**: Drawing canvas
+- **Citation Generator**: APA/MLA/Chicago citation builder
+- **Document**: PDF viewer
+- **Video**: Video player
+- **Image**: Image viewer
+- **Sticky Notes**: Post-it style notes
+- **Scratchpad**: Free-form drawing
+
+## What Otto Does / Doesn't Do
+
+**✅ Otto DOES (reversible work):**
+- Revision note (plan, definitions, formulas) from Pronote + Drive
+- Checklist broken into 10-15 min steps
+- Targeted source/video list
+- Email draft to teacher (NEVER sent without your tap)
+
+**🔒 Otto NEVER does without you:**
+- Send an email, invite to a Calendar event, delete a file → one approval tap required, every time.
+
+**🎓 Otto REFUSES to do:**
+- Written dissertation, corrected exercise, test answer. The document created is a guide; the exercise remains a step for YOU to do. This is enforced in code (not just a promise in this README) — see `DOES_STUDENT_WORK` in `server/claude.ts`.
+
+## Tech Stack
+
+- **Backend**: Node + Express (TypeScript), durable job queue Supabase (Postgres)
+- **Frontend**: Vite + React (TypeScript)
+- **AI**: [DeepSeek](https://deepseek.com) via OpenAI-compatible API
+- **Integrations**: [Composio](https://composio.dev) for Gmail/Calendar/Drive; custom Pronote module (`pawnote`, non-official) with AES-256-GCM encrypted token
+- **Storage**: [Supabase](https://supabase.com) (Postgres, ideally hosted in EU) — recommended, GDPR-friendly
+
+## Quick Start
 
 ```bash
-git clone <ton-fork> otto && cd otto
+git clone <your-fork> otto && cd otto
 cp .env.example .env
-#   → renseigne DEEPSEEK_API_KEY, COMPOSIO_API_KEY (https://composio.dev), et SESSION_SECRET
+#   → fill in DEEPSEEK_API_KEY, COMPOSIO_API_KEY (https://composio.dev), and SESSION_SECRET
 npm install
-npm run dev          # ouvre http://localhost:5273
+npm run dev          # opens http://localhost:5273
 ```
 
-Ça suffit pour tourner en local. Ajoute Supabase (voir plus bas) pour que ça survive à un redémarrage.
+That's enough to run locally. Add Supabase (see below) for it to survive a restart.
 
-## Variables d'environnement
+## Environment Variables
 
-**Requises**
+**Required**
 
-| Variable | Rôle |
+| Variable | Purpose |
 |-----|---------|
-| `DEEPSEEK_API_KEY` | L'agent IA (génération + exécution des tâches) |
-| `COMPOSIO_API_KEY` | Gmail/Calendar/Drive — à récupérer sur https://composio.dev |
-| `SESSION_SECRET` | Signe le cookie de session (`openssl rand -hex 32`) |
-| `PUBLIC_URL` | Ton origine (`http://localhost:5273` en dev, ton URL HTTPS en prod) |
+| `DEEPSEEK_API_KEY` | The AI agent (generation + task execution) |
+| `COMPOSIO_API_KEY` | Gmail/Calendar/Drive — get from https://composio.dev |
+| `SESSION_SECRET` | Signs the session cookie (`openssl rand -hex 32`) |
+| `PUBLIC_URL` | Your origin (`http://localhost:5273` in dev, your HTTPS URL in prod) |
 
-**Recommandées / spécifiques à Pronote**
+**Recommended / Pronote-specific**
 
-| Variable | Rôle |
+| Variable | Purpose |
 |-----|---------|
-| `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` | Persistance cloud (recommandé ; **requis en production**) |
-| `CREDENTIAL_ENCRYPTION_KEY` | Chiffre le jeton Pronote (AES-256-GCM) avant stockage. **Sans elle, la connexion Pronote refuse de démarrer** (`openssl rand -hex 32`) — les autres fonctionnalités continuent de marcher sans. |
-| `MONTHLY_AI_BUDGET_USD` | Plafond de dépense IA mensuel par compte (défaut `3`) |
-| `CRON_SECRET` | Protège `/api/cron/drain` (requis sur Vercel) |
-| `DEEPSEEK_MODEL` | Défaut `deepseek-v4-flash` (ou `deepseek-v4-pro` pour plus de raisonnement) |
-| `PORT` | Défaut `8788` |
-| `PLAID_CLIENT_ID` + `PLAID_SECRET` | **Désactivé pour le moment** — voir la note Finance ci-dessous. Ces clés restent lues côté serveur mais rien dans l'interface n'y mène plus. |
-| `PLAID_MOCK` | Idem — sans effet tant que Finance reste désactivé côté produit. |
+| `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` | Cloud persistence (recommended; **required in production**) |
+| `CREDENTIAL_ENCRYPTION_KEY` | Encrypts the Pronote token (AES-256-GCM) before storage. **Without it, Pronote connection refuses to start** (`openssl rand -hex 32`) — other features continue to work without it. |
+| `MONTHLY_AI_BUDGET_USD` | Monthly AI spend cap per account (default `3`) |
+| `CRON_SECRET` | Protects `/api/cron/drain` (required on Vercel) |
+| `DEEPSEEK_MODEL` | Default `deepseek-v4-flash` (or `deepseek-v4-pro` for more reasoning) |
+| `PORT` | Default `8788` |
+| `PLAID_CLIENT_ID` + `PLAID_SECRET` | **Disabled for now** — see Finance note below. These keys are still read server-side but nothing in the UI leads there anymore. |
+| `PLAID_MOCK` | Same — no effect while Finance remains disabled in-product. |
 
-Voir [`.env.example`](.env.example) pour la liste annotée complète.
+See [`.env.example`](.env.example) for the full annotated list.
 
-> **Finance (Plaid) — désactivé pour le moment.** Otto a un pipeline complet de détection de factures récurrentes/charges suspectes via liaison bancaire (Plaid), mais il est retiré de l'interface : Plaid reste forcé en sandbox côté serveur (aucune approbation business, aucune couverture bancaire EU confirmée), donc inutilisable pour un vrai compte en production. Le code n'est pas supprimé — juste désactivé par un flag (`FINANCE_ENABLED` dans `server/discover.ts`) — le temps que ce soit prêt à sortir pour de vrai.
+> **Finance (Plaid) — disabled for now.** Otto has a complete pipeline for detecting recurring charges/suspicious transactions via bank linking (Plaid), but it's removed from the UI: Plaid remains forced to sandbox server-side (no business approval, no EU bank coverage confirmed), so unusable for a real production account. The code isn't deleted — just disabled by a flag (`FINANCE_ENABLED` in `server/discover.ts`) — until it's ready to ship for real.
 
-## Persistance cloud (recommandé)
+## Cloud Persistence (Recommended)
 
-Ton profil, tes tâches et tes connexions sont indexés par email de compte, pour survivre aux redémarrages et te suivre partout.
+Your profile, tasks, and connections are indexed by account email, to survive restarts and follow you everywhere.
 
-1. Exécute [`supabase.sql`](supabase.sql) dans l'éditeur SQL Supabase (crée les tables ; **RLS verrouillée par défaut**).
-2. Renseigne `SUPABASE_URL` + `SUPABASE_SERVICE_KEY`. **Le serveur refuse de démarrer en production sans la clé de service** — elle contourne RLS et doit rester côté serveur uniquement.
-3. Pour un projet Supabase jetable en local, tu peux utiliser la clé anon + décommenter les policies DEV-ONLY clairement indiquées dans `supabase.sql`.
+1. Run [`supabase.sql`](supabase.sql) in the Supabase SQL editor (creates tables; **RLS locked by default**).
+2. Fill in `SUPABASE_URL` + `SUPABASE_SERVICE_KEY`. **The server refuses to start in production without the service key** — it bypasses RLS and must stay server-side only.
+3. For a throwaway local Supabase project, you can use the anon key + uncomment the DEV-ONLY policies clearly marked in `supabase.sql`.
 
-## Déployer
+## Deploy
 
 ```bash
 npm run build        # → dist/
-npm start            # production : Express sert dist/ + l'API sur $PORT
+npm start            # production: Express serves dist/ + API on $PORT
 ```
 
-Marche sur n'importe quel hébergeur Node (Render, Railway, Fly, une VM, ou Docker — un `Dockerfile` est fourni) et sur Vercel (`vercel.json` branche la fonction API, l'hébergement statique, le cron et les headers de sécurité). Renseigne les variables requises, pointe `PUBLIC_URL` vers ton domaine HTTPS, et vois la **checklist prod** ci-dessous.
+Works on any Node host (Render, Railway, Fly, a VM, or Docker — a `Dockerfile` is provided) and on Vercel (`vercel.json` branches the API function, static hosting, cron, and security headers). Fill in the required variables, point `PUBLIC_URL` to your HTTPS domain, and see the **production checklist** below.
 
-### Checklist production
+### Production Checklist
 
-- Variables requises renseignées (le démarrage échoue sans) : `SESSION_SECRET`, `DEEPSEEK_API_KEY`, `COMPOSIO_API_KEY`, `PUBLIC_URL`.
-- `CREDENTIAL_ENCRYPTION_KEY` renseignée si tu veux que Pronote fonctionne — sinon la connexion Pronote refuse poliment plutôt que de stocker en clair.
-- `supabase.sql` exécuté ; `SUPABASE_SERVICE_KEY` renseignée ; clés anon/service jamais envoyées au client.
-- `CRON_SECRET` renseignée (Vercel Cron vide la file d'attente — une fois par jour sur le plan Hobby, plus souvent sur Pro).
-- **`SENTRY_DSN` (+ `VITE_SENTRY_DSN` côté client) renseignées.** Documentées comme optionnelles dans `.env.example`, elles ne devraient pas l'être en pratique : sans elles, un sweep/job qui échoue en silence (le job queue avale l'erreur pour ne jamais bloquer le pipeline) ne remonte NULLE PART — pas de log consulté, pas d'alerte. C'est le scénario exact qui casse "proactif" sans que personne ne le remarque. Gratuit jusqu'à un volume correct sur [sentry.io](https://sentry.io) ou auto-hébergeable.
-- Sécurité en place : CSP + headers de sécurité, rate-limiting sur l'auth, mots de passe bcrypt, cookies `httpOnly`/`secure`, aucun secret dans le bundle client, RLS verrouillée par défaut, AES-256-GCM sur le seul identifiant qu'on stocke nous-mêmes (jeton Pronote), plus le chiffrement au repos par défaut de Postgres/Supabase sur chaque table.
-- `/privacy` et `/terms` publiées dans l'app — **requis pour la vérification OAuth Google.**
-- **Google OAuth :** Gmail/Calendar/Drive sont des scopes sensibles. Soumets l'écran de consentement OAuth avec ton URL de politique de confidentialité + ta page d'accueil ; tant que ce n'est pas vérifié, Google plafonne l'app à 100 utilisateurs et affiche un écran "app non vérifiée".
+- Required variables filled in (startup fails without): `SESSION_SECRET`, `DEEPSEEK_API_KEY`, `COMPOSIO_API_KEY`, `PUBLIC_URL`.
+- `CREDENTIAL_ENCRYPTION_KEY` filled in if you want Pronote to work — otherwise Pronote connection politely refuses rather than storing in clear.
+- `supabase.sql` executed; `SUPABASE_SERVICE_KEY` filled in; anon/service keys never sent to client.
+- `CRON_SECRET` filled in (Vercel Cron drains the queue — once per day on Hobby plan, more often on Pro).
+- **`SENTRY_DSN` (+ `VITE_SENTRY_DSN` client-side) filled in.** Documented as optional in `.env.example`, they shouldn't be in practice: without them, a sweep/job that fails silently (the job queue swallows the error to never block the pipeline) surfaces NOWHERE — no log consulted, no alert. This is the exact scenario that breaks "proactive" without anyone noticing. Free up to a reasonable volume on [sentry.io](https://sentry.io) or self-hostable.
+- Security in place: CSP + security headers, rate-limiting on auth, bcrypt passwords, `httpOnly`/`secure` cookies, no secrets in client bundle, RLS locked by default, AES-256-GCM on the one identifier we store ourselves (Pronote token), plus default encryption-at-rest of Postgres/Supabase on every table.
+- `/privacy` and `/terms` published in the app — **required for Google OAuth verification.**
+- **Google OAuth**: Gmail/Calendar/Drive are sensitive scopes. Submit the OAuth consent screen with your privacy policy URL + your homepage; until verified, Google caps the app to 100 users and shows an "unverified app" screen.
 
-## Ce qu'il fait / ne fait pas
+## What It Does / Doesn't Do
 
-- ✅ Prépare automatiquement le travail réversible : brouillons (jamais envoyés), fiches de révision, checklists, recherche/synthèse.
-- 🔒 Jamais irréversible sans toi : envoyer un mail, inviter à un événement, supprimer → toujours un tap d'approbation.
-- 🎓 Ne fait jamais le travail noté à ta place : pas de dissertation rédigée, pas d'exercice corrigé, pas de réponse de contrôle — les documents créés sont des guides, et l'exercice reste toujours une étape pour toi.
-- 🧠 Passe au crible Pronote/Gmail/Calendar/Drive pour les faits ; seul ce qui a *vraiment besoin de toi* remonte.
-- 🗂️ Données stockées par compte, chiffrées au repos (Postgres/Supabase par défaut, plus AES-256-GCM applicatif sur le seul identifiant qu'on stocke nous-mêmes) ; rien n'est partagé, revendu, ou utilisé pour entraîner des modèles. La conversation avec Otto et le Tableau du Mode Étude restent en local sur l'appareil (`localStorage`, jamais synchronisés) — ils ne suivent pas d'un appareil à l'autre, par choix.
-- 📤 RGPD intégré : consentement explicite à l'inscription, export complet de tes données en un clic (`/api/account/export` — tâches, jobs, connexions, jamais les jetons/mots de passe), et suppression de compte instantanée et définitive depuis Réglages.
+- ✅ Automatically prepares reversible work: drafts (never sent), revision notes, checklists, research/synthesis.
+- 🔒 Never irreversible without you: send an email, invite to an event, delete → always one approval tap.
+- 🎓 Never does graded work for you: no written dissertation, no corrected exercise, no test answer — the documents created are guides, and the exercise remains a step for you.
+- 🧠 Screens Pronote/Gmail/Calendar/Drive for facts; only what *actually needs you* surfaces.
+- 🗂️ Data stored by account, encrypted at rest (Postgres/Supabase by default, plus AES-256-GCM app-level on the one identifier we store ourselves); nothing is shared, claimed, or used to train models. The conversation with Otto and the Study Mode Board remain local on the device (`localStorage`, never synced) — they don't follow from device to device, by choice.
+- 📤 Built-in GDPR: explicit consent on signup, one-click full data export (`/api/account/export` — tasks, jobs, connections, never tokens/passwords), and instant permanent account deletion from Settings.
 
-## Extension Chrome Otto Tabs (optionnelle)
-
-Deux choses : les étapes du type "ouvrir une page" ouvrent des onglets automatiquement, groupés dans un groupe "Otto" ; et pendant une session Mode Étude active, elle bloque la navigation vers tout site en dehors de l'app (avec une liste blanche perso configurable depuis le popup de l'extension, en plus de l'app elle-même et de la connexion Google). Aucune des deux n'est requise pour utiliser Otto — sans l'extension, l'app se rabat simplement sur `window.open` et ne bloque rien.
-
-Pas encore sur le Chrome Web Store. Depuis **Réglages** dans l'app, télécharge `otto-tabs-extension.zip`, dézippe-le, puis `chrome://extensions` → active le Mode développeur → **Charger l'extension non empaquetée** → sélectionne le dossier dézippé. (Le code source vit dans [`extension/`](extension/) si tu préfères charger directement depuis le repo.)
-
-## Structure du projet
+## Project Structure
 
 ```
-client/          App React (Vite)
-client/study/    Mode Étude — bureau plein écran, outils, artefacts (local-first, IndexedDB)
-server/          API Express, job queue, agent IA, intégrations
-shared/          Types + fonctions pures partagées client & serveur
-extension/       Extension Chrome Otto Tabs (MV3)
-tests/           Suite de tests de fonctions pures (npm test)
-supabase.sql     Schéma Postgres + RLS
+client/          React app (Vite)
+client/study/    Study Mode — full-screen workspace, tools, artifacts (local-first, IndexedDB)
+server/          Express API, job queue, AI agent, integrations
+shared/          Types + pure functions shared client & server
+tests/           Pure function test suite (npm test)
+supabase.sql     Postgres schema + RLS
 ```
 
-## Développement
+## Development
 
 ```bash
-npm run dev         # serveur + client avec hot reload
-npm test            # tests de fonctions pures (pas de réseau/IA)
+npm run dev         # server + client with hot reload
+npm test            # pure function tests (no network/AI)
 npm run typecheck   # tsc --noEmit
-npm run build       # build de production du client
+npm run build       # production client build
 ```
 
-## Contribuer
+## Contributing
 
-Issues et PRs bienvenues. Lance `npm run typecheck && npm test && npm run build` avant d'ouvrir une PR, et garde un style cohérent avec l'existant.
+Issues and PRs welcome. Run `npm run typecheck && npm test && npm run build` before opening a PR, and keep style consistent with the existing codebase.
 
-## Licence
+## License
 
-[MIT](LICENSE) © Willem Tjong. Projet indépendant, non affilié à ni approuvé par Pronote/Index Éducation, Google, Composio, DeepSeek, ou Supabase.
+[MIT](LICENSE) © Willem Tjong. Independent project, not affiliated with or approved by Pronote/Index Éducation, Google, Composio, DeepSeek, or Supabase.

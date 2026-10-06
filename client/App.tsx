@@ -13,23 +13,16 @@ import { pushError } from "./errorLog.ts";
 import { useIsPhone } from "./useIsPhone.ts";
 import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard, PageInfoHint } from "./ui.tsx";
 import { t } from "./i18n.ts";
-import { TaskCardRow, TaskFocus, TaskHero, TaskReadOnly } from "./TaskCard.tsx";
+import { TaskCardRow, TaskFocus, TaskReadOnly } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
 import { TutorSession } from "./tutor/TutorSession.tsx";
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
 import { 
-  LayoutDashboard,
-  BookOpen,
   GraduationCap,
-  AlertTriangle,
-  Settings as SettingsIcon,
-  Menu,
-  X,
   Lock,
   Zap,
   ShieldCheck,
   Compass,
-  BarChart3,
   Mic,
   MicOff
 } from "lucide-react";
@@ -126,9 +119,7 @@ function fmtDay(iso: string, L?: (fr: string, en: string) => string): string {
   return isNaN(d.getTime()) ? iso : d.toLocaleDateString(L?.("fr-FR", "en-US"), { month: "short", day: "numeric" });
 }
 
-// Open a URL in a new tab. Prefers the Otto Chrome extension (web/extension/) — it sets a DOM flag and
-// relays postMessage to chrome.tabs.create, so tabs can open UNATTENDED during auto-do. Without it, falls
-// back to window.open (works on a user click).
+// Open a URL in a new tab. Tabs open via window.open (see client/ui.tsx's openTab).
 // Temporary: Otto still generates, ranks, and breaks tasks into steps, but does not auto-run or offer
 // one-click execution of them — the card shows the plan as a checklist for the user to work through
 // themselves. Flip back to true to restore auto-do/Approve & Run/Send. Nothing execution-related is deleted.
@@ -231,11 +222,6 @@ function clearAllLocalAccountData(userId: string | null): void {
   } catch { /* ignore */ }
 }
 
-const GREETING = (lang?: "fr" | "en") => {
-  const h = new Date().getHours();
-  const key = h < 12 ? "dashboard.greeting.morning" : h < 18 ? "dashboard.greeting.afternoon" : "dashboard.greeting.evening";
-  return t(key, lang === "en" ? "en" : "fr");
-};
 /** A friendly first name from the account email's local part ("tjong.willem@…" → "Tjong"). Personalizes the UI. */
 const firstName = (user?: string) => {
   const local = (user || "").split("@")[0].split(/[._+-]+/)[0];
@@ -414,7 +400,7 @@ export function App() {
   // at that size, and a half-working version of them is worse than a clean read-only one.
   const isPhone = useIsPhone();
   const PHONE_ALLOWED_ROUTES = ["", "tasks", "log", "settings"];
-  const phoneRouteAllowed = (r: string) => PHONE_ALLOWED_ROUTES.includes(r) || r.startsWith("task/");
+  const phoneRouteAllowed = (r: string) => PHONE_ALLOWED_ROUTES.includes(r) || r.startsWith("task/") || r.startsWith("tutor/session/");
   useEffect(() => {
     if (isPhone && status?.loggedIn && !phoneRouteAllowed(route)) navigate("tasks");
   }, [isPhone, status?.loggedIn, route]);
@@ -508,9 +494,7 @@ export function App() {
   const [showAllTasks, setShowAllTasks] = useState(false);
   // Study Mode state
   const [studyModeTask, setStudyModeTask] = useState<WebTask | null>(null);
-  // Sidebar state
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  // Briefly highlights the row a just-confirmed task lands on in "Completed" — gives finishing something a
+  // Briefly highlights the row a just-confirmed task lands in "Completed" — gives finishing something a
   // visible destination instead of the card just vanishing from the active list with nothing to show for it.
   const [justDoneId, setJustDoneId] = useState<string | null>(null);
   const flagJustDone = useCallback((id: string) => {
@@ -1036,21 +1020,8 @@ export function App() {
   // afternoon, Willem." next to "Ensuite : ...") for an English-language account. Deriving the same way
   // GREETING/todayLong already do keeps every dashboard string in this function on one real source.
   const T = (key: string, vars?: Record<string, string | number>) => t(key, en ? "en" : "fr", vars);
-  // Split ONCE, outside the render tree, so "Today" and "Later/Can wait" can land in different grid
-  // areas (dash-today vs dash-more) instead of one inline block — the whole point of the two-zone
-  // dashboard is that Today is never sitting behind anything else, including the rail widgets on mobile.
+  // Show first 3 tasks, rest behind "show more"
   const focusToday = live.slice(0, 3);
-  // The spotlight is the actual #1-ranked task (sortWithinQuadrant's own ordering — Eisenhower quadrant,
-  // then soonest deadline, then VIP, then freshest), full stop. This USED to skip over the true top task
-  // in favor of the highest-ranked task that was already clickable (needs_review/failed), reasoning that
-  // a queued/executing task's [Continue] button would be a dead end — but it isn't: opening it shows
-  // TaskFocus's own legitimate "Otto prépare ça…" waiting state, not a blank screen. That override meant
-  // "your next priority" could silently jump to a LESS urgent task just because it happened to be ready
-  // sooner — the opposite of what the top spot is supposed to mean.
-  const heroTask = focusToday[0];
-  const restToday = focusToday.slice(1);
-  const laterToday = live.slice(3, 6);
-  const canWait = live.slice(6);
   // Today's real momentum — the ALL-TIME done count only ever grows, so a bar based on it would sit near
   // full forever and mean nothing. What a student actually wants to see is "how much of TODAY is left".
   const doneToday = completed.filter((t) => (t.updatedAt || t.createdAt || "").slice(0, 10) === todayIso()).length;
@@ -1063,110 +1034,59 @@ export function App() {
     <LangContext.Provider value={status?.language === "en" ? "en" : "fr"}>
     <NotifyContext.Provider value={notify}>
     <div className="app">
-      {/* Sidebar — hidden in Tutor: that screen is meant to be a full-screen, focused surface (reported
-          live), not the dashboard's usual chrome. TutorSession gets its own small back control instead
-          (onExit prop above) so there's still exactly one way out, just not the full nav. */}
-      {route !== "tutor" && <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
-        <div className="sidebar-brand">
-          <Logo size={20} /> Otto
-        </div>
-        <nav className="sidebar-nav">
+      {/* Top nav — the prototype's single shell: lowercase "otto" wordmark left, plain text links right
+          (Today/Tutor/Journal/Mistakes/Settings), active link in the orange. Replaces the old sidebar +
+          page-title topbar entirely. Hidden in Tutor: that screen is a full-screen, focused surface —
+          TutorSession carries its own breadcrumb row ("All sessions / Mathematics … End session"), the
+          same chrome the prototype's /tutor/session uses. */}
+      {!route.startsWith("tutor") && (
+      <header className="topnav">
+        <a className="topnav-brand" href="/tasks">otto</a>
+        <nav className="topnav-links">
           <a
-            className={`sidebar-item ${route === "" || route === "tasks" || route.startsWith("task/") ? "active" : ""}`}
+            className={`topnav-link ${route === "" || route === "tasks" || route.startsWith("task/") ? "active" : ""}`}
             href="/tasks"
-            onClick={() => setSidebarOpen(false)}
           >
-            <LayoutDashboard />
-            {status?.language === "en" ? "Tasks" : "Tâches"}
-            {live.length > 0 && <span className="sidebar-badge">{live.length}</span>}
-          </a>
-          <a
-            className={`sidebar-item ${route === "log" ? "active" : ""}`}
-            href="/log"
-            onClick={() => setSidebarOpen(false)}
-          >
-            <BookOpen />
-            {isPhone ? (status?.language === "en" ? "Flashcards" : "Cartes") : (status?.language === "en" ? "Journal" : "Journal")}
+            {en ? "Today" : "Aujourd'hui"}
           </a>
           {!isPhone && <a
-            className={`sidebar-item ${route === "tutor" ? "active" : ""}`}
+            className={`topnav-link ${route === "tutor" || route.startsWith("tutor/session/") ? "active" : ""}`}
             href="/tutor"
-            onClick={() => setSidebarOpen(false)}
           >
-            <GraduationCap />
-            {status?.language === "en" ? "Tutor" : "Tuteur"}
-          </a>}
-          {STUDY_MODE_ENABLED && !isPhone && (
-            <a
-              className={`sidebar-item ${route === "study" ? "active" : ""}`}
-              href="/study"
-              onClick={() => setSidebarOpen(false)}
-            >
-              <GraduationCap />
-              {status?.language === "en" ? "Study" : "Réviser"}
-            </a>
-          )}
-          {!isPhone && <a
-            className={`sidebar-item ${route === "errorlog" ? "active" : ""}`}
-            href="/errorlog"
-            onClick={() => setSidebarOpen(false)}
-          >
-            <AlertTriangle />
-            {status?.language === "en" ? "Error log" : "Erreurs"}
+            {en ? "Tutor" : "Tuteur"}
           </a>}
           <a
-            className={`sidebar-item ${route === "settings" ? "active" : ""}`}
-            href="/settings"
-            onClick={() => setSidebarOpen(false)}
+            className={`topnav-link ${route === "log" ? "active" : ""}`}
+            href="/log"
           >
-            <SettingsIcon />
-            {status?.language === "en" ? "Settings" : "Réglages"}
+            {en ? "Journal" : "Journal"}
+          </a>
+          {!isPhone && <a
+            className={`topnav-link ${route === "errorlog" ? "active" : ""}`}
+            href="/errorlog"
+          >
+            {en ? "Mistakes" : "Erreurs"}
+          </a>}
+          <a
+            className={`topnav-link ${route === "settings" ? "active" : ""}`}
+            href="/settings"
+          >
+            {en ? "Settings" : "Réglages"}
           </a>
           {!isPhone && isAdminUser(status?.user) && (
             <a
-              className={`sidebar-item ${route === "admin" ? "active" : ""}`}
+              className={`topnav-link ${route === "admin" ? "active" : ""}`}
               href="/admin"
-              onClick={() => setSidebarOpen(false)}
             >
-              <BarChart3 />
               Admin
             </a>
           )}
         </nav>
-        <div className="sidebar-footer">
-          <a className="sidebar-user" href="/settings" onClick={() => setSidebarOpen(false)}>
-            <span className="sidebar-user-avatar">{(status.name || firstName(status.user) || "O").charAt(0).toUpperCase()}</span>
-            <span className="sidebar-user-info">
-              <span className="sidebar-user-name">{status.name || firstName(status.user) || (en ? "Account" : "Compte")}</span>
-              <span className="sidebar-user-email">{status.user || ""}</span>
-            </span>
-          </a>
-        </div>
-      </aside>}
-
-      {/* Mobile sidebar toggle — also hidden in Tutor, same reasoning as the sidebar itself. */}
-      {route !== "tutor" && <button
-        className="sidebar-toggle"
-        onClick={() => setSidebarOpen(!sidebarOpen)}
-        aria-label="Toggle sidebar"
-      >
-        {sidebarOpen ? <X /> : <Menu />}
-      </button>}
+      </header>
+      )}
 
       {/* Main content area */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        {route !== "tutor" && <header className="topbar">
-          <div className="topbar-title">{(() => {
-            if (route === "settings") return en ? "Settings" : "Réglages";
-            if (route === "log") return isPhone ? (en ? "Flashcards" : "Cartes") : (en ? "Journal" : "Journal");
-            if (route === "study") return en ? "Study" : "Réviser";
-            if (route === "errorlog") return en ? "Error log" : "Erreurs";
-            if (route === "admin") return "Admin";
-            return en ? "Tasks" : "Tâches";
-          })()}</div>
-          <div className="spacer" />
-          {!isPhone && (route === "" || route === "tasks" || route.startsWith("task/")) && (status.googleConnected || status.pronoteConnected) && <button className="btn ghost" disabled={busy} onClick={() => void generate()}>{busy ? (status?.language === "en" ? "Searching…" : "Recherche…") : (status?.language === "en" ? "Refresh" : "Actualiser")}</button>}
-        </header>}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'visible' }}>
 
       {/* Hoisted out of the dashboard-only branch below (where it used to live, inside the `route ===
           "settings" ? ... : (...)` ternary's else-arm) so it renders on EVERY route, not just /tasks —
@@ -1188,6 +1108,8 @@ export function App() {
         <StudyLogPage lang={status?.language} tasks={tasks} status={status} phoneOnly={isPhone} />
       ) : route === "tutor" ? (
         <TutorSession userId={status?.user || null} onExit={() => navigate("tasks")} visionReady={!!status?.visionReady} />
+      ) : route.startsWith("tutor/session/") ? (
+        <TutorSession userId={status?.user || null} onExit={() => navigate("tasks")} visionReady={!!status?.visionReady} sessionId={route.split("/")[3]} />
       ) : route === "study" ? (
         <StandaloneStudyEntry tasks={tasks} setTasks={setTasks} status={status} notify={notify} navigate={navigate} />
       ) : route === "errorlog" ? (
@@ -1202,8 +1124,14 @@ export function App() {
       ) : (
         <main className="list-wrap" key="dash">
           <div className="dash-head">
-            <p className="dash-date">{todayLong(status?.language)}</p>
-            <h1 className="list-head">{GREETING(status?.language)}{(status.name || firstName(status.user)) ? <>, <span className="accent-num">{status.name || firstName(status.user)}</span></> : null}.</h1>
+            {/* The prototype's page title: "Your day, under control." — one calm sentence, no name,
+                no greeting-by-clock. Under it ONE gray line joins the date to the "Three priorities…"
+                reassurance with a middle dot ("Monday, 5 October · Three priorities. Everything else
+                can wait.") instead of a separate uppercase date label above the title. */}
+            <h1 className="list-head">{en ? "Your day, under control." : "Ta journée, sous contrôle."}</h1>
+            <p className="page-sub" style={{ marginTop: 10 }}>
+              {todayLong(status?.language)}{en ? " · Three priorities. Everything else can wait." : " · Trois priorités. Le reste peut attendre."}
+            </p>
             {momentumSubject ? (
               <p className="dash-momentum">
                 {T("dashboard.momentum", { subject: momentumSubject })}
@@ -1218,11 +1146,6 @@ export function App() {
                 ? (doneToday > 0 ? T("dashboard.doneForToday") : T("dashboard.allCaughtUp"))
                 : (T("dashboard.thingsLeft", { count: live.length, plural: live.length > 1 ? "s" : "" }) +
                    (doneToday > 0 ? T("dashboard.alreadyDone", { count: doneToday, plural: doneToday > 1 ? "s" : "" }) : "") + ".")}
-              {live.length > 0 && heroTask ? (
-                <span className="dash-next">
-                  {T("dashboard.nextUp", { title: heroTask.title })}
-                </span>
-              ) : null}
               {/* One status signal at a time, in priority order — overdue outranks in-progress work,
                   which outranks a routine scan — instead of stacking every pill that happens to apply. */}
               {overdueCount > 0 ? (
@@ -1235,11 +1158,19 @@ export function App() {
                 <span className="scan-note"><span className="scan-dot" /> {en ? "checking…" : "vérification…"}</span>
               ) : null}
             </p>
-            {/* Today's progress, not all-time — see doneToday. Hidden when there's nothing to measure. */}
+            {/* Today's progress, not all-time — see doneToday. Hidden when there's nothing to measure.
+                The prototype puts the caption ("1 of 3 complete · A good start.") ABOVE the bar. */}
             {todayTotal > 0 && (
-              <div className="dash-progress" role="img" aria-label={en ? `${doneToday} of ${todayTotal} done today` : `${doneToday} sur ${todayTotal} faites aujourd'hui`}>
-                <div className="dash-progress-fill" style={{ width: `${Math.round((doneToday / todayTotal) * 100)}%` }} />
-              </div>
+              <>
+                <p className="dash-progress-caption">
+                  {en
+                    ? `${doneToday} of ${todayTotal} complete · ${doneToday === 0 ? "Ready when you are." : doneToday >= todayTotal ? "All done for today." : "A good start."}`
+                    : `${doneToday} sur ${todayTotal} terminée${doneToday > 1 ? "s" : ""} · ${doneToday === 0 ? "Prêt quand tu veux." : doneToday >= todayTotal ? "Tout est fait pour aujourd'hui." : "Un bon début."}`}
+                </p>
+                <div className="dash-progress" role="img" aria-label={en ? `${doneToday} of ${todayTotal} done today` : `${doneToday} sur ${todayTotal} faites aujourd'hui`}>
+                  <div className="dash-progress-fill" style={{ width: `${Math.round((doneToday / todayTotal) * 100)}%` }} />
+                </div>
+              </>
             )}
           </div>
           {/* Onboarding's sidebar tour explains what the Tasks tab IS, but never what "Do now"/"This
@@ -1270,11 +1201,10 @@ export function App() {
               <button className="btn xs ghost" onClick={() => navigate("settings")}>{en ? "Settings" : "Réglages"}</button>
             </div>
           )}
-          {/* Two-zone dashboard: Today (dash-today, now led by the TaskHero spotlight) is the main event —
-              it comes FIRST on both mobile and desktop (via CSS `order`/`grid-row`, not DOM position, so
-              the JSX below doesn't need to move), ahead of add-task and the rail widgets. On desktop
-              (≥1024px) dash-grid places dash-rail beside dash-today+dash-more instead, sticky, so the
-              workload/exam widgets stay ambient context, never blocking the hero. */}
+          {/* Two-zone dashboard: Today (dash-today) is the main event — it comes FIRST on both mobile
+              and desktop (via CSS `order`/`grid-row`, not DOM position, so the JSX below doesn't need to
+              move), ahead of add-task and the rail widgets. On desktop (≥1024px) dash-grid places dash-rail
+              beside dash-today+dash-more instead, sticky, so the workload/exam widgets stay ambient context. */}
           <div className="dash-grid">
             {/* Adding a task is an action, so it's off on a phone (read-only there — see
                 PHONE_ALLOWED_ROUTES above). */}
@@ -1300,23 +1230,48 @@ export function App() {
                     <p>{en ? "You're all caught up — Otto's still keeping an eye on your Pronote." : "Tu es à jour — Otto continue de surveiller ton Pronote."}</p>
                   </div>
                 );
-              })() : (
+              })(              ) : (
                 <div className={`list-focus-wrap ${settled ? "settled" : ""}`}>
-                  {/* The dashboard's one headline moment — no "Today"/"Top N" label needed above it, the
-                      greeting already says "this is today" and the hero itself says what matters most.
-                      Everything else today still shows, just quieter, underneath. */}
-                  <TaskHero key={heroTask.id} task={heroTask} onOpen={() => navigate(`task/${heroTask.id}`)} />
-                  {restToday.length > 0 && (
-                    <div className="focus-group dash-also-today">
-                      <div className="focus-group-head">
-                        <span className="focus-title">{en ? "Also today" : "Aussi aujourd'hui"}</span>
-                      </div>
+                  {/* All tasks shown as equal-sized cards, no spotlight */}
+                  {focusToday.length > 0 && (
+                    <div className="list">
+                      {focusToday.map((t, i) => (
+                        <TaskCardRow
+                          key={t.id}
+                          task={t}
+                          index={i}
+                          retrying={retryingIds.includes(t.id)}
+                          isNew={!seenTasks.has(t.id) && !isHandled(t.status) && !isInFlight(t.status)}
+                          onOpen={() => navigate(`task/${t.id}`)}
+                          onChange={setTasks}
+                          onTask={patchTask}
+                          onConfirmed={flagJustDone}
+                          onEnterStudyMode={STUDY_MODE_ENABLED && !isPhone ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
+                          readOnly={isPhone}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+            <div className="dash-more">
+              {live.length > 3 && (
+                <div className={`list-focus-wrap ${settled ? "settled" : ""}`}>
+                  <div className="focus-group">
+                    {!showAllTasks ? (
+                      <button className="btn xs ghost show-more-btn" onClick={() => setShowAllTasks(true)}>
+                        {en
+                          ? `See ${live.length - 3} more task${live.length - 3 > 1 ? "s" : ""}…`
+                          : `Voir ${live.length - 3} tâche${live.length - 3 > 1 ? "s" : ""} de plus…`}
+                      </button>
+                    ) : (
                       <div className="list">
-                        {restToday.map((t, i) => (
+                        {live.slice(3).map((t, i) => (
                           <TaskCardRow
                             key={t.id}
                             task={t}
-                            index={i}
+                            index={i + 3}
                             retrying={retryingIds.includes(t.id)}
                             isNew={!seenTasks.has(t.id) && !isHandled(t.status) && !isInFlight(t.status)}
                             onOpen={() => navigate(`task/${t.id}`)}
@@ -1328,81 +1283,8 @@ export function App() {
                           />
                         ))}
                       </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div className="dash-more">
-              {live.length > 0 && (laterToday.length > 0 || canWait.length > 0) && (
-                <div className={`list-focus-wrap ${settled ? "settled" : ""}`}>
-                  {/* "Later" used to always render here, unconditionally — hero + "Also today" + "Later"
-                      meant up to 6 rows shown before anything ever collapsed, reported live as feeling
-                      crowded past 5. Later now shares the SAME "see more" gate as "Can wait" — a normal day
-                      shows at most hero + "Also today" (≤3 rows) before a single click reveals the rest. */}
-                  {(laterToday.length > 0 || canWait.length > 0) && (
-                    <div className="focus-group">
-                      {!showAllTasks ? (
-                        <button className="btn xs ghost show-more-btn" onClick={() => setShowAllTasks(true)}>
-                          {en
-                            ? `See ${laterToday.length + canWait.length} more task${laterToday.length + canWait.length > 1 ? "s" : ""}…`
-                            : `Voir ${laterToday.length + canWait.length} tâche${laterToday.length + canWait.length > 1 ? "s" : ""} de plus…`}
-                        </button>
-                      ) : (
-                        <>
-                          {laterToday.length > 0 && (
-                            <>
-                              <div className="focus-group-head">
-                                <span className="focus-title">{en ? "Later" : "Plus tard"}</span>
-                              </div>
-                              <div className="list">
-                                {laterToday.map((t, i) => (
-                                  <TaskCardRow
-                                    key={t.id}
-                                    task={t}
-                                    index={i}
-                                    retrying={retryingIds.includes(t.id)}
-                                    isNew={!seenTasks.has(t.id) && !isHandled(t.status) && !isInFlight(t.status)}
-                                    onOpen={() => navigate(`task/${t.id}`)}
-                                    onChange={setTasks}
-                                    onTask={patchTask}
-                                    onConfirmed={flagJustDone}
-                                    onEnterStudyMode={STUDY_MODE_ENABLED && !isPhone ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
-                            readOnly={isPhone}
-                                  />
-                                ))}
-                              </div>
-                            </>
-                          )}
-                          {canWait.length > 0 && (
-                            <>
-                              <div className="focus-group-head">
-                                <span className="focus-title">{en ? "Can wait" : "Peut attendre"}</span>
-                              </div>
-                              <div className="list">
-                                {canWait.map((t, i) => (
-                                  <TaskCardRow
-                                    key={t.id}
-                                    task={t}
-                                    index={i}
-                                    retrying={retryingIds.includes(t.id)}
-                                    isNew={!seenTasks.has(t.id) && !isHandled(t.status) && !isInFlight(t.status)}
-                                    onOpen={() => navigate(`task/${t.id}`)}
-                                    onChange={setTasks}
-                                    onTask={patchTask}
-                                    onConfirmed={flagJustDone}
-                                    onEnterStudyMode={STUDY_MODE_ENABLED && !isPhone ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
-                            readOnly={isPhone}
-                                  />
-                                ))}
-                              </div>
-                            </>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               )}
               {completed.length > 0 && (
@@ -1425,6 +1307,7 @@ export function App() {
               )}
             </div>
           </div>
+        </div>
           {/* Task detail opens as a modal over the list — click a row (live or completed) to open it. */}
           {(() => {
             const openTask = openId ? tasks.find((t) => t.id === openId) : null;
@@ -2187,7 +2070,9 @@ function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
   const [mistake, setMistake] = useState("");
   const [fix, setFix] = useState("");
   const [saving, setSaving] = useState(false);
-  const [openSubject, setOpenSubject] = useState<string | null>(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [filterSubject, setFilterSubject] = useState("");
+  const [expandedSubjects, setExpandedSubjects] = useState<Set<string>>(new Set());
   // Same "don't silently drop a failed load" fix as SettingsPage's profileError/loadProfile — a failed
   // fetch used to just flip `loaded` true with `profile` still null, rendering the same "no mistakes yet"
   // empty state a genuinely-empty account gets, with no way to tell the two apart or retry.
@@ -2197,7 +2082,27 @@ function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
   useEffect(loadProfile, []);
 
   const groups = errorLogBySubject(profile?.errorLog);
-  useEffect(() => { if (!openSubject && groups.length) setOpenSubject(groups[0].subject); }, [groups.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [expandAll, setExpandAll] = useState(false);
+  const filteredGroups = filterSubject ? groups.filter(g => g.subject.toLowerCase().includes(filterSubject.toLowerCase())) : groups;
+
+  const toggleExpandAll = () => {
+    setExpandAll(!expandAll);
+    if (!expandAll) {
+      setExpandedSubjects(new Set(filteredGroups.map(g => g.subject)));
+    } else {
+      setExpandedSubjects(new Set());
+    }
+  };
+
+  const toggleSubject = (subject: string) => {
+    const newExpanded = new Set(expandedSubjects);
+    if (newExpanded.has(subject)) {
+      newExpanded.delete(subject);
+    } else {
+      newExpanded.add(subject);
+    }
+    setExpandedSubjects(newExpanded);
+  };
 
   const add = async () => {
     const s = subject.trim(), q = question.trim();
@@ -2205,8 +2110,9 @@ function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
     setSaving(true);
     try {
       const p = await api.addErrorLogEntry(s, q, mistake.trim(), fix.trim());
-      setProfile(p); setQuestion(""); setMistake(""); setFix("");
-      setOpenSubject(s);
+      setProfile(p); setQuestion(""); setMistake(""); setFix(""); setSubject("");
+      setShowAddForm(false);
+      setExpandedSubjects(new Set([s]));
     } catch (e: any) { notify(e?.message || L("Impossible d'ajouter cette erreur.", "Couldn't add that entry."), "error"); }
     finally { setSaving(false); }
   };
@@ -2215,47 +2121,87 @@ function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
     catch (e: any) { notify(e?.message || L("Impossible de supprimer cette entrée.", "Couldn't remove that entry."), "error"); }
   };
 
+  const totalMistakes = groups.reduce((sum, g) => sum + g.entries.length, 0);
+
   return (
     <main className="list-wrap">
       <div className="dash-head">
-        <h2>{L("Journal d'erreurs", "Error log")}</h2>
-        <p className="dash-line">{L("Note tes erreurs précises — la question, ce que tu as eu faux, ce qu'il faut faire la prochaine fois. Classé par matière, pour réviser avant un contrôle.", "Log your specific mistakes — the question, what you got wrong, what to do next time. Grouped by subject, so you can review before a test.")}</p>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--space-3)" }}>
+          <h1 className="list-head">{L("Des erreurs qui méritent d'être retenues.", "Mistakes worth remembering.")}</h1>
+          <button className="btn primary" onClick={() => setShowAddForm(!showAddForm)}>
+            {showAddForm ? L("Fermer", "Close") : L("+ Ajouter", "+ Add")}
+          </button>
+        </div>
+        <p className="page-sub" style={{ marginTop: 10 }}>
+          {totalMistakes > 0 ? (
+            <>{totalMistakes} {totalMistakes === 1 ? L("erreur notée", "mistake logged") : L("erreurs notées", "mistakes logged")} · {groups.length} {groups.length === 1 ? L("matière", "subject") : L("matières", "subjects")}</>
+          ) : (
+            L("La question. Ce qui a mal tourné. Ce que tu essaieras la prochaine fois.", "The question. What went wrong. What you'll try next time.")
+          )}
+        </p>
       </div>
 
       {profileError ? (
         <p className="rewrite-error">{L("Certaines infos n'ont pas pu être chargées.", "Some info couldn't load.")} <button type="button" className="btn xs ghost" onClick={loadProfile}>{L("Réessayer", "Retry")}</button></p>
       ) : null}
 
-      <div className="errorlog-addform">
-        <div className="addrow">
-          <input className="addinput sm" placeholder={L("Matière (ex : Physique)", "Subject (e.g. Physics)")} value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={60} />
+      {groups.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)", marginTop: "var(--space-4)" }}>
+          <input
+            className="addinput"
+            placeholder={L("Filtrer par matière...", "Filter by subject...")}
+            value={filterSubject}
+            onChange={(e) => setFilterSubject(e.target.value)}
+            style={{ marginBottom: 0 }}
+          />
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--space-3)" }}>
+            <p className="muted small">
+              {filteredGroups.length} {filteredGroups.length === 1 ? L("résultat", "result") : L("résultats", "results")}
+            </p>
+            <button className="btn xs ghost" onClick={toggleExpandAll}>
+              {expandAll ? L("Tout réduire", "Collapse all") : L("Tout développer", "Expand all")}
+            </button>
+          </div>
         </div>
-        <textarea className="errorlog-textarea" rows={1} placeholder={L("Quelle était la question ?", "What was the question?")} value={question} onChange={(e) => setQuestion(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
-        <textarea className="errorlog-textarea" rows={1} placeholder={L("Qu'as-tu eu faux ?", "What did you get wrong?")} value={mistake} onChange={(e) => setMistake(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
-        <textarea className="errorlog-textarea" rows={1} placeholder={L("Que faire la prochaine fois ?", "What to do next time?")} value={fix} onChange={(e) => setFix(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
-        <button type="button" className="btn primary" disabled={saving || !subject.trim() || !question.trim()} onClick={() => void add()}>
-          {saving ? L("Enregistrement…", "Saving…") : L("Ajouter au journal", "Add to log")}
-        </button>
-      </div>
+      )}
+
+      {showAddForm && (
+        <div className="errorlog-addform">
+          <div className="addrow">
+            <input className="addinput sm" placeholder={L("ex : Physique", "e.g. Physics")} value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={60} />
+          </div>
+          <textarea className="errorlog-textarea" rows={1} placeholder={L("La question ?", "What was the question?")} value={question} onChange={(e) => setQuestion(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
+          <textarea className="errorlog-textarea" rows={1} placeholder={L("Ce qui a mal tourné ?", "What went wrong?")} value={mistake} onChange={(e) => setMistake(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
+          <textarea className="errorlog-textarea" rows={1} placeholder={L("Ce que tu essaieras la prochaine fois ?", "What will you try next time?")} value={fix} onChange={(e) => setFix(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
+          <button type="button" className="btn primary" disabled={saving || !subject.trim() || !question.trim()} onClick={() => void add()}>
+            {saving ? L("Enregistrement…", "Saving…") : L("Ajouter au journal", "Add to log")}
+          </button>
+        </div>
+      )}
 
       {!loaded ? (
         <p className="muted small">{L("Récupération de ton journal…", "Pulling up your log…")}</p>
       ) : groups.length === 0 ? (
-        <p className="muted small" style={{ marginTop: "var(--space-3)" }}>{L("Pas encore d'erreurs notées — ajoute la première ci-dessus.", "Nothing logged yet — add your first mistake above.")}</p>
+        <div className="empty-state">
+          <div className="empty-mark"><span className="empty-check">✓</span></div>
+          <h3>{L("Aucune erreur notée", "No mistakes logged yet")}</h3>
+          <p>{L("Ajoute ta première erreur pour commencer à préparer tes tests.", "Add your first mistake to start building your test prep log.")}</p>
+          <button className="btn primary" onClick={() => setShowAddForm(true)}>{L("Ajouter une erreur", "Add a mistake")}</button>
+        </div>
       ) : (
-        <div className="errorlog-groups" style={{ marginTop: "var(--space-4)" }}>
-          {groups.map((g) => (
+        <div className="errorlog-groups">
+          {filteredGroups.map((g) => (
             <div key={g.subject} className="errorlog-group">
-              <button type="button" className="errorlog-group-head" onClick={() => setOpenSubject(openSubject === g.subject ? null : g.subject)}>
+              <button type="button" className="errorlog-group-head" onClick={() => toggleSubject(g.subject)}>
                 <span className="card-title">{g.subject}</span>
                 <span className="card-sub">{g.entries.length} {g.entries.length === 1 ? L("erreur", "mistake") : L("erreurs", "mistakes")}</span>
               </button>
-              {openSubject === g.subject ? (
+              {expandedSubjects.has(g.subject) ? (
                 <ul className="errorlog-entries">
                   {g.entries.map((e) => (
                     <li key={e.id} className="errorlog-entry">
                       <div className="errorlog-entry-head">
-                        <span className="muted small">{new Date(e.createdAt).toLocaleDateString(en ? "en-GB" : "fr-FR", { day: "numeric", month: "short", year: "numeric" })}</span>
+                        <span className="muted">{new Date(e.createdAt).toLocaleDateString(en ? "en-GB" : "fr-FR", { day: "numeric", month: "short", year: "numeric" })}</span>
                         <button className="x" title={L("Supprimer", "Remove")} onClick={() => void remove(e.id)}>×</button>
                       </div>
                       <p><strong>{L("Question : ", "Question: ")}</strong>{e.question}</p>
@@ -2606,10 +2552,10 @@ function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" | "en"; 
 
   return (
     <main className="list-wrap studylog-page">
-      <h1 className="list-head">{phoneOnly ? L("Tes cartes", "Your flashcards") : L("Journal d'apprentissage", "Journal")}</h1>
-      <p className="dash-line">{phoneOnly
+      <h1 className="list-head">{phoneOnly ? L("Tes cartes", "Your flashcards") : L("Journal", "Journal")}</h1>
+      <p className="page-sub" style={{ marginTop: 10 }}>{phoneOnly
         ? L("Révise tes cartes ici — le reste d'Otto marche mieux sur un plus grand écran.", "Review your flashcards here — the rest of Otto works better on a bigger screen.")
-        : L("Note ce que tu as appris aujourd'hui — Otto en fait des cartes de révision.", "Note what you learned today — Otto turns it into flashcards.")}</p>
+        : L("Garde ce que tu as appris. Reviens à ce qui compte.", "Keep what you learned. Come back to what matters.")}</p>
 
       {/* Same .seg/.seg-btn segmented-control pattern as Pronote's Student/Parent picker — one visual
           language for every binary switcher in the app, not a second bespoke tab style. Hidden on phone:
@@ -2701,7 +2647,7 @@ function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" | "en"; 
                 </div>
               ) : null}
               <textarea className="studylog-textarea" rows={14}
-                placeholder={L("Aujourd'hui, j'ai appris… (ou clique sur Dictée vocale)", "Today I learned… (or click Voice dictation)")}
+                placeholder={L("Qu'as-tu appris aujourd'hui ?", "What did you learn today?")}
                 value={text} onChange={(e) => setText(e.target.value)} maxLength={4000} />
               <div className="studylog-actions">
                 <button type="button" className="btn primary" disabled={saving || !text.trim()} onClick={() => void save()}>
@@ -2861,7 +2807,9 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
 
   return (
     <main className="settings-page">
-      <h1 className="settings-title">{L("Réglages", "Settings")}</h1>
+      {/* The prototype's Settings head: "Make Otto yours." + "Your account, your connections, your pace." */}
+      <h1 className="list-head">{L("Fais d'Otto le tien.", "Make Otto yours.")}</h1>
+      <p className="page-sub" style={{ marginTop: 10, marginBottom: "var(--space-6)" }}>{L("Ton compte, tes connexions, ton rythme.", "Your account, your connections, your pace.")}</p>
       {profileError ? (
         <p className="rewrite-error">{L("Certaines infos du profil n'ont pas pu être chargées.", "Some profile info couldn't load.")} <button type="button" className="btn xs ghost" onClick={loadProfile}>{L("Réessayer", "Retry")}</button></p>
       ) : null}
@@ -3553,23 +3501,28 @@ function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status
       setBusy(false);
     }
   };
+  // The two main modes use the prototype's auth copy verbatim (login "Welcome back." · signup "A clearer
+  // day starts here."); forgot/reset keep their own explanatory copy — the prototype doesn't design those
+  // states. French adapted through L() as everywhere else.
   const titles: Record<typeof mode, string> = {
-    signup: L("Crée ton compte", "Create your account"),
-    login: L("Content de te revoir", "Welcome back"),
+    signup: L("Une journée plus claire commence ici.", "A clearer day starts here."),
+    login: L("Content de te revoir.", "Welcome back."),
     forgot: L("Mot de passe oublié", "Forgot password"),
     reset: L("Choisis un nouveau mot de passe", "Choose a new password"),
   };
   const subs: Record<typeof mode, string> = {
-    signup: L("30 secondes pour t'inscrire — tu connectes Pronote ensuite.", "30 seconds to sign up — connect Pronote next."),
-    login: L("Connecte-toi pour reprendre où tu en étais.", "Log in to pick up where Otto left off."),
+    signup: L("Un agenda qui s'organise. Un tuteur qui t'explique.", "Meet your planner. Find your tutor."),
+    login: L("Un peu de clarté t'attend.", "A little clarity is waiting for you."),
     forgot: L("On t'envoie un lien pour en choisir un nouveau.", "We'll email you a link to pick a new one."),
     reset: L("Ce lien ne fonctionne qu'une seule fois.", "This link only works once."),
   };
   return (
     <div className="login-page">
-      <header className="landing-nav glass-nav">
-        <a className="brand" href="/"><Logo size={20} /> Otto</a>
-        <button type="button" className="lang-toggle" onClick={() => onLangChange(en ? "fr" : "en")}>{en ? "FR" : "EN"}</button>
+      {/* Same nav chrome as the landing page (landing-nav-framer) — the prototype's public pages share
+          one shell: lowercase "otto" wordmark left, language toggle right. */}
+      <header className="landing-nav-framer">
+        <a className="brand-framer" href="/"><Logo size={20} /> <span className="brand-name-framer">otto</span></a>
+        <button type="button" className="lang-toggle-framer" onClick={() => onLangChange(en ? "fr" : "en")} aria-label={en ? "Changer de langue" : "Switch language"}>{en ? "FR" : "EN"}</button>
       </header>
       <main className="login-main">
         <div className="login-card">
@@ -3662,166 +3615,112 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
   const L = (fr: string, e: string) => (en ? e : fr);
 
   return (
-    <div className="landing landing-simple">
-      {/* Simple Navigation */}
-      <header className="landing-nav-simple">
-        <span className="brand"><Logo size={20} /> <span className="brand-name">Otto</span></span>
-        <nav className="landing-navlinks">
-          <button type="button" className="lang-toggle" onClick={() => onLangChange(en ? "fr" : "en")} aria-label={en ? "Changer de langue" : "Switch language"}>{en ? "FR" : "EN"}</button>
-          <a className="btn ghost" href="/login">{L("Se connecter", "Log in")}</a>
-          <a className="btn primary" href="/signup">{L("Commencer", "Get started")}</a>
+    <div className="landing landing-framer">
+      {/* Framer-style Navigation */}
+      <header className="landing-nav-framer">
+        <span className="brand-framer"><Logo size={20} /> <span className="brand-name-framer">otto</span></span>
+        <nav className="landing-navlinks-framer">
+          {/* The prototype's nav link leads somewhere real: the /research page, the long-form write-up of
+              Otto's learning philosophy (the research the approach is grounded in) — not an in-page anchor. */}
+          <a href="/research" className="nav-link-framer">{L("Notre approche", "Our approach")}</a>
+          <button type="button" className="lang-toggle-framer" onClick={() => onLangChange(en ? "fr" : "en")} aria-label={en ? "Changer de langue" : "Switch language"}>{en ? "FR" : "EN"}</button>
+          <a className="btn ghost-framer" href="/login">{L("Log in", "Se connecter")}</a>
         </nav>
       </header>
 
-      {/* Hero Section - Simplified */}
-      <main className="hero-simple">
-        <h1 className="hero-title-simple">
-          {en ? <>Your studies, <span className="tally-highlight">under control</span>.</> : <>Ton lycée, <span className="tally-highlight">sous contrôle</span>.</>}
+      {/* Hero Section */}
+      <main className="hero-framer">
+        <h1 className="hero-title-framer">
+          {en ? "Less busywork. More understanding." : "Moins de travail. Plus de compréhension."}
         </h1>
 
-        <p className="hero-sub-simple">
-          {L(
-            "Tes devoirs et contrôles deviennent un plan quotidien clair — et un tuteur t'aide sur ce que tu ne comprends pas encore.",
-            "Homework and exams become a clear daily plan — with a tutor for what you don't understand yet.",
-          )}
+        <p className="hero-sub-framer">
+          {en
+            ? "Your school day, organized. Your questions, worked through. Otto brings proactive planning and personal tutoring together."
+            : "Ta journée d'école, organisée. Tes questions, résolues. Otto réunit la planification proactive et le tutorat personnel."}
         </p>
 
-        <div className="hero-cta-simple">
-          <a className="btn primary big" href="/signup">{L("Commencer gratuitement", "Get started for free")}</a>
-          <a className="btn ghost big" href="/login">{L("Se connecter", "Log in")}</a>
+        <div className="hero-cta-framer">
+          <a className="btn primary-framer" href="/signup">{en ? "Open Otto" : "Ouvrir Otto"}</a>
         </div>
+
+        <p className="hero-tagline-framer">
+          {en ? "A study companion, not a shortcut." : "Un compagnon d'étude, pas un raccourci."}
+        </p>
+
+        <a href="#features" className="hero-demo-link-framer">
+          {en ? "Explore the demo — Tasks and tutoring, together." : "Explorer la démo — Tâches et tutorat, ensemble."}
+        </a>
       </main>
 
-      {/* Simple Features */}
-      <section className="features-simple">
-        <div className="feature-simple">
-          <h3>{L("Tuteur Socratique", "Socratic tutor")}</h3>
-          <p>{L("Des questions guidées sur les notions difficiles — jamais les devoirs faits à ta place.", "Guided questions on tough concepts — never the homework done for you.")}</p>
+      {/* Two-column Feature Section */}
+      <section id="features" className="features-framer">
+        <div className="feature-column-framer">
+          <div className="feature-number-framer">01</div>
+          <h2 className="feature-title-framer">{en ? "PROACTIVE TASKS" : "TÂCHES PROACTIVES"}</h2>
+          <h3 className="feature-heading-framer">
+            {en ? "Your day, already sorted." : "Ta journée, déjà organisée."}
+          </h3>
+          <p className="feature-desc-framer">
+            {en
+              ? "Pronote, Gmail, Calendar, Drive — they all become priorities, with materials and steps ready before you sit down."
+              : "Pronote, Gmail, Calendar, Drive — tout devient priorité, avec les matériaux et les étapes prêts avant même que tu t'installes."}
+          </p>
+
+          {/* Sample Task Card */}
+          <div className="sample-task-framer">
+            <div className="sample-task-subject-framer">
+              {en ? "MATHEMATICS · TOMORROW" : "MATHÉMATIQUES · DEMAIN"}
+            </div>
+            <h4 className="sample-task-title-framer">
+              {en ? "Get ready for derivatives" : "Prépare-toi aux dérivées"}
+            </h4>
+            <p className="sample-task-meta-framer">
+              {en ? "15 min review · 2 practice questions" : "15 min de révision · 2 questions d'exercice"}
+            </p>
+          </div>
         </div>
-        <div className="feature-simple">
-          <h3>{L("Toujours un pas d'avance", "Always a step ahead")}</h3>
-          <p>{L("Otto repère tes devoirs et examens dans Gmail, Calendar et Pronote, et crée tes tâches avant même que tu y penses.", "Otto spots your homework and exams in Gmail, Calendar, and Pronote, and creates your tasks before you even think to.")}</p>
-        </div>
-        <div className="feature-simple">
-          <h3>{L("Journal d'apprentissage", "Learning journal")}</h3>
-          <p>{L("Un résumé quotidien de ce que tu as appris, avec fiches et quiz de révision générés automatiquement.", "A daily summary of what you learned, with flashcards and quizzes generated automatically for review.")}</p>
+
+        <div className="feature-column-framer">
+          <div className="feature-number-framer">02</div>
+          <h2 className="feature-title-framer">{en ? "PERSONAL TUTOR" : "TUTEUR PERSONNEL"}</h2>
+          <h3 className="feature-heading-framer">
+            {en ? "A nudge. Not the answer." : "Un coup de pouce. Pas la réponse."}
+          </h3>
+          <p className="feature-desc-framer">
+            {en
+              ? "Stuck on a concept? Otto asks questions, adapts its approach, and helps you find your own way through."
+              : "Bloqué sur un concept ? Otto pose des questions, adapte son approche et t'aide à trouver ton propre chemin."}
+          </p>
+
+          {/* Sample Tutor Interaction */}
+          <div className="sample-tutor-framer">
+            <div className="sample-tutor-label-framer">
+              {en ? "OTTO / YOUR TUTOR" : "OTTO / TON TUTEUR"}
+            </div>
+            <p className="sample-tutor-question-framer">
+              {en ? "What does the slope tell us about how this function changes?" : "Que nous dit la pente sur la façon dont cette fonction change ?"}
+            </p>
+            <p className="sample-tutor-prompt-framer">
+              {en ? "Start with your observations — what do you notice?" : "Commence par tes observations — que remarques-tu ?"}
+            </p>
+          </div>
         </div>
       </section>
 
-      {/* "Meet your tutor" — each block names something Otto actually does, not aspirational copy. Kept to
-          four: dropped Klar's "collaborate in shared courses" (Otto is a solo tutor, no shared-course
-          concept exists) rather than describe a feature that isn't real. */}
-      <section className="landing-sec-simple agent-features">
-        <div className="sec-header-simple">
-          <h2>{L("Ce qu'Otto fait vraiment.", "What Otto actually does.")}</h2>
+      {/* Footer */}
+      <footer className="landing-footer-framer">
+        <div className="footer-brand-framer">
+          otto · {en ? "Made for learning, not shortcuts." : "Fait pour apprendre, pas pour tricher."}
         </div>
-        <div className="agent-feature-grid">
-          <div className="agent-feature-card">
-            <h3>{L("Un tableau de séance, construit au fil de l'eau", "A session document, built as you go")}</h3>
-            <p>{L("Objectif du jour, formules, ton propre raisonnement — Otto écrit sur un tableau persistant pendant que vous parlez, pas juste dans le chat.", "Today's focus, formulas, your own reasoning — Otto writes to a persistent board as you talk, not just into the chat.")}</p>
-          </div>
-          <div className="agent-feature-card">
-            <h3>{L("Les sources, affichées — pas juste citées", "Sources shown, not just claimed")}</h3>
-            <p>{L("Quand Otto s'appuie sur une recherche, les sources utilisées apparaissent sous la réponse, cliquables.", "When Otto leans on a web search, the sources it used show up under the reply, clickable.")}</p>
-          </div>
-          <div className="agent-feature-card">
-            <h3>{L("Des scènes interactives, pas des captures d'écran", "Interactive scenes, not screenshots")}</h3>
-            <p>{L("Pour une notion qui se manipule — un solide en 3D, une courbe qu'on fait glisser — Otto construit une scène que tu touches, en plus des exercices et quiz habituels.", "For a notion that's better manipulated than described — a 3D solid, a curve you drag — Otto builds a scene you can touch, alongside the usual practice problems and quizzes.")}</p>
-          </div>
-          <div className="agent-feature-card">
-            <h3>{L("Une vraie voix, pas un robot", "A real voice, not a robot")}</h3>
-            <p>{L("Le mode vocal lit les réponses à voix haute avec une voix naturelle — utile en marchant, ou simplement pour écouter plutôt que lire.", "Voice mode reads replies aloud with a natural voice — useful on the move, or just to listen instead of read.")}</p>
-          </div>
-        </div>
-      </section>
-
-      {/* Integrations + security — real facts only, no certifications Otto doesn't hold. The grid mirrors
-          server/integrations.ts's actual CATALOG (Composio-backed) plus Pronote, which isn't Composio but
-          is the other real connection this app supports. */}
-      <section className="landing-sec-simple">
-        <div className="sec-header-simple">
-          <h2>{L("Connecté à ce que tu utilises déjà.", "Connected to what you already use.")}</h2>
-        </div>
-        <div className="integrations-grid">
-          {[
-            L("Gmail", "Gmail"), L("Google Calendar", "Google Calendar"), L("Google Docs", "Google Docs"),
-            L("Google Slides", "Google Slides"), L("Google Sheets", "Google Sheets"), L("Google Drive", "Google Drive"),
-            L("Notion", "Notion"), L("Pronote", "Pronote"),
-          ].map((name) => <span key={name} className="integration-pill">{name}</span>)}
-        </div>
-        <ul className="security-facts">
-          <li>{L("Tes identifiants Pronote sont chiffrés en AES-256-GCM — jamais stockés en clair.", "Your Pronote credentials are encrypted with AES-256-GCM — never stored in plain text.")}</li>
-          <li>{L("Gmail et Calendar sont connectés en lecture par défaut — Otto ne peut pas envoyer d'email ou modifier un événement sans ta confirmation.", "Gmail and Calendar connect read-first — Otto can't send an email or change an event without your confirmation.")}</li>
-          <li>{L("Tes données ne sont pas vendues, point.", "Your data isn't sold, full stop.")}</li>
-        </ul>
-      </section>
-
-      {/* Research — kept but simplified */}
-      <section className="landing-sec-simple">
-        <div className="sec-header-simple">
-          <h2>{L("Construit sur des méthodes éprouvées.", "Built on proven methods.")}</h2>
-        </div>
-        <dl className="research-list-simple">
-          <div className="research-row-simple">
-            <dt>{L("Questionnement socratique", "Socratic questioning")}</dt>
-            <dd>{L("Te fait construire la réponse toi-même au lieu de te la donner toute faite.", "Guides you to build the answer yourself instead of handing it over.")}</dd>
-          </div>
-          <div className="research-row-simple">
-            <dt>{L("Système Leitner", "Leitner system")}</dt>
-            <dd>{L("Fait réapparaître les cartes de révision juste avant le moment où tu les oublierais.", "Resurfaces flashcards right before you would forget them.")}</dd>
-          </div>
-          <div className="research-row-simple">
-            <dt>{L("Matrice d'Eisenhower", "Eisenhower matrix")}</dt>
-            <dd>{L("Priorise tes tâches selon leur réelle urgence et importance pour tes objectifs.", "Prioritizes your tasks by true urgency and importance for your goals.")}</dd>
-          </div>
-        </dl>
-      </section>
-
-      {/* FAQ — kept but simplified */}
-      <section className="landing-sec-simple">
-        <div className="sec-header-simple">
-          <h2>{L("Questions fréquentes.", "Frequently asked questions.")}</h2>
-        </div>
-        <div className="faq-list-simple">
-          <details className="faq-item-simple">
-            <summary>{L("Est-ce qu'Otto fait mes devoirs à ma place ?", "Does Otto do my homework for me?")}</summary>
-            <p>{L("Non — Otto détecte tout travail noté et produit à la place une fiche méthodologique et des questions d'entraînement.", "No — Otto detects graded work and provides step-by-step methodologies and practice questions instead.")}</p>
-          </details>
-          <details className="faq-item-simple">
-            <summary>{L("Comment fonctionne le tuteur IA ?", "How does the AI tutor work?")}</summary>
-            <p>{L("Le tuteur t'explique les concepts inconnus et te guide pas à pas pour résoudre tes exercices, sans jamais donner la réponse directement.", "The tutor explains unknown concepts and guides you step-by-step to solve exercises, without giving the direct answer.")}</p>
-          </details>
-          <details className="faq-item-simple">
-            <summary>{L("Je suis en filière IB ou Bac, est-ce adapté ?", "Does Otto work for IB or French Bac students?")}</summary>
-            <p>{L("Absolument. Otto gère Pronote, Google Calendar/Gmail ainsi que les filières IB (HL/SL, TOK, CAS, EE) et Bac.", "Yes. Otto supports Pronote, Google Calendar/Gmail, as well as IB (HL/SL, TOK, CAS, EE) and French Bac subjects.")}</p>
-          </details>
-          <details className="faq-item-simple">
-            <summary>{L("Mes identifiants Pronote sont-ils sécurisés ?", "Are my Pronote credentials safe?")}</summary>
-            <p>{L("Tes identifiants sont chiffrés en AES-256-GCM et ne sont jamais stockés en clair ni revendus.", "Your credentials are encrypted using AES-256-GCM and never stored in plain text or sold.")}</p>
-          </details>
-        </div>
-      </section>
-
-      {/* CTA Banner — kept but simplified */}
-      <section className="cta-band-simple">
-        <h2>{L("Reprends le contrôle de tes études.", "Take command of your coursework.")}</h2>
-        <p>{L("Connecte ton Pronote ou ton agenda en 30 secondes.", "Connect your school agenda in 30 seconds.")}</p>
-        <div className="cta-actions-simple">
-          <a className="btn primary big" href="/signup">{L("Commencer gratuitement", "Get started for free")}</a>
-        </div>
-      </section>
-
-      {/* Footer — one row: brand, links, copyright */}
-      <footer className="landing-foot-simple">
-        <div className="foot-top-simple">
-          <span className="brand"><Logo size={20} /> <span className="brand-name">Otto</span></span>
-          <nav className="foot-group-simple">
-            <a href="/research">{L("Recherche", "Research")}</a>
-            <a href="/privacy">{L("Confidentialité", "Privacy")}</a>
-            <a href="/terms">{L("Conditions", "Terms")}</a>
-          </nav>
-          <span>© 2026 Otto</span>
-        </div>
+        <nav className="footer-links-framer">
+          <a href="/privacy">{en ? "Privacy" : "Confidentialité"}</a>
+          <a href="/terms">{en ? "Terms" : "Conditions"}</a>
+          {/* Not in the prototype's footer, but /research is this landing's long-form "Research" section —
+              dropping the link during the restyle would orphan the page entirely. (The /unlimited page
+              stays reachable through its own routes; it's just not a footer link any more.) */}
+          <a href="/research">{en ? "Research" : "Recherche"}</a>
+        </nav>
       </footer>
     </div>
   );
@@ -4002,13 +3901,11 @@ function TermsBody() {
   );
 }
 
-/** /research — the long-form version of the landing page's compact "Research" list (see the `landing-sec`
- *  with `sec-kicker`="Recherche"/"Research" in Landing()). That section stays a 4-line citation on purpose
- *  (a methodology reference, not a pitch); this page is where someone who actually wants the detail can
- *  read it. Grounded in the REAL implementation, not generic claims — cites actual function/file names
- *  the same way DOES_STUDENT_WORK is cited elsewhere in this app's own public-facing copy, so every claim
- *  here is checkable against the code, not marketing. Same LegalPage wrapper pattern (own LangContext,
- *  reachable logged-out) since it's public and has nothing to do with an authenticated session. */
+/** /research — the philosophy page, linked from the landing nav's "Our approach". The landing's compact
+ *  "Research" list stays a 4-line citation on purpose; this page is the mission statement plus the four
+ *  methods, one short user-facing paragraph each — deliberately NO file/function names here (reported:
+ *  naming internals reads like the page is talking to a computer, not to a student). Same wrapper pattern
+ *  as the legal pages (own LangContext, reachable logged-out) since it's public. */
 function ResearchPage({ lang }: { lang?: string }) {
   return (
     <LangContext.Provider value={lang === "en" ? "en" : "fr"}>
@@ -4019,75 +3916,78 @@ function ResearchPage({ lang }: { lang?: string }) {
 function ResearchPageBody() {
   const L = useLang();
   return (
-    <div className="landing legal-page">
-      <header className="landing-nav glass-nav">
-        <a className="brand" href="/"><Logo size={22} /> Otto</a>
-        <nav className="landing-navlinks">
-          <a className="btn ghost" href="/">{L("Accueil", "Home")}</a>
+    <div className="landing research-page">
+      <header className="landing-nav-framer">
+        <a className="brand-framer" href="/"><Logo size={20} /> <span className="brand-name-framer">otto</span></a>
+        <nav className="landing-navlinks-framer">
+          <a className="btn ghost-framer" href="/">{L("Accueil", "Home")}</a>
         </nav>
       </header>
-      <main className="legal">
-        <h1>{L("Ce sur quoi Otto est construit", "What Otto is actually built on")}</h1>
-        <p>
+      <main className="research-main">
+        {/* The mission statement leads the page, set in the same serif display face as the landing hero —
+            this page is the philosophy, typeset like a manifesto, not a plain article. */}
+        <p className="micro-label accent">{L("Recherche", "Research")}</p>
+        <h1 className="research-title">{L("Fait pour apprendre, pas pour tricher.", "Made for learning, not shortcuts.")}</h1>
+        <p className="research-intro">
           {L(
-            "La plupart des « tuteurs IA » sont un chatbot générique avec un prompt système qui dit « sois pédagogique ». Ça tient rarement : sous la pression (« allez, donne-moi juste la réponse »), le modèle finit par céder. Otto est construit différemment — sur quatre méthodes pédagogiques précises, chacune avec un mécanisme concret dans le code, pas juste une instruction qu'on espère suivie.",
-            "Most \"AI tutors\" are a generic chatbot with a system prompt that says \"be pedagogical.\" That rarely holds up — under real pressure (\"come on, just give me the answer\"), the model eventually caves. Otto is built differently: on four specific pedagogical methods, each backed by an actual mechanism in the code, not just an instruction it's hoped will be followed.",
+            "La plupart des tuteurs IA promettent d'enseigner. Sous la pression, ils donnent la réponse. Otto est construit sur quatre méthodes qui rendent plus difficile de donner la réponse que t'aider à apprendre.",
+            "Most AI tutors promise to teach. Under pressure, they hand over the answer. Otto is built on four methods that make handing over the answer harder than helping you learn.",
           )}
         </p>
 
-        <h2>{L("1. Questionnement socratique", "1. Socratic questioning")}</h2>
-        <p>
+        <section className="research-sec">
+          <p className="research-sec-kicker" aria-hidden>01</p>
+          <h2 className="research-sec-title">{L("Le questionnement socratique", "Socratic questioning")}</h2>
+        <p className="research-sec-body">
           {L(
-            "La règle centrale du tuteur d'Otto s'appelle en interne « HAND BACK THE THINKING » : une fois le raisonnement construit avec l'élève, c'est TOUJOURS à lui de prononcer la conclusion — jamais à Otto. Concrètement, le prompt du tuteur (`chatAboutTask` dans `server/claude.ts`) impose un cycle en 6 étapes à chaque échange : fixer l'objectif, obtenir une tentative de l'élève, diagnostiquer où ça coince (pas juste QUE ça coince — identifier l'erreur précise et le raisonnement erroné derrière), donner UN seul indice à la fois, exiger que l'élève reformule avec ses propres mots, puis ajuster l'échange suivant. Un « focalisateur » (une question qui pousse l'élève à choisir lui-même la piste) est toujours préféré à un « entonnoir » (une question qui ne laisse qu'un seul mot à compléter) — la nuance est appliquée dans le prompt avec des exemples concrets des deux, précisément parce qu'un modèle de langage a naturellement tendance à entonner : ça paraît utile, mais ça empêche l'élève de vraiment réfléchir.",
-            "The core rule of Otto's tutor is internally called \"HAND BACK THE THINKING\": once the reasoning has been built together with the student, it's ALWAYS the student who states the conclusion — never Otto. Concretely, the tutor prompt (`chatAboutTask` in `server/claude.ts`) enforces a 6-step loop on every exchange: set the goal, elicit an attempt, diagnose where it's actually breaking down (not just THAT it's wrong — the specific error and the flawed reasoning underneath it), give exactly one hint at a time, require the student to explain it back in their own words, then adjust the next exchange. A \"focusing\" question (one that makes the student choose their own next move) is always preferred over a \"funneling\" one (one that leaves only a single word to fill in) — the distinction is spelled out in the prompt with concrete examples of both, precisely because a language model naturally drifts toward funneling: it feels helpful, but it does the thinking for the student instead of letting them do it.",
+            "Otto ne donne jamais la conclusion — c'est toi qui la trouves. Il repère exactement où tu bloques, donne un seul indice à la fois, puis te demande de reformuler avec tes mots. Et s'il commence à glisser vers la réponse toute faite, un garde-fou intégré l'arrête et le redirige.",
+            "Otto never states the conclusion — you do. It finds exactly where you're stuck, gives one hint at a time, then asks you to say it back in your own words. And if it ever drifts toward just handing over the answer, a built-in guardrail stops it and redirects.",
           )}
         </p>
-        <p>
-          {L(
-            "Ce n'est pas qu'une instruction dans un prompt : c'est aussi vérifié après coup. Si Otto écrit malgré tout une conclusion à la place de l'élève (« la réponse est D », « c'est donc Paris »), un filtre programmatique (`CHAT_STATES_ANSWER`) détecte la phrase, jette la réponse, et la remplace par une redirection. Et si l'élève insiste après un refus (« allez, donne-moi juste la réponse »), le prompt interdit explicitement de céder davantage à la répétition qu'à la première demande — la pression n'est jamais traitée comme une nouvelle preuve qu'il faut craquer.",
-            "This isn't just a prompt instruction — it's also checked after the fact. If Otto still writes a conclusion for the student (\"the answer is D,\" \"so it's Paris\"), a programmatic filter (`CHAT_STATES_ANSWER`) catches the phrasing, discards the reply, and substitutes a redirect. And if the student pushes again after being turned down (\"come on, just tell me\"), the prompt explicitly forbids getting any more lenient with repetition than on the first ask — pressure is never treated as new evidence that it's time to give in.",
-          )}
-        </p>
+        </section>
 
-        <h2>{L("2. Répétition espacée (système Leitner)", "2. Spaced repetition (the Leitner system)")}</h2>
-        <p>
+        <section className="research-sec">
+          <p className="research-sec-kicker" aria-hidden>02</p>
+          <h2 className="research-sec-title">{L("La répétition espacée", "Spaced repetition")}</h2>
+        <p className="research-sec-body">
           {L(
-            "Chaque carte de révision qu'Otto crée vit dans une des cases d'un système Leitner : une carte que tu rates reste en case 1 et revient vite ; une carte que tu réussis avance d'une case et revient plus tard. Le but n'est pas de te faire revoir tout, tout le temps — c'est de faire réapparaître chaque carte juste avant le moment où tu l'aurais oubliée, ni trop tôt (perte de temps sur ce que tu sais déjà) ni trop tard (la carte a eu le temps de s'effacer). Le résumé hebdomadaire du Journal d'apprentissage utilise le même mécanisme : il pondère automatiquement vers ce que tu as le plus raté cette semaine, pas vers un mélange aléatoire.",
-            "Every flashcard Otto creates lives in one of several Leitner boxes: a card you get wrong stays in box 1 and comes back soon; a card you get right moves up a box and comes back later. The point isn't to make you review everything constantly — it's to resurface each card right before you would have forgotten it: not so early it wastes time on something you already know, not so late the card has already faded. The weekly Journal summary uses the exact same mechanism: it automatically weights toward whatever you got wrong most that week, not a random mix.",
+            "Chaque carte revient juste avant que tu l'aurais oubliée — ni plus tôt, ni plus tard. Celles que tu rates reviennent vite ; celles que tu connais s'éloignent.",
+            "Every card comes back right before you'd forget it — not sooner, not later. The ones you miss return quickly; the ones you know drift further away.",
           )}
         </p>
+        </section>
 
-        <h2>{L("3. Hiérarchie d'engagement (ICAP)", "3. The engagement hierarchy (ICAP)")}</h2>
-        <p>
+        <section className="research-sec">
+          <p className="research-sec-kicker" aria-hidden>03</p>
+          <h2 className="research-sec-title">{L("La hiérarchie de l'engagement", "The engagement hierarchy")}</h2>
+        <p className="research-sec-body">
           {L(
-            "Le modèle ICAP (Chi & Wylie) classe l'apprentissage en quatre niveaux d'engagement croissants — Passif, Actif, Constructif, Interactif — et montre que plus l'élève est engagé activement, plus l'apprentissage est profond. Taper une question et lire la réponse est passif : c'est le niveau le plus superficiel, même si la réponse est juste. Expliquer son raisonnement à voix haute à un tuteur qui réagit vraiment est interactif — le niveau le plus profond. Le prompt du tuteur d'Otto applique cette hiérarchie explicitement : chaque réponse doit pousser l'élève UN cran plus haut sur cette échelle, jamais plus bas. Une réponse qui donne la solution et s'arrête là est classée « passive » dans le prompt — même si la solution est correcte — précisément parce que ICAP prédit qu'elle n'apprend presque rien.",
-            "The ICAP framework (Chi & Wylie) ranks learning across four increasing levels of engagement — Passive, Active, Constructive, Interactive — and shows that deeper engagement produces deeper learning. Typing a question and reading the answer is passive: the shallowest level, even when the answer is correct. Explaining your reasoning out loud to a tutor that actually responds to it is interactive — the deepest level. Otto's tutor prompt applies this hierarchy explicitly: every reply must push the student ONE rung up that ladder, never down. A reply that just hands over the answer and stops is explicitly classified as \"passive\" in the prompt — even when the answer is right — precisely because ICAP predicts it teaches almost nothing.",
+            "Lire une réponse n'apprend presque rien. Expliquer son raisonnement à voix haute apprend le plus. Chaque réponse d'Otto est écrite pour te faire monter d'un cran — jamais descendre.",
+            "Reading an answer teaches you almost nothing. Explaining your reasoning out loud teaches you the most. Every Otto reply is written to pull you one level deeper — never shallower.",
           )}
         </p>
+        </section>
 
-        <h2>{L("4. Matrice d'Eisenhower", "4. The Eisenhower matrix")}</h2>
-        <p>
+        <section className="research-sec">
+          <p className="research-sec-kicker" aria-hidden>04</p>
+          <h2 className="research-sec-title">{L("La matrice d'Eisenhower", "The Eisenhower matrix")}</h2>
+        <p className="research-sec-body">
           {L(
-            "Ta liste « Aujourd'hui » n'est pas triée par date d'arrivée ni par date limite brute — chaque tâche reçoit un score d'urgence et un score d'importance, et la matrice d'Eisenhower (urgent/important) détermine dans quel quadrant elle tombe : Faire maintenant, Planifier, Déléguer, ou Peut attendre. Un devoir dû demain mais mineur ne prend pas le pas sur une révision de contrôle majeur dû dans 3 jours si ce contrôle compte plus — le score combine les deux axes, pas juste l'échéance. Et l'urgence n'est pas figée au moment où la tâche apparaît : elle grimpe mécaniquement à mesure que l'échéance approche (`applyDeadlineUrgency`), pour que rien ne s'endorme tranquillement en bas de la liste jusqu'à la veille.",
-            "Your \"Today\" list isn't sorted by arrival order or by raw deadline — every task gets an urgency score and an importance score, and the Eisenhower matrix (urgent/important) determines which quadrant it lands in: Do now, Schedule, Delegate, or Can wait. A minor assignment due tomorrow doesn't automatically outrank a major test review due in 3 days if that test actually matters more — the score combines both axes, not just the deadline. And urgency isn't frozen at the moment a task first appears: it climbs mechanically as the deadline nears (`applyDeadlineUrgency`), so nothing quietly sits at the bottom of the list until the night before.",
+            "Ta journée n'est pas une pile triée par échéance. Chaque tâche est notée pour l'urgence et l'importance — et re-notée à mesure que les dates approchent — pour que la bonne chose reste en haut.",
+            "Your day isn't a pile sorted by deadline. Every task is scored for urgency and importance — and re-scored as deadlines approach — so the right thing stays on top.",
           )}
         </p>
+        </section>
 
-        <h2>{L("En plus : la personnalisation apprend, elle ne devine pas", "On top of that: personalization that learns, not guesses")}</h2>
-        <p>
-          {L(
-            "Otto fait tourner sept petits systèmes d'apprentissage par renforcement (bandits contextuels, échantillonnage de Thompson) qui ajustent en continu des détails concrets pour CHAQUE élève : la longueur de session Pomodoro qui lui convient, le niveau de détail de ses fiches, le découpage plus ou moins fin de ses étapes, jusqu'au style de réponse du tuteur (plus de questions vs. plus d'exemples travaillés). Chaque système apprend d'un signal réel — a-t-il fini sa session, est-il resté engagé, ses cartes ont-elles progressé — et, quand la caméra de concentration (optionnelle, traitement 100% local) est activée, du niveau de concentration réel mesuré pendant la session. Rien n'est deviné une fois pour toutes : ça s'ajuste au fil des sessions, pour cet élève précis.",
-            "Otto runs seven small reinforcement-learning systems (contextual bandits, Thompson sampling) that continuously tune concrete details for EACH student: the Pomodoro length that actually works for them, how detailed their flashcards should be, how finely their steps get broken down, even the tutor's reply style (more questions vs. more worked examples). Each one learns from a real signal — did they finish the session, did they stay engaged, did their cards actually improve — and, when the optional focus camera (100% local processing) is on, from the actual measured concentration during that session. Nothing is guessed once and left alone — it adjusts session over session, for that specific student.",
-          )}
-        </p>
-
-        <h2>{L("Ce que ça ne veut pas dire", "What this doesn't mean")}</h2>
-        <p>
-          {L(
-            "Ces méthodes réduisent le risque qu'Otto fasse le travail à ta place ou explique mal — elles ne l'éliminent pas. Un modèle de langage reste un modèle de langage : il peut se tromper, mal diagnostiquer, ou (rarement) laisser passer une réponse qu'il n'aurait pas dû donner malgré les filtres. C'est pour ça qu'Otto affiche un badge visible sur chaque échange où un garde-fou s'est déclenché, plutôt que de prétendre que le système est infaillible.",
-            "These methods reduce the risk of Otto doing the work for you or explaining something badly — they don't eliminate it. A language model is still a language model: it can be wrong, misdiagnose something, or (rarely) let through a reply it shouldn't have despite the filters. That's why Otto shows a visible badge on any exchange where a guardrail actually tripped, rather than claiming the system is infallible.",
-          )}
-        </p>
+        <section className="research-sec research-sec-closing">
+          <h2 className="research-sec-title">{L("Ce que ça ne veut pas dire", "What this doesn't mean")}</h2>
+          <p className="research-sec-body">
+            {L(
+              "Otto peut se tromper — un modèle de langage reste un modèle de langage. Alors chaque fois qu'un garde-fou se déclenche, Otto l'affiche sur l'échange, au lieu de prétendre qu'il est infaillible.",
+              "Otto can still be wrong — a language model is a language model. So whenever a guardrail fires, Otto says so right on the exchange, instead of claiming to be infallible.",
+            )}
+          </p>
+        </section>
 
         <a className="legal-back" href="/">{L("← Retour à Otto", "← Back to Otto")}</a>
       </main>

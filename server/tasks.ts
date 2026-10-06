@@ -1174,6 +1174,7 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
             } catch (e: any) { console.warn("[tasks] supplementary non-Google sweep failed:", e?.message || e); }
           }
         }
+        attachLocationLinks(result, items);
         return result;
       }
     } catch (e: any) { console.warn("[tasks] discovery pipeline failed, falling back to agent sweep:", e?.message || e); }
@@ -1186,6 +1187,29 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
   for (const u of gen.profileUpdates) applyProfileUpdate(profile, u);
   const result = foldGenerated(existing, gen.tasks, profile.highPriorityPeople || []);
   return result;
+}
+
+/** Deterministic: a Calendar event with a real `location` field (an address/venue — see calendarToItems,
+ *  server/discover.ts) gets a "get there" Google Maps link attached to its task, matched by the SAME stable
+ *  `anchorKey` (`calendar:<eventId>`) the rest of the dedupe pipeline already keys on. Never asks the AI
+ *  classifier to recall/invent the address — a wrong address in a maps link actively sends the student to
+ *  the wrong place, which is worse than no link at all, so this reads the event's own structured field
+ *  directly instead of trusting a model to transcribe it correctly from prose. Idempotent (checks for an
+ *  existing maps link first) so re-running a sweep on an already-linked task is a no-op. Exported for tests. */
+export function googleMapsDirectionsUrl(location: string): string {
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(location)}`;
+}
+export function attachLocationLinks(result: WebTask[], items: { anchorKey: string; location?: string }[]): void {
+  for (const item of items) {
+    if (!item.location) continue;
+    const task = result.find((t) => t.anchorKey === item.anchorKey);
+    if (!task) continue;
+    if ((task.links || []).some((l) => /maps\.google\.com|google\.com\/maps/.test(l.url))) continue;
+    // label "Open" (not a descriptive string) so the client's own linkKind (TaskCard.tsx) relabels it from
+    // the URL itself as "Itinéraire"/"Directions" in the student's actual language, same convention the
+    // other evidence links here already lean on for that fallback.
+    task.links = [...(task.links || []), { label: "Open", url: googleMapsDirectionsUrl(item.location) }];
+  }
 }
 
 /** Pure post-processing of a sweep's output: absorb duplicates into the existing list, cap genuinely NEW
