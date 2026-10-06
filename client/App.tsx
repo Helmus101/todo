@@ -18,18 +18,11 @@ import { StudyMode } from "./study/StudyMode.tsx";
 import { TutorSession } from "./tutor/TutorSession.tsx";
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
 import { 
-  LayoutDashboard,
-  BookOpen,
   GraduationCap,
-  AlertTriangle,
-  Settings as SettingsIcon,
-  Menu,
-  X,
   Lock,
   Zap,
   ShieldCheck,
   Compass,
-  BarChart3,
   Mic,
   MicOff
 } from "lucide-react";
@@ -506,9 +499,7 @@ export function App() {
   const [showAllTasks, setShowAllTasks] = useState(false);
   // Study Mode state
   const [studyModeTask, setStudyModeTask] = useState<WebTask | null>(null);
-  // Sidebar state
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  // Briefly highlights the row a just-confirmed task lands on in "Completed" — gives finishing something a
+  // Briefly highlights the row a just-confirmed task lands in "Completed" — gives finishing something a
   // visible destination instead of the card just vanishing from the active list with nothing to show for it.
   const [justDoneId, setJustDoneId] = useState<string | null>(null);
   const flagJustDone = useCallback((id: string) => {
@@ -1053,111 +1044,59 @@ export function App() {
     <LangContext.Provider value={status?.language === "en" ? "en" : "fr"}>
     <NotifyContext.Provider value={notify}>
     <div className="app">
-      {/* Sidebar — hidden in Tutor: that screen is meant to be a full-screen, focused surface (reported
-          live), not the dashboard's usual chrome. TutorSession gets its own small back control instead
-          (onExit prop above) so there's still exactly one way out, just not the full nav. */}
-      {!route.startsWith("tutor") && <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
-        <div className="sidebar-brand">
-          <Logo size={20} /> Otto
-        </div>
-        <nav className="sidebar-nav">
+      {/* Top nav — the prototype's single shell: lowercase "otto" wordmark left, plain text links right
+          (Today/Tutor/Journal/Mistakes/Settings), active link in the orange. Replaces the old sidebar +
+          page-title topbar entirely. Hidden in Tutor: that screen is a full-screen, focused surface —
+          TutorSession carries its own breadcrumb row ("All sessions / Mathematics … End session"), the
+          same chrome the prototype's /tutor/session uses. */}
+      {!route.startsWith("tutor") && (
+      <header className="topnav">
+        <a className="topnav-brand" href="/tasks">otto</a>
+        <nav className="topnav-links">
           <a
-            className={`sidebar-item ${route === "" || route === "tasks" || route.startsWith("task/") ? "active" : ""}`}
+            className={`topnav-link ${route === "" || route === "tasks" || route.startsWith("task/") ? "active" : ""}`}
             href="/tasks"
-            onClick={() => setSidebarOpen(false)}
           >
-            <LayoutDashboard />
-            {status?.language === "en" ? "Tasks" : "Tâches"}
-            {live.length > 0 && <span className="sidebar-badge">{live.length}</span>}
-          </a>
-          <a
-            className={`sidebar-item ${route === "log" ? "active" : ""}`}
-            href="/log"
-            onClick={() => setSidebarOpen(false)}
-          >
-            <BookOpen />
-            {isPhone ? (status?.language === "en" ? "Flashcards" : "Cartes") : (status?.language === "en" ? "Journal" : "Journal")}
+            {en ? "Today" : "Aujourd'hui"}
           </a>
           {!isPhone && <a
-            className={`sidebar-item ${route === "tutor" || route.startsWith("tutor/session/") ? "active" : ""}`}
+            className={`topnav-link ${route === "tutor" || route.startsWith("tutor/session/") ? "active" : ""}`}
             href="/tutor"
-            onClick={() => setSidebarOpen(false)}
           >
-            <GraduationCap />
-            {status?.language === "en" ? "Tutor" : "Tuteur"}
-          </a>}
-          {STUDY_MODE_ENABLED && !isPhone && (
-            <a
-              className={`sidebar-item ${route === "study" ? "active" : ""}`}
-              href="/study"
-              onClick={() => setSidebarOpen(false)}
-            >
-              <GraduationCap />
-              {status?.language === "en" ? "Study" : "Réviser"}
-            </a>
-          )}
-          {!isPhone && <a
-            className={`sidebar-item ${route === "errorlog" ? "active" : ""}`}
-            href="/errorlog"
-            onClick={() => setSidebarOpen(false)}
-          >
-            <AlertTriangle />
-            {status?.language === "en" ? "Error log" : "Erreurs"}
+            {en ? "Tutor" : "Tuteur"}
           </a>}
           <a
-            className={`sidebar-item ${route === "settings" ? "active" : ""}`}
-            href="/settings"
-            onClick={() => setSidebarOpen(false)}
+            className={`topnav-link ${route === "log" ? "active" : ""}`}
+            href="/log"
           >
-            <SettingsIcon />
-            {status?.language === "en" ? "Settings" : "Réglages"}
+            {en ? "Journal" : "Journal"}
+          </a>
+          {!isPhone && <a
+            className={`topnav-link ${route === "errorlog" ? "active" : ""}`}
+            href="/errorlog"
+          >
+            {en ? "Mistakes" : "Erreurs"}
+          </a>}
+          <a
+            className={`topnav-link ${route === "settings" ? "active" : ""}`}
+            href="/settings"
+          >
+            {en ? "Settings" : "Réglages"}
           </a>
           {!isPhone && isAdminUser(status?.user) && (
             <a
-              className={`sidebar-item ${route === "admin" ? "active" : ""}`}
+              className={`topnav-link ${route === "admin" ? "active" : ""}`}
               href="/admin"
-              onClick={() => setSidebarOpen(false)}
             >
-              <BarChart3 />
               Admin
             </a>
           )}
         </nav>
-        <div className="sidebar-footer">
-          <a className="sidebar-user" href="/settings" onClick={() => setSidebarOpen(false)}>
-            <span className="sidebar-user-avatar">{(status.name || firstName(status.user) || "O").charAt(0).toUpperCase()}</span>
-            <span className="sidebar-user-info">
-              <span className="sidebar-user-name">{status.name || firstName(status.user) || (en ? "Account" : "Compte")}</span>
-              <span className="sidebar-user-email">{status.user || ""}</span>
-            </span>
-          </a>
-        </div>
-      </aside>}
-
-      {/* Mobile sidebar toggle — also hidden in Tutor, same reasoning as the sidebar itself. */}
-      {!route.startsWith("tutor") && <button
-        className="sidebar-toggle"
-        onClick={() => setSidebarOpen(!sidebarOpen)}
-        aria-label="Toggle sidebar"
-      >
-        {sidebarOpen ? <X /> : <Menu />}
-      </button>}
+      </header>
+      )}
 
       {/* Main content area */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        {!route.startsWith("tutor") && <header className="topbar">
-          <div className="topbar-title">{(() => {
-            if (route === "settings") return en ? "Settings" : "Réglages";
-            if (route === "log") return isPhone ? (en ? "Flashcards" : "Cartes") : (en ? "Journal" : "Journal");
-            if (route === "study") return en ? "Study" : "Réviser";
-            if (route === "errorlog") return en ? "Error log" : "Erreurs";
-            if (route === "admin") return "Admin";
-            if (route.startsWith("tutor/session/")) return en ? "Tutor Session" : "Séance de tutorat";
-            return en ? "Tasks" : "Tâches";
-          })()}</div>
-          <div className="spacer" />
-          {!isPhone && (route === "" || route === "tasks" || route.startsWith("task/")) && (status.googleConnected || status.pronoteConnected) && <button className="btn ghost" disabled={busy} onClick={() => void generate()}>{busy ? (status?.language === "en" ? "Searching…" : "Recherche…") : (status?.language === "en" ? "Refresh" : "Actualiser")}</button>}
-        </header>}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'visible' }}>
 
       {/* Hoisted out of the dashboard-only branch below (where it used to live, inside the `route ===
           "settings" ? ... : (...)` ternary's else-arm) so it renders on EVERY route, not just /tasks —
@@ -1196,7 +1135,12 @@ export function App() {
         <main className="list-wrap" key="dash">
           <div className="dash-head">
             <p className="dash-date">{todayLong(status?.language)}</p>
-            <h1 className="list-head">{GREETING(status?.language)}{(status.name || firstName(status.user)) ? <>, <span className="accent-num">{status.name || firstName(status.user)}</span></> : null}.</h1>
+            {/* The prototype's page title: "Your day, under control." — one calm sentence, no name,
+                no greeting-by-clock. The sub-line is its "Three priorities…" reassurance. */}
+            <h1 className="list-head">{en ? "Your day, under control." : "Ta journée, sous contrôle."}</h1>
+            <p className="page-sub" style={{ marginTop: 10 }}>
+              {en ? "Three priorities. Everything else can wait." : "Trois priorités. Le reste peut attendre."}
+            </p>
             {momentumSubject ? (
               <p className="dash-momentum">
                 {T("dashboard.momentum", { subject: momentumSubject })}
@@ -1223,11 +1167,19 @@ export function App() {
                 <span className="scan-note"><span className="scan-dot" /> {en ? "checking…" : "vérification…"}</span>
               ) : null}
             </p>
-            {/* Today's progress, not all-time — see doneToday. Hidden when there's nothing to measure. */}
+            {/* Today's progress, not all-time — see doneToday. Hidden when there's nothing to measure.
+                Caption mirrors the prototype's "1 of 3 complete · A good start." line under the bar. */}
             {todayTotal > 0 && (
-              <div className="dash-progress" role="img" aria-label={en ? `${doneToday} of ${todayTotal} done today` : `${doneToday} sur ${todayTotal} faites aujourd'hui`}>
-                <div className="dash-progress-fill" style={{ width: `${Math.round((doneToday / todayTotal) * 100)}%` }} />
-              </div>
+              <>
+                <div className="dash-progress" role="img" aria-label={en ? `${doneToday} of ${todayTotal} done today` : `${doneToday} sur ${todayTotal} faites aujourd'hui`}>
+                  <div className="dash-progress-fill" style={{ width: `${Math.round((doneToday / todayTotal) * 100)}%` }} />
+                </div>
+                <p className="dash-progress-caption">
+                  {en
+                    ? `${doneToday} of ${todayTotal} complete · ${doneToday === 0 ? "Ready when you are." : doneToday >= todayTotal ? "All done for today." : "A good start."}`
+                    : `${doneToday} sur ${todayTotal} terminée${doneToday > 1 ? "s" : ""} · ${doneToday === 0 ? "Prêt quand tu veux." : doneToday >= todayTotal ? "Tout est fait pour aujourd'hui." : "Un bon début."}`}
+                </p>
+              </>
             )}
           </div>
           {/* Onboarding's sidebar tour explains what the Tasks tab IS, but never what "Do now"/"This
@@ -2190,8 +2142,8 @@ function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
   return (
     <main className="list-wrap">
       <div className="dash-head">
-        <h2>{L("Journal d'erreurs", "Error log")}</h2>
-        <p className="dash-line">{L("Note tes erreurs précises — la question, ce que tu as eu faux, ce qu'il faut faire la prochaine fois. Classé par matière, pour réviser avant un contrôle.", "Log your specific mistakes — the question, what you got wrong, what to do next time. Grouped by subject, so you can review before a test.")}</p>
+        <h1 className="list-head">{L("Des erreurs qui méritent d'être retenues.", "Mistakes worth remembering.")}</h1>
+        <p className="page-sub" style={{ marginTop: 10 }}>{L("La question. Ce qui a mal tourné. Ce que tu essaieras la prochaine fois.", "The question. What went wrong. What you'll try next time.")}</p>
       </div>
 
       {profileError ? (
@@ -2200,11 +2152,11 @@ function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
 
       <div className="errorlog-addform">
         <div className="addrow">
-          <input className="addinput sm" placeholder={L("Matière (ex : Physique)", "Subject (e.g. Physics)")} value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={60} />
+          <input className="addinput sm" placeholder={L("ex : Physique", "e.g. Physics")} value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={60} />
         </div>
-        <textarea className="errorlog-textarea" rows={1} placeholder={L("Quelle était la question ?", "What was the question?")} value={question} onChange={(e) => setQuestion(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
-        <textarea className="errorlog-textarea" rows={1} placeholder={L("Qu'as-tu eu faux ?", "What did you get wrong?")} value={mistake} onChange={(e) => setMistake(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
-        <textarea className="errorlog-textarea" rows={1} placeholder={L("Que faire la prochaine fois ?", "What to do next time?")} value={fix} onChange={(e) => setFix(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
+        <textarea className="errorlog-textarea" rows={1} placeholder={L("La question ?", "What was the question?")} value={question} onChange={(e) => setQuestion(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
+        <textarea className="errorlog-textarea" rows={1} placeholder={L("Ce qui a mal tourné ?", "What went wrong?")} value={mistake} onChange={(e) => setMistake(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
+        <textarea className="errorlog-textarea" rows={1} placeholder={L("Ce que tu essaieras la prochaine fois ?", "What will you try next time?")} value={fix} onChange={(e) => setFix(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
         <button type="button" className="btn primary" disabled={saving || !subject.trim() || !question.trim()} onClick={() => void add()}>
           {saving ? L("Enregistrement…", "Saving…") : L("Ajouter au journal", "Add to log")}
         </button>
@@ -2578,10 +2530,10 @@ function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" | "en"; 
 
   return (
     <main className="list-wrap studylog-page">
-      <h1 className="list-head">{phoneOnly ? L("Tes cartes", "Your flashcards") : L("Journal d'apprentissage", "Journal")}</h1>
-      <p className="dash-line">{phoneOnly
+      <h1 className="list-head">{phoneOnly ? L("Tes cartes", "Your flashcards") : L("Journal", "Journal")}</h1>
+      <p className="page-sub" style={{ marginTop: 10 }}>{phoneOnly
         ? L("Révise tes cartes ici — le reste d'Otto marche mieux sur un plus grand écran.", "Review your flashcards here — the rest of Otto works better on a bigger screen.")
-        : L("Note ce que tu as appris aujourd'hui — Otto en fait des cartes de révision.", "Note what you learned today — Otto turns it into flashcards.")}</p>
+        : L("Garde ce que tu as appris. Reviens à ce qui compte.", "Keep what you learned. Come back to what matters.")}</p>
 
       {/* Same .seg/.seg-btn segmented-control pattern as Pronote's Student/Parent picker — one visual
           language for every binary switcher in the app, not a second bespoke tab style. Hidden on phone:
@@ -2673,7 +2625,7 @@ function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" | "en"; 
                 </div>
               ) : null}
               <textarea className="studylog-textarea" rows={14}
-                placeholder={L("Aujourd'hui, j'ai appris… (ou clique sur Dictée vocale)", "Today I learned… (or click Voice dictation)")}
+                placeholder={L("Qu'as-tu appris aujourd'hui ?", "What did you learn today?")}
                 value={text} onChange={(e) => setText(e.target.value)} maxLength={4000} />
               <div className="studylog-actions">
                 <button type="button" className="btn primary" disabled={saving || !text.trim()} onClick={() => void save()}>
@@ -2833,7 +2785,9 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
 
   return (
     <main className="settings-page">
-      <h1 className="settings-title">{L("Réglages", "Settings")}</h1>
+      {/* The prototype's Settings head: "Make Otto yours." + "Your account, your connections, your pace." */}
+      <h1 className="list-head">{L("Fais d'Otto le tien.", "Make Otto yours.")}</h1>
+      <p className="page-sub" style={{ marginTop: 10, marginBottom: "var(--space-6)" }}>{L("Ton compte, tes connexions, ton rythme.", "Your account, your connections, your pace.")}</p>
       {profileError ? (
         <p className="rewrite-error">{L("Certaines infos du profil n'ont pas pu être chargées.", "Some profile info couldn't load.")} <button type="button" className="btn xs ghost" onClick={loadProfile}>{L("Réessayer", "Retry")}</button></p>
       ) : null}

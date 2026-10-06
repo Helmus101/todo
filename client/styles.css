@@ -7,41 +7,46 @@
 /* Import Inter font for Apple-like typography with optical sizing. 450/550/650 added alongside the original four (400/500/
    600/700) for the editorial type system's headings, which call for 650 specifically — without the exact
    weight loaded, the browser can't interpolate between static font-face files and silently rounds to the
-   nearest one loaded (700), so the intended in-between weight would never actually render. */
+   nearest one loaded (700), so the intended in-between weight would never actually render.
+   Baskervville (serif display) + Handlee (journal handwriting) were extracted from the Otto Framer
+   prototype's own @font-face rules — they're its two non-Inter voices, not guesses. */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;550;600;650;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Baskervville:ital@0;1&family=Handlee&display=swap');
 
 /* Otto brand system — the "consent line": Otto's own (reversible) work reads quiet/graphite; anything that
    needs a person reads cobalt. Colour is semantic, not decorative — see the 90/8/2 budget in the brand book.
    Typography now uses Inter for Apple-like feel with optical sizing and proper tracking. */
 
 :root {
-  /* Minimalist palette — Framer-inspired: clean white canvas, near-black ink, orange accent */
+  /* Minimalist palette — extracted from the live Otto Framer prototype's computed styles:
+     warm white canvas, near-black ink (#1D1D1F), graphite secondary text (#6E6E73),
+     one warm orange accent (#FF752B) for CTAs/progress/active nav. */
   --bg: #FFFFFF;
   --surface: #FFFFFF;
   --surface-raised: #FFFFFF;
   --surface-glass: #FFFFFF;
-  --ink: #18181B;
-  --ink-2: #71717A;
+  --ink: #1D1D1F;
+  --ink-2: #6E6E73;
   --ink-3: #A1A1AA;
-  --line: #E4E4E7;
+  --line: #E5E5EA;
   --line-soft: #F4F4F5;
-  --line-glass: #E4E4E7;
+  --line-glass: #E5E5EA;
 
   /* Accent: Orange as primary accent color for buttons, highlights, focus states */
-  --accent: #FF6B00;
-  --accent-hover: #E65A00;
-  --accent-active: #CC5200;
-  --accent-soft: rgba(255, 107, 0, 0.08);
-  --accent-rgb: 255, 107, 0;
-  --brand-mark: #FF6B00;
+  --accent: #FF752B;
+  --accent-hover: #F26A22;
+  --accent-active: #E05A18;
+  --accent-soft: rgba(255, 117, 43, 0.10);
+  --accent-rgb: 255, 117, 43;
+  --brand-mark: #FF752B;
   --focus-ring: var(--accent);
   /* Chat bubbles use orange with white text */
-  --chat-user-bg: #FF6B00;
-  --chat-user-bg-2: #E65A00;
+  --chat-user-bg: #FF752B;
+  --chat-user-bg-2: #F26A22;
   
-  --bg-2: #F4F4F5;
-  --bg-3: #E4E4E7;
-  --graphite: #71717A;
+  --bg-2: #F5F5F4;
+  --bg-3: #EBEBEA;
+  --graphite: #6E6E73;
   --vermilion: #EF4444;
   --ok: #22C55E;
   --amber: #F59E0B;
@@ -117,49 +122,18 @@
   --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', "Segoe UI", Roboto, sans-serif;
   --display: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  /* Two extra voices extracted from the Framer prototype: a serif for the landing's big display lines
+     ("Hi, I'm Otto." lineage of editorial headlines) and a handwriting face for journal entries.
+     Deliberately NOT used as the default anywhere else — see each usage site. */
+  --font-serif: 'Baskervville', Georgia, 'Times New Roman', serif;
+  --font-hand: 'Handlee', 'Bradley Hand', cursive;
   
   font-optical-sizing: auto;
 }
 
-/* Dark Mode — clean, minimal dark palette */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0A0A0B;
-    --surface: #18181B;
-    --surface-raised: #27272A;
-    --surface-glass: #18181B;
-    --ink: #FAFAFA;
-    --ink-2: #A1A1AA;
-    --ink-3: #71717A;
-    --line: #27272A;
-    --line-soft: #1F1F23;
-    --line-glass: #27272A;
-    
-    --accent: #60A5FA;
-    --accent-hover: #2563EB;
-    --accent-active: #1D4ED8;
-    --accent-soft: rgba(96, 165, 250, 0.1);
-    --accent-rgb: 96, 165, 250;
-
-    --bg-2: #27272A;
-    --bg-3: #3F3F46;
-    --vermilion: #F87171;
-    --ok: #4ADE80;
-    --amber: #FBBF24;
-    --warn: #FBBF24;
-    
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
-    --shadow-card-hover: 0 2px 8px rgba(0, 0, 0, 0.4);
-    --shadow-pop: 0 4px 24px rgba(0, 0, 0, 0.5);
-    --shadow-glow: 0 0 0 3px var(--accent-soft);
-    
-    --bar: #0A0A0B;
-    --hover-wash: #27272A;
-    --bg-rgb: 10, 10, 11;
-    --glass-border: #27272A;
-  }
-}
+/* Light-only — the Framer prototype is a white-on-white design, so the suite ships light only. The
+   former dark-mode token override block was removed in the restyle to the prototype (git history
+   keeps it; a future dark pass would rebuild it from this file's new token set). */
 
 /* ─── Density variants — the personalization ask's "adapt background, borders, rounding, text size" ───────
    Deliberately a SMALL, HAND-WRITTEN, BOUNDED set of token overrides (never generated/mutated CSS — see the
@@ -179,6 +153,50 @@
   --text-xs: 12px; --text-sm: 13.5px; --text-base: 14.5px; --text-md: 16.5px; --text-lg: 18px; --text-xl: 22px; --text-2xl: 27px;
   --radius: 18px; --radius-sm: 12px; --radius-xs: 8px;
 }
+
+/* ─── New prototype utility primitives ───────────────────────────────────────
+   Extracted from the Otto Framer prototype's live styles. These are the four
+   recurring structural idioms its screens are built from, shared app-wide.
+
+   .proto-page — the centered content column every prototype screen sits in.
+   .micro-label — the uppercase letter-spaced labels ("PREVIEW · SAMPLE DATA",
+     "MATHEMATICS · TOMORROW", "01 / PROACTIVE TASKS", "PROFILE").
+   .hairline — the 1px full-width rules that divide sections instead of cards.
+   .page-title — the big page headings ("Your day, under control."). */
+.proto-page {
+  width: 100%;
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-6) var(--space-8);
+}
+.proto-page.narrow { max-width: 760px; }
+.micro-label {
+  font-size: 12px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.micro-label.accent { color: var(--accent); }
+.hairline { border: 0; border-top: 1px solid var(--line); height: 0; margin: 0; width: 100%; }
+.page-title {
+  font-family: var(--display);
+  font-size: clamp(34px, 4.6vw, 52px);
+  font-weight: 650;
+  letter-spacing: var(--tracking-display);
+  line-height: 1.08;
+  color: var(--ink);
+}
+.page-sub {
+  font-size: var(--text-lg);
+  color: var(--ink-2);
+  max-width: 60ch;
+  line-height: 1.55;
+}
+/* Buttons become full pills in this suite — the prototype's single most visible gesture
+   (measured 12px 24px, radius 100px on its CTAs). Set once so every .btn variant inherits. */
+.btn { border-radius: var(--radius-pill); }
+.btn.xs, .btn.sm { border-radius: var(--radius-pill); }
 
 /* ─── Base ─────────────────────────────────────────────────────────────────── */
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -264,7 +282,6 @@ input:focus, textarea:focus {
     transition-duration: 0.01ms !important;
   }
   /* Surfaces that slide/scale get a graceful opacity crossfade instead */
-  .sidebar,
   .task-modal, .task-modal-overlay,
   .sm-header, .sm-bottombar,
   .sm-modal, .sm-drawer,
@@ -285,7 +302,7 @@ input:focus, textarea:focus {
 /* Apple design §14 — prefers-reduced-transparency: make glass surfaces solid so text is always
    legible, even for users with visual processing differences that struggle with blur effects. */
 @media (prefers-reduced-transparency: reduce) {
-  .topbar, .sidebar, .sm-header, .sm-bottombar, .task-modal-overlay, .bar,
+  .topnav, .sm-header, .sm-bottombar, .task-modal-overlay, .bar,
   .sm-modal-backdrop, .sm-modal, .sm-drawer, .task-modal {
     background: var(--surface) !important;
     backdrop-filter: none !important;
@@ -299,7 +316,7 @@ input:focus, textarea:focus {
    preferences are asking for the same thing (less reliance on a soft visual effect to read the UI), just
    for a different reason (contrast sensitivity vs. motion/visual-processing). */
 @media (prefers-contrast: more) {
-  .topbar, .sidebar, .sm-header, .sm-bottombar, .task-modal-overlay, .bar,
+  .topnav, .sm-header, .sm-bottombar, .task-modal-overlay, .bar,
   .sm-modal-backdrop, .sm-modal, .sm-drawer, .task-modal {
     background: var(--surface) !important;
     backdrop-filter: none !important;
@@ -400,153 +417,47 @@ input:focus, textarea:focus {
    a fallback pair since older browsers don't support dvh at all. Matches the pattern the task modal
    already used correctly (styles.css .task-modal). */
 .app { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: row; }
-.topbar {
-  position: sticky; top: 0; z-index: 20;
-  display: flex; align-items: center; gap: var(--space-3);
-  height: 52px; padding: 0 var(--space-5);
-  padding-top: env(safe-area-inset-top);
-  height: calc(52px + env(safe-area-inset-top));
-  padding-left: calc(var(--space-5) + env(safe-area-inset-left));
-  padding-right: calc(var(--space-5) + env(safe-area-inset-right));
-  background: var(--bar);
-  border-bottom: 1px solid var(--line);
-  transition: background var(--duration-base) var(--ease);
-}
 .spacer { flex: 1; }
 
-/* ─── Sidebar (Apple-style navigation) ───────────────────────────────────────────────── */
-.sidebar {
-  width: 220px;
-  flex-shrink: 0;
-  background: var(--surface);
-  border-right: 1px solid var(--line);
-  display: flex;
-  flex-direction: column;
-  padding: var(--space-5) var(--space-3);
-  height: 100vh;
-  height: 100dvh;
-  position: sticky;
-  top: 0;
-  overflow-y: auto;
-  transition: transform var(--duration-spring) var(--ease);
+/* ─── Top nav — the prototype's single shell (replaces the old sidebar+topbar) ────
+   Full-viewport app: one sticky header — lowercase "otto" wordmark left, plain text links right
+   (Today/Tutor/Journal/Mistakes/Settings), active link in the orange. No sidebar, no page-title bar.
+   The Tutor session screen drops this header entirely (like the prototype's /tutor/session, which
+   carries its own "All sessions / Mathematics … End session" breadcrumb row instead).
+   Phone: prototype keeps the same header (its screenshot at 880px is the narrow case) — links stay,
+   wordmark shrinks, and the row stays legible. */
+.topnav {
+  position: sticky; top: 0; z-index: 40;
+  width: 100%;
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-4);
+  height: calc(64px + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) clamp(20px, 5vw, 48px) 0;
+  background: var(--bg);
 }
-.sidebar-brand {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  margin-bottom: var(--space-5);
-  font-weight: var(--weight-bold);
-  font-size: var(--text-md);
-  color: var(--ink);
-  letter-spacing: -0.02em;
+.topnav-brand {
+  font-family: var(--display); font-weight: 700; font-size: 22px; letter-spacing: -0.03em;
+  color: var(--ink); text-decoration: none; line-height: 1;
 }
-.sidebar-nav {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+/* The prototype's logotype is lowercase — enforcing it guards against content-driven caps drift. */
+.topnav-brand { text-transform: lowercase; }
+.topnav-links { display: flex; align-items: center; gap: clamp(18px, 3vw, 34px); }
+.topnav-link {
+  font-size: 16px; font-weight: 600; color: var(--ink); text-decoration: none;
+  line-height: 1; padding: 6px 0; border-radius: var(--radius-xs);
+  transition: color var(--duration-fast) var(--ease);
 }
-.sidebar-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  min-height: 38px;
-  border-radius: var(--radius-xs);
-  color: var(--ink-2);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-  text-decoration: none;
-  transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
-  cursor: pointer;
+@media (hover: hover) {
+  .topnav-link:hover { color: var(--accent); }
 }
-.sidebar-item:hover {
-  background: var(--hover-wash);
-  color: var(--ink);
-}
-.sidebar-item.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: var(--weight-semibold);
-}
-.sidebar-item:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-.sidebar-item svg {
-  width: 18px;
-  height: 18px;
-  stroke-width: 1.5;
-}
-.sidebar-badge {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 var(--space-1);
-  border-radius: var(--radius-pill);
-  background: var(--accent);
-  color: #fff;
-  font-size: 10px;
-  font-weight: var(--weight-semibold);
-  line-height: 1;
-}
-
-/* Mobile sidebar toggle */
-.sidebar-toggle {
-  display: none;
-  position: fixed;
-  bottom: var(--space-4);
-  right: var(--space-4);
-  width: 48px;
-  height: 48px;
-  min-width: 48px;
-  min-height: 48px;
-  border-radius: 50%;
-  background: var(--accent);
-  color: #fff;
-  border: none;
-  cursor: pointer;
-  z-index: 100;
-  box-shadow: var(--shadow-pop);
-  /* Apple Design §1 — instant feedback on press */
-  transition: transform var(--duration-instant) var(--ease-spring), background var(--duration-fast) var(--ease-spring);
-}
-.sidebar-toggle:active {
-  transform: scale(0.95);
-}
-.sidebar-toggle:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-
-@media (max-width: 768px) {
-  .sidebar {
-    position: fixed;
-    /* Apple Design §11 — compositor-only properties only. Animating `left` re-triggers layout on every
-       frame; `transform: translateX` runs on the GPU compositor with zero layout cost, giving a smooth
-       60fps slide even on mid-range phones. will-change hints the browser to promote the layer early. */
-    left: 0; /* reset left; position is now handled by transform */
-    top: 0;
-    z-index: 50;
-    transform: translateX(-100%);
-    /* Apple Design §4 — use spring curve for drawer/sheet animations */
-    transition: transform var(--duration-spring) var(--ease-spring);
-    will-change: transform;
-  }
-  .sidebar.open {
-    transform: translateX(0);
-  }
-  .sidebar-toggle {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .app {
-    flex-direction: column;
-  }
-  .topbar {
-    padding-left: calc(var(--space-4) + env(safe-area-inset-left));
-  }
-  .list-wrap {
-    padding: clamp(24px, 5vh, 72px) var(--space-4) var(--space-7);
-  }
+.topnav-link.active { color: var(--accent); }
+.topnav-link:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 4px; }
+/* Phone: same header, tightened — five links + wordmark must fit 360px, so step the type down
+   and drop the gap. (The prototype's own narrow rendering does exactly this.) */
+@media (max-width: 640px) {
+  .topnav { height: calc(56px + env(safe-area-inset-top)); padding-left: 16px; padding-right: 16px; }
+  .topnav-brand { font-size: 19px; }
+  .topnav-links { gap: 12px; }
+  .topnav-link { font-size: 14px; padding: 8px 0; }
 }
 
 /* ─── Dashboard ────────────────────────────────────────────────────────────── */
@@ -559,23 +470,24 @@ input:focus, textarea:focus {
    viewport — `margin: 0 auto` on a wide screen (the content area starts at 220px, the sidebar's width, and
    can run to 2000px+) left a huge, unbalanced dead-space gap that made the column look like it was floating
    disconnected from the rest of the app instead of sitting in it. */
+/* The prototype's.dashboard column is centered and generous — its /tasks content sits in ~1040px of a
+   full-width white page (no sidebar to offset against any more). */
 .list-wrap {
   width: 100%;
-  max-width: 680px;
-  margin: 0;
+  max-width: 720px;
+  margin: 0 auto;
   padding: clamp(32px, 6vh, 72px) clamp(var(--space-5), 5vw, 64px) var(--space-8);
   animation: pageIn var(--duration-spring) var(--ease) backwards;
 }
-.dash-head { margin-bottom: var(--space-5); }
-/* A small eyebrow above the greeting — today's date, so the dashboard reads as "here's where things stand
-   today" at a glance, not just a generic hello. Muted, not competing with the greeting for attention. */
+.dash-head { margin-bottom: var(--space-6); }
+/* The prototype's date line ("Monday, 5 October") — an uppercase micro-label above the big title. */
 .dash-date { 
-  margin: 0 0 4px; 
-  font-size: var(--text-xs); 
-  /* Apple Design §15 — positive tracking on small text for legibility */
-  letter-spacing: 0.02em; 
-  color: var(--ink-3); 
-  text-transform: capitalize; 
+  margin: 0 0 10px; 
+  font-size: 12px; 
+  letter-spacing: 0.08em; 
+  color: var(--ink-2); 
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase; 
 }
 /* Continues the same sentence-line as .dash-line's count, naming what's actually next — plain text, not a
    pill (only real status signals like overdue/working get pill treatment). */
@@ -755,16 +667,15 @@ input:focus, textarea:focus {
 .week-item-test { background: var(--accent); }
 .week-item-homework { background: var(--ink-3); }
 .week-item-task { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
-/* Fluid from the phone up — a flat 44px display face on a 375px screen pushed "Bonjour, <prénom>." onto
-   three cramped lines and ate the fold before a single task was visible. */
+/* The prototype's "Your day, under control." — a big sentence-style heading, weight 650, tight tracking. */
 .list-head {
   font-family: var(--display);
-  font-size: clamp(28px, 6vw, 42px);
-  font-weight: 700;
+  font-size: clamp(30px, 5.4vw, 46px);
+  font-weight: 650;
   /* Apple Design §15 — negative tracking on large headings */
-  letter-spacing: var(--tracking-tighter);
+  letter-spacing: var(--tracking-display);
   /* Apple Design §15 — tight leading on large text */
-  line-height: 1.05;
+  line-height: 1.1;
   color: var(--ink);
   /* Apple Design §4 — spring animation for entrance */
   animation: appleRise var(--duration-spring) var(--ease-spring) backwards;
@@ -818,22 +729,22 @@ input:focus, textarea:focus {
 .scan-note { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-3); font-size: 12px; }
 .scan-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse 2.2s infinite; }
 
-/* Apple-style Progress Capsule */
+/* The prototype's progress row: a taller rounded orange bar with a plain-sentence caption below it
+   ("1 of 3 complete · A good start.") instead of the old hairline-thin strip. */
 .dash-progress {
   margin-top: 18px;
-  height: 4px;
+  height: 8px;
   border-radius: var(--radius-pill);
-  background: var(--line);
+  background: var(--bg-2);
+  border: 1px solid var(--line-soft);
   overflow: hidden;
   /* Apple Design §4 — spring animation with staggered delay */
   animation: appleRise var(--duration-spring) var(--ease-spring) 0.1s backwards;
 }
-.dash-progress-fill {
-  height: 100%;
-  border-radius: var(--radius-pill);
-  background: var(--accent);
-  /* Apple Design §4 — spring transition for value changes */
-  transition: width var(--duration-slow) var(--ease-spring);
+.dash-progress-caption {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--ink-2);
 }
 
 /* ─── TaskHero — Apple Spotlight Card ─────────────────────────────────────── */
@@ -4107,7 +4018,6 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
    read as a mobile app, not a layout that quietly re-optimizes its hit targets for a mouse — so this
    block is ONLY wider gutters/insets/layout direction, never smaller buttons or inputs. */
 @media (min-width: 641px) {
-  .topbar { gap: var(--space-5); padding: 0 var(--space-5); padding-left: calc(20px + env(safe-area-inset-left)); padding-right: calc(20px + env(safe-area-inset-right)); }
   .list-wrap, .settings-page { padding-left: 24px; padding-right: 24px; padding-bottom: 140px; }
   .list, .empty { margin-left: 0; margin-right: 0; }
   .card { gap: 14px; padding: 16px 18px 16px 26px; }
@@ -6673,6 +6583,10 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   width: 100%; min-height: 260px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface);
   padding: 12px 14px; font-size: 14.5px; line-height: 1.6; font-family: inherit; resize: vertical;
 }
+/* The journal's written voice — the prototype renders entries in the handwriting face (Handlee).
+   Applied to the textarea so composition feels like writing the prototype's entry, and entries read
+   as handwriting once saved (the rendered text below reuses the same class via studylog-day-cards). */
+.studylog-textarea { font-family: var(--font-hand, inherit); font-size: 17px; }
 .studylog-textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); outline: none; }
 /* Error log's three fields used to share .studylog-textarea, whose 260px min-height is sized for the big
    daily journal entry — reported live as three giant empty boxes for what's usually a one-line question/
@@ -6690,6 +6604,8 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .studylog-summary-sec h3 { font-size: var(--text-md); font-weight: var(--weight-semibold); margin-bottom: 8px; }
 .studylog-day-cards-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: 4px; }
 .studylog-day-cards-head h3 { font-size: var(--text-md); font-weight: var(--weight-semibold); }
+/* A saved journal entry re-renders in the handwriting face — the prototype's signature move on /log. */
+.studylog-day-cards .flashcard-deck, .studylog-day-cards .fc-front { font-family: var(--font-hand, inherit); }
 .studylog-practice-sec { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--line-soft); }
 .studylog-practice-sec h4 { font-size: var(--text-sm); font-weight: var(--weight-semibold); color: var(--ink-2); margin-bottom: 8px; }
 .studylog-feynman-gap { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--line-soft); font-size: var(--text-sm); color: var(--ink-2); line-height: 1.5; }
@@ -6712,7 +6628,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 /* ── Tutor Session (Primer-style: chat + board) ─────────────────────────────── */
 /* The board is the lesson's real document — give it the larger half even at rest (chat is the input
    surface, the board is what accumulates and matters); voice mode pushes the ratio further still. */
-.tutor-session { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 0.55fr) minmax(0, 1.45fr); gap: 20px; padding: 20px 24px; height: calc(100vh - 64px); box-sizing: border-box; }
+.tutor-session { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 0.55fr) minmax(0, 1.45fr); gap: 20px; padding: 12px 24px 20px; height: calc(100vh - 64px); box-sizing: border-box; align-content: start; }
 /* Glass-card treatment matching .settings-sec — these were the plainest-looking panes in the app (flat
    border, no shadow) next to Settings' already-polished cards; same tokens, no new design language. */
 .tutor-chat, .tutor-board {
@@ -6778,8 +6694,11 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .sm-board-outline-heading { font-size: var(--text-sm); font-weight: 700; color: var(--ink); }
 .sm-board-outline-bullets { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
 .sm-board-outline-bullets li { font-size: var(--text-sm); color: var(--ink); line-height: 1.5; }
-.tutor-start { padding: 16px; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; border-bottom: 1px solid var(--line); }
-.tutor-start p { margin: 0; font-size: 1.1rem; }
+/* The chat pane's face + status header ("Otto is here") above the thread. */
+.tutor-chat-face-wrap { display: flex; align-items: center; gap: 12px; padding: 16px 18px 0; }
+.tutor-chat-face-wrap .tutor-face { width: 44px; height: 44px; gap: 8px; }
+.tutor-chat-face-wrap .tutor-face-eye { width: 5px; height: 7px; }
+.tutor-chat-status { margin: 0; color: var(--ink-2); font-size: 13px; }
 @media (max-width: 800px) { .tutor-session { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; height: auto; min-height: calc(100vh - 64px); } }
 
 /* The board reads as a page with real margins, not content jammed to the pane's edges — more room per
@@ -6900,14 +6819,22 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 /* Live drafting indicator — the writing hand. */
 .sm-board-drafting { display: flex; align-items: center; gap: 8px; margin: 10px 4px; padding: 8px 12px; border: 1px dashed var(--line); border-radius: var(--radius); color: var(--ink-2); font-size: 13px; font-style: italic; }
 
-/* Tutor landing (no active session): calm, evidence-informed entry point. */
+/* Tutor landing (no active session): the prototype's centered column — cream-circle face, big serif-
+   weight title "Hi, I'm Otto.", one question line, subject select + orange pill. */
 .tutor-landing { display: flex; align-items: center; justify-content: center; padding: 60px 20px; min-height: calc(100vh - 60px); }
-.tutor-landing-inner { max-width: 520px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 24px; }
-.tutor-hero-kicker { color: var(--accent); font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-.tutor-landing-inner h2 { margin: 0; font-size: clamp(2rem, 5vw, 2.5rem); letter-spacing: -.04em; font-weight: 700; color: var(--ink); }
-.tutor-landing-sub { max-width: 480px; margin: 0; color: var(--ink-2); font-size: 1.1rem; line-height: 1.6; }
-.tutor-subject-select { width: 100%; max-width: 320px; }
-.tutor-subject-select label { display: block; text-align: left; margin-bottom: 8px; font-size: 0.9rem; font-weight: 600; color: var(--ink); }
+.tutor-landing-inner { max-width: 460px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 22px; }
+/* The cream face — the prototype's single illustration (two dots, no mouth). CSS-only, no asset. */
+.tutor-face {
+  width: 72px; height: 72px; border-radius: 50%;
+  background: #F2EFE9;
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  flex: none;
+}
+.tutor-face-eye { width: 7px; height: 9px; border-radius: 3px; background: var(--ink); }
+.tutor-landing-title { margin: 0; font-size: clamp(2.2rem, 5vw, 2.8rem); letter-spacing: var(--tracking-display); font-weight: 650; color: var(--ink); }
+.tutor-landing-sub { max-width: 420px; margin: 0; color: var(--ink-2); font-size: 1.1rem; line-height: 1.6; }
+.tutor-subject-select { width: 100%; max-width: 320px; text-align: left; }
+.tutor-subject-select label { display: block; text-align: left; margin-bottom: 8px; font-size: 0.85rem; font-weight: 600; color: var(--ink-2); }
 .tutor-subject-select select { width: 100%; padding: 12px 16px; font-size: 1rem; }
 .tutor-principles { width: 100%; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 4px 0; }
 .tutor-principles div { display: flex; flex-direction: column; gap: 8px; padding: 16px 10px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); text-align: left; }
@@ -6915,14 +6842,26 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .tutor-principles span { font-size: 13px; line-height: 1.35; font-weight: 600; }
 .tutor-session-note { display: flex; align-items: center; gap: 10px; color: var(--ink-2); font-size: 13px; line-height: 1.4; text-align: left; }
 .tutor-session-note span { flex: 0 0 auto; padding: 5px 8px; border-radius: var(--radius-pill); background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 700; }
-.tutor-start-btn { font-size: 1.1rem; padding: 14px 32px; font-weight: 600; width: 100%; max-width: 320px; }
+.tutor-start-btn { font-size: 1.05rem; padding: 13px 32px; font-weight: 600; width: 100%; max-width: 320px; }
 .tutor-start-actions { display: flex; flex-direction: column; align-items: center; gap: 10px; width: 100%; }
 @media (max-width: 560px) { .tutor-start-actions .tutor-start-btn { width: 100%; } }
 @media (max-width: 560px) { .tutor-principles { grid-template-columns: 1fr; } .tutor-principles div { flex-direction: row; align-items: center; gap: 12px; } }
 
-/* End-session button in the chat pane title bar */
+/* End-session button in the breadcrumb bar */
 .tutor-pane-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.tutor-end-btn { font-size: 13px; padding: 4px 12px; font-weight: 500; }
+.tutor-end-btn { font-size: 13px; padding: 6px 16px; font-weight: 500; }
+
+/* Session breadcrumb bar — the prototype's "All sessions / Mathematics … End session" chrome row.
+   Replaces the old per-pane title button (the end action used to live inside the chat pane header). */
+.tutor-crumbbar {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 4px 0;
+}
+.tutor-crumb-link { background: none; border: none; padding: 0; font: inherit; font-weight: 650; font-size: 15px; color: var(--ink); cursor: pointer; }
+.tutor-crumb-link:hover { color: var(--accent); }
+.tutor-crumb-subject { color: var(--ink-2); font-size: 15px; }
+.tutor-crumbbar .tutor-end-btn { margin-left: auto; }
 
 /* Past-session reference shown on a fresh session start */
 .tutor-past-ref { font-size: 0.9rem; color: var(--ink-2); font-style: italic; }

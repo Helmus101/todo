@@ -370,12 +370,12 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
     }
   }, [selectedSubject, startingSession, pendingActiveSession, sessionStart, saveAndClose, userId, L]);
 
-  // The Tutor route hides the app's usual sidebar/topbar entirely (reported live: it should be a full-
-  // screen, focused surface) — this is the ONE way back to Tasks that replaces it, present on every one of
-  // this component's screens (error, landing, active session) so it's never actually a dead end.
+  // The Tutor route hides the app's top nav entirely (it's a focused, full-screen surface) — this is the
+  // ONE way back to Tasks that replaces it, present on the landing and error screens (the active session
+  // uses the breadcrumb bar's "All sessions" link instead).
   const backButton = (
     <button type="button" className="tutor-back-btn" onClick={onExit} aria-label={L("Retour aux tâches", "Back to tasks")}>
-      ← Otto
+      ← {L("Toutes les séances", "All sessions")}
     </button>
   );
 
@@ -394,9 +394,11 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
       <main className="list-wrap tutor-landing">
         {backButton}
         <div className="tutor-landing-inner">
-          <div className="tutor-hero-kicker">{L("Le tutorat qui te rend autonome", "Tutoring that makes you independent")}</div>
-          <h2>{L("Apprendre en réfléchissant", "Learn by thinking")}</h2>
-          <p className="tutor-landing-sub">{L("Otto ne fait pas le travail à ta place. Il t'aide à essayer, à expliquer ton raisonnement et à transférer ce que tu apprends.", "Otto won't do the work for you. He helps you try, explain your reasoning, and transfer what you learn.")}</p>
+          {/* The prototype's cream-circle face — two dots, no mouth. The one illustration the whole
+              design system allows, reused on the landing and the session screens. */}
+          <div className="tutor-face" aria-hidden><span className="tutor-face-eye" /><span className="tutor-face-eye" /></div>
+          <h2 className="tutor-landing-title">{L("Salut, moi c'est Otto.", "Hi, I'm Otto.")}</h2>
+          <p className="tutor-landing-sub">{L("Qu'est-ce que tu veux comprendre aujourd'hui ?", "What would you like to understand today?")}</p>
 
           {/* If there's an active session, show resume option */}
           {pendingActiveSession && (
@@ -418,7 +420,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
 
           {/* Always show subject selector so you can create a new session even when one is active */}
           <div className="tutor-subject-select">
-            <label htmlFor="tutor-subject-select">{L("Sur quelle matière veux-tu travailler ?", "Which subject do you want to work on?")}</label>
+            <label className="micro-label" htmlFor="tutor-subject-select">{L("Matière", "Subject")}</label>
             <select
               id="tutor-subject-select"
               value={selectedSubject}
@@ -441,14 +443,14 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
             >
               {startingSession
                 ? L("Démarrage…", "Starting…")
-                : L("Commencer une séance de ", "Start a ") + selectedSubject + L("", " session")}
+                : L("Commencer une séance", "Start a session")}
             </button>
           )}
 
           {pastSessions.length > 0 && (
             <div className="tutor-past-sessions">
               <button className="tutor-history-toggle" onClick={() => setShowHistory((v) => !v)}>
-                {showHistory ? "▼ " : "▶ "}{L("Séances précédentes", "Past sessions")} ({pastSessions.length})
+                {showHistory ? "▼ " : "▶ "}{L("Nos séances passées", "Our past sessions")} ({pastSessions.length})
               </button>
               {showHistory && (
                 <ul className="tutor-history-list">
@@ -541,17 +543,22 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
   // visual surface (figures, formulas, structure), not on a chat transcript they can't see while speaking.
   return (
     <main className={`tutor-session${voiceState.voiceModeOn ? " voice-primary" : ""}`}>
+      {/* The prototype's session chrome: breadcrumb left ("All sessions / Mathematics"), End session right. */}
+      <div className="tutor-crumbbar">
+        <button type="button" className="tutor-crumb-link" onClick={onExit}>{L("Toutes les séances", "All sessions")}</button>
+        {task.sourceSubject ? <span className="tutor-crumb-subject">{task.sourceSubject}</span> : null}
+        <button className="btn ghost tutor-end-btn" disabled={endingSession} onClick={() => void endSession()}>
+          {endingSession ? L("Fin…", "Ending…") : L("Terminer la séance", "End session")}
+        </button>
+      </div>
       <section className="tutor-chat" aria-label={L("Discuter avec Otto", "Ask Otto")}>
-        <div className="tutor-pane-title">
-          {backButton}
-          <span>{L("Demande à Otto", "Ask Otto")}</span>
-          <button className="btn ghost tutor-end-btn" disabled={endingSession} onClick={() => void endSession()}>
-            {endingSession ? L("Fin…", "Ending…") : L("Terminer la séance", "End session")}
-          </button>
+        <div className="tutor-chat-face-wrap">
+          <div className="tutor-face" aria-hidden><span className="tutor-face-eye" /><span className="tutor-face-eye" /></div>
+          <p className="tutor-chat-status">{sending || pendingMsg ? L("Otto réfléchit", "Otto is thinking") : L("Otto est là", "Otto is here")}</p>
         </div>
         {fresh && (
           <div className="tutor-start">
-            <p>{L("Salut ! Je suis Otto, ton tuteur. On travaille ensemble sur ce que tu veux apprendre ?", "Hi! I'm Otto, your tutor. Ready to work on whatever you'd like to learn?")}</p>
+            <p>{L("Je suis là. Dis-moi où tu bloques, et on trouvera le chemin.", "I'm here. Tell me where you got stuck, and we'll find a way through.")}</p>
           </div>
         )}
         {/* Reported live: the mic should be off while Otto is speaking, not open for interruption — no
@@ -570,7 +577,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
       </section>
       <section className="tutor-board" aria-label={L("Tableau", "Board")}>
         <div className="tutor-pane-title">
-          <span>{whiteboardOpen ? L("Tableau blanc", "Whiteboard") : desmosOpen ? L("Desmos", "Desmos") : L("Le tableau", "Board")}</span>
+          <span className="micro-label">{whiteboardOpen ? L("Tableau blanc", "Whiteboard") : desmosOpen ? L("Desmos", "Desmos") : L("Tableau", "Board")}</span>
           {/* Voice state lives on the BOARD pane: in voice-first mode this is the pane the student is
               actually looking at. Kept small and inline in the pane title (reported: the earlier full-width
               orb banner was too big/intrusive) — a compact status dot + label is enough to answer "am I

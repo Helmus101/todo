@@ -4138,14 +4138,16 @@ section("Clarity fixes — 'I'm not understanding' escalates, rephrasing isn't a
   check("the write-to-board tool rule requires honoring an EXPLICIT written-anchor request the same turn", claude.includes("If the student EXPLICITLY") && claude.includes('asks you to write/put something on the board'));
 }
 
-section("Chat bubble color — user bubble uses fixed saturated blue tokens, not the dark-mode-lightened --accent (source pins)");
+section("Chat bubble color — user bubble uses dedicated fixed-saturation tokens, not the theme-dependent --accent (source pins)");
 {
-  // Reported live: "text is grey on blue background". Root cause: dark mode lightens --accent to #60A5FA
-  // (for buttons/links) but the chat bubbles reused that same variable with white text — white-on-pastel-
-  // blue has very low contrast, which reads as grey. Fix: dedicated --chat-user-bg/--chat-user-bg-2 tokens
-  // that stay a fixed, saturated blue in BOTH themes (not redefined inside the dark-mode @media block).
+  // Reported live: "text is grey on blue background". Root cause: dark mode lightened --accent
+  // (for buttons/links) but the chat bubbles reused that same variable with white text — white-on-pastel
+  // had very low contrast, which read as grey. Fix: dedicated --chat-user-bg/--chat-user-bg-2 tokens with
+  // a fixed saturation regardless of theme. (Restyle note: the suite went light-only and the accent went
+  // orange in the Framer-prototype restyle, so the "fixed" value is now the suite orange #FF752B — the
+  // pins below still assert exactly what matters: a literal fixed value, and no dark-mode redefinition.)
   const css = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
-  check("--chat-user-bg is defined as a fixed saturated blue in :root", /--chat-user-bg:\s*#2563EB/.test(css));
+  check("--chat-user-bg is defined as a fixed literal hex in :root (not a var() reference)", /--chat-user-bg:\s*#[0-9A-Fa-f]{6}\s*;/.test(css));
   check(".chat-user (TaskCard's chat) uses --chat-user-bg, not the theme-lightened --accent", /\.chat-user\s*\{[^}]*--chat-user-bg-2[^}]*--chat-user-bg/s.test(css));
   check(".sm-ai-msg-user (Study Mode's Ask Otto chat) uses --chat-user-bg, not --accent", /\.sm-ai-msg-user\s*\{[^}]*--chat-user-bg/s.test(css));
   const darkBlock = css.slice(css.indexOf("@media (prefers-color-scheme: dark)"), css.indexOf("@media (prefers-color-scheme: dark)") + 1200);
@@ -4180,7 +4182,9 @@ section("Phone restriction — flashcard review + READ-ONLY tasks, no chat; iPad
   // ticking steps off, no Study Mode, no dismiss, no add-task.
   check("a phone opens TaskReadOnly instead of TaskFocus (which is where chat lives)", /isPhone \? \(\s*<TaskReadOnly task=\{openTask\} \/>/.test(app));
   check("task rows on phone are view-only (readOnly) and can't launch Study Mode", /readOnly=\{isPhone\}/.test(app) && /STUDY_MODE_ENABLED && !isPhone \?/.test(app));
-  check("add-task and the refresh/generate action are hidden on phone", /\{!isPhone && <div className="dash-addtask">/.test(app) && /\{!isPhone && \(route === "" \|\| route === "tasks"/.test(app));
+  // (Restyled to the Framer prototype: the old topbar's Refresh ghost button is gone — the generate
+  // action now lives only in the dashboard's own empty states, and add-task stayed phone-hidden.)
+  check("add-task and the refresh/generate action are hidden on phone", /\{!isPhone && <div className="dash-addtask">/.test(app) && !/\{!isPhone && \(route === "" \|\| route === "tasks"/.test(app));
   const card = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
   check("TaskCardRow's readOnly hides the tick-off, Study Mode and dismiss controls", /!isDone && !readOnly \? \(/.test(card) && /!isDone && !readOnly && onEnterStudyMode/.test(card) && /!isDone && !leaving && !readOnly && <button className="card-x"/.test(card));
   // "no chat for the moment" is the explicit constraint here, not "no interaction at all" — opening a link
@@ -4312,20 +4316,22 @@ section("CREATE_INTERACTIVE — sandboxed, scoped to Study Mode, capped (source 
   check("the prompt requires something visible on the first frame, before any interaction", claude.includes("Draw something visible on the FIRST"));
 }
 
-section("Landing page redesign — real features/integrations only, no fabricated testimonials or certifications (source pins)");
+section("Landing page redesign — prototype copy, real features only, no fabricated testimonials or certifications (source pins)");
 {
   // Direct instruction after reviewing a competitor's landing page: redesign Otto's, but explicitly WITHOUT
   // inventing customer testimonials (fabricated reviews attributed to fictional people) or claiming
   // certifications (SOC 2, ISO 27001, SAML SSO) this app doesn't hold — the user confirmed both calls.
+  // Later restyled to the Otto Framer prototype: the long feature/integrations grids were replaced by the
+  // prototype's two-column "01/PROACTIVE TASKS · 02/PERSONAL TUTOR" section with honest sample cards —
+  // still real, still nothing fabricated; the prototype's copy is the marketing now.
   const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
   const landing = app.slice(app.indexOf("export function Landing("), app.indexOf("// ── Legal pages"));
   check("no fabricated testimonial content (no quote attributed to a named 'customer')", !/testimonial/i.test(landing));
   check("no certifications this app doesn't hold (SOC 2 / ISO 27001 / SAML)", !/SOC\s*2/i.test(landing) && !/ISO\s*27001/i.test(landing) && !/SAML/i.test(landing));
-  // What replaced it: real, already-shipped features, and the real integrations catalog.
-  check("the feature grid names real, already-shipped capabilities (board, sources, interactive scenes, voice)", landing.includes("agent-feature-grid") && /tableau de séance|session document/.test(landing) && /scène|scene/i.test(landing) && /voix|voice/i.test(landing));
-  check("the integrations list matches server/integrations.ts's real CATALOG, not an invented one", landing.includes("integrations-grid") && landing.includes('L("Notion", "Notion")') && landing.includes('L("Pronote", "Pronote")'));
-  check("the security claims are checkable facts already true elsewhere in this app (AES-256-GCM, read-first OAuth)", landing.includes("AES-256-GCM") && /read-first|lecture par défaut/.test(landing));
-  check("the Research page (previously an orphan route, never linked) is now reachable from the footer", app.includes('href="/research"'));
+  check("the two-column prototype section names the two real halves of the product (proactive tasks + personal tutor)", landing.includes("features-framer") && /PROACTIVE TASKS/.test(landing) && /PERSONAL TUTOR/.test(landing));
+  check("the sample cards use the prototype's honest examples (derivatives task, slope question)", /Get ready for derivatives/.test(landing) && /What does the slope tell us/.test(landing));
+  check("the hero copy matches the prototype (Less busywork. More understanding.)", /Less busywork\. More understanding\./.test(landing));
+  check("the footer keeps Privacy/Terms/Unlimited and the Research page stays reachable", landing.includes('href="/unlimited"') && app.includes('href="/research"'));
 }
 
 section("Task detail view — removed the big bold current-step hero, 'To get started', and the 'Done' bullet log (source pins)");
