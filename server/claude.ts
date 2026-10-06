@@ -8272,6 +8272,18 @@ export async function chatAboutTask(
     let boardClaimCorrected = false;
     let boardNudgeDone = false;
     let reasoningNudgeDone = false;
+    // Tutor only: the student just contributed a step and Otto wrote NOTHING on the board — one corrective round
+    // to put THEIR reasoning (and any helpful formula) there, in Otto's own words. Latched to once per turn;
+    // skipped on the first message, while a guardrail has wiped the turn, and for non-substantive input. Used by
+    // BOTH the plain-text path and the after-tool-calls path. Returns true when it queued the round.
+    const nudgeReasoning = (draft: string, round: number, lastRound: boolean): boolean => {
+      if (!(opts?.primer && !reasoningNudgeDone && !boardNudgeDone && !lastRound && history.length >= 1 && result.board.length === 0 && !result.guardrailTripped && isSubstantiveStep(message))) return false;
+      reasoningNudgeDone = true;
+      console.log(`${new Date().toISOString()} [chat] round ${round}: student contributed a step but nothing is on the board — asking for the reasoning entry`);
+      messages.push({ role: "assistant", content: draft });
+      messages.push({ role: "user", content: "The student just contributed a step, but nothing was added to the board this turn. Before you reply, call WRITE_TO_BOARD ONCE: kind \"summary\" — THEIR reasoning so far in your own words (the move they made, why it works, what it gave), e.g. \"Factor: two numbers with product 6 and sum −5 → −2, −3\". If a formula or rule that would genuinely help is in play and not on the board yet, add it too (real math through DRAW_ON_BOARD's equation op). Never quote their message word for word, never write a step they haven't reached or the final answer. Then send your short reply again." });
+      return true;
+    };
     let truncationRetried = false;
     // Latches for the post-reply truth pass below (each fires at most ONCE per turn, same shape as the
     // board-claim fix): one corrective round when the draft asserts arithmetic that doesn't recompute,
@@ -8469,6 +8481,7 @@ export async function chatAboutTask(
         // ignored it entirely. Silent compression, once, non-voice only (voice mode has its own stricter
         // TTS ceiling and its own retry paths above).
         if (opts?.primer && countWords(textContent) > 70) textContent = tightenForChat(textContent);
+        if (nudgeReasoning(textContent, round, lastRound)) continue;
         if (!lengthRetried && !lastRound && !opts?.voiceMode && countWords(textContent) > 120) {
           lengthRetried = true;
           console.log(`${new Date().toISOString()} [chat] round ${round}: draft is ${countWords(textContent)} words — asking for a compressed rewrite`);
@@ -8597,16 +8610,7 @@ export async function chatAboutTask(
       // own trig step in chat and wrote nothing, so the board never showed THEIR reasoning or the formula
       // in play). ONE corrective round, latched, same shape as that fix: add the entry, or continue
       // unchanged if the exchange genuinely produced nothing board-worthy.
-      // Tutor only: the student just contributed a step and Otto wrote NOTHING on the board — one corrective
-      // round to put THEIR reasoning (and any helpful formula) there, in Otto's own words. Latched to once per
-      // turn; skipped on the first message, while a guardrail has wiped the turn, and for non-substantive input.
-      if (opts?.primer && !reasoningNudgeDone && !boardNudgeDone && !lastRound && history.length >= 1 && result.board.length === 0 && !result.guardrailTripped && isSubstantiveStep(message)) {
-        reasoningNudgeDone = true;
-        console.log(`${new Date().toISOString()} [chat] round ${round}: student contributed a step but nothing is on the board — asking for the reasoning entry`);
-        messages.push({ role: "assistant", content: textContent });
-        messages.push({ role: "user", content: "The student just contributed a step, but nothing was added to the board this turn. Before you reply, call WRITE_TO_BOARD ONCE: kind \"summary\" — THEIR reasoning so far in your own words (the move they made, why it works, what it gave), e.g. \"Factor: two numbers with product 6 and sum −5 → −2, −3\". If a formula or rule that would genuinely help is in play and not on the board yet, add it too (real math through DRAW_ON_BOARD's equation op). Never quote their message word for word, never write a step they haven't reached or the final answer. Then send your short reply again." });
-        continue;
-      }
+      if (nudgeReasoning(textContent, round, lastRound)) continue;
       if (!boardNudgeDone && !lastRound && shouldNudgeBoardWrite(textContent, message, result.board.length > 0)) {
         boardNudgeDone = true;
         console.log(`${new Date().toISOString()} [chat] round ${round}: reply confirms the student's math step but nothing was written to the board — asking for the write`);

@@ -4492,5 +4492,7 @@ section("TTS voice — switched to a male voice on both cloud tiers, arrows read
   check("spacing around the substituted word is normal regardless of how tight the arrow was in source", toSpeakableText("a→b") === "a gives b");
 }
 
+const { runTutorSim } = await import("./tutor-sim.mjs");
+await runTutorSim(check, section);
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

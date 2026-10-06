@@ -189,10 +189,15 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
   }, [sessionStart, task, saveAndClose]);
 
   const canvasRef = useRef<TutorCanvasHandle>(null);
+  // True from the moment a batch carrying a CORRECT exercise result is sent until the student's next own message.
+  const [exerciseDone, setExerciseDone] = useState(false);
   const [surfaceEl, setSurfaceEl] = useState<HTMLDivElement | null>(null);
   const send = useCallback(async (override?: string, voiceMode?: boolean) => {
     let message = (override ?? input).trim();
     if (!message || sending || !task) return;
+    const isAutoResult = /^\[(?:Exercise|Exercice)\]/.test(message);
+    if (!isAutoResult) setExerciseDone(false);
+    else if (/\b(marked right|juste)\b/.test(message)) setExerciseDone(true);
     setInput(""); setSending(true); setError(null); setPendingMsg(message);
     try {
       // Anything new on the whiteboard rides along with the message — draw, then just say "is this right?"
@@ -572,8 +577,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
   ];
   // Right after the student has completed an exercise: offer the next move as one-tap choices (Otto also asks
   // what they'd like to do — see the persona's EXERCISE RESULTS rule) instead of leaving them at a bare "solved".
-  const lastUserMsg = [...(task.chat || [])].reverse().find((m) => m.role === "user")?.text || "";
-  const justFinishedExercise = /^\[(?:Exercise|Exercice)\]/.test(lastUserMsg) && /\b(marked right|juste)\b/.test(lastUserMsg);
+  const justFinishedExercise = exerciseDone;
   const nextChips = [
     { label: L("➡ Un autre", "➡ Another one"), text: L("J'en veux un autre comme celui-là.", "Another one like it, please.") },
     { label: L("⬆ Plus dur", "⬆ Harder"), text: L("Donne-m'en un plus difficile.", "Give me a harder one.") },
