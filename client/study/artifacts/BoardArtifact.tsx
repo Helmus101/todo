@@ -36,7 +36,6 @@ const KIND_LABEL: Record<string, [string, string]> = {
   outline: ["Plan", "Outline"],
   interactive: ["Interactif", "Interactive"],
   graph: ["Graphique", "Graph"],
-  working: ["Ton travail", "Your work"],
 };
 
 // Quiet margin glyph per kind — a worksheet's annotations, not badges. Typographic on purpose (no icon
@@ -52,7 +51,6 @@ const KIND_GLYPH: Record<string, string> = {
   outline: "▤",
   interactive: "◈",
   graph: "◠",
-  working: "✎",
 };
 
 const LABEL_SIZE: Record<string, number> = { sm: 12, md: 14, lg: 18 };

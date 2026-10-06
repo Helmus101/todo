@@ -1518,7 +1518,7 @@ export interface BoardEntry {
    *  (see `outline`) — for essay-based/humanities content (history causes, source analysis, an essay plan)
    *  where a flat sentence or a spatial diagram both fit poorly; math/science still reach for
    *  formula/diagram first. */
-  kind?: "note" | "instruction" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "interactive" | "graph" | "working";
+  kind?: "note" | "instruction" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "interactive" | "graph";
   /** Present only when kind === "diagram" — the figure's shapes, rendered as SVG (BoardArtifact.tsx). Capped
    *  at 15 ops server-side (makeDiagramEntry, server/claude.ts): enough for a labeled triangle or a small
    *  graph, not enough to build a full illustration op-by-op. */
