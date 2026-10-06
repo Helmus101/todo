@@ -1972,6 +1972,48 @@ async function retryRequest<T>(fn: () => Promise<T>, retries = 3, delayMs = 1000
   throw lastErr;
 }
 
+
+// The Tutor talks to the student like a person, so a reply has to come back FAST. DeepSeek v4's hidden
+// reasoning pass is most of a turn's latency; for the Primer persona it's switched off per request via the
+// API's `thinking` toggle (the persona's own rules do the pedagogy, and the arithmetic/fact verifiers below
+// still run). The param is provider-specific, so a 4xx that names it is treated as "this endpoint doesn't
+// know it": retry once WITHOUT it and remember, so a rejecting provider costs one wasted call, ever.
+let thinkingToggleRejected = false;
+async function createChatFast(client: OpenAI, params: any, fast: boolean): Promise<any> {
+  if (!fast || USING_NVIDIA || thinkingToggleRejected || process.env.TUTOR_THINKING === "on") return client.chat.completions.create(params);
+  try {
+    return await client.chat.completions.create({ ...params, thinking: { type: "disabled" } } as any);
+  } catch (e: any) {
+    const status = Number(e?.status);
+    if ((status === 400 || status === 422) && /thinking/i.test(String(e?.message || e?.error?.message || ""))) {
+      thinkingToggleRejected = true;
+      console.warn("[chat] provider rejected the `thinking` toggle — continuing without it");
+      return client.chat.completions.create(params);
+    }
+    throw e;
+  }
+}
+
+/** Local, zero-latency version of the compression round for the Primer: a draft that ran long is cut back to
+ *  its first sentences plus the closing question, at sentence boundaries — never mid-thought, and the one
+ *  question that hands the thinking back to the student always survives. A short draft is returned as is. */
+export function tightenForChat(text: string, maxWords = 70): string {
+  const t = text.trim();
+  if (countWords(t) <= maxWords) return t;
+  const sentences = t.split(/(?<=[.!?…])\s+/).filter(Boolean);
+  if (sentences.length < 3) return t;
+  const last = sentences[sentences.length - 1];
+  const tail = /[?？]\s*$/.test(last) ? last : "";
+  const keep: string[] = [];
+  let words = tail ? countWords(tail) : 0;
+  for (const sn of sentences.slice(0, tail ? -1 : undefined)) {
+    const n = countWords(sn);
+    if (keep.length && words + n > maxWords) break;
+    keep.push(sn); words += n;
+  }
+  return [...keep, ...(tail ? [tail] : [])].join(" ");
+}
+
 /** Cap `text` at `maxLen` WITHOUT cutting mid-word/mid-sentence — a plain `.slice()` at a hard character
  *  count can land anywhere, including mid-word ("Bertrand" → "Bertra"), which reads as broken rather than
  *  just short. Backs up to the last sentence-ending punctuation within the cap; if none exists (one long
@@ -6822,7 +6864,26 @@ const CHAT_TOKEN_CEILING = 500_000;
  *  (Socratic, hint ladder, board, one question at a time) is the same at every age; only the language,
  *  tone, and framing calibrate to the student's actual level. */
 const PRIMER_PERSONA =
-  `\n\nYOU ARE THE PRIMER — READ THIS FIRST, IT OVERRIDES ANYTHING BELOW THAT CONFLICTS.\n` +
+  `\n\nSOUND LIKE A PERSON, ANSWER LIKE ONE — THIS BLOCK WINS OVER EVERYTHING BELOW.\n` +
+  `The student is looking at an avatar and ONE bubble: they only ever see your latest message, like a ` +
+  `person across the table, not a transcript. So:\n` +
+  `- Usually 1-2 short sentences, ~35 words at most. Lead with a human reaction to what they JUST said ` +
+  `("mm, close", "ah, that's the sign", "wait — say more about that"), then ONE small question or ONE tiny ` +
+  `nudge. Fragments are fine. Never open with praise-filler ("Great question!", "Absolutely!"), never ` +
+  `recap what they said back at length, never announce what you're about to do ("Let me explain…").\n` +
+  `- Socratic by default: don't explain what a question could draw out of them. Ask the smallest question ` +
+  `that makes them take the next step themselves. Explain directly only after they're genuinely stuck twice.\n` +
+  `- Answer in their language and register. Say "I" and "you", use contractions, think out loud a little ` +
+  `("hm, what if we try…"). One idea per message. No lists, no headings, no bold walls.\n` +
+  `- Use the board for anything they'd otherwise have to remember (a formula, a given, a diagram) INSTEAD of ` +
+  `reading it out in the bubble. Keep the bubble for the conversation.\n` +
+  `- SHOW, DON'T TELL: when an idea is spatial or dynamic (vectors, graphs of a family of functions, forces, ` +
+  `waves, orbits, probability, geometry, circuits, reactions, a process with moving parts), prefer a small ` +
+  `CREATE_INTERACTIVE scene the student can drag/slide right on the board, then ask what they notice as they ` +
+  `move it ("slide a — what happens to the vertex?"). Keep each scene SMALL (under ~60 lines, plain SVG + ` +
+  `inline JS, no library unless truly needed) so it appears fast, with the thing being varied labelled. Don't ` +
+  `build one for something a sentence or a quick DRAW_ON_BOARD figure already makes clear.\n\n` +
+  `YOU ARE THE PRIMER — READ THIS FIRST, IT OVERRIDES ANYTHING BELOW THAT CONFLICTS.\n` +
   `You are a devoted, endlessly patient private tutor, like Aristotle with Alexander, or the Primer in ` +
   `The Diamond Age. Your default student is a LYCÉE/IB TEENAGER (roughly 14-18) — that's who this app is ` +
   `built for and who you should assume you're talking to unless the STUDENT'S YEAR/GRADE LEVEL line below ` +
@@ -8014,13 +8075,13 @@ export async function chatAboutTask(
         // retries) rather than the earlier `retries: 2` (one retry) — a real DeepSeek blip (a momentary
         // rate limit, a brief network hiccup) going straight to the generic fallback after a SINGLE retry
         // was still common enough to report; the deadline (120s) has ample room for one more attempt.
-        res = await retryRequest(() => client.chat.completions.create({
+        res = await retryRequest(() => createChatFast(client, {
           model: actualModel, max_tokens: OUT.chat, temperature: 0.6,
           messages: apiMessages,
           // The chat tool set is deliberately in-app only (CREATE_*/web_search) — NEVER Composio. A tutoring
           // chat must not be able to touch the student's connected accounts, unlike runTask's tool set.
           ...(lastRound ? {} : { tools: tools.map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })) }),
-        }), 3, 400);
+        }, !!opts?.primer), 3, 400);
       } catch (e: any) {
         // This used to swallow the real error completely — the ONLY visible symptom was every chat
         // message (even "hello") silently landing on the generic fallback line, with nothing in server
@@ -8167,6 +8228,7 @@ export async function chatAboutTask(
         // (4) LENGTH BACKSTOP (TALE): the 45-word budget is prompt-side; this catches the draft that
         // ignored it entirely. Silent compression, once, non-voice only (voice mode has its own stricter
         // TTS ceiling and its own retry paths above).
+        if (opts?.primer && countWords(textContent) > 70) textContent = tightenForChat(textContent);
         if (!lengthRetried && !lastRound && !opts?.voiceMode && countWords(textContent) > 120) {
           lengthRetried = true;
           console.log(`${new Date().toISOString()} [chat] round ${round}: draft is ${countWords(textContent)} words — asking for a compressed rewrite`);

@@ -562,7 +562,9 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
           task={task} currentStep={undefined} input={input} setInput={setInput} sending={sending}
           error={error} pendingMsg={pendingMsg} onSend={(o, v) => void send(o, v)}
           onOpenNote={noop} onOpenDeck={noop} onOpenQuiz={noop}
-          emptyText={L("Pose-moi une question ou montre-moi ton travail.", "Ask me anything or show me your work.")}
+          emptyText={task.sourceSubject
+            ? L(`Salut ! Sur quoi tu bloques en ${task.sourceSubject} ? Écris, dessine ou parle — je t'écoute.`, `Hey! What's tripping you up in ${task.sourceSubject}? Type, draw or just talk — I'm listening.`)
+            : L("Salut ! Sur quoi tu bloques ? Écris, dessine ou parle.", "Hey! What are you stuck on? Type, draw or just talk.")}
           placeholder={L("Parle ou écris à Otto…", "Talk or type to Otto…")}
           onVoiceStateChange={handleVoiceState}
         />

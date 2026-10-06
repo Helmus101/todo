@@ -361,7 +361,7 @@ export function AskOttoPanel({
               </div>
             ) : lastReply ? (
               <>
-                <div className="otto-bubble-text">{renderChatText(lastReply.text)}</div>
+                <div className="otto-bubble-text" key={lastMessageKey(task.chat)}>{renderChatText(lastReply.text)}</div>
                 {mismatches.length ? (
                   <div className="sm-ai-calc-check" role="note">
                     <span className="sm-ai-calc-check-icon" aria-hidden="true">⚠</span>
