@@ -222,11 +222,6 @@ function clearAllLocalAccountData(userId: string | null): void {
   } catch { /* ignore */ }
 }
 
-const GREETING = (lang?: "fr" | "en") => {
-  const h = new Date().getHours();
-  const key = h < 12 ? "dashboard.greeting.morning" : h < 18 ? "dashboard.greeting.afternoon" : "dashboard.greeting.evening";
-  return t(key, lang === "en" ? "en" : "fr");
-};
 /** A friendly first name from the account email's local part ("tjong.willem@…" → "Tjong"). Personalizes the UI. */
 const firstName = (user?: string) => {
   const local = (user || "").split("@")[0].split(/[._+-]+/)[0];

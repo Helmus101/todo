@@ -625,11 +625,6 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
 
 /* ─── Settings — Tally form look: white card sections, hairline rows ────── */
 .settings-page { width: 100%; max-width: 660px; margin: 0 auto; }
-.settings-title {
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  font-size: clamp(26px, 4vw, 32px);
-}
 .settings-sec {
   background: #FFFFFF;
   border: 1px solid var(--line);
@@ -1193,12 +1188,6 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
 .toast.error .toast-x:hover { background: rgba(255,255,255,0.1); }
 
 /* ─── Settings — refined form sections ──────────────────────────────────── */
-.settings-title {
-  font-size: clamp(24px, 4vw, 30px);
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  margin-bottom: 28px;
-}
 .settings-sec {
   padding: 24px 28px;
   margin-bottom: 16px;
