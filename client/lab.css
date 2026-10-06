@@ -1,0 +1,123 @@
+@import url('https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500&display=swap');
+
+/* ═══ "AI lab" skin — loaded LAST, so it re-themes the whole app through tokens first and a short list of
+   overrides second. The look: warm paper, hairline borders instead of shadows, a quiet serif for page
+   titles, mono micro-labels, near-black primary actions, and orange reserved for small signals (the active
+   page, progress, focus, Otto himself). Nothing here changes layout or behaviour — delete this file and
+   the app is exactly as before. ═══════════════════════════════════════════════════════════════════════════ */
+:root {
+  --bg: #FAF9F5;
+  --surface: #FFFFFF;
+  --surface-raised: #FFFFFF;
+  --surface-glass: #FFFFFF;
+  --bar: #FAF9F5;
+  --ink: #141413;
+  --ink-2: #5E5D59;
+  --ink-3: #8A877E;
+  --line: #E6E3DA;
+  --line-soft: #EFEDE5;
+  --line-glass: #E6E3DA;
+  --glass-border: #E6E3DA;
+  --bg-2: #F2F0E9;
+  --bg-3: #E9E6DD;
+  --hover-wash: #F2F0E9;
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --shadow-sm: none;
+  --shadow-card: none;
+  --shadow-card-hover: 0 0 0 1px var(--ink-3);
+  --shadow-pop: 0 8px 24px rgba(20, 20, 19, 0.08);
+  --shadow-float: 0 12px 32px rgba(20, 20, 19, 0.10);
+  --shadow-glow: 0 0 0 3px var(--accent-soft);
+  --display: 'Newsreader', 'Baskervville', Georgia, 'Times New Roman', serif;
+  --font-serif: 'Newsreader', 'Baskervville', Georgia, serif;
+  --label: var(--mono);
+}
+html, body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antialiased; }
+
+/* Page titles: quiet serif, regular weight, generous size — the "research paper" voice. */
+.list-head, .tutor-landing-title, h1.page-title {
+  font-family: var(--display);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 1.08;
+}
+.list-head .accent-num { color: var(--ink); font-style: italic; }
+h2, .settings-sec h2 { font-family: var(--display); font-weight: 500; letter-spacing: -0.01em; }
+
+/* Top nav: text only, active page marked by a hairline underline. */
+.topnav { border-bottom: 1px solid var(--line-soft); }
+.topnav-brand { font-family: var(--display); font-weight: 500; font-size: 24px; letter-spacing: -0.02em; }
+.topnav-link { font-size: 14px; font-weight: 500; color: var(--ink-2); padding: 8px 0; border-bottom: 1px solid transparent; border-radius: 0; }
+@media (hover: hover) { .topnav-link:hover { color: var(--ink); } }
+.topnav-link.active { color: var(--ink); border-bottom-color: var(--accent); }
+
+/* Buttons: near-black primary, quiet secondary, no glows. */
+.btn { border-radius: var(--radius); font-weight: 500; }
+.btn:hover { background: var(--bg-2); border-color: var(--ink-3); }
+.btn.primary, .btn.primary.big, .sm-btn-primary { background: var(--ink); border-color: var(--ink); color: var(--bg); box-shadow: none; }
+.btn.primary:hover, .btn.primary.big:hover, .sm-btn-primary:hover:not(:disabled) { background: #33322E; border-color: #33322E; box-shadow: none; }
+.btn.primary:active, .btn.primary.big:active { background: #000; box-shadow: none; }
+.btn.primary:disabled, .sm-btn-primary:disabled { background: var(--bg-3); border-color: var(--bg-3); color: var(--ink-3); }
+.btn.ghost { color: var(--ink-2); }
+:focus-visible { outline-color: var(--accent); }
+
+/* Surfaces: hairline borders, no elevation. */
+.settings-sec, .task-card, .tcard, .card, .empty-state, .connect-card, .sm-ai-input, .tutor-active-session-card {
+  box-shadow: none;
+  border-color: var(--line);
+  border-radius: var(--radius-lg);
+}
+.settings-sec { background: var(--surface); }
+input, textarea, select { border-radius: var(--radius); }
+input:focus, textarea:focus, select:focus { border-color: var(--ink); box-shadow: 0 0 0 3px var(--accent-soft); outline: none; }
+
+/* Micro-labels: mono, small caps — the "lab notebook" detail. */
+.micro-label, .settings-sec > h3, .settings-sec-title, .tutor-history-section-label, .tutor-objectives-head, .week-label, .list-status {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* Tutor stage + dock: calmer elevation. */
+.otto-dock { border-radius: 16px; box-shadow: 0 1px 2px rgba(20,20,19,.04), 0 12px 32px rgba(20,20,19,.08); }
+.otto-bubble { background: var(--bg-2); }
+.tc-toolbar { box-shadow: 0 1px 2px rgba(20,20,19,.04), 0 6px 20px rgba(20,20,19,.07); }
+.tc-show { background: var(--ink); box-shadow: 0 6px 20px rgba(20,20,19,.2); }
+.ts-canvas { background-color: var(--bg); background-image: radial-gradient(color-mix(in srgb, var(--line) 90%, transparent) 1px, transparent 1px); }
+.tutor-face { background: #EFEBE0; }
+.tutor-start-row { background: var(--surface); }
+.tutor-end-btn { font-weight: 500; }
+.otto-quick-btn { background: var(--surface); }
+.otto-quick-btn:hover { background: var(--bg-2); border-color: var(--ink-3); }
+
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+
+/* Page canvas = paper everywhere (some wrappers painted their own white). */
+#root, .app, .list-wrap, .main, main { background-color: var(--bg); }
+/* Inline links: ink, underlined — orange stays a signal, not a link colour. */
+.settings-sec a:not(.btn) { color: var(--ink); font-weight: 500; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+.settings-sec a:not(.btn):hover { text-decoration-color: var(--ink); }
+.btn.danger, .btn.destructive, .settings-danger .btn { box-shadow: none; }
+button, .btn { box-shadow: none; }
+
+/* Landing + auth: same paper, same serif voice, same near-black action. */
+h1 { font-family: var(--display); font-weight: 400; letter-spacing: -0.025em; }
+.hero-title-framer { font-weight: 400; letter-spacing: -0.03em; line-height: 1.04; }
+.feature-title-framer { font-weight: 500; letter-spacing: -0.015em; }
+.feature-heading-framer { font-family: var(--display); font-weight: 500; font-size: 1.45em; letter-spacing: -0.015em; }
+.feature-number-framer { font-family: var(--mono); font-weight: 400; font-size: 13px; letter-spacing: 0.08em; color: var(--ink-3); }
+.landing-nav-framer, .landing-footer-framer { background: var(--bg); border-color: var(--line-soft); }
+.hero-framer, .hero-inner-framer, [class*="hero-"][class$="-framer"]:not(.hero-title-framer) { background: transparent; }
+.btn.primary-framer { background: var(--ink); border-color: var(--ink); color: var(--bg); box-shadow: none; border-radius: var(--radius); }
+.btn.primary-framer:hover { background: #33322E; border-color: #33322E; box-shadow: none; }
+.btn.ghost-framer { color: var(--ink-2); }
+.lang-toggle-framer { background: transparent; border: 1px solid var(--line); color: var(--ink-2); font-family: var(--mono); font-size: 11px; letter-spacing: .06em; border-radius: var(--radius); }
+.feature-card-framer, .feature-demo-framer, [class*="demo-card"] { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: none; }
+.features-framer [class*="card"], .features-framer [class*="demo"], .features-framer [class*="preview"] { background: var(--surface); border: 1px solid var(--line); box-shadow: none; }
