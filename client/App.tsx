@@ -2070,7 +2070,9 @@ function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
   const [mistake, setMistake] = useState("");
   const [fix, setFix] = useState("");
   const [saving, setSaving] = useState(false);
-  const [openSubject, setOpenSubject] = useState<string | null>(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [filterSubject, setFilterSubject] = useState("");
+  const [expandedSubjects, setExpandedSubjects] = useState<Set<string>>(new Set());
   // Same "don't silently drop a failed load" fix as SettingsPage's profileError/loadProfile — a failed
   // fetch used to just flip `loaded` true with `profile` still null, rendering the same "no mistakes yet"
   // empty state a genuinely-empty account gets, with no way to tell the two apart or retry.
@@ -2080,7 +2082,27 @@ function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
   useEffect(loadProfile, []);
 
   const groups = errorLogBySubject(profile?.errorLog);
-  useEffect(() => { if (!openSubject && groups.length) setOpenSubject(groups[0].subject); }, [groups.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [expandAll, setExpandAll] = useState(false);
+  const filteredGroups = filterSubject ? groups.filter(g => g.subject.toLowerCase().includes(filterSubject.toLowerCase())) : groups;
+
+  const toggleExpandAll = () => {
+    setExpandAll(!expandAll);
+    if (!expandAll) {
+      setExpandedSubjects(new Set(filteredGroups.map(g => g.subject)));
+    } else {
+      setExpandedSubjects(new Set());
+    }
+  };
+
+  const toggleSubject = (subject: string) => {
+    const newExpanded = new Set(expandedSubjects);
+    if (newExpanded.has(subject)) {
+      newExpanded.delete(subject);
+    } else {
+      newExpanded.add(subject);
+    }
+    setExpandedSubjects(newExpanded);
+  };
 
   const add = async () => {
     const s = subject.trim(), q = question.trim();
@@ -2088,8 +2110,9 @@ function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
     setSaving(true);
     try {
       const p = await api.addErrorLogEntry(s, q, mistake.trim(), fix.trim());
-      setProfile(p); setQuestion(""); setMistake(""); setFix("");
-      setOpenSubject(s);
+      setProfile(p); setQuestion(""); setMistake(""); setFix(""); setSubject("");
+      setShowAddForm(false);
+      setExpandedSubjects(new Set([s]));
     } catch (e: any) { notify(e?.message || L("Impossible d'ajouter cette erreur.", "Couldn't add that entry."), "error"); }
     finally { setSaving(false); }
   };
@@ -2098,47 +2121,87 @@ function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
     catch (e: any) { notify(e?.message || L("Impossible de supprimer cette entrée.", "Couldn't remove that entry."), "error"); }
   };
 
+  const totalMistakes = groups.reduce((sum, g) => sum + g.entries.length, 0);
+
   return (
     <main className="list-wrap">
       <div className="dash-head">
-        <h1 className="list-head">{L("Des erreurs qui méritent d'être retenues.", "Mistakes worth remembering.")}</h1>
-        <p className="page-sub" style={{ marginTop: 10 }}>{L("La question. Ce qui a mal tourné. Ce que tu essaieras la prochaine fois.", "The question. What went wrong. What you'll try next time.")}</p>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--space-3)" }}>
+          <h1 className="list-head">{L("Des erreurs qui méritent d'être retenues.", "Mistakes worth remembering.")}</h1>
+          <button className="btn primary" onClick={() => setShowAddForm(!showAddForm)}>
+            {showAddForm ? L("Fermer", "Close") : L("+ Ajouter", "+ Add")}
+          </button>
+        </div>
+        <p className="page-sub" style={{ marginTop: 10 }}>
+          {totalMistakes > 0 ? (
+            <>{totalMistakes} {totalMistakes === 1 ? L("erreur notée", "mistake logged") : L("erreurs notées", "mistakes logged")} · {groups.length} {groups.length === 1 ? L("matière", "subject") : L("matières", "subjects")}</>
+          ) : (
+            L("La question. Ce qui a mal tourné. Ce que tu essaieras la prochaine fois.", "The question. What went wrong. What you'll try next time.")
+          )}
+        </p>
       </div>
 
       {profileError ? (
         <p className="rewrite-error">{L("Certaines infos n'ont pas pu être chargées.", "Some info couldn't load.")} <button type="button" className="btn xs ghost" onClick={loadProfile}>{L("Réessayer", "Retry")}</button></p>
       ) : null}
 
-      <div className="errorlog-addform">
-        <div className="addrow">
-          <input className="addinput sm" placeholder={L("ex : Physique", "e.g. Physics")} value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={60} />
+      {groups.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)", marginTop: "var(--space-4)" }}>
+          <input
+            className="addinput"
+            placeholder={L("Filtrer par matière...", "Filter by subject...")}
+            value={filterSubject}
+            onChange={(e) => setFilterSubject(e.target.value)}
+            style={{ marginBottom: 0 }}
+          />
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--space-3)" }}>
+            <p className="muted small">
+              {filteredGroups.length} {filteredGroups.length === 1 ? L("résultat", "result") : L("résultats", "results")}
+            </p>
+            <button className="btn xs ghost" onClick={toggleExpandAll}>
+              {expandAll ? L("Tout réduire", "Collapse all") : L("Tout développer", "Expand all")}
+            </button>
+          </div>
         </div>
-        <textarea className="errorlog-textarea" rows={1} placeholder={L("La question ?", "What was the question?")} value={question} onChange={(e) => setQuestion(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
-        <textarea className="errorlog-textarea" rows={1} placeholder={L("Ce qui a mal tourné ?", "What went wrong?")} value={mistake} onChange={(e) => setMistake(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
-        <textarea className="errorlog-textarea" rows={1} placeholder={L("Ce que tu essaieras la prochaine fois ?", "What will you try next time?")} value={fix} onChange={(e) => setFix(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
-        <button type="button" className="btn primary" disabled={saving || !subject.trim() || !question.trim()} onClick={() => void add()}>
-          {saving ? L("Enregistrement…", "Saving…") : L("Ajouter au journal", "Add to log")}
-        </button>
-      </div>
+      )}
+
+      {showAddForm && (
+        <div className="errorlog-addform">
+          <div className="addrow">
+            <input className="addinput sm" placeholder={L("ex : Physique", "e.g. Physics")} value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={60} />
+          </div>
+          <textarea className="errorlog-textarea" rows={1} placeholder={L("La question ?", "What was the question?")} value={question} onChange={(e) => setQuestion(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
+          <textarea className="errorlog-textarea" rows={1} placeholder={L("Ce qui a mal tourné ?", "What went wrong?")} value={mistake} onChange={(e) => setMistake(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
+          <textarea className="errorlog-textarea" rows={1} placeholder={L("Ce que tu essaieras la prochaine fois ?", "What will you try next time?")} value={fix} onChange={(e) => setFix(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
+          <button type="button" className="btn primary" disabled={saving || !subject.trim() || !question.trim()} onClick={() => void add()}>
+            {saving ? L("Enregistrement…", "Saving…") : L("Ajouter au journal", "Add to log")}
+          </button>
+        </div>
+      )}
 
       {!loaded ? (
         <p className="muted small">{L("Récupération de ton journal…", "Pulling up your log…")}</p>
       ) : groups.length === 0 ? (
-        <p className="muted small" style={{ marginTop: "var(--space-3)" }}>{L("Pas encore d'erreurs notées — ajoute la première ci-dessus.", "Nothing logged yet — add your first mistake above.")}</p>
+        <div className="empty-state">
+          <div className="empty-mark"><span className="empty-check">✓</span></div>
+          <h3>{L("Aucune erreur notée", "No mistakes logged yet")}</h3>
+          <p>{L("Ajoute ta première erreur pour commencer à préparer tes tests.", "Add your first mistake to start building your test prep log.")}</p>
+          <button className="btn primary" onClick={() => setShowAddForm(true)}>{L("Ajouter une erreur", "Add a mistake")}</button>
+        </div>
       ) : (
-        <div className="errorlog-groups" style={{ marginTop: "var(--space-4)" }}>
-          {groups.map((g) => (
+        <div className="errorlog-groups">
+          {filteredGroups.map((g) => (
             <div key={g.subject} className="errorlog-group">
-              <button type="button" className="errorlog-group-head" onClick={() => setOpenSubject(openSubject === g.subject ? null : g.subject)}>
+              <button type="button" className="errorlog-group-head" onClick={() => toggleSubject(g.subject)}>
                 <span className="card-title">{g.subject}</span>
                 <span className="card-sub">{g.entries.length} {g.entries.length === 1 ? L("erreur", "mistake") : L("erreurs", "mistakes")}</span>
               </button>
-              {openSubject === g.subject ? (
+              {expandedSubjects.has(g.subject) ? (
                 <ul className="errorlog-entries">
                   {g.entries.map((e) => (
                     <li key={e.id} className="errorlog-entry">
                       <div className="errorlog-entry-head">
-                        <span className="muted small">{new Date(e.createdAt).toLocaleDateString(en ? "en-GB" : "fr-FR", { day: "numeric", month: "short", year: "numeric" })}</span>
+                        <span className="muted">{new Date(e.createdAt).toLocaleDateString(en ? "en-GB" : "fr-FR", { day: "numeric", month: "short", year: "numeric" })}</span>
                         <button className="x" title={L("Supprimer", "Remove")} onClick={() => void remove(e.id)}>×</button>
                       </div>
                       <p><strong>{L("Question : ", "Question: ")}</strong>{e.question}</p>
