@@ -7067,6 +7067,11 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .otto-bubble-empty { margin: 0; color: var(--ink-2); }
 .otto-bubble-thinking { display: flex; align-items: center; gap: 8px; color: var(--ink-2); }
 .otto-replay { position: absolute; top: 8px; right: 8px; width: 28px; height: 28px; border: 0; border-radius: 50%; background: var(--surface); box-shadow: 0 0 0 1px var(--line); cursor: pointer; font-size: 13px; line-height: 1; }
+.otto-quick { display: flex; flex-wrap: wrap; gap: 8px; padding-left: 68px; }
+.otto-quick-btn { font: inherit; font-size: 13px; padding: 7px 14px; border-radius: var(--radius-pill); border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; transition: border-color .12s, background .12s; }
+.otto-quick-btn:hover { border-color: var(--accent); background: var(--accent-soft); }
+.otto-quick-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+@media (max-width: 800px) { .otto-quick { padding-left: 0; } }
 .otto-dock .sm-ai-input-row { margin: 0; }
 .tutor-stage.voice-on .otto-dock { border-color: var(--accent); }
 @keyframes otto-ripple { from { transform: scale(.9); opacity: .5; } to { transform: scale(1.5); opacity: 0; } }

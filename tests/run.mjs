@@ -46,6 +46,13 @@ section("Primer chat — thinking toggle with safe fallback, persona leads with 
   check("fast chat helper retries without `thinking` on a rejecting provider", /thinkingToggleRejected = true/.test(src) && /type: "disabled"/.test(src));
   check("primer persona opens with the sound-like-a-person block", /SOUND LIKE A PERSON, ANSWER LIKE ONE/.test(src));
   check("persona pushes small interactive scenes (show, don't tell)", /SHOW, DON'T TELL/.test(src));
+  check("persona handles automatic exercise results + whiteboard readings like a person", /EXERCISE RESULTS ARRIVE AS/.test(src) && /THEIR WHITEBOARD ARRIVES AS/.test(src) && /GOOD EXERCISES/.test(src));
+  check("persona honours one-tap replies and retrieval-first returns", /ONE-TAP REPLIES/.test(src) && /RETRIEVAL OVER RE-EXPLAINING/.test(src));
+  const tut = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  check("tutor dock offers one-tap starters + follow-ups and a recall opener from the last session", /quickReplies=\{fresh \? starters : followUps\}/.test(tut) && /What do you still remember/.test(tut));
+  const board = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  check("board reports every exercise attempt to the tutor (never the correct answer)", /onProblemResult\?\.\(\{ problem, given, correct, attempt \}\)/.test(board) && /\[Exercise\] I answered/.test(tut));
+  check("new whiteboard ink rides along with the next message (no separate send step)", /readUnseenInk\(\)/.test(tut) && /What I wrote\/drew on the board/.test(tut));
 }
 
 // ── Generation gates ──────────────────────────────────────────────────────────

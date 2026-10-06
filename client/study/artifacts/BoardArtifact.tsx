@@ -17,6 +17,10 @@ interface BoardArtifactProps {
    *  the document feels like it's being drafted in real time next to the conversation, not refreshed after
    *  the fact (reported: board work should feel "smooth, mechanical" — the writing hand is always visible). */
   writing?: boolean;
+  /** Tutor only — fired on every answer attempt (right or wrong) so Otto can react to it like a person would
+   *  ("what made you pick B?") instead of the board silently marking it. `attempt` counts tries on this
+   *  problem including this one. Never carries the correct answer — only what the student gave. */
+  onProblemResult?: (r: { problem: TaskProblem; given: string; correct: boolean; attempt: number }) => void;
 }
 
 const KIND_LABEL: Record<string, [string, string]> = {
@@ -299,7 +303,7 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
  *  and practice problems. ONE DOCUMENT, ONE FLOW: entries and problems interleave in the order the session
  *  actually produced them (a problem sits between the formula it exercises and the insight answering it —
  *  the lesson's story, not a problem section pinned on top). kind:"focus" stays pinned above as the heading. */
-export function BoardArtifact({ task, writing }: BoardArtifactProps) {
+export function BoardArtifact({ task, writing, onProblemResult }: BoardArtifactProps) {
   const L = useLang();
   const endRef = useRef<HTMLDivElement>(null);
   const entries = task.board || [];
@@ -372,7 +376,13 @@ export function BoardArtifact({ task, writing }: BoardArtifactProps) {
   const revealDuration = (text: string): number => Math.min(1.6, Math.max(0.5, text.length / 90));
 
   // A wrong pick is recorded (struck out) but never "answers" the problem — only the correct one does.
+  const attemptsRef = useRef<Record<string, number>>({});
+  const reportResult = (problem: TaskProblem, given: string, correct: boolean) => {
+    const attempt = (attemptsRef.current[problem.id] = (attemptsRef.current[problem.id] || 0) + 1);
+    onProblemResult?.({ problem, given, correct, attempt });
+  };
   const setProblemPicked = (problem: TaskProblem, picked: number) => {
+    reportResult(problem, problem.options?.[picked] ?? String(picked), picked === problem.correct);
     setProblemState(prev => {
       const cur = prev[problem.id] || { picked: null, textAnswer: "", submitted: false };
       return picked === problem.correct
@@ -386,6 +396,8 @@ export function BoardArtifact({ task, writing }: BoardArtifactProps) {
   };
 
   const submitProblem = (problemId: string) => {
+    const pr = problems.find((p) => p.id === problemId);
+    if (pr && pr.answer) { const given = (problemState[problemId]?.textAnswer || "").trim(); if (given) reportResult(pr, given, practiceAnswerMatches(given, pr.answer)); }
     setProblemState(prev => ({ ...prev, [problemId]: { ...prev[problemId] || { picked: null, textAnswer: "", submitted: false }, submitted: true } }));
   };
 

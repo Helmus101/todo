@@ -42,6 +42,9 @@ interface AskOttoPanelProps {
    *  bubble, and the student's input sits right under it. Every voice/echo/send behavior is shared with the
    *  full chat; only the rendering differs. */
   variant?: "chat" | "dock";
+  /** Dock only — one-tap replies shown under Otto's bubble. Research on AI tutors: students ignore tutors
+   *  that make them compose every message; a tap is the lowest-friction way to say "hint", "I'm lost". */
+  quickReplies?: { label: string; text: string }[];
 }
 
 // The text currently being spoken aloud (the newest assistant reply) — the echo guard's reference: Otto
@@ -73,7 +76,7 @@ function arithmeticMismatches(text: string): { raw: string; lhs: string; claimed
 // other drawers, so the title bar/close/drag/resize handles all come from ArtifactCanvas's generic wrapper.
 export function AskOttoPanel({
   task, currentStep, input, setInput, sending, error, pendingMsg, onSend,
-  onOpenNote, onOpenDeck, onOpenQuiz, emptyText, placeholder, onVoiceStateChange, bargeIn, variant = "chat",
+  onOpenNote, onOpenDeck, onOpenQuiz, emptyText, placeholder, onVoiceStateChange, bargeIn, variant = "chat", quickReplies,
 }: AskOttoPanelProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -380,6 +383,13 @@ export function AskOttoPanel({
             )}
           </div>
         </div>
+        {quickReplies?.length && !sending ? (
+          <div className="otto-quick" role="group" aria-label={L("Réponses rapides", "Quick replies")}>
+            {quickReplies.map((q) => (
+              <button key={q.label} type="button" className="otto-quick-btn" onClick={() => onSend(q.text, voiceModeOn)}>{q.label}</button>
+            ))}
+          </div>
+        ) : null}
         {diagnostics}
         {inputRow}
       </div>
