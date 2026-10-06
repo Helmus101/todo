@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { WebTask, Quadrant, TaskLink, Profile, Sendable, AddUsageCategory, TaskStep, BoardEntry } from "../shared/types.ts";
 import { dedupeFacts, sameFact, canonStatus, sortWithinQuadrant, addUsage, isHandled, tzOf, deadlineEpoch, normalizeWhen, gradesBySubject } from "../shared/types.ts";
+import type { EnrolledCourse } from "../shared/courses.ts";
 import { generateTasks, classifyCandidates, pickOneTask, runTask as aiRun, type ProfileUpdate, type RefinedTask, type AcademicContext } from "./claude.ts";
 import { readOnly, scopeTools, DOC_LINK, type AgentTools } from "./integrations.ts";
 import { discoverSourceItems, filterCandidates, hasAssignmentText } from "./discover.ts";
@@ -674,6 +675,28 @@ function unionStudyArtifacts(winner: WebTask, loser: WebTask): Partial<Pick<WebT
 }
 
 /** Cross-device profile merge: entity-level fact dedupe; `paused` follows the most RECENT toggle. */
+/** Union by course id; per unit take the MAX of every counter, so two devices that each credited a session
+ *  never lose one (counters are monotonic). Deletes persist via cloud-first saveState in the route. */
+export function mergeCourses(a?: EnrolledCourse[], b?: EnrolledCourse[]): EnrolledCourse[] | undefined {
+  if (!a?.length && !b?.length) return a ?? b;
+  const map = new Map<string, EnrolledCourse>();
+  for (const c of [...(a || []), ...(b || [])]) {
+    const cur = map.get(c.id);
+    if (!cur) { map.set(c.id, c); continue; }
+    const progress: EnrolledCourse["progress"] = { ...cur.progress };
+    for (const [uid, p] of Object.entries(c.progress)) {
+      const q = progress[uid];
+      progress[uid] = q ? {
+        sessions: Math.max(q.sessions, p.sessions), minutes: Math.max(q.minutes, p.minutes),
+        quizBest: q.quizBest == null && p.quizBest == null ? undefined : Math.max(q.quizBest ?? 0, p.quizBest ?? 0),
+        lastAt: q.lastAt > p.lastAt ? q.lastAt : p.lastAt,
+      } : p;
+    }
+    map.set(c.id, { ...cur, progress });
+  }
+  return [...map.values()].slice(0, 12);
+}
+
 export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
   const pausedAt = (p: Profile) => Date.parse(p.pausedAt || "") || 0;
   const pausedSide = pausedAt(p2) >= pausedAt(p1) ? p2 : p1;
@@ -808,6 +831,7 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     })() : undefined,
     // Union by id, same reasoning as manual grade entries above — a manually-logged exam added on one
     // device must survive a merge against another device's copy that doesn't have it yet.
+    enrolledCourses: mergeCourses(p1.enrolledCourses, p2.enrolledCourses),
     manualExams: (p1.manualExams?.length || p2.manualExams?.length)
       ? [...new Map([...(p1.manualExams || []), ...(p2.manualExams || [])].map((e) => [e.id, e])).values()]
       : undefined,

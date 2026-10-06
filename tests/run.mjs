@@ -1928,12 +1928,13 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   check("a past session's full board can be reopened (View board button + modal)", /setOpenBoardSession/.test(tutorSrc) && /<BoardArtifact task=\{\{ board: openBoardSession\.board \}/.test(tutorSrc));
   // Voice stays off through start/resume — the student turns it on with the mic toggle themselves.
   check("starting or resuming a session leaves voice OFF (explicit mic tap to enable)", !/setWantVoice\(true\)/.test(tutorSrc));
-  // The voice state pill lives on the BOARD pane header: in a voice-first session the student's eyes are
-  // on the board, so "am I being heard?" has to be answerable where they're actually looking.
-  check("voice state is reported up and shown on the board pane", /onVoiceStateChange/.test(tutorSrc) && /tutor-voice-pill/.test(tutorSrc));
-  check("voice mode shifts the layout board-primary", /voice-primary/.test(tutorSrc));
+  // Otto is an avatar docked over the canvas (no transcript): voice state shows on the avatar itself
+  // (mood ring) and the stage takes a voice-on accent, so "am I being heard?" is answered right where the
+  // student is looking.
+  check("voice state is reported up and drives the stage", /onVoiceStateChange/.test(tutorSrc) && /tutor-stage\$\{voiceState\.voiceModeOn \? " voice-on"/.test(tutorSrc));
   const tutorStyles = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
-  check("voice-primary grid actually exists in CSS (not a dead class)", /\.tutor-session\.voice-primary \{ grid-template-columns/.test(tutorStyles));
+  check("tutor shows Otto as a dock (latest answer only), not the full chat", /variant="dock"/.test(tutorSrc) && /\.otto-bubble/.test(tutorStyles));
+  check("tutor canvas: ink layer with undo/redo + eraser over the board", /TutorCanvas/.test(tutorSrc) && /\.tc-toolbar/.test(tutorStyles));
   // Barge-in: talking over Otto cancels the TTS mid-sentence, like interrupting a human tutor. Threshold
   // is 2+ words so speaker echo / a throat-clear doesn't cut him off.
   const askOttoSrc = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");

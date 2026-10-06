@@ -6,7 +6,7 @@ import { useLang, TaskModal, formatMath } from "../ui.tsx";
 import { AskOttoPanel } from "../study/AskOttoPanel.tsx";
 import { BoardArtifact } from "../study/artifacts/BoardArtifact.tsx";
 import { TutorDesmos } from "./TutorDesmos.tsx";
-import { TutorWhiteboard } from "./TutorWhiteboard.tsx";
+import { TutorCanvas } from "./TutorCanvas.tsx";
 import { buildSessionSummary, saveTutorSession, getTutorSessions, type TutorSessionSummary } from "./tutorSessions.ts";
 
 // A dismiss that silently fails (a network blip, a momentary 429) used to just be swallowed — the session
@@ -77,19 +77,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
   // see the board pane's render below for why: an iframe that's removed and re-added reloads from scratch.
   const desmosEverOpenedRef = useRef(false);
   if (desmosOpen) desmosEverOpenedRef.current = true;
-  // The whiteboard REPLACES the board pane while open (reported live: it should take over the board, not
-  // the chat — drawing is visual work, same pane Desmos uses, not the conversation). Mutually exclusive
-  // with Desmos (openWhiteboard/openDesmos below enforce it) — only one replaces the board at a time.
-  const [whiteboardOpen, setWhiteboardOpen] = useState(false);
-  // Same "stays mounted once opened" treatment as desmosEverOpenedRef above, and for the same reason an
-  // unmount would be wrong here too: reported live, closing the whiteboard without sending used to throw
-  // the drawing away outright — a real accidental-close/detour losing real unsubmitted work. Keeping the
-  // component mounted (hidden, not unmounted) means the canvas's own drawn pixels just survive; only an
-  // actual send clears it (see TutorWhiteboard's own `send`).
-  const whiteboardEverOpenedRef = useRef(false);
-  if (whiteboardOpen) whiteboardEverOpenedRef.current = true;
-  const openWhiteboard = useCallback(() => { setDesmosOpen(false); setWhiteboardOpen(true); }, []);
-  const openDesmos = useCallback(() => { setWhiteboardOpen(false); setDesmosOpen(true); }, []);
+  const openDesmos = useCallback(() => setDesmosOpen(true), []);
   const handleVoiceState = useCallback((s: { listening: boolean; speaking: boolean; voiceModeOn: boolean; interim: string }) => setVoiceState(s), []);
   // StrictMode guard for the mount peek below (a double-invoke would just be a wasted duplicate GET, but
   // the guard also keeps the read strictly once-per-mount). Runs once per component lifetime.
@@ -188,9 +176,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
         setPendingActiveSession(null);
         setShowHistory(true);
         setDesmosOpen(false);
-        setWhiteboardOpen(false);
         desmosEverOpenedRef.current = false;
-        whiteboardEverOpenedRef.current = false;
       }, INACTIVITY_MS);
     };
     const activityEvents = ["mousedown", "keydown", "scroll", "touchstart"] as const;
@@ -273,9 +259,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
       setPendingActiveSession(null);
       setShowHistory(true);
       setDesmosOpen(false);
-      setWhiteboardOpen(false);
       desmosEverOpenedRef.current = false;
-      whiteboardEverOpenedRef.current = false;
     } finally {
       setEndingSession(false);
     }
@@ -311,9 +295,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
     });
     setSessionStart(new Date().toISOString());
     setDesmosOpen(false);
-    setWhiteboardOpen(false);
     desmosEverOpenedRef.current = false;
-    whiteboardEverOpenedRef.current = false;
   }, [pendingActiveSession, userId]);
 
   const startNewSession = useCallback(async () => {
@@ -358,9 +340,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
         });
         setSessionStart(new Date().toISOString());
         setDesmosOpen(false);
-        setWhiteboardOpen(false);
         desmosEverOpenedRef.current = false;
-        whiteboardEverOpenedRef.current = false;
       }
       setPendingActiveSession(null);
     } catch {
@@ -539,10 +519,20 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
 
   const noop = () => {};
   const fresh = !task.chat?.length && !pendingMsg;
-  // Voice-primary layout: while voice mode is on the board pane widens and takes the accent highlight —
-  // the student is talking, not typing, and per the gesture/dual-coding research their eyes belong on the
-  // visual surface (figures, formulas, structure), not on a chat transcript they can't see while speaking.
+  const objDone = task.objectives?.filter((o) => o.done).length ?? 0;
+  // Gauth-style stage: ONE big canvas (Otto's lesson board with the student's ink over it) and Otto himself
+  // as just an avatar docked at the bottom — no transcript. The student talks (or types) to the avatar and
+  // sees only Otto's latest answer; everything worth keeping lands on the board instead of scrolling away
+  // in a chat log. The full conversation is still saved with the session for the history view.
   return (
+    <main className={`tutor-stage${voiceState.voiceModeOn ? " voice-on" : ""}`}>
+      <header className="ts-bar">
+        {backButton}
+        <span className="ts-title">{task.sourceSubject || L("Séance", "Session")}</span>
+        {!!task.objectives?.length && (
+          <span className="ts-chip" title={task.objectives.map((o) => `${o.done ? "✓" : "○"} ${o.label}`).join("\n")}>
+            ◎ {objDone}/{task.objectives.length}{typeof task.mastery === "number" ? ` · ${Math.round(task.mastery * 100)}%` : ""}
+          </span>
     <main className={`tutor-session${voiceState.voiceModeOn ? " voice-primary" : ""}`}>
       {/* The prototype's session chrome: breadcrumb left ("All sessions / Mathematics"), End session right. */}
       <div className="tutor-crumbbar">
@@ -657,35 +647,39 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
             </ul>
           </div>
         )}
-        <div className="tutor-board-body" style={{ display: desmosOpen || whiteboardOpen ? "none" : undefined }}>
+        <span className="ts-spacer" />
+        <button className="btn ghost tutor-end-btn" disabled={endingSession} onClick={() => void endSession()}>
+          {endingSession ? L("Fin…", "Ending…") : L("Terminer la séance", "End session")}
+        </button>
+      </header>
+      <section className="ts-canvas" aria-label={L("Tableau", "Board")}>
+        <div className="tutor-board-body ts-board-body" style={{ display: desmosOpen ? "none" : undefined }}>
           <BoardArtifact task={task} writing={sending} />
         </div>
-        {/* Always mounted (never conditionally rendered) once opened once this session — only VISIBILITY
-            toggles via inline style, which inline style always wins over the stylesheet's own display
-            rule regardless of selector specificity, unlike the `hidden` attribute. An iframe that gets
-            removed from the DOM and re-added reloads from scratch; one that's just hidden keeps running,
-            so the student's graph survives toggling back to the board and back to Desmos again. */}
+        {/* Desmos stays mounted once opened (an iframe that's removed reloads blank, losing the student's graph). */}
         {desmosOpen || desmosEverOpenedRef.current ? (
           <div style={{ display: desmosOpen ? "contents" : "none" }}>
             <TutorDesmos onClose={() => setDesmosOpen(false)} />
           </div>
         ) : null}
-        {/* Same mounted-once-opened treatment, same reason — see TutorWhiteboard's own doc comment. */}
-        {whiteboardOpen || whiteboardEverOpenedRef.current ? (
-          <div style={{ display: whiteboardOpen ? "contents" : "none" }}>
-            <TutorWhiteboard
-              onClose={() => setWhiteboardOpen(false)}
-              onSend={(description) => {
-                // Framed as the student's own message (shown verbatim in their chat bubble, same as if
-                // they'd typed it) rather than a hidden side-channel — the student should see exactly what
-                // Otto is being told their drawing shows, so a bad transcription is visible/correctable in
-                // the thread itself instead of silently steering the conversation.
-                void send(L(`Voici ce que j'ai dessiné : ${description}`, `Here's what I drew: ${description}`));
-              }}
-            />
-          </div>
-        ) : null}
+        <TutorCanvas
+          visionReady={visionReady}
+          hidden={desmosOpen}
+          onDesmos={openDesmos}
+          onSend={(description) => void send(L(`Voici ce que j'ai dessiné : ${description}`, `Here's what I drew: ${description}`))}
+        />
       </section>
+      <div className="ts-dock">
+        <AskOttoPanel
+          variant="dock"
+          task={task} currentStep={undefined} input={input} setInput={setInput} sending={sending}
+          error={error} pendingMsg={pendingMsg} onSend={(o, v) => void send(o, v)}
+          onOpenNote={noop} onOpenDeck={noop} onOpenQuiz={noop}
+          emptyText={L("Pose-moi une question ou montre-moi ton travail.", "Ask me anything or show me your work.")}
+          placeholder={L("Parle ou écris à Otto…", "Talk or type to Otto…")}
+          onVoiceStateChange={handleVoiceState}
+        />
+      </div>
     </main>
   );
 }

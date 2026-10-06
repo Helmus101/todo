@@ -8325,3 +8325,80 @@ export async function chatAboutTask(
     new Promise<ChatResult>((resolve) => setTimeout(() => resolve(finish("")), CHAT_DEADLINE_MS)),
   ]);
 }
+
+// ── Courses (shared/courses.ts) ──────────────────────────────────────────────────────────────────────────
+// Three small, best-effort JSON calls: draft an outline for a custom subject, build a unit quiz, and decide
+// which unit a free-form tutor session actually covered (so EVERY session counts toward course progress,
+// not only ones launched from a unit button). All return null on any failure — callers degrade gracefully.
+function courseModel(): string { return DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL; }
+
+export async function generateCourseOutline(name: string, level: string | undefined, profile?: Profile): Promise<{ units: string[]; tokens: { in: number; out: number; cachedIn: number } } | null> {
+  try {
+    const res = await retryRequest(() => deepseekClient().chat.completions.create({
+      model: courseModel(), max_tokens: 500, temperature: 0.3, response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: languageLine(profile) + trackLine(profile) +
+          `Draft the unit outline of a school course the student wants to follow. Use the REAL syllabus's own ` +
+          `unit names and order if you know it for this course/level; otherwise a sensible standard progression. ` +
+          `6 to 10 units, each a short title (≤8 words), no numbering, no duplicates. ` +
+          `Return ONLY JSON: {"units": ["...", ...]}.` },
+        { role: "user", content: `Course: "${name.slice(0, 80)}"${level ? `\nLevel: ${level.slice(0, 30)}` : ""}${profile?.yearLevel ? `\nStudent year: ${profile.yearLevel}` : ""}` },
+      ],
+    }));
+    const out = firstJson<{ units?: string[] }>(res.choices[0]?.message?.content || "");
+    const units = Array.isArray(out?.units) ? [...new Set(out.units.map((x) => String(x).trim().slice(0, 100)).filter(Boolean))].slice(0, 12) : [];
+    return units.length >= 3 ? { units, tokens: usageOf(res) } : null;
+  } catch { return null; }
+}
+
+export interface CourseQuizQuestion { q: string; options: string[]; answer: number; why: string }
+
+export function sanitizeQuizQuestions(raw: unknown): CourseQuizQuestion[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((x: any) => {
+    const options = Array.isArray(x?.options) ? x.options.map((o: any) => String(o).trim().slice(0, 200)).filter(Boolean).slice(0, 4) : [];
+    const answer = Number.isInteger(x?.answer) ? x.answer : -1;
+    return { q: String(x?.q || "").trim().slice(0, 400), options, answer, why: String(x?.why || "").trim().slice(0, 300) };
+  }).filter((x) => x.q && x.options.length >= 3 && x.answer >= 0 && x.answer < x.options.length).slice(0, 6);
+}
+
+export async function generateUnitQuiz(course: string, unit: string, profile?: Profile): Promise<{ questions: CourseQuizQuestion[]; tokens: { in: number; out: number; cachedIn: number } } | null> {
+  try {
+    const res = await retryRequest(() => deepseekClient().chat.completions.create({
+      model: courseModel(), max_tokens: 1400, temperature: 0.5, response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: languageLine(profile) + trackLine(profile) + syllabusGroundingLine(profile, course) +
+          `Write a 5-question multiple-choice check for ONE unit of a course. Questions must test understanding ` +
+          `(apply, explain, spot the error), not trivia, ramp from easy to harder, and each have exactly 4 plausible ` +
+          `options with ONE correct. Keep any maths in plain text. Return ONLY JSON: ` +
+          `{"questions": [{"q": "...", "options": ["...","...","...","..."], "answer": 0, "why": "one-sentence explanation"}]} ` +
+          `where "answer" is the 0-based index of the correct option; vary which index is correct.` },
+        { role: "user", content: `Course: ${course.slice(0, 80)}\nUnit: ${unit.slice(0, 100)}` },
+      ],
+    }));
+    const out = firstJson<{ questions?: unknown }>(res.choices[0]?.message?.content || "");
+    const questions = sanitizeQuizQuestions(out?.questions);
+    return questions.length >= 3 ? { questions, tokens: usageOf(res) } : null;
+  } catch { return null; }
+}
+
+/** Which unit (if any) did this tutor session actually cover? Returns a unit id from `units`, or null when
+ *  the session wasn't clearly about any one of them (never guesses — a wrong credit is worse than none). */
+export async function matchSessionToUnit(course: string, units: { id: string; name: string }[], sessionText: string, profile?: Profile): Promise<{ unitId: string | null; tokens: { in: number; out: number; cachedIn: number } } | null> {
+  const text = String(sessionText || "").trim();
+  if (text.length < 30 || !units.length) return null;
+  try {
+    const res = await retryRequest(() => deepseekClient().chat.completions.create({
+      model: courseModel(), max_tokens: 60, temperature: 0, response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: languageLine(profile) +
+          `Given a tutoring session's notes and a course's units, pick the ONE unit the session mainly covered. ` +
+          `If it wasn't clearly about a single listed unit, answer null. Return ONLY JSON: {"unit": <index number or null>}.` },
+        { role: "user", content: `Course: ${course}\nUnits:\n${units.map((x, i) => `${i}. ${x.name}`).join("\n")}\n\nSESSION NOTES:\n"""\n${text.slice(0, 3000)}\n"""` },
+      ],
+    }));
+    const out = firstJson<{ unit?: number | null }>(res.choices[0]?.message?.content || "");
+    const i = out?.unit;
+    return { unitId: typeof i === "number" && Number.isInteger(i) && units[i] ? units[i].id : null, tokens: usageOf(res) };
+  } catch { return null; }
+}
