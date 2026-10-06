@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { Pencil, Highlighter, Eraser, Type, Undo2, Redo2, Trash2, Hand, Send } from "lucide-react";
 import { api } from "../api.ts";
@@ -54,9 +55,10 @@ export interface TutorCanvasHandle {
   readUnseenInk: () => Promise<string | null>;
 }
 
-export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean; hidden: boolean; onSend: (description: string) => void; onDesmos: () => void }>(function TutorCanvas({ visionReady, hidden, onSend, onDesmos }, handleRef) {
+export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean; hidden: boolean; surface: HTMLElement | null; onSend: (description: string, note?: string) => void; onDesmos: () => void }>(function TutorCanvas({ visionReady, hidden, surface, onSend, onDesmos }, handleRef) {
   const L = useLang();
-  const wrapRef = useRef<HTMLDivElement>(null);
+  const [askOpen, setAskOpen] = useState(false);
+  const [askText, setAskText] = useState("");
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const items = useRef<Item[]>([]);
   const inkStamp = useRef(0);
@@ -79,22 +81,32 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
     paint(ctx, live.current ? [...items.current, live.current] : items.current, size.current.w, size.current.h);
   }, []);
 
+  // The ink lives ON the board surface: the canvas is portalled INTO the board's scroll container and sized to
+  // its full content height, so what the student writes scrolls with Otto's writing — one shared page, like
+  // pen on paper — instead of floating over the viewport. (Ink coordinates are page coordinates.)
   useEffect(() => {
-    const wrap = wrapRef.current, c = canvasRef.current;
-    if (!wrap || !c) return;
+    const c = canvasRef.current;
+    if (!surface || !c) return;
     const fit = () => {
-      const r = wrap.getBoundingClientRect();
-      if (!r.width || !r.height) return; // hidden (Desmos open) — keep the old size, repaint on return
+      const w = surface.clientWidth;
+      if (!w) return; // hidden (Desmos open) — keep the old size, repaint on return
+      const board = surface.firstElementChild as HTMLElement | null;
+      const h = Math.max(surface.clientHeight, board ? board.offsetTop + board.offsetHeight + 300 : 0);
+      if (Math.abs(size.current.w - w) < 0.5 && Math.abs(size.current.h - h) < 0.5) return;
       const dpr = window.devicePixelRatio || 1;
-      size.current = { w: r.width, h: r.height };
-      c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr);
+      size.current = { w, h };
+      c.style.height = `${h}px`;
+      c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
       repaint();
     };
     fit();
     const ro = new ResizeObserver(fit);
-    ro.observe(wrap);
-    return () => ro.disconnect();
-  }, [repaint]);
+    ro.observe(surface);
+    if (surface.firstElementChild) ro.observe(surface.firstElementChild);
+    const mo = new MutationObserver(fit);
+    mo.observe(surface, { childList: true, subtree: true });
+    return () => { ro.disconnect(); mo.disconnect(); };
+  }, [surface, repaint]);
 
   useEffect(() => { if (typing) textRef.current?.focus(); }, [typing]);
 
@@ -154,13 +166,24 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
   const seenStamp = useRef(0);
   const readInk = async (): Promise<string> => {
     const c = canvasRef.current!;
-    // Flatten onto white: the canvas is transparent (it sits over the board), but the vision model
-    // needs dark ink on a plain light background to read handwriting reliably.
+    // Crop to where the ink actually is (+ margin): the canvas is the whole scrollable page, which would
+    // otherwise be a huge mostly-empty image for the vision model.
+    const dpr = window.devicePixelRatio || 1;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const it of items.current) {
+      if (it.kind === "text") { x0 = Math.min(x0, it.x); y0 = Math.min(y0, it.y); x1 = Math.max(x1, it.x + it.value.length * it.size * 0.6); y1 = Math.max(y1, it.y + it.size * 1.3); }
+      else if (it.tool !== "eraser") for (const p of it.pts) { x0 = Math.min(x0, p.x - it.width); y0 = Math.min(y0, p.y - it.width); x1 = Math.max(x1, p.x + it.width); y1 = Math.max(y1, p.y + it.width); }
+    }
+    const pad = 24;
+    const sx = Math.max(0, x0 - pad), sy = Math.max(0, y0 - pad), sw = Math.min(size.current.w, x1 + pad) - sx, sh = Math.min(size.current.h, y1 + pad) - sy;
+    // Flatten onto white: the canvas is transparent (it sits over the board), but the vision model needs
+    // dark ink on a plain light background to read handwriting reliably.
     const flat = document.createElement("canvas");
-    flat.width = c.width; flat.height = c.height;
+    const scale = Math.min(1, 1600 / Math.max(sw, sh));
+    flat.width = Math.max(1, Math.round(sw * dpr * scale)); flat.height = Math.max(1, Math.round(sh * dpr * scale));
     const f = flat.getContext("2d")!;
     f.fillStyle = "#FFFFFF"; f.fillRect(0, 0, flat.width, flat.height);
-    f.drawImage(c, 0, 0);
+    f.drawImage(c, sx * dpr, sy * dpr, sw * dpr, sh * dpr, 0, 0, flat.width, flat.height);
     const { description } = await api.readWhiteboard(flat.toDataURL("image/png"));
     seenStamp.current = inkStamp.current;
     return description;
@@ -177,9 +200,11 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
     const c = canvasRef.current;
     if (!c || !hasInk || sending) return;
     setSending(true); setError(null);
+    const note = askText.trim();
     try {
       const description = await readInk();
-      onSend(description);
+      setAskOpen(false); setAskText("");
+      onSend(description, note || undefined);
     } catch (e: any) {
       setError(e?.status != null ? e.message : L("Otto n'a pas pu lire ton tableau — réessaie.", "Otto couldn't read your board — try again."));
     } finally { setSending(false); }
@@ -190,45 +215,69 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
   );
   const drawing = tool !== "pan";
   return (
-    <div className="tc-layer" ref={wrapRef} style={{ display: hidden ? "none" : undefined, pointerEvents: "none" }}>
-      <canvas
-        ref={canvasRef}
-        className={`tc-canvas tool-${tool}`}
-        style={{ pointerEvents: drawing ? "auto" : "none" }}
-        onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
-      />
-      {typing && (
-        <input
-          ref={textRef} className="tc-text" style={{ left: typing.x, top: typing.y, color }} value={typing.value}
-          placeholder={L("Écris ici…", "Type here…")}
-          onChange={(e) => setTyping({ ...typing, value: e.target.value })}
-          onKeyDown={(e) => { if (e.key === "Enter") commitText(); if (e.key === "Escape") setTyping(null); }}
-          onBlur={commitText}
-        />
-      )}
-      <div className="tc-toolbar" role="toolbar" aria-label={L("Outils du tableau", "Whiteboard tools")} style={{ pointerEvents: "auto" }}>
-        {btn("pen", <Pencil size={18} />, L("Stylo", "Pen"))}
-        {btn("highlighter", <Highlighter size={18} />, L("Surligneur", "Highlighter"))}
-        {btn("eraser", <Eraser size={18} />, L("Gomme", "Eraser"))}
-        {btn("text", <Type size={18} />, L("Texte", "Text"))}
-        {btn("pan", <Hand size={18} />, L("Défiler le tableau", "Scroll the board"))}
-        <span className="tc-sep" aria-hidden />
-        {COLORS.map((c) => (
-          <button key={c} type="button" className={`tc-swatch${color === c && tool !== "eraser" ? " on" : ""}`} style={{ background: c }} onClick={() => { setColor(c); if (tool === "eraser" || tool === "pan") setTool("pen"); }} aria-label={c} />
-        ))}
-        <span className="tc-sep" aria-hidden />
-        <button type="button" className="tc-btn" onClick={undo} disabled={!items.current.length} title={L("Annuler", "Undo")} aria-label={L("Annuler", "Undo")}><Undo2 size={18} /></button>
-        <button type="button" className="tc-btn" onClick={redoFn} disabled={!redo.current.length} title={L("Rétablir", "Redo")} aria-label={L("Rétablir", "Redo")}><Redo2 size={18} /></button>
-        <button type="button" className="tc-btn" onClick={clear} disabled={!items.current.length} title={L("Tout effacer", "Clear all")} aria-label={L("Tout effacer", "Clear all")}><Trash2 size={18} /></button>
-        <span className="tc-sep" aria-hidden />
-        <button type="button" className="tc-btn tc-fn" onClick={onDesmos} title="Desmos" aria-label="Desmos">ƒ</button>
+    <>
+      {surface && createPortal(
+        <>
+          <canvas
+            ref={canvasRef}
+            className={`tc-canvas tool-${tool}`}
+            style={{ pointerEvents: drawing && !hidden ? "auto" : "none", display: hidden ? "none" : undefined }}
+            onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
+          />
+          {typing && !hidden && (
+            <input
+              ref={textRef} className="tc-text" style={{ left: typing.x, top: typing.y, color }} value={typing.value}
+              placeholder={L("Écris ici…", "Type here…")}
+              onChange={(e) => setTyping({ ...typing, value: e.target.value })}
+              onKeyDown={(e) => { if (e.key === "Enter") commitText(); if (e.key === "Escape") setTyping(null); }}
+              onBlur={commitText}
+            />
+          )}
+        </>, surface)}
+      <div className="tc-layer" style={{ pointerEvents: "none" }}>
+        {/* The toolbar is part of the screen chrome, not of the page: same place and same tools whether the
+            board, a long scrolled lesson or Desmos is showing (drawing tools just dim while Desmos is up). */}
+        <div className={`tc-toolbar${hidden ? " dim" : ""}`} role="toolbar" aria-label={L("Outils du tableau", "Whiteboard tools")} style={{ pointerEvents: "auto" }}>
+          {btn("pen", <Pencil size={18} />, L("Stylo", "Pen"))}
+          {btn("highlighter", <Highlighter size={18} />, L("Surligneur", "Highlighter"))}
+          {btn("eraser", <Eraser size={18} />, L("Gomme", "Eraser"))}
+          {btn("text", <Type size={18} />, L("Texte", "Text"))}
+          {btn("pan", <Hand size={18} />, L("Défiler le tableau", "Scroll the board"))}
+          <span className="tc-sep" aria-hidden />
+          {COLORS.map((c) => (
+            <button key={c} type="button" className={`tc-swatch${color === c && tool !== "eraser" ? " on" : ""}`} style={{ background: c }} onClick={() => { setColor(c); if (tool === "eraser" || tool === "pan") setTool("pen"); }} aria-label={c} />
+          ))}
+          <span className="tc-sep" aria-hidden />
+          <button type="button" className="tc-btn" onClick={undo} disabled={!items.current.length} title={L("Annuler", "Undo")} aria-label={L("Annuler", "Undo")}><Undo2 size={18} /></button>
+          <button type="button" className="tc-btn" onClick={redoFn} disabled={!redo.current.length} title={L("Rétablir", "Redo")} aria-label={L("Rétablir", "Redo")}><Redo2 size={18} /></button>
+          <button type="button" className="tc-btn" onClick={clear} disabled={!items.current.length} title={L("Tout effacer", "Clear all")} aria-label={L("Tout effacer", "Clear all")}><Trash2 size={18} /></button>
+          <span className="tc-sep" aria-hidden />
+          <button type="button" className={`tc-btn tc-fn${hidden ? " on" : ""}`} onClick={onDesmos} title={hidden ? L("Retour au tableau", "Back to the board") : "Desmos"} aria-label="Desmos" aria-pressed={hidden}>ƒ</button>
+        </div>
+        {visionReady && hasInk && !hidden && (
+          <div className="tc-show-wrap" style={{ pointerEvents: "auto" }}>
+            {askOpen && (
+              <div className="tc-ask" role="dialog" aria-label={L("Dire à Otto quoi regarder", "Tell Otto what to look at")}>
+                <label htmlFor="tc-ask-input">{L("Qu'est-ce qu'Otto doit regarder ?", "What should Otto look at?")}</label>
+                <textarea id="tc-ask-input" rows={2} autoFocus value={askText} maxLength={400}
+                  placeholder={L("ex. Vérifie ma 2e ligne · Est-ce que ce schéma est juste ?", "e.g. Check my 2nd line · Is this diagram right?")}
+                  onChange={(e) => setAskText(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void show(); } if (e.key === "Escape") setAskOpen(false); }} />
+                <div className="tc-ask-actions">
+                  <button type="button" className="btn ghost" onClick={() => setAskOpen(false)}>{L("Annuler", "Cancel")}</button>
+                  <button type="button" className="btn primary" disabled={sending} onClick={() => void show()}>{sending ? L("Otto regarde…", "Otto is looking…") : L("Envoyer", "Send")}</button>
+                </div>
+              </div>
+            )}
+            {!askOpen && (
+              <button type="button" className="tc-show" onClick={() => setAskOpen(true)}>
+                <Send size={16} /> {L("Montrer à Otto", "Show Otto")}
+              </button>
+            )}
+          </div>
+        )}
+        {error && <div className="tc-error" role="alert" style={{ pointerEvents: "auto" }}>{error}</div>}
       </div>
-      {visionReady && hasInk && (
-        <button type="button" className="tc-show" style={{ pointerEvents: "auto" }} onClick={() => void show()} disabled={sending}>
-          <Send size={16} /> {sending ? L("Otto regarde…", "Otto is looking…") : L("Montrer à Otto", "Show Otto")}
-        </button>
-      )}
-      {error && <div className="tc-error" role="alert" style={{ pointerEvents: "auto" }}>{error}</div>}
-    </div>
+    </>
   );
 });

@@ -1479,6 +1479,28 @@ export type DiagramOp =
    *  `latex` is raw LaTeX with no surrounding $/\( \) delimiters — e.g. "\\frac{2}{x-1} + \\frac{3}{x+2}". */
   | { op: "equation"; x: number; y: number; latex: string };
 
+/** A function graph the tutor puts on the board (GRAPH_ON_BOARD). Expressions are plain math in x and the
+ *  slider parameters ("a*x^2 + b*x + c", "sin(k x)"), compiled by shared/mathExpr.ts — never eval'd. */
+export interface GraphSpec {
+  /** "function" (default): curves y = f(x). "bars": a labelled bar chart. "histogram": raw numbers binned.
+   *  "surface": a rotatable 3D surface z = f(x, y). */
+  kind?: "function" | "bars" | "histogram" | "surface";
+  bars?: { label: string; value: number }[];
+  data?: number[];
+  bins?: number;
+  /** surface only: z as an expression in x, y (and the slider params); the x/y window is xmin..xmax × ymin..ymax. */
+  z?: string;
+  fns: { expr: string; label?: string; color?: "blue" | "red" | "green" | "orange" | "purple" | "ink"; dashed?: boolean }[];
+  /** Up to 3 sliders the student can drag; each is a single-letter name usable in every expression. */
+  params?: { name: string; min: number; max: number; value: number; step?: number; label?: string }[];
+  xmin: number; xmax: number;
+  ymin?: number; ymax?: number;
+  /** Marked points (a root, a vertex, a data point); with `connect` they are joined into a line (a data plot). */
+  points?: { x: number; y: number; label?: string }[];
+  connect?: boolean;
+  xLabel?: string; yLabel?: string;
+}
+
 export interface BoardEntry {
   id: string;
   /** Plain text/markdown-lite (renderChatText already handles this) — not restricted to any one format,
@@ -1496,11 +1518,13 @@ export interface BoardEntry {
    *  (see `outline`) — for essay-based/humanities content (history causes, source analysis, an essay plan)
    *  where a flat sentence or a spatial diagram both fit poorly; math/science still reach for
    *  formula/diagram first. */
-  kind?: "note" | "instruction" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "interactive";
+  kind?: "note" | "instruction" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "interactive" | "graph" | "working";
   /** Present only when kind === "diagram" — the figure's shapes, rendered as SVG (BoardArtifact.tsx). Capped
    *  at 15 ops server-side (makeDiagramEntry, server/claude.ts): enough for a labeled triangle or a small
    *  graph, not enough to build a full illustration op-by-op. */
   diagram?: DiagramOp[];
+  /** Present only when kind === "graph" (GRAPH_ON_BOARD) — a live, slider-driven function plot. */
+  graph?: GraphSpec;
   /** Present only when kind === "outline" — one or more headed sections, each a short list of bullet
    *  points. Built for a history/essay-style board (causes-of-an-event, a source's key points, an essay's
    *  section-by-section plan) the same way `diagram` is built for a geometric figure: structure the model

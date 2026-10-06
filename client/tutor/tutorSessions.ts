@@ -50,7 +50,7 @@ function writeAll(list: TutorSessionSummary[], userId: string | null): void {
 
 /** Build a short recap string from the board + chat of a just-ended session. */
 export function buildSessionSummary(board: BoardEntry[], chat: NonNullable<WebTask["chat"]>): string {
-  const boardTexts = board.map((b) => b.text.trim()).filter(Boolean);
+  const boardTexts = board.map((b) => String(b?.text ?? "").trim()).filter(Boolean);
   const parts: string[] = [];
   if (boardTexts.length) {
     // Preserve line breaks and structure instead of flattening with " · "

@@ -11,6 +11,7 @@ export function toSpeakableText(md: string): string {
     .replace(/^\s{0,3}#{1,6}\s+/gm, "")                // headings
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")         // [label](url) → label
     .replace(/\*\*([^*]+)\*\*/g, "$1")                 // **bold**
+    .replace(/==([^=\n]+)==/g, "$1")                    // ==highlight==
     .replace(/\*([^*]+)\*/g, "$1")                     // *italic*
     .replace(/^\s{0,3}[-*+]\s+/gm, "")                 // bullet markers
     .replace(/^\s{0,3}\d+[.)]\s+/gm, "")               // numbered list markers
