@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { WebTask } from "../../shared/types.ts";
 import { api } from "../api.ts";
 import { setLocalObjectives, getLocalThread } from "../localChatBoard.ts";
-import { useLang, TaskModal } from "../ui.tsx";
+import { useLang, TaskModal, formatMath } from "../ui.tsx";
 import { AskOttoPanel } from "../study/AskOttoPanel.tsx";
 import { BoardArtifact } from "../study/artifacts/BoardArtifact.tsx";
 import { TutorDesmos } from "./TutorDesmos.tsx";
@@ -473,7 +473,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
                         </div>
                         <div className="tutor-history-topic">
                           {s.subject && <span className="tutor-history-subject-pill">{s.subject}</span>}
-                          <span>{s.summary.split(" — ")[0]}</span>
+                          <span>{formatMath(s.summary.split(" — ")[0])}</span>
                         </div>
                         {/* Board at a glance — the first few things Otto actually wrote that session, as the
                             compact scannable record (the full reopenable board is one click below). Capped at
@@ -482,9 +482,11 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
                           <div className="tutor-history-takeaways">
                             <div className="tutor-history-section-label">{L("Le tableau en bref", "Board at a glance")}</div>
                             <ul className="tutor-history-board">
-                              {s.boardEntries.filter(Boolean).slice(0, 3).map((line, bi) => (
-                                <li key={bi}>{line.length > 140 ? `${line.slice(0, 140)}…` : line}</li>
-                              ))}
+                              {s.boardEntries.filter(Boolean).slice(0, 3).map((line, bi) => {
+                                const formattedLine = formatMath(line);
+                                const displayLine = formattedLine.length > 140 ? `${formattedLine.slice(0, 140)}…` : formattedLine;
+                                return <li key={bi}>{displayLine}</li>;
+                              })}
                             </ul>
                           </div>
                         )}

@@ -6931,32 +6931,32 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .tutor-past-ref { font-size: 0.9rem; color: var(--ink-2); font-style: italic; }
 
 /* Past sessions history (collapsible) */
-.tutor-past-sessions { width: 100%; text-align: left; margin-top: 32px; }
+.tutor-past-sessions { width: 100%; text-align: left; margin-top: 40px; }
 /* The prototype renders past sessions as a section: plain heading over a hairline, then quiet rows —
    not a boxed collapsible. The toggle keeps its collapse behaviour, just dressed as the heading. */
-.tutor-history-toggle { background: none; border: none; border-bottom: 1px solid var(--line); border-radius: 0; color: var(--ink); font-size: 1.3rem; cursor: pointer; padding: 0 0 14px; font-family: inherit; font-weight: 650; display: flex; align-items: baseline; justify-content: space-between; width: 100%; text-align: left; }
+.tutor-history-toggle { background: none; border: none; border-bottom: 1px solid var(--line); border-radius: 0; color: var(--ink); font-size: 1.4rem; cursor: pointer; padding: 0 0 16px; font-family: inherit; font-weight: 650; display: flex; align-items: baseline; justify-content: space-between; width: 100%; text-align: left; letter-spacing: var(--tracking-tight); }
 .tutor-history-toggle:hover { background: none; border-color: var(--ink-3); }
-.tutor-history-list { list-style: none; padding: 0; margin: 16px 0 0; display: flex; flex-direction: column; gap: 12px; }
-.tutor-history-item { border: none; border-bottom: 1px solid var(--line); border-radius: 0; padding: 18px 0; text-align: left; background: none; }
-.tutor-history-item:hover { border-color: var(--ink-3); box-shadow: none; background: none; }
-.tutor-history-date { font-size: 0.85rem; color: var(--ink-2); margin-bottom: 8px; display: flex; align-items: center; gap: 8px; font-weight: 500; }
+.tutor-history-list { list-style: none; padding: 0; margin: 20px 0 0; display: flex; flex-direction: column; gap: 16px; }
+.tutor-history-item { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 20px; text-align: left; background: var(--surface); transition: border-color var(--duration-fast) var(--ease), box-shadow var(--duration-fast) var(--ease); }
+.tutor-history-item:hover { border-color: var(--accent); box-shadow: var(--shadow-card-hover); }
+.tutor-history-date { font-size: 0.85rem; color: var(--ink-2); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; font-weight: 500; }
 .tutor-history-subject { font-size: 0.8rem; color: var(--accent); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
 .tutor-history-summary { font-size: 0.95rem; font-weight: 500; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; }
-.tutor-history-summary-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; color: var(--ink-2); font-size: 0.8rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.tutor-history-summary-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; color: var(--ink-2); font-size: 0.8rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
 .tutor-history-message-count { flex: 0 0 auto; color: var(--ink-3); font-size: 0.8rem; font-weight: 600; letter-spacing: 0; text-transform: none; }
 /* The row's title IS the session topic — big and semibold, like the prototype's "Understanding
    derivatives", with the subject demoted to quiet text before it. */
-.tutor-history-topic { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; line-height: 1.35; font-size: 1.25rem; font-weight: 650; color: var(--ink); }
-.tutor-history-subject-pill { flex: 0 0 auto; padding: 0; border-radius: 0; background: none; color: var(--ink-2); font-size: 0.95rem; font-weight: 500; line-height: 1.4; text-transform: none; letter-spacing: 0; }
-.tutor-history-subject-pill::after { content: " ·"; color: var(--ink-3); }
-.tutor-history-takeaways { margin-top: 12px; padding-top: 12px; border-top: 1px solid color-mix(in srgb, var(--line) 70%, transparent); }
-.tutor-history-section-label { margin-bottom: 6px; color: var(--ink-2); font-size: 0.8rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
-.tutor-history-board { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
-.tutor-history-board li { font-size: 0.9rem; color: var(--ink-2); padding-left: 16px; position: relative; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; line-height: 1.5; }
-.tutor-history-board li::before { content: ""; position: absolute; left: 2px; top: 0.6em; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.tutor-history-topic { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; line-height: 1.4; font-size: 1.1rem; font-weight: 600; color: var(--ink); margin-bottom: 12px; }
+.tutor-history-subject-pill { flex: 0 0 auto; padding: 4px 10px; border-radius: var(--radius-pill); background: var(--accent-soft); color: var(--accent); font-size: 0.8rem; font-weight: 600; line-height: 1.4; text-transform: uppercase; letter-spacing: 0.04em; }
+.tutor-history-subject-pill::after { content: ""; }
+.tutor-history-takeaways { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
+.tutor-history-section-label { margin-bottom: 8px; color: var(--ink-2); font-size: 0.8rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.tutor-history-board { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.tutor-history-board li { font-size: 0.9rem; color: var(--ink-2); padding-left: 18px; position: relative; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; line-height: 1.6; }
+.tutor-history-board li::before { content: ""; position: absolute; left: 3px; top: 0.65em; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 
-.tutor-history-actions { display: flex; gap: 10px; margin-top: 12px; }
-.tutor-history-view-board, .tutor-history-view-chat { font-size: 0.85rem; padding: 6px 14px; font-weight: 500; }
+.tutor-history-actions { display: flex; gap: 8px; margin-top: 16px; }
+.tutor-history-view-board, .tutor-history-view-chat { font-size: 0.85rem; padding: 8px 16px; font-weight: 500; }
 
 /* Active session card styling */
 .tutor-active-session-card {
