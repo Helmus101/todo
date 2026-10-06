@@ -11,6 +11,7 @@ import { findArithmeticClaims } from "../../server/arithmetic.ts";
 import { InlineProblem } from "./InlineProblem.tsx";
 import { extractPdfText } from "./pdfText.ts";
 import { api } from "../api.ts";
+import { OttoAvatar } from "../tutor/OttoAvatar.tsx";
 
 interface AskOttoPanelProps {
   task: WebTask;
@@ -37,6 +38,10 @@ interface AskOttoPanelProps {
    *  false-trigger from speaker echo or a throat-clear; two real words is intent. Kept local to Tutor
    *  Session — the per-task chat in TaskCard.tsx keeps its pause-and-resume behavior. */
   bargeIn?: boolean;
+  /** "dock" (Tutor stage): no transcript at all — Otto is just his avatar plus the LATEST answer in one
+   *  bubble, and the student's input sits right under it. Every voice/echo/send behavior is shared with the
+   *  full chat; only the rendering differs. */
+  variant?: "chat" | "dock";
 }
 
 // The text currently being spoken aloud (the newest assistant reply) — the echo guard's reference: Otto
@@ -68,7 +73,7 @@ function arithmeticMismatches(text: string): { raw: string; lhs: string; claimed
 // other drawers, so the title bar/close/drag/resize handles all come from ArtifactCanvas's generic wrapper.
 export function AskOttoPanel({
   task, currentStep, input, setInput, sending, error, pendingMsg, onSend,
-  onOpenNote, onOpenDeck, onOpenQuiz, emptyText, placeholder, onVoiceStateChange, bargeIn,
+  onOpenNote, onOpenDeck, onOpenQuiz, emptyText, placeholder, onVoiceStateChange, bargeIn, variant = "chat",
 }: AskOttoPanelProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -264,6 +269,123 @@ export function AskOttoPanel({
     userScrolledRef.current = !isNearBottom;
   }, []);
 
+  const diagnostics = (
+    <>
+      {error ? (
+        <div className="sm-ai-error">
+          {error}
+          <button type="button" className="sm-btn sm-btn-ghost sm-btn-sm" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending}>Retry</button>
+        </div>
+      ) : null}
+      {/* Real mic failure surfacing (permission denied, no mic, network) — previously silent. */}
+      {micError ? <div className="sm-ai-error" role="alert">{L(micError[0], micError[1])}</div> : null}
+      {/* TTS diagnostic (useSpeechSynthesis's lastDiagnostic): which speech path actually ran and, when it
+          fell back, WHY. Voice failures were the last fully-silent surface in this panel — a 501 from a
+          missing server key, a CSP-blocked audio element, and a vendor outage all looked like "Otto just
+          doesn't talk," indistinguishable from voice mode doing nothing at all. Muted one-liner (not an
+          alert): speech DID happen via the fallback, so this explains rather than alarms. Only while voice
+          mode is on, so the line never appears in text-only sessions. */}
+      {voiceModeOn && synth.lastDiagnostic ? (
+        <div className="sm-ai-tts-note" role="status">{synth.lastDiagnostic}</div>
+      ) : null}
+
+    </>
+  );
+  const inputRow = (
+    <>
+      <div className="sm-ai-input-row">
+        <textarea
+          ref={inputRef}
+          className="sm-ai-input"
+          rows={1}
+          aria-label={L("Ton message à Otto", "Your message to Otto")}
+          placeholder={placeholder ?? L("De quoi as-tu besoin ?", "What do you need help with?")}
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(undefined, voiceModeOn); } }}
+          disabled={sending}
+          autoFocus
+        />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/pdf,image/png,image/jpeg,image/webp,text/plain,.md"
+          style={{ display: "none" }}
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) void onAttachFile(f); e.target.value = ""; }}
+        />
+        <button
+          type="button"
+          className="sm-btn sm-btn-ghost sm-btn-sm sm-ai-attach-btn"
+          disabled={attaching || sending}
+          onClick={() => fileInputRef.current?.click()}
+          title={L("Joindre un fichier (PDF, image, texte)", "Attach a file (PDF, image, text)")}
+        >
+          {attaching ? "…" : "📎"}
+        </button>
+        <VoiceControls
+          supported={recog.supported}
+          voiceModeOn={voiceModeOn}
+          listening={recog.listening}
+          speaking={synth.speaking}
+          interimTranscript={recog.interimTranscript}
+          // unlock() only matters before the FIRST speak() of a session unlocks autoplay — calling it again
+          // on every OFF click too (previously unconditional) meant it fired its own raw
+          // speak()/cancel() pair on the real engine at the exact moment the real synth.cancel() effect
+          // (keyed on voiceModeOn, one render tick later) was ALSO about to cancel a real in-flight
+          // utterance — two uncoordinated callers hitting speechSynthesis back to back, the documented
+          // Chrome trigger for a subsequent speak() silently never firing onstart. Reported live as "TTS
+          // breaks specifically when I turn the mic off then back on." Only unlock on the ON transition.
+          onToggle={() => { if (!voiceModeOn) synth.unlock(); toggleVoiceMode(); }}
+          en={en}
+        />
+        <button className="sm-btn sm-btn-primary" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending || !input.trim()}>
+          {L("Envoyer", "Send")}
+        </button>
+      </div>
+    </>
+  );
+
+  if (variant === "dock") {
+    const lastReply = [...(task.chat || [])].reverse().find((m) => m.role === "assistant");
+    const mood = recog.listening && voiceModeOn && !synth.speaking && !sending ? "listening" : synth.speaking ? "speaking" : sending ? "thinking" : "idle";
+    const mismatches = lastReply ? arithmeticMismatches(lastReply.text) : [];
+    return (
+      <div className="otto-dock">
+        <div className="otto-dock-row">
+          <OttoAvatar mood={mood} size={56} />
+          <div className="otto-bubble" role="log" aria-live="polite" aria-label={L("Réponse d'Otto", "Otto's answer")}>
+            {sending ? (
+              <div className="otto-bubble-thinking" role="status">
+                <span className="sm-typing-dots" aria-hidden="true"><i /><i /><i /></span>
+                {thinkingWord ? <span className="sm-typing-slow">{thinkingWord}…</span> : null}
+              </div>
+            ) : lastReply ? (
+              <>
+                <div className="otto-bubble-text">{renderChatText(lastReply.text)}</div>
+                {mismatches.length ? (
+                  <div className="sm-ai-calc-check" role="note">
+                    <span className="sm-ai-calc-check-icon" aria-hidden="true">⚠</span>
+                    <span>{L("Vérifie ce calcul avec Otto : ", "Double-check this with Otto: ")}<code>{mismatches[0].raw}</code></span>
+                  </div>
+                ) : null}
+                <button
+                  type="button" className="otto-replay"
+                  onClick={() => (synth.speaking ? synth.cancel() : (synth.unlock(), synth.speak(lastReply.text)))}
+                  title={synth.speaking ? L("Arrêter la voix", "Stop voice") : L("Réécouter", "Listen again")}
+                  aria-label={synth.speaking ? L("Arrêter la voix", "Stop voice") : L("Réécouter", "Listen again")}
+                >{synth.speaking ? "■" : "🔊"}</button>
+              </>
+            ) : (
+              <p className="otto-bubble-empty">{emptyText ?? ""}</p>
+            )}
+          </div>
+        </div>
+        {diagnostics}
+        {inputRow}
+      </div>
+    );
+  }
+
   return (
     <div className="sm-ai-embed">
       <div className="sm-ai-chat" role="log" aria-live="polite" aria-label={L("Conversation avec Otto", "Conversation with Otto")} ref={chatContainerRef} onScroll={handleScroll}>
@@ -330,73 +452,8 @@ export function AskOttoPanel({
         <div ref={endRef} />
       </div>
 
-      {error ? (
-        <div className="sm-ai-error">
-          {error}
-          <button type="button" className="sm-btn sm-btn-ghost sm-btn-sm" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending}>Retry</button>
-        </div>
-      ) : null}
-      {/* Real mic failure surfacing (permission denied, no mic, network) — previously silent. */}
-      {micError ? <div className="sm-ai-error" role="alert">{L(micError[0], micError[1])}</div> : null}
-      {/* TTS diagnostic (useSpeechSynthesis's lastDiagnostic): which speech path actually ran and, when it
-          fell back, WHY. Voice failures were the last fully-silent surface in this panel — a 501 from a
-          missing server key, a CSP-blocked audio element, and a vendor outage all looked like "Otto just
-          doesn't talk," indistinguishable from voice mode doing nothing at all. Muted one-liner (not an
-          alert): speech DID happen via the fallback, so this explains rather than alarms. Only while voice
-          mode is on, so the line never appears in text-only sessions. */}
-      {voiceModeOn && synth.lastDiagnostic ? (
-        <div className="sm-ai-tts-note" role="status">{synth.lastDiagnostic}</div>
-      ) : null}
-
-      <div className="sm-ai-input-row">
-        <textarea
-          ref={inputRef}
-          className="sm-ai-input"
-          rows={1}
-          aria-label={L("Ton message à Otto", "Your message to Otto")}
-          placeholder={placeholder ?? L("De quoi as-tu besoin ?", "What do you need help with?")}
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(undefined, voiceModeOn); } }}
-          disabled={sending}
-          autoFocus
-        />
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="application/pdf,image/png,image/jpeg,image/webp,text/plain,.md"
-          style={{ display: "none" }}
-          onChange={(e) => { const f = e.target.files?.[0]; if (f) void onAttachFile(f); e.target.value = ""; }}
-        />
-        <button
-          type="button"
-          className="sm-btn sm-btn-ghost sm-btn-sm sm-ai-attach-btn"
-          disabled={attaching || sending}
-          onClick={() => fileInputRef.current?.click()}
-          title={L("Joindre un fichier (PDF, image, texte)", "Attach a file (PDF, image, text)")}
-        >
-          {attaching ? "…" : "📎"}
-        </button>
-        <VoiceControls
-          supported={recog.supported}
-          voiceModeOn={voiceModeOn}
-          listening={recog.listening}
-          speaking={synth.speaking}
-          interimTranscript={recog.interimTranscript}
-          // unlock() only matters before the FIRST speak() of a session unlocks autoplay — calling it again
-          // on every OFF click too (previously unconditional) meant it fired its own raw
-          // speak()/cancel() pair on the real engine at the exact moment the real synth.cancel() effect
-          // (keyed on voiceModeOn, one render tick later) was ALSO about to cancel a real in-flight
-          // utterance — two uncoordinated callers hitting speechSynthesis back to back, the documented
-          // Chrome trigger for a subsequent speak() silently never firing onstart. Reported live as "TTS
-          // breaks specifically when I turn the mic off then back on." Only unlock on the ON transition.
-          onToggle={() => { if (!voiceModeOn) synth.unlock(); toggleVoiceMode(); }}
-          en={en}
-        />
-        <button className="sm-btn sm-btn-primary" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending || !input.trim()}>
-          {L("Envoyer", "Send")}
-        </button>
-      </div>
+      {diagnostics}
+      {inputRow}
     </div>
   );
 }
