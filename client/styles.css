@@ -103,12 +103,13 @@
   --duration-slow: 300ms;
   --duration-spring: 300ms;
   
-  /* Minimal shadows — barely-there depth */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-card-hover: 0 2px 8px rgba(0, 0, 0, 0.06);
-  --shadow-pop: 0 4px 24px rgba(0, 0, 0, 0.08);
+  /* Enhanced shadows for Framer-like depth */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04);
+  --shadow-card-hover: 0 8px 24px rgba(0, 0, 0, 0.08), 0 2px 8px rgba(0, 0, 0, 0.06);
+  --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.12), 0 4px 16px rgba(0, 0, 0, 0.08);
   --shadow-glow: 0 0 0 3px var(--accent-soft);
+  --shadow-float: 0 20px 40px rgba(0, 0, 0, 0.15), 0 8px 20px rgba(0, 0, 0, 0.1);
   
   /* Solid surfaces, no glass */
   --bar: #FAFAFA;
@@ -186,12 +187,14 @@
   letter-spacing: var(--tracking-display);
   line-height: 1.08;
   color: var(--ink);
+  margin-bottom: var(--space-3);
 }
 .page-sub {
   font-size: var(--text-lg);
   color: var(--ink-2);
   max-width: 60ch;
   line-height: 1.55;
+  margin-bottom: var(--space-5);
 }
 /* Buttons become full pills in this suite — the prototype's single most visible gesture
    (measured 12px 24px, radius 100px on its CTAs). Set once so every .btn variant inherits. */
@@ -340,31 +343,33 @@ input:focus, textarea:focus {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  transition: background var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease), opacity var(--duration-fast) var(--ease), transform var(--duration-instant) var(--ease-spring);
+  transition: background var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease), opacity var(--duration-fast) var(--ease), transform var(--duration-instant) var(--ease-spring), box-shadow var(--duration-fast) var(--ease);
   white-space: nowrap; text-decoration: none; user-select: none;
   -webkit-touch-callout: none;
+  box-shadow: var(--shadow-sm);
 }
-.btn:hover { background: var(--bg-2); }
+.btn:hover { background: var(--bg-2); box-shadow: var(--shadow-card-hover); }
 /* Apple Design §1 — instant tactile feedback on press. Previously this scale-down only existed inside the
    prefers-reduced-motion block below (meant to stay as the one motion reduced-motion users keep), which
    left everyone else with NO press feedback at all on the single most-clicked element in the app. */
-.btn:active { background: var(--bg-3); transform: scale(0.97); }
-.btn:disabled { opacity: 0.45; cursor: default; }
+.btn:active { background: var(--bg-3); transform: scale(0.97); box-shadow: var(--shadow-sm); }
+.btn:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
 .btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .btn.primary {
   background: var(--accent); border-color: var(--accent); color: #fff;
+  box-shadow: 0 2px 8px rgba(255, 117, 43, 0.25), 0 1px 3px rgba(255, 117, 43, 0.15);
 } /* the irreversible act — cobalt */
 /* hover: hover — see .card:hover's comment: an unscoped :hover transform can shift a real button out from
    under a finger between touchdown and touchup on iOS Safari, silently dropping the tap. */
 @media (hover: hover) {
-  .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); box-shadow: 0 4px 16px rgba(255, 117, 43, 0.35), 0 2px 8px rgba(255, 117, 43, 0.2); }
 }
-.btn.primary:active { background: var(--accent-active); }
-.btn.ghost { background: transparent; border-color: transparent; color: var(--accent); }
+.btn.primary:active { background: var(--accent-active); box-shadow: 0 2px 8px rgba(255, 117, 43, 0.25), 0 1px 3px rgba(255, 117, 43, 0.15); }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--accent); box-shadow: none; }
 .btn.ghost:hover { background: var(--accent-soft); }
 /* Destructive confirm ONLY (delete / payment) — vermilion, never a marketing accent. */
-.btn.danger { background: var(--vermilion); border-color: var(--vermilion); color: #fff; }
-.btn.danger:hover { filter: brightness(0.88); }
+.btn.danger { background: var(--vermilion); border-color: var(--vermilion); color: #fff; box-shadow: 0 2px 8px rgba(239, 68, 68, 0.25), 0 1px 3px rgba(239, 68, 68, 0.15); }
+.btn.danger:hover { filter: brightness(0.88); box-shadow: 0 4px 16px rgba(239, 68, 68, 0.35), 0 2px 8px rgba(239, 68, 68, 0.2); }
 /* 34px drawn height is below the file's own declared 44px mobile floor — used for real actions ("Aide",
    "Ouvrir ↗", chat "Envoyer", artifact chips), not decoration. A full ::after hit expander on every side
    would overlap a neighboring .btn.xs where they sit only 6-8px apart in a row (sendable/confirm rows,
@@ -408,6 +413,27 @@ input:focus, textarea:focus {
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
   box-shadow: var(--shadow-pop); padding: var(--space-8); max-width: 400px;
   display: flex; flex-direction: column; gap: var(--space-3); align-items: center;
+}
+
+/* ─── Math formatting for chat ─────────────────────────────────────────────── */
+.katex-inline {
+  font-size: 1.05em;
+  padding: 0 2px;
+  display: inline-block;
+  vertical-align: middle;
+}
+.katex-inline .katex {
+  font-size: 1em;
+}
+.katex-fallback {
+  font-family: var(--mono);
+  background: var(--bg-2);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.95em;
+}
+.chat-code-block {
+  font-family: var(--mono) !important;
 }
 
 /* ─── Topbar ───────────────────────────────────────────────────────────────── */
@@ -766,11 +792,12 @@ input:focus, textarea:focus {
   letter-spacing: var(--tracking-tight);
   line-height: 1.25;
   color: var(--ink);
+  margin-bottom: var(--space-2);
 }
 .dash-hero-why {
   margin-top: var(--space-2);
   font-size: 14.5px;
-  line-height: 1.55;
+  line-height: 1.6;
   color: var(--ink-2);
   max-width: 54ch;
 }
@@ -934,29 +961,33 @@ input:focus, textarea:focus {
 
 /* ─── Apple Grouped Task List ─────────────────────────────────────────────── */
 .list {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  background: transparent;
+  border: none;
+  border-radius: 0;
   box-shadow: none;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
+  padding: 0;
 }
 .card {
   position: relative;
   display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-5); min-height: 56px;
-  background: transparent;
-  border: none;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--space-2);
   animation: appleRise var(--duration-slow) var(--ease) backwards;
-  transition: background var(--duration-fast) var(--ease);
+  transition: background var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease), box-shadow var(--duration-fast) var(--ease), transform var(--duration-fast) var(--ease);
+  box-shadow: var(--shadow-card);
 }
-.card + .card { border-top: 1px solid var(--line-soft); }
+.card + .card { border-top: none; }
 /* Scoped to `hover: hover` (not a bare :hover) to avoid the "needs two taps to open on iPhone" bug. iOS
    Safari applies :hover styles on touchDOWN (a long-documented WebKit quirk), so an unscoped rule here
    would shift visual state between finger-down and finger-up on iOS Safari. `hover: hover` is the
    codebase's own established pattern for this class of problem (see `hover: none` nearby). */
 @media (hover: hover) {
-  .card:hover { background: var(--hover-wash); }
+  .card:hover { background: var(--hover-wash); border-color: var(--line-glass); box-shadow: var(--shadow-card-hover); transform: translateY(-1px); }
 }
 /* Once the list has shown once, later re-renders replay faster and without the stagger — it's an update,
    not a fresh reveal. */
@@ -1020,7 +1051,7 @@ input:focus, textarea:focus {
 }
 .task-modal {
   position: relative; width: 100%; max-width: none; background: var(--surface);
-  border: none; border-radius: 0; box-shadow: none;
+  border: none; border-radius: 0; box-shadow: var(--shadow-float);
   min-height: 100%; min-height: 100dvh;
   /* Padded for a notch/Dynamic Island and the home-indicator bar on a phone; env() resolves to 0 on a
      device without either, so this is a no-op safety margin on desktop, not a visible gap. */
