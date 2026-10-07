@@ -153,4 +153,16 @@ export async function runTutorSim(check, section) {
     : { content: "There's the triangle. Which side is the hypotenuse?" };
   r = await run("help me with a right triangle", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
   check("GEOMETRY_ON_BOARD is offered to the tutor and its figure lands on the board", calls[0].tools.some((x) => x.function?.name === "GEOMETRY_ON_BOARD") && r.board.length === 1 && r.board[0].kind === "diagram" && r.board[0].diagram.length > 8);
+
+  // Human tutor pass: gentle openers, dictated-maths hint, the session's start survives a long thread.
+  check("a harsh opener is softened (Careful —, No,, Wrong.)", /^Hm, let's check that/.test(adA.softenOpener("Careful — 1/cos x is sec x. What now?")) && !/^Wrong/i.test(adA.softenOpener("Wrong. Try again?")) && adA.softenOpener("Nice — what next?") === "Nice — what next?");
+  const sp = adA.spokenMathHint("three times one over cotan squared minus 3 over cosine equals 8 sec plus 25");
+  check("dictated maths gets a literal transcription plus a grouping warning; plain text gets none", /cot ²/.test(sp) && /GROUPING/.test(sp) && adA.spokenMathHint("what is the derivative of x squared") === "");
+  const longHist = []; for (let n = 0; n < 40; n++) longHist.push({ role: n % 2 ? "assistant" : "user", text: n % 2 ? "ok, go on" : "step " + n });
+  script = () => ({ content: "Which factor first?" });
+  await run("next?", { history: longHist, opts: { opening: [{ role: "user", text: "Solve 3(1/cot^2 x - 3/cos x) = 8 sec x + 25 for the form (a sec x + b)(sec x + c)" }] } });
+  check("the session's opening statement is pinned verbatim in the prompt even when the thread is long", JSON.stringify(calls[0].messages).includes("HOW THIS SESSION BEGAN") && JSON.stringify(calls[0].messages).includes("8 sec x + 25"));
+  script = () => ({ content: "Careful — that isn't it. What is 1/cos x?" });
+  r = await run("is it 3 sec x", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
+  check("end to end: a harsh draft reaches the student softened", /^Hm, let's check that/.test(r.reply));
 }

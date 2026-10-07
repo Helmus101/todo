@@ -130,3 +130,24 @@ h1 { font-family: var(--display); font-weight: 400; letter-spacing: -0.025em; }
 .onboard-top { padding-right: 56px; }
 .onboard-skip { top: 18px; right: 18px; }
 .onboard-chips + .muted { margin-top: 12px; }
+
+/* ---- Tutor board: exercises + focus, quieter (minimal, lab-like) ---- */
+.sm-board-problem { background: var(--surface); border: 1px solid var(--line); border-left: 1px solid var(--line); border-radius: 14px; box-shadow: none; padding: 20px 24px; margin: 6px 0 18px; }
+.sm-board-problem-label { background: none; padding: 0; border-radius: 0; margin-bottom: 8px; font-size: 11px; letter-spacing: .08em; color: var(--ink-3, #8a867b); }
+.sm-board-problem-label::before { content: none; }
+.sm-board-problem-q { font-size: 1.05rem; font-weight: 500; line-height: 1.65; margin-bottom: 4px; }
+.sm-board-problem-q .katex { font-size: 1.06em; }
+.sm-board-problem-format { margin-top: 2px; font-size: 13px; color: var(--ink-3, #8a867b); }
+.sm-board-problem-hint-row { margin-top: 10px; }
+.sm-board-problem-hint-row .sm-btn { background: none; border: none; padding: 0; height: auto; font-size: 13px; font-weight: 500; color: var(--accent); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.sm-board-problem-hint { font-style: normal; padding: 10px 14px; border-left: 2px solid var(--accent); background: var(--accent-soft); border-radius: 0 8px 8px 0; color: var(--ink-2); }
+.sm-board-problem .sm-inline-problem-input-row { margin-top: 14px; gap: 10px; }
+.sm-board-problem .sm-inline-problem-input { height: 44px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); padding: 0 14px; font-size: 15px; }
+.sm-board-problem .sm-inline-problem-input-row .sm-btn { height: 44px; padding: 0 20px; border-radius: 10px; background: var(--ink); color: #fff; border: 1px solid var(--ink); font-weight: 500; }
+.sm-board-problem .sm-inline-problem-input-row .sm-btn:disabled { background: transparent; color: var(--ink-3, #8a867b); border-color: var(--line); }
+.sm-board-problem .quiz-opt { border-radius: 10px; }
+.sm-board-focus-pin { background: transparent; border: none; border-left: 2px solid var(--accent); border-radius: 0; padding: 4px 0 4px 14px; margin: 4px 0 20px; }
+.sm-board-focus-pin .sm-board-entry-kind { font-size: 11px; letter-spacing: .08em; color: var(--ink-3, #8a867b); }
+.sm-board-focus-text { font-size: 1.1rem; font-weight: 500; }
+.sm-board-trace { border-left: 1px solid var(--line); }
+.sm-board-trace-heading { color: var(--ink-3, #8a867b); letter-spacing: .08em; }

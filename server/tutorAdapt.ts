@@ -112,3 +112,34 @@ export function planMove(opts: { userKey: string; message: string; history: { ro
   const line = `\nTEACHING MOVE THIS TURN (chosen from what has worked for THIS student): ${MOVE_TEXT[arm]} Keep every other rule — short, Socratic, never the answer.\n`;
   return { arm, line, scoredPrev, state };
 }
+
+const HARSH_OPENERS: [RegExp, string][] = [
+  [/^(?:careful|watch out|attention)\s*[—–:,-]\s*/i, "Hm, let's check that — "],
+  [/^(?:no|nope|wrong|incorrect|not quite|non|faux)[,.!:—–-]\s*/i, "Almost — let's look closer. "],
+  [/^that(?:'|’)?s (?:not right|wrong|incorrect|not correct|false)[,.!:—–-]?\s*/i, "Let's check that together. "],
+  [/^actually[,:]?\s+/i, "Hm, one thing to check — "],
+];
+/** A reply must never OPEN harshly. Rewrites a leading "Careful —" / "No," / "Wrong." into a gentler lead-in
+ *  (the persona forbids them; this is the backstop for a draft that did it anyway). */
+export function softenOpener(text: string): string {
+  const t = text.trimStart();
+  for (const [re, rep] of HARSH_OPENERS) if (re.test(t)) return t.replace(re, rep);
+  return text;
+}
+
+const SPOKEN: [RegExp, string][] = [
+  [/\b(?:square root of|racine carrée de)\b/gi, "√"], [/\bsquared\b/gi, "²"], [/\bcubed\b/gi, "³"], [/\bover\b/gi, "/"],
+  [/\bco-?tan(?:gent)?\b/gi, "cot"], [/\bco-?sine\b/gi, "cos"], [/\bsine\b/gi, "sin"], [/\btangent\b/gi, "tan"], [/\bsecant\b/gi, "sec"], [/\bcosecant\b/gi, "csc"],
+  [/\b(?:plus)\b/gi, "+"], [/\b(?:minus)\b/gi, "−"], [/\b(?:times|multiplied by)\b/gi, "×"], [/\b(?:equals|is equal to)\b/gi, "="], [/\bpi\b/gi, "π"], [/\btheta\b/gi, "θ"],
+];
+/** Dictated / speech-to-text maths ("three times one over cotan squared minus 3 over cosine") reads fine to a
+ *  human but its STRUCTURE (what sits under which fraction bar, what a bracket holds) is lost. When a message looks
+ *  dictated, hand the tutor a literal symbol transcription AND the reminder that the grouping is unreliable. */
+export function spokenMathHint(message: string): string {
+  const hits = (message.match(/\b(over|squared|cubed|cosine|co-?tan|sine|tangent|secant|plus|minus|times|equals|square root)\b/gi) || []).length;
+  if (hits < 2 || message.length > 400) return "";
+  let s = message;
+  for (const [re, rep] of SPOKEN) s = s.replace(re, rep);
+  s = s.replace(/\s+/g, " ").trim();
+  return `\n\nDICTATED MATHS: the student's message looks spoken/transcribed. Literal symbol reading: «${s}». The GROUPING (what is under which fraction bar, what a bracket holds, what multiplies what) is NOT reliable in speech — write your typeset reading on the board and confirm it with them before working on it, and if a word looks like a transcription slip ("Cortex" for "cot x"), say what you took it to mean.\n`;
+}

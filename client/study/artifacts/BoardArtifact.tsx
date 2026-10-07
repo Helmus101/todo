@@ -3,7 +3,7 @@ import katex from "katex";
 import type { WebTask, BoardEntry, TaskProblem, DiagramOp } from "../../../shared/types.ts";
 import { practiceAnswerMatches } from "../../../shared/types.ts";
 import { GraphBlock } from "./GraphBlock.tsx";
-import { renderChatText, useLang, FirstTimeHint, stripStrayMarkdown, formatMath } from "../../ui.tsx";
+import { renderChatText, useLang, FirstTimeHint, stripStrayMarkdown, formatMath, boldify } from "../../ui.tsx";
 
 // A guarded DYNAMIC import, not a static `import "katex/dist/katex.min.css"` — this module is also pulled
 // in by tests/run.mjs's client-module-graph check, which runs under plain Node/tsx (no Vite), and Node's
@@ -129,7 +129,7 @@ export function MathText({ text }: { text: string }) {
       {parts.map((p, i) => {
         const m = /^\$\$([^$]+)\$\$$|^\$([^$\n]+)\$$|^\\\(([\s\S]*)\\\)$|^\\\[([\s\S]*)\\\]$/.exec(p);
         const latex = m ? (m[1] ?? m[2] ?? m[3] ?? m[4]) : null;
-        return latex ? <InlineEquation key={i} latex={latex.trim()} /> : <span key={i}>{renderChatText(p)}</span>;
+        return latex ? <InlineEquation key={i} latex={latex.trim()} /> : <span key={i} style={{ whiteSpace: "pre-wrap" }}>{boldify(formatMath(p))}</span>;
       })}
     </>
   );
@@ -317,13 +317,13 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
 
       <span className="sm-board-section-num" aria-hidden="true">{String(sectionNumber).padStart(2, "0")}</span>
       <div className="sm-board-entry-main">
-      <div className="sm-board-problem-label">{en ? "Practice problem" : "Problème d'entraînement"}</div>
-      <div className="sm-board-problem-q">{stripStrayMarkdown(problem.question)}</div>
-      {problem.format && !answered ? <div className="sm-board-problem-format">{problem.format}</div> : null}
+      <div className="sm-board-problem-label">{en ? "Try it" : "À toi"}</div>
+      <div className="sm-board-problem-q"><MathText text={stripStrayMarkdown(problem.question)} /></div>
+      {problem.format && !answered ? <div className="sm-board-problem-format"><MathText text={problem.format} /></div> : null}
       {problem.hint && !answered ? (
         <div className="sm-board-problem-hint-row">
           {hintShown ? (
-            <div className="sm-board-problem-hint">{stripStrayMarkdown(problem.hint)}</div>
+            <div className="sm-board-problem-hint"><MathText text={stripStrayMarkdown(problem.hint)} /></div>
           ) : (
             <button type="button" className="sm-btn sm-btn-ghost sm-btn-sm" onClick={onShowHint}>
               {en ? "Hint" : "Indice"}
@@ -343,7 +343,7 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
                 disabled={answered || wrong.includes(oi)}
                 onClick={() => onPick(oi)}
               >
-                <span className="quiz-opt-text">{stripStrayMarkdown(opt)}</span>
+                <span className="quiz-opt-text"><MathText text={stripStrayMarkdown(opt)} /></span>
                 {optState === "correct" && <span className="quiz-opt-mark" aria-hidden="true">✓</span>}
                 {optState === "wrong" && <span className="quiz-opt-mark" aria-hidden="true">✗</span>}
               </button>
@@ -385,7 +385,7 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
         </div>
       ) : null}
       {answered && problem.why ? (
-        <div className="sm-inline-problem-why">{stripStrayMarkdown(problem.why)}</div>
+        <div className="sm-inline-problem-why"><MathText text={stripStrayMarkdown(problem.why)} /></div>
       ) : null}
       </div>
     </div>

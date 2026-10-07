@@ -1554,8 +1554,11 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
   const historyRaw = Array.isArray(req.body?.history) ? req.body.history : [];
   const history: { role: "user" | "assistant"; text: string }[] = historyRaw
     .filter((h: any) => h && (h.role === "user" || h.role === "assistant") && typeof h.text === "string")
-    .map((h: any) => ({ role: h.role as "user" | "assistant", text: String(h.text).slice(0, 4000) }))
-    .slice(-CHAT_CAP);
+    .map((h: any) => ({ role: h.role as "user" | "assistant", text: String(h.text).slice(0, 4000) }));
+  // How the session BEGAN (the problem/equation as the student first stated it) is pinned verbatim for the tutor
+  // even once the thread outgrows the window — otherwise a long session forgets what it was about.
+  const opening = history.length > 24 ? history.slice(0, 3).map((h) => ({ role: h.role, text: h.text.slice(0, 700) })) : [];
+  history.splice(0, Math.max(0, history.length - CHAT_CAP));
   // Same client-owned pattern for what's CURRENTLY on the board — without this the model can write to the
   // board but has no idea what's already there (reported live: it referenced "that triangle" and had no
   // answer when the student said they couldn't see what it meant — it had never been told).
@@ -1653,7 +1656,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
       message,
       profile,
       academic,
-      { stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, primer: req.body?.primer === true, recentJournal, currentBoard, currentProblems, currentObjectives, repair, moveLine, notNeeded: tasks.notNeededFronts(req.session.tasks || [], t.sourceSubject) },
+      { stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, primer: req.body?.primer === true, recentJournal, currentBoard, currentProblems, currentObjectives, repair, moveLine, opening, notNeeded: tasks.notNeededFronts(req.session.tasks || [], t.sourceSubject) },
     );
     addUsage(profile, out.tokens, "chat"); // untracked before — a tool-calling turn can now cost like a small run
     bumpActivityHour(profile, new Date(), t.sourceSubject);

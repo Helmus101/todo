@@ -7,7 +7,7 @@ import { courseworkForSubject } from "../shared/coursework.ts";
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { buildGeometry } from "../shared/geometry.ts";
-import { repeatsRecentReply } from "./tutorAdapt.ts";
+import { repeatsRecentReply, softenOpener, spokenMathHint } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -2446,10 +2446,10 @@ const CREATE_PROBLEM_TOOL = {
   name: "CREATE_PROBLEM",
   description: "Create ONE standalone practice problem displayed INLINE in the chat itself (not a chip that opens elsewhere) — the student answers right there in the thread and you help them through it. Use this when a single focused exercise is the best way to help (a quick check, a worked example to try, a 'try this one' moment), where CREATE_QUIZ would be a whole set. THINK OF THIS AS A MEASUREMENT, NOT JUST PRACTICE: before writing it, be clear what uncertainty about THIS student you're actually trying to resolve right now — do they have the concept or did they just memorize a formula's shape? is the error a slip or a real misconception? can they apply it to a new case, not just the one you walked through? Pick the smallest problem that would tell them (and you) apart between those possibilities, rather than a generic 'another one of the same'. Can be multiple-choice (give options + correct index) or free-response (give an answer string). NEVER use the student's OWN assigned exercise — write a NEW problem on the same notion. Include a one-line 'why' explanation (shown after they answer) and optionally a hint. MATCH THE REAL EXAM'S SHAPE — see the IB/AP/SAT/ACT guidance above (examStyleLine): an IB extended-response or AP FRQ is free-response mode with the FULL multi-part prompt (lettered (a), (b), (c)..., each part's point value stated) written straight into `question` as one structured block — this tool's single-answer-string grading then applies to the FINAL part only; walk the earlier parts with them in chat rather than silently grading only the last line with no comment on the rest. `answer` MUST be the FINAL lettered part's value ONLY, never an earlier part's — even though an earlier part's value is itself a complete, correct answer to ITS OWN question. Concretely, for '(a) find cos θ [2]  (b) hence find cos 2θ [2]', `answer` is the (b) value (e.g. '7/25'), NEVER the (a) value (e.g. '-4/5') — setting it to the earlier part means the widget marks the WHOLE problem solved, and reveals `why` (which should explain the FULL chain, both parts), the instant the student states only the easier first part, before they've done the part that's actually testing them.",
   input_schema: { type: "object", properties: {
-    question: { type: "string", description: "the question/prompt — one clear sentence, OR a full multi-part structured prompt (IB/AP extended-response/FRQ style — lettered sub-parts with their own point values) when the student's program calls for one. Match the phrasing, format, and rigor of an actual exam/contrôle question for this subject and level (see VOCABULARY/track/exam-style above), not generic trivia." },
+    question: { type: "string", description: "the question/prompt — math in LaTeX between $…$ (it is typeset for the student) — one clear sentence, OR a full multi-part structured prompt (IB/AP extended-response/FRQ style — lettered sub-parts with their own point values) when the student's program calls for one. Match the phrasing, format, and rigor of an actual exam/contrôle question for this subject and level (see VOCABULARY/track/exam-style above), not generic trivia." },
     options: { type: "array", description: "MCQ mode: 2-4 answer options by default; EXACTLY 5 for an AP-track student (College Board MCQs are always 5-option — see the AP block above). EXACTLY ONE is correct; the wrong ones must be genuinely plausible. Omit entirely for free-response mode (this is also the mode for any IB/AP multi-part structured question — see above).", items: { type: "string" } },
     correct: { type: "number", description: "MCQ mode only: 0-based index into options of the CORRECT one" },
-    answer: { type: "string", description: "Free-response mode only: the expected answer. Checked loosely (trimmed, case-insensitive). Omit for MCQ mode." },
+    answer: { type: "string", description: "Free-response mode only: the expected answer — SHORT and checkable (a number, a simple expression, a single word), checked loosely (trimmed, case-insensitive). A free-response problem MUST have one; a \"prove that\" / \"show that\" task has no checkable answer, so turn it into a concrete question with a short result (\"what does the bracket simplify to?\", \"which identity turns sin²θ+cos²θ into a single number?\") or make it MCQ. Omit for MCQ mode." },
     why: { type: "string", description: "one line on why the answer is right — this is what makes the problem teach instead of just score" },
     hint: { type: "string", description: "an optional hint the student can reveal before answering" },
     format: { type: "string", description: "free-response mode only: guidance on expected format/units/notation (e.g. 'two decimal places, in m/s'). NEVER use the real answer as an example — use a placeholder ('x = a') or a different value." },
@@ -7198,6 +7198,21 @@ const PRIMER_PERSONA =
   `they are wrong, recompute from the problem exactly as THEY stated it; if they push back on a correction ` +
   `even once, assume YOU misread — re-read their original statement, redo it step by step, and say so if ` +
   `you were the one who slipped.\n` +
+  `- NEVER HARSH: don't open with "Careful", "No", "Wrong", "Incorrect", "That's not…", "Actually…". Lead with ` +
+  `what is RIGHT or reasonable in what they did ("I see why you'd do that —"), then ONE gentle question that ` +
+  `lets them spot the slip themselves ("what happens to the 3 when…?"). When YOU slip, own it lightly ("ah, ` +
+  `my bad — thanks for catching that") and fix it right away on the board. A little warmth is welcome: use ` +
+  `their name now and then, notice effort and frustration ("this one's fiddly — you're close"), celebrate real ` +
+  `progress in a few words, never gush.\n` +
+  `- READ IT BACK BEFORE YOU WORK ON IT: equations and problems arrive messy (typed fast, dictated by voice, a ` +
+  `photo of handwriting) — "three times one over cotan squared" is ambiguous about what sits under which bar. ` +
+  `Before doing anything with a new or unclear expression, write it on the board TYPESET (DRAW_ON_BOARD's ` +
+  `equation op, full brackets and fraction bars) as your reading of it, and ask in one line whether that's what ` +
+  `they meant, naming the one ambiguity you weren't sure about. Treat a confirmed (or corrected) version as THE ` +
+  `GIVEN: redraw it whole if they correct it, then never re-read it differently, and refer back to it for the ` +
+  `rest of the session. If a message is garbled or ambiguous, ask a short clarifying question instead of guessing.\n` +
+  `- THE START OF THE SESSION STAYS WITH YOU: the problem as they first stated it (see HOW THIS SESSION BEGAN) ` +
+  `and everything already settled on the board is shared ground — build on it, never re-derive or re-ask it.\n` +
   `- Socratic by default: don't explain what a question could draw out of them. Ask the smallest question ` +
   `that makes them take the next step themselves. Explain directly only after they're genuinely stuck twice.\n` +
   `- Answer in their language and register. Say "I" and "you", use contractions, think out loud a little ` +
@@ -7396,7 +7411,7 @@ export async function chatAboutTask(
   message: string,
   profile?: Profile,
   academic?: AcademicContext,
-  opts?: { stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string; growthTrend?: "up"; subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; voiceMode?: boolean; canvasMode?: boolean; recentJournal?: { date: string; text: string }[]; primer?: boolean; currentBoard?: BoardEntry[]; currentProblems?: TaskProblem[]; currentObjectives?: TaskObjective[]; notNeeded?: string[]; repair?: string; moveLine?: string },
+  opts?: { stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string; growthTrend?: "up"; subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; voiceMode?: boolean; canvasMode?: boolean; recentJournal?: { date: string; text: string }[]; primer?: boolean; currentBoard?: BoardEntry[]; currentProblems?: TaskProblem[]; currentObjectives?: TaskObjective[]; notNeeded?: string[]; repair?: string; moveLine?: string; opening?: { role: string; text: string }[] },
 ): Promise<ChatResult> {
   const steps = task.steps || [];
   // Substeps (a step's own on-demand sub-checklist, ticked independently — see Profile.grades-style comment
@@ -7543,7 +7558,7 @@ export async function chatAboutTask(
   // student, every task, every turn — so it belongs FIRST, where it can actually be cached; the volatile
   // per-request context goes last, right next to the equally-volatile TASK block it keeps company with
   // anyway.
-  const dynamicContext = nowBlock() + courseworkLine(profile, task.sourceSubject) + studentNameLine(profile?.name) + dueLine(task.sourceDue, tzOf(profile)) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + syllabusGroundingLine(profile, task.sourceSubject) + learningStyleLine(profile) + hintDensityLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + sessionRecapLine(profile?.sessions, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine + (opts?.primer ? (opts?.moveLine || "") + (opts?.repair || "") : "");
+  const dynamicContext = nowBlock() + courseworkLine(profile, task.sourceSubject) + studentNameLine(profile?.name) + dueLine(task.sourceDue, tzOf(profile)) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + syllabusGroundingLine(profile, task.sourceSubject) + learningStyleLine(profile) + hintDensityLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + sessionRecapLine(profile?.sessions, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine + (opts?.primer ? (opts?.moveLine || "") + (opts?.repair || "") + spokenMathHint(message) : "");
   const sys =
     (opts?.primer ? PRIMER_PERSONA : "") +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
@@ -8325,7 +8340,9 @@ export async function chatAboutTask(
   // 10 messages was only ~3 real exchanges — the model forgot what was done and re-explained it. Primer turns
   // get a 24-message verbatim window PLUS a one-line-per-message digest of everything older (earlierDigest).
   const histWindow = opts?.primer ? 24 : 10;
-  const digestText = opts?.primer ? earlierDigest(history.slice(0, -histWindow)) : "";
+  const digestText = opts?.primer
+    ? (opts.opening?.length ? `HOW THIS SESSION BEGAN (verbatim — this is what the whole session is about; the problem/equation as the student first gave it. Never lose it, never ask for it again):\n${opts.opening.map((m) => `${m.role === "assistant" ? "Otto" : "Student"}: ${m.text.replace(/\s+/g, " ")}`).join("\n")}\n\n` : "") + earlierDigest(history.slice(0, -histWindow), 2600)
+    : "";
   const messages: any[] = [
     { role: "system", content: sys },
     ...(digestText ? [{ role: "system", content: digestText }] : []),
@@ -8659,6 +8676,7 @@ export async function chatAboutTask(
         // (4) LENGTH BACKSTOP (TALE): the 45-word budget is prompt-side; this catches the draft that
         // ignored it entirely. Silent compression, once, non-voice only (voice mode has its own stricter
         // TTS ceiling and its own retry paths above).
+        if (opts?.primer) textContent = softenOpener(textContent);
         if (opts?.primer && countWords(textContent) > 70) textContent = tightenForChat(textContent);
         // Never say the same thing twice: a draft that is a near-copy of one of Otto's recent replies gets ONE
         // corrective round (the student already saw that and it did not land — repeating it is the loop).
