@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+// Timer icon instead of the 🍅 emoji (explicit request: no emoji in the app).
+import { Timer } from "lucide-react";
 import type { WebTask } from "../../shared/types.ts";
 import { useLang } from "../ui.tsx";
 
@@ -62,7 +64,7 @@ export function SessionHeader({
           {pomodoroRemaining !== undefined && (
             <span className="sm-pomodoro-badge" title={L(`Cycle ${(pomodoroCycle || 0) + 1}`, `Cycle ${(pomodoroCycle || 0) + 1}`)}>
               {pomodoroPhaseTotal ? <ProgressRing fraction={1 - pomodoroRemaining / pomodoroPhaseTotal} /> : null}
-              🍅 {formatTime(pomodoroRemaining)}
+              <Timer size={13} aria-hidden="true" /> {formatTime(pomodoroRemaining)}
             </span>
           )}
           <span className="sm-timer">{formatTime(elapsed)}</span>

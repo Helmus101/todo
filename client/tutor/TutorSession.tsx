@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowRight, TrendingUp, RotateCcw, MessageCircle, Lightbulb, CircleHelp, ChevronRight, ChevronDown } from "lucide-react";
 import type { WebTask } from "../../shared/types.ts";
 import { api } from "../api.ts";
 import { setLocalObjectives, getLocalThread } from "../localChatBoard.ts";
@@ -477,7 +478,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
           {pastSessions.length > 0 && (
             <div className="tutor-past-sessions">
               <button className="tutor-history-toggle" onClick={() => setShowHistory((v) => !v)}>
-                {showHistory ? "▼ " : "▶ "}{L("Nos séances passées", "Our past sessions")} ({pastSessions.length})
+                {showHistory ? <ChevronDown size={13} aria-hidden="true" /> : <ChevronRight size={13} aria-hidden="true" />}{L("Nos séances passées", "Our past sessions")} ({pastSessions.length})
               </button>
               {showHistory && (
                 <ul className="tutor-history-list">
@@ -587,16 +588,20 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
   // Right after the student has completed an exercise: offer the next move as one-tap choices (Otto also asks
   // what they'd like to do — see the persona's EXERCISE RESULTS rule) instead of leaving them at a bare "solved".
   const justFinishedExercise = exerciseDone;
+  // Real lucide icons instead of emoji, same convention VoiceControls established: an emoji chip renders
+  // differently (or not at all) per OS/browser and reads ambiguous at a glance (explicit request: no emoji
+  // in the app). The icon is decorative — the label text carries the meaning.
+  const ic = { size: 14, "aria-hidden": true } as const;
   const nextChips = [
-    { label: L("➡ Un autre", "➡ Another one"), text: L("J'en veux un autre comme celui-là.", "Another one like it, please.") },
-    { label: L("⬆ Plus dur", "⬆ Harder"), text: L("Donne-m'en un plus difficile.", "Give me a harder one.") },
-    { label: L("🔁 Revoir l'idée", "🔁 Go over the idea"), text: L("Reprenons l'idée derrière cet exercice.", "Let's go back over the idea behind that one.") },
-    { label: L("💬 Autre chose", "💬 Something else"), text: L("Je voudrais faire autre chose.", "I'd like to do something else.") },
+    { label: <><ArrowRight {...ic} /> {L("Un autre", "Another one")}</>, text: L("J'en veux un autre comme celui-là.", "Another one like it, please.") },
+    { label: <><TrendingUp {...ic} /> {L("Plus dur", "Harder")}</>, text: L("Donne-m'en un plus difficile.", "Give me a harder one.") },
+    { label: <><RotateCcw {...ic} /> {L("Revoir l'idée", "Go over the idea")}</>, text: L("Reprenons l'idée derrière cet exercice.", "Let's go back over the idea behind that one.") },
+    { label: <><MessageCircle {...ic} /> {L("Autre chose", "Something else")}</>, text: L("Je voudrais faire autre chose.", "I'd like to do something else.") },
   ];
   const followUps = [
-    { label: L("💡 Un indice", "💡 Hint"), text: L("Tu peux me donner un petit indice ?", "Can I have a small hint?") },
-    { label: L("🤔 Je suis perdu", "🤔 I'm lost"), text: L("Je suis perdu — on peut y aller plus doucement ?", "I'm lost — can we go smaller?") },
-    { label: L("➡ Un autre", "➡ Another one"), text: L("Compris ! Donne-m'en un autre à essayer.", "Got it! Give me another to try.") },
+    { label: <><Lightbulb {...ic} /> {L("Un indice", "Hint")}</>, text: L("Tu peux me donner un petit indice ?", "Can I have a small hint?") },
+    { label: <><CircleHelp {...ic} /> {L("Je suis perdu", "I'm lost")}</>, text: L("Je suis perdu — on peut y aller plus doucement ?", "I'm lost — can we go smaller?") },
+    { label: <><ArrowRight {...ic} /> {L("Un autre", "Another one")}</>, text: L("Compris ! Donne-m'en un autre à essayer.", "Got it! Give me another to try.") },
   ];
   // Gauth-style stage: ONE big canvas (Otto's lesson board with the student's ink over it) and Otto himself
   // as just an avatar docked at the bottom — no transcript. The student talks (or types) to the avatar and
@@ -615,7 +620,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
           </span>
         )}
         <button type="button" className="btn ghost tutor-chat-btn" data-tour="ts-chat" onClick={() => setChatDrawer(true)} aria-label={L("Ouvrir le chat", "Open chat")}>
-          💬 {L("Chat", "Chat")}
+          <MessageCircle size={14} aria-hidden="true" /> {L("Chat", "Chat")}
         </button>
         <button className="btn ghost tutor-end-btn" disabled={endingSession} onClick={() => void endSession()}>
           {endingSession ? L("Fin…", "Ending…") : L("Terminer la séance", "End session")}

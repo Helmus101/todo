@@ -936,7 +936,7 @@ export const PLAN_ONLY_OVERRIDE =
   `one phone number, one link) does NOT clear this bar by itself — that belongs in a step's own text or the ` +
   `task's links, not a whole separate note; a note needs several things worth compiling TOGETHER, not one ` +
   `thing worth restating. Renewing/returning a library loan, confirming a single appointment, a one-step ` +
-  `errand �� these almost never need a note even when you found a real detail (an address, a due date, a ` +
+  `errand — these almost never need a note even when you found a real detail (an address, a due date, a ` +
   `renew-online link): put that detail directly in the step, done. When in doubt for a logistics task, ` +
   `leave it as steps and skip the note. ` +
   `A FICHE IS ONLY WORTH MAKING IF IT HAS THE REAL CONTENT — the actual formulas, the actual vocabulary, the ` +
@@ -1636,20 +1636,47 @@ export function visionReady(): boolean {
   return !!process.env.GEMINI_API_KEY;
 }
 
-// ── Gemini text-to-speech (the tutor's spoken voice) ────────────────────────────────────────────────────
-// Natural neural voice on the GEMINI_API_KEY already used for vision — no extra vendor account. The model
-// detects the spoken language from the text itself, so French replies come out in French and English
-// replies in English with no per-language voice table. Both are env-overridable so a model rename or a
-// different voice is a config change, not a deploy. The client falls back to the browser's own voice
-// whenever this fails, so an outage degrades the voice, never silences it.
-const GEMINI_TTS_MODEL = process.env.GEMINI_TTS_MODEL || "gemini-2.5-flash-preview-tts";
-// "Kore" (the SDK's own example default) reads firm/female — direct request for a better male voice.
-// "Charon" is Google's documented "Informative" male voice, a clear, even register that fits a tutor
-// explaining something, as opposed to e.g. "Puck" (Upbeat/energetic) or "Fenrir" (Excitable), which read
-// as more hype than a calm explanation calls for.
-const GEMINI_TTS_VOICE = process.env.GEMINI_TTS_VOICE || "Charon";
+// ── The tutor's spoken voice: free, keyless, MALE ONLY ──────────────────────────────────────────────────
+// Direct asks, in order: (1) don't use Gemini TTS; (2) use a free TTS API; (3) never fall back to a female
+// voice — "even if it fails, use another free male voice". So the chain below is a POOL of free, keyless,
+// explicitly male voices, tried in order, and it deliberately contains no female tier at all:
+//   · Gemini TTS (the old primary) — removed on request.
+//   · StreamElements (the old second tier) — removed because it is simply dead now: every request answers
+//     `401 {"message":"No API key was found"}` (verified live), so it sat in front of a real provider
+//     costing a wasted round trip every time.
+//   · Google Translate's translate_tts (the old third tier) — removed because its only voice is FEMALE,
+//     which is the exact thing ask (3) forbids. Its 180-char chunk-and-concatenate step was also the main
+//     reason replies sounded clipped: it re-encoded in tiny pieces.
+// What replaces them all is ttsmp3.com's public `makemp3_new.php` endpoint: no account, no key, and it
+// speaks with real Amazon Polly voice names — the same neural family the old StreamElements tier proxied.
+// Verified live: real MP3s for francophone and anglophone text, with the male voice names below.
+// Male voices only — every name here is a documented Polly MALE voice. French has exactly ONE free male
+// voice available from any keyless provider checked (Mathieu); English has five. That is what the pool is
+// for: a failure re-tries with a DIFFERENT male voice instead of dropping to a woman's voice or silence.
+// Adding a second French male source later is a one-line addition to this array.
+const TTS_MALE_VOICES: Record<"fr" | "en", string[]> = {
+  fr: ["Mathieu"],
+  en: ["Matthew", "Brian", "Joey", "Justin", "Russell"],
+};
+// Verified live against the provider: ~1200 characters synthesizes fine, ~1500 comes back "Usage Limit
+// exceeded". 900 keeps real headroom under that ceiling rather than riding it — a chunk that trips the
+// limit would drop the rest of the reply's audio, which is precisely the "voice cuts off early" symptom.
+const TTS_CHUNK_MAX = 900;
+/** The longest text the client may send in one /api/tts request. Shared shape with the client's own chunk
+ *  size so the two can never drift again (they used to: the client sent up to 1800 characters and the route
+ *  silently `.slice(0, 1000)`-ed it, so every reply longer than 1000 characters had its audio cut off
+ *  mid-sentence — on every provider, which is why it read as "all voices cut off early"). The server now
+ *  chunks internally instead of truncating, so this is a request-size bound, not a content bound. */
+export const TTS_MAX_TEXT = 4000;
+// A plain browser User-Agent + Referer: several free, undocumented TTS endpoints quietly 403/502 a request
+// that doesn't look like it came from a browser — a bare server-side fetch() sends no User-Agent at all,
+// which reads as a bot.
+const BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+const TTS_API_URL = "https://ttsmp3.com/makemp3_new.php";
+const TTS_TIMEOUT_MS = 12_000;
+/** Free and keyless means there is nothing for a deployment to configure — the voice is always available. */
 export function ttsReady(): boolean {
-  return !!process.env.GEMINI_API_KEY;
+  return true;
 }
 /** Wrap raw little-endian PCM in a WAV header so an <audio> element can play it (Gemini returns bare PCM). */
 export function pcmToWav(pcm: Buffer, sampleRate: number, channels = 1, bitsPerSample = 16): Buffer {
@@ -1670,136 +1697,107 @@ export function pcmToWav(pcm: Buffer, sampleRate: number, channels = 1, bitsPerS
   header.writeUInt32LE(pcm.length, 40);
   return Buffer.concat([header, pcm]);
 }
-/** Synthesize `text` to a playable WAV. Never throws; no retry (the client's fallback is faster than one). */
-// Statuses worth one quick retry before giving up on Gemini and moving to the next tier: 429 (the small
-// preview-model quota resetting within seconds), and 500/503 (a transient upstream blip) — never 4xx like
-// 400/401/404, which a retry can't fix. Direct request ("make sure gemini always works"): most Gemini TTS
-// failures reported live have been exactly this kind of short-lived hiccup, not a real outage.
-const GEMINI_TTS_RETRY_STATUSES = new Set([500, 503]);
-const GEMINI_TTS_RETRY_DELAY_MS = 800;
-// Reported live: a slow Gemini response (this used to wait up to 15s) blew straight through the CLIENT's
-// own fetch timeout, which aborts the whole /api/tts request — killing StreamElements/Google Translate's
-// chance to answer too, since they're later steps in the SAME request, never reached once the client gives
-// up. Gemini failing fast matters more here than Gemini succeeding slowly: 7s (plus one 7s retry on a
-// transient status) still leaves real time for the two fallback tiers inside the client's own budget (see
-// CLOUD_FETCH_TIMEOUT_MS, client/voice/useSpeechSynthesis.ts) instead of eating almost all of it.
-const GEMINI_TTS_TIMEOUT_MS = 6_000;
-
-async function callGeminiTts(text: string, key: string): Promise<{ wav: Buffer } | { error: string; status: number }> {
+/** One male voice, one chunk, one attempt. Never throws. */
+async function synthesizeChunkWithVoice(text: string, voice: string): Promise<{ mp3: Buffer } | { error: string; status: number }> {
   try {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent`, {
+    const res = await fetch(TTS_API_URL, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-goog-api-key": key },
-      signal: AbortSignal.timeout(GEMINI_TTS_TIMEOUT_MS),
-      body: JSON.stringify({
-        contents: [{ parts: [{ text }] }],
-        generationConfig: {
-          responseModalities: ["AUDIO"],
-          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: GEMINI_TTS_VOICE } } },
-        },
-      }),
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "User-Agent": BROWSER_UA,
+        "Referer": "https://ttsmp3.com/",
+        "Accept": "application/json",
+      },
+      signal: AbortSignal.timeout(TTS_TIMEOUT_MS),
+      // The endpoint takes the VOICE NAME in its `lang` field (verified live: `lang=Mathieu` speaks French
+      // with the Polly male voice of that name). `source=ttsmp3` is what its own web form sends.
+      body: new URLSearchParams({ msg: text, lang: voice, source: "ttsmp3" }).toString(),
     });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      let detail = "";
-      try { detail = JSON.parse(body)?.error?.message || ""; } catch { /* non-JSON */ }
-      return { error: `Gemini TTS ${res.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`, status: res.status };
-    }
-    const json: any = await res.json();
-    const parts: any[] = json?.candidates?.[0]?.content?.parts || [];
-    const inline = parts.map((p) => p?.inlineData || p?.inline_data).find((d) => d?.data);
-    if (!inline) return { error: `Gemini TTS returned no audio (${json?.candidates?.[0]?.finishReason || json?.promptFeedback?.blockReason || "empty"})`, status: 502 };
-    const rate = Number(/rate=(\d+)/.exec(inline.mimeType || inline.mime_type || "")?.[1]) || 24000;
-    return { wav: pcmToWav(Buffer.from(inline.data, "base64"), rate) };
+    if (!res.ok) return { error: `ttsmp3 ${res.status}`, status: res.status };
+    const json: any = await res.json().catch(() => null);
+    const url = typeof json?.URL === "string" ? json.URL : "";
+    // The ONLY reliable success signal is "did it hand back an audio URL": the provider OMITS `success` on a
+    // cache hit ({"Error":0,"Cached":1,"URL":"…"} — probed live, same voice, same request, one after the
+    // other) and only includes it on a fresh synthesis. Requiring `success` therefore rejected every CACHED
+    // phrase, which in tutoring is the common case — the same short acknowledgements get spoken turn after
+    // turn, so the pool would have walked every male voice and then failed the whole reply.
+    // A refusal (over-length/over-quota) comes back with NO url, and with the provider's own wording in
+    // `Error` — "Usage Limit exceeded" — which is what gets reported here so a log line names the real cause
+    // instead of a generic 502.
+    if (!url) return { error: `voice ${voice} rejected: ${String(json?.Error ?? "no audio url")}`, status: 502 };
+    const audio = await fetch(url, {
+      headers: { "User-Agent": BROWSER_UA, "Referer": "https://ttsmp3.com/" },
+      signal: AbortSignal.timeout(TTS_TIMEOUT_MS),
+    });
+    if (!audio.ok) return { error: `audio download ${audio.status}`, status: audio.status === 200 ? 502 : audio.status };
+    const mp3 = Buffer.from(await audio.arrayBuffer());
+    if (!mp3.length) return { error: `${voice} returned empty audio`, status: 502 };
+    return { mp3 };
   } catch (e: any) {
-    return { error: `Gemini TTS request failed: ${e?.message || e}`, status: 504 };
+    return { error: `voice ${voice} failed: ${e?.message || e}`, status: 504 };
   }
 }
 
-export async function synthesizeSpeech(text: string): Promise<{ wav: Buffer } | { error: string; status: number }> {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) return { error: "TTS not configured", status: 501 };
-  const first = await callGeminiTts(text, key);
-  if (!("error" in first) || !GEMINI_TTS_RETRY_STATUSES.has(first.status)) return first;
-  await new Promise((resolve) => setTimeout(resolve, GEMINI_TTS_RETRY_DELAY_MS));
-  return callGeminiTts(text, key);
+/** Removes a leading ID3v2 tag (its 10-byte header plus the size it declares) from an MP3 buffer, leaving
+ *  raw MPEG frames. THIS IS NOT COSMETIC: the free provider returns EVERY synthesis with its own ID3v2
+ *  tag, so concatenating two chunks naively embeds a tag in the middle of the stream — and an <audio>
+ *  element that meets an ID3v2 header mid-file can simply stop there. Verified live on a 1350-character
+ *  reply: the second tag sat at byte 356,588, i.e. exactly the first chunk's length, which is precisely
+ *  where the audio would go silent (the "long replies get cut off" half of the voice reports — the
+ *  1000-character server slice was the other half). Stripping the tag from every chunk after the first
+ *  makes the result ONE continuous MPEG stream instead of two files glued together. Exported for tests. */
+export function stripId3v2(mp3: Buffer): Buffer {
+  if (mp3.length < 10 || mp3.toString("latin1", 0, 3) !== "ID3") return mp3;
+  const flags = mp3[5];
+  // The size is four 7-bit "syncsafe" bytes — the top bit of each is reserved and always 0.
+  const size = ((mp3[6] & 0x7f) << 21) | ((mp3[7] & 0x7f) << 14) | ((mp3[8] & 0x7f) << 7) | (mp3[9] & 0x7f);
+  const start = 10 + size + ((flags & 0x10) ? 10 : 0); // 0x10 = a footer follows the tag
+  return start > 0 && start < mp3.length ? mp3.subarray(start) : mp3;
+}
+/** Same idea at the other end: a trailing ID3v1 tag ("TAG" + 125 bytes at the very end) belongs only at
+ *  the end of the WHOLE stream, so a chunk carrying one that is then followed by more audio would also
+ *  break continuity. Exported for tests. */
+export function stripId3v1(mp3: Buffer): Buffer {
+  if (mp3.length > 128 && mp3.toString("latin1", mp3.length - 128, mp3.length - 125) === "TAG") return mp3.subarray(0, mp3.length - 128);
+  return mp3;
 }
 
-/** The tutor's voice: ONE consistent voice, and fast failure. Gemini's neural voice goes first; when it fails
- *  (quota/blip) the free tiers (StreamElements → Google Translate) answer instead. Two things keep that from
- *  sounding broken:
- *  - A circuit breaker: after a Gemini failure the route goes STRAIGHT to the free tiers for a short window, so
- *    consecutive replies use ONE voice during a quota spell instead of flipping Gemini/Polly/Gemini per reply,
- *    and the student isn't made to wait on a Gemini call that's known to be failing.
- *  - No parallel hedging and no multi-request replies: two simultaneous Gemini calls burn its tiny per-minute
- *    quota, which is exactly what made voices change mid-reply and replies cut off.
- *  Never throws. */
-let geminiDownUntil = 0;
-export async function synthesizeSpeechRace(text: string, lang: string): Promise<{ audio: Buffer; mime: string } | { error: string; status: number }> {
-  const chain = async (): Promise<{ audio: Buffer; mime: string } | { error: string; status: number }> => {
-    const f = await synthesizeSpeechFallback(text, lang);
-    if (!("error" in f)) return { audio: f.mp3, mime: "audio/mpeg" };
-    console.warn(`[tts] StreamElements failed, trying Google Translate: ${f.error}`);
-    const g = await synthesizeSpeechGoogleTranslate(text, lang);
-    return "error" in g ? g : { audio: g.mp3, mime: "audio/mpeg" };
-  };
-  if (!process.env.GEMINI_API_KEY) { console.warn("[tts] GEMINI_API_KEY not set — using the free tiers directly."); return chain(); }
-  if (Date.now() < geminiDownUntil) return chain();
-  const r = await synthesizeSpeech(text);
-  if (!("error" in r)) return { audio: r.wav, mime: "audio/wav" };
-  geminiDownUntil = Date.now() + (r.status === 429 ? 60_000 : 20_000);
-  console.warn(`[tts] Gemini failed (${r.error}) — using the free tiers for the next ${r.status === 429 ? 60 : 20}s`);
-  return chain();
-}
-
-// ── Second TTS tier (StreamElements) ─────────────────────────────────────────────────────────────────────
-// Direct request: never fall through to the browser's own voice — it's the one thing this feature must
-// never sound like. Gemini's TTS preview model has a tiny quota (see the 429-backoff logic in
-// useSpeechSynthesis.ts) and this app has no budget for a paid vendor, so a SECOND free, keyless voice
-// covers exactly the gap Gemini's quota opens up: no account, no API key, no cost — a public endpoint
-// StreamElements exposes for its own stream-alert text-to-speech feature, proxying real Amazon Polly
-// neural voices (same quality tier as Gemini's, not a robotic fallback). No official SLA/docs, so this is
-// "best-effort second opinion," not foundation-grade — if IT fails too, the client's browser voice is the
-// true last resort, which still beats dead silence.
-// Matching Gemini's switch to a male voice above — this is the fallback tier, so it should sound like the
-// same tutor, not switch gender when Gemini's quota is hit. "Mathieu"/"Matthew" are the standard male
-// neural Polly voices for fr/en (StreamElements proxies Amazon Polly).
-const STREAMELEMENTS_VOICE: Record<string, string> = { fr: "Mathieu", en: "Matthew" };
-// A plain browser User-Agent: several free, undocumented TTS endpoints (this one included) quietly 403/502
-// a request that doesn't look like it came from a browser — a bare server-side fetch() sends no User-Agent
-// at all, which reads as a bot. Reported live: BOTH free tiers failed together on the same request, the
-// classic symptom of a shared missing-header problem rather than two unrelated outages.
-const BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
-export async function synthesizeSpeechFallback(text: string, lang: string): Promise<{ mp3: Buffer } | { error: string; status: number }> {
-  const voice = STREAMELEMENTS_VOICE[lang] || STREAMELEMENTS_VOICE.en;
-  try {
-    const res = await fetch(`https://api.streamelements.com/kappa/v2/speech?voice=${voice}&text=${encodeURIComponent(text)}`, {
-      headers: { "User-Agent": BROWSER_UA, "Referer": "https://streamelements.com/", "Accept": "audio/mpeg,*/*" },
-      // Same "fail fast, there's another tier waiting" reasoning as Gemini's own timeout above — this used
-      // to be 15s, which alone could eat the client's entire fetch budget before Google Translate ever got
-      // a turn.
-      signal: AbortSignal.timeout(8_000),
-    });
-    const ct = res.headers.get("content-type") || "";
-    if (!res.ok || !ct.startsWith("audio/")) {
-      const body = await res.text().catch(() => "");
-      return { error: `StreamElements TTS ${res.status} (${ct || "no content-type"})${body ? `: ${body.slice(0, 150)}` : ""}`, status: res.status === 200 ? 502 : res.status };
+/** The tutor's voice. Splits long text into provider-safe chunks (never truncates it) and speaks each chunk
+ *  with the first MALE voice in that language's pool that answers — a failure moves to the NEXT male voice,
+ *  never to a woman's voice and never to a partial reply. Returns an honest error if every male voice failed;
+ *  the client then plays nothing for that reply (see useSpeechSynthesis: it never substitutes a browser
+ *  voice on a cloud failure) rather than switching gender mid-session. */
+export async function synthesizeSpeech(text: string, lang: string): Promise<{ audio: Buffer; mime: string } | { error: string; status: number }> {
+  const voices = TTS_MALE_VOICES[lang === "fr" ? "fr" : "en"];
+  const chunks = wordWrapChunks(text, TTS_CHUNK_MAX);
+  if (!chunks.length) return { error: "nothing to speak", status: 400 };
+  const parts: Buffer[] = [];
+  let last: { error: string; status: number } = { error: "no male voice tried", status: 501 };
+  for (const chunk of chunks) {
+    let done = false;
+    for (let i = 0; i < voices.length && !done; i++) {
+      const r = await synthesizeChunkWithVoice(chunk, voices[i]);
+      if (!("error" in r)) {
+        // Container tags go on the WHOLE stream, not on each piece of it — see stripId3v2's comment for the
+        // live-verified mid-stream tag that was silently stopping long replies at the chunk boundary.
+        const body = stripId3v1(r.mp3);
+        parts.push(parts.length === 0 ? body : stripId3v2(body));
+        done = true; break;
+      }
+      last = r;
+      console.warn(`[tts] male voice ${voices[i]} failed (${r.error})${i < voices.length - 1 ? " — trying the next male voice" : ""}`);
     }
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (!buf.length) return { error: "StreamElements TTS returned empty audio", status: 502 };
-    return { mp3: buf };
-  } catch (e: any) {
-    return { error: `StreamElements TTS request failed: ${e?.message || e}`, status: 504 };
+    // No male voice could speak THIS chunk: give up on the whole reply rather than serve a half-spoken one.
+    if (!done) return last;
   }
+  return { audio: Buffer.concat(parts), mime: "audio/mpeg" };
 }
 
-// ── Third TTS tier (Google Translate's TTS endpoint) ────────────────────────────────────────────────────
-// The exact free, keyless endpoint the widely-used `gTTS` Python library has shipped against in production
-// for years — the most battle-tested "always works" option available with no account/key, which is why it
-// goes last: voice quality is a notch below Gemini/Polly, so it's a safety net, not a first choice. Google
-// caps each request at ~200 characters, so a reply is split into word-wrapped chunks and the resulting MP3
-// frames are concatenated — raw MP3 concatenation plays back correctly in every browser's <audio> element.
-const GOOGLE_TTS_CHUNK_MAX = 180;
+// ── Long text is split, never truncated ──────────────────────────────────────────────────────────────────
+// The provider caps how much it will synthesize in one call (see TTS_CHUNK_MAX), so a long reply is
+// word-wrapped into pieces that each sit safely under that cap and the resulting MP3 frames are
+// concatenated — raw MP3 concatenation plays back correctly in every browser's <audio> element. Exported
+// for unit tests.
 export function wordWrapChunks(text: string, max: number): string[] {
   const words = text.split(/\s+/).filter(Boolean);
   const out: string[] = [];
@@ -1812,24 +1810,6 @@ export function wordWrapChunks(text: string, max: number): string[] {
   if (cur) out.push(cur);
   return out;
 }
-export async function synthesizeSpeechGoogleTranslate(text: string, lang: string): Promise<{ mp3: Buffer } | { error: string; status: number }> {
-  const chunks = wordWrapChunks(text, GOOGLE_TTS_CHUNK_MAX);
-  if (!chunks.length) return { error: "nothing to speak", status: 400 };
-  try {
-    const buffers = await Promise.all(chunks.map(async (chunk) => {
-      const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(chunk)}&tl=${lang}&client=tw-ob`;
-      const res = await fetch(url, { headers: { "User-Agent": BROWSER_UA, "Referer": "https://translate.google.com/" }, signal: AbortSignal.timeout(10_000) });
-      if (!res.ok) throw Object.assign(new Error(`google translate tts ${res.status}`), { status: res.status });
-      const buf = Buffer.from(await res.arrayBuffer());
-      if (!buf.length) throw new Error("empty audio chunk");
-      return buf;
-    }));
-    return { mp3: Buffer.concat(buffers) };
-  } catch (e: any) {
-    return { error: `Google Translate TTS failed: ${e?.message || e}`, status: e?.status || 502 };
-  }
-}
-
 /** Reads an 800x600-ish whiteboard snapshot (a data URL, e.g. "data:image/png;base64,...") and returns a
  *  plain-text transcription of what's actually drawn — never an interpretation or a solved answer; that's
  *  the tutor's job once the transcription reaches it as a normal chat message (same "one model per
@@ -2029,6 +2009,66 @@ async function retryRequest<T>(fn: () => Promise<T>, retries = 3, delayMs = 1000
 // API's `thinking` toggle (the persona's own rules do the pedagogy, and the arithmetic/fact verifiers below
 // still run). The param is provider-specific, so a 4xx that names it is treated as "this endpoint doesn't
 // know it": retry once WITHOUT it and remember, so a rejecting provider costs one wasted call, ever.
+// ── TUTOR MODEL ROUTING: Gemini first, DeepSeek as the fallback ─────────────────────────────────────────
+// Direct request: the tutoring chat (the "math tutor") should run on the Gemini API, falling back to
+// DeepSeek. Gemini is reached through its OpenAI-COMPATIBILITY endpoint rather than its native
+// generateContent shape on purpose: it speaks the exact same `chat.completions` protocol as DeepSeek —
+// including tool/function-calling — so the tutor's whole loop (its tool set, the tool-result framing, the
+// usage accounting, the per-round token ceiling) works unchanged and only the transport swaps. Writing a
+// second, native-Gemini parallel of that loop would have been ~200 lines of duplicated pedagogy.
+// Scope: THIS is the tutor only. Task generation, sweeps, flashcards/quizzes and every other AI call in
+// this file still use deepseekClient() exactly as before — the request was about the tutor, and quietly
+// re-routing the background sweep would change cost and behavior nobody asked to change.
+const GEMINI_OPENAI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
+// Lite by default: a tutoring turn is latency-sensitive and the persona's own rules (not raw model size)
+// carry the pedagogy. GEMINI_MODEL is the same name already verified working for whiteboard vision, so this
+// doesn't invent a model identifier — and it's env-overridable for a stronger/cheaper swap later.
+const GEMINI_TUTOR_MODEL = process.env.GEMINI_TUTOR_MODEL || GEMINI_MODEL;
+function geminiClient(key: string): OpenAI {
+  return new OpenAI({
+    apiKey: key,
+    baseURL: GEMINI_OPENAI_BASE_URL,
+    timeout: 60_000,
+    maxRetries: 0, // retryRequest owns retries
+  });
+}
+/** The tutor's provider list, in priority order: Gemini when configured, DeepSeek always (as the fallback). */
+function tutorProviders(): { name: string; client: OpenAI; model: string }[] {
+  const out: { name: string; client: OpenAI; model: string }[] = [];
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (geminiKey) out.push({ name: "gemini", client: geminiClient(geminiKey), model: GEMINI_TUTOR_MODEL });
+  try {
+    out.push({ name: USING_NVIDIA ? "nvidia" : "deepseek", client: deepseekClient(), model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL });
+  } catch (e: any) {
+    // No DeepSeek key at all is only fatal when Gemini isn't configured either — tutorProviders' caller
+    // reports that by throwing the last provider's own error.
+    if (!out.length) throw e;
+  }
+  return out;
+}
+/** One tutor completion, Gemini first with DeepSeek as the fallback. A provider that fails (network, auth,
+ *  quota, an unsupported param) hands the SAME turn to the next provider instead of failing the reply —
+ *  which is what makes "Gemini, falling back to DeepSeek" real rather than nominal. Usage/cost accounting
+ *  downstream is provider-agnostic (usageOf reads the OpenAI-shaped fields both return). */
+async function createTutorChat(params: any, fast: boolean): Promise<any> {
+  const providers = tutorProviders();
+  if (!providers.length) throw new Error("Set GEMINI_API_KEY or DEEPSEEK_API_KEY in web/.env.");
+  let lastErr: any;
+  for (let i = 0; i < providers.length; i++) {
+    const p = providers[i];
+    try {
+      // The `thinking` toggle is DeepSeek-specific, so `fast` only applies to that provider (see
+      // createChatFast's own comment) — passing it to Gemini would be a wasted 400 on every turn.
+      return await createChatFast(p.client, { ...params, model: p.model }, fast && p.name !== "gemini");
+    } catch (e: any) {
+      lastErr = e;
+      const more = i < providers.length - 1;
+      console.warn(`[chat] ${p.name} (${p.model}) failed: ${e?.message || e}${more ? ` — falling back to ${providers[i + 1].name}` : ""}`);
+    }
+  }
+  throw lastErr;
+}
+
 let thinkingToggleRejected = false;
 async function createChatFast(client: OpenAI, params: any, fast: boolean): Promise<any> {
   if (!fast || USING_NVIDIA || thinkingToggleRejected || process.env.TUTOR_THINKING === "on") return client.chat.completions.create(params);
@@ -2819,14 +2859,31 @@ export function isDuplicateProblem(existing: TaskProblem[], incoming: { question
  *  - NOTHING WRITTEN: `wroteToBoardThisTurn` false — if Otto already wrote, the rule is satisfied; never nag.
  *  Pure; unit-tested in tests/run.mjs. Consumed by chatAboutTask's tool loop as a ONE-SHOT corrective
  *  round (same posture as the empty-board-claim fix — a prompt line alone was reported-live ignorable). */
-export function shouldNudgeBoardWrite(reply: string, lastStudentMessage: string, wroteToBoardThisTurn: boolean): boolean {
-  if (wroteToBoardThisTurn) return false;
-  const text = `${reply}\n${lastStudentMessage}`;
-  const mathInPlay = /=/.test(text)
+/** Is there real math (or a formula being talked about) in this text? Shared by the two board-write
+ *  enforcement predicates below so "what counts as board-worthy" can't drift between them. Pure. */
+export function mathInPlay(text: string): boolean {
+  return /=/.test(text)
     || /[\^√πθ²³±×÷≤≥]/.test(text)
     || /\b(sin|cos|tan|log|ln|exp|lim|deriv\w*|dériv\w*|factor\w*|simplif\w*|cancel\w*)\b/i.test(text)
     || /\b(formula|formule|equation|équation|square|carré)\b/i.test(text);
-  if (!mathInPlay) return false;
+}
+
+/** The OTHER half of the board-write enforcement: the tutor put real math/facts in CHAT while the board was
+ *  still EMPTY — "it explains the formula but never shows it". Reported live as "the tutor is not using the
+ *  board enough": a session could run several turns with a worked formula in every reply and a board that
+ *  never filled up, because nothing enforced the write (shouldNudgeBoardWrite only fires on a CONFIRMATION,
+ *  and nudgeReasoning only on a student-contributed step). Narrow on purpose — empty board only, so it can
+ *  never nag mid-session, and once per turn via the same latch. Pure; unit-tested. */
+export function shouldNudgeBoardContent(reply: string, boardIsEmpty: boolean, wroteToBoardThisTurn: boolean): boolean {
+  if (wroteToBoardThisTurn || !boardIsEmpty) return false;
+  return mathInPlay(reply);
+}
+
+/** Never triggered by a reply that says nothing and asks the next question (the coaching loop). */
+export function shouldNudgeBoardWrite(reply: string, lastStudentMessage: string, wroteToBoardThisTurn: boolean): boolean {
+  if (wroteToBoardThisTurn) return false;
+  const text = `${reply}\n${lastStudentMessage}`;
+  if (!mathInPlay(text)) return false;
   // Reproduced live: a real session where every "Spot on. The thruster gave it a boost…" confirmation after
   // a correct physics answer never triggered the nudge — "spot on" (and a few other everyday ways of saying
   // "you got it") simply weren't in this list, so the ONE mechanism meant to catch "confirmed the student's
@@ -6040,7 +6097,7 @@ export async function runTask(
       : (fr ? `Analyse terminée. ${steps.length} étape(s) à faire.` : `Analysis done. ${steps.length} step(s) to do.`);
 
     return {
-      context: context || (fr ? "Analyse basée sur la tâche elle-m��me." : "Analyzed from the task itself."),
+      context: context || (fr ? "Analyse basée sur la tâche elle-même." : "Analyzed from the task itself."),
       synthesis,
       did: did.length ? did : [],
       steps: steps.length ? steps : [{ text: fr ? `Avancer sur : ${task.title}` : `Continue working on: ${task.title}`, automatable: false }],
@@ -6429,7 +6486,7 @@ export async function expandStep(
           `Do NOT duplicate any work already covered by the OTHER STEPS listed above — your substeps are for ` +
           `this ONE step only.\n\n` +
           `If one of RESOURCES ALREADY ON THIS TASK above is exactly the page a sub-action needs, give that ` +
-          `sub-action a "url" copied VERBATIM from the list �� never invent or guess one, and never a url that ` +
+          `sub-action a "url" copied VERBATIM from the list — never invent or guess one, and never a url that ` +
           `isn't in that list. Most sub-actions won't have one.\n\n` +
           `Mark "automatable": true ONLY for a sub-action that's a pure lookup/research fact (a schedule, a ` +
           `price, an opening hour, an address, a definition) that needs no login and isn't the student's own ` +
@@ -7340,21 +7397,35 @@ export async function chatAboutTask(
     What would you like to explore?" - warm, human, friendly.\n`
     : "";
     
-  // Smarter board integration - use board naturally in conversation
-  const boardIntegrationBlock = (boardEntries.length || currentProblems.length)
-    ? `\nBOARD INTEGRATION: The board is your shared workspace with the student. USE IT NATURALLY:
-    - When introducing a key concept, formula, or example, WRITE_TO_BOARD it so they can see it while talking
-    - Reference board entries by saying "look at what we have on the board" or "as you can see up there"
-    - Don't over-explain what's already on the board - build on it instead
-    - Use the board to show their work, not just your explanations
-    - Make the board feel like a shared blackboard, not a separate display
-    - For history/literature/language-arts/social-science content specifically: reach for kind:'outline' by
-      default, not a flat sentence or a bare list crammed into 'text' — causes of an event, a source's key
-      points, an essay's plan (thesis/evidence/counter-argument) are all headed-sections-with-bullets, which
-      'outline' renders as real structure instead of a wall of text. Diagrams and 'formula' still make sense
-      for anything genuinely spatial or numeric even in a humanities session (a map, a timeline with dates as
-      a number line) — the subject decides the kind, not a fixed rule per subject.\n`
-    : "";
+  // Board integration — UNCONDITIONAL. It used to be gated on the board already being non-empty, which is
+  // exactly backwards: a fresh session has NOTHING on the board, so the model was handed no instruction to
+  // start using it and a session that opened with three chat turns and an empty board tended to stay that
+  // way (reported live: "the tutor is not using the board enough"). The empty-board half now says the quiet
+  // part out loud, and the "how often" rule below is the actual ask being enforced — most turns should ADD
+  // something, and "talking about the math instead of putting it up" is named as the failure it is.
+  const boardIntegrationBlock =
+    `\nBOARD INTEGRATION — the board is the shared workspace, and this session should LOOK like the tutoring ` +
+    `that happened. SHOW IT, DON'T JUST SAY IT: a formula in play, a term being defined, the given values, ` +
+    `the cases a problem splits into, a diagram, or the step the student just landed — each of those belongs ` +
+    `ON the board. Explaining it in chat instead is the commonest way the document ends up empty while the ` +
+    `conversation looks fine. ` +
+    (boardEntries.length || currentProblems.length
+      ? `Reference what's already up ("look at what we have on the board") and build on it — never ` +
+        `re-explain an entry that's already there. `
+      : `NOTHING IS ON THE BOARD YET and this is the moment that changes: put the focus line up ` +
+        `(kind:"focus") as soon as you know what you're working on, then the first formula/definition/values ` +
+        `the moment they come into play. `) +
+    `HOW OFTEN: any turn that produced something worth holding in the head — a formula, a definition, the ` +
+    `problem's values, a case split, the student's own step — should normally END with ONE new board entry. ` +
+    `A turn with real content and no write is the exception, not the default; several such turns in a row is ` +
+    `the failure mode this rule exists to correct. ONE short entry per call, never a wall of text — the next ` +
+    `thing gets its own entry later.\n` +
+    `- For history/literature/language-arts/social-science content specifically: reach for kind:'outline' by ` +
+    `default, not a flat sentence or a bare list crammed into 'text' — causes of an event, a source's key ` +
+    `points, an essay's plan (thesis/evidence/counter-argument) are all headed-sections-with-bullets, which ` +
+    `'outline' renders as real structure instead of a wall of text. Diagrams and 'formula' still make sense ` +
+    `for anything genuinely spatial or numeric even in a humanities session (a map, a timeline with dates as ` +
+    `a number line) — the subject decides the kind, not a fixed rule per subject.\n`;
     
   // Smarter responses - contextual awareness
   const contextAwarenessBlock = history.length > 0
@@ -7541,7 +7612,8 @@ export async function chatAboutTask(
     `reply using markdown:\n` +
     `  - Tables: use markdown pipe tables (| Header | Header |) — they render in chat.\n` +
     `  - ASCII/text diagrams inside a triple-backtick code block for timelines, flowcharts, labeled ` +
-    `structures: \`\`\`\n  1789 ──�� 1792 ──▶ 1799\n  Révolution │ Terreur │ Consulat\n  \`\`\`\n` +
+    // ASCII arrows, not the ▶ glyph (and not the mojibake this line had): bare U+25B6 is text-presentation on some platforms and a full-color triangle on others, and the app is emoji-free now (tests/run.mjs sweeps for it). "-->" is also this prompt’s own documented arrow.
+    `structures: \`\`\`\n  1789 --> 1792 --> 1799\n  Révolution │ Terreur │ Consulat\n  \`\`\`\n` +
     `  - Side-by-side comparisons in a table, labeled diagrams with arrows (→ ↑ ↓), mind-map style ` +
     `indented lists.\n` +
     `  - Keep these SMALL and SCANNABLE — a few lines, not a full page. The point is a quick visual anchor, ` +
@@ -8058,6 +8130,13 @@ export async function chatAboutTask(
     `a "how you got there" reasoning trace (each dash line = one move they made, corrected wrong-turns ` +
     `included), and any worked line you leave unfinished ("= ?") gets a highlighted "à toi de finir" chip. ` +
     `Write to fit that: summaries as tight dash lines (the trace renders them one per line), worked lines ` +
+    // Reported live, with a screenshot: a summary came out as "5. ○ 6. collect → 3sec²x − 17sec x − 28 = 0"
+    // and the trace rendered step 5 as "○ 6 collect → …". The board numbers the trace itself, so a step
+    // number or bullet the model writes INSIDE a line is noise at best and a merged pair of steps at worst.
+    `ONE MOVE PER LINE — the trace is numbered for you. Never write a step number or a bullet glyph (○, •, 6.) ` +
+    `inside a line, never put TWO moves on one line ("collect → …; then substitute …" is two lines), and ` +
+    `never merge a finished move with the next one just because they're related — a merged line renders as one ` +
+    `step containing the other's number, which reads as a broken board. One dash line = exactly one move. ` +
     `that END in the gap you want them to complete — the chip lands on the line you deliberately didn't ` +
     `finish (the completion effect, made visible). Insights credited to them ("d'après toi : …") read as ` +
     `their page, not yours — that's the point of the document.\n` +
@@ -8197,8 +8276,9 @@ export async function chatAboutTask(
     ...history.slice(-histWindow).map((h) => ({ role: h.role, content: h.text })),
     { role: "user", content: message },
   ];
-  const client = deepseekClient();
-  const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
+  // No `client`/`actualModel` here any more: every model call in this function goes through
+  // createTutorChat (Gemini first, DeepSeek as the fallback), which owns provider selection — resolving a
+  // DeepSeek client up front would also make a DeepSeek key mandatory even when Gemini is answering.
   // REMEMBER_TOOL added here (chat previously had no way to persist anything from a tutoring conversation
   // into the student's profile, even though real conversations are the richest signal for this — a
   // mentioned teammate, a recurring struggle, a professor's grading quirk) — writes through applyRememberFact,
@@ -8310,11 +8390,19 @@ export async function chatAboutTask(
     // skipped on the first message, while a guardrail has wiped the turn, and for non-substantive input. Used by
     // BOTH the plain-text path and the after-tool-calls path. Returns true when it queued the round.
     const nudgeReasoning = (draft: string, round: number, lastRound: boolean): boolean => {
-      if (!(opts?.primer && !reasoningNudgeDone && !boardNudgeDone && !lastRound && history.length >= 1 && result.board.length === 0 && !result.guardrailTripped && isSubstantiveStep(message))) return false;
+      const studentStep = isSubstantiveStep(message);
+      // Two distinct misses, one latch: (a) the student contributed a step and the tutor wrote nothing, and
+      // (b) the tutor's OWN reply put real math in chat while the board was still empty — "explains the
+      // formula but never shows it", the reported "not using the board enough". Both are empty-board cases,
+      // so the corrective round can never fire mid-session once there's something up.
+      const contentMissedBoard = result.board.length === 0 && shouldNudgeBoardContent(draft, true, false);
+      if (!(opts?.primer && !reasoningNudgeDone && !boardNudgeDone && !lastRound && history.length >= 1 && !result.guardrailTripped && (studentStep || contentMissedBoard))) return false;
       reasoningNudgeDone = true;
-      console.log(`${new Date().toISOString()} [chat] round ${round}: student contributed a step but nothing is on the board — asking for the reasoning entry`);
+      console.log(`${new Date().toISOString()} [chat] round ${round}: ${studentStep ? "student contributed a step but" : "real math in the reply but"} nothing is on the board — asking for the write`);
       messages.push({ role: "assistant", content: draft });
-      messages.push({ role: "user", content: "The student just contributed a step, but nothing was added to the board this turn. Before you reply, call WRITE_TO_BOARD ONCE: kind \"summary\" — THEIR reasoning so far in your own words (the move they made, why it works, what it gave), e.g. \"Factor: two numbers with product 6 and sum −5 → −2, −3\". If a formula or rule that would genuinely help is in play and not on the board yet, add it too (real math through DRAW_ON_BOARD's equation op). Never quote their message word for word, never write a step they haven't reached or the final answer. Then send your short reply again." });
+      messages.push({ role: "user", content: studentStep
+        ? "The student just contributed a step, but nothing was added to the board this turn. Before you reply, call WRITE_TO_BOARD ONCE: kind \"summary\" — THEIR reasoning so far in your own words (the move they made, why it works, what it gave), e.g. \"Factor: two numbers with product 6 and sum −5 → −2, −3\". If a formula or rule that would genuinely help is in play and not on the board yet, add it too (real math through DRAW_ON_BOARD's equation op). Never quote their message word for word, never write a step they haven't reached or the final answer. Then send your short reply again."
+        : "You're working with real math here and the board is still completely empty — the student can see your reply but nothing is visible next to it. Before you reply again, call WRITE_TO_BOARD ONCE: the formula in play, the given values, or the definition you just used (real math through DRAW_ON_BOARD's equation op — one short entry, NOT a wall of text, and not a restatement of your reply). Then send your short reply again. If this exchange genuinely produced nothing worth keeping visible, just continue unchanged and don't mention this." });
       return true;
     };
     let truncationRetried = false;
@@ -8360,8 +8448,10 @@ export async function chatAboutTask(
         // retries) rather than the earlier `retries: 2` (one retry) — a real DeepSeek blip (a momentary
         // rate limit, a brief network hiccup) going straight to the generic fallback after a SINGLE retry
         // was still common enough to report; the deadline (120s) has ample room for one more attempt.
-        res = await retryRequest(() => createChatFast(client, {
-          model: actualModel, max_tokens: OUT.chat, temperature: 0.6,
+        // Gemini first, DeepSeek as the fallback — see createTutorChat's own comment. The model name is
+        // per-provider now, so it is NOT passed here.
+        res = await retryRequest(() => createTutorChat({
+          max_tokens: OUT.chat, temperature: 0.6,
           messages: apiMessages,
           // The chat tool set is deliberately in-app only (CREATE_*/web_search) — NEVER Composio. A tutoring
           // chat must not be able to touch the student's connected accounts, unlike runTask's tool set.
@@ -8394,10 +8484,10 @@ export async function chatAboutTask(
           // THAT budget wasn't enough for reasoning-about-a-tool-result once, resending the identical
           // ceiling and hoping for a shorter reasoning pass is optimism, not a real second chance. 1.5x
           // gives the retry actual extra headroom instead of just re-rolling the same dice.
-          const retryRes: any = await retryRequest(() => client.chat.completions.create({
-            model: actualModel, max_tokens: Math.round(OUT.chat * 1.5), temperature: 0.6,
+          const retryRes: any = await retryRequest(() => createTutorChat({
+            max_tokens: Math.round(OUT.chat * 1.5), temperature: 0.6,
             messages: [...apiMessages, { role: "user" as const, content: "Reply in plain words now — no tool use." }],
-          }), 1, 400);
+          }, false), 1, 400);
           const u = usageOf(retryRes);
           result.tokens.in += u.in; result.tokens.out += u.out; result.tokens.cachedIn = (result.tokens.cachedIn || 0) + u.cachedIn;
           textContent = retryRes.choices?.[0]?.message?.content || "";
@@ -8409,10 +8499,10 @@ export async function chatAboutTask(
           // bumped again (2x base) for the same reason as the retry above.
           if (!textContent.trim()) {
             console.log(`${new Date().toISOString()} [chat] round ${round}: second empty completion, retrying once more asking for ONE short sentence`);
-            const shortRes: any = await retryRequest(() => client.chat.completions.create({
-              model: actualModel, max_tokens: OUT.chat * 2, temperature: 0.6,
+            const shortRes: any = await retryRequest(() => createTutorChat({
+              max_tokens: OUT.chat * 2, temperature: 0.6,
               messages: [...apiMessages, { role: "user" as const, content: "Reply in ONE short sentence only — just the single most useful fact/answer, no explanation, no formatting." }],
-            }), 1, 400);
+            }, false), 1, 400);
             const u2 = usageOf(shortRes);
             result.tokens.in += u2.in; result.tokens.out += u2.out; result.tokens.cachedIn = (result.tokens.cachedIn || 0) + u2.cachedIn;
             textContent = shortRes.choices?.[0]?.message?.content || "";
@@ -8453,11 +8543,11 @@ export async function chatAboutTask(
           truncationRetried = true;
           console.log(`${new Date().toISOString()} [chat] round ${round}: reply hit finish_reason 'length' — retrying once for a complete, concise reply`);
           try {
-            const contRes: any = await retryRequest(() => client.chat.completions.create({
-              model: actualModel, max_tokens: OUT.chat, temperature: 0.6,
+            const contRes: any = await retryRequest(() => createTutorChat({
+              max_tokens: OUT.chat, temperature: 0.6,
               messages: [...apiMessages, { role: "assistant" as const, content: textContent },
                 { role: "user" as const, content: "That got cut off. Continue from EXACTLY where it stopped — a couple of short sentences, concisely — don't restart or repeat what you already said, just complete the thought." }],
-            }), 2, 400);
+            }, false), 2, 400);
             const u = usageOf(contRes);
             result.tokens.in += u.in; result.tokens.out += u.out; result.tokens.cachedIn = (result.tokens.cachedIn || 0) + u.cachedIn;
             const completion = contRes.choices?.[0]?.message?.content?.trim();

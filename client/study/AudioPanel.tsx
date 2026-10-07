@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { Play } from "lucide-react";
 import { AUDIO_OPTIONS } from "./StudyMode.tsx";
 import { toSpotifyEmbedUrl } from "./spotify.ts";
 import { useSmClose, SmSurface, useLang } from "../ui.tsx";
@@ -53,14 +54,14 @@ export function AudioPanel({ audioType, volume, playing, customAudioName, spotif
               className={`sm-audio-track ${audioType === opt.id ? "active" : ""}`}
               onClick={() => onChange(opt.id, volume, true)}
             >
-              {playing && audioType === opt.id ? "▶ " : ""}{L(opt.label[0], opt.label[1])}
+              {playing && audioType === opt.id ? <Play size={12} aria-hidden="true" /> : null}{L(opt.label[0], opt.label[1])}
             </button>
           ))}
           <button
             className={`sm-audio-track ${audioType === "custom" ? "active" : ""}`}
             onClick={() => customAudioName ? onChange("custom", volume, true) : fileInputRef.current?.click()}
           >
-            {playing && audioType === "custom" ? "▶ " : ""}{customAudioName || L("Ajouter ta propre musique…", "Upload your own…")}
+            {playing && audioType === "custom" ? <Play size={12} aria-hidden="true" /> : null}{customAudioName || L("Ajouter ta propre musique…", "Upload your own…")}
           </button>
           <input
             ref={fileInputRef}

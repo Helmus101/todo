@@ -5957,7 +5957,10 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   border-radius: var(--radius-pill);
   margin-bottom: var(--space-3);
 }
-.sm-board-problem-label::before { content: "✏️"; font-size: 11px; line-height: 1; }
+/* A monochrome dingbat, not the ✏️ emoji: the variation selector (U+FE0F) is what forces emoji presentation,
+   and it renders as a full-color glyph on some platforms and not others — the rest of the app's margin marks
+   (✦, ⌇, ∑) are plain typographic glyphs, and this one now matches them. */
+.sm-board-problem-label::before { content: "✎"; font-size: 11px; line-height: 1; }
   .sm-board-problem-q { font-size: var(--text-base); font-weight: 600; color: var(--ink); line-height: 1.55; white-space: pre-wrap; }
   .sm-board-problem-format { margin-top: var(--space-2); font-size: var(--text-sm); color: var(--ink-3); white-space: pre-wrap; }
 .sm-board-problem-opts { display: flex; flex-direction: column; gap: 6px; margin-top: var(--space-3); }

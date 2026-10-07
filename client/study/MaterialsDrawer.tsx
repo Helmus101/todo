@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { Layers, Play } from "lucide-react";
 import type { StudyMaterial } from "./StudyTypes.ts";
 import { useSmClose, SmSurface, useLang } from "../ui.tsx";
 
@@ -24,13 +25,16 @@ export function MaterialsDrawer({ materials, onClose, onOpenArtifact, onAddFiles
   };
   const { closing, doClose } = useSmClose(onClose, 240);
 
+  // Real icons where the old glyph had emoji presentation (▶ and ❏ render as COLOR emoji on some
+  // Android/Windows builds — explicit request: no emoji in the app). The remaining marks (PDF / ▤ / ▨) are
+  // plain typographic text with no emoji presentation on any platform.
   const typeIcon = (type: StudyMaterial["type"]) => {
     if (type === "pdf") return "PDF";
-    if (type === "video") return "▶";
+    if (type === "video") return <Play size={12} aria-hidden="true" />;
     if (type === "image") return "▨";
     if (type === "document") return "▤";
     if (type === "note") return "▤";
-    if (type === "flashcard") return "❏";
+    if (type === "flashcard") return <Layers size={12} aria-hidden="true" />;
     if (type === "quiz") return "?";
     return L("Lien", "Link");
   };

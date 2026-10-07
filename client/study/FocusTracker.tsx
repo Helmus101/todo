@@ -1,4 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+// An icon, not the 🎯 emoji (explicit request: no emoji in the app — an emoji renders differently or not
+// at all depending on OS/browser, and here it's carrying real meaning: how focused the student looks).
+import { Target } from "lucide-react";
 
 /**
  * Webcam-based focus tracker for Study Mode.
@@ -245,8 +248,8 @@ export function FocusTracker({ enabled, onMetrics, onSessionEnd }: FocusTrackerP
       <canvas ref={canvasRef} style={{ display: "none" }} />
       {liveScore !== null && (
         <>
-          <span style={{ fontSize: "16px" }}>
-            {liveScore >= 70 ? "🎯" : liveScore >= 40 ? "◐" : "○"}
+          <span style={{ fontSize: "16px", display: "inline-flex", alignItems: "center" }}>
+            {liveScore >= 70 ? <Target size={16} aria-hidden="true" /> : liveScore >= 40 ? "◐" : "○"}
           </span>
           <span>{liveScore}</span>
           <span style={{ opacity: 0.6, fontSize: "10px" }}>focus</span>

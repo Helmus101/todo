@@ -1,4 +1,6 @@
 import { useRef, useEffect, useState, useContext, useCallback } from "react";
+import type { ReactNode } from "react";
+import { Paperclip, TriangleAlert, Volume2, Square, StickyNote, Layers, CircleCheck } from "lucide-react";
 import type { WebTask } from "../../shared/types.ts";
 import { renderChatText, useThinkingWord, useLang, LangContext, CondensedUserMessage, FirstTimeHint, useNotify } from "../ui.tsx";
 import { useSpeechRecognition } from "../voice/useSpeechRecognition.ts";
@@ -44,7 +46,7 @@ interface AskOttoPanelProps {
   variant?: "chat" | "dock";
   /** Dock only — one-tap replies shown under Otto's bubble. Research on AI tutors: students ignore tutors
    *  that make them compose every message; a tap is the lowest-friction way to say "hint", "I'm lost". */
-  quickReplies?: { label: string; text: string }[];
+  quickReplies?: { label: ReactNode; text: string }[];
 }
 
 // The text currently being spoken aloud (the newest assistant reply) — the echo guard's reference: Otto
@@ -323,7 +325,7 @@ export function AskOttoPanel({
           onClick={() => fileInputRef.current?.click()}
           title={L("Joindre un fichier (PDF, image, texte)", "Attach a file (PDF, image, text)")}
         >
-          {attaching ? "…" : "📎"}
+          {attaching ? "…" : <Paperclip size={15} aria-hidden="true" />}
         </button>
         <VoiceControls
           supported={recog.supported}
@@ -367,7 +369,7 @@ export function AskOttoPanel({
                 <div className="otto-bubble-text" key={lastMessageKey(task.chat)}>{renderChatText(lastReply.text)}</div>
                 {mismatches.length ? (
                   <div className="sm-ai-calc-check" role="note">
-                    <span className="sm-ai-calc-check-icon" aria-hidden="true">⚠</span>
+                    <span className="sm-ai-calc-check-icon" aria-hidden="true"><TriangleAlert size={13} /></span>
                     <span>{L("Vérifie ce calcul avec Otto : ", "Double-check this with Otto: ")}<code>{mismatches[0].raw}</code></span>
                   </div>
                 ) : null}
@@ -376,7 +378,7 @@ export function AskOttoPanel({
                   onClick={() => (synth.speaking ? synth.cancel() : (synth.unlock(), synth.speak(lastReply.text)))}
                   title={synth.speaking ? L("Arrêter la voix", "Stop voice") : L("Réécouter", "Listen again")}
                   aria-label={synth.speaking ? L("Arrêter la voix", "Stop voice") : L("Réécouter", "Listen again")}
-                >{synth.speaking ? "■" : "🔊"}</button>
+                >{synth.speaking ? <Square size={13} aria-hidden="true" /> : <Volume2 size={15} aria-hidden="true" />}</button>
               </>
             ) : (
               <p className="otto-bubble-empty">{emptyText ?? ""}</p>
@@ -386,7 +388,7 @@ export function AskOttoPanel({
         {quickReplies?.length && !sending ? (
           <div className="otto-quick" role="group" aria-label={L("Réponses rapides", "Quick replies")}>
             {quickReplies.map((q) => (
-              <button key={q.label} type="button" className="otto-quick-btn" onClick={() => onSend(q.text, voiceModeOn)}>{q.label}</button>
+              <button key={q.text} type="button" className="otto-quick-btn" onClick={() => onSend(q.text, voiceModeOn)}>{q.label}</button>
             ))}
           </div>
         ) : null}
@@ -419,7 +421,11 @@ export function AskOttoPanel({
                     : task.quizzes?.some((q) => q.id === a.id);
                   if (!exists) return null;
                   const open = a.kind === "note" ? onOpenNote : a.kind === "deck" ? onOpenDeck : onOpenQuiz;
-                  const icon = a.kind === "note" ? "📝" : a.kind === "deck" ? "🗂️" : "✅";
+                  // Real lucide icons, not emoji — same reasoning as VoiceControls: a 📝/🗂️/✅ renders
+                  // differently (or not at all) across OS/browser combinations and reads ambiguous at a
+                  // glance, while an icon is unambiguous on every platform (explicit request: no emoji in
+                  // the app).
+                  const icon = a.kind === "note" ? <StickyNote size={13} /> : a.kind === "deck" ? <Layers size={13} /> : <CircleCheck size={13} />;
                   return (
                     <button key={a.id} type="button" className="sm-ai-artifact-chip" onClick={() => open(a.id, a.title)}>
                       <span className="sm-ai-artifact-chip-icon" aria-hidden="true">{icon}</span>
@@ -436,7 +442,7 @@ export function AskOttoPanel({
               const mismatches = arithmeticMismatches(m.text);
               return mismatches.length ? (
                 <div className="sm-ai-calc-check" role="note">
-                  <span className="sm-ai-calc-check-icon" aria-hidden="true">⚠</span>
+                  <span className="sm-ai-calc-check-icon" aria-hidden="true"><TriangleAlert size={13} /></span>
                   <span>
                     {L("Vérifie ce calcul avec Otto : ", "Double-check this with Otto: ")}
                     <code>{mismatches[0].raw}</code>

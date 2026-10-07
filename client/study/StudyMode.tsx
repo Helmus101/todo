@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+// Icon, not the 🎯 emoji (explicit request: no emoji in the app; here it signals the focus-camera reading).
+import { Target } from "lucide-react";
 import type { WebTask } from "../../shared/types.ts";
 import type {
   StudyEnvironment,
@@ -1251,8 +1253,8 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
             backdropFilter: "blur(var(--blur)) saturate(180%)", WebkitBackdropFilter: "blur(var(--blur)) saturate(180%)",
             fontSize: "12px", color: "var(--ink)", pointerEvents: "none",
           }}>
-            <span style={{ fontSize: "16px" }}>
-              {focusCamera.tracking.concentration >= 70 ? "🎯" : focusCamera.tracking.concentration >= 40 ? "◐" : "○"}
+            <span style={{ fontSize: "16px", display: "inline-flex", alignItems: "center" }}>
+              {focusCamera.tracking.concentration >= 70 ? <Target size={16} aria-hidden="true" /> : focusCamera.tracking.concentration >= 40 ? "◐" : "○"}
             </span>
             <span>{focusCamera.tracking.concentration}</span>
             <span style={{ opacity: 0.6, fontSize: 10 }}>

@@ -13,7 +13,7 @@ import { useEffect, useState, useRef, useContext, useCallback, type ReactNode, t
 import type { WebTask, TaskStep, Profile } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight, deadlineEpoch } from "../shared/types.ts";
 import { api } from "./api.ts";
-import { BookOpen } from "lucide-react";
+import { BookOpen, MessageCircle, Layers, CircleHelp, Rows3 } from "lucide-react";
 import {
   LangContext, useLang, todayIso, fmtDate, relTime, statusChip, subtitle, quadrantLabel, sourceAttributionLine,
   fmtWhen, TAB_GROUP, openTab, openTabs, autoOpenTaskDocs,
@@ -436,7 +436,7 @@ export function TaskReadOnly({ task }: { task: WebTask }) {
                 ))}
                 {task.flashcards?.map((f) => (
                   <div key={f.id} className="note-chip" style={{ pointerEvents: "none" }}>
-                    <span className="note-chip-icon" aria-hidden="true">❏</span>
+                    <span className="note-chip-icon" aria-hidden="true"><Layers size={13} /></span>
                     <span className="note-chip-text"><span className="note-chip-title">{f.title}</span><span className="note-chip-meta">{L(`${f.cards.length} cartes`, `${f.cards.length} cards`)}</span></span>
                   </div>
                 ))}
@@ -760,7 +760,7 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
           step list. */}
       {!isDone ? (
         <button type="button" className="btn primary xs tf-ask-otto" onClick={() => setOpenChat(true)}>
-          💬 {L("Demander à Otto — besoin d'aide ?", "Ask Otto — need help?")}
+          <MessageCircle size={14} aria-hidden="true" /> {L("Demander à Otto — besoin d'aide ?", "Ask Otto — need help?")}
         </button>
       ) : null}
 
@@ -1281,7 +1281,7 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
               </button>
             ) : c.kind === "deck" ? (
               <button key={c.item.id} type="button" className="note-chip" onClick={() => onOpenDeck(c.item.id)}>
-                <span className="note-chip-icon" aria-hidden="true">❏</span>
+                <span className="note-chip-icon" aria-hidden="true"><Layers size={13} /></span>
                 <span className="note-chip-text"><span className="note-chip-title">{c.item.title}</span><span className="note-chip-meta">{L(`${c.item.cards.length} cartes`, `${c.item.cards.length} cards`)}</span></span>
               </button>
             ) : (
@@ -1431,7 +1431,7 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
                     : a.kind === "deck" ? task.flashcards?.some((f) => f.id === a.id)
                     : task.quizzes?.some((q) => q.id === a.id);
                   if (!exists) return null; // evicted by ARTIFACT_CAP — render nothing rather than crash
-                  const icon = a.kind === "note" ? "▤" : a.kind === "deck" ? "❏" : "?";
+                  const icon = a.kind === "note" ? <Rows3 size={13} /> : a.kind === "deck" ? <Layers size={13} /> : <CircleHelp size={13} />;
                   const open = a.kind === "note" ? onOpenNote : a.kind === "deck" ? onOpenDeck : onOpenQuiz;
                   return <button key={a.id} type="button" className="btn xs ghost note-chip" onClick={() => open(a.id)}><span aria-hidden="true">{icon}</span> {a.title}</button>;
                 })}

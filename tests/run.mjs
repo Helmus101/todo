@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync, readdirSync } from "node:fs";
 import { recencyStamp, dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor, attachLocationLinks, googleMapsDirectionsUrl } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem, detectLang, visionReady, describeWhiteboard, academicBlock, sessionRecapLine } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, shouldNudgeBoardContent, mathInPlay, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem, detectLang, visionReady, describeWhiteboard, academicBlock, sessionRecapLine } from "../server/claude.ts";
 import { evaluateArithmetic, parseNumber, findArithmeticClaims, hasArithmetic } from "../server/arithmetic.ts";
 import { isLikelyEcho, createEchoFilter, normalizeForEcho } from "../client/voice/echoGuard.ts";
 import { speechErrorMessage } from "../client/voice/speechErrors.ts";
@@ -16,8 +16,9 @@ import { connectionColumnUpdates } from "../server/store.ts";
 import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, contextKey, chooseArm, computeReward, computeCardReward, computeLatencyReward, updatePosterior, leadingArm } from "../server/bandit.ts";
 import { trimFreeTTSWatermark } from "../server/ttsTrim.ts";
 import { wantsArtifactTools } from "../server/claude.ts";
-import { rankVoices, cloudChunks, toSpeakableText } from "../client/voice/useSpeechSynthesis.ts";
-import { pcmToWav, leaksAnswer, scrubAnswerLeak, makeProblem as makeProblemLeak, makePracticeProblem as makePracticeLeak, wordWrapChunks, leaksAnyProblemAnswer, makeInteractiveEntry } from "../server/claude.ts";
+import { rankVoices, isMaleVoice, cloudChunks, toSpeakableText } from "../client/voice/useSpeechSynthesis.ts";
+import { traceLines, splitMergedSteps } from "../client/study/artifacts/BoardArtifact.tsx";
+import { pcmToWav, leaksAnswer, scrubAnswerLeak, makeProblem as makeProblemLeak, makePracticeProblem as makePracticeLeak, wordWrapChunks, leaksAnyProblemAnswer, makeInteractiveEntry, stripId3v2, stripId3v1 } from "../server/claude.ts";
 import { lastMessageKey } from "../client/voice/replyKey.ts";
 import { subjectMastery } from "../shared/types.ts";
 import { COURSES, findCourse, normText, subjectMatches, matchesUnit, unitMastery, courseProgress, nextUnitToWork, masteryBand, UNIT_MASTERED_AT, orderCoursesForProfile, normalizeEnrolledCourses, unitObjectives } from "../shared/courses.ts";
@@ -41,6 +42,31 @@ section("Board = the reasoning, not a transcript (source pins)");
   check("a corrective round asks the tutor (not the app) to write the reasoning + helpful formula when a step produced no board write", /reasoningNudgeDone = true/.test(src) && /call WRITE_TO_BOARD ONCE: kind \\"summary\\"/.test(src) && /isSubstantiveStep\(message\)/.test(src));
   check("persona asks for the move + why + result in its own words and forbids quoting the chat", /THE BOARD IS THE WORKING — THE REASONING, NOT A TRANSCRIPT/.test(src) && /NEVER copy what the student typed/.test(src));
 }
+section("Board reasoning trace — one move per rendered line, even when the model merges two steps (unit tests)");
+{
+  // Reported live (screenshot): a summary line came out as "5. ○ 6. collect → 3sec²x − 17sec x − 28 = 0" and
+  // the board rendered step 5 whose TEXT read "○ 6 collect → …" — a stray bullet glyph and a second step
+  // number inside one step. The trace is numbered by the board itself, so both are noise; a merged pair of
+  // moves is a broken-looking board.
+  check("a merged pair of numbered steps collapses to the one move that had content", traceLines("5. ○ 6. collect → 3sec²x − 17sec x − 28 = 0").join("|") === "collect → 3sec²x − 17sec x − 28 = 0");
+  check("a step decorated with a bullet glyph loses the glyph", traceLines("○ 6. collect → 3sec²x = 0").join("|") === "collect → 3sec²x = 0");
+  check("a glyph that follows the marker is stripped too (\"6. ○ x\" → \"x\"), not left as the step's text", traceLines("6. ○ collect → 3sec²x = 0").join("|") === "collect → 3sec²x = 0");
+  check("two full steps on one line are split into two, in order", traceLines("3. ×3: 3sec²x − 3 = 8sec x\n4. collect → 3u² − 17u − 28 = 0").length === 2);
+  check("a genuine two-step line is split properly: \"4. ×3: … 5. collect → …\"", traceLines("4. ×3: 3sec²x − 3 = 8sec x 5. collect → 3u² − 17u − 28 = 0").join("|") === "×3: 3sec²x − 3 = 8sec x|collect → 3u² − 17u − 28 = 0");
+  // The split must not be trigger-happy: a "2)" that is part of the sentence is NOT a new step, and a jump
+  // in numbering is not a continuation either.
+  check("a bracketed number inside prose is left alone", traceLines("4. divide by 2) then add 1").join("|") === "divide by 2) then add 1");
+  check("a number that does NOT continue the line's own sequence is left alone", traceLines("1. use step 7. skip ahead").join("|") === "use step 7. skip ahead");
+  check("dash lines (the documented summary format) still render one move each", traceLines("- isolated x on one side\n- sign flips when dividing\n- checked by substituting back").length === 3);
+  check("the model's own header line never counts as step one", traceLines("How you got there:\n- a\n- b").join("|") === "a|b");
+  check("blank lines and marker-only lines never render as an empty step", traceLines("1. a\n2. \n3. \n\n4. d").join("|") === "a|d");
+  check("splitMergedSteps is a pure function the renderer can rely on", Array.isArray(splitMergedSteps("1. a")) && splitMergedSteps("plain prose").length === 1);
+  const boardSrc = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  check("the renderer draws the numbering itself and no longer pastes the model's glyph into the step text", /<ol className="sm-board-trace-list">/.test(boardSrc) && /piece\.replace\(LEAD_DECOR_RE, ""\)\.replace\(LEAD_MARKER_RE, ""\)\.replace\(LEAD_DECOR_RE, ""\)/.test(boardSrc));
+  const claudeTrace = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("the prompt tells the model to write ONE move per line with no step number or bullet inside it", claudeTrace.includes("ONE MOVE PER LINE — the trace is numbered for you") && claudeTrace.includes("never put TWO moves on one line"));
+}
+
 section("Tutor stage — End session always ends; the stage is screen-height with ONE scroller the ink lives on (source pins)");
 {
   const tut = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
@@ -1656,6 +1682,28 @@ section("shouldNudgeBoardWrite — a confirmed student math step must land on th
   // round, latched, feeding the model back its own reply so the write actually happens mid-turn.
   check("the nudge is a ONE-SHOT corrective round inside the tool loop", /boardNudgeDone = false;/.test(claudeSrc5) && /!boardNudgeDone && !lastRound && shouldNudgeBoardWrite\(textContent, message, result\.board\.length > 0\)/.test(claudeSrc5) && /boardNudgeDone = true;/.test(claudeSrc5));
   check("the prompt names the confirmation moment as a board moment", /"YES — EXACTLY THAT" IS A BOARD MOMENT TOO/.test(claudeSrc5));
+  // A SECOND, distinct miss: the tutor's own reply carries real math while the board is still EMPTY. Nothing
+  // caught that before — shouldNudgeBoardWrite needs a confirmation and nudgeReasoning needed a
+  // student-contributed step — so a session could talk math for several turns with an empty board.
+  check("real math in the reply with an EMPTY board is its own nudge trigger", shouldNudgeBoardContent("Let's use F_net = mg sin25 − mg cos25·tan20 first.", true, false) && shouldNudgeBoardContent("sin²θ + cos²θ = 1 is the formula in play.", true, false));
+  check("that trigger can never nag mid-session: anything already on the board disables it", !shouldNudgeBoardContent("F_net = mg sin25", false, false));
+  check("and it never fires when the turn already wrote", !shouldNudgeBoardContent("F_net = mg sin25", true, true));
+  check("a content-free reply (just the next question) does not trigger it", !shouldNudgeBoardContent("What do you notice about the two angles here?", true, false));
+  check("mathInPlay is the shared, single definition of board-worthy math", mathInPlay("x = 2") && mathInPlay("the formula for the area") && !mathInPlay("the author uses irony throughout"));
+  check("an empty board with math in the reply gets a corrective round (not just a student step)", /shouldNudgeBoardContent\(draft, true, false\)/.test(claudeSrc5) && /studentStep \|\| contentMissedBoard/.test(claudeSrc5));
+}
+
+section("Board usage — the 'use the board' guidance is UNCONDITIONAL (it used to require a non-empty board, source pins)");
+{
+  // Reported live: "the tutor is not using the board enough". One structural cause: the whole BOARD
+  // INTEGRATION block was gated on the board already having something on it, so a FRESH session — the exact
+  // moment the board should start filling up — received no instruction to use it at all.
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const block = src.slice(src.indexOf("const boardIntegrationBlock"), src.indexOf("const contextAwarenessBlock"));
+  check("BOARD INTEGRATION is built unconditionally, not behind (boardEntries.length || currentProblems.length)", !/^\s*const boardIntegrationBlock = \(boardEntries\.length \|\| currentProblems\.length\)/m.test(src) && block.includes("BOARD INTEGRATION — the board is the shared workspace"));
+  check("the empty-board case is called out explicitly, with what to put up first", block.includes("NOTHING IS ON THE BOARD YET") && block.includes('kind:"focus"'));
+  check("and it names the failure mode being corrected (explaining in chat instead of showing it)", block.includes("SHOW IT, DON'T JUST SAY IT") && block.includes("the commonest way the document ends up empty"));
+  check("it states the frequency expected: content-bearing turns normally END with one new entry", block.includes("HOW OFTEN") && block.includes("should normally END with ONE new board entry"));
 }
 
 section("Arithmetic ground truth — evaluator, claim extractor, CREATE_CALC (server/arithmetic.ts + claude.ts)");
@@ -1742,18 +1790,32 @@ section("isLikelyEcho — textual echo discrimination for real barge-in (client/
   // The per-task chat got the same treatment: interruptible everywhere, not just in Tutor Session.
   check("TaskChat is interruptible too (stateful echo filter, mic never paused during TTS)", /echoFilterRef\.current\.isEcho\(text\)/.test(taskCardSrc) && !/wasSpeakingRef/.test(taskCardSrc));
 
-  // Voice pipeline (server/index.ts /api/tts): Gemini neural TTS on the existing GEMINI_API_KEY (replaced
-  // FreeTTS, whose vendor path was the flakiest part of voice), with a second free/keyless provider tried
-  // before ever giving up (see the section below). Language comes from the text itself for Gemini; the
-  // fallback provider needs it explicitly for voice selection. Fail-loud in logs, fail-open to the client.
+  // Voice pipeline (server/index.ts /api/tts → server/claude.ts synthesizeSpeech). Three direct asks, in
+  // order: don't use Gemini TTS; use a FREE TTS API; never fall back to a female voice — "even if it fails,
+  // use another free male voice". So the whole old chain is gone: Gemini TTS (removed on request),
+  // StreamElements (dead — 401 "No API key was found" on every request, verified live) and Google
+  // Translate's translate_tts (its only voice is FEMALE, which is precisely what was forbidden). What
+  // remains is ONE free, keyless endpoint (ttsmp3.com's public form) driven by a pool of real Polly MALE
+  // voice names. A failed voice retries the NEXT male voice; there is no female tier to fall to at all.
   const serverSrc = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
-  const ttsBody = serverSrc.slice(serverSrc.indexOf('app.post("/api/tts"'), serverSrc.indexOf('app.post("/api/tts"') + 2200);
+  const ttsBody = serverSrc.slice(serverSrc.indexOf('app.post("/api/tts"'), serverSrc.indexOf('app.post("/api/tts"') + 2600);
+  const claudeSrc = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const ttsFn = claudeSrc.slice(claudeSrc.indexOf("export async function synthesizeSpeech"), claudeSrc.indexOf("export function wordWrapChunks"));
   check("TTS route is authenticated and rate-limited", /app\.post\("\/api\/tts", requireAuth, rateLimit\(/.test(serverSrc));
-  check("TTS route uses the Gemini-led race (synthesizeSpeechRace), not the old FreeTTS vendor", /synthesizeSpeechRace\(/.test(ttsBody) && !/freetts\.org/.test(serverSrc));
-  check("an unconfigured deployment skips straight to the free tiers instead of failing immediately", /using the free tiers directly/.test(readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8")));
-  check("an upstream failure of ALL THREE providers is a clean 502/429 with a bilingual message", /Échec de la génération vocale/.test(ttsBody));
-  check("the route serves playable audio with the winning provider's mime type (WAV or MP3), never cached", /out\.mime/.test(ttsBody) && /no-store/.test(ttsBody));
-  check("request text is capped server-side", /text\.slice\(0, 1000\)/.test(ttsBody));
+  check("TTS route calls synthesizeSpeech (the male-only pool) with the request-size bound, not the old race", /synthesizeSpeech\(text\.slice\(0, TTS_MAX_TEXT\), lang\)/.test(ttsBody));
+  check("Gemini TTS, the old synthesis race, StreamElements and Google Translate TTS are gone entirely", !/GEMINI_TTS|synthesizeSpeechRace|geminiDownUntil|callGeminiTts/.test(claudeSrc + serverSrc) && !/api\.streamelements\.com|translate\.google\.com|freetts\.org/.test(claudeSrc + serverSrc) && !/synthesizeSpeechFallback|synthesizeSpeechGoogleTranslate/.test(claudeSrc));
+  check("the voice pool is a free, keyless, MALE-ONLY list with more than one fallback voice per language", /const TTS_MALE_VOICES: Record<"fr" \| "en", string\[\]> = \{\s*fr: \["Mathieu"\],\s*en: \["Matthew", "Brian", "Joey", "Justin", "Russell"\],\s*\};/.test(claudeSrc));
+  check("no known FEMALE voice name appears anywhere in the server's TTS voices", !/Chantal|Gabrielle|Celine|Céline|Joanna|Salli|Kimberly|Samantha|Amelie|Amélie/.test(claudeSrc));
+  check("the pool is tried IN ORDER per chunk and a failure moves to the next male voice", /for \(let i = 0; i < voices\.length && !done; i\+\+\)/.test(ttsFn) && /trying the next male voice/.test(ttsFn));
+  check("if no male voice can speak a chunk the whole reply fails loudly instead of serving half of it", /if \(!done\) return last;/.test(ttsFn) && /every male voice failed/.test(ttsBody));
+  check("voice is always available — free + keyless means there is nothing to configure", /export function ttsReady\(\): boolean \{\s*return true;\s*\}/.test(claudeSrc));
+  check("long replies are CHUNKED at the provider's own safe size, never truncated", /wordWrapChunks\(text, TTS_CHUNK_MAX\)/.test(ttsFn) && /const TTS_CHUNK_MAX = 900;/.test(claudeSrc));
+  // Comments in this region deliberately QUOTE the removed `text.slice(0, 1000)` to explain the bug, so the
+  // pin runs against executable lines only.
+  const ttsCode = ttsBody.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+  check("the 1000-char reply truncation is gone — the route bounds the REQUEST, it doesn't slice the content", !/text\.slice\(0, 1000\)/.test(ttsCode) && /TTS_MAX_TEXT = 4000/.test(claudeSrc));
+  check("an upstream failure is a clean 502/429 with a bilingual message", /Échec de la génération vocale/.test(ttsBody));
+  check("the route serves playable audio with the winning provider's mime type, never cached", /out\.mime/.test(ttsBody) && /no-store/.test(ttsBody));
   // And exercised, not just pinned: synthetic MPEG2 Layer III streams (FreeTTS's own format:
   // 24 kHz ⇒ 576-sample ≈ 24 ms frames, 144-byte @ 48 kbps) verify the splice math. Real probed
   // vendor files cut 10.89s→7.51s and 9.83s→6.45s, dead-center of the safe window below.
@@ -2107,8 +2169,8 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   check("the cloud voice goes through api.ttsAudio (CSRF-safe req(), never a bare fetch)", /api\.ttsAudio\(/.test(ttsSynthSrc) && !/fetch\("\/api\/tts"/.test(ttsSynthSrc));
   check("a slow cloud voice times out rather than leaving the student waiting forever", /AbortSignal\.timeout\(CLOUD_FETCH_TIMEOUT_MS\)/.test(ttsSynthSrc));
   // Direct request: "dont ever revert to browser" — a failed cloud fetch/playback must NEVER fall through
-  // to speechSynthesis (the whole three-tier server chain already tried Gemini, StreamElements, and Google
-  // Translate by the time this throws). One quick client-side retry absorbs a transient blip; past that,
+  // to speechSynthesis (the server has already walked its whole male-voice pool by the time this throws).
+  // One quick client-side retry absorbs a transient blip; past that,
   // the reply's audio is silently skipped (lastDiagnostic set) rather than switching voices mid-session.
   check("a cloud chunk gets exactly one quick retry before being given up on", /CLOUD_RETRY_DELAY_MS/.test(ttsSynthSrc) && /await sleep\(CLOUD_RETRY_DELAY_MS\)/.test(ttsSynthSrc));
   check("a cloud fetch failure never falls through to the browser voice — it's skipped silently instead", !/noteCloudFailure/.test(ttsSynthSrc) && !/speakWithBrowser\(gen, chunks/.test(ttsSynthSrc) && /skipping this reply's audio \(never the browser voice\)/.test(ttsSynthSrc));
@@ -4119,20 +4181,24 @@ section("useThinkingWord — time-banded wording so a long wait stops implying '
   check("returns null while inactive, same as before (callers rely on this)", /if \(!active\) return null;/.test(hookFn));
 }
 
-section("TTS rewrite — voice ranking prefers on-device voices (rankVoices unit tests)");
+section("TTS — the browser voice list is MALE-ONLY BY POSITIVE MATCH (isMaleVoice/rankVoices unit tests)");
 {
   // Reported live (repeatedly): voice mode stays on "Listening", never "Otto is speaking", even with a reply.
   // Root causes in the old hook: it RANKED Chrome's network "Google …" voices first (they fail silently and
   // cut out after ~15s), and on any utterance error it skipped to the next sentence — a failing voice
   // drained the whole reply in milliseconds, so `speaking` only flickered and nothing was ever heard.
+  // On top of that, the Web Speech API exposes NO gender field, so "never a female voice" has to be decided
+  // from the NAME — and it is decided POSITIVELY: a voice must be identifiable as male to be usable at all.
   const v = (name, lang, localService, voiceURI = name) => ({ name, lang, localService, voiceURI });
-  const voices = [v("Google français", "fr-FR", false), v("Thomas", "fr-FR", true), v("Amélie", "fr-CA", true), v("Samantha", "en-US", true), v("Google US English", "en-US", false)];
-  check("an on-device exact-language voice beats Chrome's network 'Google' voice", rankVoices(voices, "fr-FR")[0].name === "Thomas");
-  check("an on-device same-base-language voice still beats a network exact-language voice", rankVoices([v("Google français", "fr-FR", false), v("Amélie", "fr-CA", true)], "fr-FR")[0].name === "Amélie");
-  check("a network voice is still used when it's the ONLY voice for the language", rankVoices([v("Google français", "fr-FR", false), v("Samantha", "en-US", true)], "fr-FR")[0].name === "Google français");
+  const voices = [v("Google français", "fr-FR", false), v("Matthieu", "fr-FR", true), v("Amélie", "fr-CA", true), v("Samantha", "en-US", true), v("Google US English", "en-US", false)];
+  check("a name from the MALE list is male; a name from the FEMALE list never is", ["Thomas", "Henri", "Matthieu", "David", "Google UK English Male"].every(isMaleVoice) && ["Amélie", "Samantha", "Chantal", "Google français", "Google US English", "Zira"].every((n) => !isMaleVoice(n)));
+  check("an unknown/blank name is NOT male — silence beats guessing wrong and getting a woman's voice", !isMaleVoice("") && !isMaleVoice("Voice 7") && !isMaleVoice("   "));
+  check("an on-device exact-language MALE voice beats Chrome's network 'Google' (female) voice", rankVoices(voices, "fr-FR")[0].name === "Matthieu");
+  check("EVERY returned voice is male, and a list with only female voices yields nothing at all", rankVoices(voices, "fr-FR").length > 0 && rankVoices(voices, "fr-FR").every((x) => isMaleVoice(x.name)) && rankVoices([v("Amélie", "fr-FR", true), v("Samantha", "fr-FR", true)], "fr-FR").length === 0);
+  check("a MALE network voice is still used when it's the only male voice for the language", rankVoices([v("Google UK English Male", "en-GB", false), v("Samantha", "en-GB", true)], "en-GB")[0].name === "Google UK English Male");
   check("wrong-language voices are never returned", rankVoices([v("Samantha", "en-US", true)], "fr-FR").length === 0);
-  check("a voice that already failed this session is excluded from the ranking", rankVoices(voices, "fr-FR", new Set(["Thomas"]))[0].name === "Amélie");
-  check("an underscore-style lang tag (fr_FR, some Android builds) still matches", rankVoices([v("Local", "fr_FR", true)], "fr-FR").length === 1);
+  check("a voice that already failed this session is excluded from the ranking", rankVoices([v("Matthieu", "fr-FR", true), v("Henri", "fr-FR", true), v("Amélie", "fr-FR", true)], "fr-FR", new Set(["Matthieu"]))[0].name === "Henri");
+  check("an underscore-style lang tag (fr_FR, some Android builds) still matches", rankVoices([v("Matthieu", "fr_FR", true)], "fr-FR").length === 1);
 }
 
 section("TTS rewrite — invariants: no silent drain, no stuck 'speaking', no stale callbacks, never left paused (source pins)");
@@ -4144,7 +4210,14 @@ section("TTS rewrite — invariants: no silent drain, no stuck 'speaking', no st
   check("the diagnostic is bilingual (follows the speech language, no FR/EN mixing)", /`Speech playback failed \(\$\{reason\}\)/.test(tts));
   check("a normal successful speak never sets a diagnostic (no happy-path noise)", !/Using this browser's built-in speech/.test(tts));
   check("every chunk has a START timeout (dropped utterance → retry, never hangs)", /setTimeout\(\(\) => settle\(true, "never-started"\), START_TIMEOUT_MS\)/.test(tts));
-  check("every started chunk has a RUN ceiling (onend never arriving can't leave speaking stuck true)", /runTimeoutMs\(item\.text\)/.test(tts) && /settle\(false, "timeout"\)/.test(tts));
+  check("every started BROWSER chunk has a RUN ceiling (onend never arriving can't leave speaking stuck true)", /browserRunTimeoutMs\(item\.text\)/.test(tts) && /settle\(false, "timeout"\)/.test(tts));
+  // The other half of "all voices cut off early": cloud playback used to be cut off by that same
+  // text-length GUESS at how long the speech ought to take (~110ms/char), which pauses, emphasis or just a
+  // slower voice legitimately exceed — so it PAUSED the element mid-sentence. Playback is now bounded by
+  // PROGRESS (a stall detector) plus a generous absolute ceiling, neither of which can fire during healthy
+  // playback. The old guess must not come back.
+  check("cloud playback is never cut off by a text-length duration guess — only by a stall or the backstop", !/runTimeoutMs\(/.test(tts.replace(/browserRunTimeoutMs/g, "X")) && /PLAY_STALL_MS = 10_000/.test(tts) && /PLAY_CEILING_MS = 15 \* 60_000/.test(tts) && /ontimeupdate/.test(tts));
+  check("the stall detector only fires when there is genuinely no progress, and it resets on progress", /lastProgressAt = Date\.now\(\)/.test(tts) && /Date\.now\(\) - lastProgressAt < PLAY_STALL_MS/.test(tts));
   check("settle() is idempotent — onend/onerror/timeouts can't double-advance the queue", /if \(settled\) return;\s*\n\s*settled = true;/.test(tts));
   check("speak() and cancel() bump the generation; handlers check it before acting", /const gen = \+\+genRef\.current;/.test(tts) && /genRef\.current\+\+;/.test(tts) && /if \(genRef\.current !== gen\) return;/.test(tts));
   check("a paused engine is resumed before speaking (a paused engine queues silently forever)", /if \(engine\.paused\) engine\.resume\(\);/.test(tts));
@@ -4183,35 +4256,72 @@ section("TTS 'never works again' — speak trigger keyed on the newest message, 
   }
 }
 
-section("Gemini voice — WAV wrapping + fluid chunking (unit tests)");
+section("TTS — WAV wrapping + fluid chunking (unit tests)");
 {
-  // Gemini TTS returns bare 24 kHz 16-bit mono PCM; an <audio> element needs a real WAV container.
+  // pcmToWav stays exported and tested: it is the one place a bare PCM buffer becomes playable audio, and it
+  // was already needed once when a provider returned headerless PCM. The free provider today returns real
+  // MP3s, so this is insurance rather than a live path — cheap to keep honest.
   const pcm = Buffer.alloc(4800);
   const wav = pcmToWav(pcm, 24000);
   check("WAV = 44-byte header + the PCM payload", wav.length === 44 + pcm.length);
   check("RIFF/WAVE/fmt/data markers are in place", wav.toString("ascii", 0, 4) === "RIFF" && wav.toString("ascii", 8, 12) === "WAVE" && wav.toString("ascii", 12, 16) === "fmt " && wav.toString("ascii", 36, 40) === "data");
   check("sample rate, PCM format and data length are written correctly", wav.readUInt32LE(24) === 24000 && wav.readUInt16LE(20) === 1 && wav.readUInt32LE(40) === pcm.length && wav.readUInt32LE(4) === 36 + pcm.length);
-  // Chunking: AS FEW REQUESTS AS POSSIBLE per reply — reported live, Gemini's TTS preview model hit its
-  // own per-minute quota (429) during an ordinary conversation, and the old "first sentence alone, then
-  // the rest" split sent 2 calls per reply, burning quota twice as fast for no benefit once rate-limited.
+  // Chunking: AS FEW REQUESTS AS POSSIBLE per reply — the free provider refuses an over-long synthesis
+  // outright ("Usage Limit exceeded" at ~1500 characters, verified live), and a chunk that trips that
+  // ceiling loses the REST of the reply's audio, which is exactly the "voice cuts off early" symptom.
   // Joined text is also what makes the neural voice sound fluid (a request per sentence resets intonation
   // at every period).
   check("a one-sentence reply is one chunk", cloudChunks(["Bonjour."]).length === 1);
-  check("an ordinary multi-sentence reply is ONE chunk now (was 2 requests before this fix)", cloudChunks(["A.", "B.", "C."]).length === 1 && cloudChunks(["A.", "B.", "C."])[0] === "A. B. C.");
-  const long = Array.from({ length: 12 }, (_, i) => `Sentence number ${i} is here and is moderately long.`);
+  check("an ordinary multi-sentence reply is ONE chunk (not one request per sentence)", cloudChunks(["A.", "B.", "C."]).length === 1 && cloudChunks(["A.", "B.", "C."])[0] === "A. B. C.");
+  const long = Array.from({ length: 40 }, (_, i) => `Sentence number ${i} is here and is moderately long.`);
   const chunks = cloudChunks(long);
-  check("only a genuinely long reply splits at all, into ~1800-char chunks, nothing lost", chunks.every((c) => c.length <= 1800) && chunks.join(" ") === long.join(" "));
+  check("only a genuinely long reply splits at all, into provider-safe ~900-char chunks, nothing lost", chunks.length > 1 && chunks.every((c) => c.length <= 900) && chunks.join(" ") === long.join(" "));
   check("a long reply still splits into FEWER, bigger chunks than one-per-sentence would", chunks.length < long.length);
+  // The client's chunk size and the server's cap must agree: they drifted once (the client sent up to 1800
+  // characters and the server sliced at 1000), which is what silently truncated every long reply's audio.
+  const ttsChunkSrc = readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8");
+  check("the client asks for chunks at the provider-safe size, in lockstep with the server's cap", /const CLOUD_CHUNK_MAX_CHARS = 900;/.test(ttsChunkSrc) && /const TTS_CHUNK_MAX = 900;/.test(readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8")));
 }
 
-section("Gemini TTS gets one quick retry on a transient failure before falling to the next tier (source pins)");
+section("TTS — one free provider, a MALE-ONLY voice pool, retried voice-by-voice and chunk-by-chunk (source pins)");
 {
-  // Direct request: "make sure gemini always works" — most live Gemini TTS failures have been transient
-  // (429 quota, or a momentary 500/503), not real outages, so one quick retry absorbs them before this tier
-  // is counted as failed and the route moves on to StreamElements/Google Translate.
+  // Direct asks: use a FREE tts api, never a female voice, "even if it fails, use another free male voice".
+  // The server's synthesizeSpeech is the single place those three rules live, so pin the shape of it: a
+  // per-language pool of male voice names, one attempt per chunk per voice, and a hard stop (never a
+  // female voice, never a half-spoken reply) when the pool is exhausted.
   const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
-  check("500/503 are retried once; 429 is NOT (the circuit breaker + free tier handle quota), never a real 4xx like 400/401/404", /GEMINI_TTS_RETRY_STATUSES = new Set\(\[500, 503\]\)/.test(claude));
-  check("synthesizeSpeech actually retries via callGeminiTts before giving up", /const first = await callGeminiTts\(text, key\);/.test(claude) && /return callGeminiTts\(text, key\);/.test(claude));
+  const fn = claude.slice(claude.indexOf("export async function synthesizeSpeech"), claude.indexOf("export function wordWrapChunks"));
+  check("a free, keyless provider is used (its public form endpoint — no account, no API key)", /https:\/\/ttsmp3\.com\/makemp3_new\.php/.test(claude) && /source: "ttsmp3"/.test(claude));
+  check("the request looks like a browser (a bare server fetch is refused by these free endpoints)", /User-Agent": BROWSER_UA/.test(claude) && /Referer": "https:\/\/ttsmp3\.com\/"/.test(claude));
+  check("the voice name is sent in the field the endpoint actually reads", /lang: voice/.test(claude));
+  check("synthesizeSpeech speaks each chunk with the pool in order, one voice at a time (never in parallel)", /for \(const chunk of chunks\)/.test(fn) && /await synthesizeChunkWithVoice\(chunk, voices\[i\]\)/.test(fn));
+  check("a chunk the whole male pool refuses fails the reply loudly rather than returning partial audio", /if \(!done\) return last;/.test(fn));
+  check("no Gemini TTS key, model or voice constant survives anywhere in the server", !/GEMINI_TTS|callGeminiTts/.test(claude));
+
+  // ── Container tags: the provider tags EACH synthesis with its own ID3v2 header ────────────────────────
+  // Verified live on a 1350-character French reply: the second chunk's tag landed at byte 356,588 — exactly
+  // the first chunk's length — and an <audio> element that meets an ID3v2 header mid-file stops there. That
+  // is the "long replies cut off early" half of the voice reports (the server's 1000-char slice was the
+  // other half, and it only ever affected replies over 1000 characters — which is why short ones were fine).
+  const id3 = (size) => Buffer.concat([
+    Buffer.from([0x49, 0x44, 0x33, 4, 0, 0, (size >> 21) & 0x7f, (size >> 14) & 0x7f, (size >> 7) & 0x7f, size & 0x7f]),
+    Buffer.alloc(size, 0x11),
+  ]);
+  const frames = Buffer.alloc(300, 0xff);
+  check("a leading ID3v2 tag is stripped, leaving raw frames", stripId3v2(Buffer.concat([id3(40), frames])).length === 300 && stripId3v2(Buffer.concat([id3(40), frames]))[0] === 0xff);
+  check("an untagged MP3 is returned byte-for-byte", stripId3v2(frames).length === 300 && stripId3v1(frames).length === 300);
+  check("a tag whose declared size exceeds the buffer never eats the audio (returns it unchanged)", stripId3v2(id3(4000)).length === 4010);
+  check("a trailing ID3v1 tag ('TAG' + 125 bytes) is stripped too", stripId3v1(Buffer.concat([frames, Buffer.from("TAG"), Buffer.alloc(125, 0x22)])).length === 300);
+  check("the concatenation strips each later chunk's container tag (one continuous MPEG stream)", /const body = stripId3v1\(r\.mp3\);/.test(claude) && /parts\.push\(parts\.length === 0 \? body : stripId3v2\(body\)\);/.test(claude));
+
+  // ── The success signal: `success` is NOT always present ──────────────────────────────────────────────
+  // Probed live, same voice + same text one call apart: a FRESH synthesis carries "success":1, while a
+  // CACHE HIT answers {"Error":0,"Cached":1,"URL":"…"} with NO `success` field at all. And in tutoring the
+  // cached case is the common one — the same short acknowledgements get spoken turn after turn — so
+  // requiring `success` rejected every repeated phrase, walked the entire male pool and then failed the
+  // reply. The only signal that can be trusted is the presence of an audio URL.
+  check("success is judged by the AUDIO URL, not by a `success` field the cache-hit response omits", /const url = typeof json\?\.URL === "string" \? json\.URL : "";/.test(claude) && /if \(!url\) return \{ error: `voice \$\{voice\} rejected/.test(claude) && !/json\?\.success/.test(claude));
+  check("and the provider's own refusal wording still reaches the log line", /String\(json\?\.Error \?\? "no audio url"\)/.test(claude));
 }
 
 section("Answers are NEVER revealed — chat prompt and every practice-problem surface (source pins)");
@@ -4254,20 +4364,21 @@ section("Problem guidance never gives the answer away — format/hint 'e.g.' lea
   check("makePracticeProblem (journal): the leaking example is stripped", daily.problem && daily.problem.format === "a single number");
 }
 
-section("TTS never falls straight to the browser voice — two free cloud tiers tried server-side first (source pins)");
+section("TTS never falls straight to the browser voice — the free cloud voice is the only primary (source pins)");
 {
-  // Direct request: the browser's own speechSynthesis must never be the primary voice. /api/tts now tries
-  // Gemini, then a second free/keyless provider (StreamElements → real Amazon Polly voices) before ever
-  // returning an error that would make the client fall back to the browser voice.
+  // Direct request: the browser's own speechSynthesis must never be the primary voice. /api/tts answers from
+  // the free, keyless male-voice pool (see the pool section above); when it fails, the client plays NOTHING
+  // for that reply rather than substituting a browser voice.
   const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
-  check("a second, keyless TTS provider exists (StreamElements/Polly), not just Gemini", /export async function synthesizeSpeechFallback/.test(claude) && /api\.streamelements\.com\/kappa\/v2\/speech/.test(claude));
-  check("the fallback provider has real voices for both app languages (fr and en)", /STREAMELEMENTS_VOICE: Record<string, string> = \{ fr: "Mathieu", en: "Matthew" \};/.test(claude));
-  check("the fallback provider validates it actually got audio back, not an error page with a 200", /ct\.startsWith\("audio\/"\)/.test(claude));
+  check("the provider validates it actually got audio back, not an error page with a 200", /if \(!url\) return \{ error/.test(claude) && /if \(!res\.ok\) return \{ error/.test(claude) && /if \(!audio\.ok\)/.test(claude) && /if \(!mp3\.length\)/.test(claude));
+  check("the provider's own rejection wording is reported, so a log line names the real cause", /rejected: \$\{String\(json\?\.Error/.test(claude));
 
   const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
-  const ttsRoute = idx.slice(idx.indexOf('app.post("/api/tts"'), idx.indexOf('app.post("/api/tts"') + 1800);
-  check("one consistent voice: Gemini first, free tiers only after it fails, with a circuit breaker (no parallel calls)", /let geminiDownUntil = 0;/.test(claude) && /if \(Date\.now\(\) < geminiDownUntil\) return chain\(\);/.test(claude) && !/TTS_HEDGE_MS/.test(claude));
-  check("a reply is never split into several parallel voice requests (they trip Gemini's quota and change the voice mid-reply)", !/leadSplit/.test(readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8")));
+  const ttsRoute = idx.slice(idx.indexOf('app.post("/api/tts"'), idx.indexOf('app.post("/api/tts"') + 2600);
+  const ttsRegion = claude.slice(claude.indexOf("const TTS_MALE_VOICES"), claude.indexOf("export function wordWrapChunks"));
+  check("one consistent voice: ONE provider, one pool, no hedging/racing between voice tiers", !/TTS_HEDGE_MS|Promise\.race|geminiDownUntil/.test(ttsRegion));
+  check("a reply is never split into several parallel voice requests (they change the voice mid-reply)", !/leadSplit/.test(readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8")));
+  check("the route reports a real failure instead of serving empty/cached audio", /res\.status\(out\.status === 429 \? 429 : 502\)/.test(ttsRoute));
 }
 
 section("Clarity fixes — 'I'm not understanding' escalates, rephrasing isn't a different approach, explicit write-requests honored (source pins)");
@@ -4494,20 +4605,17 @@ section("Task detail view — removed the big bold current-step hero, 'To get st
   check("StepList (every step, current one included, with its own full controls) is untouched — nothing lost, just de-duplicated", /function StepList\(/.test(card) && /onStepDone\(i\)/.test(card));
 }
 
-section("TTS timeout retune — a slow Gemini must not abort the whole fallback chain before it gets to run (source pins)");
+section("TTS timeouts — a retry across the male pool must finish inside the client's own patience (source pins)");
 {
   // Reported live, with console logs: "signal timed out" twice in a row, then "skipping this reply's audio"
-  // — total silence on a reply. Root cause: the client's own fetch timeout (8s) was SHORTER than Gemini's
-  // own per-call timeout (15s) plus its one retry (another 15s) — the client gave up and aborted the whole
-  // /api/tts request before the server-side fallback chain (StreamElements, Google Translate) ever got a
-  // turn, since they're later steps in that SAME request. Fix: Gemini fails fast server-side (so the chain
-  // actually reaches the fallback tiers quickly), and the client's own timeout is long enough to let a
-  // realistic worst-case single-tier delay finish instead of cutting it off mid-flight.
+  // — total silence on a reply. Root cause: the client's own fetch timeout was SHORTER than the server-side
+  // work it was waiting for (one provider attempt, then the NEXT male voice in the pool), so the client gave
+  // up and aborted the whole /api/tts request mid-flight. Both sides now have a documented budget and the
+  // client's is strictly larger than the worst case one chunk can cost server-side.
   const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
-  check("Gemini's own per-call timeout is short enough to leave real time for the fallback tiers (was 15s)", /GEMINI_TTS_TIMEOUT_MS = 6_000/.test(claude));
-  check("StreamElements' timeout was also brought down from 15s for the same reason", /signal: AbortSignal\.timeout\(8_000\)/.test(claude));
   const ttsSynthSrc = readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8");
-  check("the client's fetch timeout now comfortably exceeds Gemini's worst case (7s + one 7s retry) plus a full StreamElements attempt", /CLOUD_FETCH_TIMEOUT_MS = 25_000/.test(ttsSynthSrc));
+  check("the provider call itself is bounded (a hung endpoint can't hold the reply hostage)", /const TTS_TIMEOUT_MS = 12_000;/.test(claude) && /signal: AbortSignal\.timeout\(TTS_TIMEOUT_MS\)/.test(claude));
+  check("the client's fetch timeout comfortably exceeds one provider attempt plus the next male voice's attempt", /CLOUD_FETCH_TIMEOUT_MS = 25_000/.test(ttsSynthSrc) && 25_000 > 2 * 12_000);
 }
 
 section("HINT LADDER — a conceptual carryover between parts must be asked, not asserted (source pin)");
@@ -4538,14 +4646,16 @@ section("WRITE_TO_BOARD must not get ahead of the chat — only record a step on
   check("it gives the concrete fix: ask the question first, write the entry after they answer", claude.includes("ask the question first and write the entry after they answer it"));
 }
 
-section("TTS voice — switched to a male voice on both cloud tiers, arrows read as a word (source pins)");
+section("TTS voice — MALE ONLY, and arrows read as a word (source pins)");
 {
-  // Direct request: "use a better male voice" — Gemini's default (Kore, Firm/female-leaning) and
-  // StreamElements' default (Joanna/Celine, both female) both switched to a male voice, so the tutor
-  // doesn't change gender mid-session if Gemini's quota is hit and the route falls to the next tier.
+  // Direct request, verbatim: "do not use a female voice; only use a male voice. Do not fall back to any
+  // female voice. Just use a male voice, even if it fails, use another free male voice." The pool below is
+  // every voice the tutor can ever sound like — so the pin is on the POOL's contents, not on one default.
   const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
-  check("Gemini's default voice is now Charon (male, Informative), not Kore", /GEMINI_TTS_VOICE \|\| "Charon"/.test(claude) && !/GEMINI_TTS_VOICE \|\| "Kore"/.test(claude));
-  check("StreamElements' fallback voices are also male (Mathieu/Matthew), not Celine/Joanna", /STREAMELEMENTS_VOICE: Record<string, string> = \{ fr: "Mathieu", en: "Matthew" \};/.test(claude));
+  const pool = claude.slice(claude.indexOf("const TTS_MALE_VOICES"), claude.indexOf("const TTS_CHUNK_MAX"));
+  const names = [...pool.matchAll(/"([A-Za-z]+)"/g)].map((m) => m[1]).filter((n) => !["fr", "en"].includes(n));
+  check("every voice in the pool is a MALE voice name, and there is a fallback voice in each language", names.includes("Mathieu") && names.includes("Matthew") && names.length >= 6 && !names.includes("Chantal") && !names.includes("Gabrielle"));
+  check("French has its own pool entry (never reusing an English voice for French text)", /fr: \["Mathieu"\]/.test(pool) && /en: \["Matthew"/.test(pool));
 
   // Direct request: "make sure here it doesn't say the arrow but replaces by word" — a worked-math arrow
   // ("t² = 9.18 → t = 3.03 s") either got read literally as "arrow" or mangled by the TTS engine.
@@ -4687,6 +4797,46 @@ section("Production readiness — the two CSP copies agree, and the Docker build
     };
     return walkDir("../server/") && walkDir("../client/");
   })());
+}
+
+section("No emoji in the rendered app — real icons (lucide-react) instead (repo-wide sweep)");
+{
+  // Direct request: "remove emojis if u can from app". Emoji have no fixed appearance — the same codepoint
+  // renders as a full-color image on one OS/browser and as a monochrome glyph (or a tofu box) on another,
+  // which is exactly why VoiceControls already switched the mic/speaker buttons to lucide icons. Anything
+  // with EMOJI PRESENTATION is now an icon; the app's own monochrome typographic vocabulary (✓ ✗ ✕ ○ ✦ ◎
+  // and the CSS ::before marks) is deliberately kept — those are plain text glyphs, not emoji.
+  const EMOJI_PRESENTATION = /[\u{1F000}-\u{1FAFF}\u{FE0F}\u{2049}\u{203C}\u{23E9}-\u{23FA}\u{25B6}\u{26A0}\u{2705}\u{270F}\u{274C}\u{27A1}\u{2B06}\u{2B07}\u{1F004}]/u;
+  const offenders = [];
+  const walk = (dir) => {
+    for (const e of readdirSync(new URL(dir, import.meta.url), { withFileTypes: true })) {
+      if (e.isDirectory()) { if (!/node_modules|dist|\.git/.test(e.name)) walk(`${dir}${e.name}/`); continue; }
+      if (!/\.(tsx?|css|html)$/.test(e.name)) continue;
+      // Comments are exempt on purpose: they document WHY an emoji was removed ("a 📝/🗂️/✅ renders
+      // differently per platform"), and no comment is ever rendered to the student.
+      const src = readFileSync(new URL(`${dir}${e.name}`, import.meta.url), "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .split("\n").map((l) => l.replace(/\/\/.*$/, "")).join("\n");
+      src.split("\n").forEach((l, i) => { if (EMOJI_PRESENTATION.test(l)) offenders.push(`${dir}${e.name}:${i + 1}`); });
+    }
+  };
+  walk("../client/");
+  walk("../server/");
+  walk("../shared/");
+  check(`no emoji-presentation character is left in any rendered client/server source (found: ${offenders.slice(0, 6).join(", ") || "none"})`, offenders.length === 0);
+  // And the replacements are real icons, not a different glyph font: the components that used to render emoji
+  // now import from lucide-react (the project's established icon library).
+  for (const [file, icons] of [
+    ["../client/study/AskOttoPanel.tsx", ["Paperclip", "TriangleAlert", "Volume2", "StickyNote"]],
+    ["../client/tutor/TutorSession.tsx", ["ArrowRight", "TrendingUp", "RotateCcw", "MessageCircle", "Lightbulb", "CircleHelp"]],
+    ["../client/study/FocusTracker.tsx", ["Target"]],
+    ["../client/study/SessionHeader.tsx", ["Timer"]],
+    ["../client/study/ToolsDrawer.tsx", ["StickyNote", "Quote", "PenLine"]],
+    ["../client/TaskCard.tsx", ["MessageCircle", "Layers"]],
+  ]) {
+    const src = readFileSync(new URL(file, import.meta.url), "utf8");
+    check(`${file.split("/").pop()} renders its former emoji as lucide icons (${icons.join(", ")})`, /from "lucide-react"/.test(src) && icons.every((i) => new RegExp(`\\b${i}\\b`).test(src)));
+  }
 }
 
 const { runTutorSim } = await import("./tutor-sim.mjs");

@@ -14,7 +14,7 @@ import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, Fo
 import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY, subjectMastery } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
 import { planMove, repairLine } from "./tutorAdapt.ts";
-import { summarizeCoursework, fallbackCourseworkSummary, aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto, ttsReady, synthesizeSpeechRace, interactiveSceneDocument, INTERACTIVE_SCENE_CSP } from "./claude.ts";
+import { summarizeCoursework, fallbackCourseworkSummary, aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto, ttsReady, synthesizeSpeech, TTS_MAX_TEXT, interactiveSceneDocument, INTERACTIVE_SCENE_CSP } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken, getAdminMetrics } from "./store.ts";
 import { sendTransactionalEmail } from "./mailer.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
@@ -3834,22 +3834,24 @@ app.post("/api/study/profile", requireAuth, async (req, res) => {
     res.status(500).json({ error: M(req, "Impossible d'enregistrer le profil d'étude.", "Couldn't save study profile.") }); }
 });
 
-// The tutor's spoken voice: Gemini TTS (see synthesizeSpeech in server/claude.ts). Called one chunk at a
-// time by client/voice/useSpeechSynthesis.ts, which falls back to the browser's own voice on ANY failure
-// here (501 unconfigured, upstream error, timeout) — so this route can fail loudly in the logs without ever
-// silencing Otto. Rate-limited generously: one reply is 1-3 chunks, and voice mode can go quickly.
+// The tutor's spoken voice (see synthesizeSpeech in server/claude.ts): a free, keyless, MALE-ONLY voice
+// pool. Called one chunk at a time by client/voice/useSpeechSynthesis.ts, which on failure plays NOTHING for
+// that reply rather than substituting a female/browser voice — a loud, honest failure is the intended
+// behavior here, so a failure is logged with the provider's own reason. Rate-limited generously: one reply
+// is 1-3 chunks, and voice mode can go quickly.
 app.post("/api/tts", requireAuth, rateLimit(120, 60_000), async (req, res) => {
   const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
   const lang = req.body?.lang === "fr" ? "fr" : "en";
   if (!text) { res.status(400).json({ error: M(req, "le texte est requis", "text is required") }); return; }
-  // Three free, keyless tiers before the client ever touches the browser's own voice (direct request:
-  // never use that as the primary experience): Gemini's neural voice, StreamElements (real Amazon Polly
-  // voices) and Google Translate's TTS endpoint (the gTTS library's, years in production). They are RACED, not
-  // chained (see synthesizeSpeechRace in server/claude.ts): Gemini goes first and wins when healthy, the free
-  // tiers start in parallel the moment it's slow or failing, so a bad Gemini call costs ~2s, not ~15s.
-  const out = await synthesizeSpeechRace(text.slice(0, 1000), lang);
+  // One free, keyless provider speaking from a MALE-ONLY voice pool (see synthesizeSpeech in
+  // server/claude.ts): no Gemini TTS, no female voice to fall back to, and a failure retries the next male
+  // voice rather than switching gender. Long text is CHUNKED by that function, never sliced — the old
+  // `text.slice(0, 1000)` here was silently cutting the tail off every reply longer than 1000 characters,
+  // which is what "all voices cut off early" actually was. TTS_MAX_TEXT bounds only how much text one
+  // request may carry (the client never sends more than it); it is not a content limit.
+  const out = await synthesizeSpeech(text.slice(0, TTS_MAX_TEXT), lang);
   if ("error" in out) {
-    console.error(`[tts] all three providers failed: ${out.error}`);
+    console.error(`[tts] every male voice failed: ${out.error}`);
     res.status(out.status === 429 ? 429 : 502).json({ error: M(req, "Échec de la génération vocale", "TTS generation failed") });
     return;
   }

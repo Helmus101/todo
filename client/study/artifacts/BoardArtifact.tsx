@@ -67,12 +67,54 @@ function isCompletionGap(text: string): boolean {
   return /\?\s*$/.test(last) && last.trim().length <= 40;
 }
 
+/** Decorative glyphs a model sometimes prefixes a step with ("○ 6. collect → …"). They carry no meaning at
+ *  all, and left in place they render as part of the step's own text. */
+const STEP_DECOR = "•·▪‣∙◦∘○●◯◆◇";
+const LEAD_DECOR_RE = new RegExp(`^[\\s${STEP_DECOR}\\-–—*]+`);
+/** The line's own list marker: "3. " / "10) ". */
+const LEAD_MARKER_RE = /^(\d{1,2})[.)]\s*/;
+
+/** ONE LINE, SEVERAL STEPS. The model intermittently packs two numbered moves onto a single line
+ *  ("5. ○ 6. collect → 3sec²x − 17sec x − 28 = 0"), and the board then rendered it as step 5 whose text read
+ *  "○ 6 collect → …" — a stray glyph and a second step number inside one step (reported live, with a
+ *  screenshot). Such a line is split at every embedded marker that CONTINUES the line's own numbering
+ *  (1,2,3…), which is what keeps a legitimate "2)" inside prose ("divide by 2) then…") from being torn into
+ *  a bogus step. Exported for unit tests. */
+export function splitMergedSteps(line: string): string[] {
+  const first = LEAD_MARKER_RE.exec(line.trimStart());
+  if (!first) return [line];
+  const body = line.trimStart().slice(first[0].length);
+  const pieces: string[] = [];
+  const boundary = new RegExp(`[\\s${STEP_DECOR}]+(?=\\d{1,2}[.)]\\s)`, "g");
+  let cursor = 0;
+  let expected = Number(first[1]) + 1;
+  for (let m = boundary.exec(body); m; m = boundary.exec(body)) {
+    const at = m.index + m[0].length;
+    const num = Number(/^(\d{1,2})/.exec(body.slice(at))?.[1]);
+    // Not the next step the model would be numbering → this is prose, leave it in place.
+    if (!(num >= expected && num <= expected + 2)) continue;
+    pieces.push(body.slice(cursor, m.index));
+    cursor = at;
+    expected = num + 1;
+  }
+  pieces.push(body.slice(cursor));
+  return pieces;
+}
+
+/** "How you got there", one step per rendered line. Exported for unit tests. */
 export function traceLines(text: string): string[] {
-  const lines = text.replace(/<br\s*\/?>/gi, "\n").replace(/<\/?[a-z][^>]*>/gi, "").split("\n")
-    // The model sometimes numbers its own lines ("1. …", "2) …") or adds a header — the board numbers
-    // the steps itself, so a pasted "1." would double up ("1. 1. …") and a header would count as step one.
-    .map((l) => l.replace(/^\s*(?:[-–—•*]|\d{1,2}[.)])\s*/, "").trim())
-    .filter(Boolean);
+  const rawLines = text.replace(/<br\s*\/?>/gi, "\n").replace(/<\/?[a-z][^>]*>/gi, "").split("\n");
+  const lines: string[] = [];
+  for (const raw of rawLines) {
+    // Peel the line's own marker AND any glyphs around it, from both ends of the marker: "○ 6. x" and
+    // "6. ○ x" are the same step written by a model that decorates and double-numbers freely.
+    for (const piece of splitMergedSteps(raw)) {
+      const cleaned = piece.replace(LEAD_DECOR_RE, "").replace(LEAD_MARKER_RE, "").replace(LEAD_DECOR_RE, "").trim();
+      if (cleaned) lines.push(cleaned);
+    }
+  }
+  // The model sometimes adds its own header (or a lead-in ending in a colon) — the board draws the
+  // heading itself, so that first line would otherwise count as step one.
   while (lines.length > 1 && (/^(how you got there|ton raisonnement)\b/i.test(lines[0]) || /:\s*$/.test(lines[0]))) lines.shift();
   return lines;
 }
