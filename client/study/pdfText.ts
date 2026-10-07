@@ -38,3 +38,26 @@ export async function extractPdfText(file: File | Blob): Promise<string> {
     return "";
   }
 }
+
+export interface ReadDocument { text: string; pages: number; totalPages?: number; truncated: boolean }
+
+/** Coursework reader: ONLY the first `maxPages` pages and at most `maxChars` characters of a PDF (a 200-page
+ *  textbook must never be read whole), reporting how much was read so the UI can say "first 6 of 24 pages".
+ *  Returns text "" when nothing readable was found (a scanned PDF with no text layer). Never throws. */
+export async function extractPdfTextLimited(file: File | Blob, maxPages: number, maxChars: number): Promise<ReadDocument> {
+  try {
+    const pdfjs = await getPdfjs();
+    const doc = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
+    let text = "", pages = 0;
+    for (let i = 1; i <= Math.min(doc.numPages, maxPages) && text.length < maxChars; i++) {
+      const page = await doc.getPage(i);
+      const content = await page.getTextContent();
+      text += content.items.map((it: any) => ("str" in it ? it.str : "")).join(" ") + "\n\n";
+      pages = i;
+    }
+    const clean = text.replace(/[ \t]+/g, " ").trim();
+    return { text: clean.slice(0, maxChars), pages, totalPages: doc.numPages, truncated: doc.numPages > pages || clean.length > maxChars };
+  } catch {
+    return { text: "", pages: 0, truncated: false };
+  }
+}

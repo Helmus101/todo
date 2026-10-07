@@ -6,6 +6,8 @@ import { App } from "./App.tsx";
 import "./styles.css";
 import "./tally.css";
 import "./lab.css";
+import "./coursework.css";
+import "./tour.css";
 
 // Same purpose as the server-side wiring in server/sentry.ts: production error visibility, currently
 // nonexistent on the client (a render crash or a rejected promise only ever reached the console — a real

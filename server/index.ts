@@ -1,3 +1,4 @@
+import { COURSEWORK_MAX_CHARS, COURSEWORK_MAX_DOCS, COURSEWORK_MAX_PAGES } from "../shared/coursework.ts";
 import "./env.ts"; // load web/.env + the repo-root .env (COMPOSIO_API_KEY etc.) — MUST be first
 import { initSentry, reportError } from "./sentry.ts";
 initSentry(); // before anything else can throw — no-op if SENTRY_DSN isn't set
@@ -8,10 +9,11 @@ import session from "express-session";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
+import type { CourseworkDoc } from "../shared/coursework.ts";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, FocusSession } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY, subjectMastery } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
-import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto, ttsReady, synthesizeSpeechRace, interactiveSceneDocument, INTERACTIVE_SCENE_CSP } from "./claude.ts";
+import { summarizeCoursework, fallbackCourseworkSummary, aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto, ttsReady, synthesizeSpeechRace, interactiveSceneDocument, INTERACTIVE_SCENE_CSP } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken, getAdminMetrics } from "./store.ts";
 import { sendTransactionalEmail } from "./mailer.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
@@ -1036,6 +1038,10 @@ app.get("/api/status", ah(async (req, res) => {
     language: req.session.profile?.language === "en" ? "en" : "fr",
     customTheme: req.session.profile?.customTheme,
     betaFeatures: !!req.session.profile?.betaFeatures,
+    // "Onboarded" = finished/skipped the basic flow, OR an account that clearly predates it (has a name, a track or
+    // tasks) — those are never put through name/track questions they've long answered. Page guides still run.
+    onboarded: !!req.session.profile?.onboardedAt || !!req.session.profile?.name || !!req.session.profile?.track || (req.session.tasks || []).length > 0,
+    toursSeen: req.session.profile?.toursSeen,
   };
   // Hand the CSRF synchronizer token to the client here — this is the ONE place it's ever transmitted (see
   // requireAuth's own comment). Generated lazily so an already-logged-in session picks one up on its next
@@ -3262,6 +3268,107 @@ app.post("/api/profile/exam", requireAuth, ah(async (req, res) => {
   await commit(req);
   res.json(p);
 }));
+// ── First-run tour ───────────────────────────────────────────────────────────────────────────────────────────
+// Stamped when the student finishes or skips the tour, server-side so it follows the account across devices
+// (a replay from Settings never needs this).
+app.post("/api/profile/onboarded", requireAuth, ah(async (req, res) => {
+  const p = (req.session.profile ||= emptyProfile());
+  if (!p.onboardedAt) p.onboardedAt = new Date().toISOString();
+  await commit(req);
+  res.json({ ok: true });
+}));
+
+// A page guide was shown (or skipped): remember it on the account so it never repeats, on any device.
+app.post("/api/profile/tour-seen", requireAuth, ah(async (req, res) => {
+  const id = String(req.body?.id || "").replace(/[^a-z0-9-]/gi, "").slice(0, 40);
+  if (!id) { res.status(400).json({ error: M(req, "identifiant requis", "id required") }); return; }
+  const p = (req.session.profile ||= emptyProfile());
+  p.toursSeen = [...new Set([...(p.toursSeen || []), id])].slice(0, 40);
+  await commit(req);
+  res.json({ ok: true, toursSeen: p.toursSeen });
+}));
+// "Test onboarding" (Settings): forget the basic flow AND every page guide so the whole first-run experience replays.
+app.post("/api/profile/onboarding-reset", requireAuth, ah(async (req, res) => {
+  const p = (req.session.profile ||= emptyProfile());
+  p.toursSeen = [];
+  p.onboardedAt = undefined;
+  if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
+  await commit(req);
+  res.json({ ok: true });
+}));
+// The subjects the student takes (onboarding step) — ordered first wherever a subject is picked.
+app.post("/api/profile/subjects", requireAuth, ah(async (req, res) => {
+  const p = (req.session.profile ||= emptyProfile());
+  const list = Array.isArray(req.body?.subjects) ? req.body.subjects : [];
+  p.subjects = [...new Set<string>(list.map((s: unknown) => String(s).trim().slice(0, 60)).filter(Boolean))].slice(0, 14);
+  await commit(req);
+  res.json({ ok: true, subjects: p.subjects });
+}));
+
+// ── Coursework ───────────────────────────────────────────────────────────────────────────────────────────────
+// The browser extracts text from the FIRST few pages only (COURSEWORK_MAX_PAGES / COURSEWORK_MAX_CHARS, enforced
+// again here), the server distils it to a short summary + key points the tutor and chat can cite, and — when the
+// document itself sets work (a worksheet, an assignment brief) — proposes up to 3 tasks. The file itself is never
+// uploaded or stored; only the summary and a short excerpt are kept on the profile.
+app.post("/api/coursework", requireAuth, rateLimit(15, 60_000), ah(async (req, res) => {
+  const p = (req.session.profile ||= emptyProfile());
+  const subject = String(req.body?.subject || "").trim().slice(0, 60);
+  const name = String(req.body?.name || "").trim().replace(/\s+/g, " ").slice(0, 140);
+  const text = String(req.body?.text || "").replace(/\u0000/g, "").trim().slice(0, COURSEWORK_MAX_CHARS);
+  if (!subject || !name) { res.status(400).json({ error: M(req, "choisis une matière et un nom de document", "pick a subject and a document name") }); return; }
+  if (text.length < 40) { res.status(400).json({ error: M(req, "Je n'ai pas réussi à lire de texte dans ce document (scan sans texte ?).", "I couldn't read any text in that document (a scanned page with no text?).") }); return; }
+  if ((p.coursework || []).length >= COURSEWORK_MAX_DOCS) { res.status(400).json({ error: M(req, "Tu as atteint la limite de documents — supprime-en un d'abord.", "You've reached the document limit — remove one first.") }); return; }
+  const pages = Math.max(1, Math.min(COURSEWORK_MAX_PAGES, Math.round(Number(req.body?.pages) || 1)));
+  const totalPages = Number(req.body?.totalPages) > 0 ? Math.min(9999, Math.round(Number(req.body.totalPages))) : undefined;
+  const truncated = req.body?.truncated === true || (totalPages != null && totalPages > pages) || String(req.body?.text || "").length > COURSEWORK_MAX_CHARS;
+  const ready = aiReady() && !isPaused(req) && !overBudget(req);
+  const sum = ready ? await summarizeCoursework(subject, name, text, p).catch(() => null) : null;
+  if (sum) addUsage(p, sum.tokens, "other");
+  const id = randomUUID();
+  const doc: CourseworkDoc = {
+    id, subject, name,
+    summary: sum?.summary || fallbackCourseworkSummary(text),
+    keyPoints: sum?.keyPoints?.length ? sum.keyPoints : undefined,
+    excerpt: text.replace(/\s+/g, " ").slice(0, 1500),
+    pages, totalPages, truncated: truncated || undefined,
+    addedAt: new Date().toISOString(),
+  };
+  // Tasks only when the document itself sets work (the summarizer returns [] otherwise). Added like a manual
+  // task (same shape, idempotent clientId), tagged with the subject, then queued for planning when AI is ready.
+  const created: WebTask[] = [];
+  for (const [i, t] of (sum?.tasks || []).entries()) {
+    req.session.tasks = tasks.addManual(req.session.tasks || [], t.title, null, !ready, t.due, `cw:${id}:${i}`);
+    const added = req.session.tasks[0];
+    added.sourceSubject = subject;
+    if (t.why) added.why = t.why;
+    if (ready) added.status = "queued";
+    created.push(added);
+  }
+  if (created.length) doc.taskIds = created.map((t) => t.id);
+  p.coursework = [doc, ...(p.coursework || [])].slice(0, COURSEWORK_MAX_DOCS);
+  await saveSession(req);
+  if (created.length && req.session.user) {
+    const email = req.session.user;
+    try {
+      const current = await loadState(email);
+      await saveState(email, { profile: mergeProfiles(current.profile || emptyProfile(), p), tasks: mergeTasks(current.tasks || [], req.session.tasks || []) });
+    } catch { /* best-effort — the enqueue below merges on write too */ }
+    if (ready) for (const t of created) { try { await jobs.enqueueAndDrain(email, "execute_task", t.id, undefined, false); } catch { /* the kick loop / cron picks it up */ } }
+  }
+  await commit(req);
+  res.json({ doc, tasks: created.map((t) => ({ id: t.id, title: t.title })), profile: p, aiSummarized: !!sum });
+}));
+app.delete("/api/coursework/:id", requireAuth, async (req, res) => {
+  try {
+    const p = (req.session.profile ||= emptyProfile());
+    const id = decodeURIComponent(String(req.params.id || ""));
+    p.coursework = (p.coursework || []).filter((d) => d.id !== id);
+    if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
+    await commit(req);
+    res.json(p);
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de supprimer ce document — réessaie.", "Couldn't remove that document — try again.") }); }
+});
 // ── Focus Tracking ─────────────────────────────────────────────────────────────
 // Save a focus session from the camera artifact
 app.post("/api/focus/session", requireAuth, async (req, res) => {

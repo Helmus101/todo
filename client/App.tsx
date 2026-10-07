@@ -16,6 +16,10 @@ import { t } from "./i18n.ts";
 import { TaskCardRow, TaskFocus, TaskReadOnly } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
 import { TutorSession } from "./tutor/TutorSession.tsx";
+import { Coursework } from "./CourseworkPage.tsx";
+import { TourProvider, PageTour } from "./PageTour.tsx";
+import { TOURS } from "./tours.ts";
+import { COMMON_SUBJECTS } from "../shared/coursework.ts";
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
 import { 
   GraduationCap,
@@ -204,7 +208,7 @@ const CACHED_STATUS: ConnectionStatus | null = (() => {
  *  go, not just the server row. Module-level (not inside App()) so SettingsPage's own delete-account
  *  handler can call it too, without threading it through as a prop. */
 function clearAllLocalAccountData(userId: string | null): void {
-  try { ["otto-tasks", "weave-status", "otto-seen-tasks", "otto-lastgen", "otto-onboard", "otto-onboard-step", "otto-onboard-track"].forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
+  try { ["otto-tasks", "weave-status", "otto-seen-tasks", "otto-lastgen", "otto-onboard", "otto-onboard-step", "otto-onboard-track", "otto-tours-seen"].forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
   clearLocalDecks(userId);
   clearLocalQuizzes(userId);
   clearLocalChatBoard(userId);
@@ -467,6 +471,18 @@ export function App() {
   }, []);
   const dismissNote = useCallback(() => { if (noteTimer.current) clearTimeout(noteTimer.current); setNote(""); }, []);
   const [onboard, setOnboard] = useState(() => { try { return localStorage.getItem("otto-onboard") === "1"; } catch { return false; } });
+  // Page guides already shown (client/PageTour.tsx): cached locally for instant paint, merged with the account's
+  // server-side list so a guide never repeats on another device.
+  const [toursSeen, setToursSeen] = useState<Set<string>>(() => { try { return new Set<string>(JSON.parse(localStorage.getItem("otto-tours-seen") || "[]")); } catch { return new Set<string>(); } });
+  const markTourSeen = useCallback((id: string) => {
+    setToursSeen((prev) => {
+      if (prev.has(id)) return prev;
+      const n = new Set(prev); n.add(id);
+      try { localStorage.setItem("otto-tours-seen", JSON.stringify([...n])); } catch { /* best-effort */ }
+      return n;
+    });
+    void api.markTourSeen(id).catch(() => { /* best-effort — the local flag already stops a repeat on this device */ });
+  }, []);
   const [loadError, setLoadError] = useState(false); // backend unreachable after retries → show a retry screen
   const [reloadKey, setReloadKey] = useState(0);      // bump to re-attempt the status fetch
   const [seenTasks, setSeenTasks] = useState<Set<string>>(() => loadSeenTasks());
@@ -483,13 +499,33 @@ export function App() {
       setSeenTasks(new Set());
     }
   }, [status?.user]);
+  useEffect(() => {
+    const server = status?.toursSeen;
+    if (server?.length) setToursSeen((prev) => { const n = new Set([...prev, ...server]); return n.size === prev.size ? prev : n; });
+  }, [status?.toursSeen]);
   // AI budget (from the CLOUD-authoritative /api/usage) — drives the "budget reached" banner + renewal date,
   // so it reflects usage racked up by background jobs, not just this session.
   const [budget, setBudget] = useState<{ over: boolean; renewsOn: string } | null>(null);
   const loadBudget = useCallback(async () => { try { const u = await api.usage(); setBudget({ over: u.over, renewsOn: u.renewsOn }); } catch { /* keep last */ } }, []);
   // First-run onboarding is the ONE place Otto is explained — set on signup, cleared when the flow finishes.
   const startOnboard = () => { try { localStorage.setItem("otto-onboard", "1"); } catch { /* ignore */ } setOnboard(true); };
-  const finishOnboard = () => { try { localStorage.removeItem("otto-onboard"); localStorage.removeItem("otto-onboard-step"); localStorage.removeItem("otto-onboard-track"); } catch { /* ignore */ } setOnboard(false); };
+  const finishOnboard = () => {
+    try { localStorage.removeItem("otto-onboard"); localStorage.removeItem("otto-onboard-step"); localStorage.removeItem("otto-onboard-track"); } catch { /* ignore */ }
+    setOnboard(false);
+    // Finished OR skipped: remember it on the account so the basic flow doesn't come back on another device.
+    void api.markOnboarded().then(() => loadStatusRef.current()).catch(() => { /* best-effort */ });
+  };
+  // "Test onboarding" (Settings): forget the basic flow and every page guide, then replay from the top.
+  const replayOnboarding = async () => {
+    try { await api.resetOnboarding(); } catch { /* still replay locally */ }
+    try { localStorage.removeItem("otto-tours-seen"); localStorage.removeItem("otto-onboard-step"); } catch { /* ignore */ }
+    setToursSeen(new Set());
+    onboardTriggered.current = true;
+    navigate("tasks");
+    startOnboard();
+  };
+  const loadStatusRef = useRef<() => void>(() => {});
+  const onboardTriggered = useRef(false);
   const [showCompleted, setShowCompleted] = useState(false);
   const [showAllTasks, setShowAllTasks] = useState(false);
   // Study Mode state
@@ -518,6 +554,15 @@ export function App() {
     setStatus(next);
   }, []);
   const loadStatus = useCallback(async () => { try { applyStatus(await api.status()); } catch { /* keep last */ } }, [applyStatus]);
+  loadStatusRef.current = () => { void loadStatus(); };
+  // First open of a brand-new account that never saw (or finished) the basic flow — e.g. signed up in another
+  // tab, or closed it before finishing. Accounts that clearly predate it are marked onboarded server-side.
+  useEffect(() => {
+    if (!status?.loggedIn || status.onboarded !== false || onboardTriggered.current) return;
+    onboardTriggered.current = true;
+    startOnboard();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status?.loggedIn, status?.onboarded]);
 
   // Persist the signed-in state so a returning user skips the login flash (reconciled on next load).
   useEffect(() => {
@@ -1033,6 +1078,7 @@ export function App() {
   return (
     <LangContext.Provider value={status?.language === "en" ? "en" : "fr"}>
     <NotifyContext.Provider value={notify}>
+    <TourProvider seen={toursSeen} markSeen={markTourSeen} suppressed={onboard}>
     <div className="app">
       {/* Top nav — the prototype's single shell: lowercase "otto" wordmark left, plain text links right
           (Today/Tutor/Journal/Mistakes/Settings), active link in the orange. Replaces the old sidebar +
@@ -1061,6 +1107,12 @@ export function App() {
           >
             {en ? "Journal" : "Journal"}
           </a>
+          {!isPhone && <a
+            className={`topnav-link ${route === "coursework" ? "active" : ""}`}
+            href="/coursework"
+          >
+            {en ? "Coursework" : "Cours"}
+          </a>}
           {!isPhone && <a
             className={`topnav-link ${route === "errorlog" ? "active" : ""}`}
             href="/errorlog"
@@ -1101,9 +1153,15 @@ export function App() {
       )}
 
       {onboard && <Onboarding status={status} onStatus={loadStatus} onDone={finishOnboard} />}
+      {/* First visit to a page: an interactive guide pointing at the real controls (client/PageTour.tsx). */}
+      {(() => {
+        const id = route === "" || route === "tasks" ? "tasks" : route === "log" ? "journal" : route === "errorlog" ? "mistakes" : route === "coursework" ? "coursework" : route === "settings" ? "settings" : null;
+        if (!id || isPhone) return null;
+        return <PageTour key={id} id={id} steps={TOURS[id]} ready={!onboard} />;
+      })()}
 
       {route === "settings" ? (
-        <SettingsPage status={status} tasks={tasks} onSignOut={signOut} onChanged={loadStatus} onTasksChanged={setTasks} onStatusUpdate={loadStatus} />
+        <SettingsPage status={status} tasks={tasks} onSignOut={signOut} onChanged={loadStatus} onTasksChanged={setTasks} onStatusUpdate={loadStatus} onReplayOnboarding={replayOnboarding} />
       ) : route === "log" ? (
         <StudyLogPage lang={status?.language} tasks={tasks} status={status} phoneOnly={isPhone} />
       ) : route === "tutor" ? (
@@ -1112,6 +1170,8 @@ export function App() {
         <TutorSession userId={status?.user || null} onExit={() => navigate("tasks")} visionReady={!!status?.visionReady} sessionId={route.split("/")[3]} />
       ) : route === "study" ? (
         <StandaloneStudyEntry tasks={tasks} setTasks={setTasks} status={status} notify={notify} navigate={navigate} />
+      ) : route === "coursework" ? (
+        <Coursework onTasksChanged={() => { void api.tasks().then(setTasks).catch(() => {}); }} />
       ) : route === "errorlog" ? (
         <MistakeLogPage lang={status?.language} />
       ) : route === "admin" && isAdminUser(status?.user) ? (
@@ -1343,6 +1403,7 @@ export function App() {
       )}
       </div>
     </div>
+    </TourProvider>
     </NotifyContext.Provider>
     </LangContext.Provider>
   );
@@ -2716,7 +2777,7 @@ function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" | "en"; 
 /** The landing page (shown logged out at route /) — sharp, crisp positioning as a trusted decision engine. */
 /** The Settings PAGE (route /settings): account, ALL app connections (Composio — incl. Google), the
  *  person-profile editor, and exactly what Otto will/won't do. */
-function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onStatusUpdate }: { status: ConnectionStatus; tasks: WebTask[]; onSignOut: () => void; onChanged: () => void; onTasksChanged: (tasks: WebTask[]) => void; onStatusUpdate?: () => void }) {
+function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onStatusUpdate, onReplayOnboarding }: { status: ConnectionStatus; tasks: WebTask[]; onSignOut: () => void; onChanged: () => void; onTasksChanged: (tasks: WebTask[]) => void; onStatusUpdate?: () => void; onReplayOnboarding?: () => void }) {
   const L = useLang();
   const notify = useNotify();
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -2829,6 +2890,10 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
         </div>
         <div className="modal-row"><span className="lbl">{L("Confidentialité", "Privacy")}</span><span className="val">{L("Ton mot de passe Pronote est chiffré et jamais revendu. ", "Your Pronote password is encrypted and never resold. ")}<a href="/privacy">{L("Détails →", "Details →")}</a></span></div>
         <div className="modal-row"><span className="lbl">{L("Mentions légales", "Legal")}</span><span className="val"><a href="/privacy">{L("Confidentialité", "Privacy")}</a> · <a href="/terms">{L("CGU", "Terms")}</a></span></div>
+        <div className="modal-row" data-tour="replay-onboarding">
+          <span className="lbl">{L("Visite guidée", "Welcome tour")}</span>
+          <span className="val"><button type="button" className="btn xs ghost" onClick={() => onReplayOnboarding?.()}>{L("Tester l'onboarding", "Test onboarding")}</button></span>
+        </div>
         <div className="modal-row">
           <span className="lbl">{L("Tes données", "Your data")}</span>
           <span className="val"><a href={api.exportDataUrl()} download>{L("Télécharger mes données", "Download my data")}</a></span>
@@ -3224,7 +3289,7 @@ function GoogleTiles({ onChanged, restricted = true }: { onChanged?: () => void;
 // existed in the JSX below but nothing ever advanced to it — step 4's button called onDone directly, so
 // that screen was dead code: unreachable, and the progress dots undercounted by one. Fixed by actually
 // advancing through it instead of deleting it; it's a better finish than exiting straight from step 4.
-const OB_STEPS = 6;
+const OB_STEPS = 5;
 /** Otto Lycée v2: onboarding is SIX short steps — name → track+language → what Otto does → connect
  *  everything (Pronote + Google on ONE step) → one-screen feature tour with a direct start action → a final
  *  personalized "you're all set" closing screen. v1 ran 12 screens, most of
@@ -3288,6 +3353,31 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
   // Year level is no longer asked in onboarding: it was one more field on day one for optional context,
   // and the track pick already calibrates the AI vocabulary. It remains fully settable in Settings
   // (PreferencesFields.saveYearLevel), which is the right home for an optional detail.
+  // Year + subjects: the last things the basic flow collects (the page guides cover everything else).
+  const [year, setYear] = useState("");
+  const [subs, setSubs] = useState<string[]>([]);
+  // Prefill from what the account already has — matters for "Test onboarding" replays, where re-asking
+  // for what's already known (and showing empty fields) would look broken.
+  useEffect(() => {
+    let alive = true;
+    void api.profile().then((p) => {
+      if (!alive) return;
+      if (p.name) setName((n) => n || p.name!);
+      if (p.language === "en" || p.language === "fr") setLang(p.language);
+      if (p.track) setTrack(p.track);
+      if (p.yearLevel) setYear(p.yearLevel);
+      if (p.subjects?.length) setSubs(p.subjects);
+    }).catch(() => { /* a blank form is fine */ });
+    return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const saveYearSubjects = async () => {
+    try {
+      if (year.trim()) await api.setProfilePreference("yearLevel", year.trim());
+      await api.setSubjects(subs);
+    } catch { notify(L("Année/matières non enregistrées — tu peux les refaire dans Réglages.", "Year/subjects didn't save — you can set them later in Settings."), "error"); }
+    setStep(3);
+  };
   const saveName = async () => {
     const n = name.trim();
     if (n) { try { await api.setProfile("name", n); await onStatus(); } catch { notify(L("Prénom non enregistré — tu peux le refaire dans Réglages.", "Name didn't save — you can set it later in Settings."), "error"); } }
@@ -3365,16 +3455,24 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
 
         {step === 2 && (
           <div className="onboard-step">
-            <h2>{L("Comment Otto t'aide", "How Otto helps")}</h2>
-            <p className="onboard-lead">{L("Chaque matin, Otto transforme tes devoirs et échéances en un plan clair pour aujourd'hui.", "Every morning, Otto turns your homework and deadlines into a clear plan for today.")}</p>
-            <div className="ob-states">
-              <div className="ob-state"><span className="ob-dot done" /><div><b>{L("Fait pour toi", "Done for you")}</b><span>{L("Fiches, checklists, brouillons — jamais l'exercice lui-même.", "Study guides, checklists, drafts — never the exercise itself.")}</span></div></div>
-              <div className="ob-state"><span className="ob-dot need" /><div><b>{L("À toi de jouer", "Your turn")}</b><span>{L("Le devoir ou le contrôle, avec un plan pas à pas.", "The assignment or test, with a step-by-step plan.")}</span></div></div>
-              <div className="ob-state"><span className="ob-dot check" /><div><b>{L("Terminé", "Done")}</b><span>{L("Coché, plus besoin d'y penser.", "Checked off, no need to think about it again.")}</span></div></div>
+            <h2>{L("Ta classe", "Your classes")}</h2>
+            <p className="onboard-lead">{L("Otto règle son niveau et classe tes cours par matière.", "Otto pitches his level to you and files your coursework by subject.")}</p>
+            <p className="onboard-lead" style={{ marginTop: 12 }}>{L("Ton année", "Your year")}</p>
+            <div className="onboard-chips">
+              {["Seconde", "Première", "Terminale", "IB DP1", "IB DP2", "Grade 9", "Grade 10", "Grade 11", "Grade 12"].map((y) => (
+                <button key={y} type="button" className={`btn xs ${year === y ? "" : "ghost"}`} onClick={() => setYear(y)} aria-pressed={year === y}>{y}</button>
+              ))}
             </div>
+            <p className="onboard-lead" style={{ marginTop: 18 }}>{L("Tes matières", "Your subjects")}</p>
+            <div className="onboard-chips">
+              {COMMON_SUBJECTS.filter((x) => x !== "Other").map((x) => (
+                <button key={x} type="button" className={`btn xs ${subs.includes(x) ? "" : "ghost"}`} onClick={() => setSubs((cur) => (cur.includes(x) ? cur.filter((c) => c !== x) : [...cur, x]))} aria-pressed={subs.includes(x)}>{x}</button>
+              ))}
+            </div>
+            <p className="muted small">{L("Optionnel — modifiable à tout moment dans les Réglages.", "Optional — change it any time in Settings.")}</p>
             <div className="onboard-actions onboard-actions-split">
               <button className="btn ghost" onClick={() => setStep(1)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(3)}>{L("Suivant", "Next")}</button>
+              <button className="btn primary" onClick={() => void saveYearSubjects()}>{L("Continuer", "Continue")}</button>
             </div>
           </div>
         )}
@@ -3408,24 +3506,6 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
             each here, and the per-feature detail lives where it belongs — in the feature's own
             first-time hint (FirstTimeHint, client/ui.tsx), shown when the student actually reaches it. */}
         {step === 4 && (
-          <div className="onboard-step">
-            <h2>{L("Où trouver quoi", "Where to find things")}</h2>
-            <div className="ob-tour">
-              <div className="ob-tour-row"><b>{L("Tâches", "Tasks")}</b><span>{L("Ton plan du jour, trié par priorité. Ouvre une tâche pour commencer.", "Your plan for today — Otto scans Pronote/Gmail every morning and sorts it by priority. Tick it off, done.")}</span></div>
-              <div className="ob-tour-row"><b>{L("Journal", "Journal")}</b><span>{L("Garde une trace de ce que tu apprends.", "Log in one line what you learned — Otto turns it into flashcards.")}</span></div>
-              <div className="ob-tour-row"><b>{L("Erreurs", "Error log")}</b><span>{L("Enregistre tes erreurs pour savoir quoi réviser.", "Log each precise mistake (question, your answer, the right one) — before a test, Otto targets your revision on them.")}</span></div>
-              <div className="ob-tour-row"><b>{L("Tuteur", "Tutor")}</b><span>{L("Pose une question : Otto explique et donne des indices.", "Ask a question about your work: Otto explains and gives hints, but never the answer.")}</span></div>
-              <div className="ob-tour-row"><b>{L("Réglages", "Settings")}</b><span>{L("Gère tes connexions, ta langue et ton parcours.", "Connections, language, track — everything changes here.")}</span></div>
-            </div>
-            <p className="muted small">{L("Le Tuteur explique, donne des indices et t'aide à avancer.", "Tutor explains, gives hints, and helps you move forward.")}</p>
-            <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(3)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(5)}>{L("C'est parti", "Start here")}</button>
-            </div>
-          </div>
-        )}
-
-        {step === 5 && (
           <div className="onboard-step onboard-done">
             <div className="onboard-done-mark"><Logo size={30} /></div>
             <h2>{L("C'est prêt", "You're all set")}{name.trim() ? `, ${name.trim().split(/\s+/)[0]}` : ""}</h2>
@@ -3434,6 +3514,7 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
               : pronoteIsPrimary
               ? L("Connecte ton Pronote quand tu veux depuis les Réglages, et Otto se met au travail.", "Connect your Pronote any time from Settings, and Otto gets to work.")
               : L("Connecte Gmail/Calendar ou ajoute tes examens depuis les Réglages, et Otto se met au travail.", "Connect Gmail/Calendar or add your exams from Settings, and Otto gets to work.")}</p>
+            <p className="muted small">{L("La première fois que tu ouvres une page, Otto te montre comment elle marche — étape par étape, sur les vrais boutons.", "The first time you open a page, Otto shows you how it works — step by step, on the real buttons.")}</p>
             <div className="onboard-actions"><button className="btn primary big" onClick={onDone}>{L("Voir mes tâches", "See my tasks")}</button></div>
           </div>
         )}

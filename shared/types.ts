@@ -1,4 +1,5 @@
 // Shared task model — imported by both the Express backend and the React client.
+import { normalizeCoursework, type CourseworkDoc } from "./coursework.ts";
 
 export type Quadrant = "do" | "schedule" | "delegate" | "later";
 
@@ -234,6 +235,14 @@ export interface Profile {
   // reporting a small `PronoteTestItem`, `subject`, and `deadline` is the same low-friction pattern as the
   // `grades` self-report above, not a new mechanism.
   manualExams?: { id: string; subject: string; deadline: string }[];
+  // Documents uploaded per subject (shared/coursework.ts): a bounded summary + excerpt the tutor and chat can cite.
+  coursework?: CourseworkDoc[];
+  // When the student finished (or skipped) the first-run tour — server-side so it follows the account across devices.
+  onboardedAt?: string;
+  // Page guides already shown (ids like "tasks", "tutor-session") — server-side so a guide never repeats on another device.
+  toursSeen?: string[];
+  // The subjects this student takes (picked in onboarding): ordered first wherever a subject is chosen.
+  subjects?: string[];
   // A student-maintained log of specific mistakes — "what question, what I got wrong, what to do about it
   // next time" — grouped by subject (see errorLogBySubject below). Distinct from journal flashcards
   // (client/App.tsx's StudyLogPage): a flashcard is "review this fact again"; an error-log entry is "here's
@@ -470,6 +479,10 @@ export function normalizeProfile(p: any): Profile {
           deadline: typeof e?.deadline === "string" ? e.deadline : "",
         })).filter((e: { subject: string; deadline: string }) => e.subject && e.deadline).slice(0, 100)
       : undefined,
+    coursework: normalizeCoursework(p?.coursework),
+    onboardedAt: typeof p?.onboardedAt === "string" ? p.onboardedAt : undefined,
+    toursSeen: Array.isArray(p?.toursSeen) ? [...new Set<string>(p.toursSeen.map((t: any) => String(t).slice(0, 40)).filter(Boolean))].slice(0, 40) : undefined,
+    subjects: Array.isArray(p?.subjects) ? [...new Set<string>(p.subjects.map((t: any) => String(t).trim().slice(0, 60)).filter(Boolean))].slice(0, 14) : undefined,
     errorLog: Array.isArray(p?.errorLog)
       ? p.errorLog.map((e: any) => ({
           id: typeof e?.id === "string" && e.id ? e.id : newId(),
@@ -1741,6 +1754,8 @@ export interface ConnectionStatus {
   genPerDay?: number;         // how many times/day Otto scans for new tasks (1–4) — drives the client sweep cadence
   timezone?: string;          // the account's captured IANA timezone (client compares to detect a change)
   customTheme?: ThemeTokens;  // AI-personalized theme override, if the student opted in (see validateThemeTokens)
+  onboarded?: boolean;  // the basic onboarding has been finished/skipped (or the account clearly predates it)
+  toursSeen?: string[]; // page guides already shown on this account (Profile.toursSeen)
   betaFeatures?: boolean;     // opt-in gate for bandit personalization / focus camera / AI theme — see Profile's own doc comment
   overBudget?: boolean;       // month-to-date AI spend has crossed the cap — gen/exec paused until it resets
   unlimited?: boolean;        // account has no monthly AI spend cap (set via the /unlimited page)
