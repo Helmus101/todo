@@ -170,3 +170,54 @@ export function boardStatesAskedValue(reply: string, entries: { text?: string; d
   });
   return bad;
 }
+
+// ---- Socratic scaffolding (Graesser's tutoring frame: pump → prompt → hint → partial example → assertion last) ----
+const STUCK = /\b(i don['’]?t know|idk|no idea|not sure|i give up|i['’]?m (?:so |still |really )?(?:lost|stuck)|je ne sais pas|je sais pas|aucune id[ée]e|je suis (?:perdu|bloqu[ée])|help me|aide[- ]moi)\b|^\s*\??\s*$|^\s*(?:what|quoi)\s*\??\s*$/i;
+const isStuckMsg = (m: string): boolean => STUCK.test(m.trim()) || /^\[Exercise\].*marked wrong/s.test(m.trim());
+
+/** How many of the student's most recent turns in a row (including this one) show they're stuck. */
+export function stuckStreak(message: string, history: { role: string; text: string }[]): number {
+  let n = isStuckMsg(message) ? 1 : 0;
+  if (!n) return 0;
+  const users = history.filter((h) => h.role === "user").map((h) => h.text).reverse();
+  for (const u of users) { if (isStuckMsg(u)) n++; else break; }
+  return n;
+}
+
+/** The escalation rung for THIS turn: help in the smallest dose that unlocks them, never the answer. */
+export function scaffoldLine(message: string, history: { role: string; text: string }[]): string {
+  const n = stuckStreak(message, history);
+  if (!n) return "";
+  const rung = n === 1
+    ? "PUMP: they're stuck, so don't explain. Ask what they DO know or have tried so far, or one much smaller question about the first thing in the problem that they can answer in a few words."
+    : n === 2
+      ? "PROMPT: still stuck — give a cue, not the step: a fill-in-the-blank frame (\"the area of a sector uses ___ × r²\") or point at the relevant given on the board, then ask them to supply the missing piece."
+      : "PARTIAL EXAMPLE: several attempts, still stuck — put a PARALLEL worked example (different numbers) on the board with its last line left open as \"?\", plus ONE concrete hint about the method. Still never their answer; then ask them to do the open step on their own problem. Acknowledge that this one is genuinely tricky.";
+  return `\n\nSCAFFOLD LEVEL ${Math.min(n, 3)} (the student has been stuck ${n} turn${n > 1 ? "s" : ""} running) — ${rung}\n`;
+}
+
+const PROBES = [
+  "JUSTIFY: ask why that step is allowed / why it works (\"what lets you do that?\").",
+  "ASSUMPTIONS: ask what they're assuming and whether it always holds (\"is that true for every x? what if it's negative?\").",
+  "ANOTHER WAY: ask whether there's a different route to the same result and which they'd trust more.",
+  "CHECK IT: ask how they could test their result themselves (plug a value back in, estimate, check units, sanity-check a limit).",
+  "GENERALISE: ask what stays the same if the numbers change, or to state the rule in their own words (self-explanation).",
+  "REFLECT: ask how sure they are (1–5) and what in their method felt shakiest, or what they'd do differently next time.",
+];
+/** Every few turns of PROGRESS, a critical-thinking probe — the IB learner-profile habits (thinker, inquirer,
+ *  reflective, communicator) made concrete: justify, question assumptions, find another way, self-check, generalise, reflect. */
+export function probeLine(message: string, history: { role: string; text: string }[]): string {
+  const assistantTurns = history.filter((h) => h.role === "assistant").length;
+  if (assistantTurns < 3 || assistantTurns % 3 !== 0) return "";
+  const r = reactionTo(message, history);
+  if (r.label !== "attempt" && r.label !== "positive") return "";
+  return `\n\nCRITICAL-THINKING PROBE THIS TURN (they are making progress — deepen it, don't just move on). After a brief SPECIFIC acknowledgement of what was right, ask ONE of these in your own words: ${PROBES[Math.floor(assistantTurns / 3) % PROBES.length]}\n`;
+}
+
+/** A tutor turn that asks the student nothing is a lecture. True when a reply to a real student contribution
+ *  contains no question at all (so a corrective round should add ONE guiding question). */
+export function needsQuestion(draft: string, message: string): boolean {
+  if (!draft.trim() || /[?？]/.test(draft)) return false;
+  if (/^(?:thanks?|thank you|merci|bye|au revoir|ok(?:ay)? thanks|great thanks|c['’]est tout|that['’]?s all)\b/i.test(message.trim()) && message.trim().length < 40) return false;
+  return message.trim().length > 0;
+}

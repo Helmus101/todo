@@ -4,7 +4,7 @@
 // answer through, hands the thinking back, writes reasoning to the board, rejects bad/leaky tool calls and
 // keeps replies short. No network, no key needed.
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
-const { chatAboutTask, summarizeCoursework, makeGeometryEntry, makeProblem } = await import("../server/claude.ts");
+const { chatAboutTask, summarizeCoursework, makeGeometryEntry, makeProblem, isDuplicateBoardEntry, isDuplicateDiagram } = await import("../server/claude.ts");
 const { buildGeometry } = await import("../shared/geometry.ts");
 
 let script = () => ({ content: "" });
@@ -189,4 +189,18 @@ export async function runTutorSim(check, section) {
     : { content: "Nailed it. So what's cos(270°) and sin(270°) down there?" };
   r = await run("180 is (-1, 0)", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
   check("end to end: the self-answering table never reaches the student; the redrawn one with '?' does", r.board.length === 1 && /270°: \?/.test(r.board[0].text) && !/270°: \(0/.test(r.board[0].text));
+
+  // Socratic scaffolding, questioning, board repeats.
+  const stuck1 = adA.scaffoldLine("I don't know", [{ role: "user", text: "help" }, { role: "assistant", text: "What have you tried?" }]);
+  const stuck3 = adA.scaffoldLine("idk", [{ role: "user", text: "idk" }, { role: "assistant", text: "a" }, { role: "user", text: "i'm lost" }, { role: "assistant", text: "b" }]);
+  check("stuck turns climb the scaffold one rung at a time (pump → prompt → parallel example); a normal turn adds none", /LEVEL 1.*PUMP/s.test(stuck1) && /LEVEL 3.*PARTIAL EXAMPLE/s.test(stuck3) && adA.scaffoldLine("so x is 4", []) === "");
+  const prog = [1, 2, 3].flatMap((n) => [{ role: "user", text: "step " + n + " x = " + n }, { role: "assistant", text: "ok " + n + "?" }]);
+  check("every few turns of progress a critical-thinking probe is added (not while stuck, not on turn 1)", /CRITICAL-THINKING PROBE/.test(adA.probeLine("so the answer is x = 4", prog)) && adA.probeLine("idk", prog) === "" && adA.probeLine("x = 4", []) === "");
+  check("a reply that asks nothing is flagged; a question or a thanks-goodbye is not", adA.needsQuestion("Good. The factors are (x−2)(x−3).", "x^2 - 5x + 6 = (x-2)(x-3)") && !adA.needsQuestion("Good. What does each factor equal?", "x^2") && !adA.needsQuestion("You're welcome!", "thanks"));
+  script = (b, i) => i === 0 ? { content: "Right, the factoring is fine. Those give x = 2 and x = 3." } : { content: "Right, the factoring is fine. What does each factor equal when the product is zero?" };
+  r = await run("(x-2)(x-3)=0", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
+  check("end to end: a statement-only reply gets one corrective round and ends on a guiding question", /\?$/.test(r.reply) && calls.length >= 2);
+  check("a re-worded copy of an existing board line is a duplicate (the board no longer repeats itself)", isDuplicateBoardEntry([{ id: "1", text: "x = cos(a), y = sin(a) on the unit circle", kind: "note", at: "" }], { text: "On the unit circle: x = cos(a), y = sin(a)", kind: "note" }) && !isDuplicateBoardEntry([{ id: "1", text: "x = cos(a), y = sin(a)", kind: "note", at: "" }], { text: "tan(a) = sin(a)/cos(a)", kind: "note" }));
+  const eqA = { id: "1", text: "The equation", kind: "diagram", at: "", diagram: [{ op: "equation", x: 1, y: 1, latex: "3(\\frac{1}{\\cot^2 x})" }] };
+  check("the same figure/equation drawn twice is a duplicate; an added element makes it new", isDuplicateDiagram([eqA], { ...eqA, id: "2", diagram: [{ op: "equation", x: 9, y: 9, latex: "3 ( \\frac{1}{\\cot^2 x} )" }] }) && !isDuplicateDiagram([eqA], { ...eqA, id: "3", diagram: [...eqA.diagram, { op: "equation", x: 1, y: 80, latex: "= 8\\sec x" }] }));
 }

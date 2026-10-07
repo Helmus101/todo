@@ -7,7 +7,7 @@ import { courseworkForSubject } from "../shared/coursework.ts";
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { buildGeometry } from "../shared/geometry.ts";
-import { repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue } from "./tutorAdapt.ts";
+import { repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, needsQuestion, similarity } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -2939,7 +2939,20 @@ export function isDuplicateBoardEntry(existing: BoardEntry[], incoming: { text?:
   if (!norm(raw)) return false; // empty/whitespace never counts as a duplicate
   const inKind = typeof incoming?.kind === "string" && BOARD_KINDS.has(incoming.kind) ? incoming.kind : undefined;
   const inText = norm(raw);
-  return existing.some((e) => (inKind === undefined || kindOf(e.kind) === inKind) && norm(e.text) === inText);
+  // Near-duplicates count too: the same line re-worded or re-ordered slightly used to stack as a second copy
+  // (the board "repeating itself").
+  return existing.some((e) => (inKind === undefined || kindOf(e.kind) === inKind) && (norm(e.text) === inText || similarity(norm(e.text), inText) >= 0.85));
+}
+
+/** A figure/equation entry that repeats one already on the board: same caption AND same drawing (or the same
+ *  set of typeset equations). Re-drawing with something genuinely NEW (an added altitude, a corrected value)
+ *  differs and passes. */
+export function isDuplicateDiagram(existing: BoardEntry[], incoming: BoardEntry): boolean {
+  const sig = (e: BoardEntry) => JSON.stringify((e.diagram || []).map((o) => (o.op === "equation" ? { l: String(o.latex || "").replace(/\s+/g, "") } : o)));
+  const cap = (e: BoardEntry) => e.text.trim().toLowerCase();
+  const eqs = (e: BoardEntry) => (e.diagram || []).filter((o) => o.op === "equation").map((o) => String((o as any).latex || "").replace(/\s+/g, "")).sort().join("|");
+  const allEq = (e: BoardEntry) => !!e.diagram?.length && e.diagram.every((o) => o.op === "equation");
+  return existing.some((e) => e.kind === "diagram" && e.diagram?.length && (sig(e) === sig(incoming) || (allEq(e) && allEq(incoming) && eqs(e) === eqs(incoming))));
 }
 
 /** True when an incoming CREATE_PROBLEM call would create a content-identical copy of a problem that's
@@ -7322,6 +7335,29 @@ const PRIMER_PERSONA =
   `they are wrong, recompute from the problem exactly as THEY stated it; if they push back on a correction ` +
   `even once, assume YOU misread — re-read their original statement, redo it step by step, and say so if ` +
   `you were the one who slipped.\n` +
+  `- HOW GOOD TUTORS ACTUALLY TEACH (tutoring research: Graesser's dialogue frame, Chi's self-explanation and ICAP, ` +
+  `Kapur's productive struggle, Wood's scaffolding, Hattie's feedback, Paul-Elder questioning): you ask, THEY do ` +
+  `the thinking. Every reply to a student contribution follows this frame — (1) a brief, SPECIFIC acknowledgement ` +
+  `of what they did ("the factoring is right"); (2) ONE question that moves them forward. Let them try before ` +
+  `any help (productive struggle is where learning happens). When they're stuck climb ONE rung at a time, the ` +
+  `smallest help that unlocks them: PUMP ("what do you already know?", "what else?") → PROMPT (a fill-in-the-` +
+  `blank cue or pointing at a given on the board) → HINT (the method or first move, never the answer) → a ` +
+  `PARALLEL worked example with the last line open → only then a direct statement of a RULE (never their ` +
+  `answer). Ask real thinking questions, not quiz questions: clarify ("what do you mean by…?"), probe reasons ` +
+  `("why does that work?"), assumptions ("is that always true?"), evidence ("how do you know?"), alternatives ` +
+  `("is there another way?"), consequences ("what would happen if…?"), and about their own thinking ("how sure ` +
+  `are you, 1–5?", "what felt shakiest?"). After they get something right, have them explain it in their own ` +
+  `words or try a variation — that is the proof they understood.\n` +
+  `- LEARNER-PROFILE HABITS (IB): quietly model and reward the thinker, inquirer, communicator, risk-taker and ` +
+  `reflective learner — ask them to question their own assumptions, to say it clearly in words, to try before ` +
+  `they're sure ("a wrong attempt is useful data"), to consider another approach or perspective, to be honest ` +
+  `about what they don't yet get, and to reflect on what they'd do differently. Name the habit when you see it ` +
+  `("that's good inquiry — you tested a value"). Be open-minded about THEIR method before steering them off it.\n` +
+  `- USE THE BOARD TO MAKE THE PROBLEM VISIBLE, NEVER TO SOLVE IT: put the givens, the equation (typeset), a ` +
+  `diagram, the relevant formula/definition and THEIR own reasoning on the board so they can think off the page — ` +
+  `then ask. Never write a step they haven't reached, a final value, or a solved version of what you're asking. ` +
+  `Before you write something new, look at what is already on the board and ADD to it or point at it — never ` +
+  `restate what's already there.\n` +
   `- NEVER HARSH: don't open with "Careful", "No", "Wrong", "Incorrect", "That's not…", "Actually…". Lead with ` +
   `what is RIGHT or reasonable in what they did ("I see why you'd do that —"), then ONE gentle question that ` +
   `lets them spot the slip themselves ("what happens to the 3 when…?"). When YOU slip, own it lightly ("ah, ` +
@@ -7688,7 +7724,7 @@ export async function chatAboutTask(
   // student, every task, every turn — so it belongs FIRST, where it can actually be cached; the volatile
   // per-request context goes last, right next to the equally-volatile TASK block it keeps company with
   // anyway.
-  const dynamicContext = nowBlock() + courseworkLine(profile, task.sourceSubject) + studentNameLine(profile?.name) + dueLine(task.sourceDue, tzOf(profile)) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + syllabusGroundingLine(profile, task.sourceSubject) + learningStyleLine(profile) + hintDensityLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + sessionRecapLine(profile?.sessions, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine + (opts?.primer ? (opts?.moveLine || "") + (opts?.repair || "") + spokenMathHint(message) : "");
+  const dynamicContext = nowBlock() + courseworkLine(profile, task.sourceSubject) + studentNameLine(profile?.name) + dueLine(task.sourceDue, tzOf(profile)) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + syllabusGroundingLine(profile, task.sourceSubject) + learningStyleLine(profile) + hintDensityLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + sessionRecapLine(profile?.sessions, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine + (opts?.primer ? (opts?.moveLine || "") + (opts?.repair || "") + spokenMathHint(message) + scaffoldLine(message, history) + probeLine(message, history) : "");
   const sys =
     (opts?.primer ? PRIMER_PERSONA : "") +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
@@ -8625,6 +8661,17 @@ export async function chatAboutTask(
       messages.push({ role: "user", content: "The board entry you just wrote already STATES the value you're asking the student to find, so the question answers itself. I've pulled that entry (they never saw it). Call WRITE_TO_BOARD again with the same idea but leave the asked-for value out — show the OTHER cases or the pattern, and put \"?\" (or nothing) where the value they must work out would be. Then send your short reply again; don't mention this correction." });
       return true;
     };
+    // A turn with no question is a lecture: a reply to a real student contribution that asks them nothing gets ONE
+    // corrective round to end on a single guiding question (never the answer).
+    let questionAdded = false;
+    const guardQuestion = (draft: string, round: number, lastRound: boolean): boolean => {
+      if (!opts?.primer || questionAdded || lastRound || history.length < 1 || result.guardrailTripped || !needsQuestion(draft, message)) return false;
+      questionAdded = true;
+      console.log(`${new Date().toISOString()} [chat] round ${round}: reply asks the student nothing — asking for a guiding question`);
+      messages.push({ role: "assistant", content: draft });
+      messages.push({ role: "user", content: "That reply doesn't ask the student anything, so they just receive information. Keep what's useful but end on ONE short guiding question that makes THEM take the next step or explain their thinking (never the answer, never a yes/no they can guess). Don't mention this instruction." });
+      return true;
+    };
     let truncationRetried = false;
     // Latches for the post-reply truth pass below (each fires at most ONCE per turn, same shape as the
     // board-claim fix): one corrective round when the draft asserts arithmetic that doesn't recompute,
@@ -8835,6 +8882,7 @@ export async function chatAboutTask(
           continue;
         }
         if (guardAskedValue(textContent, round, lastRound)) continue;
+        if (guardQuestion(textContent, round, lastRound)) continue;
         if (nudgeReasoning(textContent, round, lastRound)) continue;
         if (!lengthRetried && !lastRound && !opts?.voiceMode && countWords(textContent) > 120) {
           lengthRetried = true;
@@ -8915,11 +8963,11 @@ export async function chatAboutTask(
           // Same answer-leak guard as WRITE_TO_BOARD above — a figure's caption or an equation/label op can
           // state a value just as plainly as prose can.
           else if (leaksAnyProblemAnswer([input?.caption, ...(Array.isArray(input?.ops) ? input.ops.map((o: any) => `${o?.text || ""} ${o?.latex || ""}`) : [])].join(" "), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that figure states a problem's answer outright — redraw it without that value.";
-          else { const r = makeDiagramEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Figure dessinée : « ${r.entry.text.slice(0, 60)} »` : `Diagram drawn: "${r.entry.text.slice(0, 60)}"`); } }
+          else { const r = makeDiagramEntry(input); if ("error" in r) content = r.error; else if (isDuplicateDiagram([...(opts?.currentBoard || []), ...result.board], r.entry)) content = "DUPLICATE: that exact figure/equation is already on the board — point at it in your reply instead of drawing it again (draw again only to ADD something new)."; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Figure dessinée : « ${r.entry.text.slice(0, 60)} »` : `Diagram drawn: "${r.entry.text.slice(0, 60)}"`); } }
         } else if (name === "GEOMETRY_ON_BOARD") {
           if (result.board.filter((e) => e.kind === "diagram").length >= 3) content = "LIMIT: you've already drawn a few figures this message — that's enough for one turn.";
           else if (leaksAnyProblemAnswer([input?.caption, ...(Array.isArray(input?.segments) ? input.segments.map((x: any) => (typeof x === "object" ? x?.label : "")) : []), ...(Array.isArray(input?.angles) ? input.angles.map((x: any) => x?.label) : []), ...(Array.isArray(input?.arcs) ? input.arcs.map((x: any) => x?.label) : []), ...(Array.isArray(input?.circles) ? input.circles.map((x: any) => x?.label) : [])].filter(Boolean).join(" "), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that figure labels a problem's answer — redraw it with the unknown shown as '?'.";
-          else { const r = makeGeometryEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Figure dessinée : « ${r.entry.text.slice(0, 60)} »` : `Diagram drawn: "${r.entry.text.slice(0, 60)}"`); } }
+          else { const r = makeGeometryEntry(input); if ("error" in r) content = r.error; else if (isDuplicateDiagram([...(opts?.currentBoard || []), ...result.board], r.entry)) content = "DUPLICATE: that exact figure is already on the board — point at it in your reply instead of drawing it again (draw again only to ADD something new)."; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Figure dessinée : « ${r.entry.text.slice(0, 60)} »` : `Diagram drawn: "${r.entry.text.slice(0, 60)}"`); } }
         } else if (name === "GRAPH_ON_BOARD") {
           if (result.board.filter((e) => e.kind === "graph").length >= 2) content = "LIMIT: you've already put a couple of graphs on the board this message — that's enough for one turn.";
           else if (leaksAnyProblemAnswer([input?.caption, ...(Array.isArray(input?.fns) ? input.fns.map((f: any) => f?.label || "") : [])].join(" "), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that graph's caption or labels state a problem's answer — title it by what to explore, not by the result.";
@@ -8969,6 +9017,7 @@ export async function chatAboutTask(
       // in play). ONE corrective round, latched, same shape as that fix: add the entry, or continue
       // unchanged if the exchange genuinely produced nothing board-worthy.
       if (guardAskedValue(textContent, round, lastRound)) continue;
+      if (guardQuestion(textContent, round, lastRound)) continue;
       if (nudgeReasoning(textContent, round, lastRound)) continue;
       if (!boardNudgeDone && !lastRound && shouldNudgeBoardWrite(textContent, message, result.board.length > 0)) {
         boardNudgeDone = true;
