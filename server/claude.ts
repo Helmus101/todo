@@ -2106,8 +2106,8 @@ export function openerMemoryBlock(memory: TutorOpenerMemory[] | undefined): stri
 export function cleanOpener(raw: string): string {
   let t = String(raw || "").trim();
   t = t.replace(/^```[a-z]*\n?/, "").replace(/```$/, "").trim();
-  t = t.replace(/^(otto|professeur|teacher)\s*:\s*/i, "");
   t = t.replace(/^[-–—*•]\s+/, "");
+  t = t.replace(/^(otto|professeur|teacher)\s*:\s*/i, "");
   t = t.trim().replace(/^"([\s\S]*)"$/, "$1").replace(/^«\s*([\s\S]*?)\s*»$/, "$1").trim();
   t = t.replace(/\*\*|__|`/g, "").replace(/\s*\n+\s*/g, " ").replace(/\s{2,}/g, " ").trim();
   if (t.length > 320) {
