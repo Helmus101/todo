@@ -1,3 +1,4 @@
+import type { CourseworkDoc } from "../shared/coursework.ts";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, BoardEntry, TaskProblem, TaskObjective } from "../shared/types.ts";
 import { normalizeProfile } from "../shared/types.ts";
 
@@ -279,6 +280,13 @@ export const api = {
   // needs to reach the student as a real message ("nothing's configured" / "try drawing it bigger"), not
   // silently vanish, since this is the one thing they actually asked Otto to look at.
   readWhiteboard: (image: string): Promise<{ description: string }> => post("/api/tutor/read-whiteboard", { image }),
+  uploadCoursework: (body: { subject: string; name: string; text: string; pages: number; totalPages?: number; truncated?: boolean }): Promise<{ doc: CourseworkDoc; tasks: { id: string; title: string }[]; profile: Profile; aiSummarized: boolean }> =>
+    post("/api/coursework", body).then((r: any) => ({ ...r, profile: normalizeProfile(r.profile) })),
+  deleteCoursework: (id: string): Promise<Profile> => req(`/api/coursework/${encodeURIComponent(id)}`, { method: "DELETE" }).then(j).then(normalizeProfile),
+  markTourSeen: (id: string): Promise<{ ok: boolean; toursSeen: string[] }> => post("/api/profile/tour-seen", { id }),
+  resetOnboarding: (): Promise<{ ok: boolean }> => post("/api/profile/onboarding-reset"),
+  setSubjects: (subjects: string[]): Promise<{ ok: boolean; subjects: string[] }> => post("/api/profile/subjects", { subjects }),
+  markOnboarded: (): Promise<{ ok: boolean }> => post("/api/profile/onboarded"),
   readPhoto: (image: string): Promise<{ description: string }> => post("/api/tutor/read-photo", { image }),
   // Personalization bandit (see server/bandit.ts) — v1 target: Pomodoro length. Both best-effort from the
   // caller's side too: a failure here should never block starting or ending a study session.

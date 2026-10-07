@@ -210,8 +210,8 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
     } finally { setSending(false); }
   };
 
-  const btn = (t: Tool, icon: React.ReactNode, label: string) => (
-    <button type="button" className={`tc-btn${tool === t ? " on" : ""}`} onClick={() => { if (typing) commitText(); setTool(t); }} title={label} aria-label={label} aria-pressed={tool === t}>{icon}</button>
+  const btn = (t: Tool, icon: React.ReactNode, label: string, tourId?: string) => (
+    <button type="button" data-tour={tourId} className={`tc-btn${tool === t ? " on" : ""}`} onClick={() => { if (typing) commitText(); setTool(t); }} title={label} aria-label={label} aria-pressed={tool === t}>{icon}</button>
   );
   const drawing = tool !== "pan";
   return (
@@ -239,7 +239,7 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
             board, a long scrolled lesson or Desmos is showing (drawing tools just dim while Desmos is up). */}
         <div className={`tc-toolbar${hidden ? " dim" : ""}`} role="toolbar" aria-label={L("Outils du tableau", "Whiteboard tools")} style={{ pointerEvents: "auto" }}>
           {btn("pen", <Pencil size={18} />, L("Stylo", "Pen"))}
-          {btn("highlighter", <Highlighter size={18} />, L("Surligneur", "Highlighter"))}
+          {btn("highlighter", <Highlighter size={18} />, L("Surligneur", "Highlighter"), "tc-highlighter")}
           {btn("eraser", <Eraser size={18} />, L("Gomme", "Eraser"))}
           {btn("text", <Type size={18} />, L("Texte", "Text"))}
           {btn("pan", <Hand size={18} />, L("Défiler le tableau", "Scroll the board"))}

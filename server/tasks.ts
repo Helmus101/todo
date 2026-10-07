@@ -820,6 +820,13 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     })() : undefined,
     // Union by id, same reasoning as manual grade entries above — a manually-logged exam added on one
     // device must survive a merge against another device's copy that doesn't have it yet.
+    // Union by id (a delete persists cloud-first in its route). onboardedAt keeps the earliest stamp.
+    coursework: (p1.coursework?.length || p2.coursework?.length)
+      ? [...new Map([...(p1.coursework || []), ...(p2.coursework || [])].map((d) => [d.id, d])).values()].slice(0, 60)
+      : undefined,
+    onboardedAt: [p1.onboardedAt, p2.onboardedAt].filter(Boolean).sort()[0],
+    toursSeen: (p1.toursSeen?.length || p2.toursSeen?.length) ? [...new Set([...(p1.toursSeen || []), ...(p2.toursSeen || [])])].slice(0, 40) : undefined,
+    subjects: p2.subjects ?? p1.subjects,
     manualExams: (p1.manualExams?.length || p2.manualExams?.length)
       ? [...new Map([...(p1.manualExams || []), ...(p2.manualExams || [])].map((e) => [e.id, e])).values()]
       : undefined,

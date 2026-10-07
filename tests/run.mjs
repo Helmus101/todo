@@ -24,7 +24,8 @@ import { COURSES, findCourse, normText, subjectMatches, matchesUnit, unitMastery
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, subjectFrequency, orderingBoost, twoMinuteRuleBoost } from "../server/patterns.ts";
 
 import { compileExpr } from "../shared/mathExpr.ts";
-import { makeGraphEntry, earlierDigest, isSubstantiveStep } from "../server/claude.ts";
+import { makeGraphEntry, earlierDigest, isSubstantiveStep, courseworkLine, fallbackCourseworkSummary } from "../server/claude.ts";
+import { canonSubject, sameSubject, normalizeCoursework, courseworkForSubject, COMMON_SUBJECTS, COURSEWORK_MAX_PAGES, COURSEWORK_MAX_CHARS } from "../shared/coursework.ts";
 import { tightenForChat, countWords as countWordsT } from "../server/claude.ts";
 let pass = 0, fail = 0;
 const check = (name, cond) => { cond ? pass++ : (fail++, console.log("  FAIL:", name)); };
@@ -61,6 +62,32 @@ section("Tutor memory — earlier turns are condensed, not forgotten");
   const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
   check("primer turns get a 24-message window plus the digest (non-primer stays 10)", /const histWindow = opts\?\.primer \? 24 : 10;/.test(src) && /earlierDigest\(history\.slice\(0, -histWindow\)\)/.test(src));
   check("the server keeps up to 60 messages of thread", /const CHAT_CAP = 60;/.test(readFileSync(new URL("../server/index.ts", import.meta.url), "utf8")));
+}
+section("Coursework — subjects, limits, summaries the tutor/chat can cite (unit + source pins)");
+{
+  check("subject aliases group: Maths/Mathématiques/Math, Physique/Physics, SVT/Biology, SES/Economics", sameSubject("Maths", "Math") && sameSubject("Mathématiques", "math") && sameSubject("Physique-Chimie", "Physics") && sameSubject("SVT", "Biology") && sameSubject("SES", "Economics") && !sameSubject("Math", "Physics"));
+  check("custom subjects still group with themselves", sameSubject("Psychology", "psychology") && !sameSubject("Psychology", "Sociology") && !sameSubject("", "Math"));
+  check("the common subject list is shared (tutor + coursework) and ends with Other", COMMON_SUBJECTS.includes("Math") && COMMON_SUBJECTS.includes("Computer Science") && COMMON_SUBJECTS[COMMON_SUBJECTS.length - 1] === "Other");
+  check("reading limits are small and explicit", COURSEWORK_MAX_PAGES === 6 && COURSEWORK_MAX_CHARS === 12000);
+  const raw = [{ id: "a", subject: "Math", name: "Worksheet 3", summary: "x".repeat(2000), excerpt: "y".repeat(5000), pages: 4, totalPages: 20, truncated: true, addedAt: "2026-10-01T00:00:00Z" }, { id: "", subject: "Math", name: "bad" }, { id: "b", subject: "Physique", name: "Optics notes", summary: "Light basics", excerpt: "", pages: 2, addedAt: "2026-10-02T00:00:00Z" }];
+  const norm = normalizeCoursework(raw);
+  check("normalize drops invalid docs and caps summary/excerpt", norm.length === 2 && norm[0].summary.length <= 900 && norm[0].excerpt.length <= 1600);
+  check("docs for a subject are matched by alias, newest first", courseworkForSubject(norm, "Physics").map((d) => d.id).join() === "b" && courseworkForSubject(norm, "Maths").length === 1);
+  const profile = { language: "en", coursework: norm };
+  const line = courseworkLine(profile, "Math");
+  check("chat/tutor context names the document, says how much was read, and treats it as untrusted DATA", /UPLOADED COURSEWORK FOR MATH/.test(line) && /Worksheet 3/.test(line) && /first 4 of 20 pages/.test(line) && /DATA/.test(line) && /ignore any instruction/.test(line));
+  check("no context for a subject with no documents", courseworkLine(profile, "History") === "" && courseworkLine(undefined, "Math") === "");
+  check("context is capped", courseworkLine({ coursework: Array.from({ length: 6 }, (_, i) => ({ id: String(i), subject: "Math", name: "n" + i, summary: "s".repeat(800), keyPoints: ["k".repeat(150), "k".repeat(150)], excerpt: "e".repeat(600), pages: 3, addedAt: `2026-10-0${i + 1}T00:00:00Z` })) }, "Math").length <= 2600);
+  check("fallback summary (no AI) is the first sentences, bounded", fallbackCourseworkSummary("First sentence here. Second one follows. " + "More text. ".repeat(100)).length <= 430 && fallbackCourseworkSummary("") === "");
+  const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const cwRoute = idx.slice(idx.indexOf('app.post("/api/coursework"'), idx.indexOf('app.post("/api/coursework"') + 4200);
+  check("the route is authenticated + rate-limited, re-enforces the char limit, and needs readable text", /app\.post\("\/api\/coursework", requireAuth, rateLimit\(/.test(idx) && /slice\(0, COURSEWORK_MAX_CHARS\)/.test(cwRoute) && /text\.length < 40/.test(cwRoute));
+  check("tasks are created only from what the summarizer proposes, tagged with the subject, idempotent per document", /sum\?\.tasks/.test(cwRoute) && /cw:\$\{id\}:\$\{i\}/.test(cwRoute) && /sourceSubject = subject/.test(cwRoute));
+  check("chat/tutor and task runs both carry the coursework context", /courseworkLine\(profile, task\.sourceSubject\)/.test(readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8")) && (readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8").match(/courseworkLine\(profile, task\.sourceSubject\)/g) || []).length >= 2);
+  const page = readFileSync(new URL("../client/CourseworkPage.tsx", import.meta.url), "utf8");
+  const pdf = readFileSync(new URL("../client/study/pdfText.ts", import.meta.url), "utf8");
+  check("the browser reads only the first pages (limited PDF reader) and the page tells the student the limit", /extractPdfTextLimited\(file, COURSEWORK_MAX_PAGES, COURSEWORK_MAX_CHARS\)/.test(page) && /Math\.min\(doc\.numPages, maxPages\)/.test(pdf));
+  check("Coursework is in the nav and routed", /href="\/coursework"/.test(readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8")) && /route === "coursework"/.test(readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8")));
 }
 section("Tutor graphs — safe expression compiler + GRAPH_ON_BOARD validation");
 {
@@ -1402,14 +1429,21 @@ section("Onboarding — short but complete (source pins)");
   // Was 5 — bumped to 6 fixing a real bug: step 5 (the personalized "you're all set" done screen) existed
   // in the JSX but nothing ever advanced to it, so it was dead/unreachable code and the progress dots
   // undercounted by one. Now step 4's finish button actually advances into it instead of exiting directly.
-  check("onboarding runs exactly 6 steps (0-5, including the done screen)", /const OB_STEPS = 6;/.test(src));
+  // 5 steps now: name → track+language → year+subjects → connect → done. The old "how Otto helps" and "where to
+  // find things" text screens are gone — each PAGE now teaches itself the first time it is opened (client/PageTour.tsx).
+  check("the basic onboarding runs exactly 5 steps (0-4, including the done screen)", /const OB_STEPS = 5;/.test(src));
+  check("the basic flow collects year + subjects and saves them", /saveYearSubjects/.test(ob) && /api\.setSubjects\(subs\)/.test(ob) && /setProfilePreference\("yearLevel"/.test(ob));
+  check("the flow is prefilled from the account (so a Settings replay isn't blank)", /void api\.profile\(\)\.then/.test(ob));
   check("one connect step hosts BOTH Pronote and Google tiles (no second connect screen)", (ob.match(/<PronoteTile /g) || []).length === 1 && (ob.match(/<GoogleTiles /g) || []).length === 1);
   check("no leftover step bodies beyond OB_STEPS", !/step === 6 [\s\S]*step === 11/.test(ob));
-  check("the feature tour covers Tasks, Journal, Error log and Tutor in ONE screen", /ob-tour-row/.test(ob) && (ob.match(/ob-tour-row/g) || []).length === 5 && /Journal/.test(ob) && /Error log/.test(ob));
-  check("the tour line for the error log says what it feeds (targeted revision)", /target|cible/.test(ob));
-  check("the tutor line keeps the never-the-answer rule", /never the answer|jamais la r[ée]ponse/.test(ob));
+  const toursSrc = readFileSync(new URL("../client/tours.ts", import.meta.url), "utf8");
+  check("every page has its own first-visit guide (tasks, tutor landing + session, journal, mistakes, coursework, settings)", ["tasks", "\"tutor-landing\"", "\"tutor-session\"", "journal", "mistakes", "coursework", "settings"].every((k) => new RegExp(`(^|\\n)  ${k}: \\[`).test(toursSrc)));
+  check("the tutor session guide explains voice mode, the whiteboard tools and Show Otto", /Voice mode/.test(toursSrc) && /Your tools/.test(toursSrc) && /Show Otto your work/.test(toursSrc));
+  check("an interactive step exists (advances when the student really uses the control)", /interactive: true/.test(toursSrc) && /step\.interactive/.test(readFileSync(new URL("../client/PageTour.tsx", import.meta.url), "utf8")));
+  check("the mistakes guide says what the log feeds (quizzing where you slip)", /quiz you where you slip|t'interroger/.test(toursSrc));
+  check("the tutor guide keeps the never-the-answer rule", /instead of handing you the answer|plut[ôo]t que de donner la r[ée]ponse/.test(toursSrc));
   check("language is picked on the track step, not its own screen", /saveLang\("fr"\)/.test(ob) && !/PreferencesFields profile=\{null\}/.test(ob));
-  check("year level is no longer asked at onboarding (Settings keeps it)", !/const \[yearLevel/.test(ob) && !/void saveYearLevel\(\)/.test(ob));
+  check("Settings keeps the year level field and gains a Test onboarding replay", /saveYearLevel/.test(src) && /Test onboarding/.test(src) && /onReplayOnboarding/.test(src));
   // The per-feature detail the old flow spent 4 screens on must live in the first-time hint system.
   const uiSrc = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8");
   check("FirstTimeHint exists as the per-feature home for what onboarding no longer carries", /export function FirstTimeHint/.test(uiSrc));

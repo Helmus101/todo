@@ -7,6 +7,9 @@ import { AskOttoPanel } from "../study/AskOttoPanel.tsx";
 import { BoardArtifact } from "../study/artifacts/BoardArtifact.tsx";
 import { TutorDesmos } from "./TutorDesmos.tsx";
 import { TutorCanvas, type TutorCanvasHandle } from "./TutorCanvas.tsx";
+import { PageTour } from "../PageTour.tsx";
+import { TOURS } from "../tours.ts";
+import { COMMON_SUBJECTS } from "../../shared/coursework.ts";
 import { buildSessionSummary, saveTutorSession, getTutorSessions, type TutorSessionSummary } from "./tutorSessions.ts";
 
 // A dismiss that silently fails (a network blip, a momentary 429) used to just be swallowed — the session
@@ -54,11 +57,10 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
   const [openChatSession, setOpenChatSession] = useState<TutorSessionSummary | null>(null);
   // The landing screen asks WHAT to study before starting — the subject is stamped onto the session
   // (sourceSubject, visible to the tutor prompt) and carried into history as the session's label.
-  const COMMON_SUBJECTS = [
-    "Math", "Physics", "Chemistry", "Biology", "History",
-    "English", "French", "Spanish", "Geography", "Economics",
-    "Philosophy", "Computer Science", "Art", "Music", "Other",
-  ];
+  // The student's own subjects (set in onboarding) come first; the shared common list follows.
+  const [mySubjects, setMySubjects] = useState<string[]>([]);
+  useEffect(() => { void api.profile().then((p) => setMySubjects(p.subjects || [])).catch(() => { /* the common list is enough */ }); }, []);
+  const subjectOptions = [...new Set<string>([...mySubjects, ...COMMON_SUBJECTS])];
   const [selectedSubject, setSelectedSubject] = useState("");
   const [startingSession, setStartingSession] = useState(false);
   // What the mount peek found: a freestudy session still in progress (or null).
@@ -412,6 +414,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
     return (
       <main className="list-wrap tutor-landing">
         {backButton}
+        <PageTour id="tutor-landing" steps={TOURS["tutor-landing"]} />
         <div className="tutor-landing-inner">
           {/* The prototype's cream-circle face — two dots, no mouth. The one illustration the whole
               design system allows, reused on the landing and the session screens. */}
@@ -450,7 +453,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
               aria-label={L("Matière", "Subject")}
             >
               <option value="">{L("Choisir une matière", "Choose a subject")}</option>
-              {COMMON_SUBJECTS.map((subj) => (
+              {subjectOptions.map((subj) => (
                 <option key={subj} value={subj}>{subj}</option>
               ))}
             </select>
@@ -595,6 +598,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
   // in a chat log. The full conversation is still saved with the session for the history view.
   return (
     <main className={`tutor-stage${voiceState.voiceModeOn ? " voice-on" : ""}`}>
+      <PageTour id="tutor-session" steps={TOURS["tutor-session"]} />
       {/* Same breadcrumb chrome as the rest of the Tutor ("All sessions / Subject … End session"). */}
       <header className="ts-bar tutor-crumbbar">
         <button type="button" className="tutor-crumb-link" onClick={onExit}>{L("Toutes les séances", "All sessions")}</button>
