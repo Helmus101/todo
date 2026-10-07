@@ -160,3 +160,25 @@ h1 { font-family: var(--display); font-weight: 400; letter-spacing: -0.025em; }
 .tutor-reflect-overlay { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(20,20,19,.32); }
 .tutor-reflect-overlay .tutor-reflect { width: min(480px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 24px; box-shadow: 0 20px 60px rgba(20,20,19,.18); }
 .tutor-reflect h3 { margin: 0; font-size: 1.15rem; font-weight: 600; }
+
+/* ---- Task steps: calmer rows, quiet actions, "Break this step down" as a small inline link ---- */
+.step { gap: 14px; padding: 16px 0; align-items: flex-start; }
+.step-body { gap: 4px; }
+.step-text { font-size: 15px; line-height: 1.55; color: var(--ink); }
+.step.done .step-text { color: var(--ink-3); }
+.step-minutes, .step-target, .step-when { font-size: 12.5px; color: var(--ink-3); }
+.step-minutes.quick-win { color: var(--accent); font-weight: 500; }
+.substep-expand.btn { align-self: flex-start; height: auto; margin: 6px 0 0; padding: 2px 0; background: none; border: none; box-shadow: none; border-radius: 0; font-size: 13px; font-weight: 500; color: var(--ink-3); }
+.substep-expand.btn::before { content: "+"; margin-right: 6px; font-weight: 600; }
+.substep-expand.btn:hover { background: none; color: var(--accent); }
+.step-act { display: flex; align-items: center; gap: 6px; align-self: flex-start; }
+.step-act .btn.xs { display: inline-block; text-align: left; line-height: 28px; height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); font-size: 13px; font-weight: 500; white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.step-act .btn.xs:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); background: var(--surface); }
+@media (max-width: 640px) { .step { flex-wrap: wrap; } .step-act { margin-left: 36px; } }
+
+/* ---- Ask Otto popup: the conversation takes the WHOLE popup (thread fills, input pinned at the bottom) ---- */
+.task-modal.wide { max-width: min(820px, 94vw); min-height: min(88vh, 820px); }
+.task-modal.wide .task-chat { display: flex; flex-direction: column; height: 100%; min-height: 0; margin: 0; padding: 0; border: none; background: none; box-shadow: none; }
+.task-modal.wide .task-chat > h3 { flex: none; }
+.task-modal.wide .chat-thread { flex: 1; min-height: 0; max-height: none; overflow-y: auto; margin-bottom: 12px; padding-right: 4px; }
+.task-modal.wide .task-chat > :last-child { flex: none; }
