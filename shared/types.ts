@@ -1453,6 +1453,8 @@ export interface DailyPracticeProblem {
  *  `DailyPracticeProblem` (one free-response per day). */
 export interface TaskProblem {
   id: string;
+  /** Client-only, sent with chat turns: the student has already answered this one correctly. */
+  solved?: boolean;
   /** The question/prompt itself — one clear sentence or a short problem statement. */
   question: string;
   /** MCQ mode: 2-4 options. When present, the student picks one and gets immediate feedback.
@@ -1535,7 +1537,7 @@ export interface BoardEntry {
    *  (see `outline`) — for essay-based/humanities content (history causes, source analysis, an essay plan)
    *  where a flat sentence or a spatial diagram both fit poorly; math/science still reach for
    *  formula/diagram first. */
-  kind?: "note" | "instruction" | "question" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "interactive" | "graph";
+  kind?: "note" | "instruction" | "question" | "given" | "result" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "interactive" | "graph";
   /** Present only when kind === "diagram" — the figure's shapes, rendered as SVG (BoardArtifact.tsx). Capped
    *  at 15 ops server-side (makeDiagramEntry, server/claude.ts): enough for a labeled triangle or a small
    *  graph, not enough to build a full illustration op-by-op. */

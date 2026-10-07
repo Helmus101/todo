@@ -29,6 +29,8 @@ const KIND_LABEL: Record<string, [string, string]> = {
   focus: ["Objectif du jour", "Today's focus"],
   instruction: ["Consigne", "Instruction"],
   question: ["Question", "Question"],
+  given: ["Donnée", "Given"],
+  result: ["Établi", "Established"],
   formula: ["Formule", "Formula"],
   summary: ["Ton raisonnement", "Your reasoning"],
   problem: ["Problème", "Problem"],
@@ -46,6 +48,8 @@ const KIND_GLYPH: Record<string, string> = {
   focus: "◎",
   instruction: "→",
   question: "?",
+  given: "▤",
+  result: "✓",
   formula: "∑",
   summary: "⌇",
   insight: "✦",
@@ -671,7 +675,7 @@ export function BoardArtifact({ task, writing, onProblemResult }: BoardArtifactP
                 </>
               ) : (
                 <>
-                  <div className="sm-board-entry-text">{e.kind === "question" ? <div style={{ whiteSpace: "pre-wrap" }}><MathText text={autoMathLine(stripStrayMarkdown(e.text))} /></div> : e.kind === "formula" ? <div style={{ whiteSpace: "pre-wrap" }}><MathText text={autoMathLine(stripStrayMarkdown(e.text))} /></div> : renderChatText(e.text)}</div>
+                  <div className="sm-board-entry-text">{e.kind === "question" || e.kind === "given" || e.kind === "result" ? <div style={{ whiteSpace: "pre-wrap" }}><MathText text={autoMathLine(stripStrayMarkdown(e.kind === "result" ? e.text.replace(/^\s*(?:established|établi|found|result|trouvé)\s*:\s*/i, "") : e.text))} /></div> : e.kind === "formula" ? <div style={{ whiteSpace: "pre-wrap" }}><MathText text={autoMathLine(stripStrayMarkdown(e.text))} /></div> : renderChatText(e.text)}</div>
                   {isCompletionGap(e.text) ? (
                     <span className="sm-board-todo-chip">{en ? "Your turn to finish" : "À toi de finir"}</span>
                   ) : null}

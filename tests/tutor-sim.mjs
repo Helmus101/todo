@@ -4,7 +4,7 @@
 // answer through, hands the thinking back, writes reasoning to the board, rejects bad/leaky tool calls and
 // keeps replies short. No network, no key needed.
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
-const { chatAboutTask, summarizeCoursework, makeGeometryEntry, makeProblem, isDuplicateBoardEntry, isDuplicateDiagram } = await import("../server/claude.ts");
+const { chatAboutTask, summarizeCoursework, makeGeometryEntry, makeProblem, isDuplicateProblem, isDuplicateBoardEntry, isDuplicateDiagram } = await import("../server/claude.ts");
 const { buildGeometry } = await import("../shared/geometry.ts");
 const { autoMathLine } = await import("../shared/mathText.ts");
 
@@ -62,18 +62,18 @@ export async function runTutorSim(check, section) {
   // 6. Reasoning nudge: a substantive step with NO board write triggers one corrective round.
   script = (b, i) => {
     if (i === 0) return { content: "Good. What next?" };
-    if (/call WRITE_TO_BOARD ONCE/.test(lastUserText(b)) && !b.messages.some((m) => m.role === "tool")) return { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "Move 1: factor the quadratic; why: products of roots give the constant term", kind: "summary" })] };
+    if (/1-3 short WRITE_TO_BOARD calls/.test(lastUserText(b)) && !b.messages.some((m) => m.role === "tool")) return { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "Move 1: factor the quadratic; why: products of roots give the constant term", kind: "summary" })] };
     return { content: "Good. What does each factor give you?" };
   };
   r = await run("x² − 5x + 6 = (x−2)(x−3)", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
-  check("student step + no board write → one corrective round puts the reasoning on the board", r.board.length === 1 && r.board[0].kind === "summary" && calls.some((b) => /call WRITE_TO_BOARD ONCE/.test(lastUserText(b))));
+  check("student step + no board write → one corrective round puts the reasoning on the board", r.board.length === 1 && r.board[0].kind === "summary" && calls.some((b) => /1-3 short WRITE_TO_BOARD calls/.test(lastUserText(b))));
   check("…and the entry is Otto's own reasoning, not a copy of the student's message", !/\(x−2\)\(x−3\)$/.test(r.board[0]?.text || "") && r.board[0].text !== "x² − 5x + 6 = (x−2)(x−3)");
 
   // 7. No nudge for chatter / first message / questions.
   for (const [msg, hist] of [["ok", [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }]], ["what is a root?", [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }]], ["x = 3 so 2x = 6", []]]) {
     script = () => ({ content: "Okay. What next?" });
     r = await run(msg, { history: hist });
-    check(`no corrective board round for "${msg}"${hist.length ? "" : " (first message)"}`, !calls.some((b) => /call WRITE_TO_BOARD ONCE/.test(lastUserText(b))) && r.board.length === 0);
+    check(`no corrective board round for "${msg}"${hist.length ? "" : " (first message)"}`, !calls.some((b) => /1-3 short WRITE_TO_BOARD calls/.test(lastUserText(b))) && r.board.length === 0);
   }
 
   // 8. Graph tool: valid plot lands on the board; a bad expression is explained back to the model.
@@ -226,4 +226,30 @@ export async function runTutorSim(check, section) {
   script = () => ({ content: "Good start. Which two special angles add up to 5π/12?" });
   r = await run("so I need exact values", { history: [{ role: "user", text: "find sin(5π/12)" }, { role: "assistant", text: "ok" }] });
   check("end to end: the reply's guiding question lands on the board as kind 'question'", r.boardAll.some((e) => e.kind === "question" && /special angles add up/.test(e.text)));
+
+  const sysT = String(calls[0].messages[0].content);
+  check("the persona makes the board the student's paper for every subject (given / result / question / formulas / outlines / mnemonics)", /THE BOARD IS THEIR PAPER/.test(sysT) && /kind "result"/.test(sysT) && /kind "given"/.test(sysT) && /history\/economics\/literature/.test(sysT));
+  // a student step with only an auto-added question on the board still gets the write-to-board nudge (summary + result)
+  script = (b, i) => i === 0 ? { content: "Right, that's the sum formula. Which two special angles add up to 5π/12?" } : i === 1 ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "Established: $\\sin(A+B)=\\sin A\\cos B+\\cos A\\sin B$", kind: "result" })] } : { content: "Right, that's the sum formula. Which two special angles add up to 5π/12?" };
+  r = await run("so I use sin(A+B) = sin A cos B + cos A sin B", { history: [{ role: "user", text: "find sin(5π/12)" }, { role: "assistant", text: "ok" }] });
+  check("a student step gets the nudge even though the question was auto-placed; a 'result' entry lands (kind result)", /kind \\\"result\\\"|kind \"result\"/.test(JSON.stringify(calls[1].messages)) || r.board.some((e) => e.kind === "result"));
+
+  check("the board guidance is judgement, not a checklist (no forced entries, no repeats)", /GUIDE TO YOUR JUDGEMENT|a guide to your judgement/.test(String(calls[0].messages[0].content)) && /never write an entry just to have written one/.test(String(calls[0].messages[0].content)));
+  script = () => ({ content: "Nice. Which factor first?" });
+  r = await run("ok", { history: [{ role: "user", text: "solve x^2-5x+6" }, { role: "assistant", text: "ok" }], board: [{ id: "q", kind: "question", text: "Which two numbers multiply to 6 and add to −5?", at: "" }] });
+  check("a new question card is not stacked on top of one the student is still working with", r.boardAll.every((e) => e.kind !== "question"));
+
+  // One exercise at a time; never re-ask a question.
+  check("a near-identical exercise is a duplicate (the 4× 'sin(5π/12) as a sum of special angles' problem)", isDuplicateProblem([{ id: "1", question: "Find the exact value of sin(5π/12) by writing 5π/12 as the sum of two special angles.", createdAt: "" }], { question: "Find the exact value of sin(5π/12) by writing 5π/12 = π/4 + π/6 as a sum of two special angles." }) && !isDuplicateProblem([{ id: "1", question: "Find sin(5π/12) as a sum of special angles.", createdAt: "" }], { question: "Given sin θ = 3/5 in the first quadrant, find sin(2θ)." }));
+  check("'next', 'another one', 'skip', 'harder' explicitly ask to move on; ordinary answers don't", ["next one please", "Another one like it, please.", "can we skip this", "Give me a harder one.", "un autre exercice"].every(adA.asksToMoveOn) && !adA.asksToMoveOn("so it is root 6 over 4") && !adA.asksToMoveOn("I think the answer is 3"));
+  const askedBefore = [{ role: "assistant", text: "Nice. What formula can you use to expand sin(2θ) into single angles?" }, { role: "user", text: "sin(θ+θ)" }];
+  check("re-asking an earlier question is detected; a new question is not", adA.repeatsRecentQuestion("Good. What formula can you use to expand sin(2θ) into single angles?", askedBefore) && !adA.repeatsRecentQuestion("Good. What is cos θ if sin θ = 3/5?", askedBefore));
+  const openP = { id: "p1", question: "Given sin θ = 3/5, find sin(2θ).", answer: "24/25", createdAt: new Date().toISOString() };
+  script = (b, i) => i === 0 ? { content: "", tool_calls: [tc("CREATE_PROBLEM", { question: "What is the area of a circle of radius 3, in terms of π?", answer: "9π" })] } : { content: "What formula expands sin(2θ)?" };
+  r = await run("I'm not sure", { problems: [openP], history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
+  check("no new exercise while one is unanswered (rejected, nothing piled on)", r.problems.length === 0 && /haven't answered the exercise/.test(JSON.stringify(calls[1].messages)));
+  r = await run("another one please", { problems: [openP], history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
+  check("...but the student asking for another one gets it", r.problems.length === 1);
+  r = await run("next", { problems: [{ ...openP, solved: true }], history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
+  check("...and once the previous one is solved a new one is fine", r.problems.length === 1);
 }

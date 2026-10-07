@@ -7,7 +7,7 @@ import { courseworkForSubject } from "../shared/coursework.ts";
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { buildGeometry } from "../shared/geometry.ts";
-import { repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, boardQuestionOf, traceAheadOfStudent, similarity } from "./tutorAdapt.ts";
+import { repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, boardQuestionOf, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -2572,7 +2572,7 @@ const WRITE_TO_BOARD_TOOL = {
   description: "Write ONE short entry onto the student's persistent tutor Board — a visible, always-accessible surface separate from the chat thread, NOT limited to practice problems. The board is a document being BUILT entry by entry across the session: it opens with the day's focus, collects the key definitions and formulas as they come up, credits the student's own insights, and ends with a summary of their reasoning. Each call adds ONE short, focused entry — never a wall of text; the next thing gets its own entry later as the session moves on. What belongs here is decided by one test: would the student otherwise have to hold it in their head, or scroll back through chat to find it? (given values and the goal, a formula in play, the cases a problem splits into, a diagram, the sub-goal they're on, a key term's gloss, their own insight). Anything that fails that test stays in chat. Don't narrate that you're writing it ('let me jot that down') — just call the tool. NEVER GET AHEAD OF THE CHAT: a 'summary'/'formula'/'note' entry records a step ONLY once the student has actually said/derived it in chat THAT turn — never a later step of the SAME derivation they haven't reached yet, even symbolically with no numbers (reported live: the board already showed 'F_net down slope = mg sin25 - mg cos25 * tan20' as a finished line while the chat was still walking the student through deriving exactly that, one piece at a time — the board had done the derivation FOR them, just quietly, on a different surface than chat). If you're tempted to write the NEXT formula before asking the question that gets them there, ask the question first and write the entry after they answer it.",
   input_schema: { type: "object", properties: {
     text: { type: "string", description: "the entry itself — plain text/light markdown, ONE idea, in KEYWORDS AND STRUCTURE rather than prose: ~25 words of prose max, and fewer is better. Write the skeleton of the idea, never a restatement of what you just said in chat (a board that repeats your sentences measurably hurts learning — the redundancy effect). Annotate like handwritten notes: 'term = plain gloss' on its own line; relationships as arrows ('A --pushes--> B'); contrasts stacked with '<-' margin asides ('NOT x <- what you'd expect' / 'BUT y <- the actual point'); dash lines for anything sequential, one idea each. Anything with REAL SPATIAL POSITION — a shape, a triangle, a number line, points on axes — belongs in DRAW_ON_BOARD instead, which renders an actual figure. For kind:'outline' this is just a one-line title (the sections go in `outline` below) — for anything else, reserve a fenced ASCII block here for genuinely textual structure (a small table) where neither a real drawing nor an outline fits. ANY such ASCII sketch MUST be wrapped in a triple-backtick code fence (```\\n...\\n```) — the board renders a fenced block as monospace, preserving every space exactly as typed; UNFENCED text gets trimmed line by line and the whole shape collapses into a flat line with no structure left." },
-    kind: { type: "string", enum: ["note", "instruction", "question", "formula", "summary", "focus", "insight", "definition", "outline"], description: "styling/role hint: 'question' for EVERY guiding question you ask the student about the work — the question itself, short, maths in $…$ (it stays on the page while they think; never include its answer); 'focus' ONCE to open a session's document — today's arc, where you start and what you're building toward; 'instruction' for a directive to start/try something; 'definition' the first time a key term comes up — the term in **bold**, then a plain-language definition; 'formula' for a plain fact/rule worth keeping visible in words (not real math notation — for an actual expression/equation with a fraction, exponent, or root, use DRAW_ON_BOARD's 'equation' op instead, which typesets it for real instead of describing it in text); 'insight' when the STUDENT has a genuine aha in their own words — credit them by name ('Will's insight: ...'); 'summary' for a recap of the STUDENT's reasoning; 'outline' for headed, bulleted structure — a timeline, the causes/effects of an event, a source's key points, an essay's section-by-section plan (REQUIRES the separate `outline` field below, with real sections and bullets — this is the DEFAULT reach for history/literature/language-arts/social-science content instead of trying to force it into a flat sentence); 'note' for anything else. Defaults to 'note' if omitted." },
+    kind: { type: "string", enum: ["note", "instruction", "question", "given", "result", "formula", "summary", "focus", "insight", "definition", "outline"], description: "styling/role hint: 'given' for the problem's data / statement exactly as given (typeset maths in $…$); 'result' for something the STUDENT has just derived, found or confirmed that matters for the next part (an equation, a value, a simplified form — in $…$, labelled in a few words, only once THEY reached it); 'question' for EVERY guiding question you ask the student about the work — the question itself, short, maths in $…$ (it stays on the page while they think; never include its answer); 'focus' ONCE to open a session's document — today's arc, where you start and what you're building toward; 'instruction' for a directive to start/try something; 'definition' the first time a key term comes up — the term in **bold**, then a plain-language definition; 'formula' for a plain fact/rule worth keeping visible in words (not real math notation — for an actual expression/equation with a fraction, exponent, or root, use DRAW_ON_BOARD's 'equation' op instead, which typesets it for real instead of describing it in text); 'insight' when the STUDENT has a genuine aha in their own words — credit them by name ('Will's insight: ...'); 'summary' for a recap of the STUDENT's reasoning; 'outline' for headed, bulleted structure — a timeline, the causes/effects of an event, a source's key points, an essay's section-by-section plan (REQUIRES the separate `outline` field below, with real sections and bullets — this is the DEFAULT reach for history/literature/language-arts/social-science content instead of trying to force it into a flat sentence); 'note' for anything else. Defaults to 'note' if omitted." },
     outline: {
       type: "array",
       description: "REQUIRED when kind is 'outline', omitted otherwise. 1-6 headed sections, each with 1-8 short bullets — e.g. for 'why did the Provisional Government fail?': [{heading: 'Kept fighting WWI', bullets: ['lost the army', 'lost the people']}, {heading: 'Lenin\\'s slogan', bullets: ['Peace, Land, Bread']}]. Bullets are KEYWORDS, same discipline as `text` above — not full sentences.",
@@ -2874,7 +2874,7 @@ export function makeProblem(input: any): { problem: TaskProblem } | { error: str
   };
 }
 
-const BOARD_KINDS = new Set(["note", "instruction", "question", "formula", "summary", "focus", "insight", "definition", "outline"]);
+const BOARD_KINDS = new Set(["note", "instruction", "question", "given", "result", "formula", "summary", "focus", "insight", "definition", "outline"]);
 const MAX_OUTLINE_SECTIONS = 6;
 const MAX_OUTLINE_BULLETS = 8;
 export function makeBoardEntry(input: any): { entry: BoardEntry } | { error: string } {
@@ -2971,7 +2971,8 @@ export function isDuplicateProblem(existing: TaskProblem[], incoming: { question
   const raw = typeof incoming?.question === "string" ? incoming.question : "";
   if (!norm(raw)) return false;
   const inText = norm(raw);
-  return existing.some((p) => norm(p.question) === inText);
+  // near-duplicates too: "Find sin(5π/12) by writing it as a sum" re-asked with a few words changed is the same exercise
+  return existing.some((p) => norm(p.question) === inText || similarity(norm(p.question), inText) >= 0.7);
 }
 
 /** True when a finished chat reply is exactly the moment the board's reasoning-trace rule exists for:
@@ -7399,7 +7400,19 @@ const PRIMER_PERSONA =
   `typeset via DRAW_ON_BOARD's equation op. NEVER copy what the student typed or what you just said into the ` +
   `board word for word — a quote of the chat is noise; the board adds structure, the why and the result. Only ` +
   `what has actually been reached: never a step they haven't got to, never the answer.\n` +
-  `- WHEN TO USE THE BOARD — EXACTLY (use it generously; the board is the shared page you both think on): ` +
+  `- THE BOARD IS THEIR PAPER (an alternative to scrap paper — USE IT FOR EVERY SUBJECT, constantly, not just for ` +
+  `"how you got there"): maths/physics — the givens (kind "given"), each question (kind "question"), every equation ` +
+  `or value they DERIVE that the next part will need (kind "result", e.g. "Established: $…$"), formulas and ` +
+  `units, free-body/figures/graphs, their reasoning lines; chemistry/biology — equations, definitions, labelled ` +
+  `diagrams, process steps; history/economics/literature — outline (causes, timeline, argument structure), ` +
+  `definitions, key quotes with ==the key part== highlighted, cause→effect chains; languages — vocabulary, ` +
+  `conjugations, corrected sentences, example sentences; any subject — a mnemonic, an analogy, a common ` +
+  `mistake to watch for, an insight credited to them, a "so far" recap, a checklist of what's left. When in doubt, ` +
+  `write it down: a student who can see the problem, what they've found and what's next thinks better than one ` +
+  `holding it all in their head. Several short entries beat one long one; every entry one idea. But it is a ` +
+  `living page, not a form: never write an entry just to have written one, and never repeat what is already there.\n` +
+  `- WHEN THE BOARD HELPS (a guide to your judgement, NOT a checklist — add something when it genuinely helps the ` +
+  `student think, skip it when it would just be clutter; a quick clarification or a bit of chat needs nothing): ` +
   `(1) the moment a problem arrives: today's focus + the problem AS GIVEN, typeset; (2) EVERY guiding question you ask ` +
   `about the work goes on the board too (kind "question": the question itself, short, never its answer) — the ` +
   `question stays in front of them while they think; (3) every formula, definition or rule the second you mention ` +
@@ -8656,19 +8669,20 @@ export async function chatAboutTask(
     // to put THEIR reasoning (and any helpful formula) there, in Otto's own words. Latched to once per turn;
     // skipped on the first message, while a guardrail has wiped the turn, and for non-substantive input. Used by
     // BOTH the plain-text path and the after-tool-calls path. Returns true when it queued the round.
+    const isStuckLike = (m: string) => stuckStreak(m, []) > 0 || /\b(hint|indice|again|repeat|répète|what do you mean|comment ça)\b/i.test(m);
     const nudgeReasoning = (draft: string, round: number, lastRound: boolean): boolean => {
       const studentStep = isSubstantiveStep(message);
       // Two distinct misses, one latch: (a) the student contributed a step and the tutor wrote nothing, and
       // (b) the tutor's OWN reply put real math in chat while the board was still empty — "explains the
       // formula but never shows it", the reported "not using the board enough". Both are empty-board cases,
       // so the corrective round can never fire mid-session once there's something up.
-      const contentMissedBoard = result.board.length === 0 && shouldNudgeBoardContent(draft, true, false);
+      const contentMissedBoard = result.board.filter((e) => e.kind !== "question").length === 0 && shouldNudgeBoardContent(draft, true, false);
       if (!(opts?.primer && !reasoningNudgeDone && !boardNudgeDone && !lastRound && history.length >= 1 && !result.guardrailTripped && (studentStep || contentMissedBoard))) return false;
       reasoningNudgeDone = true;
       console.log(`${new Date().toISOString()} [chat] round ${round}: ${studentStep ? "student contributed a step but" : "real math in the reply but"} nothing is on the board — asking for the write`);
       messages.push({ role: "assistant", content: draft });
       messages.push({ role: "user", content: studentStep
-        ? "The student just contributed a step, but nothing was added to the board this turn. Before you reply, call WRITE_TO_BOARD ONCE: kind \"summary\" — THEIR reasoning so far in your own words (the move they made, why it works, what it gave), e.g. \"Factor: two numbers with product 6 and sum −5 → −2, −3\". If a formula or rule that would genuinely help is in play and not on the board yet, add it too (real math through DRAW_ON_BOARD's equation op). Never quote their message word for word, never write a step they haven't reached or the final answer. Then send your short reply again."
+        ? "The student just contributed a step, but nothing was added to the board this turn — the board is their paper and it should show their work. Before you reply, write to it (1-3 short WRITE_TO_BOARD calls): (a) kind \"summary\" — THEIR reasoning so far in your own words, maths in $…$ (the move they made, why it works, what it gave); (b) if the step produced an equation, value or simplified form that matters for the NEXT part of the problem, kind \"result\" — that thing alone, typeset in $…$, with a 2-4 word label (e.g. \"Established: $\\\\cos\\\\tfrac{\\\\pi}{3}=\\\\tfrac12$\"); (c) if a formula or rule is in play and not on the board yet, kind \"formula\". Only what THEY have reached — never a step they haven't taken or the final answer, never their message word for word. Write only what is genuinely worth keeping — if the step was trivial, write nothing. Then send your short reply again."
         : "You're working with real math here and the board is still completely empty — the student can see your reply but nothing is visible next to it. Before you reply again, call WRITE_TO_BOARD ONCE: the formula in play, the given values, or the definition you just used (real math through DRAW_ON_BOARD's equation op — one short entry, NOT a wall of text, and not a restatement of your reply). Then send your short reply again. If this exchange genuinely produced nothing worth keeping visible, just continue unchanged and don't mention this." });
       return true;
     };
@@ -8708,11 +8722,15 @@ export async function chatAboutTask(
       if (!opts?.primer || history.length < 1 || result.guardrailTripped) return;
       const q = boardQuestionOf(draft);
       if (!q) return;
+      if (repeatsRecentQuestion(draft, history)) return; // never put a re-asked question on the board again
       const norm = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim();
       const known = [...(opts?.currentBoard || []), ...result.board];
       if (known.some((e) => (e.kind === "question" || e.kind === "instruction") && similarity(norm(e.text), norm(q)) >= 0.7)) return;
       if (result.board.some((e) => e.kind !== "question" && similarity(norm(e.text || ""), norm(q)) >= 0.6)) return;
       if (result.board.filter((e) => e.kind === "question").length >= 1) return;
+      // not a card per turn: if one of the last two things on the board is already a question, the student is still
+      // working with it — only a new question once the board has moved on.
+      if ((opts?.currentBoard || []).slice(-2).some((e) => e.kind === "question")) return;
       const made = makeBoardEntry({ text: q, kind: "question" });
       if ("entry" in made && !boardStatesAskedValue(q, [made.entry as any]).length) result.board.push(made.entry);
     };
@@ -8918,11 +8936,11 @@ export async function chatAboutTask(
         if (opts?.primer && countWords(textContent) > 45) textContent = tightenForChat(textContent, 45);
         // Never say the same thing twice: a draft that is a near-copy of one of Otto's recent replies gets ONE
         // corrective round (the student already saw that and it did not land — repeating it is the loop).
-        if (opts?.primer && !repeatCorrected && !lastRound && repeatsRecentReply(textContent, history)) {
+        if (opts?.primer && !repeatCorrected && !lastRound && (repeatsRecentReply(textContent, history) || (repeatsRecentQuestion(textContent, history) && !isStuckLike(message)))) {
           repeatCorrected = true;
           console.log(`${new Date().toISOString()} [chat] round ${round}: draft repeats a recent reply — asking for a different approach`);
           messages.push({ role: "assistant", content: textContent });
-          messages.push({ role: "user", content: "That is almost exactly what you already said and it did not land. Do NOT repeat it. In one short sentence say what you heard from the student, then try a DIFFERENT approach (a picture, a tiny worked case, or a different question), one question at most. Don't mention this instruction." });
+          messages.push({ role: "user", content: "That is almost exactly what you already said or asked and it did not land. If this is a question you already asked: do NOT ask it again — if the student has answered it, acknowledge that in a few words and move to the NEXT step; if they haven't, help with THAT question (a hint or a smaller version) instead of re-asking. Do NOT repeat it. In one short sentence say what you heard from the student, then try a DIFFERENT approach (a picture, a tiny worked case, or a different question), one question at most. Don't mention this instruction." });
           continue;
         }
         if (guardAskedValue(textContent, round, lastRound)) continue;
@@ -8980,6 +8998,9 @@ export async function chatAboutTask(
           // the student already sees (opts.currentProblems, delivered live every turn) and what this same
           // turn already made (result.problems), so a repeat is caught whether it's an old or a brand-new
           // duplicate.
+          // ONE exercise at a time: while the student still has an unanswered one on the board, no new one — unless
+          // they explicitly asked to move on / get another.
+          else if (opts?.primer && !asksToMoveOn(message) && [...(opts?.currentProblems || []).filter((p) => !p.solved), ...result.problems].length > 0) content = "REJECTED: they haven't answered the exercise already on the board — don't pile another on top. Help them with THAT one (a hint, a smaller question). Only create a new exercise once they've answered it or explicitly ask to skip / move on / get another.";
           else if (isDuplicateProblem([...(opts?.currentProblems || []), ...result.problems], input)) content = "DUPLICATE: that exact problem is already on the board — it's already there for them to answer, don't make it again.";
           else { const r = makeProblem(input); if ("error" in r) content = r.error; else { result.problems.push(r.problem); content = JSON.stringify({ ok: true, id: r.problem.id }); logAudit("artifact", fr ? `Problème créé : « ${r.problem.question.slice(0, 60)} »` : `Problem created: "${r.problem.question.slice(0, 60)}"`); } }
         } else if (name === "WRITE_TO_BOARD") {
@@ -8991,9 +9012,9 @@ export async function chatAboutTask(
           if (result.board.length >= 5) content = "LIMIT: you've already written several entries this message — that's enough for one turn.";
           // "How you got there" is the STUDENT's reasoning: a line carrying a π-term / root / fraction that nothing the
           // student said (and no given) contains is a step the TUTOR took for them — refuse it.
-          else if (opts?.primer && String(input?.kind) === "summary" && traceAheadOfStudent(String(input?.text || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), message], [...(opts?.currentBoard || []).filter((e) => e.kind !== "summary").map((e) => e.text), ...(opts?.currentProblems || []).map((p) => p.question)]).length) {
+          else if (opts?.primer && ["summary", "result"].includes(String(input?.kind)) && traceAheadOfStudent(String(input?.text || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), message], [...(opts?.currentBoard || []).filter((e) => e.kind !== "summary").map((e) => e.text), ...(opts?.currentProblems || []).map((p) => p.question)]).length) {
             const missing = traceAheadOfStudent(String(input?.text || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), message], [...(opts?.currentBoard || []).filter((e) => e.kind !== "summary").map((e) => e.text), ...(opts?.currentProblems || []).map((p) => p.question)]);
-            content = `REJECTED: "How you got there" records only what the STUDENT has actually said or done, and this line contains ${missing.join(", ")} which they never reached — that's a step you'd be taking for them. Write only the steps they've stated (in your own words). If they haven't got there yet, write nothing and ask them the question instead.`;
+            content = `REJECTED: "How you got there" and "result" entries record only what the STUDENT has actually said or done, and this line contains ${missing.join(", ")} which they never reached — that's a step you'd be taking for them. Write only the steps they've stated (in your own words). If they haven't got there yet, write nothing and ask them the question instead.`;
           }
           // Content-level duplicate check — the client can only dedupe by id,
           // and every write gets a fresh UUID, so a re-written formula previously stacked a second visual
