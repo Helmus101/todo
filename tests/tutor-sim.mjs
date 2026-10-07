@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 // Tutor pipeline simulation — runs the REAL chatAboutTask (tool loop, guards, nudges, board writes) against a
 // scripted fake model endpoint (globalThis.fetch is intercepted for api.deepseek.com). It cannot judge how a
 // live model WRITES, but it proves the machinery around it does what the tutor promises: never lets a stated
@@ -282,4 +283,13 @@ export async function runTutorSim(check, section) {
     const p3 = adA.planTurn({ userKey: "rl:t1", message: "I told you I don't get it", history: [...hist, { role: "user", text: "x" }, { role: "assistant", text: "y" }], subject: "Math", policy: p2.policy, rng: P.rng(3) });
     check("a frustrated reply is a zero reward for the previous move and that move is not repeated", p3.learned.reward === 0 && p3.move !== p2.move);
   }
+
+  // Latency: an interactive tutor turn is bounded in model rounds (it used to allow 7), and the tutor stage skips Pronote/connected-app lookups.
+  let nWrites = 0;
+  script = (b, i) => i < 6 ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "Note number " + (nWrites++) + " about the unit circle and radians", kind: "note" })] } : { content: "Which angle first?" };
+  await run("keep going", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
+  check("an interactive tutor turn makes at most 4 model rounds even if the model keeps calling tools (was 7)", calls.length <= 4);
+  const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("Primer turns skip the Pronote + connected-app network lookups, and provider attempts have timeouts (Gemini 9s, DeepSeek 24s) so a stalled one fails over fast", /req\.body\?\.primer !== true && \(await pronoteSvc\.pronoteConnected/.test(idx) && /req\.body\?\.primer === true \? undefined : await toolsFor\(req\)/.test(idx) && /9_000 : 24_000/.test(cl) && /CHAT_DEADLINE_MS = opts\?\.primer \? 45_000 : 120_000/.test(cl));
 }

@@ -1613,8 +1613,10 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     .map((o: any) => ({ id: "", label: String(o.label).slice(0, 160), done: Boolean(o.done) }));
   try {
     let academic: { homework: Awaited<ReturnType<typeof pronoteSvc.pronoteHomework>>; tests: Awaited<ReturnType<typeof pronoteSvc.pronoteTests>> } | undefined;
+    // The tutor stage never uses Pronote homework or connected-app tools, so those network round-trips (sequential, each
+    // easily 1-3s) are skipped for Primer turns — pure latency.
     try {
-      if ((await pronoteSvc.pronoteConnected(req.session.user!)).connected) {
+      if (req.body?.primer !== true && (await pronoteSvc.pronoteConnected(req.session.user!)).connected) {
         const [homework, tests] = await Promise.all([pronoteSvc.pronoteHomework(req.session.user!), pronoteSvc.pronoteTests(req.session.user!)]);
         if (homework.length || tests.length) academic = { homework, tests };
       }
@@ -1628,7 +1630,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     // this can never send/draft/delete anything, unlike runTask's own (separately scoped) tool access.
     // Best-effort: toolsFor already swallows its own errors into `undefined`, so a Composio hiccup here
     // just means chat runs without account access this turn, not a broken chat.
-    const rawExtras = await toolsFor(req);
+    const rawExtras = req.body?.primer === true ? undefined : await toolsFor(req);
     const extras = rawExtras ? integrations.readOnly(rawExtras) : undefined;
     // Seventh bandit target (CHAT_STYLE_ARMS) — chosen once per turn, best-effort (a bandit hiccup must
     // never block the chat reply itself).

@@ -2060,7 +2060,8 @@ async function createTutorChat(params: any, fast: boolean): Promise<any> {
     try {
       // The `thinking` toggle is DeepSeek-specific, so `fast` only applies to that provider (see
       // createChatFast's own comment) — passing it to Gemini would be a wasted 400 on every turn.
-      return await createChatFast(p.client, { ...params, model: p.model }, fast && p.name !== "gemini");
+      // `fast` = an interactive Primer turn: bounded per attempt (Gemini 9s, DeepSeek 24s) so a stalled provider falls over quickly.
+      return await createChatFast(p.client, { ...params, model: p.model }, fast && p.name !== "gemini", fast ? (p.name === "gemini" ? 9_000 : 24_000) : undefined);
     } catch (e: any) {
       lastErr = e;
       const more = i < providers.length - 1;
@@ -2177,16 +2178,19 @@ export async function tutorOpener(
 }
 
 let thinkingToggleRejected = false;
-async function createChatFast(client: OpenAI, params: any, fast: boolean): Promise<any> {
-  if (!fast || USING_NVIDIA || thinkingToggleRejected || process.env.TUTOR_THINKING === "on") return client.chat.completions.create(params);
+async function createChatFast(client: OpenAI, params: any, fast: boolean, timeoutMs?: number): Promise<any> {
+  // `timeoutMs`: a hung provider must fail over in seconds, not after the SDK's 10-minute default — the tutor turn
+  // is interactive, so a stalled request is the single biggest source of "it took 30+ seconds".
+  const opts = timeoutMs ? { timeout: timeoutMs, maxRetries: 0 } : undefined;
+  if (!fast || USING_NVIDIA || thinkingToggleRejected || process.env.TUTOR_THINKING === "on") return client.chat.completions.create(params, opts);
   try {
-    return await client.chat.completions.create({ ...params, thinking: { type: "disabled" } } as any);
+    return await client.chat.completions.create({ ...params, thinking: { type: "disabled" } } as any, opts);
   } catch (e: any) {
     const status = Number(e?.status);
     if ((status === 400 || status === 422) && /thinking/i.test(String(e?.message || e?.error?.message || ""))) {
       thinkingToggleRejected = true;
       console.warn("[chat] provider rejected the `thinking` toggle — continuing without it");
-      return client.chat.completions.create(params);
+      return client.chat.completions.create(params, opts);
     }
     throw e;
   }
@@ -7291,6 +7295,9 @@ export interface ChatResult {
 // reply just now"), even though nothing actually crashed. Raised to give a multi-lookup turn real headroom.
 const CHAT_MAX_ROUNDS = 7;
 const CHAT_MAX_ARTIFACTS = 2;
+/** Interactive Primer turns: at most this many model rounds / this long before we stop adding optional rounds and reply. */
+const PRIMER_MAX_ROUNDS = 4;
+const PRIMER_BUDGET_MS = 9_000;
 // Was 40_000, then 150_000 — reproduced live BOTH times as the actual cause of a run of "Otto couldn't
 // reply"/generic-fallback turns mid-session, NOT reasoning-token exhaustion (that's OUT.chat's own concern):
 // a single round's tokens.in scales with how much the session has ALREADY accumulated (chat history + every
@@ -8657,6 +8664,7 @@ export async function chatAboutTask(
     return result;
   };
 
+  const turnStartedAt = Date.now();
   const runRounds = async (): Promise<ChatResult> => {
     // One-shot: a reply that points the student at the board/screen when nothing was actually written there
     // gets ONE corrective round to write it for real (see CHAT_CLAIMS_BOARD's own comment). Latched so a
@@ -8755,7 +8763,8 @@ export async function chatAboutTask(
         if (history[i].role === "user") studentLang = detectLang(history[i].text);
       }
     }
-    for (let round = 0; round < CHAT_MAX_ROUNDS; round++) {
+    const maxRounds = opts?.primer ? PRIMER_MAX_ROUNDS : CHAT_MAX_ROUNDS;
+    for (let round = 0; round < maxRounds; round++) {
       if (result.tokens.in + result.tokens.out > CHAT_TOKEN_CEILING) {
         // Reproduced live: a big tool-call payload (e.g. a large flashcard deck) plus the growing
         // conversation history can blow the ceiling on round 0 or 1, landing here BEFORE the loop ever
@@ -8765,7 +8774,9 @@ export async function chatAboutTask(
         console.error(`[chat] hit CHAT_TOKEN_CEILING at round ${round} (${result.tokens.in + result.tokens.out} tokens) — falling back`);
         break;
       }
-      const lastRound = round === CHAT_MAX_ROUNDS - 1;
+      // LATENCY BUDGET (Primer only): the student is waiting. After PRIMER_BUDGET_MS of model rounds, or PRIMER_MAX_ROUNDS
+      // rounds, stop tool use and the optional corrective rounds and just answer in plain words now.
+      const lastRound = round === maxRounds - 1 || (!!opts?.primer && round > 0 && Date.now() - turnStartedAt > PRIMER_BUDGET_MS);
       const apiMessages = lastRound
         ? [...messages, { role: "user" as const, content: "Out of tool calls for this turn — reply in plain words now, no more tool use." }]
         : messages;
@@ -8785,7 +8796,7 @@ export async function chatAboutTask(
           // The chat tool set is deliberately in-app only (CREATE_*/web_search) — NEVER Composio. A tutoring
           // chat must not be able to touch the student's connected accounts, unlike runTask's tool set.
           ...(lastRound ? {} : { tools: tools.map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })) }),
-        }, !!opts?.primer), 3, 400);
+        }, !!opts?.primer), opts?.primer ? 2 : 3, 400);
       } catch (e: any) {
         // This used to swallow the real error completely — the ONLY visible symptom was every chat
         // message (even "hello") silently landing on the generic fallback line, with nothing in server
@@ -9120,7 +9131,7 @@ export async function chatAboutTask(
   // again even if a fix elsewhere makes replies fast again; a slow-but-real reply beating the generic
   // fallback is always the better outcome, and DeepSeek v4's hidden reasoning tokens make "slow" hard to
   // bound tightly (see the 28s→45s history right above).
-  const CHAT_DEADLINE_MS = 120_000;
+  const CHAT_DEADLINE_MS = opts?.primer ? 45_000 : 120_000; // an interactive tutor turn never hangs for two minutes
   return Promise.race([
     runRounds(),
     new Promise<ChatResult>((resolve) => setTimeout(() => resolve(finish("")), CHAT_DEADLINE_MS)),
