@@ -111,4 +111,20 @@ export async function runTutorSim(check, section) {
   calls = [];
   await chatAboutTask(task, [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }], "help with my sheet", { language: "en", coursework: [{ id: "c1", subject: "Maths", name: "Factoring worksheet", summary: "Eight exercises on factoring quadratics.", keyPoints: ["difference of squares"], excerpt: "Exercise 1. Factor x^2 - 9.", pages: 2, addedAt: new Date().toISOString() }] }, undefined, { primer: true, canvasMode: true });
   check("an uploaded document for the subject (matched by alias) reaches the tutor's system prompt, labelled as data", /UPLOADED COURSEWORK FOR MATH/.test(String(calls[0].messages[0].content)) && /Factoring worksheet/.test(String(calls[0].messages[0].content)) && /Eight exercises on factoring/.test(String(calls[0].messages[0].content)));
+
+  // Adaptation: loop detection, repeat guard, and the move bandit (RL) — pure helpers from server/tutorAdapt.ts.
+  const adA = await import("../server/tutorAdapt.ts");
+  const adB = await import("../server/bandit.ts");
+  const adaptHist = [{ role: "user", text: "tan squared is sec squared minus one" }, { role: "assistant", text: "What is tan x in terms of sine and cosine?" }, { role: "user", text: "I told you tan squared is sec squared minus one" }];
+  check("'I told you' reads as frustrated and triggers a REPAIR directive", adA.reactionTo("I told you already, it's sec squared minus one", adaptHist).frustrated && /REPAIR/.test(adA.repairLine("I told you already", adaptHist)));
+  check("a normal attempt does not trigger REPAIR", adA.repairLine("so the bracket is sec x minus 3", adaptHist) === "");
+  check("saying the same thing again is detected as repeated", adA.reactionTo("tan squared equals sec squared minus one", adaptHist).repeated);
+  check("near-copy replies are flagged as a loop / repeat", adA.repeatsRecentReply("What is tan x in terms of sine and cosine?", adaptHist) && !adA.repeatsRecentReply("Try drawing the right triangle with angle x.", adaptHist));
+  let adst = {}, adkey = "move|Math|stuck";
+  for (let n = 0; n < 40; n++) adst = adB.updatePosterior(adst, adkey, "visual", 1), adst = adB.updatePosterior(adst, adkey, "probe", 0);
+  let adwins = 0; for (let n = 0; n < 50; n++) if (adB.chooseArm(adA.TUTOR_MOVE_ARMS, adst, adkey).arm.id === "visual") adwins++;
+  check("the move bandit learns: the move that keeps working is served most", adwins > 35);
+  const adplan1 = adA.planMove({ userKey: "u:t", message: "ok", history: [], state: adst, contextKey: adkey, update: adB.updatePosterior });
+  const adplan2 = adA.planMove({ userKey: "u:t", message: "I told you, that's not working", history: [{ role: "user", text: "a" }, { role: "assistant", text: "b" }], state: adst, contextKey: adkey, update: adB.updatePosterior });
+  check("a move that just failed is never served twice in a row and its failure is scored", adplan2.arm !== adplan1.arm && adplan2.scoredPrev?.arm === adplan1.arm && adplan2.scoredPrev.reward === 0);
 }

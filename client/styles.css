@@ -6855,10 +6855,12 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
    own thinking, not the tutor's explanation. */
 .sm-board-trace { border-left: 2px solid var(--accent); padding-left: 10px; margin: 2px 0; }
 .sm-board-trace-heading { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
-.sm-board-trace-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
-.sm-board-trace-list li { position: relative; padding-left: 14px; font-size: .93em; line-height: 1.45; }
-.sm-board-trace-list li::before { content: "—"; position: absolute; left: 0; color: var(--ink-2); }
-.sm-board-trace-list li.sm-board-trace-turn::after { content: "⟲"; margin-left: 5px; color: var(--ink-2); font-size: .85em; }
+.sm-board-trace-list { list-style: none; counter-reset: trace; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.sm-board-trace-list li { position: relative; counter-increment: trace; padding-left: 30px; font-size: .97em; line-height: 1.65; }
+.sm-board-trace-list li::before { content: counter(trace); position: absolute; left: 0; top: .2em; width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--line, #d9d4c7); color: var(--ink-2); font-size: 11px; line-height: 18px; text-align: center; font-weight: 600; }
+.sm-board-trace-list li.sm-board-trace-turn::after { content: "⟲"; margin-left: 6px; color: var(--ink-2); font-size: .85em; }
+.sm-inline-eq .katex { font-size: 1.08em; }
+.sm-board-trace { padding-top: 4px; padding-bottom: 4px; }
 /* Live drafting indicator — the writing hand. */
 .sm-board-drafting { display: flex; align-items: center; gap: 8px; margin: 10px 4px; padding: 8px 12px; border: 1px dashed var(--line); border-radius: var(--radius); color: var(--ink-2); font-size: 13px; font-style: italic; }
 
@@ -6903,7 +6905,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .tutor-crumb-link { background: none; border: none; padding: 0; font: inherit; font-weight: 650; font-size: 15px; color: var(--ink); cursor: pointer; }
 .tutor-crumb-link:hover { color: var(--accent); }
 .tutor-crumb-subject { color: var(--ink-2); font-size: 15px; }
-.tutor-crumbbar .tutor-end-btn { margin-left: auto; }
+.tutor-crumbbar .tutor-chat-btn { margin-left: auto; }
 
 /* Past-session reference shown on a fresh session start */
 .tutor-past-ref { font-size: 0.9rem; color: var(--ink-2); font-style: italic; }
@@ -7135,3 +7137,11 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 mark.otto-mark { background: linear-gradient(transparent 12%, color-mix(in srgb, #FACC15 55%, transparent) 12%, color-mix(in srgb, #FACC15 55%, transparent) 92%, transparent 92%); color: inherit; padding: 0 2px; border-radius: 3px; background-repeat: no-repeat; animation: otto-mark-in .5s ease-out both; }
 @keyframes otto-mark-in { from { background-size: 0% 100%; } to { background-size: 100% 100%; } }
 @media (prefers-reduced-motion: reduce) { mark.otto-mark { animation: none; } }
+
+/* Chat drawer on the tutor stage — the transcript is hidden by design but always one tap away. */
+.tutor-chat-drawer .tutor-chat-history { max-height: 60vh; gap: 14px; }
+.tutor-chat-empty { color: var(--ink-2); text-align: center; margin: 24px 0; }
+.tutor-chat-past { margin-top: 12px; padding: 0 16px 12px; }
+.tutor-chat-past > summary, .tutor-chat-past-item > summary { cursor: pointer; font-weight: 600; color: var(--ink-2); padding: 8px 0; }
+.tutor-chat-past-item { border-top: 1px solid var(--line); }
+.tutor-chat-past-item .tutor-chat-history { padding: 8px 0 12px; max-height: 40vh; }

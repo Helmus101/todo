@@ -67,19 +67,53 @@ function isCompletionGap(text: string): boolean {
   return /\?\s*$/.test(last) && last.trim().length <= 40;
 }
 
-/** kind:"summary" rendered as a REASONING TRACE — the record of HOW the student got there: dash lines in
+export function traceLines(text: string): string[] {
+  const lines = text.split("\n")
+    // The model sometimes numbers its own lines ("1. …", "2) …") or adds a header — the board numbers
+    // the steps itself, so a pasted "1." would double up ("1. 1. …") and a header would count as step one.
+    .map((l) => l.replace(/^\s*(?:[-–—•*]|\d{1,2}[.)])\s*/, "").trim())
+    .filter(Boolean);
+  while (lines.length > 1 && (/^(how you got there|ton raisonnement)\b/i.test(lines[0]) || /:\s*$/.test(lines[0]))) lines.shift();
+  return lines;
+}
+
+/** Prose with real typeset math inline: `$…$` and `\(…\)` segments go through KaTeX, everything else through
+ *  the normal chat renderer (bold, ==highlight==, unicode math). A bad equation falls back to its source. */
+export function MathText({ text }: { text: string }) {
+  const parts = text.split(/(\$\$[^$]+\$\$|\$[^$\n]+\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\])/g);
+  if (parts.length === 1) return <>{renderChatText(text)}</>;
+  return (
+    <>
+      {parts.map((p, i) => {
+        const m = /^\$\$([^$]+)\$\$$|^\$([^$\n]+)\$$|^\\\(([\s\S]*)\\\)$|^\\\[([\s\S]*)\\\]$/.exec(p);
+        const latex = m ? (m[1] ?? m[2] ?? m[3] ?? m[4]) : null;
+        return latex ? <InlineEquation key={i} latex={latex.trim()} /> : <span key={i}>{renderChatText(p)}</span>;
+      })}
+    </>
+  );
+}
+
+function InlineEquation({ latex }: { latex: string }) {
+  const html = useMemo(() => {
+    try { return katex.renderToString(latex, { throwOnError: false, strict: false, trust: false, displayMode: false }); } catch { return null; }
+  }, [latex]);
+  if (html === null) return <span>{latex}</span>;
+  return <span className="sm-inline-eq" dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+/** kind:"summary" rendered as a REASONING TRACE — the record of HOW the student got there: numbered lines in
  *  the order they actually did it, wrong turns they corrected included. This is the board's centerpiece:
  *  what accumulates on it should increasingly be the student's own thinking, not the tutor's explanation.
  *  (ICAP: the visible artifact of a session is the student's constructions — the tutor's voice stays in chat.) */
 function ReasoningTrace({ text, en }: { text: string; en: boolean }) {
-  const lines = text.split("\n").map((l) => l.replace(/^\s*[-–—•]\s*/, "").trim()).filter(Boolean);
+  const lines = traceLines(text);
   if (!lines.length) return null;
   return (
     <div className="sm-board-trace">
       <div className="sm-board-trace-heading">{en ? "How you got there" : "Ton raisonnement"}</div>
       <ol className="sm-board-trace-list">
         {lines.map((l, i) => (
-          <li key={i} className={/\b(corrigé?|en fait|non pas|pas ça|oops|my bad)\b/i.test(l) ? "sm-board-trace-turn" : undefined}>{l}</li>
+          <li key={i} className={/\b(corrigé?|en fait|non pas|pas ça|oops|my bad)\b/i.test(l) ? "sm-board-trace-turn" : undefined}><MathText text={l} /></li>
         ))}
       </ol>
     </div>
