@@ -137,6 +137,7 @@ section("Tutor stage — End session always ends; the stage is screen-height wit
   check("tutor stage is fixed to the screen height (it used to grow with the board and push End session away)", /\.tutor-stage \{[^}]*flex: none[^}]*height: 100dvh/.test(css));
   check("the board component's own scroller is neutralised in the stage so the ink canvas is on the one real scroller", /\.ts-board-body \.sm-board-body \{ overflow: visible;/.test(css) && /createPortal\(/.test(readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8")));
   check("'Show Otto' lets the student say what to look at (note travels with the drawing)", /tc-ask/.test(readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8")) && /onSend=\{\(description, note\)/.test(tut));
+  check("the whiteboard starts in select/hand mode, not draw — the board underneath must be usable right away", /useState<Tool>\("pan"\)/.test(readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8")));
 }
 section("Tutor memory — earlier turns are condensed, not forgotten");
 {

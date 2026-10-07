@@ -65,7 +65,9 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
   const redo = useRef<Item[]>([]);
   const live = useRef<Extract<Item, { kind: "stroke" }> | null>(null);
   const size = useRef({ w: 0, h: 0 });
-  const [tool, setTool] = useState<Tool>("pen");
+  // Starts in "pan" (select/hand) — the board underneath must be usable (scrolling, clicking a step,
+  // following a link) the moment the tutor opens, without the ink layer eating every pointer event first.
+  const [tool, setTool] = useState<Tool>("pan");
   const [color, setColor] = useState(COLORS[1]);
   const [version, setVersion] = useState(0); // bumps on every committed change → toolbar enable/disable
   const [typing, setTyping] = useState<{ x: number; y: number; value: string } | null>(null);
