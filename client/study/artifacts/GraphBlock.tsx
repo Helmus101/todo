@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import type { GraphSpec } from "../../../shared/types.ts";
 import { compileExpr } from "../../../shared/mathExpr.ts";
+import { useLang } from "../../ui.tsx";
 
 const W = 560, H = 340, PAD = { l: 44, r: 16, t: 14, b: 30 };
 const COLOR: Record<string, string> = { blue: "#2563EB", red: "#DC2626", green: "#16A34A", orange: "#EA580C", purple: "#9333EA", ink: "var(--ink)" };
@@ -143,6 +144,7 @@ function Histogram({ spec }: { spec: GraphSpec }) {
 
 // ── 3D surface z = f(x, y), drag to rotate ───────────────────────────────────────────────────────────────
 function Surface({ spec }: { spec: GraphSpec }) {
+  const L = useLang();
   const [vals, setVals] = useState<Record<string, number>>(() => Object.fromEntries((spec.params || []).map((p) => [p.name, p.value])));
   const [view, setView] = useState({ az: 0.9, el: 0.6 });
   const drag = useRef<{ x: number; y: number } | null>(null);
@@ -193,13 +195,13 @@ function Surface({ spec }: { spec: GraphSpec }) {
 
   return (
     <div className="sm-graph">
-      <svg viewBox={`0 0 ${W} ${H}`} className="sm-graph-svg sm-graph-3d" role="img" aria-label="3D surface — drag to rotate"
+      <svg viewBox={`0 0 ${W} ${H}`} className="sm-graph-svg sm-graph-3d" role="img" aria-label={L("Surface 3D — fais glisser pour tourner", "3D surface — drag to rotate")}
         onPointerDown={(e) => { drag.current = { x: e.clientX, y: e.clientY }; e.currentTarget.setPointerCapture(e.pointerId); }}
         onPointerMove={(e) => { const d = drag.current; if (!d) return; setView((v) => ({ az: v.az + (e.clientX - d.x) * 0.012, el: Math.max(0.1, Math.min(1.4, v.el + (e.clientY - d.y) * 0.008)) })); drag.current = { x: e.clientX, y: e.clientY }; }}
         onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>
         <polygon points={base} className="sm-graph-base" />
         {polys.map((p, i) => <polygon key={i} points={p.pts} fill={p.fill} className="sm-graph-quad" />)}
-        <text x={W - PAD.r} y={H - 8} className="sm-graph-axislabel" textAnchor="end">drag to rotate · x∈[{fmt(x0)}, {fmt(x1)}], y∈[{fmt(y0)}, {fmt(y1)}], z∈[{fmt(zlo)}, {fmt(zhi)}]</text>
+        <text x={W - PAD.r} y={H - 8} className="sm-graph-axislabel" textAnchor="end">{L("fais glisser pour tourner · x∈[", "drag to rotate · x∈[")}{fmt(x0)}, {fmt(x1)}], y∈[{fmt(y0)}, {fmt(y1)}], z∈[{fmt(zlo)}, {fmt(zhi)}]</text>
       </svg>
       <div className="sm-graph-legend"><span className="sm-graph-leg">z = {spec.z}</span></div>
       <Sliders params={spec.params} vals={vals} setVals={setVals} />

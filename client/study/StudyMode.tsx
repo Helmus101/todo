@@ -29,6 +29,7 @@ import { NoisePlayer, type NoiseType } from "./noise.ts";
 import { tileWithinBounds } from "./tileLayout.ts";
 import { extractPdfText } from "./pdfText.ts";
 import { useFocusCamera } from "./useFocusCamera.ts";
+import { GAZE_LABELS } from "./useFaceTracking.ts";
 
 interface StudyModeProps {
   task: WebTask;
@@ -1254,7 +1255,9 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
               {focusCamera.tracking.concentration >= 70 ? "🎯" : focusCamera.tracking.concentration >= 40 ? "◐" : "○"}
             </span>
             <span>{focusCamera.tracking.concentration}</span>
-            <span style={{ opacity: 0.6, fontSize: 10 }}>{focusCamera.tracking.gazeStatus}</span>
+            <span style={{ opacity: 0.6, fontSize: 10 }}>
+              {(() => { const g = GAZE_LABELS[focusCamera.tracking.gazeStatus] || [focusCamera.tracking.gazeStatus, focusCamera.tracking.gazeStatus]; return language === "en" ? g[1] : g[0]; })()}
+            </span>
           </div>
         )}
         <button
@@ -1268,7 +1271,7 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
           }}
           title={language === "en" ? "Toggle focus tracking (webcam)" : "Suivi de concentration (caméra)"}
         >
-          {focusCamera.enabled ? "◉ Focus on" : "○ Focus off"}
+          {focusCamera.enabled ? (language === "en" ? "◉ Focus on" : "◉ Concentration on") : (language === "en" ? "○ Focus off" : "○ Concentration off")}
         </button>
       </div>}
 

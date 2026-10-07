@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Camera, Eye, Activity, Move, EyeOff, Loader2, X } from "lucide-react";
 import type { FocusCamera } from "../useFocusCamera.ts";
+import { GAZE_LABELS, MOVEMENT_LABELS } from "../useFaceTracking.ts";
 import { useLang } from "../../ui.tsx";
 
 interface CameraArtifactProps {
@@ -12,6 +13,7 @@ interface CameraArtifactProps {
 // independent copy from `tracking.landmarks` without needing the actual tracked <canvas> element, which
 // stays owned by useFocusCamera and outlives this widget's own mount/unmount.
 const EYE_LANDMARK_IDX = [33, 133, 159, 145, 362, 263, 386, 374];
+
 
 /** Purely a *view* onto the shared FocusCamera (see useFocusCamera.ts) — this widget can be freely closed
  *  and reopened by the student without affecting the underlying camera stream or ML tracking, which live
@@ -86,18 +88,25 @@ export function CameraArtifact({ camera }: CameraArtifactProps) {
           <div className="sm-camera-icon" aria-hidden="true">
             <Camera size={24} strokeWidth={1.5} />
           </div>
-          <h3>Private focus camera</h3>
+          <h3>{L("Caméra de concentration privée", "Private focus camera")}</h3>
           <p>
-            Optional. On-device ML tracks your face, eyes, and movement to estimate concentration. Video
-            stays in this browser — never recorded, uploaded, or stored. Once on, it keeps working for the
-            rest of the session even if you close this panel.
+            {L(
+              "Optionnel. Le ML embarqué suit ton visage, tes yeux et tes mouvements pour estimer ta concentration. "
+                + "La vidéo reste dans ce navigateur — jamais enregistrée, envoyée ou conservée. Une fois activée, "
+                + "elle continue de fonctionner pour le reste de la séance, même si tu fermes ce panneau.",
+              "Optional. On-device ML tracks your face, eyes, and movement to estimate concentration. Video "
+                + "stays in this browser — never recorded, uploaded, or stored. Once on, it keeps working for the "
+                + "rest of the session even if you close this panel.",
+            )}
           </p>
           <button className="sm-btn sm-btn-primary" onClick={() => void startCamera()}>
-            Allow camera
+            {L("Autoriser la caméra", "Allow camera")}
           </button>
           {error && (
             <p className="sm-camera-error" role="alert">
-              {error}
+              {error === "unsupported"
+                ? L("Ce navigateur ne prend pas en charge l'accès à la caméra.", "Camera access is not supported in this browser.")
+                : L("L'accès à la caméra n'a pas été autorisé. Rien n'a été enregistré ni envoyé.", "Camera access was not granted. Nothing was recorded or uploaded.")}
             </p>
           )}
         </div>
@@ -116,20 +125,20 @@ export function CameraArtifact({ camera }: CameraArtifactProps) {
             {!videoReady && (
               <div className="sm-camera-video-loading" role="status">
                 <Loader2 size={18} className="sm-spin" />
-                <span>Starting camera preview…</span>
+                <span>{L("Démarrage de l'aperçu caméra…", "Starting camera preview…")}</span>
               </div>
             )}
             <canvas ref={canvasRef} className="sm-camera-overlay" />
             {tracking.status === "loading" && (
               <div className="sm-camera-ml-loading">
                 <Loader2 size={20} className="sm-spin" />
-                <span>Loading ML model…</span>
+                <span>{L("Chargement du modèle ML…", "Loading ML model…")}</span>
               </div>
             )}
             {tracking.status === "error" && (
               <div className="sm-camera-ml-error">
                 <EyeOff size={18} />
-                <span>Concentration tracking unavailable — camera preview only</span>
+                <span>{L("Suivi de concentration indisponible — aperçu caméra uniquement", "Concentration tracking unavailable — camera preview only")}</span>
                 {process.env.NODE_ENV === "development" && tracking.errorMessage && (
                   <span className="sm-camera-ml-error-detail">{tracking.errorMessage}</span>
                 )}
@@ -141,7 +150,7 @@ export function CameraArtifact({ camera }: CameraArtifactProps) {
                 className={`sm-camera-badge ${tracking.faceDetected ? "is-on" : "is-off"}`}
               >
                 <span className="sm-camera-badge-dot" />
-                {tracking.faceDetected ? "Face tracked" : "No face"}
+                {tracking.faceDetected ? L("Visage suivi", "Face tracked") : L("Aucun visage", "No face")}
               </div>
             )}
           </div>
@@ -168,7 +177,7 @@ export function CameraArtifact({ camera }: CameraArtifactProps) {
                 </svg>
                 <div className="sm-metric-ring-label">
                   <span className="sm-metric-ring-val">{conc}</span>
-                  <span className="sm-metric-ring-unit">focus</span>
+                  <span className="sm-metric-ring-unit">{L("concentration", "focus")}</span>
                 </div>
               </div>
 
@@ -176,23 +185,23 @@ export function CameraArtifact({ camera }: CameraArtifactProps) {
               <div className="sm-metric-chips">
                 <div className="sm-metric-chip">
                   <Eye size={13} strokeWidth={2} />
-                  <span className="sm-metric-chip-label">Gaze</span>
-                  <span className="sm-metric-chip-val">{tracking.gazeStatus}</span>
+                  <span className="sm-metric-chip-label">{L("Regard", "Gaze")}</span>
+                  <span className="sm-metric-chip-val">{L(...(GAZE_LABELS[tracking.gazeStatus] || [tracking.gazeStatus, tracking.gazeStatus] as [string, string]))}</span>
                 </div>
                 <div className="sm-metric-chip">
                   <Move size={13} strokeWidth={2} />
-                  <span className="sm-metric-chip-label">Movement</span>
-                  <span className="sm-metric-chip-val">{tracking.movementStatus}</span>
+                  <span className="sm-metric-chip-label">{L("Mouvement", "Movement")}</span>
+                  <span className="sm-metric-chip-val">{L(...(MOVEMENT_LABELS[tracking.movementStatus] || [tracking.movementStatus, tracking.movementStatus] as [string, string]))}</span>
                 </div>
                 <div className="sm-metric-chip">
                   <Activity size={13} strokeWidth={2} />
-                  <span className="sm-metric-chip-label">Blinks</span>
+                  <span className="sm-metric-chip-label">{L("Clignements", "Blinks")}</span>
                   <span className="sm-metric-chip-val">
                     {tracking.blinkCount} · {tracking.blinkRate}/min
                   </span>
                 </div>
                 <div className="sm-metric-chip sm-metric-chip-pose">
-                  <span className="sm-metric-chip-label">Head pose</span>
+                  <span className="sm-metric-chip-label">{L("Posture de tête", "Head pose")}</span>
                   <span className="sm-metric-chip-val">
                     Y {tracking.headYaw}° · P {tracking.headPitch}° · R {tracking.headRoll}°
                   </span>
@@ -202,10 +211,10 @@ export function CameraArtifact({ camera }: CameraArtifactProps) {
           )}
 
           <div className="sm-camera-live-note">
-            Live preview only · on-device ML · not recorded or uploaded · keeps tracking even if you close this panel
+            {L("Aperçu en direct uniquement · ML embarqué · rien n'est enregistré ni envoyé · continue même si tu fermes ce panneau", "Live preview only · on-device ML · not recorded or uploaded · keeps tracking even if you close this panel")}
           </div>
           <button className="sm-btn sm-btn-ghost" onClick={stopCamera}>
-            <X size={14} /> Turn camera off
+            <X size={14} /> {L("Éteindre la caméra", "Turn camera off")}
           </button>
         </div>
       )}

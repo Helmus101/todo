@@ -1,6 +1,10 @@
 # Keep the build context lean + safe. Critically: never copy the host's node_modules over the container's
 # fresh install (host binaries — esbuild/vite — are built for the host OS and break in Linux), and never
 # bake .env secrets into the image.
+#
+# `scripts/` is deliberately NOT ignored: `npm run build` ends with scripts/prerender-landing.tsx (bakes
+# the landing page into dist/index.html), so excluding it made every Docker build die on
+# ERR_MODULE_NOT_FOUND right after vite finished. Reproduced with the exact ignore list in a scratch copy.
 node_modules
 dist
 .env
@@ -10,4 +14,3 @@ dist
 *.log
 npm-debug.log*
 .DS_Store
-scripts

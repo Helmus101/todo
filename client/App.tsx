@@ -3522,7 +3522,7 @@ function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status
           one shell: lowercase "otto" wordmark left, language toggle right. */}
       <header className="landing-nav-framer">
         <a className="brand-framer" href="/"><Logo size={20} /> <span className="brand-name-framer">otto</span></a>
-        <button type="button" className="lang-toggle-framer" onClick={() => onLangChange(en ? "fr" : "en")} aria-label={en ? "Changer de langue" : "Switch language"}>{en ? "FR" : "EN"}</button>
+        <button type="button" className="lang-toggle-framer" onClick={() => onLangChange(en ? "fr" : "en")} aria-label={en ? "Switch language" : "Changer de langue"}>{en ? "FR" : "EN"}</button>
       </header>
       <main className="login-main">
         <div className="login-card">
@@ -3623,8 +3623,8 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
           {/* The prototype's nav link leads somewhere real: the /research page, the long-form write-up of
               Otto's learning philosophy (the research the approach is grounded in) — not an in-page anchor. */}
           <a href="/research" className="nav-link-framer">{L("Notre approche", "Our approach")}</a>
-          <button type="button" className="lang-toggle-framer" onClick={() => onLangChange(en ? "fr" : "en")} aria-label={en ? "Changer de langue" : "Switch language"}>{en ? "FR" : "EN"}</button>
-          <a className="btn ghost-framer" href="/login">{L("Log in", "Se connecter")}</a>
+          <button type="button" className="lang-toggle-framer" onClick={() => onLangChange(en ? "fr" : "en")} aria-label={en ? "Switch language" : "Changer de langue"}>{en ? "FR" : "EN"}</button>
+          <a className="btn ghost-framer" href="/login">{L("Se connecter", "Log in")}</a>
         </nav>
       </header>
 

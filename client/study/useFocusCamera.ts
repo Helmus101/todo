@@ -4,7 +4,9 @@ import { api } from "../api.ts";
 
 export interface FocusCamera {
   enabled: boolean;
-  error: string | null;
+  /** A stable CODE, not a sentence: this hook isn't a component and can't read the app's language, so the
+   *  display site (CameraArtifact) owns the wording in French or English. */
+  error: "unsupported" | "denied" | null;
   tracking: FaceTrackingState;
   /** The live MediaStream, for a widget to attach to its own <video> for preview — a MediaStream can back
    *  multiple <video> elements at once, so the widget doesn't need the actual tracked element (see below). */
@@ -48,7 +50,7 @@ export function useFocusCamera({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [enabled, setEnabled] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FocusCamera["error"]>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
 
   const tracking = useFaceTracking(videoRef, canvasRef, enabled);
@@ -166,7 +168,7 @@ export function useFocusCamera({
   const startCamera = useCallback(async () => {
     setError(null);
     if (!navigator.mediaDevices?.getUserMedia) {
-      setError("Camera access is not supported in this browser.");
+      setError("unsupported");
       return;
     }
     try {
@@ -185,7 +187,7 @@ export function useFocusCamera({
       setStream(s);
       setEnabled(true);
     } catch {
-      setError("Camera access was not granted. Nothing was recorded or uploaded.");
+      setError("denied");
       streamRef.current?.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
       setStream(null);

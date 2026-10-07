@@ -1,5 +1,5 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { recencyStamp, dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor, attachLocationLinks, googleMapsDirectionsUrl } from "../server/tasks.ts";
 import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem, detectLang, visionReady, describeWhiteboard, academicBlock, sessionRecapLine } from "../server/claude.ts";
 import { evaluateArithmetic, parseNumber, findArithmeticClaims, hasArithmetic } from "../server/arithmetic.ts";
@@ -4490,6 +4490,140 @@ section("TTS voice — switched to a male voice on both cloud tiers, arrows read
   check("an ASCII '->' arrow is also replaced", toSpeakableText("x -> y") === "x gives y");
   check("a '=>' arrow is also replaced", toSpeakableText("A => B") === "A gives B");
   check("spacing around the substituted word is normal regardless of how tight the arrow was in source", toSpeakableText("a→b") === "a gives b");
+}
+
+section("Bilingual copy — French and English never bleed into each other (source pins + a repo-wide sweep)");
+{
+  // Reported live: "sometimes it changes like french is mixed with english or so in copy". Two distinct
+  // failure modes were behind it, both fixed here and both pinned below:
+  //  (1) an L(fr, en) pair written the WRONG WAY ROUND — the landing page's "Log in" link rendered
+  //      "Log in" in French and "Se connecter" in English, and the language toggle's aria-label did the
+  //      same swap — and
+  //  (2) a string hardcoded in English and never wrapped in L() at all, so a French student saw English
+  //      regardless of the toggle (a whole Study Mode setup screen, the camera consent panel, the citation
+  //      hint, the tutor's guardrail tag, the crash fallback...).
+  const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
+  const appSrc = read("../client/App.tsx");
+
+  check("the language toggle's aria-label follows the language, not the reverse", /aria-label=\{en \? "Switch language" : "Changer de langue"\}/.test(appSrc) && !/en \? "Changer de langue"/.test(appSrc));
+  check("the landing page's login link is French-first (it rendered \"Log in\" in French)", /\{L\("Se connecter", "Log in"\)\}/.test(appSrc));
+
+  // A sweep over every L(fr, en) pair in the client: the first argument must not read as English while the
+  // second reads as French. Catches the swap class wherever a future one lands, not just the two above.
+  const FR_WORDS = new Set("le la les des une pour avec dans sur ton tes nous vous est sont était tout tous très rien qui quoi comment pourquoi quand cette ces mon ma mes ses avoir fait faire bien déjà encore aussi mais alors donc ici après avant entre vers chaque autre même sans votre notre leurs leur aux cela chose compte enregistrer supprimer envoyer continuer commencer terminer fermer ouvrir retour suivant précédent question réponse sujet matière élève étudiant professeur classe cours exercice leçon devoir réviser révision objectif matériel outils minute heure attention reste restant mieux assez prêt tâches semaine jour mois année fois devoirs contrôles réglages pendant active réactive chercher nouvelles seules tranquille vérification apparaîtront caméra aperçu enregistré téléversé mouvement visage yeux estimation navigateur jamais cliquer déposer fichiers travail pause utilisation mot définitions intérieur rotation glisser surface bureau sauvé exactement repris besoin commencer garde contenu récemment copié copier remplir moins titre passer soumettre généré vérifier contre classe guide style avant valid étudier commencé panneau ajouter terminer étapes terminée terminé".split(/\s+/));
+  const EN_WORDS = new Set("the and with your you what this that these those from for of is are was were been have has had will would can could should make made all every very good morning evening hello thanks thank yes not nothing yet already now today tomorrow yesterday week month year time thing things other others same also but if then so here there small big great new next last ready continue start finish close open view back question answer note notes card cards subject student teacher class course exercise lesson homework revise revision effort progress goal goals plan materials tools minute minutes hour hours attention left remain remaining better enough little resume session generated check against exact guide before submitting rotate drag surface desk saved where off need everything starting keeps contained focus trended recently copy copied fill least title upcoming events deadlines documents shared enrich study whenever want free workspace help tied task search add remove edit delete save cancel confirm retry again enter select choose done loading error success warning info previous skip reloading usually fixes hit unexpected budget sweep tasks appear own complete sorted priority deadline urgent important caught keeping eye still checking taking while log sign out switch language camera live only recorded uploaded turn model private optional tracks face eyes movement estimate concentration video stays browser never click drop upload files images pomodoro auto alternate work break use type word definitions inside mode missed closest grade grades published accessed".split(/\s+/));
+  const scoreString = (s) => {
+    const toks = s.toLowerCase().replace(/[’']/g, " ").replace(/[^a-zà-öø-ÿ]+/gi, " ").trim().split(/\s+/).filter(Boolean);
+    let fr = 0, en = 0;
+    for (const w of toks) { if (FR_WORDS.has(w)) fr++; if (EN_WORDS.has(w)) en++; }
+    if (/[àâäçéèêëîïôöùûüœ]/i.test(s)) fr += 3;
+    return { fr, en };
+  };
+  // Literal-only, non-nested scan of `L("...", "...")` — the vast majority of pairs are plain literals, and
+  // a pair built from expressions (a template with variables) is deliberately skipped rather than guessed at.
+  const swappedPairs = [];
+  const clientFiles = [];
+  const walkClient = (dir) => {
+    for (const name of readdirSync(new URL(dir, import.meta.url), { withFileTypes: true })) {
+      if (name.isDirectory()) walkClient(`${dir}${name.name}/`);
+      else if (/\.tsx?$/.test(name.name)) clientFiles.push(`${dir}${name.name}`);
+    }
+  };
+  walkClient("../client/");
+  for (const rel of clientFiles) {
+    const src = read(rel);
+    const re = /(?<![\w.$])L\(\s*(["'])((?:(?!\1)[^\\]|\\.)*)\1\s*,\s*(["'])((?:(?!\3)[^\\]|\\.)*)\3\s*[,)]/g;
+    let m;
+    while ((m = re.exec(src))) {
+      const first = m[2], second = m[4];
+      const a = scoreString(first), b = scoreString(second);
+      if (a.en >= 2 && a.fr === 0 && b.fr >= 2 && b.en === 0) swappedPairs.push(`${rel}: ${JSON.stringify(first)} | ${JSON.stringify(second)}`);
+    }
+  }
+  check(`no L(fr, en) pair is written the wrong way round (${swappedPairs.length} found)`, swappedPairs.length === 0);
+  if (swappedPairs.length) console.log("    " + swappedPairs.join("\n    "));
+
+  // The specific strings that were hardcoded English — each must now be a bilingual pair, and the English
+  // side must appear exactly ONCE in the file (inside that pair) so it can only ever render in English.
+  const bilingual = (rel, fr, en) => {
+    const src = read(rel);
+    const occurrences = src.split(`"${en}"`).length - 1;
+    check(`${rel.split("/").pop()}: "${en.slice(0, 44)}" is French-first now`, src.includes(`L("${fr}", "${en}")`) && occurrences === 1);
+  };
+  bilingual("../client/study/StudySetup.tsx", "Reprendre la séance précédente", "Resume previous session");
+  bilingual("../client/study/StudySetup.tsx", "Matériel pour cette séance", "Materials for this session");
+  bilingual("../client/study/StudySetup.tsx", "Clique ou glisse-dépose", "Click or drag & drop");
+  bilingual("../client/study/StudySetup.tsx", "Commencer à réviser", "Start studying");
+  bilingual("../client/study/StudySetup.tsx", "MODE ÉTUDE", "STUDY MODE");
+  bilingual("../client/study/artifacts/CameraArtifact.tsx", "Caméra de concentration privée", "Private focus camera");
+  bilingual("../client/study/artifacts/CameraArtifact.tsx", "Autoriser la caméra", "Allow camera");
+  bilingual("../client/study/artifacts/CameraArtifact.tsx", "Éteindre la caméra", "Turn camera off");
+  bilingual("../client/study/artifacts/GraphBlock.tsx", "Surface 3D — fais glisser pour tourner", "3D surface — drag to rotate");
+  const citeSrc = read("../client/study/artifacts/CitationArtifact.tsx");
+  check("CitationArtifact: the date row labels and the generated citation itself follow the student's language", citeSrc.includes('L("Publié le", "Published")') && citeSrc.includes('L("Consulté le", "Accessed")') && citeSrc.includes('en ? "(n.d.)." : "(s.d.)."') && citeSrc.includes('en ? "Accessed" : "Consulté le"'));
+  check("the tutor's guardrail tag reuses the same bilingual wording as the task chat", read("../client/study/AskOttoPanel.tsx").includes('L("Otto guide, ne fait pas à ta place", "Otto guides, doesn\'t do it for you")'));
+  check("a camera permission failure surfaces a CODE the display site can translate (not a baked-in sentence)", /error: "unsupported" \| "denied" \| null/.test(read("../client/study/useFocusCamera.ts")) && !/setError\("Camera access/.test(read("../client/study/useFocusCamera.ts")));
+  check("gaze/movement statuses stay English KEYS (session averages compare against them) with separate display labels", /GAZE_LABELS/.test(read("../client/study/useFaceTracking.ts")) && /gazeStatus === "On screen"/.test(read("../client/study/useFocusCamera.ts")));
+  check("the crash fallback outside LangProvider reads the persisted language instead of assuming English", /localStorage.getItem\("otto-landing-lang"\)/.test(read("../client/main.tsx")) && !/<h1>Something went wrong<\/h1>/.test(read("../client/main.tsx")));
+}
+
+section("Production readiness — the two CSP copies agree, and the Docker build keeps what it needs (source pins)");
+{
+  // The app ships TWO copies of the same Content-Security-Policy: server/index.ts (the self-hosted/Docker
+  // path, where Express sets the header) and vercel.json (the Vercel path, where their edge serves it).
+  // They had silently drifted — style-src was missing https://fonts.googleapis.com in the Express copy
+  // while vercel.json already had it, so on the Docker path every page silently fell back to a system font.
+  // A directive-by-directive comparison is what actually catches that class of bug.
+  const serverSrc = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const vercelRaw = readFileSync(new URL("../vercel.json", import.meta.url), "utf8");
+  const cspOf = (block) => Object.fromEntries(block.split(";").map((d) => d.trim()).filter(Boolean).map((d) => {
+    const i = d.indexOf(" ");
+    return [d.slice(0, i), d.slice(i + 1).trim().split(/\s+/).sort().join(" ")];
+  }));
+  const startMarker = 'const CSP = [';
+  const cspArraySrc = serverSrc.slice(serverSrc.indexOf(startMarker), serverSrc.indexOf('].join("; ");'));
+  const exprCsp = cspOf(cspArraySrc.split("\n").filter((l) => /^\s*"[a-z-]+ /.test(l)).map((l) => l.trim().replace(/^"|",?$/g, "").replace(/"\s*\+\s*"/g, "")).join("; "));
+  const vercelCsp = cspOf((vercelRaw.match(/Content-Security-Policy",\s*"value":\s*"([^"]+)"/) || [])[1] || "");
+  const directions = (o) => Object.keys(o).sort().join(" ");
+  check("both CSP copies declare the same directives", directions(exprCsp) === directions(vercelCsp));
+  const differing = Object.keys(exprCsp).filter((k) => vercelCsp[k] && exprCsp[k] !== vercelCsp[k]);
+  check(`no directive drifted between the Express CSP and vercel.json (${differing.join(", ") || "none"})`, differing.length === 0);
+  check("the Express CSP allows the Google Fonts stylesheet both stylesheets @import", /style-src[^"]*https:\/\/fonts\.googleapis\.com/.test(cspArraySrc));
+
+  // .dockerignore must NOT exclude scripts/: `npm run build` ends with scripts/prerender-landing.tsx, so
+  // ignoring it made the Docker image build die on ERR_MODULE_NOT_FOUND after vite had already finished
+  // (verified by reproducing the ignore list in a scratch copy).
+  const dockerignore = readFileSync(new URL("../.dockerignore", import.meta.url), "utf8");
+  check(".dockerignore keeps scripts/ (a Docker build needs scripts/prerender-landing.tsx)",
+    !dockerignore.split("\n").some((l) => l.trim() === "scripts" || l.trim() === "scripts/"));
+  check(".dockerignore still excludes the host node_modules and any .env (host binaries + secrets)",
+    dockerignore.split("\n").some((l) => l.trim() === "node_modules") && dockerignore.split("\n").some((l) => l.trim() === ".env"));
+
+  // The runtime image must never carry devDependencies: `npm start` needs only tsx + cross-env, both of
+  // which are production dependencies (see the multi-stage Dockerfile).
+  const dockerfile = readFileSync(new URL("../Dockerfile", import.meta.url), "utf8");
+  const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  check("the runtime stage installs production dependencies only", /npm ci --omit=dev/.test(dockerfile) && /AS runtime/.test(dockerfile) && /AS build/.test(dockerfile));
+  check("the Docker runtime drops root", /^USER node$/m.test(dockerfile));
+  check("the Docker healthcheck probes the API's own /healthz", /HEALTHCHECK[\s\S]{0,200}\/healthz/.test(dockerfile));
+  check("npm start's two runtime deps are production dependencies (tsx, cross-env)", !!pkg.dependencies.tsx && !!pkg.dependencies["cross-env"]);
+
+  // Unused runtime dependencies are pure supply-chain surface — cors (no permissive CORS is used anywhere;
+  // the CSRF design depends on that) and bcryptjs (auth moved to Supabase) were both sitting in
+  // `dependencies` with zero imports.
+  for (const dead of ["cors", "bcryptjs", "googleapis"]) {
+    check(`the unused ${dead} dependency is gone from package.json`, !pkg.dependencies[dead]);
+  }
+  check("no client/server source imports cors, bcryptjs or googleapis", (() => {
+    const walkDir = (dir) => {
+      for (const e of readdirSync(new URL(dir, import.meta.url), { withFileTypes: true })) {
+        if (e.isDirectory()) { if (!/node_modules|dist|\.git/.test(e.name)) walkDir(`${dir}${e.name}/`); }
+        else if (/\.tsx?$/.test(e.name)) { if (/from "(cors|bcryptjs|googleapis)"/.test(readFileSync(new URL(`${dir}${e.name}`, import.meta.url), "utf8"))) return false; }
+      }
+      return true;
+    };
+    return walkDir("../server/") && walkDir("../client/");
+  })());
 }
 
 const { runTutorSim } = await import("./tutor-sim.mjs");

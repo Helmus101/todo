@@ -277,7 +277,7 @@ export function AskOttoPanel({
       {error ? (
         <div className="sm-ai-error">
           {error}
-          <button type="button" className="sm-btn sm-btn-ghost sm-btn-sm" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending}>Retry</button>
+          <button type="button" className="sm-btn sm-btn-ghost sm-btn-sm" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending}>{L("Réessayer", "Retry")}</button>
         </div>
       ) : null}
       {/* Real mic failure surfacing (permission denied, no mic, network) — previously silent. */}
@@ -430,7 +430,7 @@ export function AskOttoPanel({
               </div>
             ) : null}
             {m.role === "assistant" && m.guardrail ? (
-              <span className="sm-ai-guardrail-tag">Otto guides, doesn't do it for you</span>
+              <span className="sm-ai-guardrail-tag">{L("Otto guide, ne fait pas à ta place", "Otto guides, doesn't do it for you")}</span>
             ) : null}
             {m.role === "assistant" && (() => {
               const mismatches = arithmeticMismatches(m.text);

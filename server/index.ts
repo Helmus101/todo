@@ -102,7 +102,13 @@ const CSP = [
   "script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net",
   "script-src-elem 'self' https://cdn.jsdelivr.net",
   "worker-src 'self' blob:",
-  "style-src 'self' 'unsafe-inline'",
+  // https://fonts.googleapis.com: client/styles.css and client/lab.css both @import Inter/
+  // Baskervville/Handlee/Newsreader from Google Fonts. The imported .woff2 files live on
+  // fonts.gstatic.com (font-src below already allowed it), but the STYLESHEET fetch itself is governed
+  // by style-src — missing here while vercel.json's copy of this CSP already listed it, so on the
+  // self-hosted/Docker path (where THIS header is the one actually served) every page silently fell
+  // back to a system font. Same class of drift as the font-src/connect-src fixes above.
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   // blob:: a student's uploaded image material (ImageArtifact.tsx) renders straight from a same-page
   // blob: URL (StudySetup's/StudyMode's upload flow, same origin as the PDF blob: already allowed under
   // frame-src below) — without this, EVERY uploaded image silently failed to render (CSP blocks it before
@@ -2601,7 +2607,9 @@ app.post("/api/tutor/read-whiteboard", requireAuth, rateLimit(15, 60_000), expre
   if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
   const image = String(req.body?.image || "");
   if (!image) { res.status(400).json({ error: M(req, "Aucun dessin reçu.", "No drawing received.") }); return; }
-  const r = await describeWhiteboard(image);
+  // The vision helper composes its own (diagnostic, sometimes upstream-detail-bearing) message, so it
+  // takes the request's language instead of returning English the client would show inside a French UI.
+  const r = await describeWhiteboard(image, (fr, en) => M(req, fr, en));
   if ("error" in r) { res.status(422).json({ error: r.error }); return; }
   void recordEvent(req.session.user!, "whiteboard_read", {});
   res.json({ description: r.description });
@@ -2618,7 +2626,7 @@ app.post("/api/tutor/read-photo", requireAuth, rateLimit(15, 60_000), express.js
   if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
   const image = String(req.body?.image || "");
   if (!image) { res.status(400).json({ error: M(req, "Aucune image reçue.", "No image received.") }); return; }
-  const r = await describeUploadedPhoto(image);
+  const r = await describeUploadedPhoto(image, (fr, en) => M(req, fr, en));
   if ("error" in r) { res.status(422).json({ error: r.error }); return; }
   void recordEvent(req.session.user!, "photo_read", {});
   res.json({ description: r.description });

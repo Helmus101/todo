@@ -1834,20 +1834,33 @@ export async function synthesizeSpeechGoogleTranslate(text: string, lang: string
  *  concern" posture as the rest of this file: this function's only job is "what does the image show",
  *  exactly like stripHtmlToText's "what does the page say" in server/index.ts). Returns an error string
  *  (never throws) so the route can hand the student an honest, specific failure. */
+/** Picks the right language for one message — the same shape as server/index.ts's own `M(req, fr, en)`,
+ *  passed IN by the caller because this module is called from routes (which know the request's language)
+ *  as well as from tests (which don't). Defaults to English so a caller that doesn't care — or doesn't
+ *  have a request — keeps the previous exact behavior. */
+type Msg = (fr: string, en: string) => string;
+const EN_ONLY: Msg = (_fr, en) => en;
+
+/** French/English noun phrases for the thing being read. French needs three forms (a sentence-initial
+ *  subject, the object of "lire", and the object of "sur") because the article contracts differently —
+ *  "le tableau blanc" vs "du tableau blanc"; English needs one. Getting this wrong is how machine-shaped
+ *  translations read badly ("lire le tableau blanc" is fine, "sur le tableau" needs "sur", not "dans"). */
+type VisionNoun = { frSubj: string; frOf: string; frOn: string; en: string; blockedFr: string; blockedEn: string };
+
 /** Shared Gemini vision call — both describeWhiteboard (a canvas drawing) and describeUploadedPhoto (a
  *  student-supplied photo of an exercise/document, used by the Tutor's file-upload attach button) need the
  *  exact same request/error-handling shape and only differ in the instruction text and the "looks empty"
  *  size heuristic's label. One implementation, two thin callers, instead of ~60 duplicated lines. */
-async function describeImageWithGemini(dataUrl: string, instruction: string, emptyLabel: string, blockedLabel: string): Promise<{ description: string } | { error: string }> {
+async function describeImageWithGemini(dataUrl: string, instruction: string, noun: VisionNoun, t: Msg = EN_ONLY): Promise<{ description: string } | { error: string }> {
   const key = process.env.GEMINI_API_KEY;
-  if (!key) return { error: "Reading images isn't configured on this server." };
+  if (!key) return { error: t("La lecture d'images n'est pas configurée sur ce serveur.", "Reading images isn't configured on this server.") };
   const match = /^data:(image\/(?:png|jpeg|jpg|webp));base64,(.+)$/.exec(dataUrl);
-  if (!match) return { error: "That doesn't look like a real image." };
+  if (!match) return { error: t("Ça ne ressemble pas à une vraie image.", "That doesn't look like a real image.") };
   const [, mimeType, base64] = match;
   // A blank/near-blank canvas (nothing drawn, or just a stray dot) still produces a "valid" PNG — catch it
   // here on SIZE before spending a real API call on nothing. A completely empty 800x600 PNG is tiny (a few
   // hundred bytes of flat-color compression); anything with real content is reliably much larger.
-  if (base64.length < 400) return { error: `The ${emptyLabel} looks empty.` };
+  if (base64.length < 400) return { error: t(`${noun.frSubj} semble vide.`, `The ${noun.en} looks empty.`) };
   try {
     const res = await retryRequest(() => fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`,
@@ -1874,7 +1887,10 @@ async function describeImageWithGemini(dataUrl: string, instruction: string, emp
       // just Gemini's own error message) so a failure is self-diagnosable from the chat bubble itself.
       let detail = "";
       try { detail = JSON.parse(body)?.error?.message || ""; } catch { /* non-JSON error body */ }
-      return { error: `Couldn't read the ${emptyLabel} (${res.status}${detail ? `: ${detail.slice(0, 200)}` : ""}) — try again in a moment.` };
+      return { error: t(
+        `Impossible de lire ${noun.frOf} (${res.status}${detail ? ` : ${detail.slice(0, 200)}` : ""}) — réessaie dans un instant.`,
+        `Couldn't read the ${noun.en} (${res.status}${detail ? `: ${detail.slice(0, 200)}` : ""}) — try again in a moment.`,
+      ) };
     }
     const json: any = await res.json();
     // Same reasoning as the !res.ok branch above: a 200 with no usable text can ALSO have a real, specific
@@ -1885,14 +1901,17 @@ async function describeImageWithGemini(dataUrl: string, instruction: string, emp
     const finishReason = json?.candidates?.[0]?.finishReason;
     const description = String(json?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
     if (!description) {
-      if (blockReason) return { error: `${blockedLabel} (${blockReason}) — try a different image.` };
-      if (finishReason && finishReason !== "STOP") return { error: `Couldn't finish reading the ${emptyLabel} (${finishReason}) — try again.` };
-      return { error: `Couldn't make out anything in the ${emptyLabel} — try a bigger/clearer one.` };
+      if (blockReason) return { error: t(`${noun.blockedFr} (${blockReason}) — essaie une autre image.`, `${noun.blockedEn} (${blockReason}) — try a different image.`) };
+      if (finishReason && finishReason !== "STOP") return { error: t(`Impossible de terminer la lecture ${noun.frOf} (${finishReason}) — réessaie.`, `Couldn't finish reading the ${noun.en} (${finishReason}) — try again.`) };
+      return { error: t(`Impossible de distinguer quoi que ce soit sur ${noun.frOn} — essaie une image plus grande ou plus nette.`, `Couldn't make out anything in the ${noun.en} — try a bigger/clearer one.`) };
     }
     return { description: description.slice(0, 2000) };
   } catch (e: any) {
     console.error(`[vision] Gemini request threw: ${e?.message || e}`);
-    return { error: `Couldn't read the ${emptyLabel} just now (${e?.message || "network error"}) — try again in a moment.` };
+    return { error: t(
+      `Impossible de lire ${noun.frOf} pour l'instant (${e?.message || "erreur réseau"}) — réessaie dans un instant.`,
+      `Couldn't read the ${noun.en} just now (${e?.message || "network error"}) — try again in a moment.`,
+    ) };
   }
 }
 
@@ -1902,7 +1921,7 @@ async function describeImageWithGemini(dataUrl: string, instruction: string, emp
  *  concern" posture as the rest of this file: this function's only job is "what does the image show",
  *  exactly like stripHtmlToText's "what does the page say" in server/index.ts). Returns an error string
  *  (never throws) so the route can hand the student an honest, specific failure. */
-export async function describeWhiteboard(dataUrl: string): Promise<{ description: string } | { error: string }> {
+export async function describeWhiteboard(dataUrl: string, t: Msg = EN_ONLY): Promise<{ description: string } | { error: string }> {
   return describeImageWithGemini(
     dataUrl,
     "Transcribe exactly what is drawn/written on this whiteboard — any text, numbers, " +
@@ -1910,7 +1929,8 @@ export async function describeWhiteboard(dataUrl: string): Promise<{ description
       "including the shape/layout of any diagram, not what it might mean or whether it's correct. " +
       "If it's a math expression, transcribe it precisely (e.g. \"x^2 + 3x - 4 = 0\", not a vague " +
       "paraphrase). If the board is genuinely blank or illegible, say so plainly instead of guessing.",
-    "whiteboard", "The whiteboard image was blocked",
+    { frSubj: "Le tableau blanc", frOf: "du tableau blanc", frOn: "le tableau blanc", en: "whiteboard", blockedFr: "L'image du tableau a été bloquée", blockedEn: "The whiteboard image was blocked" },
+    t,
   );
 }
 
@@ -1919,14 +1939,15 @@ export async function describeWhiteboard(dataUrl: string): Promise<{ description
  *  text required. Same literal-transcription posture as describeWhiteboard: this only reports what the
  *  image SHOWS, never solves it or interprets it — that's the tutor's job once the transcription reaches
  *  it as normal chat context. */
-export async function describeUploadedPhoto(dataUrl: string): Promise<{ description: string } | { error: string }> {
+export async function describeUploadedPhoto(dataUrl: string, t: Msg = EN_ONLY): Promise<{ description: string } | { error: string }> {
   return describeImageWithGemini(
     dataUrl,
     "Transcribe exactly what this photo shows — all text, numbers, equations, diagrams, tables, or " +
       "handwriting, in reading order. Be literal and factual: describe what's actually there, not what it " +
       "might mean. If it's a math/science exercise, transcribe every part/question precisely. If the image " +
       "is blurry, cut off, or illegible in places, say so plainly for those parts instead of guessing.",
-    "image", "The image was blocked",
+    { frSubj: "L'image", frOf: "de l'image", frOn: "l'image", en: "image", blockedFr: "L'image a été bloquée", blockedEn: "The image was blocked" },
+    t,
   );
 }
 
