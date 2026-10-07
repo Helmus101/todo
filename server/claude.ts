@@ -2555,7 +2555,7 @@ const CREATE_PROBLEM_TOOL = {
     question: { type: "string", description: "the question/prompt — math in LaTeX between $…$ (it is typeset for the student) — one clear sentence, OR a full multi-part structured prompt (IB/AP extended-response/FRQ style — lettered sub-parts with their own point values) when the student's program calls for one. Match the phrasing, format, and rigor of an actual exam/contrôle question for this subject and level (see VOCABULARY/track/exam-style above), not generic trivia." },
     options: { type: "array", description: "MCQ mode: 2-4 answer options by default; EXACTLY 5 for an AP-track student (College Board MCQs are always 5-option — see the AP block above). EXACTLY ONE is correct; the wrong ones must be genuinely plausible. Omit entirely for free-response mode (this is also the mode for any IB/AP multi-part structured question — see above).", items: { type: "string" } },
     correct: { type: "number", description: "MCQ mode only: 0-based index into options of the CORRECT one" },
-    answer: { type: "string", description: "Free-response mode only: the expected answer — SHORT and checkable (a number, a simple expression, a single word), checked loosely (trimmed, case-insensitive). A free-response problem MUST have one; a \"prove that\" / \"show that\" task has no checkable answer, so turn it into a concrete question with a short result (\"what does the bracket simplify to?\", \"which identity turns sin²θ+cos²θ into a single number?\") or make it MCQ. Omit for MCQ mode." },
+    answer: { type: "string", description: "Free-response mode only: the expected answer — SHORT and checkable (a number, a simple expression, a single word), checked loosely (trimmed, case-insensitive). An EXERCISE is ONLY for a question with exactly ONE correct, short answer. NEVER create one for anything open-ended (explain, why, describe, justify, prove/show that, compare, discuss, multi-part (a)(b)(c)) — ask those in the conversation. If you can't state one short answer, it is not an exercise. Omit for MCQ mode." },
     why: { type: "string", description: "one line on why the answer is right — this is what makes the problem teach instead of just score" },
     hint: { type: "string", description: "an optional hint the student can reveal before answering" },
     format: { type: "string", description: "free-response mode only: guidance on expected format/units/notation (e.g. 'two decimal places, in m/s'). NEVER use the real answer as an example — use a placeholder ('x = a') or a different value." },
@@ -2844,6 +2844,15 @@ export function makeProblem(input: any): { problem: TaskProblem } | { error: str
   // Free-response mode: answer string
   const answer = input?.answer ? String(input.answer).trim().slice(0, 200) : undefined;
   if (!hasMCQ && !answer) return { error: "ERROR: a problem needs either MCQ (2+ options + correct index) or a free-response answer." };
+  // An EXERCISE the student types an answer into must have exactly ONE correct, short, checkable answer — a number,
+  // an expression, a single term. Open-ended asks (explain/describe/justify/prove/compare…), multi-part prompts and
+  // prose "answers" can't be auto-checked and would mark a right idea wrong; those belong in the conversation.
+  if (!hasMCQ && answer) {
+    const proseWords = (answer.match(/[A-Za-zÀ-ÿ]{3,}/g) || []).length;
+    if (answer.length > 40 || proseWords > 3 || /[.;]\s+\S/.test(answer) || /\b(because|since|donc|parce que|therefore)\b/i.test(answer)) return { error: "REJECTED: a type-in exercise needs ONE short checkable answer (a number, an expression, a single word/term — e.g. \"7\", \"x = 2\", \"sec²x − 1\"). Prose answers can't be auto-checked. Ask this in the conversation instead, or rewrite it so the answer is a single value." };
+    if (/\b(explain|describe|discuss|justify|prove|show that|demonstrate|compare|outline|comment on|in your own words|what do you think|why|how (?<verb>would|could|might|do you)|explique|décris|décrivez|discute|justifie|démontre|montre que|compare|pourquoi|à ton avis)\b/i.test(question)) return { error: "REJECTED: that question is open-ended (explain / why / prove / compare…) — it has no single checkable answer, so it is NOT an exercise. Ask it in the conversation, or reword it so it has exactly one correct short answer (\"what is …?\", \"find …\", \"simplify … to a single value\")." };
+    if (/\(\s*a\s*\)[\s\S]*\(\s*b\s*\)/i.test(question)) return { error: "REJECTED: multi-part prompts can't be auto-checked — create ONE problem per part, each with a single answer." };
+  }
   // Never let the guidance give the answer away. Free-response: scrub format AND hint against the answer.
   // MCQ: scrub against the correct option's text, but only when it's specific enough (3+ chars) not to
   // false-positive on an ordinary number in the hint.
@@ -7349,6 +7358,9 @@ const PRIMER_PERSONA =
   `typeset via DRAW_ON_BOARD's equation op. NEVER copy what the student typed or what you just said into the ` +
   `board word for word — a quote of the chat is noise; the board adds structure, the why and the result. Only ` +
   `what has actually been reached: never a step they haven't got to, never the answer.\n` +
+  `- EXERCISES ARE ONLY FOR ONE-ANSWER QUESTIONS: CREATE_PROBLEM is for a question whose answer is a single short, ` +
+  `checkable value (a number, an expression, a term) or a multiple-choice. Anything open-ended — explain, why, ` +
+  `describe, justify, prove, compare, "what do you think" — is asked in the conversation, never as an exercise box.\n` +
   `- GEOMETRY: any triangle, circle, sector, polygon, angle, altitude or midpoint figure goes through ` +
   `GEOMETRY_ON_BOARD (state named points in real units + what joins what; it draws accurately, labels cleanly, ` +
   `marks angles and right angles) — never DRAW_ON_BOARD with pixel guesses. Draw the GIVEN, mark the unknown as ` +
