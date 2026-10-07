@@ -4,7 +4,7 @@
 // answer through, hands the thinking back, writes reasoning to the board, rejects bad/leaky tool calls and
 // keeps replies short. No network, no key needed.
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
-const { chatAboutTask, summarizeCoursework, makeGeometryEntry } = await import("../server/claude.ts");
+const { chatAboutTask, summarizeCoursework, makeGeometryEntry, makeProblem } = await import("../server/claude.ts");
 const { buildGeometry } = await import("../shared/geometry.ts");
 
 let script = () => ({ content: "" });
@@ -170,4 +170,9 @@ export async function runTutorSim(check, section) {
   await run("so it is 3 sec x", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
   const sysTxt = String(calls[0].messages[0].content);
   check("the tutor is told to be critical-but-kind: verify every step, never wave a wrong step through, justify, never erase the board", /CRITICAL, KINDLY/.test(sysTxt) && /never wave it through/.test(sysTxt) && /ever erased/.test(sysTxt));
+
+  // Exercises are only for ONE-answer questions.
+  check("a short single-answer exercise is accepted", !("error" in makeProblem({ question: "Simplify $\\cos^2\\theta(1+\\tan^2\\theta)$ to a single number.", answer: "1" })) && !("error" in makeProblem({ question: "Solve 2x + 3 = 11.", answer: "x = 4" })));
+  check("open-ended asks (explain / why / prove / compare) are rejected as exercises", ["Explain why the sum of angles is 180°.", "Prove that sin²x + cos²x = 1.", "Why does the graph open upward?", "Compare mitosis and meiosis.", "Explique pourquoi x² ≥ 0."].every((q) => /open-ended/.test(makeProblem({ question: q, answer: "1" }).error || "")));
+  check("prose answers and multi-part prompts are rejected; MCQ stays allowed", /ONE short checkable answer/.test(makeProblem({ question: "What happens to the force?", answer: "it doubles because the mass doubles" }).error || "") && /multi-part/.test(makeProblem({ question: "(a) Find x. (b) Find y.", answer: "3" }).error || "") && !("error" in makeProblem({ question: "Why is the sky blue?", options: ["Rayleigh scattering", "Reflection of the sea"], correct: 0 })));
 }

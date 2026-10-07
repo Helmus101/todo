@@ -431,12 +431,6 @@ export function BoardArtifact({ task, writing, onProblemResult }: BoardArtifactP
       return (withState || dupes[0]).id === p.id;
     });
   const latestFocus = [...entries].reverse().find((e) => e.kind === "focus");
-  // NOTHING on the board is ever removed. When the tutor rewrites something (the reasoning trace, a corrected
-  // formula/figure with the same caption) the older version stays where it was, just marked "earlier version"
-  // and quieter, so the student can always see how the work evolved.
-  const supersedeKey = (e: BoardEntry): string | null => e.kind === "summary" ? "summary" : (e.kind === "diagram" || e.kind === "formula") && e.text.trim() ? `${e.kind}:${e.text.trim().toLowerCase()}` : null;
-  const supersededIds = new Set<string>();
-  entries.forEach((e, i) => { const k = supersedeKey(e); if (k && entries.slice(i + 1).some((x) => supersedeKey(x) === k)) supersededIds.add(e.id); });
   const flowEntries = entries
     .filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i)
     .filter(e => e.kind !== "focus" && (e.kind as string) !== "problem");
@@ -609,12 +603,11 @@ export function BoardArtifact({ task, writing, onProblemResult }: BoardArtifactP
           return (
             <div
               key={item.key}
-              className={`sm-board-entry sm-board-entry-${e.kind || "note"} sm-board-writein${fresh ? " sm-board-reveal" : ""}${supersededIds.has(e.id) ? " sm-board-superseded" : ""}`}
+              className={`sm-board-entry sm-board-entry-${e.kind || "note"} sm-board-writein${fresh ? " sm-board-reveal" : ""}`}
               style={fresh ? { animationDuration: `.35s, ${revealDuration(e.text)}s` } : undefined}
             >
               <span className="sm-board-section-num" aria-hidden="true">{String(idx + 1).padStart(2, "0")}</span>
               <div className="sm-board-entry-main">
-              {supersededIds.has(e.id) ? <div className="sm-board-superseded-tag">{en ? "Earlier version" : "Version précédente"}</div> : null}
               {/* No kind-label chip here on purpose (removed: "Formule"/"Définition"/"Insight"/…) — the board
                   reads as ONE continuous document the tutor is working on, not a form with labeled fields.
                   The underlying `kind` still drives real formatting differences below (a diagram is a figure,

@@ -151,8 +151,3 @@ h1 { font-family: var(--display); font-weight: 400; letter-spacing: -0.025em; }
 .sm-board-focus-text { font-size: 1.1rem; font-weight: 500; }
 .sm-board-trace { border-left: 1px solid var(--line); }
 .sm-board-trace-heading { color: var(--ink-3, #8a867b); letter-spacing: .08em; }
-
-/* Rewritten entries are kept (never deleted) — just quieter, with a small tag. */
-.sm-board-superseded { opacity: .55; }
-.sm-board-superseded:hover { opacity: .9; }
-.sm-board-superseded-tag { font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3, #8a867b); margin-bottom: 4px; }
