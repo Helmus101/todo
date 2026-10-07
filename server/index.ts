@@ -13,7 +13,8 @@ import type { CourseworkDoc } from "../shared/coursework.ts";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, FocusSession } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY, subjectMastery } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
-import { planMove, repairLine } from "./tutorAdapt.ts";
+import { planTurn, repairLine } from "./tutorAdapt.ts";
+import { parsePolicy, summarize as summarizePolicy, initPolicy } from "./tutorPolicy.ts";
 import { summarizeCoursework, fallbackCourseworkSummary, aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto, ttsReady, synthesizeSpeech, TTS_MAX_TEXT, tutorOpener, interactiveSceneDocument, INTERACTIVE_SCENE_CSP } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken, getAdminMetrics } from "./store.ts";
 import { sendTransactionalEmail } from "./mailer.ts";
@@ -1671,14 +1672,14 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     if (req.body?.primer === true) {
       try {
         repair = repairLine(message, history);
-        // Contextual: what works when the student is stuck/frustrated is learned separately from a normal turn.
-        const moveKey = `move|${t.sourceSubject || "any"}|${repair ? "stuck" : "flow"}`;
-        const moveState = await loadBanditState(req.session.user!, "tutormove");
-        const plan = planMove({ userKey: `${req.session.user}:${t.id}`, message, history, state: moveState, contextKey: moveKey, update: updatePosterior });
+        // The RL policy: a small neural network, trained online per student (REINFORCE), that picks the teaching move and
+        // pace for this turn. Weights persist per student; the previous turn's action is scored by how they just reacted.
+        const polState = await loadBanditState(req.session.user!, "tutorpolicy");
+        const plan = planTurn({ userKey: `${req.session.user}:${t.id}`, message, history, subject: t.sourceSubject, policy: parsePolicy((polState as any)?.policy) });
         moveLine = plan.line;
-        if (plan.scoredPrev) {
-          void saveBanditState(req.session.user!, "tutormove", plan.state!).catch(() => {});
-          void recordSessionOutcome({ userEmail: req.session.user!, decisionKey: "tutormove", arm: plan.scoredPrev.arm, context: moveKey, reward: plan.scoredPrev.reward, at: new Date().toISOString() });
+        if (plan.learned) {
+          void saveBanditState(req.session.user!, "tutorpolicy", { policy: plan.policy } as any).catch(() => {});
+          void recordSessionOutcome({ userEmail: req.session.user!, decisionKey: "tutorpolicy", arm: plan.learned.move, context: `${t.sourceSubject || "any"}|${plan.stuck ? "stuck" : "flow"}`, reward: plan.learned.reward, at: new Date().toISOString() });
         }
         if (repair) void recordMetric(req.session.user!, "tutor_repair_triggered", 1);
       } catch { /* best-effort */ }
@@ -3267,6 +3268,18 @@ app.post("/api/profile/grade", requireAuth, ah(async (req, res) => {
 // subject for anything still lacking an id (a pre-history-model entry that never got normalized) or for
 // a bulk "remove this whole subject" — same param, whichever matches.
 // Primer: Get dependence metrics for parent dashboard (Phase 1.5)
+// What Otto's learned policy currently favours for this student (transparency) + reset.
+app.get("/api/tutor/policy", requireAuth, async (req, res) => {
+  try {
+    const st = await loadBanditState(req.session.user!, "tutorpolicy");
+    const p = parsePolicy((st as any)?.policy);
+    res.json(p ? { learning: true, ...summarizePolicy(p) } : { learning: false, updates: 0 });
+  } catch { res.json({ learning: false, updates: 0 }); }
+});
+app.delete("/api/tutor/policy", requireAuth, async (req, res) => {
+  try { await saveBanditState(req.session.user!, "tutorpolicy", {} as any); res.json({ ok: true }); }
+  catch { res.status(500).json({ error: M(req, "Impossible de réinitialiser.", "Couldn't reset.") }); }
+});
 app.get("/api/primer/dependence", requireAuth, (req, res) => {
   const profile = req.session.profile;
   const metrics = profile?.dependenceMetrics || {};
