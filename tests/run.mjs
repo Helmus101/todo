@@ -1940,6 +1940,14 @@ section("isLikelyEcho — textual echo discrimination for real barge-in (client/
   const recogHookSrc = readFileSync(new URL("../client/voice/useSpeechRecognition.ts", import.meta.url), "utf8");
   check("the hook maps real error codes to student-presentable messages", /onErrorRef\.current\?\.\(speechErrorMessage\(e\.error\)\)/.test(recogHookSrc));
   check("no-speech/aborted never surface (normal always-on events, not failures)", /e\.error === "no-speech" \|\| e\.error === "aborted"\) return;/.test(recogHookSrc));
+
+  // Reported live: the student got cut off "sometimes" mid-sentence — not from a real pause, but from the
+  // browser's own ~60s session cap landing mid-utterance; the old onend unconditionally flushed the
+  // pending-final buffer before restarting, sending a half-finished thought purely because of where that
+  // boundary fell. Flushing must happen ONLY on a real stop (keepAliveRef false), never on an auto-restart.
+  const onendBody = recogHookSrc.slice(recogHookSrc.indexOf("rec.onend = () => {"), recogHookSrc.indexOf("recRef.current = rec;"));
+  check("an auto-restart (session cap/blip) does NOT flush the pending buffer — it survives the restart", /if \(keepAliveRef\.current\) \{[\s\S]*setTimeout\(\(\) => \{ if \(keepAliveRef\.current && recRef\.current === rec\) createAndStartRef\.current\?\.\(\); \}, 50\);[\s\S]*\} else \{[\s\S]*flushPending\(\);/.test(onendBody));
+  check("a real stop (not keeping alive) still flushes so a trailing utterance isn't lost for good", /\} else \{\s*\n\s*flushPending\(\);/.test(onendBody));
   check("the error mapper covers permission, no-mic, network, language, and a fallback", ["not-allowed", "audio-capture", "network", "language-not-supported"].every((c) => speechErrorsSrc.includes(`case "${c}"`)) && /default:/.test(speechErrorsSrc));
 }
 
