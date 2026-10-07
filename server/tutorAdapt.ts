@@ -284,3 +284,37 @@ export function repeatsRecentQuestion(draft: string, history: { role: string; te
   const past = history.filter((h) => h.role === "assistant").slice(-lookback);
   return past.some((h) => { const pq = boardQuestionOf(h.text); return !!pq && similarity(q, pq) >= 0.6; });
 }
+
+// ---- Neural RL policy (server/tutorPolicy.ts) wiring ----
+import { act, learn, initPolicy, paceLine, MOVES as POLICY_MOVES, type Policy, type Experience, type Move, type Pace } from "./tutorPolicy.ts";
+
+const pendingExp = new Map<string, { exp: Experience; move: Move }>();
+const PENDING_CAP = 2000;
+
+export interface TurnPlan { move: Move; pace: Pace; line: string; policy: Policy; learned?: { move: Move; reward: number }; stuck: boolean }
+/** One turn of the RL loop: (1) score + learn from the PREVIOUS turn's action using how the student just reacted,
+ *  (2) pick this turn's move and pace from the updated policy, (3) hand back the directive line + new weights. */
+export function planTurn(o: { userKey: string; message: string; history: { role: string; text: string }[]; subject?: string; policy: Policy | null; now?: Date; rng?: () => number }): TurnPlan {
+  let policy = o.policy || initPolicy();
+  const reaction = reactionTo(o.message, o.history);
+  const prev = pendingExp.get(o.userKey);
+  let learned: TurnPlan["learned"];
+  if (prev && o.history.length >= 2) {
+    policy = learn(policy, prev.exp, reaction.reward);
+    learned = { move: prev.move, reward: reaction.reward };
+  }
+  const users = o.history.filter((h) => h.role === "user").slice(-5).map((h) => h.text);
+  const ctx = {
+    reaction: reaction.label, stuckStreak: stuckStreak(o.message, o.history), turn: o.history.filter((h) => h.role === "assistant").length,
+    subject: o.subject, hour: (o.now || new Date()).getHours(), messageWords: o.message.trim().split(/\s+/).filter(Boolean).length,
+    hasMaths: /[0-9=+\-*/^√π]/.test(o.message), recentWrong: users.filter((m) => /^\[Exercise\].*marked wrong/s.test(m.trim())).length,
+    repeatedStudent: reaction.repeated, prevMove: prev?.move,
+  };
+  const failed = prev && reaction.reward < 0.5 ? prev.move : undefined;
+  const a = act(policy, ctx, o.rng, failed);
+  if (pendingExp.size >= PENDING_CAP) pendingExp.delete(pendingExp.keys().next().value as string);
+  pendingExp.set(o.userKey, { exp: a.exp, move: a.move });
+  const line = `\nTEACHING MOVE THIS TURN (a policy learned from how THIS student responds): ${MOVE_TEXT[a.move]} Keep every other rule — short, Socratic, never the answer.\n` + paceLine(a.pace);
+  return { move: a.move, pace: a.pace, line, policy, ...(learned ? { learned } : {}), stuck: ctx.stuckStreak > 0 };
+}
+export const _POLICY_MOVES_CHECK: readonly string[] = POLICY_MOVES;

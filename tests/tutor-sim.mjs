@@ -7,6 +7,7 @@ process.env.DEEPSEEK_API_KEY ||= "sim-key";
 const { chatAboutTask, summarizeCoursework, makeGeometryEntry, makeProblem, isDuplicateProblem, isDuplicateBoardEntry, isDuplicateDiagram } = await import("../server/claude.ts");
 const { buildGeometry } = await import("../shared/geometry.ts");
 const { autoMathLine } = await import("../shared/mathText.ts");
+const P = await import("../server/tutorPolicy.ts");
 
 let script = () => ({ content: "" });
 let calls = [];
@@ -252,4 +253,33 @@ export async function runTutorSim(check, section) {
   check("...but the student asking for another one gets it", r.problems.length === 1);
   r = await run("next", { problems: [{ ...openP, solved: true }], history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
   check("...and once the previous one is solved a new one is fine", r.problems.length === 1);
+
+  // ---- the neural RL policy learns a student's preferences ----
+  {
+    const r = P.rng(42);
+    let pol = P.initPolicy(3);
+    const calm = { reaction: "attempt", stuckStreak: 0, turn: 6, subject: "Math", hour: 17, messageWords: 12, hasMaths: true, recentWrong: 0, repeatedStudent: false };
+    const stuck = { ...calm, reaction: "frustrated", stuckStreak: 2, recentWrong: 1 };
+    // a simulated student: stuck → a PICTURE helps and slowing down helps; flowing → a probing question works, stretching is welcome
+    const reward = (c, a) => { let x = 0.25 + (c === stuck ? (a.move === "visual" ? 0.55 : 0) + (a.pace === "slow" ? 0.15 : 0) : (a.move === "probe" ? 0.45 : 0) + (a.pace === "stretch" ? 0.2 : 0)); return Math.min(1, x + (r() - 0.5) * 0.1); };
+    const before = P.summarize(pol);
+    for (let n = 0; n < 1500; n++) { const c = n % 2 ? stuck : calm; const a = P.act(pol, c, r); pol = P.learn(pol, a.exp, reward(c, a)); }
+    const after = P.summarize(pol);
+    check("the RL policy starts uninformed and (after training on a simulated student) learns picture+slow when stuck and probe+stretch when flowing", before.updates === 0 && after.updates === 1500 && after.stuck.move === "visual" && after.stuck.pace === "slow" && after.flow.move === "probe" && after.flow.pace === "stretch");
+    const fp = P.forward(pol, P.featuresFor(stuck)).pm;
+    check("probabilities stay a valid distribution and exploration never dies (every move keeps a floor when sampling)", Math.abs(fp.reduce((a, b) => a + b, 0) - 1) < 1e-9 && (() => { const seen = new Set(); const rr = P.rng(5); for (let n = 0; n < 3000; n++) seen.add(P.act(pol, stuck, rr).move); return seen.size === P.MOVES.length; })());
+    check("a move that just failed is never served twice in a row", (() => { const rr = P.rng(9); for (let n = 0; n < 400; n++) if (P.act(pol, stuck, rr, "visual").move === "visual") return false; return true; })());
+    const rt = P.parsePolicy(JSON.parse(JSON.stringify(pol)));
+    check("the policy round-trips through JSON (persisted per student) and corrupt state is rejected", !!rt && rt.updates === 1500 && P.parsePolicy({ v: 1, W1: [1] }) === null && P.parsePolicy(null) === null);
+    check("features have the declared dimension and are bounded", P.featuresFor(stuck).length === P.FEATURE_DIM && P.featuresFor(stuck).every((v) => v >= 0 && v <= 1));
+  }
+  {
+    // end to end through planTurn: it scores the previous action from the student's reaction and updates the weights
+    const hist = [{ role: "user", text: "find sin(5π/12)" }, { role: "assistant", text: "What two special angles add to 5π/12?" }];
+    const p1 = adA.planTurn({ userKey: "rl:t1", message: "no idea", history: hist.slice(0, 1), subject: "Math", policy: null, rng: P.rng(1) });
+    const p2 = adA.planTurn({ userKey: "rl:t1", message: "oh pi over four plus pi over six!", history: hist, subject: "Math", policy: p1.policy, rng: P.rng(2) });
+    check("planTurn learns from the student's reaction to the previous move (reward high for a good reply) and returns a move + pace directive", !p1.learned && p2.learned && p2.learned.reward >= 0.75 && p2.policy.updates === 1 && /TEACHING MOVE THIS TURN/.test(p2.line) && /PACE THIS TURN/.test(p2.line));
+    const p3 = adA.planTurn({ userKey: "rl:t1", message: "I told you I don't get it", history: [...hist, { role: "user", text: "x" }, { role: "assistant", text: "y" }], subject: "Math", policy: p2.policy, rng: P.rng(3) });
+    check("a frustrated reply is a zero reward for the previous move and that move is not repeated", p3.learned.reward === 0 && p3.move !== p2.move);
+  }
 }

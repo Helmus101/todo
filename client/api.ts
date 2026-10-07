@@ -286,6 +286,9 @@ export const api = {
   markTourSeen: (id: string): Promise<{ ok: boolean; toursSeen: string[] }> => post("/api/profile/tour-seen", { id }),
   resetOnboarding: (): Promise<{ ok: boolean }> => post("/api/profile/onboarding-reset"),
   setSubjects: (subjects: string[]): Promise<{ ok: boolean; subjects: string[] }> => post("/api/profile/subjects", { subjects }),
+  // Otto's learned teaching policy for this student (transparency + reset).
+  tutorPolicy: (): Promise<{ learning: boolean; updates: number; flow?: { move: string; pace: string }; stuck?: { move: string; pace: string } }> => req("/api/tutor/policy").then(j),
+  resetTutorPolicy: (): Promise<{ ok: boolean }> => req("/api/tutor/policy", { method: "DELETE" }).then(j),
   markOnboarded: (): Promise<{ ok: boolean }> => post("/api/profile/onboarded"),
   readPhoto: (image: string): Promise<{ description: string }> => post("/api/tutor/read-photo", { image }),
   // Personalization bandit (see server/bandit.ts) — v1 target: Pomodoro length. Both best-effort from the

@@ -2807,6 +2807,37 @@ function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" | "en"; 
 /** The landing page (shown logged out at route /) — sharp, crisp positioning as a trusted decision engine. */
 /** The Settings PAGE (route /settings): account, ALL app connections (Composio — incl. Google), the
  *  person-profile editor, and exactly what Otto will/won't do. */
+/** Settings → "How Otto teaches you": what the tutor's learned policy (a small neural net trained with reinforcement
+ *  learning on how you react to each teaching move) currently favours for you, with a reset. */
+const MOVE_LABEL: Record<string, [string, string]> = {
+  probe: ["te poser une question ouverte", "asking you an open question"],
+  "smaller-step": ["découper en plus petites étapes", "breaking it into smaller steps"],
+  "worked-parallel": ["montrer un exemple parallèle", "showing a parallel worked example"],
+  visual: ["dessiner un schéma", "drawing a picture"],
+  analogy: ["utiliser une analogie", "using an analogy"],
+  "reflect-back": ["reformuler ce que tu dis", "saying back what you said"],
+  "direct-hint": ["te donner un indice précis", "giving one concrete hint"],
+};
+const PACE_LABEL: Record<string, [string, string]> = { slow: ["en allant doucement", "going slowly"], steady: ["à rythme normal", "at a steady pace"], stretch: ["en poussant plus loin", "stretching you"] };
+function TutorPolicyRow() {
+  const L = useLang();
+  const [info, setInfo] = useState<Awaited<ReturnType<typeof api.tutorPolicy>> | null>(null);
+  const load = useCallback(() => { void api.tutorPolicy().then(setInfo).catch(() => setInfo(null)); }, []);
+  useEffect(load, [load]);
+  const say = (m?: { move: string; pace: string }) => m ? `${L(...(MOVE_LABEL[m.move] || ["", ""]))}, ${L(...(PACE_LABEL[m.pace] || ["", ""]))}` : "";
+  return (
+    <div className="modal-row">
+      <span className="lbl">{L("Comment Otto t'enseigne", "How Otto teaches you")}</span>
+      <span className="val">
+        {info?.learning && info.updates >= 8
+          ? <>{L(`Otto apprend de tes réactions (${info.updates} échanges). Quand ça roule : ${say(info.flow)}. Quand tu bloques : ${say(info.stuck)}. `, `Otto learns from how you react (${info.updates} replies so far). When you're flowing: ${say(info.flow)}. When you're stuck: ${say(info.stuck)}. `)}</>
+          : L("Otto commence à apprendre ce qui marche pour toi — quelques séances et il s'adaptera. ", "Otto is starting to learn what works for you — a few sessions and it will adapt. ")}
+        <button type="button" className="btn xs ghost" onClick={() => { if (window.confirm(L("Réinitialiser ce qu'Otto a appris sur ta façon d'apprendre ?", "Reset what Otto has learned about how you learn?"))) void api.resetTutorPolicy().then(load); }}>{L("Réinitialiser", "Reset")}</button>
+      </span>
+    </div>
+  );
+}
+
 function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onStatusUpdate, onReplayOnboarding }: { status: ConnectionStatus; tasks: WebTask[]; onSignOut: () => void; onChanged: () => void; onTasksChanged: (tasks: WebTask[]) => void; onStatusUpdate?: () => void; onReplayOnboarding?: () => void }) {
   const L = useLang();
   const notify = useNotify();
@@ -2920,6 +2951,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
         </div>
         <div className="modal-row"><span className="lbl">{L("Confidentialité", "Privacy")}</span><span className="val">{L("Ton mot de passe Pronote est chiffré et jamais revendu. ", "Your Pronote password is encrypted and never resold. ")}<a href="/privacy">{L("Détails →", "Details →")}</a></span></div>
         <div className="modal-row"><span className="lbl">{L("Mentions légales", "Legal")}</span><span className="val"><a href="/privacy">{L("Confidentialité", "Privacy")}</a> · <a href="/terms">{L("CGU", "Terms")}</a></span></div>
+        <TutorPolicyRow />
         <div className="modal-row" data-tour="replay-onboarding">
           <span className="lbl">{L("Visite guidée", "Welcome tour")}</span>
           <span className="val"><button type="button" className="btn xs ghost" onClick={() => onReplayOnboarding?.()}>{L("Tester l'onboarding", "Test onboarding")}</button></span>
