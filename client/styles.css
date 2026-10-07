@@ -3611,18 +3611,6 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .hero-tagline-framer {
   font-size: 14px;
   color: #A1A1AA;
-  margin-bottom: 16px;
-}
-
-.hero-demo-link-framer {
-  font-size: 14px;
-  color: #71717A;
-  text-decoration: none;
-  transition: color 0.2s ease;
-}
-
-.hero-demo-link-framer:hover {
-  color: #FF6B00;
 }
 
 .features-framer {

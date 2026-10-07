@@ -3903,6 +3903,35 @@ section("'Pulling up your day' no longer spins forever for a skip-connect accoun
   check("the connected-gated sync effect flips `loaded` directly when the account never connected anything, instead of leaving it permanently false", /if \(!connected\) \{ setLoaded\(true\); return; \}/.test(loadedEffect));
 }
 
+section("Pronote is one option, not the premise — no-integration accounts get working copy, not a fake watch (source pin)");
+{
+  // Direct ask: "don't make the app so Pronote centric … if the user doesn't have any integrations it should
+  // still work, and it shouldn't say watching Pronote". The dashboard's first-run empty state used to
+  // hardcode "Otto is watching your Pronote" and offer only a "Check now" button — for a student who skipped
+  // the connect card that button could only ever return a "nothing connected" skip, so the page claimed
+  // Otto was watching a portal nobody had linked and gave no way forward.
+  const appSrcPronote = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  check("the dashboard empty state no longer hardcodes 'Otto is watching your Pronote'", !/Otto is watching your Pronote/.test(appSrcPronote));
+  check("the empty state names whichever source is actually connected (Pronote vs inbox)", /const watching = status\.pronoteConnected\s*\n\s*\? \(en \? "your Pronote" : "ton Pronote"\)\s*\n\s*: status\.googleConnected/.test(appSrcPronote));
+  const firstRun = appSrcPronote.slice(appSrcPronote.indexOf("const watching = status.pronoteConnected"), appSrcPronote.indexOf("<div className={`list-focus-wrap"));
+  check("with nothing connected, the first-run empty state points at Settings instead of a no-op 'Check now'", /href="\/settings">\{en \? "Connect an app"/.test(firstRun));
+  check("the all-caught-up line drops the Pronote claim when nothing is connected", /Nothing else needs your attention right now/.test(firstRun));
+  check("the connect card offers the whole picker rather than a single 'Connect my Pronote' CTA", !/Connect my Pronote/.test(appSrcPronote) && /Choose what to connect/.test(appSrcPronote));
+  check("the skip escape hatch stays a real, equal choice — using Otto with nothing connected", /Use Otto without connecting/.test(appSrcPronote));
+  check("the sweep's 'nothing new' note names the connected source, not Pronote by default", /nothing new from \$\{status\?\.pronoteConnected \? "Pronote" : status\?\.googleConnected \? "your inbox" : "your sources"\}/.test(appSrcPronote));
+  // Same framing outside the app shell: the <head> title and the PWA manifest are the FIRST thing a
+  // non-Pronote student reads, and both used to define Otto as "le prolongement de Pronote".
+  const indexHtml = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  check("the page title no longer defines Otto as an extension of Pronote", !/prolongement de Pronote/i.test(indexHtml));
+  const manifest = JSON.parse(readFileSync(new URL("../public/manifest.json", import.meta.url), "utf8"));
+  check("the PWA manifest doesn't define Otto as an extension of Pronote either", !/prolongement de Pronote/i.test(manifest.name));
+  // Direct ask: the hero's "Explorer la démo — Tâches et tutorat, ensemble." link is gone (both languages),
+  // and its now-dead CSS block went with it.
+  check("the landing hero no longer links to the demo", !/Explorer la démo/.test(appSrcPronote) && !/hero-demo-link-framer/.test(appSrcPronote));
+  const styles = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
+  check("the removed hero demo link leaves no dead CSS behind", !/\.hero-demo-link-framer/.test(styles));
+}
+
 section("Terms/Privacy links open in a new tab from the signup form (source pin — in-progress signup state loss fix)");
 {
   // Reported live during a Terms/Privacy audit: clicking these from the login/signup form navigated the

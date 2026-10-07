@@ -99,7 +99,7 @@ export function unionChatEntries<T extends { role: string; text: string; at: str
 // Translate a sweep job's skip/failure line into user terms — an honest reason, never a fake all-clear.
 function sweepSkipMessage(note: string, en?: boolean): string {
   if (/nothing connected/i.test(note)) return en
-    ? "No apps are connected for this account — connect Gmail in Settings so Otto has something to read."
+    ? "No apps are connected for this account — connect one in Settings (Pronote, Gmail…) so Otto has something to read, or add tasks yourself."
     : "Aucune app n'est connectée sur ce compte — connecte ton Pronote/Gmail dans les Réglages pour qu'Otto ait de quoi lire.";
   if (/budget reached/i.test(note)) return en
     ? "Otto's reached its monthly AI budget — it resets on the 1st."
@@ -845,7 +845,11 @@ export function App() {
       const sweepEn = status?.language === "en";
       if (stillRunning) notify(sweepEn ? "Still checking — hang on a moment." : "Vérification en cours — patiente un instant.");
       else if (/^(skipped:|sweep )/.test(serverNote)) notify(sweepSkipMessage(serverNote, sweepEn), /budget|paused|connected/i.test(serverNote) ? "error" : "info");
-      else if (!t.length) notify(sweepEn ? "You're all set — nothing new from Pronote yet." : "Tu es tranquille — rien de nouveau sur Pronote pour l'instant.");
+      // Name whatever source is actually connected instead of assuming Pronote — a Google-only (or manual)
+      // student was being told about a school portal they never linked.
+      else if (!t.length) notify(sweepEn
+        ? `You're all set — nothing new from ${status?.pronoteConnected ? "Pronote" : status?.googleConnected ? "your inbox" : "your sources"} yet.`
+        : `Tu es tranquille — rien de nouveau ${status?.pronoteConnected ? "sur Pronote" : status?.googleConnected ? "dans ta boîte mail" : "côté sources"} pour l'instant.`);
       else if (!fresh.length) notify(sweepEn
         ? `Checked — no new tasks${needsYou ? `; ${needsYou} still need${needsYou === 1 ? "s" : ""} you` : "; everything's already on your list"}.`
         : `Vérifié — rien de nouveau${needsYou ? ` ; ${needsYou} tâche${needsYou === 1 ? "" : "s"} ${needsYou === 1 ? "attend" : "attendent"} encore toi` : " ; tout est déjà sur ta liste"}.`);
@@ -1275,22 +1279,44 @@ export function App() {
                   show the skeleton instead of flashing the empty state. */}
               {live.length === 0 && (busy || !loaded) ? <TaskSkeleton /> : live.length === 0 ? (() => {
                 const who = status.name || firstName(status.user);
+                // Pronote is ONE way to feed Otto, not its premise. Name whichever source is actually
+                // linked, and for a student who skipped connecting anything, say what to do instead of
+                // claiming Otto is watching a school portal nobody ever connected (that copy read as a
+                // bug — and "Check now" there did nothing but return a "nothing connected" skip).
+                const watching = status.pronoteConnected
+                  ? (en ? "your Pronote" : "ton Pronote")
+                  : status.googleConnected
+                    ? (en ? "your inbox" : "ta boîte mail")
+                    : null;
                 // First run (nothing ever completed) reads differently from a genuinely cleared list.
                 return handled === 0 ? (
-                  <div className="empty-state">
-                    <div className="empty-mark"><Logo size={28} /></div>
-                    <h3>{en ? `Otto is watching your Pronote${who ? `, ${who}` : ""}` : `Otto surveille ton Pronote${who ? `, ${who}` : ""}`}</h3>
-                    <p>{en ? "It reads your homework and tests. Tasks arrive automatically." : "Il lit tes devoirs et contrôles. Les tâches arrivent automatiquement."}</p>
-                    <button className="btn primary" disabled={busy} onClick={() => void generate()}>{busy ? (en ? "Searching…" : "Recherche…") : (en ? "Check now" : "Vérifier maintenant")}</button>
-                  </div>
+                  connected ? (
+                    <div className="empty-state">
+                      <div className="empty-mark"><Logo size={28} /></div>
+                      <h3>{en ? `Otto is watching ${watching}${who ? `, ${who}` : ""}` : `Otto surveille ${watching}${who ? `, ${who}` : ""}`}</h3>
+                      <p>{en ? "It reads your homework and tests. Tasks arrive automatically." : "Il lit tes devoirs et contrôles. Les tâches arrivent automatiquement."}</p>
+                      <button className="btn primary" disabled={busy} onClick={() => void generate()}>{busy ? (en ? "Searching…" : "Recherche…") : (en ? "Check now" : "Vérifier maintenant")}</button>
+                    </div>
+                  ) : (
+                    <div className="empty-state">
+                      <div className="empty-mark"><Logo size={28} /></div>
+                      <h3>{en ? `Nothing on your list yet${who ? `, ${who}` : ""}` : `Rien sur ta liste pour l'instant${who ? `, ${who}` : ""}`}</h3>
+                      <p>{en
+                        ? "Add a task above and Otto takes it from there — or connect an app in Settings so homework and deadlines arrive on their own."
+                        : "Ajoute une tâche ci-dessus et Otto s'occupe du reste — ou connecte une app dans les Réglages pour que devoirs et échéances arrivent tout seuls."}</p>
+                      <a className="btn ghost" href="/settings">{en ? "Connect an app" : "Connecter une app"}</a>
+                    </div>
+                  )
                 ) : (
                   <div className="empty-state">
                     <div className="empty-mark done"><span className="empty-check">✓</span></div>
                     <h3>{en ? `All caught up${who ? `, ${who}` : ""}` : `Tout est à jour${who ? `, ${who}` : ""}`}</h3>
-                    <p>{en ? "You're all caught up — Otto's still keeping an eye on your Pronote." : "Tu es à jour — Otto continue de surveiller ton Pronote."}</p>
+                    <p>{connected
+                      ? (en ? `You're all caught up — Otto's still keeping an eye on ${watching}.` : `Tu es à jour — Otto continue de surveiller ${watching}.`)
+                      : (en ? "You're all caught up. Nothing else needs your attention right now." : "Tu es à jour. Rien d'autre ne demande ton attention pour l'instant.")}</p>
                   </div>
                 );
-              })(              ) : (
+              })() : (
                 <div className={`list-focus-wrap ${settled ? "settled" : ""}`}>
                   {/* All tasks shown as equal-sized cards, no spotlight */}
                   {focusToday.length > 0 && (
@@ -1757,18 +1783,22 @@ function ConnectCard({ status, onSkip }: { status: ConnectionStatus; onSkip: () 
     <div className="connect-card">
       <div className="connect-mark"><Logo size={30} /></div>
       <h2>{who ? (en ? `Welcome, ${who}` : `Bienvenue, ${who}`) : (en ? "Welcome to Otto" : "Bienvenue sur Otto")}</h2>
+      {/* Pronote is ONE option, never the premise: someone with no Pronote (IB/AP, a school on another
+          portal, or nobody at all) must not read this as "this app isn't for me". Same picker either way. */}
       <p>{en
-        ? "Connect your Pronote and Otto gets to work — it turns your homework and tests into a clear plan for today. It never does the exercise for you, and never checks anything off in Pronote without you."
-        : "Connecte ton Pronote et Otto se met au travail — il transforme tes devoirs et contrôles en un plan clair pour aujourd'hui. Il ne fait jamais l'exercice à ta place, et ne coche jamais rien dans Pronote sans toi."}</p>
+        ? "Connect whatever holds your homework — Pronote, Gmail, Calendar or Drive — and Otto turns it into a clear plan for today. It never does the exercise for you, and never checks anything off without you."
+        : "Connecte ce qui contient tes devoirs — Pronote, Gmail, Calendar ou Drive — et Otto en fait un plan clair pour aujourd'hui. Il ne fait jamais l'exercice à ta place, et ne coche jamais rien sans toi."}</p>
       {/* A raw env-var name means nothing to a student — say what's actually broken instead. */}
       {!status.aiReady && <div className="warn">{en ? "Otto's AI isn't set up on this server yet — task generation is off for now." : "L'IA d'Otto n'est pas encore configurée sur ce serveur — la génération de tâches est désactivée pour l'instant."}</div>}
-      <a className="btn primary big" href="/settings">{en ? "Connect my Pronote" : "Connecter mon Pronote"}</a>
+      <a className="btn primary big" href="/settings">{en ? "Choose what to connect" : "Choisir quoi connecter"}</a>
       {/* Escape hatch — reported live: no Pronote/school with Pronote, no Google account, just wants to add
           tasks by hand and use the tutor. Connecting nothing is a legitimate way to use Otto (manual tasks
           + chat/Study Mode still work fully; the only thing missing is AUTOMATIC detection), so this isn't
-          hidden behind Settings or worded as a dead end — it's a real, first-class choice right here. */}
-      <button type="button" className="btn ghost" onClick={onSkip}>{en ? "Skip — I'll add tasks myself" : "Passer — j'ajouterai mes tâches moi-même"}</button>
-      <p className="fineprint">{en ? "Disconnect Pronote, or pause Otto, any time in Settings. " : "Déconnecte Pronote, ou mets Otto en pause, à tout moment dans les Réglages. "}<a href="/privacy">{en ? "What Otto reads and why →" : "Ce qu'Otto lit et pourquoi →"}</a></p>
+          hidden behind Settings or worded as a dead end — it's a real, first-class choice right here. It
+          sits at the same weight as the connect button for the same reason: nothing connected is not a
+          downgrade, and Otto must not read as a Pronote-only app. */}
+      <button type="button" className="btn ghost" onClick={onSkip}>{en ? "Use Otto without connecting" : "Utiliser Otto sans connecter"}</button>
+      <p className="fineprint">{en ? "Connect or disconnect any app, or pause Otto, any time in Settings. " : "Connecte ou déconnecte n'importe quelle app, ou mets Otto en pause, à tout moment dans les Réglages. "}<a href="/privacy">{en ? "What Otto reads and why →" : "Ce qu'Otto lit et pourquoi →"}</a></p>
     </div>
   );
 }
@@ -3511,9 +3541,9 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
             <h2>{L("C'est prêt", "You're all set")}{name.trim() ? `, ${name.trim().split(/\s+/)[0]}` : ""}</h2>
             <p className="onboard-lead">{pronoteConnected
               ? L("Otto se met au travail. Ton plan du jour arrive.", "Otto is getting to work. Your plan for today is on its way.")
-              : pronoteIsPrimary
-              ? L("Connecte ton Pronote quand tu veux depuis les Réglages, et Otto se met au travail.", "Connect your Pronote any time from Settings, and Otto gets to work.")
-              : L("Connecte Gmail/Calendar ou ajoute tes examens depuis les Réglages, et Otto se met au travail.", "Connect Gmail/Calendar or add your exams from Settings, and Otto gets to work.")}</p>
+              // Nothing connected yet — offer the whole picker (Pronote, Gmail, Calendar, Drive) rather
+              // than naming Pronote as if it were required, and remind them manual tasks work too.
+              : L("Connecte une app (Pronote, Gmail, Calendar) ou ajoute tes examens depuis les Réglages, et Otto se met au travail.", "Connect an app (Pronote, Gmail, Calendar) or add your exams from Settings, and Otto gets to work.")}</p>
             <p className="muted small">{L("La première fois que tu ouvres une page, Otto te montre comment elle marche — étape par étape, sur les vrais boutons.", "The first time you open a page, Otto shows you how it works — step by step, on the real buttons.")}</p>
             <div className="onboard-actions"><button className="btn primary big" onClick={onDone}>{L("Voir mes tâches", "See my tasks")}</button></div>
           </div>
@@ -3728,10 +3758,6 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
         <p className="hero-tagline-framer">
           {en ? "A study companion, not a shortcut." : "Un compagnon d'étude, pas un raccourci."}
         </p>
-
-        <a href="#features" className="hero-demo-link-framer">
-          {en ? "Explore the demo — Tasks and tutoring, together." : "Explorer la démo — Tâches et tutorat, ensemble."}
-        </a>
       </main>
 
       {/* Two-column Feature Section */}
