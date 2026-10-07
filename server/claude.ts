@@ -6,7 +6,8 @@ import { compileExpr } from "../shared/mathExpr.ts";
 import { courseworkForSubject } from "../shared/coursework.ts";
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
-import { repeatsRecentReply } from "./tutorAdapt.ts";
+import { buildGeometry } from "../shared/geometry.ts";
+import { repeatsRecentReply, softenOpener, spokenMathHint } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -2551,10 +2552,10 @@ const CREATE_PROBLEM_TOOL = {
   name: "CREATE_PROBLEM",
   description: "Create ONE standalone practice problem displayed INLINE in the chat itself (not a chip that opens elsewhere) — the student answers right there in the thread and you help them through it. Use this when a single focused exercise is the best way to help (a quick check, a worked example to try, a 'try this one' moment), where CREATE_QUIZ would be a whole set. THINK OF THIS AS A MEASUREMENT, NOT JUST PRACTICE: before writing it, be clear what uncertainty about THIS student you're actually trying to resolve right now — do they have the concept or did they just memorize a formula's shape? is the error a slip or a real misconception? can they apply it to a new case, not just the one you walked through? Pick the smallest problem that would tell them (and you) apart between those possibilities, rather than a generic 'another one of the same'. Can be multiple-choice (give options + correct index) or free-response (give an answer string). NEVER use the student's OWN assigned exercise — write a NEW problem on the same notion. Include a one-line 'why' explanation (shown after they answer) and optionally a hint. MATCH THE REAL EXAM'S SHAPE — see the IB/AP/SAT/ACT guidance above (examStyleLine): an IB extended-response or AP FRQ is free-response mode with the FULL multi-part prompt (lettered (a), (b), (c)..., each part's point value stated) written straight into `question` as one structured block — this tool's single-answer-string grading then applies to the FINAL part only; walk the earlier parts with them in chat rather than silently grading only the last line with no comment on the rest. `answer` MUST be the FINAL lettered part's value ONLY, never an earlier part's — even though an earlier part's value is itself a complete, correct answer to ITS OWN question. Concretely, for '(a) find cos θ [2]  (b) hence find cos 2θ [2]', `answer` is the (b) value (e.g. '7/25'), NEVER the (a) value (e.g. '-4/5') — setting it to the earlier part means the widget marks the WHOLE problem solved, and reveals `why` (which should explain the FULL chain, both parts), the instant the student states only the easier first part, before they've done the part that's actually testing them.",
   input_schema: { type: "object", properties: {
-    question: { type: "string", description: "the question/prompt — one clear sentence, OR a full multi-part structured prompt (IB/AP extended-response/FRQ style — lettered sub-parts with their own point values) when the student's program calls for one. Match the phrasing, format, and rigor of an actual exam/contrôle question for this subject and level (see VOCABULARY/track/exam-style above), not generic trivia." },
+    question: { type: "string", description: "the question/prompt — math in LaTeX between $…$ (it is typeset for the student) — one clear sentence, OR a full multi-part structured prompt (IB/AP extended-response/FRQ style — lettered sub-parts with their own point values) when the student's program calls for one. Match the phrasing, format, and rigor of an actual exam/contrôle question for this subject and level (see VOCABULARY/track/exam-style above), not generic trivia." },
     options: { type: "array", description: "MCQ mode: 2-4 answer options by default; EXACTLY 5 for an AP-track student (College Board MCQs are always 5-option — see the AP block above). EXACTLY ONE is correct; the wrong ones must be genuinely plausible. Omit entirely for free-response mode (this is also the mode for any IB/AP multi-part structured question — see above).", items: { type: "string" } },
     correct: { type: "number", description: "MCQ mode only: 0-based index into options of the CORRECT one" },
-    answer: { type: "string", description: "Free-response mode only: the expected answer. Checked loosely (trimmed, case-insensitive). Omit for MCQ mode." },
+    answer: { type: "string", description: "Free-response mode only: the expected answer — SHORT and checkable (a number, a simple expression, a single word), checked loosely (trimmed, case-insensitive). A free-response problem MUST have one; a \"prove that\" / \"show that\" task has no checkable answer, so turn it into a concrete question with a short result (\"what does the bracket simplify to?\", \"which identity turns sin²θ+cos²θ into a single number?\") or make it MCQ. Omit for MCQ mode." },
     why: { type: "string", description: "one line on why the answer is right — this is what makes the problem teach instead of just score" },
     hint: { type: "string", description: "an optional hint the student can reveal before answering" },
     format: { type: "string", description: "free-response mode only: guidance on expected format/units/notation (e.g. 'two decimal places, in m/s'). NEVER use the real answer as an example — use a placeholder ('x = a') or a different value." },
@@ -2603,14 +2604,17 @@ const DRAW_ON_BOARD_TOOL = {
     "call's shapes. Coordinate space is 0-800 wide, 0-600 tall; keep the figure roughly centered and leave " +
     "margin, it will be scaled to fit the board. Max 15 ops per figure — plan the layout before calling, " +
     "don't sprawl. One label per meaningful point/line, positioned just off the shape it names, never " +
-    "overlapping another label.",
+    "overlapping another label. FOR GEOMETRY (triangles, circles, sectors, angles, altitudes, polygons) DO NOT " +
+    "use this — use GEOMETRY_ON_BOARD, which does the coordinates for you and draws far more accurately.",
   input_schema: { type: "object", properties: {
     caption: { type: "string", description: "one short line describing the figure, shown as its title on the board" },
     ops: {
       type: "array",
       description: "the figure's shapes, in any order. See each op's own fields.",
       items: { type: "object", properties: {
-        op: { type: "string", enum: ["line", "rect", "circle", "polyline", "label", "axes", "equation"] },
+        op: { type: "string", enum: ["line", "rect", "circle", "polyline", "polygon", "arc", "label", "axes", "equation"] },
+        dashed: { type: "boolean", description: "line/circle/polyline/arc: dashed stroke (auxiliary lines, hidden edges)" },
+        a0: { type: "number", description: "arc only: start angle in degrees, SCREEN orientation (0 = right, 90 = down); sweeps to a1" }, a1: { type: "number", description: "arc only: end angle in degrees (a1 < a0 sweeps counter-clockwise on screen)" },
         x1: { type: "number" }, y1: { type: "number" }, x2: { type: "number" }, y2: { type: "number" },
         arrow: { type: "boolean", description: "line only: draw an arrowhead at (x2,y2)" },
         x: { type: "number" }, y: { type: "number" }, w: { type: "number" }, h: { type: "number" },
@@ -3052,15 +3056,25 @@ function validateDiagramOp(raw: any): DiagramOp | null {
   const color = typeof raw?.color === "string" && raw.color.trim() ? raw.color.trim().slice(0, 20) : undefined;
   switch (raw?.op) {
     case "line":
-      return { op: "line", x1: clampX(raw.x1), y1: clampY(raw.y1), x2: clampX(raw.x2), y2: clampY(raw.y2), ...(raw.arrow ? { arrow: true } : {}), ...(color ? { color } : {}) };
+      return { op: "line", x1: clampX(raw.x1), y1: clampY(raw.y1), x2: clampX(raw.x2), y2: clampY(raw.y2), ...(raw.arrow ? { arrow: true } : {}), ...(raw.dashed ? { dashed: true } : {}), ...(color ? { color } : {}) };
     case "rect":
       return { op: "rect", x: clampX(raw.x), y: clampY(raw.y), w: clampCoord(raw.w, 1, 800), h: clampCoord(raw.h, 1, 600), ...(raw.fill ? { fill: true } : {}), ...(color ? { color } : {}) };
     case "circle":
-      return { op: "circle", cx: clampX(raw.cx), cy: clampY(raw.cy), r: clampR(raw.r) || 1, ...(raw.fill ? { fill: true } : {}), ...(color ? { color } : {}) };
+      return { op: "circle", cx: clampX(raw.cx), cy: clampY(raw.cy), r: clampR(raw.r) || 1, ...(raw.fill ? { fill: true } : {}), ...(raw.dashed ? { dashed: true } : {}), ...(color ? { color } : {}) };
     case "polyline": {
       const pts = Array.isArray(raw.points) ? raw.points.slice(0, 30).map((p: any) => ({ x: clampX(p?.x), y: clampY(p?.y) })) : [];
       if (pts.length < 2) return null;
-      return { op: "polyline", points: pts, ...(color ? { color } : {}) };
+      return { op: "polyline", points: pts, ...(raw.dashed ? { dashed: true } : {}), ...(color ? { color } : {}) };
+    }
+    case "polygon": {
+      const pts = Array.isArray(raw.points) ? raw.points.slice(0, 20).map((p: any) => ({ x: clampX(p?.x), y: clampY(p?.y) })) : [];
+      if (pts.length < 3) return null;
+      return { op: "polygon", points: pts, ...(raw.fill ? { fill: true } : {}), ...(color ? { color } : {}) };
+    }
+    case "arc": {
+      const a0 = clampCoord(raw.a0, -720, 720), a1 = clampCoord(raw.a1, -720, 720);
+      if (a0 === a1) return null;
+      return { op: "arc", cx: clampX(raw.cx), cy: clampY(raw.cy), r: clampR(raw.r) || 1, a0, a1, ...(raw.dashed ? { dashed: true } : {}), ...(color ? { color } : {}) };
     }
     case "label": {
       const text = String(raw?.text || "").trim().slice(0, 60);
@@ -3098,6 +3112,43 @@ export function makeDiagramEntry(input: any): { entry: BoardEntry } | { error: s
   if (!ops.length) return { error: "ERROR: no valid ops after validation — check each op has its required fields (see the tool schema)." };
   return { entry: { id: randomUUID(), text: caption, kind: "diagram", diagram: ops, at: new Date().toISOString() } };
 }
+
+/** GEOMETRY_ON_BOARD: the model states points in REAL units + relations; shared/geometry.ts does the drawing maths. */
+export function makeGeometryEntry(input: any): { entry: BoardEntry } | { error: string } {
+  const caption = String(input?.caption || "").trim().slice(0, 200);
+  if (!caption) return { error: "ERROR: caption is required." };
+  const r = buildGeometry(input || {});
+  if ("error" in r) return r;
+  return { entry: { id: randomUUID(), text: caption, kind: "diagram", diagram: r.ops, at: new Date().toISOString() } };
+}
+const GEOMETRY_ON_BOARD_TOOL = {
+  name: "GEOMETRY_ON_BOARD",
+  description: "Draw an ACCURATE geometry figure on the board — triangles, circles, sectors/arcs, polygons, angle marks, " +
+    "altitudes, midpoints. You give the MATHS (named points in real units, what joins what), the board does the drawing: " +
+    "correct proportions (a 3-4-5 triangle really is right-angled), centred, every point labelled outside the shape, angle " +
+    "arcs and right-angle squares, tick marks for equal sides. NEVER work out pixel coordinates. Use this for ANY geometry " +
+    "or trig-setup figure; use DRAW_ON_BOARD only for non-geometric sketches (arrows, number lines, free diagrams). " +
+    "Show the GIVEN information only (lengths, angles the problem states) — label what the student must find with '?' " +
+    "or leave it unlabelled, never the answer. Redraw the WHOLE figure when adding to it (e.g. add the altitude). " +
+    "EXAMPLES: a 3-4-5 triangle with the right angle at C → triangle:{names:['A','B','C'], sides:[3,4,5]} (sides are [a=BC, b=CA, c=AB]) " +
+    "+ angles:[{at:'C',from:'A',to:'B',right:true}]. Triangle with altitude → triangle + " +
+    "derive:[{name:'H',kind:'foot',from:'A',onto:['B','C']}] + segments:[{from:'A',to:'H',dashed:true}] + angles:[{at:'H',from:'A',to:'B',right:true}]. " +
+    "Sector of radius 2 and angle 5π/6 → points:{O:[0,0]}, arcs:[{center:'O',r:2,from:0,to:150,label:'5π/6'}], " +
+    "derive:[{name:'A',kind:'polar',from:'O',dist:2,deg:0},{name:'B',kind:'polar',from:'O',dist:2,deg:150}], segments:[{from:'O',to:'A',label:'2'},{from:'O',to:'B',label:'2'}]. " +
+    "Two circles → circles:[{center:'O1',r:15},{center:'O2',r:10}] with points O1:[0,0], O2:[25,0].",
+  input_schema: { type: "object", properties: {
+    caption: { type: "string", description: "one short line, shown as the figure's title" },
+    points: { type: "object", description: "named points in REAL units, maths orientation (y up): {\"A\":[0,0],\"B\":[4,0]}. Names are letters like A, B, O, H, A'." },
+    triangle: { type: "object", description: "alternative to points for a triangle: {names:[A,B,C], sides:[a,b,c]} where a=BC, b=CA, c=AB; solved exactly (law of cosines). Sides get length labels unless labelSides:false.", properties: { names: { type: "array", items: { type: "string" } }, sides: { type: "array", items: { type: "number" } }, labelSides: { type: "boolean" } } },
+    derive: { type: "array", description: "points computed in order: {name,kind:'midpoint',of:[P,Q]} | {name,kind:'foot',from:P,onto:[Q,R]} (foot of the perpendicular = altitude/height) | {name,kind:'polar',from:P,dist,deg} (a point at a distance and angle from P, degrees counter-clockwise from the +x axis).", items: { type: "object" } },
+    segments: { type: "array", description: "\"AB\" or {from,to,label?,dashed?,ticks?(1-3 equal-side marks),arrow?,color?}. label is a length like \"5\" or \"x\".", items: {} },
+    polygons: { type: "array", description: "closed shapes: \"ABC\" or {points:[...],fill?:true,color?}", items: {} },
+    circles: { type: "array", description: "{center,r | through,label?,dashed?,fill?} — r in the same real units as the points", items: { type: "object" } },
+    arcs: { type: "array", description: "{center,r,from,to,label?} degrees counter-clockwise from +x — sectors, arc length problems", items: { type: "object" } },
+    angles: { type: "array", description: "{at:'B',from:'A',to:'C',label?:'40°'|'θ'|'?',right?:true} — an arc (or right-angle square) at vertex B between rays BA and BC", items: { type: "object" } },
+    unlabeled: { type: "array", items: { type: "string" }, description: "point names that should NOT get a name label" },
+  }, required: ["caption"] },
+};
 
 const GRAPH_COLORS = ["blue", "red", "green", "orange", "purple", "ink"] as const;
 /** Validate a GRAPH_ON_BOARD request: every expression must compile (shared/mathExpr.ts, no eval) and produce
@@ -7253,6 +7304,21 @@ const PRIMER_PERSONA =
   `they are wrong, recompute from the problem exactly as THEY stated it; if they push back on a correction ` +
   `even once, assume YOU misread — re-read their original statement, redo it step by step, and say so if ` +
   `you were the one who slipped.\n` +
+  `- NEVER HARSH: don't open with "Careful", "No", "Wrong", "Incorrect", "That's not…", "Actually…". Lead with ` +
+  `what is RIGHT or reasonable in what they did ("I see why you'd do that —"), then ONE gentle question that ` +
+  `lets them spot the slip themselves ("what happens to the 3 when…?"). When YOU slip, own it lightly ("ah, ` +
+  `my bad — thanks for catching that") and fix it right away on the board. A little warmth is welcome: use ` +
+  `their name now and then, notice effort and frustration ("this one's fiddly — you're close"), celebrate real ` +
+  `progress in a few words, never gush.\n` +
+  `- READ IT BACK BEFORE YOU WORK ON IT: equations and problems arrive messy (typed fast, dictated by voice, a ` +
+  `photo of handwriting) — "three times one over cotan squared" is ambiguous about what sits under which bar. ` +
+  `Before doing anything with a new or unclear expression, write it on the board TYPESET (DRAW_ON_BOARD's ` +
+  `equation op, full brackets and fraction bars) as your reading of it, and ask in one line whether that's what ` +
+  `they meant, naming the one ambiguity you weren't sure about. Treat a confirmed (or corrected) version as THE ` +
+  `GIVEN: redraw it whole if they correct it, then never re-read it differently, and refer back to it for the ` +
+  `rest of the session. If a message is garbled or ambiguous, ask a short clarifying question instead of guessing.\n` +
+  `- THE START OF THE SESSION STAYS WITH YOU: the problem as they first stated it (see HOW THIS SESSION BEGAN) ` +
+  `and everything already settled on the board is shared ground — build on it, never re-derive or re-ask it.\n` +
   `- Socratic by default: don't explain what a question could draw out of them. Ask the smallest question ` +
   `that makes them take the next step themselves. Explain directly only after they're genuinely stuck twice.\n` +
   `- Answer in their language and register. Say "I" and "you", use contractions, think out loud a little ` +
@@ -7274,6 +7340,11 @@ const PRIMER_PERSONA =
   `typeset via DRAW_ON_BOARD's equation op. NEVER copy what the student typed or what you just said into the ` +
   `board word for word — a quote of the chat is noise; the board adds structure, the why and the result. Only ` +
   `what has actually been reached: never a step they haven't got to, never the answer.\n` +
+  `- GEOMETRY: any triangle, circle, sector, polygon, angle, altitude or midpoint figure goes through ` +
+  `GEOMETRY_ON_BOARD (state named points in real units + what joins what; it draws accurately, labels cleanly, ` +
+  `marks angles and right angles) — never DRAW_ON_BOARD with pixel guesses. Draw the GIVEN, mark the unknown as ` +
+  `"?", then ask what they notice or which relationship links the pieces. Adding the altitude/a radius/a ` +
+  `midpoint = redraw the whole figure with it, dashed.\n` +
   `- GRAPHS: for anything that is a FUNCTION or data trend (parabolas and a/b/c, amplitude/period, exponentials, ` +
   `transformations, motion graphs, a line of best fit; also bar charts, histograms and 3D surfaces z=f(x,y)) use GRAPH_ON_BOARD, not CREATE_INTERACTIVE — it's instant, ` +
   `always renders, and gives the student real sliders and a hover readout. Plot the FAMILY or the setup, never ` +
@@ -7446,7 +7517,7 @@ export async function chatAboutTask(
   message: string,
   profile?: Profile,
   academic?: AcademicContext,
-  opts?: { stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string; growthTrend?: "up"; subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; voiceMode?: boolean; canvasMode?: boolean; recentJournal?: { date: string; text: string }[]; primer?: boolean; currentBoard?: BoardEntry[]; currentProblems?: TaskProblem[]; currentObjectives?: TaskObjective[]; notNeeded?: string[]; repair?: string; moveLine?: string },
+  opts?: { stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string; growthTrend?: "up"; subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; voiceMode?: boolean; canvasMode?: boolean; recentJournal?: { date: string; text: string }[]; primer?: boolean; currentBoard?: BoardEntry[]; currentProblems?: TaskProblem[]; currentObjectives?: TaskObjective[]; notNeeded?: string[]; repair?: string; moveLine?: string; opening?: { role: string; text: string }[] },
 ): Promise<ChatResult> {
   const steps = task.steps || [];
   // Substeps (a step's own on-demand sub-checklist, ticked independently — see Profile.grades-style comment
@@ -7593,7 +7664,7 @@ export async function chatAboutTask(
   // student, every task, every turn — so it belongs FIRST, where it can actually be cached; the volatile
   // per-request context goes last, right next to the equally-volatile TASK block it keeps company with
   // anyway.
-  const dynamicContext = nowBlock() + courseworkLine(profile, task.sourceSubject) + studentNameLine(profile?.name) + dueLine(task.sourceDue, tzOf(profile)) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + syllabusGroundingLine(profile, task.sourceSubject) + learningStyleLine(profile) + hintDensityLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + sessionRecapLine(profile?.sessions, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine + (opts?.primer ? (opts?.moveLine || "") + (opts?.repair || "") : "");
+  const dynamicContext = nowBlock() + courseworkLine(profile, task.sourceSubject) + studentNameLine(profile?.name) + dueLine(task.sourceDue, tzOf(profile)) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + syllabusGroundingLine(profile, task.sourceSubject) + learningStyleLine(profile) + hintDensityLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + sessionRecapLine(profile?.sessions, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine + (opts?.primer ? (opts?.moveLine || "") + (opts?.repair || "") + spokenMathHint(message) : "");
   const sys =
     (opts?.primer ? PRIMER_PERSONA : "") +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
@@ -8375,7 +8446,9 @@ export async function chatAboutTask(
   // 10 messages was only ~3 real exchanges — the model forgot what was done and re-explained it. Primer turns
   // get a 24-message verbatim window PLUS a one-line-per-message digest of everything older (earlierDigest).
   const histWindow = opts?.primer ? 24 : 10;
-  const digestText = opts?.primer ? earlierDigest(history.slice(0, -histWindow)) : "";
+  const digestText = opts?.primer
+    ? (opts.opening?.length ? `HOW THIS SESSION BEGAN (verbatim — this is what the whole session is about; the problem/equation as the student first gave it. Never lose it, never ask for it again):\n${opts.opening.map((m) => `${m.role === "assistant" ? "Otto" : "Student"}: ${m.text.replace(/\s+/g, " ")}`).join("\n")}\n\n` : "") + earlierDigest(history.slice(0, -histWindow), 2600)
+    : "";
   const messages: any[] = [
     { role: "system", content: sys },
     ...(digestText ? [{ role: "system", content: digestText }] : []),
@@ -8409,8 +8482,8 @@ export async function chatAboutTask(
   // core to live tutoring and/or already cheap.
   const includeArtifactTools = wantsArtifactTools(message, history);
   const tools = opts?.canvasMode
-    ? [CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, CREATE_INTERACTIVE_TOOL, SET_OBJECTIVES_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])]
-    : [...(includeArtifactTools ? [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL] : []), CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, SET_OBJECTIVES_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])];
+    ? [CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, CREATE_INTERACTIVE_TOOL, SET_OBJECTIVES_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])]
+    : [...(includeArtifactTools ? [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL] : []), CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, SET_OBJECTIVES_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])];
   const empty = (): ChatResult => ({ reply: "", notes: [], flashcards: [], quizzes: [], problems: [], board: [], audit: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false });
   const result = empty();
   const logAudit = (kind: AuditEvent["kind"], label: string) => result.audit.push({ at: new Date().toISOString(), kind, label });
@@ -8709,6 +8782,7 @@ export async function chatAboutTask(
         // (4) LENGTH BACKSTOP (TALE): the 45-word budget is prompt-side; this catches the draft that
         // ignored it entirely. Silent compression, once, non-voice only (voice mode has its own stricter
         // TTS ceiling and its own retry paths above).
+        if (opts?.primer) textContent = softenOpener(textContent);
         if (opts?.primer && countWords(textContent) > 70) textContent = tightenForChat(textContent);
         // Never say the same thing twice: a draft that is a near-copy of one of Otto's recent replies gets ONE
         // corrective round (the student already saw that and it did not land — repeating it is the loop).
@@ -8800,6 +8874,10 @@ export async function chatAboutTask(
           // state a value just as plainly as prose can.
           else if (leaksAnyProblemAnswer([input?.caption, ...(Array.isArray(input?.ops) ? input.ops.map((o: any) => `${o?.text || ""} ${o?.latex || ""}`) : [])].join(" "), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that figure states a problem's answer outright — redraw it without that value.";
           else { const r = makeDiagramEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Figure dessinée : « ${r.entry.text.slice(0, 60)} »` : `Diagram drawn: "${r.entry.text.slice(0, 60)}"`); } }
+        } else if (name === "GEOMETRY_ON_BOARD") {
+          if (result.board.filter((e) => e.kind === "diagram").length >= 3) content = "LIMIT: you've already drawn a few figures this message — that's enough for one turn.";
+          else if (leaksAnyProblemAnswer([input?.caption, ...(Array.isArray(input?.segments) ? input.segments.map((x: any) => (typeof x === "object" ? x?.label : "")) : []), ...(Array.isArray(input?.angles) ? input.angles.map((x: any) => x?.label) : []), ...(Array.isArray(input?.arcs) ? input.arcs.map((x: any) => x?.label) : []), ...(Array.isArray(input?.circles) ? input.circles.map((x: any) => x?.label) : [])].filter(Boolean).join(" "), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that figure labels a problem's answer — redraw it with the unknown shown as '?'.";
+          else { const r = makeGeometryEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Figure dessinée : « ${r.entry.text.slice(0, 60)} »` : `Diagram drawn: "${r.entry.text.slice(0, 60)}"`); } }
         } else if (name === "GRAPH_ON_BOARD") {
           if (result.board.filter((e) => e.kind === "graph").length >= 2) content = "LIMIT: you've already put a couple of graphs on the board this message — that's enough for one turn.";
           else if (leaksAnyProblemAnswer([input?.caption, ...(Array.isArray(input?.fns) ? input.fns.map((f: any) => f?.label || "") : [])].join(" "), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that graph's caption or labels state a problem's answer — title it by what to explore, not by the result.";

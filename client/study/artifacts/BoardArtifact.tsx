@@ -3,7 +3,7 @@ import katex from "katex";
 import type { WebTask, BoardEntry, TaskProblem, DiagramOp } from "../../../shared/types.ts";
 import { practiceAnswerMatches } from "../../../shared/types.ts";
 import { GraphBlock } from "./GraphBlock.tsx";
-import { renderChatText, useLang, FirstTimeHint, stripStrayMarkdown } from "../../ui.tsx";
+import { renderChatText, useLang, FirstTimeHint, stripStrayMarkdown, formatMath, boldify } from "../../ui.tsx";
 
 // A guarded DYNAMIC import, not a static `import "katex/dist/katex.min.css"` — this module is also pulled
 // in by tests/run.mjs's client-module-graph check, which runs under plain Node/tsx (no Vite), and Node's
@@ -129,7 +129,7 @@ export function MathText({ text }: { text: string }) {
       {parts.map((p, i) => {
         const m = /^\$\$([^$]+)\$\$$|^\$([^$\n]+)\$$|^\\\(([\s\S]*)\\\)$|^\\\[([\s\S]*)\\\]$/.exec(p);
         const latex = m ? (m[1] ?? m[2] ?? m[3] ?? m[4]) : null;
-        return latex ? <InlineEquation key={i} latex={latex.trim()} /> : <span key={i}>{renderChatText(p)}</span>;
+        return latex ? <InlineEquation key={i} latex={latex.trim()} /> : <span key={i} style={{ whiteSpace: "pre-wrap" }}>{boldify(formatMath(p))}</span>;
       })}
     </>
   );
@@ -215,15 +215,30 @@ function DiagramOpSVG({ op }: { op: DiagramOp }) {
   const stroke = op.op !== "label" && "color" in op && op.color ? op.color : "currentColor";
   switch (op.op) {
     case "line":
-      return <line x1={op.x1} y1={op.y1} x2={op.x2} y2={op.y2} stroke={stroke} strokeWidth={2} markerEnd={op.arrow ? "url(#sm-diagram-arrow)" : undefined} />;
+      return <line x1={op.x1} y1={op.y1} x2={op.x2} y2={op.y2} stroke={stroke} strokeWidth={2} strokeLinecap="round" strokeDasharray={op.dashed ? "6 5" : undefined} markerEnd={op.arrow ? "url(#sm-diagram-arrow)" : undefined} />;
     case "rect":
       return <rect x={op.x} y={op.y} width={op.w} height={op.h} stroke={stroke} strokeWidth={2} fill={op.fill ? stroke : "none"} fillOpacity={op.fill ? 0.15 : undefined} />;
     case "circle":
-      return <circle cx={op.cx} cy={op.cy} r={op.r} stroke={stroke} strokeWidth={2} fill={op.fill ? stroke : "none"} fillOpacity={op.fill ? 0.15 : undefined} />;
+      return <circle cx={op.cx} cy={op.cy} r={op.r} stroke={op.r <= 4 && op.fill ? "none" : stroke} strokeWidth={2} strokeDasharray={op.dashed ? "6 5" : undefined} fill={op.fill ? stroke : "none"} fillOpacity={op.fill ? (op.r <= 4 ? 1 : 0.15) : undefined} />;
     case "polyline":
-      return <polyline points={op.points.map((p) => `${p.x},${p.y}`).join(" ")} stroke={stroke} strokeWidth={2} fill="none" />;
-    case "label":
-      return <text x={op.x} y={op.y} fontSize={LABEL_SIZE[op.size || "md"]} fill="currentColor">{op.text}</text>;
+      return <polyline points={op.points.map((p) => `${p.x},${p.y}`).join(" ")} stroke={stroke} strokeWidth={2} strokeDasharray={op.dashed ? "6 5" : undefined} strokeLinejoin="round" fill="none" />;
+    case "polygon":
+      return <polygon points={op.points.map((p) => `${p.x},${p.y}`).join(" ")} stroke={stroke} strokeWidth={2} strokeLinejoin="round" fill={op.fill ? stroke : "none"} fillOpacity={op.fill ? 0.12 : undefined} />;
+    case "arc": {
+      const rad = (d: number) => (d * Math.PI) / 180;
+      const sweep = op.a1 > op.a0;
+      const large = Math.abs(op.a1 - op.a0) > 180 ? 1 : 0;
+      // a full turn collapses start and end onto one point (SVG draws nothing) — pull the end in a hair.
+      const end = Math.abs(op.a1 - op.a0) >= 359.9 ? op.a0 + (sweep ? 359.9 : -359.9) : op.a1;
+      const sx = op.cx + op.r * Math.cos(rad(op.a0)), sy = op.cy + op.r * Math.sin(rad(op.a0));
+      const ex = op.cx + op.r * Math.cos(rad(end)), ey = op.cy + op.r * Math.sin(rad(end));
+      return <path d={`M ${sx} ${sy} A ${op.r} ${op.r} 0 ${large} ${sweep ? 1 : 0} ${ex} ${ey}`} stroke={stroke} strokeWidth={2} strokeDasharray={op.dashed ? "6 5" : undefined} fill="none" />;
+    }
+    case "label": {
+      const mid = op.anchor === "middle";
+      const t = formatMath(op.text);
+      return <text x={op.x} y={op.y} fontSize={LABEL_SIZE[op.size || "md"]} fill="currentColor" textAnchor={mid ? "middle" : "start"} dominantBaseline={mid ? "central" : undefined} fontStyle={/^[A-Za-z][′'₀-₉0-9]*$/.test(t) ? "italic" : undefined}>{t}</text>;
+    }
     case "axes":
       return (
         <g stroke="currentColor" strokeWidth={1.5} fill="currentColor">
@@ -302,13 +317,13 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
 
       <span className="sm-board-section-num" aria-hidden="true">{String(sectionNumber).padStart(2, "0")}</span>
       <div className="sm-board-entry-main">
-      <div className="sm-board-problem-label">{en ? "Practice problem" : "Problème d'entraînement"}</div>
-      <div className="sm-board-problem-q">{stripStrayMarkdown(problem.question)}</div>
-      {problem.format && !answered ? <div className="sm-board-problem-format">{problem.format}</div> : null}
+      <div className="sm-board-problem-label">{en ? "Try it" : "À toi"}</div>
+      <div className="sm-board-problem-q"><MathText text={stripStrayMarkdown(problem.question)} /></div>
+      {problem.format && !answered ? <div className="sm-board-problem-format"><MathText text={problem.format} /></div> : null}
       {problem.hint && !answered ? (
         <div className="sm-board-problem-hint-row">
           {hintShown ? (
-            <div className="sm-board-problem-hint">{stripStrayMarkdown(problem.hint)}</div>
+            <div className="sm-board-problem-hint"><MathText text={stripStrayMarkdown(problem.hint)} /></div>
           ) : (
             <button type="button" className="sm-btn sm-btn-ghost sm-btn-sm" onClick={onShowHint}>
               {en ? "Hint" : "Indice"}
@@ -328,7 +343,7 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
                 disabled={answered || wrong.includes(oi)}
                 onClick={() => onPick(oi)}
               >
-                <span className="quiz-opt-text">{stripStrayMarkdown(opt)}</span>
+                <span className="quiz-opt-text"><MathText text={stripStrayMarkdown(opt)} /></span>
                 {optState === "correct" && <span className="quiz-opt-mark" aria-hidden="true">✓</span>}
                 {optState === "wrong" && <span className="quiz-opt-mark" aria-hidden="true">✗</span>}
               </button>
@@ -370,7 +385,7 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
         </div>
       ) : null}
       {answered && problem.why ? (
-        <div className="sm-inline-problem-why">{stripStrayMarkdown(problem.why)}</div>
+        <div className="sm-inline-problem-why"><MathText text={stripStrayMarkdown(problem.why)} /></div>
       ) : null}
       </div>
     </div>

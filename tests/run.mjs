@@ -147,7 +147,7 @@ section("Tutor memory — earlier turns are condensed, not forgotten");
   check("digest is capped, newest lines win", (() => { const many = Array.from({ length: 200 }, (_, i) => ({ role: "user", text: `message number ${i} about something` })); const out = earlierDigest(many, 600); return out.length < 800 && /number 199/.test(out) && !/number 0 /.test(out); })());
   check("nothing older gives an empty digest", earlierDigest([]) === "");
   const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
-  check("primer turns get a 24-message window plus the digest (non-primer stays 10)", /const histWindow = opts\?\.primer \? 24 : 10;/.test(src) && /earlierDigest\(history\.slice\(0, -histWindow\)\)/.test(src));
+  check("primer turns get a 24-message window plus the digest (non-primer stays 10)", /const histWindow = opts\?\.primer \? 24 : 10;/.test(src) && /earlierDigest\(history\.slice\(0, -histWindow\), 2600\)/.test(src));
   check("the server keeps up to 60 messages of thread", /const CHAT_CAP = 60;/.test(readFileSync(new URL("../server/index.ts", import.meta.url), "utf8")));
 }
 section("Coursework — subjects, limits, summaries the tutor/chat can cite (unit + source pins)");
@@ -4600,7 +4600,7 @@ section("CREATE_INTERACTIVE — sandboxed, scoped to Study Mode, capped (source 
 {
   const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
   check("CREATE_INTERACTIVE is only added to the canvas-mode (Study Mode) tool list, not the regular task-chat one", (() => {
-    const canvasLine = claude.split("\n").find((l) => l.includes("CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, CREATE_INTERACTIVE_TOOL"));
+    const canvasLine = claude.split("\n").find((l) => l.includes("CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, CREATE_INTERACTIVE_TOOL"));
     const regularLine = claude.split("\n").find((l) => l.includes("CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL"));
     return !!canvasLine && !!regularLine && !regularLine.includes("CREATE_INTERACTIVE");
   })());

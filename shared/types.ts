@@ -1482,11 +1482,15 @@ export interface TaskProblem {
  *  0-800 x 0-600 space so the model never has to reason about the container's actual pixel size — the
  *  renderer scales the viewBox to fit. */
 export type DiagramOp =
-  | { op: "line"; x1: number; y1: number; x2: number; y2: number; arrow?: boolean; color?: string }
+  | { op: "line"; x1: number; y1: number; x2: number; y2: number; arrow?: boolean; dashed?: boolean; color?: string }
   | { op: "rect"; x: number; y: number; w: number; h: number; fill?: boolean; color?: string }
-  | { op: "circle"; cx: number; cy: number; r: number; fill?: boolean; color?: string }
-  | { op: "polyline"; points: { x: number; y: number }[]; color?: string }
-  | { op: "label"; x: number; y: number; text: string; size?: "sm" | "md" | "lg" }
+  | { op: "circle"; cx: number; cy: number; r: number; fill?: boolean; dashed?: boolean; color?: string }
+  | { op: "polyline"; points: { x: number; y: number }[]; dashed?: boolean; color?: string }
+  /** Closed shape (outline, optionally lightly filled). */
+  | { op: "polygon"; points: { x: number; y: number }[]; fill?: boolean; color?: string }
+  /** Circular arc about (cx,cy) from screen-angle a0 to a1 in degrees (y points DOWN, so counter-clockwise on screen is a1 < a0); sweeps the way from a0 to a1, may exceed 180°. */
+  | { op: "arc"; cx: number; cy: number; r: number; a0: number; a1: number; dashed?: boolean; color?: string }
+  | { op: "label"; x: number; y: number; text: string; size?: "sm" | "md" | "lg"; anchor?: "start" | "middle" }
   | { op: "axes"; x: number; y: number; w: number; h: number; xLabel?: string; yLabel?: string }
   /** Real typeset math (KaTeX), not the plain-text approximation formatMath (client/ui.tsx) does for chat.
    *  `latex` is raw LaTeX with no surrounding $/\( \) delimiters — e.g. "\\frac{2}{x-1} + \\frac{3}{x+2}". */

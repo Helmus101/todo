@@ -449,7 +449,7 @@ function formatMath(text: string): string {
   return s.replace(/[{}]/g, "").replace(/ {2,}/g, " ").trim();
 }
 
-export { formatMath };
+export { formatMath, boldify };
 
 /** Light markdown → JSX for an in-app note (CREATE_NOTE's body): headings, **bold**, and bullet/numbered
  *  lists. Never sent anywhere — this only ever renders inside the popup, so a small hand-rolled pass is

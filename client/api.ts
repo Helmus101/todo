@@ -449,7 +449,9 @@ export const api = {
   // Otto asking the student to describe its own board back to it.
   chat: (id: string, message: string, history: NonNullable<WebTask["chat"]>, board: BoardEntry[], problems: TaskProblem[], stepIndex?: number, materials?: { label: string; text: string }[], voiceMode?: boolean, canvasMode?: boolean, primer?: boolean, objectives?: TaskObjective[]): Promise<{ reply: string; chatDelta: NonNullable<WebTask["chat"]>; board: BoardEntry[]; problems: TaskProblem[]; objectives?: TaskObjective[]; guardrailTripped: boolean; task: WebTask; sessionCapReached?: boolean; subject?: string; sessionEnded?: boolean; error?: string }> =>
     post(`/api/tasks/${id}/chat`, {
-      message, history: history.map((h) => ({ role: h.role, text: h.text })),
+      // The on-device thread can be long: send how the session began (first 3) + the recent tail, not all of it
+      // (the server pins the opening verbatim and keeps its own window).
+      message, history: (history.length > 66 ? [...history.slice(0, 3), ...history.slice(-62)] : history).map((h) => ({ role: h.role, text: h.text })),
       board: board.map((b) => ({ text: b.text, kind: b.kind, outline: b.outline })),
       problems: problems.map((p) => ({ question: p.question, options: p.options })),
       stepIndex, materials, voiceMode, canvasMode, primer, objectives,
