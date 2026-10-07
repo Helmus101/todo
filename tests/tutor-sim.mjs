@@ -165,4 +165,9 @@ export async function runTutorSim(check, section) {
   script = () => ({ content: "Careful — that isn't it. What is 1/cos x?" });
   r = await run("is it 3 sec x", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
   check("end to end: a harsh draft reaches the student softened", /^Hm, let's check that/.test(r.reply));
+
+  script = () => ({ content: "Mm. What happens to the −3 when you distribute it?" });
+  await run("so it is 3 sec x", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
+  const sysTxt = String(calls[0].messages[0].content);
+  check("the tutor is told to be critical-but-kind: verify every step, never wave a wrong step through, justify, never erase the board", /CRITICAL, KINDLY/.test(sysTxt) && /never wave it through/.test(sysTxt) && /ever erased/.test(sysTxt));
 }

@@ -156,6 +156,16 @@ section("TutorSession — no hook after an early return (React #310 crash)");
   const after = src.slice(src.indexOf("const noop = () => {};"));
   check("every hook in TutorSession sits above the loading/landing early returns", src.includes("const noop = () => {};") && !/\buse(State|Effect|Context|Ref|Callback|Memo|Layout\w*)\(/.test(after));
 }
+section("Board — nothing already on it is ever dropped by a server reply");
+{
+  const src = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  check("a chat reply merges its board/problems/chat into what's on screen instead of replacing it", /board: mergeBoardById\(task\.board \|\| \[\], updated\?\.board \|\| \[\]\)/.test(src) && /chat: \[\.\.\.\(task\.chat \|\| \[\]\), \.\.\.\(response\.chatDelta \|\| \[\]\)\]/.test(src));
+  const m = src.match(/export function mergeBoardById[\s\S]*?\n}\n/)[0].replace("export function", "function").replace(/<T[^>]*>/, "").replace(/\(existing: T\[\], incoming: T\[\]\): T\[\]/, "(existing, incoming)").replace(/\(x: T\)/g, "(x)").replace(/\(x\) => x\.id/g, "(x) => x.id");
+  const mergeBoardById = new Function(m.replace(/: T/g, "") + "; return mergeBoardById;")();
+  const a = [{ id: "1", at: "2026-01-01T00:00:01Z" }, { id: "2", at: "2026-01-01T00:00:03Z" }];
+  const out = mergeBoardById(a, [{ id: "2", at: "2026-01-01T00:00:03Z" }, { id: "3", at: "2026-01-01T00:00:02Z" }]);
+  check("mergeBoardById keeps every existing entry, adds only new ones, ordered by time", out.map((x) => x.id).join() === "1,3,2" && mergeBoardById(a, []) === a && mergeBoardById(a, [{ id: "9" }]).length === 3);
+}
 section("Coursework — subjects, limits, summaries the tutor/chat can cite (unit + source pins)");
 {
   check("subject aliases group: Maths/Mathématiques/Math, Physique/Physics, SVT/Biology, SES/Economics", sameSubject("Maths", "Math") && sameSubject("Mathématiques", "math") && sameSubject("Physique-Chimie", "Physics") && sameSubject("SVT", "Biology") && sameSubject("SES", "Economics") && !sameSubject("Math", "Physics"));

@@ -431,16 +431,15 @@ export function BoardArtifact({ task, writing, onProblemResult }: BoardArtifactP
       return (withState || dupes[0]).id === p.id;
     });
   const latestFocus = [...entries].reverse().find((e) => e.kind === "focus");
+  // NOTHING on the board is ever removed. When the tutor rewrites something (the reasoning trace, a corrected
+  // formula/figure with the same caption) the older version stays where it was, just marked "earlier version"
+  // and quieter, so the student can always see how the work evolved.
+  const supersedeKey = (e: BoardEntry): string | null => e.kind === "summary" ? "summary" : (e.kind === "diagram" || e.kind === "formula") && e.text.trim() ? `${e.kind}:${e.text.trim().toLowerCase()}` : null;
+  const supersededIds = new Set<string>();
+  entries.forEach((e, i) => { const k = supersedeKey(e); if (k && entries.slice(i + 1).some((x) => supersedeKey(x) === k)) supersededIds.add(e.id); });
   const flowEntries = entries
     .filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i)
-    .filter(e => e.kind !== "focus" && (e.kind as string) !== "problem")
-    // A corrected entry REPLACES the one it corrects: the reasoning trace is one evolving record (only the latest
-    // is shown), and a re-written formula/figure with the same caption supersedes the earlier draft — the board
-    // used to stack four near-identical "The equation to work with" blocks and five "How you got there" lists.
-    .filter((e, i, arr) => {
-      const key = e.kind === "summary" ? "summary" : (e.kind === "diagram" || e.kind === "formula") && e.text.trim() ? `${e.kind}:${e.text.trim().toLowerCase()}` : null;
-      return key === null || !arr.slice(i + 1).some((x) => (x.kind === "summary" ? "summary" : (x.kind === "diagram" || x.kind === "formula") && x.text.trim() ? `${x.kind}:${x.text.trim().toLowerCase()}` : null) === key);
-    });
+    .filter(e => e.kind !== "focus" && (e.kind as string) !== "problem");
 
   // THE FLOW: entries (by their `at`) and problems (by `createdAt`) merged and sorted by timestamp —
   // the board reads top-to-bottom in the order the session actually happened. A missing/unparseable
@@ -610,11 +609,12 @@ export function BoardArtifact({ task, writing, onProblemResult }: BoardArtifactP
           return (
             <div
               key={item.key}
-              className={`sm-board-entry sm-board-entry-${e.kind || "note"} sm-board-writein${fresh ? " sm-board-reveal" : ""}`}
+              className={`sm-board-entry sm-board-entry-${e.kind || "note"} sm-board-writein${fresh ? " sm-board-reveal" : ""}${supersededIds.has(e.id) ? " sm-board-superseded" : ""}`}
               style={fresh ? { animationDuration: `.35s, ${revealDuration(e.text)}s` } : undefined}
             >
               <span className="sm-board-section-num" aria-hidden="true">{String(idx + 1).padStart(2, "0")}</span>
               <div className="sm-board-entry-main">
+              {supersededIds.has(e.id) ? <div className="sm-board-superseded-tag">{en ? "Earlier version" : "Version précédente"}</div> : null}
               {/* No kind-label chip here on purpose (removed: "Formule"/"Définition"/"Insight"/…) — the board
                   reads as ONE continuous document the tutor is working on, not a form with labeled fields.
                   The underlying `kind` still drives real formatting differences below (a diagram is a figure,
