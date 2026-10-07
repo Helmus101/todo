@@ -199,6 +199,30 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
 
   const canvasRef = useRef<TutorCanvasHandle>(null);
   // True from the moment a batch carrying a CORRECT exercise result is sent until the student's next own message.
+  // (Hooks live up here, above every early return below — a hook after one crashes the page with React #310 the
+  // moment `task` goes from loading to loaded.)
+  // OTTO SPEAKS FIRST — FOR REAL. The instant line below is still rendered with no model call (blank-page
+  // friction is what makes students abandon AI tutors), but it is only a PLACEHOLDER: as soon as the
+  // session opens, the server is asked for the real opening line, grounded in this browser's own record of
+  // the last sessions (the actual board lines and what the student asked — see sessionMemoryForPrompt) plus
+  // everything the server knows about them. It replaces the placeholder when it lands; if it never does
+  // (offline, AI paused, a slow provider) the student keeps the instant line, never an empty greeting.
+  const [openerAskedFor, setOpenerAskedFor] = useState<string | null>(null);
+  const [realOpener, setRealOpener] = useState<{ id: string; text: string } | null>(null);
+  // Same source of truth the interface itself reads (see LangContext) — the opener's language must match
+  // the UI the student is looking at, not a second guess at it.
+  const openerLang: "fr" | "en" = useContext(LangContext);
+  useEffect(() => {
+    const id = task?.id;
+    if (!id || task.chat?.length || openerAskedFor === id) return;
+    setOpenerAskedFor(id);
+    let cancelled = false;
+    const memory = sessionMemoryForPrompt(getTutorSessions(userId), task.sourceSubject, Date.now(), openerLang);
+    void api.tutorOpener(task.sourceSubject || "", memory)
+      .then((r) => { if (!cancelled && r?.opener) setRealOpener({ id, text: r.opener }); })
+      .catch(() => { /* the instant line stays — this is an enhancement, never a blocker */ });
+    return () => { cancelled = true; };
+  }, [task?.id, task?.chat?.length, task?.sourceSubject, userId, openerAskedFor, openerLang]);
   const [exerciseDone, setExerciseDone] = useState(false);
   const [surfaceEl, setSurfaceEl] = useState<HTMLDivElement | null>(null);
   const send = useCallback(async (override?: string, voiceMode?: boolean) => {
@@ -568,28 +592,6 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
 
   const noop = () => {};
   const fresh = !task.chat?.length && !pendingMsg;
-  // OTTO SPEAKS FIRST — FOR REAL. The instant line below is still rendered with no model call (blank-page
-  // friction is what makes students abandon AI tutors), but it is only a PLACEHOLDER: as soon as the
-  // session opens, the server is asked for the real opening line, grounded in this browser's own record of
-  // the last sessions (the actual board lines and what the student asked — see sessionMemoryForPrompt) plus
-  // everything the server knows about them. It replaces the placeholder when it lands; if it never does
-  // (offline, AI paused, a slow provider) the student keeps the instant line, never an empty greeting.
-  const [openerAskedFor, setOpenerAskedFor] = useState<string | null>(null);
-  const [realOpener, setRealOpener] = useState<{ id: string; text: string } | null>(null);
-  // Same source of truth the interface itself reads (see LangContext) — the opener's language must match
-  // the UI the student is looking at, not a second guess at it.
-  const openerLang: "fr" | "en" = useContext(LangContext);
-  useEffect(() => {
-    const id = task?.id;
-    if (!id || task.chat?.length || openerAskedFor === id) return;
-    setOpenerAskedFor(id);
-    let cancelled = false;
-    const memory = sessionMemoryForPrompt(getTutorSessions(userId), task.sourceSubject, Date.now(), openerLang);
-    void api.tutorOpener(task.sourceSubject || "", memory)
-      .then((r) => { if (!cancelled && r?.opener) setRealOpener({ id, text: r.opener }); })
-      .catch(() => { /* the instant line stays — this is an enhancement, never a blocker */ });
-    return () => { cancelled = true; };
-  }, [task?.id, task?.chat?.length, task?.sourceSubject, userId, openerAskedFor, openerLang]);
   const objDone = task.objectives?.filter((o) => o.done).length ?? 0;
   // The INSTANT greeting (shown before the real one arrives — see the opener effect above). When this
   // subject has a past session it is a retrieval question about what was ACTUALLY worked on, named with the

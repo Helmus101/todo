@@ -150,6 +150,12 @@ section("Tutor memory — earlier turns are condensed, not forgotten");
   check("primer turns get a 24-message window plus the digest (non-primer stays 10)", /const histWindow = opts\?\.primer \? 24 : 10;/.test(src) && /earlierDigest\(history\.slice\(0, -histWindow\), 2600\)/.test(src));
   check("the server keeps up to 60 messages of thread", /const CHAT_CAP = 60;/.test(readFileSync(new URL("../server/index.ts", import.meta.url), "utf8")));
 }
+section("TutorSession — no hook after an early return (React #310 crash)");
+{
+  const src = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  const after = src.slice(src.indexOf("const noop = () => {};"));
+  check("every hook in TutorSession sits above the loading/landing early returns", src.includes("const noop = () => {};") && !/\buse(State|Effect|Context|Ref|Callback|Memo|Layout\w*)\(/.test(after));
+}
 section("Coursework — subjects, limits, summaries the tutor/chat can cite (unit + source pins)");
 {
   check("subject aliases group: Maths/Mathématiques/Math, Physique/Physics, SVT/Biology, SES/Economics", sameSubject("Maths", "Math") && sameSubject("Mathématiques", "math") && sameSubject("Physique-Chimie", "Physics") && sameSubject("SVT", "Biology") && sameSubject("SES", "Economics") && !sameSubject("Math", "Physics"));
