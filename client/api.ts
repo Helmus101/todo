@@ -453,7 +453,7 @@ export const api = {
       // (the server pins the opening verbatim and keeps its own window).
       message, history: (history.length > 66 ? [...history.slice(0, 3), ...history.slice(-62)] : history).map((h) => ({ role: h.role, text: h.text })),
       board: board.map((b) => ({ text: b.text, kind: b.kind, outline: b.outline, diagram: b.diagram?.slice(0, 40) })),
-      problems: problems.map((p) => ({ question: p.question, options: p.options })),
+      problems: problems.map((p) => ({ question: p.question, options: p.options, solved: p.solved === true })),
       stepIndex, materials, voiceMode, canvasMode, primer, objectives,
     }),
   // Otto's opening line for a tutor session (see tutorOpener in server/claude.ts): the browser's own

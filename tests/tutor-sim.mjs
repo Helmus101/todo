@@ -4,7 +4,7 @@
 // answer through, hands the thinking back, writes reasoning to the board, rejects bad/leaky tool calls and
 // keeps replies short. No network, no key needed.
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
-const { chatAboutTask, summarizeCoursework, makeGeometryEntry, makeProblem, isDuplicateBoardEntry, isDuplicateDiagram } = await import("../server/claude.ts");
+const { chatAboutTask, summarizeCoursework, makeGeometryEntry, makeProblem, isDuplicateProblem, isDuplicateBoardEntry, isDuplicateDiagram } = await import("../server/claude.ts");
 const { buildGeometry } = await import("../shared/geometry.ts");
 const { autoMathLine } = await import("../shared/mathText.ts");
 
@@ -238,4 +238,18 @@ export async function runTutorSim(check, section) {
   script = () => ({ content: "Nice. Which factor first?" });
   r = await run("ok", { history: [{ role: "user", text: "solve x^2-5x+6" }, { role: "assistant", text: "ok" }], board: [{ id: "q", kind: "question", text: "Which two numbers multiply to 6 and add to −5?", at: "" }] });
   check("a new question card is not stacked on top of one the student is still working with", r.boardAll.every((e) => e.kind !== "question"));
+
+  // One exercise at a time; never re-ask a question.
+  check("a near-identical exercise is a duplicate (the 4× 'sin(5π/12) as a sum of special angles' problem)", isDuplicateProblem([{ id: "1", question: "Find the exact value of sin(5π/12) by writing 5π/12 as the sum of two special angles.", createdAt: "" }], { question: "Find the exact value of sin(5π/12) by writing 5π/12 = π/4 + π/6 as a sum of two special angles." }) && !isDuplicateProblem([{ id: "1", question: "Find sin(5π/12) as a sum of special angles.", createdAt: "" }], { question: "Given sin θ = 3/5 in the first quadrant, find sin(2θ)." }));
+  check("'next', 'another one', 'skip', 'harder' explicitly ask to move on; ordinary answers don't", ["next one please", "Another one like it, please.", "can we skip this", "Give me a harder one.", "un autre exercice"].every(adA.asksToMoveOn) && !adA.asksToMoveOn("so it is root 6 over 4") && !adA.asksToMoveOn("I think the answer is 3"));
+  const askedBefore = [{ role: "assistant", text: "Nice. What formula can you use to expand sin(2θ) into single angles?" }, { role: "user", text: "sin(θ+θ)" }];
+  check("re-asking an earlier question is detected; a new question is not", adA.repeatsRecentQuestion("Good. What formula can you use to expand sin(2θ) into single angles?", askedBefore) && !adA.repeatsRecentQuestion("Good. What is cos θ if sin θ = 3/5?", askedBefore));
+  const openP = { id: "p1", question: "Given sin θ = 3/5, find sin(2θ).", answer: "24/25", createdAt: new Date().toISOString() };
+  script = (b, i) => i === 0 ? { content: "", tool_calls: [tc("CREATE_PROBLEM", { question: "What is the area of a circle of radius 3, in terms of π?", answer: "9π" })] } : { content: "What formula expands sin(2θ)?" };
+  r = await run("I'm not sure", { problems: [openP], history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
+  check("no new exercise while one is unanswered (rejected, nothing piled on)", r.problems.length === 0 && /haven't answered the exercise/.test(JSON.stringify(calls[1].messages)));
+  r = await run("another one please", { problems: [openP], history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
+  check("...but the student asking for another one gets it", r.problems.length === 1);
+  r = await run("next", { problems: [{ ...openP, solved: true }], history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
+  check("...and once the previous one is solved a new one is fine", r.problems.length === 1);
 }

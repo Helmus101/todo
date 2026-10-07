@@ -1604,7 +1604,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
   const currentProblems = currentProblemsRaw
     .filter((p: any) => p && typeof p.question === "string" && p.question.trim())
     .slice(-12)
-    .map((p: any) => ({ id: "", createdAt: "", question: String(p.question).slice(0, 600), ...(Array.isArray(p.options) ? { options: p.options.map((o: any) => String(o).slice(0, 300)).slice(0, 6) } : {}) }));
+    .map((p: any) => ({ id: "", createdAt: "", solved: p.solved === true, question: String(p.question).slice(0, 600), ...(Array.isArray(p.options) ? { options: p.options.map((o: any) => String(o).slice(0, 300)).slice(0, 6) } : {}) }));
   const currentObjectivesRaw = Array.isArray(req.body?.objectives) ? req.body.objectives : [];
   const currentObjectives = currentObjectivesRaw
     .filter((o: any) => o && typeof o.label === "string" && o.label.trim())

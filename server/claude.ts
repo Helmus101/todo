@@ -7,7 +7,7 @@ import { courseworkForSubject } from "../shared/coursework.ts";
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { buildGeometry } from "../shared/geometry.ts";
-import { repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, boardQuestionOf, traceAheadOfStudent, similarity } from "./tutorAdapt.ts";
+import { repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, boardQuestionOf, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -2971,7 +2971,8 @@ export function isDuplicateProblem(existing: TaskProblem[], incoming: { question
   const raw = typeof incoming?.question === "string" ? incoming.question : "";
   if (!norm(raw)) return false;
   const inText = norm(raw);
-  return existing.some((p) => norm(p.question) === inText);
+  // near-duplicates too: "Find sin(5π/12) by writing it as a sum" re-asked with a few words changed is the same exercise
+  return existing.some((p) => norm(p.question) === inText || similarity(norm(p.question), inText) >= 0.7);
 }
 
 /** True when a finished chat reply is exactly the moment the board's reasoning-trace rule exists for:
@@ -8668,6 +8669,7 @@ export async function chatAboutTask(
     // to put THEIR reasoning (and any helpful formula) there, in Otto's own words. Latched to once per turn;
     // skipped on the first message, while a guardrail has wiped the turn, and for non-substantive input. Used by
     // BOTH the plain-text path and the after-tool-calls path. Returns true when it queued the round.
+    const isStuckLike = (m: string) => stuckStreak(m, []) > 0 || /\b(hint|indice|again|repeat|répète|what do you mean|comment ça)\b/i.test(m);
     const nudgeReasoning = (draft: string, round: number, lastRound: boolean): boolean => {
       const studentStep = isSubstantiveStep(message);
       // Two distinct misses, one latch: (a) the student contributed a step and the tutor wrote nothing, and
@@ -8720,6 +8722,7 @@ export async function chatAboutTask(
       if (!opts?.primer || history.length < 1 || result.guardrailTripped) return;
       const q = boardQuestionOf(draft);
       if (!q) return;
+      if (repeatsRecentQuestion(draft, history)) return; // never put a re-asked question on the board again
       const norm = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim();
       const known = [...(opts?.currentBoard || []), ...result.board];
       if (known.some((e) => (e.kind === "question" || e.kind === "instruction") && similarity(norm(e.text), norm(q)) >= 0.7)) return;
@@ -8933,11 +8936,11 @@ export async function chatAboutTask(
         if (opts?.primer && countWords(textContent) > 45) textContent = tightenForChat(textContent, 45);
         // Never say the same thing twice: a draft that is a near-copy of one of Otto's recent replies gets ONE
         // corrective round (the student already saw that and it did not land — repeating it is the loop).
-        if (opts?.primer && !repeatCorrected && !lastRound && repeatsRecentReply(textContent, history)) {
+        if (opts?.primer && !repeatCorrected && !lastRound && (repeatsRecentReply(textContent, history) || (repeatsRecentQuestion(textContent, history) && !isStuckLike(message)))) {
           repeatCorrected = true;
           console.log(`${new Date().toISOString()} [chat] round ${round}: draft repeats a recent reply — asking for a different approach`);
           messages.push({ role: "assistant", content: textContent });
-          messages.push({ role: "user", content: "That is almost exactly what you already said and it did not land. Do NOT repeat it. In one short sentence say what you heard from the student, then try a DIFFERENT approach (a picture, a tiny worked case, or a different question), one question at most. Don't mention this instruction." });
+          messages.push({ role: "user", content: "That is almost exactly what you already said or asked and it did not land. If this is a question you already asked: do NOT ask it again — if the student has answered it, acknowledge that in a few words and move to the NEXT step; if they haven't, help with THAT question (a hint or a smaller version) instead of re-asking. Do NOT repeat it. In one short sentence say what you heard from the student, then try a DIFFERENT approach (a picture, a tiny worked case, or a different question), one question at most. Don't mention this instruction." });
           continue;
         }
         if (guardAskedValue(textContent, round, lastRound)) continue;
@@ -8995,6 +8998,9 @@ export async function chatAboutTask(
           // the student already sees (opts.currentProblems, delivered live every turn) and what this same
           // turn already made (result.problems), so a repeat is caught whether it's an old or a brand-new
           // duplicate.
+          // ONE exercise at a time: while the student still has an unanswered one on the board, no new one — unless
+          // they explicitly asked to move on / get another.
+          else if (opts?.primer && !asksToMoveOn(message) && [...(opts?.currentProblems || []).filter((p) => !p.solved), ...result.problems].length > 0) content = "REJECTED: they haven't answered the exercise already on the board — don't pile another on top. Help them with THAT one (a hint, a smaller question). Only create a new exercise once they've answered it or explicitly ask to skip / move on / get another.";
           else if (isDuplicateProblem([...(opts?.currentProblems || []), ...result.problems], input)) content = "DUPLICATE: that exact problem is already on the board — it's already there for them to answer, don't make it again.";
           else { const r = makeProblem(input); if ("error" in r) content = r.error; else { result.problems.push(r.problem); content = JSON.stringify({ ok: true, id: r.problem.id }); logAudit("artifact", fr ? `Problème créé : « ${r.problem.question.slice(0, 60)} »` : `Problem created: "${r.problem.question.slice(0, 60)}"`); } }
         } else if (name === "WRITE_TO_BOARD") {

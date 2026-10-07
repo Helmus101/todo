@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { ArrowRight, TrendingUp, RotateCcw, MessageCircle, Lightbulb, CircleHelp, ChevronRight, ChevronDown } from "lucide-react";
-import type { WebTask } from "../../shared/types.ts";
+import type { WebTask, TaskProblem } from "../../shared/types.ts";
 import { api } from "../api.ts";
 import { setLocalObjectives, getLocalThread } from "../localChatBoard.ts";
 import { useLang, LangContext, TaskModal, formatMath } from "../ui.tsx";
@@ -258,7 +258,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
       // come back as a hard "Otto couldn't reply" with no message at all. canvasMode restricts the tutor to
       // CREATE_PROBLEM (individual, inline, answerable right on the board) instead — the only artifact this
       // screen actually knows how to show.
-      const response = await api.chat(task.id, message, task.chat || [], task.board || [], task.problems || [], undefined, undefined, voiceMode, true, true, task.objectives || []);
+      const response = await api.chat(task.id, message, task.chat || [], task.board || [], (task.problems || []).map((p) => ({ ...p, solved: solvedRef.current.has(p.id) })), undefined, undefined, voiceMode, true, true, task.objectives || []);
       const { task: updated, objectives } = response;
       // objectives is only ever the FULL replacement list (SET_OBJECTIVES' own contract), or undefined
       // when Otto didn't touch it this turn — never overwrite the existing list with an empty one.
@@ -319,9 +319,12 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
   // message (several quick answers = one reaction, not a stack of replies).
   const resultsRef = useRef<string[]>([]);
   const [resultTick, setResultTick] = useState(0);
+  // Problems the student has answered correctly — sent with every turn so the tutor never piles a new exercise on an unanswered one.
+  const solvedRef = useRef<Set<string>>(new Set());
   const sendRef = useRef(send);
   sendRef.current = send;
-  const onProblemResult = useCallback((r: { given: string; correct: boolean; attempt: number }) => {
+  const onProblemResult = useCallback((r: { problem: TaskProblem; given: string; correct: boolean; attempt: number }) => {
+    if (r.correct) solvedRef.current.add(r.problem.id);
     resultsRef.current.push(L(
       `[Exercice] J'ai répondu « ${r.given.slice(0, 120)} » — ${r.correct ? "juste" : "faux"} (essai n°${r.attempt}).`,
       `[Exercise] I answered "${r.given.slice(0, 120)}" — marked ${r.correct ? "right" : "wrong"} (try #${r.attempt}).`));

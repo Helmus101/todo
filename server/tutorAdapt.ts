@@ -270,3 +270,17 @@ export function traceAheadOfStudent(entryText: string, studentTexts: string[], g
   const said = compactMaths([...studentTexts, ...givens].join(" \n "));
   return traceTokens(entryText).filter((t) => !said.includes(t));
 }
+
+// ---- Don't pile on / don't repeat ----
+/** The student explicitly asked to move on / get another (so a NEW exercise or question is welcome). */
+export function asksToMoveOn(message: string): boolean {
+  return /\b(next|another|skip|pass|move on|new (?:one|question|problem|exercise)|different (?:one|question|problem)|harder|easier|passe|suivant|un autre|une autre|autre (?:exercice|question)|plus dur|plus facile|je passe)\b/i.test(message);
+}
+
+/** The question this reply asks matches one the tutor already asked in its last few turns. */
+export function repeatsRecentQuestion(draft: string, history: { role: string; text: string }[], lookback = 8): boolean {
+  const q = boardQuestionOf(draft);
+  if (!q) return false;
+  const past = history.filter((h) => h.role === "assistant").slice(-lookback);
+  return past.some((h) => { const pq = boardQuestionOf(h.text); return !!pq && similarity(q, pq) >= 0.6; });
+}

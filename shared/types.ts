@@ -1453,6 +1453,8 @@ export interface DailyPracticeProblem {
  *  `DailyPracticeProblem` (one free-response per day). */
 export interface TaskProblem {
   id: string;
+  /** Client-only, sent with chat turns: the student has already answered this one correctly. */
+  solved?: boolean;
   /** The question/prompt itself — one clear sentence or a short problem statement. */
   question: string;
   /** MCQ mode: 2-4 options. When present, the student picks one and gets immediate feedback.
