@@ -1,11 +1,67 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api.ts";
 
+const GREEK_WORDS: Record<string, string> = {
+  alpha: "alpha", beta: "beta", gamma: "gamma", delta: "delta", epsilon: "epsilon", zeta: "zeta",
+  eta: "eta", theta: "theta", iota: "iota", kappa: "kappa", lambda: "lambda", mu: "mu", nu: "nu",
+  xi: "xi", pi: "pi", rho: "rho", sigma: "sigma", tau: "tau", upsilon: "upsilon", phi: "phi",
+  chi: "chi", psi: "psi", omega: "omega",
+};
+
+/** Reported live: a worked-math reply full of real LaTeX ("$\sin\left(\frac{\pi}{12}\right)$") got read
+ *  aloud LITERALLY — "dollar sin backslash left parenthesis backslash frac pi 12 ..." — because the TTS
+ *  pipeline only ever stripped markdown, never LaTeX. Otto's board/chat math is real LaTeX (KaTeX renders
+ *  it visually), so speech needs its own pass that turns the common constructs into the words a tutor would
+ *  actually say, then throws away anything left over (an unrecognized command/brace/delimiter) rather than
+ *  reading it character by character. Order matters: fractions/roots/sub-superscripts are unwrapped BEFORE
+ *  the final sweep that strips remaining backslash-commands and braces, so their arguments survive as plain
+ *  text instead of being deleted along with the syntax. Exported for unit tests. */
+export function stripLatexForSpeech(text: string): string {
+  let s = text
+    .replace(/\$\$([\s\S]+?)\$\$/g, " $1 ")            // $$...$$ display math — keep the content
+    .replace(/\\\[([\s\S]+?)\\\]/g, " $1 ")             // \[...\] display math
+    .replace(/\\\(([\s\S]+?)\\\)/g, " $1 ")             // \(...\) inline math
+    .replace(/\$([^$\n]+?)\$/g, " $1 ")                 // $...$ inline math
+    .replace(/\\left|\\right/g, "")                     // sizing commands carry no sound of their own
+    .replace(/\\text\{([^{}]*)\}/g, "$1");
+  // Fractions/roots can nest one level deep in typical worked-math output (e.g. a fraction of two sums) —
+  // run twice so the inner pair resolves before the outer one is matched.
+  for (let i = 0; i < 2; i++) {
+    s = s
+      .replace(/\\d?frac\{([^{}]*)\}\{([^{}]*)\}/g, " ($1) over ($2) ")
+      .replace(/\\sqrt\[(\d+)\]\{([^{}]*)\}/g, " the $1th root of ($2) ")
+      .replace(/\\sqrt\{([^{}]*)\}/g, " the square root of ($1) ");
+  }
+  s = s
+    .replace(/\\(alpha|beta|gamma|delta|epsilon|zeta|eta|theta|iota|kappa|lambda|mu|nu|xi|pi|rho|sigma|tau|upsilon|phi|chi|psi|omega)\b/gi, (_, w) => ` ${GREEK_WORDS[w.toLowerCase()]} `)
+    // Function names: the backslash is syntax (keeps KaTeX from italicizing "sin" as s*i*n), the word itself
+    // IS the spoken word — unlike an unrecognized command below, this one must survive the sweep that drops
+    // backslash-commands with no sound of their own.
+    .replace(/\\(sin|cos|tan|csc|sec|cot|sinh|cosh|tanh|ln|log|lim|exp|min|max|gcd|det)\b/g, " $1 ")
+    .replace(/\\cdot|\\times/g, " times ")
+    .replace(/\\div/g, " divided by ")
+    .replace(/\\pm/g, " plus or minus ")
+    .replace(/\\leq?/g, " less than or equal to ")
+    .replace(/\\geq?/g, " greater than or equal to ")
+    .replace(/\\neq/g, " not equal to ")
+    .replace(/\\approx/g, " approximately ")
+    .replace(/\\infty/g, " infinity ")
+    .replace(/\^\{([^{}]*)\}/g, " to the power of $1 ")
+    .replace(/\^(-?\w)/g, " to the power of $1 ")
+    .replace(/_\{([^{}]*)\}/g, " sub $1 ")
+    .replace(/_(\w)/g, " sub $1 ")
+    .replace(/\\[a-zA-Z]+/g, " ")                       // any other LaTeX command — not worth guessing at
+    .replace(/[{}$]/g, "")                              // remaining braces/delimiters
+    .replace(/[ \t]+/g, " ")
+    .trim();
+  return s;
+}
+
 /** Strip the markdown Otto's replies use (headings, bold/italic emphasis markers, [links](url), GFM table
  *  pipes, bullet markers) down to plain readable prose — read aloud verbatim, "hashtag hashtag" and literal
  *  pipe/asterisk characters would be nonsense. Exported for unit tests. */
 export function toSpeakableText(md: string): string {
-  return md
+  return stripLatexForSpeech(md)
     .replace(/```[\s\S]*?```/g, " ")                 // code blocks — not worth reading aloud
     .replace(/`([^`]+)`/g, "$1")                      // inline code
     .replace(/^\s{0,3}#{1,6}\s+/gm, "")                // headings

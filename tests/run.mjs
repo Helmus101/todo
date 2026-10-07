@@ -18,7 +18,7 @@ import { trimFreeTTSWatermark } from "../server/ttsTrim.ts";
 import { openerMemoryBlock, cleanOpener, tutorOpener } from "../server/claude.ts";
 import { sessionTopic, relativeWhen, sessionMemoryForPrompt } from "../client/tutor/tutorSessions.ts";
 import { wantsArtifactTools } from "../server/claude.ts";
-import { rankVoices, isMaleVoice, cloudChunks, toSpeakableText } from "../client/voice/useSpeechSynthesis.ts";
+import { rankVoices, isMaleVoice, cloudChunks, toSpeakableText, stripLatexForSpeech } from "../client/voice/useSpeechSynthesis.ts";
 import { traceLines, splitMergedSteps } from "../client/study/artifacts/BoardArtifact.tsx";
 import { pcmToWav, leaksAnswer, scrubAnswerLeak, makeProblem as makeProblemLeak, makePracticeProblem as makePracticeLeak, wordWrapChunks, leaksAnyProblemAnswer, makeInteractiveEntry, stripId3v2, stripId3v1 } from "../server/claude.ts";
 import { lastMessageKey } from "../client/voice/replyKey.ts";
@@ -4741,6 +4741,24 @@ section("TTS voice — MALE ONLY, and arrows read as a word (source pins)");
   check("an ASCII '->' arrow is also replaced", toSpeakableText("x -> y") === "x gives y");
   check("a '=>' arrow is also replaced", toSpeakableText("A => B") === "A gives B");
   check("spacing around the substituted word is normal regardless of how tight the arrow was in source", toSpeakableText("a→b") === "a gives b");
+
+  // Reported live: a worked-math reply with real LaTeX ("$\sin\left(\frac{\pi}{12}\right)$") was read aloud
+  // LITERALLY — "dollar sin backslash left parenthesis backslash frac pi 12 ..." — because only markdown was
+  // ever stripped before speech, never LaTeX.
+  check("inline $...$ math has its delimiters removed, not read as 'dollar'", !stripLatexForSpeech("$x = 2$").includes("$"));
+  check("\\left and \\right are silent (no sound of their own)", !/left|right/i.test(stripLatexForSpeech("\\sin\\left(x\\right)")));
+  check("\\frac becomes 'A over B', not read as a command", stripLatexForSpeech("\\frac{\\pi}{12}").replace(/\s+/g, " ") === "( pi ) over (12)");
+  check("the exact reported phrase reads as real words, no backslash/dollar/brace survives", (() => {
+    const out = toSpeakableText("Find the exact value of $\\sin\\left(\\frac{\\pi}{12}\\right)$");
+    return !/[\\${}]/.test(out) && /pi/.test(out) && /over/.test(out) && /\bsin\b/.test(out);
+  })());
+  check("\\sqrt{x} becomes 'the square root of x'", stripLatexForSpeech("\\sqrt{x}") === "the square root of (x)");
+  check("a superscript ^{2} becomes 'to the power of 2'", stripLatexForSpeech("x^{2}").trim() === "x to the power of 2");
+  check("a bare superscript ^2 (no braces) also becomes 'to the power of 2'", stripLatexForSpeech("x^2").trim() === "x to the power of 2");
+  check("greek letters are spoken, not left as backslash-commands", stripLatexForSpeech("\\theta + \\pi").includes("theta") && stripLatexForSpeech("\\theta + \\pi").includes("pi") && !stripLatexForSpeech("\\theta + \\pi").includes("\\"));
+  check("\\cdot and \\leq read as words", stripLatexForSpeech("a \\cdot b \\leq c").includes("times") && stripLatexForSpeech("a \\cdot b \\leq c").includes("less than or equal to"));
+  check("an unrecognized LaTeX command is dropped rather than read character-by-character", !stripLatexForSpeech("\\somethingweird{x}").includes("\\"));
+  check("plain text with no LaTeX passes through unchanged", stripLatexForSpeech("just plain text") === "just plain text");
 }
 
 section("Bilingual copy — French and English never bleed into each other (source pins + a repo-wide sweep)");
