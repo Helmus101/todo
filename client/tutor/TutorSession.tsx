@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { ArrowRight, TrendingUp, RotateCcw, MessageCircle, Lightbulb, CircleHelp, ChevronRight, ChevronDown } from "lucide-react";
 import type { WebTask } from "../../shared/types.ts";
 import { api } from "../api.ts";
 import { setLocalObjectives, getLocalThread } from "../localChatBoard.ts";
-import { useLang, TaskModal, formatMath } from "../ui.tsx";
+import { useLang, LangContext, TaskModal, formatMath } from "../ui.tsx";
 import { AskOttoPanel } from "../study/AskOttoPanel.tsx";
 import { BoardArtifact, MathText } from "../study/artifacts/BoardArtifact.tsx";
 import { TutorDesmos } from "./TutorDesmos.tsx";
@@ -11,7 +11,7 @@ import { TutorCanvas, type TutorCanvasHandle } from "./TutorCanvas.tsx";
 import { PageTour } from "../PageTour.tsx";
 import { TOURS } from "../tours.ts";
 import { COMMON_SUBJECTS } from "../../shared/coursework.ts";
-import { buildSessionSummary, saveTutorSession, getTutorSessions, type TutorSessionSummary } from "./tutorSessions.ts";
+import { buildSessionSummary, saveTutorSession, getTutorSessions, sessionMemoryForPrompt, sessionTopic, relativeWhen, type TutorSessionSummary } from "./tutorSessions.ts";
 
 // A dismiss that silently fails (a network blip, a momentary 429) used to just be swallowed — the session
 // then never actually ends server-side and comes back as a "Reprendre?" ghost on every future visit
@@ -568,18 +568,46 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
 
   const noop = () => {};
   const fresh = !task.chat?.length && !pendingMsg;
+  // OTTO SPEAKS FIRST — FOR REAL. The instant line below is still rendered with no model call (blank-page
+  // friction is what makes students abandon AI tutors), but it is only a PLACEHOLDER: as soon as the
+  // session opens, the server is asked for the real opening line, grounded in this browser's own record of
+  // the last sessions (the actual board lines and what the student asked — see sessionMemoryForPrompt) plus
+  // everything the server knows about them. It replaces the placeholder when it lands; if it never does
+  // (offline, AI paused, a slow provider) the student keeps the instant line, never an empty greeting.
+  const [openerAskedFor, setOpenerAskedFor] = useState<string | null>(null);
+  const [realOpener, setRealOpener] = useState<{ id: string; text: string } | null>(null);
+  // Same source of truth the interface itself reads (see LangContext) — the opener's language must match
+  // the UI the student is looking at, not a second guess at it.
+  const openerLang: "fr" | "en" = useContext(LangContext);
+  useEffect(() => {
+    const id = task?.id;
+    if (!id || task.chat?.length || openerAskedFor === id) return;
+    setOpenerAskedFor(id);
+    let cancelled = false;
+    const memory = sessionMemoryForPrompt(getTutorSessions(userId), task.sourceSubject, Date.now(), openerLang);
+    void api.tutorOpener(task.sourceSubject || "", memory)
+      .then((r) => { if (!cancelled && r?.opener) setRealOpener({ id, text: r.opener }); })
+      .catch(() => { /* the instant line stays — this is an enhancement, never a blocker */ });
+    return () => { cancelled = true; };
+  }, [task?.id, task?.chat?.length, task?.sourceSubject, userId, openerAskedFor, openerLang]);
   const objDone = task.objectives?.filter((o) => o.done).length ?? 0;
-  // Zero-friction start (blank-page friction is what makes students abandon AI tutors): Otto "speaks first"
-  // instantly, no model call. If this subject has a past session, the opener is a retrieval question about
-  // it — recalling beats re-reading — otherwise a plain, specific invitation. One-tap starters follow.
-  const lastSame = pastSessions.find((s) => s.subject && s.subject === task.sourceSubject && s.summary && s.summary !== "Session completed");
-  const lastTopic = lastSame?.summary.split(" — ")[0].split("\n")[0].slice(0, 90);
+  // The INSTANT greeting (shown before the real one arrives — see the opener effect above). When this
+  // subject has a past session it is a retrieval question about what was ACTUALLY worked on, named with the
+  // topic sessionTopic picked out of that session's real board (never a board caption like "The equation to
+  // work with", which is what used to get quoted back here and made the line read as a placeholder);
+  // otherwise a plain, specific invitation. One-tap starters follow.
+  const lastSame = pastSessions.find((s) => s.subject && s.subject === task.sourceSubject && sessionTopic(s));
+  const lastTopic = lastSame ? sessionTopic(lastSame) : "";
+  const lastWhen = lastSame ? relativeWhen(lastSame.endTime, Date.now(), openerLang) : "";
   const subj = task.sourceSubject;
-  const openerText = lastTopic
-    ? L(`Salut ! La dernière fois on a bossé : « ${lastTopic} ». Qu'est-ce que tu en retiens ? Ou dis-moi sur quoi tu bloques aujourd'hui.`, `Hey! Last time we worked on: "${lastTopic}". What do you still remember? Or tell me what's tripping you up today.`)
+  const instantOpener = lastTopic
+    ? L(`Salut ! ${lastWhen ? `La dernière fois, ${lastWhen}, on` : "La dernière fois on"} a bossé sur « ${lastTopic} ». Qu'est-ce que tu en retiens ?`,
+        `Hey! ${lastWhen ? `Last time, ${lastWhen}, we` : "Last time we"} worked on "${lastTopic}". What do you still remember?`)
     : subj
       ? L(`Salut ! Sur quoi tu bloques en ${subj} ? Écris, dessine ou parle — je t'écoute.`, `Hey! What's tripping you up in ${subj}? Type, draw or just talk — I'm listening.`)
       : L("Salut ! Sur quoi tu bloques ? Écris, dessine ou parle.", "Hey! What are you stuck on? Type, draw or just talk.");
+  // The real line wins as soon as it lands; the instant one covers the gap (and any failure).
+  const openerText = realOpener && realOpener.id === task.id ? realOpener.text : instantOpener;
   const starters = [
     { label: L("Je bloque sur un exercice", "I'm stuck on a problem"), text: L("Je bloque sur un exercice.", "I'm stuck on a problem.") },
     { label: L("Explique-moi un cours", "Teach me a topic"), text: L("J'aimerais comprendre un chapitre.", "I'd like to understand a topic.") },

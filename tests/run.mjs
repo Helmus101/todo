@@ -15,6 +15,8 @@ import { stripHtml, applyPronoteGrades, isPrivateOrReservedIp, assertSafeExterna
 import { connectionColumnUpdates } from "../server/store.ts";
 import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, contextKey, chooseArm, computeReward, computeCardReward, computeLatencyReward, updatePosterior, leadingArm } from "../server/bandit.ts";
 import { trimFreeTTSWatermark } from "../server/ttsTrim.ts";
+import { openerMemoryBlock, cleanOpener, tutorOpener } from "../server/claude.ts";
+import { sessionTopic, relativeWhen, sessionMemoryForPrompt } from "../client/tutor/tutorSessions.ts";
 import { wantsArtifactTools } from "../server/claude.ts";
 import { rankVoices, isMaleVoice, cloudChunks, toSpeakableText } from "../client/voice/useSpeechSynthesis.ts";
 import { traceLines, splitMergedSteps } from "../client/study/artifacts/BoardArtifact.tsx";
@@ -65,6 +67,65 @@ section("Board reasoning trace — one move per rendered line, even when the mod
   check("the renderer draws the numbering itself and no longer pastes the model's glyph into the step text", /<ol className="sm-board-trace-list">/.test(boardSrc) && /piece\.replace\(LEAD_DECOR_RE, ""\)\.replace\(LEAD_MARKER_RE, ""\)\.replace\(LEAD_DECOR_RE, ""\)/.test(boardSrc));
   const claudeTrace = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
   check("the prompt tells the model to write ONE move per line with no step number or bullet inside it", claudeTrace.includes("ONE MOVE PER LINE — the trace is numbered for you") && claudeTrace.includes("never put TWO moves on one line"));
+}
+
+section("Tutor opener — Otto's first line is REAL memory, never a template or a board caption (unit tests + source pins)");
+{
+  // Reported live, verbatim: 'Hey! Last time we worked on: "The equation to work with". What do you still
+  // remember?' — a board CAPTION quoted back as the thing they studied, inside a hardcoded sentence. The
+  // opener is now written by the tutor from real memory (the browser's own record of the last sessions +
+  // what the server knows), and these are the properties that make that real rather than decorative.
+  const memory = [
+    { when: "yesterday", subject: "Maths", lines: ["3sec²x − 17sec x − 28 = 0", "on pose X = sec x"], asked: ["pourquoi on remplace sec x par X ?"] },
+    { when: "3 days ago", subject: "Maths", lines: ["f'(x) = 3x² − 3"], asked: [] },
+  ];
+  const block = openerMemoryBlock(memory);
+  check("the opener's memory block carries the REAL board lines, not a title or a topic label", block.includes("3sec²x − 17sec x − 28 = 0") && block.includes("on pose X = sec x"));
+  check("...and the student's own questions, in their own words", block.includes("pourquoi on remplace sec x par X ?"));
+  check("...and when each one happened", block.includes("yesterday") && block.includes("3 days ago"));
+  check("a hollow session contributes nothing rather than a fabricated row", openerMemoryBlock([{ when: "", subject: "", lines: [], asked: [] }]) === "" && openerMemoryBlock(undefined) === "");
+
+  check("a quoted completion arrives unquoted", cleanOpener('"Salut ! On reprend ?"') === "Salut ! On reprend ?");
+  check("French guillemets are stripped too", cleanOpener("« Salut ! »") === "Salut !");
+  check("a speaker label, a bullet and markdown emphasis never reach the bubble", cleanOpener("- Otto: **Salut** !") === "Salut !");
+  check("a multi-line completion collapses to ONE spoken line", cleanOpener("Salut !\n\nOn reprend ?") === "Salut ! On reprend ?");
+  check("a runaway completion is clamped at a sentence boundary, not mid-word", (() => { const t = cleanOpener("a".repeat(150) + ". " + "b".repeat(400)); return t.length <= 321 && /[.?!]$/.test(t); })());
+  check("an empty completion is treated as a real failure, never a blank bubble", cleanOpener("") === "" && cleanOpener("   ") === "");
+
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("the opener runs on the tutor's own provider chain (Gemini → DeepSeek fallback), not a second AI client", /export async function tutorOpener\([\s\S]*?await createTutorChat\(/.test(src));
+  check("the prompt forbids inventing a RECOLLECTION — the exact placeholder this feature removes", src.includes("last time we were working on X") && src.includes("an honest blank start") && src.includes("beats a fabricated memory"));
+  check("with NOTHING on record the model is told so out loud, so it can't confabulate a past session", src.includes("NOTHING IS ON RECORD about what this student has worked on") && src.includes('"last time" / "la dernière fois"'));
+  check("a board caption is named as a caption, not as something the student studied", src.includes("never a board caption or a placeholder label") && src.includes("is a heading on the board, NOT something the student studied"));
+  check("the line is asked to make them RECALL the work rather than be told what it was", src.includes("make it a retrieval ") && src.includes("get THEM to recall it"));
+
+  const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  check("the opener route is authenticated, rate-limited and budget-gated like every other AI call, and counts its usage", /app\.post\("\/api\/tutor\/opener", requireAuth, rateLimit\(/.test(idx) && /await tutorOpener\(\{ subject[\s\S]{0,160}addUsage\(profile, out\.tokens, "chat"\)/.test(idx));
+  check("client-controlled memory is capped before it can reach the prompt", idx.includes("rawMemory.slice(0, 3)") && idx.includes("slice(0, 6).map((x: string) => x.trim().slice(0, 200))") && idx.includes("slice(0, 3).map((x: string) => x.trim().slice(0, 200))"));
+  check("a failed opener is a quiet 502 the client ignores, never an error the student sees", idx.includes("[tutor] opener failed") && /opener failed[\s\S]{0,200}res\.status\(502\)/.test(idx));
+
+  // ── the browser's own record: what gets sent up as memory
+  const captionSession = { id: "c1", taskId: "c1", startTime: "2026-10-01T10:00:00.000Z", endTime: "2026-10-01T10:30:00.000Z", messageCount: 3, boardEntries: ["Today's focus", "The equation to work with"], summary: "The equation to work with", chat: [] };
+  check("a board CAPTION is never picked as the topic — that is the reported bug, unit-tested", sessionTopic(captionSession) === "");
+  check("a real board line IS picked, preferring one with actual work in it", sessionTopic({ ...captionSession, boardEntries: ["Today's focus", "on a parlé de la dérivée", "3sec²x − 17sec x − 28 = 0"] }) === "3sec²x − 17sec x − 28 = 0");
+  check("no board and no recap means NO topic (the caller must then not claim to remember)", sessionTopic({ ...captionSession, boardEntries: [], summary: "Session completed" }) === "");
+  check("relative time is given only as precisely as it is actually known", relativeWhen(new Date(Date.now() - 86_400_000).toISOString(), Date.now(), "en") === "yesterday" && relativeWhen(new Date(Date.now() - 3 * 86_400_000).toISOString(), Date.now(), "fr") === "il y a 3 jours" && relativeWhen(new Date(Date.now() - 9 * 86_400_000).toISOString(), Date.now(), "fr") === "la semaine dernière" && relativeWhen("not a date", Date.now(), "fr") === "");
+  const old = { ...captionSession, id: "s1", endTime: new Date(Date.now() - 9 * 86_400_000).toISOString(), subject: "Maths", boardEntries: ["3sec²x − 17sec x − 28 = 0", "on pose X = sec x"], summary: "3sec²x − 17sec x − 28 = 0", chat: [{ role: "user", text: "pourquoi on remplace sec x par X ?" }, { role: "assistant", text: "bonne question" }] };
+  const other = { ...old, id: "s2", subject: "Histoire", boardEntries: ["la Révolution française", "1789"], chat: [] };
+  const mem2 = sessionMemoryForPrompt([other, old], "Maths", Date.now(), "en");
+  check("this subject's sessions come first even when another subject is newer", mem2[0].subject === "Maths" && mem2[1].subject === "Histoire");
+  check("the memory carries the real board content and the student's question, not a title", mem2[0].lines.includes("3sec²x − 17sec x − 28 = 0") && mem2[0].asked[0] === "pourquoi on remplace sec x par X ?" && mem2[0].when === "last week");
+  check("a session with nothing real is dropped instead of being sent as a hollow row", sessionMemoryForPrompt([captionSession], "Maths", Date.now(), "en").length === 0);
+  check("the memory is capped at three sessions so the opener request stays small", sessionMemoryForPrompt([1, 2, 3, 4, 5].map((n) => ({ ...old, id: `x${n}` })), "Maths", Date.now(), "en").length === 3);
+  const ts = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  check("opening a session asks for the real opening line, grounded in the browser's own record", /api\.tutorOpener\(task\.sourceSubject \|\| "", memory\)/.test(ts) && /sessionMemoryForPrompt\(getTutorSessions\(userId\), task\.sourceSubject, Date\.now\(\), openerLang\)/.test(ts));
+  check("it is asked exactly once per session and only while the session is still blank", /if \(!id \|\| task\.chat\?\.length \|\| openerAskedFor === id\) return;/.test(ts) && /setOpenerAskedFor\(id\)/.test(ts));
+  check("the instant line stays as the fallback — a failed or slow opener never leaves an empty greeting", /const openerText = realOpener && realOpener\.id === task\.id \? realOpener\.text : instantOpener;/.test(ts) && /the instant line stays/.test(ts));
+  check("the instant line no longer quotes the first raw board text as 'what we worked on'", !/lastSame\?\.summary\.split/.test(ts) && /sessionTopic\(lastSame\)/.test(ts) && /relativeWhen\(lastSame\.endTime/.test(ts));
+  const sessionsSrc = readFileSync(new URL("../client/tutor/tutorSessions.ts", import.meta.url), "utf8");
+  check("the old recap helper that never reached the model is gone (one memory path, not two)", !sessionsSrc.includes("pastSessionsLine") && !ts.includes("pastSessionsLine"));
+  const apiSrc = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
+  check("the client has exactly one opener call, and it is best-effort by design", /tutorOpener: \(subject: string, pastSessions/.test(apiSrc) && /post\("\/api\/tutor\/opener", \{ subject, pastSessions \}\)/.test(apiSrc));
 }
 
 section("Tutor stage — End session always ends; the stage is screen-height with ONE scroller the ink lives on (source pins)");

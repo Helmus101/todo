@@ -454,6 +454,13 @@ export const api = {
       problems: problems.map((p) => ({ question: p.question, options: p.options })),
       stepIndex, materials, voiceMode, canvasMode, primer, objectives,
     }),
+  // Otto's opening line for a tutor session (see tutorOpener in server/claude.ts): the browser's own
+  // session history — the REAL board lines and the student's questions from their last sessions, which the
+  // server has no other way to see — rides up with the request so the line is grounded in what they
+  // actually did rather than a template. Best-effort by design: the client shows its own instant greeting
+  // while this is in flight and simply keeps it if this fails, so callers never surface an error from it.
+  tutorOpener: (subject: string, pastSessions: { when: string; subject?: string; lines: string[]; asked: string[] }[]): Promise<{ opener: string }> =>
+    post("/api/tutor/opener", { subject, pastSessions }),
   // The flashcard/quiz "ask for a hint" sidebar — stateless server-side, so the client passes its own
   // short local history each turn. No client-side timeout (matches `chat`): the server's own 2-minute
   // deadline is the real backstop, and a hint arriving late still beats a hard-cut error mid-drill.

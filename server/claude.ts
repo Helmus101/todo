@@ -2069,6 +2069,112 @@ async function createTutorChat(params: any, fast: boolean): Promise<any> {
   throw lastErr;
 }
 
+// ── OTTO SPEAKS FIRST: the real opening line of a tutor session ─────────────────────────────────────────
+// Direct request: the session's opening line has to be REAL — grounded in what this student actually did
+// last time — instead of a canned sentence with a topic slotted into it. The old line filled its slot from
+// the first stored board text, which is a caption half the time ("The equation to work with" was quoted
+// back to a student as "what we worked on last time" — a placeholder reading as memory).
+// The browser holds the RICHEST real record (the actual board lines and the student's own questions from
+// their last sessions) and the server can't see it, so the client sends a compact recap up with the
+// request (see client/tutor/tutorSessions.ts's sessionMemoryForPrompt) and this grounds the line in that
+// PLUS everything the server already knows: the tutor's own end-of-session recaps (profile.sessions), the
+// running student model, and the milestones for this subject.
+export interface TutorOpenerMemory {
+  /** When it happened, already localized by the client ("yesterday", "3 days ago"). */
+  when?: string;
+  subject?: string;
+  /** REAL board lines from that session — the actual content, never a title or a kind label. */
+  lines?: string[];
+  /** What the STUDENT asked in that session, in their own words. */
+  asked?: string[];
+}
+/** The real-memory block the opener is grounded in. Exported so its exact shape is pinned by tests: the
+ *  whole point of this feature is that the line is grounded, not invented. */
+export function openerMemoryBlock(memory: TutorOpenerMemory[] | undefined): string {
+  const items = (memory || []).filter((m) => m && (m.lines?.length || m.asked?.length || (m.subject && m.when)));
+  if (!items.length) return "";
+  return `\nWHAT THEY ACTUALLY DID IN RECENT SESSIONS (real record from this student's own browser, newest ` +
+    `first — these are the REAL board lines and questions from those sessions, not titles or topic labels):\n` +
+    items.map((m) => `- ${[m.when, m.subject].filter(Boolean).join(" · ") || "recent session"}` +
+      (m.lines?.length ? `\n  what was on the board: ${m.lines.join(" | ")}` : "") +
+      (m.asked?.length ? `\n  what they asked: ${m.asked.map((q) => `"${q}"`).join(" ")}` : "")).join("\n") + "\n";
+}
+/** Never let a model's formatting habits reach the bubble: this line is spoken, not written. Drops a code
+ *  fence, a leading "Otto:" speaker label, a bullet dash, a surrounding quote pair, and markdown emphasis;
+ *  collapses newlines to spaces; clamps at a sentence boundary. Exported for tests. */
+export function cleanOpener(raw: string): string {
+  let t = String(raw || "").trim();
+  t = t.replace(/^```[a-z]*\n?/, "").replace(/```$/, "").trim();
+  t = t.replace(/^(otto|professeur|teacher)\s*:\s*/i, "");
+  t = t.replace(/^[-–—*•]\s+/, "");
+  t = t.trim().replace(/^"([\s\S]*)"$/, "$1").replace(/^«\s*([\s\S]*?)\s*»$/, "$1").trim();
+  t = t.replace(/\*\*|__|`/g, "").replace(/\s*\n+\s*/g, " ").replace(/\s{2,}/g, " ").trim();
+  if (t.length > 320) {
+    const cut = t.slice(0, 320);
+    const end = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("? "), cut.lastIndexOf("! "));
+    t = end > 80 ? cut.slice(0, end + 1).trim() : cut.trimEnd() + "…";
+  }
+  return t;
+}
+/** Compose the tutor session's opening line from real memory. Throws when the AI genuinely failed (empty
+ *  completion included) — the route turns that into a quiet 502 and the client keeps its own instant line,
+ *  so a failure here never leaves the student with an empty greeting. */
+export async function tutorOpener(
+  opts: { subject?: string; memory?: TutorOpenerMemory[] },
+  profile?: Profile,
+): Promise<{ opener: string; tokens: { in: number; out: number; cachedIn: number } }> {
+  const subject = (opts.subject || "").trim();
+  const en = profile?.language === "en";
+  const sys =
+    `You are Otto, a patient one-to-one tutor, opening a BRAND-NEW session with this student. Write ONLY ` +
+    `the first thing you say to them — ONE or two short spoken sentences, no headings, no bullets, no ` +
+    `markdown, no name/speaker label. Warm and specific, like a person who remembers them, never ` +
+    `ceremonious.\n` +
+    `THE LINE MUST BE REAL. Ground every specific thing you say in the memory below and nowhere else: name ` +
+    `what they ACTUALLY worked on — the real equation, the technique, the topic as it appeared on the board ` +
+    `— never a generic category, and never a board caption or a placeholder label (a label like "The ` +
+    `equation to work with" is a heading on the board, NOT something the student studied). When the memory ` +
+    `says when it happened, a light time reference ("yesterday", "the other day") is welcome.\n` +
+    `NEVER invent a topic, a detail, or a number that isn't in the memory — and that includes inventing a ` +
+    `RECOLLECTION: "last time we were working on X" when nothing on record says X is a lie the student can ` +
+    `catch, and it is the exact placeholder this line exists to replace. When nothing is on record, say ` +
+    `nothing about a previous session at all and just ask what they want to work on — an honest blank start ` +
+    `beats a fabricated memory.\n` +
+    `End with ONE short question that gets them talking. When there IS real memory, make it a retrieval ` +
+    `question about that work (get THEM to recall it — don't just tell them what it was): recalling beats ` +
+    `re-reading. Otherwise ask what's tripping them up. Vary the wording — this line must never read like a ` +
+    `template.\n` +
+    `Spoken tone: contractions, plain words, the rhythm of speech.`;
+  const recorded =
+    sessionRecapLine(profile?.sessions, subject || undefined) +
+    studentModelLine(profile) +
+    milestoneLine(profile, subject || undefined) +
+    openerMemoryBlock(opts.memory);
+  // The empty case is stated as its OWN instruction rather than left as an absence: with no memory block at
+  // all, the model's default was to confabulate a warm "last time we were working on…" (verified live — it
+  // invented a whole discriminant session for a student with no history), which is precisely the fake
+  // recollection this feature exists to remove. Naming the fact out loud is what stops it.
+  const memorySection = recorded.trim()
+    ? recorded
+    : `\nNOTHING IS ON RECORD about what this student has worked on${subject ? ` in ${subject}` : ""} — no ` +
+      `previous session, no notes, nothing. You have NO memory of them. Do NOT refer to a previous session, ` +
+      `do NOT say "last time" / "la dernière fois", and do NOT name any topic, exercise, equation or number. ` +
+      `Just open by asking what they want to work on today.\n`;
+  const user =
+    (subject ? `The session is about ${subject}.\n` : "") +
+    memorySection +
+    nowBlock() + studentNameLine(profile?.name) +
+    `\nWrite the opening line ${en ? "in English" : "in French (tu, not vous)"} — nothing else.`;
+  const res = await createTutorChat({
+    messages: [{ role: "system", content: sys }, { role: "user", content: user }],
+    temperature: 0.8,
+    max_tokens: 200,
+  }, true);
+  const opener = cleanOpener(res?.choices?.[0]?.message?.content || "");
+  if (!opener) throw new Error("empty opener completion");
+  return { opener, tokens: usageOf(res) };
+}
+
 let thinkingToggleRejected = false;
 async function createChatFast(client: OpenAI, params: any, fast: boolean): Promise<any> {
   if (!fast || USING_NVIDIA || thinkingToggleRejected || process.env.TUTOR_THINKING === "on") return client.chat.completions.create(params);

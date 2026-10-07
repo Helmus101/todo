@@ -14,7 +14,7 @@ import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, Fo
 import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY, subjectMastery } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
 import { planMove, repairLine } from "./tutorAdapt.ts";
-import { summarizeCoursework, fallbackCourseworkSummary, aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto, ttsReady, synthesizeSpeech, TTS_MAX_TEXT, interactiveSceneDocument, INTERACTIVE_SCENE_CSP } from "./claude.ts";
+import { summarizeCoursework, fallbackCourseworkSummary, aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto, ttsReady, synthesizeSpeech, TTS_MAX_TEXT, tutorOpener, interactiveSceneDocument, INTERACTIVE_SCENE_CSP } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken, getAdminMetrics } from "./store.ts";
 import { sendTransactionalEmail } from "./mailer.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
@@ -1512,6 +1512,39 @@ app.post("/api/tasks/cleanup-artifact-steps", requireAuth, rateLimit(2, 60_000),
     res.status(500).json({ error: M(req, "Impossible de nettoyer les étapes — réessaie.", "Couldn't cleanup steps — try again.") });
   }
 });
+
+// Otto SPEAKS FIRST: the tutor session's opening line (see tutorOpener in server/claude.ts). REAL, not a
+// template — the browser's own session history (the actual board lines and questions from the student's
+// last sessions, which exist ONLY in their browser) rides up in the request and is grounded in alongside
+// what the server already knows (the tutor's own end-of-session recaps, the running student model,
+// milestones). The client shows its own instant greeting until this lands, so a slow or failed AI call here
+// degrades to that line instead of an empty greeting — which is why a failure is a 502 the client quietly
+// ignores rather than an error the student sees.
+app.post("/api/tutor/opener", requireAuth, rateLimit(30, 60_000), ah(async (req, res) => {
+  if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour discuter.", "AI is paused — resume it in Settings to chat.") }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
+  if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
+  const subject = typeof req.body?.subject === "string" ? req.body.subject.trim().slice(0, 80) : "";
+  // Client-controlled input, so every field is capped here (the prompt builder does no capping of its own).
+  const rawMemory = Array.isArray(req.body?.pastSessions) ? req.body.pastSessions : [];
+  const memory = rawMemory.slice(0, 3).map((m: any) => ({
+    when: typeof m?.when === "string" ? m.when.trim().slice(0, 40) : undefined,
+    subject: typeof m?.subject === "string" ? m.subject.trim().slice(0, 80) : undefined,
+    lines: (Array.isArray(m?.lines) ? m.lines : []).filter((x: any) => typeof x === "string" && x.trim()).slice(0, 6).map((x: string) => x.trim().slice(0, 200)),
+    asked: (Array.isArray(m?.asked) ? m.asked : []).filter((x: any) => typeof x === "string" && x.trim()).slice(0, 3).map((x: string) => x.trim().slice(0, 200)),
+  })).filter((m: any) => m.lines.length || m.asked.length || (m.subject && m.when));
+  try {
+    const profile = req.session.profile ||= emptyProfile();
+    const out = await tutorOpener({ subject: subject || undefined, memory }, profile);
+    addUsage(profile, out.tokens, "chat");
+    bumpActivityHour(profile, new Date(), subject || undefined);
+    await commit(req);
+    res.json({ opener: out.opener });
+  } catch (e: any) {
+    console.error(`[tutor] opener failed: ${e?.message || e}`);
+    res.status(502).json({ error: M(req, "Otto n'a pas pu démarrer la séance — réessaie.", "Otto couldn't start the session — try again.") });
+  }
+}));
 
 // Per-task coaching chat — grounded in that one task's own context/steps, so a student stuck on it can
 // talk it through with Otto without re-explaining the situation. Rate-limited + budget-gated like every
