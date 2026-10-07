@@ -7145,3 +7145,6 @@ mark.otto-mark { background: linear-gradient(transparent 12%, color-mix(in srgb,
 .tutor-chat-past > summary, .tutor-chat-past-item > summary { cursor: pointer; font-weight: 600; color: var(--ink-2); padding: 8px 0; }
 .tutor-chat-past-item { border-top: 1px solid var(--line); }
 .tutor-chat-past-item .tutor-chat-history { padding: 8px 0 12px; max-height: 40vh; }
+.tutor-chat-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 0 16px; color: var(--ink-2); font-size: 13px; }
+.tutor-chat-drawer.expanded .tutor-chat-history { max-height: calc(100dvh - 220px); }
+.tutor-chat-drawer.expanded .tutor-chat-text { max-width: 92%; }

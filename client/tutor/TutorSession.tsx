@@ -57,6 +57,9 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
   const [openChatSession, setOpenChatSession] = useState<TutorSessionSummary | null>(null);
   // The stage hides the transcript on purpose, but it is always one tap away: this drawer.
   const [chatDrawer, setChatDrawer] = useState(false);
+  const [chatExpanded, setChatExpanded] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (chatDrawer) chatEndRef.current?.scrollIntoView({ block: "end" }); }, [chatDrawer, chatExpanded, task?.chat?.length]);
   // The landing screen asks WHAT to study before starting — the subject is stamped onto the session
   // (sourceSubject, visible to the tutor prompt) and carried into history as the session's label.
   // The student's own subjects (set in onboarding) come first; the shared common list follows.
@@ -649,8 +652,12 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
         />
       </div>
       {chatDrawer && (
-        <TaskModal onClose={() => setChatDrawer(false)} title={L("Chat avec Otto", "Chat with Otto")}>
-          <div className="tutor-chat-drawer">
+        <TaskModal wide onClose={() => { setChatDrawer(false); setChatExpanded(false); }} title={L("Chat avec Otto", "Chat with Otto")}>
+          <div className={`tutor-chat-drawer${chatExpanded ? " expanded" : ""}`}>
+            <div className="tutor-chat-toolbar">
+              <span>{task.chat?.length || 0} {L("messages", "messages")}</span>
+              <button type="button" className="btn ghost xs" onClick={() => setChatExpanded((v) => !v)}>{chatExpanded ? L("Réduire", "Collapse") : L("Agrandir", "Expand")}</button>
+            </div>
             <div className="tutor-chat-history">
               {!task.chat?.length && <p className="tutor-chat-empty">{L("Rien encore — dis bonjour à Otto.", "Nothing yet — say hi to Otto.")}</p>}
               {task.chat?.map((msg, i) => (
@@ -659,6 +666,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
                   <div className="tutor-chat-text"><MathText text={msg.text} /></div>
                 </div>
               ))}
+              <div ref={chatEndRef} />
             </div>
             {pastSessions.some((ps) => ps.chat?.length) && (
               <details className="tutor-chat-past">
