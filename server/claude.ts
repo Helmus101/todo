@@ -2729,6 +2729,8 @@ export function makeNote(input: any): { note: TaskNote } | { error: string } {
 // for every other deck-producing path (daily/weekly journal decks, task-run/chat CREATE_FLASHCARDS).
 const DECK_CARD_CAP = 50;
 const MONTHLY_DECK_CARD_CAP = 100;
+/** Daily decks have no real limit — this is only a runaway-output backstop (the prompt says "no card limit"). */
+const DAILY_DECK_CARD_CAP = 150;
 export function makeDeck(input: any, maxCards: number = DECK_CARD_CAP): { deck: TaskFlashcards } | { error: string } {
   const title = String(input?.title || "Flashcards").trim().slice(0, 120) || "Flashcards";
   const cards = (Array.isArray(input?.cards) ? input.cards : [])
@@ -4728,12 +4730,13 @@ export async function generateDailyStudyCards(logText: string, profile?: Profile
           `wrote, one idea per card; fix anything they got wrong instead of repeating the error; if they named ` +
           `a concept without its content (e.g. "SUVAT equations", nothing listed), fill in the real content as ` +
           `its own card(s), using your own subject knowledge — but stay strictly on the topics they named, no ` +
-          `detours. However many cards the entry genuinely supports — a short one-topic entry might be 5-10, a ` +
-          `dense multi-subject day can go up to 50; don't pad to hit a number, and don't artificially cap a day ` +
-          `that really has more to cover either.` +
-          (concise ? " Keep it SHORT and reliable this time: short precise backs, no worked solutions, at most 15 cards." : ` ${CARD_STYLE_RULE}${FLASHCARD_STYLE_TEXT[styleArm || ""] || ""}`) },
+          `detours. THERE IS NO CARD LIMIT: make one card for EVERY distinct idea the entry supports and cover ` +
+          `all of it — don't stop at ten, don't summarise several ideas into one card to save space. A short ` +
+          `one-topic entry usually yields 10-20 cards, a normal day 20-40, a dense multi-subject day 40-80 or ` +
+          `more. Only fewer when the entry genuinely holds fewer ideas; never pad with filler.` +
+          (concise ? " Keep the backs SHORT and precise this time (no worked solutions) — but still one card per idea, as many as the entry supports." : ` ${CARD_STYLE_RULE}${FLASHCARD_STYLE_TEXT[styleArm || ""] || ""}`) },
         { role: "user", content:
-          `TODAY'S LOG ENTRY:\n"""\n${raw.slice(0, 4000)}\n"""${weakBlock}\n\n` +
+          `TODAY'S LOG ENTRY:\n"""\n${raw.slice(0, 12000)}\n"""${weakBlock}\n\n` +
           `Return JSON: {"title": short label (≤8 words, name the actual topic(s)), "cards": [{"front": "...", "back": "..."}, ...]}.` },
       ],
     }));
@@ -4747,7 +4750,7 @@ export async function generateDailyStudyCards(logText: string, profile?: Profile
     // overhead — most days use a fraction of this.
     const res = await makeReq(24000, false);
     let out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res.choices[0]?.message?.content || "");
-    let result = out ? makeDeck(out) : { error: "no parseable JSON in the response" };
+    let result = out ? makeDeck(out, DAILY_DECK_CARD_CAP) : { error: "no parseable JSON in the response" };
     let tokens = usageOf(res);
     // FALLBACK: on the rare response that still gets cut off before its closing brace (firstJson can't
     // parse a truncated JSON blob AT ALL — one dropped brace loses the whole deck, not just the tail),
@@ -4759,9 +4762,9 @@ export async function generateDailyStudyCards(logText: string, profile?: Profile
       // room for actual `content` once reasoning ran, undermining the whole point of a fallback (observed
       // live: the fallback ALSO came back with empty content on the same failing entry). Still meaningfully
       // smaller than the primary attempt's 24000, just not so small it can't realistically finish.
-      const res2 = await makeReq(8000, true);
+      const res2 = await makeReq(12000, true);
       out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res2.choices[0]?.message?.content || "");
-      result = out ? makeDeck(out) : { error: "no parseable JSON in the retry either" };
+      result = out ? makeDeck(out, DAILY_DECK_CARD_CAP) : { error: "no parseable JSON in the retry either" };
       const t2 = usageOf(res2);
       tokens = { in: tokens.in + t2.in, out: tokens.out + t2.out, cachedIn: (tokens.cachedIn || 0) + (t2.cachedIn || 0) };
       if (!("deck" in result)) {
