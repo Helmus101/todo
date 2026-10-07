@@ -100,6 +100,14 @@ export function buildGeometry(spec: GeoSpec): { ops: DiagramOp[] } | { error: st
     else return { error: `ERROR: segment ${JSON.stringify(s)} uses an undefined point (defined: ${[...known].join(", ")}).` };
   }
   const polys: { pts: string[]; fill?: boolean; color?: string }[] = [];
+  // Points given but NOTHING said to join them (the model listed A, B, C and forgot the sides) — a figure of loose
+  // dots is never what was meant: join the points the caller listed, in order (a segment for two, a closed shape
+  // for three or more).
+  if (!segs.length && !(spec.polygons || []).length && !(spec.circles || []).length && !(spec.arcs || []).length && !(spec.angles || []).length && !(spec.derive || []).length && P.size >= 2) {
+    const names = [...P.keys()];
+    if (names.length === 2) segs.push({ from: names[0], to: names[1] });
+    else for (let i = 0; i < names.length; i++) segs.push({ from: names[i], to: names[(i + 1) % names.length] });
+  }
   for (const g of spec.polygons || []) {
     const names = typeof g === "string" ? parseNames(g.replace(/[\s-]/g, ""), known) : (g?.points || []).every((n) => known.has(n)) ? g.points : null;
     if (!names || names.length < 3) return { error: `ERROR: polygon ${JSON.stringify(g)} needs 3+ defined points.` };

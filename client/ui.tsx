@@ -375,14 +375,14 @@ const scriptify = (s: string, map: Record<string, string>, marker: string): stri
   [...s].every((c) => map[c]) ? [...s].map((c) => map[c]).join("") : `${marker}${s.length > 1 ? `(${s})` : s}`;
 const LATEX_SYMBOLS: [RegExp, string][] = [
   [/\\times/g, "×"], [/\\cdot/g, "·"], [/\\div/g, "÷"], [/\\pm/g, "±"], [/\\mp/g, "∓"],
-  [/\\leq?/g, "≤"], [/\\geq?/g, "≥"], [/\\neq/g, "≠"], [/\\approx/g, "≈"], [/\\equiv/g, "≡"], [/\\propto/g, "∝"],
+  [/\\leq?(?![a-zA-Z])/g, "≤"], [/\\geq?(?![a-zA-Z])/g, "≥"], [/\\neq/g, "≠"], [/\\approx/g, "≈"], [/\\equiv/g, "≡"], [/\\propto/g, "∝"],
   [/\\Longrightarrow/g, "⟹"], [/\\longrightarrow/g, "⟶"], [/\\Rightarrow/g, "⇒"], [/\\Leftarrow/g, "⇐"],
   [/\\(right|left)?arrow|\\to(?![a-zA-Z])/g, "→"], [/\\Leftrightarrow|\\iff(?![a-zA-Z])/g, "⇔"], [/\\leftrightarrow/g, "↔"], [/\\infty/g, "∞"],
   [/\\pi/g, "π"], [/\\theta/g, "θ"], [/\\alpha/g, "α"], [/\\beta/g, "β"], [/\\gamma/g, "γ"], [/\\Gamma/g, "Γ"],
   [/\\[Dd]elta/g, "Δ"], [/\\lambda/g, "λ"], [/\\mu/g, "μ"], [/\\sigma/g, "σ"], [/\\phi/g, "φ"], [/\\omega/g, "ω"],
   [/\\Omega/g, "Ω"], [/\\eta/g, "η"], [/\\rho/g, "ρ"], [/\\tau/g, "τ"], [/\\chi/g, "χ"], [/\\psi/g, "ψ"], [/\\nu/g, "ν"], [/\\xi/g, "ξ"], [/\\zeta/g, "ζ"], [/\\kappa/g, "κ"],
   [/\\sum/g, "Σ"], [/\\prod/g, "Π"], [/\\int/g, "∫"], [/\\oint/g, "∮"], [/\\forall/g, "∀"], [/\\exists/g, "∃"],
-  [/\\in/g, "∈"], [/\\notin/g, "∉"], [/\\subseteq/g, "⊆"], [/\\subset/g, "⊂"], [/\\cup/g, "∪"], [/\\cap/g, "∩"], [/\\emptyset|\\varnothing/g, "∅"],
+  [/\\in(?![a-zA-Z])/g, "∈"], [/\\notin/g, "∉"], [/\\subseteq/g, "⊆"], [/\\subset/g, "⊂"], [/\\cup(?![a-zA-Z])/g, "∪"], [/\\cap(?![a-zA-Z])/g, "∩"], [/\\emptyset|\\varnothing/g, "∅"],
   [/\\partial/g, "∂"], [/\\nabla/g, "∇"], [/\\mid/g, "|"], [/\\setminus/g, "\\"],
   [/\\cdots/g, "⋯"], [/\\ldots|\\dots/g, "…"], [/\\vdots/g, "⋮"], [/\\ddots/g, "⋱"],
   // Function names — roman (upright), never treated as adjacent-variable multiplication like a bare "sin".

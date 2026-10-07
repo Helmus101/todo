@@ -147,7 +147,11 @@ export function spokenMathHint(message: string): string {
 /** What the tutor is ASKING about: the specific values/expressions in its final question — angles/units ("270°",
  *  "5π/6"), and small arithmetic expressions ("7 × 8"). Plain bare numbers are ignored (too common to mean anything). */
 export function askedTokens(reply: string): string[] {
-  const q = (reply.match(/[^.!?\n]*\?/g) || []).slice(-2).join(" ");
+  // sentences that ASK (end in "?") or INSTRUCT ("Find…", "Write … as…", "Simplify…") — both name something the
+  // student is meant to produce, so the board must not already state it.
+  const asks = (reply.match(/[^.!?\n]*\?/g) || []).slice(-2);
+  const tasks = (reply.match(/(?:^|[.!\n]\s*)((?:so\s+|now\s+|try to\s+)?(?:find|write|show|calculate|compute|simplify|solve|determine|express|evaluate|work out|trouve|écris|calcule|simplifie|résous|détermine|exprime)\b[^.!?\n]*)/gi) || []).slice(-3);
+  const q = [...asks, ...tasks].join(" ");
   const toks = new Set<string>();
   for (const m of q.matchAll(/\d+(?:[.,]\d+)?\s*(?:°|π|pi\b|rad\b|degrees?\b|degrés?\b)|\d*π(?:\s*\/\s*\d+)?|\b\d+(?:[.,]\d+)?\s*[×x*+\-−/÷^]\s*\d+(?:[.,]\d+)?/gi)) toks.add(m[0].replace(/\s+/g, "").toLowerCase());
   return [...toks].filter((t) => t.length >= 2);
@@ -231,4 +235,38 @@ export function cheerLine(message: string, history: { role: string; text: string
   if (justRight && rights >= 2) return `\n\nMILESTONE: that's ${rights} exercises right recently. Give a short, genuine, SPECIFIC cheer (what they did well — a few words, no gushing), then raise the challenge a notch or ask what they want to tackle next.\n`;
   if (objectives?.length && objectives.every((o) => o.done)) return `\n\nMILESTONE: every objective for this session is done. Say so warmly in a few words, name one thing they did well, and ask what they'd like to do next (more practice, a harder one, or wrap up with a reflection).\n`;
   return "";
+}
+
+// ---- Every question goes on the board ----
+const GENERIC_CLOSER = /^(?:so\s+|and\s+)?(?:does (?:that|this|it) (?:make sense|click|help|work|sound)|make sense|(?:do you )?(?:want|wanna|would you like) (?:to |another|more|me)|ready|ok(?:ay)?|sound good|shall we|how (?:are|is) (?:you|it|that)|is that (?:ok|okay|clear|right)|any questions|veux-tu|tu veux|ça va|c['’]est clair|ça te parle)/i;
+
+/** The question Otto is asking, as one clean sentence — or "" when there is no real question about the work
+ *  (a generic "does that make sense?" / "want another?" / "ok?" is conversation, not a board-worthy question). */
+export function boardQuestionOf(reply: string): string {
+  const qs = reply.replace(/\s+/g, " ").match(/[^.!?]*[^.!?\s][^.!?]*\?/g) || [];
+  const last = (qs[qs.length - 1] || "").trim().replace(/^(?:and|so|now|okay|ok|alright|right|well)[,\s—–-]+/i, "").trim();
+  if (last.length < 14 || last.split(/\s+/).length < 4) return "";
+  if (GENERIC_CLOSER.test(last)) return "";
+  return last.slice(0, 300);
+}
+
+// ---- "How you got there" must be THEIR steps ----
+const NUM_WORDS: Record<string, string> = { zero: "0", one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9", ten: "10", eleven: "11", twelve: "12", thirteen: "13", fourteen: "14", fifteen: "15", sixteen: "16", eighteen: "18", twenty: "20", un: "1", deux: "2", trois: "3", quatre: "4", cinq: "5", six_fr: "6", sept: "7", huit: "8", neuf: "9", dix: "10", douze: "12" };
+/** Student text → comparable compact maths: number words → digits, "pi"→π, "over"→/, "root"→√, spaces/brackets gone. */
+export function compactMaths(text: string): string {
+  let s = text.toLowerCase();
+  s = s.replace(/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|eighteen|twenty|un|deux|trois|quatre|cinq|sept|huit|neuf|dix|douze)\b/g, (w) => NUM_WORDS[w] || w);
+  s = s.replace(/\b(?:a|one|une?)\s+half\b|\bhalf\b|\bun demi\b/g, "1/2").replace(/\bpi\b/g, "π").replace(/\b(?:over|sur|divided by|divisé par)\b/g, "/").replace(/\b(?:square )?root(?: of)?\b|\bracine(?: carrée)?(?: de)?\b/g, "√").replace(/\bsquared\b/g, "²");
+  return s.replace(/[\s()\[\]{}]/g, "").replace(/[−–]/g, "-");
+}
+/** The structured maths tokens in a trace line (π-terms, roots, fractions) — what a student would have to have SAID. */
+export function traceTokens(line: string): string[] {
+  const c = compactMaths(line.replace(/\$/g, ""));
+  return [...new Set(c.match(/\d*π(?:\/\d+)?|\d*√\d+|\d+\/\d+/g) || [])];
+}
+/** Tokens in a would-be "How you got there" entry that appear in NOTHING the student said and in no given (problem
+ *  statement / earlier board). Non-empty → the tutor is writing a step the student hasn't taken. */
+export function traceAheadOfStudent(entryText: string, studentTexts: string[], givens: string[]): string[] {
+  const said = compactMaths([...studentTexts, ...givens].join(" \n "));
+  return traceTokens(entryText).filter((t) => !said.includes(t));
 }
