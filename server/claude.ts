@@ -7,7 +7,7 @@ import { courseworkForSubject } from "../shared/coursework.ts";
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { buildGeometry } from "../shared/geometry.ts";
-import { repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, similarity } from "./tutorAdapt.ts";
+import { repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, boardQuestionOf, traceAheadOfStudent, similarity } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -2572,7 +2572,7 @@ const WRITE_TO_BOARD_TOOL = {
   description: "Write ONE short entry onto the student's persistent tutor Board — a visible, always-accessible surface separate from the chat thread, NOT limited to practice problems. The board is a document being BUILT entry by entry across the session: it opens with the day's focus, collects the key definitions and formulas as they come up, credits the student's own insights, and ends with a summary of their reasoning. Each call adds ONE short, focused entry — never a wall of text; the next thing gets its own entry later as the session moves on. What belongs here is decided by one test: would the student otherwise have to hold it in their head, or scroll back through chat to find it? (given values and the goal, a formula in play, the cases a problem splits into, a diagram, the sub-goal they're on, a key term's gloss, their own insight). Anything that fails that test stays in chat. Don't narrate that you're writing it ('let me jot that down') — just call the tool. NEVER GET AHEAD OF THE CHAT: a 'summary'/'formula'/'note' entry records a step ONLY once the student has actually said/derived it in chat THAT turn — never a later step of the SAME derivation they haven't reached yet, even symbolically with no numbers (reported live: the board already showed 'F_net down slope = mg sin25 - mg cos25 * tan20' as a finished line while the chat was still walking the student through deriving exactly that, one piece at a time — the board had done the derivation FOR them, just quietly, on a different surface than chat). If you're tempted to write the NEXT formula before asking the question that gets them there, ask the question first and write the entry after they answer it.",
   input_schema: { type: "object", properties: {
     text: { type: "string", description: "the entry itself — plain text/light markdown, ONE idea, in KEYWORDS AND STRUCTURE rather than prose: ~25 words of prose max, and fewer is better. Write the skeleton of the idea, never a restatement of what you just said in chat (a board that repeats your sentences measurably hurts learning — the redundancy effect). Annotate like handwritten notes: 'term = plain gloss' on its own line; relationships as arrows ('A --pushes--> B'); contrasts stacked with '<-' margin asides ('NOT x <- what you'd expect' / 'BUT y <- the actual point'); dash lines for anything sequential, one idea each. Anything with REAL SPATIAL POSITION — a shape, a triangle, a number line, points on axes — belongs in DRAW_ON_BOARD instead, which renders an actual figure. For kind:'outline' this is just a one-line title (the sections go in `outline` below) — for anything else, reserve a fenced ASCII block here for genuinely textual structure (a small table) where neither a real drawing nor an outline fits. ANY such ASCII sketch MUST be wrapped in a triple-backtick code fence (```\\n...\\n```) — the board renders a fenced block as monospace, preserving every space exactly as typed; UNFENCED text gets trimmed line by line and the whole shape collapses into a flat line with no structure left." },
-    kind: { type: "string", enum: ["note", "instruction", "formula", "summary", "focus", "insight", "definition", "outline"], description: "styling/role hint: 'focus' ONCE to open a session's document — today's arc, where you start and what you're building toward; 'instruction' for a directive to start/try something; 'definition' the first time a key term comes up — the term in **bold**, then a plain-language definition; 'formula' for a plain fact/rule worth keeping visible in words (not real math notation — for an actual expression/equation with a fraction, exponent, or root, use DRAW_ON_BOARD's 'equation' op instead, which typesets it for real instead of describing it in text); 'insight' when the STUDENT has a genuine aha in their own words — credit them by name ('Will's insight: ...'); 'summary' for a recap of the STUDENT's reasoning; 'outline' for headed, bulleted structure — a timeline, the causes/effects of an event, a source's key points, an essay's section-by-section plan (REQUIRES the separate `outline` field below, with real sections and bullets — this is the DEFAULT reach for history/literature/language-arts/social-science content instead of trying to force it into a flat sentence); 'note' for anything else. Defaults to 'note' if omitted." },
+    kind: { type: "string", enum: ["note", "instruction", "question", "formula", "summary", "focus", "insight", "definition", "outline"], description: "styling/role hint: 'question' for EVERY guiding question you ask the student about the work — the question itself, short, maths in $…$ (it stays on the page while they think; never include its answer); 'focus' ONCE to open a session's document — today's arc, where you start and what you're building toward; 'instruction' for a directive to start/try something; 'definition' the first time a key term comes up — the term in **bold**, then a plain-language definition; 'formula' for a plain fact/rule worth keeping visible in words (not real math notation — for an actual expression/equation with a fraction, exponent, or root, use DRAW_ON_BOARD's 'equation' op instead, which typesets it for real instead of describing it in text); 'insight' when the STUDENT has a genuine aha in their own words — credit them by name ('Will's insight: ...'); 'summary' for a recap of the STUDENT's reasoning; 'outline' for headed, bulleted structure — a timeline, the causes/effects of an event, a source's key points, an essay's section-by-section plan (REQUIRES the separate `outline` field below, with real sections and bullets — this is the DEFAULT reach for history/literature/language-arts/social-science content instead of trying to force it into a flat sentence); 'note' for anything else. Defaults to 'note' if omitted." },
     outline: {
       type: "array",
       description: "REQUIRED when kind is 'outline', omitted otherwise. 1-6 headed sections, each with 1-8 short bullets — e.g. for 'why did the Provisional Government fail?': [{heading: 'Kept fighting WWI', bullets: ['lost the army', 'lost the people']}, {heading: 'Lenin\\'s slogan', bullets: ['Peace, Land, Bread']}]. Bullets are KEYWORDS, same discipline as `text` above — not full sentences.",
@@ -2648,7 +2648,7 @@ const CREATE_INTERACTIVE_TOOL = {
     "would show the same thing just as well, use one of those instead; this tool should be rare, not a " +
     "default reach for every graph. `html` is a self-contained HTML/JS BODY ONLY — no <html>/<head>/<body> " +
     "wrapper, that's added for you. You may load AT MOST ONE library via " +
-    "<script src=\"https://cdn.jsdelivr.net/npm/...\"> or cdnjs.cloudflare.com — suggested: three.js (3D " +
+    "<script src=\"https://cdn.jsdelivr.net/npm/...\"> or cdnjs.cloudflare.com — suggested: JSXGraph (dynamic geometry the student can DRAG — move a vertex and watch the angles/lengths change; cdn.jsdelivr.net/npm/jsxgraph), three.js (3D " +
     "shapes), p5.js (simulations), chart.js or plotly.js (interactive charts), jsxgraph (interactive " +
     "geometry). Any other script source gets stripped before this ever reaches the student. No network " +
     "calls beyond that one library, no forms, no navigation, no iframes of your own. Keep it small, fast, " +
@@ -2874,7 +2874,7 @@ export function makeProblem(input: any): { problem: TaskProblem } | { error: str
   };
 }
 
-const BOARD_KINDS = new Set(["note", "instruction", "formula", "summary", "focus", "insight", "definition", "outline"]);
+const BOARD_KINDS = new Set(["note", "instruction", "question", "formula", "summary", "focus", "insight", "definition", "outline"]);
 const MAX_OUTLINE_SECTIONS = 6;
 const MAX_OUTLINE_BULLETS = 8;
 export function makeBoardEntry(input: any): { entry: BoardEntry } | { error: string } {
@@ -3149,7 +3149,7 @@ const GEOMETRY_ON_BOARD_TOOL = {
     "altitudes, midpoints. You give the MATHS (named points in real units, what joins what), the board does the drawing: " +
     "correct proportions (a 3-4-5 triangle really is right-angled), centred, every point labelled outside the shape, angle " +
     "arcs and right-angle squares, tick marks for equal sides. NEVER work out pixel coordinates. Use this for ANY geometry " +
-    "or trig-setup figure; use DRAW_ON_BOARD only for non-geometric sketches (arrows, number lines, free diagrams). " +
+    "or trig-setup figure (ALWAYS say what joins what: `segments`/`polygons`, or use `triangle`); use CREATE_INTERACTIVE with JSXGraph when the student should drag points; use DRAW_ON_BOARD only for non-geometric sketches (arrows, number lines, free diagrams). " +
     "Show the GIVEN information only (lengths, angles the problem states) — label what the student must find with '?' " +
     "or leave it unlabelled, never the answer. Redraw the WHOLE figure when adding to it (e.g. add the altitude). " +
     "EXAMPLES: a 3-4-5 triangle with the right angle at C → triangle:{names:['A','B','C'], sides:[3,4,5]} (sides are [a=BC, b=CA, c=AB]) " +
@@ -7399,6 +7399,29 @@ const PRIMER_PERSONA =
   `typeset via DRAW_ON_BOARD's equation op. NEVER copy what the student typed or what you just said into the ` +
   `board word for word — a quote of the chat is noise; the board adds structure, the why and the result. Only ` +
   `what has actually been reached: never a step they haven't got to, never the answer.\n` +
+  `- WHEN TO USE THE BOARD — EXACTLY (use it generously; the board is the shared page you both think on): ` +
+  `(1) the moment a problem arrives: today's focus + the problem AS GIVEN, typeset; (2) EVERY guiding question you ask ` +
+  `about the work goes on the board too (kind "question": the question itself, short, never its answer) — the ` +
+  `question stays in front of them while they think; (3) every formula, definition or rule the second you mention ` +
+  `or hint at it; (4) any figure, graph or diagram the problem is about (GEOMETRY_ON_BOARD / GRAPH_ON_BOARD) the ` +
+  `moment it helps; (5) after each step THEY get right, one new line of THEIR reasoning (kind "summary", in ` +
+  `$…$ maths); (6) when they're stuck, the parallel worked example with its last line open as "?"; (7) a short ` +
+  `insight credit when they have an aha; (8) a corrected GIVEN redrawn whole when they fix your reading. Keep ` +
+  `the chat bubble short because the board carries the content.\n` +
+  `- "HOW YOU GOT THERE" IS THEIRS, NEVER YOURS: a trace/summary line records a step the STUDENT said or did, in ` +
+  `their order — never a step you took, suggested or finished for them. If they haven't said it, it does not go ` +
+  `in the trace (and if you find yourself writing it, ask them for it instead).\n` +
+  `- THE CHAT BUBBLE IS TINY: at most two short sentences (~30 words) and ONE question. No recap of their work, ` +
+  `no lists, no raw LaTeX in the bubble, and never state a value, identity or result they could work out or ` +
+  `look up themselves ("cos(π/4) equals sin(π/4), which is √2/2" is the lesson — ask for it instead). The board ` +
+  `carries the content; the bubble just nudges.\n` +
+  `- THE FIRST MOVE IS THEIRS: when a problem hinges on a key idea — a decomposition (π/12 = π/3 − π/4), a ` +
+  `substitution, which identity to use, completing the square, the setup of an equation — NEVER put it in the ` +
+  `question or on the board. The board shows the problem AS GIVEN (e.g. sin(π/12)); ask what they'd try first ` +
+  `and let them find the idea ("what two angles do you know exact values for that could build π/12?"). Do not ` +
+  `finish the maths for them: each next step comes from their mouth, you only confirm, probe or nudge.\n` +
+  `- WRITE MATHS ON THE BOARD IN LaTeX: in every board line (reasoning summaries, formulas) put maths between ` +
+  `$…$ — e.g. "$\\sin(\\tfrac{\\pi}{3}) = \\tfrac{\\sqrt{3}}{2}$" — so it is typeset; keep the words plain.\n` +
   `- THE BOARD NEVER ANSWERS YOUR QUESTION: whatever you ask them to work out must NOT already be written on the ` +
   `board. When you lay out a pattern or table (unit-circle values, a worked case, a list of examples), show the ` +
   `OTHER cases and leave the one you're asking about as "?" — never fill in the asked value and then ask for it.\n` +
@@ -8677,6 +8700,22 @@ export async function chatAboutTask(
       messages.push({ role: "user", content: "That reply doesn't ask the student anything, so they just receive information. Keep what's useful but end on ONE short guiding question that makes THEM take the next step or explain their thinking (never the answer, never a yes/no they can guess). Don't mention this instruction." });
       return true;
     };
+    // EVERY question goes on the board: the guiding question Otto asks about the work is written on the page (kind
+    // "question") so it stays in front of the student while they think — taken verbatim from the reply, no extra
+    // model call. Skipped for generic closers ("does that make sense?"), when a similar question is already there,
+    // or when a board entry written this turn already carries it.
+    const ensureQuestionOnBoard = (draft: string): void => {
+      if (!opts?.primer || history.length < 1 || result.guardrailTripped) return;
+      const q = boardQuestionOf(draft);
+      if (!q) return;
+      const norm = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim();
+      const known = [...(opts?.currentBoard || []), ...result.board];
+      if (known.some((e) => (e.kind === "question" || e.kind === "instruction") && similarity(norm(e.text), norm(q)) >= 0.7)) return;
+      if (result.board.some((e) => e.kind !== "question" && similarity(norm(e.text || ""), norm(q)) >= 0.6)) return;
+      if (result.board.filter((e) => e.kind === "question").length >= 1) return;
+      const made = makeBoardEntry({ text: q, kind: "question" });
+      if ("entry" in made && !boardStatesAskedValue(q, [made.entry as any]).length) result.board.push(made.entry);
+    };
     let truncationRetried = false;
     // Latches for the post-reply truth pass below (each fires at most ONCE per turn, same shape as the
     // board-claim fix): one corrective round when the draft asserts arithmetic that doesn't recompute,
@@ -8876,7 +8915,7 @@ export async function chatAboutTask(
         // ignored it entirely. Silent compression, once, non-voice only (voice mode has its own stricter
         // TTS ceiling and its own retry paths above).
         if (opts?.primer) textContent = softenOpener(textContent);
-        if (opts?.primer && countWords(textContent) > 70) textContent = tightenForChat(textContent);
+        if (opts?.primer && countWords(textContent) > 45) textContent = tightenForChat(textContent, 45);
         // Never say the same thing twice: a draft that is a near-copy of one of Otto's recent replies gets ONE
         // corrective round (the student already saw that and it did not land — repeating it is the loop).
         if (opts?.primer && !repeatCorrected && !lastRound && repeatsRecentReply(textContent, history)) {
@@ -8888,6 +8927,7 @@ export async function chatAboutTask(
         }
         if (guardAskedValue(textContent, round, lastRound)) continue;
         if (guardQuestion(textContent, round, lastRound)) continue;
+        ensureQuestionOnBoard(textContent);
         if (nudgeReasoning(textContent, round, lastRound)) continue;
         if (!lengthRetried && !lastRound && !opts?.voiceMode && countWords(textContent) > 120) {
           lengthRetried = true;
@@ -8949,6 +8989,12 @@ export async function chatAboutTask(
           // anytime". A generous per-turn cap of its own still applies, just to stop a genuinely broken
           // response from spamming dozens of entries in one turn.
           if (result.board.length >= 5) content = "LIMIT: you've already written several entries this message — that's enough for one turn.";
+          // "How you got there" is the STUDENT's reasoning: a line carrying a π-term / root / fraction that nothing the
+          // student said (and no given) contains is a step the TUTOR took for them — refuse it.
+          else if (opts?.primer && String(input?.kind) === "summary" && traceAheadOfStudent(String(input?.text || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), message], [...(opts?.currentBoard || []).filter((e) => e.kind !== "summary").map((e) => e.text), ...(opts?.currentProblems || []).map((p) => p.question)]).length) {
+            const missing = traceAheadOfStudent(String(input?.text || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), message], [...(opts?.currentBoard || []).filter((e) => e.kind !== "summary").map((e) => e.text), ...(opts?.currentProblems || []).map((p) => p.question)]);
+            content = `REJECTED: "How you got there" records only what the STUDENT has actually said or done, and this line contains ${missing.join(", ")} which they never reached — that's a step you'd be taking for them. Write only the steps they've stated (in your own words). If they haven't got there yet, write nothing and ask them the question instead.`;
+          }
           // Content-level duplicate check — the client can only dedupe by id,
           // and every write gets a fresh UUID, so a re-written formula previously stacked a second visual
           // copy. Checked against BOTH what the student already sees (opts.currentBoard, delivered live
@@ -9023,6 +9069,7 @@ export async function chatAboutTask(
       // unchanged if the exchange genuinely produced nothing board-worthy.
       if (guardAskedValue(textContent, round, lastRound)) continue;
       if (guardQuestion(textContent, round, lastRound)) continue;
+      ensureQuestionOnBoard(textContent);
       if (nudgeReasoning(textContent, round, lastRound)) continue;
       if (!boardNudgeDone && !lastRound && shouldNudgeBoardWrite(textContent, message, result.board.length > 0)) {
         boardNudgeDone = true;

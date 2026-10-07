@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import katex from "katex";
 import type { WebTask, BoardEntry, TaskProblem, DiagramOp } from "../../../shared/types.ts";
 import { practiceAnswerMatches } from "../../../shared/types.ts";
+import { autoMathLine } from "../../../shared/mathText.ts";
 import { GraphBlock } from "./GraphBlock.tsx";
 import { renderChatText, useLang, FirstTimeHint, stripStrayMarkdown, formatMath, boldify } from "../../ui.tsx";
 
@@ -27,6 +28,7 @@ interface BoardArtifactProps {
 const KIND_LABEL: Record<string, [string, string]> = {
   focus: ["Objectif du jour", "Today's focus"],
   instruction: ["Consigne", "Instruction"],
+  question: ["Question", "Question"],
   formula: ["Formule", "Formula"],
   summary: ["Ton raisonnement", "Your reasoning"],
   problem: ["Problème", "Problem"],
@@ -43,6 +45,7 @@ const KIND_LABEL: Record<string, [string, string]> = {
 const KIND_GLYPH: Record<string, string> = {
   focus: "◎",
   instruction: "→",
+  question: "?",
   formula: "∑",
   summary: "⌇",
   insight: "✦",
@@ -137,7 +140,7 @@ export function MathText({ text }: { text: string }) {
 
 function InlineEquation({ latex }: { latex: string }) {
   const html = useMemo(() => {
-    try { return katex.renderToString(latex, { throwOnError: false, strict: false, trust: false, displayMode: false }); } catch { return null; }
+    try { return katex.renderToString(/\\frac|\\sqrt/.test(latex) ? `\\displaystyle ${latex}` : latex, { throwOnError: false, strict: false, trust: false, displayMode: false }); } catch { return null; }
   }, [latex]);
   if (html === null) return <span>{latex}</span>;
   return <span className="sm-inline-eq" dangerouslySetInnerHTML={{ __html: html }} />;
@@ -155,7 +158,7 @@ function ReasoningTrace({ text, en }: { text: string; en: boolean }) {
       <div className="sm-board-trace-heading">{en ? "How you got there" : "Ton raisonnement"}</div>
       <ol className="sm-board-trace-list">
         {lines.map((l, i) => (
-          <li key={i} className={/\b(corrigé?|en fait|non pas|pas ça|oops|my bad)\b/i.test(l) ? "sm-board-trace-turn" : undefined}><MathText text={l} /></li>
+          <li key={i} className={/\b(corrigé?|en fait|non pas|pas ça|oops|my bad)\b/i.test(l) ? "sm-board-trace-turn" : undefined}><MathText text={autoMathLine(l)} /></li>
         ))}
       </ol>
     </div>
@@ -668,7 +671,7 @@ export function BoardArtifact({ task, writing, onProblemResult }: BoardArtifactP
                 </>
               ) : (
                 <>
-                  <div className="sm-board-entry-text">{renderChatText(e.text)}</div>
+                  <div className="sm-board-entry-text">{e.kind === "question" ? <div style={{ whiteSpace: "pre-wrap" }}><MathText text={autoMathLine(stripStrayMarkdown(e.text))} /></div> : e.kind === "formula" ? <div style={{ whiteSpace: "pre-wrap" }}><MathText text={autoMathLine(stripStrayMarkdown(e.text))} /></div> : renderChatText(e.text)}</div>
                   {isCompletionGap(e.text) ? (
                     <span className="sm-board-todo-chip">{en ? "Your turn to finish" : "À toi de finir"}</span>
                   ) : null}

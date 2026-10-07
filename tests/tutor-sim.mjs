@@ -6,6 +6,7 @@
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
 const { chatAboutTask, summarizeCoursework, makeGeometryEntry, makeProblem, isDuplicateBoardEntry, isDuplicateDiagram } = await import("../server/claude.ts");
 const { buildGeometry } = await import("../shared/geometry.ts");
+const { autoMathLine } = await import("../shared/mathText.ts");
 
 let script = () => ({ content: "" });
 let calls = [];
@@ -21,7 +22,7 @@ globalThis.fetch = async (url, init) => {
 
 const task = { title: "Math session", why: "tutoring", source: "freestudy", sourceSubject: "Math" };
 const problem = { id: "p1", question: "Solve x² − 5x + 6 = 0", answer: "x = 2 or x = 3", why: "factors (x−2)(x−3)", createdAt: new Date().toISOString() };
-const run = async (message, o = {}) => { calls = []; return chatAboutTask(task, o.history || [], message, undefined, undefined, { primer: true, canvasMode: true, currentProblems: o.problems || [], currentBoard: o.board || [], ...(o.opts || {}) }); };
+const run = async (message, o = {}) => { calls = []; const res = await chatAboutTask(task, o.history || [], message, undefined, undefined, { primer: true, canvasMode: true, currentProblems: o.problems || [], currentBoard: o.board || [], ...(o.opts || {}) }); return { ...res, boardAll: res.board, board: res.board.filter((e) => e.kind !== "question") }; };
 const tc = (name, args) => ({ name, args });
 const lastUserText = (body) => String([...body.messages].reverse().find((m) => m.role === "user")?.content || "");
 
@@ -208,4 +209,21 @@ export async function runTutorSim(check, section) {
   check("milestone cheer: a streak of right exercises, or all objectives done; not on a plain turn or a single right answer", /MILESTONE/.test(adA.cheerLine(exR, [{ role: "user", text: exR }, { role: "assistant", text: "nice?" }])) && /every objective/.test(adA.cheerLine("ok", [], [{ done: true }, { done: true }])) && adA.cheerLine("x = 4", [], [{ done: true }, { done: false }]) === "" && adA.cheerLine(exR, []) === "");
   check("when stuck, the first rung normalises before shrinking the step", /NORMALISE/.test(adA.scaffoldLine("idk", [])));
   check("the persona has the warm-older-student voice and uses what it knows about the student", /WARM OLDER STUDENT/.test(String(calls[0].messages[0].content)) && /use what you know about them/.test(String(calls[0].messages[0].content)));
+
+  check("plain-text maths in a trace line is wrapped as LaTeX (fractions, roots, greek, functions); prose and existing $…$ are left alone", autoMathLine("Evaluated: (√3/2)(√2/2) - (√2/2)(1/2)") === "Evaluated: $(\\frac{\\sqrt{3}}{2})(\\frac{\\sqrt{2}}{2}) - (\\frac{\\sqrt{2}}{2})(\\frac{1}{2})$" && /\$A = \\frac\{\\pi\}\{3\}\$, \$B = \\frac\{\\pi\}\{4\}\$/.test(autoMathLine("Substituted A = π/3, B = π/4")) && autoMathLine("Add up to 5π/12?") === "Add up to $\\frac{5\\pi}{12}$?" && autoMathLine("He should try again") === "He should try again" && autoMathLine("so $x^2$ is 4") === "so $x^2$ is 4" && /special-angle/.test(autoMathLine("mapped special-angle values for A = π/3")));
+  check("an instruction ('Find … by writing π/12 as …') counts as asking: a board line that already shows the decomposition is detected", adA.boardStatesAskedValue("Find the exact value of sin(π/12) by writing π/12 as the difference of two special angles.", [{ text: "x", diagram: [{ latex: "\\sin(π/12) = \\sin(π/3 - π/4)" }] }]).length === 1 && adA.boardStatesAskedValue("Find the exact value of sin(π/12) by writing it as a difference of angles.", [{ text: "Target: sin(π/12) = ?" }]).length === 0);
+  check("the persona makes the first move (the key idea / decomposition) the student's and asks for LaTeX on the board", /THE FIRST MOVE IS THEIRS/.test(String(calls[0].messages[0].content)) && /WRITE MATHS ON THE BOARD IN LaTeX/.test(String(calls[0].messages[0].content)));
+
+  const loose = buildGeometry({ points: { A: [0, 0], B: [6, 0], C: [2, 4] } });
+  check("points with no sides given are joined into a closed shape (never a figure of loose dots)", !loose.error && loose.ops.filter((o) => o.op === "line").length === 3 && buildGeometry({ points: { A: [0, 0], B: [3, 4] } }).ops.filter((o) => o.op === "line").length === 1);
+
+  const said = ["can you do sin of five pi over twelve", "I think we split it into pi over four plus..."];
+  check("a trace line with a step the student never said is flagged; their own (even spoken) steps and the given are fine", adA.traceAheadOfStudent("Splitting 5π/12 into sum of special angles: π/4 + π/6", ["find sin(5π/12)", "hmm no idea"], ["Find sin(5π/12)"]).join() === "π/4,π/6" && adA.traceAheadOfStudent("Split 5π/12 = π/4 + π/6", ["find sin(5π/12)", "pi over four plus pi over six"], []).length === 0 && adA.traceAheadOfStudent("Expanded sin(A - B)", [], []).length === 0 && adA.traceAheadOfStudent("sin(π/3) = √3/2", ["root 3 over 2 is sin of pi over 3"], []).length === 0);
+  script = (b, i) => i === 0 ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "Split 5π/12 into π/4 + π/6", kind: "summary" })] } : { content: "What do you get for sin of 5π/12 — which two angles would you split it into?" };
+  r = await run("hmm I have no idea where to start with sin(5π/12)", { history: [{ role: "user", text: "find sin(5π/12)" }, { role: "assistant", text: "ok" }] });
+  check("end to end: a tutor-authored step is refused on the board's trace", r.board.every((e) => e.kind !== "summary") && /REJECTED/.test(JSON.stringify(calls[1].messages)));
+  check("a closing question is put on the board as a question entry; a generic 'does that make sense?' is not", adA.boardQuestionOf("Good. Which two special angles add up to 5π/12?") === "Which two special angles add up to 5π/12?" && adA.boardQuestionOf("Nice work. Does that make sense?") === "" && adA.boardQuestionOf("ok?") === "");
+  script = () => ({ content: "Good start. Which two special angles add up to 5π/12?" });
+  r = await run("so I need exact values", { history: [{ role: "user", text: "find sin(5π/12)" }, { role: "assistant", text: "ok" }] });
+  check("end to end: the reply's guiding question lands on the board as kind 'question'", r.boardAll.some((e) => e.kind === "question" && /special angles add up/.test(e.text)));
 }
