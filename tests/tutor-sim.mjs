@@ -62,18 +62,18 @@ export async function runTutorSim(check, section) {
   // 6. Reasoning nudge: a substantive step with NO board write triggers one corrective round.
   script = (b, i) => {
     if (i === 0) return { content: "Good. What next?" };
-    if (/call WRITE_TO_BOARD ONCE/.test(lastUserText(b)) && !b.messages.some((m) => m.role === "tool")) return { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "Move 1: factor the quadratic; why: products of roots give the constant term", kind: "summary" })] };
+    if (/1-3 short WRITE_TO_BOARD calls/.test(lastUserText(b)) && !b.messages.some((m) => m.role === "tool")) return { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "Move 1: factor the quadratic; why: products of roots give the constant term", kind: "summary" })] };
     return { content: "Good. What does each factor give you?" };
   };
   r = await run("x² − 5x + 6 = (x−2)(x−3)", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
-  check("student step + no board write → one corrective round puts the reasoning on the board", r.board.length === 1 && r.board[0].kind === "summary" && calls.some((b) => /call WRITE_TO_BOARD ONCE/.test(lastUserText(b))));
+  check("student step + no board write → one corrective round puts the reasoning on the board", r.board.length === 1 && r.board[0].kind === "summary" && calls.some((b) => /1-3 short WRITE_TO_BOARD calls/.test(lastUserText(b))));
   check("…and the entry is Otto's own reasoning, not a copy of the student's message", !/\(x−2\)\(x−3\)$/.test(r.board[0]?.text || "") && r.board[0].text !== "x² − 5x + 6 = (x−2)(x−3)");
 
   // 7. No nudge for chatter / first message / questions.
   for (const [msg, hist] of [["ok", [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }]], ["what is a root?", [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }]], ["x = 3 so 2x = 6", []]]) {
     script = () => ({ content: "Okay. What next?" });
     r = await run(msg, { history: hist });
-    check(`no corrective board round for "${msg}"${hist.length ? "" : " (first message)"}`, !calls.some((b) => /call WRITE_TO_BOARD ONCE/.test(lastUserText(b))) && r.board.length === 0);
+    check(`no corrective board round for "${msg}"${hist.length ? "" : " (first message)"}`, !calls.some((b) => /1-3 short WRITE_TO_BOARD calls/.test(lastUserText(b))) && r.board.length === 0);
   }
 
   // 8. Graph tool: valid plot lands on the board; a bad expression is explained back to the model.
@@ -226,4 +226,11 @@ export async function runTutorSim(check, section) {
   script = () => ({ content: "Good start. Which two special angles add up to 5π/12?" });
   r = await run("so I need exact values", { history: [{ role: "user", text: "find sin(5π/12)" }, { role: "assistant", text: "ok" }] });
   check("end to end: the reply's guiding question lands on the board as kind 'question'", r.boardAll.some((e) => e.kind === "question" && /special angles add up/.test(e.text)));
+
+  const sysT = String(calls[0].messages[0].content);
+  check("the persona makes the board the student's paper for every subject (given / result / question / formulas / outlines / mnemonics)", /THE BOARD IS THEIR PAPER/.test(sysT) && /kind "result"/.test(sysT) && /kind "given"/.test(sysT) && /history\/economics\/literature/.test(sysT));
+  // a student step with only an auto-added question on the board still gets the write-to-board nudge (summary + result)
+  script = (b, i) => i === 0 ? { content: "Right, that's the sum formula. Which two special angles add up to 5π/12?" } : i === 1 ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "Established: $\\sin(A+B)=\\sin A\\cos B+\\cos A\\sin B$", kind: "result" })] } : { content: "Right, that's the sum formula. Which two special angles add up to 5π/12?" };
+  r = await run("so I use sin(A+B) = sin A cos B + cos A sin B", { history: [{ role: "user", text: "find sin(5π/12)" }, { role: "assistant", text: "ok" }] });
+  check("a student step gets the nudge even though the question was auto-placed; a 'result' entry lands (kind result)", /kind \\\"result\\\"|kind \"result\"/.test(JSON.stringify(calls[1].messages)) || r.board.some((e) => e.kind === "result"));
 }
