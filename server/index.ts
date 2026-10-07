@@ -1599,7 +1599,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
   const currentBoard = currentBoardRaw
     .filter((b: any) => b && typeof b.text === "string" && b.text.trim())
     .slice(-60)
-    .map((b: any) => ({ id: "", at: "", text: String(b.text).slice(0, 600), ...(typeof b.kind === "string" ? { kind: b.kind } : {}), ...(b.kind === "outline" && Array.isArray(b.outline) ? { outline: b.outline.slice(0, 6).map((s: any) => ({ heading: String(s?.heading || "").slice(0, 120), bullets: (Array.isArray(s?.bullets) ? s.bullets : []).map((x: any) => String(x).slice(0, 200)).slice(0, 8) })) } : {}) }));
+    .map((b: any) => ({ id: "", at: "", text: String(b.text).slice(0, 600), ...(typeof b.kind === "string" ? { kind: b.kind } : {}), ...(Array.isArray(b.diagram) ? { diagram: b.diagram.slice(0, 40).filter((o: any) => o && typeof o.op === "string") } : {}), ...(b.kind === "outline" && Array.isArray(b.outline) ? { outline: b.outline.slice(0, 6).map((s: any) => ({ heading: String(s?.heading || "").slice(0, 120), bullets: (Array.isArray(s?.bullets) ? s.bullets : []).map((x: any) => String(x).slice(0, 200)).slice(0, 8) })) } : {}) }));
   const currentProblemsRaw = Array.isArray(req.body?.problems) ? req.body.problems : [];
   const currentProblems = currentProblemsRaw
     .filter((p: any) => p && typeof p.question === "string" && p.question.trim())

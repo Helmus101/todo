@@ -143,3 +143,92 @@ export function spokenMathHint(message: string): string {
   s = s.replace(/\s+/g, " ").trim();
   return `\n\nDICTATED MATHS: the student's message looks spoken/transcribed. Literal symbol reading: «${s}». The GROUPING (what is under which fraction bar, what a bracket holds, what multiplies what) is NOT reliable in speech — write your typeset reading on the board and confirm it with them before working on it, and if a word looks like a transcription slip ("Cortex" for "cot x"), say what you took it to mean.\n`;
 }
+
+/** What the tutor is ASKING about: the specific values/expressions in its final question — angles/units ("270°",
+ *  "5π/6"), and small arithmetic expressions ("7 × 8"). Plain bare numbers are ignored (too common to mean anything). */
+export function askedTokens(reply: string): string[] {
+  const q = (reply.match(/[^.!?\n]*\?/g) || []).slice(-2).join(" ");
+  const toks = new Set<string>();
+  for (const m of q.matchAll(/\d+(?:[.,]\d+)?\s*(?:°|π|pi\b|rad\b|degrees?\b|degrés?\b)|\d*π(?:\s*\/\s*\d+)?|\b\d+(?:[.,]\d+)?\s*[×x*+\-−/÷^]\s*\d+(?:[.,]\d+)?/gi)) toks.add(m[0].replace(/\s+/g, "").toLowerCase());
+  return [...toks].filter((t) => t.length >= 2);
+}
+
+/** Does any of these board entries already STATE a value for something the question asks about? (e.g. the board
+ *  shows "270°: (0, −1)" while Otto asks "what's cos(270°) and sin(270°)?" — the question answers itself.)
+ *  Returns the indices of the offending entries. A "?" placeholder after the marker is fine. */
+export function boardStatesAskedValue(reply: string, entries: { text?: string; diagram?: { text?: string; latex?: string }[] }[]): number[] {
+  const toks = askedTokens(reply);
+  if (!toks.length) return [];
+  const bad: number[] = [];
+  entries.forEach((e, i) => {
+    const hay = [e.text || "", ...(e.diagram || []).map((o) => `${o.text || ""} ${o.latex || ""}`)].join("\n").replace(/[ \t]+/g, "").toLowerCase();
+    for (const tok of toks) {
+      const esc = tok.replace(/[.*+?^${}()|[\]\\\/-]/g, "\\$&");
+      // token, then (within a few chars of function/bracket noise) a value marker and a real value that isn't "?"
+      if (new RegExp(`${esc}[)\\]]?(?:[:=→⇒]|-->|->|=>|\\\\to|\\\\rightarrow)(?!\\?|\\s*$)[^\\n]{1,}`).test(hay)) { bad.push(i); break; }
+    }
+  });
+  return bad;
+}
+
+// ---- Socratic scaffolding (Graesser's tutoring frame: pump → prompt → hint → partial example → assertion last) ----
+const STUCK = /\b(i don['’]?t know|idk|no idea|not sure|i give up|i['’]?m (?:so |still |really )?(?:lost|stuck)|je ne sais pas|je sais pas|aucune id[ée]e|je suis (?:perdu|bloqu[ée])|help me|aide[- ]moi)\b|^\s*\??\s*$|^\s*(?:what|quoi)\s*\??\s*$/i;
+const isStuckMsg = (m: string): boolean => STUCK.test(m.trim()) || /^\[Exercise\].*marked wrong/s.test(m.trim());
+
+/** How many of the student's most recent turns in a row (including this one) show they're stuck. */
+export function stuckStreak(message: string, history: { role: string; text: string }[]): number {
+  let n = isStuckMsg(message) ? 1 : 0;
+  if (!n) return 0;
+  const users = history.filter((h) => h.role === "user").map((h) => h.text).reverse();
+  for (const u of users) { if (isStuckMsg(u)) n++; else break; }
+  return n;
+}
+
+/** The escalation rung for THIS turn: help in the smallest dose that unlocks them, never the answer. */
+export function scaffoldLine(message: string, history: { role: string; text: string }[]): string {
+  const n = stuckStreak(message, history);
+  if (!n) return "";
+  const rung = n === 1
+    ? "PUMP: they're stuck, so don't explain. First NORMALISE it in a few warm words (\"this one's fiddly — most people trip here\"), then ask what they DO know or have tried so far, or one much smaller question about the first thing in the problem that they can answer in a few words."
+    : n === 2
+      ? "PROMPT: still stuck — give a cue, not the step: a fill-in-the-blank frame (\"the area of a sector uses ___ × r²\") or point at the relevant given on the board, then ask them to supply the missing piece."
+      : "PARTIAL EXAMPLE: several attempts, still stuck — put a PARALLEL worked example (different numbers) on the board with its last line left open as \"?\", plus ONE concrete hint about the method. Still never their answer; then ask them to do the open step on their own problem. Acknowledge that this one is genuinely tricky.";
+  return `\n\nSCAFFOLD LEVEL ${Math.min(n, 3)} (the student has been stuck ${n} turn${n > 1 ? "s" : ""} running) — ${rung}\n`;
+}
+
+const PROBES = [
+  "JUSTIFY: ask why that step is allowed / why it works (\"what lets you do that?\").",
+  "ASSUMPTIONS: ask what they're assuming and whether it always holds (\"is that true for every x? what if it's negative?\").",
+  "ANOTHER WAY: ask whether there's a different route to the same result and which they'd trust more.",
+  "CHECK IT: ask how they could test their result themselves (plug a value back in, estimate, check units, sanity-check a limit).",
+  "GENERALISE: ask what stays the same if the numbers change, or to state the rule in their own words (self-explanation).",
+  "REFLECT: ask how sure they are (1–5) and what in their method felt shakiest, or what they'd do differently next time.",
+];
+/** Every few turns of PROGRESS, a critical-thinking probe — the IB learner-profile habits (thinker, inquirer,
+ *  reflective, communicator) made concrete: justify, question assumptions, find another way, self-check, generalise, reflect. */
+export function probeLine(message: string, history: { role: string; text: string }[]): string {
+  const assistantTurns = history.filter((h) => h.role === "assistant").length;
+  if (assistantTurns < 3 || assistantTurns % 3 !== 0) return "";
+  const r = reactionTo(message, history);
+  if (r.label !== "attempt" && r.label !== "positive") return "";
+  return `\n\nCRITICAL-THINKING PROBE THIS TURN (they are making progress — deepen it, don't just move on). After a brief SPECIFIC acknowledgement of what was right, ask ONE of these in your own words: ${PROBES[Math.floor(assistantTurns / 3) % PROBES.length]}\n`;
+}
+
+/** A tutor turn that asks the student nothing is a lecture. True when a reply to a real student contribution
+ *  contains no question at all (so a corrective round should add ONE guiding question). */
+export function needsQuestion(draft: string, message: string): boolean {
+  if (!draft.trim() || /[?？]/.test(draft)) return false;
+  if (/^(?:thanks?|thank you|merci|bye|au revoir|ok(?:ay)? thanks|great thanks|c['’]est tout|that['’]?s all)\b/i.test(message.trim()) && message.trim().length < 40) return false;
+  return message.trim().length > 0;
+}
+
+/** Genuine, brief cheer at real milestones (never every turn): a streak of right exercises, or every session
+ *  objective ticked off. The line asks for a few specific words and then a raised challenge — not gushing. */
+export function cheerLine(message: string, history: { role: string; text: string }[], objectives?: { done: boolean }[]): string {
+  const recent = [...history.filter((h) => h.role === "user").map((h) => h.text).slice(-5), message];
+  const rights = recent.filter((m) => /^\[Exercise\].*marked right/s.test(m.trim())).length;
+  const justRight = /^\[Exercise\].*marked right/s.test(message.trim());
+  if (justRight && rights >= 2) return `\n\nMILESTONE: that's ${rights} exercises right recently. Give a short, genuine, SPECIFIC cheer (what they did well — a few words, no gushing), then raise the challenge a notch or ask what they want to tackle next.\n`;
+  if (objectives?.length && objectives.every((o) => o.done)) return `\n\nMILESTONE: every objective for this session is done. Say so warmly in a few words, name one thing they did well, and ask what they'd like to do next (more practice, a harder one, or wrap up with a reflection).\n`;
+  return "";
+}

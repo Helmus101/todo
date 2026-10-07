@@ -151,3 +151,12 @@ h1 { font-family: var(--display); font-weight: 400; letter-spacing: -0.025em; }
 .sm-board-focus-text { font-size: 1.1rem; font-weight: 500; }
 .sm-board-trace { border-left: 1px solid var(--line); }
 .sm-board-trace-heading { color: var(--ink-3, #8a867b); letter-spacing: .08em; }
+
+.tutor-reflect { display: flex; flex-direction: column; gap: 14px; padding: 4px 4px 8px; }
+.tutor-reflect p { margin: 0; font-size: 1rem; line-height: 1.55; color: var(--ink); }
+.tutor-reflect-input { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font: inherit; resize: vertical; background: var(--surface); }
+.tutor-reflect-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
+.tutor-reflect-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.tutor-reflect-overlay { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(20,20,19,.32); }
+.tutor-reflect-overlay .tutor-reflect { width: min(480px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 24px; box-shadow: 0 20px 60px rgba(20,20,19,.18); }
+.tutor-reflect h3 { margin: 0; font-size: 1.15rem; font-weight: 600; }

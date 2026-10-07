@@ -4,7 +4,7 @@
 // answer through, hands the thinking back, writes reasoning to the board, rejects bad/leaky tool calls and
 // keeps replies short. No network, no key needed.
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
-const { chatAboutTask, summarizeCoursework, makeGeometryEntry, makeProblem } = await import("../server/claude.ts");
+const { chatAboutTask, summarizeCoursework, makeGeometryEntry, makeProblem, isDuplicateBoardEntry, isDuplicateDiagram } = await import("../server/claude.ts");
 const { buildGeometry } = await import("../shared/geometry.ts");
 
 let script = () => ({ content: "" });
@@ -175,4 +175,37 @@ export async function runTutorSim(check, section) {
   check("a short single-answer exercise is accepted", !("error" in makeProblem({ question: "Simplify $\\cos^2\\theta(1+\\tan^2\\theta)$ to a single number.", answer: "1" })) && !("error" in makeProblem({ question: "Solve 2x + 3 = 11.", answer: "x = 4" })));
   check("open-ended asks (explain / why / prove / compare) are rejected as exercises", ["Explain why the sum of angles is 180°.", "Prove that sin²x + cos²x = 1.", "Why does the graph open upward?", "Compare mitosis and meiosis.", "Explique pourquoi x² ≥ 0."].every((q) => /open-ended/.test(makeProblem({ question: q, answer: "1" }).error || "")));
   check("prose answers and multi-part prompts are rejected; MCQ stays allowed", /ONE short checkable answer/.test(makeProblem({ question: "What happens to the force?", answer: "it doubles because the mass doubles" }).error || "") && /multi-part/.test(makeProblem({ question: "(a) Find x. (b) Find y.", answer: "3" }).error || "") && !("error" in makeProblem({ question: "Why is the sky blue?", options: ["Rayleigh scattering", "Reflection of the sea"], correct: 0 })));
+
+  // The board must never answer the question Otto is asking.
+  const unitTable = { text: "90°: (0, 1)\n180°: (-1, 0)\n270°: (0, -1)\n<- x = cos(a), y = sin(a)", kind: "note" };
+  check("a board table that already shows the asked value is detected (the 270° case)", adA.boardStatesAskedValue("So what's cos(270°) and sin(270°) down there?", [unitTable]).length === 1);
+  check("a table that leaves the asked value as ? or shows only OTHER cases is fine", adA.boardStatesAskedValue("So what's cos(270°) and sin(270°)?", [{ text: "90°: (0, 1)\n180°: (-1, 0)\n270°: ?" }]).length === 0 && adA.boardStatesAskedValue("So what's cos(270°)?", [{ text: "90°: (0, 1)\n180°: (-1, 0)" }]).length === 0 && adA.boardStatesAskedValue("What's the next step?", [unitTable]).length === 0);
+  check("a worked arithmetic line that states the asked product is detected", adA.boardStatesAskedValue("Now what is 7 × 8?", [{ text: "7 × 8 = 56" }]).length === 1);
+  // end to end: the leaking entry is pulled, Otto redraws it with a blank, the student only ever sees the fixed one
+  script = (b, i) => i === 0
+    ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", unitTable)] }
+    : i === 1 ? { content: "Nailed it. So what's cos(270°) and sin(270°) down there?" }
+    : i === 2 ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "90°: (0, 1)\n180°: (-1, 0)\n270°: ?\n<- x = cos(a), y = sin(a)", kind: "note" })] }
+    : { content: "Nailed it. So what's cos(270°) and sin(270°) down there?" };
+  r = await run("180 is (-1, 0)", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
+  check("end to end: the self-answering table never reaches the student; the redrawn one with '?' does", r.board.length === 1 && /270°: \?/.test(r.board[0].text) && !/270°: \(0/.test(r.board[0].text));
+
+  // Socratic scaffolding, questioning, board repeats.
+  const stuck1 = adA.scaffoldLine("I don't know", [{ role: "user", text: "help" }, { role: "assistant", text: "What have you tried?" }]);
+  const stuck3 = adA.scaffoldLine("idk", [{ role: "user", text: "idk" }, { role: "assistant", text: "a" }, { role: "user", text: "i'm lost" }, { role: "assistant", text: "b" }]);
+  check("stuck turns climb the scaffold one rung at a time (pump → prompt → parallel example); a normal turn adds none", /LEVEL 1.*PUMP/s.test(stuck1) && /LEVEL 3.*PARTIAL EXAMPLE/s.test(stuck3) && adA.scaffoldLine("so x is 4", []) === "");
+  const prog = [1, 2, 3].flatMap((n) => [{ role: "user", text: "step " + n + " x = " + n }, { role: "assistant", text: "ok " + n + "?" }]);
+  check("every few turns of progress a critical-thinking probe is added (not while stuck, not on turn 1)", /CRITICAL-THINKING PROBE/.test(adA.probeLine("so the answer is x = 4", prog)) && adA.probeLine("idk", prog) === "" && adA.probeLine("x = 4", []) === "");
+  check("a reply that asks nothing is flagged; a question or a thanks-goodbye is not", adA.needsQuestion("Good. The factors are (x−2)(x−3).", "x^2 - 5x + 6 = (x-2)(x-3)") && !adA.needsQuestion("Good. What does each factor equal?", "x^2") && !adA.needsQuestion("You're welcome!", "thanks"));
+  script = (b, i) => i === 0 ? { content: "Right, the factoring is fine. Those give x = 2 and x = 3." } : { content: "Right, the factoring is fine. What does each factor equal when the product is zero?" };
+  r = await run("(x-2)(x-3)=0", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
+  check("end to end: a statement-only reply gets one corrective round and ends on a guiding question", /\?$/.test(r.reply) && calls.length >= 2);
+  check("a re-worded copy of an existing board line is a duplicate (the board no longer repeats itself)", isDuplicateBoardEntry([{ id: "1", text: "x = cos(a), y = sin(a) on the unit circle", kind: "note", at: "" }], { text: "On the unit circle: x = cos(a), y = sin(a)", kind: "note" }) && !isDuplicateBoardEntry([{ id: "1", text: "x = cos(a), y = sin(a)", kind: "note", at: "" }], { text: "tan(a) = sin(a)/cos(a)", kind: "note" }));
+  const eqA = { id: "1", text: "The equation", kind: "diagram", at: "", diagram: [{ op: "equation", x: 1, y: 1, latex: "3(\\frac{1}{\\cot^2 x})" }] };
+  check("the same figure/equation drawn twice is a duplicate; an added element makes it new", isDuplicateDiagram([eqA], { ...eqA, id: "2", diagram: [{ op: "equation", x: 9, y: 9, latex: "3 ( \\frac{1}{\\cot^2 x} )" }] }) && !isDuplicateDiagram([eqA], { ...eqA, id: "3", diagram: [...eqA.diagram, { op: "equation", x: 1, y: 80, latex: "= 8\\sec x" }] }));
+
+  const exR = "[Exercise] I answered \"4\" — marked right (try #1).";
+  check("milestone cheer: a streak of right exercises, or all objectives done; not on a plain turn or a single right answer", /MILESTONE/.test(adA.cheerLine(exR, [{ role: "user", text: exR }, { role: "assistant", text: "nice?" }])) && /every objective/.test(adA.cheerLine("ok", [], [{ done: true }, { done: true }])) && adA.cheerLine("x = 4", [], [{ done: true }, { done: false }]) === "" && adA.cheerLine(exR, []) === "");
+  check("when stuck, the first rung normalises before shrinking the step", /NORMALISE/.test(adA.scaffoldLine("idk", [])));
+  check("the persona has the warm-older-student voice and uses what it knows about the student", /WARM OLDER STUDENT/.test(String(calls[0].messages[0].content)) && /use what you know about them/.test(String(calls[0].messages[0].content)));
 }

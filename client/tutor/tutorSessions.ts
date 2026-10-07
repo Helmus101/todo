@@ -24,6 +24,8 @@ export interface TutorSessionSummary {
   // The full chat history (all messages with role and text) so the conversation can be reviewed later
   chat?: NonNullable<WebTask["chat"]>;
   summary: string;          // a short auto-generated recap
+  /** What the student said they learned / would do differently, written in the end-of-session reflection (IB "reflective"). */
+  reflection?: string;
   subject?: string;         // the subject selected when starting the session
   // Final tally of task.objectives at session end (SET_OBJECTIVES tool, see shared/types.ts) — the
   // live "Today's focus" checklist already tracks these during the session; this just persists the
@@ -141,7 +143,7 @@ export function sessionMemoryForPrompt(
     out.push({
       when: relativeWhen(s.endTime, now, lang),
       ...(s.subject ? { subject: s.subject } : {}),
-      lines: [`${topic}`, ...rest].slice(0, 6).map((l) => (l.length > 200 ? l.slice(0, 198).trimEnd() + "…" : l)),
+      lines: [`${topic}`, ...(s.reflection ? [`Their own reflection then: ${s.reflection.replace(/\s+/g, " ").slice(0, 160)}`] : []), ...rest].slice(0, 6).map((l) => (l.length > 200 ? l.slice(0, 198).trimEnd() + "…" : l)),
       asked: asked.map((q) => (q.length > 200 ? q.slice(0, 198).trimEnd() + "…" : q)),
     });
     if (out.length >= 3) break;
