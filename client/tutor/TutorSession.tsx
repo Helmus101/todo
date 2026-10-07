@@ -58,6 +58,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
   // The stage hides the transcript on purpose, but it is always one tap away: this drawer.
   const [chatDrawer, setChatDrawer] = useState(false);
   const [chatExpanded, setChatExpanded] = useState(false);
+  const [openPast, setOpenPast] = useState<Record<string, boolean>>({});
   const chatEndRef = useRef<HTMLDivElement>(null);
   useEffect(() => { if (chatDrawer) chatEndRef.current?.scrollIntoView({ block: "end" }); }, [chatDrawer, chatExpanded, task?.chat?.length]);
   // The landing screen asks WHAT to study before starting — the subject is stamped onto the session
@@ -672,18 +673,20 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
               <details className="tutor-chat-past">
                 <summary>{L("Séances passées", "Past sessions")} ({pastSessions.filter((ps) => ps.chat?.length).length})</summary>
                 {pastSessions.filter((ps) => ps.chat?.length).map((ps) => (
-                  <details key={ps.id} className="tutor-chat-past-item">
+                  <details key={ps.id} className="tutor-chat-past-item" onToggle={(e) => setOpenPast((o) => ({ ...o, [ps.id]: (e.currentTarget as HTMLDetailsElement).open }))}>
                     <summary>
-                      {new Date(ps.startTime || ps.endTime).toLocaleDateString()}{ps.subject ? ` · ${ps.subject}` : ""} — {(ps.summary || "").split(" — ")[0].slice(0, 70)}
+                      {new Date(ps.startTime || ps.endTime).toLocaleDateString()}{ps.subject ? ` · ${ps.subject}` : ""} — {(ps.summary || "").replace(/[*`#>_\-]+/g, " ").replace(/\s+/g, " ").trim().split(" — ")[0].slice(0, 70) || `${ps.messageCount} ${L("messages", "messages")}`}
                     </summary>
-                    <div className="tutor-chat-history">
-                      {ps.chat!.map((msg, i) => (
-                        <div key={i} className={`tutor-chat-message ${msg.role}`}>
-                          <div className="tutor-chat-role">{msg.role === "user" ? L("Toi", "You") : "Otto"}</div>
-                          <div className="tutor-chat-text"><MathText text={msg.text} /></div>
-                        </div>
-                      ))}
-                    </div>
+                    {openPast[ps.id] && (
+                      <div className="tutor-chat-history">
+                        {ps.chat!.map((msg, i) => (
+                          <div key={i} className={`tutor-chat-message ${msg.role}`}>
+                            <div className="tutor-chat-role">{msg.role === "user" ? L("Toi", "You") : "Otto"}</div>
+                            <div className="tutor-chat-text"><MathText text={msg.text} /></div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </details>
                 ))}
               </details>
