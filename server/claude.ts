@@ -2719,7 +2719,7 @@ const BOARD_KINDS = new Set(["note", "instruction", "formula", "summary", "focus
 const MAX_OUTLINE_SECTIONS = 6;
 const MAX_OUTLINE_BULLETS = 8;
 export function makeBoardEntry(input: any): { entry: BoardEntry } | { error: string } {
-  const text = stripLeakedToolCallSyntax(String(input?.text || "").trim()).slice(0, 600);
+  const text = stripLeakedToolCallSyntax(String(input?.text || "").trim()).replace(/<br\s*\/?>/gi, "\n").replace(/<\/?[a-z][^>]*>/gi, "").slice(0, 600);
   if (!text) return { error: "ERROR: a board entry needs non-empty text." };
   const kindRaw = String(input?.kind || "").trim();
   const kind = BOARD_KINDS.has(kindRaw) ? (kindRaw as BoardEntry["kind"]) : undefined;
@@ -7086,7 +7086,10 @@ const PRIMER_PERSONA =
   `- LISTEN BEFORE YOU STEER: when they correct you, repeat themself, or say it isn't working ("I told you", ` +
   `"that's not what I meant", "still don't get it"), they are right until proven otherwise. Say back what you ` +
   `heard in one short sentence, then try a DIFFERENT approach — never re-ask the same question, never defend ` +
-  `your last move. Their method, number or word beats your plan: check it with them first.\n` +
+  `your last move. Their method, number or word beats your plan: check it with them first. BEFORE you tell them ` +
+  `they are wrong, recompute from the problem exactly as THEY stated it; if they push back on a correction ` +
+  `even once, assume YOU misread — re-read their original statement, redo it step by step, and say so if ` +
+  `you were the one who slipped.\n` +
   `- Socratic by default: don't explain what a question could draw out of them. Ask the smallest question ` +
   `that makes them take the next step themselves. Explain directly only after they're genuinely stuck twice.\n` +
   `- Answer in their language and register. Say "I" and "you", use contractions, think out loud a little ` +

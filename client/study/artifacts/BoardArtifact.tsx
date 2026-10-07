@@ -68,7 +68,7 @@ function isCompletionGap(text: string): boolean {
 }
 
 export function traceLines(text: string): string[] {
-  const lines = text.split("\n")
+  const lines = text.replace(/<br\s*\/?>/gi, "\n").replace(/<\/?[a-z][^>]*>/gi, "").split("\n")
     // The model sometimes numbers its own lines ("1. …", "2) …") or adds a header — the board numbers
     // the steps itself, so a pasted "1." would double up ("1. 1. …") and a header would count as step one.
     .map((l) => l.replace(/^\s*(?:[-–—•*]|\d{1,2}[.)])\s*/, "").trim())
@@ -376,7 +376,14 @@ export function BoardArtifact({ task, writing, onProblemResult }: BoardArtifactP
   const latestFocus = [...entries].reverse().find((e) => e.kind === "focus");
   const flowEntries = entries
     .filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i)
-    .filter(e => e.kind !== "focus" && (e.kind as string) !== "problem");
+    .filter(e => e.kind !== "focus" && (e.kind as string) !== "problem")
+    // A corrected entry REPLACES the one it corrects: the reasoning trace is one evolving record (only the latest
+    // is shown), and a re-written formula/figure with the same caption supersedes the earlier draft — the board
+    // used to stack four near-identical "The equation to work with" blocks and five "How you got there" lists.
+    .filter((e, i, arr) => {
+      const key = e.kind === "summary" ? "summary" : (e.kind === "diagram" || e.kind === "formula") && e.text.trim() ? `${e.kind}:${e.text.trim().toLowerCase()}` : null;
+      return key === null || !arr.slice(i + 1).some((x) => (x.kind === "summary" ? "summary" : (x.kind === "diagram" || x.kind === "formula") && x.text.trim() ? `${x.kind}:${x.text.trim().toLowerCase()}` : null) === key);
+    });
 
   // THE FLOW: entries (by their `at`) and problems (by `createdAt`) merged and sorted by timestamp —
   // the board reads top-to-bottom in the order the session actually happened. A missing/unparseable
