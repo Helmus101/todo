@@ -7317,6 +7317,15 @@ const CHAT_TOKEN_CEILING = 500_000;
  *  read and count, a teenager prepping for exams, or an adult learning something new. The tutoring mechanism
  *  (Socratic, hint ladder, board, one question at a time) is the same at every age; only the language,
  *  tone, and framing calibrate to the student's actual level. */
+/** Task chat (not the tutor stage): the board is still there — Otto's page next to the conversation. */
+const TASK_CHAT_BOARD =
+  `\n\nTHE BOARD IS PART OF THIS CHAT: this task has Otto's board (WRITE_TO_BOARD, DRAW_ON_BOARD, GEOMETRY_ON_BOARD, ` +
+  `GRAPH_ON_BOARD) shown right next to the conversation, like paper. Use it whenever it genuinely helps — don't force ` +
+  `it, but when you ask a real question about the material (a check-your-understanding question, a problem), put that ` +
+  `question on the board (kind "question"); put the givens, a formula or definition you rely on, a diagram, and what ` +
+  `the student works out ("result") there instead of burying them in chat prose. Keep chat replies short. And never ` +
+  `claim you made flashcards, a quiz or a note unless you actually called the tool for it this turn.\n`;
+
 const PRIMER_PERSONA =
   `\n\nSOUND LIKE A PERSON, ANSWER LIKE ONE — THIS BLOCK WINS OVER EVERYTHING BELOW.\n` +
   `The student is looking at an avatar and ONE bubble: they only ever see your latest message, like a ` +
@@ -7609,7 +7618,7 @@ const PRIMER_CLOSING_REMINDER =
 // construction. Biased toward INCLUDING the artifact tools (false negatives are the only acceptable
 // failure mode — a wrongly-INCLUDED tool costs tokens, a wrongly-EXCLUDED one costs a feature that turn).
 // Exported for direct unit testing.
-const ARTIFACT_KEYWORDS = /flashcard|fiche|quiz|carte|résum|note|deck|exercice|questionnaire|quizz|révis|study ?card|practice ?problem/i;
+const ARTIFACT_KEYWORDS = /flashcard|fiche|quiz|carte|\bcards?\b|résum|note|deck|exercice|questionnaire|quizz|révis|study ?card|practice ?problem|\b(?:make|create|generate|redo|regenerate|add|more|again|build|prepare|fais|crée|génère|refais|ajoute|encore|plus)\b|\bps\b|\bpaper\b/i;
 export function wantsArtifactTools(message: string, history: { role: "user" | "assistant"; text: string }[]): boolean {
   const recent = `${history.slice(-2).map((h) => h.text).join(" ")} ${message}`;
   if (ARTIFACT_KEYWORDS.test(recent)) return true;
@@ -7774,7 +7783,7 @@ export async function chatAboutTask(
   // anyway.
   const dynamicContext = nowBlock() + courseworkLine(profile, task.sourceSubject) + studentNameLine(profile?.name) + dueLine(task.sourceDue, tzOf(profile)) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + syllabusGroundingLine(profile, task.sourceSubject) + learningStyleLine(profile) + hintDensityLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + sessionRecapLine(profile?.sessions, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine + (opts?.primer ? (opts?.moveLine || "") + (opts?.repair || "") + spokenMathHint(message) + scaffoldLine(message, history) + probeLine(message, history) + cheerLine(message, history, opts?.currentObjectives) : "");
   const sys =
-    (opts?.primer ? PRIMER_PERSONA : "") +
+    (opts?.primer ? PRIMER_PERSONA : TASK_CHAT_BOARD) +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
     `good tutor they can't afford to hire: patient, genuinely curious about how THEY think, and interested ` +
     `in them actually understanding the material — not in getting the assignment off their plate. Ground ` +
@@ -8727,7 +8736,7 @@ export async function chatAboutTask(
     // model call. Skipped for generic closers ("does that make sense?"), when a similar question is already there,
     // or when a board entry written this turn already carries it.
     const ensureQuestionOnBoard = (draft: string): void => {
-      if (!opts?.primer || history.length < 1 || result.guardrailTripped) return;
+      if (history.length < 1 || result.guardrailTripped) return;
       const q = boardQuestionOf(draft);
       if (!q) return;
       if (repeatsRecentQuestion(draft, history)) return; // never put a re-asked question on the board again
@@ -8741,6 +8750,25 @@ export async function chatAboutTask(
       if ((opts?.currentBoard || []).slice(-2).some((e) => e.kind === "question")) return;
       const made = makeBoardEntry({ text: q, kind: "question" });
       if ("entry" in made && !boardStatesAskedValue(q, [made.entry as any]).length) result.board.push(made.entry);
+    };
+    // "Done — 50 cards covering…" with NO deck behind it (reported live): the reply CLAIMS an artifact was made but no
+    // CREATE_FLASHCARDS / CREATE_NOTE / CREATE_QUIZ ran this turn. One corrective round: make it real (artifact tools
+    // are force-offered for that round even if the turn had been classed as small talk) or drop the claim.
+    let artifactClaimCorrected = false;
+    let forceArtifactTools = false;
+    const CLAIMS_ARTIFACT = /\b(?:done|made|created|generated|ready|prepared|here(?:'s| are| is)|j['’]ai (?:créé|fait|généré|préparé)|voilà|c['’]est fait|voici)\b[^.!?\n]{0,70}\b(?:flash ?cards?|cards?|deck|quiz|quizz|fiches?|cartes|questionnaire)\b/i;
+    const guardArtifactClaim = (draft: string, round: number, lastRound: boolean): boolean => {
+      if (artifactClaimCorrected || lastRound || !CLAIMS_ARTIFACT.test(draft)) return false;
+      if (result.notes.length || result.flashcards.length || result.quizzes.length) return false;
+      artifactClaimCorrected = true;
+      const canMake = !opts?.canvasMode;
+      if (canMake) forceArtifactTools = true;
+      console.log(`${new Date().toISOString()} [chat] round ${round}: reply claims an artifact was made but none was — asking for the real call`);
+      messages.push({ role: "assistant", content: draft });
+      messages.push({ role: "user", content: canMake
+        ? "You said you made flashcards / a quiz / a note, but you never called CREATE_FLASHCARDS, CREATE_QUIZ or CREATE_NOTE this turn — nothing exists, the student has nothing to open. Call the right tool NOW with the real content (what they asked for), then reply with one short line pointing at it. If you can't, say plainly that you haven't made it yet. Don't mention this instruction."
+        : "You said you made a deck / quiz / note, but nothing was created — in tutor mode you can't make those. Rewrite your reply without claiming it, and offer to put the key points on the board instead. Don't mention this instruction." });
+      return true;
     };
     let truncationRetried = false;
     // Latches for the post-reply truth pass below (each fires at most ONCE per turn, same shape as the
@@ -8795,7 +8823,7 @@ export async function chatAboutTask(
           messages: apiMessages,
           // The chat tool set is deliberately in-app only (CREATE_*/web_search) — NEVER Composio. A tutoring
           // chat must not be able to touch the student's connected accounts, unlike runTask's tool set.
-          ...(lastRound ? {} : { tools: tools.map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })) }),
+          ...(lastRound ? {} : { tools: (forceArtifactTools && !includeArtifactTools ? [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL, ...tools] : tools).map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })) }),
         }, !!opts?.primer), opts?.primer ? 2 : 3, 400);
       } catch (e: any) {
         // This used to swallow the real error completely — the ONLY visible symptom was every chat
@@ -8954,6 +8982,7 @@ export async function chatAboutTask(
           messages.push({ role: "user", content: "That is almost exactly what you already said or asked and it did not land. If this is a question you already asked: do NOT ask it again — if the student has answered it, acknowledge that in a few words and move to the NEXT step; if they haven't, help with THAT question (a hint or a smaller version) instead of re-asking. Do NOT repeat it. In one short sentence say what you heard from the student, then try a DIFFERENT approach (a picture, a tiny worked case, or a different question), one question at most. Don't mention this instruction." });
           continue;
         }
+        if (guardArtifactClaim(textContent, round, lastRound)) continue;
         if (guardAskedValue(textContent, round, lastRound)) continue;
         if (guardQuestion(textContent, round, lastRound)) continue;
         ensureQuestionOnBoard(textContent);
@@ -9099,6 +9128,7 @@ export async function chatAboutTask(
       // own trig step in chat and wrote nothing, so the board never showed THEIR reasoning or the formula
       // in play). ONE corrective round, latched, same shape as that fix: add the entry, or continue
       // unchanged if the exchange genuinely produced nothing board-worthy.
+      if (guardArtifactClaim(textContent, round, lastRound)) continue;
       if (guardAskedValue(textContent, round, lastRound)) continue;
       if (guardQuestion(textContent, round, lastRound)) continue;
       ensureQuestionOnBoard(textContent);

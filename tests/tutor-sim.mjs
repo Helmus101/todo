@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 // answer through, hands the thinking back, writes reasoning to the board, rejects bad/leaky tool calls and
 // keeps replies short. No network, no key needed.
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
-const { chatAboutTask, summarizeCoursework, makeGeometryEntry, makeProblem, isDuplicateProblem, isDuplicateBoardEntry, isDuplicateDiagram } = await import("../server/claude.ts");
+const { chatAboutTask, summarizeCoursework, makeGeometryEntry, makeProblem, isDuplicateProblem, isDuplicateBoardEntry, isDuplicateDiagram, wantsArtifactTools } = await import("../server/claude.ts");
 const { buildGeometry } = await import("../shared/geometry.ts");
 const { autoMathLine } = await import("../shared/mathText.ts");
 const P = await import("../server/tutorPolicy.ts");
@@ -292,4 +292,12 @@ export async function runTutorSim(check, section) {
   const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
   const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
   check("Primer turns skip the Pronote + connected-app network lookups, and provider attempts have timeouts (Gemini 9s, DeepSeek 24s) so a stalled one fails over fast", /req\.body\?\.primer !== true && \(await pronoteSvc\.pronoteConnected/.test(idx) && /req\.body\?\.primer === true \? undefined : await toolsFor\(req\)/.test(idx) && /9_000 : 24_000/.test(cl) && /CHAT_DEADLINE_MS = opts\?\.primer \? 45_000 : 120_000/.test(cl));
+
+  // "Done — 50 cards" with no deck behind it (reported live)
+  check("a follow-up like 'make them ps' after talk of cards keeps the artifact tools available", wantsArtifactTools("make them ps", [{ role: "user", text: "make 50 flashcards" }, { role: "assistant", text: "Done — 50 cards covering scarcity" }]) && wantsArtifactTools("make more", []) && !wantsArtifactTools("ok thanks", []));
+  script = (b, i) => i === 0 ? { content: "Done — 50 cards covering scarcity, PPCs and elasticity." } : i === 1 ? { content: "", tool_calls: [tc("CREATE_FLASHCARDS", { title: "Paper 1 prep", cards: [{ front: "Define scarcity", back: "Limited resources vs unlimited wants" }, { front: "XED > 0 means", back: "Substitutes" }] })] } : { content: "Made the deck — it's in your prepared items." };
+  calls = [];
+  const rd = await chatAboutTask({ title: "DST prep", why: "", source: "manual" }, [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }], "ok", undefined, undefined, {});
+  check("a reply claiming 'Done — 50 cards' with no deck gets one corrective round that makes the real deck (tools force-offered even on small talk)", rd.flashcards.length === 1 && calls.length >= 2 && /CREATE_FLASHCARDS/.test(JSON.stringify(calls[1].messages)) && calls[1].tools.some((x) => x.function?.name === "CREATE_FLASHCARDS"));
+  check("the task chat gets the board guidance (question on the board, no claimed-but-uncalled artifacts)", /THE BOARD IS PART OF THIS CHAT/.test(String(calls[0].messages[0].content)) && /never\s+claim you made flashcards/.test(String(calls[0].messages[0].content)));
 }
