@@ -4751,7 +4751,7 @@ section("TTS voice — MALE ONLY, and arrows read as a word (source pins)");
   check("\\frac becomes 'A over B', not read as a command", stripLatexForSpeech("\\frac{\\pi}{12}").replace(/\s+/g, " ") === "( pi ) over (12)");
   check("the exact reported phrase reads as real words, no backslash/dollar/brace survives", (() => {
     const out = toSpeakableText("Find the exact value of $\\sin\\left(\\frac{\\pi}{12}\\right)$");
-    return !/[\\${}]/.test(out) && /pi/.test(out) && /over/.test(out) && /\bsin\b/.test(out);
+    return !/[\\${}]/.test(out) && /pi/.test(out) && /over/.test(out) && /\bsine\b/.test(out);
   })());
   check("\\sqrt{x} becomes 'the square root of x'", stripLatexForSpeech("\\sqrt{x}") === "the square root of (x)");
   check("a superscript ^{2} becomes 'to the power of 2'", stripLatexForSpeech("x^{2}").trim() === "x to the power of 2");
@@ -4760,6 +4760,23 @@ section("TTS voice — MALE ONLY, and arrows read as a word (source pins)");
   check("\\cdot and \\leq read as words", stripLatexForSpeech("a \\cdot b \\leq c").includes("times") && stripLatexForSpeech("a \\cdot b \\leq c").includes("less than or equal to"));
   check("an unrecognized LaTeX command is dropped rather than read character-by-character", !stripLatexForSpeech("\\somethingweird{x}").includes("\\"));
   check("plain text with no LaTeX passes through unchanged", stripLatexForSpeech("just plain text") === "just plain text");
+
+  // Reported live: "sin A cos B + cos A sin B" was read with the bare abbreviation ("sin", "cos") instead of
+  // the word a tutor actually says ("sine", "cosine") — true for plain text (no backslash at all, as an
+  // angle-addition identity is often typed) as much as for real LaTeX \sin/\cos.
+  check("plain-text trig abbreviations (no backslash) are spoken as full words", stripLatexForSpeech("sin A cos B + cos A sin B") === "sine A cosine B + cosine A sine B");
+  check("LaTeX \\sin/\\cos are also spoken as full words, not left as the abbreviation", stripLatexForSpeech("\\sin(x) + \\cos(x)") === "sine (x) + cosine (x)");
+  check("longer trig names (sinh/arcsin) match whole, no stray trailing letter left over", stripLatexForSpeech("\\sinh(x)") === "hyperbolic sine (x)" && stripLatexForSpeech("arcsin(x)") === "arc sine(x)");
+  check("the abbreviation only expands as a whole word — 'cousin'/'cost'/'cosy' are never touched", stripLatexForSpeech("cousin, cost, cosy") === "cousin, cost, cosy");
+
+  // Direct request: abbreviations/shorthand shouldn't stay literal when they actually mean something else —
+  // "ab" inside a real formula means a×b, not the word "ab". Scoped to genuine LaTeX math zones ($...$ etc)
+  // so ordinary prose outside a formula ("the area is ab, by the way") is never second-guessed.
+  check("implicit multiplication inside real math: 'ab' is spoken as 'a times b'", stripLatexForSpeech("$ab$") === "a times b");
+  check("implicit multiplication still applies inside a longer formula ($x = ab + c$)", stripLatexForSpeech("$x = ab + c$").includes("a times b"));
+  check("three concatenated variables chain the word 'times' between each pair", stripLatexForSpeech("$abc$") === "a times b times c");
+  check("outside any math delimiter, the same letters are left as the ordinary English word", stripLatexForSpeech("the area is ab, by the way") === "the area is ab, by the way");
+  check("words this pipeline itself produces (over/sub/root/sine/pi/...) survive the expansion pass unharmed", stripLatexForSpeech("$\\frac{\\pi}{12}$").replace(/\s+/g, " ").trim() === "( pi ) over (12)");
 }
 
 section("Bilingual copy — French and English never bleed into each other (source pins + a repo-wide sweep)");

@@ -8,6 +8,46 @@ const GREEK_WORDS: Record<string, string> = {
   chi: "chi", psi: "psi", omega: "omega",
 };
 
+/** Reported live: "sin A cos B + cos A sin B" was read with the ABBREVIATION itself ("sin", "cos") rather
+ *  than the word a tutor actually says ("sine", "cosine") — true whether the source had a LaTeX \sin or was
+ *  already plain text (angle-addition identities are often typed without backslashes at all). Longer names
+ *  listed first so sinh/cosh/tanh/arcsin/etc match whole, never leaving a stray trailing "h" behind once
+ *  "sin"/"cos"/"tan" are consumed. */
+const TRIG_WORDS: Record<string, string> = {
+  arcsin: "arc sine", arccos: "arc cosine", arctan: "arc tangent",
+  sinh: "hyperbolic sine", cosh: "hyperbolic cosine", tanh: "hyperbolic tangent",
+  sin: "sine", cos: "cosine", tan: "tangent", csc: "cosecant", sec: "secant", cot: "cotangent",
+};
+const TRIG_NAMES = "arcsin|arccos|arctan|sinh|cosh|tanh|sin|cos|tan|csc|sec|cot";
+
+/** Words this pipeline can itself produce (or real short English words) that must never be torn apart as if
+ *  they were concatenated single-letter variables — see expandImplicitMultiplication below. */
+const NO_SPLIT_WORDS = new Set([
+  "am", "an", "as", "at", "be", "by", "do", "go", "he", "hi", "if", "in", "is", "it", "me", "my", "no",
+  "of", "oh", "ok", "on", "or", "so", "to", "up", "us", "we",
+  "and", "for", "are", "but", "not", "you", "all", "can", "her", "was", "one", "our", "out", "day", "get",
+  "has", "him", "his", "how", "man", "new", "now", "old", "see", "two", "way", "who", "let", "put", "say",
+  "she", "too", "use", "the", "dad", "mom", "bad", "bag", "bar", "bed", "bet", "big", "bit", "box", "boy",
+  "bus", "buy", "car", "cat", "cup", "cut", "dog", "eat", "egg", "end", "eye", "far", "few", "fly", "fun",
+  "gun", "guy", "hat", "hit", "hot", "ice", "job", "joy", "key", "kid", "lap", "law", "leg", "lie", "lot",
+  "low", "mad", "map", "mix", "mud", "net", "nor", "nut", "oil", "own", "pan", "pay", "pen", "pet", "pie",
+  "pig", "pot", "pub", "rat", "red", "rob", "run", "sad", "sat", "saw", "set", "sit", "sky", "son", "sun",
+  "tax", "tea", "ten", "tie", "top", "toy", "try", "van", "war", "wet", "win", "yes", "yet", "arc",
+  "ln", "log", "lim", "exp", "min", "max", "gcd", "det",
+  "sin", "cos", "tan", "csc", "sec", "cot", "sine", "sinh", "cosh", "tanh",
+  "over", "sub", "root", "less", "than", "plus", "gives", "times",
+  ...Object.keys(GREEK_WORDS),
+]);
+/** Implicit multiplication: "ab" in a formula means a×b, not the word "ab" — read literally it sounds like
+ *  nonsense ("ab", "mn", "pq"). Scoped to actual LaTeX math zones only (see stripLatexForSpeech's sentinel
+ *  markers below): outside real math, a short lowercase run is almost always an actual English word, and
+ *  guessing wrong there would be worse than leaving an occasional real formula unexpanded. Runs LAST, after
+ *  every other LaTeX word (frac/sqrt/trig/greek/operator) has already been spelled out — NO_SPLIT_WORDS
+ *  protects exactly those output words from being torn apart as if they were variables themselves. */
+function expandImplicitMultiplication(math: string): string {
+  return math.replace(/\b[a-z]{2,4}\b/g, (token) => (NO_SPLIT_WORDS.has(token) ? token : token.split("").join(" times ")));
+}
+
 /** Reported live: a worked-math reply full of real LaTeX ("$\sin\left(\frac{\pi}{12}\right)$") got read
  *  aloud LITERALLY — "dollar sin backslash left parenthesis backslash frac pi 12 ..." — because the TTS
  *  pipeline only ever stripped markdown, never LaTeX. Otto's board/chat math is real LaTeX (KaTeX renders
@@ -17,11 +57,13 @@ const GREEK_WORDS: Record<string, string> = {
  *  the final sweep that strips remaining backslash-commands and braces, so their arguments survive as plain
  *  text instead of being deleted along with the syntax. Exported for unit tests. */
 export function stripLatexForSpeech(text: string): string {
+  // \x01...\x02 mark genuine math zones (what was inside a LaTeX delimiter) so implicit multiplication can
+  // be expanded ONLY there, at the very end, after everything inside has already been turned into words.
   let s = text
-    .replace(/\$\$([\s\S]+?)\$\$/g, " $1 ")            // $$...$$ display math — keep the content
-    .replace(/\\\[([\s\S]+?)\\\]/g, " $1 ")             // \[...\] display math
-    .replace(/\\\(([\s\S]+?)\\\)/g, " $1 ")             // \(...\) inline math
-    .replace(/\$([^$\n]+?)\$/g, " $1 ")                 // $...$ inline math
+    .replace(/\$\$([\s\S]+?)\$\$/g, " \x01$1\x02 ")     // $$...$$ display math — keep the content
+    .replace(/\\\[([\s\S]+?)\\\]/g, " \x01$1\x02 ")      // \[...\] display math
+    .replace(/\\\(([\s\S]+?)\\\)/g, " \x01$1\x02 ")      // \(...\) inline math
+    .replace(/\$([^$\n]+?)\$/g, " \x01$1\x02 ")          // $...$ inline math
     .replace(/\\left|\\right/g, "")                     // sizing commands carry no sound of their own
     .replace(/\\text\{([^{}]*)\}/g, "$1");
   // Fractions/roots can nest one level deep in typical worked-math output (e.g. a fraction of two sums) —
@@ -34,10 +76,11 @@ export function stripLatexForSpeech(text: string): string {
   }
   s = s
     .replace(/\\(alpha|beta|gamma|delta|epsilon|zeta|eta|theta|iota|kappa|lambda|mu|nu|xi|pi|rho|sigma|tau|upsilon|phi|chi|psi|omega)\b/gi, (_, w) => ` ${GREEK_WORDS[w.toLowerCase()]} `)
-    // Function names: the backslash is syntax (keeps KaTeX from italicizing "sin" as s*i*n), the word itself
-    // IS the spoken word — unlike an unrecognized command below, this one must survive the sweep that drops
-    // backslash-commands with no sound of their own.
-    .replace(/\\(sin|cos|tan|csc|sec|cot|sinh|cosh|tanh|ln|log|lim|exp|min|max|gcd|det)\b/g, " $1 ")
+    // Function names: the backslash is syntax (keeps KaTeX from italicizing "sin" as s*i*n) — \sin/\cos/\tan
+    // become the full spoken word straight away; a function name with no special meaning when spoken (ln,
+    // log, lim, exp, min, max, gcd, det) just has its backslash dropped.
+    .replace(new RegExp(`\\\\(${TRIG_NAMES})\\b`, "g"), (_, w) => ` ${TRIG_WORDS[w]} `)
+    .replace(/\\(ln|log|lim|exp|min|max|gcd|det)\b/g, " $1 ")
     .replace(/\\cdot|\\times/g, " times ")
     .replace(/\\div/g, " divided by ")
     .replace(/\\pm/g, " plus or minus ")
@@ -52,6 +95,11 @@ export function stripLatexForSpeech(text: string): string {
     .replace(/_(\w)/g, " sub $1 ")
     .replace(/\\[a-zA-Z]+/g, " ")                       // any other LaTeX command — not worth guessing at
     .replace(/[{}$]/g, "")                              // remaining braces/delimiters
+    // Plain-text trig abbreviations (no backslash at all — angle-addition identities are often typed this
+    // way directly, "sin A cos B + cos A sin B") get the same word-form treatment as the LaTeX case above.
+    .replace(new RegExp(`\\b(${TRIG_NAMES})\\b`, "g"), (_, w) => TRIG_WORDS[w])
+    .replace(/\x01([\s\S]*?)\x02/g, (_, zone) => expandImplicitMultiplication(zone))
+    .replace(/[\x01\x02]/g, "")
     .replace(/[ \t]+/g, " ")
     .trim();
   return s;
