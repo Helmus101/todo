@@ -11,8 +11,8 @@ export const COMMON_SUBJECTS = [
 ] as const;
 
 /** Reading limits — enforced in the browser before upload AND re-enforced server-side. */
-export const COURSEWORK_MAX_PAGES = 6;
-export const COURSEWORK_MAX_CHARS = 12_000;
+export const COURSEWORK_MAX_PAGES = 15;
+export const COURSEWORK_MAX_CHARS = 30_000;
 export const COURSEWORK_MAX_DOCS = 60;
 
 export interface CourseworkDoc {

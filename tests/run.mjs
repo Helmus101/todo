@@ -171,7 +171,7 @@ section("Coursework — subjects, limits, summaries the tutor/chat can cite (uni
   check("subject aliases group: Maths/Mathématiques/Math, Physique/Physics, SVT/Biology, SES/Economics", sameSubject("Maths", "Math") && sameSubject("Mathématiques", "math") && sameSubject("Physique-Chimie", "Physics") && sameSubject("SVT", "Biology") && sameSubject("SES", "Economics") && !sameSubject("Math", "Physics"));
   check("custom subjects still group with themselves", sameSubject("Psychology", "psychology") && !sameSubject("Psychology", "Sociology") && !sameSubject("", "Math"));
   check("the common subject list is shared (tutor + coursework) and ends with Other", COMMON_SUBJECTS.includes("Math") && COMMON_SUBJECTS.includes("Computer Science") && COMMON_SUBJECTS[COMMON_SUBJECTS.length - 1] === "Other");
-  check("reading limits are small and explicit", COURSEWORK_MAX_PAGES === 6 && COURSEWORK_MAX_CHARS === 12000);
+  check("reading limits are small and explicit", COURSEWORK_MAX_PAGES === 15 && COURSEWORK_MAX_CHARS === 30000);
   const raw = [{ id: "a", subject: "Math", name: "Worksheet 3", summary: "x".repeat(2000), excerpt: "y".repeat(5000), pages: 4, totalPages: 20, truncated: true, addedAt: "2026-10-01T00:00:00Z" }, { id: "", subject: "Math", name: "bad" }, { id: "b", subject: "Physique", name: "Optics notes", summary: "Light basics", excerpt: "", pages: 2, addedAt: "2026-10-02T00:00:00Z" }];
   const norm = normalizeCoursework(raw);
   check("normalize drops invalid docs and caps summary/excerpt", norm.length === 2 && norm[0].summary.length <= 900 && norm[0].excerpt.length <= 1600);
@@ -191,6 +191,7 @@ section("Coursework — subjects, limits, summaries the tutor/chat can cite (uni
   const pdf = readFileSync(new URL("../client/study/pdfText.ts", import.meta.url), "utf8");
   check("the browser reads only the first pages (limited PDF reader) and the page tells the student the limit", /extractPdfTextLimited\(file, COURSEWORK_MAX_PAGES, COURSEWORK_MAX_CHARS\)/.test(page) && /Math\.min\(doc\.numPages, maxPages\)/.test(pdf));
   check("Coursework is in the nav and routed", /href="\/coursework"/.test(readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8")) && /route === "coursework"/.test(readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8")));
+  check("each uploaded document is collapsible (details/summary), not a flat always-open card", /<details key={d\.id} className="cw-doc"/.test(page) && /<summary>/.test(page));
 }
 section("Tutor graphs — safe expression compiler + GRAPH_ON_BOARD validation");
 {

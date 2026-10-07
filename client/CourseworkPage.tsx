@@ -136,16 +136,16 @@ export function Coursework({ onTasksChanged }: { onTasksChanged?: () => void }) 
             <div key={subj} className="cw-group">
               <h3 className="cw-subject">{subj}<span>{list.length}</span></h3>
               {list.map((d) => (
-                <article key={d.id} className="cw-doc">
-                  <header>
+                <details key={d.id} className="cw-doc" open={list.length === 1}>
+                  <summary>
                     <h4>{d.name}</h4>
-                    <button type="button" className="cw-del" onClick={() => void remove(d.id)} aria-label={L(`Supprimer ${d.name}`, `Remove ${d.name}`)}>✕</button>
-                  </header>
-                  <p className="cw-meta">{d.truncated ? L(`Pages 1–${d.pages}${d.totalPages ? ` sur ${d.totalPages}` : ""} lues`, `Read pages 1–${d.pages}${d.totalPages ? ` of ${d.totalPages}` : ""}`) : L("Lu en entier", "Read in full")}{d.taskIds?.length ? ` · ${L(`${d.taskIds.length} tâche(s) créée(s)`, `${d.taskIds.length} task(s) created`)}` : ""}</p>
+                    <span className="cw-meta">{d.truncated ? L(`Pages 1–${d.pages}${d.totalPages ? ` sur ${d.totalPages}` : ""} lues`, `Read pages 1–${d.pages}${d.totalPages ? ` of ${d.totalPages}` : ""}`) : L("Lu en entier", "Read in full")}{d.taskIds?.length ? ` · ${L(`${d.taskIds.length} tâche(s) créée(s)`, `${d.taskIds.length} task(s) created`)}` : ""}</span>
+                    <button type="button" className="cw-del" onClick={(e) => { e.preventDefault(); void remove(d.id); }} aria-label={L(`Supprimer ${d.name}`, `Remove ${d.name}`)}>✕</button>
+                  </summary>
                   <p className="cw-summary">{d.summary}</p>
                   {d.keyPoints?.length ? <ul className="cw-points">{d.keyPoints.map((k, i) => <li key={i}>{k}</li>)}</ul> : null}
                   <a className="cw-ask" href="/tutor">{L("Étudier avec le tuteur →", "Study this with the tutor →")}</a>
-                </article>
+                </details>
               ))}
             </div>
           ))}
