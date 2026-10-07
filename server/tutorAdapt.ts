@@ -19,7 +19,7 @@ const MOVE_TEXT: Record<TutorMoveArm["id"], string> = {
   probe: "ask what they currently think and where exactly it stops making sense — one open question, then listen.",
   "smaller-step": "shrink the step: split what you were about to ask into a tiny first piece they can answer in a few words.",
   "worked-parallel": "show a PARALLEL worked example (same method, different numbers) on the board, leave its last line open, then ask them to do the same on their problem.",
-  visual: "stop using words: put a picture on the board (DRAW_ON_BOARD, GRAPH_ON_BOARD or a small CREATE_INTERACTIVE) and ask what they notice in it.",
+  visual: "stop using words: put a picture on the board (GEOMETRY_ON_BOARD for geometry, DRAW_ON_BOARD, GRAPH_ON_BOARD or a small CREATE_INTERACTIVE) and ask what they notice in it.",
   analogy: "give one everyday analogy for the idea (a real-life situation, not another formula) and ask how it maps onto their problem.",
   "reflect-back": "say back, in your own words, what you think they just said or tried, and ask if you got it right before going further.",
   "direct-hint": "give ONE concrete hint (the rule or the first move, never the answer), then ask them to take the step.",

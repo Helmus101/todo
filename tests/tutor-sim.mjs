@@ -4,7 +4,8 @@
 // answer through, hands the thinking back, writes reasoning to the board, rejects bad/leaky tool calls and
 // keeps replies short. No network, no key needed.
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
-const { chatAboutTask, summarizeCoursework } = await import("../server/claude.ts");
+const { chatAboutTask, summarizeCoursework, makeGeometryEntry } = await import("../server/claude.ts");
+const { buildGeometry } = await import("../shared/geometry.ts");
 
 let script = () => ({ content: "" });
 let calls = [];
@@ -127,4 +128,29 @@ export async function runTutorSim(check, section) {
   const adplan1 = adA.planMove({ userKey: "u:t", message: "ok", history: [], state: adst, contextKey: adkey, update: adB.updatePosterior });
   const adplan2 = adA.planMove({ userKey: "u:t", message: "I told you, that's not working", history: [{ role: "user", text: "a" }, { role: "assistant", text: "b" }], state: adst, contextKey: adkey, update: adB.updatePosterior });
   check("a move that just failed is never served twice in a row and its failure is scored", adplan2.arm !== adplan1.arm && adplan2.scoredPrev?.arm === adplan1.arm && adplan2.scoredPrev.reward === 0);
+
+  // Geometry figures: the model states the maths, the compiler does the drawing (shared/geometry.ts).
+  const geo = buildGeometry({ triangle: { names: ["A", "B", "C"], sides: [3, 4, 5] }, angles: [{ at: "C", from: "A", to: "B", right: true }] });
+  const lines = (geo.ops || []).filter((o) => o.op === "line");
+  const L2 = (o) => Math.hypot(o.x2 - o.x1, o.y2 - o.y1);
+  const [AB, BC, CA] = lines;
+  check("a 3-4-5 triangle is drawn with true proportions (sides 5:3:4) and closes", !geo.error && Math.abs(L2(AB) / L2(BC) - 5 / 3) < 0.02 && Math.abs(L2(CA) / L2(BC) - 4 / 3) < 0.02 && Math.hypot(AB.x2 - BC.x1, AB.y2 - BC.y1) < 0.2 && Math.hypot(BC.x2 - CA.x1, BC.y2 - CA.y1) < 0.2);
+  check("the right angle at C really is 90° and gets a square mark; side lengths + A, B, C are labelled", Math.abs(((BC.x2 - BC.x1) * (CA.x2 - CA.x1) + (BC.y2 - BC.y1) * (CA.y2 - CA.y1))) < 0.02 * L2(BC) * L2(CA) && geo.ops.some((o) => o.op === "polyline" && o.points.length === 3) && ["3", "4", "5", "A", "B", "C"].every((t) => geo.ops.some((o) => o.op === "label" && o.text === t)));
+  check("every op stays inside the 800×600 board", geo.ops.every((o) => ["x", "x1", "x2", "cx"].every((k) => !(k in o) || (o[k] >= 0 && o[k] <= 800)) && ["y", "y1", "y2", "cy"].every((k) => !(k in o) || (o[k] >= 0 && o[k] <= 600))));
+  const alt = buildGeometry({ triangle: { names: ["A", "B", "C"], sides: [7, 6, 5] }, derive: [{ name: "H", kind: "foot", from: "A", onto: ["B", "C"] }], segments: [{ from: "A", to: "H", dashed: true }], angles: [{ at: "H", from: "A", to: "B", right: true }] });
+  const ah = alt.ops.filter((o) => o.op === "line" && o.dashed)[0];
+  const bc = alt.ops.filter((o) => o.op === "line")[1];
+  check("an altitude's foot is exactly perpendicular to its base and the line is dashed", !alt.error && !!ah && Math.abs((ah.x2 - ah.x1) * (bc.x2 - bc.x1) + (ah.y2 - ah.y1) * (bc.y2 - bc.y1)) < 0.01 * L2(ah) * L2(bc));
+  const sec = buildGeometry({ points: { O: [0, 0] }, derive: [{ name: "A", kind: "polar", from: "O", dist: 2, deg: 0 }, { name: "B", kind: "polar", from: "O", dist: 2, deg: 150 }], segments: ["OA", "OB"], arcs: [{ center: "O", r: 2, from: 0, to: 150, label: "5π/6" }] });
+  check("a sector compiles to two radii plus a counter-clockwise arc", !sec.error && sec.ops.filter((o) => o.op === "line").length === 2 && sec.ops.some((o) => o.op === "arc" && o.a1 < o.a0));
+  const circ = buildGeometry({ points: { O1: [0, 0], O2: [25, 0] }, circles: [{ center: "O1", r: 15 }, { center: "O2", r: 10 }] });
+  const cs = circ.ops.filter((o) => o.op === "circle" && o.r > 4);
+  check("two touching circles keep their radius ratio and touch", !circ.error && Math.abs(cs[0].r / cs[1].r - 1.5) < 0.01 && Math.abs(Math.hypot(cs[1].cx - cs[0].cx, cs[1].cy - cs[0].cy) - (cs[0].r + cs[1].r)) < 0.5);
+  check("impossible or undefined input gives a model-readable error, not a broken figure", /can't form a triangle/.test(buildGeometry({ triangle: { names: ["A", "B", "C"], sides: [1, 1, 5] } }).error) && /defined point/.test(buildGeometry({ points: { A: [0, 0] }, segments: ["AZ"] }).error || "") && "error" in makeGeometryEntry({ points: { A: [0, 0] } }));
+  // end to end: the tool is offered and a call lands on the board as a diagram entry
+  script = (b, i) => i === 0
+    ? { content: "", tool_calls: [tc("GEOMETRY_ON_BOARD", { caption: "Triangle ABC", triangle: { names: ["A", "B", "C"], sides: [3, 4, 5] }, angles: [{ at: "C", from: "A", to: "B", right: true }] })] }
+    : { content: "There's the triangle. Which side is the hypotenuse?" };
+  r = await run("help me with a right triangle", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
+  check("GEOMETRY_ON_BOARD is offered to the tutor and its figure lands on the board", calls[0].tools.some((x) => x.function?.name === "GEOMETRY_ON_BOARD") && r.board.length === 1 && r.board[0].kind === "diagram" && r.board[0].diagram.length > 8);
 }

@@ -6,6 +6,7 @@ import { compileExpr } from "../shared/mathExpr.ts";
 import { courseworkForSubject } from "../shared/coursework.ts";
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
+import { buildGeometry } from "../shared/geometry.ts";
 import { repeatsRecentReply } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
@@ -2497,14 +2498,17 @@ const DRAW_ON_BOARD_TOOL = {
     "call's shapes. Coordinate space is 0-800 wide, 0-600 tall; keep the figure roughly centered and leave " +
     "margin, it will be scaled to fit the board. Max 15 ops per figure — plan the layout before calling, " +
     "don't sprawl. One label per meaningful point/line, positioned just off the shape it names, never " +
-    "overlapping another label.",
+    "overlapping another label. FOR GEOMETRY (triangles, circles, sectors, angles, altitudes, polygons) DO NOT " +
+    "use this — use GEOMETRY_ON_BOARD, which does the coordinates for you and draws far more accurately.",
   input_schema: { type: "object", properties: {
     caption: { type: "string", description: "one short line describing the figure, shown as its title on the board" },
     ops: {
       type: "array",
       description: "the figure's shapes, in any order. See each op's own fields.",
       items: { type: "object", properties: {
-        op: { type: "string", enum: ["line", "rect", "circle", "polyline", "label", "axes", "equation"] },
+        op: { type: "string", enum: ["line", "rect", "circle", "polyline", "polygon", "arc", "label", "axes", "equation"] },
+        dashed: { type: "boolean", description: "line/circle/polyline/arc: dashed stroke (auxiliary lines, hidden edges)" },
+        a0: { type: "number", description: "arc only: start angle in degrees, SCREEN orientation (0 = right, 90 = down); sweeps to a1" }, a1: { type: "number", description: "arc only: end angle in degrees (a1 < a0 sweeps counter-clockwise on screen)" },
         x1: { type: "number" }, y1: { type: "number" }, x2: { type: "number" }, y2: { type: "number" },
         arrow: { type: "boolean", description: "line only: draw an arrowhead at (x2,y2)" },
         x: { type: "number" }, y: { type: "number" }, w: { type: "number" }, h: { type: "number" },
@@ -2946,15 +2950,25 @@ function validateDiagramOp(raw: any): DiagramOp | null {
   const color = typeof raw?.color === "string" && raw.color.trim() ? raw.color.trim().slice(0, 20) : undefined;
   switch (raw?.op) {
     case "line":
-      return { op: "line", x1: clampX(raw.x1), y1: clampY(raw.y1), x2: clampX(raw.x2), y2: clampY(raw.y2), ...(raw.arrow ? { arrow: true } : {}), ...(color ? { color } : {}) };
+      return { op: "line", x1: clampX(raw.x1), y1: clampY(raw.y1), x2: clampX(raw.x2), y2: clampY(raw.y2), ...(raw.arrow ? { arrow: true } : {}), ...(raw.dashed ? { dashed: true } : {}), ...(color ? { color } : {}) };
     case "rect":
       return { op: "rect", x: clampX(raw.x), y: clampY(raw.y), w: clampCoord(raw.w, 1, 800), h: clampCoord(raw.h, 1, 600), ...(raw.fill ? { fill: true } : {}), ...(color ? { color } : {}) };
     case "circle":
-      return { op: "circle", cx: clampX(raw.cx), cy: clampY(raw.cy), r: clampR(raw.r) || 1, ...(raw.fill ? { fill: true } : {}), ...(color ? { color } : {}) };
+      return { op: "circle", cx: clampX(raw.cx), cy: clampY(raw.cy), r: clampR(raw.r) || 1, ...(raw.fill ? { fill: true } : {}), ...(raw.dashed ? { dashed: true } : {}), ...(color ? { color } : {}) };
     case "polyline": {
       const pts = Array.isArray(raw.points) ? raw.points.slice(0, 30).map((p: any) => ({ x: clampX(p?.x), y: clampY(p?.y) })) : [];
       if (pts.length < 2) return null;
-      return { op: "polyline", points: pts, ...(color ? { color } : {}) };
+      return { op: "polyline", points: pts, ...(raw.dashed ? { dashed: true } : {}), ...(color ? { color } : {}) };
+    }
+    case "polygon": {
+      const pts = Array.isArray(raw.points) ? raw.points.slice(0, 20).map((p: any) => ({ x: clampX(p?.x), y: clampY(p?.y) })) : [];
+      if (pts.length < 3) return null;
+      return { op: "polygon", points: pts, ...(raw.fill ? { fill: true } : {}), ...(color ? { color } : {}) };
+    }
+    case "arc": {
+      const a0 = clampCoord(raw.a0, -720, 720), a1 = clampCoord(raw.a1, -720, 720);
+      if (a0 === a1) return null;
+      return { op: "arc", cx: clampX(raw.cx), cy: clampY(raw.cy), r: clampR(raw.r) || 1, a0, a1, ...(raw.dashed ? { dashed: true } : {}), ...(color ? { color } : {}) };
     }
     case "label": {
       const text = String(raw?.text || "").trim().slice(0, 60);
@@ -2992,6 +3006,43 @@ export function makeDiagramEntry(input: any): { entry: BoardEntry } | { error: s
   if (!ops.length) return { error: "ERROR: no valid ops after validation — check each op has its required fields (see the tool schema)." };
   return { entry: { id: randomUUID(), text: caption, kind: "diagram", diagram: ops, at: new Date().toISOString() } };
 }
+
+/** GEOMETRY_ON_BOARD: the model states points in REAL units + relations; shared/geometry.ts does the drawing maths. */
+export function makeGeometryEntry(input: any): { entry: BoardEntry } | { error: string } {
+  const caption = String(input?.caption || "").trim().slice(0, 200);
+  if (!caption) return { error: "ERROR: caption is required." };
+  const r = buildGeometry(input || {});
+  if ("error" in r) return r;
+  return { entry: { id: randomUUID(), text: caption, kind: "diagram", diagram: r.ops, at: new Date().toISOString() } };
+}
+const GEOMETRY_ON_BOARD_TOOL = {
+  name: "GEOMETRY_ON_BOARD",
+  description: "Draw an ACCURATE geometry figure on the board — triangles, circles, sectors/arcs, polygons, angle marks, " +
+    "altitudes, midpoints. You give the MATHS (named points in real units, what joins what), the board does the drawing: " +
+    "correct proportions (a 3-4-5 triangle really is right-angled), centred, every point labelled outside the shape, angle " +
+    "arcs and right-angle squares, tick marks for equal sides. NEVER work out pixel coordinates. Use this for ANY geometry " +
+    "or trig-setup figure; use DRAW_ON_BOARD only for non-geometric sketches (arrows, number lines, free diagrams). " +
+    "Show the GIVEN information only (lengths, angles the problem states) — label what the student must find with '?' " +
+    "or leave it unlabelled, never the answer. Redraw the WHOLE figure when adding to it (e.g. add the altitude). " +
+    "EXAMPLES: a 3-4-5 triangle with the right angle at C → triangle:{names:['A','B','C'], sides:[3,4,5]} (sides are [a=BC, b=CA, c=AB]) " +
+    "+ angles:[{at:'C',from:'A',to:'B',right:true}]. Triangle with altitude → triangle + " +
+    "derive:[{name:'H',kind:'foot',from:'A',onto:['B','C']}] + segments:[{from:'A',to:'H',dashed:true}] + angles:[{at:'H',from:'A',to:'B',right:true}]. " +
+    "Sector of radius 2 and angle 5π/6 → points:{O:[0,0]}, arcs:[{center:'O',r:2,from:0,to:150,label:'5π/6'}], " +
+    "derive:[{name:'A',kind:'polar',from:'O',dist:2,deg:0},{name:'B',kind:'polar',from:'O',dist:2,deg:150}], segments:[{from:'O',to:'A',label:'2'},{from:'O',to:'B',label:'2'}]. " +
+    "Two circles → circles:[{center:'O1',r:15},{center:'O2',r:10}] with points O1:[0,0], O2:[25,0].",
+  input_schema: { type: "object", properties: {
+    caption: { type: "string", description: "one short line, shown as the figure's title" },
+    points: { type: "object", description: "named points in REAL units, maths orientation (y up): {\"A\":[0,0],\"B\":[4,0]}. Names are letters like A, B, O, H, A'." },
+    triangle: { type: "object", description: "alternative to points for a triangle: {names:[A,B,C], sides:[a,b,c]} where a=BC, b=CA, c=AB; solved exactly (law of cosines). Sides get length labels unless labelSides:false.", properties: { names: { type: "array", items: { type: "string" } }, sides: { type: "array", items: { type: "number" } }, labelSides: { type: "boolean" } } },
+    derive: { type: "array", description: "points computed in order: {name,kind:'midpoint',of:[P,Q]} | {name,kind:'foot',from:P,onto:[Q,R]} (foot of the perpendicular = altitude/height) | {name,kind:'polar',from:P,dist,deg} (a point at a distance and angle from P, degrees counter-clockwise from the +x axis).", items: { type: "object" } },
+    segments: { type: "array", description: "\"AB\" or {from,to,label?,dashed?,ticks?(1-3 equal-side marks),arrow?,color?}. label is a length like \"5\" or \"x\".", items: {} },
+    polygons: { type: "array", description: "closed shapes: \"ABC\" or {points:[...],fill?:true,color?}", items: {} },
+    circles: { type: "array", description: "{center,r | through,label?,dashed?,fill?} — r in the same real units as the points", items: { type: "object" } },
+    arcs: { type: "array", description: "{center,r,from,to,label?} degrees counter-clockwise from +x — sectors, arc length problems", items: { type: "object" } },
+    angles: { type: "array", description: "{at:'B',from:'A',to:'C',label?:'40°'|'θ'|'?',right?:true} — an arc (or right-angle square) at vertex B between rays BA and BC", items: { type: "object" } },
+    unlabeled: { type: "array", items: { type: "string" }, description: "point names that should NOT get a name label" },
+  }, required: ["caption"] },
+};
 
 const GRAPH_COLORS = ["blue", "red", "green", "orange", "purple", "ink"] as const;
 /** Validate a GRAPH_ON_BOARD request: every expression must compile (shared/mathExpr.ts, no eval) and produce
@@ -7168,6 +7219,11 @@ const PRIMER_PERSONA =
   `typeset via DRAW_ON_BOARD's equation op. NEVER copy what the student typed or what you just said into the ` +
   `board word for word — a quote of the chat is noise; the board adds structure, the why and the result. Only ` +
   `what has actually been reached: never a step they haven't got to, never the answer.\n` +
+  `- GEOMETRY: any triangle, circle, sector, polygon, angle, altitude or midpoint figure goes through ` +
+  `GEOMETRY_ON_BOARD (state named points in real units + what joins what; it draws accurately, labels cleanly, ` +
+  `marks angles and right angles) — never DRAW_ON_BOARD with pixel guesses. Draw the GIVEN, mark the unknown as ` +
+  `"?", then ask what they notice or which relationship links the pieces. Adding the altitude/a radius/a ` +
+  `midpoint = redraw the whole figure with it, dashed.\n` +
   `- GRAPHS: for anything that is a FUNCTION or data trend (parabolas and a/b/c, amplitude/period, exponentials, ` +
   `transformations, motion graphs, a line of best fit; also bar charts, histograms and 3D surfaces z=f(x,y)) use GRAPH_ON_BOARD, not CREATE_INTERACTIVE — it's instant, ` +
   `always renders, and gives the student real sliders and a hover readout. Plot the FAMILY or the setup, never ` +
@@ -8303,8 +8359,8 @@ export async function chatAboutTask(
   // core to live tutoring and/or already cheap.
   const includeArtifactTools = wantsArtifactTools(message, history);
   const tools = opts?.canvasMode
-    ? [CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, CREATE_INTERACTIVE_TOOL, SET_OBJECTIVES_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])]
-    : [...(includeArtifactTools ? [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL] : []), CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, SET_OBJECTIVES_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])];
+    ? [CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, CREATE_INTERACTIVE_TOOL, SET_OBJECTIVES_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])]
+    : [...(includeArtifactTools ? [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL] : []), CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, SET_OBJECTIVES_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])];
   const empty = (): ChatResult => ({ reply: "", notes: [], flashcards: [], quizzes: [], problems: [], board: [], audit: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false });
   const result = empty();
   const logAudit = (kind: AuditEvent["kind"], label: string) => result.audit.push({ at: new Date().toISOString(), kind, label });
@@ -8694,6 +8750,10 @@ export async function chatAboutTask(
           // state a value just as plainly as prose can.
           else if (leaksAnyProblemAnswer([input?.caption, ...(Array.isArray(input?.ops) ? input.ops.map((o: any) => `${o?.text || ""} ${o?.latex || ""}`) : [])].join(" "), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that figure states a problem's answer outright — redraw it without that value.";
           else { const r = makeDiagramEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Figure dessinée : « ${r.entry.text.slice(0, 60)} »` : `Diagram drawn: "${r.entry.text.slice(0, 60)}"`); } }
+        } else if (name === "GEOMETRY_ON_BOARD") {
+          if (result.board.filter((e) => e.kind === "diagram").length >= 3) content = "LIMIT: you've already drawn a few figures this message — that's enough for one turn.";
+          else if (leaksAnyProblemAnswer([input?.caption, ...(Array.isArray(input?.segments) ? input.segments.map((x: any) => (typeof x === "object" ? x?.label : "")) : []), ...(Array.isArray(input?.angles) ? input.angles.map((x: any) => x?.label) : []), ...(Array.isArray(input?.arcs) ? input.arcs.map((x: any) => x?.label) : []), ...(Array.isArray(input?.circles) ? input.circles.map((x: any) => x?.label) : [])].filter(Boolean).join(" "), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that figure labels a problem's answer — redraw it with the unknown shown as '?'.";
+          else { const r = makeGeometryEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Figure dessinée : « ${r.entry.text.slice(0, 60)} »` : `Diagram drawn: "${r.entry.text.slice(0, 60)}"`); } }
         } else if (name === "GRAPH_ON_BOARD") {
           if (result.board.filter((e) => e.kind === "graph").length >= 2) content = "LIMIT: you've already put a couple of graphs on the board this message — that's enough for one turn.";
           else if (leaksAnyProblemAnswer([input?.caption, ...(Array.isArray(input?.fns) ? input.fns.map((f: any) => f?.label || "") : [])].join(" "), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that graph's caption or labels state a problem's answer — title it by what to explore, not by the result.";

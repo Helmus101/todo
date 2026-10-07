@@ -4539,7 +4539,7 @@ section("CREATE_INTERACTIVE — sandboxed, scoped to Study Mode, capped (source 
 {
   const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
   check("CREATE_INTERACTIVE is only added to the canvas-mode (Study Mode) tool list, not the regular task-chat one", (() => {
-    const canvasLine = claude.split("\n").find((l) => l.includes("CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, CREATE_INTERACTIVE_TOOL"));
+    const canvasLine = claude.split("\n").find((l) => l.includes("CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, CREATE_INTERACTIVE_TOOL"));
     const regularLine = claude.split("\n").find((l) => l.includes("CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL"));
     return !!canvasLine && !!regularLine && !regularLine.includes("CREATE_INTERACTIVE");
   })());
