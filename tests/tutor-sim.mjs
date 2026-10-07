@@ -175,4 +175,18 @@ export async function runTutorSim(check, section) {
   check("a short single-answer exercise is accepted", !("error" in makeProblem({ question: "Simplify $\\cos^2\\theta(1+\\tan^2\\theta)$ to a single number.", answer: "1" })) && !("error" in makeProblem({ question: "Solve 2x + 3 = 11.", answer: "x = 4" })));
   check("open-ended asks (explain / why / prove / compare) are rejected as exercises", ["Explain why the sum of angles is 180°.", "Prove that sin²x + cos²x = 1.", "Why does the graph open upward?", "Compare mitosis and meiosis.", "Explique pourquoi x² ≥ 0."].every((q) => /open-ended/.test(makeProblem({ question: q, answer: "1" }).error || "")));
   check("prose answers and multi-part prompts are rejected; MCQ stays allowed", /ONE short checkable answer/.test(makeProblem({ question: "What happens to the force?", answer: "it doubles because the mass doubles" }).error || "") && /multi-part/.test(makeProblem({ question: "(a) Find x. (b) Find y.", answer: "3" }).error || "") && !("error" in makeProblem({ question: "Why is the sky blue?", options: ["Rayleigh scattering", "Reflection of the sea"], correct: 0 })));
+
+  // The board must never answer the question Otto is asking.
+  const unitTable = { text: "90°: (0, 1)\n180°: (-1, 0)\n270°: (0, -1)\n<- x = cos(a), y = sin(a)", kind: "note" };
+  check("a board table that already shows the asked value is detected (the 270° case)", adA.boardStatesAskedValue("So what's cos(270°) and sin(270°) down there?", [unitTable]).length === 1);
+  check("a table that leaves the asked value as ? or shows only OTHER cases is fine", adA.boardStatesAskedValue("So what's cos(270°) and sin(270°)?", [{ text: "90°: (0, 1)\n180°: (-1, 0)\n270°: ?" }]).length === 0 && adA.boardStatesAskedValue("So what's cos(270°)?", [{ text: "90°: (0, 1)\n180°: (-1, 0)" }]).length === 0 && adA.boardStatesAskedValue("What's the next step?", [unitTable]).length === 0);
+  check("a worked arithmetic line that states the asked product is detected", adA.boardStatesAskedValue("Now what is 7 × 8?", [{ text: "7 × 8 = 56" }]).length === 1);
+  // end to end: the leaking entry is pulled, Otto redraws it with a blank, the student only ever sees the fixed one
+  script = (b, i) => i === 0
+    ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", unitTable)] }
+    : i === 1 ? { content: "Nailed it. So what's cos(270°) and sin(270°) down there?" }
+    : i === 2 ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "90°: (0, 1)\n180°: (-1, 0)\n270°: ?\n<- x = cos(a), y = sin(a)", kind: "note" })] }
+    : { content: "Nailed it. So what's cos(270°) and sin(270°) down there?" };
+  r = await run("180 is (-1, 0)", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
+  check("end to end: the self-answering table never reaches the student; the redrawn one with '?' does", r.board.length === 1 && /270°: \?/.test(r.board[0].text) && !/270°: \(0/.test(r.board[0].text));
 }

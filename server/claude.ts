@@ -7,7 +7,7 @@ import { courseworkForSubject } from "../shared/coursework.ts";
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { buildGeometry } from "../shared/geometry.ts";
-import { repeatsRecentReply, softenOpener, spokenMathHint } from "./tutorAdapt.ts";
+import { repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -7358,6 +7358,9 @@ const PRIMER_PERSONA =
   `typeset via DRAW_ON_BOARD's equation op. NEVER copy what the student typed or what you just said into the ` +
   `board word for word — a quote of the chat is noise; the board adds structure, the why and the result. Only ` +
   `what has actually been reached: never a step they haven't got to, never the answer.\n` +
+  `- THE BOARD NEVER ANSWERS YOUR QUESTION: whatever you ask them to work out must NOT already be written on the ` +
+  `board. When you lay out a pattern or table (unit-circle values, a worked case, a list of examples), show the ` +
+  `OTHER cases and leave the one you're asking about as "?" — never fill in the asked value and then ask for it.\n` +
   `- EXERCISES ARE ONLY FOR ONE-ANSWER QUESTIONS: CREATE_PROBLEM is for a question whose answer is a single short, ` +
   `checkable value (a number, an expression, a term) or a multiple-choice. Anything open-ended — explain, why, ` +
   `describe, justify, prove, compare, "what do you think" — is asked in the conversation, never as an exercise box.\n` +
@@ -8605,6 +8608,23 @@ export async function chatAboutTask(
         : "You're working with real math here and the board is still completely empty — the student can see your reply but nothing is visible next to it. Before you reply again, call WRITE_TO_BOARD ONCE: the formula in play, the given values, or the definition you just used (real math through DRAW_ON_BOARD's equation op — one short entry, NOT a wall of text, and not a restatement of your reply). Then send your short reply again. If this exchange genuinely produced nothing worth keeping visible, just continue unchanged and don't mention this." });
       return true;
     };
+    // The question must not answer itself: a board entry written THIS turn that already states the value Otto is
+    // asking for (a table with "270°: (0, −1)" next to "what's cos 270°?") gets pulled before the student sees it
+    // and rewritten once with that value left as "?". Only this turn's pending entries are touched — nothing the
+    // student already has on their board is ever removed.
+    let askedLeakFixed = false;
+    const guardAskedValue = (draft: string, round: number, lastRound: boolean): boolean => {
+      if (!opts?.primer || !result.board.length) return false;
+      const bad = boardStatesAskedValue(draft, result.board as any);
+      if (!bad.length) return false;
+      result.board = result.board.filter((_, i) => !bad.includes(i));
+      if (askedLeakFixed || lastRound) return false;
+      askedLeakFixed = true;
+      console.log(`${new Date().toISOString()} [chat] round ${round}: a board entry already states the value the question asks for — pulled, asking for a rewrite with a blank`);
+      messages.push({ role: "assistant", content: draft });
+      messages.push({ role: "user", content: "The board entry you just wrote already STATES the value you're asking the student to find, so the question answers itself. I've pulled that entry (they never saw it). Call WRITE_TO_BOARD again with the same idea but leave the asked-for value out — show the OTHER cases or the pattern, and put \"?\" (or nothing) where the value they must work out would be. Then send your short reply again; don't mention this correction." });
+      return true;
+    };
     let truncationRetried = false;
     // Latches for the post-reply truth pass below (each fires at most ONCE per turn, same shape as the
     // board-claim fix): one corrective round when the draft asserts arithmetic that doesn't recompute,
@@ -8814,6 +8834,7 @@ export async function chatAboutTask(
           messages.push({ role: "user", content: "That is almost exactly what you already said and it did not land. Do NOT repeat it. In one short sentence say what you heard from the student, then try a DIFFERENT approach (a picture, a tiny worked case, or a different question), one question at most. Don't mention this instruction." });
           continue;
         }
+        if (guardAskedValue(textContent, round, lastRound)) continue;
         if (nudgeReasoning(textContent, round, lastRound)) continue;
         if (!lengthRetried && !lastRound && !opts?.voiceMode && countWords(textContent) > 120) {
           lengthRetried = true;
@@ -8947,6 +8968,7 @@ export async function chatAboutTask(
       // own trig step in chat and wrote nothing, so the board never showed THEIR reasoning or the formula
       // in play). ONE corrective round, latched, same shape as that fix: add the entry, or continue
       // unchanged if the exchange genuinely produced nothing board-worthy.
+      if (guardAskedValue(textContent, round, lastRound)) continue;
       if (nudgeReasoning(textContent, round, lastRound)) continue;
       if (!boardNudgeDone && !lastRound && shouldNudgeBoardWrite(textContent, message, result.board.length > 0)) {
         boardNudgeDone = true;

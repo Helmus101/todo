@@ -143,3 +143,30 @@ export function spokenMathHint(message: string): string {
   s = s.replace(/\s+/g, " ").trim();
   return `\n\nDICTATED MATHS: the student's message looks spoken/transcribed. Literal symbol reading: «${s}». The GROUPING (what is under which fraction bar, what a bracket holds, what multiplies what) is NOT reliable in speech — write your typeset reading on the board and confirm it with them before working on it, and if a word looks like a transcription slip ("Cortex" for "cot x"), say what you took it to mean.\n`;
 }
+
+/** What the tutor is ASKING about: the specific values/expressions in its final question — angles/units ("270°",
+ *  "5π/6"), and small arithmetic expressions ("7 × 8"). Plain bare numbers are ignored (too common to mean anything). */
+export function askedTokens(reply: string): string[] {
+  const q = (reply.match(/[^.!?\n]*\?/g) || []).slice(-2).join(" ");
+  const toks = new Set<string>();
+  for (const m of q.matchAll(/\d+(?:[.,]\d+)?\s*(?:°|π|pi\b|rad\b|degrees?\b|degrés?\b)|\d*π(?:\s*\/\s*\d+)?|\b\d+(?:[.,]\d+)?\s*[×x*+\-−/÷^]\s*\d+(?:[.,]\d+)?/gi)) toks.add(m[0].replace(/\s+/g, "").toLowerCase());
+  return [...toks].filter((t) => t.length >= 2);
+}
+
+/** Does any of these board entries already STATE a value for something the question asks about? (e.g. the board
+ *  shows "270°: (0, −1)" while Otto asks "what's cos(270°) and sin(270°)?" — the question answers itself.)
+ *  Returns the indices of the offending entries. A "?" placeholder after the marker is fine. */
+export function boardStatesAskedValue(reply: string, entries: { text?: string; diagram?: { text?: string; latex?: string }[] }[]): number[] {
+  const toks = askedTokens(reply);
+  if (!toks.length) return [];
+  const bad: number[] = [];
+  entries.forEach((e, i) => {
+    const hay = [e.text || "", ...(e.diagram || []).map((o) => `${o.text || ""} ${o.latex || ""}`)].join("\n").replace(/[ \t]+/g, "").toLowerCase();
+    for (const tok of toks) {
+      const esc = tok.replace(/[.*+?^${}()|[\]\\\/-]/g, "\\$&");
+      // token, then (within a few chars of function/bracket noise) a value marker and a real value that isn't "?"
+      if (new RegExp(`${esc}[)\\]]?(?:[:=→⇒]|-->|->|=>|\\\\to|\\\\rightarrow)(?!\\?|\\s*$)[^\\n]{1,}`).test(hay)) { bad.push(i); break; }
+    }
+  });
+  return bad;
+}
