@@ -7407,9 +7407,11 @@ const PRIMER_PERSONA =
   `definitions, key quotes with ==the key part== highlighted, cause→effect chains; languages — vocabulary, ` +
   `conjugations, corrected sentences, example sentences; any subject — a mnemonic, an analogy, a common ` +
   `mistake to watch for, an insight credited to them, a "so far" recap, a checklist of what's left. When in doubt, ` +
-  `WRITE IT DOWN: a student who can see the problem, what they've found and what's next thinks better than one ` +
-  `holding it all in their head. Several short entries beat one long one; every entry one idea.\n` +
-  `- WHEN TO USE THE BOARD — EXACTLY (use it generously; the board is the shared page you both think on): ` +
+  `write it down: a student who can see the problem, what they've found and what's next thinks better than one ` +
+  `holding it all in their head. Several short entries beat one long one; every entry one idea. But it is a ` +
+  `living page, not a form: never write an entry just to have written one, and never repeat what is already there.\n` +
+  `- WHEN THE BOARD HELPS (a guide to your judgement, NOT a checklist — add something when it genuinely helps the ` +
+  `student think, skip it when it would just be clutter; a quick clarification or a bit of chat needs nothing): ` +
   `(1) the moment a problem arrives: today's focus + the problem AS GIVEN, typeset; (2) EVERY guiding question you ask ` +
   `about the work goes on the board too (kind "question": the question itself, short, never its answer) — the ` +
   `question stays in front of them while they think; (3) every formula, definition or rule the second you mention ` +
@@ -8678,7 +8680,7 @@ export async function chatAboutTask(
       console.log(`${new Date().toISOString()} [chat] round ${round}: ${studentStep ? "student contributed a step but" : "real math in the reply but"} nothing is on the board — asking for the write`);
       messages.push({ role: "assistant", content: draft });
       messages.push({ role: "user", content: studentStep
-        ? "The student just contributed a step, but nothing was added to the board this turn — the board is their paper and it should show their work. Before you reply, write to it (1-3 short WRITE_TO_BOARD calls): (a) kind \"summary\" — THEIR reasoning so far in your own words, maths in $…$ (the move they made, why it works, what it gave); (b) if the step produced an equation, value or simplified form that matters for the NEXT part of the problem, kind \"result\" — that thing alone, typeset in $…$, with a 2-4 word label (e.g. \"Established: $\\\\cos\\\\tfrac{\\\\pi}{3}=\\\\tfrac12$\"); (c) if a formula or rule is in play and not on the board yet, kind \"formula\". Only what THEY have reached — never a step they haven't taken or the final answer, never their message word for word. Then send your short reply again."
+        ? "The student just contributed a step, but nothing was added to the board this turn — the board is their paper and it should show their work. Before you reply, write to it (1-3 short WRITE_TO_BOARD calls): (a) kind \"summary\" — THEIR reasoning so far in your own words, maths in $…$ (the move they made, why it works, what it gave); (b) if the step produced an equation, value or simplified form that matters for the NEXT part of the problem, kind \"result\" — that thing alone, typeset in $…$, with a 2-4 word label (e.g. \"Established: $\\\\cos\\\\tfrac{\\\\pi}{3}=\\\\tfrac12$\"); (c) if a formula or rule is in play and not on the board yet, kind \"formula\". Only what THEY have reached — never a step they haven't taken or the final answer, never their message word for word. Write only what is genuinely worth keeping — if the step was trivial, write nothing. Then send your short reply again."
         : "You're working with real math here and the board is still completely empty — the student can see your reply but nothing is visible next to it. Before you reply again, call WRITE_TO_BOARD ONCE: the formula in play, the given values, or the definition you just used (real math through DRAW_ON_BOARD's equation op — one short entry, NOT a wall of text, and not a restatement of your reply). Then send your short reply again. If this exchange genuinely produced nothing worth keeping visible, just continue unchanged and don't mention this." });
       return true;
     };
@@ -8723,6 +8725,9 @@ export async function chatAboutTask(
       if (known.some((e) => (e.kind === "question" || e.kind === "instruction") && similarity(norm(e.text), norm(q)) >= 0.7)) return;
       if (result.board.some((e) => e.kind !== "question" && similarity(norm(e.text || ""), norm(q)) >= 0.6)) return;
       if (result.board.filter((e) => e.kind === "question").length >= 1) return;
+      // not a card per turn: if one of the last two things on the board is already a question, the student is still
+      // working with it — only a new question once the board has moved on.
+      if ((opts?.currentBoard || []).slice(-2).some((e) => e.kind === "question")) return;
       const made = makeBoardEntry({ text: q, kind: "question" });
       if ("entry" in made && !boardStatesAskedValue(q, [made.entry as any]).length) result.board.push(made.entry);
     };

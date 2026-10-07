@@ -233,4 +233,9 @@ export async function runTutorSim(check, section) {
   script = (b, i) => i === 0 ? { content: "Right, that's the sum formula. Which two special angles add up to 5π/12?" } : i === 1 ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "Established: $\\sin(A+B)=\\sin A\\cos B+\\cos A\\sin B$", kind: "result" })] } : { content: "Right, that's the sum formula. Which two special angles add up to 5π/12?" };
   r = await run("so I use sin(A+B) = sin A cos B + cos A sin B", { history: [{ role: "user", text: "find sin(5π/12)" }, { role: "assistant", text: "ok" }] });
   check("a student step gets the nudge even though the question was auto-placed; a 'result' entry lands (kind result)", /kind \\\"result\\\"|kind \"result\"/.test(JSON.stringify(calls[1].messages)) || r.board.some((e) => e.kind === "result"));
+
+  check("the board guidance is judgement, not a checklist (no forced entries, no repeats)", /GUIDE TO YOUR JUDGEMENT|a guide to your judgement/.test(String(calls[0].messages[0].content)) && /never write an entry just to have written one/.test(String(calls[0].messages[0].content)));
+  script = () => ({ content: "Nice. Which factor first?" });
+  r = await run("ok", { history: [{ role: "user", text: "solve x^2-5x+6" }, { role: "assistant", text: "ok" }], board: [{ id: "q", kind: "question", text: "Which two numbers multiply to 6 and add to −5?", at: "" }] });
+  check("a new question card is not stacked on top of one the student is still working with", r.boardAll.every((e) => e.kind !== "question"));
 }
