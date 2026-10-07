@@ -42,6 +42,15 @@ async function dismissWithRetry(taskId: string): Promise<void> {
  *  dismissed silently, not memorialized). Ending a session generates a short summary from the board + chat
  *  (see tutorSessions.ts), saves it locally, and dismisses the task so the next start creates a fresh one.
  *  Past session summaries are shown in a collapsible strip. */
+/** Union by id, keeping every existing item (never drops one), ordered by time. Pure. */
+export function mergeBoardById<T extends { id: string; at?: string; createdAt?: string }>(existing: T[], incoming: T[]): T[] {
+  const seen = new Set(existing.map((x) => x.id));
+  const fresh = incoming.filter((x) => x && !seen.has(x.id));
+  if (!fresh.length) return existing;
+  const when = (x: T) => Date.parse(x.at || x.createdAt || "") || Number.MAX_SAFE_INTEGER;
+  return [...existing, ...fresh].map((x, i) => ({ x, i })).sort((a, b) => when(a.x) - when(b.x) || a.i - b.i).map((o) => o.x);
+}
+
 export function TutorSession({ userId, onExit, visionReady, sessionId }: { userId: string | null; onExit: () => void; visionReady: boolean; sessionId?: string }) {
   const L = useLang();
   const [task, setTask] = useState<WebTask | null>(null);
@@ -253,9 +262,15 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
       // chat/board/problems are cloud-persisted again now (server/index.ts's chat route) — `updated`
       // already carries the full, authoritative arrays, no local-storage write needed.
       // Only update relevant fields, preserve context/steps/links from before
+      // NEVER let the server's copy replace what's already on screen: its stored board/chat are capped and can lag
+      // behind this device, so taking `updated` wholesale made new writes wipe older board entries (and long
+      // chats). Keep everything we have, add what's new by id, order by time.
       setTask({
         ...task,
         ...updated,
+        board: mergeBoardById(task.board || [], updated?.board || []),
+        problems: mergeBoardById(task.problems || [], updated?.problems || []),
+        chat: [...(task.chat || []), ...(response.chatDelta || [])],
         objectives: newObjectives,
         // Don't overwrite context/steps/links with irrelevant data
         context: task.context || "",
@@ -269,6 +284,9 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
         setTask({
           ...task,
           ...errorData.task,
+          board: mergeBoardById(task.board || [], errorData.task?.board || errorData.board || []),
+          problems: mergeBoardById(task.problems || [], errorData.task?.problems || errorData.problems || []),
+          chat: task.chat || [],
           // Preserve context/steps/links
           context: task.context || "",
           steps: task.steps || [],
