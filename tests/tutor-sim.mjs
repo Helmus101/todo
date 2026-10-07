@@ -203,4 +203,9 @@ export async function runTutorSim(check, section) {
   check("a re-worded copy of an existing board line is a duplicate (the board no longer repeats itself)", isDuplicateBoardEntry([{ id: "1", text: "x = cos(a), y = sin(a) on the unit circle", kind: "note", at: "" }], { text: "On the unit circle: x = cos(a), y = sin(a)", kind: "note" }) && !isDuplicateBoardEntry([{ id: "1", text: "x = cos(a), y = sin(a)", kind: "note", at: "" }], { text: "tan(a) = sin(a)/cos(a)", kind: "note" }));
   const eqA = { id: "1", text: "The equation", kind: "diagram", at: "", diagram: [{ op: "equation", x: 1, y: 1, latex: "3(\\frac{1}{\\cot^2 x})" }] };
   check("the same figure/equation drawn twice is a duplicate; an added element makes it new", isDuplicateDiagram([eqA], { ...eqA, id: "2", diagram: [{ op: "equation", x: 9, y: 9, latex: "3 ( \\frac{1}{\\cot^2 x} )" }] }) && !isDuplicateDiagram([eqA], { ...eqA, id: "3", diagram: [...eqA.diagram, { op: "equation", x: 1, y: 80, latex: "= 8\\sec x" }] }));
+
+  const exR = "[Exercise] I answered \"4\" — marked right (try #1).";
+  check("milestone cheer: a streak of right exercises, or all objectives done; not on a plain turn or a single right answer", /MILESTONE/.test(adA.cheerLine(exR, [{ role: "user", text: exR }, { role: "assistant", text: "nice?" }])) && /every objective/.test(adA.cheerLine("ok", [], [{ done: true }, { done: true }])) && adA.cheerLine("x = 4", [], [{ done: true }, { done: false }]) === "" && adA.cheerLine(exR, []) === "");
+  check("when stuck, the first rung normalises before shrinking the step", /NORMALISE/.test(adA.scaffoldLine("idk", [])));
+  check("the persona has the warm-older-student voice and uses what it knows about the student", /WARM OLDER STUDENT/.test(String(calls[0].messages[0].content)) && /use what you know about them/.test(String(calls[0].messages[0].content)));
 }

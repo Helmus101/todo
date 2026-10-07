@@ -67,6 +67,9 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
   const [openChatSession, setOpenChatSession] = useState<TutorSessionSummary | null>(null);
   // The stage hides the transcript on purpose, but it is always one tap away: this drawer.
   const [chatDrawer, setChatDrawer] = useState(false);
+  // End-of-session reflection (IB "reflective"): before a real session closes, one optional question.
+  const [reflectOpen, setReflectOpen] = useState(false);
+  const [reflectText, setReflectText] = useState("");
   const [chatExpanded, setChatExpanded] = useState(false);
   const [openPast, setOpenPast] = useState<Record<string, boolean>>({});
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -143,7 +146,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
     }
   }, [sessionId, userId]);
 
-  const saveAndClose = useCallback((task: WebTask, startedAt: string) => {
+  const saveAndClose = useCallback((task: WebTask, startedAt: string, reflection?: string) => {
     const chat = task.chat || [];
     const board = task.board || [];
     const userMsgCount = chat.filter((m) => m.role === "user").length;
@@ -167,6 +170,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
       subject: task.sourceSubject,
       objectivesCompleted: task.objectives?.length ? task.objectives.filter((o) => o.done).length : undefined,
       objectivesTotal: task.objectives?.length || undefined,
+      ...(reflection?.trim() ? { reflection: reflection.trim().slice(0, 500) } : {}),
     };
     saveTutorSession(sessionSummary, userId);
     setPastSessions(getTutorSessions(userId));
@@ -333,14 +337,14 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
     return () => clearTimeout(t);
   }, [resultTick, sending, voiceState.speaking, task?.id]);
 
-  const endSession = useCallback(async () => {
+  const endSession = useCallback(async (reflection?: string) => {
     if (!task || endingSession) return;
     setEndingSession(true);
     try {
       // Ending must ALWAYS end: a failure while saving the history summary (storage full, an odd board entry)
       // or while dismissing the task server-side must never leave the student stuck on a button that does
       // nothing. Every step is best-effort; the screen is left no matter what.
-      try { saveAndClose(task, sessionStart || task.createdAt || new Date().toISOString()); } catch (e) { console.warn("[tutor] couldn't save the session summary:", e); }
+      try { saveAndClose(task, sessionStart || task.createdAt || new Date().toISOString(), reflection); } catch (e) { console.warn("[tutor] couldn't save the session summary:", e); }
       // Dismiss the freestudy task so the next start creates a fresh one.
       try { await dismissWithRetry(task.id); } catch { /* ghost-cleanup in peekForActiveSession covers it */ }
     } finally {
@@ -670,7 +674,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
         <button type="button" className="btn ghost tutor-chat-btn" data-tour="ts-chat" onClick={() => setChatDrawer(true)} aria-label={L("Ouvrir le chat", "Open chat")}>
           <MessageCircle size={14} aria-hidden="true" /> {L("Chat", "Chat")}
         </button>
-        <button className="btn ghost tutor-end-btn" disabled={endingSession} onClick={() => void endSession()}>
+        <button className="btn ghost tutor-end-btn" disabled={endingSession} onClick={() => { const real = (task.chat || []).filter((m) => m.role === "user").length >= 3; if (real) setReflectOpen(true); else void endSession(); }}>
           {endingSession ? L("Fin…", "Ending…") : L("Terminer la séance", "End session")}
         </button>
       </header>
@@ -705,6 +709,19 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
           onVoiceStateChange={handleVoiceState}
         />
       </div>
+      {reflectOpen && (
+        <div className="tutor-reflect-overlay" role="dialog" aria-modal="true" aria-label={L("Avant de partir", "Before you go")} onClick={() => setReflectOpen(false)}>
+          <div className="tutor-reflect" onClick={(e) => e.stopPropagation()}>
+            <h3>{L("Avant de partir", "Before you go")}</h3>
+            <p>{L("Qu'est-ce qui t'a fait « tilt » aujourd'hui, et qu'est-ce que tu ferais différemment la prochaine fois ?", "What's one thing that clicked today, and what would you do differently next time?")}</p>
+            <textarea className="tutor-reflect-input" rows={4} autoFocus value={reflectText} onChange={(e) => setReflectText(e.target.value)} placeholder={L("Écris quelques mots… (facultatif)", "A few words… (optional)")} />
+            <div className="tutor-reflect-actions">
+              <button type="button" className="btn ghost" onClick={() => { setReflectOpen(false); void endSession(""); }}>{L("Passer", "Skip")}</button>
+              <button type="button" className="btn primary" onClick={() => { setReflectOpen(false); void endSession(reflectText); }}>{L("Enregistrer et terminer", "Save & end")}</button>
+            </div>
+          </div>
+        </div>
+      )}
       {chatDrawer && (
         <TaskModal wide onClose={() => { setChatDrawer(false); setChatExpanded(false); }} title={L("Chat avec Otto", "Chat with Otto")}>
           <div className={`tutor-chat-drawer${chatExpanded ? " expanded" : ""}`}>

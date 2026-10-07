@@ -189,7 +189,7 @@ export function scaffoldLine(message: string, history: { role: string; text: str
   const n = stuckStreak(message, history);
   if (!n) return "";
   const rung = n === 1
-    ? "PUMP: they're stuck, so don't explain. Ask what they DO know or have tried so far, or one much smaller question about the first thing in the problem that they can answer in a few words."
+    ? "PUMP: they're stuck, so don't explain. First NORMALISE it in a few warm words (\"this one's fiddly — most people trip here\"), then ask what they DO know or have tried so far, or one much smaller question about the first thing in the problem that they can answer in a few words."
     : n === 2
       ? "PROMPT: still stuck — give a cue, not the step: a fill-in-the-blank frame (\"the area of a sector uses ___ × r²\") or point at the relevant given on the board, then ask them to supply the missing piece."
       : "PARTIAL EXAMPLE: several attempts, still stuck — put a PARALLEL worked example (different numbers) on the board with its last line left open as \"?\", plus ONE concrete hint about the method. Still never their answer; then ask them to do the open step on their own problem. Acknowledge that this one is genuinely tricky.";
@@ -220,4 +220,15 @@ export function needsQuestion(draft: string, message: string): boolean {
   if (!draft.trim() || /[?？]/.test(draft)) return false;
   if (/^(?:thanks?|thank you|merci|bye|au revoir|ok(?:ay)? thanks|great thanks|c['’]est tout|that['’]?s all)\b/i.test(message.trim()) && message.trim().length < 40) return false;
   return message.trim().length > 0;
+}
+
+/** Genuine, brief cheer at real milestones (never every turn): a streak of right exercises, or every session
+ *  objective ticked off. The line asks for a few specific words and then a raised challenge — not gushing. */
+export function cheerLine(message: string, history: { role: string; text: string }[], objectives?: { done: boolean }[]): string {
+  const recent = [...history.filter((h) => h.role === "user").map((h) => h.text).slice(-5), message];
+  const rights = recent.filter((m) => /^\[Exercise\].*marked right/s.test(m.trim())).length;
+  const justRight = /^\[Exercise\].*marked right/s.test(message.trim());
+  if (justRight && rights >= 2) return `\n\nMILESTONE: that's ${rights} exercises right recently. Give a short, genuine, SPECIFIC cheer (what they did well — a few words, no gushing), then raise the challenge a notch or ask what they want to tackle next.\n`;
+  if (objectives?.length && objectives.every((o) => o.done)) return `\n\nMILESTONE: every objective for this session is done. Say so warmly in a few words, name one thing they did well, and ask what they'd like to do next (more practice, a harder one, or wrap up with a reflection).\n`;
+  return "";
 }
