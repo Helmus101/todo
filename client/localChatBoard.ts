@@ -26,7 +26,9 @@ const BASE_KEY = "otto-local-chat-board";
 // the storage location did. CHAT_CAP here was briefly 40 (a copy-paste guess, never actually matched the
 // server's 60) — a real regression that trimmed more aggressively than before and read as "chat deletes
 // itself" on any longer-running conversation.
-const CHAT_CAP = 60;
+// Kept long on purpose: this is the student's own on-device transcript (the Chat drawer shows ALL of it); the
+// server only ever receives the last 60 messages of it per turn.
+const CHAT_CAP = 400;
 const BOARD_CAP = 60;
 const PROBLEMS_CAP = 12;
 

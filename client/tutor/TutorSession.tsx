@@ -4,7 +4,7 @@ import { api } from "../api.ts";
 import { setLocalObjectives, getLocalThread } from "../localChatBoard.ts";
 import { useLang, TaskModal, formatMath } from "../ui.tsx";
 import { AskOttoPanel } from "../study/AskOttoPanel.tsx";
-import { BoardArtifact } from "../study/artifacts/BoardArtifact.tsx";
+import { BoardArtifact, MathText } from "../study/artifacts/BoardArtifact.tsx";
 import { TutorDesmos } from "./TutorDesmos.tsx";
 import { TutorCanvas, type TutorCanvasHandle } from "./TutorCanvas.tsx";
 import { PageTour } from "../PageTour.tsx";
@@ -55,6 +55,11 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
   const [showHistory, setShowHistory] = useState(false);
   const [openBoardSession, setOpenBoardSession] = useState<TutorSessionSummary | null>(null);
   const [openChatSession, setOpenChatSession] = useState<TutorSessionSummary | null>(null);
+  // The stage hides the transcript on purpose, but it is always one tap away: this drawer.
+  const [chatDrawer, setChatDrawer] = useState(false);
+  const [chatExpanded, setChatExpanded] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (chatDrawer) chatEndRef.current?.scrollIntoView({ block: "end" }); }, [chatDrawer, chatExpanded, task?.chat?.length]);
   // The landing screen asks WHAT to study before starting — the subject is stamped onto the session
   // (sourceSubject, visible to the tutor prompt) and carried into history as the session's label.
   // The student's own subjects (set in onboarding) come first; the shared common list follows.
@@ -549,7 +554,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
               {openChatSession.chat?.map((msg, i) => (
                 <div key={i} className={`tutor-chat-message ${msg.role}`}>
                   <div className="tutor-chat-role">{msg.role === "user" ? L("Toi", "You") : L("Otto", "Otto")}</div>
-                  <div className="tutor-chat-text">{msg.text}</div>
+                  <div className="tutor-chat-text"><MathText text={msg.text} /></div>
                 </div>
               ))}
             </div>
@@ -608,6 +613,9 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
             ◎ {objDone}/{task.objectives.length}{typeof task.mastery === "number" ? ` · ${Math.round(task.mastery * 100)}%` : ""}
           </span>
         )}
+        <button type="button" className="btn ghost tutor-chat-btn" data-tour="ts-chat" onClick={() => setChatDrawer(true)} aria-label={L("Ouvrir le chat", "Open chat")}>
+          💬 {L("Chat", "Chat")}
+        </button>
         <button className="btn ghost tutor-end-btn" disabled={endingSession} onClick={() => void endSession()}>
           {endingSession ? L("Fin…", "Ending…") : L("Terminer la séance", "End session")}
         </button>
@@ -643,6 +651,46 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
           onVoiceStateChange={handleVoiceState}
         />
       </div>
+      {chatDrawer && (
+        <TaskModal wide onClose={() => { setChatDrawer(false); setChatExpanded(false); }} title={L("Chat avec Otto", "Chat with Otto")}>
+          <div className={`tutor-chat-drawer${chatExpanded ? " expanded" : ""}`}>
+            <div className="tutor-chat-toolbar">
+              <span>{task.chat?.length || 0} {L("messages", "messages")}</span>
+              <button type="button" className="btn ghost xs" onClick={() => setChatExpanded((v) => !v)}>{chatExpanded ? L("Réduire", "Collapse") : L("Agrandir", "Expand")}</button>
+            </div>
+            <div className="tutor-chat-history">
+              {!task.chat?.length && <p className="tutor-chat-empty">{L("Rien encore — dis bonjour à Otto.", "Nothing yet — say hi to Otto.")}</p>}
+              {task.chat?.map((msg, i) => (
+                <div key={i} className={`tutor-chat-message ${msg.role}`}>
+                  <div className="tutor-chat-role">{msg.role === "user" ? L("Toi", "You") : "Otto"}</div>
+                  <div className="tutor-chat-text"><MathText text={msg.text} /></div>
+                </div>
+              ))}
+              <div ref={chatEndRef} />
+            </div>
+            {pastSessions.some((ps) => ps.chat?.length) && (
+              <details className="tutor-chat-past">
+                <summary>{L("Séances passées", "Past sessions")} ({pastSessions.filter((ps) => ps.chat?.length).length})</summary>
+                {pastSessions.filter((ps) => ps.chat?.length).map((ps) => (
+                  <details key={ps.id} className="tutor-chat-past-item">
+                    <summary>
+                      {new Date(ps.startTime || ps.endTime).toLocaleDateString()}{ps.subject ? ` · ${ps.subject}` : ""} — {(ps.summary || "").split(" — ")[0].slice(0, 70)}
+                    </summary>
+                    <div className="tutor-chat-history">
+                      {ps.chat!.map((msg, i) => (
+                        <div key={i} className={`tutor-chat-message ${msg.role}`}>
+                          <div className="tutor-chat-role">{msg.role === "user" ? L("Toi", "You") : "Otto"}</div>
+                          <div className="tutor-chat-text"><MathText text={msg.text} /></div>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                ))}
+              </details>
+            )}
+          </div>
+        </TaskModal>
+      )}
     </main>
   );
 }

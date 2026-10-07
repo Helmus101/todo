@@ -13,6 +13,7 @@ import type { CourseworkDoc } from "../shared/coursework.ts";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, FocusSession } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY, subjectMastery } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
+import { planMove, repairLine } from "./tutorAdapt.ts";
 import { summarizeCoursework, fallbackCourseworkSummary, aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto, ttsReady, synthesizeSpeechRace, interactiveSceneDocument, INTERACTIVE_SCENE_CSP } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken, getAdminMetrics } from "./store.ts";
 import { sendTransactionalEmail } from "./mailer.ts";
@@ -1627,13 +1628,32 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
       .sort((a, b) => (b.logDate || "").localeCompare(a.logDate || ""))
       .slice(0, 14)
       .map((x) => ({ date: x.logDate!, text: x.logText!.trim() }));
+    // Adapt to THIS student: detect a stuck/looping conversation (REPAIR directive) and pick the teaching move
+    // that has been working for them (Thompson-sampling bandit, scored by how they reacted to the previous move).
+    // Primer (stage) turns only; best-effort — a failure here must never block the reply.
+    let repair = "", moveLine = "";
+    if (req.body?.primer === true) {
+      try {
+        repair = repairLine(message, history);
+        // Contextual: what works when the student is stuck/frustrated is learned separately from a normal turn.
+        const moveKey = `move|${t.sourceSubject || "any"}|${repair ? "stuck" : "flow"}`;
+        const moveState = await loadBanditState(req.session.user!, "tutormove");
+        const plan = planMove({ userKey: `${req.session.user}:${t.id}`, message, history, state: moveState, contextKey: moveKey, update: updatePosterior });
+        moveLine = plan.line;
+        if (plan.scoredPrev) {
+          void saveBanditState(req.session.user!, "tutormove", plan.state!).catch(() => {});
+          void recordSessionOutcome({ userEmail: req.session.user!, decisionKey: "tutormove", arm: plan.scoredPrev.arm, context: moveKey, reward: plan.scoredPrev.reward, at: new Date().toISOString() });
+        }
+        if (repair) void recordMetric(req.session.user!, "tutor_repair_triggered", 1);
+      } catch { /* best-effort */ }
+    }
     const out = await chatAboutTask(
       { title: t.title, why: t.why, context: t.context, steps: t.steps, source: t.source, sourceDetail: t.sourceDetail, sourceSubject: t.sourceSubject, sourceDue: t.sourceDue, flashcards: t.flashcards, quizzes: t.quizzes },
       history.map((h) => ({ role: h.role, text: h.text })),
       message,
       profile,
       academic,
-      { stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, primer: req.body?.primer === true, recentJournal, currentBoard, currentProblems, currentObjectives, notNeeded: tasks.notNeededFronts(req.session.tasks || [], t.sourceSubject) },
+      { stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, primer: req.body?.primer === true, recentJournal, currentBoard, currentProblems, currentObjectives, repair, moveLine, notNeeded: tasks.notNeededFronts(req.session.tasks || [], t.sourceSubject) },
     );
     addUsage(profile, out.tokens, "chat"); // untracked before — a tool-calling turn can now cost like a small run
     bumpActivityHour(profile, new Date(), t.sourceSubject);

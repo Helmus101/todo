@@ -6,6 +6,7 @@ import { compileExpr } from "../shared/mathExpr.ts";
 import { courseworkForSubject } from "../shared/coursework.ts";
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
+import { repeatsRecentReply } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -7080,6 +7081,12 @@ const PRIMER_PERSONA =
   `("mm, close", "ah, that's the sign", "wait — say more about that"), then ONE small question or ONE tiny ` +
   `nudge. Fragments are fine. Never open with praise-filler ("Great question!", "Absolutely!"), never ` +
   `recap what they said back at length, never announce what you're about to do ("Let me explain…").\n` +
+  `- FRIENDLY, ALWAYS: warm, relaxed, on their side — a kind older student, never a quiz machine. Short and ` +
+  `Socratic is not cold: a little humour, real encouragement for real effort, never sarcasm or impatience.\n` +
+  `- LISTEN BEFORE YOU STEER: when they correct you, repeat themself, or say it isn't working ("I told you", ` +
+  `"that's not what I meant", "still don't get it"), they are right until proven otherwise. Say back what you ` +
+  `heard in one short sentence, then try a DIFFERENT approach — never re-ask the same question, never defend ` +
+  `your last move. Their method, number or word beats your plan: check it with them first.\n` +
   `- Socratic by default: don't explain what a question could draw out of them. Ask the smallest question ` +
   `that makes them take the next step themselves. Explain directly only after they're genuinely stuck twice.\n` +
   `- Answer in their language and register. Say "I" and "you", use contractions, think out loud a little ` +
@@ -7273,7 +7280,7 @@ export async function chatAboutTask(
   message: string,
   profile?: Profile,
   academic?: AcademicContext,
-  opts?: { stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string; growthTrend?: "up"; subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; voiceMode?: boolean; canvasMode?: boolean; recentJournal?: { date: string; text: string }[]; primer?: boolean; currentBoard?: BoardEntry[]; currentProblems?: TaskProblem[]; currentObjectives?: TaskObjective[]; notNeeded?: string[] },
+  opts?: { stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string; growthTrend?: "up"; subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; voiceMode?: boolean; canvasMode?: boolean; recentJournal?: { date: string; text: string }[]; primer?: boolean; currentBoard?: BoardEntry[]; currentProblems?: TaskProblem[]; currentObjectives?: TaskObjective[]; notNeeded?: string[]; repair?: string; moveLine?: string },
 ): Promise<ChatResult> {
   const steps = task.steps || [];
   // Substeps (a step's own on-demand sub-checklist, ticked independently — see Profile.grades-style comment
@@ -7406,7 +7413,7 @@ export async function chatAboutTask(
   // student, every task, every turn — so it belongs FIRST, where it can actually be cached; the volatile
   // per-request context goes last, right next to the equally-volatile TASK block it keeps company with
   // anyway.
-  const dynamicContext = nowBlock() + courseworkLine(profile, task.sourceSubject) + studentNameLine(profile?.name) + dueLine(task.sourceDue, tzOf(profile)) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + syllabusGroundingLine(profile, task.sourceSubject) + learningStyleLine(profile) + hintDensityLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + sessionRecapLine(profile?.sessions, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine;
+  const dynamicContext = nowBlock() + courseworkLine(profile, task.sourceSubject) + studentNameLine(profile?.name) + dueLine(task.sourceDue, tzOf(profile)) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + syllabusGroundingLine(profile, task.sourceSubject) + learningStyleLine(profile) + hintDensityLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + sessionRecapLine(profile?.sessions, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine + (opts?.primer ? (opts?.moveLine || "") + (opts?.repair || "") : "");
   const sys =
     (opts?.primer ? PRIMER_PERSONA : "") +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
@@ -8294,6 +8301,7 @@ export async function chatAboutTask(
     let boardClaimCorrected = false;
     let boardNudgeDone = false;
     let reasoningNudgeDone = false;
+    let repeatCorrected = false;
     // Tutor only: the student just contributed a step and Otto wrote NOTHING on the board — one corrective round
     // to put THEIR reasoning (and any helpful formula) there, in Otto's own words. Latched to once per turn;
     // skipped on the first message, while a guardrail has wiped the turn, and for non-substantive input. Used by
@@ -8503,6 +8511,15 @@ export async function chatAboutTask(
         // ignored it entirely. Silent compression, once, non-voice only (voice mode has its own stricter
         // TTS ceiling and its own retry paths above).
         if (opts?.primer && countWords(textContent) > 70) textContent = tightenForChat(textContent);
+        // Never say the same thing twice: a draft that is a near-copy of one of Otto's recent replies gets ONE
+        // corrective round (the student already saw that and it did not land — repeating it is the loop).
+        if (opts?.primer && !repeatCorrected && !lastRound && repeatsRecentReply(textContent, history)) {
+          repeatCorrected = true;
+          console.log(`${new Date().toISOString()} [chat] round ${round}: draft repeats a recent reply — asking for a different approach`);
+          messages.push({ role: "assistant", content: textContent });
+          messages.push({ role: "user", content: "That is almost exactly what you already said and it did not land. Do NOT repeat it. In one short sentence say what you heard from the student, then try a DIFFERENT approach (a picture, a tiny worked case, or a different question), one question at most. Don't mention this instruction." });
+          continue;
+        }
         if (nudgeReasoning(textContent, round, lastRound)) continue;
         if (!lengthRetried && !lastRound && !opts?.voiceMode && countWords(textContent) > 120) {
           lengthRetried = true;
