@@ -3295,7 +3295,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   color: var(--ink-3);
 }
 
-/* ─── Simple Landing Page ─────────────────────────────────────────────────── */
+/* ─── Simple Landing Page ──────────────────────────────────────���──────────── */
 .landing-simple {
   min-height: 100vh;
   min-height: 100dvh;
@@ -5717,6 +5717,153 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   color: var(--ink-1);
 }
 .sm-bg-filename { font-size: var(--text-xs); color: var(--ink-3); margin-top: var(--space-1); }
+
+/* Tutor on a phone: keep the board readable and make every important control reachable without
+   shrinking the lesson into a desktop canvas. The board scrolls, while the header and action bar
+   stay compact and touch-friendly. */
+@media (max-width: 640px) {
+  .sm-shell {
+    height: 100dvh;
+    min-height: 100dvh;
+  }
+
+  .sm-header-top {
+    min-height: 48px;
+    padding: 0 12px;
+    gap: 8px;
+  }
+
+  .sm-back-btn,
+  .sm-artifact-btn,
+  .sm-fullscreen-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .sm-task-title {
+    font-size: var(--text-md);
+  }
+
+  .sm-header-right {
+    gap: 4px;
+  }
+
+  .sm-timer,
+  .sm-clock,
+  .sm-pomodoro-badge {
+    font-size: var(--text-xs);
+  }
+
+  .sm-header-step {
+    padding: 0 12px 12px;
+  }
+
+  .sm-step-row {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .sm-step-text {
+    font-size: var(--text-lg);
+    line-height: 1.35;
+  }
+
+  .sm-progress-row {
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .sm-canvas {
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    background-size: 24px 24px;
+  }
+
+  .sm-artifact {
+    min-width: min(300px, calc(100vw - 24px));
+    max-width: calc(100vw - 24px);
+    min-height: 160px;
+  }
+
+  .sm-artifact-body {
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .sm-artifact-titlebar {
+    min-height: 44px;
+  }
+
+  .sm-artifact-btn,
+  .sm-drawer-close {
+    width: 44px;
+    height: 44px;
+  }
+
+  .sm-bottombar {
+    display: flex;
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 0;
+    padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+  }
+
+  .sm-bottombar-left,
+  .sm-bottombar-right {
+    width: 100%;
+    min-height: 44px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .sm-bottombar-left::-webkit-scrollbar,
+  .sm-bottombar-right::-webkit-scrollbar {
+    display: none;
+  }
+
+  .sm-bottombar-right {
+    justify-content: stretch;
+  }
+
+  .sm-bar-btn,
+  .sm-btn {
+    min-height: 44px;
+    flex: 0 0 auto;
+  }
+
+  .sm-bottombar-right .sm-btn {
+    flex: 1 1 0;
+  }
+
+  .sm-drawer {
+    left: 0;
+    right: 0;
+    width: 100%;
+    max-width: 100%;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+
+  .sm-drawer-body {
+    padding: 16px 12px calc(16px + env(safe-area-inset-bottom));
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .sm-tools-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sm-tool-btn,
+  .sm-material-row {
+    min-height: 52px;
+  }
+}
+
 /* Fills the "chat" artifact's body (ArtifactCanvas.tsx) — a flex column so the message list grows/shrinks
    with the artifact's own drag-resize instead of being capped at a fixed height like the old fixed-drawer
    version was. */
@@ -6826,7 +6973,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 
 
 
-/* ── Tutor Session (Primer-style: chat + board) ─────────────────────────────── */
+/* ── Tutor Session (Primer-style: chat + board) ────────────────────────────���── */
 /* The board is the lesson's real document — give it the larger half even at rest (chat is the input
    surface, the board is what accumulates and matters); voice mode pushes the ratio further still. */
 .tutor-session { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 0.55fr) minmax(0, 1.45fr); gap: 20px; padding: 12px 24px 20px; height: calc(100vh - 64px); box-sizing: border-box; align-content: start; }
