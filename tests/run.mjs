@@ -3537,6 +3537,12 @@ section("practiceAnswerMatches — loose-but-not-fuzzy free-response checking");
   check("multi-step rounding tolerance still rejects a genuinely wrong answer, not just a nearby one", !practiceAnswerMatches("6.5", "7.43"));
   check("a bare integer answer (no decimal) stays exact — loosening is scoped to decimal/computed answers", !practiceAnswerMatches("5", "4"));
   check("a bare integer answer still matches itself exactly", practiceAnswerMatches("4", "4"));
+
+  // Reported live again: the first widening (3%/0.05) still wasn't generous enough — Otto's own chat reply
+  // called the student's answer correct while the inline "Check" box still said "Not quite". Widened to
+  // 5%/0.08; these two cases sit between the OLD and NEW tolerance (would have failed before, pass now).
+  check("a wider rounding-path gap (within 5%) now passes where the old 3% tolerance would have rejected it", practiceAnswerMatches("1.92", "2.0") && practiceAnswerMatches("1.94", "2.02"));
+  check("still not unlimited — a value clearly outside even the widened tolerance still fails", !practiceAnswerMatches("1.5", "2.0"));
 }
 
 section("looksLikeStem / makePracticeProblem — daily practice-problem generation gate + validation");

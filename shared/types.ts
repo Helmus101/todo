@@ -1720,21 +1720,23 @@ function parseNumericOrFraction(s: string): number {
 }
 // A multi-step numeric problem (physics, chemistry, finance) routinely has more than one legitimate path
 // to the final number — g = 9.8 vs 9.81, rounding an intermediate angle vs carrying full precision through
-// to the last step — and those paths can disagree by a percent or two even though both are "correct".
-// Reported live: a student's correctly-derived 7.28 N (g=9.8, rounded intermediate angle) and 7.43 N
-// (exact, no intermediate rounding) were BOTH marked wrong against a problem whose stored `answer` was
-// just one specific path through the same calculation — the tolerance below was a flat relative 1e-6,
-// i.e. exact-match. A plain integer-looking answer ("4", a count, an MCQ-style exact value) should stay
-// tight — loosening those risks accepting a genuinely wrong value. The signal used to tell the two apart:
-// whether the STORED answer itself was given with a decimal point. A decimal answer is a rounded result of
-// a computation, so a reasonable alternate path landing within a few percent is almost always the same
-// physical quantity; a bare integer is treated as exact.
+// to the last step — and those paths can disagree by a few percent even though both are "correct".
+// Reported live, twice: first a student's correctly-derived 7.28 N (g=9.8, rounded intermediate angle) vs
+// 7.43 N (exact, no intermediate rounding) were BOTH marked wrong against a stored `answer` that was just
+// one specific path through the same calculation (back when this was a flat 1e-6 exact-match); then, after
+// a first widening to 3%/0.05, a case where Otto's own chat reply called the student's answer correct while
+// this same check still said "Not quite" — 3% still wasn't generous enough for every legitimate alternate
+// path. Widened again (5%, 0.08 floor). A plain integer-looking answer ("4", a count, an MCQ-style exact
+// value) stays tight — loosening those risks accepting a genuinely wrong value. The signal used to tell the
+// two apart: whether the STORED answer itself was given with a decimal point. A decimal answer is a rounded
+// result of a computation, so a reasonable alternate path landing within a few percent is almost always the
+// same physical quantity; a bare integer is treated as exact.
 function numbersMatch(given: number, correct: string | number): boolean {
   const correctNum = typeof correct === "number" ? correct : parseNumericOrFraction(correct);
   const looksDecimal = typeof correct === "string" && /\.\d/.test(correct);
   if (!looksDecimal) return Math.abs(given - correctNum) < 1e-6 * Math.max(1, Math.abs(correctNum));
-  const relTol = Math.abs(correctNum) * 0.03; // covers g=9.8-vs-9.81 and a single intermediate rounding step
-  const absFloor = 0.05; // last-digit rounding drift for small answers (7.42 vs 7.43)
+  const relTol = Math.abs(correctNum) * 0.05; // covers g=9.8-vs-9.81/9.8-vs-10 and a couple of rounded steps
+  const absFloor = 0.08; // last-digit rounding drift for small answers (7.42 vs 7.43, 1.94 vs 1.97)
   return Math.abs(given - correctNum) <= Math.max(relTol, absFloor);
 }
 export function practiceAnswerMatches(given: string, correct: string): boolean {
