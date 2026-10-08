@@ -32,6 +32,8 @@ interface BoardArtifactProps {
   /** True while a reply to an on-board answer is in flight — disables the box so a second submit can't
    *  fire before the first one's reply (and the board's own `writing` indicator) lands. */
   answering?: boolean;
+  /** Optional handler to clear the board entries */
+  onClearBoard?: () => void;
 }
 
 const KIND_LABEL: Record<string, [string, string]> = {
@@ -344,19 +346,48 @@ interface ProblemBlockProps {
 type ProblemState = { picked: number | null; textAnswer: string; submitted: boolean; wrong?: number[] };
 
 function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onShowHint, onPick, onTextAnswer, onSubmit, en, fresh }: ProblemBlockProps) {
+  const [expanded, setExpanded] = useState(false);
   const problemIsMCQ = Array.isArray(problem.options) && problem.options.length >= 2;
   const wrong = state.wrong || [];
   const answered = problemIsMCQ ? state.picked !== null && state.picked === problem.correct : state.submitted && isCorrect;
   const missed = !answered && (problemIsMCQ ? wrong.length > 0 : state.submitted);
+
+  if (answered && !expanded) {
+    return (
+      <div
+        className={`sm-board-problem sm-board-problem-solved-compact sm-board-writein${fresh ? " sm-board-reveal" : ""}`}
+        style={fresh ? { animationDuration: `.35s, ${Math.min(1.6, Math.max(0.5, problem.question.length / 90))}s` } : undefined}
+      >
+        <span className="sm-board-section-num" aria-hidden="true">{String(sectionNumber).padStart(2, "0")}</span>
+        <div className="sm-board-entry-main">
+          <div className="sm-board-problem-compact-inner">
+            <span className="sm-board-problem-compact-mark" aria-hidden="true">✓</span>
+            <span className="sm-board-problem-compact-q"><MathText text={stripStrayMarkdown(problem.question)} /></span>
+            <button type="button" className="sm-btn sm-btn-ghost sm-btn-xs sm-board-compact-btn" onClick={() => setExpanded(true)}>
+              {en ? "Details" : "Détails"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
-      className={`sm-board-problem sm-board-writein${fresh ? " sm-board-reveal" : ""}`}
+      className={`sm-board-problem sm-board-writein${answered ? " sm-board-problem-solved" : ""}${fresh ? " sm-board-reveal" : ""}`}
       style={fresh ? { animationDuration: `.35s, ${Math.min(1.6, Math.max(0.5, problem.question.length / 90))}s` } : undefined}
     >
 
       <span className="sm-board-section-num" aria-hidden="true">{String(sectionNumber).padStart(2, "0")}</span>
       <div className="sm-board-entry-main">
-      <div className="sm-board-problem-label">{en ? "Try it" : "À toi"}</div>
+      <div className="sm-board-problem-heading-row">
+        <div className="sm-board-problem-label">{answered ? (en ? "Resolved" : "Résolu") : (en ? "Try it" : "À toi")}</div>
+        {answered && (
+          <button type="button" className="sm-btn sm-btn-ghost sm-btn-xs sm-board-compact-btn" onClick={() => setExpanded(false)}>
+            {en ? "Compact" : "Réduire"}
+          </button>
+        )}
+      </div>
       <div className="sm-board-problem-q"><MathText text={stripStrayMarkdown(problem.question)} /></div>
       {problem.format && !answered ? <div className="sm-board-problem-format"><MathText text={problem.format} /></div> : null}
       {problem.hint && !answered ? (
@@ -436,13 +467,14 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
  *  and practice problems. ONE DOCUMENT, ONE FLOW: entries and problems interleave in the order the session
  *  actually produced them (a problem sits between the formula it exercises and the insight answering it —
  *  the lesson's story, not a problem section pinned on top). kind:"focus" stays pinned above as the heading. */
-export function BoardArtifact({ task, writing, onProblemResult, onAnswer, answering }: BoardArtifactProps) {
+export function BoardArtifact({ task, writing, onProblemResult, onAnswer, answering, onClearBoard }: BoardArtifactProps) {
   const L = useLang();
   const endRef = useRef<HTMLDivElement>(null);
   const entries = task.board || [];
   const problems = task.problems || [];
   const [showHint, setShowHint] = useState<{ [key: string]: boolean }>({});
   const [problemState, setProblemState] = useState<{ [key: string]: ProblemState }>({});
+  const [showArchive, setShowArchive] = useState(false);
   // The inline answer box (see onAnswer below) — keyed by the entry it's answering so switching to a
   // DIFFERENT question starts blank instead of carrying over half-typed text from the last one.
   const [answerKey, setAnswerKey] = useState<string | null>(null);
@@ -610,6 +642,11 @@ export function BoardArtifact({ task, writing, onProblemResult, onAnswer, answer
           {new Date().toLocaleDateString(en ? "en-US" : "fr-FR", { weekday: "long", day: "numeric", month: "long" })}
         </span>
         {task.sourceSubject ? <span className="sm-board-header-subject">{task.sourceSubject}</span> : null}
+        {onClearBoard && (
+          <button type="button" className="sm-btn sm-btn-ghost sm-btn-xs sm-board-clear-btn" onClick={onClearBoard} title={en ? "Clear board entries" : "Réinitialiser le tableau"}>
+            {en ? "Clear board" : "Effacer"}
+          </button>
+        )}
       </div>
 
       {/* The pinned session goal (kind:"focus") — always the FIRST thing on the board, like the heading of
@@ -622,12 +659,22 @@ export function BoardArtifact({ task, writing, onProblemResult, onAnswer, answer
         </div>
       ) : null}
 
-      {/* ONE FLOW — entries and problems interleaved by timestamp, in the order the session produced them.
-          Problems are NOT a pinned section: a CREATE_PROBLEM sits right between the entry that set it up and
-          the insight that answered it. Every item gets a worksheet section number (01, 02, …) — the document
-          is being drafted, section by section, not fed in as cards, same as everything else on the board. */}
-      {flowItems.map((item, idx) =>
-        item.problem ? (
+      {flowItems.length > 5 && (
+        <div className="sm-board-archive-bar">
+          <button type="button" className="sm-btn sm-btn-ghost sm-btn-xs sm-board-archive-toggle" onClick={() => setShowArchive((v) => !v)}>
+            {showArchive
+              ? (en ? "▲ Hide earlier working steps" : "▲ Masquer les étapes précédentes")
+              : (en ? `▼ Show ${flowItems.length - 4} earlier working steps` : `▼ Voir les ${flowItems.length - 4} étapes précédentes`)}
+          </button>
+        </div>
+      )}
+
+      {/* ONE FLOW — entries and problems interleaved by timestamp, in the order the session produced them. */}
+      {flowItems.map((item, idx) => {
+        const isArchived = flowItems.length > 5 && !showArchive && idx < flowItems.length - 4;
+        if (isArchived) return null;
+
+        return item.problem ? (
           <ProblemBlock
             key={item.key}
             fresh={isFreshlyWritten(item.key)}
@@ -645,10 +692,11 @@ export function BoardArtifact({ task, writing, onProblemResult, onAnswer, answer
         ) : (() => {
           const e = item.entry!;
           const fresh = isFreshlyWritten(item.key);
+          const isPastQuestion = idx < flowItems.length - 1 && (e.kind === "question" || e.kind === "gap");
           return (
             <div
               key={item.key}
-              className={`sm-board-entry sm-board-entry-${e.kind || "note"} sm-board-writein${fresh ? " sm-board-reveal" : ""}${e.owner === "student" ? " sm-board-entry-student" : ""}`}
+              className={`sm-board-entry sm-board-entry-${e.kind || "note"} sm-board-writein${fresh ? " sm-board-reveal" : ""}${e.owner === "student" ? " sm-board-entry-student" : ""}${isPastQuestion ? " sm-board-entry-faded" : ""}`}
               style={fresh ? { animationDuration: `.35s, ${revealDuration(e.text)}s` } : undefined}
             >
               <span className="sm-board-section-num" aria-hidden="true">{String(idx + 1).padStart(2, "0")}</span>
@@ -760,7 +808,7 @@ export function BoardArtifact({ task, writing, onProblemResult, onAnswer, answer
             </div>
           );
         })()
-      )}
+      })}
 
       {/* The live drafting indicator — while the tutor's reply is being generated the document shows its
           writing hand ("Otto écrit…"), so new entries arrive as the continuation of a visible act of

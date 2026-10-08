@@ -163,7 +163,7 @@ section("TutorSession — no hook after an early return (React #310 crash)");
 section("Board — nothing already on it is ever dropped by a server reply");
 {
   const src = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
-  check("a chat reply merges its board/problems/chat into what's on screen instead of replacing it", /board: mergeBoardById\(task\.board \|\| \[\], updated\?\.board \|\| \[\]\)/.test(src) && /chat: \[\.\.\.\(task\.chat \|\| \[\]\), \.\.\.\(response\.chatDelta \|\| \[\]\)\]/.test(src));
+  check("a chat reply merges its board/problems/chat into what's on screen instead of replacing it", /mergeBoardById\(task\.board \|\| \[\], updated\?\.board \|\| \[\]\)/.test(src) && /chat: \[\.\.\.\(task\.chat \|\| \[\]\), \.\.\.\(response\.chatDelta \|\| \[\]\)\]/.test(src));
   const m = src.match(/export function mergeBoardById[\s\S]*?\n}\n/)[0].replace("export function", "function").replace(/<T[^>]*>/, "").replace(/\(existing: T\[\], incoming: T\[\]\): T\[\]/, "(existing, incoming)").replace(/\(x: T\)/g, "(x)").replace(/\(x\) => x\.id/g, "(x) => x.id");
   const mergeBoardById = new Function(m.replace(/: T/g, "") + "; return mergeBoardById;")();
   const a = [{ id: "1", at: "2026-01-01T00:00:01Z" }, { id: "2", at: "2026-01-01T00:00:03Z" }];

@@ -2595,6 +2595,18 @@ const WRITE_TO_BOARD_TOOL = {
   }, required: ["text"] },
 };
 
+const CLEAR_BOARD_TOOL = {
+  name: "CLEAR_BOARD",
+  description: "Clear or reset the tutor board when moving to a new topic, starting a new problem phase, or cleaning up workspace clutter. Preserves the pinned session focus/goal entry by default unless keepFocus is set to false.",
+  input_schema: {
+    type: "object",
+    properties: {
+      reason: { type: "string", description: "Why the board is being cleared (e.g. 'Starting fresh topic on derivatives', 'Clearing intermediate working for new problem')" },
+      keepFocus: { type: "boolean", description: "Whether to preserve the pinned session focus/goal line (default true)" }
+    }
+  }
+};
+
 // A real drawn figure, distinct from WRITE_TO_BOARD's ASCII-in-a-fence fallback — see the DiagramOp type
 // (shared/types.ts) for the shape vocabulary. Each figure is SELF-CONTAINED: if Otto needs to add to a
 // shape drawn earlier (e.g. the altitude on a triangle from three turns ago), it redraws the WHOLE scene
@@ -7368,6 +7380,7 @@ export interface ChatResult {
   quizzes: TaskQuiz[];
   problems: TaskProblem[];
   board: BoardEntry[];
+  boardCleared?: boolean;
   /** Set ONLY when SET_OBJECTIVES was called this turn — the FULL replacement list, not a delta (see the
    *  tool's own contract). Undefined (not an empty array) when Otto didn't touch objectives this turn, so
    *  the route/client can tell "no change" apart from "cleared the list", which never happens in practice. */
@@ -8773,12 +8786,12 @@ export async function chatAboutTask(
   // which no longer renders a board anywhere except the Tutor (TutorSession.tsx).
   const includeArtifactTools = wantsArtifactTools(message, history);
   const boardTools = opts?.primer
-    ? [CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, ...(opts?.canvasMode ? [CREATE_INTERACTIVE_TOOL] : []), SET_OBJECTIVES_TOOL]
+    ? [CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, CLEAR_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, ...(opts?.canvasMode ? [CREATE_INTERACTIVE_TOOL] : []), SET_OBJECTIVES_TOOL]
     : [];
   const tools = opts?.canvasMode
     ? [...boardTools, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])]
     : [...(includeArtifactTools ? [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL] : []), ...boardTools, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])];
-  const empty = (): ChatResult => ({ reply: "", notes: [], flashcards: [], quizzes: [], problems: [], board: [], audit: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false });
+  const empty = (): ChatResult => ({ reply: "", notes: [], flashcards: [], quizzes: [], problems: [], board: [], boardCleared: false, audit: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false });
   const result = empty();
   const logAudit = (kind: AuditEvent["kind"], label: string) => result.audit.push({ at: new Date().toISOString(), kind, label });
   const finish = (reply: string): ChatResult => {
@@ -9255,6 +9268,13 @@ export async function chatAboutTask(
           else if (opts?.primer && !asksToMoveOn(message) && [...(opts?.currentProblems || []).filter((p) => !p.solved), ...result.problems].length > 0) content = "REJECTED: they haven't answered the exercise already on the board — don't pile another on top. Help them with THAT one (a hint, a smaller question). Only create a new exercise once they've answered it or explicitly ask to skip / move on / get another.";
           else if (isDuplicateProblem([...(opts?.currentProblems || []), ...result.problems], input)) content = "DUPLICATE: that exact problem is already on the board — it's already there for them to answer, don't make it again.";
           else { const r = makeProblem(input); if ("error" in r) content = r.error; else { result.problems.push(r.problem); content = JSON.stringify({ ok: true, id: r.problem.id }); logAudit("artifact", fr ? `Problème créé : « ${r.problem.question.slice(0, 60)} »` : `Problem created: "${r.problem.question.slice(0, 60)}"`); } }
+        } else if (name === "CLEAR_BOARD") {
+          result.boardCleared = true;
+          const keepFocus = (input as any)?.keepFocus !== false;
+          const focusEntry = keepFocus ? (opts?.currentBoard || []).find((e) => e.kind === "focus") : undefined;
+          result.board = focusEntry ? [focusEntry] : [];
+          content = JSON.stringify({ ok: true, message: "Board cleared." });
+          logAudit("artifact", fr ? "Tableau réinitialisé" : "Board cleared");
         } else if (name === "WRITE_TO_BOARD") {
           // Deliberately NOT gated by madeEnough/CHAT_MAX_ARTIFACTS — a board entry is meant to be cheap
           // and frequent (a short instruction, a formula, a running summary), not a heavyweight artifact

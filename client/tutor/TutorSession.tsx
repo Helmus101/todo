@@ -269,7 +269,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
       // CREATE_PROBLEM (individual, inline, answerable right on the board) instead — the only artifact this
       // screen actually knows how to show.
       const response = await api.chat(task.id, message, task.chat || [], task.board || [], (task.problems || []).map((p) => ({ ...p, solved: solvedRef.current.has(p.id) })), undefined, undefined, voiceMode, true, true, task.objectives || []);
-      const { task: updated, objectives } = response;
+      const { task: updated, objectives, boardCleared } = response as typeof response & { boardCleared?: boolean };
       // objectives is only ever the FULL replacement list (SET_OBJECTIVES' own contract), or undefined
       // when Otto didn't touch it this turn — never overwrite the existing list with an empty one.
       const newObjectives = objectives?.length ? setLocalObjectives(task.id, objectives, userId) : (task.objectives || []);
@@ -282,7 +282,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
       setTask({
         ...task,
         ...updated,
-        board: mergeBoardById(task.board || [], updated?.board || []),
+        board: boardCleared ? updated?.board || [] : mergeBoardById(task.board || [], updated?.board || []),
         problems: mergeBoardById(task.problems || [], updated?.problems || []),
         chat: [...(task.chat || []), ...(response.chatDelta || [])],
         objectives: newObjectives,
@@ -720,7 +720,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
       )}
       <section className="ts-canvas" aria-label={L("Tableau", "Board")}>
         <div className="tutor-board-body ts-board-body" ref={setSurfaceEl} style={{ display: desmosOpen ? "none" : undefined }}>
-          <BoardArtifact task={task} writing={sending} onProblemResult={onProblemResult} onAnswer={(text) => void send(text)} answering={sending} />
+          <BoardArtifact task={task} writing={sending} onProblemResult={onProblemResult} onAnswer={(text) => void send(text)} answering={sending} onClearBoard={() => setTask({ ...task, board: [], problems: [] })} />
         </div>
         {/* Desmos stays mounted once opened (an iframe that's removed reloads blank, losing the student's graph). */}
         {desmosOpen || desmosEverOpenedRef.current ? (

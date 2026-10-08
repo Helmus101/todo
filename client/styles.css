@@ -5977,6 +5977,57 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .sm-board-problem-opt-letter { font-weight: 700; color: var(--ink-3); }
 .sm-board-problem-hint-row { margin-top: var(--space-3); }
 .sm-board-problem-hint { font-size: var(--text-sm); color: var(--ink-3); font-style: italic; }
+
+/* Compact solved-problem row — no card shadow, just a slim tick line */
+.sm-board-problem-solved-compact {
+  background: transparent;
+  box-shadow: none;
+  border: none;
+  padding: 4px 0;
+}
+.sm-board-problem-compact-inner { display: flex; align-items: center; gap: 8px; }
+.sm-board-problem-compact-mark { color: var(--accent); font-weight: 700; font-size: 13px; flex: none; }
+.sm-board-problem-compact-q {
+  flex: 1;
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Label row (problem heading + compact/expand button on the same line) */
+.sm-board-problem-heading-row { display: flex; align-items: center; gap: 8px; margin-bottom: var(--space-2); }
+/* Solved state modifier on the full problem card — subtle background tint */
+.sm-board-problem-solved { background: color-mix(in srgb, var(--accent) 4%, var(--bg-2)); }
+/* Extra-small button variant */
+.sm-btn-xs { font-size: 11px; padding: 2px 8px; line-height: 1.4; }
+/* Compact / Details / Collapse button inside a problem block */
+.sm-board-compact-btn { margin-left: auto; flex: none; }
+/* Faded past question / gap entry (no longer the active question) */
+.sm-board-entry-faded { opacity: 0.42; transition: opacity .15s; }
+.sm-board-entry-faded:hover { opacity: 0.8; }
+/* Archive bar — sits above the flow, centered subtle toggle */
+.sm-board-archive-bar {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-2) 0;
+  margin-bottom: var(--space-1);
+}
+.sm-board-archive-toggle {
+  font-size: 11px;
+  color: var(--ink-3);
+  gap: 4px;
+}
+.sm-board-archive-toggle:hover { color: var(--ink-2); }
+/* Clear-board button in the board header — right-aligned */
+.sm-board-clear-btn {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ink-3);
+  opacity: 0.6;
+}
+.sm-board-clear-btn:hover { opacity: 1; color: var(--danger, #d94f4f); }
+
 .sm-board-entry-text p + p { margin-top: 8px; }
 .sm-ai-msg {
   max-width: 84%;

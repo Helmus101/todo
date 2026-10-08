@@ -1844,7 +1844,8 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     // BOARD_MERGE_CAP mirroring tasks.ts's own cross-device merge caps so a single-device append here
     // never exceeds what a later multi-device MERGE would also cap it to).
     if (newChat.length) t.chat = [...(t.chat || []), ...newChat].slice(-CHAT_CAP);
-    if (out.board.length) t.board = [...(t.board || []), ...out.board].slice(-tasks.BOARD_MERGE_CAP);
+    if (out.boardCleared) t.board = out.board;
+    else if (out.board.length) t.board = [...(t.board || []), ...out.board].slice(-tasks.BOARD_MERGE_CAP);
     if (out.problems.length) t.problems = [...(t.problems || []), ...out.problems].slice(-tasks.ARTIFACT_CAP);
     // Board event log + session state + action log (server/boardEvents.ts, server/sessionState.ts,
     // server/actionSpace.ts) — previously-written, never-called scaffolding; see the plan this wires up.
@@ -1852,7 +1853,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     // so the tagged attempt shows up in the trajectory exactly like Otto's own writes do.
     if (req.body?.primer === true && sessionStateBefore) {
       try {
-        const boardAfter = [...boardForTurn, ...out.board];
+        const boardAfter = out.boardCleared ? out.board : [...boardForTurn, ...out.board];
         const objectivesAfter = out.objectives || currentObjectives;
         const problemsAfter = [...currentProblems, ...out.problems];
         const events = [
@@ -1881,7 +1882,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     lastTurnObjectivesDone.set(planKey, (out.objectives || currentObjectives).filter((o) => o.done).length);
     t.updatedAt = now;
     await commit(req);
-    res.json({ reply: out.reply, chatDelta: newChat, board: out.board, problems: out.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped, task: t });
+    res.json({ reply: out.reply, chatDelta: newChat, board: out.board, boardCleared: out.boardCleared, problems: out.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped, task: t });
   } catch (e: any) {
     console.error(e);
     res.status(500).json({ error: M(req, "échec de la discussion", "chat failed") });
