@@ -23,8 +23,8 @@ interface BoardArtifactProps {
    *  ("what made you pick B?") instead of the board silently marking it. `attempt` counts tries on this
    *  problem including this one. Never carries the correct answer — only what the student gave. */
   onProblemResult?: (r: { problem: TaskProblem; given: string; correct: boolean; attempt: number }) => void;
-  /** Lets the student answer directly where the question lives, instead of having to scroll down to chat
-   *  to reply — a 'question' entry or a completion-gap line ("= ?") was otherwise pure text to read, even
+  /** Lets the student answer directly where the open work lives, instead of having to scroll down to chat
+   *  to reply — a completion-gap line ("= ?") was otherwise pure text to read, even
    *  though CREATE_PROBLEM entries right next to them already had a real inline answer box. Sends the text
    *  exactly like typing it into chat (same `send`), so Otto's reply lands normally and can add its own
    *  next board entry. Omitted entirely on a read-only surface (the phone view, a past session's history). */
@@ -39,7 +39,6 @@ interface BoardArtifactProps {
 const KIND_LABEL: Record<string, [string, string]> = {
   focus: ["Objectif du jour", "Today's focus"],
   instruction: ["Consigne", "Instruction"],
-  question: ["Question", "Question"],
   given: ["Donnée", "Given"],
   result: ["Établi", "Established"],
   formula: ["Formule", "Formula"],
@@ -59,7 +58,6 @@ const KIND_LABEL: Record<string, [string, string]> = {
 const KIND_GLYPH: Record<string, string> = {
   focus: "◎",
   instruction: "→",
-  question: "?",
   given: "▤",
   result: "✓",
   formula: "∑",
@@ -692,11 +690,11 @@ export function BoardArtifact({ task, writing, onProblemResult, onAnswer, answer
         ) : (() => {
           const e = item.entry!;
           const fresh = isFreshlyWritten(item.key);
-          const isPastQuestion = idx < flowItems.length - 1 && (e.kind === "question" || e.kind === "gap");
+          const isPastGap = idx < flowItems.length - 1 && e.kind === "gap";
           return (
             <div
               key={item.key}
-              className={`sm-board-entry sm-board-entry-${e.kind || "note"} sm-board-writein${fresh ? " sm-board-reveal" : ""}${e.owner === "student" ? " sm-board-entry-student" : ""}${isPastQuestion ? " sm-board-entry-faded" : ""}`}
+              className={`sm-board-entry sm-board-entry-${e.kind || "note"} sm-board-writein${fresh ? " sm-board-reveal" : ""}${e.owner === "student" ? " sm-board-entry-student" : ""}${isPastGap ? " sm-board-entry-faded" : ""}`}
               style={fresh ? { animationDuration: `.35s, ${revealDuration(e.text)}s` } : undefined}
             >
               <span className="sm-board-section-num" aria-hidden="true">{String(idx + 1).padStart(2, "0")}</span>
@@ -761,16 +759,16 @@ export function BoardArtifact({ task, writing, onProblemResult, onAnswer, answer
                 </>
               ) : (
                 <>
-                  <div className={`sm-board-entry-text${e.kind === "gap" ? " sm-board-gap-text" : ""}`}>{e.kind === "question" || e.kind === "given" || e.kind === "result" ? <div style={{ whiteSpace: "pre-wrap" }}><MathText text={autoMathLine(stripStrayMarkdown(e.kind === "result" ? e.text.replace(/^\s*(?:established|établi|found|result|trouvé)\s*:\s*/i, "") : e.text))} /></div> : e.kind === "formula" ? <div style={{ whiteSpace: "pre-wrap" }}><MathText text={autoMathLine(stripStrayMarkdown(e.text))} /></div> : renderChatText(e.text)}</div>
+                  <div className={`sm-board-entry-text${e.kind === "gap" ? " sm-board-gap-text" : ""}`}>{e.kind === "given" || e.kind === "result" ? <div style={{ whiteSpace: "pre-wrap" }}><MathText text={autoMathLine(stripStrayMarkdown(e.kind === "result" ? e.text.replace(/^\s*(?:established|établi|found|result|trouvé)\s*:\s*/i, "") : e.text))} /></div> : e.kind === "formula" ? <div style={{ whiteSpace: "pre-wrap" }}><MathText text={autoMathLine(stripStrayMarkdown(e.text))} /></div> : renderChatText(e.text)}</div>
                   {(e.kind === "gap" || isCompletionGap(e.text)) ? (
                     <span className="sm-board-todo-chip">{en ? "Your turn to finish" : "À toi de finir"}</span>
                   ) : null}
-                  {/* Answer right where the question lives, instead of having to scroll down to chat —
+                  {/* Answer right where the open line lives, instead of having to scroll down to chat —
                       only on the single NEWEST entry, and only when it's actually something to answer
-                      (a guiding question, or a worked line Otto deliberately left as "= ?"). Once the
+                      (a worked line Otto deliberately left as "= ?"). Once the
                       student replies, Otto's next turn adds a new entry after this one, which naturally
                       stops being "last" — the box just disappears on its own, no extra bookkeeping. */}
-                  {onAnswer && idx === flowItems.length - 1 && (e.kind === "question" || isCompletionGap(e.text)) ? (
+                  {onAnswer && idx === flowItems.length - 1 && isCompletionGap(e.text) ? (
                     <div className="sm-board-answer-row">
                       <input
                         type="text"

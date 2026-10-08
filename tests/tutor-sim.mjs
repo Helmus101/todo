@@ -29,7 +29,7 @@ globalThis.fetch = async (url, init) => {
 
 const task = { title: "Math session", why: "tutoring", source: "freestudy", sourceSubject: "Math" };
 const problem = { id: "p1", question: "Solve x² − 5x + 6 = 0", answer: "x = 2 or x = 3", why: "factors (x−2)(x−3)", createdAt: new Date().toISOString() };
-const run = async (message, o = {}) => { calls = []; const res = await chatAboutTask(task, o.history || [], message, undefined, undefined, { primer: true, canvasMode: true, currentProblems: o.problems || [], currentBoard: o.board || [], ...(o.opts || {}) }); return { ...res, boardAll: res.board, board: res.board.filter((e) => e.kind !== "question") }; };
+const run = async (message, o = {}) => { calls = []; const res = await chatAboutTask(task, o.history || [], message, undefined, undefined, { primer: true, canvasMode: true, currentProblems: o.problems || [], currentBoard: o.board || [], ...(o.opts || {}) }); return { ...res, boardAll: res.board }; };
 const tc = (name, args) => ({ name, args });
 const lastUserText = (body) => String([...body.messages].reverse().find((m) => m.role === "user")?.content || "");
 
@@ -238,22 +238,22 @@ export async function runTutorSim(check, section) {
   script = (b, i) => i === 0 ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "Split 5π/12 into π/4 + π/6", kind: "summary" })] } : { content: "What do you get for sin of 5π/12 — which two angles would you split it into?" };
   r = await run("hmm I have no idea where to start with sin(5π/12)", { history: [{ role: "user", text: "find sin(5π/12)" }, { role: "assistant", text: "ok" }] });
   check("end to end: a tutor-authored step is refused on the board's trace", r.board.every((e) => e.kind !== "summary") && /REJECTED/.test(JSON.stringify(calls[1].messages)));
-  check("a closing question is put on the board as a question entry; a generic 'does that make sense?' is not", adA.boardQuestionOf("Good. Which two special angles add up to 5π/12?") === "Which two special angles add up to 5π/12?" && adA.boardQuestionOf("Nice work. Does that make sense?") === "" && adA.boardQuestionOf("ok?") === "");
+  check("a reply's real closing question is extracted (that is how a re-ask is caught); a generic 'does that make sense?' is not", adA.boardQuestionOf("Good. Which two special angles add up to 5π/12?") === "Which two special angles add up to 5π/12?" && adA.boardQuestionOf("Nice work. Does that make sense?") === "" && adA.boardQuestionOf("ok?") === "");
   script = () => ({ content: "Good start. Which two special angles add up to 5π/12?" });
   r = await run("so I need exact values", { history: [{ role: "user", text: "find sin(5π/12)" }, { role: "assistant", text: "ok" }] });
-  check("end to end: the reply's guiding question lands on the board as kind 'question'", r.boardAll.some((e) => e.kind === "question" && /special angles add up/.test(e.text)));
+  check("end to end: the guiding question stays in chat — nothing question-shaped lands on the board", !r.boardAll.some((e) => e.kind === "question" || /special angles add up/.test(e.text)));
 
   const sysT = String(calls[0].messages[0].content);
   check("the persona makes the board the student's paper for every subject (given / result / question / formulas / outlines / mnemonics)", /THE BOARD IS THEIR PAPER/.test(sysT) && /kind "result"/.test(sysT) && /kind "given"/.test(sysT) && /history\/economics\/literature/.test(sysT));
-  // a student step with only an auto-added question on the board still gets the write-to-board nudge (summary + result)
+  // a student step with an empty board still gets the write-to-board nudge (summary + result)
   script = (b, i) => i === 0 ? { content: "Right, that's the sum formula. Which two special angles add up to 5π/12?" } : i === 1 ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "Established: $\\sin(A+B)=\\sin A\\cos B+\\cos A\\sin B$", kind: "result" })] } : { content: "Right, that's the sum formula. Which two special angles add up to 5π/12?" };
   r = await run("so I use sin(A+B) = sin A cos B + cos A sin B", { history: [{ role: "user", text: "find sin(5π/12)" }, { role: "assistant", text: "ok" }] });
-  check("a student step gets the nudge even though the question was auto-placed; a 'result' entry lands (kind result)", /kind \\\"result\\\"|kind \"result\"/.test(JSON.stringify(calls[1].messages)) || r.board.some((e) => e.kind === "result"));
+  check("a student step gets the nudge; a 'result' entry lands (kind result)", /kind \\\"result\\\"|kind \"result\"/.test(JSON.stringify(calls[1].messages)) || r.board.some((e) => e.kind === "result"));
 
   check("the board guidance is judgement, not a checklist (no forced entries, no repeats)", /GUIDE TO YOUR JUDGEMENT|a guide to your judgement/.test(String(calls[0].messages[0].content)) && /never write an entry just to have written one/.test(String(calls[0].messages[0].content)));
   script = () => ({ content: "Nice. Which factor first?" });
-  r = await run("ok", { history: [{ role: "user", text: "solve x^2-5x+6" }, { role: "assistant", text: "ok" }], board: [{ id: "q", kind: "question", text: "Which two numbers multiply to 6 and add to −5?", at: "" }] });
-  check("a new question card is not stacked on top of one the student is still working with", r.boardAll.every((e) => e.kind !== "question"));
+  r = await run("ok", { history: [{ role: "user", text: "solve x^2-5x+6" }, { role: "assistant", text: "ok" }], board: [{ id: "g", kind: "gap", text: "x² − 5x + 6 = (x − ?)(x − ?)", at: "" }] });
+  check("the board never grows a question card — questions are asked and answered in chat only", r.boardAll.every((e) => e.kind !== "question" && !/Which factor first/.test(e.text)));
 
   // One exercise at a time; never re-ask a question.
   check("a near-identical exercise is a duplicate (the 4× 'sin(5π/12) as a sum of special angles' problem)", isDuplicateProblem([{ id: "1", question: "Find the exact value of sin(5π/12) by writing 5π/12 as the sum of two special angles.", createdAt: "" }], { question: "Find the exact value of sin(5π/12) by writing 5π/12 = π/4 + π/6 as a sum of two special angles." }) && !isDuplicateProblem([{ id: "1", question: "Find sin(5π/12) as a sum of special angles.", createdAt: "" }], { question: "Given sin θ = 3/5 in the first quadrant, find sin(2θ)." }));

@@ -6012,20 +6012,9 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .sm-btn-xs { font-size: 11px; padding: 2px 8px; line-height: 1.4; }
 /* Compact / Details / Collapse button inside a problem block */
 .sm-board-compact-btn { margin-left: auto; flex: none; }
-/* Faded past question / gap entry (no longer the active question). Smoother opacity gradient for better visual hierarchy.
-   Guiding questions (intermediate steps) fade more to feel like inline prompts rather than formal questions. */
+/* Faded past gap entry (no longer the active line). Smoother opacity gradient for better visual hierarchy. */
 .sm-board-entry-faded { opacity: 0.4; transition: opacity .2s ease-out; }
 .sm-board-entry-faded:hover { opacity: 0.7; }
-/* Guiding questions (kind="question") when faded are intermediate steps - make them feel like inline prompts */
-.sm-board-entry-question.sm-board-entry-faded .sm-board-entry-text {
-  font-style: italic;
-  color: var(--ink-2);
-}
-/* Make faded guiding questions blend better - lighter border, less padding */
-.sm-board-entry-question.sm-board-entry-faded {
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent);
-  padding: 10px 0;
-}
 /* Archive bar — sits above the flow, centered subtle toggle. Made more subtle to reduce chrome. */
 .sm-board-archive-bar {
   display: flex;
@@ -6960,11 +6949,8 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .sm-board-header-subject { font-size: 12px; font-weight: 700; color: var(--accent); letter-spacing: .04em; text-transform: uppercase; }
 .sm-board-entry, .sm-board-problem { position: relative; }
 .sm-board-section-num { position: absolute; left: -26px; top: 4px; font-size: 11px; font-weight: 600; color: var(--ink-3, var(--ink-2)); opacity: .55; font-variant-numeric: tabular-nums; user-select: none; }
-/* Guiding questions (kind="question") should feel like inline prompts, not numbered questions.
-   Hide their section numbers - only CREATE_PROBLEM blocks (practice problems) get numbers. */
-.sm-board-entry-question .sm-board-section-num {
-  display: none;
-}
+/* Quiet numbered sections in the margin — CREATE_PROBLEM blocks render their own numbering; entries are
+   plain lines of the working document. */
 @media (max-width: 720px) { .sm-board-section-num { display: none; } }
 .sm-board-entry-main { min-width: 0; }
 .sm-board-glyph { margin-right: 5px; opacity: .7; font-size: .9em; }

@@ -167,7 +167,7 @@ export interface TutorSessionStateShape {
   objective?: string;
   /** The concept the session is currently about, if the app can name it. */
   concept?: string;
-  /** The specific sub-question in play right now (the newest question on the board, usually). */
+  /** The specific sub-problem in play right now (the newest gap or open problem on the board, usually). */
   subproblem?: string;
   mastery?: number | null;
   confidence?: number;

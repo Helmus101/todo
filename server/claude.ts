@@ -7,7 +7,7 @@ import { COURSEWORK_MAX_CHARS, courseworkForSubject, sameSubject } from "../shar
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { buildGeometry } from "../shared/geometry.ts";
-import { repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, boardQuestionOf, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
+import { repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -2581,7 +2581,7 @@ const WRITE_TO_BOARD_TOOL = {
   description: "Write ONE short entry onto the student's persistent tutor Board — a visible, always-accessible surface separate from the chat thread, NOT limited to practice problems. The board is a document being BUILT entry by entry across the session: it opens with the day's focus, collects the key definitions and formulas as they come up, credits the student's own insights, and ends with a summary of their reasoning. Each call adds ONE entry; the next thing gets its own entry later as the session moves on. ONE idea per call and no walls of PROSE — but a short multi-line block of WORKING (each line one move, the last line left as '= ?' for them to finish) IS one entry, and it is the fastest way to make the page look like the paper you'd both be writing on. What belongs here is decided by one test: would the student otherwise have to hold it in their head, or scroll back through chat to find it? (given values and the goal, a formula in play, the cases a problem splits into, a diagram, the sub-goal they're on, a key term's gloss, their own insight). Anything that fails that test stays in chat. Don't narrate that you're writing it ('let me jot that down') — just call the tool. NEVER GET AHEAD OF THE CHAT: a 'summary'/'formula'/'note' entry records a step ONLY once the student has actually said/derived it in chat THAT turn — never a later step of the SAME derivation they haven't reached yet, even symbolically with no numbers (reported live: the board already showed 'F_net down slope = mg sin25 - mg cos25 * tan20' as a finished line while the chat was still walking the student through deriving exactly that, one piece at a time — the board had done the derivation FOR them, just quietly, on a different surface than chat). If you're tempted to write the NEXT formula before asking the question that gets them there, ask the question first and write the entry after they answer it.",
   input_schema: { type: "object", properties: {
     text: { type: "string", description: "the entry itself — plain text/light markdown, ONE idea, in KEYWORDS AND STRUCTURE rather than prose: ~25 words of prose max, and fewer is better. Write the skeleton of the idea, never a restatement of what you just said in chat (a board that repeats your sentences measurably hurts learning — the redundancy effect). Annotate like handwritten notes: 'term = plain gloss' on its own line; relationships as arrows ('A --pushes--> B'); contrasts stacked with '<-' margin asides ('NOT x <- what you'd expect' / 'BUT y <- the actual point'); dash lines for anything sequential, one idea each. Anything with REAL SPATIAL POSITION — a shape, a triangle, a number line, points on axes — belongs in DRAW_ON_BOARD instead, which renders an actual figure. For kind:'outline' this is just a one-line title (the sections go in `outline` below) — for anything else, reserve a fenced ASCII block here for genuinely textual structure (a small table) where neither a real drawing nor an outline fits. ANY such ASCII sketch MUST be wrapped in a triple-backtick code fence (```\\n...\\n```) — the board renders a fenced block as monospace, preserving every space exactly as typed; UNFENCED text renders ONE LINE PER LINE as ordinary page lines — which is exactly what you want for a step-by-step derivation (each line one move), so do NOT fence working; a fence is ONLY for a shape whose exact spacing IS the content. When you write 'maths in $…$' anywhere in this entry, wrap ONLY the actual numbers/symbols — '0.05 m' or '10 N', never a surrounding phrase or whole sentence like '$under a force of 10 N$' — KaTeX renders real words as garbled, jammed-together italic letters, not prose." },
-    kind: { type: "string", enum: ["note", "instruction", "question", "given", "result", "formula", "summary", "focus", "insight", "definition", "outline", "gap"], description: "styling/role hint: 'given' for the problem's data / statement exactly as given (typeset maths in $…$); 'result' for something the STUDENT has just derived, found or confirmed that matters for the next part (an equation, a value, a simplified form — in $…$, labelled in a few words, only once THEY reached it); 'question' for EVERY guiding question you ask the student about the work — the question itself, short, maths in $…$ (it stays on the page while they think; never include its answer); 'focus' ONCE to open a session's document — today's arc, where you start and what you're building toward; 'instruction' for a directive to start/try something; 'definition' the first time a key term comes up — the term in **bold**, then a plain-language definition; 'formula' for a plain fact/rule worth keeping visible in words (not real math notation — for an actual expression/equation with a fraction, exponent, or root, use DRAW_ON_BOARD's 'equation' op instead, which typesets it for real instead of describing it in text); 'insight' when the STUDENT has a genuine aha in their own words — credit them by name ('Will's insight: ...'); 'summary' for a recap of the STUDENT's reasoning — it renders as the 'how you got there' reasoning trace, so it is for THEIR reasoning and NOT the default kind: most entries are plain text ('note', 'given', 'formula', 'definition', 'question', 'result'), written as ordinary page lines, one idea per line; 'outline' for headed, bulleted structure — a timeline, the causes/effects of an event, a source's key points, an essay's section-by-section plan (REQUIRES the separate `outline` field below, with real sections and bullets — this is the DEFAULT reach for history/literature/language-arts/social-science content instead of trying to force it into a flat sentence); 'gap' for a DELIBERATELY INCOMPLETE step or equation the student must finish — the `text` contains the setup with a '?' where the answer goes (e.g. 'a = ? / m' or 'F_net = ?'), and you MUST also set `expectedAnswer` to the value the student should produce. This is the completion effect: Otto supplies the method, the student performs the final transformation. Use gaps aggressively — every worked line should end in a gap before the student fills it, rather than Otto completing every step. 'note' for anything else. Defaults to 'note' if omitted." },
+    kind: { type: "string", enum: ["note", "instruction", "given", "result", "formula", "summary", "focus", "insight", "definition", "outline", "gap"], description: "styling/role hint: 'given' for the problem's data / statement exactly as given (typeset maths in $…$); 'result' for something the STUDENT has just derived, found or confirmed that matters for the next part (an equation, a value, a simplified form — in $…$, labelled in a few words, only once THEY reached it); 'focus' ONCE to open a session's document — today's arc, where you start and what you're building toward; 'instruction' for a directive to start/try something; 'definition' the first time a key term comes up — the term in **bold**, then a plain-language definition; 'formula' for a plain fact/rule worth keeping visible in words (not real math notation — for an actual expression/equation with a fraction, exponent, or root, use DRAW_ON_BOARD's 'equation' op instead, which typesets it for real instead of describing it in text); 'insight' when the STUDENT has a genuine aha in their own words — credit them by name ('Will's insight: ...'); 'summary' for a recap of the STUDENT's reasoning — it renders as the 'how you got there' reasoning trace, so it is for THEIR reasoning and NOT the default kind: most entries are plain text ('note', 'given', 'formula', 'definition', 'result'), written as ordinary page lines, one idea per line; 'outline' for headed, bulleted structure — a timeline, the causes/effects of an event, a source's key points, an essay's section-by-section plan (REQUIRES the separate `outline` field below, with real sections and bullets — this is the DEFAULT reach for history/literature/language-arts/social-science content instead of trying to force it into a flat sentence); 'gap' for a DELIBERATELY INCOMPLETE step or equation the student must finish — the `text` contains the setup with a '?' where the answer goes (e.g. 'a = ? / m' or 'F_net = ?'), and you MUST also set `expectedAnswer` to the value the student should produce. This is the completion effect: Otto supplies the method, the student performs the final transformation. Use gaps aggressively — every worked line should end in a gap before the student fills it, rather than Otto completing every step. 'note' for anything else. Defaults to 'note' if omitted." },
     expectedAnswer: { type: "string", description: "REQUIRED when kind is 'gap', omitted otherwise. The value the student should fill in — e.g. '10/3', '4.5', 'friction'. Otto must NEVER reveal this in chat while the gap is open; the student discovers it by working through the problem." },
     owner: { type: "string", enum: ["otto", "student"], description: "Who wrote this entry. 'otto' (default) for everything Otto writes. 'student' ONLY for entries transcribing the student's OWN work (their equations, their reasoning steps, their answers) — use this when you're putting their actual work onto the board so it's visually distinguishable from your scaffolding. Otto never silently rewrites or overwrites student-owned entries." },
     outline: {
@@ -2899,7 +2899,7 @@ export function makeProblem(input: any): { problem: TaskProblem } | { error: str
   };
 }
 
-const BOARD_KINDS = new Set(["note", "instruction", "question", "given", "result", "formula", "summary", "focus", "insight", "definition", "outline", "gap"]);
+const BOARD_KINDS = new Set(["note", "instruction", "given", "result", "formula", "summary", "focus", "insight", "definition", "outline", "gap"]);
 /** Resolve an ANNOTATE_BOARD target ("#3" or an id) against the board as the model saw it (the last 40 entries, annotations excluded). */
 export function resolveBoardTarget(target: string, board: BoardEntry[]): BoardEntry | null {
   const visible = board.slice(-40);
@@ -7535,7 +7535,7 @@ const PRIMER_PERSONA =
   `board word for word — a quote of the chat is noise; the board adds structure, the why and the result. Only ` +
   `what has actually been reached: never a step they haven't got to, never the answer.\n` +
   `- THE BOARD IS THEIR PAPER (an alternative to scrap paper — USE IT FOR EVERY SUBJECT, constantly, not just for ` +
-  `"how you got there"): maths/physics — the givens (kind "given"), each question (kind "question"), every equation ` +
+  `"how you got there"): maths/physics — the givens (kind "given"), every equation ` +
   `or value they DERIVE that the next part will need (kind "result", e.g. "Established: $…$"), formulas and ` +
   `units, free-body/figures/graphs, their reasoning lines; chemistry/biology — equations, definitions, labelled ` +
   `diagrams, process steps; history/economics/literature — outline (causes, timeline, argument structure), ` +
@@ -7547,13 +7547,12 @@ const PRIMER_PERSONA =
   `living page, not a form: never write an entry just to have written one, and never repeat what is already there.\n` +
   `- WHEN THE BOARD HELPS (a guide to your judgement, NOT a checklist — add something when it genuinely helps the ` +
   `student think, skip it when it would just be clutter; a quick clarification or a bit of chat needs nothing): ` +
-  `(1) the moment a problem arrives: today's focus + the problem AS GIVEN, typeset; (2) EVERY guiding question you ask ` +
-  `about the work goes on the board too (kind "question": the question itself, short, never its answer) — the ` +
-  `question stays in front of them while they think; (3) every formula, definition or rule the second you mention ` +
-  `or hint at it; (4) any figure, graph or diagram the problem is about (GEOMETRY_ON_BOARD / GRAPH_ON_BOARD) the ` +
-  `moment it helps; (5) after each step THEY get right, one new line of THEIR reasoning (kind "summary", in ` +
-  `$…$ maths); (6) when they're stuck, the parallel worked example with its last line open as "?"; (7) a short ` +
-  `insight credit when they have an aha; (8) a corrected GIVEN redrawn whole when they fix your reading. Keep ` +
+  `(1) the moment a problem arrives: today's focus + the problem AS GIVEN, typeset; (2) every formula, definition ` +
+  `or rule the second you mention or hint at it; (3) any figure, graph or diagram the problem is about ` +
+  `(GEOMETRY_ON_BOARD / GRAPH_ON_BOARD) the moment it helps; (4) after each step THEY get right, one new line of ` +
+  `THEIR reasoning (kind "summary", in $…$ maths); (5) when they're stuck, the parallel worked example with its ` +
+  `last line open as "?"; (6) a short insight credit when they have an aha; (7) a corrected GIVEN redrawn whole ` +
+  `when they fix your reading. Keep ` +
   `the chat bubble short because the board carries the content.\n` +
   `- "HOW YOU GOT THERE" IS THEIRS, NEVER YOURS: a trace/summary line records a step the STUDENT said or did, in ` +
   `their order — never a step you took, suggested or finished for them. If they haven't said it, it does not go ` +
@@ -7848,8 +7847,8 @@ export async function chatAboutTask(
     `multi-line block like that is ONE entry, not "a wall of text": the ~25-word ceiling is about prose, ` +
     `never about a line of working.\n` +
     `- ASK IF YOU'RE UNSURE. If you don't know what they want on the page, or which of two things to put ` +
-    `up, ask ONE short question instead of guessing or writing both. Guiding questions belong on the board ` +
-    `too (kind:"question"), so the question is still there while they think.\n`;
+    `up, ask ONE short question instead of guessing or writing both — the question stays in CHAT, never a ` +
+    `board entry: the board holds problems, working and figures, and questions are spoken, not posted.\n`;
     
   // Smarter responses - contextual awareness
   const contextAwarenessBlock = history.length > 0
@@ -8890,9 +8889,8 @@ export async function chatAboutTask(
       // "it doesn't always use it". It now fires whenever the draft introduces working the board doesn't
       // have, whatever is already up; the once-per-turn latch below is what keeps it from nagging.
       const boardNow = [...(opts?.currentBoard || []), ...result.board];
-      const boardIsEmpty = boardNow.filter((e) => e.kind !== "question").length === 0;
+      const boardIsEmpty = boardNow.length === 0;
       const boardTextNow = boardNow
-        .filter((e) => e.kind !== "question")
         .map((e) => `${e.text} ${(e.outline || []).map((s) => `${s.heading}: ${s.bullets.join("; ")}`).join(" ")}`)
         .join("\n");
       const contentMissedBoard = shouldNudgeBoardContent(draft, boardTextNow, false);
@@ -8934,26 +8932,6 @@ export async function chatAboutTask(
       messages.push({ role: "assistant", content: draft });
       messages.push({ role: "user", content: "That reply doesn't ask the student anything, so they just receive information. Keep what's useful but end on ONE short guiding question that makes THEM take the next step or explain their thinking (never the answer, never a yes/no they can guess). Don't mention this instruction." });
       return true;
-    };
-    // EVERY question goes on the board: the guiding question Otto asks about the work is written on the page (kind
-    // "question") so it stays in front of the student while they think — taken verbatim from the reply, no extra
-    // model call. Skipped for generic closers ("does that make sense?"), when a similar question is already there,
-    // or when a board entry written this turn already carries it.
-    const ensureQuestionOnBoard = (draft: string): void => {
-      if (history.length < 1 || result.guardrailTripped) return;
-      const q = boardQuestionOf(draft);
-      if (!q) return;
-      if (repeatsRecentQuestion(draft, history)) return; // never put a re-asked question on the board again
-      const norm = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim();
-      const known = [...(opts?.currentBoard || []), ...result.board];
-      if (known.some((e) => (e.kind === "question" || e.kind === "instruction") && similarity(norm(e.text), norm(q)) >= 0.7)) return;
-      if (result.board.some((e) => e.kind !== "question" && similarity(norm(e.text || ""), norm(q)) >= 0.6)) return;
-      if (result.board.filter((e) => e.kind === "question").length >= 1) return;
-      // not a card per turn: if one of the last two things on the board is already a question, the student is still
-      // working with it — only a new question once the board has moved on.
-      if ((opts?.currentBoard || []).slice(-2).some((e) => e.kind === "question")) return;
-      const made = makeBoardEntry({ text: q, kind: "question" });
-      if ("entry" in made && !boardStatesAskedValue(q, [made.entry as any]).length) result.board.push(made.entry);
     };
     // "Done — 50 cards covering…" with NO deck behind it (reported live): the reply CLAIMS an artifact was made but no
     // CREATE_FLASHCARDS / CREATE_NOTE / CREATE_QUIZ ran this turn. One corrective round: make it real (artifact tools
@@ -9210,7 +9188,6 @@ export async function chatAboutTask(
         if (guardArtifactClaim(textContent, round, lastRound)) continue;
         if (guardAskedValue(textContent, round, lastRound)) continue;
         if (guardQuestion(textContent, round, lastRound)) continue;
-        ensureQuestionOnBoard(textContent);
         if (nudgeReasoning(textContent, round, lastRound)) continue;
         if (!lengthRetried && !lastRound && !opts?.voiceMode && countWords(textContent) > 120) {
           lengthRetried = true;
@@ -9374,7 +9351,6 @@ export async function chatAboutTask(
       if (guardArtifactClaim(textContent, round, lastRound)) continue;
       if (guardAskedValue(textContent, round, lastRound)) continue;
       if (guardQuestion(textContent, round, lastRound)) continue;
-      ensureQuestionOnBoard(textContent);
       if (nudgeReasoning(textContent, round, lastRound)) continue;
       if (!boardNudgeDone && !lastRound && shouldNudgeBoardWrite(textContent, message, result.board.length > 0)) {
         boardNudgeDone = true;

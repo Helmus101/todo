@@ -20,12 +20,12 @@ export interface TurnActionInputs {
   newProblems: TaskProblem[];
   newObjectives?: TaskObjective[];
   /** The board as it stood BEFORE this turn — only consulted to tell ASK_QUESTION apart from ASK_FOLLOWUP
-   *  (was there already an open question on the page?). */
+   *  (was there already an open gap the student is still working on?). */
   priorBoard?: BoardEntry[];
 }
 
 function hasOpenQuestion(board: BoardEntry[] | undefined): boolean {
-  return !!board?.length && board.slice(-3).some((e) => e.kind === "question" || e.kind === "gap");
+  return !!board?.length && board.slice(-3).some((e) => e.kind === "gap");
 }
 
 /** Classify what this turn actually did onto one TutorAction — see the module comment for why this is
@@ -55,13 +55,6 @@ export function classifyTurnAction(input: TurnActionInputs): { action: TutorActi
   // (both are "show, don't tell" board artifacts); revisit if a dedicated action is ever added.
   if (newBoardEntries.some((e) => e.kind === "interactive")) {
     return { action: "CREATE_DIAGRAM", why: "called CREATE_INTERACTIVE this turn (no dedicated action bucket yet)" };
-  }
-
-  const question = newBoardEntries.find((e) => e.kind === "question");
-  if (question) {
-    return hasOpenQuestion(priorBoard)
-      ? { action: "ASK_FOLLOWUP", why: "wrote a board question while one was already open" }
-      : { action: "ASK_QUESTION", why: "wrote a new board question" };
   }
 
   if (newBoardEntries.length) {

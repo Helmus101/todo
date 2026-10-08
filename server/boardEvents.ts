@@ -202,11 +202,11 @@ export function boardSurfaceBlock(entries: BoardEntry[] | undefined, problems: T
 export function tagStudentAnswer(entries: BoardEntry[] | undefined, text: string, opts: { at: Date; correct?: boolean; concept?: string }): BoardEntry[] | undefined {
   const clean = String(text || "").replace(/\s+/g, " ").trim();
   if (!entries?.length || clean.length < 2) return entries;
-  // Find the newest entry this answer is plausibly answering: the last entry that is a question or a gap.
+  // Find the newest entry this answer is plausibly answering: the last gap (or any line left ending in "?").
   let targetIdx = -1;
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i];
-    if (e.kind === "question" || e.kind === "gap" || /=\s*\?\s*$/.test(e.text || "")) { targetIdx = i; break; }
+    if (e.kind === "gap" || /=\s*\?\s*$/.test(e.text || "")) { targetIdx = i; break; }
   }
   if (targetIdx < 0) return entries;
   const target = entries[targetIdx];

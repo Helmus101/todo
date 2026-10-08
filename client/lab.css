@@ -183,11 +183,6 @@ h1 { font-family: var(--display); font-weight: 400; letter-spacing: -0.025em; }
 .task-modal.wide .chat-thread { flex: 1; min-height: 0; max-height: none; overflow-y: auto; margin-bottom: 12px; padding-right: 4px; }
 .task-modal.wide .task-chat > :last-child { flex: none; }
 
-/* A guiding question lives on the page while the student thinks. */
-.sm-board-entry-question .sm-board-entry-main { border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); border-left: 3px solid var(--accent); border-radius: 12px; padding: 12px 16px; background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface)); }
-.sm-board-entry-question .sm-board-entry-text { font-weight: 500; font-size: 1.02rem; line-height: 1.6; }
-.sm-board-entry-question .sm-board-entry-main::before { content: "Question"; display: block; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); font-weight: 700; margin-bottom: 4px; }
-
 /* Given (the problem's data) and Established (what the student found) — the board as paper. */
 .sm-board-entry-given .sm-board-entry-main { border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; background: var(--surface); }
 .sm-board-entry-given .sm-board-entry-main::before { content: "Given"; display: block; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3, #8a867b); font-weight: 700; margin-bottom: 4px; }

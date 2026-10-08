@@ -1885,8 +1885,13 @@ section("Board usage — the 'use the board' guidance is UNCONDITIONAL (it used 
     block.includes("NOT EVERY ENTRY IS A REASONING TRACE") && block.includes("should be plain text") && block.includes("wearing a costume"));
   check("it teaches the line-by-line working with the next line left as a gap",
     block.includes("SHOW THE WORKING, LINE BY LINE") && block.includes("the NEXT line left as the gap") && block.includes("never about a line of working"));
-  check("it gives permission to ask when unsure, and puts the question on the board",
-    block.includes("ASK IF YOU'RE UNSURE") && block.includes("Guiding questions belong on the board"));
+  check("it gives permission to ask when unsure, and keeps the question in chat — never a board entry",
+    block.includes("ASK IF YOU'RE UNSURE") && block.includes("the question stays in CHAT, never a") && block.includes("questions are spoken, not posted"));
+  // The board's whole capability set: put a PROBLEM up, put a figure/artifact up, or WRITE a line of working.
+  // The old kind:"question" card — every guiding question auto-mirrored onto the page — is gone: questions
+  // are asked and answered in chat, the board only carries problems, working and figures.
+  check("the question card is gone from the board vocabulary (enum, BOARD_KINDS, mirror, prompt rules)",
+    !/"note", "instruction", "question", "given"/.test(src) && !/ensureQuestionOnBoard/.test(src) && !/kind === "question"/.test(src) && !/Guiding questions belong on the board/.test(src));
   check("the big board section carries the paper test for any turn", /THE TEST FOR ANY TURN[\s\S]{0,160}what would be on it by now\?/.test(src));
   check("the one non-optional write is no longer hard-wired to kind:\"summary\"", /THE ONE WRITE THAT ISN'T OPTIONAL[\s\S]{0,700}the KIND follows what they actually did/.test(src) && !/THE ONE WRITE THAT ISN'T OPTIONAL[\s\S]{0,300}call WRITE_TO_BOARD with kind:\"summary\" before your reply ends/.test(src));
   check("the fence rule is corrected: ordinary step lines are NOT fenced, only exact-space shapes are", /UNFENCED text renders ONE LINE PER LINE/.test(src) && /a fence is ONLY for a shape whose exact spacing IS the content/.test(src));
@@ -2097,12 +2102,12 @@ section("Voice-mode board rules — gesture research, not dictation (prompt pins
 
 section("Board: students can answer directly on it, Tutor-only (source pins)");
 {
-  // The board was read-only for the student — a 'question' entry or a completion-gap line ("= ?") was
-  // pure text, even though CREATE_PROBLEM entries right next to them already had a real inline answer box.
+  // The board was read-only for the student — a completion-gap line ("= ?") was pure text, even
+  // though CREATE_PROBLEM entries right next to them already had a real inline answer box.
   // Added an onAnswer prop so the student can reply directly where the question lives.
   const boardSrc = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
   check("BoardArtifact accepts an onAnswer callback and an answering-in-flight flag", /onAnswer\?: \(text: string\) => void;/.test(boardSrc) && /answering\?: boolean;/.test(boardSrc));
-  check("the inline answer box only shows on the NEWEST entry, and only for a question/completion-gap", /idx === flowItems\.length - 1 && \(e\.kind === "question" \|\| isCompletionGap\(e\.text\)\)/.test(boardSrc));
+  check("the inline answer box only shows on the NEWEST entry, and only for a completion-gap", /idx === flowItems\.length - 1 && isCompletionGap\(e\.text\)/.test(boardSrc) && !/kind === "question"/.test(boardSrc));
   check("submitting calls onAnswer with the typed text, exactly like a normal chat send", /onAnswer\(v\); setAnswerKey\(e\.id\); setAnswerText\(""\);/.test(boardSrc));
 
   // Direct instruction (reversing the regular-task-chat board addition above): the board is TUTOR-ONLY —
@@ -5152,7 +5157,7 @@ section("boardEvents.ts — diffing/trajectory/surface-block (now wired into the
 {
   const now = new Date("2026-10-08T12:00:00.000Z");
   const e1 = { id: "a", kind: "formula", text: "F = ma", at: "2026-10-08T11:58:00.000Z" };
-  const e2 = { id: "b", kind: "question", text: "What force opposes motion?", at: "2026-10-08T11:59:00.000Z" };
+  const e2 = { id: "b", kind: "gap", text: "F_net = ?", at: "2026-10-08T11:59:00.000Z" };
   check("a brand-new entry is an otto-wrote/student-wrote event", diffBoard([], [e1], now).length === 1 && diffBoard([], [e1], now)[0].kind === "otto-wrote");
   check("a student-owned entry is tagged student-wrote", diffBoard([], [{ ...e1, owner: "student" }], now)[0].kind === "student-wrote");
   check("a removed entry is an erased event", diffBoard([e1], [], now).some((ev) => ev.kind === "erased"));
@@ -5164,7 +5169,7 @@ section("boardEvents.ts — diffing/trajectory/surface-block (now wired into the
   check("boardTrajectoryBlock is silent with no events at all", boardTrajectoryBlock([]) === "" && boardTrajectoryBlock(undefined) === "");
   check("boardTrajectoryBlock speaks up once a student erase/rewrite is in the stream", /WHAT JUST HAPPENED ON THE BOARD/.test(boardTrajectoryBlock([{ at: now.toISOString(), kind: "erased", detail: "removed their own entry" }])));
   check("boardSurfaceBlock tags ownership and status", /STUDENT'S WORK/.test(boardSurfaceBlock([{ id: "s1", kind: "result", text: "N = mg", owner: "student", status: "incorrect", at: now.toISOString() }], [])) && /marked WRONG/.test(boardSurfaceBlock([{ id: "s1", kind: "result", text: "N = mg", owner: "student", status: "incorrect", at: now.toISOString() }], [])));
-  check("tagStudentAnswer attaches to the newest open question/gap, owner=student", tagStudentAnswer([e2], "friction", { at: now })?.at(-1)?.owner === "student" && tagStudentAnswer([e2], "friction", { at: now })?.at(-1)?.text === "friction");
+  check("tagStudentAnswer attaches to the newest open gap, owner=student", tagStudentAnswer([e2], "friction", { at: now })?.at(-1)?.owner === "student" && tagStudentAnswer([e2], "friction", { at: now })?.at(-1)?.text === "friction");
   check("tagStudentAnswer is a no-op when nothing is open to answer", tagStudentAnswer([e1], "42", { at: now }) === undefined || tagStudentAnswer([e1], "42", { at: now })?.length === 1);
   check("selfCorrections finds a rewrite preceded by an erase", selfCorrections([{ at: "1", kind: "erased", detail: "x" }, { at: "2", kind: "rewrote", detail: "y" }]).length === 1);
   check("boardFingerprint is case/whitespace-insensitive but content-sensitive", boardFingerprint({ kind: "note", text: "Hello   World" }) === boardFingerprint({ kind: "note", text: "hello world" }) && boardFingerprint({ kind: "note", text: "A" }) !== boardFingerprint({ kind: "note", text: "B" }));
@@ -5178,7 +5183,8 @@ section("actionSpace.ts — deterministic teaching-action classification + decis
   check("a gap entry classifies as CREATE_GAP", classifyTurnAction({ ...base, newBoardEntries: [{ id: "g", kind: "gap", text: "x", at: "y" }] }).action === "CREATE_GAP");
   check("an all-equation diagram classifies as WRITE_EQUATION, a real shape as CREATE_DIAGRAM", classifyTurnAction({ ...base, newBoardEntries: [{ id: "d", kind: "diagram", text: "x", at: "y", diagram: [{ op: "equation", latex: "x" }] }] }).action === "WRITE_EQUATION" && classifyTurnAction({ ...base, newBoardEntries: [{ id: "d", kind: "diagram", text: "x", at: "y", diagram: [{ op: "line", x1: 0, y1: 0, x2: 1, y2: 1 }] }] }).action === "CREATE_DIAGRAM");
   check("a graph entry classifies as CREATE_GRAPH", classifyTurnAction({ ...base, newBoardEntries: [{ id: "gr", kind: "graph", text: "x", at: "y" }] }).action === "CREATE_GRAPH");
-  check("a board question with no prior open question is ASK_QUESTION; with one already open, ASK_FOLLOWUP", classifyTurnAction({ ...base, newBoardEntries: [{ id: "q", kind: "question", text: "x", at: "y" }] }).action === "ASK_QUESTION" && classifyTurnAction({ ...base, newBoardEntries: [{ id: "q", kind: "question", text: "x", at: "y" }], priorBoard: [{ id: "q0", kind: "question", text: "earlier", at: "z" }] }).action === "ASK_FOLLOWUP");
+  check("the board can't ask: a stray legacy question entry is just a board write, not ASK_QUESTION", classifyTurnAction({ ...base, newBoardEntries: [{ id: "q", kind: "question", text: "x", at: "y" }] }).action === "EXPLAIN");
+  check("ASK_FOLLOWUP still fires when a reply asks over an open gap", classifyTurnAction({ ...base, reply: "Which force first?", priorBoard: [{ id: "g0", kind: "gap", text: "a = ?", at: "z" }] }).action === "ASK_FOLLOWUP");
   check("no tool call, reply ends in '?' → ASK_QUESTION", classifyTurnAction({ ...base, reply: "What happens next?" }).action === "ASK_QUESTION");
   check("no tool call, short content-free reply → WAIT", classifyTurnAction({ ...base, reply: "Good, keep going." }).action === "WAIT");
   check("no tool call, longer explanatory reply with no question → EXPLAIN", classifyTurnAction({ ...base, reply: "The normal force balances the perpendicular component of weight on the incline, which is why it isn't simply equal to mg." }).action === "EXPLAIN");

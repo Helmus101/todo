@@ -244,11 +244,13 @@ export function cheerLine(message: string, history: { role: string; text: string
   return "";
 }
 
-// ---- Every question goes on the board ----
+// ---- The question a reply actually asks (repeat detection only) ----
 const GENERIC_CLOSER = /^(?:so\s+|and\s+)?(?:does (?:that|this|it) (?:make sense|click|help|work|sound)|make sense|(?:do you )?(?:want|wanna|would you like) (?:to |another|more|me)|ready|ok(?:ay)?|sound good|shall we|how (?:are|is) (?:you|it|that)|is that (?:ok|okay|clear|right)|any questions|veux-tu|tu veux|ça va|c['’]est clair|ça te parle)/i;
 
 /** The question Otto is asking, as one clean sentence — or "" when there is no real question about the work
- *  (a generic "does that make sense?" / "want another?" / "ok?" is conversation, not a board-worthy question). */
+ *  (a generic "does that make sense?" / "want another?" / "ok?" is conversation, not a question). Used to
+ *  catch Otto re-asking something it already asked. Questions are never written to the board — they live in
+ *  chat only, so this never becomes a board entry. */
 export function boardQuestionOf(reply: string): string {
   const qs = reply.replace(/\s+/g, " ").match(/[^.!?]*[^.!?\s][^.!?]*\?/g) || [];
   const last = (qs[qs.length - 1] || "").trim().replace(/^(?:and|so|now|okay|ok|alright|right|well)[,\s—–-]+/i, "").trim();
