@@ -16,7 +16,11 @@ import { computeWorkload } from "./workload.ts";
 import { planTurn, repairLine, reactionTo } from "./tutorAdapt.ts";
 import { diffBoard, recordBoardEvents, objectiveEvents, problemEvents, tagStudentAnswer, selfCorrections } from "./boardEvents.ts";
 import { buildTutorDecision, recordTutorDecision } from "./actionSpace.ts";
-import { loadOrInitSessionState, updateSessionState, persistSessionState } from "./sessionState.ts";
+import { loadOrInitSessionState, persistSessionState } from "./sessionState.ts";
+import { computePolicy, applyTurn, studentStepEntry } from "./tutorBrain.ts";
+import { normalizeStudentModel, emptyStudentModel, studentModelSummary } from "./studentModel.ts";
+import { ensureGraph } from "./conceptGraph.ts";
+import { classifyTurnAction } from "./actionSpace.ts";
 import { parsePolicy, summarize as summarizePolicy, initPolicy } from "./tutorPolicy.ts";
 import { summarizeCoursework, fallbackCourseworkSummary, aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto, ttsReady, synthesizeSpeech, TTS_MAX_TEXT, tutorOpener, interactiveSceneDocument, INTERACTIVE_SCENE_CSP } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken, getAdminMetrics } from "./store.ts";
@@ -1625,7 +1629,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
   const currentBoard = currentBoardRaw
     .filter((b: any) => b && typeof b.text === "string" && b.text.trim())
     .slice(-60)
-    .map((b: any) => ({ id: "", at: "", text: String(b.text).slice(0, 600), ...(typeof b.kind === "string" ? { kind: b.kind } : {}), ...(Array.isArray(b.diagram) ? { diagram: b.diagram.slice(0, 40).filter((o: any) => o && typeof o.op === "string") } : {}), ...(b.kind === "outline" && Array.isArray(b.outline) ? { outline: b.outline.slice(0, 6).map((s: any) => ({ heading: String(s?.heading || "").slice(0, 120), bullets: (Array.isArray(s?.bullets) ? s.bullets : []).map((x: any) => String(x).slice(0, 200)).slice(0, 8) })) } : {}),
+    .map((b: any) => ({ id: typeof b.id === "string" ? b.id.slice(0, 64) : "", at: "", text: String(b.text).slice(0, 600), ...(typeof b.targetId === "string" ? { targetId: b.targetId.slice(0, 64) } : {}), ...(typeof b.kind === "string" ? { kind: b.kind } : {}), ...(Array.isArray(b.diagram) ? { diagram: b.diagram.slice(0, 40).filter((o: any) => o && typeof o.op === "string") } : {}), ...(b.kind === "outline" && Array.isArray(b.outline) ? { outline: b.outline.slice(0, 6).map((s: any) => ({ heading: String(s?.heading || "").slice(0, 120), bullets: (Array.isArray(s?.bullets) ? s.bullets : []).map((x: any) => String(x).slice(0, 200)).slice(0, 8) })) } : {}),
       // Ownership/status/concept — dropped here before (only text/kind/diagram/outline survived the
       // client round-trip), which silently defeated boardSurfaceBlock's "STUDENT'S WORK"/"marked WRONG"
       // tags and tagStudentAnswer's own target-finding downstream: both need these to actually be present.
@@ -1748,14 +1752,28 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     // nothing open to answer.
     const boardForTurn = req.body?.primer === true ? tagStudentAnswer(currentBoard, message, { at: turnNow }) : currentBoard;
     const sessionStateBefore = req.body?.primer === true ? loadOrInitSessionState(profile, t.id, turnNow) : undefined;
+    // THE TUTOR BRAIN (server/tutorBrain.ts): the app's policy for this turn — how much help is allowed, anti-dependence,
+    // wait/step-back/retest/transfer — computed from the session state + the persistent student model + the concept graph.
+    // The model gets it as a binding block and its hidden plan is validated against it (claude.ts).
+    const learner = req.body?.primer === true ? (normalizeStudentModel(profile.conceptModel) || emptyStudentModel()) : undefined;
+    const graph = req.body?.primer === true ? ensureGraph(profile.conceptGraph) : undefined;
+    let tutorPolicy: ReturnType<typeof computePolicy> | undefined;
+    if (sessionStateBefore) { try { tutorPolicy = computePolicy({ message, history, state: sessionStateBefore, model: learner, graph, subject: t.sourceSubject, board: boardForTurn, now: turnNow }); } catch (e: any) { console.warn("[tutor] policy failed:", e?.message || e); } }
     const out = await chatAboutTask(
       { title: t.title, why: t.why, context: t.context, steps: t.steps, source: t.source, sourceDetail: t.sourceDetail, sourceSubject: t.sourceSubject, sourceDue: t.sourceDue, flashcards: t.flashcards, quizzes: t.quizzes },
       history.map((h) => ({ role: h.role, text: h.text })),
       message,
       profile,
       academic,
-      { stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, primer: req.body?.primer === true, recentJournal, currentBoard: boardForTurn, currentProblems, currentObjectives, repair, moveLine, opening, notNeeded: tasks.notNeededFronts(req.session.tasks || [], t.sourceSubject), boardEvents: t.boardEvents, sessionState: sessionStateBefore },
+      { stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, primer: req.body?.primer === true, recentJournal, currentBoard: boardForTurn, currentProblems, currentObjectives, repair, moveLine, opening, notNeeded: tasks.notNeededFronts(req.session.tasks || [], t.sourceSubject), boardEvents: t.boardEvents, sessionState: sessionStateBefore, policy: tutorPolicy },
     );
+    // The student's own step, as the model transcribed it from what they said, lands on the board as THEIR work
+    // (owner student, marked correct/incorrect) — the board is shared paper, not Otto's notebook (spec §10/§11).
+    if (req.body?.primer === true && out.plan?.studentStep && !out.guardrailTripped) {
+      const se = studentStepEntry(out.plan, turnNow, out.plan.concept);
+      const norm = (x: string) => x.toLowerCase().replace(/[\s$]/g, "");
+      if (se && ![...currentBoard, ...out.board].some((e) => norm(e.text) === norm(se.text))) out.board.unshift(se);
+    }
     addUsage(profile, out.tokens, "chat"); // untracked before — a tool-calling turn can now cost like a small run
     bumpActivityHour(profile, new Date(), t.sourceSubject);
     profile.lastTutorActivityAt = new Date().toISOString(); // drives shouldRefreshStudentModel's "real activity" gate
@@ -1843,12 +1861,15 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
           ...problemEvents(currentProblems, problemsAfter, turnNow),
         ];
         if (events.length) t.boardEvents = recordBoardEvents(t.boardEvents, events);
-        const decision = buildTutorDecision({ reply: out.reply, newBoardEntries: out.board, newProblems: out.problems, priorBoard: currentBoard, now: turnNow, taskId: t.id, subject: t.sourceSubject });
-        profile.tutorDecisions = recordTutorDecision(profile.tutorDecisions, decision);
-        const success = events.some((e) => e.kind === "objective-done" || e.kind === "problem-solved") || selfCorrections(events).length > 0;
-        const reaction = reactionTo(message, history);
-        const sessionStateAfter = updateSessionState(sessionStateBefore, { action: decision.action, frustrated: reaction.frustrated, boardLength: boardAfter.length, success }, turnNow);
-        profile.tutorSessions = persistSessionState(profile.tutorSessions, sessionStateAfter);
+        // The app's update (spec §18/§21/§30): the model's plan + what the app measured (exercise results, board
+        // events) → session state, the evidence-based student model, the concept graph and the decision log.
+        const fallback = classifyTurnAction({ reply: out.reply, newBoardEntries: out.board, newProblems: out.problems, priorBoard: currentBoard });
+        const exerciseResults = [...message.matchAll(/\[(?:Exercise|Exercice)\][^\n]*?(right|wrong|juste|faux)[^\n]*?#\s*(\d+)/gi)].map((mm) => ({ correct: /right|juste/i.test(mm[1]), attempt: Number(mm[2]) || 1 }));
+        const applied = applyTurn(sessionStateBefore, learner, graph, { plan: out.plan || null, fallbackAction: fallback.action, fallbackWhy: fallback.why, ...(out.planCorrection ? { correctedFrom: out.planCorrection.from, correctReason: out.planCorrection.reason } : {}), message, history, subject: t.sourceSubject, exerciseResults, now: turnNow });
+        profile.tutorDecisions = recordTutorDecision(profile.tutorDecisions, { ...applied.decision, taskId: t.id });
+        profile.tutorSessions = persistSessionState(profile.tutorSessions, { ...applied.state, boardRichness: Math.min(1, boardAfter.length / 12) });
+        profile.conceptModel = applied.model;
+        if (applied.graph) profile.conceptGraph = applied.graph;
       } catch { /* best-effort — never blocks the reply */ }
     }
     // Record what THIS turn produced, for the next turn's RL scoring (see lastTurnBoardWrite's own comment).

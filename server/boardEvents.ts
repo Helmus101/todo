@@ -170,21 +170,25 @@ export function boardSurfaceBlock(entries: BoardEntry[] | undefined, problems: T
   const probs = (problems || []).slice(-8);
   if (!board.length && !probs.length) return "";
   const lines: string[] = [];
-  for (const e of board) {
+  for (const [i, e] of board.entries()) {
+    if (e.kind === "annotation") continue; // annotations are shown on the entry they point at, below
+    const notes = board.filter((a) => a.kind === "annotation" && a.targetId && a.targetId === e.id).map((a) => `your note (${a.tone || "focus"}): ${a.text}`);
     const tags = [
+      `#${i + 1}`,
+      ...notes,
       e.owner === "student" ? "STUDENT'S WORK" : "yours",
       e.kind === "gap" ? "GAP — they must fill this" : "",
       e.status === "incorrect" ? "marked WRONG" : e.status === "correct" ? "marked correct" : "",
       e.concept ? `concept: ${e.concept}` : "",
     ].filter(Boolean);
-    lines.push(`- [${e.kind || "note"}]${tags.length ? ` (${tags.join("; ")})` : ""} ${e.text.slice(0, 400)}` +
+    lines.push(`- [${e.kind || "note"}] (${tags.join("; ")}) ${e.text.slice(0, 400)}` +
       (e.kind === "outline" && e.outline?.length ? "\n" + e.outline.map((s) => `  · ${s.heading}: ${s.bullets.join("; ")}`).join("\n") : ""));
   }
   for (const p of probs) lines.push(`- [problem] ${p.question.slice(0, 300)}${p.options?.length ? ` (options: ${p.options.join(" / ")})` : ""}${p.solved ? " — SOLVED" : ""}`);
   return (
     `\nWHAT'S CURRENTLY ON THE BOARD (the visible surface next to this chat — you can see it, the student ` +
     `can see it, don't ask them to describe it back to you; a NEW WRITE_TO_BOARD call adds to this, it ` +
-    `never replaces it). Entries marked STUDENT'S WORK are THEIRS, not yours — never rewrite, correct or ` +
+    `never replaces it; #n is each entry's reference for ANNOTATE_BOARD). Entries marked STUDENT'S WORK are THEIRS, not yours — never rewrite, correct or ` +
     `delete one silently; respond to it in chat and let them fix it. Everything listed here is ALREADY DONE ` +
     `or already asked — never redo or re-explain it; continue from the LAST entry:\n` +
     lines.join("\n") + "\n"

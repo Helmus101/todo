@@ -18,6 +18,7 @@ import { getMaxHintLevel, isGraduationMoment } from "./dependenceMetrics.ts";
 import { evaluateArithmetic, findArithmeticClaims, hasArithmetic } from "./arithmetic.ts";
 import { boardSurfaceBlock, boardTrajectoryBlock, type BoardEvent } from "./boardEvents.ts";
 import { buildTutorDecision } from "./actionSpace.ts";
+import { extractPlan, validatePlan, policyBlock as tutorPolicyBlock, PLAN_PROTOCOL, type TutorPlan, type TutorPolicy } from "./tutorBrain.ts";
 import { sessionStateBlock } from "./sessionState.ts";
 import type { TutorSessionStateShape, TutorDecisionShape } from "../shared/agentTypes.ts";
 
@@ -2887,6 +2888,14 @@ export function makeProblem(input: any): { problem: TaskProblem } | { error: str
 }
 
 const BOARD_KINDS = new Set(["note", "instruction", "question", "given", "result", "formula", "summary", "focus", "insight", "definition", "outline", "gap"]);
+/** Resolve an ANNOTATE_BOARD target ("#3" or an id) against the board as the model saw it (the last 40 entries, annotations excluded). */
+export function resolveBoardTarget(target: string, board: BoardEntry[]): BoardEntry | null {
+  const visible = board.slice(-40);
+  const m = /^#?\s*(\d{1,3})$/.exec(String(target || "").trim());
+  if (m) { const n = Number(m[1]); return n >= 1 && n <= visible.length && visible[n - 1].kind !== "annotation" ? visible[n - 1] : null; }
+  const id = String(target || "").trim();
+  return id ? visible.find((e) => e.id === id && e.kind !== "annotation") || null : null;
+}
 const MAX_OUTLINE_SECTIONS = 6;
 const MAX_OUTLINE_BULLETS = 8;
 export function makeBoardEntry(input: any): { entry: BoardEntry } | { error: string } {
@@ -3256,6 +3265,21 @@ const GEOMETRY_ON_BOARD_TOOL = {
     angles: { type: "array", description: "{at:'B',from:'A',to:'C',label?:'40°'|'θ'|'?',right?:true} — an arc (or right-angle square) at vertex B between rays BA and BC", items: { type: "object" } },
     unlabeled: { type: "array", items: { type: "string" }, description: "point names that should NOT get a name label" },
   }, required: ["caption"] },
+};
+
+/** ANNOTATE_BOARD — Otto's pointer: a short note attached to a specific board entry (its #n from the board listing, or its
+ *  id). This is how a tutor "circles the mistake" or "points at the equation" instead of writing a paragraph in chat. */
+const ANNOTATE_BOARD_TOOL = {
+  name: "ANNOTATE_BOARD",
+  description: "Attach a SHORT pointer to one existing board entry — highlight it, circle a mistake in the student's work, point at the " +
+    "line to look at, or mark something they got right. Use the entry's #n from WHAT'S CURRENTLY ON THE BOARD (or its id). The note " +
+    "points and asks; it NEVER states the correction or the answer (\"look at the direction of this force — perpendicular to what?\" " +
+    "not \"N should be mg cos θ\"). Prefer this to explaining a mistake in chat: show WHERE, let them find WHAT. One or two per turn.",
+  input_schema: { type: "object", properties: {
+    target: { type: "string", description: "which entry: '#3' (its number in the board listing) or its id" },
+    note: { type: "string", description: "the pointer, ≤ 20 words, maths in $…$, a question or a nudge — never the fix" },
+    tone: { type: "string", enum: ["error", "hint", "good", "focus"], description: "error = this looks wrong; hint = look here; good = nicely done; focus = this is the line we're working on" },
+  }, required: ["target", "note"] },
 };
 
 const GRAPH_COLORS = ["blue", "red", "green", "orange", "purple", "ink"] as const;
@@ -7360,6 +7384,10 @@ export interface ChatResult {
    *  ("Otto couldn't reply — try again") instead of rendering it as an in-character chat bubble, which used
    *  to make an actual outage (bad API key, DeepSeek down) look exactly like Otto just being unhelpful. */
   error?: boolean;
+  /** Tutor only: the hidden plan the model wrote this turn (tutorBrain.ts) — never shown to the student. */
+  plan?: TutorPlan;
+  /** Set when the app vetoed the model's first plan against the tutor policy and it re-planned. */
+  planCorrection?: { from: TutorPlan["action"]; reason: string };
 }
 
 // The tutor's own tool loop is bounded much tighter than runTask's: a chat turn is "maybe look something
@@ -7711,7 +7739,7 @@ export async function chatAboutTask(
   message: string,
   profile?: Profile,
   academic?: AcademicContext,
-  opts?: { stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string; growthTrend?: "up"; subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; voiceMode?: boolean; canvasMode?: boolean; recentJournal?: { date: string; text: string }[]; primer?: boolean; currentBoard?: BoardEntry[]; currentProblems?: TaskProblem[]; currentObjectives?: TaskObjective[]; notNeeded?: string[]; repair?: string; moveLine?: string; opening?: { role: string; text: string }[]; boardEvents?: BoardEvent[]; sessionState?: TutorSessionStateShape },
+  opts?: { stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string; growthTrend?: "up"; subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; voiceMode?: boolean; canvasMode?: boolean; recentJournal?: { date: string; text: string }[]; primer?: boolean; currentBoard?: BoardEntry[]; currentProblems?: TaskProblem[]; currentObjectives?: TaskObjective[]; notNeeded?: string[]; repair?: string; moveLine?: string; opening?: { role: string; text: string }[]; boardEvents?: BoardEvent[]; sessionState?: TutorSessionStateShape; policy?: TutorPolicy },
 ): Promise<ChatResult> {
   const steps = task.steps || [];
   // Substeps (a step's own on-demand sub-checklist, ticked independently — see Profile.grades-style comment
@@ -7872,7 +7900,7 @@ export async function chatAboutTask(
   // anyway.
   const dynamicContext = nowBlock() + courseworkLine(profile, task.sourceSubject) + studentNameLine(profile?.name) + dueLine(task.sourceDue, tzOf(profile)) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + syllabusGroundingLine(profile, task.sourceSubject) + learningStyleLine(profile) + hintDensityLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + sessionRecapLine(profile?.sessions, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine + (opts?.primer ? (opts?.moveLine || "") + (opts?.repair || "") + spokenMathHint(message) + scaffoldLine(message, history) + probeLine(message, history) + cheerLine(message, history, opts?.currentObjectives) : "");
   const sys =
-    (opts?.primer ? PRIMER_PERSONA : "") +
+    (opts?.primer ? PRIMER_PERSONA + PLAN_PROTOCOL : "") +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
     `good tutor they can't afford to hire: patient, genuinely curious about how THEY think, and interested ` +
     `in them actually understanding the material — not in getting the assignment off their plate. Ground ` +
@@ -8693,7 +8721,7 @@ export async function chatAboutTask(
     boardIntegrationBlock +
     contextAwarenessBlock +
     dynamicContext +
-    `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}${boardBlock}${trajectoryBlock}${sessionBlock}${objectivesBlock}` +
+    `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}${boardBlock}${trajectoryBlock}${sessionBlock}${opts?.primer && opts?.policy && opts?.sessionState ? tutorPolicyBlock(opts.policy, opts.sessionState) : ""}${objectivesBlock}` +
     assignmentBlock(task, tzOf(profile)) + profileBlock(profile) + academicBlock(academic) + materialsBlock(opts?.materials) +
     PRIMER_CLOSING_REMINDER;
   // 10, not the whole thread: every one of these is resent verbatim on every turn AND every intra-turn
@@ -8754,7 +8782,7 @@ export async function chatAboutTask(
   const result = empty();
   const logAudit = (kind: AuditEvent["kind"], label: string) => result.audit.push({ at: new Date().toISOString(), kind, label });
   const finish = (reply: string): ChatResult => {
-    reply = stripLeakedToolCallSyntax(reply);
+    reply = stripLeakedToolCallSyntax(extractPlan(reply).reply);
     // The redirect line replaces a violating REPLY, but if that same turn also produced artifacts, they were
     // almost certainly the same violation wearing a different container (a "fiche" that's just the essay) —
     // discard them too rather than hand over a chip whose text just got rejected.
@@ -8831,6 +8859,7 @@ export async function chatAboutTask(
     let boardNudgeDone = false;
     let reasoningNudgeDone = false;
     let repeatCorrected = false;
+    let planCorrected = false;
     // Tutor only: one corrective round for the two ways a turn can fail to leave a mark on the board —
     // (a) the student contributed a step and Otto wrote NOTHING, and (b) Otto's own reply carried working the
     // page doesn't have (see shouldNudgeBoardContent; the second case used to require an EMPTY board, which is
@@ -9000,6 +9029,27 @@ export async function chatAboutTask(
       { const u = usageOf(res); result.tokens.in += u.in; result.tokens.out += u.out; result.tokens.cachedIn = (result.tokens.cachedIn || 0) + u.cachedIn; }
       const toolCalls = res.choices?.[0]?.message?.tool_calls || [];
       let textContent = res.choices?.[0]?.message?.content || "";
+      // The hidden plan (tutorBrain.ts): captured, then stripped — the student, TTS and the stored thread never
+      // see it. The newest plan wins (a re-plan after a correction replaces the vetoed one).
+      const rawContent = textContent;
+      if (opts?.primer) { const ex = extractPlan(textContent); if (ex.plan) result.plan = ex.plan; textContent = ex.reply; }
+      // THE APPLICATION'S VETO: a plan that gives more help than the policy allows this turn (or answers an
+      // answer-request the student hasn't attempted) never executes — its tool calls are refused unrun and the
+      // model re-plans once. This is the "LLM decides, app validates" line of spec §19/§20.
+      if (opts?.primer && opts?.policy && !planCorrected && !lastRound && result.plan) {
+        const v = validatePlan(result.plan, opts.policy);
+        if (!v.ok) {
+          planCorrected = true;
+          result.planCorrection = { from: result.plan.action, reason: v.reason };
+          console.log(`${new Date().toISOString()} [chat] round ${round}: plan ${result.plan.action} vetoed by tutor policy — ${v.reason}`);
+          if (toolCalls.length) {
+            messages.push({ role: "assistant", content: rawContent, tool_calls: toolCalls });
+            for (const tc of toolCalls) messages.push({ role: "tool", tool_call_id: tc.id || `tool_${Date.now()}`, content: "NOT RUN — tutor policy check failed (see next message)." });
+          } else messages.push({ role: "assistant", content: rawContent });
+          messages.push({ role: "user", content: `TUTOR POLICY CHECK — your plan was not accepted: ${v.reason} Write a NEW <plan> that respects the policy, then your reply (and any board writes). Don't mention this check.` });
+          continue;
+        }
+      }
       if (!toolCalls.length && !textContent.trim()) {
         // Genuinely empty completion, no tool call either — DeepSeek v4's hidden reasoning tokens ate the
         // WHOLE max_tokens budget before a single reply token came out (the same trap documented on OUT/
@@ -9242,6 +9292,17 @@ export async function chatAboutTask(
           if (result.board.filter((e) => e.kind === "diagram").length >= 3) content = "LIMIT: you've already drawn a few figures this message — that's enough for one turn.";
           else if (leaksAnyProblemAnswer([input?.caption, ...(Array.isArray(input?.segments) ? input.segments.map((x: any) => (typeof x === "object" ? x?.label : "")) : []), ...(Array.isArray(input?.angles) ? input.angles.map((x: any) => x?.label) : []), ...(Array.isArray(input?.arcs) ? input.arcs.map((x: any) => x?.label) : []), ...(Array.isArray(input?.circles) ? input.circles.map((x: any) => x?.label) : [])].filter(Boolean).join(" "), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that figure labels a problem's answer — redraw it with the unknown shown as '?'.";
           else { const r = makeGeometryEntry(input); if ("error" in r) content = r.error; else if (isDuplicateDiagram([...(opts?.currentBoard || []), ...result.board], r.entry)) content = "DUPLICATE: that exact figure is already on the board — point at it in your reply instead of drawing it again (draw again only to ADD something new)."; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Figure dessinée : « ${r.entry.text.slice(0, 60)} »` : `Diagram drawn: "${r.entry.text.slice(0, 60)}"`); } }
+        } else if (name === "ANNOTATE_BOARD") {
+          const all = [...(opts?.currentBoard || []), ...result.board];
+          const hit = resolveBoardTarget(String((input as any)?.target || ""), all);
+          const note = String((input as any)?.note || "").replace(/\s+/g, " ").trim().slice(0, 200);
+          const tone = ["error", "hint", "good", "focus"].includes((input as any)?.tone) ? (input as any).tone : "focus";
+          if (!hit) content = "ERROR: no such board entry — use a #n from the board listing.";
+          else if (!hit.id) content = "ERROR: that entry can't be pointed at yet.";
+          else if (!note) content = "ERROR: a pointer needs a short note.";
+          else if (result.board.filter((e) => e.kind === "annotation").length >= 2) content = "LIMIT: two pointers per turn is plenty.";
+          else if (leaksAnyProblemAnswer(note, [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that note states a problem's answer — point and ask, don't tell.";
+          else { result.board.push({ id: randomUUID(), text: note, kind: "annotation", targetId: hit.id, tone, owner: "otto", at: new Date().toISOString() } as BoardEntry); content = JSON.stringify({ ok: true }); logAudit("artifact", fr ? `Annotation : « ${note.slice(0, 60)} »` : `Pointed at the board: "${note.slice(0, 60)}"`); }
         } else if (name === "GRAPH_ON_BOARD") {
           if (result.board.filter((e) => e.kind === "graph").length >= 2) content = "LIMIT: you've already put a couple of graphs on the board this message — that's enough for one turn.";
           else if (leaksAnyProblemAnswer([input?.caption, ...(Array.isArray(input?.fns) ? input.fns.map((f: any) => f?.label || "") : [])].join(" "), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that graph's caption or labels state a problem's answer — title it by what to explore, not by the result.";
