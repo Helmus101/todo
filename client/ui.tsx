@@ -419,7 +419,10 @@ function formatMath(text: string): string {
     // "^\circ" idiom directly as a plain degree symbol (no leftover caret) BEFORE the generic superscript
     // pass below would otherwise grab just the backslash as a one-character "exponent" and mangle it.
     .replace(/\^\\circ/g, "°").replace(/\\circ/g, "°")
-    .replace(/\\d?frac\{([^{}]*)\}\{([^{}]*)\}/g, "($1)/($2)") // \frac AND \dfrac/\tfrac
+    // [cdt]? — the old `d?` NEVER matched \tfrac (reported live: "F_{(avg)} = \tfrac{kx}{2}" printed as
+    // raw "F_(avg) = \tfrackx2" once the braces were stripped at the end of this function).
+    .replace(/\\[cdt]?frac\{([^{}]*)\}\{([^{}]*)\}/g, "($1)/($2)") // \frac, \dfrac, \tfrac, \cfrac
+    .replace(/\\[cdt]?frac(\S)(\S)/g, (_, a, b) => `(${a})/(${b})`) // brace-less form: \tfrac12 → (1)/(2)
     // \sqrt[n]{x} (nth root) before the plain \sqrt{x} case, or the `[n]` would be left dangling.
     .replace(/\\sqrt\[([^\]]*)\]\{([^{}]*)\}/g, (_, n, g) => `${scriptify(n, SUPERSCRIPT, "^")}√(${g})`)
     .replace(/\\sqrt\{([^{}]*)\}/g, "√($1)")
@@ -446,7 +449,11 @@ function formatMath(text: string): string {
   s = s.replace(/_(?!\{)(\S)/g, (_, g) => scriptify(g, SUBSCRIPT, "_"));
   s = s.replace(/\^\{([^{}]*)\}/g, (_, g) => scriptify(g, SUPERSCRIPT, "^"));
   s = s.replace(/_\{([^{}]*)\}/g, (_, g) => scriptify(g, SUBSCRIPT, "_"));
-  return s.replace(/[{}]/g, "").replace(/ {2,}/g, " ").trim();
+  // Never hand a raw backslash to the reader (reported live: "E = \tfrac12(250)(0.12)^2 = 1.8\ J" printed
+  // verbatim): any command still unhandled becomes its plain name, a control-space becomes a space, and
+  // any other stray backslash is dropped. KaTeX never sees this output — MathText routes real $…$ spans to
+  // KaTeX before formatMath runs — so removing syntax can only ever lose a raw "\\" the reader can't use.
+  return s.replace(/\\\s+/g, " ").replace(/\\([a-zA-Z]+)/g, "$1").replace(/\\/g, "").replace(/[{}]/g, "").replace(/ {2,}/g, " ").trim();
 }
 
 export { formatMath, boldify };

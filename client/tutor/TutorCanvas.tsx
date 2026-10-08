@@ -83,24 +83,44 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
     paint(ctx, live.current ? [...items.current, live.current] : items.current, size.current.w, size.current.h);
   }, []);
 
+  // Lowest inked pixel in page coords (committed ink + the stroke in progress). The page must always cover
+  // it — both so a stroke is never clipped, and so a later refit (triggered by Otto writing a new entry)
+  // can't shrink the canvas out from under ink the student drew further down in the blank.
+  const inkBottom = useCallback(() => {
+    let y = 0;
+    for (const it of items.current) {
+      if (it.kind === "text") y = Math.max(y, it.y + it.size * 1.4);
+      else if (it.tool !== "eraser") for (const p of it.pts) y = Math.max(y, p.y + it.width);
+    }
+    const l = live.current;
+    if (l && l.tool !== "eraser") for (const p of l.pts) y = Math.max(y, p.y + l.width);
+    return y;
+  }, []);
+
+  // Sizes the ink page to the board PLUS an open blank area underneath (≈60% of the pane, min 400px) — the
+  // "infinite canvas": the student scrolls down into clean ruled space to draw, and a stroke that reaches
+  // the current bottom edge extends the page again (see move()) instead of hitting a wall.
+  const fit = useCallback(() => {
+    const c = canvasRef.current, surf = surface;
+    if (!surf || !c) return;
+    const w = surf.clientWidth;
+    if (!w) return; // hidden (Desmos open) — keep the old size, repaint on return
+    const board = surf.firstElementChild as HTMLElement | null;
+    const blank = Math.max(400, Math.round(surf.clientHeight * 0.6));
+    const h = Math.max(surf.clientHeight, board ? board.offsetTop + board.offsetHeight + blank : 0, inkBottom() + 240);
+    if (Math.abs(size.current.w - w) < 0.5 && Math.abs(size.current.h - h) < 0.5) return;
+    const dpr = window.devicePixelRatio || 1;
+    size.current = { w, h };
+    c.style.height = `${h}px`;
+    c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+    repaint();
+  }, [surface, repaint, inkBottom]);
+
   // The ink lives ON the board surface: the canvas is portalled INTO the board's scroll container and sized to
   // its full content height, so what the student writes scrolls with Otto's writing — one shared page, like
   // pen on paper — instead of floating over the viewport. (Ink coordinates are page coordinates.)
   useEffect(() => {
-    const c = canvasRef.current;
-    if (!surface || !c) return;
-    const fit = () => {
-      const w = surface.clientWidth;
-      if (!w) return; // hidden (Desmos open) — keep the old size, repaint on return
-      const board = surface.firstElementChild as HTMLElement | null;
-      const h = Math.max(surface.clientHeight, board ? board.offsetTop + board.offsetHeight + 300 : 0);
-      if (Math.abs(size.current.w - w) < 0.5 && Math.abs(size.current.h - h) < 0.5) return;
-      const dpr = window.devicePixelRatio || 1;
-      size.current = { w, h };
-      c.style.height = `${h}px`;
-      c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
-      repaint();
-    };
+    if (!surface) return;
     fit();
     const ro = new ResizeObserver(fit);
     ro.observe(surface);
@@ -108,7 +128,7 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
     const mo = new MutationObserver(fit);
     mo.observe(surface, { childList: true, subtree: true });
     return () => { ro.disconnect(); mo.disconnect(); };
-  }, [surface, repaint]);
+  }, [surface, fit]);
 
   useEffect(() => { if (typing) textRef.current?.focus(); }, [typing]);
 
@@ -147,7 +167,9 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
     const evs = (e.nativeEvent as PointerEvent).getCoalescedEvents?.() ?? [];
     const r = canvasRef.current!.getBoundingClientRect();
     if (evs.length) for (const ev of evs) s.pts.push({ x: ev.clientX - r.left, y: ev.clientY - r.top }); else s.pts.push(pos(e));
-    repaint();
+    // Ink reaching the current bottom edge extends the page (infinite canvas) instead of hitting a wall;
+    // fit() repaints when it actually grows, so don't repaint twice.
+    if (s.pts[s.pts.length - 1].y > size.current.h - 200) fit(); else repaint();
   };
   const up = (e: React.PointerEvent) => {
     const f = forwarded.current; forwarded.current = null;
@@ -185,6 +207,37 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
     flat.width = Math.max(1, Math.round(sw * dpr * scale)); flat.height = Math.max(1, Math.round(sh * dpr * scale));
     const f = flat.getContext("2d")!;
     f.fillStyle = "#FFFFFF"; f.fillRect(0, 0, flat.width, flat.height);
+    // Board context UNDER the ink: drawings sit on top of Otto's lesson (a circle around an equation, an
+    // arrow to a step) — cropped ink alone loses exactly what the student is pointing AT. Paint the printed
+    // board text behind the strokes in the same crop so the vision read sees the OVERLAP — what's drawn AND
+    // what it was drawn over — like looking at the real page instead of a floating doodle.
+    const canvasRect = c.getBoundingClientRect();
+    const ctxSel = ".sm-board-entry-text, .sm-board-line, .sm-board-problem-q, .sm-board-problem-compact-q";
+    const all = Array.from(surface?.querySelectorAll<HTMLElement>(ctxSel) ?? []);
+    const nodes = all.filter((el) => !all.some((o) => o !== el && o.contains(el))); // drop nested duplicates
+    f.textBaseline = "top";
+    for (const el of nodes) {
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) continue;
+      const ex = r.left - canvasRect.left, ey = r.top - canvasRect.top;
+      if (ex + r.width < sx || ey + r.height < sy || ex > sx + sw || ey > sy + sh) continue; // outside crop
+      const dx = (ex - sx) * dpr * scale, dy = (ey - sy) * dpr * scale;
+      const fs = Math.max(8, (parseFloat(getComputedStyle(el).fontSize) || 14) * dpr * scale);
+      f.font = `${Math.round(fs)}px Inter, system-ui, sans-serif`;
+      f.fillStyle = "#3F3E39";
+      const maxW = Math.max(40, Math.min(flat.width - dx, Math.min(r.width, sx + sw - Math.max(ex, sx)) * dpr * scale));
+      let lineY = dy, printed = 0;
+      for (const raw of (el.innerText || "").split("\n")) {
+        let cur = "";
+        const push = (t: string) => { if (lineY <= flat.height && printed < 12) { f.fillText(t, dx, lineY); printed++; } lineY += fs * 1.35; };
+        for (const word of raw.split(/\s+/).filter(Boolean)) {
+          const test = cur ? `${cur} ${word}` : word;
+          if (cur && f.measureText(test).width > maxW) { push(cur); cur = word; } else cur = test;
+        }
+        if (cur) push(cur);
+        if (printed >= 12) break;
+      }
+    }
     f.drawImage(c, sx * dpr, sy * dpr, sw * dpr, sh * dpr, 0, 0, flat.width, flat.height);
     const { description } = await api.readWhiteboard(flat.toDataURL("image/png"));
     seenStamp.current = inkStamp.current;

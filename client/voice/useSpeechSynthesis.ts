@@ -70,7 +70,10 @@ export function stripLatexForSpeech(text: string): string {
   // run twice so the inner pair resolves before the outer one is matched.
   for (let i = 0; i < 2; i++) {
     s = s
-      .replace(/\\d?frac\{([^{}]*)\}\{([^{}]*)\}/g, " ($1) over ($2) ")
+      // [cdt]? — `d?` alone never matched \tfrac/\cfrac (spoken as nothing; the braces then got deleted
+      // along with the syntax, losing the fraction's arguments entirely).
+      .replace(/\\[cdt]?frac\{([^{}]*)\}\{([^{}]*)\}/g, " ($1) over ($2) ")
+      .replace(/\\[cdt]?frac(\S)(\S)/g, " ($1) over ($2) ") // brace-less: \tfrac12 → ( 1 ) over (2)
       .replace(/\\sqrt\[(\d+)\]\{([^{}]*)\}/g, " the $1th root of ($2) ")
       .replace(/\\sqrt\{([^{}]*)\}/g, " the square root of ($1) ");
   }
@@ -94,6 +97,7 @@ export function stripLatexForSpeech(text: string): string {
     .replace(/_\{([^{}]*)\}/g, " sub $1 ")
     .replace(/_(\w)/g, " sub $1 ")
     .replace(/\\[a-zA-Z]+/g, " ")                       // any other LaTeX command — not worth guessing at
+    .replace(/\\/g, " ")                                // lone backslash ("\ J" control space) — silence, not "backslash"
     .replace(/[{}$]/g, "")                              // remaining braces/delimiters
     // Plain-text trig abbreviations (no backslash at all — angle-addition identities are often typed this
     // way directly, "sin A cos B + cos A sin B") get the same word-form treatment as the LaTeX case above.

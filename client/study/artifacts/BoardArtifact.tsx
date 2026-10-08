@@ -23,8 +23,6 @@ interface BoardArtifactProps {
    *  ("what made you pick B?") instead of the board silently marking it. `attempt` counts tries on this
    *  problem including this one. Never carries the correct answer — only what the student gave. */
   onProblemResult?: (r: { problem: TaskProblem; given: string; correct: boolean; attempt: number }) => void;
-  /** Optional handler to clear the board entries */
-  onClearBoard?: () => void;
 }
 
 const KIND_LABEL: Record<string, [string, string]> = {
@@ -140,6 +138,12 @@ const MATH_WORD_ALLOW = new Set([
   "sin", "cos", "tan", "cot", "sec", "csc", "log", "ln", "exp", "lim", "sqrt", "frac", "mod", "min", "max",
   "det", "gcd", "arg", "sup", "inf", "pi", "theta", "alpha", "beta", "gamma", "delta", "lambda", "mu",
   "sigma", "phi", "omega", "eta", "rho", "tau", "chi", "psi", "nu", "xi", "zeta", "kappa",
+  // the other macros a tutoring model actually writes — without these, a perfectly good equation whose
+  // latex uses two unfamiliar commands ("\Rightarrow … \approx …") counted as 2 "prose words", tripped
+  // the gate and fell back to plain text, which is how the (1)/(2) pseudo-fractions reached the chat.
+  "tfrac", "dfrac", "cfrac", "approx", "Rightarrow", "rightarrow", "Leftrightarrow", "infty", "times", "div",
+  "cdot", "cdots", "ldots", "dots", "angle", "perp", "parallel", "cong", "sim", "equiv", "propto",
+  "sinh", "cosh", "tanh", "arcsin", "arccos", "arctan", "gcd",
 ]);
 export function looksLikeRealMath(latex: string): boolean {
   const words = latex.match(/\p{L}{3,}/gu) || [];
@@ -150,8 +154,14 @@ export function looksLikeRealMath(latex: string): boolean {
 /** Prose with real typeset math inline: `$…$` and `\(…\)` segments go through KaTeX, everything else through
  *  the normal chat renderer (bold, ==highlight==, unicode math). A bad equation falls back to its source. */
 export function MathText({ text }: { text: string }) {
-  const parts = text.split(/(\$\$[^$]+\$\$|\$[^$\n]+\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\])/g);
-  if (parts.length === 1) return <>{renderChatText(text)}</>;
+  // Bare model maths (no $…$: "E = \tfrac12(250)(0.12)^2 = 1.8\ J", "(1)/(2)(0.5)v² = 1.8 ⇒ v ≈ 2.68\ m/s")
+  // used to fall straight through to formatMath's plain-text approximation — literal \tfrac commands and
+  // (1)/(2) pseudo-fractions in the chat, reported live twice. autoMathLine wraps each line's maths in $…$
+  // FIRST so the KaTeX path below renders real stacked fractions; prose passes through untouched and text
+  // already in $…$ is left alone (autoMathLine is a no-op on it), so this is safe for every caller.
+  const auto = autoMathLine(text);
+  const parts = auto.split(/(\$\$[^$]+\$\$|\$[^$\n]+\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\])/g);
+  if (parts.length === 1) return <>{renderChatText(auto)}</>;
   return (
     <>
       {parts.map((p, i) => {
@@ -445,14 +455,13 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
  *  and practice problems. ONE DOCUMENT, ONE FLOW: entries and problems interleave in the order the session
  *  actually produced them (a problem sits between the formula it exercises and the insight answering it —
  *  the lesson's story, not a problem section pinned on top). kind:"focus" stays pinned above as the heading. */
-export function BoardArtifact({ task, writing, onProblemResult, onClearBoard }: BoardArtifactProps) {
+export function BoardArtifact({ task, writing, onProblemResult }: BoardArtifactProps) {
   const L = useLang();
   const endRef = useRef<HTMLDivElement>(null);
   const entries = task.board || [];
   const problems = task.problems || [];
   const [showHint, setShowHint] = useState<{ [key: string]: boolean }>({});
   const [problemState, setProblemState] = useState<{ [key: string]: ProblemState }>({});
-  const [showArchive, setShowArchive] = useState(false);
 
   // Content-level dedupe on RENDER (by id): sync merges (tasks.ts's unionStudyArtifacts) and a
   // double-responded turn can hand back an array containing the same entry/problem twice. Entries drop
@@ -614,11 +623,6 @@ export function BoardArtifact({ task, writing, onProblemResult, onClearBoard }: 
           {new Date().toLocaleDateString(en ? "en-US" : "fr-FR", { weekday: "long", day: "numeric", month: "long" })}
         </span>
         {task.sourceSubject ? <span className="sm-board-header-subject">{task.sourceSubject}</span> : null}
-        {onClearBoard && (
-          <button type="button" className="sm-btn sm-btn-ghost sm-btn-xs sm-board-clear-btn" onClick={onClearBoard} title={en ? "Clear board entries" : "Réinitialiser le tableau"}>
-            {en ? "Clear board" : "Effacer"}
-          </button>
-        )}
       </div>
 
       {/* The pinned session goal (kind:"focus") — always the FIRST thing on the board, like the heading of
@@ -626,21 +630,11 @@ export function BoardArtifact({ task, writing, onProblemResult, onClearBoard }: 
           focus wins if a session ever writes a second one. */}
       {latestFocus ? <div className="sm-board-line sm-board-focus-line"><MathText text={autoMathLine(stripStrayMarkdown(latestFocus.text))} /></div> : null}
 
-      {flowItems.length > 8 && (
-        <div className="sm-board-archive-bar">
-          <button type="button" className="sm-btn sm-btn-ghost sm-btn-xs sm-board-archive-toggle" onClick={() => setShowArchive((v) => !v)}>
-            {showArchive
-              ? (en ? "▲ Hide earlier working steps" : "▲ Masquer les étapes précédentes")
-              : (en ? `▼ Show ${flowItems.length - 4} earlier working steps` : `▼ Voir les ${flowItems.length - 4} étapes précédentes`)}
-          </button>
-        </div>
-      )}
-
-      {/* ONE FLOW — entries and problems interleaved by timestamp, in the order the session produced them. */}
+      {/* ONE FLOW — entries and problems interleaved by timestamp, in the order the session produced them.
+          Every step stays visible: an earlier version collapsed everything but the last four behind a
+          show/hide disclosure, but the board is a lesson document — hiding the working is the opposite of
+          what a student needs when they scroll back to see how they got here. */}
       {flowItems.map((item, idx) => {
-        const isArchived = flowItems.length > 5 && !showArchive && idx < flowItems.length - 4;
-        if (isArchived) return null;
-
         return item.problem ? (
           <ProblemBlock
             key={item.key}

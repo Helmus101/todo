@@ -720,7 +720,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
       )}
       <section className="ts-canvas" aria-label={L("Tableau", "Board")}>
         <div className="tutor-board-body ts-board-body" ref={setSurfaceEl} style={{ display: desmosOpen ? "none" : undefined }}>
-          <BoardArtifact task={task} writing={sending} onProblemResult={onProblemResult} onClearBoard={() => setTask({ ...task, board: [], problems: [] })} />
+          <BoardArtifact task={task} writing={sending} onProblemResult={onProblemResult} />
         </div>
         {/* Desmos stays mounted once opened (an iframe that's removed reloads blank, losing the student's graph). */}
         {desmosOpen || desmosEverOpenedRef.current ? (

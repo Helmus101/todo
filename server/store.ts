@@ -1021,15 +1021,27 @@ export interface AdminMetrics {
    *  this dashboard actually gets used for: "who's using it, how much"). */
   byUser: AdminUserMetrics[];
 }
-const ADMIN_METRICS_ACCOUNT_LIMIT = 5000;
+/** One Supabase page for the account scan. This is a PAGE SIZE, not a cap: getAdminMetrics loops until a
+ *  short page, so every total covers every account (the old `limit(5000)` silently undercounted userCount,
+ *  taskCount and every derived number past 5000 accounts — an accurate-looking dashboard with wrong
+ *  numbers is worse than no dashboard). ADMIN_METRICS_MAX_ROWS is only a runaway guard. */
+const ADMIN_METRICS_PAGE = 1000;
+const ADMIN_METRICS_MAX_ROWS = 100_000;
 export async function getAdminMetrics(): Promise<AdminMetrics | null> {
   if (!client) return null;
   try {
-    const { data, error } = await client.from(TABLE).select("email, tasks").limit(ADMIN_METRICS_ACCOUNT_LIMIT);
-    if (error) { console.warn("[store] getAdminMetrics failed:", error.message); return null; }
-    const rows = data || [];
+    const rows: { email?: unknown; tasks?: unknown }[] = [];
+    for (let from = 0; from < ADMIN_METRICS_MAX_ROWS; from += ADMIN_METRICS_PAGE) {
+      const { data, error } = await client.from(TABLE).select("email, tasks").range(from, from + ADMIN_METRICS_PAGE - 1);
+      if (error) { console.warn("[store] getAdminMetrics failed:", error.message); return null; }
+      rows.push(...((data || []) as { email?: unknown; tasks?: unknown }[]));
+      if (!data || data.length < ADMIN_METRICS_PAGE) break;
+    }
     let taskCount = 0;
     let tutorSessionCount = 0;
+    // Headline total = the SUM of the per-user rounded column, so the table always adds up to the card
+    // (summing the raw floats and rounding once could differ from the displayed column by a minute or two —
+    // small, but exactly the kind of thing that makes a dashboard's own numbers disagree with itself).
     let tutorMinutesTotal = 0;
     const tasksBySource: Record<string, number> = {};
     const byUser: AdminUserMetrics[] = [];
@@ -1057,15 +1069,16 @@ export async function getAdminMetrics(): Promise<AdminMetrics | null> {
           const times = chat.map((m) => Date.parse(m?.at || "")).filter((n) => Number.isFinite(n));
           if (times.length >= 2) {
             const minutes = Math.max(0, (Math.max(...times) - Math.min(...times)) / 60000);
-            tutorMinutesTotal += minutes;
             userTutorMinutes += minutes;
           }
         }
       }
-      byUser.push({ email, taskCount: tasks.length, tutorSessionCount: userTutorSessions, tutorMinutes: Math.round(userTutorMinutes) });
+      const roundedMinutes = Math.round(userTutorMinutes);
+      tutorMinutesTotal += roundedMinutes;
+      byUser.push({ email, taskCount: tasks.length, tutorSessionCount: userTutorSessions, tutorMinutes: roundedMinutes });
     }
     byUser.sort((a, b) => b.taskCount - a.taskCount);
-    return { userCount: rows.length, taskCount, tutorSessionCount, tutorMinutesTotal: Math.round(tutorMinutesTotal), tasksBySource, byUser };
+    return { userCount: rows.length, taskCount, tutorSessionCount, tutorMinutesTotal, tasksBySource, byUser };
   } catch (e) {
     reportError("admin-metrics", e);
     return null;

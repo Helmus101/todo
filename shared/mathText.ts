@@ -8,11 +8,14 @@ const FN = new Set(["sin", "cos", "tan", "cot", "sec", "csc", "log", "ln", "exp"
 const isMathToken = (t: string): boolean => {
   const bare = t.replace(/^[(\[{]+|[)\]},.;:]+$/g, "");
   if (!bare) return /[=+\-−×·÷/^<>≤≥≈≠→⇒]/.test(t);
+  // a LaTeX command token ("\sin", "\alpha", "\tfrac12") is maths by definition — without this the
+  // command's letters read as prose ("tfrackx" is 7 letters) and the line prints with a raw backslash.
+  if (/^\\[a-zA-Z]+/.test(bare)) return true;
   // an ordinary word (3+ letters that isn't a function name) is prose, even with a hyphen in it ("special-angle")
   for (const w of bare.match(/\p{L}{3,}/gu) || []) if (!FN.has(w.toLowerCase())) return false;
   if (FN.has(bare.toLowerCase())) return true; // "sin" / "cos" on their own: "sin A cos B"
   if (/^\p{L}$/u.test(bare)) return true; // a single-letter variable: x, A, θ
-  if (/[0-9=+\-−×·÷/^<>≤≥≈≠→⇒√π∞∑∫°]|->|=>/.test(bare)) return true;
+  if (/[0-9=+\-−×·÷/^<>≤≥≈≠→⇒√π∞∑∫°⁰-⁹₀-₉]|->|=>/.test(bare)) return true;
   const word = bare.match(/^[A-Za-z]+/)?.[0]?.toLowerCase() || "";
   if (FN.has(word) && /[(0-9π]/.test(bare.slice(word.length))) return true;
   return false;
@@ -23,6 +26,11 @@ const GREEK: [RegExp, string][] = [[/π/g, "\\pi "], [/θ/g, "\\theta "], [/α/g
 /** Convert one plain-text math run to LaTeX. Exported for tests. */
 export function plainMathToLatex(run: string): string {
   let s = run.trim();
+  // "\ " control space (model writes "1.8\ J") — a lone backslash in math mode prints raw otherwise.
+  s = s.replace(/\\\s+/g, " ");
+  // unicode scripts written directly ("v²", "x₀") — wrap them so KaTeX treats them as real scripts.
+  s = s.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]/g, (c) => `^{${"⁰¹²³⁴⁵⁶⁷⁸⁹".indexOf(c)}}`);
+  s = s.replace(/[₀₁₂₃₄₅₆₇₈₉]/g, (c) => `_{${"₀₁₂₃₄₅₆₇₈₉".indexOf(c)}}`);
   s = s.replace(/->|⟶|→/g, " \\to ").replace(/=>|⇒/g, " \\Rightarrow ").replace(/≤/g, "\\le ").replace(/≥/g, "\\ge ").replace(/≠/g, "\\ne ").replace(/≈/g, "\\approx ").replace(/×/g, "\\times ").replace(/·/g, "\\cdot ").replace(/÷/g, "\\div ").replace(/−/g, "-").replace(/°/g, "^\\circ ");
   for (const [re, rep] of GREEK) s = s.replace(re, rep);
   s = s.replace(/\b(arcsin|arccos|arctan|sinh|cosh|tanh|sin|cos|tan|cot|sec|csc|log|ln|exp|lim)\b/g, "\\$1");
@@ -56,12 +64,30 @@ export function wrapRawLatex(line: string): string {
   }).join("");
 }
 
+/** Strip backslash syntax left OUTSIDE $…$ / \(…\) segments — prose must never print a raw backslash
+ *  (reported live: "… = 1.8\ J", "v ≈ 2.68\ m/s"). Segments that ARE math are left untouched for KaTeX. */
+function stripBackslashesOutsideMath(line: string): string {
+  if (!line.includes("\\")) return line;
+  const parts = line.split(/(\$[^$\n]*\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\])/g);
+  return parts.map((seg) => (!seg ? "" : /^\$|^\\\(|^\\\[/.test(seg)
+    ? seg
+    : seg.replace(/\\\s+/g, " ").replace(/\\([a-zA-Z]+)/g, "$1").replace(/\\/g, ""))).join("");
+}
+
 /** Wrap each math run of a plain line in $…$ (leaves prose alone). */
 export function autoMathLine(line: string): string {
+  // Multi-line text (a board summary, a chat reply): process line-by-line so a $…$ span never crosses a
+  // newline (MathText's split pattern is $[^$\n]+$ — a cross-line span would print its raw delimiters),
+  // and so fenced code blocks pass through byte-for-byte (rewriting "x = 1" inside a fence to "$x = 1$"
+  // would corrupt the code).
+  if (line.includes("\n")) {
+    let fence = false;
+    return line.split("\n").map((l) => { if (/^\s*```/.test(l)) { fence = !fence; return l; } return fence ? l : autoMathLine(l); }).join("\n");
+  }
   // Bare LaTeX first: without this the line trips the early return below and the commands are printed
   // literally (or read as prose) instead of typesetting.
   line = wrapRawLatex(line);
-  if (/\$|\\\(|\\\[|\\[a-zA-Z]+\{/.test(line)) return line;
+  if (/\$|\\\(|\\\[|\\[a-zA-Z]+\{/.test(line)) return stripBackslashesOutsideMath(line);
   // peel trailing sentence punctuation off a maths token ("5π/12?" → "5π/12" + "?") so it stays outside the $…$
   const toks = line.split(/(\s+)/).flatMap((t) => { const m = /^(.+?)([?!.,;:]+)$/.exec(t); return m && isMathToken(m[1]) && !/^\s+$/.test(t) ? [m[1], m[2]] : [t]; });
   const out: string[] = [];
@@ -69,8 +95,11 @@ export function autoMathLine(line: string): string {
   const flush = () => {
     if (!run.length) return;
     const raw = run.join("").trim();
-    // a lone single letter / bare number is prose ("a", "2 steps"), not an equation
-    if (/[=+\-−×·÷/^√π→<>≤≥≈≠°]|->|=>|[A-Za-z]+\(/.test(raw) || /^\p{L}\d?$/u.test(raw) && false) out.push(`$${plainMathToLatex(raw)}$` + trail);
+    // Wrap only when there's a real expression: a run with NO letters/digits at all (a lone "-", a table
+    // rule "|---|:---:|") is structure, not maths — wrapping it would turn bullets into $-$ and break
+    // markdown tables. A run that IS a LaTeX command wraps even without =/operator, so "\sin x" alone
+    // typesets instead of printing a raw backslash.
+    if (/^\\[a-zA-Z]+/.test(raw) || (/[=+\-−×·÷/^√π→<>≤≥≈≠°]|->|=>|[A-Za-z]+\(/.test(raw) && /[\p{L}\p{N}]/u.test(raw))) out.push(`$${plainMathToLatex(raw)}$` + trail);
     else out.push(run.join("") + trail);
     run = []; trail = "";
   };
@@ -81,5 +110,5 @@ export function autoMathLine(line: string): string {
     else { if (run.length) { trail = pendingSpace; flush(); pendingSpace = ""; } out.push(t); }
   }
   if (run.length) { trail = ""; flush(); }
-  return out.join("");
+  return stripBackslashesOutsideMath(out.join(""));
 }

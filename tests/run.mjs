@@ -147,6 +147,31 @@ section("Tutor stage — End session always ends; the stage is screen-height wit
   check("'Show Otto' lets the student say what to look at (note travels with the drawing)", /tc-ask/.test(readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8")) && /onSend=\{\(description, note\)/.test(tut));
   check("the whiteboard starts in select/hand mode, not draw — the board underneath must be usable right away", /useState<Tool>\("pan"\)/.test(readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8")));
 }
+
+// Whiteboard, three live requests: (1) Otto can INVITE them to draw at any point, (2) a snapshot must be
+// read in the CONTEXT of what's already on the board (drawings overlap the lesson — a circle over an
+// equation refers to THAT equation), (3) the canvas is infinite — scroll down into blank space and keep
+// drawing, and Otto keeps writing after.
+section("Whiteboard — invited any time, read in board context, infinite blank to draw in (source pins)");
+{
+  const canvasSrc = readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8");
+  const csrcW = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("the tutor prompt tells Otto he may invite them to draw at ANY point, and to read the ink against the board",
+    /INVITING THEM TO DRAW: the whiteboard is always right there in the tutor — you can suggest it at ANY /.test(csrcW) &&
+    /it in the CONTEXT of what's already on the board/.test(csrcW));
+  check("the vision read paints the printed BOARD text behind the ink (the overlap is what the student means)",
+    /\.sm-board-entry-text, \.sm-board-line, \.sm-board-problem-q/.test(canvasSrc) &&
+    /Board context UNDER the ink/.test(canvasSrc) &&
+    canvasSrc.indexOf("Board context UNDER the ink") < canvasSrc.indexOf("f.drawImage(c, sx \* dpr"));
+  check("the ink page always keeps a big blank area under the last entry, and never sizes below its own ink",
+    /const blank = Math\.max\(400, Math\.round\(surf\.clientHeight \* 0\.6\)\)/.test(canvasSrc) &&
+    /inkBottom\(\) \+ 240/.test(canvasSrc));
+  check("a stroke reaching the bottom edge EXTENDS the page instead of hitting a wall (infinite canvas)",
+    /y > size\.current\.h - 200\) fit\(\)/.test(canvasSrc));
+  check("Otto keeps writing after a scroll: new entries auto-scroll into view and refit the ink page",
+    /endRef\.current\?\.scrollIntoView/.test(readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8")) &&
+    /new MutationObserver\(fit\)/.test(canvasSrc));
+}
 section("Tutor memory — earlier turns are condensed, not forgotten");
 {
   const older = [{ role: "user", text: "I'm stuck on factoring x² − 5x + 6" }, { role: "assistant", text: "Which two numbers multiply to 6 and add to −5? Take your time." }, { role: "user", text: "[Exercise] I answered \"4\" — marked wrong (try #1)." }];
@@ -2191,6 +2216,61 @@ section("Fully Socratic tutor — policy every turn, never the gap's value, one 
     autoMathLine("$\\cos x = \\tfrac12$") === "$\\cos x = \\tfrac12$");
 }
 
+// Reported live twice while these fixes shipped: "(1)/(2)(0.5)v² = 1.8 ⇒ v ≈ 2.68\ m/s" showed as a
+// pseudo-fraction with a raw backslash, and "E = \tfrac12(250)(0.12)² = 1.8\ J" as literal commands —
+// in BOTH cases the student saw syntax instead of maths. These pin the full line, end to end.
+section("fractions always typeset — pseudo-fractions and bare \\tfrac lines never print raw");
+{
+  const l1 = autoMathLine("(1)/(2)(0.5)v² = 1.8 ⇒ v ≈ 2.68\\ m/s");
+  check("the (1)/(2) line is ONE KaTeX span: real fraction, real scripts, real ⇒/≈, \\frac{m}{s} for m/s",
+    l1.startsWith("$") && l1.endsWith("$") && l1.includes("\\frac{1}{2}") && l1.includes("v^{2}") &&
+    l1.includes("\\frac{m}{s}") && l1.includes("\\Rightarrow") && l1.includes("\\approx"));
+  const l2 = autoMathLine("E = \\tfrac12(250)(0.12)² = 1.8\\ J");
+  check("the bare \\tfrac12 line typesets the fraction and leaves NO backslash outside $…$ (the '\\ J' control space)",
+    l2.includes("$\\tfrac12(250)(0.12)$") && !l2.replace(/\$[^$]*\$/g, "").includes("\\"));
+  check("a bullet dash and a markdown table rule are structure, never wrapped as maths",
+    autoMathLine("- add this up") === "- add this up" && autoMathLine("|---|:---:|") === "|---|:---:|");
+  check("multi-line input is processed per line, and fenced code passes through byte-for-byte",
+    autoMathLine("x = 1\n```\ny = 2\n```") === "$x = 1$\n```\ny = 2\n```" &&
+    autoMathLine("a = 1\nb = 2") === "$a = 1$\n$b = 2$");
+
+  // MathText (the chat/board renderer) must run autoMathLine FIRST — otherwise BARE model maths never
+  // reaches KaTeX at all and falls straight through to formatMath's plain-text approximation.
+  const bsrc = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  check("MathText typesets bare model maths (autoMathLine runs before the $ split, on every caller's text)",
+    /const auto = autoMathLine\(text\)/.test(bsrc) && /renderChatText\(auto\)/.test(bsrc));
+  check("the KaTeX prose-gate knows the macros the tutor actually writes (tfrac/approx/Rightarrow/…)",
+    /"tfrac", "dfrac", "cfrac", "approx", "Rightarrow"/.test(bsrc));
+  check("the board never hides earlier working steps and has no clear-board control (removed by request)",
+    !bsrc.includes("showArchive") && !/earlier working steps/.test(bsrc) && !bsrc.includes("sm-board-clear-btn") &&
+    !bsrc.includes("onClearBoard"));
+  const scss = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
+  check("no archive-toggle / clear-button CSS left behind, and the board sheet is transparent (no white)",
+    !/sm-board-archive/.test(scss) && !/sm-board-clear-btn/.test(scss) &&
+    /\.sm-board-body \{[^}]*background: transparent/.test(scss) &&
+    /\.ts-canvas \{[^}]*background: var\(--bg\)/.test(scss));
+
+  // TTS must never read a backslash aloud either (the same raw-latex family of bugs, in audio).
+  check("TTS: bare \\tfrac becomes words, control space is silent — no backslash ever reaches the voice",
+    !stripLatexForSpeech("E = \\tfrac12(250)(0.12)^2 = 1.8\\ J").includes("\\") &&
+    stripLatexForSpeech("\\tfrac{kx}{2}").includes("over") &&
+    stripLatexForSpeech("= $\\frac{1}{2}$").includes("over"));
+
+  // formatMath (client/ui.tsx) is the plain-text fallback for every NON-KaTeX surface (notes, flashcards,
+  // TaskCard chat). It must swallow \\tfrac (the old `d?` regex never matched it — reported live as
+  // raw "F_(avg) = \\tfrackx2") and can never emit a raw backslash.
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const React = await import("react");
+  const ui = await import("../client/ui.tsx");
+  const render = (s) => renderToStaticMarkup(React.createElement(React.Fragment, null, ui.renderNoteBody(s)));
+  check("formatMath converts \\tfrac (braced AND bare-12) and never prints a raw backslash",
+    render("E = \\tfrac12(250)(0.12)^2 = 1.8\\ J").includes("(1)/(2)") &&
+    !render("E = \\tfrac12(250)(0.12)^2 = 1.8\\ J").includes("\\") &&
+    render("x = \\tfrac{kx}{2}").includes("(kx)/(2)"));
+  check("a \\frac in prose still becomes (a)/(b), and a ² written by the model survives as a superscript",
+    render("area = \\frac{1}{2}bh").includes("(1)/(2)") && render("KE = ½mv²").includes("²"));
+}
+
 section("loadState survives a missing-column schema-drift error (source pins)");
 {
   const storeSrc = readFileSync(new URL("../server/store.ts", import.meta.url), "utf8");
@@ -4216,6 +4296,15 @@ section("Admin metrics dashboard — gated to one hardcoded email, server AND cl
   const adminFn = storeSrcAdmin.slice(storeSrcAdmin.indexOf("export async function getAdminMetrics"));
   check("tutor session counting applies the SAME substance gate as TutorSession.tsx's saveAndClose (a real message or board content)", /userMsgCount === 0 && board\.length === 0\) continue;/.test(adminFn));
   check("byUser is sorted and per-account tutor minutes/sessions are tracked, not just the app-wide total", /byUser\.sort/.test(adminFn) && /userTutorSessions/.test(adminFn) && /userTutorMinutes/.test(adminFn));
+  // Accuracy: the account scan used to be `.limit(5000)` — every headline number silently undercounted
+  // past 5000 accounts while still looking exact. It now pages until a short page (page size ≠ cap), and
+  // the headline minutes card is literally the sum of the rounded per-user column, so the table always
+  // adds up to the card it sits under.
+  check("the account scan PAGES every account (a page size, never a .limit cap that undercounts)",
+    /ADMIN_METRICS_PAGE = 1000/.test(storeSrcAdmin) && /\.range\(from, from \+ ADMIN_METRICS_PAGE - 1\)/.test(adminFn) &&
+    !/\.limit\(ADMIN_METRICS|ADMIN_METRICS_ACCOUNT_LIMIT/.test(storeSrcAdmin));
+  check("the headline tutor-minutes card is exactly the sum of the displayed per-user column",
+    /tutorMinutesTotal \+= roundedMinutes/.test(adminFn) && /tutorMinutesTotal, tasksBySource, byUser/.test(adminFn));
 }
 
 section("Kick loop egress/CPU fix — hidden-tab guard, trimmed payload, ETag (source pins)");

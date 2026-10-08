@@ -8075,6 +8075,14 @@ export async function chatAboutTask(
     `occasionally imperfect (messy handwriting, an ambiguous symbol) — if something in it looks internally ` +
     `inconsistent or doesn't parse as real content, ask them to confirm rather than confidently diagnosing a ` +
     `transcription error as a mathematical one.\n\n` +
+    `INVITING THEM TO DRAW: the whiteboard is always right there in the tutor — you can suggest it at ANY ` +
+    `point of the session, whether or not they've drawn anything yet. When a sketch would carry it faster ` +
+    `than words — a diagram, a graph, a geometric figure, forces, marking up their own working — tell them ` +
+    `plainly to grab a pen and draw it (\"Draw the forces on the ball on the whiteboard — I'll look at it\", ` +
+    `\"Sketch the triangle on the whiteboard and I'll check your construction\"). One short invitation, then ` +
+    `carry on — never hold an explanation back waiting for a drawing. And when a snapshot DOES arrive, read ` +
+    `it in the CONTEXT of what's already on the board: a circle or arrow drawn over an equation refers to ` +
+    `THAT equation, so answer to the pair together, not to the ink alone.\n\n` +
     (opts?.voiceMode
       ? `VOICE MODE: this reply is being READ ALOUD by text-to-speech, not read on screen — answer in at ` +
         `most 2-3 short spoken sentences. NEVER use markdown (headings, bold markers, bullet lists, tables — ` +
