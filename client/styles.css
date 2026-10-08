@@ -5849,19 +5849,16 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   animation: sm-board-entry-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 /* Last 2-3 entries (current work) get slightly warmer background to distinguish from reference material */
-.sm-board-entry:nth-last-child(-n+3):not(.sm-board-entry-faded) {
-  background: color-mix(in srgb, var(--accent) 2%, transparent);
-}
 .sm-board-entry:last-child { border-bottom: none; }
 .sm-board-entry-formula { font-family: var(--mono, monospace); }
 /* The session document's OPENING heading — "Today's focus". Slightly larger/bolder, like a page title, but
    still just text sitting on the page — nothing about it is boxed differently from any other entry. */
-.sm-board-entry-focus .sm-board-entry-kind { color: var(--accent); margin-bottom: 6px; }
+.sm-board-entry-focus .sm-board-entry-kind { margin-bottom: 6px; }
 .sm-board-entry-focus .sm-board-entry-text { font-size: var(--text-base); font-weight: 600; line-height: 1.45; color: var(--ink); }
 /* The STUDENT's own aha, credited by name — reads as a highlight on the page (accent-colored label + a soft
    inline background strictly behind the text, not a separate boxed container) rather than another note. */
-.sm-board-entry-insight .sm-board-entry-kind { color: var(--accent); }
-.sm-board-entry-insight .sm-board-entry-text { background: var(--accent-soft); border-radius: var(--radius-xs); padding: 2px 6px; margin: -2px -6px; display: inline; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.sm-board-entry-insight .sm-board-entry-kind { color: var(--ink-3); }
+.sm-board-entry-insight .sm-board-entry-text { font-weight: 600; }
 .sm-board-entry-kind {
   display: block;
   font-size: 10px;
@@ -5883,9 +5880,9 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   width: 100%;
   aspect-ratio: 800 / 600;
   color: var(--ink);
-  background: color-mix(in srgb, var(--bg-2) 60%, transparent);
-  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
-  border-radius: var(--radius-xs);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 2px;
 }
 /* Phone-only read-only task view (TaskReadOnly, client/TaskCard.tsx) — a task you can read, not work on.
    Intentionally plain: no cards, no affordances that look tappable, since nothing here is. */
@@ -5940,11 +5937,10 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   flex: none;
   margin: 0 0 var(--space-3);
   padding: var(--space-4) var(--space-4) var(--space-4) calc(var(--space-4) + 2px);
-  background: var(--surface-glass);
-  border: 1px solid color-mix(in srgb, var(--accent) 15%, var(--line-soft));
-  border-left: 3px solid var(--accent);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  box-shadow: none;
   transition: box-shadow var(--duration-base) var(--ease-spring), border-color var(--duration-base) var(--ease-spring);
 }
 .sm-board-problem-label {
@@ -5955,10 +5951,10 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--accent);
-  background: var(--accent-soft);
-  padding: 4px 9px;
-  border-radius: var(--radius-pill);
+  color: var(--ink-3);
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
   margin-bottom: var(--space-3);
 }
 /* A monochrome dingbat, not the ✏️ emoji: the variation selector (U+FE0F) is what forces emoji presentation,
