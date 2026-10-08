@@ -476,7 +476,9 @@ export function BoardArtifact({ task, writing, onProblemResult, onAnswer, answer
   const latestFocus = [...entries].reverse().find((e) => e.kind === "focus");
   const flowEntries = entries
     .filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i)
-    .filter(e => e.kind !== "focus" && (e.kind as string) !== "problem");
+    .filter(e => e.kind !== "focus" && (e.kind as string) !== "problem" && e.kind !== "annotation");
+  // Otto's pointers: a short note attached to the entry it is about (highlight / circle a mistake / point at it).
+  const annotationsFor = (id: string) => entries.filter((a) => a.kind === "annotation" && a.targetId === id);
 
   // THE FLOW: entries (by their `at`) and problems (by `createdAt`) merged and sorted by timestamp —
   // the board reads top-to-bottom in the order the session actually happened. A missing/unparseable
@@ -748,6 +750,12 @@ export function BoardArtifact({ task, writing, onProblemResult, onAnswer, answer
                   ) : null}
                 </>
               )}
+              {annotationsFor(e.id).map((a) => (
+                <div key={a.id} className={`sm-board-annot sm-board-annot-${a.tone || "focus"}`} role="note">
+                  <span className="sm-board-annot-pin" aria-hidden="true">{a.tone === "error" ? "!" : a.tone === "good" ? "✓" : a.tone === "hint" ? "?" : "→"}</span>
+                  <MathText text={autoMathLine(stripStrayMarkdown(a.text))} />
+                </div>
+              ))}
               </div>
             </div>
           );

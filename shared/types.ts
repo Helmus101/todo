@@ -1587,7 +1587,7 @@ export interface BoardEntry {
    *  (see `outline`) — for essay-based/humanities content (history causes, source analysis, an essay plan)
    *  where a flat sentence or a spatial diagram both fit poorly; math/science still reach for
    *  formula/diagram first. */
-  kind?: "note" | "instruction" | "question" | "given" | "result" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "interactive" | "graph" | "gap";
+  kind?: "note" | "instruction" | "question" | "given" | "result" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "interactive" | "graph" | "gap" | "annotation";
   /** Who authored this entry — "otto" (default for backward compat) or "student". Student-owned entries are
    *  never silently rewritten by Otto. Used to visually distinguish Otto's scaffolding from the student's
    *  own work on the board (see BoardArtifact.tsx). */
@@ -1606,6 +1606,9 @@ export interface BoardEntry {
    *  student model (server/studentModel.ts). Optional and loose: a board entry is not required to be about a
    *  named concept, and an unnamed one simply carries no evidence. */
   concept?: string;
+  /** kind === "annotation": the board entry this note points at (highlight / circle a mistake / point to it), and how. */
+  targetId?: string;
+  tone?: "error" | "hint" | "good" | "focus";
   /** Present only when kind === "diagram" — the figure's shapes, rendered as SVG (BoardArtifact.tsx). Capped
    *  at 15 ops server-side (makeDiagramEntry, server/claude.ts): enough for a labeled triangle or a small
    *  graph, not enough to build a full illustration op-by-op. */

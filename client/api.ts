@@ -455,7 +455,7 @@ export const api = {
       // The on-device thread can be long: send how the session began (first 3) + the recent tail, not all of it
       // (the server pins the opening verbatim and keeps its own window).
       message, history: (history.length > 66 ? [...history.slice(0, 3), ...history.slice(-62)] : history).map((h) => ({ role: h.role, text: h.text })),
-      board: board.map((b) => ({ text: b.text, kind: b.kind, outline: b.outline, diagram: b.diagram?.slice(0, 40) })),
+      board: board.map((b) => ({ id: b.id, text: b.text, kind: b.kind, outline: b.outline, diagram: b.diagram?.slice(0, 40), owner: b.owner, status: b.status, concept: b.concept, targetId: b.targetId })),
       problems: problems.map((p) => ({ question: p.question, options: p.options, solved: p.solved === true })),
       stepIndex, materials, voiceMode, canvasMode, primer, objectives,
     }),

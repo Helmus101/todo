@@ -1665,7 +1665,7 @@ section("Study Mode: chat always present on the desk (source pins)");
   // own freeform canvas. WRITE_TO_BOARD/DRAW_ON_BOARD/etc. are only offered to the model when opts.primer
   // is set (TutorSession.tsx), never for a plain task-chat turn or Study Mode's canvasMode-only chat.
   check("board/problem/objectives tools are gated on opts.primer, not offered unconditionally any more", /const boardTools = opts\?\.primer/.test(claudeSrc2));
-  check("the plain task-chat board prompt (TASK_CHAT_BOARD) is gone — no board text injected outside primer", !/const TASK_CHAT_BOARD =/.test(claudeSrc2) && !/THE BOARD IS PART OF THIS CHAT/.test(claudeSrc2) && /\(opts\?\.primer \? PRIMER_PERSONA : ""\)/.test(claudeSrc2));
+  check("the plain task-chat board prompt (TASK_CHAT_BOARD) is gone — no board text injected outside primer", !/const TASK_CHAT_BOARD =/.test(claudeSrc2) && !/THE BOARD IS PART OF THIS CHAT/.test(claudeSrc2) && /\(opts\?\.primer \? PRIMER_PERSONA \+ PLAN_PROTOCOL : ""\)/.test(claudeSrc2));
   const studyModeNoBoard = !/type: "board"/.test(studyModeSrc) && !/const openOrFocusBoard = useCallback/.test(studyModeSrc);
   check("Study Mode no longer creates or re-opens a Board artifact anywhere", studyModeNoBoard);
   const toolsDrawerSrc2 = readFileSync(new URL("../client/study/ToolsDrawer.tsx", import.meta.url), "utf8");
@@ -5186,7 +5186,7 @@ section("actionSpace.ts — deterministic teaching-action classification + decis
   check("buildTutorDecision fills taskId/subject/at/action/why", decision.taskId === "t1" && decision.subject === "Physics" && decision.action === "CREATE_PROBLEM" && decision.at === now.toISOString() && decision.why.length > 0);
   check("recordTutorDecision appends and caps", recordTutorDecision(Array.from({ length: TUTOR_DECISION_CAP - 1 }, () => decision), decision).length === TUTOR_DECISION_CAP);
   const idxSrc2 = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
-  check("the chat route actually calls buildTutorDecision/recordTutorDecision on the live path, not just imports them", /buildTutorDecision\(\{/.test(idxSrc2) && /recordTutorDecision\(/.test(idxSrc2));
+  check("the chat route actually records a decision on the live path (tutorBrain applyTurn → recordTutorDecision), not just imports it", /applyTurn\(sessionStateBefore/.test(idxSrc2) && /recordTutorDecision\(/.test(idxSrc2));
 }
 
 section("sessionState.ts — app-owned per-task session state (source + unit)");
@@ -5208,7 +5208,7 @@ section("sessionState.ts — app-owned per-task session state (source + unit)");
   check("persistSessionState upserts by taskId and caps the list", persistSessionState([fresh], updateSessionState(fresh, { action: "WAIT", boardLength: 0, success: false }, now)).length === 1);
   check("sessionStateBlock is silent on turn 0 (nothing to report yet), speaks up after", sessionStateBlock(fresh) === "" && /SESSION STATE/.test(sessionStateBlock(afterHint)));
   const idxSrc3 = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
-  check("the chat route calls loadOrInitSessionState before the chatAboutTask call and updateSessionState/persistSessionState after it", /loadOrInitSessionState\(profile, t\.id, turnNow\)/.test(idxSrc3) && /updateSessionState\(sessionStateBefore/.test(idxSrc3) && /persistSessionState\(profile\.tutorSessions/.test(idxSrc3));
+  check("the chat route calls loadOrInitSessionState before the chatAboutTask call and updateSessionState/persistSessionState after it", /loadOrInitSessionState\(profile, t\.id, turnNow\)/.test(idxSrc3) && /applyTurn\(sessionStateBefore/.test(idxSrc3) && /persistSessionState\(profile\.tutorSessions/.test(idxSrc3));
 
   // CRITICAL: normalizeProfile builds a brand-new object from an explicit field whitelist — anything not
   // listed is silently DROPPED on every load (server/store.ts calls it on every loadState). Without

@@ -190,6 +190,16 @@ export interface TutorSessionStateShape {
   boardRichness: number;
   recentActions: SessionAction[];
   nextRecommendedAction?: string;
+  /** Help level (0-6) already used on the CURRENT sub-problem — resets when a new question/problem starts
+   *  (server/tutorBrain.ts). The policy only lets Otto climb one rung past it at a time. */
+  levelNow?: number;
+  /** Concept keys already given their retrieval check this session. */
+  retestDone?: string[];
+  /** What the student said they want and how long they have (spec §36/§37). */
+  goalType?: string;
+  minutes?: number;
+  /** The model's last plan, so the next turn can check "did what I expected happen?". */
+  lastPlan?: { action: string; why?: string; expectedNext?: string; diagnosis?: string };
 }
 
 export const SESSION_CAP = 8;

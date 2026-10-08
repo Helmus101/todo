@@ -9,6 +9,11 @@ const { chatAboutTask, summarizeCoursework, makeGeometryEntry, makeProblem, isDu
 const { buildGeometry } = await import("../shared/geometry.ts");
 const { autoMathLine } = await import("../shared/mathText.ts");
 const P = await import("../server/tutorPolicy.ts");
+const BR = await import("../server/tutorBrain.ts");
+const SM = await import("../server/studentModel.ts");
+const CG = await import("../server/conceptGraph.ts");
+const SS = await import("../server/sessionState.ts");
+const { resolveBoardTarget: wa_resolve } = await import("../server/claude.ts");
 
 let script = () => ({ content: "" });
 let calls = [];
@@ -104,7 +109,7 @@ export async function runTutorSim(check, section) {
   // boardSurfaceBlock (server/boardEvents.ts, wired in to replace the old hand-rolled block) always tags
   // an Otto-owned entry "(yours)" — spec §11's ownership distinction made explicit even with nothing to
   // contrast against yet, not just when a student entry is also present.
-  check("the board + current problem are shown to the model as ALREADY DONE context", /WHAT'S CURRENTLY ON THE BOARD/.test(String(calls[0].messages[0].content)) && /\[summary\] \(yours\) Factor first/.test(String(calls[0].messages[0].content)) && /\[problem\] Solve x² − 5x \+ 6 = 0/.test(String(calls[0].messages[0].content)));
+  check("the board + current problem are shown to the model as ALREADY DONE context", /WHAT'S CURRENTLY ON THE BOARD/.test(String(calls[0].messages[0].content)) && /\[summary\] \(#1; yours\) Factor first/.test(String(calls[0].messages[0].content)) && /\[problem\] Solve x² − 5x \+ 6 = 0/.test(String(calls[0].messages[0].content)));
 
   // 11. Coursework: the summarizer parses/caps what the model returns, and uploaded docs reach the tutor's prompt.
   script = () => ({ content: JSON.stringify({ summary: "A worksheet on factoring quadratics with 8 exercises.", keyPoints: ["difference of squares", "sum and product of roots"], tasks: [{ title: "Do exercises 1-8 of the factoring worksheet", why: "set by the sheet", due: "2026-10-12" }, { title: "x", why: "too short" }, { title: "Redo the odd-numbered exercises with a timer", why: "practice", due: "next friday" }, { title: "Do the extension problems", why: "bonus" }, { title: "Fifth task that must be dropped", why: "cap" }] }) });
@@ -313,4 +318,99 @@ export async function runTutorSim(check, section) {
   // guardrail is enforced in CODE regardless (see the corrective-round check just above this one), not by
   // a prompt sentence, so removing that sentence here is not a behavioral regression.
   check("plain task chat (no primer) gets no board prompt text at all", !/THE BOARD IS PART OF THIS CHAT/.test(String(calls[0].messages[0].content)));
+
+  // ══ THE TUTOR BRAIN (server/tutorBrain.ts) — plan protocol, app policy, validation, evidence-based updates ══
+  section("Tutor brain — plan → policy → validation → student model (scenario evaluations A–F)");
+  {
+    const now = new Date("2026-10-08T15:00:00Z");
+    const fresh = () => SS.emptySessionState("t1", now);
+    // the hidden plan
+    const ex = BR.extractPlan('<plan>{"action":"ask_question","level":0,"concept":"Newton II","why":"check what they know","diagnosis":{"type":"misconception","hypothesis":"treats N as mg","confidence":0.7}}</plan>\nWhat forces act on the block?');
+    check("the hidden plan is parsed (action normalised, diagnosis kept) and stripped from what the student sees", ex.plan?.action === "ASK_QUESTION" && ex.plan.diagnosis?.type === "misconception" && ex.reply === "What forces act on the block?");
+    check("a malformed or cut-off plan never reaches the student", BR.extractPlan("<plan>{not json}</plan> Hi?").reply === "Hi?" && BR.extractPlan('<plan>{"action":"EXPL').reply === "" && BR.extractPlan("plain reply").plan === null);
+    check("an unknown action is rejected rather than guessed", BR.normalizePlan({ action: "SOLVE_IT_FOR_THEM" }) === null);
+
+    // Student D — constantly asks for answers
+    const D = BR.computePolicy({ message: "just give me the answer", history: [{ role: "assistant", text: "What forces act on the block?" }], state: fresh(), now });
+    check("Student D (answer-seeker, no attempt): policy asks for an attempt first and caps help at level 1", D.askAttemptFirst && D.maxLevel === 1);
+    check("...and an EXPLAIN plan is vetoed, an attempt-request question is allowed", !BR.validatePlan({ action: "EXPLAIN" }, D).ok && BR.validatePlan({ action: "ASK_QUESTION", level: 0 }, D).ok && !BR.validatePlan({ action: "GIVE_HINT" }, D).ok);
+    const D2 = BR.computePolicy({ message: "I got 9.8 sin 30 = 4.9 but the answer says 2.4, just tell me the answer", history: [], state: fresh(), now });
+    check("...but after a real attempt the request is answered from THEIR work (no attempt demand)", !D2.askAttemptFirst);
+    const trusted = { ...fresh(), turns: 14, independence: 0.85, unaidedSuccesses: 4 };
+    check("...and a long, independent session isn't artificially withheld from", !BR.computePolicy({ message: "what's the answer?", history: [], state: trusted, now }).askAttemptFirst);
+
+    // minimum necessary assistance: one rung at a time, faster only on evidence
+    const calm = BR.computePolicy({ message: "is it the normal force?", history: [], state: { ...fresh(), levelNow: 0 }, now });
+    const stuck = BR.computePolicy({ message: "idk", history: [{ role: "user", text: "no idea" }, { role: "assistant", text: "Which force?" }, { role: "user", text: "i'm lost" }, { role: "assistant", text: "Up or down?" }], state: { ...fresh(), levelNow: 2 }, now });
+    check("help climbs ONE rung past where the sub-problem is (no jumping to an explanation)", calm.maxLevel === 1 && !BR.validatePlan({ action: "EXPLAIN" }, calm).ok && !BR.validatePlan({ action: "GIVE_TARGETED_HINT" }, calm).ok && BR.validatePlan({ action: "ASK_FOLLOWUP" }, calm).ok);
+    check("...and climbs faster only when smaller help demonstrably failed (stuck 3 turns → up to a partial example)", stuck.maxLevel >= 5 && BR.validatePlan({ action: "SHOW_EXAMPLE" }, stuck).ok);
+    check("Socratic ≠ never explaining: 'explain what X is' may start at a short explanation", BR.computePolicy({ message: "can you explain what an externality is", history: [], state: fresh(), now }).maxLevel >= 5);
+
+    // Student F — works silently and is progressing: say little
+    const F = BR.computePolicy({ message: "so N = mg cos 30 = 8.5 N", history: [{ role: "assistant", text: "What's N here?" }], state: fresh(), now });
+    check("Student F (working, progressing): the policy says wait / say very little", F.waitOk && F.recommend.some((r) => /say very little/.test(r)));
+
+    // Student B — weak prerequisite: step back down the graph
+    const graph = CG.ensureGraph(undefined);
+    let model = SM.emptyStudentModel();
+    for (let k = 0; k < 3; k++) model = SM.recordConceptEvidence(model, { label: "Resolving a vector into components", kind: "mistake", detail: "uses sin for the adjacent side" }, now);
+    const B = BR.computePolicy({ message: "i don't know", history: [{ role: "user", text: "no idea" }, { role: "assistant", text: "Which component?" }], state: { ...fresh(), concept: "Motion on an inclined plane" }, model, graph, subject: "Physics", now });
+    check("Student B (stuck on inclines, weak at components): policy points BELOW the problem to the prerequisite", !!B.stepBack && /component/i.test(B.stepBack.label) && B.recommend.some((r) => /STEP_BACK_PREREQUISITE/.test(r)));
+
+    // Student C — strong memory/execution, never transferred: ask for transfer, not another of the same
+    let cmodel = SM.emptyStudentModel();
+    for (let k = 0; k < 3; k++) cmodel = SM.recordConceptEvidence(cmodel, { label: "Indirect taxes and subsidies", subject: "Economics", kind: "solved-unaided" }, now);
+    const C = BR.computePolicy({ message: "ok next", history: [], state: { ...fresh(), concept: "Indirect taxes and subsidies" }, model: cmodel, graph, subject: "Economics", now });
+    check("Student C (solves unaided, never transferred): policy asks for a transfer question in a new context", !!C.transfer && C.recommend.some((r) => /TRANSFER/.test(r)));
+
+    // spaced retrieval
+    let rmodel = SM.recordConceptEvidence(SM.emptyStudentModel(), { label: "Elasticity", subject: "Economics", kind: "solved-unaided" }, new Date("2026-09-20T10:00:00Z"));
+    rmodel = { ...rmodel, concepts: Object.fromEntries(Object.entries(rmodel.concepts).map(([k, c]) => [k, { ...c, nextReview: "2026-09-25T00:00:00Z" }])) };
+    const R = BR.computePolicy({ message: "hi, let's do econ", history: [], state: fresh(), model: rmodel, graph, subject: "Economics", now });
+    check("a concept due for review gets ONE natural retrieval check at the start of a session", R.retest?.label === "Elasticity" && R.recommend.some((r) => /quick check/.test(r)));
+
+    // Student E — recurring misconception, evidence-based model updates
+    let st = fresh(), em = SM.emptyStudentModel();
+    const a1 = BR.applyTurn(st, em, graph, { plan: { action: "HIGHLIGHT", concept: "Normal (contact) force", diagnosis: { type: "misconception", hypothesis: "takes N = mg on a slope", confidence: 0.8 }, why: "they wrote N = mg", expectedNext: "they question the direction" }, fallbackAction: "WAIT", fallbackWhy: "", message: "N = mg", history: [], subject: "Physics", now });
+    const rec1 = SM.findConcept(a1.model, "Normal (contact) force");
+    check("Student E: a confident misconception diagnosis becomes an evidence-backed hypothesis on that concept (not a label)", !!rec1 && rec1.misconceptions[0]?.text === "takes N = mg on a slope" && rec1.misconceptions[0].evidence.length === 1 && rec1.misconceptions[0].confidence < 1);
+    check("...and the decision log keeps the why / diagnosis / expected next (debuggable, spec §45)", a1.decision.action === "HIGHLIGHT" && /they wrote N = mg/.test(a1.decision.why) && /misconception/.test(a1.decision.evidence) && /question the direction/.test(a1.decision.expectedNext));
+    // help given on this sub-problem → an "unaided" claim is downgraded by the app
+    st = { ...a1.state, levelNow: 3 };
+    const a2 = BR.applyTurn(st, a1.model, graph, { plan: { action: "ASK_FOLLOWUP", concept: "Normal (contact) force", evidence: { kind: "solved-unaided" } }, fallbackAction: "WAIT", fallbackWhy: "", message: "oh so N = mg cos θ", history: [], subject: "Physics", now });
+    check("the APP decides mastery: 'solved unaided' after a level-3 hint is recorded as solved-after-hint", a2.evidenceKind === "solved-after-hint");
+    const rec2 = SM.findConcept(a2.model, "Normal (contact) force");
+    check("a demonstration schedules the next spaced retrieval check", !!rec2?.nextReview && Date.parse(rec2.nextReview) > now.getTime());
+    const a3 = BR.applyTurn(fresh(), em, graph, { plan: { action: "ASK_QUESTION", goal: { type: "exam", minutes: 30 }, objective: "Prepare for Friday's mechanics test" }, fallbackAction: "WAIT", fallbackWhy: "", message: "test friday, I have 30 min", history: [], now });
+    check("goal + time + objective are kept in session state and switch the policy to an efficient pace", a3.state.goalType === "exam" && a3.state.minutes === 30 && a3.state.objective === "Prepare for Friday's mechanics test" && BR.timeModeOf(a3.state) === "rush");
+    const a4 = BR.applyTurn(fresh(), em, graph, { plan: null, fallbackAction: "CREATE_PROBLEM", fallbackWhy: "called CREATE_PROBLEM", message: "next", history: [], exerciseResults: [{ correct: true, attempt: 1 }], now });
+    check("with no plan the turn is still logged (classifier fallback) and the app measures exercise results itself", a4.decision.action === "CREATE_PROBLEM" && a4.state.unaidedSuccesses === 1);
+    check("a student step from the plan becomes a student-owned board line with its status", (() => { const e = BR.studentStepEntry({ action: "ASK_FOLLOWUP", studentStep: { text: "$N = mg$", status: "incorrect" } }, now); return e.owner === "student" && e.status === "incorrect" && e.text === "$N = mg$"; })());
+  }
+
+  // End to end through the real pipeline: an over-helping plan is vetoed BEFORE its tools run, the model re-plans.
+  {
+    const now = new Date();
+    const pol = BR.computePolicy({ message: "just give me the answer", history: [{ role: "assistant", text: "What forces act on the block?" }], state: SS.emptySessionState("t1", now), now });
+    script = (b, i) => i === 0
+      ? { content: '<plan>{"action":"EXPLAIN","level":6,"why":"they want it"}</plan>', tool_calls: [tc("WRITE_TO_BOARD", { text: "N = mg cos 30 so a = g sin 30", kind: "note" })] }
+      : { content: '<plan>{"action":"ASK_QUESTION","level":0,"why":"no attempt yet","expected_next":"they name a force"}</plan>\nHappy to help — what have you tried so far, or which force would you start with?' };
+    r = await run("just give me the answer", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "What forces act on the block?" }], opts: { policy: pol, sessionState: SS.emptySessionState("t1", now) } });
+    check("end to end: an EXPLAIN plan on an un-attempted answer request is vetoed and its board write never runs", r.board.length === 0 && r.planCorrection?.from === "EXPLAIN" && r.plan?.action === "ASK_QUESTION");
+    check("...the student only ever sees the re-planned reply, never plan JSON", !/<plan>|"action"/.test(r.reply) && /what have you tried/.test(r.reply));
+    check("...and the binding TUTOR POLICY + plan protocol are in the tutor's prompt", /TUTOR POLICY FOR THIS TURN/.test(String(calls[0].messages[0].content)) && /HOW YOU THINK EACH TURN/.test(String(calls[0].messages[0].content)));
+  }
+
+  // ANNOTATE_BOARD — Otto points at an existing entry instead of explaining the mistake in chat
+  {
+    const board = [{ id: "e1", kind: "given", text: "A block on a 30° slope", at: "" }, { id: "e2", kind: "result", owner: "student", status: "incorrect", text: "N = mg", at: "" }];
+    check("a board target resolves by #n or id, never to an annotation or out of range", wa_resolve("#2", board)?.id === "e2" && wa_resolve("e1", board)?.id === "e1" && wa_resolve("#9", board) === null);
+    script = (b, i) => i === 0 ? { content: "", tool_calls: [tc("ANNOTATE_BOARD", { target: "#2", note: "Check the direction of this force — perpendicular to what?", tone: "error" })] } : { content: "Look at the circled line — what is the normal force perpendicular to?" };
+    r = await run("is N = mg?", { board, history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
+    const ann = r.boardAll.find((e) => e.kind === "annotation");
+    check("end to end: ANNOTATE_BOARD attaches a pointer to the student's entry (and is shown the #n listing)", !!ann && ann.targetId === "e2" && ann.tone === "error" && /#2; STUDENT'S WORK/.test(String(calls[0].messages[0].content)));
+    script = (b, i) => i === 0 ? { content: "", tool_calls: [tc("ANNOTATE_BOARD", { target: "#2", note: "It should be 8.5 N, not mg", tone: "error" })] } : { content: "Which direction does N point?" };
+    r = await run("is N = mg?", { board, problems: [{ id: "p1", question: "Block on 30° slope, m = 1 kg: find N", answer: "8.5 N", createdAt: "" }], history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
+    check("a pointer that states the problem's answer is refused (point and ask, never tell)", !r.boardAll.some((e) => e.kind === "annotation") && /REJECTED/.test(JSON.stringify(calls[1].messages)));
+  }
 }
