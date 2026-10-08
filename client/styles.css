@@ -6141,15 +6141,8 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   transition: border-color var(--duration-base) var(--ease-spring), box-shadow var(--duration-base) var(--ease-spring);
 }
 .sm-inline-problem-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
-/* Answer-on-the-board row (BoardArtifact's onAnswer) — same shape as the problem input above, just its
-   own class since it lives on a plain question/completion-gap entry, not a TaskProblem. */
-.sm-board-answer-row { display: flex; gap: var(--space-2); align-items: center; margin-top: 8px; }
-.sm-board-answer-input {
-  flex: 1; padding: 9px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm);
-  font-size: var(--text-sm); background: var(--bg); color: var(--ink);
-  transition: border-color var(--duration-base) var(--ease-spring), box-shadow var(--duration-base) var(--ease-spring);
-}
-.sm-board-answer-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
+/* (the board's own inline answer row/input is gone by direct instruction — a gap shows the line and its
+   "Your turn: …" chip; the student answers in chat, same as everything else.) */
 .sm-inline-problem-result {
   display: flex; align-items: center; gap: 6px;
   padding: 9px 12px; border-radius: var(--radius-sm); font-size: var(--text-sm); font-weight: var(--weight-semibold);
@@ -6972,17 +6965,9 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .sm-board-gap-text::after { content: " ?"; color: var(--accent); font-weight: 700; }
 .sm-board-entry-student { border-left: 3px solid var(--accent); margin-left: -3px; padding-left: 12px; }
 .sm-board-entry-student .sm-board-entry-text { font-style: italic; }
-/* Reasoning trace (kind:"summary") — the record of HOW the student got there, as a numbered-ish dash list
-   with corrected wrong-turns visually marked. The board's centerpiece: what accumulates is the student's
-   own thinking, not the tutor's explanation. */
-.sm-board-trace { border-left: 2px solid var(--accent); padding-left: 10px; margin: 2px 0; }
-.sm-board-trace-heading { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
-.sm-board-trace-list { list-style: none; counter-reset: trace; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
-.sm-board-trace-list li { position: relative; counter-increment: trace; padding-left: 30px; font-size: .97em; line-height: 1.65; }
-.sm-board-trace-list li::before { content: counter(trace); position: absolute; left: 0; top: .2em; width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--line, #d9d4c7); color: var(--ink-2); font-size: 11px; line-height: 18px; text-align: center; font-weight: 600; }
-.sm-board-trace-list li.sm-board-trace-turn::after { content: "⟲"; margin-left: 6px; color: var(--ink-2); font-size: .85em; }
+/* The "how you got there" reasoning-trace box was removed by direct instruction: a board line is a board
+   line — no heading, no numbering, no category, just the work written out. */
 .sm-inline-eq .katex { font-size: 1.08em; }
-.sm-board-trace { padding-top: 4px; padding-bottom: 4px; }
 /* Live drafting indicator — the writing hand. */
 .sm-board-drafting { display: flex; align-items: center; gap: 8px; margin: 10px 4px; padding: 8px 12px; border: 1px dashed var(--line); border-radius: var(--radius); color: var(--ink-2); font-size: 13px; font-style: italic; }
 

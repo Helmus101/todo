@@ -7,7 +7,7 @@ import { COURSEWORK_MAX_CHARS, courseworkForSubject, sameSubject } from "../shar
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { buildGeometry } from "../shared/geometry.ts";
-import { repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
+import { repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -2207,7 +2207,7 @@ async function createChatFast(client: OpenAI, params: any, fast: boolean, timeou
 export function tightenForChat(text: string, maxWords = 70): string {
   const t = text.trim();
   if (countWords(t) <= maxWords) return t;
-  const sentences = t.split(/(?<=[.!?…])\s+/).filter(Boolean);
+  const sentences = t.split(/(?<=[.!?…])(?<!\d[.!?…])\s+/).filter(Boolean);
   if (sentences.length < 3) return t;
   const last = sentences[sentences.length - 1];
   const tail = /[?？]\s*$/.test(last) ? last : "";
@@ -2215,7 +2215,11 @@ export function tightenForChat(text: string, maxWords = 70): string {
   let words = tail ? countWords(tail) : 0;
   for (const sn of sentences.slice(0, tail ? -1 : undefined)) {
     const n = countWords(sn);
-    if (keep.length && words + n > maxWords) break;
+    // A numbered LIST is content, never filler: "1. 1 - 2sin² x" used to be shredded at the "1." (the split
+    // saw a sentence end) and the fragments dropped one by one, so a reply promising "your three choices"
+    // arrived with only option 1 left. List segments are kept whole, over budget if necessary.
+    const isList = /\b\d+[.)]\s/.test(sn);
+    if (keep.length && !isList && words + n > maxWords) break;
     keep.push(sn); words += n;
   }
   return [...keep, ...(tail ? [tail] : [])].join(" ");
@@ -2581,8 +2585,9 @@ const WRITE_TO_BOARD_TOOL = {
   description: "Write ONE short entry onto the student's persistent tutor Board — a visible, always-accessible surface separate from the chat thread, NOT limited to practice problems. The board is a document being BUILT entry by entry across the session: it opens with the day's focus, collects the key definitions and formulas as they come up, credits the student's own insights, and ends with a summary of their reasoning. Each call adds ONE entry; the next thing gets its own entry later as the session moves on. ONE idea per call and no walls of PROSE — but a short multi-line block of WORKING (each line one move, the last line left as '= ?' for them to finish) IS one entry, and it is the fastest way to make the page look like the paper you'd both be writing on. What belongs here is decided by one test: would the student otherwise have to hold it in their head, or scroll back through chat to find it? (given values and the goal, a formula in play, the cases a problem splits into, a diagram, the sub-goal they're on, a key term's gloss, their own insight). Anything that fails that test stays in chat. Don't narrate that you're writing it ('let me jot that down') — just call the tool. NEVER GET AHEAD OF THE CHAT: a 'summary'/'formula'/'note' entry records a step ONLY once the student has actually said/derived it in chat THAT turn — never a later step of the SAME derivation they haven't reached yet, even symbolically with no numbers (reported live: the board already showed 'F_net down slope = mg sin25 - mg cos25 * tan20' as a finished line while the chat was still walking the student through deriving exactly that, one piece at a time — the board had done the derivation FOR them, just quietly, on a different surface than chat). If you're tempted to write the NEXT formula before asking the question that gets them there, ask the question first and write the entry after they answer it.",
   input_schema: { type: "object", properties: {
     text: { type: "string", description: "the entry itself — plain text/light markdown, ONE idea, in KEYWORDS AND STRUCTURE rather than prose: ~25 words of prose max, and fewer is better. Write the skeleton of the idea, never a restatement of what you just said in chat (a board that repeats your sentences measurably hurts learning — the redundancy effect). Annotate like handwritten notes: 'term = plain gloss' on its own line; relationships as arrows ('A --pushes--> B'); contrasts stacked with '<-' margin asides ('NOT x <- what you'd expect' / 'BUT y <- the actual point'); dash lines for anything sequential, one idea each. Anything with REAL SPATIAL POSITION — a shape, a triangle, a number line, points on axes — belongs in DRAW_ON_BOARD instead, which renders an actual figure. For kind:'outline' this is just a one-line title (the sections go in `outline` below) — for anything else, reserve a fenced ASCII block here for genuinely textual structure (a small table) where neither a real drawing nor an outline fits. ANY such ASCII sketch MUST be wrapped in a triple-backtick code fence (```\\n...\\n```) — the board renders a fenced block as monospace, preserving every space exactly as typed; UNFENCED text renders ONE LINE PER LINE as ordinary page lines — which is exactly what you want for a step-by-step derivation (each line one move), so do NOT fence working; a fence is ONLY for a shape whose exact spacing IS the content. When you write 'maths in $…$' anywhere in this entry, wrap ONLY the actual numbers/symbols — '0.05 m' or '10 N', never a surrounding phrase or whole sentence like '$under a force of 10 N$' — KaTeX renders real words as garbled, jammed-together italic letters, not prose." },
-    kind: { type: "string", enum: ["note", "instruction", "given", "result", "formula", "summary", "focus", "insight", "definition", "outline", "gap"], description: "styling/role hint: 'given' for the problem's data / statement exactly as given (typeset maths in $…$); 'result' for something the STUDENT has just derived, found or confirmed that matters for the next part (an equation, a value, a simplified form — in $…$, labelled in a few words, only once THEY reached it); 'focus' ONCE to open a session's document — today's arc, where you start and what you're building toward; 'instruction' for a directive to start/try something; 'definition' the first time a key term comes up — the term in **bold**, then a plain-language definition; 'formula' for a plain fact/rule worth keeping visible in words (not real math notation — for an actual expression/equation with a fraction, exponent, or root, use DRAW_ON_BOARD's 'equation' op instead, which typesets it for real instead of describing it in text); 'insight' when the STUDENT has a genuine aha in their own words — credit them by name ('Will's insight: ...'); 'summary' for a recap of the STUDENT's reasoning — it renders as the 'how you got there' reasoning trace, so it is for THEIR reasoning and NOT the default kind: most entries are plain text ('note', 'given', 'formula', 'definition', 'result'), written as ordinary page lines, one idea per line; 'outline' for headed, bulleted structure — a timeline, the causes/effects of an event, a source's key points, an essay's section-by-section plan (REQUIRES the separate `outline` field below, with real sections and bullets — this is the DEFAULT reach for history/literature/language-arts/social-science content instead of trying to force it into a flat sentence); 'gap' for a DELIBERATELY INCOMPLETE step or equation the student must finish — the `text` contains the setup with a '?' where the answer goes (e.g. 'a = ? / m' or 'F_net = ?'), and you MUST also set `expectedAnswer` to the value the student should produce. This is the completion effect: Otto supplies the method, the student performs the final transformation. Use gaps aggressively — every worked line should end in a gap before the student fills it, rather than Otto completing every step. 'note' for anything else. Defaults to 'note' if omitted." },
+    kind: { type: "string", enum: ["note", "instruction", "given", "result", "formula", "summary", "focus", "insight", "definition", "outline", "gap"], description: "styling/role hint: 'given' for the problem's data / statement exactly as given (typeset maths in $…$); 'result' for something the STUDENT has just derived, found or confirmed that matters for the next part (an equation, a value, a simplified form — in $…$, written plain with no label or prefix, only once THEY reached it); 'focus' ONCE to open a session's document — today's arc, where you start and what you're building toward; 'instruction' for a directive to start/try something; 'definition' the first time a key term comes up — the term in **bold**, then a plain-language definition; 'formula' for a plain fact/rule worth keeping visible in words (not real math notation — for an actual expression/equation with a fraction, exponent, or root, use DRAW_ON_BOARD's 'equation' op instead, which typesets it for real instead of describing it in text); 'insight' when the STUDENT has a genuine aha in their own words — credit them by name ('Will's insight: ...'); 'summary' for a recap of the STUDENT's reasoning — it is for THEIR reasoning, never yours, and it renders like any other line: no heading, no numbering, no category — NOT the default kind: most entries are plain text ('note', 'given', 'formula', 'definition', 'result'), written as ordinary page lines, one idea per line; 'outline' for headed, bulleted structure — a timeline, the causes/effects of an event, a source's key points, an essay's section-by-section plan (REQUIRES the separate `outline` field below, with real sections and bullets — this is the DEFAULT reach for history/literature/language-arts/social-science content instead of trying to force it into a flat sentence); 'gap' for a DELIBERATELY INCOMPLETE step or equation the student must finish — the `text` contains the setup with a '?' where the answer goes (e.g. 'a = ? / m' or 'F_net = ?'), and you MUST also set `expectedAnswer` to the value the student should produce. You MUST also set `gapAction` — 2-6 words naming the SPECIFIC thing they have to do on that line (\"expand the bracket\", \"resolve into components\", \"pick the identity\") — it becomes the chip under the line (\"Your turn: expand the bracket\") so their move is named, never a generic \"finish this\". Never put the value in `gapAction`. This is the completion effect: Otto supplies the method, the student performs the final transformation. Use gaps aggressively — every worked line should end in a gap before the student fills it, rather than Otto completing every step. 'note' for anything else. Defaults to 'note' if omitted." },
     expectedAnswer: { type: "string", description: "REQUIRED when kind is 'gap', omitted otherwise. The value the student should fill in — e.g. '10/3', '4.5', 'friction'. Otto must NEVER reveal this in chat while the gap is open; the student discovers it by working through the problem." },
+    gapAction: { type: "string", description: "REQUIRED when kind is 'gap', omitted otherwise. 2-6 words naming the SPECIFIC next move (the chip under the line: 'Your turn: expand the bracket'). Never the value itself, never a generic 'finish this'." },
     owner: { type: "string", enum: ["otto", "student"], description: "Who wrote this entry. 'otto' (default) for everything Otto writes. 'student' ONLY for entries transcribing the student's OWN work (their equations, their reasoning steps, their answers) — use this when you're putting their actual work onto the board so it's visually distinguishable from your scaffolding. Otto never silently rewrites or overwrites student-owned entries." },
     outline: {
       type: "array",
@@ -2932,7 +2937,8 @@ export function makeBoardEntry(input: any): { entry: BoardEntry } | { error: str
   }
   const owner: BoardEntry["owner"] = input?.owner === "student" ? "student" : "otto";
   const expectedAnswer = kind === "gap" && input?.expectedAnswer ? String(input.expectedAnswer).trim().slice(0, 200) : undefined;
-  return { entry: { id: randomUUID(), text, ...(kind ? { kind } : {}), ...(owner === "student" ? { owner } : {}), ...(expectedAnswer ? { expectedAnswer } : {}), at: new Date().toISOString() } };
+  const gapAction = kind === "gap" && input?.gapAction ? String(input.gapAction).trim().replace(/\s+/g, " ").slice(0, 60) : undefined;
+  return { entry: { id: randomUUID(), text, ...(kind ? { kind } : {}), ...(owner === "student" ? { owner } : {}), ...(expectedAnswer ? { expectedAnswer } : {}), ...(gapAction ? { gapAction } : {}), at: new Date().toISOString() } };
 }
 
 /** Full-replace validator for SET_OBJECTIVES — mirrors the tool's own contract (the model always sends the
@@ -7536,7 +7542,7 @@ const PRIMER_PERSONA =
   `what has actually been reached: never a step they haven't got to, never the answer.\n` +
   `- THE BOARD IS THEIR PAPER (an alternative to scrap paper — USE IT FOR EVERY SUBJECT, constantly, not just for ` +
   `"how you got there"): maths/physics — the givens (kind "given"), every equation ` +
-  `or value they DERIVE that the next part will need (kind "result", e.g. "Established: $…$"), formulas and ` +
+  `  or value they DERIVE that the next part will need (kind "result", no label — just the line), formulas and ` +
   `units, free-body/figures/graphs, their reasoning lines; chemistry/biology — equations, definitions, labelled ` +
   `diagrams, process steps; history/economics/literature — outline (causes, timeline, argument structure), ` +
   `definitions, key quotes with ==the key part== highlighted, cause→effect chains; languages — vocabulary, ` +
@@ -7848,7 +7854,17 @@ export async function chatAboutTask(
     `never about a line of working.\n` +
     `- ASK IF YOU'RE UNSURE. If you don't know what they want on the page, or which of two things to put ` +
     `up, ask ONE short question instead of guessing or writing both — the question stays in CHAT, never a ` +
-    `board entry: the board holds problems, working and figures, and questions are spoken, not posted.\n`;
+    `board entry: the board holds problems, working and figures, and questions are spoken, not posted.\n` +
+    `- WHEN THEY ANSWER, TAKE IT: the moment they state an answer — even partial, even one they looked up or ` +
+    `guessed, even without showing their working — recognise it in a few words (right: say so and move ON; ` +
+    `wrong: say exactly what's off and ask the ONE next question). Never make them re-derive it to prove ` +
+    `they were really with you, never re-ask the same question because the reasoning wasn't shown, and never ` +
+    `refuse to confirm a value THEY just put on the table. You can ask "quick one — why?" as a follow-up, but ` +
+    `as a question, never as a precondition for accepting the answer.\n` +
+    `- WRITE EVERY LINE FRESH AND ADAPTIVE: no stock openings, no template labels (never \"Given:\", \"Established:\", ` +
+    `\"Step 1\"), no recycled phrasing from earlier turns. Write in THEIR words and their notation, at their ` +
+    `level, in the language they're using, shaped by what just happened this session — the same idea said any ` +
+    `other way would be the wrong line for THIS student at THIS moment.\n`;
     
   // Smarter responses - contextual awareness
   const contextAwarenessBlock = history.length > 0
@@ -8798,7 +8814,12 @@ export async function chatAboutTask(
     // The redirect line replaces a violating REPLY, but if that same turn also produced artifacts, they were
     // almost certainly the same violation wearing a different container (a "fiche" that's just the essay) —
     // discard them too rather than hand over a chip whose text just got rejected.
-    if (CHAT_DOES_WORK.test(reply) || CHAT_STATES_ANSWER.test(reply)) {
+    // RECOGNITION IS NOT A LEAK: when the STUDENT just put the answer on the table themselves ("the answer is
+    // 42", "B", "x = 2 or x = 3"), Otto confirming it is exactly what a tutor owes them — but this guard fired
+    // on Otto's confirmation and replaced it with a refusal, so the tutor looked like it hadn't noticed the
+    // question was already answered (reported live: "it should recognise when the question was answered, even
+    // if not fully with the tutor"). The guard stays fully armed for anything the student did NOT state.
+    if (CHAT_DOES_WORK.test(reply) || (CHAT_STATES_ANSWER.test(reply) && !studentStatedAnswer(message, history))) {
       result.notes = []; result.flashcards = []; result.quizzes = []; result.problems = []; result.board = [];
       result.guardrailTripped = true;
       logAudit("guardrail", fr
@@ -8872,6 +8893,15 @@ export async function chatAboutTask(
     let reasoningNudgeDone = false;
     let repeatCorrected = false;
     let planCorrected = false;
+    // Tutor-only Socratic latches (each corrective round below fires at most ONCE per turn):
+    //  · planMissing  — the turn reached the app with no <plan>, so the policy had nothing to check;
+    //  · gapLeakFixed — the reply handed over the value of a gap still open on the board;
+    //  · oneQuestionFixed — the reply asked two questions at once;
+    //  · poseFixed    — a full problem was posed in chat and never put on the board.
+    let planMissing = false;
+    let gapLeakFixed = false;
+    let oneQuestionFixed = false;
+    let poseFixed = false;
     // Tutor only: one corrective round for the two ways a turn can fail to leave a mark on the board —
     // (a) the student contributed a step and Otto wrote NOTHING, and (b) Otto's own reply carried working the
     // page doesn't have (see shouldNudgeBoardContent; the second case used to require an EMPTY board, which is
@@ -8899,7 +8929,7 @@ export async function chatAboutTask(
       console.log(`${new Date().toISOString()} [chat] round ${round}: ${studentStep ? "student contributed a step but" : "real working in the reply but"} none of it is on the board — asking for the write`);
       messages.push({ role: "assistant", content: draft });
       messages.push({ role: "user", content: studentStep
-        ? "The student just contributed a step, but nothing was added to the board this turn — the board is their paper and it should show their work. Before you reply, write to it (1-3 short WRITE_TO_BOARD calls): (a) kind \"summary\" — THEIR reasoning so far in your own words, maths in $…$ (the move they made, why it works, what it gave); (b) if the step produced an equation, value or simplified form that matters for the NEXT part of the problem, kind \"result\" — that thing alone, typeset in $…$, with a 2-4 word label (e.g. \"Established: $\\\\cos\\\\tfrac{\\\\pi}{3}=\\\\tfrac12$\"); (c) if a formula or rule is in play and not on the board yet, kind \"formula\". Only what THEY have reached — never a step they haven't taken or the final answer, never their message word for word. Write only what is genuinely worth keeping — if the step was trivial, write nothing. Then send your short reply again."
+        ? "The student just contributed a step, but nothing was added to the board this turn — the board is their paper and it should show their work. Before you reply, write to it (1-3 short WRITE_TO_BOARD calls): (a) kind \"summary\" — THEIR reasoning so far in your own words, maths in $…$ (the move they made, why it works, what it gave); (b) if the step produced an equation, value or simplified form that matters for the NEXT part of the problem, kind \"result\" — that thing alone, typeset in $…$, on its own with NO label or prefix (never \"Established:\") — just the line itself); (c) if a formula or rule is in play and not on the board yet, kind \"formula\". Only what THEY have reached — never a step they haven't taken or the final answer, never their message word for word. Write only what is genuinely worth keeping — if the step was trivial, write nothing. Then send your short reply again."
         : boardIsEmpty
         ? "You're working with real math here and the board is still completely empty — the student can see your reply but nothing is visible next to it. Before you reply again, call WRITE_TO_BOARD ONCE: the formula in play, the given values, or the definition you just used (real math through DRAW_ON_BOARD's equation op — one short entry, NOT a wall of text, and not a restatement of your reply). Then send your short reply again. If this exchange genuinely produced nothing worth keeping visible, just continue unchanged and don't mention this."
         : "You just worked through real math in the chat — a formula, an equation, a line of working — and none of it is on the board, which is the page you're both working on. Before you reply again, call WRITE_TO_BOARD and put the WORKING up: SEPARATE LINES, one move per line, maths in $…$, in the order you did it, and leave the NEXT line as the gap (\"= ?\") for the student to finish — that gap is the point, don't close it for them. A short multi-line block like that is ONE entry, not a wall of text. Do NOT reach for kind \"summary\" for this: that one renders as a reasoning trace and is for the STUDENT's own reasoning. If this exchange genuinely produced nothing worth keeping visible, just continue unchanged and don't mention this." });
@@ -8922,6 +8952,25 @@ export async function chatAboutTask(
       messages.push({ role: "user", content: "The board entry you just wrote already STATES the value you're asking the student to find, so the question answers itself. I've pulled that entry (they never saw it). Call WRITE_TO_BOARD again with the same idea but leave the asked-for value out — show the OTHER cases or the pattern, and put \"?\" (or nothing) where the value they must work out would be. Then send your short reply again; don't mention this correction." });
       return true;
     };
+    // THE VALUE OF AN OPEN GAP NEVER APPEARS IN CHAT. The board carries `expectedAnswer` for every "= ?" line
+    // and the tool forbids revealing it — but only the BOARD was ever checked for stating an asked-for value
+    // (guardAskedValue above); the reply itself had no equivalent net (CHAT_STATES_ANSWER only catches the
+    // phrase "the answer is…", so a bare "8.5 N" in prose passed straight through). Skipped when the STUDENT
+    // already said the value: confirming what THEY produced is recognition, handing over what they never said
+    // is the violation — which is also what lets the tutor take an answer that came from outside the session.
+    const guardGapAnswer = (draft: string, round: number, lastRound: boolean): boolean => {
+      if (!opts?.primer || gapLeakFixed || lastRound || result.guardrailTripped) return false;
+      const open = [...(opts?.currentBoard || []), ...result.board].filter((e) => e.kind === "gap" && e.expectedAnswer);
+      if (!open.length) return false;
+      const theirs = [message, ...history.filter((h) => h.role === "user").map((h) => h.text)].join("\n");
+      const hit = open.find((e) => replyStatesValue(draft, e.expectedAnswer!) && !replyStatesValue(theirs, e.expectedAnswer!));
+      if (!hit) return false;
+      gapLeakFixed = true;
+      console.log(`${new Date().toISOString()} [chat] round ${round}: reply states the value of a gap still open on the board — pulling it, asking for a question instead`);
+      messages.push({ role: "assistant", content: draft });
+      messages.push({ role: "user", content: `Your reply hands over the value the open line on the board (\"${String(hit.text).slice(0, 60)}\") is asking them to produce — while that line is open it is theirs to fill, never yours to say. Take the value OUT: keep the method or the next nudge, and end on the question that gets THEM to produce it. (If they already produced it themselves, confirm what THEY said.) Don't mention this correction.` });
+      return true;
+    };
     // A turn with no question is a lecture: a reply to a real student contribution that asks them nothing gets ONE
     // corrective round to end on a single guiding question (never the answer).
     let questionAdded = false;
@@ -8931,6 +8980,40 @@ export async function chatAboutTask(
       console.log(`${new Date().toISOString()} [chat] round ${round}: reply asks the student nothing — asking for a guiding question`);
       messages.push({ role: "assistant", content: draft });
       messages.push({ role: "user", content: "That reply doesn't ask the student anything, so they just receive information. Keep what's useful but end on ONE short guiding question that makes THEM take the next step or explain their thinking (never the answer, never a yes/no they can guess). Don't mention this instruction." });
+      return true;
+    };
+    // ONE QUESTION AT A TIME. Two questions in one reply split their attention: they answer the easy one and
+    // the real question dies (reported live: "it sometimes generated two questions at once"). The count only
+    // looks at REAL question marks — the "?" of an open gap ("F_net = ?") is notation, not a question.
+    const guardOneQuestion = (draft: string, round: number, lastRound: boolean): boolean => {
+      if (!opts?.primer || oneQuestionFixed || lastRound || result.guardrailTripped) return false;
+      if ((draft.match(/[^=\s]\?/g) || []).length < 2) return false;
+      oneQuestionFixed = true;
+      console.log(`${new Date().toISOString()} [chat] round ${round}: reply asks two questions at once — asking for the one that matters`);
+      messages.push({ role: "assistant", content: draft });
+      messages.push({ role: "user", content: "That reply asks them TWO things at once — they can only be working on one. Keep the ONE question that moves them forward right now and turn the others into a statement (or drop them). Don't mention this instruction." });
+      return true;
+    };
+    // A PROBLEM POSED IN CHAT GOES ON THE BOARD THE MOMENT IT'S POSED. Reported live: a full IB question
+    // ("Find all values of x … cos 2x + 3cos x = 1 … what's your first move?") lived only as scrollback —
+    // the board sat empty next to an entire session of real work. One corrective round: CREATE_PROBLEM when
+    // it's a single-answer exercise, otherwise WRITE_TO_BOARD with the givens and the actual question.
+    const POSE_VERB = /\b(?:find|solve|determine|calculate|compute|evaluate|simplify|express|prove|show(?: that)?|work out|deduce|hence|trouve|résous|calcule|démontre|simplifie|exprime|déduis)\b/i;
+    const guardPoseOnBoard = (draft: string, round: number, lastRound: boolean): boolean => {
+      if (!opts?.primer || poseFixed || lastRound || result.guardrailTripped) return false;
+      if (result.problems.length || result.board.length) return false; // something already landed this turn
+      if (!/\?/.test(draft) || !POSE_VERB.test(draft)) return false;
+      const eqs = (draft.match(/[\p{L}\p{N}πθμ√^()\s.,+\-*/]{3,}=[\p{L}\p{N}π√^()\s.,+\-*/-]{1,40}/gu) || [])
+        .map((m) => m.trim()).filter((m) => m.replace(/\s+/g, "").length >= 3);
+      if (!eqs.length) return false;
+      const board = [...(opts?.currentBoard || []), ...result.board]
+        .map((e) => `${e.text} ${(e.diagram || []).map((o: any) => o.latex || "").join(" ")} ${(e.outline || []).map((s) => `${s.heading} ${s.bullets.join(" ")}`).join(" ")}`)
+        .join("\n").replace(/[\s$]/g, "").toLowerCase();
+      if (eqs.some((m) => board.includes(m.replace(/[\s$]/g, "").toLowerCase()))) return false; // already up there
+      poseFixed = true;
+      console.log(`${new Date().toISOString()} [chat] round ${round}: a problem was posed in chat with nothing on the board — asking for it up there`);
+      messages.push({ role: "assistant", content: draft });
+      messages.push({ role: "user", content: "You just posed a real problem in chat only — the moment the thread scrolls it's gone, and the board next to it stays empty. Put it up NOW, same reply: CREATE_PROBLEM if it's a single-answer exercise (it gets the answer box), otherwise WRITE_TO_BOARD with the givens AND the actual question (short lines, maths in $…$), then ask your question about it. Then send your short reply again. Don't mention this instruction." });
       return true;
     };
     // "Done — 50 cards covering…" with NO deck behind it (reported live): the reply CLAIMS an artifact was made but no
@@ -9024,6 +9107,21 @@ export async function chatAboutTask(
       // see it. The newest plan wins (a re-plan after a correction replaces the vetoed one).
       const rawContent = textContent;
       if (opts?.primer) { const ex = extractPlan(textContent); if (ex.plan) result.plan = ex.plan; textContent = ex.reply; }
+      // FULLY SOCRATIC = THE POLICY IS CONSULTED EVERY TURN. Validation below only has something to check
+      // when the model wrote a <plan>; a turn that reaches here with NONE could hand over a level-6
+      // explanation while the policy allows one rung of help, and nothing would look at it. So a tutor turn
+      // with no plan gets ONE corrective round demanding it (latched — a model that still omits it falls
+      // through to the other guards rather than spinning).
+      if (opts?.primer && opts?.policy && !planCorrected && !planMissing && !lastRound && !result.plan && (toolCalls.length || textContent.trim())) {
+        planMissing = true;
+        console.log(`${new Date().toISOString()} [chat] round ${round}: tutor turn with no <plan> — asking for it so this turn's help can be checked against the policy`);
+        if (toolCalls.length) {
+          messages.push({ role: "assistant", content: rawContent, tool_calls: toolCalls });
+          for (const tc of toolCalls) messages.push({ role: "tool", tool_call_id: tc.id || `tool_${Date.now()}`, content: "NOT RUN — no plan to check (see next message)." });
+        } else messages.push({ role: "assistant", content: rawContent });
+        messages.push({ role: "user", content: "TUTOR POLICY CHECK — you wrote no <plan>, so this turn's move could not be checked against how much help is allowed right now. Write the <plan> FIRST (HOW YOU THINK EACH TURN), then your reply and any board writes. Don't mention this check." });
+        continue;
+      }
       // THE APPLICATION'S VETO: a plan that gives more help than the policy allows this turn (or answers an
       // answer-request the student hasn't attempted) never executes — its tool calls are refused unrun and the
       // model re-plans once. This is the "LLM decides, app validates" line of spec §19/§20.
@@ -9188,6 +9286,9 @@ export async function chatAboutTask(
         if (guardArtifactClaim(textContent, round, lastRound)) continue;
         if (guardAskedValue(textContent, round, lastRound)) continue;
         if (guardQuestion(textContent, round, lastRound)) continue;
+        if (guardGapAnswer(textContent, round, lastRound)) continue;
+        if (guardOneQuestion(textContent, round, lastRound)) continue;
+        if (guardPoseOnBoard(textContent, round, lastRound)) continue;
         if (nudgeReasoning(textContent, round, lastRound)) continue;
         if (!lengthRetried && !lastRound && !opts?.voiceMode && countWords(textContent) > 120) {
           lengthRetried = true;
@@ -9351,6 +9452,9 @@ export async function chatAboutTask(
       if (guardArtifactClaim(textContent, round, lastRound)) continue;
       if (guardAskedValue(textContent, round, lastRound)) continue;
       if (guardQuestion(textContent, round, lastRound)) continue;
+      if (guardGapAnswer(textContent, round, lastRound)) continue;
+      if (guardOneQuestion(textContent, round, lastRound)) continue;
+      if (guardPoseOnBoard(textContent, round, lastRound)) continue;
       if (nudgeReasoning(textContent, round, lastRound)) continue;
       if (!boardNudgeDone && !lastRound && shouldNudgeBoardWrite(textContent, message, result.board.length > 0)) {
         boardNudgeDone = true;

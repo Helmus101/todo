@@ -149,8 +149,6 @@ h1 { font-family: var(--display); font-weight: 400; letter-spacing: -0.025em; }
 .sm-board-focus-pin { background: transparent; border: none; border-left: 2px solid var(--accent); border-radius: 0; padding: 4px 0 4px 14px; margin: 4px 0 20px; }
 .sm-board-focus-pin .sm-board-entry-kind { font-size: 11px; letter-spacing: .08em; color: var(--ink-3, #8a867b); }
 .sm-board-focus-text { font-size: 1.1rem; font-weight: 500; }
-.sm-board-trace { border-left: 1px solid var(--line); }
-.sm-board-trace-heading { color: var(--ink-3, #8a867b); letter-spacing: .08em; }
 
 .tutor-reflect { display: flex; flex-direction: column; gap: 14px; padding: 4px 4px 8px; }
 .tutor-reflect p { margin: 0; font-size: 1rem; line-height: 1.55; color: var(--ink); }
@@ -184,10 +182,10 @@ h1 { font-family: var(--display); font-weight: 400; letter-spacing: -0.025em; }
 .task-modal.wide .task-chat > :last-child { flex: none; }
 
 /* Given (the problem's data) and Established (what the student found) — the board as paper. */
+/* No category captions ("Given" / "✓ Established") — by direct instruction the board just WRITES the line
+   out, never labels what kind of line it is. A quiet border is all a given/established line gets. */
 .sm-board-entry-given .sm-board-entry-main { border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; background: var(--surface); }
-.sm-board-entry-given .sm-board-entry-main::before { content: "Given"; display: block; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3, #8a867b); font-weight: 700; margin-bottom: 4px; }
 .sm-board-entry-result .sm-board-entry-main { border-left: 3px solid #2f9e6f; border-radius: 0 12px 12px 0; padding: 10px 16px; background: color-mix(in srgb, #2f9e6f 8%, var(--surface)); }
-.sm-board-entry-result .sm-board-entry-main::before { content: "✓ Established"; display: block; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: #2f9e6f; font-weight: 700; margin-bottom: 4px; }
 .sm-board-entry-given .sm-board-entry-text, .sm-board-entry-result .sm-board-entry-text { font-size: 1.04rem; line-height: 1.65; }
 
 /* ---- Board: ownership, status and Otto's pointers (the board is shared paper) ---- */

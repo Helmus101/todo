@@ -1596,6 +1596,10 @@ export interface BoardEntry {
    *  as an interactive blank the student must complete (the completion effect: doing the last step yourself
    *  is where the learning happens). Otto must NEVER reveal this value in chat while the gap is open. */
   expectedAnswer?: string;
+  /** Present only when kind === "gap" — the SPECIFIC next move that line is asking for (2-6 words, written by
+   *  Otto: "expand the bracket"). Shown as the chip under the line ("Your turn: expand the bracket") so a gap
+   *  names what to DO instead of a generic "finish this". Never carries the value itself. */
+  gapAction?: string;
   /** How a STUDENT-authored entry turned out — set by the app (never by the model), the moment the student
    *  answers on the board (see server/boardEvents.ts's tagStudentAnswer). Purely presentational: it lets the
    *  page keep a wrong attempt visible and struck through instead of either silently deleting it or letting

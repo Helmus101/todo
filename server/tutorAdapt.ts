@@ -259,6 +259,41 @@ export function boardQuestionOf(reply: string): string {
   return last.slice(0, 300);
 }
 
+// ---- Never hand over an open gap's answer ----
+/** True when `reply` plainly STATES `value` — the `expectedAnswer` of a gap still open on the board. Boundary-
+ *  aware on purpose: "4.9" must not fire inside "84.9" or "4.95", and "friction" must not fire inside
+ *  "frictionless". Word-valued answers only match as whole words; maths/number answers also match the
+ *  spacing-free form the model actually types ("x=2orx=3", "8.5n"), still never inside a longer number. */
+export function replyStatesValue(reply: string, value: string): boolean {
+  const raw = String(value || "").replace(/\$/g, "").trim().toLowerCase();
+  const compactNeedle = raw.replace(/\s+/g, "");
+  if (compactNeedle.length < 3) return false;
+  const hay = String(reply || "").toLowerCase();
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // word-for-word, with real word boundaries (spaces intact)
+  if (new RegExp(`(?<![\\p{L}\\d])${esc(raw)}(?![\\p{L}\\d])`, "u").test(hay)) return true;
+  // maths/number answers: also allow the no-spacing form, but never inside a longer number (digit/dot boundaries)
+  if (!/[\d=+*/^√π%:]/.test(compactNeedle)) return false;
+  return new RegExp(`(?<![\\d.])${esc(compactNeedle)}(?![\\d.])`).test(hay.replace(/\s+/g, ""));
+}
+
+// ---- Answers count, wherever they came from ----
+/** Did the STUDENT just put an answer on the table themselves? True for a stated value, an option letter, a
+ *  short maths statement — false for a question or an admission of confusion. Used so Otto can RECOGNISE an
+ *  answer (confirm it and move on) instead of tripping its own "never state the answer" guardrail on a reply
+ *  that only repeats what the student already said — which reads as the tutor failing to notice the question
+ *  was answered, even when the answer came from outside the session. */
+export function studentStatedAnswer(message: string, _history: { role: string; text: string }[] = []): boolean {
+  const last = String(message || "").trim();
+  if (!last || /\?/.test(last)) return false; // a question is not an answer
+  if (/\b(?:the (?:correct |final )?answer is|la (?:bonne )?réponse est|c['’]est donc l['’]option|option [a-d])\b/i.test(last)) return true;
+  if (/^\s*(?:option\s*)?[a-d][.)]?\s*$/i.test(last)) return true; // "B"
+  const words = last.split(/\s+/).length;
+  if (words < 2 || words > 14) return false;
+  if (/\b(?:why|how|don['’]?t|understand|explain|je ne|comment|pourquoi|explique)\b/i.test(last)) return false;
+  return /[0-9=+\-*/^√π]/.test(last); // a short maths statement: "x = 2 or x = 3", "8.5 N"
+}
+
 // ---- "How you got there" must be THEIR steps ----
 const NUM_WORDS: Record<string, string> = { zero: "0", one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9", ten: "10", eleven: "11", twelve: "12", thirteen: "13", fourteen: "14", fifteen: "15", sixteen: "16", eighteen: "18", twenty: "20", un: "1", deux: "2", trois: "3", quatre: "4", cinq: "5", six_fr: "6", sept: "7", huit: "8", neuf: "9", dix: "10", douze: "12" };
 /** Student text → comparable compact maths: number words → digits, "pi"→π, "over"→/, "root"→√, spaces/brackets gone. */

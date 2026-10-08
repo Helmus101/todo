@@ -30,6 +30,7 @@ import { compileExpr } from "../shared/mathExpr.ts";
 import { makeGraphEntry, earlierDigest, isSubstantiveStep, courseworkLine, fallbackCourseworkSummary, chunkCourseworkText } from "../server/claude.ts";
 import { canonSubject, sameSubject, normalizeCoursework, courseworkForSubject, COMMON_SUBJECTS, COURSEWORK_MAX_PAGES, COURSEWORK_MAX_CHARS } from "../shared/coursework.ts";
 import { tightenForChat, countWords as countWordsT } from "../server/claude.ts";
+import { replyStatesValue, studentStatedAnswer } from "../server/tutorAdapt.ts";
 import { diffBoard, recordBoardEvents, objectiveEvents, problemEvents, boardTrajectoryBlock, boardSurfaceBlock, tagStudentAnswer, selfCorrections, boardFingerprint } from "../server/boardEvents.ts";
 import { classifyTurnAction, buildTutorDecision, recordTutorDecision, TUTOR_DECISION_CAP } from "../server/actionSpace.ts";
 import { emptySessionState, loadOrInitSessionState, updateSessionState, persistSessionState, sessionStateBlock } from "../server/sessionState.ts";
@@ -67,7 +68,10 @@ section("Board reasoning trace — one move per rendered line, even when the mod
   check("blank lines and marker-only lines never render as an empty step", traceLines("1. a\n2. \n3. \n\n4. d").join("|") === "a|d");
   check("splitMergedSteps is a pure function the renderer can rely on", Array.isArray(splitMergedSteps("1. a")) && splitMergedSteps("plain prose").length === 1);
   const boardSrc = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
-  check("the renderer draws the numbering itself and no longer pastes the model's glyph into the step text", /<ol className="sm-board-trace-list">/.test(boardSrc) && /piece\.replace\(LEAD_DECOR_RE, ""\)\.replace\(LEAD_MARKER_RE, ""\)\.replace\(LEAD_DECOR_RE, ""\)/.test(boardSrc));
+  // The reasoning-trace BOX (the numbered "how you got there" list) was removed by direct instruction —
+  // a board line is just a line, with no category around it. traceLines stays: it still strips the model's
+  // own markers/glyphs from the text it is given.
+  check("the reasoning-trace box is gone, while traceLines still strips the model's own markers", !/sm-board-trace/.test(boardSrc) && /piece\.replace\(LEAD_DECOR_RE, ""\)\.replace\(LEAD_MARKER_RE, ""\)\.replace\(LEAD_DECOR_RE, ""\)/.test(boardSrc));
   const claudeTrace = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
   check("the prompt tells the model to write ONE move per line with no step number or bullet inside it", claudeTrace.includes("ONE MOVE PER LINE — the trace is numbered for you") && claudeTrace.includes("never put TWO moves on one line"));
 }
@@ -1711,7 +1715,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   // artifact of a session is the student's own thinking, laid out like a lesson page, written in live).
   check("board has a worksheet header (date + subject)", /sm-board-header/.test(boardSrc) && /sm-board-header-subject/.test(boardSrc));
   check("board entries carry worksheet section numbers", /sm-board-section-num/.test(boardSrc));
-  check("kind:\"summary\" renders as a reasoning trace (how the student got there)", /ReasoningTrace/.test(boardSrc) && /sm-board-trace/.test(boardSrc));
+  check("kind:\"summary\" renders as an ordinary line — no trace box, no heading, no category", !/ReasoningTrace|sm-board-trace/.test(boardSrc));
   check("a deliberately unfinished worked line gets an 'à toi de finir' completion chip (completion effect, visible)", /isCompletionGap/.test(boardSrc) && /sm-board-todo-chip/.test(boardSrc));
   check("new entries write themselves in (drafted, not swapped)", /sm-board-writein/.test(boardSrc));
   check("the board shows a live 'Otto écrit…' drafting indicator while the tutor composes", /writing\?/.test(boardSrc) && /sm-board-drafting/.test(boardSrc));
@@ -2100,23 +2104,76 @@ section("Voice-mode board rules — gesture research, not dictation (prompt pins
   check("the student-can't-see-notation requirement itself is preserved", /THE BOARD IS THE ONLY PLACE THEY EVER SEE THE ACTUAL NOTATION/.test(claudeSrc4));
 }
 
-section("Board: students can answer directly on it, Tutor-only (source pins)");
+section("Board: a gap poses the question — no small inline answer fields, Tutor-only (source pins)");
 {
-  // The board was read-only for the student — a completion-gap line ("= ?") was pure text, even
-  // though CREATE_PROBLEM entries right next to them already had a real inline answer box.
-  // Added an onAnswer prop so the student can reply directly where the question lives.
+  // Direct instruction: no small answer fields on the board. A gap shows the BIG line plus a chip naming the
+  // SPECIFIC move ("Your turn: expand the bracket"); the student answers in chat, where Otto's reply lands
+  // like any other message. The old onAnswer/answer-input widget is gone entirely.
   const boardSrc = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
-  check("BoardArtifact accepts an onAnswer callback and an answering-in-flight flag", /onAnswer\?: \(text: string\) => void;/.test(boardSrc) && /answering\?: boolean;/.test(boardSrc));
-  check("the inline answer box only shows on the NEWEST entry, and only for a completion-gap", /idx === flowItems\.length - 1 && isCompletionGap\(e\.text\)/.test(boardSrc) && !/kind === "question"/.test(boardSrc));
-  check("submitting calls onAnswer with the typed text, exactly like a normal chat send", /onAnswer\(v\); setAnswerKey\(e\.id\); setAnswerText\(""\);/.test(boardSrc));
+  check("BoardArtifact has no inline answer box any more (no onAnswer, no answer input, no draft state)", !/onAnswer|sm-board-answer-input|answerText/.test(boardSrc));
+  check("the gap chip carries a SPECIFIC next move (gapAction), with the generic line only as fallback", /gapAction/.test(boardSrc) && /Your turn:/.test(boardSrc) && /Your turn to finish/.test(boardSrc));
+  check("no kind-\"question\" rendering survives either", !/kind === \"question\"/.test(boardSrc));
 
-  // Direct instruction (reversing the regular-task-chat board addition above): the board is TUTOR-ONLY —
-  // the plain task chat (TaskCard.tsx) and Study Mode's own freeform canvas no longer render or write one
-  // at all, so onAnswer is wired ONLY into TutorSession.tsx's board, never TaskCard's.
+  // Direct instruction: the board is TUTOR-ONLY — the plain task chat (TaskCard.tsx) and Study Mode's own
+  // freeform canvas no longer render or write one at all.
   const taskCardSrc2 = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
   const tutorSessionSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
   check("TaskCard (plain task chat) never renders a board at all any more", !/BoardArtifact/.test(taskCardSrc2));
-  check("TutorSession wires onAnswer to its own send, so answering on the board behaves exactly like chat", /onAnswer=\{\(text\) => void send\(text\)\}/.test(tutorSessionSrc));
+  check("TutorSession no longer passes an answer box into the board", !/onAnswer/.test(tutorSessionSrc));
+}
+
+section("Fully Socratic tutor — policy every turn, never the gap's value, one question, answers taken (unit + source pins)");
+{
+  // 1. The value of a gap still open on the board must never appear in the CHAT reply — and must be
+  //    confirmable the moment the STUDENT is the one who produced it (answers count wherever they came from).
+  check("a gap's value said in prose is detected, including the spacing-free form the model types",
+    replyStatesValue("Yes — it's 8.5 N.", "8.5 N") && replyStatesValue("so x=2orx=3 is what you get", "x = 2 or x = 3"));
+  check("...but never by matching inside a longer number or a longer word",
+    !replyStatesValue("around 84.9 or 8.55", "8.5 N") && !replyStatesValue("the frictionless surface", "friction") && !replyStatesValue("x = 184.9", "84.9"));
+  check("a reply that never states the value is not flagged", !replyStatesValue("what do you get for a?", "8.5 N"));
+
+  // 2. Recognition: an answer the student put on the table (option letter, stated value, short maths
+  //    statement) is THEIRS — Otto confirming it is not a leak. A question or an admission of confusion is.
+  check("a bare option letter or a stated value counts as the student's own answer",
+    studentStatedAnswer("B") && studentStatedAnswer("the answer is 42") && studentStatedAnswer("x = 2 or x = 3") && studentStatedAnswer("8.5 N"));
+  check("a question or an admission of confusion is not an answer",
+    !studentStatedAnswer("why does 3x²(x+1) = 0?") && !studentStatedAnswer("i don't understand why N = mg cos θ") && !studentStatedAnswer(""));
+
+  // 3. The board's truncation bug (reported live): a reply listing three choices arrived with option 1 only,
+  //    because the compressor split the numbered list into fragments at every "1." and dropped the rest.
+  const listed = "Here are your three choices for cos 2x:\n1. 1 - 2sin² x\n2. 2cos² x - 1\n3. 2sin² x - 1\nSince the rest of your equation only has cos x in it (plus that 3cos x), which one of those forms is going to make your life the easiest?";
+  const kept = tightenForChat(listed, 45);
+  check("tightening never shreds a numbered list — all three choices and the closing question survive",
+    /1 - 2sin² x/.test(kept) && /2cos² x - 1/.test(kept) && /2sin² x - 1/.test(kept) && /easiest\?/.test(kept));
+
+  // 4. A gap carries the SPECIFIC move its chip names.
+  const g = makeBoardEntry({ text: "3x²(x + 1) = ?", kind: "gap", expectedAnswer: "3x³+3x²", gapAction: "expand the bracket" }).entry;
+  const n = makeBoardEntry({ text: "a note", kind: "note", gapAction: "expand the bracket" }).entry;
+  check("a gap stores its specific next move (and the answer it must not reveal); other kinds carry none",
+    g.gapAction === "expand the bracket" && g.expectedAnswer === "3x³+3x²" && !n.gapAction);
+
+  // 5. The enforcement itself — every corrective round is on the live reply path, twice (plain-text and
+  //    after-tool-calls branches), which is what makes the tutor's Socratic posture binding rather than a
+  //    prompt suggestion.
+  const csrc = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("a tutor turn with no <plan> is sent back once, so the policy is consulted EVERY turn",
+    /TUTOR POLICY CHECK — you wrote no <plan>/.test(csrc) && /!result\.plan && \(toolCalls\.length \|\| textContent\.trim\(\)\)/.test(csrc));
+  check("the gap's value is pulled from the CHAT reply too, on both reply paths",
+    (csrc.match(/guardGapAnswer\(textContent, round, lastRound\)/g) || []).length === 2 && /replyStatesValue\(draft, e\.expectedAnswer/.test(csrc));
+  check("two questions in one reply are cut to one (the gap's own '?' is notation, not a question)",
+    csrc.includes("draft.match(/[^=\\s]\\?/g)") && (csrc.match(/guardOneQuestion\(textContent, round, lastRound\)/g) || []).length === 2);
+  check("a problem posed in chat with nothing on the board is put on the board instead",
+    (csrc.match(/guardPoseOnBoard\(textContent, round, lastRound\)/g) || []).length === 2 && /const POSE_VERB/.test(csrc));
+  check("confirming an answer the STUDENT already gave never trips the 'never state the answer' guardrail",
+    /CHAT_STATES_ANSWER\.test\(reply\) && !studentStatedAnswer\(message, history\)/.test(csrc));
+  check("the tutor is told to take an answer wherever it came from, and to write every line fresh with no category",
+    /WHEN THEY ANSWER, TAKE IT/.test(csrc) && /WRITE EVERY LINE FRESH AND ADAPTIVE/.test(csrc) && /never \\"Given:\\"/.test(csrc));
+  check("WRITE_TO_BOARD asks for a specific gapAction and makeBoardEntry keeps it",
+    /gapAction: \{ type: "string"/.test(csrc) && /\.\.\.\(gapAction \? \{ gapAction \} : \{\}\)/.test(csrc));
+  const labSrc = readFileSync(new URL("../client/lab.css", import.meta.url), "utf8");
+  const boardCss = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
+  check("the board wears no category captions and no trace box (no 'Given' / '✓ Established' / numbered trace)",
+    !/content: "Given"|content: "✓ Established"/.test(labSrc) && !/sm-board-trace/.test(boardCss) && !/sm-board-answer-input/.test(boardCss));
 }
 
 section("loadState survives a missing-column schema-drift error (source pins)");

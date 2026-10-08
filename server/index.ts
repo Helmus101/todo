@@ -1635,7 +1635,10 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
       // tags and tagStudentAnswer's own target-finding downstream: both need these to actually be present.
       ...(b.owner === "student" || b.owner === "otto" ? { owner: b.owner } : {}),
       ...(b.status === "correct" || b.status === "incorrect" ? { status: b.status } : {}),
-      ...(typeof b.concept === "string" && b.concept.trim() ? { concept: b.concept.trim().slice(0, 80) } : {}) }));
+      ...(typeof b.concept === "string" && b.concept.trim() ? { concept: b.concept.trim().slice(0, 80) } : {}),
+      // The gap's "what to do next" chip (BoardArtifact) — dropped here with owner/status before, which
+      // silently reverted every gap to the generic "Your turn to finish" after one round trip.
+      ...(typeof b.gapAction === "string" && b.gapAction.trim() ? { gapAction: b.gapAction.trim().slice(0, 60) } : {}) }));
   const currentProblemsRaw = Array.isArray(req.body?.problems) ? req.body.problems : [];
   const currentProblems = currentProblemsRaw
     .filter((p: any) => p && typeof p.question === "string" && p.question.trim())
