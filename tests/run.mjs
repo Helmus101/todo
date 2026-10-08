@@ -4104,6 +4104,18 @@ section("Flashcard/quiz/journal local caches are account-scoped (source pins —
   check("QuizPlayer's progress key includes userId, not just the quiz id", /function quizProgressKey\(quizId: string, userId: string \| null\): string \{ return `otto-quiz:\$\{userId \|\| "anon"\}:\$\{quizId\}`; \}/.test(uiSrcLeak));
   const clearFn = appSrcLeak.slice(appSrcLeak.indexOf("function clearAllLocalAccountData"), appSrcLeak.indexOf("const GREETING ="));
   check("sign-out/delete sweeps the studylog week/month, deck-progress, and quiz-progress caches for this user, not just the three pre-existing per-account stores", /otto-deck:\$\{userId \|\| "anon"\}:/.test(clearFn) && /otto-quiz:\$\{userId \|\| "anon"\}:/.test(clearFn) && /STUDYLOG_CACHE_PREFIX/.test(clearFn) && /STUDYLOG_MONTH_CACHE_PREFIX/.test(clearFn));
+
+  // Reported live: "flashcards in journal log shows only 10 even though more were generated" / "go back a
+  // week and it shows only the entry, not the flashcard" — both symptoms of the SAME race: load(m)/the
+  // month effect fired a new fetch on every monday/month change with no guard against an OLDER, now-
+  // superseded request resolving AFTER a newer one and overwriting the right week/month's data with the
+  // wrong one's (clicking the week-nav arrows a couple of times fast is exactly when two requests are in
+  // flight at once). A generation ref, bumped per call and checked before either setState, is the fix —
+  // same pattern as useSpeechSynthesis's genRef for this identical class of stale-async-response bug.
+  const loadFn = appSrcLeak.slice(appSrcLeak.indexOf("const load = useCallback((m: string) => {"), appSrcLeak.indexOf("const navKeyRef = useRef"));
+  check("the week loader guards against an older, superseded request overwriting a newer one's data", /const loadGenRef = useRef\(0\);/.test(appSrcLeak) && /const gen = \+\+loadGenRef\.current;/.test(loadFn) && /if \(loadGenRef\.current !== gen\) return;[\s\S]*?setDays\(r\.days\)/.test(loadFn) && /if \(loadGenRef\.current !== gen\) return;.*superseded[\s\S]*?if \(!cached\)/.test(loadFn));
+  const monthFn = appSrcLeak.slice(appSrcLeak.indexOf("const monthGenRef = useRef(0);"), appSrcLeak.indexOf("}, [month]);"));
+  check("the month loader has the same stale-response guard", /const gen = \+\+monthGenRef\.current;/.test(monthFn) && /if \(monthGenRef\.current !== gen\) return;/.test(monthFn));
 }
 
 section("Focus/visibility resync removed — only the Pronote keepalive stays on that heartbeat (source pin)");

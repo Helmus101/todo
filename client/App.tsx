@@ -2514,11 +2514,23 @@ function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" | "en"; 
     for (const quiz of monthSummary.quizzes || []) saveQuizLocally(monthSummary.id, monthSummary.title, quiz, undefined, userId);
   }, [monthSummary, userId]);
 
+  // STALE-RESPONSE GUARD: clicking "prev/next week" (or arriving back at a week you'd already left)
+  // fires a new fetch on every `monday` change, but nothing stopped an OLDER request from resolving AFTER
+  // a newer one and overwriting the right week's data with the wrong week's — reported live as "I go back
+  // a week and it shows only the entry, not the flashcards" (a day that genuinely has a deck momentarily,
+  // or permanently if the user doesn't revisit, shows as deck-less because a slower, now-stale response
+  // for a DIFFERENT week landed last and clobbered `days`/`summary`). A plain incrementing ref — bumped on
+  // every call, captured per-call, checked before either setState — makes only the LATEST request's
+  // response ever allowed to apply, same pattern as useSpeechSynthesis's genRef for the identical class of
+  // "an async step must not touch state after something newer has superseded it" race.
+  const loadGenRef = useRef(0);
   const load = useCallback((m: string) => {
+    const gen = ++loadGenRef.current;
     const cached = loadWeekCache(status?.user || null, m);
     if (cached) { setDays(cached.days); setSummary(cached.summary); setLoaded(true); }
     else setLoaded(false);
     void api.studyLogWeek(m).then((r) => {
+      if (loadGenRef.current !== gen) return; // superseded by a newer week request — discard
       // A SUCCESSFUL server response is authoritative, full stop — richerTask's "prefer whichever has
       // content" merge used to run even here, which meant a day the server genuinely has no deck for could
       // still show a stale LOCAL-ONLY deck left over from an earlier save that looked like it worked
@@ -2528,7 +2540,10 @@ function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" | "en"; 
       // cache is the only copy there is at all) — just not here, where server truth already won the race.
       setDays(r.days); setSummary(r.summary); setLoaded(true);
       saveWeekCache(status?.user || null, m, { days: r.days, summary: r.summary });
-    }).catch(() => { if (!cached) { setLoaded(true); notify(en ? "Couldn't load this week." : "Impossible de charger la semaine.", "error"); } });
+    }).catch(() => {
+      if (loadGenRef.current !== gen) return; // superseded — a newer request's own success/failure wins
+      if (!cached) { setLoaded(true); notify(en ? "Couldn't load this week." : "Impossible de charger la semaine.", "error"); }
+    });
   }, [en, notify]);
   useEffect(() => { load(monday); }, [monday, load]);
   // `days` gets a new array reference on every background refresh (load()'s cache-then-network double-set,
@@ -2548,10 +2563,16 @@ function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" | "en"; 
     if (navigated) { setText(days[selected]?.logText || ""); setEditingDay(false); }
     else if (!editingDayRef.current) { setText(days[selected]?.logText || ""); }
   }, [selected, monday, days]);
+  // Same stale-response race as the week loader above (loadGenRef) — the month changes alongside `monday`
+  // every time the week nav crosses a month boundary, so a slower, now-superseded request here can land
+  // just as easily and clobber the right month's data with the wrong one's.
+  const monthGenRef = useRef(0);
   useEffect(() => {
+    const gen = ++monthGenRef.current;
     const cached = loadMonthCache(status?.user || null, month);
     if (cached) { setMonthWeeks(cached.weeks); setMonthSummary(cached.summary); }
     void api.studyLogMonth(month).then((r) => {
+      if (monthGenRef.current !== gen) return; // superseded by a newer month request — discard
       // Same reasoning as the week load above — a successful response is authoritative, never overridden
       // by a stale local-only cache entry.
       setMonthWeeks(r.weeks); setMonthSummary(r.summary);
