@@ -7394,11 +7394,15 @@ const CHAT_TOKEN_CEILING = 500_000;
 /** Task chat (not the tutor stage): the board is still there — Otto's page next to the conversation. */
 const TASK_CHAT_BOARD =
   `\n\nTHE BOARD IS PART OF THIS CHAT: this task has Otto's board (WRITE_TO_BOARD, DRAW_ON_BOARD, GEOMETRY_ON_BOARD, ` +
-  `GRAPH_ON_BOARD) shown right next to the conversation, like paper. Use it whenever it genuinely helps — don't force ` +
-  `it, but when you ask a real question about the material (a check-your-understanding question, a problem), put that ` +
-  `question on the board (kind "question"); put the givens, a formula or definition you rely on, a diagram, and what ` +
-  `the student works out ("result") there instead of burying them in chat prose. Keep chat replies short. And never ` +
-  `claim you made flashcards, a quiz or a note unless you actually called the tool for it this turn.\n`;
+  `GRAPH_ON_BOARD) shown right next to the conversation, like paper — DEFAULT TO USING IT, not the other way ` +
+  `around: most turns that discuss real content (a formula, a given, a diagram, a definition, a step the student ` +
+  `just worked out) should leave ONE short entry, same step as your reply, not a separate turn. When you ask a ` +
+  `real question about the material (a check-your-understanding question, a problem), put that question on the ` +
+  `board (kind "question"); put the givens, a formula or definition you rely on, a diagram, and what the student ` +
+  `works out ("result") there INSTEAD of burying them in chat prose — the chat bubble is for the conversation, ` +
+  `the board is for anything they'd otherwise have to remember or scroll back to find. A short "ok, got it" or a ` +
+  `plain follow-up question with nothing new to record is the one case that stays board-free. Keep chat replies ` +
+  `short. And never claim you made flashcards, a quiz or a note unless you actually called the tool for it this turn.\n`;
 
 const PRIMER_PERSONA =
   `\n\nSOUND LIKE A PERSON, ANSWER LIKE ONE — THIS BLOCK WINS OVER EVERYTHING BELOW.\n` +

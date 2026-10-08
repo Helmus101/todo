@@ -6076,6 +6076,15 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   transition: border-color var(--duration-base) var(--ease-spring), box-shadow var(--duration-base) var(--ease-spring);
 }
 .sm-inline-problem-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
+/* Answer-on-the-board row (BoardArtifact's onAnswer) — same shape as the problem input above, just its
+   own class since it lives on a plain question/completion-gap entry, not a TaskProblem. */
+.sm-board-answer-row { display: flex; gap: var(--space-2); align-items: center; margin-top: 8px; }
+.sm-board-answer-input {
+  flex: 1; padding: 9px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  font-size: var(--text-sm); background: var(--bg); color: var(--ink);
+  transition: border-color var(--duration-base) var(--ease-spring), box-shadow var(--duration-base) var(--ease-spring);
+}
+.sm-board-answer-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
 .sm-inline-problem-result {
   display: flex; align-items: center; gap: 6px;
   padding: 9px 12px; border-radius: var(--radius-sm); font-size: var(--text-sm); font-weight: var(--weight-semibold);

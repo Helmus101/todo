@@ -23,6 +23,15 @@ interface BoardArtifactProps {
    *  ("what made you pick B?") instead of the board silently marking it. `attempt` counts tries on this
    *  problem including this one. Never carries the correct answer — only what the student gave. */
   onProblemResult?: (r: { problem: TaskProblem; given: string; correct: boolean; attempt: number }) => void;
+  /** Lets the student answer directly where the question lives, instead of having to scroll down to chat
+   *  to reply — a 'question' entry or a completion-gap line ("= ?") was otherwise pure text to read, even
+   *  though CREATE_PROBLEM entries right next to them already had a real inline answer box. Sends the text
+   *  exactly like typing it into chat (same `send`), so Otto's reply lands normally and can add its own
+   *  next board entry. Omitted entirely on a read-only surface (the phone view, a past session's history). */
+  onAnswer?: (text: string) => void;
+  /** True while a reply to an on-board answer is in flight — disables the box so a second submit can't
+   *  fire before the first one's reply (and the board's own `writing` indicator) lands. */
+  answering?: boolean;
 }
 
 const KIND_LABEL: Record<string, [string, string]> = {
@@ -404,13 +413,17 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
  *  and practice problems. ONE DOCUMENT, ONE FLOW: entries and problems interleave in the order the session
  *  actually produced them (a problem sits between the formula it exercises and the insight answering it —
  *  the lesson's story, not a problem section pinned on top). kind:"focus" stays pinned above as the heading. */
-export function BoardArtifact({ task, writing, onProblemResult }: BoardArtifactProps) {
+export function BoardArtifact({ task, writing, onProblemResult, onAnswer, answering }: BoardArtifactProps) {
   const L = useLang();
   const endRef = useRef<HTMLDivElement>(null);
   const entries = task.board || [];
   const problems = task.problems || [];
   const [showHint, setShowHint] = useState<{ [key: string]: boolean }>({});
   const [problemState, setProblemState] = useState<{ [key: string]: ProblemState }>({});
+  // The inline answer box (see onAnswer below) — keyed by the entry it's answering so switching to a
+  // DIFFERENT question starts blank instead of carrying over half-typed text from the last one.
+  const [answerKey, setAnswerKey] = useState<string | null>(null);
+  const [answerText, setAnswerText] = useState("");
 
   // Content-level dedupe on RENDER (by id): sync merges (tasks.ts's unionStudyArtifacts) and a
   // double-responded turn can hand back an array containing the same entry/problem twice. Entries drop
@@ -678,6 +691,37 @@ export function BoardArtifact({ task, writing, onProblemResult }: BoardArtifactP
                   <div className="sm-board-entry-text">{e.kind === "question" || e.kind === "given" || e.kind === "result" ? <div style={{ whiteSpace: "pre-wrap" }}><MathText text={autoMathLine(stripStrayMarkdown(e.kind === "result" ? e.text.replace(/^\s*(?:established|établi|found|result|trouvé)\s*:\s*/i, "") : e.text))} /></div> : e.kind === "formula" ? <div style={{ whiteSpace: "pre-wrap" }}><MathText text={autoMathLine(stripStrayMarkdown(e.text))} /></div> : renderChatText(e.text)}</div>
                   {isCompletionGap(e.text) ? (
                     <span className="sm-board-todo-chip">{en ? "Your turn to finish" : "À toi de finir"}</span>
+                  ) : null}
+                  {/* Answer right where the question lives, instead of having to scroll down to chat —
+                      only on the single NEWEST entry, and only when it's actually something to answer
+                      (a guiding question, or a worked line Otto deliberately left as "= ?"). Once the
+                      student replies, Otto's next turn adds a new entry after this one, which naturally
+                      stops being "last" — the box just disappears on its own, no extra bookkeeping. */}
+                  {onAnswer && idx === flowItems.length - 1 && (e.kind === "question" || isCompletionGap(e.text)) ? (
+                    <div className="sm-board-answer-row">
+                      <input
+                        type="text"
+                        className="sm-board-answer-input"
+                        placeholder={en ? "Your answer…" : "Ta réponse…"}
+                        value={answerKey === e.id ? answerText : ""}
+                        onChange={(ev) => { setAnswerKey(e.id); setAnswerText(ev.target.value); }}
+                        onKeyDown={(ev) => {
+                          if (ev.key !== "Enter") return;
+                          const v = (answerKey === e.id ? answerText : "").trim();
+                          if (!v || answering) return;
+                          onAnswer(v); setAnswerKey(e.id); setAnswerText("");
+                        }}
+                        disabled={!!answering}
+                      />
+                      <button
+                        type="button"
+                        className="sm-btn sm-btn-primary sm-btn-sm"
+                        disabled={!!answering || !(answerKey === e.id && answerText.trim())}
+                        onClick={() => { const v = answerText.trim(); if (!v) return; onAnswer(v); setAnswerKey(e.id); setAnswerText(""); }}
+                      >
+                        {en ? "Send" : "Envoyer"}
+                      </button>
+                    </div>
                   ) : null}
                 </>
               )}

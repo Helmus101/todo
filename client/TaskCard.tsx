@@ -798,7 +798,7 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
           uses; only shown once there's actually something on it, same "count > 0" gating as PreparedPanel. */}
       {(task.board?.length || task.problems?.length) ? (
         <div className="tf-board-inline">
-          <BoardArtifact task={task} />
+          <BoardArtifact task={task} onAnswer={(text) => void sendChat(text)} answering={chatSending} />
         </div>
       ) : null}
 

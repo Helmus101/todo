@@ -2063,6 +2063,31 @@ section("Voice-mode board rules — gesture research, not dictation (prompt pins
   check("the student-can't-see-notation requirement itself is preserved", /THE BOARD IS THE ONLY PLACE THEY EVER SEE THE ACTUAL NOTATION/.test(claudeSrc4));
 }
 
+section("Make the board used more — regular task chat defaults to it, students can answer on it (source pins)");
+{
+  // Direct request: "make the board used more and in a more useful way." Two parts:
+  // (1) the plain task-chat board framing (TASK_CHAT_BOARD) was hedged/optional ("use it whenever it
+  // genuinely helps — don't force it"), noticeably softer than Primer/Study mode's insistent framing —
+  // strengthened to default TO using it, with the old anti-spam guard (a bare "ok, got it" stays board-free)
+  // kept so this doesn't turn into a wall-of-board-entries regression.
+  const claudeSrc5 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const taskChatBoard = claudeSrc5.slice(claudeSrc5.indexOf("const TASK_CHAT_BOARD ="), claudeSrc5.indexOf("const PRIMER_PERSONA ="));
+  check("regular task chat now DEFAULTS to using the board, not 'whenever it helps, don't force it'", /DEFAULT TO USING IT/.test(taskChatBoard) && !/don't force/.test(taskChatBoard));
+  check("a content-free reply (ack/follow-up question) is still explicitly exempt — no forced spam", /stays board-free/.test(taskChatBoard));
+
+  // (2) the board itself was read-only for the student — a 'question' entry or a completion-gap line
+  // ("= ?") was pure text, even though CREATE_PROBLEM entries right next to them already had a real inline
+  // answer box. Added an onAnswer prop so the student can reply directly where the question lives.
+  const boardSrc = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  check("BoardArtifact accepts an onAnswer callback and an answering-in-flight flag", /onAnswer\?: \(text: string\) => void;/.test(boardSrc) && /answering\?: boolean;/.test(boardSrc));
+  check("the inline answer box only shows on the NEWEST entry, and only for a question/completion-gap", /idx === flowItems\.length - 1 && \(e\.kind === "question" \|\| isCompletionGap\(e\.text\)\)/.test(boardSrc));
+  check("submitting calls onAnswer with the typed text, exactly like a normal chat send", /onAnswer\(v\); setAnswerKey\(e\.id\); setAnswerText\(""\);/.test(boardSrc));
+  const taskCardSrc2 = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
+  const tutorSessionSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  check("wired into the regular task chat's board (sendChat) and Study Mode's board (send)", /onAnswer=\{\(text\) => void sendChat\(text\)\}/.test(taskCardSrc2) && /onAnswer=\{\(text\) => void send\(text\)\}/.test(tutorSessionSrc));
+  check("the phone read-only board view does NOT get an answer box (still genuinely read-only)", !/<BoardArtifact task=\{task\} onAnswer=/.test(taskCardSrc2.slice(0, taskCardSrc2.indexOf("function TaskFocus"))));
+}
+
 section("loadState survives a missing-column schema-drift error (source pins)");
 {
   const storeSrc = readFileSync(new URL("../server/store.ts", import.meta.url), "utf8");
