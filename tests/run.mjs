@@ -19,7 +19,7 @@ import { openerMemoryBlock, cleanOpener, tutorOpener } from "../server/claude.ts
 import { sessionTopic, relativeWhen, sessionMemoryForPrompt } from "../client/tutor/tutorSessions.ts";
 import { wantsArtifactTools } from "../server/claude.ts";
 import { rankVoices, isMaleVoice, cloudChunks, toSpeakableText, stripLatexForSpeech } from "../client/voice/useSpeechSynthesis.ts";
-import { traceLines, splitMergedSteps } from "../client/study/artifacts/BoardArtifact.tsx";
+import { traceLines, splitMergedSteps, looksLikeRealMath } from "../client/study/artifacts/BoardArtifact.tsx";
 import { pcmToWav, leaksAnswer, scrubAnswerLeak, makeProblem as makeProblemLeak, makePracticeProblem as makePracticeLeak, wordWrapChunks, leaksAnyProblemAnswer, makeInteractiveEntry, stripId3v2, stripId3v1 } from "../server/claude.ts";
 import { lastMessageKey } from "../client/voice/replyKey.ts";
 import { subjectMastery } from "../shared/types.ts";
@@ -1720,6 +1720,26 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   // Direct request: problems should sit IN the board's flow (between the entries around them), not pinned
   // at the top — the board is one document telling the lesson's story in the order it happened.
   check("problems are flow items, not a pinned section (no 'Current problem' block, no mode toggle)", !/Problème actuel/.test(boardSrc) && !/singleQuestionMode/.test(boardSrc) && /createdAt \|\| ""\) \|\| Number\.MAX_SAFE_INTEGER/.test(boardSrc));
+}
+
+section("MathText — a mis-wrapped $...$ prose phrase falls back to plain text instead of KaTeX mangling it");
+{
+  // Reported live: a board question rendered as "...05 m*underaforceof*10 N, *what's*k?" — the model had
+  // wrapped a whole PROSE phrase in $…$. KaTeX renders real English words as a run of individually-
+  // italicized single-letter atoms with none of the original spacing — exactly the jammed-together mess
+  // reported. looksLikeRealMath is the guard: 2+ real multi-letter English words (not a recognized
+  // function/unit/greek name) means this is misplaced prose, not an equation.
+  check("a real equation (numbers + a unit letter) still looks like math", looksLikeRealMath("0.05 m") && looksLikeRealMath("F = ma") && looksLikeRealMath("x^2 + y^2 = z^2"));
+  check("a real equation using recognized function/greek names still looks like math", looksLikeRealMath("\\sin(\\theta) = 0.5") && looksLikeRealMath("\\log(x) + \\sin(y)"));
+  check("the exact reported phrase — prose wrapped in $...$ — does NOT look like math", !looksLikeRealMath("0.05 m under a force of 10 N, what's k") && !looksLikeRealMath("under a force of"));
+  check("a single stray prose word (e.g. a unit spelled out) still passes — only 2+ real words trips it", looksLikeRealMath("10 Newtons"));
+  const boardSrc2 = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  check("MathText actually gates InlineEquation behind looksLikeRealMath, not just defines it", /latex && looksLikeRealMath\(latex\)\s*\n\s*\? <InlineEquation/.test(boardSrc2));
+  check("the non-math fallback renders the UNWRAPPED content (no stray $ delimiters left in the text)", /boldify\(formatMath\(latex \?\? p\)\)/.test(boardSrc2));
+  // Prevention, not just graceful degradation: the WRITE_TO_BOARD prompt itself now warns against wrapping
+  // a whole phrase/sentence in $…$.
+  const claudeSrcMath = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("WRITE_TO_BOARD_TOOL warns against wrapping a whole phrase/sentence in $…$, only the actual numbers/symbols", /wrap ONLY the actual numbers\/symbols/.test(claudeSrcMath) && /KaTeX renders real words as garbled/.test(claudeSrcMath));
 }
 
 section("isDuplicateBoardEntry — content-level duplicate prevention for board writes (server/claude.ts)");

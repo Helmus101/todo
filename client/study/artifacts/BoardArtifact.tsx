@@ -137,6 +137,25 @@ export function traceLines(text: string): string[] {
   return lines;
 }
 
+// Reported live: a board question rendered as "...05 m*underaforceof*10 N, *what's*k?" — the model had
+// wrapped a whole PROSE phrase in $…$ (over-applying the board prompt's "maths in $…$" instruction to a
+// sentence fragment, not just the actual numbers/variables). KaTeX happily "renders" that: real English
+// words become a run of individually-italicized single-letter atoms with none of their original spacing
+// (math mode has no concept of word-spacing), which is exactly the jammed-together, italic mess reported.
+// Guard: a captured $…$ span only goes to KaTeX if it actually LOOKS like math — plain multi-letter
+// English words (not a recognized function/unit/greek name) are the tell that this is misplaced prose,
+// not an equation. A real equation ("0.05 m", "F = ma", "\sin(x)") has at most one such word, if any.
+const MATH_WORD_ALLOW = new Set([
+  "sin", "cos", "tan", "cot", "sec", "csc", "log", "ln", "exp", "lim", "sqrt", "frac", "mod", "min", "max",
+  "det", "gcd", "arg", "sup", "inf", "pi", "theta", "alpha", "beta", "gamma", "delta", "lambda", "mu",
+  "sigma", "phi", "omega", "eta", "rho", "tau", "chi", "psi", "nu", "xi", "zeta", "kappa",
+]);
+export function looksLikeRealMath(latex: string): boolean {
+  const words = latex.match(/\p{L}{3,}/gu) || [];
+  const prose = words.filter((w) => !MATH_WORD_ALLOW.has(w.toLowerCase()));
+  return prose.length < 2;
+}
+
 /** Prose with real typeset math inline: `$…$` and `\(…\)` segments go through KaTeX, everything else through
  *  the normal chat renderer (bold, ==highlight==, unicode math). A bad equation falls back to its source. */
 export function MathText({ text }: { text: string }) {
@@ -147,7 +166,9 @@ export function MathText({ text }: { text: string }) {
       {parts.map((p, i) => {
         const m = /^\$\$([^$]+)\$\$$|^\$([^$\n]+)\$$|^\\\(([\s\S]*)\\\)$|^\\\[([\s\S]*)\\\]$/.exec(p);
         const latex = m ? (m[1] ?? m[2] ?? m[3] ?? m[4]) : null;
-        return latex ? <InlineEquation key={i} latex={latex.trim()} /> : <span key={i} style={{ whiteSpace: "pre-wrap" }}>{boldify(formatMath(p))}</span>;
+        return latex && looksLikeRealMath(latex)
+          ? <InlineEquation key={i} latex={latex.trim()} />
+          : <span key={i} style={{ whiteSpace: "pre-wrap" }}>{boldify(formatMath(latex ?? p))}</span>;
       })}
     </>
   );
