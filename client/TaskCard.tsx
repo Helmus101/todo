@@ -361,8 +361,11 @@ export function TaskHero({ task, onOpen, onChange, onTask, onConfirmed, readOnly
  *  most race-sensitive component in the app for no gain. This renders the same underlying data (what the
  *  task is, when it's due, and the plan Otto wrote) straight from the WebTask, with no handlers at all.
  *  Chat is absent on purpose — direct instruction, "no chat for the moment" on a phone. */
-export function TaskReadOnly({ task }: { task: WebTask }) {
+export function TaskReadOnly({ task, onTask, userId }: { task: WebTask; onTask: (t: WebTask) => void; userId: string | null }) {
   const L = useLang();
+  const [openNote, setOpenNote] = useState<string | null>(null);
+  const [openDeck, setOpenDeck] = useState<string | null>(null);
+  const [openQuiz, setOpenQuiz] = useState<string | null>(null);
   const cardEn = useContext(LangContext) === "en";
   const w = taskDateLabel(task, L);
   const steps = task.steps || [];
@@ -428,22 +431,22 @@ export function TaskReadOnly({ task }: { task: WebTask }) {
               <span className="prepared-label">{L("Créé pour toi", "Made for you")}</span>
               <div className="note-chips prepared-chips">
                 {task.notes?.map((n) => (
-                  <div key={n.id} className="note-chip" style={{ pointerEvents: "none" }}>
+                  <button key={n.id} type="button" className="note-chip" onClick={() => setOpenNote(n.id)}>
                     <span className="note-chip-icon" aria-hidden="true">▤</span>
-                    <span className="note-chip-text"><span className="note-chip-title">{n.title}</span><span className="note-chip-meta">{L("Fiche", "Note")}</span></span>
-                  </div>
+                    <span className="note-chip-text"><span className="note-chip-title">{n.title}</span><span className="note-chip-meta">{L("Fiche · Ouvrir", "Note · Open")}</span></span>
+                  </button>
                 ))}
                 {task.flashcards?.map((f) => (
-                  <div key={f.id} className="note-chip" style={{ pointerEvents: "none" }}>
+                  <button key={f.id} type="button" className="note-chip" onClick={() => setOpenDeck(f.id)}>
                     <span className="note-chip-icon" aria-hidden="true"><Layers size={13} /></span>
-                    <span className="note-chip-text"><span className="note-chip-title">{f.title}</span><span className="note-chip-meta">{L(`${f.cards.length} cartes`, `${f.cards.length} cards`)}</span></span>
-                  </div>
+                    <span className="note-chip-text"><span className="note-chip-title">{f.title}</span><span className="note-chip-meta">{L(`${f.cards.length} cartes · Ouvrir`, `${f.cards.length} cards · Open`)}</span></span>
+                  </button>
                 ))}
                 {task.quizzes?.map((qz) => (
-                  <div key={qz.id} className="note-chip" style={{ pointerEvents: "none" }}>
+                  <button key={qz.id} type="button" className="note-chip" onClick={() => setOpenQuiz(qz.id)}>
                     <span className="note-chip-icon" aria-hidden="true">?</span>
-                    <span className="note-chip-text"><span className="note-chip-title">{qz.title}</span><span className="note-chip-meta">{L(`${qz.questions.length} questions`, `${qz.questions.length} questions`)}</span></span>
-                  </div>
+                    <span className="note-chip-text"><span className="note-chip-title">{qz.title}</span><span className="note-chip-meta">{L(`${qz.questions.length} questions · Ouvrir`, `${qz.questions.length} questions · Open`)}</span></span>
+                  </button>
                 ))}
               </div>
             </>
@@ -457,6 +460,8 @@ export function TaskReadOnly({ task }: { task: WebTask }) {
         {L("Sur téléphone, Otto est en lecture seule. Ouvre-le sur un ordinateur ou un iPad pour travailler dessus.",
            "On a phone, Otto is read-only. Open it on a laptop or iPad to actually work on this.")}
       </p>
+      <ArtifactPopups task={task} onTask={onTask} openNote={openNote} openDeck={openDeck} openQuiz={openQuiz}
+        setOpenNote={setOpenNote} setOpenDeck={setOpenDeck} setOpenQuiz={setOpenQuiz} userId={userId} />
     </div>
   );
 }
