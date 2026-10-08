@@ -6036,7 +6036,69 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   color: var(--ink-3);
   opacity: 0.6;
 }
-.sm-board-clear-btn:hover { opacity: 1; color: var(--danger, #d94f4f); }
+.sm-board-clear-btn:hover { opacity: 1; color: var(--ink); }
+
+/* The board is a study surface, not a dashboard. Keep its content nearly monochrome so the
+   only visual emphasis comes from the student's work: questions, diagrams, and equations. */
+.sm-board-body {
+  --board-accent: var(--ink);
+  --board-accent-soft: var(--bg-2);
+  --board-rule: var(--line);
+  background: var(--surface);
+}
+.sm-board-body .sm-board-focus-pin,
+.sm-board-body .sm-board-entry,
+.sm-board-body .sm-board-problem {
+  border-color: var(--board-rule);
+}
+.sm-board-body .sm-board-entry-kind,
+.sm-board-body .sm-board-problem-label,
+.sm-board-body .sm-board-header-date,
+.sm-board-body .sm-board-header-subject,
+.sm-board-body .sm-board-glyph {
+  color: var(--ink-3);
+}
+.sm-board-body .sm-board-focus-text,
+.sm-board-body .sm-board-entry-text,
+.sm-board-body .sm-board-problem-q,
+.sm-board-body .sm-board-problem-compact-q {
+  color: var(--ink);
+}
+.sm-board-body .sm-board-problem,
+.sm-board-body .sm-board-problem-solved {
+  background: transparent;
+  box-shadow: none;
+}
+.sm-board-body .sm-board-problem-opts .quiz-opt,
+.sm-board-body .sm-inline-problem-input,
+.sm-board-body .sm-board-diagram,
+.sm-board-body .sm-board-interactive-frame {
+  border-color: var(--line);
+  box-shadow: none;
+}
+.sm-board-body .sm-board-problem-opts .quiz-opt:hover:not(:disabled),
+.sm-board-body .sm-board-problem-opts .quiz-opt.correct,
+.sm-board-body .sm-board-problem-opts .quiz-opt.wrong {
+  border-color: var(--ink-2);
+  background: var(--bg-2);
+  box-shadow: none;
+}
+.sm-board-body .sm-board-problem-compact-mark,
+.sm-board-body .quiz-opt.correct .quiz-opt-mark,
+.sm-board-body .sm-inline-problem-result.correct,
+.sm-board-body .sm-btn-primary,
+.sm-board-body .sm-btn-ghost {
+  color: var(--ink);
+}
+.sm-board-body .sm-btn-primary {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--surface);
+}
+.sm-board-body .sm-btn-ghost {
+  border-color: transparent;
+  background: transparent;
+}
 
 .sm-board-entry-text p + p { margin-top: 8px; }
 .sm-ai-msg {
