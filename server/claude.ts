@@ -7841,11 +7841,18 @@ export async function chatAboutTask(
     `'outline' renders as real structure instead of a wall of text. Diagrams and 'formula' still make sense ` +
     `for anything genuinely spatial or numeric even in a humanities session (a map, a timeline with dates as ` +
     `a number line) — the subject decides the kind, not a fixed rule per subject.\n` +
-    `- NOT EVERY ENTRY IS A REASONING TRACE. kind:"summary" renders as "How you got there" and belongs to ` +
-    `the STUDENT's own reasoning, in the turn where they actually landed something. The rest of the page ` +
-    `should be plain text: the given, a formula, a term, a note-to-self, the next line of working. A board ` +
-    `where every entry is a trace reads as a stack of essays instead of the page you're both working on, ` +
-    `and it is its own failure — the same one as an empty board, wearing a costume.\n` +
+    `- NOT TOO MUCH, NOT TOO LITTLE — the budget a real teacher works to. Normally ONE new line per turn; ` +
+    `up to three only when you're setting up a new problem (the given, the question, one starting formula); ` +
+    `four or more in a turn that isn't a setup is transcription, not teaching. Keep the PAGE readable too: ` +
+    `when you move to a new problem, clear the old working (CLEAR_BOARD, keepFocus) or write the new focus ` +
+    `so the problem they're on stays visible, instead of appending forever until the useful lines are ` +
+    `buried. Under-writing is the other failure — a turn with a real formula, definition or student step and ` +
+    `nothing up there is a lesson that happened only in the scrollback. A line is worth writing when they'd ` +
+    `otherwise hold it in their head or scroll back for it; anything else stays in chat.\n` +
+    `- SELF-EXPLANATION — the cheapest big gain in the research: when they get a step RIGHT and it carries ` +
+    `the method (not routine arithmetic), ask WHY it works before moving on ("why does that split it?", ` +
+    `"what makes that allowed here?"). At most once per exchange — never after every line, and never as a ` +
+    `condition for accepting an answer they already gave.\n` +
     `- SHOW THE WORKING, LINE BY LINE. When you work a problem through, the working goes up as SEPARATE LINES ` +
     `in the order you did it: each line one move, maths in $…$, a 2-5 word margin note only where the move ` +
     `isn't obvious, and the NEXT line left as the gap ("= ?") for them to do themselves. That gap is the ` +
@@ -9359,7 +9366,7 @@ export async function chatAboutTask(
           // like a note/deck/quiz. Capping it the same way would defeat "always accessible, write anything
           // anytime". A generous per-turn cap of its own still applies, just to stop a genuinely broken
           // response from spamming dozens of entries in one turn.
-          if (result.board.length >= 5) content = "LIMIT: you've already written several entries this message — that's enough for one turn.";
+          if (result.board.length >= 3) content = "LIMIT: three entries is a full turn on the board (setting up a new problem — the given, the question, one starting line — is exactly three). Keep what's up there and put the rest in your reply.";
           // "How you got there" is the STUDENT's reasoning: a line carrying a π-term / root / fraction that nothing the
           // student said (and no given) contains is a step the TUTOR took for them — refuse it.
           else if (opts?.primer && ["summary", "result"].includes(String(input?.kind)) && traceAheadOfStudent(String(input?.text || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), message], [...(opts?.currentBoard || []).filter((e) => e.kind !== "summary").map((e) => e.text), ...(opts?.currentProblems || []).map((p) => p.question)]).length) {

@@ -1883,10 +1883,14 @@ section("Board usage — the 'use the board' guidance is UNCONDITIONAL (it used 
   check("the empty-board case is called out explicitly, with what to put up first", block.includes("NOTHING IS ON THE BOARD YET") && block.includes('kind:"focus"'));
   check("and it names the failure mode being corrected (explaining in chat instead of showing it)", block.includes("SHOW IT, DON'T JUST SAY IT") && block.includes("the commonest way the document ends up empty"));
   check("it states the frequency expected: content-bearing turns normally END with one new entry", block.includes("HOW OFTEN") && block.includes("should normally END with ONE new board entry"));
-  // Reported live: "for board now it mostly does is how you got there" — summary/reasoning-trace was the only
-  // kind the strong rules named, so the page filled up with traces instead of being a page.
-  check("it rebalances the KIND mix: a reasoning trace is for the student's own reasoning, the rest is plain text",
-    block.includes("NOT EVERY ENTRY IS A REASONING TRACE") && block.includes("should be plain text") && block.includes("wearing a costume"));
+  // Reported live: "for board now it mostly does is how you got there" — and then, in the other direction,
+  // walls of notes. The block now carries the actual BUDGET (one line a turn, three on a setup, keep the
+  // current problem visible) plus the self-explanation rule, instead of kind-mix advice.
+  check("it states the board budget: one line a turn, three on a setup, and the current problem stays visible",
+    block.includes("NOT TOO MUCH, NOT TOO LITTLE") && block.includes("Normally ONE new line per turn") && block.includes("up to three only when you're setting up a new problem") && block.includes("stays visible"));
+  check("it asks for self-explanation after a right step (the research-backed why), bounded",
+    block.includes("SELF-EXPLANATION") && block.includes("never as a") && block.includes("condition for accepting an answer"));
+  check("the write cap matches the budget (three per turn, not five)", /result\.board\.length >= 3/.test(src) && !/result\.board\.length >= 5/.test(src));
   check("it teaches the line-by-line working with the next line left as a gap",
     block.includes("SHOW THE WORKING, LINE BY LINE") && block.includes("the NEXT line left as the gap") && block.includes("never about a line of working"));
   check("it gives permission to ask when unsure, and keeps the question in chat — never a board entry",
