@@ -275,7 +275,18 @@ const commit = async (req: express.Request, opts?: { awaitCloud?: boolean }) => 
   
   const syncCloud = async (throwOnError?: boolean) => {
     try {
-      const current = await loadState(email);
+      // `throwOnError` is only ever passed true for the awaitCloud path (a journal save, a flashcard
+      // review) — exactly the low-frequency, high-value write where merging against a STALE cached cloud
+      // snapshot (loadState's own 5min per-instance cache, see store.ts) is least acceptable: on
+      // serverless, this request's warm instance may not be the one that performed the account's most
+      // recent write, so its cache can lag another instance's write by up to 5 minutes. Reported live as
+      // flashcard counts that varied between views and "flashcards not reliably saving to the cloud" —
+      // a merge computed against a stale base can lose a concurrent write instead of unioning it.
+      // bypassCache:true always hits Supabase directly here, same as the GET routes that already need
+      // this guarantee (studylog week/month). The default (non-awaitCloud, high-frequency) path keeps the
+      // cache — those calls are frequent enough that paying a full Supabase read every time isn't worth it,
+      // and losing a merge there is already covered by the NEXT awaitCloud write reconciling things.
+      const current = await loadState(email, { bypassCache: !!throwOnError });
       const mergedTasks = mergeTasks(current.tasks || [], localTasks);
       const mergedProfile = mergeProfiles(current.profile || emptyProfile(), localProfile);
       await saveState(email, { profile: mergedProfile, tasks: mergedTasks }, { throwOnError });

@@ -4158,6 +4158,21 @@ section("Flashcard/quiz/journal local caches are account-scoped (source pins —
   check("the month loader has the same stale-response guard", /const gen = \+\+monthGenRef\.current;/.test(monthFn) && /if \(monthGenRef\.current !== gen\) return;/.test(monthFn));
 }
 
+section("commit()'s awaitCloud sync bypasses the stale-cache merge base (source pin)");
+{
+  // Reported live, same cluster of symptoms: "flashcards should save to cloud" / counts that vary between
+  // views. Root cause: syncCloud's `loadState(email)` (the merge BASE for the write-back) had no
+  // bypassCache, so on serverless a warm instance that ISN'T the one that performed another device's/
+  // request's most recent write could merge against a cloud snapshot up to 5 minutes stale (loadState's
+  // own per-instance cache, store.ts) and write that stale-based merge back — a classic lost-update risk,
+  // worst exactly on the awaitCloud path (journal saves, flashcard reviews) this app explicitly calls its
+  // highest-value, must-actually-persist writes.
+  const idxSrc = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const syncCloudFn = idxSrc.slice(idxSrc.indexOf("const syncCloud = async"), idxSrc.indexOf("if (opts?.awaitCloud) {"));
+  check("syncCloud's merge-base read bypasses the cache exactly when this is the awaitCloud (throwOnError) path", /loadState\(email, \{ bypassCache: !!throwOnError \}\)/.test(syncCloudFn));
+  check("the high-frequency, non-awaitCloud path still uses the cache (no behavior change for step-done/confirm)", /bypassCache: !!throwOnError/.test(syncCloudFn) && !/bypassCache: true/.test(syncCloudFn));
+}
+
 section("Focus/visibility resync removed — only the Pronote keepalive stays on that heartbeat (source pin)");
 {
   // Removed per direct instruction: 4 requests (tasks/status/budget/sweep) on every tab focus/visibility
