@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 // falls back to the platform's emoji font on some Android/Windows builds and renders as a COLOR glyph there
 // while staying monochrome elsewhere — an SVG icon looks the same on every platform, which is the same
 // reasoning VoiceControls already documented for the mic/speaker buttons.
-import { ListTodo, LayoutList, PenLine, StickyNote, Quote, Camera, NotebookPen, SquareFunction, BookA } from "lucide-react";
+import { ListTodo, PenLine, StickyNote, Quote, Camera, NotebookPen, SquareFunction, BookA } from "lucide-react";
 import type { ArtifactType, WorkspaceTemplate } from "./StudyTypes.ts";
 import { useSmClose, SmSurface, useLang } from "../ui.tsx";
 
@@ -28,10 +28,8 @@ interface ToolsDrawerProps {
 // artifacts it creates for each type (see buildInitialArtifacts/openOrFocus*).
 const ALL_TOOLS: { type: ArtifactType; label: [string, string]; icon: ReactNode; templates: WorkspaceTemplate[] }[] = [
   { type: "task", label: ["Infos tâche", "Task info"], icon: <ListTodo size={14} aria-hidden="true" />, templates: ["WRITING", "READING", "PROBLEM_SOLVING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
-  // Recommended everywhere — unlike the other tools, this one isn't something the student reaches for; it's
-  // where Otto writes unprompted (formulas, instructions, summaries), so it should always be one click away
-  // regardless of what kind of task this is.
-  { type: "board", label: ["Tableau", "Board"], icon: <LayoutList size={14} aria-hidden="true" />, templates: ["WRITING", "READING", "PROBLEM_SOLVING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
+  // The Board tool used to live here — removed per direct instruction: the board is a TUTOR-ONLY surface
+  // now (TutorSession.tsx), not something Study Mode's own freeform canvas offers any more.
   { type: "camera", label: ["Caméra privée", "Private camera"], icon: <Camera size={14} aria-hidden="true" />, templates: ["WRITING", "READING", "PROBLEM_SOLVING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
   { type: "notes", label: ["Notes", "Notes"], icon: <NotebookPen size={14} aria-hidden="true" />, templates: ["WRITING", "READING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
   { type: "scratchpad", label: ["Brouillon", "Scratchpad"], icon: <PenLine size={14} aria-hidden="true" />, templates: ["PROBLEM_SOLVING", "WRITING", "RESEARCH", "STANDARD", "PROJECT"] },

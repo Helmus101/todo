@@ -275,7 +275,7 @@ section("Tutor graphs — safe expression compiler + GRAPH_ON_BOARD validation")
   check("histogram validates (5+ numbers, not all identical)", "entry" in makeGraphEntry({ caption: "h", kind: "histogram", data: [1, 2, 2, 3, 3, 3, 4, 9] }) && "error" in makeGraphEntry({ caption: "h", kind: "histogram", data: [1, 2] }) && "error" in makeGraphEntry({ caption: "h", kind: "histogram", data: [4, 4, 4, 4, 4, 4] }));
   const surf = makeGraphEntry({ caption: "Saddle", kind: "surface", z: "z = x^2 - y^2", xmin: -2, xmax: 2, ymin: -2, ymax: 2 });
   check("3D surface z=f(x,y) validates and needs a y-range", "entry" in surf && surf.entry.graph.z === "x^2 - y^2" && "error" in makeGraphEntry({ caption: "s", kind: "surface", z: "x*y", xmin: -1, xmax: 1 }) && /two variables/i.test(makeGraphEntry({ caption: "c", xmin: -1, xmax: 1, fns: [{ expr: "x*y" }] }).error || ""));
-  check("tutor has GRAPH_ON_BOARD in both tool sets + handler", (src.match(/GRAPH_ON_BOARD_TOOL/g) || []).length >= 3 && /name === "GRAPH_ON_BOARD"/.test(src));
+  check("tutor has GRAPH_ON_BOARD in boardTools + handler", (src.match(/GRAPH_ON_BOARD_TOOL/g) || []).length >= 2 && /name === "GRAPH_ON_BOARD"/.test(src));
   check("board renders graph entries; ==highlight== renders as a mark and is stripped for speech", /<GraphBlock spec=\{e\.graph\}/.test(board) && /otto-mark/.test(ui) && /==\(\[\^=\\n\]\+\)==/.test(readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8")));
 }
 section("Primer replies — tightenForChat keeps it short and keeps the closing question");
@@ -1644,24 +1644,33 @@ section("betaFeatures gates all 7 bandit call sites + the AI theme route (source
 // EMPTY task list — for every account, on every read, including every background job's "load the account,
 // merge in new work, save it back" cycle. Two separate fixes, both pinned: the migration now exists, and a
 // missing-column error on the whole-row select no longer collapses profile+tasks to nothing.
-section("Study Mode: chat + Board always present, board write reliability (source pins)");
+section("Study Mode: chat always present on the desk (source pins)");
 {
   const studyModeSrc = readFileSync(new URL("../client/study/StudyMode.tsx", import.meta.url), "utf8");
   const claudeSrc2 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
-  // Direct instruction: chat + the Board must be on the desk from the FIRST moment of every session, on
-  // every workspace template — not opt-in behind a click or Otto's own first write.
-  check("defaultChatAndBoard exists and is used by buildInitialArtifacts", /function defaultChatAndBoard/.test(studyModeSrc) && /const chatAndBoard = defaultChatAndBoard/.test(studyModeSrc));
+  // Direct instruction: chat must be on the desk from the FIRST moment of every session, on every workspace
+  // template — not opt-in behind a click.
+  check("defaultChatArtifacts exists and is used by buildInitialArtifacts", /function defaultChatArtifacts/.test(studyModeSrc) && /const chatArtifacts = defaultChatArtifacts/.test(studyModeSrc));
   // Every template branch (WRITING/READING/PROBLEM_SOLVING/REVISION/RESEARCH/default) must spread it in —
   // count the case labels vs the spread sites so a new template added later can't silently skip this.
   const templateCases = (studyModeSrc.match(/case "(WRITING|READING|PROBLEM_SOLVING|REVISION|RESEARCH)":/g) || []).length;
-  const spreadSites = (studyModeSrc.match(/\.\.\.chatAndBoard,/g) || []).length;
-  check("every named template branch spreads chatAndBoard into its return (none silently opt out)", templateCases > 0 && spreadSites >= templateCases + 1); // +1 for the default branch
-  check("resumeSession backfills chat/board for a pre-existing saved session, without touching an already-present one", /missingTypes.*filter.*!env\.artifacts\.some/.test(studyModeSrc.replace(/\s+/g, " ")));
+  const spreadSites = (studyModeSrc.match(/\.\.\.chatArtifacts,/g) || []).length;
+  check("every named template branch spreads chatArtifacts into its return (none silently opt out)", templateCases > 0 && spreadSites >= templateCases + 1); // +1 for the default branch
+  check("resumeSession backfills chat for a pre-existing saved session, without touching an already-present one", /env\.artifacts\.some\(\(a\) => a\.type === "chat"\)/.test(studyModeSrc));
 
-  // The board-write prompt used to leave EVERY write entirely to the model's own per-turn judgment call —
-  // strengthened so a genuine topic resolution always leaves a "lessons learned" record, not just when it
-  // happens to occur to the model.
-  check("chatAboutTask's prompt requires a summary board write whenever the student actually resolves something", /THE ONE WRITE THAT ISN'T OPTIONAL[\s\S]{0,400}kind:"summary"/.test(claudeSrc2));
+  // Direct instruction: the board is a TUTOR-ONLY surface — removed from plain task chat AND Study Mode's
+  // own freeform canvas. WRITE_TO_BOARD/DRAW_ON_BOARD/etc. are only offered to the model when opts.primer
+  // is set (TutorSession.tsx), never for a plain task-chat turn or Study Mode's canvasMode-only chat.
+  check("board/problem/objectives tools are gated on opts.primer, not offered unconditionally any more", /const boardTools = opts\?\.primer/.test(claudeSrc2));
+  check("the plain task-chat board prompt (TASK_CHAT_BOARD) is gone — no board text injected outside primer", !/const TASK_CHAT_BOARD =/.test(claudeSrc2) && !/THE BOARD IS PART OF THIS CHAT/.test(claudeSrc2) && /\(opts\?\.primer \? PRIMER_PERSONA : ""\)/.test(claudeSrc2));
+  const studyModeNoBoard = !/type: "board"/.test(studyModeSrc) && !/const openOrFocusBoard = useCallback/.test(studyModeSrc);
+  check("Study Mode no longer creates or re-opens a Board artifact anywhere", studyModeNoBoard);
+  const toolsDrawerSrc2 = readFileSync(new URL("../client/study/ToolsDrawer.tsx", import.meta.url), "utf8");
+  check("the tools drawer no longer offers a Board tool to add", !/type: "board"/.test(toolsDrawerSrc2));
+  const artifactCanvasSrc = readFileSync(new URL("../client/study/ArtifactCanvas.tsx", import.meta.url), "utf8");
+  check("ArtifactCanvas renders nothing for a legacy 'board' artifact rather than importing/mounting BoardArtifact again", !/import \{ BoardArtifact \}/.test(artifactCanvasSrc) && /case "board":[\s\S]{0,500}return null;/.test(artifactCanvasSrc));
+  const taskCardSrc3 = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
+  check("TaskCard no longer renders a board in the regular task chat (TaskFocus/TaskReadOnly)", !/BoardArtifact/.test(taskCardSrc3));
 }
 
 section("Board renders each entry ONCE (the duplicated render block is gone) + pinned focus");
@@ -2063,29 +2072,23 @@ section("Voice-mode board rules — gesture research, not dictation (prompt pins
   check("the student-can't-see-notation requirement itself is preserved", /THE BOARD IS THE ONLY PLACE THEY EVER SEE THE ACTUAL NOTATION/.test(claudeSrc4));
 }
 
-section("Make the board used more — regular task chat defaults to it, students can answer on it (source pins)");
+section("Board: students can answer directly on it, Tutor-only (source pins)");
 {
-  // Direct request: "make the board used more and in a more useful way." Two parts:
-  // (1) the plain task-chat board framing (TASK_CHAT_BOARD) was hedged/optional ("use it whenever it
-  // genuinely helps — don't force it"), noticeably softer than Primer/Study mode's insistent framing —
-  // strengthened to default TO using it, with the old anti-spam guard (a bare "ok, got it" stays board-free)
-  // kept so this doesn't turn into a wall-of-board-entries regression.
-  const claudeSrc5 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
-  const taskChatBoard = claudeSrc5.slice(claudeSrc5.indexOf("const TASK_CHAT_BOARD ="), claudeSrc5.indexOf("const PRIMER_PERSONA ="));
-  check("regular task chat now DEFAULTS to using the board, not 'whenever it helps, don't force it'", /DEFAULT TO USING IT/.test(taskChatBoard) && !/don't force/.test(taskChatBoard));
-  check("a content-free reply (ack/follow-up question) is still explicitly exempt — no forced spam", /stays board-free/.test(taskChatBoard));
-
-  // (2) the board itself was read-only for the student — a 'question' entry or a completion-gap line
-  // ("= ?") was pure text, even though CREATE_PROBLEM entries right next to them already had a real inline
-  // answer box. Added an onAnswer prop so the student can reply directly where the question lives.
+  // The board was read-only for the student — a 'question' entry or a completion-gap line ("= ?") was
+  // pure text, even though CREATE_PROBLEM entries right next to them already had a real inline answer box.
+  // Added an onAnswer prop so the student can reply directly where the question lives.
   const boardSrc = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
   check("BoardArtifact accepts an onAnswer callback and an answering-in-flight flag", /onAnswer\?: \(text: string\) => void;/.test(boardSrc) && /answering\?: boolean;/.test(boardSrc));
   check("the inline answer box only shows on the NEWEST entry, and only for a question/completion-gap", /idx === flowItems\.length - 1 && \(e\.kind === "question" \|\| isCompletionGap\(e\.text\)\)/.test(boardSrc));
   check("submitting calls onAnswer with the typed text, exactly like a normal chat send", /onAnswer\(v\); setAnswerKey\(e\.id\); setAnswerText\(""\);/.test(boardSrc));
+
+  // Direct instruction (reversing the regular-task-chat board addition above): the board is TUTOR-ONLY —
+  // the plain task chat (TaskCard.tsx) and Study Mode's own freeform canvas no longer render or write one
+  // at all, so onAnswer is wired ONLY into TutorSession.tsx's board, never TaskCard's.
   const taskCardSrc2 = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
   const tutorSessionSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
-  check("wired into the regular task chat's board (sendChat) and Study Mode's board (send)", /onAnswer=\{\(text\) => void sendChat\(text\)\}/.test(taskCardSrc2) && /onAnswer=\{\(text\) => void send\(text\)\}/.test(tutorSessionSrc));
-  check("the phone read-only board view does NOT get an answer box (still genuinely read-only)", !/<BoardArtifact task=\{task\} onAnswer=/.test(taskCardSrc2.slice(0, taskCardSrc2.indexOf("function TaskFocus"))));
+  check("TaskCard (plain task chat) never renders a board at all any more", !/BoardArtifact/.test(taskCardSrc2));
+  check("TutorSession wires onAnswer to its own send, so answering on the board behaves exactly like chat", /onAnswer=\{\(text\) => void send\(text\)\}/.test(tutorSessionSrc));
 }
 
 section("loadState survives a missing-column schema-drift error (source pins)");
@@ -3522,6 +3525,18 @@ section("practiceAnswerMatches — loose-but-not-fuzzy free-response checking");
   check("a pi-valued answer with a unicode minus sign still matches", practiceAnswerMatches("−pi/6", String(-Math.PI / 6)));
   check("a genuinely wrong pi-valued answer still fails", !practiceAnswerMatches("pi/6", "5π/6"));
   check("'pi' alone is never confused with the unrelated word 'pit' or similar", !practiceAnswerMatches("pit", String(Math.PI)));
+  // Reported live: a multi-step physics problem (friction on an incline) has more than one legitimate path
+  // to the final number — g=9.8 vs 9.81, rounding the intermediate angle (21.8°) vs carrying full precision
+  // through to the end. The student's two independently-correct derivations (7.28 N with a rounded
+  // intermediate angle, 7.43 N carrying exact precision) were BOTH marked wrong against a stored answer
+  // that was just one specific path through the same calculation — a flat 1e-6 relative tolerance is
+  // exact-match in practice. A DECIMAL correct answer now gets a few-percent band to absorb this; a bare
+  // integer (a count, an exact MCQ-style value) stays exact so a genuinely wrong value still fails.
+  check("multi-step rounding: a less-precise-but-valid path (g=9.8) is accepted against the exact stored value", practiceAnswerMatches("7.28", "7.43"));
+  check("multi-step rounding: last-digit drift (7.42 vs stored 7.43) is accepted", practiceAnswerMatches("7.42", "7.43"));
+  check("multi-step rounding tolerance still rejects a genuinely wrong answer, not just a nearby one", !practiceAnswerMatches("6.5", "7.43"));
+  check("a bare integer answer (no decimal) stays exact — loosening is scoped to decimal/computed answers", !practiceAnswerMatches("5", "4"));
+  check("a bare integer answer still matches itself exactly", practiceAnswerMatches("4", "4"));
 }
 
 section("looksLikeStem / makePracticeProblem — daily practice-problem generation gate + validation");
@@ -4361,10 +4376,20 @@ section("Tool-narrowing latency fix — core tutoring tools are NEVER dropped by
 {
   const claudeSrcTools = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
   const toolsBlock = claudeSrcTools.slice(claudeSrcTools.indexOf("const includeArtifactTools = wantsArtifactTools"), claudeSrcTools.indexOf("const empty = (): ChatResult"));
-  for (const core of ["WRITE_TO_BOARD_TOOL", "DRAW_ON_BOARD_TOOL", "SET_OBJECTIVES_TOOL", "WEB_SEARCH_TOOL", "CREATE_CALC_TOOL", "CREATE_PROBLEM_TOOL"]) {
+  // WEB_SEARCH_TOOL/CREATE_CALC_TOOL are generic utility tools, unrelated to the board — still core, still
+  // listed unconditionally (never narrowed by the includeArtifactTools heuristic) in both branches.
+  for (const core of ["WEB_SEARCH_TOOL", "CREATE_CALC_TOOL"]) {
     check(`${core} is listed unconditionally (not inside the includeArtifactTools ternary) in both branches`, (toolsBlock.match(new RegExp(core, "g")) || []).length === 2 && !new RegExp(`includeArtifactTools \\? \\[[^\\]]*${core}`).test(toolsBlock));
   }
   check("only the 4 artifact/remember tools are gated behind includeArtifactTools", /includeArtifactTools \? \[CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL\]/.test(toolsBlock) && /includeArtifactTools \? \[REMEMBER_TOOL\]/.test(toolsBlock));
+  // Direct instruction: the board (and everything that renders ON it — practice problems, objectives) is
+  // TUTOR-ONLY now — WRITE_TO_BOARD/DRAW_ON_BOARD/GEOMETRY_ON_BOARD/GRAPH_ON_BOARD/CREATE_PROBLEM/
+  // SET_OBJECTIVES are no longer unconditional; they're gated behind `opts?.primer` via `boardTools`,
+  // spread into both branches so a Tutor turn still gets them either way canvasMode is set.
+  for (const core of ["WRITE_TO_BOARD_TOOL", "DRAW_ON_BOARD_TOOL", "GEOMETRY_ON_BOARD_TOOL", "GRAPH_ON_BOARD_TOOL", "SET_OBJECTIVES_TOOL", "CREATE_PROBLEM_TOOL"]) {
+    check(`${core} is in boardTools (primer-gated), not listed directly in either tools branch`, new RegExp(`const boardTools = opts\\?\\.primer[\\s\\S]*?${core}`).test(toolsBlock) && (toolsBlock.match(new RegExp(core, "g")) || []).length === 1);
+  }
+  check("both branches spread boardTools in (a Tutor turn gets them whether canvasMode is set or not)", (toolsBlock.match(/\.\.\.boardTools,/g) || []).length === 2);
 }
 
 section("useThinkingWord — time-banded wording so a long wait stops implying 'almost done' (source pin)");
@@ -4670,6 +4695,12 @@ section("leaksAnyProblemAnswer — board/diagram/chat-reply guard against statin
   check("DRAW_ON_BOARD checks both the caption and every op's text/latex for a leak", /input\.ops\.map\(\(o: any\) => `\$\{o\?\.text \|\| ""\} \$\{o\?\.latex \|\| ""\}`/.test(claude));
   check("the chat reply itself gets the same backstop inside finish(), discarding artifacts like the CHAT_DOES_WORK guardrail does", /leaksAnyProblemAnswer\(reply, \[\.\.\.\(opts\?\.currentProblems \|\| \[\]\), \.\.\.result\.problems\]\)\)/.test(claude));
   check("CREATE_PROBLEM_TOOL's own description now spells out the exact failure mode with a concrete example (answer = final part only)", claude.includes("`answer` MUST be the FINAL lettered part's value ONLY") && claude.includes("e.g. '7/25'") && claude.includes("e.g. '-4/5'"));
+  // Reported live: a multi-step physics problem's generated `answer` was only reachable via ONE specific
+  // intermediate-rounding path, so a student's equally valid alternate path (different rounding, g=9.8 vs
+  // 9.81) kept getting marked wrong by the widget. Pin that CREATE_PROBLEM_TOOL now tells the model to
+  // avoid baking in that ambiguity in the first place: carry full precision through intermediate steps, and
+  // state any non-conventional constant explicitly so every valid path converges on the same number.
+  check("CREATE_PROBLEM_TOOL warns against rounding intermediate steps when computing a multi-step numeric answer", claude.includes("NEVER round an intermediate result") && claude.includes("state the exact value to use directly in `question`"));
 }
 
 section("HINT LADDER — a substitution's result must not be computed FOR the student while narrating the next step (source pin)");
@@ -4737,10 +4768,10 @@ section("makeInteractiveEntry — CREATE_INTERACTIVE validation (allowlisted scr
 section("CREATE_INTERACTIVE — sandboxed, scoped to Study Mode, capped (source pins)");
 {
   const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
-  check("CREATE_INTERACTIVE is only added to the canvas-mode (Study Mode) tool list, not the regular task-chat one", (() => {
-    const canvasLine = claude.split("\n").find((l) => l.includes("CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, CREATE_INTERACTIVE_TOOL"));
+  check("CREATE_INTERACTIVE requires BOTH primer (Tutor) AND canvas mode — never the regular task-chat tool list", (() => {
+    const boardToolsBlock = claude.slice(claude.indexOf("const boardTools = opts?.primer"), claude.indexOf("const tools = opts?.canvasMode"));
     const regularLine = claude.split("\n").find((l) => l.includes("CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL"));
-    return !!canvasLine && !!regularLine && !regularLine.includes("CREATE_INTERACTIVE");
+    return boardToolsBlock.includes("opts?.canvasMode ? [CREATE_INTERACTIVE_TOOL]") && !!regularLine && !regularLine.includes("CREATE_INTERACTIVE");
   })());
   check("its own per-board cap is separate from WRITE_TO_BOARD/DRAW_ON_BOARD's", claude.includes('e.kind === "interactive").length >= 2'));
 

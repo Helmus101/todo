@@ -305,5 +305,9 @@ export async function runTutorSim(check, section) {
   calls = [];
   const rd = await chatAboutTask({ title: "DST prep", why: "", source: "manual" }, [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }], "ok", undefined, undefined, {});
   check("a reply claiming 'Done — 50 cards' with no deck gets one corrective round that makes the real deck (tools force-offered even on small talk)", rd.flashcards.length === 1 && calls.length >= 2 && /CREATE_FLASHCARDS/.test(JSON.stringify(calls[1].messages)) && calls[1].tools.some((x) => x.function?.name === "CREATE_FLASHCARDS"));
-  check("the task chat gets the board guidance (question on the board, no claimed-but-uncalled artifacts)", /THE BOARD IS PART OF THIS CHAT/.test(String(calls[0].messages[0].content)) && /never\s+claim you made flashcards/.test(String(calls[0].messages[0].content)));
+  // Direct instruction: the board is TUTOR-ONLY now — plain task chat (no primer) gets NO board prompt
+  // text at all any more (the old TASK_CHAT_BOARD block is gone). The "don't claim an uncalled artifact"
+  // guardrail is enforced in CODE regardless (see the corrective-round check just above this one), not by
+  // a prompt sentence, so removing that sentence here is not a behavioral regression.
+  check("plain task chat (no primer) gets no board prompt text at all", !/THE BOARD IS PART OF THIS CHAT/.test(String(calls[0].messages[0].content)));
 }

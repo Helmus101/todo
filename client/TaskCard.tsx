@@ -24,7 +24,6 @@ import { createEchoFilter } from "./voice/echoGuard.ts";
 import { useSpeechSynthesis } from "./voice/useSpeechSynthesis.ts";
 import { lastMessageKey } from "./voice/replyKey.ts";
 import { useVoiceModePref } from "./voice/useVoiceModePref.ts";
-import { BoardArtifact } from "./study/artifacts/BoardArtifact.tsx";
 import { getLocalThread } from "./localChatBoard.ts";
 import { VoiceControls } from "./voice/VoiceControls.tsx";
 
@@ -454,11 +453,6 @@ export function TaskReadOnly({ task }: { task: WebTask }) {
           ) : null}
         </div>
       ) : null}
-      {(task.board?.length || task.problems?.length) ? (
-        <div className="tf-board-inline">
-          <BoardArtifact task={task} />
-        </div>
-      ) : null}
       <p className="task-readonly-foot">
         {L("Sur téléphone, Otto est en lecture seule. Ouvre-le sur un ordinateur ou un iPad pour travailler dessus.",
            "On a phone, Otto is read-only. Open it on a laptop or iPad to actually work on this.")}
@@ -791,16 +785,8 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
         ) : null}
       </div>
 
-      {/* The tutor's Board (WRITE_TO_BOARD, server/claude.ts) was already persisted onto task.board/
-          task.problems by every chat turn — but outside Study Mode, nothing ever RENDERED it. A student
-          asking a question in the plain task chat (not Study Mode) who got told "look at the board above"
-          saw nothing at all, because there was no "above" for it to be. Same component Study Mode's desk
-          uses; only shown once there's actually something on it, same "count > 0" gating as PreparedPanel. */}
-      {(task.board?.length || task.problems?.length) ? (
-        <div className="tf-board-inline">
-          <BoardArtifact task={task} onAnswer={(text) => void sendChat(text)} answering={chatSending} />
-        </div>
-      ) : null}
+      {/* Direct instruction: the board is a Tutor-only surface — plain task chat never shows one (and, as
+          of this change, never writes one either; see chatAboutTask's tools gating in server/claude.ts). */}
 
       {openChat ? (
         <TaskModal onClose={() => setOpenChat(false)} nested wide title={L("Demander à Otto", "Ask Otto")}>

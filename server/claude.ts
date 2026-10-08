@@ -2559,7 +2559,7 @@ const CREATE_PROBLEM_TOOL = {
     question: { type: "string", description: "the question/prompt — math in LaTeX between $…$ (it is typeset for the student) — one clear sentence, OR a full multi-part structured prompt (IB/AP extended-response/FRQ style — lettered sub-parts with their own point values) when the student's program calls for one. Match the phrasing, format, and rigor of an actual exam/contrôle question for this subject and level (see VOCABULARY/track/exam-style above), not generic trivia." },
     options: { type: "array", description: "MCQ mode: 2-4 answer options by default; EXACTLY 5 for an AP-track student (College Board MCQs are always 5-option — see the AP block above). EXACTLY ONE is correct; the wrong ones must be genuinely plausible. Omit entirely for free-response mode (this is also the mode for any IB/AP multi-part structured question — see above).", items: { type: "string" } },
     correct: { type: "number", description: "MCQ mode only: 0-based index into options of the CORRECT one" },
-    answer: { type: "string", description: "Free-response mode only: the expected answer — SHORT and checkable (a number, a simple expression, a single word), checked loosely (trimmed, case-insensitive). An EXERCISE is ONLY for a question with exactly ONE correct, short answer. NEVER create one for anything open-ended (explain, why, describe, justify, prove/show that, compare, discuss, multi-part (a)(b)(c)) — ask those in the conversation. If you can't state one short answer, it is not an exercise. Omit for MCQ mode." },
+    answer: { type: "string", description: "Free-response mode only: the expected answer — SHORT and checkable (a number, a simple expression, a single word), checked loosely (trimmed, case-insensitive, and with a few-percent tolerance on decimal numeric answers to absorb ordinary rounding). An EXERCISE is ONLY for a question with exactly ONE correct, short answer. NEVER create one for anything open-ended (explain, why, describe, justify, prove/show that, compare, discuss, multi-part (a)(b)(c)) — ask those in the conversation. If you can't state one short answer, it is not an exercise. Omit for MCQ mode. MULTI-STEP NUMERIC PROBLEMS (physics/chem/finance): compute this value by carrying full precision through every intermediate step — NEVER round an intermediate result (an angle, a sub-total) before using it in a later step, since that can shift the final value by several percent and make a student's equally valid, less-rounded calculation get marked wrong. If a constant isn't a fixed convention (g, a rate, a density), state the exact value to use directly in `question` so every valid path converges on the same number." },
     why: { type: "string", description: "one line on why the answer is right — this is what makes the problem teach instead of just score" },
     hint: { type: "string", description: "an optional hint the student can reveal before answering" },
     format: { type: "string", description: "free-response mode only: guidance on expected format/units/notation (e.g. 'two decimal places, in m/s'). NEVER use the real answer as an example — use a placeholder ('x = a') or a different value." },
@@ -7391,18 +7391,9 @@ const CHAT_TOKEN_CEILING = 500_000;
  *  read and count, a teenager prepping for exams, or an adult learning something new. The tutoring mechanism
  *  (Socratic, hint ladder, board, one question at a time) is the same at every age; only the language,
  *  tone, and framing calibrate to the student's actual level. */
-/** Task chat (not the tutor stage): the board is still there — Otto's page next to the conversation. */
-const TASK_CHAT_BOARD =
-  `\n\nTHE BOARD IS PART OF THIS CHAT: this task has Otto's board (WRITE_TO_BOARD, DRAW_ON_BOARD, GEOMETRY_ON_BOARD, ` +
-  `GRAPH_ON_BOARD) shown right next to the conversation, like paper — DEFAULT TO USING IT, not the other way ` +
-  `around: most turns that discuss real content (a formula, a given, a diagram, a definition, a step the student ` +
-  `just worked out) should leave ONE short entry, same step as your reply, not a separate turn. When you ask a ` +
-  `real question about the material (a check-your-understanding question, a problem), put that question on the ` +
-  `board (kind "question"); put the givens, a formula or definition you rely on, a diagram, and what the student ` +
-  `works out ("result") there INSTEAD of burying them in chat prose — the chat bubble is for the conversation, ` +
-  `the board is for anything they'd otherwise have to remember or scroll back to find. A short "ok, got it" or a ` +
-  `plain follow-up question with nothing new to record is the one case that stays board-free. Keep chat replies ` +
-  `short. And never claim you made flashcards, a quiz or a note unless you actually called the tool for it this turn.\n`;
+// TASK_CHAT_BOARD (the old "the board is still there in task chat" block) was removed per direct
+// instruction: the board is a TUTOR-ONLY surface now — plain task chat gets no board prompt text and no
+// board tools at all (see the `tools`/`boardTools` gating on `opts?.primer`, a few hundred lines down).
 
 const PRIMER_PERSONA =
   `\n\nSOUND LIKE A PERSON, ANSWER LIKE ONE — THIS BLOCK WINS OVER EVERYTHING BELOW.\n` +
@@ -7875,7 +7866,7 @@ export async function chatAboutTask(
   // anyway.
   const dynamicContext = nowBlock() + courseworkLine(profile, task.sourceSubject) + studentNameLine(profile?.name) + dueLine(task.sourceDue, tzOf(profile)) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + syllabusGroundingLine(profile, task.sourceSubject) + learningStyleLine(profile) + hintDensityLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + sessionRecapLine(profile?.sessions, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine + (opts?.primer ? (opts?.moveLine || "") + (opts?.repair || "") + spokenMathHint(message) + scaffoldLine(message, history) + probeLine(message, history) + cheerLine(message, history, opts?.currentObjectives) : "");
   const sys =
-    (opts?.primer ? PRIMER_PERSONA : TASK_CHAT_BOARD) +
+    (opts?.primer ? PRIMER_PERSONA : "") +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
     `good tutor they can't afford to hire: patient, genuinely curious about how THEY think, and interested ` +
     `in them actually understanding the material — not in getting the assignment off their plate. Ground ` +
@@ -8697,12 +8688,19 @@ export async function chatAboutTask(
   // large static prompt. Conservative and reversible: only drops them on a turn that's clearly short/
   // conversational with no artifact-ish keyword; a wrongly-dropped tool just means the model can't call
   // it THIS round, not a permanent loss — the student's next message is evaluated fresh. The tools that
-  // stay ALWAYS available either way (board-writing, objectives, search, calc, a focused problem) are
-  // core to live tutoring and/or already cheap.
+  // stay ALWAYS available either way (search, calc) are core to live tutoring and/or already cheap.
+  // Direct instruction: the board (and everything that renders ON it — practice problems, session
+  // objectives) is a TUTOR-ONLY surface now, not "board-writing is always on." Previously WRITE_TO_BOARD/
+  // DRAW_ON_BOARD/etc. were offered unconditionally (canvas mode or not) — gated to `opts?.primer` so the
+  // model can no longer call them in a plain task chat or the general Study canvas, matching the client,
+  // which no longer renders a board anywhere except the Tutor (TutorSession.tsx).
   const includeArtifactTools = wantsArtifactTools(message, history);
+  const boardTools = opts?.primer
+    ? [CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, ...(opts?.canvasMode ? [CREATE_INTERACTIVE_TOOL] : []), SET_OBJECTIVES_TOOL]
+    : [];
   const tools = opts?.canvasMode
-    ? [CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, CREATE_INTERACTIVE_TOOL, SET_OBJECTIVES_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])]
-    : [...(includeArtifactTools ? [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL] : []), CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, SET_OBJECTIVES_TOOL, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])];
+    ? [...boardTools, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])]
+    : [...(includeArtifactTools ? [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL] : []), ...boardTools, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])];
   const empty = (): ChatResult => ({ reply: "", notes: [], flashcards: [], quizzes: [], problems: [], board: [], audit: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false });
   const result = empty();
   const logAudit = (kind: AuditEvent["kind"], label: string) => result.audit.push({ at: new Date().toISOString(), kind, label });
