@@ -3295,7 +3295,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   color: var(--ink-3);
 }
 
-/* ─── Simple Landing Page ─────────────────────────────────────────────────── */
+/* ─── Simple Landing Page ──────────────────────────────────────�����──────────── */
 .landing-simple {
   min-height: 100vh;
   min-height: 100dvh;
@@ -5717,6 +5717,153 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   color: var(--ink-1);
 }
 .sm-bg-filename { font-size: var(--text-xs); color: var(--ink-3); margin-top: var(--space-1); }
+
+/* Tutor on a phone: keep the board readable and make every important control reachable without
+   shrinking the lesson into a desktop canvas. The board scrolls, while the header and action bar
+   stay compact and touch-friendly. */
+@media (max-width: 640px) {
+  .sm-shell {
+    height: 100dvh;
+    min-height: 100dvh;
+  }
+
+  .sm-header-top {
+    min-height: 48px;
+    padding: 0 12px;
+    gap: 8px;
+  }
+
+  .sm-back-btn,
+  .sm-artifact-btn,
+  .sm-fullscreen-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .sm-task-title {
+    font-size: var(--text-md);
+  }
+
+  .sm-header-right {
+    gap: 4px;
+  }
+
+  .sm-timer,
+  .sm-clock,
+  .sm-pomodoro-badge {
+    font-size: var(--text-xs);
+  }
+
+  .sm-header-step {
+    padding: 0 12px 12px;
+  }
+
+  .sm-step-row {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .sm-step-text {
+    font-size: var(--text-lg);
+    line-height: 1.35;
+  }
+
+  .sm-progress-row {
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .sm-canvas {
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    background-size: 24px 24px;
+  }
+
+  .sm-artifact {
+    min-width: min(300px, calc(100vw - 24px));
+    max-width: calc(100vw - 24px);
+    min-height: 160px;
+  }
+
+  .sm-artifact-body {
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .sm-artifact-titlebar {
+    min-height: 44px;
+  }
+
+  .sm-artifact-btn,
+  .sm-drawer-close {
+    width: 44px;
+    height: 44px;
+  }
+
+  .sm-bottombar {
+    display: flex;
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 0;
+    padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+  }
+
+  .sm-bottombar-left,
+  .sm-bottombar-right {
+    width: 100%;
+    min-height: 44px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .sm-bottombar-left::-webkit-scrollbar,
+  .sm-bottombar-right::-webkit-scrollbar {
+    display: none;
+  }
+
+  .sm-bottombar-right {
+    justify-content: stretch;
+  }
+
+  .sm-bar-btn,
+  .sm-btn {
+    min-height: 44px;
+    flex: 0 0 auto;
+  }
+
+  .sm-bottombar-right .sm-btn {
+    flex: 1 1 0;
+  }
+
+  .sm-drawer {
+    left: 0;
+    right: 0;
+    width: 100%;
+    max-width: 100%;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+
+  .sm-drawer-body {
+    padding: 16px 12px calc(16px + env(safe-area-inset-bottom));
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .sm-tools-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sm-tool-btn,
+  .sm-material-row {
+    min-height: 52px;
+  }
+}
+
 /* Fills the "chat" artifact's body (ArtifactCanvas.tsx) — a flex column so the message list grows/shrinks
    with the artifact's own drag-resize instead of being capped at a fixed height like the old fixed-drawer
    version was. */
@@ -5849,19 +5996,16 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   animation: sm-board-entry-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 /* Last 2-3 entries (current work) get slightly warmer background to distinguish from reference material */
-.sm-board-entry:nth-last-child(-n+3):not(.sm-board-entry-faded) {
-  background: color-mix(in srgb, var(--accent) 2%, transparent);
-}
 .sm-board-entry:last-child { border-bottom: none; }
 .sm-board-entry-formula { font-family: var(--mono, monospace); }
 /* The session document's OPENING heading — "Today's focus". Slightly larger/bolder, like a page title, but
    still just text sitting on the page — nothing about it is boxed differently from any other entry. */
-.sm-board-entry-focus .sm-board-entry-kind { color: var(--accent); margin-bottom: 6px; }
+.sm-board-entry-focus .sm-board-entry-kind { margin-bottom: 6px; }
 .sm-board-entry-focus .sm-board-entry-text { font-size: var(--text-base); font-weight: 600; line-height: 1.45; color: var(--ink); }
 /* The STUDENT's own aha, credited by name — reads as a highlight on the page (accent-colored label + a soft
    inline background strictly behind the text, not a separate boxed container) rather than another note. */
-.sm-board-entry-insight .sm-board-entry-kind { color: var(--accent); }
-.sm-board-entry-insight .sm-board-entry-text { background: var(--accent-soft); border-radius: var(--radius-xs); padding: 2px 6px; margin: -2px -6px; display: inline; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.sm-board-entry-insight .sm-board-entry-kind { color: var(--ink-3); }
+.sm-board-entry-insight .sm-board-entry-text { font-weight: 600; }
 .sm-board-entry-kind {
   display: block;
   font-size: 10px;
@@ -5883,9 +6027,9 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   width: 100%;
   aspect-ratio: 800 / 600;
   color: var(--ink);
-  background: color-mix(in srgb, var(--bg-2) 60%, transparent);
-  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
-  border-radius: var(--radius-xs);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 2px;
 }
 /* Phone-only read-only task view (TaskReadOnly, client/TaskCard.tsx) — a task you can read, not work on.
    Intentionally plain: no cards, no affordances that look tappable, since nothing here is. */
@@ -5940,11 +6084,10 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   flex: none;
   margin: 0 0 var(--space-3);
   padding: var(--space-4) var(--space-4) var(--space-4) calc(var(--space-4) + 2px);
-  background: var(--surface-glass);
-  border: 1px solid color-mix(in srgb, var(--accent) 15%, var(--line-soft));
-  border-left: 3px solid var(--accent);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  box-shadow: none;
   transition: box-shadow var(--duration-base) var(--ease-spring), border-color var(--duration-base) var(--ease-spring);
 }
 .sm-board-problem-label {
@@ -5955,10 +6098,10 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--accent);
-  background: var(--accent-soft);
-  padding: 4px 9px;
-  border-radius: var(--radius-pill);
+  color: var(--ink-3);
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
   margin-bottom: var(--space-3);
 }
 /* A monochrome dingbat, not the ✏️ emoji: the variation selector (U+FE0F) is what forces emoji presentation,
@@ -6040,7 +6183,69 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   color: var(--ink-3);
   opacity: 0.6;
 }
-.sm-board-clear-btn:hover { opacity: 1; color: var(--danger, #d94f4f); }
+.sm-board-clear-btn:hover { opacity: 1; color: var(--ink); }
+
+/* The board is a study surface, not a dashboard. Keep its content nearly monochrome so the
+   only visual emphasis comes from the student's work: questions, diagrams, and equations. */
+.sm-board-body {
+  --board-accent: var(--ink);
+  --board-accent-soft: var(--bg-2);
+  --board-rule: var(--line);
+  background: var(--surface);
+}
+.sm-board-body .sm-board-focus-pin,
+.sm-board-body .sm-board-entry,
+.sm-board-body .sm-board-problem {
+  border-color: var(--board-rule);
+}
+.sm-board-body .sm-board-entry-kind,
+.sm-board-body .sm-board-problem-label,
+.sm-board-body .sm-board-header-date,
+.sm-board-body .sm-board-header-subject,
+.sm-board-body .sm-board-glyph {
+  color: var(--ink-3);
+}
+.sm-board-body .sm-board-focus-text,
+.sm-board-body .sm-board-entry-text,
+.sm-board-body .sm-board-problem-q,
+.sm-board-body .sm-board-problem-compact-q {
+  color: var(--ink);
+}
+.sm-board-body .sm-board-problem,
+.sm-board-body .sm-board-problem-solved {
+  background: transparent;
+  box-shadow: none;
+}
+.sm-board-body .sm-board-problem-opts .quiz-opt,
+.sm-board-body .sm-inline-problem-input,
+.sm-board-body .sm-board-diagram,
+.sm-board-body .sm-board-interactive-frame {
+  border-color: var(--line);
+  box-shadow: none;
+}
+.sm-board-body .sm-board-problem-opts .quiz-opt:hover:not(:disabled),
+.sm-board-body .sm-board-problem-opts .quiz-opt.correct,
+.sm-board-body .sm-board-problem-opts .quiz-opt.wrong {
+  border-color: var(--ink-2);
+  background: var(--bg-2);
+  box-shadow: none;
+}
+.sm-board-body .sm-board-problem-compact-mark,
+.sm-board-body .quiz-opt.correct .quiz-opt-mark,
+.sm-board-body .sm-inline-problem-result.correct,
+.sm-board-body .sm-btn-primary,
+.sm-board-body .sm-btn-ghost {
+  color: var(--ink);
+}
+.sm-board-body .sm-btn-primary {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--surface);
+}
+.sm-board-body .sm-btn-ghost {
+  border-color: transparent;
+  background: transparent;
+}
 
 .sm-board-entry-text p + p { margin-top: 8px; }
 .sm-ai-msg {
@@ -6768,7 +6973,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 
 
 
-/* ── Tutor Session (Primer-style: chat + board) ─────────────────────────────── */
+/* ── Tutor Session (Primer-style: chat + board) ────────────────────────────���── */
 /* The board is the lesson's real document — give it the larger half even at rest (chat is the input
    surface, the board is what accumulates and matters); voice mode pushes the ratio further still. */
 .tutor-session { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 0.55fr) minmax(0, 1.45fr); gap: 20px; padding: 12px 24px 20px; height: calc(100vh - 64px); box-sizing: border-box; align-content: start; }
@@ -7107,6 +7312,52 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .tutor-chat-text { font-size: 0.95rem; line-height: 1.5; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; padding: 10px 14px; border-radius: var(--radius-sm); max-width: 85%; }
 .tutor-chat-message.user .tutor-chat-text { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--ink); }
 .tutor-chat-message.assistant .tutor-chat-text { background: var(--surface); border: 1px solid var(--line); color: var(--ink); }
+
+/* Phone-first tutor layout: keep /tutor reachable and usable at 390px without horizontal clipping. */
+@media (max-width: 640px) {
+  .tutor-landing {
+    min-height: calc(100dvh - 56px - env(safe-area-inset-top));
+    padding: 32px 16px;
+    align-items: flex-start;
+  }
+  .tutor-landing-inner { width: 100%; gap: 18px; }
+  .tutor-landing-title { font-size: 2.15rem; }
+  .tutor-landing-sub { max-width: 32ch; font-size: 1rem; }
+  .tutor-start-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 8px;
+    border-radius: 16px;
+  }
+  .tutor-start-select { min-height: 48px; padding: 10px 12px; }
+  .tutor-start-btn { width: 100%; min-height: 48px; padding: 12px 18px; }
+  .tutor-active-session-card { width: 100%; max-width: none; padding: 16px; }
+  .tutor-active-session-actions, .tutor-history-actions { flex-wrap: wrap; }
+  .tutor-history-actions > * { flex: 1 1 140px; text-align: center; }
+
+  .tutor-stage { height: 100dvh; min-height: 100dvh; }
+  .tutor-crumbbar {
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    padding: 10px 12px;
+  }
+  .tutor-crumb-link, .tutor-crumb-subject { font-size: 14px; }
+  .tutor-crumbbar .tutor-chat-btn { margin-left: 0; }
+  .tutor-end-btn { margin-left: auto; min-height: 44px; padding: 8px 10px; }
+  .ts-bar { padding-left: 12px; padding-right: 12px; }
+  .ts-board-body { padding: 76px 8px 300px; }
+  .ts-board-body .sm-board-body { padding-left: 8px; padding-right: 8px; }
+  .ts-dock { width: calc(100% - 16px); bottom: max(8px, env(safe-area-inset-bottom)); }
+  .otto-dock { padding: 8px; border-radius: 16px; }
+  .otto-dock-row { gap: 8px; }
+  .otto-bubble { font-size: 14px; padding: 9px 36px 9px 11px; max-height: 25vh; }
+  .otto-avatar { display: none; }
+  .otto-quick { gap: 6px; }
+  .otto-quick-btn { min-height: 44px; padding: 8px 11px; }
+  .tc-toolbar { top: 8px; max-width: calc(100% - 16px); }
+  .tc-btn { width: 44px; height: 44px; }
+}
 
 /* Tutor landing page */
 .tutor-subject-select { margin: 16px 0; }

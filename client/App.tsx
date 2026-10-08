@@ -1409,7 +1409,7 @@ export function App() {
                     same task and the plan Otto wrote, with no chat and nothing to act on, instead of
                     TaskFocus's full working surface. */}
                 {isPhone ? (
-                  <TaskReadOnly task={openTask} />
+                  <TaskReadOnly task={openTask} onTask={patchTask} userId={status?.user || null} />
                 ) : (
                   <TaskFocus
                     task={openTask}
@@ -2541,7 +2541,7 @@ function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" | "en"; 
       setDays(r.days); setSummary(r.summary); setLoaded(true);
       saveWeekCache(status?.user || null, m, { days: r.days, summary: r.summary });
     }).catch(() => {
-      if (loadGenRef.current !== gen) return; // superseded — a newer request's own success/failure wins
+      if (loadGenRef.current !== gen) return; // superseded ��� a newer request's own success/failure wins
       if (!cached) { setLoaded(true); notify(en ? "Couldn't load this week." : "Impossible de charger la semaine.", "error"); }
     });
   }, [en, notify]);
