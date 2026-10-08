@@ -659,7 +659,7 @@ export function BoardArtifact({ task, writing, onProblemResult, onAnswer, answer
         </div>
       ) : null}
 
-      {flowItems.length > 5 && (
+      {flowItems.length > 8 && (
         <div className="sm-board-archive-bar">
           <button type="button" className="sm-btn sm-btn-ghost sm-btn-xs sm-board-archive-toggle" onClick={() => setShowArchive((v) => !v)}>
             {showArchive
