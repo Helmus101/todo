@@ -6139,6 +6139,21 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   width: 100%;
 }
 
+/* Study Mode Whiteboard — paper-like freehand canvas (see WhiteboardArtifact.tsx). Ruled lines overlay
+   matches the tutor whiteboard's notebook-paper feel. */
+.sm-whiteboard-body { height: 100%; display: flex; flex-direction: column; }
+.sm-whiteboard-toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.sm-whiteboard-canvas-wrap { position: relative; flex: 1; min-height: 0; }
+.sm-whiteboard-canvas-wrap::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: var(--radius-sm);
+  background: repeating-linear-gradient(to bottom, transparent 0, transparent 31px, rgba(0, 60, 120, 0.07) 31px, rgba(0, 60, 120, 0.07) 32px);
+}
+.sm-whiteboard-canvas { width: 100%; height: 100%; touch-action: none; cursor: crosshair; border-radius: var(--radius-sm); border: 1px solid var(--line); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06); }
+.sm-wb-btn { border: 1px solid var(--line); background: var(--bg-2); color: var(--ink); border-radius: var(--radius-xs); padding: 4px 10px; font-size: 13px; cursor: pointer; }
+.sm-wb-btn:hover { background: var(--bg-3); }
+.sm-wb-btn.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.sm-wb-select { border: 1px solid var(--line); background: var(--bg-2); color: var(--ink); border-radius: var(--radius-xs); padding: 3px 6px; font-size: 13px; cursor: pointer; }
+
 @media (prefers-color-scheme: dark) {
   .sm-shell,
   .sm-canvas,
@@ -6153,6 +6168,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   .sm-header,
   .sm-bottombar { background: rgba(22, 25, 31, 0.94); }
   .sm-whiteboard-canvas { background: #f7f7f2; }
+  .tutor-whiteboard-paper { background: #f7f7f2; }
 }
 
 @media (max-width: 900px) {
@@ -6370,7 +6386,17 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
    reported live: the board felt cramped/flat against the chrome around it. The padding here is the margin
    that creates that inset; the canvas element itself stays a plain white rect, radius'd to match. */
 .tutor-whiteboard-canvas-wrap { position: relative; flex: 1; min-height: 0; display: flex; padding: 16px; background: var(--bg-2); }
-.tutor-whiteboard-canvas { flex: 1; min-height: 0; width: 100%; background: #FFFFFF; touch-action: none; cursor: crosshair; border-radius: var(--radius-sm); border: 1px solid var(--line); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06); }
+.tutor-whiteboard-canvas { flex: 1; min-height: 0; width: 100%; touch-action: none; cursor: crosshair; border-radius: var(--radius-sm); border: 1px solid var(--line); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06); }
+/* Paper ruled lines — a visual guide overlay on top of the canvas (pointer-events: none so it never
+   blocks drawing). Not baked into the canvas pixels, so it doesn't appear in the PNG sent to the vision
+   model. Subtle horizontal rules like notebook paper, plus a faint margin line on the left. */
+.tutor-whiteboard-paper { position: relative; }
+.tutor-whiteboard-canvas-wrap::after {
+  content: ""; position: absolute; inset: 16px; pointer-events: none; border-radius: var(--radius-sm);
+  background:
+    repeating-linear-gradient(to bottom, transparent 0, transparent 31px, rgba(0, 60, 120, 0.07) 31px, rgba(0, 60, 120, 0.07) 32px);
+  z-index: 1;
+}
 /* Positioned at the click point in DISPLAY pixels (see PendingText's own comment), offset by the canvas's
    own inset padding above so it lands on the exact spot clicked, not shifted by the wrapper's margin.
    transform shifts it up so the typed baseline lines up with where the click landed, same spot fillText

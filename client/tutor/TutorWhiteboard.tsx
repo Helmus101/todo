@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api.ts";
 import { useLang } from "../ui.tsx";
+import { startStroke, inkExtend, renderAllStrokes, type InkPoint, type InkStroke } from "../ink.ts";
 
 interface TutorWhiteboardProps {
   onClose: () => void;
@@ -11,7 +12,7 @@ interface TutorWhiteboardProps {
 }
 
 type Tool = "pen" | "eraser" | "text";
-interface Stroke { points: { x: number; y: number }[]; color: string; width: number; }
+
 /** A click with the text tool opens this at the click point (in DISPLAY/CSS pixels, so it can be positioned
  *  with plain absolute CSS over the canvas) — committed text is then baked straight into the canvas raster
  *  via fillText, same as a pen stroke, so it rides along with everything else into the one PNG snapshot
@@ -19,37 +20,39 @@ interface Stroke { points: { x: number; y: number }[]; color: string; width: num
  *  pixels, same as ink. */
 interface PendingText { displayX: number; displayY: number; value: string; }
 
-/** A freehand canvas scoped to the Tutor, separate from Study Mode's WhiteboardArtifact (which is tied to
- *  that feature's own ArtifactState persistence and has no export/send capability at all — see the repo
- *  investigation that found no toDataURL/toBlob anywhere). This one's only job is "draw, then hand a PNG
- *  snapshot to the vision-reading endpoint" — nothing here is saved server-side. Reported live: closing it
- *  without sending used to discard the drawing outright, which lost real unsubmitted work on an accidental
- *  close or a detour to check something else. Fixed not in this component but in its PARENT (TutorSession) —
- *  same fix shape as Desmos's own "stays mounted" persistence: once opened, this component is kept mounted
- *  (hidden, not unmounted) rather than destroyed on close, so the canvas's own drawn pixels simply survive
- *  closing and reopening. Only an actual successful send clears it (see `send` below) — that's the one case
- *  where starting fresh on the next visit is actually correct. */
+/** Paper color baked into the canvas on init — the eraser draws this color, and toDataURL includes it so
+ *  the vision model sees a paper-colored background rather than transparent. A warm off-white, not the
+ *  clinical #FFFFFF the old version used: closer to actual notebook paper. */
+const PAPER = "#f7f7f2";
+
+/** A freehand canvas scoped to the Tutor. Smooth Bézier ink rendering with velocity-based variable width
+ *  (see ink.ts) makes it feel like writing on paper, not dragging pixels. Once opened, this component is
+ *  kept mounted (hidden, not unmounted) by its parent (TutorSession) so the canvas's drawn pixels survive
+ *  closing and reopening — only a successful send clears it. */
 export function TutorWhiteboard({ onClose, onSend }: TutorWhiteboardProps) {
   const L = useLang();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [tool, setTool] = useState<Tool>("pen");
-  const [color, setColor] = useState("#18181B");
-  const strokeWidth = tool === "eraser" ? 22 : 3;
-  const isDrawing = useRef(false);
-  const currentStroke = useRef<{ x: number; y: number }[]>([]);
-  const strokes = useRef<Stroke[]>([]);
+  const [color, setColor] = useState("#1a1a2e");
   const [hasInk, setHasInk] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingText, setPendingText] = useState<PendingText | null>(null);
   const textInputRef = useRef<HTMLInputElement>(null);
 
-  const getPos = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+  const strokes = useRef<InkStroke[]>([]);
+  const currentStroke = useRef<InkStroke | null>(null);
+  const isDrawing = useRef(false);
+
+  /** Base pen width — the renderer varies it by velocity (slower = thicker, faster = thinner) on top of this. */
+  const baseWidth = tool === "eraser" ? 22 : 3;
+
+  const getPos = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>): InkPoint => {
     const rect = canvasRef.current!.getBoundingClientRect();
     const scaleX = canvasRef.current!.width / rect.width;
     const scaleY = canvasRef.current!.height / rect.height;
     const point = "touches" in e ? (e.touches[0] || e.changedTouches[0]) : e;
-    return { x: (point.clientX - rect.left) * scaleX, y: (point.clientY - rect.top) * scaleY };
+    return { x: (point.clientX - rect.left) * scaleX, y: (point.clientY - rect.top) * scaleY, t: performance.now() };
   };
   const getDisplayPos = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
     const rect = canvasRef.current!.getBoundingClientRect();
@@ -57,6 +60,24 @@ export function TutorWhiteboard({ onClose, onSend }: TutorWhiteboardProps) {
     return { x: point.clientX - rect.left, y: point.clientY - rect.top };
   };
 
+  /** Paint the paper background onto the canvas pixels — must be done on mount (and after clear) so the
+   *  canvas isn't transparent and toDataURL captures the paper color. */
+  const paintPaper = () => {
+    const ctx = canvasRef.current?.getContext("2d");
+    if (!ctx || !canvasRef.current) return;
+    ctx.fillStyle = PAPER;
+    ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+  };
+
+  /** Redraw everything — paper background + all stored strokes. */
+  const redrawAll = () => {
+    const ctx = canvasRef.current?.getContext("2d");
+    if (!ctx) return;
+    paintPaper();
+    renderAllStrokes(ctx, strokes.current);
+  };
+
+  useEffect(() => { paintPaper(); }, []);
   useEffect(() => { if (pendingText) textInputRef.current?.focus(); }, [pendingText]);
 
   const commitText = () => {
@@ -76,51 +97,50 @@ export function TutorWhiteboard({ onClose, onSend }: TutorWhiteboardProps) {
     setHasInk(true);
   };
 
-  const strokeSegment = (from: { x: number; y: number }, to: { x: number; y: number }) => {
-    const ctx = canvasRef.current?.getContext("2d");
-    if (!ctx) return;
-    ctx.beginPath();
-    ctx.strokeStyle = tool === "eraser" ? "#FFFFFF" : color;
-    ctx.lineWidth = strokeWidth;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.moveTo(from.x, from.y);
-    ctx.lineTo(to.x, to.y);
-    ctx.stroke();
-  };
-
   const start = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     if (tool === "text") {
-      if (pendingText) { commitText(); return; } // a second click elsewhere commits the open one first
+      if (pendingText) { commitText(); return; }
       const p = getDisplayPos(e);
       setPendingText({ displayX: p.x, displayY: p.y, value: "" });
       return;
     }
+    const ctx = canvasRef.current?.getContext("2d");
+    if (!ctx) return;
     isDrawing.current = true;
-    currentStroke.current = [getPos(e)];
-  };
-  const move = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    if (!isDrawing.current) return;
-    e.preventDefault();
-    const pos = getPos(e);
-    const pts = currentStroke.current;
-    const prev = pts[pts.length - 1];
-    pts.push(pos);
-    if (prev) strokeSegment(prev, pos);
+    const pt = getPos(e);
+    currentStroke.current = startStroke(pt, tool === "eraser" ? PAPER : color, baseWidth);
+    strokes.current.push(currentStroke.current);
+    // Draw the initial dot so a quick tap leaves a mark
+    inkExtend(ctx, currentStroke.current, pt);
     setHasInk(true);
   };
+
+  const move = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    if (!isDrawing.current || !currentStroke.current) return;
+    e.preventDefault();
+    const ctx = canvasRef.current?.getContext("2d");
+    if (!ctx) return;
+    inkExtend(ctx, currentStroke.current, getPos(e));
+    setHasInk(true);
+  };
+
   const end = () => {
-    if (!isDrawing.current) return;
     isDrawing.current = false;
-    if (currentStroke.current.length > 1) strokes.current.push({ points: currentStroke.current, color: tool === "eraser" ? "#FFFFFF" : color, width: strokeWidth });
-    currentStroke.current = [];
+    currentStroke.current = null;
+  };
+
+  const undo = () => {
+    if (!strokes.current.length) return;
+    strokes.current.pop();
+    redrawAll();
+    setHasInk(strokes.current.length > 0);
+    setPendingText(null);
   };
 
   const clear = () => {
-    const ctx = canvasRef.current?.getContext("2d");
-    if (ctx && canvasRef.current) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
     strokes.current = [];
+    paintPaper();
     setHasInk(false);
     setError(null);
     setPendingText(null);
@@ -134,8 +154,7 @@ export function TutorWhiteboard({ onClose, onSend }: TutorWhiteboardProps) {
       const dataUrl = canvasRef.current.toDataURL("image/png");
       const { description } = await api.readWhiteboard(dataUrl);
       onSend(description);
-      clear(); // sent for real — start the next visit clean, unlike an unsent drawing (see TutorSession: the
-               // component now stays mounted across close/reopen specifically so THAT case survives)
+      clear();
       onClose();
     } catch (e: any) {
       setError(e?.status != null ? e.message : L("La lecture du tableau a échoué — réessaie.", "Couldn't read the whiteboard — try again."));
@@ -154,6 +173,7 @@ export function TutorWhiteboard({ onClose, onSend }: TutorWhiteboardProps) {
         </div>
         <div className="tutor-whiteboard-toolbar-divider" aria-hidden />
         <input type="color" value={color} onChange={(e) => setColor(e.target.value)} className="tutor-whiteboard-color" aria-label={L("Couleur", "Color")} />
+        <button type="button" className="btn xs ghost" onClick={undo} disabled={!hasInk}>↶ {L("Annuler", "Undo")}</button>
         <button type="button" className="btn xs ghost" onClick={clear} disabled={!hasInk}>{L("Effacer tout", "Clear")}</button>
         <div className="tutor-whiteboard-toolbar-divider" aria-hidden />
         <button type="button" className="btn xs ghost" onClick={onClose}>{L("← Retour au tableau", "← Back to board")}</button>
@@ -161,7 +181,7 @@ export function TutorWhiteboard({ onClose, onSend }: TutorWhiteboardProps) {
       <div className="tutor-whiteboard-canvas-wrap">
         <canvas
           ref={canvasRef}
-          className="tutor-whiteboard-canvas"
+          className="tutor-whiteboard-canvas tutor-whiteboard-paper"
           width={800}
           height={600}
           onMouseDown={start} onMouseMove={move} onMouseUp={end} onMouseLeave={end}

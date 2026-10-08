@@ -1,89 +1,112 @@
-import { useRef, useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ArtifactState } from "../StudyTypes.ts";
+import { startStroke, inkExtend, renderAllStrokes, type InkPoint, type InkStroke } from "../../ink.ts";
 
 interface WhiteboardArtifactProps {
   artifact: ArtifactState;
   onChange: (contentState: Record<string, unknown>) => void;
 }
 
-type Tool = "pen" | "eraser" | "text";
-interface Stroke { points: { x: number; y: number }[]; color: string; width: number; }
+type Tool = "pen" | "eraser";
 
+/** Paper color baked into the canvas on init — the eraser draws this color. Warm off-white, like notebook
+ *  paper, not the clinical #FFFFFF the old version used. */
+const PAPER = "#f7f7f2";
+
+/** A freehand canvas in Study Mode. Smooth Bézier ink rendering with velocity-based variable width
+ *  (see ink.ts) makes it feel like writing on paper. Strokes persist to ArtifactState (the study tile's
+ *  content state) so they survive the tile being closed and reopened. */
 export function WhiteboardArtifact({ artifact, onChange }: WhiteboardArtifactProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [tool, setTool] = useState<Tool>("pen");
   const [color, setColor] = useState("#1a1a2e");
   const [strokeWidth, setStrokeWidth] = useState(3);
   const isDrawing = useRef(false);
-  const currentStroke = useRef<{ x: number; y: number }[]>([]);
-  const strokes = useRef<Stroke[]>((artifact.contentState?.strokes as Stroke[]) || []);
+  const currentStroke = useRef<InkStroke | null>(null);
+  const strokes = useRef<InkStroke[]>([]);
 
-  const getPos = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    const rect = canvasRef.current!.getBoundingClientRect();
-    if ("touches" in e) {
-      return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
-    }
-    return { x: (e as React.MouseEvent).clientX - rect.left, y: (e as React.MouseEvent).clientY - rect.top };
-  };
-
-  const redraw = () => {
-    const ctx = canvasRef.current?.getContext("2d");
-    if (!ctx || !canvasRef.current) return;
-    ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-    strokes.current.forEach(stroke => {
-      if (stroke.points.length < 2) return;
-      ctx.beginPath();
-      ctx.strokeStyle = stroke.color;
-      ctx.lineWidth = stroke.width;
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
-      stroke.points.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
-      ctx.stroke();
-    });
-  };
-
-  useEffect(() => { redraw(); }, []);
-
-  const onPointerDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    isDrawing.current = true;
-    currentStroke.current = [getPos(e)];
-  };
-
-  const onPointerMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!isDrawing.current) return;
-    const pos = getPos(e);
-    currentStroke.current.push(pos);
+  // Restore persisted strokes on mount. Old format had { points: {x,y}[], color, width } — map to InkStroke
+  // with t:0 (timestamps aren't used by the renderer, only x/y for the Bézier + velocity-from-distance).
+  useEffect(() => {
+    const loaded = (artifact.contentState?.strokes as any[]) || [];
+    strokes.current = loaded.map((s) => ({
+      points: (s.points || []).map((p: any) => ({ x: p.x, y: p.y, t: p.t || 0 })),
+      color: s.color || PAPER,
+      baseWidth: s.width || s.baseWidth || 3,
+    }));
     const ctx = canvasRef.current?.getContext("2d");
     if (!ctx) return;
-    const pts = currentStroke.current;
-    if (pts.length < 2) return;
-    ctx.beginPath();
-    ctx.strokeStyle = tool === "eraser" ? "#f5f5f0" : color;
-    ctx.lineWidth = tool === "eraser" ? 24 : strokeWidth;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.moveTo(pts[pts.length - 2].x, pts[pts.length - 2].y);
-    ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
-    ctx.stroke();
+    ctx.fillStyle = PAPER;
+    ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    renderAllStrokes(ctx, strokes.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const baseWidth = tool === "eraser" ? 22 : strokeWidth;
+
+  const getPos = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>): InkPoint => {
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const scaleX = canvasRef.current!.width / rect.width;
+    const scaleY = canvasRef.current!.height / rect.height;
+    const point = "touches" in e ? (e.touches[0] || e.changedTouches[0]) : e;
+    return { x: (point.clientX - rect.left) * scaleX, y: (point.clientY - rect.top) * scaleY, t: performance.now() };
   };
 
-  const onPointerUp = () => {
+  const paintPaper = () => {
+    const ctx = canvasRef.current?.getContext("2d");
+    if (!ctx || !canvasRef.current) return;
+    ctx.fillStyle = PAPER;
+    ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+  };
+
+  const redrawAll = () => {
+    const ctx = canvasRef.current?.getContext("2d");
+    if (!ctx) return;
+    paintPaper();
+    renderAllStrokes(ctx, strokes.current);
+  };
+
+  const persist = () => {
+    onChange({ strokes: strokes.current.map((s) => ({ points: s.points, color: s.color, width: s.baseWidth })) });
+  };
+
+  const start = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const ctx = canvasRef.current?.getContext("2d");
+    if (!ctx) return;
+    isDrawing.current = true;
+    const pt = getPos(e);
+    currentStroke.current = startStroke(pt, tool === "eraser" ? PAPER : color, baseWidth);
+    strokes.current.push(currentStroke.current);
+    inkExtend(ctx, currentStroke.current, pt);
+  };
+
+  const move = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    if (!isDrawing.current || !currentStroke.current) return;
+    e.preventDefault();
+    const ctx = canvasRef.current?.getContext("2d");
+    if (!ctx) return;
+    inkExtend(ctx, currentStroke.current, getPos(e));
+  };
+
+  const end = () => {
     if (!isDrawing.current) return;
     isDrawing.current = false;
-    strokes.current.push({
-      points: currentStroke.current,
-      color: tool === "eraser" ? "#f5f5f0" : color,
-      width: tool === "eraser" ? 24 : strokeWidth,
-    });
-    currentStroke.current = [];
-    onChange({ strokes: strokes.current });
+    currentStroke.current = null;
+    persist();
+  };
+
+  const undo = () => {
+    if (!strokes.current.length) return;
+    strokes.current.pop();
+    redrawAll();
+    persist();
   };
 
   const clear = () => {
     strokes.current = [];
-    redraw();
-    onChange({ strokes: [] });
+    paintPaper();
+    persist();
   };
 
   return (
@@ -97,19 +120,19 @@ export function WhiteboardArtifact({ artifact, onChange }: WhiteboardArtifactPro
           <option value={4}>Normal</option>
           <option value={8}>Thick</option>
         </select>
+        <button className="sm-wb-btn" onClick={undo}>↶ Undo</button>
         <button className="sm-wb-btn" onClick={clear}>Clear</button>
       </div>
-      <canvas
-        ref={canvasRef}
-        className="sm-whiteboard-canvas"
-        width={800}
-        height={600}
-        onMouseDown={onPointerDown}
-        onMouseMove={onPointerMove}
-        onMouseUp={onPointerUp}
-        onMouseLeave={onPointerUp}
-        style={{ cursor: tool === "eraser" ? "cell" : "crosshair" }}
-      />
+      <div className="sm-whiteboard-canvas-wrap">
+        <canvas
+          ref={canvasRef}
+          className="sm-whiteboard-canvas tutor-whiteboard-paper"
+          width={800}
+          height={600}
+          onMouseDown={start} onMouseMove={move} onMouseUp={end} onMouseLeave={end}
+          onTouchStart={start} onTouchMove={move} onTouchEnd={end} onTouchCancel={end}
+        />
+      </div>
     </div>
   );
 }
