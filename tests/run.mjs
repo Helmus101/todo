@@ -1715,15 +1715,9 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   // The board as a drafted WORKSHEET (research: gradual release + completion effect + ICAP — the visible
   // artifact of a session is the student's own thinking, laid out like a lesson page, written in live).
   check("board has a worksheet header (date + subject)", /sm-board-header/.test(boardSrc) && /sm-board-header-subject/.test(boardSrc));
-<<<<<<< HEAD
-  check("board entries carry worksheet section numbers", /sm-board-section-num/.test(boardSrc));
+  check("board is flat: plain lines, no section numbers or boxes", /sm-board-line/.test(boardSrc) && !/sm-board-section-num/.test(boardSrc));
   check("kind:\"summary\" renders as an ordinary line — no trace box, no heading, no category", !/ReasoningTrace|sm-board-trace/.test(boardSrc));
   check("a deliberately unfinished worked line gets an 'à toi de finir' completion chip (completion effect, visible)", /isCompletionGap/.test(boardSrc) && /sm-board-todo-chip/.test(boardSrc));
-=======
-  check("board is flat: plain lines, no section numbers or boxes", /sm-board-line/.test(boardSrc) && !/sm-board-section-num/.test(boardSrc));
-  check("kind:\"summary\" renders as a reasoning trace (how the student got there)", /ReasoningTrace/.test(boardSrc) && /sm-board-trace/.test(boardSrc));
-  check("a deliberately unfinished worked line gets an 'à toi de finir' completion chip (completion effect, visible)", /isCompletionGap/.test(boardSrc));
->>>>>>> 8ec2956 (Flat board: plain lines, no highlighting or boxes; stricter never-give-the-answer tutor rule)
   check("new entries write themselves in (drafted, not swapped)", /sm-board-writein/.test(boardSrc));
   check("the board shows a live 'Otto écrit…' drafting indicator while the tutor composes", /writing\?/.test(boardSrc) && /sm-board-drafting/.test(boardSrc));
   check("TutorSession wires the drafting indicator to the chat's sending state", /writing=\{sending\}/.test(readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8")));
@@ -4782,11 +4776,11 @@ section("Phone restriction — flashcard review + READ-ONLY tasks, no chat; iPad
 
   const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
   check("App.tsx imports the shared useIsPhone hook", /import \{ useIsPhone \} from "\.\/useIsPhone\.ts"/.test(app));
-  check("tasks + flashcards + settings are reachable on phone; anything else redirects to the task list", /PHONE_ALLOWED_ROUTES\s*=\s*\["", "tasks", "log", "settings"\]/.test(app) && /r\.startsWith\("task\/"\)/.test(app) && /!phoneRouteAllowed\(route\)\) navigate\("tasks"\)/.test(app));
-  check("Tutor/Study/Error log/Admin stay hidden on phone, but Tasks does NOT", /\{!isPhone && <a[\s\S]{0,200}href="\/tutor"/.test(app) && /\{!isPhone && <a[\s\S]{0,200}href="\/errorlog"/.test(app) && !/\{!isPhone && <a[\s\S]{0,200}href="\/tasks"/.test(app));
+  check("tasks + flashcards + settings are reachable on phone; anything else redirects to the task list", /PHONE_ALLOWED_ROUTES\s*=\s*\["", "tasks", "log", "settings", "tutor"\]/.test(app) && /r\.startsWith\("task\/"\)/.test(app) && /!phoneRouteAllowed\(route\)\) navigate\("tasks"\)/.test(app));
+  check("Tutor/Study/Error log/Admin stay hidden on phone, but Tasks does NOT", /\{!isPhone && <a[\s\S]{0,200}href="\/errorlog"/.test(app) && !/\{!isPhone && <a[\s\S]{0,200}href="\/tasks"/.test(app));
   // The point of the phone task view: READ it, don't work on it. No chat (TaskFocus owns the chat), no
   // ticking steps off, no Study Mode, no dismiss, no add-task.
-  check("a phone opens TaskReadOnly instead of TaskFocus (which is where chat lives)", /isPhone \? \(\s*<TaskReadOnly task=\{openTask\} \/>/.test(app));
+  check("a phone opens TaskReadOnly instead of TaskFocus (which is where chat lives)", /isPhone \? \(\s*<TaskReadOnly task=\{openTask\}/.test(app));
   check("task rows on phone are view-only (readOnly) and can't launch Study Mode", /readOnly=\{isPhone\}/.test(app) && /STUDY_MODE_ENABLED && !isPhone \?/.test(app));
   // (Restyled to the Framer prototype: the old topbar's Refresh ghost button is gone — the generate
   // action now lives only in the dashboard's own empty states, and add-task stayed phone-hidden.)

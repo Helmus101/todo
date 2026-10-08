@@ -339,7 +339,6 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
         className={`sm-board-problem sm-board-problem-solved-compact sm-board-writein${fresh ? " sm-board-reveal" : ""}`}
         style={fresh ? { animationDuration: `.35s, ${Math.min(1.6, Math.max(0.5, problem.question.length / 90))}s` } : undefined}
       >
-        <span className="sm-board-section-num" aria-hidden="true">{String(sectionNumber).padStart(2, "0")}</span>
         <div className="sm-board-entry-main">
           <div className="sm-board-problem-compact-inner">
             <span className="sm-board-problem-compact-mark" aria-hidden="true">✓</span>
