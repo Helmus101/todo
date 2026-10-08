@@ -3295,7 +3295,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   color: var(--ink-3);
 }
 
-/* ─── Simple Landing Page ──────────────────────────────────────���──────────── */
+/* ─── Simple Landing Page ──────────────────────────────────────�����──────────── */
 .landing-simple {
   min-height: 100vh;
   min-height: 100dvh;
@@ -7312,6 +7312,52 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .tutor-chat-text { font-size: 0.95rem; line-height: 1.5; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; padding: 10px 14px; border-radius: var(--radius-sm); max-width: 85%; }
 .tutor-chat-message.user .tutor-chat-text { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--ink); }
 .tutor-chat-message.assistant .tutor-chat-text { background: var(--surface); border: 1px solid var(--line); color: var(--ink); }
+
+/* Phone-first tutor layout: keep /tutor reachable and usable at 390px without horizontal clipping. */
+@media (max-width: 640px) {
+  .tutor-landing {
+    min-height: calc(100dvh - 56px - env(safe-area-inset-top));
+    padding: 32px 16px;
+    align-items: flex-start;
+  }
+  .tutor-landing-inner { width: 100%; gap: 18px; }
+  .tutor-landing-title { font-size: 2.15rem; }
+  .tutor-landing-sub { max-width: 32ch; font-size: 1rem; }
+  .tutor-start-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 8px;
+    border-radius: 16px;
+  }
+  .tutor-start-select { min-height: 48px; padding: 10px 12px; }
+  .tutor-start-btn { width: 100%; min-height: 48px; padding: 12px 18px; }
+  .tutor-active-session-card { width: 100%; max-width: none; padding: 16px; }
+  .tutor-active-session-actions, .tutor-history-actions { flex-wrap: wrap; }
+  .tutor-history-actions > * { flex: 1 1 140px; text-align: center; }
+
+  .tutor-stage { height: 100dvh; min-height: 100dvh; }
+  .tutor-crumbbar {
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    padding: 10px 12px;
+  }
+  .tutor-crumb-link, .tutor-crumb-subject { font-size: 14px; }
+  .tutor-crumbbar .tutor-chat-btn { margin-left: 0; }
+  .tutor-end-btn { margin-left: auto; min-height: 44px; padding: 8px 10px; }
+  .ts-bar { padding-left: 12px; padding-right: 12px; }
+  .ts-board-body { padding: 76px 8px 300px; }
+  .ts-board-body .sm-board-body { padding-left: 8px; padding-right: 8px; }
+  .ts-dock { width: calc(100% - 16px); bottom: max(8px, env(safe-area-inset-bottom)); }
+  .otto-dock { padding: 8px; border-radius: 16px; }
+  .otto-dock-row { gap: 8px; }
+  .otto-bubble { font-size: 14px; padding: 9px 36px 9px 11px; max-height: 25vh; }
+  .otto-avatar { display: none; }
+  .otto-quick { gap: 6px; }
+  .otto-quick-btn { min-height: 44px; padding: 8px 11px; }
+  .tc-toolbar { top: 8px; max-width: calc(100% - 16px); }
+  .tc-btn { width: 44px; height: 44px; }
+}
 
 /* Tutor landing page */
 .tutor-subject-select { margin: 16px 0; }
