@@ -1,0 +1,196 @@
+@import url('https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500&display=swap');
+
+/* ═══ "AI lab" skin — loaded LAST, so it re-themes the whole app through tokens first and a short list of
+   overrides second. The look: warm paper, hairline borders instead of shadows, a quiet serif for page
+   titles, mono micro-labels, near-black primary actions, and orange reserved for small signals (the active
+   page, progress, focus, Otto himself). Nothing here changes layout or behaviour — delete this file and
+   the app is exactly as before. ═══════════════════════════════════════════════════════════════════════════ */
+:root {
+  --bg: #FAF9F5;
+  --surface: #FFFFFF;
+  --surface-raised: #FFFFFF;
+  --surface-glass: #FFFFFF;
+  --bar: #FAF9F5;
+  --ink: #141413;
+  --ink-2: #5E5D59;
+  --ink-3: #8A877E;
+  --line: #E6E3DA;
+  --line-soft: #EFEDE5;
+  --line-glass: #E6E3DA;
+  --glass-border: #E6E3DA;
+  --bg-2: #F2F0E9;
+  --bg-3: #E9E6DD;
+  --hover-wash: #F2F0E9;
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --shadow-sm: none;
+  --shadow-card: none;
+  --shadow-card-hover: 0 0 0 1px var(--ink-3);
+  --shadow-pop: 0 8px 24px rgba(20, 20, 19, 0.08);
+  --shadow-float: 0 12px 32px rgba(20, 20, 19, 0.10);
+  --shadow-glow: 0 0 0 3px var(--accent-soft);
+  --display: 'Newsreader', 'Baskervville', Georgia, 'Times New Roman', serif;
+  --font-serif: 'Newsreader', 'Baskervville', Georgia, serif;
+  --label: var(--mono);
+}
+html, body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antialiased; }
+
+/* Page titles: quiet serif, regular weight, generous size — the "research paper" voice. */
+.list-head, .tutor-landing-title, h1.page-title {
+  font-family: var(--display);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 1.08;
+}
+.list-head .accent-num { color: var(--ink); font-style: italic; }
+h2, .settings-sec h2 { font-family: var(--display); font-weight: 500; letter-spacing: -0.01em; }
+
+/* Top nav: text only, active page marked by a hairline underline. */
+.topnav { border-bottom: 1px solid var(--line-soft); }
+.topnav-brand { font-family: var(--display); font-weight: 500; font-size: 24px; letter-spacing: -0.02em; }
+.topnav-link { font-size: 14px; font-weight: 500; color: var(--ink-2); padding: 8px 0; border-bottom: 1px solid transparent; border-radius: 0; }
+@media (hover: hover) { .topnav-link:hover { color: var(--ink); } }
+.topnav-link.active { color: var(--ink); border-bottom-color: var(--accent); }
+
+/* Buttons: near-black primary, quiet secondary, no glows. */
+.btn { border-radius: var(--radius); font-weight: 500; }
+.btn:hover { background: var(--bg-2); border-color: var(--ink-3); }
+.btn.primary, .btn.primary.big, .sm-btn-primary { background: var(--ink); border-color: var(--ink); color: var(--bg); box-shadow: none; }
+.btn.primary:hover, .btn.primary.big:hover, .sm-btn-primary:hover:not(:disabled) { background: #33322E; border-color: #33322E; box-shadow: none; }
+.btn.primary:active, .btn.primary.big:active { background: #000; box-shadow: none; }
+.btn.primary:disabled, .sm-btn-primary:disabled { background: var(--bg-3); border-color: var(--bg-3); color: var(--ink-3); }
+.btn.ghost { color: var(--ink-2); }
+:focus-visible { outline-color: var(--accent); }
+
+/* Surfaces: hairline borders, no elevation. */
+.settings-sec, .task-card, .tcard, .card, .empty-state, .connect-card, .sm-ai-input, .tutor-active-session-card {
+  box-shadow: none;
+  border-color: var(--line);
+  border-radius: var(--radius-lg);
+}
+.settings-sec { background: var(--surface); }
+input, textarea, select { border-radius: var(--radius); }
+input:focus, textarea:focus, select:focus { border-color: var(--ink); box-shadow: 0 0 0 3px var(--accent-soft); outline: none; }
+
+/* Micro-labels: mono, small caps — the "lab notebook" detail. */
+.micro-label, .settings-sec > h3, .settings-sec-title, .tutor-history-section-label, .tutor-objectives-head, .week-label, .list-status {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* Tutor stage + dock: calmer elevation. */
+.otto-dock { border-radius: 16px; box-shadow: 0 1px 2px rgba(20,20,19,.04), 0 12px 32px rgba(20,20,19,.08); }
+.otto-bubble { background: var(--bg-2); }
+.tc-toolbar { box-shadow: 0 1px 2px rgba(20,20,19,.04), 0 6px 20px rgba(20,20,19,.07); }
+.tc-show { background: var(--ink); box-shadow: 0 6px 20px rgba(20,20,19,.2); }
+.ts-canvas { background-color: var(--bg); background-image: radial-gradient(color-mix(in srgb, var(--line) 90%, transparent) 1px, transparent 1px); }
+.tutor-face { background: #EFEBE0; }
+.tutor-start-row { background: var(--surface); }
+.tutor-end-btn { font-weight: 500; }
+.otto-quick-btn { background: var(--surface); }
+.otto-quick-btn:hover { background: var(--bg-2); border-color: var(--ink-3); }
+
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+
+/* Page canvas = paper everywhere (some wrappers painted their own white). */
+#root, .app, .list-wrap, .main, main { background-color: var(--bg); }
+/* Inline links: ink, underlined — orange stays a signal, not a link colour. */
+.settings-sec a:not(.btn) { color: var(--ink); font-weight: 500; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+.settings-sec a:not(.btn):hover { text-decoration-color: var(--ink); }
+.btn.danger, .btn.destructive, .settings-danger .btn { box-shadow: none; }
+button, .btn { box-shadow: none; }
+
+/* Landing + auth: same paper, same serif voice, same near-black action. */
+h1 { font-family: var(--display); font-weight: 400; letter-spacing: -0.025em; }
+.hero-title-framer { font-weight: 400; letter-spacing: -0.03em; line-height: 1.04; }
+.feature-title-framer { font-weight: 500; letter-spacing: -0.015em; }
+.feature-heading-framer { font-family: var(--display); font-weight: 500; font-size: 1.45em; letter-spacing: -0.015em; }
+.feature-number-framer { font-family: var(--mono); font-weight: 400; font-size: 13px; letter-spacing: 0.08em; color: var(--ink-3); }
+.landing-nav-framer, .landing-footer-framer { background: var(--bg); border-color: var(--line-soft); }
+.hero-framer, .hero-inner-framer, [class*="hero-"][class$="-framer"]:not(.hero-title-framer) { background: transparent; }
+.btn.primary-framer { background: var(--ink); border-color: var(--ink); color: var(--bg); box-shadow: none; border-radius: var(--radius); }
+.btn.primary-framer:hover { background: #33322E; border-color: #33322E; box-shadow: none; }
+.btn.ghost-framer { color: var(--ink-2); }
+.lang-toggle-framer { background: transparent; border: 1px solid var(--line); color: var(--ink-2); font-family: var(--mono); font-size: 11px; letter-spacing: .06em; border-radius: var(--radius); }
+.feature-card-framer, .feature-demo-framer, [class*="demo-card"] { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: none; }
+.features-framer [class*="card"], .features-framer [class*="demo"], .features-framer [class*="preview"] { background: var(--surface); border: 1px solid var(--line); box-shadow: none; }
+
+/* Basic onboarding: year/subject pickers wrap as chips (the default .onboard-apps stacks full-width tiles), and
+   the Skip link no longer sits on top of the progress dots. */
+.onboard-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.onboard-chips .btn { width: auto; min-width: 0; flex: 0 0 auto; }
+.onboard-chips .btn[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.onboard-top { padding-right: 56px; }
+.onboard-skip { top: 18px; right: 18px; }
+.onboard-chips + .muted { margin-top: 12px; }
+
+/* ---- Tutor board: exercises + focus, quieter (minimal, lab-like) ---- */
+.sm-board-problem { background: var(--surface); border: 1px solid var(--line); border-left: 1px solid var(--line); border-radius: 14px; box-shadow: none; padding: 20px 24px; margin: 6px 0 18px; }
+.sm-board-problem-label { background: none; padding: 0; border-radius: 0; margin-bottom: 8px; font-size: 11px; letter-spacing: .08em; color: var(--ink-3, #8a867b); }
+.sm-board-problem-label::before { content: none; }
+.sm-board-problem-q { font-size: 1.05rem; font-weight: 500; line-height: 1.65; margin-bottom: 4px; }
+.sm-board-problem-q .katex { font-size: 1.06em; }
+.sm-board-problem-format { margin-top: 2px; font-size: 13px; color: var(--ink-3, #8a867b); }
+.sm-board-problem-hint-row { margin-top: 10px; }
+.sm-board-problem-hint-row .sm-btn { background: none; border: none; padding: 0; height: auto; font-size: 13px; font-weight: 500; color: var(--accent); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.sm-board-problem-hint { font-style: normal; padding: 10px 14px; border-left: 2px solid var(--accent); background: var(--accent-soft); border-radius: 0 8px 8px 0; color: var(--ink-2); }
+.sm-board-problem .sm-inline-problem-input-row { margin-top: 14px; gap: 10px; }
+.sm-board-problem .sm-inline-problem-input { height: 44px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); padding: 0 14px; font-size: 15px; }
+.sm-board-problem .sm-inline-problem-input-row .sm-btn { height: 44px; padding: 0 20px; border-radius: 10px; background: var(--ink); color: #fff; border: 1px solid var(--ink); font-weight: 500; }
+.sm-board-problem .sm-inline-problem-input-row .sm-btn:disabled { background: transparent; color: var(--ink-3, #8a867b); border-color: var(--line); }
+.sm-board-problem .quiz-opt { border-radius: 10px; }
+.sm-board-focus-pin { background: transparent; border: none; border-left: 2px solid var(--accent); border-radius: 0; padding: 4px 0 4px 14px; margin: 4px 0 20px; }
+.sm-board-focus-pin .sm-board-entry-kind { font-size: 11px; letter-spacing: .08em; color: var(--ink-3, #8a867b); }
+.sm-board-focus-text { font-size: 1.1rem; font-weight: 500; }
+.sm-board-trace { border-left: 1px solid var(--line); }
+.sm-board-trace-heading { color: var(--ink-3, #8a867b); letter-spacing: .08em; }
+
+.tutor-reflect { display: flex; flex-direction: column; gap: 14px; padding: 4px 4px 8px; }
+.tutor-reflect p { margin: 0; font-size: 1rem; line-height: 1.55; color: var(--ink); }
+.tutor-reflect-input { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font: inherit; resize: vertical; background: var(--surface); }
+.tutor-reflect-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
+.tutor-reflect-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.tutor-reflect-overlay { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(20,20,19,.32); }
+.tutor-reflect-overlay .tutor-reflect { width: min(480px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 24px; box-shadow: 0 20px 60px rgba(20,20,19,.18); }
+.tutor-reflect h3 { margin: 0; font-size: 1.15rem; font-weight: 600; }
+
+/* ---- Task steps: calmer rows, quiet actions, "Break this step down" as a small inline link ---- */
+.step { gap: 14px; padding: 16px 0; align-items: flex-start; }
+.step-body { gap: 4px; }
+.step-text { font-size: 15px; line-height: 1.55; color: var(--ink); }
+.step.done .step-text { color: var(--ink-3); }
+.step-minutes, .step-target, .step-when { font-size: 12.5px; color: var(--ink-3); }
+.step-minutes.quick-win { color: var(--accent); font-weight: 500; }
+.substep-expand.btn { align-self: flex-start; height: auto; margin: 6px 0 0; padding: 2px 0; background: none; border: none; box-shadow: none; border-radius: 0; font-size: 13px; font-weight: 500; color: var(--ink-3); }
+.substep-expand.btn::before { content: "+"; margin-right: 6px; font-weight: 600; }
+.substep-expand.btn:hover { background: none; color: var(--accent); }
+.step-act { display: flex; align-items: center; gap: 6px; align-self: flex-start; }
+.step-act .btn.xs { display: inline-block; text-align: left; line-height: 28px; height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); font-size: 13px; font-weight: 500; white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.step-act .btn.xs:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); background: var(--surface); }
+@media (max-width: 640px) { .step { flex-wrap: wrap; } .step-act { margin-left: 36px; } }
+
+/* ---- Ask Otto popup: the conversation takes the WHOLE popup (thread fills, input pinned at the bottom) ---- */
+.task-modal.wide { max-width: min(820px, 94vw); min-height: min(88vh, 820px); }
+.task-modal.wide .task-chat { display: flex; flex-direction: column; height: 100%; min-height: 0; margin: 0; padding: 0; border: none; background: none; box-shadow: none; }
+.task-modal.wide .task-chat > h3 { flex: none; }
+.task-modal.wide .chat-thread { flex: 1; min-height: 0; max-height: none; overflow-y: auto; margin-bottom: 12px; padding-right: 4px; }
+.task-modal.wide .task-chat > :last-child { flex: none; }
+
+/* A guiding question lives on the page while the student thinks. */
+.sm-board-entry-question .sm-board-entry-main { border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); border-left: 3px solid var(--accent); border-radius: 12px; padding: 12px 16px; background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface)); }
+.sm-board-entry-question .sm-board-entry-text { font-weight: 500; font-size: 1.02rem; line-height: 1.6; }
+.sm-board-entry-question .sm-board-entry-main::before { content: "Question"; display: block; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); font-weight: 700; margin-bottom: 4px; }
+
+/* Given (the problem's data) and Established (what the student found) — the board as paper. */
+.sm-board-entry-given .sm-board-entry-main { border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; background: var(--surface); }
+.sm-board-entry-given .sm-board-entry-main::before { content: "Given"; display: block; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3, #8a867b); font-weight: 700; margin-bottom: 4px; }
+.sm-board-entry-result .sm-board-entry-main { border-left: 3px solid #2f9e6f; border-radius: 0 12px 12px 0; padding: 10px 16px; background: color-mix(in srgb, #2f9e6f 8%, var(--surface)); }
+.sm-board-entry-result .sm-board-entry-main::before { content: "✓ Established"; display: block; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: #2f9e6f; font-weight: 700; margin-bottom: 4px; }
+.sm-board-entry-given .sm-board-entry-text, .sm-board-entry-result .sm-board-entry-text { font-size: 1.04rem; line-height: 1.65; }

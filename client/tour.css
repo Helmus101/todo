@@ -1,0 +1,14 @@
+.tour-root { position: fixed; inset: 0; z-index: 9000; pointer-events: none; }
+.tour-dim { position: fixed; background: rgba(20, 20, 19, 0.52); pointer-events: auto; transition: all .18s ease; }
+.tour-ring { position: fixed; border: 2px solid var(--accent); border-radius: 12px; box-shadow: 0 0 0 4px var(--accent-soft); pointer-events: none; transition: all .18s ease; }
+.tour-ring.live { animation: tour-pulse 1.6s ease-in-out infinite; }
+@keyframes tour-pulse { 0%, 100% { box-shadow: 0 0 0 4px var(--accent-soft); } 50% { box-shadow: 0 0 0 9px var(--accent-soft); } }
+.tour-card { position: fixed; pointer-events: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px 14px; box-shadow: 0 12px 40px rgba(20, 20, 19, .22); }
+.tour-meta { display: flex; justify-content: space-between; align-items: center; font-family: var(--mono); font-size: 11px; letter-spacing: .08em; color: var(--ink-3); text-transform: uppercase; }
+.tour-skip { border: 0; background: transparent; font: inherit; color: var(--ink-3); cursor: pointer; text-transform: none; letter-spacing: 0; font-size: 12px; }
+.tour-skip:hover { color: var(--ink); }
+.tour-title { margin: 6px 0 4px; font-family: var(--display); font-weight: 500; font-size: 19px; letter-spacing: -0.01em; }
+.tour-body { margin: 0; color: var(--ink-2); font-size: 14px; line-height: 1.5; }
+.tour-action { margin: 8px 0 0; font-size: 13px; font-weight: 600; color: var(--accent); }
+.tour-actions { display: flex; justify-content: space-between; gap: 8px; margin-top: 12px; }
+@media (prefers-reduced-motion: reduce) { .tour-dim, .tour-ring { transition: none; } .tour-ring.live { animation: none; } }

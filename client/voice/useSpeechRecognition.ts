@@ -156,13 +156,18 @@ export function useSpeechRecognition({ lang, onResult, onInterim, onError }: Use
       if (recRef.current !== rec) return;
       setInterimTranscript("");
       onInterimRef.current?.("");
-      flushPending(); // don't lose a trailing utterance still waiting out its debounce when the session ends
       if (keepAliveRef.current) {
-        // The recognizer stopped on its own (session cap / blip) but the app still wants to be listening —
-        // restart transparently. A brief microtask delay avoids some browsers' "already started" race when
-        // onend and a fresh start() land in the same tick.
+        // Reported live: the student got cut off mid-sentence "sometimes" — not from a real pause, but
+        // from the browser's OWN session cap (most engines force a session to end after ~60s even in
+        // continuous mode) landing mid-utterance. The old code flushed the pending buffer unconditionally
+        // right here, before restarting — which sent a half-finished thought out as a message purely
+        // because of where the 60s boundary happened to fall, nothing the student did. Don't flush: the
+        // buffer (and its already-scheduled flush timer, if one is pending) is a ref, so it simply survives
+        // the restart below and keeps accumulating once the new recognizer's onresult starts firing again —
+        // the student never notices the session underneath them was replaced.
         setTimeout(() => { if (keepAliveRef.current && recRef.current === rec) createAndStartRef.current?.(); }, 50);
       } else {
+        flushPending(); // a REAL stop (stop()/abort() or a fatal error) — send what was still buffered rather than losing it
         setListening(false);
       }
     };

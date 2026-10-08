@@ -26,3 +26,26 @@ Most relevant to Otto's threat model:
 - Keep `SUPABASE_SERVICE_KEY` server-side only; it bypasses RLS.
 - Set a strong `SESSION_SECRET` (`openssl rand -hex 32`) and `CRON_SECRET` in production.
 - Never commit a real `.env`. Bring your own `DEEPSEEK_API_KEY` and `COMPOSIO_API_KEY`.
+
+## Dependency audit — known, accepted, not yet patchable
+
+`npm audit --omit=dev` reports one high-severity advisory, and it is **unfixable today**, so it is
+recorded here instead of being silently ignored:
+
+| Advisory | Package | Path | Status |
+| --- | --- | --- | --- |
+| [GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv) (CVE-2026-85393) | `node-forge` | `@blockshub/pawnote-lts` → `node-forge` | **No patched version exists** — the advisory lists *Patched versions: none* for `<= 1.4.0`, and `1.4.0` is the latest release. `npm audit fix --force` would only *downgrade* the tree, so it is deliberately not run. |
+
+The advisory is about RSA **PKCS#1 v1.5 signature verification** accepting extra nested
+`DigestAlgorithm` elements. Reachability in this codebase was checked, not assumed:
+
+- Otto's own code never imports `node-forge` (`grep -rn "node-forge" server scripts` → no matches).
+- The only consumer is `@blockshub/pawnote-lts` (the Pronote client). Its compiled bundle contains
+  **zero `.verify(` calls** — it uses node-forge for `cipher.createCipher`/`createDecipher` (AES),
+  `md.md5`/`md.sha*`, `util.*`, `jsbn.BigInteger`, and `pki.rsa.setPublicKey` (encrypting to Pronote's
+  public key during the login handshake). The vulnerable verification path is never entered.
+- Even if it were, forging a signature would require the school's Pronote server to be the attacker —
+  a party that already receives the student's own credentials.
+
+Re-check this entry whenever `node-forge` ships a patched release (`npm audit` will start passing on
+its own once the tree resolves to a fixed version), and drop it at that point.

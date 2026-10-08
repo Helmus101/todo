@@ -145,7 +145,15 @@ export async function makeSessionStore(): Promise<session.Store | undefined> {
   // which now takes up to 3min to self-heal instead of 1min. Acceptable for a single-student account where
   // near-simultaneous multi-device edits are rare; if that tradeoff ever bites, lower this back down rather
   // than reverting to the old 60s/4s — the egress savings compound with every open tab/poll tick.
-  const GET_CACHE_TTL_MS = 180_000;
+  const GET_CACHE_TTL_MS = 900_000; // 15min — was 3min. Every get() past TTL re-reads the FULL session blob
+  // (profile + every task + chat history) from Supabase and JSON.parses it: CPU + Supabase egress paid by
+  // the very first request on any warm-but-stale instance. The client's real poll cadence is 10 minutes
+  // (App.tsx's syncTick) plus occasional clicks, so a 3min TTL meant virtually every poll landed past
+  // expiry and paid the full re-hydration anyway. 15min means a warm instance almost always serves the
+  // session from memory; every WRITE still refreshes the cache immediately (set() below), and cross-tab/
+  // cross-device task freshness flows through /api/tasks's cloud merge (loadState), not through re-reading
+  // this blob — so the staleness window only ever affects unmodified reads. If a tradeoff ever bites,
+  // lower this rather than reverting to 3min: the savings compound with every open tab/poll tick.
   // Bounded so this can't grow forever on a long-running server (a serverless deployment recycles the
   // process anyway) — every distinct sid that's ever hit get()/set() would otherwise sit in memory until
   // process restart, and a session blob can be sizeable (see comment above). A Map preserves insertion
@@ -333,7 +341,11 @@ async function withRetry<T>(label: string, op: () => Promise<{ data: T; error: {
 // 3min (matching makeSessionStore's cache) after a real Supabase egress-cap outage — every extra minute of
 // TTL directly removes read volume, compounding across every open tab's poll and every `loadState` call
 // scattered through index.ts/pronote.ts/jobs.ts (see that file's own comment on this).
-const STATE_CACHE_TTL_MS = 180_000;
+const STATE_CACHE_TTL_MS = 300_000; // 5min — was 3min. Same lever as makeSessionStore's cache above: every
+// extra minute of TTL removes a full profile+tasks row read (plus its JSON.parse CPU) on any warm instance,
+// and the client's poll cadence is now 10 minutes, so a longer TTL is what actually collapses repeat reads.
+// Mutations always invalidate (saveState/cacheSetState), and POST /api/jobs/kick reads with bypassCache: true
+// when freshness matters, so the wider window only affects best-effort poll merges.
 const STATE_CACHE_MAX = 500;
 const stateCache = new Map<string, { at: number; state: AccountState }>();
 function cacheSetState(email: string, state: AccountState) {
@@ -983,4 +995,79 @@ export async function exportJobsAndEvents(userEmail: string): Promise<{ jobs: Jo
     jobs: memJobs.filter((j) => j.user_email === userEmail),
     events: memEvents.filter((e) => e.user_email === userEmail),
   };
+}
+
+/** Aggregate, app-wide usage metrics for the admin dashboard (gated to a single hardcoded email in
+ *  server/index.ts's route — this function itself does no access control, it's a pure data query). Pulls
+ *  every account's `tasks` column in one shot rather than one query per account: this app's expected scale
+ *  (a class of students, not a production SaaS) makes a single bounded SELECT the simplest correct choice;
+ *  revisit with a real SQL aggregate (a Postgres view/RPC) if the account count ever approaches the limit
+ *  below. Tutor session MINUTES are an ESTIMATE (span between a session's first and last chat message, not
+ *  a tracked start/end) since Tutor sessions have no explicit duration field — see TaskFocus/TutorSession's
+ *  own chat array, which is the only per-session timestamp signal that exists today. */
+export interface AdminUserMetrics {
+  email: string;
+  taskCount: number;
+  tutorSessionCount: number;
+  tutorMinutes: number;
+}
+export interface AdminMetrics {
+  userCount: number;
+  taskCount: number;
+  tutorSessionCount: number;
+  tutorMinutesTotal: number;
+  tasksBySource: Record<string, number>;
+  /** Per-account breakdown — sorted by taskCount descending (the most active accounts first, the view
+   *  this dashboard actually gets used for: "who's using it, how much"). */
+  byUser: AdminUserMetrics[];
+}
+const ADMIN_METRICS_ACCOUNT_LIMIT = 5000;
+export async function getAdminMetrics(): Promise<AdminMetrics | null> {
+  if (!client) return null;
+  try {
+    const { data, error } = await client.from(TABLE).select("email, tasks").limit(ADMIN_METRICS_ACCOUNT_LIMIT);
+    if (error) { console.warn("[store] getAdminMetrics failed:", error.message); return null; }
+    const rows = data || [];
+    let taskCount = 0;
+    let tutorSessionCount = 0;
+    let tutorMinutesTotal = 0;
+    const tasksBySource: Record<string, number> = {};
+    const byUser: AdminUserMetrics[] = [];
+    for (const row of rows) {
+      const email = String((row as any).email || "unknown");
+      const tasks: any[] = Array.isArray((row as any).tasks) ? (row as any).tasks : [];
+      taskCount += tasks.length;
+      let userTutorSessions = 0;
+      let userTutorMinutes = 0;
+      for (const t of tasks) {
+        const src = String(t?.source || "unknown");
+        tasksBySource[src] = (tasksBySource[src] || 0) + 1;
+        if (src === "freestudy") {
+          // SAME substance gate TutorSession.tsx's saveAndClose uses to decide whether a session is even
+          // worth keeping (a real user message or board content) — reported live: without this, the count
+          // included every opened-and-immediately-abandoned session (tapped into Tutor, closed before
+          // sending anything), which the client never shows in its own history at all. That inflated a
+          // real "28 sessions" to "91" — tracking raw freestudy TASKS, not actual tutor SESSIONS.
+          const chat: any[] = Array.isArray(t?.chat) ? t.chat : [];
+          const board: any[] = Array.isArray(t?.board) ? t.board : [];
+          const userMsgCount = chat.filter((m) => m?.role === "user").length;
+          if (userMsgCount === 0 && board.length === 0) continue;
+          tutorSessionCount++;
+          userTutorSessions++;
+          const times = chat.map((m) => Date.parse(m?.at || "")).filter((n) => Number.isFinite(n));
+          if (times.length >= 2) {
+            const minutes = Math.max(0, (Math.max(...times) - Math.min(...times)) / 60000);
+            tutorMinutesTotal += minutes;
+            userTutorMinutes += minutes;
+          }
+        }
+      }
+      byUser.push({ email, taskCount: tasks.length, tutorSessionCount: userTutorSessions, tutorMinutes: Math.round(userTutorMinutes) });
+    }
+    byUser.sort((a, b) => b.taskCount - a.taskCount);
+    return { userCount: rows.length, taskCount, tutorSessionCount, tutorMinutesTotal: Math.round(tutorMinutesTotal), tasksBySource, byUser };
+  } catch (e) {
+    reportError("admin-metrics", e);
+    return null;
+  }
 }

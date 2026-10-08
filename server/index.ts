@@ -1,3 +1,4 @@
+import { COURSEWORK_MAX_CHARS, COURSEWORK_MAX_DOCS, COURSEWORK_MAX_PAGES } from "../shared/coursework.ts";
 import "./env.ts"; // load web/.env + the repo-root .env (COMPOSIO_API_KEY etc.) — MUST be first
 import { initSentry, reportError } from "./sentry.ts";
 initSentry(); // before anything else can throw — no-op if SENTRY_DSN isn't set
@@ -8,11 +9,14 @@ import session from "express-session";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
+import type { CourseworkDoc } from "../shared/coursework.ts";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, FocusSession } from "../shared/types.ts";
-import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY } from "../shared/types.ts";
+import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY, subjectMastery } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
-import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard } from "./claude.ts";
-import { loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken } from "./store.ts";
+import { planTurn, repairLine } from "./tutorAdapt.ts";
+import { parsePolicy, summarize as summarizePolicy, initPolicy } from "./tutorPolicy.ts";
+import { summarizeCoursework, fallbackCourseworkSummary, aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto, ttsReady, synthesizeSpeech, TTS_MAX_TEXT, tutorOpener, interactiveSceneDocument, INTERACTIVE_SCENE_CSP } from "./claude.ts";
+import { loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken, getAdminMetrics } from "./store.ts";
 import { sendTransactionalEmail } from "./mailer.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, subjectFrequency, orderingBoost, weakSubjectBoost, twoMinuteRuleBoost, stallNudgeLine } from "./patterns.ts";
@@ -48,7 +52,12 @@ declare module "express-session" {
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PORT = Number(process.env.PORT || 8788);
+const PORT = Number(process.env.PORT) > 0 ? Number(process.env.PORT) : 8788;
+// The `> 0` guard matters: `Number("0") || 8788` is 0 (a non-empty string is truthy, so the || never
+// fires) and `listen(0)` binds a random ephemeral port — observed live under a sandbox shell exporting
+// PORT=0, where the server "started" fine but nothing could ever reach it (the dev client's wait-on
+// timed out, the preview proxy had no target). A 0/NaN/negative PORT is always a misconfiguration here,
+// never intentional — this app has no caller that wants an OS-assigned port.
 const PROD = process.env.NODE_ENV === "production";
 
 // Fail closed: required environment variables in production
@@ -97,7 +106,13 @@ const CSP = [
   "script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net",
   "script-src-elem 'self' https://cdn.jsdelivr.net",
   "worker-src 'self' blob:",
-  "style-src 'self' 'unsafe-inline'",
+  // https://fonts.googleapis.com: client/styles.css and client/lab.css both @import Inter/
+  // Baskervville/Handlee/Newsreader from Google Fonts. The imported .woff2 files live on
+  // fonts.gstatic.com (font-src below already allowed it), but the STYLESHEET fetch itself is governed
+  // by style-src — missing here while vercel.json's copy of this CSP already listed it, so on the
+  // self-hosted/Docker path (where THIS header is the one actually served) every page silently fell
+  // back to a system font. Same class of drift as the font-src/connect-src fixes above.
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   // blob:: a student's uploaded image material (ImageArtifact.tsx) renders straight from a same-page
   // blob: URL (StudySetup's/StudyMode's upload flow, same origin as the PDF blob: already allowed under
   // frame-src below) — without this, EVERY uploaded image silently failed to render (CSP blocks it before
@@ -135,7 +150,18 @@ const CSP = [
   // data: — PDF.js (pdfjs-dist) embeds subsetted fonts as data: URIs when rendering PDFs in Study Mode;
   // without this, every rendered PDF page silently drops its text glyphs (CSP blocks the data: font before
   // it ever loads, no console error a student would notice — just "the PDF text looks wrong").
-  "font-src 'self' data:",
+  // https://fonts.gstatic.com: Inter loads from Google Fonts' CSS (@import in client/styles.css) — the CSS
+  // itself comes from fonts.googleapis.com (style-src) but the .woff2 files live on fonts.gstatic.com.
+  // Missing here while vercel.json's copy of this CSP already had it: on the self-hosted/Docker path
+  // (where THIS header is the one actually served) every page silently rendered in a fallback font.
+  "font-src 'self' data: https://fonts.gstatic.com",
+  // 'self' blob: data: — tutor speech (server/index.ts's /api/tts, Gemini TTS) reaches the client as a same-page
+  // blob: URL handed to an <audio> element (useSpeechSynthesis.ts). Once ANY media-src is set it replaces
+  // the default-src fallback entirely (same iframe-like override trap as frame-src above), so without this
+  // directive every voice reply was blocked before a single byte decoded — no console error a student
+  // would notice, just "the tutor doesn't talk" (the <audio> element's onerror path already blamed exactly
+  // this line's absence). data: kept for any data:-URI audio the browser fallback may synthesize.
+  "media-src 'self' blob: data:",
   "base-uri 'self'",
   "form-action 'self'",
   "frame-ancestors 'none'",
@@ -160,7 +186,7 @@ app.use((req, res, next) => {
 // larger per-route limit was dead code the whole time, not a real override. Keeping the global default
 // tight (1mb is plenty for every other route — profile edits, chat messages, preferences) is deliberate:
 // only the specific routes that genuinely need more get it, not every endpoint by default.
-const LARGE_BODY_ROUTES = new Set(["/api/account/import", "/api/tutor/read-whiteboard"]);
+const LARGE_BODY_ROUTES = new Set(["/api/account/import", "/api/tutor/read-whiteboard", "/api/tutor/read-photo"]);
 app.use((req, res, next) => {
   if (LARGE_BODY_ROUTES.has(req.path)) return next();
   express.json({ limit: "1mb" })(req, res, next);
@@ -249,7 +275,18 @@ const commit = async (req: express.Request, opts?: { awaitCloud?: boolean }) => 
   
   const syncCloud = async (throwOnError?: boolean) => {
     try {
-      const current = await loadState(email);
+      // `throwOnError` is only ever passed true for the awaitCloud path (a journal save, a flashcard
+      // review) — exactly the low-frequency, high-value write where merging against a STALE cached cloud
+      // snapshot (loadState's own 5min per-instance cache, see store.ts) is least acceptable: on
+      // serverless, this request's warm instance may not be the one that performed the account's most
+      // recent write, so its cache can lag another instance's write by up to 5 minutes. Reported live as
+      // flashcard counts that varied between views and "flashcards not reliably saving to the cloud" —
+      // a merge computed against a stale base can lose a concurrent write instead of unioning it.
+      // bypassCache:true always hits Supabase directly here, same as the GET routes that already need
+      // this guarantee (studylog week/month). The default (non-awaitCloud, high-frequency) path keeps the
+      // cache — those calls are frequent enough that paying a full Supabase read every time isn't worth it,
+      // and losing a merge there is already covered by the NEXT awaitCloud write reconciling things.
+      const current = await loadState(email, { bypassCache: !!throwOnError });
       const mergedTasks = mergeTasks(current.tasks || [], localTasks);
       const mergedProfile = mergeProfiles(current.profile || emptyProfile(), localProfile);
       await saveState(email, { profile: mergedProfile, tasks: mergedTasks }, { throwOnError });
@@ -683,7 +720,8 @@ app.post("/api/account/delete", requireAuth, rateLimit(5, 60_000), async (req, r
     // being fixed (Express 4 never responds to an unhandled rejection in a route handler).
     req.session.destroy(() => res.json(result));
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || M(req, "Impossible de supprimer le compte — réessaie.", "Couldn't delete the account — try again.") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de supprimer le compte — réessaie.", "Couldn't delete the account — try again.") });
   }
 });
 
@@ -708,7 +746,8 @@ app.get("/api/account/export", requireAuth, rateLimit(5, 60_000), async (req, re
     res.setHeader("Content-Disposition", `attachment; filename="otto-data-${email}.json"`);
     res.json({ email, exportedAt: new Date().toISOString(), profile: state.profile, tasks: state.tasks, connections, jobs, events });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || M(req, "Impossible d'exporter tes données — réessaie.", "Couldn't export your data — try again.") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'exporter tes données — réessaie.", "Couldn't export your data — try again.") });
   }
 });
 
@@ -745,7 +784,8 @@ app.post("/api/account/import", requireAuth, rateLimit(5, 60_000), express.json(
     void recordEvent(email, "account_imported", { message: `Imported ${incomingTasks.length} tasks` });
     res.json({ ok: true, tasksAfter: mergedTasks.length, errorLogAfter: mergedProfile.errorLog?.length || 0 });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || M(req, "Impossible d'importer ce fichier — réessaie.", "Couldn't import that file — try again.") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'importer ce fichier — réessaie.", "Couldn't import that file — try again.") });
   }
 });
 
@@ -815,7 +855,8 @@ app.post("/api/integrations/pronote/connect", requireAuth, rateLimit(8, 15 * 60_
       } catch { /* best-effort */ }
     }
     res.status(result.ok ? 200 : 400).json(result);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de se connecter à Pronote — réessaie.", "Couldn't connect to Pronote — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de se connecter à Pronote — réessaie.", "Couldn't connect to Pronote — try again.") }); }
 });
 // Upcoming tests for the dashboard's exam countdown strip — a plain read, separate from the task pipeline
 // (a test already has/will have a task, but the countdown needs the raw subject+date list to lay out as a
@@ -847,7 +888,8 @@ app.post("/api/integrations/pronote/disconnect", requireAuth, async (req, res) =
     await pronoteSvc.disconnectPronote(req.session.user!);
     pronoteSvc.invalidatePronoteStatus(req.session.user!);
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de déconnecter Pronote — réessaie.", "Couldn't disconnect Pronote — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de déconnecter Pronote — réessaie.", "Couldn't disconnect Pronote — try again.") }); }
 });
 // Read-only: the raw Pronote grade averages, for anything that just wants to display them.
 app.post("/api/pronote/grades/sync", requireAuth, rateLimit(6, 60_000), async (req, res) => {
@@ -859,7 +901,8 @@ app.post("/api/pronote/grades/sync", requireAuth, rateLimit(6, 60_000), async (r
     await commit(req);
     res.json({ grades: live, synced: true });
   } catch (e: any) {
-    res.status(502).json({ error: e?.message || M(req, "Impossible de récupérer les notes depuis Pronote.", "Could not pull grades from Pronote.") });
+    console.error(e);
+    res.status(502).json({ error: M(req, "Impossible de récupérer les notes depuis Pronote.", "Could not pull grades from Pronote.") });
   }
 });
 app.get("/api/pronote/grades", requireAuth, async (req, res) => {
@@ -918,7 +961,8 @@ app.post("/api/integrations/blackbaud/connect-mock", requireAuth, rateLimit(10, 
 }));
 app.post("/api/integrations/blackbaud/disconnect", requireAuth, async (req, res) => {
   try { await blackbaudSvc.disconnectBlackbaud(req.session.user!); res.json({ ok: true }); }
-  catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de déconnecter — réessaie.", "Couldn't disconnect — try again.") }); }
+  catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de déconnecter — réessaie.", "Couldn't disconnect — try again.") }); }
 });
 // Deterministic "this week" workload view — no AI call, just real Pronote homework/tests + open tasks
 // bucketed by day with a relative effort heuristic (see server/workload.ts). Cheap enough to recompute
@@ -949,7 +993,8 @@ app.post("/api/integrations/:app/disconnect", requireAuth, async (req, res) => {
     void recordMetric(req.session.user!, "integration_disconnected", 1, app2);
     await saveSession(req);
     res.json(result);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de déconnecter — réessaie.", "Couldn't disconnect — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de déconnecter — réessaie.", "Couldn't disconnect — try again.") }); }
 });
 
 // Disconnect a specific account by ID (for multi-account support)
@@ -965,7 +1010,8 @@ app.post("/api/integrations/:app/disconnect/:accountId", requireAuth, async (req
     integrations.invalidateTools(req.session.user!);
     await saveSession(req);
     res.json(result);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de déconnecter — réessaie.", "Couldn't disconnect — try again.") }); return; }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de déconnecter — réessaie.", "Couldn't disconnect — try again.") }); return; }
 });
 
 // ── Status ──────────────────────────────────────────────────────────────────
@@ -1005,6 +1051,10 @@ app.get("/api/status", ah(async (req, res) => {
     language: req.session.profile?.language === "en" ? "en" : "fr",
     customTheme: req.session.profile?.customTheme,
     betaFeatures: !!req.session.profile?.betaFeatures,
+    // "Onboarded" = finished/skipped the basic flow, OR an account that clearly predates it (has a name, a track or
+    // tasks) — those are never put through name/track questions they've long answered. Page guides still run.
+    onboarded: !!req.session.profile?.onboardedAt || !!req.session.profile?.name || !!req.session.profile?.track || (req.session.tasks || []).length > 0,
+    toursSeen: req.session.profile?.toursSeen,
   };
   // Hand the CSRF synchronizer token to the client here — this is the ONE place it's ever transmitted (see
   // requireAuth's own comment). Generated lazily so an already-logged-in session picks one up on its next
@@ -1045,7 +1095,8 @@ app.post("/api/settings/unlimited", requireAuth, async (req, res) => {
     void recordEvent(req.session.user!, "settings_changed", { message: "unlimited enabled" });
     await commit(req);
     res.json(p);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer — réessaie.", "Couldn't save — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'enregistrer — réessaie.", "Couldn't save — try again.") }); }
 });
 
 app.post("/api/settings/pause", requireAuth, async (req, res) => {
@@ -1057,7 +1108,8 @@ app.post("/api/settings/pause", requireAuth, async (req, res) => {
     void recordMetric(req.session.user!, "ai_paused_toggled", p.paused ? 1 : 0);
     await commit(req);
     res.json(p);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer — réessaie.", "Couldn't save — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'enregistrer — réessaie.", "Couldn't save — try again.") }); }
 });
 
 // Live integration check — create → verify → clean up against the REAL connected account, on the user's
@@ -1067,20 +1119,50 @@ app.post("/api/settings/smoke", requireAuth, rateLimit(3, 60_000), async (req, r
     const results = await integrations.runSmokeTest(req.session.user!);
     void recordEvent(req.session.user!, "smoke_test", { message: `${results.filter((r) => r.ok).length}/${results.length} checks passed` });
     res.json(results);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "échec de la vérification d'intégration", "integration check failed") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "échec de la vérification d'intégration", "integration check failed") }); }
 });
 
 // ── Tasks ─────────────────────────────────────────────────────────────────────
 // Reconcile with the cloud copy on every load, so a task finished on ANOTHER device/tab never shows
 // undone here (and never gets pointlessly re-run by this device's auto-run).
+/** O(n) "did the merge actually change anything" check — the same cheap id/updatedAt/status signature
+ *  mergeTaskLists' fast path uses to skip its O(n²) dedupe. Deliberately NOT a reference check: the fast
+ *  path returns the FIRST argument (the cloud copy) when the lists are identical, which is a different
+ *  object than the session's copy even when not a single field differs. */
+const sameTasksSignature = (a: WebTask[], b: WebTask[]): boolean => {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  const byId = new Map(b.map((t) => [t.id, t]));
+  for (const t of a) {
+    const o = byId.get(t.id);
+    if (!o || t.updatedAt !== o.updatedAt || t.status !== o.status) return false;
+  }
+  return true;
+};
+
 app.get("/api/tasks", requireAuth, async (req, res) => {
+  // Set when this poll actually changed something (a cloud reconciliation, or a first-exposure
+  // shownAt/orderingArmId stamp) — the gate for persisting the session at the bottom. Unchanged polls
+  // skip the Supabase write entirely.
+  let tasksChanged = false;
+  // Per-poll ordering boosts, held per task id and applied to the OUTGOING copies only (see withNudge
+  // below) — never written back onto req.session.tasks.
+  const boosts = new Map<string, number>();
   try {
     if (req.session.user && cloudEnabled()) {
+      const sessionTasks = req.session.tasks || [];
       const cloud = await loadState(req.session.user);
-      req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
-      // The client only needs the merged LIST — persisting the reconciled session is bookkeeping that
-      // can happen after the response goes out (saveSession never rejects, so this is safe to fire-and-forget).
-      void saveSession(req);
+      const merged = mergeTasks(cloud.tasks || [], sessionTasks);
+      // Reconcile the session copy only when the cloud copy actually differs. The overwhelmingly common
+      // poll lands with both copies identical, and upserting the FULL session blob (profile + every task
+      // + chat history) to Supabase on every /api/tasks tick was a real per-poll CPU + egress cost for a
+      // write that carried zero new data. Skipping is safe: every durable change already lives in the
+      // cloud row — the session copy is a cache that re-derives the same union on the next real merge.
+      if (!sameTasksSignature(merged, sessionTasks)) {
+        req.session.tasks = merged;
+        tasksChanged = true;
+      }
     }
   } catch { /* best-effort — fall back to the session copy */ }
   if (req.session.tasks) {
@@ -1124,20 +1206,36 @@ app.get("/api/tasks", requireAuth, async (req, res) => {
       // position relative to its neighbors) never shifts just because the account is now in a different
       // ordering-bandit bucket than when it first appeared. Only a task that hasn't been shown yet uses
       // the current session's arm.
-      for (const t of live) t.score = (t.score || 0) + orderingBoost(t, t.orderingArmId || orderingArm, subjectFreq) + weakSubjectBoost(t, weakSubjects, subjectSignals) + twoMinuteRuleBoost(t);
-      for (const t of req.session.tasks) { if (!t.shownAt && !isHandled(t.status)) { t.shownAt = now; t.orderingArmId = orderingArm; } }
+      // Boosts are computed per request and applied RESPONSE-ONLY below. They used to be added straight
+      // into t.score here — which re-ran on EVERY poll, so a live task's persisted score grew by up to
+      // +0.3 per tick: the ETag on this route never matched (every poll shipped the full body), every
+      // poll also wrote the inflated scores back to Supabase, and the drift eventually reshuffled
+      // near-tied tasks ("the order keeps randomly changing"). The same deterministic boost applied once
+      // per request produces the identical intended ordering — without compounding.
+      for (const t of live) boosts.set(t.id, orderingBoost(t, t.orderingArmId || orderingArm, subjectFreq) + weakSubjectBoost(t, weakSubjects, subjectSignals) + twoMinuteRuleBoost(t));
+      for (const t of req.session.tasks) { if (!t.shownAt && !isHandled(t.status)) { t.shownAt = now; t.orderingArmId = orderingArm; tasksChanged = true; } }
     } catch {
-      for (const t of req.session.tasks) { if (!t.shownAt && !isHandled(t.status)) t.shownAt = now; }
+      for (const t of req.session.tasks) { if (!t.shownAt && !isHandled(t.status)) { t.shownAt = now; tasksChanged = true; } }
     }
   }
+  // Deferred session persist — only when THIS poll actually changed something (see tasksChanged above;
+  // saveSession never rejects, so this stays safe to fire-and-forget).
+  if (tasksChanged) void saveSession(req);
   // Spark-vs-facilitator nudge (patterns.ts's stallNudgeLine) — computed fresh on every request, never
   // stored: it depends on "how many days since shown", which changes on its own even with nothing else
   // touched. Attached only to the OUTGOING copy, never written back onto req.session.tasks, so it can never
   // leak into cloud storage or a cross-device merge.
-  const withNudge = (req.session.tasks || []).map((t) =>
-    !isHandled(t.status) ? { ...t, nudgeLine: stallNudgeLine(t, req.session.profile) || undefined } : t);
-  // ETag: 4-second poll loops hit this on every tick — a hash-gated 304 means 0 bytes egress on the
-  // overwhelming-majority of polls where nothing actually changed since the last fetch.
+  const withNudge = (req.session.tasks || []).map((t) => {
+    if (isHandled(t.status)) return t;
+    // Apply this request's ordering boost to the OUTGOING copy only (see the boosts map above) — the
+    // persisted score stays the clean Eisenhower base, so the boost can't compound poll over poll.
+    const boost = boosts.get(t.id) || 0;
+    return { ...t, ...(boost ? { score: (t.score || 0) + boost } : {}), nudgeLine: stallNudgeLine(t, req.session.profile) || undefined };
+  });
+  // ETag: poll loops hit this on every tick — a hash-gated 304 means 0 bytes egress on the
+  // overwhelming-majority of polls where nothing actually changed since the last fetch. (Only true now
+  // that the ordering boosts are response-only — while they mutated persisted scores on every poll, the
+  // body changed every tick and every poll paid the full payload.)
   const tasksJson = JSON.stringify(withNudge);
   const etag = `"${createHash("sha1").update(tasksJson).digest("hex").slice(0, 16)}"`;
   res.setHeader("ETag", etag);
@@ -1244,7 +1342,8 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, 
     // Responds directly instead of calling next(err) — bypasses the global route-catchall (below) that
     // would otherwise report this to Sentry, so it needs its own call here.
     reportError("tasks-generate", e);
-    res.status(500).json({ error: e?.message || M(req, "échec de la génération", "generate failed") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "échec de la génération", "generate failed") });
   }
 });
 
@@ -1308,8 +1407,31 @@ app.post("/api/tasks", requireAuth, rateLimit(20, 60_000), async (req, res) => {
     }
     res.json(req.session.tasks);
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || M(req, "Impossible d'ajouter cette tâche — réessaie.", "Couldn't add that task — try again.") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'ajouter cette tâche — réessaie.", "Couldn't add that task — try again.") });
   }
+});
+
+// ONE interactive board scene (CREATE_INTERACTIVE), served as its own HTML document for an iframe to
+// navigate to. Why a route instead of the iframe's own `srcdoc`: a srcdoc frame INHERITS the embedding
+// page's CSP, and this app's policy has no 'unsafe-inline' in script-src — so every scene's script (the
+// model's and our blank-guard alike) was silently blocked and the frame rendered empty. A real same-origin
+// navigation gets its own, much tighter policy from the headers below instead (INTERACTIVE_SCENE_CSP).
+// X-Frame-Options must also be relaxed from the global DENY, or our own same-origin iframe can't load it.
+// NOTE: vercel.json's headers rule re-applies the app CSP + X-Frame-Options: DENY at the EDGE to every path
+// it matches, which would undo both of those in production — its `source` regex therefore excludes
+// `api/interactive/` explicitly. Keep that exclusion in sync with this route's path (JSON can't hold a
+// comment saying so, which is why it's said here).
+// The frame itself still carries sandbox="allow-scripts" with NO allow-same-origin (BoardArtifact.tsx), so
+// the scene runs in an opaque origin regardless of what this document is allowed to do.
+app.get("/api/interactive/:taskId/:entryId", requireAuth, rateLimit(120, 60_000), (req, res) => {
+  const t = (req.session.tasks || []).find((x) => x.id === String(req.params.taskId));
+  const entry = (t?.board || []).find((e) => e.id === String(req.params.entryId));
+  if (!t || !entry || entry.kind !== "interactive" || !entry.html) { res.status(404).type("text/plain").send("Not found"); return; }
+  res.setHeader("Content-Security-Policy", INTERACTIVE_SCENE_CSP);
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  res.setHeader("Cache-Control", "no-store");
+  res.type("text/html; charset=utf-8").send(interactiveSceneDocument(entry.html));
 });
 
 // Refine an UNREFINED manual task (one added while AI was paused/unavailable) now that AI is back.
@@ -1325,7 +1447,8 @@ app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 60_000), async (req
     tasks.applyRefinement(req.session.tasks || [], t.id, refined);
     await commit(req);
     res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'affiner cette tâche — réessaie.", "Couldn't refine that task — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'affiner cette tâche — réessaie.", "Couldn't refine that task — try again.") }); }
 });
 
 // Regenerate steps for an existing task using the new architecture
@@ -1373,7 +1496,8 @@ app.post("/api/tasks/:id/regenerate", requireAuth, rateLimit(5, 60_000), async (
     res.json(req.session.tasks || []);
   } catch (e: any) {
     console.error("[tasks] regenerate error:", e);
-    res.status(500).json({ error: e?.message || M(req, "Impossible de régénérer les étapes — réessaie.", "Couldn't regenerate steps — try again.") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de régénérer les étapes — réessaie.", "Couldn't regenerate steps — try again.") });
   }
 });
 
@@ -1396,9 +1520,43 @@ app.post("/api/tasks/cleanup-artifact-steps", requireAuth, rateLimit(2, 60_000),
     res.json({ cleaned: totalCleaned, tasks: req.session.tasks || [] });
   } catch (e: any) {
     console.error("[tasks] cleanup error:", e);
-    res.status(500).json({ error: e?.message || M(req, "Impossible de nettoyer les étapes — réessaie.", "Couldn't cleanup steps — try again.") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de nettoyer les étapes — réessaie.", "Couldn't cleanup steps — try again.") });
   }
 });
+
+// Otto SPEAKS FIRST: the tutor session's opening line (see tutorOpener in server/claude.ts). REAL, not a
+// template — the browser's own session history (the actual board lines and questions from the student's
+// last sessions, which exist ONLY in their browser) rides up in the request and is grounded in alongside
+// what the server already knows (the tutor's own end-of-session recaps, the running student model,
+// milestones). The client shows its own instant greeting until this lands, so a slow or failed AI call here
+// degrades to that line instead of an empty greeting — which is why a failure is a 502 the client quietly
+// ignores rather than an error the student sees.
+app.post("/api/tutor/opener", requireAuth, rateLimit(30, 60_000), ah(async (req, res) => {
+  if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour discuter.", "AI is paused — resume it in Settings to chat.") }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
+  if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
+  const subject = typeof req.body?.subject === "string" ? req.body.subject.trim().slice(0, 80) : "";
+  // Client-controlled input, so every field is capped here (the prompt builder does no capping of its own).
+  const rawMemory = Array.isArray(req.body?.pastSessions) ? req.body.pastSessions : [];
+  const memory = rawMemory.slice(0, 3).map((m: any) => ({
+    when: typeof m?.when === "string" ? m.when.trim().slice(0, 40) : undefined,
+    subject: typeof m?.subject === "string" ? m.subject.trim().slice(0, 80) : undefined,
+    lines: (Array.isArray(m?.lines) ? m.lines : []).filter((x: any) => typeof x === "string" && x.trim()).slice(0, 6).map((x: string) => x.trim().slice(0, 200)),
+    asked: (Array.isArray(m?.asked) ? m.asked : []).filter((x: any) => typeof x === "string" && x.trim()).slice(0, 3).map((x: string) => x.trim().slice(0, 200)),
+  })).filter((m: any) => m.lines.length || m.asked.length || (m.subject && m.when));
+  try {
+    const profile = req.session.profile ||= emptyProfile();
+    const out = await tutorOpener({ subject: subject || undefined, memory }, profile);
+    addUsage(profile, out.tokens, "chat");
+    bumpActivityHour(profile, new Date(), subject || undefined);
+    await commit(req);
+    res.json({ opener: out.opener });
+  } catch (e: any) {
+    console.error(`[tutor] opener failed: ${e?.message || e}`);
+    res.status(502).json({ error: M(req, "Otto n'a pas pu démarrer la séance — réessaie.", "Otto couldn't start the session — try again.") });
+  }
+}));
 
 // Per-task coaching chat — grounded in that one task's own context/steps, so a student stuck on it can
 // talk it through with Otto without re-explaining the situation. Rate-limited + budget-gated like every
@@ -1410,7 +1568,18 @@ app.post("/api/tasks/cleanup-artifact-steps", requireAuth, rateLimit(2, 60_000),
 // which aren't capped this tightly — old raw chat phrasing beyond the last ~15 exchanges is mostly surface
 // narration the board has already distilled, not load-bearing context. Halved rather than cut further: still
 // comfortably covers "what did we just say two messages ago" continuity, which IS still needed turn to turn.
-const CHAT_CAP = 30;
+const CHAT_CAP = 60;
+// Did the PREVIOUS tutor turn write anything to the board? The RL policy is scored by what a move PRODUCED
+// (tutorAdapt's TurnOutcome), and "the board grew and the student engaged with it" is real evidence a
+// teaching move worked — but it is only observable ACROSS turns, so the one fact needed next turn is stashed
+// here. In-memory and best-effort, exactly like tutorPolicy's own pending-action map: a restart costs one
+// unscored turn and nothing else. Keyed per (user, task) so two sessions can't score each other's writes.
+const lastTurnBoardWrite = new Map<string, boolean>();
+// Session objectives marked done as of the END of the previous turn, same idea and same lifetime as
+// lastTurnBoardWrite: "an objective got ticked off" is only observable as a DIFFERENCE across turns, and the
+// client resends the full objective list each turn (SET_OBJECTIVES' own replace-everything contract).
+const lastTurnObjectivesDone = new Map<string, number>();
+const LAST_TURN_BOARD_CAP = 2000;
 app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour discuter.", "AI is paused — resume it in Settings to chat.") }); return; }
   if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
@@ -1441,8 +1610,11 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
   const historyRaw = Array.isArray(req.body?.history) ? req.body.history : [];
   const history: { role: "user" | "assistant"; text: string }[] = historyRaw
     .filter((h: any) => h && (h.role === "user" || h.role === "assistant") && typeof h.text === "string")
-    .map((h: any) => ({ role: h.role as "user" | "assistant", text: String(h.text).slice(0, 4000) }))
-    .slice(-CHAT_CAP);
+    .map((h: any) => ({ role: h.role as "user" | "assistant", text: String(h.text).slice(0, 4000) }));
+  // How the session BEGAN (the problem/equation as the student first stated it) is pinned verbatim for the tutor
+  // even once the thread outgrows the window — otherwise a long session forgets what it was about.
+  const opening = history.length > 24 ? history.slice(0, 3).map((h) => ({ role: h.role, text: h.text.slice(0, 700) })) : [];
+  history.splice(0, Math.max(0, history.length - CHAT_CAP));
   // Same client-owned pattern for what's CURRENTLY on the board — without this the model can write to the
   // board but has no idea what's already there (reported live: it referenced "that triangle" and had no
   // answer when the student said they couldn't see what it meant — it had never been told).
@@ -1450,21 +1622,23 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
   const currentBoard = currentBoardRaw
     .filter((b: any) => b && typeof b.text === "string" && b.text.trim())
     .slice(-60)
-    .map((b: any) => ({ id: "", at: "", text: String(b.text).slice(0, 600), ...(typeof b.kind === "string" ? { kind: b.kind } : {}), ...(b.kind === "outline" && Array.isArray(b.outline) ? { outline: b.outline.slice(0, 6).map((s: any) => ({ heading: String(s?.heading || "").slice(0, 120), bullets: (Array.isArray(s?.bullets) ? s.bullets : []).map((x: any) => String(x).slice(0, 200)).slice(0, 8) })) } : {}) }));
+    .map((b: any) => ({ id: "", at: "", text: String(b.text).slice(0, 600), ...(typeof b.kind === "string" ? { kind: b.kind } : {}), ...(Array.isArray(b.diagram) ? { diagram: b.diagram.slice(0, 40).filter((o: any) => o && typeof o.op === "string") } : {}), ...(b.kind === "outline" && Array.isArray(b.outline) ? { outline: b.outline.slice(0, 6).map((s: any) => ({ heading: String(s?.heading || "").slice(0, 120), bullets: (Array.isArray(s?.bullets) ? s.bullets : []).map((x: any) => String(x).slice(0, 200)).slice(0, 8) })) } : {}) }));
   const currentProblemsRaw = Array.isArray(req.body?.problems) ? req.body.problems : [];
   const currentProblems = currentProblemsRaw
     .filter((p: any) => p && typeof p.question === "string" && p.question.trim())
     .slice(-12)
-    .map((p: any) => ({ id: "", createdAt: "", question: String(p.question).slice(0, 600), ...(Array.isArray(p.options) ? { options: p.options.map((o: any) => String(o).slice(0, 300)).slice(0, 6) } : {}) }));
+    .map((p: any) => ({ id: "", createdAt: "", solved: p.solved === true, question: String(p.question).slice(0, 600), ...(Array.isArray(p.options) ? { options: p.options.map((o: any) => String(o).slice(0, 300)).slice(0, 6) } : {}) }));
   const currentObjectivesRaw = Array.isArray(req.body?.objectives) ? req.body.objectives : [];
-  const currentObjectives = currentObjectivesRaw
+  const currentObjectives: { id: string; label: string; done: boolean }[] = currentObjectivesRaw
     .filter((o: any) => o && typeof o.label === "string" && o.label.trim())
     .slice(-6)
     .map((o: any) => ({ id: "", label: String(o.label).slice(0, 160), done: Boolean(o.done) }));
   try {
     let academic: { homework: Awaited<ReturnType<typeof pronoteSvc.pronoteHomework>>; tests: Awaited<ReturnType<typeof pronoteSvc.pronoteTests>> } | undefined;
+    // The tutor stage never uses Pronote homework or connected-app tools, so those network round-trips (sequential, each
+    // easily 1-3s) are skipped for Primer turns — pure latency.
     try {
-      if ((await pronoteSvc.pronoteConnected(req.session.user!)).connected) {
+      if (req.body?.primer !== true && (await pronoteSvc.pronoteConnected(req.session.user!)).connected) {
         const [homework, tests] = await Promise.all([pronoteSvc.pronoteHomework(req.session.user!), pronoteSvc.pronoteTests(req.session.user!)]);
         if (homework.length || tests.length) academic = { homework, tests };
       }
@@ -1478,7 +1652,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     // this can never send/draft/delete anything, unlike runTask's own (separately scoped) tool access.
     // Best-effort: toolsFor already swallows its own errors into `undefined`, so a Composio hiccup here
     // just means chat runs without account access this turn, not a broken chat.
-    const rawExtras = await toolsFor(req);
+    const rawExtras = req.body?.primer === true ? undefined : await toolsFor(req);
     const extras = rawExtras ? integrations.readOnly(rawExtras) : undefined;
     // Seventh bandit target (CHAT_STYLE_ARMS) — chosen once per turn, best-effort (a bandit hiccup must
     // never block the chat reply itself).
@@ -1515,13 +1689,53 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
       .sort((a, b) => (b.logDate || "").localeCompare(a.logDate || ""))
       .slice(0, 14)
       .map((x) => ({ date: x.logDate!, text: x.logText!.trim() }));
+    // Adapt to THIS student: detect a stuck/looping conversation (REPAIR directive) and pick the teaching move
+    // that has been working for them (Thompson-sampling bandit, scored by how they reacted to the previous move).
+    // Primer (stage) turns only; best-effort — a failure here must never block the reply.
+    let repair = "", moveLine = "";
+    // Key for the cross-turn RL bookkeeping below — declared out here so the recording at the end of the turn
+    // (after the board/objectives are actually persisted) can use it, not only the planning block.
+    const planKey = `${req.session.user}:${t.id}`;
+    if (req.body?.primer === true) {
+      try {
+        repair = repairLine(message, history);
+        // The RL policy: a small neural network, trained online per student (REINFORCE), that picks the teaching move and
+        // pace for this turn. Weights persist per student; the previous turn's action is scored by how they just reacted
+        // AND by what that turn actually produced (see TurnOutcome — the board it wrote, the objectives it ticked off).
+        const polState = await loadBanditState(req.session.user!, "tutorpolicy");
+        // What the PREVIOUS turn produced, for this turn's scoring (see TurnOutcome). `previousObjectivesDone`
+        // is the count recorded at the end of that turn; the client's own list is the current truth, so the
+        // difference is how many got newly ticked off in between. No stored count (first turn, or a restart)
+        // means "nothing to attribute", never a guess.
+        const previousObjectivesDone = lastTurnObjectivesDone.get(planKey);
+        const objectivesDoneNow = currentObjectives.filter((o) => o.done).length;
+        const plan = planTurn({
+          userKey: planKey, message, history, subject: t.sourceSubject, policy: parsePolicy((polState as any)?.policy),
+          outcome: {
+            prevWroteBoard: lastTurnBoardWrite.get(planKey),
+            objectivesAdvanced: previousObjectivesDone === undefined ? 0 : Math.max(0, objectivesDoneNow - previousObjectivesDone),
+          },
+          context: {
+            mastery: subjectSignal?.correctRate ?? (typeof t.mastery === "number" ? t.mastery : undefined),
+            objectiveProgress: currentObjectives.length ? objectivesDoneNow / currentObjectives.length : undefined,
+            boardRich: Math.min(1, (t.board || []).length / 12),
+          },
+        });
+        moveLine = plan.line;
+        if (plan.learned) {
+          void saveBanditState(req.session.user!, "tutorpolicy", { policy: plan.policy } as any).catch(() => {});
+          void recordSessionOutcome({ userEmail: req.session.user!, decisionKey: "tutorpolicy", arm: plan.learned.move, context: `${t.sourceSubject || "any"}|${plan.stuck ? "stuck" : "flow"}`, reward: plan.learned.reward, at: new Date().toISOString() });
+        }
+        if (repair) void recordMetric(req.session.user!, "tutor_repair_triggered", 1);
+      } catch { /* best-effort */ }
+    }
     const out = await chatAboutTask(
       { title: t.title, why: t.why, context: t.context, steps: t.steps, source: t.source, sourceDetail: t.sourceDetail, sourceSubject: t.sourceSubject, sourceDue: t.sourceDue, flashcards: t.flashcards, quizzes: t.quizzes },
       history.map((h) => ({ role: h.role, text: h.text })),
       message,
       profile,
       academic,
-      { stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, primer: req.body?.primer === true, recentJournal, currentBoard, currentProblems, currentObjectives, notNeeded: tasks.notNeededFronts(req.session.tasks || [], t.sourceSubject) },
+      { stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, primer: req.body?.primer === true, recentJournal, currentBoard, currentProblems, currentObjectives, repair, moveLine, opening, notNeeded: tasks.notNeededFronts(req.session.tasks || [], t.sourceSubject) },
     );
     addUsage(profile, out.tokens, "chat"); // untracked before — a tool-calling turn can now cost like a small run
     bumpActivityHour(profile, new Date(), t.sourceSubject);
@@ -1595,11 +1809,19 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     if (newChat.length) t.chat = [...(t.chat || []), ...newChat].slice(-CHAT_CAP);
     if (out.board.length) t.board = [...(t.board || []), ...out.board].slice(-tasks.BOARD_MERGE_CAP);
     if (out.problems.length) t.problems = [...(t.problems || []), ...out.problems].slice(-tasks.ARTIFACT_CAP);
+    // Record what THIS turn produced, for the next turn's RL scoring (see lastTurnBoardWrite's own comment).
+    // `out.objectives` is SET_OBJECTIVES' full replacement list when it ran, and is never written onto `t`
+    // here (the client owns the live list) — so it is exactly the count to remember.
+    if (lastTurnBoardWrite.size >= LAST_TURN_BOARD_CAP) lastTurnBoardWrite.delete(lastTurnBoardWrite.keys().next().value as string);
+    if (lastTurnObjectivesDone.size >= LAST_TURN_BOARD_CAP) lastTurnObjectivesDone.delete(lastTurnObjectivesDone.keys().next().value as string);
+    lastTurnBoardWrite.set(planKey, out.board.length > 0);
+    lastTurnObjectivesDone.set(planKey, (out.objectives || currentObjectives).filter((o) => o.done).length);
     t.updatedAt = now;
     await commit(req);
     res.json({ reply: out.reply, chatDelta: newChat, board: out.board, problems: out.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped, task: t });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || M(req, "échec de la discussion", "chat failed") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "échec de la discussion", "chat failed") });
   }
 });
 
@@ -1694,7 +1916,8 @@ const runViaJob = async (req: express.Request, res: express.Response, type: "exe
     // directly instead of calling next(err), so it bypasses the global route-catchall's Sentry reporting.
     // Needs its own call here to cover this whole action surface.
     reportError("tasks-job-action", e, { type, taskId: id });
-    res.status(500).json({ error: e?.message || M(req, "échec de l'exécution", "run failed") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "échec de l'exécution", "run failed") });
   }
 };
 
@@ -1745,7 +1968,8 @@ app.post("/api/tasks/:id/confirm", requireAuth, rateLimit(60, 60_000), async (re
     void recordMetric(req.session.user!, "task_completed", 1, task.source || "n/a");
     if (task.shownAt) void recordMetric(req.session.user!, "task_time_to_completion_seconds", (Date.now() - Date.parse(task.shownAt)) / 1000, task.source || "n/a");
     res.json(req.session.tasks || []);
-  } catch (e: any) { reportError("tasks-confirm", e, { taskId: id }); res.status(500).json({ error: e?.message || M(req, "Impossible de confirmer cette tâche — réessaie.", "Couldn't confirm that task — try again.") }); }
+  } catch (e: any) { reportError("tasks-confirm", e, { taskId: id }); console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de confirmer cette tâche — réessaie.", "Couldn't confirm that task — try again.") }); }
 });
 app.post("/api/tasks/:id/reject", requireAuth, rateLimit(60, 60_000), async (req, res) => {
   const id = String(req.params.id);
@@ -1755,7 +1979,8 @@ app.post("/api/tasks/:id/reject", requireAuth, rateLimit(60, 60_000), async (req
     tasks.reject(req.session.tasks || [], id);
     await commit(req);
     res.json(req.session.tasks || []);
-  } catch (e: any) { reportError("tasks-reject", e, { taskId: id }); res.status(500).json({ error: e?.message || M(req, "Impossible de rejeter cette tâche — réessaie.", "Couldn't reject that task — try again.") }); }
+  } catch (e: any) { reportError("tasks-reject", e, { taskId: id }); console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de rejeter cette tâche — réessaie.", "Couldn't reject that task — try again.") }); }
 });
 app.post("/api/tasks/:id/dismiss", requireAuth, rateLimit(60, 60_000), async (req, res) => {
   const id = String(req.params.id);
@@ -1768,7 +1993,8 @@ app.post("/api/tasks/:id/dismiss", requireAuth, rateLimit(60, 60_000), async (re
     void recordEvent(req.session.user!, "dismissed", { taskId: id, message: "You dismissed it — similar tasks won't come back" });
     void recordMetric(req.session.user!, "task_dismissed", 1, task.source || "n/a");
     res.json(req.session.tasks || []);
-  } catch (e: any) { reportError("tasks-dismiss", e, { taskId: id }); res.status(500).json({ error: e?.message || M(req, "Impossible d'ignorer cette tâche — réessaie.", "Couldn't dismiss that task — try again.") }); }
+  } catch (e: any) { reportError("tasks-dismiss", e, { taskId: id }); console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'ignorer cette tâche — réessaie.", "Couldn't dismiss that task — try again.") }); }
 });
 // Auto-do ONE automatable step (focused agent run over the connected apps) — through the job queue, same
 // as full runs, so it's durably locked and audited. Enqueue-and-return, NOT enqueue-and-drain: a step run
@@ -1830,7 +2056,8 @@ app.post("/api/tasks/:id/step/:index/done", requireAuth, rateLimit(60, 60_000), 
     }
     await commit(req);
     res.json(req.session.tasks || []);
-  } catch (e: any) { reportError("tasks-step-done", e); res.status(500).json({ error: e?.message || M(req, "Impossible de mettre à jour l'étape — réessaie.", "Couldn't update the step — try again.") }); }
+  } catch (e: any) { reportError("tasks-step-done", e); console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de mettre à jour l'étape — réessaie.", "Couldn't update the step — try again.") }); }
 });
 // Record one flashcard review — advances/resets its Leitner box and schedules the next `dueAt` (see
 // nextLeitnerReview in shared/types.ts). Deterministic, no AI call. This is what turns flashcard decks from
@@ -2158,7 +2385,8 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
     // old studylog artifacts on every call — see its own comment — so that no longer needs to happen here.)
     await commit(req, { awaitCloud: true });
     res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de créer des cartes à partir de ça — réessaie.", "Couldn't make flashcards from that — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de créer des cartes à partir de ça — réessaie.", "Couldn't make flashcards from that — try again.") }); }
 }));
 app.get("/api/studylog/week", requireAuth, ah(async (req, res) => {
   const start = String(req.query.start || "");
@@ -2262,7 +2490,8 @@ app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 60_000), ah(as
     } catch { /* best-effort — the deck above already succeeded regardless */ }
     await commit(req, { awaitCloud: true });
     res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de créer le résumé de la semaine — réessaie.", "Couldn't build the week summary — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de créer le résumé de la semaine — réessaie.", "Couldn't build the week summary — try again.") }); }
 }));
 
 // YYYY-MM of the month containing `dateStr` — used to group weekly decks (keyed by their Monday) into a
@@ -2349,7 +2578,8 @@ app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 60_000), ah(a
     } catch { /* best-effort — the deck above already succeeded regardless */ }
     await commit(req, { awaitCloud: true });
     res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de créer le résumé du mois — réessaie.", "Couldn't build the month summary — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de créer le résumé du mois — réessaie.", "Couldn't build the month summary — try again.") }); }
 }));
 
 // A "just let me start studying" entry point — the full StudyMode workspace (StudyMode.tsx) and the /tutor
@@ -2381,7 +2611,10 @@ app.post("/api/study/free", requireAuth, rateLimit(20, 60_000), ah(async (req, r
     // header comment; a remount is just as often a route re-render or a StrictMode double-invoke as an
     // explicit "new session" request).
     const active = list.find((t) => t.source === "freestudy" && !isHandled(t.status));
-    if (active) { res.json(list); return; }
+    if (active) {
+      if (active.sourceSubject) active.mastery = subjectMastery(list, req.session.profile?.milestones, active.sourceSubject);
+      res.json(list); return;
+    }
   }
   
   // Fresh mode: only dismiss sessions for the specified subject, or all if no subject
@@ -2404,6 +2637,7 @@ app.post("/api/study/free", requireAuth, rateLimit(20, 60_000), ah(async (req, r
     urgency: 0, importance: 0, quadrant: e.quadrant, score: e.score, status: "needs_review",
     createdAt: now, anchorKey: `freestudy:${id}`,
     sourceSubject: subject,
+    mastery: subject ? subjectMastery(list, req.session.profile?.milestones, subject) : undefined,
   };
   list.push(t);
   req.session.tasks = list;
@@ -2488,9 +2722,28 @@ app.post("/api/tutor/read-whiteboard", requireAuth, rateLimit(15, 60_000), expre
   if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
   const image = String(req.body?.image || "");
   if (!image) { res.status(400).json({ error: M(req, "Aucun dessin reçu.", "No drawing received.") }); return; }
-  const r = await describeWhiteboard(image);
+  // The vision helper composes its own (diagnostic, sometimes upstream-detail-bearing) message, so it
+  // takes the request's language instead of returning English the client would show inside a French UI.
+  const r = await describeWhiteboard(image, (fr, en) => M(req, fr, en));
   if ("error" in r) { res.status(422).json({ error: r.error }); return; }
   void recordEvent(req.session.user!, "whiteboard_read", {});
+  res.json({ description: r.description });
+}));
+
+// The Tutor's file-upload attach button — a photo of an exercise/textbook page/handwritten note, read with
+// the same vision model as the whiteboard (describeUploadedPhoto, server/claude.ts), then handed to the
+// chat as plain text context. Images only here; PDFs are extracted client-side (client/study/pdfText.ts,
+// no server round trip needed) and plain text files are read directly in the browser — this route exists
+// specifically for the case neither of those cover: a phone-camera photo with no text layer at all.
+app.post("/api/tutor/read-photo", requireAuth, rateLimit(15, 60_000), express.json({ limit: "8mb" }), ah(async (req, res) => {
+  if (!visionReady()) { res.status(503).json({ error: M(req, "La lecture d'image n'est pas configurée sur ce serveur.", "Image reading isn't configured on this server.") }); return; }
+  if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour continuer.", "AI is paused — resume it in Settings to continue.") }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
+  const image = String(req.body?.image || "");
+  if (!image) { res.status(400).json({ error: M(req, "Aucune image reçue.", "No image received.") }); return; }
+  const r = await describeUploadedPhoto(image, (fr, en) => M(req, fr, en));
+  if ("error" in r) { res.status(422).json({ error: r.error }); return; }
+  void recordEvent(req.session.user!, "photo_read", {});
   res.json({ description: r.description });
 }));
 
@@ -2572,7 +2825,8 @@ app.post("/api/ui/theme-personalize", requireAuth, rateLimit(5, 60_000), ah(asyn
     profile.preferencesUpdatedAt = new Date().toISOString();
     await commit(req);
     res.json({ customTheme: profile.customTheme });
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de personnaliser ton thème — réessaie.", "Couldn't personalize your theme — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de personnaliser ton thème — réessaie.", "Couldn't personalize your theme — try again.") }); }
 }));
 app.post("/api/ui/theme-reset", requireAuth, ah(async (req, res) => {
   const profile = req.session.profile ||= emptyProfile();
@@ -2627,7 +2881,8 @@ app.post("/api/study/session-outcome", requireAuth, rateLimit(30, 60_000), ah(as
       void recordSessionOutcome({ userEmail: email, decisionKey: "density", arm: densityArmId, context: key, reward, at: new Date().toISOString() });
     }
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer ça — ça n'affectera pas ta session.", "Couldn't record that — it won't affect your session.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'enregistrer ça — ça n'affectera pas ta session.", "Couldn't record that — it won't affect your session.") }); }
 }));
 
 // Generic, flexible metrics ingestion ��� deliberately an open `name` string (not a fixed enum route per
@@ -2661,10 +2916,18 @@ app.post("/api/tasks/:id/step/:index/expand", requireAuth, rateLimit(20, 60_000)
     if (substeps.length) {
       step.substeps = substeps;
       task.updatedAt = new Date().toISOString();
-      await commit(req);
+      // awaitCloud, NOT the default fire-and-forget: this costs a paid AI call and is rate-limited to
+      // 20/min — exactly the low-frequency/high-value profile commit() documents for awaiting the cloud
+      // write. The detached default made the substeps serverless-fragile: the response carried them
+      // (session copy), but on Vercel the background cloud write could freeze mid-flight and never land —
+      // then the cron drain (cloud-only, no session) rebuilt the task WITHOUT the substeps and committed
+      // it with a NEWER updatedAt, legitimately overwriting the client seconds later. Reported live as
+      // "breaking down a task shows the substeps for two seconds and then they hide".
+      await commit(req, { awaitCloud: true });
     }
     res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de découper cette étape — réessaie.", "Couldn't break this step down — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de découper cette étape — réessaie.", "Couldn't break this step down — try again.") }); }
 });
 // Tick/untick one sub-step — independent of the parent step's own "done" (see the Profile.grades-style
 // comment on TaskStep.substeps: a working checklist, not a completion gate).
@@ -2679,12 +2942,14 @@ app.post("/api/tasks/:id/step/:index/substep/:subIndex/done", requireAuth, rateL
   // success. Every sibling route (confirm/dismiss/step-done) already 404s on a missing target; this one
   // was missed.
   if (!task || !sub) { res.status(404).json({ error: M(req, "Sous-étape introuvable — elle a peut-être déjà changé ailleurs.", "Sub-step not found — it may have already changed elsewhere.") }); return; }
-  try {
-    sub.done = done;
-    task.updatedAt = new Date().toISOString();
-    await commit(req);
-    res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer cette sous-étape — réessaie.", "Couldn't save this sub-step — try again.") }); }
+  try {      sub.done = done;
+      task.updatedAt = new Date().toISOString();
+      // awaitCloud — same substeps-vanish reasoning as the expand route above: a sub-step tick lost to a
+      // frozen background write would resurrect as UNdone on the next cloud-only rebuild.
+      await commit(req, { awaitCloud: true });
+      res.json(req.session.tasks || []);
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'enregistrer cette sous-étape — réessaie.", "Couldn't save this sub-step — try again.") }); }
 });
 // Let Otto just answer an automatable sub-action (see expandStep's `automatable` classification) instead
 // of the student having to look it up themselves — a read-only web search + synthesis, no permissioned
@@ -2707,7 +2972,8 @@ app.post("/api/tasks/:id/step/:index/substep/:subIndex/run", requireAuth, rateLi
     task.updatedAt = new Date().toISOString();
     await commit(req);
     res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Otto n'a pas réussi à répondre.", "Otto couldn't come up with a reply.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Otto n'a pas réussi à répondre.", "Otto couldn't come up with a reply.") }); }
 });
 // "Move to a lighter day" from the workload widget — a manual, reversible nudge (never AI-driven): the
 // student picks the day, Otto just relabels the task's own `when` and re-scores it, same deadline-urgency
@@ -2734,7 +3000,8 @@ app.post("/api/tasks/:id/reschedule", requireAuth, rateLimit(60, 60_000), async 
     tasks.applyDeadlineUrgency([task]);
     await commit(req);
     res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de déplacer cette tâche — réessaie.", "Couldn't move that task — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de déplacer cette tâche — réessaie.", "Couldn't move that task — try again.") }); }
 });
 
 // One-click send: fire a reviewed Gmail draft / composed Slack message — USER-confirmed, the ONLY send path.
@@ -2755,7 +3022,8 @@ app.post("/api/tasks/:id/send/:index", requireAuth, rateLimit(10, 60_000), async
       void recordEvent(req.session.user!, "sent", { taskId: t.id, message: `${s.label}${s.to ? ` → ${s.to}` : ""}` });
     }
     res.json(t);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'envoyer — réessaie.", "Couldn't send — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'envoyer — réessaie.", "Couldn't send — try again.") }); }
 });
 // Manual edit of an unsent draft — the user typing directly into the draft box, not an AI rewrite (that's
 // /revise). For Gmail this pushes the edit to the REAL draft (GMAIL_SEND_DRAFT sends whatever's live in
@@ -2777,7 +3045,8 @@ app.post("/api/tasks/:id/sendable/:index/edit", requireAuth, rateLimit(30, 60_00
     t.updatedAt = new Date().toISOString();
     await commit(req);
     res.json(t);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer ta modification — réessaie.", "Couldn't save your edit — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'enregistrer ta modification — réessaie.", "Couldn't save your edit — try again.") }); }
 });
 
 // ── Jobs + timeline (the durable execution layer's public surface) ────────────
@@ -2853,8 +3122,27 @@ app.post("/api/jobs/kick", requireAuth, rateLimit(60, 60_000), async (req, res) 
       } catch { /* best-effort — fall back to whatever the session already has */ }
     }
     const [active, activeTaskIds] = await Promise.all([countActiveJobs(email), activeJobTaskIds(email)]);
-    res.json({ processed: out.processed, failed: out.failed, active, activeTaskIds, tasks: responseTasks });
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "échec du déclenchement", "kick failed") }); }
+    // Trim the heaviest fields before this ships over the wire: this route fires every 10s for the entire
+    // duration any job is in flight, and chat/board/problems/objectives (full conversation history, canvas
+    // strokes, practice-problem state) can dwarf the rest of a task object. The client's keepLocalHandled
+    // merge (client/App.tsx) already falls back to localStorage for these exact fields whenever they're
+    // missing on an incoming task (see hydrateLocalThreads) — so omitting them here is a free win, not a
+    // behavior change. Confirmed via code audit that nothing downstream of api.kick() reads them.
+    const lightTasks = responseTasks.map((t: any) => {
+      const { chat, board, problems, objectives, ...rest } = t;
+      return rest;
+    });
+    const body = { active, activeTaskIds, tasks: lightTasks };
+    // ETag: this is a 10s poll loop for the entire lifetime of any active job — a hash-gated 304 means 0
+    // bytes egress on the common case where nothing changed between kicks (same pattern as /api/status
+    // and /api/tasks above).
+    const bodyJson = JSON.stringify(body);
+    const etag = `"${createHash("sha1").update(bodyJson).digest("hex").slice(0, 16)}"`;
+    res.setHeader("ETag", etag);
+    if (req.headers["if-none-match"] === etag) { res.status(304).end(); return; }
+    res.type("json").send(bodyJson);
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "échec du déclenchement", "kick failed") }); }
 });
 
 // Background drain — called by Vercel Cron (Authorization: Bearer $CRON_SECRET) once a day (vercel.json;
@@ -2879,7 +3167,8 @@ app.get("/api/cron/drain", async (req, res) => {
     // (jobs.ts's "cron-tick-skip"), but cronTick() ITSELF throwing (the whole drain never even starting)
     // was previously invisible outside Vercel's own logs.
     reportError("cron-drain", e);
-    res.status(500).json({ error: e?.message || M(req, "échec du traitement", "drain failed") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "échec du traitement", "drain failed") });
   }
 });
 
@@ -2902,7 +3191,8 @@ app.get("/api/cron/status", requireAuth, async (req, res) => {
       queued: activeJobs,
       cronConfigured: !!process.env.CRON_SECRET,
     });
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "échec de la vérification du statut", "status failed") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "échec de la vérification du statut", "status failed") }); }
 });
 
 // AI token usage for the signed-in user — read from the CLOUD (not the session), so usage racked up by
@@ -2920,7 +3210,8 @@ app.get("/api/usage", requireAuth, async (req, res) => {
       // costing money" is an answerable question instead of one opaque total (see addUsage's own comment).
       byCategory: u?.monthByCategory || {},
     });
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "échec de la récupération de l'utilisation", "usage failed") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "échec de la récupération de l'utilisation", "usage failed") }); }
 });
 
 // ── Profile (who the user is) — available once logged in ───────────────────────
@@ -2940,7 +3231,8 @@ app.post("/api/profile", requireAuth, async (req, res) => {
     }
     await commit(req);
     res.json(p);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer — réessaie.", "Couldn't save — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'enregistrer — réessaie.", "Couldn't save — try again.") }); }
 });
 app.post("/api/profile/preference", requireAuth, async (req, res) => {
   try {
@@ -2983,12 +3275,17 @@ app.post("/api/profile/preference", requireAuth, async (req, res) => {
     } else if (key === "language" && (value === "fr" || value === "en")) {
       p.language = value;
       p.languageSetAt = new Date().toISOString();
-    } else if (key === "track" && ["ib", "bac", "other"].includes(value)) {
+    } else if (key === "track" && ["ib", "ap", "bac", "other"].includes(value)) {
+      // "ap" was missing from this allow-list even though the type (shared/types.ts), the Settings AND
+      // onboarding UI both offer an "AP" button, and examStyleLine/syllabusGroundingLine (claude.ts) both
+      // gate real content on p.track === "ap" — a student clicking "AP" silently failed to ever save it.
       p.track = value; p.preferencesUpdatedAt = new Date().toISOString();
     } else if (key === "learningStyle" && ["visual", "auditory", "reading", "kinesthetic", "mixed"].includes(value)) {
       // Fully wired for a while on the READ side (learningStyleLine, claude.ts) but had no write path at
       // all until now — a student could never actually set it, so the field sat permanently empty.
       p.learningStyle = value; p.preferencesUpdatedAt = new Date().toISOString();
+    } else if (key === "hintDensity" && ["steps", "hints", "balanced"].includes(value)) {
+      p.hintDensity = value; p.preferencesUpdatedAt = new Date().toISOString();
     } else if (key === "yearLevel" && typeof value === "string" && value.trim()) {
       p.yearLevel = value.trim().slice(0, 40); p.preferencesUpdatedAt = new Date().toISOString();
     } else {
@@ -3000,7 +3297,8 @@ app.post("/api/profile/preference", requireAuth, async (req, res) => {
     }
     await commit(req);
     res.json(p);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer — réessaie.", "Couldn't save — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'enregistrer — réessaie.", "Couldn't save — try again.") }); }
 });
 // Per-subject grades — self-reported (Pronote's read API doesn't expose grades), so Otto can weigh which
 // subject actually needs attention, not just what's due soonest. Upsert by subject name (case-insensitive).
@@ -3022,6 +3320,18 @@ app.post("/api/profile/grade", requireAuth, ah(async (req, res) => {
 // subject for anything still lacking an id (a pre-history-model entry that never got normalized) or for
 // a bulk "remove this whole subject" — same param, whichever matches.
 // Primer: Get dependence metrics for parent dashboard (Phase 1.5)
+// What Otto's learned policy currently favours for this student (transparency) + reset.
+app.get("/api/tutor/policy", requireAuth, async (req, res) => {
+  try {
+    const st = await loadBanditState(req.session.user!, "tutorpolicy");
+    const p = parsePolicy((st as any)?.policy);
+    res.json(p ? { learning: true, ...summarizePolicy(p) } : { learning: false, updates: 0 });
+  } catch { res.json({ learning: false, updates: 0 }); }
+});
+app.delete("/api/tutor/policy", requireAuth, async (req, res) => {
+  try { await saveBanditState(req.session.user!, "tutorpolicy", {} as any); res.json({ ok: true }); }
+  catch { res.status(500).json({ error: M(req, "Impossible de réinitialiser.", "Couldn't reset.") }); }
+});
 app.get("/api/primer/dependence", requireAuth, (req, res) => {
   const profile = req.session.profile;
   const metrics = profile?.dependenceMetrics || {};
@@ -3062,7 +3372,8 @@ app.delete("/api/profile/grade/:key", requireAuth, async (req, res) => {
     if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
     await commit(req);
     res.json(p);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de supprimer cette note — réessaie.", "Couldn't delete that grade — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de supprimer cette note — réessaie.", "Couldn't delete that grade — try again.") }); }
 });
 // Manually-logged exams/deadlines — the Pronote-less equivalent of Pronote's test list (server/pronote.ts),
 // for a student whose school doesn't use it at all (most IB/international schools). Merged into the SAME
@@ -3078,6 +3389,109 @@ app.post("/api/profile/exam", requireAuth, ah(async (req, res) => {
   await commit(req);
   res.json(p);
 }));
+// ── First-run tour ───────────────────────────────────────────────────────────────────────────────────────────
+// Stamped when the student finishes or skips the tour, server-side so it follows the account across devices
+// (a replay from Settings never needs this).
+app.post("/api/profile/onboarded", requireAuth, ah(async (req, res) => {
+  const p = (req.session.profile ||= emptyProfile());
+  if (!p.onboardedAt) p.onboardedAt = new Date().toISOString();
+  await commit(req);
+  res.json({ ok: true });
+}));
+
+// A page guide was shown (or skipped): remember it on the account so it never repeats, on any device.
+app.post("/api/profile/tour-seen", requireAuth, ah(async (req, res) => {
+  const id = String(req.body?.id || "").replace(/[^a-z0-9-]/gi, "").slice(0, 40);
+  if (!id) { res.status(400).json({ error: M(req, "identifiant requis", "id required") }); return; }
+  const p = (req.session.profile ||= emptyProfile());
+  p.toursSeen = [...new Set([...(p.toursSeen || []), id])].slice(0, 40);
+  await commit(req);
+  res.json({ ok: true, toursSeen: p.toursSeen });
+}));
+// "Test onboarding" (Settings): forget the basic flow AND every page guide so the whole first-run experience replays.
+app.post("/api/profile/onboarding-reset", requireAuth, ah(async (req, res) => {
+  const p = (req.session.profile ||= emptyProfile());
+  p.toursSeen = [];
+  p.onboardedAt = undefined;
+  if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
+  await commit(req);
+  res.json({ ok: true });
+}));
+// The subjects the student takes (onboarding step) — ordered first wherever a subject is picked.
+app.post("/api/profile/subjects", requireAuth, ah(async (req, res) => {
+  const p = (req.session.profile ||= emptyProfile());
+  const list = Array.isArray(req.body?.subjects) ? req.body.subjects : [];
+  p.subjects = [...new Set<string>(list.map((s: unknown) => String(s).trim().slice(0, 60)).filter(Boolean))].slice(0, 14);
+  await commit(req);
+  res.json({ ok: true, subjects: p.subjects });
+}));
+
+// ── Coursework ───────────────────────────────────────────────────────────────────────────────────────────────
+// The browser extracts text from the FIRST few pages only (COURSEWORK_MAX_PAGES / COURSEWORK_MAX_CHARS, enforced
+// again here), the server distils it to a short summary + key points the tutor and chat can cite, and — when the
+// document itself sets work (a worksheet, an assignment brief) — proposes up to 3 tasks. The file itself is never
+// uploaded or stored; only the summary and a short excerpt are kept on the profile.
+app.post("/api/coursework", requireAuth, rateLimit(15, 60_000), ah(async (req, res) => {
+  const p = (req.session.profile ||= emptyProfile());
+  const subject = String(req.body?.subject || "").trim().slice(0, 60);
+  const name = String(req.body?.name || "").trim().replace(/\s+/g, " ").slice(0, 140);
+  const text = String(req.body?.text || "").replace(/\u0000/g, "").trim().slice(0, COURSEWORK_MAX_CHARS);
+  if (!subject || !name) { res.status(400).json({ error: M(req, "choisis une matière et un nom de document", "pick a subject and a document name") }); return; }
+  if (text.length < 40) { res.status(400).json({ error: M(req, "Je n'ai pas réussi à lire de texte dans ce document (scan sans texte ?).", "I couldn't read any text in that document (a scanned page with no text?).") }); return; }
+  if ((p.coursework || []).length >= COURSEWORK_MAX_DOCS) { res.status(400).json({ error: M(req, "Tu as atteint la limite de documents — supprime-en un d'abord.", "You've reached the document limit — remove one first.") }); return; }
+  const pages = Math.max(1, Math.min(COURSEWORK_MAX_PAGES, Math.round(Number(req.body?.pages) || 1)));
+  const totalPages = Number(req.body?.totalPages) > 0 ? Math.min(9999, Math.round(Number(req.body.totalPages))) : undefined;
+  const truncated = req.body?.truncated === true || (totalPages != null && totalPages > pages) || String(req.body?.text || "").length > COURSEWORK_MAX_CHARS;
+  const ready = aiReady() && !isPaused(req) && !overBudget(req);
+  const sum = ready ? await summarizeCoursework(subject, name, text, p).catch(() => null) : null;
+  if (sum) addUsage(p, sum.tokens, "other");
+  const id = randomUUID();
+  const doc: CourseworkDoc = {
+    id, subject, name,
+    summary: sum?.summary || fallbackCourseworkSummary(text),
+    keyPoints: sum?.keyPoints?.length ? sum.keyPoints : undefined,
+    // 4000 chars, not 1500: `courseworkLine` quotes each document's own opening to the tutor, and a worksheet's
+    // actual questions must be inside that quote for "set an exercise from their worksheet" to mean anything.
+    excerpt: text.replace(/\s+/g, " ").slice(0, 4000),
+    pages, totalPages, truncated: truncated || undefined,
+    addedAt: new Date().toISOString(),
+  };
+  // Tasks only when the document itself sets work (the summarizer returns [] otherwise). Added like a manual
+  // task (same shape, idempotent clientId), tagged with the subject, then queued for planning when AI is ready.
+  const created: WebTask[] = [];
+  for (const [i, t] of (sum?.tasks || []).entries()) {
+    req.session.tasks = tasks.addManual(req.session.tasks || [], t.title, null, !ready, t.due, `cw:${id}:${i}`);
+    const added = req.session.tasks[0];
+    added.sourceSubject = subject;
+    if (t.why) added.why = t.why;
+    if (ready) added.status = "queued";
+    created.push(added);
+  }
+  if (created.length) doc.taskIds = created.map((t) => t.id);
+  p.coursework = [doc, ...(p.coursework || [])].slice(0, COURSEWORK_MAX_DOCS);
+  await saveSession(req);
+  if (created.length && req.session.user) {
+    const email = req.session.user;
+    try {
+      const current = await loadState(email);
+      await saveState(email, { profile: mergeProfiles(current.profile || emptyProfile(), p), tasks: mergeTasks(current.tasks || [], req.session.tasks || []) });
+    } catch { /* best-effort — the enqueue below merges on write too */ }
+    if (ready) for (const t of created) { try { await jobs.enqueueAndDrain(email, "execute_task", t.id, undefined, false); } catch { /* the kick loop / cron picks it up */ } }
+  }
+  await commit(req);
+  res.json({ doc, tasks: created.map((t) => ({ id: t.id, title: t.title })), profile: p, aiSummarized: !!sum });
+}));
+app.delete("/api/coursework/:id", requireAuth, async (req, res) => {
+  try {
+    const p = (req.session.profile ||= emptyProfile());
+    const id = decodeURIComponent(String(req.params.id || ""));
+    p.coursework = (p.coursework || []).filter((d) => d.id !== id);
+    if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
+    await commit(req);
+    res.json(p);
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de supprimer ce document — réessaie.", "Couldn't remove that document — try again.") }); }
+});
 // ── Focus Tracking ─────────────────────────────────────────────────────────────
 // Save a focus session from the camera artifact
 app.post("/api/focus/session", requireAuth, async (req, res) => {
@@ -3107,7 +3521,8 @@ app.post("/api/focus/session", requireAuth, async (req, res) => {
     res.json({ success: true, stats: p.focusStats });
   } catch (e: any) {
     console.error("Failed to save focus session:", e);
-    res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer la session — réessaie.", "Couldn't save session — try again.") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'enregistrer la session — réessaie.", "Couldn't save session — try again.") });
   }
 });
 
@@ -3122,7 +3537,8 @@ app.get("/api/focus/stats", requireAuth, async (req, res) => {
     recalculateFocusStats(p);
     res.json({ stats: p.focusStats });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || M(req, "Impossible de charger les statistiques — réessaie.", "Couldn't load stats — try again.") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de charger les statistiques — réessaie.", "Couldn't load stats — try again.") });
   }
 });
 
@@ -3138,7 +3554,8 @@ app.get("/api/focus/sessions", requireAuth, async (req, res) => {
     const sessions = (p.focusSessions || []).slice(-limit).reverse();
     res.json({ sessions });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || M(req, "Impossible de charger les sessions — réessaie.", "Couldn't load sessions — try again.") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de charger les sessions — réessaie.", "Couldn't load sessions — try again.") });
   }
 });
 
@@ -3151,7 +3568,8 @@ app.get("/api/focus/schedule-suggestion", requireAuth, async (req, res) => {
     const suggestion = generateSchedulingSuggestion({ sourceSubject: subject || undefined, difficulty: difficulty || undefined }, p);
     res.json({ suggestion });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || M(req, "Impossible de générer une suggestion — réessaie.", "Couldn't generate suggestion — try again.") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de générer une suggestion — réessaie.", "Couldn't generate suggestion — try again.") });
   }
 });
 
@@ -3163,7 +3581,8 @@ app.get("/api/focus/artifact-recommendation", requireAuth, async (req, res) => {
     const recommendation = recommendArtifactType(subject, p);
     res.json({ recommendation });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || M(req, "Impossible de générer une recommandation — réessaie.", "Couldn't generate recommendation — try again.") });
+    console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de générer une recommandation — réessaie.", "Couldn't generate recommendation — try again.") });
   }
 });
 
@@ -3327,7 +3746,8 @@ app.delete("/api/profile/exam/:id", requireAuth, async (req, res) => {
     if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
     await commit(req);
     res.json(p);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de supprimer cet examen — réessaie.", "Couldn't remove that exam — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de supprimer cet examen — réessaie.", "Couldn't remove that exam — try again.") }); }
 });
 // Error log — a student-maintained record of specific mistakes (question / what went wrong / what to do
 // next), grouped by subject client-side (see errorLogBySubject, shared/types.ts). Same accumulate-forever,
@@ -3352,7 +3772,8 @@ app.delete("/api/profile/errorlog/:id", requireAuth, async (req, res) => {
     if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
     await commit(req);
     res.json(p);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de supprimer cette entrée — réessaie.", "Couldn't remove that entry — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de supprimer cette entrée — réessaie.", "Couldn't remove that entry — try again.") }); }
 });
 // Reset Otto's synthesized "read" on this student (profile.studentModel) — same transparency posture as
 // errorLog/usage above: this is the most surveillance-adjacent field in the app (an AI-authored read of how
@@ -3367,7 +3788,8 @@ app.delete("/api/profile/student-model", requireAuth, async (req, res) => {
     if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
     await commit(req);
     res.json(p);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de réinitialiser — réessaie.", "Couldn't reset — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de réinitialiser — réessaie.", "Couldn't reset — try again.") }); }
 });
 // Wipe everything Otto has learned (restart from zero memory). The agent rebuilds it over time via `remember`.
 app.delete("/api/profile", requireAuth, async (req, res) => {
@@ -3375,7 +3797,8 @@ app.delete("/api/profile", requireAuth, async (req, res) => {
     req.session.profile = emptyProfile();
     await commit(req);
     res.json(tasks.stripProfileForResponse(req.session.profile));
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de réinitialiser ton profil — réessaie.", "Couldn't reset your profile — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de réinitialiser ton profil — réessaie.", "Couldn't reset your profile — try again.") }); }
 });
 app.delete("/api/profile/:category/:index", requireAuth, async (req, res) => {
   const p = (req.session.profile ||= emptyProfile());
@@ -3390,7 +3813,8 @@ app.delete("/api/profile/:category/:index", requireAuth, async (req, res) => {
     (p as any)[k].splice(i, 1);
     await commit(req);
     res.json(tasks.stripProfileForResponse(p));
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de supprimer ça — réessaie.", "Couldn't delete that — try again.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de supprimer ça — réessaie.", "Couldn't delete that — try again.") }); }
 });
 
 // ── Study Mode ────────────────────────────────────────────────────────���────
@@ -3403,7 +3827,8 @@ app.get("/api/study/sessions", requireAuth, async (req, res) => {
     } else {
       res.json([]);
     }
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de charger les sessions d'étude.", "Couldn't load study sessions.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de charger les sessions d'étude.", "Couldn't load study sessions.") }); }
 });
 
 // Create/save a study session
@@ -3453,7 +3878,8 @@ app.post("/api/study/session", requireAuth, async (req, res) => {
     
     await saveState(email, { profile: current.profile, tasks: current.tasks, studySessions: trimmedSessions }, { throwOnError: true });
     res.json(session);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer la session d'étude.", "Couldn't save study session.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'enregistrer la session d'étude.", "Couldn't save study session.") }); }
 });
 
 // Get study profile
@@ -3465,7 +3891,8 @@ app.get("/api/study/profile", requireAuth, async (req, res) => {
     } else {
       res.json({ userId: req.session.user, updatedAt: new Date().toISOString() });
     }
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de charger le profil d'étude.", "Couldn't load study profile.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de charger le profil d'étude.", "Couldn't load study profile.") }); }
 });
 
 // Update study profile
@@ -3506,79 +3933,51 @@ app.post("/api/study/profile", requireAuth, async (req, res) => {
     
     await saveState(email, { profile: current.profile, tasks: current.tasks, studyProfile: updated }, { throwOnError: true });
     res.json(updated);
-  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer le profil d'étude.", "Couldn't save study profile.") }); }
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible d'enregistrer le profil d'étude.", "Couldn't save study profile.") }); }
 });
 
-// ── Text-to-speech via FreeTTS ──────────────────────────────────────────────
-// Voice per account language (verified live: the old hardcoded "brian" voice was ENGLISH — a French
-// account's tutor replies were spoken by an English voice, mangling the audio — AND the whole endpoint
-// 404s now: FreeTTS moved /api/speech → /api/v1/tts, requires a locale-shaped voice name ("brian" fails
-// its own validation pattern), authenticates via an `x-api-key` header instead of Bearer, and returns a
-// JSON {audio_url} the client must fetch separately). Flow: POST /api/v1/tts → GET the returned audio_url
-// (with the same key) → stream the mp3 back to the client. Voice choice: French accounts get a real
-// fr-FR neural voice; English keeps a good en-US one. Any upstream failure stays fail-open — the client's
-// useSpeechSynthesis already falls back to the browser's built-in TTS (which IS language-correct, it picks
-// a voice by the fr-FR/en-US lang passed in) whenever this route errors.
-const TTS_VOICE_BY_LANG: Record<string, string> = {
-  fr: "fr-FR-DeniseNeural",
-  en: "en-US-AriaNeural",
-};
-const DEFAULT_TTS_VOICE = "en-US-AriaNeural";
-
-app.post("/api/tts", requireAuth, async (req, res) => {
-  const { text, lang: requestedLang } = req.body;
-  if (!text || typeof text !== "string") { res.status(400).json({ error: M(req, "le texte est requis", "text is required") }); return; }
-  if (!process.env.FREETTS_API_KEY) { res.status(501).json({ error: M(req, "Synthèse vocale non configurée", "TTS not configured") }); return; }
-
-  const profileLang = req.session.profile?.language || "";
-  const lang = requestedLang === "fr" || requestedLang === "en" ? requestedLang : profileLang;
-  const voice = TTS_VOICE_BY_LANG[lang] || DEFAULT_TTS_VOICE;
-  const key = process.env.FREETTS_API_KEY;
-  try {
-    // Step 1: request synthesis. Two retry voices on 4xx: the exact configured name could be retired by
-    // the vendor (their catalogue rotates — voices go Preview/GA/discontinued), so fall back to the
-    // multilingual sibling (always GA), then to ANY fr-FR/en-US GA voice from the live catalogue.
-    let fileId: string | undefined;
-    let audioUrl: string | undefined;
-    const attempt = async (v: string): Promise<{ ok: true; audioUrl: string } | { ok: false; status: number }> => {
-      const synth = await fetch("https://freetts.org/api/v1/tts", {
-        method: "POST",
-        headers: { "x-api-key": key, "Content-Type": "application/json" },
-        body: JSON.stringify({ text: text.slice(0, 4500), voice: v, outputFormat: "audio/mp3" }),
-        signal: AbortSignal.timeout(20_000),
-      });
-      if (!synth.ok) return { ok: false, status: synth.status };
-      const meta = await synth.json() as { audio_url?: string };
-      return meta.audio_url ? { ok: true, audioUrl: meta.audio_url } : { ok: false, status: 502 };
-    };
-    const fallbacks = voice === TTS_VOICE_BY_LANG.fr
-      ? ["fr-FR-VivienneMultilingualNeural", "fr-FR-EloiseNeural"]
-      : ["en-US-JennyNeural"];
-    for (const v of [voice, ...fallbacks]) {
-      const r = await attempt(v);
-      if (r.ok) { audioUrl = r.audioUrl; break; }
-      if (r.status !== 400 && r.status !== 422) break; // quota/auth/outage — voice retrying won't help
-    }
-    if (!audioUrl) {
-      console.error(`[tts] FreeTTS synthesis failed for voice ${voice}`);
-      res.status(500).json({ error: M(req, "Échec de la génération vocale", "TTS generation failed") });
-      return;
-    }
-    // Step 2: fetch the actual audio. (Only the audio_url's own origin is ever fetched — the URL comes
-    // from FreeTTS's own JSON response, never from the client.)
-    const audio = await fetch(audioUrl, { headers: { "x-api-key": key }, signal: AbortSignal.timeout(20_000) });
-    if (!audio.ok) {
-      console.error(`[tts] FreeTTS audio fetch error: ${audio.status}`);
-      res.status(500).json({ error: M(req, "Échec de la requête vocale", "TTS request failed") });
-      return;
-    }
-    const buffer = await audio.arrayBuffer();
-    res.setHeader("Content-Type", "audio/mpeg");
-    res.send(Buffer.from(buffer));
-  } catch (e: any) {
-    console.error(`[tts] error: ${e?.message}`);
-    res.status(500).json({ error: M(req, "Échec de la requête vocale", "TTS request failed") });
+// The tutor's spoken voice (see synthesizeSpeech in server/claude.ts): a free, keyless, MALE-ONLY voice
+// pool. Called one chunk at a time by client/voice/useSpeechSynthesis.ts, which on failure plays NOTHING for
+// that reply rather than substituting a female/browser voice — a loud, honest failure is the intended
+// behavior here, so a failure is logged with the provider's own reason. Rate-limited generously: one reply
+// is 1-3 chunks, and voice mode can go quickly.
+app.post("/api/tts", requireAuth, rateLimit(120, 60_000), async (req, res) => {
+  const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
+  const lang = req.body?.lang === "fr" ? "fr" : "en";
+  if (!text) { res.status(400).json({ error: M(req, "le texte est requis", "text is required") }); return; }
+  // One free, keyless provider speaking from a MALE-ONLY voice pool (see synthesizeSpeech in
+  // server/claude.ts): no Gemini TTS, no female voice to fall back to, and a failure retries the next male
+  // voice rather than switching gender. Long text is CHUNKED by that function, never sliced — the old
+  // `text.slice(0, 1000)` here was silently cutting the tail off every reply longer than 1000 characters,
+  // which is what "all voices cut off early" actually was. TTS_MAX_TEXT bounds only how much text one
+  // request may carry (the client never sends more than it); it is not a content limit.
+  const out = await synthesizeSpeech(text.slice(0, TTS_MAX_TEXT), lang);
+  if ("error" in out) {
+    console.error(`[tts] every male voice failed: ${out.error}`);
+    res.status(out.status === 429 ? 429 : 502).json({ error: M(req, "Échec de la génération vocale", "TTS generation failed") });
+    return;
   }
+  res.setHeader("Content-Type", out.mime);
+  res.setHeader("Cache-Control", "no-store");
+  res.send(out.audio);
+});
+
+// Admin metrics dashboard — gated to a single hardcoded account, not a role/permission system (there is
+// exactly one admin, this is a class project, not a product with a team of operators). Deliberately an
+// EXACT, case-insensitive email match rather than any kind of role flag on the profile/session — a role
+// flag would be one more piece of state that could drift or get copied into another account's row; a
+// literal constant here can't leak or be granted to anyone by accident.
+const ADMIN_EMAIL = "tjong.willem@gmail.com";
+function isAdmin(req: express.Request): boolean {
+  return (req.session.user || "").toLowerCase() === ADMIN_EMAIL;
+}
+app.get("/api/admin/metrics", requireAuth, async (req, res) => {
+  if (!isAdmin(req)) { res.status(403).json({ error: M(req, "Accès refusé.", "Access denied.") }); return; }
+  if (!cloudEnabled()) { res.status(500).json({ error: M(req, "Supabase n'est pas configuré.", "Supabase isn't configured.") }); return; }
+  const metrics = await getAdminMetrics();
+  if (!metrics) { res.status(500).json({ error: M(req, "Impossible de charger les métriques — réessaie.", "Couldn't load metrics — try again.") }); return; }
+  res.json(metrics);
 });
 
 // ── Static (production) ─────────────────────────────────────────────────────

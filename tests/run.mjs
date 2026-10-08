@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
-import { readFileSync } from "node:fs";
-import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem, detectLang, visionReady, describeWhiteboard, academicBlock, sessionRecapLine } from "../server/claude.ts";
+import { readFileSync, readdirSync } from "node:fs";
+import { recencyStamp, dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor, attachLocationLinks, googleMapsDirectionsUrl, trimOldStudylogArtifacts } from "../server/tasks.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, shouldNudgeBoardContent, mathInPlay, newMathOffBoard, replyIntroducesNewMath, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem, detectLang, visionReady, describeWhiteboard, academicBlock, sessionRecapLine } from "../server/claude.ts";
 import { evaluateArithmetic, parseNumber, findArithmeticClaims, hasArithmetic } from "../server/arithmetic.ts";
 import { isLikelyEcho, createEchoFilter, normalizeForEcho } from "../client/voice/echoGuard.ts";
 import { speechErrorMessage } from "../client/voice/speechErrors.ts";
@@ -14,11 +14,316 @@ import { computeWorkload, isPileUp } from "../server/workload.ts";
 import { stripHtml, applyPronoteGrades, isPrivateOrReservedIp, assertSafeExternalUrl } from "../server/pronote.ts";
 import { connectionColumnUpdates } from "../server/store.ts";
 import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, contextKey, chooseArm, computeReward, computeCardReward, computeLatencyReward, updatePosterior, leadingArm } from "../server/bandit.ts";
+import { trimFreeTTSWatermark } from "../server/ttsTrim.ts";
+import { openerMemoryBlock, cleanOpener, tutorOpener } from "../server/claude.ts";
+import { sessionTopic, relativeWhen, sessionMemoryForPrompt } from "../client/tutor/tutorSessions.ts";
+import { wantsArtifactTools } from "../server/claude.ts";
+import { rankVoices, isMaleVoice, cloudChunks, toSpeakableText, stripLatexForSpeech } from "../client/voice/useSpeechSynthesis.ts";
+import { traceLines, splitMergedSteps } from "../client/study/artifacts/BoardArtifact.tsx";
+import { pcmToWav, leaksAnswer, scrubAnswerLeak, makeProblem as makeProblemLeak, makePracticeProblem as makePracticeLeak, wordWrapChunks, leaksAnyProblemAnswer, makeInteractiveEntry, stripId3v2, stripId3v1 } from "../server/claude.ts";
+import { lastMessageKey } from "../client/voice/replyKey.ts";
+import { subjectMastery } from "../shared/types.ts";
+import { COURSES, findCourse, normText, subjectMatches, matchesUnit, unitMastery, courseProgress, nextUnitToWork, masteryBand, UNIT_MASTERED_AT, orderCoursesForProfile, normalizeEnrolledCourses, unitObjectives } from "../shared/courses.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, subjectFrequency, orderingBoost, twoMinuteRuleBoost } from "../server/patterns.ts";
 
+import { compileExpr } from "../shared/mathExpr.ts";
+import { makeGraphEntry, earlierDigest, isSubstantiveStep, courseworkLine, fallbackCourseworkSummary, chunkCourseworkText } from "../server/claude.ts";
+import { canonSubject, sameSubject, normalizeCoursework, courseworkForSubject, COMMON_SUBJECTS, COURSEWORK_MAX_PAGES, COURSEWORK_MAX_CHARS } from "../shared/coursework.ts";
+import { tightenForChat, countWords as countWordsT } from "../server/claude.ts";
 let pass = 0, fail = 0;
 const check = (name, cond) => { cond ? pass++ : (fail++, console.log("  FAIL:", name)); };
 const section = (name) => console.log(`— ${name}`);
+
+// ── Tutor speed + voice: local reply tightening, no extra model round-trip ─────
+section("Board = the reasoning, not a transcript (source pins)");
+{
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("the board never echoes the student's message or Otto's question (no auto-logging)", !/workingEntryFor|promptEntryFor/.test(src));
+  check("a step, result or reasoning line counts as substantive", ["x² − 5x + 6 = 0 so (x−2)(x−3) = 0", "I think I need to move the six across first and then factor it", "the answer is 12"].every(isSubstantiveStep));
+  check("questions, chips, acks, don't-knows and auto-messages do not", ["ok", "Salut", "what is a root?", "Can I have a small hint?", "I'm lost — can we go smaller?", "I don't know", "[Exercise] I answered \"4\" — marked wrong (try #1).", "[What I wrote/drew on the board: a wavy line]", "hmm"].every((m) => !isSubstantiveStep(m)));
+  check("a corrective round asks the tutor (not the app) to write the reasoning + helpful formula when a step produced no board write", /reasoningNudgeDone = true/.test(src) && /1-3 short WRITE_TO_BOARD calls\): \(a\) kind \\"summary\\"/.test(src) && /isSubstantiveStep\(message\)/.test(src));
+  check("persona asks for the move + why + result in its own words and forbids quoting the chat", /THE BOARD IS THE WORKING — THE REASONING, NOT A TRANSCRIPT/.test(src) && /NEVER copy what the student typed/.test(src));
+}
+section("Board reasoning trace — one move per rendered line, even when the model merges two steps (unit tests)");
+{
+  // Reported live (screenshot): a summary line came out as "5. ○ 6. collect → 3sec²x − 17sec x − 28 = 0" and
+  // the board rendered step 5 whose TEXT read "○ 6 collect → …" — a stray bullet glyph and a second step
+  // number inside one step. The trace is numbered by the board itself, so both are noise; a merged pair of
+  // moves is a broken-looking board.
+  check("a merged pair of numbered steps collapses to the one move that had content", traceLines("5. ○ 6. collect → 3sec²x − 17sec x − 28 = 0").join("|") === "collect → 3sec²x − 17sec x − 28 = 0");
+  check("a step decorated with a bullet glyph loses the glyph", traceLines("○ 6. collect → 3sec²x = 0").join("|") === "collect → 3sec²x = 0");
+  check("a glyph that follows the marker is stripped too (\"6. ○ x\" → \"x\"), not left as the step's text", traceLines("6. ○ collect → 3sec²x = 0").join("|") === "collect → 3sec²x = 0");
+  check("two full steps on one line are split into two, in order", traceLines("3. ×3: 3sec²x − 3 = 8sec x\n4. collect → 3u² − 17u − 28 = 0").length === 2);
+  check("a genuine two-step line is split properly: \"4. ×3: … 5. collect → …\"", traceLines("4. ×3: 3sec²x − 3 = 8sec x 5. collect → 3u² − 17u − 28 = 0").join("|") === "×3: 3sec²x − 3 = 8sec x|collect → 3u² − 17u − 28 = 0");
+  // The split must not be trigger-happy: a "2)" that is part of the sentence is NOT a new step, and a jump
+  // in numbering is not a continuation either.
+  check("a bracketed number inside prose is left alone", traceLines("4. divide by 2) then add 1").join("|") === "divide by 2) then add 1");
+  check("a number that does NOT continue the line's own sequence is left alone", traceLines("1. use step 7. skip ahead").join("|") === "use step 7. skip ahead");
+  check("dash lines (the documented summary format) still render one move each", traceLines("- isolated x on one side\n- sign flips when dividing\n- checked by substituting back").length === 3);
+  check("the model's own header line never counts as step one", traceLines("How you got there:\n- a\n- b").join("|") === "a|b");
+  check("blank lines and marker-only lines never render as an empty step", traceLines("1. a\n2. \n3. \n\n4. d").join("|") === "a|d");
+  check("splitMergedSteps is a pure function the renderer can rely on", Array.isArray(splitMergedSteps("1. a")) && splitMergedSteps("plain prose").length === 1);
+  const boardSrc = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  check("the renderer draws the numbering itself and no longer pastes the model's glyph into the step text", /<ol className="sm-board-trace-list">/.test(boardSrc) && /piece\.replace\(LEAD_DECOR_RE, ""\)\.replace\(LEAD_MARKER_RE, ""\)\.replace\(LEAD_DECOR_RE, ""\)/.test(boardSrc));
+  const claudeTrace = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("the prompt tells the model to write ONE move per line with no step number or bullet inside it", claudeTrace.includes("ONE MOVE PER LINE — the trace is numbered for you") && claudeTrace.includes("never put TWO moves on one line"));
+}
+
+section("Tutor opener — Otto's first line is REAL memory, never a template or a board caption (unit tests + source pins)");
+{
+  // Reported live, verbatim: 'Hey! Last time we worked on: "The equation to work with". What do you still
+  // remember?' — a board CAPTION quoted back as the thing they studied, inside a hardcoded sentence. The
+  // opener is now written by the tutor from real memory (the browser's own record of the last sessions +
+  // what the server knows), and these are the properties that make that real rather than decorative.
+  const memory = [
+    { when: "yesterday", subject: "Maths", lines: ["3sec²x − 17sec x − 28 = 0", "on pose X = sec x"], asked: ["pourquoi on remplace sec x par X ?"] },
+    { when: "3 days ago", subject: "Maths", lines: ["f'(x) = 3x² − 3"], asked: [] },
+  ];
+  const block = openerMemoryBlock(memory);
+  check("the opener's memory block carries the REAL board lines, not a title or a topic label", block.includes("3sec²x − 17sec x − 28 = 0") && block.includes("on pose X = sec x"));
+  check("...and the student's own questions, in their own words", block.includes("pourquoi on remplace sec x par X ?"));
+  check("...and when each one happened", block.includes("yesterday") && block.includes("3 days ago"));
+  check("a hollow session contributes nothing rather than a fabricated row", openerMemoryBlock([{ when: "", subject: "", lines: [], asked: [] }]) === "" && openerMemoryBlock(undefined) === "");
+
+  check("a quoted completion arrives unquoted", cleanOpener('"Salut ! On reprend ?"') === "Salut ! On reprend ?");
+  check("French guillemets are stripped too", cleanOpener("« Salut ! »") === "Salut !");
+  check("a speaker label, a bullet and markdown emphasis never reach the bubble", cleanOpener("- Otto: **Salut** !") === "Salut !");
+  check("a multi-line completion collapses to ONE spoken line", cleanOpener("Salut !\n\nOn reprend ?") === "Salut ! On reprend ?");
+  check("a runaway completion is clamped at a sentence boundary, not mid-word", (() => { const t = cleanOpener("a".repeat(150) + ". " + "b".repeat(400)); return t.length <= 321 && /[.?!]$/.test(t); })());
+  check("an empty completion is treated as a real failure, never a blank bubble", cleanOpener("") === "" && cleanOpener("   ") === "");
+
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("the opener runs on the tutor's own provider chain (Gemini → DeepSeek fallback), not a second AI client", /export async function tutorOpener\([\s\S]*?await createTutorChat\(/.test(src));
+  check("the prompt forbids inventing a RECOLLECTION — the exact placeholder this feature removes", src.includes("last time we were working on X") && src.includes("an honest blank start") && src.includes("beats a fabricated memory"));
+  check("with NOTHING on record the model is told so out loud, so it can't confabulate a past session", src.includes("NOTHING IS ON RECORD about what this student has worked on") && src.includes('"last time" / "la dernière fois"'));
+  check("a board caption is named as a caption, not as something the student studied", src.includes("never a board caption or a placeholder label") && src.includes("is a heading on the board, NOT something the student studied"));
+  check("the line is asked to make them RECALL the work rather than be told what it was", src.includes("make it a retrieval ") && src.includes("get THEM to recall it"));
+
+  const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  check("the opener route is authenticated, rate-limited and budget-gated like every other AI call, and counts its usage", /app\.post\("\/api\/tutor\/opener", requireAuth, rateLimit\(/.test(idx) && /await tutorOpener\(\{ subject[\s\S]{0,160}addUsage\(profile, out\.tokens, "chat"\)/.test(idx));
+  check("client-controlled memory is capped before it can reach the prompt", idx.includes("rawMemory.slice(0, 3)") && idx.includes("slice(0, 6).map((x: string) => x.trim().slice(0, 200))") && idx.includes("slice(0, 3).map((x: string) => x.trim().slice(0, 200))"));
+  check("a failed opener is a quiet 502 the client ignores, never an error the student sees", idx.includes("[tutor] opener failed") && /opener failed[\s\S]{0,200}res\.status\(502\)/.test(idx));
+
+  // ── the browser's own record: what gets sent up as memory
+  const captionSession = { id: "c1", taskId: "c1", startTime: "2026-10-01T10:00:00.000Z", endTime: "2026-10-01T10:30:00.000Z", messageCount: 3, boardEntries: ["Today's focus", "The equation to work with"], summary: "The equation to work with", chat: [] };
+  check("a board CAPTION is never picked as the topic — that is the reported bug, unit-tested", sessionTopic(captionSession) === "");
+  check("a real board line IS picked, preferring one with actual work in it", sessionTopic({ ...captionSession, boardEntries: ["Today's focus", "on a parlé de la dérivée", "3sec²x − 17sec x − 28 = 0"] }) === "3sec²x − 17sec x − 28 = 0");
+  check("no board and no recap means NO topic (the caller must then not claim to remember)", sessionTopic({ ...captionSession, boardEntries: [], summary: "Session completed" }) === "");
+  check("relative time is given only as precisely as it is actually known", relativeWhen(new Date(Date.now() - 86_400_000).toISOString(), Date.now(), "en") === "yesterday" && relativeWhen(new Date(Date.now() - 3 * 86_400_000).toISOString(), Date.now(), "fr") === "il y a 3 jours" && relativeWhen(new Date(Date.now() - 9 * 86_400_000).toISOString(), Date.now(), "fr") === "la semaine dernière" && relativeWhen("not a date", Date.now(), "fr") === "");
+  const old = { ...captionSession, id: "s1", endTime: new Date(Date.now() - 9 * 86_400_000).toISOString(), subject: "Maths", boardEntries: ["3sec²x − 17sec x − 28 = 0", "on pose X = sec x"], summary: "3sec²x − 17sec x − 28 = 0", chat: [{ role: "user", text: "pourquoi on remplace sec x par X ?" }, { role: "assistant", text: "bonne question" }] };
+  const other = { ...old, id: "s2", subject: "Histoire", boardEntries: ["la Révolution française", "1789"], chat: [] };
+  const mem2 = sessionMemoryForPrompt([other, old], "Maths", Date.now(), "en");
+  check("this subject's sessions come first even when another subject is newer", mem2[0].subject === "Maths" && mem2[1].subject === "Histoire");
+  check("the memory carries the real board content and the student's question, not a title", mem2[0].lines.includes("3sec²x − 17sec x − 28 = 0") && mem2[0].asked[0] === "pourquoi on remplace sec x par X ?" && mem2[0].when === "last week");
+  check("a session with nothing real is dropped instead of being sent as a hollow row", sessionMemoryForPrompt([captionSession], "Maths", Date.now(), "en").length === 0);
+  check("the memory is capped at three sessions so the opener request stays small", sessionMemoryForPrompt([1, 2, 3, 4, 5].map((n) => ({ ...old, id: `x${n}` })), "Maths", Date.now(), "en").length === 3);
+  const ts = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  check("opening a session asks for the real opening line, grounded in the browser's own record", /api\.tutorOpener\(task\.sourceSubject \|\| "", memory\)/.test(ts) && /sessionMemoryForPrompt\(getTutorSessions\(userId\), task\.sourceSubject, Date\.now\(\), openerLang\)/.test(ts));
+  check("it is asked exactly once per session and only while the session is still blank", /if \(!id \|\| task\.chat\?\.length \|\| openerAskedFor === id\) return;/.test(ts) && /setOpenerAskedFor\(id\)/.test(ts));
+  check("the instant line stays as the fallback — a failed or slow opener never leaves an empty greeting", /const openerText = realOpener && realOpener\.id === task\.id \? realOpener\.text : instantOpener;/.test(ts) && /the instant line stays/.test(ts));
+  check("the instant line no longer quotes the first raw board text as 'what we worked on'", !/lastSame\?\.summary\.split/.test(ts) && /sessionTopic\(lastSame\)/.test(ts) && /relativeWhen\(lastSame\.endTime/.test(ts));
+  const sessionsSrc = readFileSync(new URL("../client/tutor/tutorSessions.ts", import.meta.url), "utf8");
+  check("the old recap helper that never reached the model is gone (one memory path, not two)", !sessionsSrc.includes("pastSessionsLine") && !ts.includes("pastSessionsLine"));
+  const apiSrc = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
+  check("the client has exactly one opener call, and it is best-effort by design", /tutorOpener: \(subject: string, pastSessions/.test(apiSrc) && /post\("\/api\/tutor\/opener", \{ subject, pastSessions \}\)/.test(apiSrc));
+}
+
+section("Tutor stage — End session always ends; the stage is screen-height with ONE scroller the ink lives on (source pins)");
+{
+  const tut = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  const css = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
+  const end = tut.slice(tut.indexOf("const endSession = useCallback"), tut.indexOf("const endSession = useCallback") + 1600);
+  check("endSession no longer silently no-ops without a start time, and always leaves the screen (finally)", !/!sessionStart\) return/.test(end) && /\} finally \{[\s\S]*setTask\(null\)/.test(end) && /couldn't save the session summary/.test(end));
+  check("tutor stage is fixed to the screen height (it used to grow with the board and push End session away)", /\.tutor-stage \{[^}]*flex: none[^}]*height: 100dvh/.test(css));
+  check("the board component's own scroller is neutralised in the stage so the ink canvas is on the one real scroller", /\.ts-board-body \.sm-board-body \{ overflow: visible;/.test(css) && /createPortal\(/.test(readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8")));
+  check("'Show Otto' lets the student say what to look at (note travels with the drawing)", /tc-ask/.test(readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8")) && /onSend=\{\(description, note\)/.test(tut));
+  check("the whiteboard starts in select/hand mode, not draw — the board underneath must be usable right away", /useState<Tool>\("pan"\)/.test(readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8")));
+}
+section("Tutor memory — earlier turns are condensed, not forgotten");
+{
+  const older = [{ role: "user", text: "I'm stuck on factoring x² − 5x + 6" }, { role: "assistant", text: "Which two numbers multiply to 6 and add to −5? Take your time." }, { role: "user", text: "[Exercise] I answered \"4\" — marked wrong (try #1)." }];
+  const d = earlierDigest(older);
+  check("digest lists each older message in one line, oldest first", /^EARLIER IN THIS SESSION/.test(d) && d.indexOf("factoring") < d.indexOf("Which two numbers") && /answered a board exercise/.test(d));
+  check("digest keeps only the first sentence of Otto's turns and tells the model not to re-explain", !/Take your time/.test(d) && /don't re-explain/.test(d));
+  check("digest is capped, newest lines win", (() => { const many = Array.from({ length: 200 }, (_, i) => ({ role: "user", text: `message number ${i} about something` })); const out = earlierDigest(many, 600); return out.length < 800 && /number 199/.test(out) && !/number 0 /.test(out); })());
+  check("nothing older gives an empty digest", earlierDigest([]) === "");
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("primer turns get a 24-message window plus the digest (non-primer stays 10)", /const histWindow = opts\?\.primer \? 24 : 10;/.test(src) && /earlierDigest\(history\.slice\(0, -histWindow\), 2600\)/.test(src));
+  check("the server keeps up to 60 messages of thread", /const CHAT_CAP = 60;/.test(readFileSync(new URL("../server/index.ts", import.meta.url), "utf8")));
+}
+section("TutorSession — no hook after an early return (React #310 crash)");
+{
+  const src = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  const after = src.slice(src.indexOf("const noop = () => {};"));
+  check("every hook in TutorSession sits above the loading/landing early returns", src.includes("const noop = () => {};") && !/\buse(State|Effect|Context|Ref|Callback|Memo|Layout\w*)\(/.test(after));
+}
+section("Board — nothing already on it is ever dropped by a server reply");
+{
+  const src = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  check("a chat reply merges its board/problems/chat into what's on screen instead of replacing it", /board: mergeBoardById\(task\.board \|\| \[\], updated\?\.board \|\| \[\]\)/.test(src) && /chat: \[\.\.\.\(task\.chat \|\| \[\]\), \.\.\.\(response\.chatDelta \|\| \[\]\)\]/.test(src));
+  const m = src.match(/export function mergeBoardById[\s\S]*?\n}\n/)[0].replace("export function", "function").replace(/<T[^>]*>/, "").replace(/\(existing: T\[\], incoming: T\[\]\): T\[\]/, "(existing, incoming)").replace(/\(x: T\)/g, "(x)").replace(/\(x\) => x\.id/g, "(x) => x.id");
+  const mergeBoardById = new Function(m.replace(/: T/g, "") + "; return mergeBoardById;")();
+  const a = [{ id: "1", at: "2026-01-01T00:00:01Z" }, { id: "2", at: "2026-01-01T00:00:03Z" }];
+  const out = mergeBoardById(a, [{ id: "2", at: "2026-01-01T00:00:03Z" }, { id: "3", at: "2026-01-01T00:00:02Z" }]);
+  check("mergeBoardById keeps every existing entry, adds only new ones, ordered by time", out.map((x) => x.id).join() === "1,3,2" && mergeBoardById(a, []) === a && mergeBoardById(a, [{ id: "9" }]).length === 3);
+}
+section("Coursework — subjects, limits, summaries the tutor/chat can cite (unit + source pins)");
+{
+  check("subject aliases group: Maths/Mathématiques/Math, Physique/Physics, SVT/Biology, SES/Economics", sameSubject("Maths", "Math") && sameSubject("Mathématiques", "math") && sameSubject("Physique-Chimie", "Physics") && sameSubject("SVT", "Biology") && sameSubject("SES", "Economics") && !sameSubject("Math", "Physics"));
+  check("custom subjects still group with themselves", sameSubject("Psychology", "psychology") && !sameSubject("Psychology", "Sociology") && !sameSubject("", "Math"));
+  check("the common subject list is shared (tutor + coursework) and ends with Other", COMMON_SUBJECTS.includes("Math") && COMMON_SUBJECTS.includes("Computer Science") && COMMON_SUBJECTS[COMMON_SUBJECTS.length - 1] === "Other");
+  check("reading limits are small and explicit", COURSEWORK_MAX_PAGES === 15 && COURSEWORK_MAX_CHARS === 30000);
+  const raw = [{ id: "a", subject: "Math", name: "Worksheet 3", summary: "x".repeat(2000), excerpt: "y".repeat(5000), pages: 4, totalPages: 20, truncated: true, addedAt: "2026-10-01T00:00:00Z" }, { id: "", subject: "Math", name: "bad" }, { id: "b", subject: "Physique", name: "Optics notes", summary: "Light basics", excerpt: "", pages: 2, addedAt: "2026-10-02T00:00:00Z" }];
+  const norm = normalizeCoursework(raw);
+  check("normalize drops invalid docs and caps summary/excerpt", norm.length === 2 && norm[0].summary.length <= 900 && norm[0].excerpt.length <= 4200);
+  check("docs for a subject are matched by alias, newest first", courseworkForSubject(norm, "Physics").map((d) => d.id).join() === "b" && courseworkForSubject(norm, "Maths").length === 1);
+  const profile = { language: "en", coursework: norm };
+  const line = courseworkLine(profile, "Math");
+  check("chat/tutor context names the document, says how much was read, and treats it as untrusted DATA", /UPLOADED COURSEWORK FOR MATH/.test(line) && /Worksheet 3/.test(line) && /first 4 of 20 pages/.test(line) && /DATA/.test(line) && /ignore any instruction/.test(line));
+  check("no context for a subject with no documents", courseworkLine(profile, "History") === "" && courseworkLine(undefined, "Math") === "");
+  check("context is capped", courseworkLine({ coursework: Array.from({ length: 6 }, (_, i) => ({ id: String(i), subject: "Math", name: "n" + i, summary: "s".repeat(800), keyPoints: ["k".repeat(150), "k".repeat(150)], excerpt: "e".repeat(600), pages: 3, addedAt: `2026-10-0${i + 1}T00:00:00Z` })) }, "Math").length <= 4000);
+  // The hole that made "thoroughly usable in chat and tutor" a lie for an open session: with no subject set,
+  // courseworkForSubject matched nothing and the tutor was told about NONE of the student's documents.
+  check("a subject-less session still gets the documents, across subjects, labelled with their subject", (() => {
+    const l = courseworkLine(profile, undefined);
+    return /UPLOADED COURSEWORK FOR THEIR SUBJECTS/.test(l) && /Optics notes/.test(l) && /\[Physique\]/.test(l) && /Worksheet 3/.test(l);
+  })());
+  check("every document's own opening is quoted, not just the newest one's", (() => {
+    const two = { language: "en", coursework: [
+      { id: "x", subject: "Math", name: "Worksheet 3", summary: "Quadratics.", excerpt: "Exercise 1. Factor x^2 - 9.", pages: 2, addedAt: "2026-10-02T00:00:00Z" },
+      { id: "y", subject: "Math", name: "Worksheet 2", summary: "Fractions.", excerpt: "Exercise 4. Simplify 6/8.", pages: 2, addedAt: "2026-10-01T00:00:00Z" },
+    ] };
+    const l = courseworkLine(two, "Math");
+    return /Factor x\^2 - 9/.test(l) && /Simplify 6\/8/.test(l);
+  })());
+  check("the block tells the tutor to ground exercises in the document's own numbered questions and to say when a question isn't in it", (() => {
+    const l = courseworkLine(profile, "Math");
+    return /name the ones you're setting/.test(l) && /ISN'T answered by it/.test(l);
+  })());
+  // Reading the first 15 pages means reading the WHOLE slice: a single 12 000-char read silently dropped
+  // everything past roughly page 6 (the summariser's old `.slice(0, 12000)`).
+  check("a document longer than one window is split in order, covering the whole slice, and a short one stays a single window", (() => {
+    const long = "x".repeat(COURSEWORK_MAX_CHARS);
+    const wins = chunkCourseworkText(long);
+    return wins.length === 3 && wins.every((w) => w.length <= 12000) && wins.join("").length === COURSEWORK_MAX_CHARS && chunkCourseworkText("short text").length === 1 && chunkCourseworkText("").length === 0;
+  })());
+  check("fallback summary (no AI) is the first sentences, bounded", fallbackCourseworkSummary("First sentence here. Second one follows. " + "More text. ".repeat(100)).length <= 430 && fallbackCourseworkSummary("") === "");
+  const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const cwRoute = idx.slice(idx.indexOf('app.post("/api/coursework"'), idx.indexOf('app.post("/api/coursework"') + 4200);
+  check("the route is authenticated + rate-limited, re-enforces the char limit, and needs readable text", /app\.post\("\/api\/coursework", requireAuth, rateLimit\(/.test(idx) && /slice\(0, COURSEWORK_MAX_CHARS\)/.test(cwRoute) && /text\.length < 40/.test(cwRoute));
+  check("tasks are created only from what the summarizer proposes, tagged with the subject, idempotent per document", /sum\?\.tasks/.test(cwRoute) && /cw:\$\{id\}:\$\{i\}/.test(cwRoute) && /sourceSubject = subject/.test(cwRoute));
+  check("chat/tutor and task runs both carry the coursework context", /courseworkLine\(profile, task\.sourceSubject\)/.test(readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8")) && (readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8").match(/courseworkLine\(profile, task\.sourceSubject\)/g) || []).length >= 2);
+  const page = readFileSync(new URL("../client/CourseworkPage.tsx", import.meta.url), "utf8");
+  const pdf = readFileSync(new URL("../client/study/pdfText.ts", import.meta.url), "utf8");
+  check("the browser reads only the first pages (limited PDF reader) and the page tells the student the limit", /extractPdfTextLimited\(file, COURSEWORK_MAX_PAGES, COURSEWORK_MAX_CHARS\)/.test(page) && /Math\.min\(doc\.numPages, maxPages\)/.test(pdf));
+  check("Coursework is in the nav and routed", /href="\/coursework"/.test(readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8")) && /route === "coursework"/.test(readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8")));
+  check("each uploaded document is collapsible (details/summary), not a flat always-open card", /<details key={d\.id} className="cw-doc"/.test(page) && /<summary>/.test(page));
+  check("document cards start COLLAPSED, and what Otto read is collapsible in its own right", !/open={list\.length === 1}/.test(page) && /cw-read/.test(page) && /Ce qu'Otto a lu/.test(page));
+}
+section("Journal — old decks stay readable, and a day's deck is the NEWEST one (unit + source pins)");
+{
+  const deckWith = (createdAt, n) => ({ id: `d-${createdAt}-${n}`, title: "t", createdAt, cards: Array.from({ length: n }, (_, i) => ({ front: `f${i}`, back: `b${i}`, review: { box: 2, dueAt: "2026-01-01T00:00:00Z", seen: 2, correct: 1 } })) });
+  const studyDay = (logDate, cards) => ({ id: `t-${logDate}`, title: logDate, source: "studylog", logDate, logText: "what I learned today", flashcards: [deckWith("2026-01-01T00:00:00Z", cards)] });
+  const now = new Date("2026-10-08T12:00:00Z");
+  const fresh = trimOldStudylogArtifacts([studyDay("2026-10-01", 12)], now);
+  check("a recent day keeps its deck AND its review state", fresh[0].flashcards[0].cards.length === 12 && !!fresh[0].flashcards[0].cards[0].review);
+  // Reported live: "when i go a week before it only shows entry" — the deck was being deleted whole past the
+  // TTL, so a journal day a week old showed its text and no cards at all.
+  const old = trimOldStudylogArtifacts([studyDay("2026-08-01", 12)], now);
+  check("a 68-day-old day still shows its CARDS, and keeps its entry text", old[0].flashcards[0].cards.length === 12 && old[0].logText === "what I learned today");
+  check("past the TTL the stale Leitner state (box/dueAt) is what gets dropped, so nothing old keeps resurfacing", old[0].flashcards[0].cards.every((c) => c.review === undefined));
+  check("the retention window is at least the 30 days that were asked for", trimOldStudylogArtifacts([studyDay("2026-09-09", 5)], now)[0].flashcards[0].cards.every((c) => !!c.review));
+  check("trimming is idempotent — the hook runs on EVERY commit, so an already-trimmed task is returned as-is", (() => { const once = trimOldStudylogArtifacts([studyDay("2026-08-01", 12)], now); return trimOldStudylogArtifacts(once, now)[0] === once[0]; })());
+  const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  check("the journal day/week/month views resolve to the NEWEST deck, never flashcards[0] (the stale-deck bug behind 'only 10 show')",
+    /const dayDeck = newestDeck\(dayTask\)/.test(app) && /const summaryDeck = newestDeck\(summary\)/.test(app) && /const monthDeck = newestDeck\(monthSummary\)/.test(app) && !/flashcards\?\.\[0\]/.test(app));
+}
+section("RL personalization — one learner, board-driving moves, richer reward, more context (unit + source pins)");
+{
+  const adapt = readFileSync(new URL("../server/tutorAdapt.ts", import.meta.url), "utf8");
+  check("each of the seven learned moves carries a concrete BOARD action, so the policy's choice is visible on the page",
+    /Put that question ON THE BOARD/.test(adapt) && /put THAT shrunk step on the board/.test(adapt) && /put it on the board LINE BY LINE/.test(adapt) &&
+    /put a figure on the board/.test(adapt) && /put the MAPPING on the board/.test(adapt) && /put THAT back on the board/.test(adapt) && /write the rule up on the board/.test(adapt));
+  const pol = readFileSync(new URL("../server/tutorPolicy.ts", import.meta.url), "utf8");
+  check("the policy is v2 with the three added context features (mastery, objective progress, board richness)",
+    /v: 2/.test(pol) && /p\.v !== 2/.test(pol) && /mastery\?: number/.test(pol) && /objectiveProgress\?: number/.test(pol) && /boardRich\?: number/.test(pol));
+  const idx2 = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  check("the route feeds the policy what the previous turn PRODUCED (board write + objectives ticked off), tracked across turns",
+    /lastTurnBoardWrite/.test(idx2) && /lastTurnObjectivesDone/.test(idx2) && /objectivesAdvanced/.test(idx2) && /boardRich: Math\.min\(1, \(t\.board \|\| \[\]\)\.length \/ 12\)/.test(idx2));
+}
+section("Tutor graphs — safe expression compiler + GRAPH_ON_BOARD validation");
+{
+  const ev = (src, vars, v) => { const c = compileExpr(src, vars); return "fn" in c ? c.fn(v) : c.error; };
+  check("precedence + unary minus", ev("2 + 3*4", ["x"], { x: 0 }) === 14 && ev("-x^2", ["x"], { x: 3 }) === -9);
+  check("right-assoc power, 2^-x", ev("2^3^2", ["x"], { x: 0 }) === 512 && ev("2^-x", ["x"], { x: 1 }) === 0.5);
+  check("implicit multiplication", ev("2x", ["x"], { x: 4 }) === 8 && ev("3(x+1)", ["x"], { x: 1 }) === 6 && ev("a x^2", ["x", "a"], { x: 2, a: 3 }) === 12);
+  check("functions + constants", Math.abs(ev("sin(pi/2)", ["x"], {}) - 1) < 1e-12 && Math.abs(ev("ln(e)", ["x"], {}) - 1) < 1e-12 && ev("sqrt(16)", ["x"], {}) === 4);
+  check("unicode math input", ev("x²", ["x"], { x: 3 }) === 9 && Math.abs(ev("sin(π)", ["x"], {})) < 1e-12);
+  check("rejects code / unknown names / bad syntax", ["alert(1)", "x; y", "constructor", "x +", "(x", "foo(x)", "x.y"].every((s) => typeof ev(s, ["x"], { x: 1 }) === "string"));
+  check("a function name needs parentheses", typeof ev("sin x", ["x"], { x: 1 }) === "string");
+  const ok = makeGraphEntry({ caption: "Drag a", xmin: -5, xmax: 5, fns: [{ expr: "y = a*x^2 + 1" }], params: [{ name: "a", min: -3, max: 3, value: 1 }] });
+  check("valid graph becomes a graph entry", "entry" in ok && ok.entry.kind === "graph" && ok.entry.graph.fns[0].expr === "a*x^2 + 1" && ok.entry.graph.params[0].name === "a");
+  check("unknown slider letter is explained", /unknown name/.test(makeGraphEntry({ caption: "c", xmin: -1, xmax: 1, fns: [{ expr: "k*x" }] }).error || ""));
+  check("empty window / no real values rejected", "error" in makeGraphEntry({ caption: "c", xmin: 2, xmax: 1, fns: [{ expr: "x" }] }) && "error" in makeGraphEntry({ caption: "c", xmin: -5, xmax: -1, fns: [{ expr: "sqrt(x)" }] }));
+  check("bad slider names rejected (x, e, multi-letter)", ["x", "e", "ab"].every((n) => "error" in makeGraphEntry({ caption: "c", xmin: 0, xmax: 1, fns: [{ expr: "x" }], params: [{ name: n, min: 0, max: 1, value: 0 }] })));
+  check("points-only data plot allowed, capped to 4 fns", "entry" in makeGraphEntry({ caption: "data", xmin: 0, xmax: 10, points: [{ x: 1, y: 2 }, { x: 3, y: 5 }], connect: true }) && makeGraphEntry({ caption: "c", xmin: 0, xmax: 1, fns: Array(8).fill({ expr: "x" }) }).entry.graph.fns.length === 4);
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const ui = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8");
+  const board = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  const bars = makeGraphEntry({ caption: "Scores", kind: "bars", bars: [{ label: "A", value: 3 }, { label: "B", value: 7 }] });
+  check("bar chart validates (needs 2+ labelled values)", "entry" in bars && bars.entry.graph.kind === "bars" && "error" in makeGraphEntry({ caption: "c", kind: "bars", bars: [{ label: "A", value: 1 }] }));
+  check("histogram validates (5+ numbers, not all identical)", "entry" in makeGraphEntry({ caption: "h", kind: "histogram", data: [1, 2, 2, 3, 3, 3, 4, 9] }) && "error" in makeGraphEntry({ caption: "h", kind: "histogram", data: [1, 2] }) && "error" in makeGraphEntry({ caption: "h", kind: "histogram", data: [4, 4, 4, 4, 4, 4] }));
+  const surf = makeGraphEntry({ caption: "Saddle", kind: "surface", z: "z = x^2 - y^2", xmin: -2, xmax: 2, ymin: -2, ymax: 2 });
+  check("3D surface z=f(x,y) validates and needs a y-range", "entry" in surf && surf.entry.graph.z === "x^2 - y^2" && "error" in makeGraphEntry({ caption: "s", kind: "surface", z: "x*y", xmin: -1, xmax: 1 }) && /two variables/i.test(makeGraphEntry({ caption: "c", xmin: -1, xmax: 1, fns: [{ expr: "x*y" }] }).error || ""));
+  check("tutor has GRAPH_ON_BOARD in boardTools + handler", (src.match(/GRAPH_ON_BOARD_TOOL/g) || []).length >= 2 && /name === "GRAPH_ON_BOARD"/.test(src));
+  check("board renders graph entries; ==highlight== renders as a mark and is stripped for speech", /<GraphBlock spec=\{e\.graph\}/.test(board) && /otto-mark/.test(ui) && /==\(\[\^=\\n\]\+\)==/.test(readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8")));
+}
+section("Primer replies — tightenForChat keeps it short and keeps the closing question");
+{
+  const short = "Mm, close. What happens to the sign when you move it across?";
+  check("short reply untouched", tightenForChat(short) === short);
+  const long = "So here is the thing about quadratics and why they matter in real life. " + "They show up everywhere from projectiles to profit curves and that is honestly a lot to take in at once. ".repeat(4) + "First you factor, then you set each factor to zero, then you check both roots against the original. Which two numbers multiply to 6 and add to -5?";
+  const out = tightenForChat(long);
+  check("long reply cut to ~70 words", countWordsT(out) <= 75);
+  check("closing question survives", /Which two numbers multiply to 6 and add to -5\?$/.test(out));
+  check("cuts at a sentence boundary", /[.?!]$/.test(out));
+  check("two-sentence reply left alone", tightenForChat("One. Two?") === "One. Two?");
+}
+section("Primer chat — thinking toggle with safe fallback, persona leads with human/short rules (source pins)");
+{
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("fast chat helper retries without `thinking` on a rejecting provider", /thinkingToggleRejected = true/.test(src) && /type: "disabled"/.test(src));
+  check("primer persona opens with the sound-like-a-person block", /SOUND LIKE A PERSON, ANSWER LIKE ONE/.test(src));
+  check("persona pushes small interactive scenes (show, don't tell)", /SHOW, DON'T TELL/.test(src));
+  check("persona handles automatic exercise results + whiteboard readings like a person", /EXERCISE RESULTS ARRIVE AS/.test(src) && /THEIR WHITEBOARD ARRIVES AS/.test(src) && /GOOD EXERCISES/.test(src));
+  
+  check("persona honours one-tap replies and retrieval-first returns", /ONE-TAP REPLIES/.test(src) && /RETRIEVAL OVER RE-EXPLAINING/.test(src));
+  const tut = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  check("tutor dock offers one-tap starters + follow-ups and a recall opener from the last session", /quickReplies=\{fresh \? starters : justFinishedExercise \? nextChips : followUps\}/.test(tut) && /What do you still remember/.test(tut));
+  const board = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  check("board reports every exercise attempt to the tutor (never the correct answer)", /onProblemResult\?\.\(\{ problem, given, correct, attempt \}\)/.test(board) && /\[Exercise\] I answered/.test(tut));
+  check("finishing an exercise offers 'another / harder / go over the idea / something else' and the tutor asks instead of auto-creating the next problem", /justFinishedExercise \? nextChips/.test(tut) && /ASK what they want to do now/.test(readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8")) && /let THEM choose/.test(readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8")));
+  check("automatic exercise results wait for the reply to settle and go out batched (never replacing the answer being read)", /resultsRef\.current\.splice\(0\)\.join/.test(tut) && /if \(sending \|\| voiceState\.speaking\) return;/.test(tut));
+  check("new whiteboard ink rides along with the next message (no separate send step)", /readUnseenInk\(\)/.test(tut) && /What I wrote\/drew on the board/.test(tut));
+}
+
+section("runTask execution speed — no pointless tool-pick call, artifacts built concurrently (source pins)");
+{
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("tool-selection call is skipped when web_search is the only tool", /const toolsOut = allTools\.length > 1 \? await ask\(/.test(src) && /: \{ usefulTools: \["web_search"\] \};/.test(src));
+  check("deck/quiz/note generation runs concurrently", /await Promise\.all\(requestedArtifacts\.map\(async \(artReq\) => \{/.test(src));
+}
+section("recencyStamp / pruneHandled — a non-string timestamp must never abort a sweep");
+{
+  check("string passes through", recencyStamp({ updatedAt: "2026-01-02T00:00:00.000Z" }) === "2026-01-02T00:00:00.000Z");
+  check("falls back to createdAt", recencyStamp({ createdAt: "2026-01-01T00:00:00.000Z" }) === "2026-01-01T00:00:00.000Z");
+  check("epoch number becomes ISO", recencyStamp({ updatedAt: 1767225600000 }) === "2026-01-01T00:00:00.000Z");
+  check("Date object becomes ISO", recencyStamp({ createdAt: new Date("2026-03-04T05:06:07.000Z") }) === "2026-03-04T05:06:07.000Z");
+  check("garbage becomes empty string", recencyStamp({ updatedAt: {}, createdAt: null }) === "");
+  const mk = (id, u) => ({ id, title: id, why: "", source: "gmail", risk: "low", urgency: 0, importance: 0, quadrant: "do", score: 0, status: "done", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: u });
+  const kept = pruneHandled([mk("a", 1767225600000), mk("b", "2026-02-01T00:00:00.000Z"), mk("c", { weird: true })], 2);
+  check("pruneHandled survives mixed timestamp types and keeps the newest", kept.length === 2 && kept[0].id === "b");
+}
 
 // ── Generation gates ──────────────────────────────────────────────────────────
 section("parseGenerated grounding gates");
@@ -514,6 +819,33 @@ const allDayEvs = calendarToItems({ items: [
 ] }, NOW);
 check("today's all-day event survives past UTC midnight", allDayEvs.some((e) => e.externalId === "allday1"));
 check("a genuinely past all-day event is still dropped", !allDayEvs.some((e) => e.externalId === "alldayOld"));
+
+// Direct request: "it should already prep a google maps link" for a task like "Check route to 70 rue du
+// Théâtre, Paris 75015" — a Calendar event's own `location` field is a real, structured address, so this
+// reads it directly instead of asking the AI classifier to transcribe an address out of free text (a wrong
+// address in a maps link actively sends the student to the wrong place).
+const withLocation = calendarToItems({ items: [
+  { id: "appt1", summary: "Dentist", start: { dateTime: "2026-07-19T15:00:00Z" }, location: "70 rue du Théâtre, Paris 75015" },
+  { id: "appt2", summary: "No address", start: { dateTime: "2026-07-19T16:00:00Z" } },
+] }, NOW);
+check("calendarToItems carries the event's own location field", withLocation.find((e) => e.externalId === "appt1")?.location === "70 rue du Théâtre, Paris 75015");
+check("an event with no location field gets none", withLocation.find((e) => e.externalId === "appt2")?.location === undefined);
+
+section("attachLocationLinks — a Calendar event's address gets a Google Maps link, deterministically");
+{
+  check("googleMapsDirectionsUrl builds a real, correctly-encoded Google Maps directions URL", googleMapsDirectionsUrl("70 rue du Théâtre, Paris 75015") === "https://www.google.com/maps/dir/?api=1&destination=70%20rue%20du%20Th%C3%A9%C3%A2tre%2C%20Paris%2075015");
+  const mkTask = (anchorKey, links) => ({ id: anchorKey, title: "t", why: "w", source: "calendar", risk: "low", urgency: 0.5, importance: 0.5, quadrant: "do", score: 0.5, status: "ready", createdAt: "now", anchorKey, links });
+  const t1 = mkTask("calendar:appt1", []);
+  attachLocationLinks([t1], [{ anchorKey: "calendar:appt1", location: "70 rue du Théâtre, Paris 75015" }]);
+  check("a task matching the event's anchorKey gets the maps link attached", t1.links.some((l) => l.url.includes("google.com/maps/dir") && l.url.includes("70%20rue")));
+  const t2 = mkTask("calendar:appt2", []);
+  attachLocationLinks([t2], [{ anchorKey: "calendar:appt2" }]);
+  check("a task whose source item has no location gets nothing added", t2.links.length === 0);
+  const t3 = mkTask("calendar:appt3", [{ label: "Open", url: "https://www.google.com/maps/dir/?api=1&destination=existing" }]);
+  attachLocationLinks([t3], [{ anchorKey: "calendar:appt3", location: "a different address" }]);
+  check("idempotent — a task that already has a maps link doesn't get a second one", t3.links.length === 1);
+  check("the label is the generic 'Open' so the client's own linkKind relabels it as Directions/Itinéraire from the URL", t1.links.find((l) => l.url.includes("maps")).label === "Open");
+}
 const thread = (labels, ts) => ({ sourceApp: "gmail", externalId: "t1", anchorKey: "gmail:t1", title: "Budget question", snippet: "…", sender: "a@b.com", timestamp: ts, labels });
 const replied = dedupeByThread([thread(["inbox"], "2026-07-18T10:00:00Z"), thread(["sent"], "2026-07-18T14:00:00Z")]);
 check("user's newer reply wins (thread handled)", replied.length === 1 && replied[0].labels.includes("sent"));
@@ -1259,14 +1591,21 @@ section("Onboarding — short but complete (source pins)");
   // Was 5 — bumped to 6 fixing a real bug: step 5 (the personalized "you're all set" done screen) existed
   // in the JSX but nothing ever advanced to it, so it was dead/unreachable code and the progress dots
   // undercounted by one. Now step 4's finish button actually advances into it instead of exiting directly.
-  check("onboarding runs exactly 6 steps (0-5, including the done screen)", /const OB_STEPS = 6;/.test(src));
+  // 5 steps now: name → track+language → year+subjects → connect → done. The old "how Otto helps" and "where to
+  // find things" text screens are gone — each PAGE now teaches itself the first time it is opened (client/PageTour.tsx).
+  check("the basic onboarding runs exactly 5 steps (0-4, including the done screen)", /const OB_STEPS = 5;/.test(src));
+  check("the basic flow collects year + subjects and saves them", /saveYearSubjects/.test(ob) && /api\.setSubjects\(subs\)/.test(ob) && /setProfilePreference\("yearLevel"/.test(ob));
+  check("the flow is prefilled from the account (so a Settings replay isn't blank)", /void api\.profile\(\)\.then/.test(ob));
   check("one connect step hosts BOTH Pronote and Google tiles (no second connect screen)", (ob.match(/<PronoteTile /g) || []).length === 1 && (ob.match(/<GoogleTiles /g) || []).length === 1);
   check("no leftover step bodies beyond OB_STEPS", !/step === 6 [\s\S]*step === 11/.test(ob));
-  check("the feature tour covers Tasks, Journal, Error log and Tutor in ONE screen", /ob-tour-row/.test(ob) && (ob.match(/ob-tour-row/g) || []).length === 5 && /Journal/.test(ob) && /Error log/.test(ob));
-  check("the tour line for the error log says what it feeds (targeted revision)", /target|cible/.test(ob));
-  check("the tutor line keeps the never-the-answer rule", /never the answer|jamais la r[ée]ponse/.test(ob));
+  const toursSrc = readFileSync(new URL("../client/tours.ts", import.meta.url), "utf8");
+  check("every page has its own first-visit guide (tasks, tutor landing + session, journal, mistakes, coursework, settings)", ["tasks", "\"tutor-landing\"", "\"tutor-session\"", "journal", "mistakes", "coursework", "settings"].every((k) => new RegExp(`(^|\\n)  ${k}: \\[`).test(toursSrc)));
+  check("the tutor session guide explains voice mode, the whiteboard tools and Show Otto", /Voice mode/.test(toursSrc) && /Your tools/.test(toursSrc) && /Show Otto your work/.test(toursSrc));
+  check("an interactive step exists (advances when the student really uses the control)", /interactive: true/.test(toursSrc) && /step\.interactive/.test(readFileSync(new URL("../client/PageTour.tsx", import.meta.url), "utf8")));
+  check("the mistakes guide says what the log feeds (quizzing where you slip)", /quiz you where you slip|t'interroger/.test(toursSrc));
+  check("the tutor guide keeps the never-the-answer rule", /instead of handing you the answer|plut[ôo]t que de donner la r[ée]ponse/.test(toursSrc));
   check("language is picked on the track step, not its own screen", /saveLang\("fr"\)/.test(ob) && !/PreferencesFields profile=\{null\}/.test(ob));
-  check("year level is no longer asked at onboarding (Settings keeps it)", !/const \[yearLevel/.test(ob) && !/void saveYearLevel\(\)/.test(ob));
+  check("Settings keeps the year level field and gains a Test onboarding replay", /saveYearLevel/.test(src) && /Test onboarding/.test(src) && /onReplayOnboarding/.test(src));
   // The per-feature detail the old flow spent 4 screens on must live in the first-time hint system.
   const uiSrc = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8");
   check("FirstTimeHint exists as the per-feature home for what onboarding no longer carries", /export function FirstTimeHint/.test(uiSrc));
@@ -1305,24 +1644,33 @@ section("betaFeatures gates all 7 bandit call sites + the AI theme route (source
 // EMPTY task list — for every account, on every read, including every background job's "load the account,
 // merge in new work, save it back" cycle. Two separate fixes, both pinned: the migration now exists, and a
 // missing-column error on the whole-row select no longer collapses profile+tasks to nothing.
-section("Study Mode: chat + Board always present, board write reliability (source pins)");
+section("Study Mode: chat always present on the desk (source pins)");
 {
   const studyModeSrc = readFileSync(new URL("../client/study/StudyMode.tsx", import.meta.url), "utf8");
   const claudeSrc2 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
-  // Direct instruction: chat + the Board must be on the desk from the FIRST moment of every session, on
-  // every workspace template — not opt-in behind a click or Otto's own first write.
-  check("defaultChatAndBoard exists and is used by buildInitialArtifacts", /function defaultChatAndBoard/.test(studyModeSrc) && /const chatAndBoard = defaultChatAndBoard/.test(studyModeSrc));
+  // Direct instruction: chat must be on the desk from the FIRST moment of every session, on every workspace
+  // template — not opt-in behind a click.
+  check("defaultChatArtifacts exists and is used by buildInitialArtifacts", /function defaultChatArtifacts/.test(studyModeSrc) && /const chatArtifacts = defaultChatArtifacts/.test(studyModeSrc));
   // Every template branch (WRITING/READING/PROBLEM_SOLVING/REVISION/RESEARCH/default) must spread it in —
   // count the case labels vs the spread sites so a new template added later can't silently skip this.
   const templateCases = (studyModeSrc.match(/case "(WRITING|READING|PROBLEM_SOLVING|REVISION|RESEARCH)":/g) || []).length;
-  const spreadSites = (studyModeSrc.match(/\.\.\.chatAndBoard,/g) || []).length;
-  check("every named template branch spreads chatAndBoard into its return (none silently opt out)", templateCases > 0 && spreadSites >= templateCases + 1); // +1 for the default branch
-  check("resumeSession backfills chat/board for a pre-existing saved session, without touching an already-present one", /missingTypes.*filter.*!env\.artifacts\.some/.test(studyModeSrc.replace(/\s+/g, " ")));
+  const spreadSites = (studyModeSrc.match(/\.\.\.chatArtifacts,/g) || []).length;
+  check("every named template branch spreads chatArtifacts into its return (none silently opt out)", templateCases > 0 && spreadSites >= templateCases + 1); // +1 for the default branch
+  check("resumeSession backfills chat for a pre-existing saved session, without touching an already-present one", /env\.artifacts\.some\(\(a\) => a\.type === "chat"\)/.test(studyModeSrc));
 
-  // The board-write prompt used to leave EVERY write entirely to the model's own per-turn judgment call —
-  // strengthened so a genuine topic resolution always leaves a "lessons learned" record, not just when it
-  // happens to occur to the model.
-  check("chatAboutTask's prompt requires a summary board write whenever the student actually resolves something", /THE ONE WRITE THAT ISN'T OPTIONAL[\s\S]{0,400}kind:"summary"/.test(claudeSrc2));
+  // Direct instruction: the board is a TUTOR-ONLY surface — removed from plain task chat AND Study Mode's
+  // own freeform canvas. WRITE_TO_BOARD/DRAW_ON_BOARD/etc. are only offered to the model when opts.primer
+  // is set (TutorSession.tsx), never for a plain task-chat turn or Study Mode's canvasMode-only chat.
+  check("board/problem/objectives tools are gated on opts.primer, not offered unconditionally any more", /const boardTools = opts\?\.primer/.test(claudeSrc2));
+  check("the plain task-chat board prompt (TASK_CHAT_BOARD) is gone — no board text injected outside primer", !/const TASK_CHAT_BOARD =/.test(claudeSrc2) && !/THE BOARD IS PART OF THIS CHAT/.test(claudeSrc2) && /\(opts\?\.primer \? PRIMER_PERSONA : ""\)/.test(claudeSrc2));
+  const studyModeNoBoard = !/type: "board"/.test(studyModeSrc) && !/const openOrFocusBoard = useCallback/.test(studyModeSrc);
+  check("Study Mode no longer creates or re-opens a Board artifact anywhere", studyModeNoBoard);
+  const toolsDrawerSrc2 = readFileSync(new URL("../client/study/ToolsDrawer.tsx", import.meta.url), "utf8");
+  check("the tools drawer no longer offers a Board tool to add", !/type: "board"/.test(toolsDrawerSrc2));
+  const artifactCanvasSrc = readFileSync(new URL("../client/study/ArtifactCanvas.tsx", import.meta.url), "utf8");
+  check("ArtifactCanvas renders nothing for a legacy 'board' artifact rather than importing/mounting BoardArtifact again", !/import \{ BoardArtifact \}/.test(artifactCanvasSrc) && /case "board":[\s\S]{0,500}return null;/.test(artifactCanvasSrc));
+  const taskCardSrc3 = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
+  check("TaskCard no longer renders a board in the regular task chat (TaskFocus/TaskReadOnly)", !/BoardArtifact/.test(taskCardSrc3));
 }
 
 section("Board renders each entry ONCE (the duplicated render block is gone) + pinned focus");
@@ -1479,6 +1827,46 @@ section("shouldNudgeBoardWrite — a confirmed student math step must land on th
   // round, latched, feeding the model back its own reply so the write actually happens mid-turn.
   check("the nudge is a ONE-SHOT corrective round inside the tool loop", /boardNudgeDone = false;/.test(claudeSrc5) && /!boardNudgeDone && !lastRound && shouldNudgeBoardWrite\(textContent, message, result\.board\.length > 0\)/.test(claudeSrc5) && /boardNudgeDone = true;/.test(claudeSrc5));
   check("the prompt names the confirmation moment as a board moment", /"YES — EXACTLY THAT" IS A BOARD MOMENT TOO/.test(claudeSrc5));
+  // A SECOND, distinct miss: the tutor's own reply carries real math while the board is still EMPTY. Nothing
+  // caught that before — shouldNudgeBoardWrite needs a confirmation and nudgeReasoning needed a
+  // student-contributed step — so a session could talk math for several turns with an empty board.
+  check("real working in the reply with an EMPTY board is its own nudge trigger", shouldNudgeBoardContent("Let's use F_net = mg sin25 − mg cos25·tan20 first.", "", false) && shouldNudgeBoardContent("sin²θ + cos²θ = 1 is the formula in play.", "", false));
+  // The gate that used to be here — "anything already on the board disables it" — was the bug: a session
+  // wrote its focus line and then did every derivation in chat with no correction ever. What disables it now
+  // is the board ALREADY CARRYING that working, not the board merely having something on it.
+  check("it still fires mid-session when the reply introduces working the page doesn't have", shouldNudgeBoardContent("F_net = mg sin25", "Today's focus: forces on a slope", false) && shouldNudgeBoardContent("so x = 7 or x = −4/3", "given: 3sec²x − 28 = 0", false));
+  check("but working the board already carries is not a miss — a quoted formula isn't new", !shouldNudgeBoardContent("So we use F_net = mg sin25 here.", "F_net = mg sin25 − mg cos25·tan20", false) && !shouldNudgeBoardContent("$x = 2$ follows from it.", "solve: $x = 2$", false));
+  check("and it never fires when the turn already wrote", !shouldNudgeBoardContent("F_net = mg sin25", "", true));
+  check("a content-free reply (just the next question) does not trigger it", !shouldNudgeBoardContent("What do you notice about the two angles here?", "", false));
+  check("mathInPlay is the shared, single definition of board-worthy math", mathInPlay("x = 2") && mathInPlay("the formula for the area") && !mathInPlay("the author uses irony throughout"));
+  check("newMathOffBoard lists exactly the working the page lacks, normalized so formatting doesn't matter", newMathOffBoard("so 2x = 8 and $y = 3$", "Given: 2x = 8").join("|") === "y = 3" && newMathOffBoard("nothing to see", "").length === 0);
+  check("it ignores a stray '=' in prose (no real working), so a literature turn is never nudged", !replyIntroducesNewMath("the author's tone = ironic throughout", "") && !shouldNudgeBoardContent("the author's tone = ironic", "", false));
+  check("a reply with working the board lacks gets a corrective round, mid-session or not (not just a student step)", /shouldNudgeBoardContent\(draft, boardTextNow, false\)/.test(claudeSrc5) && /studentStep \|\| contentMissedBoard/.test(claudeSrc5) && /boardNow = \[\.\.\.\(opts\?\.currentBoard \|\| \[\]\), \.\.\.result\.board\]/.test(claudeSrc5));
+  check("the mid-session corrective round asks for the WORKING line-by-line with a gap, and says NOT to use a reasoning trace for it", /put the WORKING up: SEPARATE LINES, one move per line/.test(claudeSrc5) && /Do NOT reach for kind \\"summary\\" for this/.test(claudeSrc5));
+}
+
+section("Board usage — the 'use the board' guidance is UNCONDITIONAL (it used to require a non-empty board, source pins)");
+{
+  // Reported live: "the tutor is not using the board enough". One structural cause: the whole BOARD
+  // INTEGRATION block was gated on the board already having something on it, so a FRESH session — the exact
+  // moment the board should start filling up — received no instruction to use it at all.
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const block = src.slice(src.indexOf("const boardIntegrationBlock"), src.indexOf("const contextAwarenessBlock"));
+  check("BOARD INTEGRATION is built unconditionally, not behind (boardEntries.length || currentProblems.length)", !/^\s*const boardIntegrationBlock = \(boardEntries\.length \|\| currentProblems\.length\)/m.test(src) && block.includes("BOARD INTEGRATION — the board is the shared workspace"));
+  check("the empty-board case is called out explicitly, with what to put up first", block.includes("NOTHING IS ON THE BOARD YET") && block.includes('kind:"focus"'));
+  check("and it names the failure mode being corrected (explaining in chat instead of showing it)", block.includes("SHOW IT, DON'T JUST SAY IT") && block.includes("the commonest way the document ends up empty"));
+  check("it states the frequency expected: content-bearing turns normally END with one new entry", block.includes("HOW OFTEN") && block.includes("should normally END with ONE new board entry"));
+  // Reported live: "for board now it mostly does is how you got there" — summary/reasoning-trace was the only
+  // kind the strong rules named, so the page filled up with traces instead of being a page.
+  check("it rebalances the KIND mix: a reasoning trace is for the student's own reasoning, the rest is plain text",
+    block.includes("NOT EVERY ENTRY IS A REASONING TRACE") && block.includes("should be plain text") && block.includes("wearing a costume"));
+  check("it teaches the line-by-line working with the next line left as a gap",
+    block.includes("SHOW THE WORKING, LINE BY LINE") && block.includes("the NEXT line left as the gap") && block.includes("never about a line of working"));
+  check("it gives permission to ask when unsure, and puts the question on the board",
+    block.includes("ASK IF YOU'RE UNSURE") && block.includes("Guiding questions belong on the board"));
+  check("the big board section carries the paper test for any turn", /THE TEST FOR ANY TURN[\s\S]{0,160}what would be on it by now\?/.test(src));
+  check("the one non-optional write is no longer hard-wired to kind:\"summary\"", /THE ONE WRITE THAT ISN'T OPTIONAL[\s\S]{0,700}the KIND follows what they actually did/.test(src) && !/THE ONE WRITE THAT ISN'T OPTIONAL[\s\S]{0,300}call WRITE_TO_BOARD with kind:\"summary\" before your reply ends/.test(src));
+  check("the fence rule is corrected: ordinary step lines are NOT fenced, only exact-space shapes are", /UNFENCED text renders ONE LINE PER LINE/.test(src) && /a fence is ONLY for a shape whose exact spacing IS the content/.test(src));
 }
 
 section("Arithmetic ground truth — evaluator, claim extractor, CREATE_CALC (server/arithmetic.ts + claude.ts)");
@@ -1565,20 +1953,60 @@ section("isLikelyEcho — textual echo discrimination for real barge-in (client/
   // The per-task chat got the same treatment: interruptible everywhere, not just in Tutor Session.
   check("TaskChat is interruptible too (stateful echo filter, mic never paused during TTS)", /echoFilterRef\.current\.isEcho\(text\)/.test(taskCardSrc) && !/wasSpeakingRef/.test(taskCardSrc));
 
-  // French voice pipeline (server/index.ts /api/tts): verified live against FreeTTS — /api/speech is DEAD
-  // (404; moved to /api/v1/tts, x-api-key auth, JSON {audio_url} 2-step flow, locale-shaped voice names,
-  // "brian" now fails validation). The old route hard-spoke "brian": an ENGLISH voice reading French
-  // tutor replies. Pin the whole language-correct contract so it can't regress silently.
+  // Voice pipeline (server/index.ts /api/tts → server/claude.ts synthesizeSpeech). Three direct asks, in
+  // order: don't use Gemini TTS; use a FREE TTS API; never fall back to a female voice — "even if it fails,
+  // use another free male voice". So the whole old chain is gone: Gemini TTS (removed on request),
+  // StreamElements (dead — 401 "No API key was found" on every request, verified live) and Google
+  // Translate's translate_tts (its only voice is FEMALE, which is precisely what was forbidden). What
+  // remains is ONE free, keyless endpoint (ttsmp3.com's public form) driven by a pool of real Polly MALE
+  // voice names. A failed voice retries the NEXT male voice; there is no female tier to fall to at all.
   const serverSrc = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
-  const ttsStart = serverSrc.indexOf("const TTS_VOICE_BY_LANG");
-  const ttsBody = serverSrc.slice(ttsStart, serverSrc.indexOf("// ── Static (production)"));
-  check("TTS route uses the CURRENT FreeTTS v1 endpoint (old /api/speech is dead)", /freetts\.org\/api\/v1\/tts/.test(ttsBody) && !/freetts\.org\/api\/speech/.test(serverSrc));
-  check("TTS authenticates via x-api-key (Bearer no longer accepted)", /"x-api-key": key/.test(ttsBody));
-  check("TTS speaks a real FRENCH voice for French accounts, English for English", /TTS_VOICE_BY_LANG/.test(ttsBody) && /fr-FR-DeniseNeural/.test(ttsBody) && /en-US-AriaNeural/.test(ttsBody));
-  check("TTS voice falls back to a multilingual/fr-FR GA voice if the primary is retired", /fr-FR-VivienneMultilingualNeural/.test(ttsBody) && /fr-FR-EloiseNeural/.test(ttsBody));
-  check("TTS follows the 2-step flow (synthesis JSON → audio_url fetch → mp3 stream)", /audio_url/.test(ttsBody) && /audio\/mpeg/.test(ttsBody));
-  check("TTS only ever fetches the vendor's own returned audio_url (no client-supplied URL)", /meta\.audio_url \? \{ ok: true, audioUrl: meta\.audio_url \}/.test(ttsBody) && !/req\.body\.audio_url/.test(ttsBody));
-  check("TTS stays fail-open so the client's language-correct browser-TTS fallback still engages", /Échec de la génération vocale/.test(ttsBody) && /status !== 400 && r\.status !== 422/.test(ttsBody));
+  const ttsBody = serverSrc.slice(serverSrc.indexOf('app.post("/api/tts"'), serverSrc.indexOf('app.post("/api/tts"') + 2600);
+  const claudeSrc = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const ttsFn = claudeSrc.slice(claudeSrc.indexOf("export async function synthesizeSpeech"), claudeSrc.indexOf("export function wordWrapChunks"));
+  check("TTS route is authenticated and rate-limited", /app\.post\("\/api\/tts", requireAuth, rateLimit\(/.test(serverSrc));
+  check("TTS route calls synthesizeSpeech (the male-only pool) with the request-size bound, not the old race", /synthesizeSpeech\(text\.slice\(0, TTS_MAX_TEXT\), lang\)/.test(ttsBody));
+  check("Gemini TTS, the old synthesis race, StreamElements and Google Translate TTS are gone entirely", !/GEMINI_TTS|synthesizeSpeechRace|geminiDownUntil|callGeminiTts/.test(claudeSrc + serverSrc) && !/api\.streamelements\.com|translate\.google\.com|freetts\.org/.test(claudeSrc + serverSrc) && !/synthesizeSpeechFallback|synthesizeSpeechGoogleTranslate/.test(claudeSrc));
+  check("the voice pool is a free, keyless, MALE-ONLY list with more than one fallback voice per language", /const TTS_MALE_VOICES: Record<"fr" \| "en", string\[\]> = \{\s*fr: \["Mathieu"\],\s*en: \["Matthew", "Brian", "Joey", "Justin", "Russell"\],\s*\};/.test(claudeSrc));
+  check("no known FEMALE voice name appears anywhere in the server's TTS voices", !/Chantal|Gabrielle|Celine|Céline|Joanna|Salli|Kimberly|Samantha|Amelie|Amélie/.test(claudeSrc));
+  check("the pool is tried IN ORDER per chunk and a failure moves to the next male voice", /for \(let i = 0; i < voices\.length && !done; i\+\+\)/.test(ttsFn) && /trying the next male voice/.test(ttsFn));
+  check("if no male voice can speak a chunk the whole reply fails loudly instead of serving half of it", /if \(!done\) return last;/.test(ttsFn) && /every male voice failed/.test(ttsBody));
+  check("voice is always available — free + keyless means there is nothing to configure", /export function ttsReady\(\): boolean \{\s*return true;\s*\}/.test(claudeSrc));
+  check("long replies are CHUNKED at the provider's own safe size, never truncated", /wordWrapChunks\(text, TTS_CHUNK_MAX\)/.test(ttsFn) && /const TTS_CHUNK_MAX = 900;/.test(claudeSrc));
+  // Comments in this region deliberately QUOTE the removed `text.slice(0, 1000)` to explain the bug, so the
+  // pin runs against executable lines only.
+  const ttsCode = ttsBody.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+  check("the 1000-char reply truncation is gone — the route bounds the REQUEST, it doesn't slice the content", !/text\.slice\(0, 1000\)/.test(ttsCode) && /TTS_MAX_TEXT = 4000/.test(claudeSrc));
+  check("an upstream failure is a clean 502/429 with a bilingual message", /Échec de la génération vocale/.test(ttsBody));
+  check("the route serves playable audio with the winning provider's mime type, never cached", /out\.mime/.test(ttsBody) && /no-store/.test(ttsBody));
+  // And exercised, not just pinned: synthetic MPEG2 Layer III streams (FreeTTS's own format:
+  // 24 kHz ⇒ 576-sample ≈ 24 ms frames, 144-byte @ 48 kbps) verify the splice math. Real probed
+  // vendor files cut 10.89s→7.51s and 9.83s→6.45s, dead-center of the safe window below.
+  const mkMp3Stream = (n, withId3 = false) => {
+    const frame = Buffer.concat([Buffer.from([0xff, 0xf3, 0x64, 0xc4]), Buffer.alloc(140, 0x55)]); // header + filler data
+    const audio = Buffer.concat(Array.from({ length: n }, () => frame));
+    if (!withId3) return audio;
+    return Buffer.concat([Buffer.from([0x49, 0x44, 0x33, 3, 0, 0, 0, 0, 0, 0]), audio]); // 10-byte ID3v2 header, size 0
+  };
+  const FRAME_SECONDS = 576 / 24000;
+  for (const withId3 of [false, true]) {
+    const n = 500; // 12.0s of frames — as if sentence + ~1.6s gap + ~1.77s watermark + ~0.82s tail
+    const out = trimFreeTTSWatermark(mkMp3Stream(n, withId3));
+    const keptSeconds = out ? (out.length / 144) * FRAME_SECONDS : 0;
+    // Safe window: keep at least through the last real-speech frame (the vendor's gap starts
+    // ~4.19s from the end) but never any watermark speech (it starts ~2.59s from the end).
+    // ±1 frame of slack is fine — a frame is 24ms, the window margins are ~0.8s.
+    check(`watermark trimmer cuts inside the safe window (id3=${withId3})`, !!out && keptSeconds >= n * FRAME_SECONDS - 4.19 - FRAME_SECONDS && keptSeconds <= n * FRAME_SECONDS - 2.59);
+  }
+  check("watermark trimmer refuses short audio (a cut there would eat real speech)", trimFreeTTSWatermark(mkMp3Stream(100)) === null && trimFreeTTSWatermark(mkMp3Stream(207)) === null);
+  check("watermark trimmer fail-opens on garbage input (serves original audio)", trimFreeTTSWatermark(Buffer.alloc(4096, 0x00)) === null);
+  // The mic is NEVER on by default: voice mode (always-listening + auto-speak) starts OFF on every page
+  // load and only an explicit tap on the mic button turns it on — no localStorage restore, no auto-enable
+  // prop. The pref used to persist ("otto-voice-mode"), so any reload silently re-opened the microphone
+  // without fresh consent.
+  const voiceModeSrc = readFileSync(new URL("../client/voice/useVoiceModePref.ts", import.meta.url), "utf8");
+  check("voice mode ALWAYS starts OFF on load (useState(false); nothing restored from storage)", /useState\(false\)/.test(voiceModeSrc) && !/getItem\(/.test(voiceModeSrc));
+  check("no auto-enable path exists (the startInVoiceMode mount effect is gone)", !/startInVoiceMode/.test(readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8")));
   // Client STT/TTS language wiring: every voice surface must pass fr-FR when the app is French.
   const panelSrc = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
   check("the tutor voice panel binds BOTH STT and TTS to the app language (fr-FR in French)", /speechLang = en \? "en-US" : "fr-FR"/.test(panelSrc) && /useSpeechSynthesis\(speechLang\)/.test(panelSrc) && /lang: speechLang/.test(panelSrc));
@@ -1596,6 +2024,14 @@ section("isLikelyEcho — textual echo discrimination for real barge-in (client/
   const recogHookSrc = readFileSync(new URL("../client/voice/useSpeechRecognition.ts", import.meta.url), "utf8");
   check("the hook maps real error codes to student-presentable messages", /onErrorRef\.current\?\.\(speechErrorMessage\(e\.error\)\)/.test(recogHookSrc));
   check("no-speech/aborted never surface (normal always-on events, not failures)", /e\.error === "no-speech" \|\| e\.error === "aborted"\) return;/.test(recogHookSrc));
+
+  // Reported live: the student got cut off "sometimes" mid-sentence — not from a real pause, but from the
+  // browser's own ~60s session cap landing mid-utterance; the old onend unconditionally flushed the
+  // pending-final buffer before restarting, sending a half-finished thought purely because of where that
+  // boundary fell. Flushing must happen ONLY on a real stop (keepAliveRef false), never on an auto-restart.
+  const onendBody = recogHookSrc.slice(recogHookSrc.indexOf("rec.onend = () => {"), recogHookSrc.indexOf("recRef.current = rec;"));
+  check("an auto-restart (session cap/blip) does NOT flush the pending buffer — it survives the restart", /if \(keepAliveRef\.current\) \{[\s\S]*setTimeout\(\(\) => \{ if \(keepAliveRef\.current && recRef\.current === rec\) createAndStartRef\.current\?\.\(\); \}, 50\);[\s\S]*\} else \{[\s\S]*flushPending\(\);/.test(onendBody));
+  check("a real stop (not keeping alive) still flushes so a trailing utterance isn't lost for good", /\} else \{\s*\n\s*flushPending\(\);/.test(onendBody));
   check("the error mapper covers permission, no-mic, network, language, and a fallback", ["not-allowed", "audio-capture", "network", "language-not-supported"].every((c) => speechErrorsSrc.includes(`case "${c}"`)) && /default:/.test(speechErrorsSrc));
 }
 
@@ -1634,6 +2070,25 @@ section("Voice-mode board rules — gesture research, not dictation (prompt pins
   check("voice mode: diagrams/arrows/structure preferred over bare symbol strings", /eyes-on-figure \(not eyes-on-equation\)/.test(claudeSrc4));
   check("the old transcribe-every-intermediate-line rule is gone", !/This applies to every intermediate line/.test(claudeSrc4));
   check("the student-can't-see-notation requirement itself is preserved", /THE BOARD IS THE ONLY PLACE THEY EVER SEE THE ACTUAL NOTATION/.test(claudeSrc4));
+}
+
+section("Board: students can answer directly on it, Tutor-only (source pins)");
+{
+  // The board was read-only for the student — a 'question' entry or a completion-gap line ("= ?") was
+  // pure text, even though CREATE_PROBLEM entries right next to them already had a real inline answer box.
+  // Added an onAnswer prop so the student can reply directly where the question lives.
+  const boardSrc = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  check("BoardArtifact accepts an onAnswer callback and an answering-in-flight flag", /onAnswer\?: \(text: string\) => void;/.test(boardSrc) && /answering\?: boolean;/.test(boardSrc));
+  check("the inline answer box only shows on the NEWEST entry, and only for a question/completion-gap", /idx === flowItems\.length - 1 && \(e\.kind === "question" \|\| isCompletionGap\(e\.text\)\)/.test(boardSrc));
+  check("submitting calls onAnswer with the typed text, exactly like a normal chat send", /onAnswer\(v\); setAnswerKey\(e\.id\); setAnswerText\(""\);/.test(boardSrc));
+
+  // Direct instruction (reversing the regular-task-chat board addition above): the board is TUTOR-ONLY —
+  // the plain task chat (TaskCard.tsx) and Study Mode's own freeform canvas no longer render or write one
+  // at all, so onAnswer is wired ONLY into TutorSession.tsx's board, never TaskCard's.
+  const taskCardSrc2 = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
+  const tutorSessionSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  check("TaskCard (plain task chat) never renders a board at all any more", !/BoardArtifact/.test(taskCardSrc2));
+  check("TutorSession wires onAnswer to its own send, so answering on the board behaves exactly like chat", /onAnswer=\{\(text\) => void send\(text\)\}/.test(tutorSessionSrc));
 }
 
 section("loadState survives a missing-column schema-drift error (source pins)");
@@ -1771,7 +2226,9 @@ section("/api/study/free — resumes an active freestudy session by default, onl
   const src = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
   const start = src.indexOf('app.post("/api/study/free"');
   const body = src.slice(start, src.indexOf("}));", start) + 4);
-  check("resumes (returns the list unchanged) when an active freestudy task already exists and fresh wasn't requested", /const active = list\.find\(\(t\) => t\.source === "freestudy" && !isHandled\(t\.status\)\);/.test(body) && /if \(active\) \{ res\.json\(list\); return; \}/.test(body));
+  // Grew a mastery-stamp side effect on `active` (not a structural change to "resume" itself) when the
+  // per-subject mastery metric shipped — still resumes the SAME task list, just with one extra field set.
+  check("resumes (returns the list, with a mastery stamp on the active task) when an active freestudy task already exists and fresh wasn't requested", /const active = list\.find\(\(t\) => t\.source === "freestudy" && !isHandled\(t\.status\)\);/.test(body) && /if \(active\) \{[\s\S]{0,200}res\.json\(list\); return;\s*\}/.test(body));
   check("fresh:true still forces the old dismiss-and-mint-new behavior", /const fresh = req\.body\?\.fresh === true;/.test(body));
   const apiSrc = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
   // (fresh?: boolean — optional, so a passive call sends no fresh flag; the route later grew a subject
@@ -1779,6 +2236,19 @@ section("/api/study/free — resumes an active freestudy session by default, onl
   check("client's studyFreeSession defaults to resume (no fresh flag sent) unless explicitly asked", /studyFreeSession: \(fresh\?: boolean/.test(apiSrc));
   const appSrc = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
   check("StandaloneStudyEntry's explicit 'Enter study mode' click still requests a fresh session", /api\.studyFreeSession\(true\)/.test(appSrc));
+  // Product decision: Study Mode has NO in-app entry point — no sidebar tab, no per-task buttons; the
+  // ONLY way in is the /study URL. Pin both halves so neither can regress silently: a cleanup must not
+  // delete the URL-only entry, and a well-meaning "restore" must not re-add a live tab/buttons without
+  // consciously updating these pins.
+  check("the /study route still renders StandaloneStudyEntry (the URL-only entry point)", /: route === "study" \? \(\s*<StandaloneStudyEntry/.test(appSrc));
+  check("Study Mode has no live sidebar tab (absent, or present but flag-gated)", !appSrc.includes('sidebar-item ${route === "study"') || /STUDY_MODE_ENABLED && !isPhone && \(\s*<a\s+className=\{`sidebar-item \$\{route === "study"/.test(appSrc));
+  check("the Study Mode tab/buttons flag is actually OFF (/study stays URL-only by design)", /const STUDY_MODE_ENABLED = false;/.test(appSrc));
+  // View Transitions on route swaps: a NEWER transition starting first rejects the older one's `ready`
+  // (and sometimes `finished`) promise with a benign AbortError — reported live from production as an
+  // "Unhandled promise rejection: Transition was skipped. New ViewTransition started". Both must stay
+  // silenced; updateCallbackDone must stay UN-silenced so a real go() failure still surfaces.
+  check("navigate() silences both benign ViewTransition rejections (finished AND ready)", /const vt = vtDocument\.startViewTransition\(go\);/.test(appSrc) && /vt\.finished\.catch/.test(appSrc) && /vt\.ready\.catch/.test(appSrc));
+  check("navigate() does NOT silence updateCallbackDone (a real go() failure must still surface)", !/vt\.updateCallbackDone/.test(appSrc));
   const tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
   // Reported live: "session should not auto start" — the mount used to call /api/study/free, whose
   // resume-first route MINTS a session when none is active, so merely OPENING /tutor started one. Then a
@@ -1800,6 +2270,39 @@ section("/api/study/free — resumes an active freestudy session by default, onl
   check("resumeActiveSession reads local chat/board/problems via getLocalThread (the real API), never guessed raw keys", /const local = getLocalThread\(pendingActiveSession\.id, userId\)/.test(tutorSrc) && !/otto-chat-\$\{/.test(tutorSrc) && !/otto-board-\$\{/.test(tutorSrc) && !/otto-problems-\$\{/.test(tutorSrc));
 }
 
+section("Task UX: breakdowns don't vanish, Help opens the chat, popup is bigger, steps follow learning science (source pins)");
+{
+  // Reported live: "breaking down a task shows the substeps for two seconds and then they hide". Two
+  // layers, both pinned here. SERVER: the expand route committed with the default fire-and-forget cloud
+  // write, which on Vercel serverless can freeze before landing — the cron drain (cloud-only) then
+  // rebuilt the task WITHOUT the substeps and committed it with a newer updatedAt, legitimately
+  // overwriting the client. CLIENT: expand/runSubstep applied the response via wholesale setTasks
+  // (onChange), the file's own documented anti-pattern, with no localMutations race stamp.
+  const serverSrc2 = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const expandStart = serverSrc2.indexOf('app.post("/api/tasks/:id/step/:index/expand"');
+  const expandBody = serverSrc2.slice(expandStart, expandStart + 2200);
+  check("expand route AWAITS the cloud write (substeps survive a serverless freeze + cron rebuild)", /await commit\(req, \{ awaitCloud: true \}\)/.test(expandBody));
+  const subDoneStart = serverSrc2.indexOf('app.post("/api/tasks/:id/step/:index/substep/:subIndex/done"');
+  const subDoneBody = serverSrc2.slice(subDoneStart, subDoneStart + 1200);
+  check("substep-done route awaits the cloud write too (a tick can't resurrect as undone)", /await commit\(req, \{ awaitCloud: true \}\)/.test(subDoneBody));
+  const taskCardSrc = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
+  const stepListBody = taskCardSrc.slice(taskCardSrc.indexOf("function StepList"), taskCardSrc.indexOf("function PreparedPanel"));
+  check("expand/runSubstep apply via merge-by-id onTask, never wholesale setTasks", /applyTaskFromList\(await api\.expandStep/.test(stepListBody) && /applyTaskFromList\(await api\.runSubstep/.test(stepListBody) && !/onChange\(await api\.expandStep/.test(stepListBody));
+  // Reported live: "the help button doesn't work" — askAboutStep prefilled+focused a chat input that
+  // lives inside the (closed) Ask Otto modal, so the tap was literally invisible.
+  check("tapping a step's Help OPENS the Ask Otto popup (with the step pre-referenced)", /const askAboutStep[\s\S]*?setOpenChat\(true\);/.test(taskCardSrc));
+  // Reported live: "make the chat popup bigger" — the Ask Otto popup opts into TaskModal's `wide` size.
+  const uiSrc = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8");
+  const stylesSrc = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
+  check("TaskModal supports `wide` and the Ask Otto popup uses it", /wide\?: boolean/.test(uiSrc) && uiSrc.includes('wide ? "wide" : ""') && /<TaskModal[\s\S]*?nested wide title=\{L\("Demander à Otto"/.test(taskCardSrc));
+  check("the wide popup actually gets a bigger CSS size", /\.task-modal\.wide \{/.test(stylesSrc) && /max-width: min\(760px, 94vw\)/.test(stylesSrc));
+  // Learning science in generation: the shared rules block must be wired into every prompt that
+  // generates or breaks down the student's own steps.
+  const claudeSrc = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const rulesCount = (claudeSrc.match(/LEARNING_SCIENCE_RULES/g) || []).length;
+  check("learning-science rules exist and are injected into ALL THREE generation prompts (plan + scaffold + substeps)", rulesCount >= 4 && /ACTIVE RECALL over re-reading/.test(claudeSrc) && /SPACED RETRIEVAL/.test(claudeSrc) && /PRODUCTIVE STRUGGLE FIRST/.test(claudeSrc));
+}
+
 section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto-on), and the board survives ending a session (source pins)");
 {
   const tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
@@ -1809,7 +2312,10 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   // voice-primary layout) still activates the moment they turn it on themselves.
   check("Tutor Session does NOT auto-enable voice (no startInVoiceMode prop, no wantVoice forcing)", !/startInVoiceMode=/.test(tutorSrc) && !/setWantVoice/.test(tutorSrc));
   const askOtto = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
-  check("startInVoiceMode (where a caller still passes it) is applied exactly once (a ref-gated effect, never fights a deliberate manual toggle-off)", /autoVoiceAppliedRef/.test(askOtto));
+  // Exactly ONE toggleVoiceMode() call site is allowed: inside the mic button's own onClick (a real user
+  // gesture, also where synth.unlock() pre-arms speechSynthesis — see the TTS section below). Anywhere
+  // else would mean voice got turned on without the student tapping anything.
+  check("AskOttoPanel has NO voice auto-enable left (toggleVoiceMode() only ever called from the mic button's own click handler)", !/autoVoiceAppliedRef/.test(askOtto) && (askOtto.match(/toggleVoiceMode\(\)/g) || []).length === 1 && /onToggle=\{\(\) => \{ if \(!voiceModeOn\) synth\.unlock\(\); toggleVoiceMode\(\); \}\}/.test(askOtto));
   // Direct request: "make sure when end tutor session board is saved and users can see what was worked on" —
   // ending used to only save a FLATTENED TEXT preview (boardEntries: string[]) of the board, losing any
   // diagram/equation structure; the real board is now saved too and reopenable.
@@ -1817,12 +2323,13 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   check("a past session's full board can be reopened (View board button + modal)", /setOpenBoardSession/.test(tutorSrc) && /<BoardArtifact task=\{\{ board: openBoardSession\.board \}/.test(tutorSrc));
   // Voice stays off through start/resume — the student turns it on with the mic toggle themselves.
   check("starting or resuming a session leaves voice OFF (explicit mic tap to enable)", !/setWantVoice\(true\)/.test(tutorSrc));
-  // The voice state pill lives on the BOARD pane header: in a voice-first session the student's eyes are
-  // on the board, so "am I being heard?" has to be answerable where they're actually looking.
-  check("voice state is reported up and shown on the board pane", /onVoiceStateChange/.test(tutorSrc) && /tutor-voice-pill/.test(tutorSrc));
-  check("voice mode shifts the layout board-primary", /voice-primary/.test(tutorSrc));
+  // Otto is an avatar docked over the canvas (no transcript): voice state shows on the avatar itself
+  // (mood ring) and the stage takes a voice-on accent, so "am I being heard?" is answered right where the
+  // student is looking.
+  check("voice state is reported up and drives the stage", /onVoiceStateChange/.test(tutorSrc) && /tutor-stage\$\{voiceState\.voiceModeOn \? " voice-on"/.test(tutorSrc));
   const tutorStyles = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
-  check("voice-primary grid actually exists in CSS (not a dead class)", /\.tutor-session\.voice-primary \{ grid-template-columns/.test(tutorStyles));
+  check("tutor shows Otto as a dock (latest answer only), not the full chat", /variant="dock"/.test(tutorSrc) && /\.otto-bubble/.test(tutorStyles));
+  check("tutor canvas: ink layer with undo/redo + eraser over the board", /TutorCanvas/.test(tutorSrc) && /\.tc-toolbar/.test(tutorStyles));
   // Barge-in: talking over Otto cancels the TTS mid-sentence, like interrupting a human tutor. Threshold
   // is 2+ words so speaker echo / a throat-clear doesn't cut him off.
   const askOttoSrc = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
@@ -1838,28 +2345,48 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   check("the mic is paused during generation too, not just during speech (reported: mic stayed open the whole time a reply was generating)", /busy && !wasBusyRef\.current/.test(askOttoSrc) && /recog\.abort\(\);/.test(askOttoSrc));
   check("live interim text cancels the TTS mid-sentence (≥2 words, echo-filtered)", /onInterim: \(text\) =>/.test(askOttoSrc) && /echoFilterRef\.current\.isEcho\(text\)/.test(askOttoSrc) && /text\.trim\(\)\.split\(\/\\s\+\/\)\.length >= 2\) synth\.cancel\(\)/.test(askOttoSrc));
   check("the recognition hook exposes the live interim channel", /onInterim\?: \(text: string\) => void;/.test(recogSrc) && /onInterimRef\.current\?\.\(interim\.trim\(\)\)/.test(recogSrc));
-  // Reported live: "the speaker is still not working" — root cause was useSpeechSynthesis.ts calling a bare
-  // `fetch("/api/tts", ...)` instead of going through client/api.ts's req(), which is the ONLY thing that
-  // attaches the x-csrf-token header every other mutating POST needs. In production (CSRF enforcement is
-  // skipped only in dev — requireAuth, server/index.ts) that 403'd on EVERY call, always silently falling
-  // back to browser TTS — not flaky, just consistently broken in a way that looked like "the API."
+  // TTS history: a third-party vendor (FreeTTS) used to be tried FIRST, browser speechSynthesis as
+  // fallback. Reported live, repeatedly, across several rounds of fixes (a bare fetch missing the CSRF
+  // header, then a CSP missing media-src for blob: audio, then a one-shot-fallback race) — each real, each
+  // fixed, and STILL "TTS sometimes works, sometimes doesn't" kept recurring, because the vendor path's
+  // failure surface (network call, API key, CSRF, CSP, vendor uptime) was simply larger than a pure client-
+  // side feature needs. Flipped to browser speechSynthesis as the ONLY path: zero network calls, no API
+  // key, no CSP concern at all (the Web Speech API isn't an <audio> element, so media-src never applies).
   const ttsSynthSrc = readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8");
-  const apiSrc = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
-  check("useSpeechSynthesis's FreeTTS call goes through api.ttsAudio (CSRF-safe), not a bare fetch", /api\.ttsAudio\(/.test(ttsSynthSrc) && !/fetch\("\/api\/tts"/.test(ttsSynthSrc));
-  check("api.ttsAudio is wired through req() (the CSRF-token-attaching path), not a bare fetch", /ttsAudio:.*req\("\/api\/tts"/.test(apiSrc.replace(/\n/g, " ")));
-  // THE production-only TTS killer: Otto's own voice plays through `new Audio(URL.createObjectURL(blob))`,
-  // i.e. a blob: URL. Audio/video elements are governed by CSP's `media-src`, which falls back to
-  // `default-src 'self'` when absent — and 'self' does NOT match the blob: scheme. With no media-src, the
-  // browser blocked every spoken reply in production before a byte was decoded, while dev (Vite sends no
-  // CSP at all) worked fine, which is exactly why this survived several rounds of "it still doesn't work."
-  const vercelCfg = readFileSync(new URL("../vercel.json", import.meta.url), "utf8");
-  const csp = JSON.parse(vercelCfg).headers.flatMap((h) => h.headers).find((h) => h.key === "Content-Security-Policy")?.value || "";
-  check("CSP allows blob: audio (media-src) — without it every spoken reply is blocked in production only", /media-src[^;]*blob:/.test(csp));
-  // A blocked/failed <audio> fires BOTH onerror AND rejects play() — two fallbacks racing, where the
-  // second one's speechSynthesis.cancel() tears down the utterance the first just started. Silence.
-  check("the FreeTTS→browser fallback is one-shot (onerror and a rejected play() can't both fire it)", /let fellBack = false;/.test(ttsSynthSrc) && /if \(fellBack \|\| generationRef\.current !== myGeneration\) return;/.test(ttsSynthSrc));
+  // Now: Gemini's neural voice FIRST (fluid, natural — direct request "use a better more fluid voice"),
+  // with the browser engine as an automatic fallback on ANY cloud failure. The old vendor failures (CSRF,
+  // CSP, race) are each pinned elsewhere; here, pin that a cloud failure can never mean silence.
+  check("the cloud voice goes through api.ttsAudio (CSRF-safe req(), never a bare fetch)", /api\.ttsAudio\(/.test(ttsSynthSrc) && !/fetch\("\/api\/tts"/.test(ttsSynthSrc));
+  check("a slow cloud voice times out rather than leaving the student waiting forever", /AbortSignal\.timeout\(CLOUD_FETCH_TIMEOUT_MS\)/.test(ttsSynthSrc));
+  // Direct request: "dont ever revert to browser" — a failed cloud fetch/playback must NEVER fall through
+  // to speechSynthesis (the server has already walked its whole male-voice pool by the time this throws).
+  // One quick client-side retry absorbs a transient blip; past that,
+  // the reply's audio is silently skipped (lastDiagnostic set) rather than switching voices mid-session.
+  check("a cloud chunk gets exactly one quick retry before being given up on", /CLOUD_RETRY_DELAY_MS/.test(ttsSynthSrc) && /await sleep\(CLOUD_RETRY_DELAY_MS\)/.test(ttsSynthSrc));
+  check("a cloud fetch failure never falls through to the browser voice — it's skipped silently instead", !/noteCloudFailure/.test(ttsSynthSrc) && !/speakWithBrowser\(gen, chunks/.test(ttsSynthSrc) && /skipping this reply's audio \(never the browser voice\)/.test(ttsSynthSrc));
+  check("a cloud playback failure is also skipped silently, never the browser voice", /playback-failed/.test(ttsSynthSrc));
+  check("speak() only ever uses the browser voice when there's literally no <audio> element to play cloud audio with", /const useCloud = audioSupported;/.test(ttsSynthSrc));
+  check("the browser fallback (the no-<audio>-support edge case) still speaks via speechSynthesis", /engine\.speak\(utter\)/.test(ttsSynthSrc) && !/speakViaFreeTTS/.test(ttsSynthSrc));
   check("every TTS failure path leaves a diagnostic the UI can show, not just silence", /lastDiagnostic/.test(ttsSynthSrc) && /setLastDiagnostic/.test(ttsSynthSrc));
-  check("voice auto-start is guarded on SpeechRecognition support (Firefox stays text-first)", /recogSupportedRef\.current/.test(askOttoSrc));
+  // The very FIRST speak() of a session can get silently blocked by a browser's autoplay/gesture policy
+  // since Otto's replies always arrive async (a network round trip), never inside the click that triggered
+  // them — unlock() plays a silent empty utterance directly inside a real click handler to pre-arm the
+  // engine for every speak() call for the rest of that session.
+  check("a gesture-triggered unlock() exists to pre-arm speechSynthesis before the first real reply", /const unlock = useCallback/.test(ttsSynthSrc) && /new SpeechSynthesisUtterance\(" "\)/.test(ttsSynthSrc));
+  // An EMPTY-string utterance is a known trigger for the native speech queue getting stuck (no onend ever
+  // fires for it) — which would silently block every real utterance queued after it. This exact mistake
+  // was introduced and caught within this same feature's own first cut.
+  check("unlock() never queues an EMPTY-string utterance (a known stuck-queue trigger)", !/new SpeechSynthesisUtterance\(""\)/.test(ttsSynthSrc));
+  const askOttoSrcTts = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
+  // Reported live: "TTS breaks specifically when I turn the mic off then back on" — unlock() firing
+  // unconditionally on EVERY toggle (including OFF) meant its own raw speak()/cancel() pair hit the real
+  // engine right as the real synth.cancel() effect (one render tick later) was ALSO cancelling an
+  // in-flight utterance — two uncoordinated callers, the documented Chrome trigger for a subsequent
+  // speak() silently never firing onstart. unlock() only matters before speaking, so only call it on ON.
+  check("the mic toggle only calls synth.unlock() when turning voice mode ON, not on every toggle", /onToggle=\{\(\) => \{ if \(!voiceModeOn\) synth\.unlock\(\); toggleVoiceMode\(\); \}\}/.test(askOttoSrcTts));
+  // Voice mode is tap-only now: with no auto-start anywhere, the old "auto-start guarded on SpeechRecognition
+  // support" concern (never force-enable Firefox, which has no recognizer) is moot by construction.
+  check("voice mode never auto-starts (tap-only everywhere — Firefox stays text-first by construction)", !/recogSupportedRef/.test(askOttoSrc) && !/autoVoiceAppliedRef/.test(askOttoSrc));
 }
 
 section("isPrivateOrReservedIp — SSRF guard for the student-supplied Pronote connect URL");
@@ -2143,13 +2670,18 @@ section("Tutor prompt (chatAboutTask) carries the 'why don't they know' diagnosi
   check("tutor prompt distinguishes never-learned/forgot/cant-start/dont-understand-the-question before responding to 'I don't know'", /"I DON'T KNOW" IS NOT ONE THING/.test(chatBody));
   check("tutor prompt repairs a prerequisite gap instead of re-explaining the advanced skill built on it", /that prerequisite gap is the actual problem/.test(chatBody));
   check("tutor prompt has an explicit mastery-stop rule (perform + explain-why + transfer → move on)", /KNOW WHEN TO STOP TEACHING/.test(chatBody));
-  // Explicit 3-rung hint ladder + numeric escalation/release conditions, restructured this round to match
-  // a research-grounded reference spec (Orient/Narrow/Model-the-next-move, escalate only on a genuine
-  // attempt, release on: two unproductive rungs on the same point / explicit repeat request / checking
-  // completed work / a genuine attempt needing verification).
+  // Explicit 3-rung hint ladder (Orient/Narrow/Model-the-next-move, escalate only on a genuine attempt).
+  // The ladder USED TO have a "RELEASE THE ANSWER" escape hatch (two unproductive rungs on the same point,
+  // or an explicit repeat request) that directly contradicted Rule 3 / THE LINE YOU NEVER CROSS elsewhere
+  // in this same prompt ("never state the conclusion yourself," "never cave to repetition") — reported
+  // live as the tutor sometimes just giving the answer. Removed per direct instruction ("never give
+  // answers automatically... ask socratic questions"); checking already-completed work or finishing a
+  // near-complete attempt's last mechanical step are still fine (that's verifying, not answering FOR them).
   check("tutor prompt has the explicit HINT LADDER header with all three rungs", /## HINT LADDER[\s\S]{0,150}1\. ORIENT[\s\S]{0,800}2\. NARROW[\s\S]{0,800}3\. MODEL THE NEXT MOVE/.test(chatBody));
   check("hint ladder only escalates on a genuine attempt, not a bare 'I don't know'", /ESCALATE ONLY ON A GENUINE ATTEMPT/.test(chatBody));
-  check("hint ladder has explicit, enumerated answer-release conditions (not an open-ended gate)", /RELEASE THE ANSWER when ANY of these hold/.test(chatBody));
+  check("hint ladder no longer has an answer-release escape hatch that contradicts 'never give the answer'", !/RELEASE THE ANSWER when ANY of these hold/.test(chatBody));
+  check("hint ladder explicitly says never to release the final answer outright, even after repeated failed attempts", /NEVER RELEASE THE FINAL ANSWER OUTRIGHT, even after repeated failed attempts/.test(chatBody));
+  check("a stuck student gets a different worked example or a smaller sub-question, never the answer itself", /DIFFERENT worked example/.test(chatBody));
   check("tutor treats only a clean UNAIDED attempt as proof of learning (Bastani et al.)", /THE REAL TEST IS UNAIDED/.test(chatBody));
   check("voice mode writes spoken notation to the board instead of leaving it unwritten", /THE BOARD IS THE ONLY PLACE THEY EVER SEE THE ACTUAL NOTATION/.test(chatBody));
   // Reported live: a reply cut off mid-sentence ("One version with a twist, to make sure the method
@@ -2333,6 +2865,12 @@ check("catches a FR answer announcement", CHAT_STATES_ANSWER.test("La réponse e
 check("catches a FR MCQ conclusion", CHAT_STATES_ANSWER.test("C'est donc l'option B."));
 check("does NOT flag ordinary tutoring text with a number in it", !CHAT_STATES_ANSWER.test("That's the same rule we used on step 3 — try applying it here."));
 check("does NOT flag a focusing question", !CHAT_STATES_ANSWER.test("What do you think happens if you substitute that back in?"));
+// Reported live: a letter+dash+confirmation reveal ("B — yes.") confirmed the correct MCQ option without
+// ever matching the "the answer is"/"it's option X" phrase shapes above — same violation, shorter words.
+check("catches the shorter letter-confirmation reveal shape ('B — yes.')", CHAT_STATES_ANSWER.test("B — yes."));
+check("catches the letter-confirmation shape with a plain hyphen too", CHAT_STATES_ANSWER.test("B - correct."));
+check("catches the FR letter-confirmation reveal shape ('B — exact.')", CHAT_STATES_ANSWER.test("B — exact."));
+check("does NOT flag an ordinary sentence that happens to start with a single letter followed by other text", !CHAT_STATES_ANSWER.test("A good next step here is to substitute back in."));
 
 section("CHAT_CLAIMS_BOARD — catches Otto pointing at a board write that never happened");
 check("catches EN 'on your screen'", CHAT_CLAIMS_BOARD.test("The problem is on your screen now, just above."));
@@ -2554,7 +3092,7 @@ section("generate() — handled/dismissed titles sorted by recency before being 
   const start = src.indexOf("export async function generate(");
   const handledIdx = src.indexOf("const handled = existing", start);
   const body = src.slice(handledIdx, src.indexOf("\n  // …and what's currently ACTIVE", handledIdx));
-  check("the handled list is sorted by updatedAt/createdAt before being mapped", /\.sort\(\(a, b\) => \(b\.updatedAt \|\| b\.createdAt \|\| ""\)\.localeCompare\(a\.updatedAt \|\| a\.createdAt \|\| ""\)\)/.test(body));
+  check("the handled list is sorted by updatedAt/createdAt before being mapped", /\.sort\(\(a, b\) => recencyStamp\(b\)\.localeCompare\(recencyStamp\(a\)\)\)/.test(body));
   const sortIdx = body.indexOf(".sort(");
   const mapIdx = body.indexOf(".map(");
   check("the sort runs BEFORE the map (so recency is set before shaping the object), not after", sortIdx > 0 && mapIdx > sortIdx);
@@ -2975,6 +3513,36 @@ section("practiceAnswerMatches — loose-but-not-fuzzy free-response checking");
   check("a negative fraction is parsed correctly", practiceAnswerMatches("-7/2", "-3.5"));
   check("a genuinely wrong fraction still fails", !practiceAnswerMatches("7/2", "3"));
   check("a fraction answer with a unit still matches via the leading-number fallback", practiceAnswerMatches("7/2 m", "3.5 m"));
+  // Reported live: the prompt tells students they may type the plain-text word "pi" for π, but the matcher
+  // had zero notion of π in any form — every pi-valued trig/radian answer was marked wrong no matter how
+  // it was typed. The reported example: "5pi/6" vs a stored correct answer of "5π/6".
+  check("the word 'pi' matches the symbol 'π' written the same way (student types the plain-text word)", practiceAnswerMatches("5pi/6", "5π/6"));
+  check("the symbol 'π' matches the word 'pi' the other way around too", practiceAnswerMatches("5π/6", "5pi/6"));
+  check("bare 'pi' matches the numeric value of π", practiceAnswerMatches("pi", String(Math.PI)));
+  check("'2pi' (coefficient, no space) matches 2π", practiceAnswerMatches("2pi", String(2 * Math.PI)));
+  check("'pi/4' (no coefficient) matches π/4", practiceAnswerMatches("pi/4", String(Math.PI / 4)));
+  check("'-pi/6' (negative, no coefficient digit) matches -π/6", practiceAnswerMatches("-pi/6", String(-Math.PI / 6)));
+  check("a pi-valued answer with a unicode minus sign still matches", practiceAnswerMatches("−pi/6", String(-Math.PI / 6)));
+  check("a genuinely wrong pi-valued answer still fails", !practiceAnswerMatches("pi/6", "5π/6"));
+  check("'pi' alone is never confused with the unrelated word 'pit' or similar", !practiceAnswerMatches("pit", String(Math.PI)));
+  // Reported live: a multi-step physics problem (friction on an incline) has more than one legitimate path
+  // to the final number — g=9.8 vs 9.81, rounding the intermediate angle (21.8°) vs carrying full precision
+  // through to the end. The student's two independently-correct derivations (7.28 N with a rounded
+  // intermediate angle, 7.43 N carrying exact precision) were BOTH marked wrong against a stored answer
+  // that was just one specific path through the same calculation — a flat 1e-6 relative tolerance is
+  // exact-match in practice. A DECIMAL correct answer now gets a few-percent band to absorb this; a bare
+  // integer (a count, an exact MCQ-style value) stays exact so a genuinely wrong value still fails.
+  check("multi-step rounding: a less-precise-but-valid path (g=9.8) is accepted against the exact stored value", practiceAnswerMatches("7.28", "7.43"));
+  check("multi-step rounding: last-digit drift (7.42 vs stored 7.43) is accepted", practiceAnswerMatches("7.42", "7.43"));
+  check("multi-step rounding tolerance still rejects a genuinely wrong answer, not just a nearby one", !practiceAnswerMatches("6.5", "7.43"));
+  check("a bare integer answer (no decimal) stays exact — loosening is scoped to decimal/computed answers", !practiceAnswerMatches("5", "4"));
+  check("a bare integer answer still matches itself exactly", practiceAnswerMatches("4", "4"));
+
+  // Reported live again: the first widening (3%/0.05) still wasn't generous enough — Otto's own chat reply
+  // called the student's answer correct while the inline "Check" box still said "Not quite". Widened to
+  // 5%/0.08; these two cases sit between the OLD and NEW tolerance (would have failed before, pass now).
+  check("a wider rounding-path gap (within 5%) now passes where the old 3% tolerance would have rejected it", practiceAnswerMatches("1.92", "2.0") && practiceAnswerMatches("1.94", "2.02"));
+  check("still not unlimited — a value clearly outside even the widened tolerance still fails", !practiceAnswerMatches("1.5", "2.0"));
 }
 
 section("looksLikeStem / makePracticeProblem — daily practice-problem generation gate + validation");
@@ -3508,5 +4076,1056 @@ section("Tutor Desmos tools — the student-usable place (contract + pins)");
   check("the embed contract matches Study Mode's existing artifact (sandbox, no top-navigation)", /sandbox="allow-scripts allow-same-origin allow-popups"/.test(desmosArtifactSrc));
 }
 
+section("generateWeeklyStudyDeck / generateMonthlyStudyDeck — the spaced-repetition weak/known signal survives the concise fallback tier (source pin)");
+{
+  // Reported live: "weekly and monthly flashcards keep repeating stuff that's already very learned, not
+  // what's actually from journal entries or not yet learned." Root cause: both functions built a
+  // `spacedBlock` telling the model which concepts are weak (box 0-1, needs the most space) vs. already
+  // "Known" (box 2+, needs the least) — but only attached it to the PRIMARY attempt's user message
+  // (`concise ? "" : spacedBlock`). The concise fallback tier fires often in practice (DeepSeek v4's
+  // reasoning tokens routinely eat the primary attempt's budget), so on a real fraction of actual decks
+  // the one signal steering the model away from re-surfacing already-known material was silently absent,
+  // leaving it to default toward whatever was most salient across entries — typically the simpler,
+  // well-practiced concepts, not what needed review. Fixed: spacedBlock is now unconditional, and the
+  // concise system prompt text itself also mentions weighting toward weak concepts (previously it didn't
+  // even reference the signal conceptually in that branch).
+  const claudeSrcWM = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const weeklyFn = claudeSrcWM.slice(claudeSrcWM.indexOf("export async function generateWeeklyStudyDeck"), claudeSrcWM.indexOf("export async function generateWeeklyQuiz"));
+  const monthlyFn = claudeSrcWM.slice(claudeSrcWM.indexOf("export async function generateMonthlyStudyDeck"), claudeSrcWM.indexOf("export async function generateMonthlyQuiz"));
+  check("weekly deck's user-message spacedBlock is no longer stripped on the concise retry", weeklyFn.includes('entriesBlock}` + spacedBlock') && !/entriesBlock}` \+\s*\(concise \? "" : spacedBlock\)/.test(weeklyFn));
+  check("monthly deck's user-message spacedBlock is no longer stripped on the concise retry", monthlyFn.includes('weeksBlock}` + spacedBlock') && !/weeksBlock}` \+\s*\(concise \? "" : spacedBlock\)/.test(monthlyFn));
+  check("the weekly CONCISE system prompt now also tells the model to weight toward weak/unlearned concepts", /CONCISE week-end-review[\s\S]*?WEIGHT TOWARD[\s\S]*?box 0-1/.test(weeklyFn));
+  check("the monthly CONCISE system prompt now also tells the model to weight toward weak/unlearned concepts", /CONCISE month-end-review[\s\S]*?WEIGHT TOWARD[\s\S]*?box 0-1/.test(monthlyFn));
+}
+
+section("Admin metrics dashboard — gated to one hardcoded email, server AND client (source pins)");
+{
+  const serverSrcAdmin = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const appSrcAdmin = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  check("the server route requires auth before the admin check (no route ever does real work pre-auth)", /app\.get\("\/api\/admin\/metrics", requireAuth,/.test(serverSrcAdmin));
+  check("the admin check is an exact, case-insensitive email match — not a role flag on the profile", /const ADMIN_EMAIL = "tjong\.willem@gmail\.com";/.test(serverSrcAdmin) && /\(req\.session\.user \|\| ""\)\.toLowerCase\(\) === ADMIN_EMAIL/.test(serverSrcAdmin));
+  check("non-admins get a clean 403, not a crash or a silent empty response", /if \(!isAdmin\(req\)\) \{ res\.status\(403\)/.test(serverSrcAdmin));
+  check("the client nav link only renders for the admin email (defense in depth — the server is the real gate)", /isAdminUser\(status\?\.user\)/.test(appSrcAdmin) && /const ADMIN_EMAIL = "tjong\.willem@gmail\.com";/.test(appSrcAdmin));
+  check("the /admin route itself is also gated client-side, not just the nav link", /route === "admin" && isAdminUser\(status\?\.user\)/.test(appSrcAdmin));
+  // Reported live: "should say 28 sessions but it says 91" — tutorSessionCount was counting every raw
+  // freestudy-source TASK, including ones opened and immediately abandoned (no message ever sent). The
+  // client's own history (TutorSession.tsx's saveAndClose) never even shows those — they fail its own
+  // "substance gate" (a real user message or board content) and get dismissed silently. The admin count
+  // needs the SAME gate, or it counts something the product itself doesn't consider a session.
+  const storeSrcAdmin = readFileSync(new URL("../server/store.ts", import.meta.url), "utf8");
+  const adminFn = storeSrcAdmin.slice(storeSrcAdmin.indexOf("export async function getAdminMetrics"));
+  check("tutor session counting applies the SAME substance gate as TutorSession.tsx's saveAndClose (a real message or board content)", /userMsgCount === 0 && board\.length === 0\) continue;/.test(adminFn));
+  check("byUser is sorted and per-account tutor minutes/sessions are tracked, not just the app-wide total", /byUser\.sort/.test(adminFn) && /userTutorSessions/.test(adminFn) && /userTutorMinutes/.test(adminFn));
+}
+
+section("Kick loop egress/CPU fix — hidden-tab guard, trimmed payload, ETag (source pins)");
+{
+  const appSrcKick = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const kickEffect = appSrcKick.slice(appSrcKick.indexOf("const hasActiveWork = (list: WebTask[])"), appSrcKick.indexOf("Manual ↻ Refresh"));
+  check("kick's tick bails while the tab is hidden, same as the other polling timers in this file", /kicking\.current \|\| signedOutRef\.current \|\| document\.hidden\) return;/.test(kickEffect));
+  check("kick catches up immediately on regaining visibility instead of waiting for the next 10s tick", /visibilitychange.*onVisible|onVisible.*visibilitychange/s.test(kickEffect) && /if \(!document\.hidden\) void tick\(\);/.test(kickEffect));
+
+  const serverSrcKick = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const kickStart = serverSrcKick.indexOf('app.post("/api/jobs/kick"');
+  const kickRoute = serverSrcKick.slice(kickStart, serverSrcKick.indexOf('app.get("/api/cron/drain"', kickStart));
+  check("kick strips chat/board/problems/objectives before sending — this fires every 10s for the lifetime of any active job", /const \{ chat, board, problems, objectives, \.\.\.rest \} = t;/.test(kickRoute));
+  check("kick sets an ETag and honors If-None-Match, same pattern as /api/status and /api/tasks", /res\.setHeader\("ETag", etag\);[\s\S]*?if \(req\.headers\["if-none-match"\] === etag\) \{ res\.status\(304\)\.end\(\); return; \}/.test(kickRoute));
+
+  const apiSrcKick = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
+  check("api.kick() opts into the same ETag-cache path req() uses for GETs, so a 304 costs 0 bytes client-side too", /req\("\/api\/jobs\/kick", \{ method: "POST" \}, undefined, undefined, true\)/.test(apiSrcKick));
+}
+
+section("Flashcard/quiz/journal local caches are account-scoped (source pins — cross-account leak fix)");
+{
+  // Reported live: "flashcards are still being saved in a different account even though it was never
+  // associated with that account." Root cause: otto-studylog-week/month, otto-deck, and otto-quiz
+  // localStorage keys were keyed only by date/deck-id/quiz-id, NOT by userId — a GLOBAL key any account
+  // signed into the same browser reads/writes. Same bug class localDecks.ts/localChatBoard.ts/
+  // localQuizzes.ts already fixed for their own stores; this closes the remaining gaps.
+  const appSrcLeak = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const uiSrcLeak = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8");
+  check("studylog week cache key includes userId, not just the date", /function studylogWeekKey\(userId: string \| null, monday: string\): string \{ return `\$\{STUDYLOG_CACHE_PREFIX\}\$\{userId \|\| "anon"\}:\$\{monday\}`; \}/.test(appSrcLeak));
+  check("studylog month cache key includes userId, not just the month", /function studylogMonthKey\(userId: string \| null, month: string\): string \{ return `\$\{STUDYLOG_MONTH_CACHE_PREFIX\}\$\{userId \|\| "anon"\}:\$\{month\}`; \}/.test(appSrcLeak));
+  check("FlashcardDeck's review-progress key includes userId, not just the deck id", /function deckProgressKey\(deckId: string, userId: string \| null\): string \{ return `otto-deck:\$\{userId \|\| "anon"\}:\$\{deckId\}`; \}/.test(uiSrcLeak));
+  check("QuizPlayer's progress key includes userId, not just the quiz id", /function quizProgressKey\(quizId: string, userId: string \| null\): string \{ return `otto-quiz:\$\{userId \|\| "anon"\}:\$\{quizId\}`; \}/.test(uiSrcLeak));
+  const clearFn = appSrcLeak.slice(appSrcLeak.indexOf("function clearAllLocalAccountData"), appSrcLeak.indexOf("const GREETING ="));
+  check("sign-out/delete sweeps the studylog week/month, deck-progress, and quiz-progress caches for this user, not just the three pre-existing per-account stores", /otto-deck:\$\{userId \|\| "anon"\}:/.test(clearFn) && /otto-quiz:\$\{userId \|\| "anon"\}:/.test(clearFn) && /STUDYLOG_CACHE_PREFIX/.test(clearFn) && /STUDYLOG_MONTH_CACHE_PREFIX/.test(clearFn));
+
+  // Reported live: "flashcards in journal log shows only 10 even though more were generated" / "go back a
+  // week and it shows only the entry, not the flashcard" — both symptoms of the SAME race: load(m)/the
+  // month effect fired a new fetch on every monday/month change with no guard against an OLDER, now-
+  // superseded request resolving AFTER a newer one and overwriting the right week/month's data with the
+  // wrong one's (clicking the week-nav arrows a couple of times fast is exactly when two requests are in
+  // flight at once). A generation ref, bumped per call and checked before either setState, is the fix —
+  // same pattern as useSpeechSynthesis's genRef for this identical class of stale-async-response bug.
+  const loadFn = appSrcLeak.slice(appSrcLeak.indexOf("const load = useCallback((m: string) => {"), appSrcLeak.indexOf("const navKeyRef = useRef"));
+  check("the week loader guards against an older, superseded request overwriting a newer one's data", /const loadGenRef = useRef\(0\);/.test(appSrcLeak) && /const gen = \+\+loadGenRef\.current;/.test(loadFn) && /if \(loadGenRef\.current !== gen\) return;[\s\S]*?setDays\(r\.days\)/.test(loadFn) && /if \(loadGenRef\.current !== gen\) return;.*superseded[\s\S]*?if \(!cached\)/.test(loadFn));
+  const monthFn = appSrcLeak.slice(appSrcLeak.indexOf("const monthGenRef = useRef(0);"), appSrcLeak.indexOf("}, [month]);"));
+  check("the month loader has the same stale-response guard", /const gen = \+\+monthGenRef\.current;/.test(monthFn) && /if \(monthGenRef\.current !== gen\) return;/.test(monthFn));
+}
+
+section("commit()'s awaitCloud sync bypasses the stale-cache merge base (source pin)");
+{
+  // Reported live, same cluster of symptoms: "flashcards should save to cloud" / counts that vary between
+  // views. Root cause: syncCloud's `loadState(email)` (the merge BASE for the write-back) had no
+  // bypassCache, so on serverless a warm instance that ISN'T the one that performed another device's/
+  // request's most recent write could merge against a cloud snapshot up to 5 minutes stale (loadState's
+  // own per-instance cache, store.ts) and write that stale-based merge back — a classic lost-update risk,
+  // worst exactly on the awaitCloud path (journal saves, flashcard reviews) this app explicitly calls its
+  // highest-value, must-actually-persist writes.
+  const idxSrc = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const syncCloudFn = idxSrc.slice(idxSrc.indexOf("const syncCloud = async"), idxSrc.indexOf("if (opts?.awaitCloud) {"));
+  check("syncCloud's merge-base read bypasses the cache exactly when this is the awaitCloud (throwOnError) path", /loadState\(email, \{ bypassCache: !!throwOnError \}\)/.test(syncCloudFn));
+  check("the high-frequency, non-awaitCloud path still uses the cache (no behavior change for step-done/confirm)", /bypassCache: !!throwOnError/.test(syncCloudFn) && !/bypassCache: true/.test(syncCloudFn));
+}
+
+section("Focus/visibility resync removed — only the Pronote keepalive stays on that heartbeat (source pin)");
+{
+  // Removed per direct instruction: 4 requests (tasks/status/budget/sweep) on every tab focus/visibility
+  // event was real, avoidable egress for something a manual reload already covers.
+  const appSrcFocus = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const onFn = appSrcFocus.slice(appSrcFocus.indexOf("const on = () => {"), appSrcFocus.indexOf("document.addEventListener(\"visibilitychange\", on);"));
+  check("the focus/visibility handler no longer re-syncs tasks/status/budget/sweep", !/void syncTasks\(\); void loadStatus\(\); void loadBudget\(\); void sweepIfDue\(\);/.test(onFn));
+  check("the focus/visibility handler still touches Pronote's session to keep a connected token alive", /if \(status\?\.pronoteConnected\) void api\.pronoteTouch\(\);/.test(onFn));
+}
+
+section("'Pulling up your day' no longer spins forever for a skip-connect account with zero tasks (source pin)");
+{
+  // Reported live: a student who skipped connecting Google/Pronote AND has zero manually-added tasks saw
+  // the loading skeleton forever. Root cause: `loaded` was only ever flipped true inside syncTasks/
+  // sweepIfDue/generate, and the ONLY effect that auto-calls those is gated on `connected` — which is
+  // permanently false for a skip-connect account, so `loaded` never had a chance to become true.
+  const appSrcLoaded = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const loadedEffect = appSrcLoaded.slice(appSrcLoaded.indexOf("useEffect(() => {\n    // A student who skipped connecting"), appSrcLoaded.indexOf("}, [connected, status?.aiReady, syncTasks, sweepIfDue, loadBudget]);") + 1);
+  check("the connected-gated sync effect flips `loaded` directly when the account never connected anything, instead of leaving it permanently false", /if \(!connected\) \{ setLoaded\(true\); return; \}/.test(loadedEffect));
+}
+
+section("Pronote is one option, not the premise — no-integration accounts get working copy, not a fake watch (source pin)");
+{
+  // Direct ask: "don't make the app so Pronote centric … if the user doesn't have any integrations it should
+  // still work, and it shouldn't say watching Pronote". The dashboard's first-run empty state used to
+  // hardcode "Otto is watching your Pronote" and offer only a "Check now" button — for a student who skipped
+  // the connect card that button could only ever return a "nothing connected" skip, so the page claimed
+  // Otto was watching a portal nobody had linked and gave no way forward.
+  const appSrcPronote = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  check("the dashboard empty state no longer hardcodes 'Otto is watching your Pronote'", !/Otto is watching your Pronote/.test(appSrcPronote));
+  check("the empty state names whichever source is actually connected (Pronote vs inbox)", /const watching = status\.pronoteConnected\s*\n\s*\? \(en \? "your Pronote" : "ton Pronote"\)\s*\n\s*: status\.googleConnected/.test(appSrcPronote));
+  const firstRun = appSrcPronote.slice(appSrcPronote.indexOf("const watching = status.pronoteConnected"), appSrcPronote.indexOf("<div className={`list-focus-wrap"));
+  check("with nothing connected, the first-run empty state points at Settings instead of a no-op 'Check now'", /href="\/settings">\{en \? "Connect an app"/.test(firstRun));
+  check("the all-caught-up line drops the Pronote claim when nothing is connected", /Nothing else needs your attention right now/.test(firstRun));
+  check("the connect card offers the whole picker rather than a single 'Connect my Pronote' CTA", !/Connect my Pronote/.test(appSrcPronote) && /Choose what to connect/.test(appSrcPronote));
+  check("the skip escape hatch stays a real, equal choice — using Otto with nothing connected", /Use Otto without connecting/.test(appSrcPronote));
+  check("the sweep's 'nothing new' note names the connected source, not Pronote by default", /nothing new from \$\{status\?\.pronoteConnected \? "Pronote" : status\?\.googleConnected \? "your inbox" : "your sources"\}/.test(appSrcPronote));
+  // Same framing outside the app shell: the <head> title and the PWA manifest are the FIRST thing a
+  // non-Pronote student reads, and both used to define Otto as "le prolongement de Pronote".
+  const indexHtml = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  check("the page title no longer defines Otto as an extension of Pronote", !/prolongement de Pronote/i.test(indexHtml));
+  const manifest = JSON.parse(readFileSync(new URL("../public/manifest.json", import.meta.url), "utf8"));
+  check("the PWA manifest doesn't define Otto as an extension of Pronote either", !/prolongement de Pronote/i.test(manifest.name));
+  // Direct ask: the hero's "Explorer la démo — Tâches et tutorat, ensemble." link is gone (both languages),
+  // and its now-dead CSS block went with it.
+  check("the landing hero no longer links to the demo", !/Explorer la démo/.test(appSrcPronote) && !/hero-demo-link-framer/.test(appSrcPronote));
+  const styles = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
+  check("the removed hero demo link leaves no dead CSS behind", !/\.hero-demo-link-framer/.test(styles));
+}
+
+section("Terms/Privacy links open in a new tab from the signup form (source pin — in-progress signup state loss fix)");
+{
+  // Reported live during a Terms/Privacy audit: clicking these from the login/signup form navigated the
+  // SPA router's own click handler straight to /terms or /privacy, unmounting LoginPage and losing every
+  // typed field (email/password/consent/child-account fields) with no way back except restarting. The
+  // SPA router (usePathRoute) explicitly lets target="_blank" links fall through to normal browser nav,
+  // so opening in a new tab keeps the in-progress form alive in this tab.
+  const appSrcLegal = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const legalLine = appSrcLegal.slice(appSrcLegal.indexOf('<div className="login-legal">'), appSrcLegal.indexOf('<div className="login-legal">') + 400);
+  check("the Terms link opens in a new tab instead of unmounting the signup form", /<a href="\/terms" target="_blank" rel="noopener">/.test(legalLine));
+  check("the Privacy link opens in a new tab instead of unmounting the signup form", /<a href="\/privacy" target="_blank" rel="noopener">/.test(legalLine));
+}
+
+section("subjectMastery — per-subject mastery from tutor-session activity only, never a fabricated 0%");
+{
+  const mkTask = (subject, cards) => ({ id: "t1", sourceSubject: subject, flashcards: [{ id: "d1", title: "d", cards, createdAt: "2026-01-01T00:00:00Z" }] });
+  const now = new Date("2026-01-01T00:00:00Z");
+  check("no data at all for the subject → null, not 0", subjectMastery([mkTask("Other", [])], [], "Chemistry", now) === null);
+  check("flashcards only (no milestones) → pure Leitner ratio", subjectMastery([mkTask("Chemistry", [{ front: "a", back: "b", review: { seen: 1, correct: 1, box: 2 } }, { front: "c", back: "d", review: { seen: 1, correct: 0, box: 1 } }])], [], "Chemistry", now) === 0.5);
+  check("milestones only (no flashcards) → pure milestone recency score, capped at 1", subjectMastery([mkTask("Chemistry", [])], [{ subject: "Chemistry", topic: "x", label: "x", achievedAt: now.toISOString() }, { subject: "Chemistry", topic: "y", label: "y", achievedAt: now.toISOString() }, { subject: "Chemistry", topic: "z", label: "z", achievedAt: now.toISOString() }], "Chemistry", now) === 1);
+  check("notNeeded cards are excluded from the Leitner ratio, same as every other scoring signal", subjectMastery([mkTask("Chemistry", [{ front: "a", back: "b", review: { box: 2 }, notNeeded: true }, { front: "c", back: "d", review: { box: 1 } }])], [], "Chemistry", now) === 0);
+  check("both signals present → a weighted composite strictly between the two individual scores", (() => {
+    const m = subjectMastery([mkTask("Chemistry", [{ front: "a", back: "b", review: { box: 2 } }])], [{ subject: "Chemistry", topic: "x", label: "x", achievedAt: new Date(now.getTime() - 200 * 86_400_000).toISOString() }], "Chemistry", now);
+    return typeof m === "number" && m > 0 && m <= 1;
+  })());
+  check("subject matching is case-insensitive (matches sourceSubject's own normalization elsewhere)", subjectMastery([mkTask("chemistry", [{ front: "a", back: "b", review: { box: 2 } }])], [], "Chemistry", now) === 1);
+}
+
+section("Courses — built-in catalog integrity (built-in syllabi, AI units on demand — per scoping)");
+{
+  check("the catalog covers all three tracks the app supports (bac + ib + ap)", ["bac", "ib", "ap"].every((tr) => COURSES.some((c) => c.tracks.includes(tr))));
+  check("course ids are unique", new Set(COURSES.map((c) => c.id)).size === COURSES.length);
+  check("every course has ≥3 units with unique ids inside it", COURSES.every((c) => c.units.length >= 3 && new Set(c.units.map((u2) => u2.id)).size === c.units.length));
+  check("every unit has bilingual titles, ≥1 topic and ≥1 keyword", COURSES.every((c) => c.units.every((u2) => u2.title.fr && u2.title.en && u2.topics.length >= 1 && u2.topics.every((t) => t.fr && t.en) && u2.keywords.length >= 1)));
+  check("every course carries non-empty track + subject-alias lists", COURSES.every((c) => c.tracks.length >= 1 && c.subjects.length >= 1 && c.subjects.every((s) => s.trim())));
+  check("findCourse returns the right course and undefined for unknown ids", findCourse("maths-tle")?.subject === "Math" && findCourse("nope") === undefined);
+}
+
+section("Courses — unitMastery/courseProgress: mastery signals only, never a fabricated 0%");
+{
+  const course = {
+    id: "test", subject: "Chemistry", tracks: ["bac"], yearLevels: ["Seconde"], subjects: ["chemistry", "chimie"],
+    title: { fr: "Chimie", en: "Chemistry" },
+    units: [
+      { id: "u1", title: { fr: "Acides", en: "Acids" }, topics: [{ fr: "pH", en: "pH" }], keywords: ["acide", "ph", "acid"] },
+      { id: "u2", title: { fr: "Titrages", en: "Titrations" }, topics: [{ fr: "Titrage", en: "Titration" }], keywords: ["titrage", "titration"] },
+    ],
+  };
+  const now = new Date("2026-01-01T00:00:00Z");
+  const mkTask = (subject, cards) => ({ id: "t1", sourceSubject: subject, flashcards: [{ id: "d1", title: "d", cards, createdAt: "2026-01-01T00:00:00Z" }] });
+  const unit1 = course.units[0];
+
+  check("a unit nobody has touched → null (not started), never 0", unitMastery([mkTask("Chemistry", [])], [], course, unit1, now).mastery === null);
+  check("cards whose text mentions the unit feed the Leitner ratio", unitMastery([mkTask("Chimie", [{ front: "Qu'est-ce qu'un acide fort ?", back: "b", review: { box: 2 } }, { front: "pH", back: "b", review: { box: 1 } }])], [], course, unit1, now).mastery === 0.5);
+  check("cards for a DIFFERENT unit don't count toward this one", unitMastery([mkTask("Chemistry", [{ front: "Comment réaliser un titrage ?", back: "b", review: { box: 2 } }])], [], course, unit1, now).mastery === null);
+  check("notNeeded cards are excluded, same as subjectMastery", unitMastery([mkTask("Chemistry", [{ front: "acide", back: "b", review: { box: 2 }, notNeeded: true }, { front: "pH", back: "b", review: { box: 1 } }])], [], course, unit1, now).mastery === 0);
+  check("plural tolerance: a milestone topic mentioning 'acides' (s-plural) still matches the 'acide' keyword", unitMastery([], [{ subject: "Chemistry", topic: "les acides forts", label: "acide fort", achievedAt: now.toISOString() }], course, unit1, now).mastery > 0);
+  check("milestones for another subject are ignored", unitMastery([], [{ subject: "Math", topic: "acide", label: "x", achievedAt: now.toISOString() }], course, unit1, now).mastery === null);
+  check("subject matching is accent/case-insensitive both ways (Pronote FR ↔ tutor EN)", subjectMatches("Chimie", course) && subjectMatches("chemistry", course) && !subjectMatches("Math", course));
+  check("accent-stripping normalization (dérivée ≡ derivee)", normText("La dérivée") === "la derivee" && matchesUnit("La dérivée d'une fonction", { keywords: ["derivee"] }));
+
+  const p = courseProgress([mkTask("Chemistry", [{ front: "acide", back: "b", review: { box: 2 } }])], [], course, now);
+  check("courseProgress pct averages only the units with data", p.pct === 1 && p.touched === 1);
+  check("nextUnitToWork prefers the first untouched unit in course order", nextUnitToWork(p)?.unit.id === "u2");
+  const pEmpty = courseProgress([], [], course, now);
+  check("no data anywhere → pct null, next unit is the first one", pEmpty.pct === null && nextUnitToWork(pEmpty)?.unit.id === "u1");
+  check("masteryBand: null → new, below 0.8 → learning, at/above → mastered", masteryBand(null) === "new" && masteryBand(0.5) === "learning" && masteryBand(UNIT_MASTERED_AT) === "mastered");
+}
+
+section("Courses — real-catalog matching + enrollment + unit seeding");
+{
+  const now = new Date("2026-01-01T00:00:00Z");
+  const mkTask = (subject, cards) => ({ id: "t1", sourceSubject: subject, flashcards: [{ id: "d1", title: "d", cards, createdAt: "2026-01-01T00:00:00Z" }] });
+  const mathsTle = findCourse("maths-tle");
+  const limUnit = mathsTle.units.find((u2) => u2.id === "limites");
+  check("real catalog: a flashcard about limites matches its unit through the Pronote-style subject spelling", unitMastery([mkTask("Maths", [{ front: "Comment calculer une limite en l'infini ?", back: "…", review: { box: 2 } }])], [], mathsTle, limUnit, now).mastery === 1);
+  const maths1re = findCourse("maths-1re");
+  const derUnit = maths1re.units.find((u2) => u2.id === "derivation");
+  check("real catalog: a completed tutor-session milestone (recorded on session end) drives a unit's mastery", unitMastery([], [{ subject: "Mathématiques", topic: "dérivation d'une fonction composée", label: "dérivation", achievedAt: now.toISOString() }], maths1re, derUnit, now).mastery > 0);
+
+  check("normalizeEnrolledCourses drops unknown ids and duplicates, preserves order", JSON.stringify(normalizeEnrolledCourses(["maths-tle", "nope", "maths-tle", "ib-physics"])) === JSON.stringify(["maths-tle", "ib-physics"]));
+  check("normalizeEnrolledCourses tolerates non-arrays (old/corrupt profile data)", JSON.stringify(normalizeEnrolledCourses(undefined)) === "[]");
+
+  const unit = findCourse("maths-tle").units[0];
+  const fr = unitObjectives(unit, "fr");
+  const en = unitObjectives(unit, "en");
+  check("unitObjectives seeds 1-6 bilingual objectives straight from the unit's topics", fr.length >= 1 && fr.length <= 6 && fr[0] === unit.topics[0].fr && en[0] === unit.topics[0].en);
+
+  const ordered = orderCoursesForProfile(COURSES, { track: "bac", yearLevel: "Terminale" });
+  check("orderCoursesForProfile puts the student's own track + year first", ordered[0].tracks.includes("bac") && ordered[0].yearLevels.some((y) => y.toLowerCase() === "terminale"));
+  check("orderCoursesForProfile never drops any course (ordering only, not a filter)", ordered.length === COURSES.length);
+}
+
+section("Track-grounded curriculum content — syllabusGroundingLine gated like examStyleLine (source pin)");
+{
+  const claudeSrcSyl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const sylFn = claudeSrcSyl.slice(claudeSrcSyl.indexOf("Direct request: tutoring/content generation"), claudeSrcSyl.indexOf("/** VARK, presentation only"));
+  check("syllabusGroundingLine is gated to IB/AP only, thin/none for bac/other (confirmed with the user)", /p\?\.track !== "ib" && p\?\.track !== "ap"\)\) return "";/.test(sylFn));
+  check("syllabusGroundingLine leans on the model's own knowledge, explicitly no hardcoded syllabus database", /No new syllabus database/.test(sylFn));
+  check("the tutor chat's dynamicContext calls syllabusGroundingLine alongside trackLine", /trackLine\(profile\) \+ syllabusGroundingLine\(profile, task\.sourceSubject\)/.test(claudeSrcSyl));
+}
+
+section("TOK-inspired Socratic additions — extend existing rules, never contradict the HINT LADDER fix (source pins)");
+{
+  const claudeSrcTok = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("CHALLENGE ASSUMPTIONS now rotates through TOK-style meta-questions (evidence/counter-evidence/strongest objection)", claudeSrcTok.includes("what's the strongest case AGAINST your") && claudeSrcTok.includes("own claim?"));
+  check("rule 4b occasionally asks the student to voice a counterclaim, not just justify their own step", claudeSrcTok.includes("ask them to voice the") && claudeSrcTok.includes("OPPOSING position"));
+  check("a new 10b prompts brief reflection after a problem resolves, same not-every-turn cadence as 4b", /10b\. CLOSE A RESOLVED PROBLEM WITH ONE REFLECTIVE QUESTION, SOMETIMES/.test(claudeSrcTok));
+  check("none of the new Socratic additions reintroduce the removed answer-release escape hatch", !/RELEASE THE ANSWER when ANY of these hold/.test(claudeSrcTok));
+}
+
+section("Tutor session mastery + objectives summary — surfaced without a fabricated 0% (source pins)");
+{
+  const serverSrcMastery = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const freeRoute = serverSrcMastery.slice(serverSrcMastery.indexOf('app.post("/api/study/free"'), serverSrcMastery.indexOf('app.post("/api/study/free"') + 2500);
+  check("mastery is computed only on session start/resume (/api/study/free), not on a hot polled route", /subjectMastery\(list, req\.session\.profile\?\.milestones, /.test(freeRoute));
+
+  const tutorSrcMastery = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  check("the Today's-focus panel only renders mastery when it's an actual number, never a fabricated 0%", /typeof task\.mastery === "number"/.test(tutorSrcMastery));
+  check("the Past-sessions list distinguishes 'no objectives were set' from an explicit 0\\/N", /typeof s\.objectivesTotal === "number"/.test(tutorSrcMastery));
+}
+
+section("hintDensity preference — new axis, distinct from learningStyle, never licenses a direct answer (source pins)");
+{
+  const serverSrcHint = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  check("the /api/profile/preference route accepts hintDensity with the right allow-list, including the slider's explicit 'balanced' middle position", /key === "hintDensity" && \["steps", "hints", "balanced"\]\.includes\(value\)/.test(serverSrcHint));
+  // Real pre-existing bug, fixed alongside this feature: the UI (Settings AND onboarding) has always
+  // offered an "AP" track button, but this route's allow-list omitted "ap" — clicking it silently never
+  // saved. Caught while wiring hintDensity next to it in the same preference route.
+  check("the track preference route now accepts 'ap' (UI has always offered an AP button; this route silently dropped it before)", /key === "track" && \["ib", "ap", "bac", "other"\]\.includes\(value\)/.test(serverSrcHint));
+
+  const typesSrcHint = readFileSync(new URL("../shared/types.ts", import.meta.url), "utf8");
+  check("Profile.hintDensity is sanitized through the same allow-list as the write route", /hintDensity: \["steps", "hints", "balanced"\]\.includes\(p\?\.hintDensity\) \? p\.hintDensity : undefined,/.test(typesSrcHint));
+
+  const claudeSrcHint = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const hintFn = claudeSrcHint.slice(claudeSrcHint.indexOf("export function hintDensityLine"), claudeSrcHint.indexOf("// \"Stories tuned to her life\""));
+  check("hintDensityLine never mentions giving the direct answer — only pacing/step-size language", !/the answer\b/i.test(hintFn.replace(/never the direct answer|never the answer/gi, "")));
+  check("hintDensityLine explicitly says the direct answer is still never given, under either setting", /Still never the direct answer/.test(hintFn) || /still never the\s*direct answer/.test(hintFn));
+  check("chatAboutTask's dynamicContext includes hintDensityLine", /learningStyleLine\(profile\) \+ hintDensityLine\(profile\)/.test(claudeSrcHint));
+
+  const appSrcHint = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  check("Settings has a hint-density 3-position slider, distinct from the learningStyle VARK field", /hint-density-slider/.test(appSrcHint) && /type="range" min=\{0\} max=\{2\} step=\{1\}/.test(appSrcHint));
+  check("the slider's 3 stops map to hints/balanced/steps in that order", /const HINT_DENSITY_POSITIONS: \("hints" \| "balanced" \| "steps"\)\[\] = \["hints", "balanced", "steps"\];/.test(appSrcHint));
+}
+
+section("Tutor reply length — tightened the existing SHORT REPLIES trigger (source pin)");
+{
+  const claudeSrcLen = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("the SHORT REPLIES rule's trigger is tightened to match its own 1-3 sentence target (was a looser 5-sentence trigger)", claudeSrcLen.includes("if you find yourself writing more than 3") && claudeSrcLen.includes("sentences, stop"));
+  check("the existing PRIMER_CLOSING_REMINDER LENGTH check is untouched (still reinforces the same 1-3 sentence rule)", claudeSrcLen.includes("this genuinely 1-3 sentences?"));
+}
+
+section("wantsArtifactTools — latency fix: narrow the tool list only on a clearly short/conversational turn");
+{
+  check("a clear flashcard request keeps the artifact tools", wantsArtifactTools("tu peux me faire des flashcards sur ça ?", []) === true);
+  check("a quiz request (English) keeps the artifact tools", wantsArtifactTools("can you quiz me on this chapter", []) === true);
+  check("short small talk with no keyword drops the artifact tools", wantsArtifactTools("ok merci", []) === false);
+  check("a bare acknowledgement drops the artifact tools", wantsArtifactTools("got it", []) === false);
+  check("a short message that's still a QUESTION keeps the artifact tools (biased toward inclusion)", wantsArtifactTools("et après ?", []) === true);
+  check("a longer conversational message with no keyword still keeps the artifact tools (only ≤6 words drops)", wantsArtifactTools("yeah that makes sense I think I understand it now", []) === true);
+  check("an artifact keyword in RECENT HISTORY (not just the current message) still keeps the tools", wantsArtifactTools("ok", [{ role: "user", text: "can you make me a quiz on this" }]) === true);
+  check("empty message doesn't crash and stays on the safe/included side", wantsArtifactTools("", []) === true);
+}
+
+section("Tool-narrowing latency fix — core tutoring tools are NEVER dropped by the heuristic (source pin)");
+{
+  const claudeSrcTools = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const toolsBlock = claudeSrcTools.slice(claudeSrcTools.indexOf("const includeArtifactTools = wantsArtifactTools"), claudeSrcTools.indexOf("const empty = (): ChatResult"));
+  // WEB_SEARCH_TOOL/CREATE_CALC_TOOL are generic utility tools, unrelated to the board — still core, still
+  // listed unconditionally (never narrowed by the includeArtifactTools heuristic) in both branches.
+  for (const core of ["WEB_SEARCH_TOOL", "CREATE_CALC_TOOL"]) {
+    check(`${core} is listed unconditionally (not inside the includeArtifactTools ternary) in both branches`, (toolsBlock.match(new RegExp(core, "g")) || []).length === 2 && !new RegExp(`includeArtifactTools \\? \\[[^\\]]*${core}`).test(toolsBlock));
+  }
+  check("only the 4 artifact/remember tools are gated behind includeArtifactTools", /includeArtifactTools \? \[CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL\]/.test(toolsBlock) && /includeArtifactTools \? \[REMEMBER_TOOL\]/.test(toolsBlock));
+  // Direct instruction: the board (and everything that renders ON it — practice problems, objectives) is
+  // TUTOR-ONLY now — WRITE_TO_BOARD/DRAW_ON_BOARD/GEOMETRY_ON_BOARD/GRAPH_ON_BOARD/CREATE_PROBLEM/
+  // SET_OBJECTIVES are no longer unconditional; they're gated behind `opts?.primer` via `boardTools`,
+  // spread into both branches so a Tutor turn still gets them either way canvasMode is set.
+  for (const core of ["WRITE_TO_BOARD_TOOL", "DRAW_ON_BOARD_TOOL", "GEOMETRY_ON_BOARD_TOOL", "GRAPH_ON_BOARD_TOOL", "SET_OBJECTIVES_TOOL", "CREATE_PROBLEM_TOOL"]) {
+    check(`${core} is in boardTools (primer-gated), not listed directly in either tools branch`, new RegExp(`const boardTools = opts\\?\\.primer[\\s\\S]*?${core}`).test(toolsBlock) && (toolsBlock.match(new RegExp(core, "g")) || []).length === 1);
+  }
+  check("both branches spread boardTools in (a Tutor turn gets them whether canvasMode is set or not)", (toolsBlock.match(/\.\.\.boardTools,/g) || []).length === 2);
+}
+
+section("useThinkingWord — time-banded wording so a long wait stops implying 'almost done' (source pin)");
+{
+  // Not unit-testable as a plain function (it's a stateful React hook, setInterval/useEffect-based) — this
+  // codebase's test suite has no React test renderer, so pin the band structure/thresholds in source
+  // instead, same as other UI-behavior checks in this file.
+  const uiSrcThink = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8");
+  const hookFn = uiSrcThink.slice(uiSrcThink.indexOf("export function useThinkingWord"), uiSrcThink.indexOf("export function useThinkingWord") + 1200);
+  check("three word bands exist: THINKING_WORDS (fresh), STILL_WORKING_WORDS, TAKING_LONGER_WORDS", /STILL_WORKING_WORDS/.test(uiSrcThink) && /TAKING_LONGER_WORDS/.test(uiSrcThink));
+  check("elapsed time (not just a flat cycling interval) determines which band is shown", /elapsedMs >= STILL_WORKING_BAND_MS/.test(hookFn) && /elapsedMs >= THINKING_BAND_MS/.test(hookFn));
+  check("elapsed time resets to 0 when the hook goes inactive, so a NEW turn starts fresh in the first band", /if \(!active\) \{ setElapsedMs\(0\); return; \}/.test(hookFn));
+  check("returns null while inactive, same as before (callers rely on this)", /if \(!active\) return null;/.test(hookFn));
+}
+
+section("TTS — the browser voice list is MALE-ONLY BY POSITIVE MATCH (isMaleVoice/rankVoices unit tests)");
+{
+  // Reported live (repeatedly): voice mode stays on "Listening", never "Otto is speaking", even with a reply.
+  // Root causes in the old hook: it RANKED Chrome's network "Google …" voices first (they fail silently and
+  // cut out after ~15s), and on any utterance error it skipped to the next sentence — a failing voice
+  // drained the whole reply in milliseconds, so `speaking` only flickered and nothing was ever heard.
+  // On top of that, the Web Speech API exposes NO gender field, so "never a female voice" has to be decided
+  // from the NAME — and it is decided POSITIVELY: a voice must be identifiable as male to be usable at all.
+  const v = (name, lang, localService, voiceURI = name) => ({ name, lang, localService, voiceURI });
+  const voices = [v("Google français", "fr-FR", false), v("Matthieu", "fr-FR", true), v("Amélie", "fr-CA", true), v("Samantha", "en-US", true), v("Google US English", "en-US", false)];
+  check("a name from the MALE list is male; a name from the FEMALE list never is", ["Thomas", "Henri", "Matthieu", "David", "Google UK English Male"].every(isMaleVoice) && ["Amélie", "Samantha", "Chantal", "Google français", "Google US English", "Zira"].every((n) => !isMaleVoice(n)));
+  check("an unknown/blank name is NOT male — silence beats guessing wrong and getting a woman's voice", !isMaleVoice("") && !isMaleVoice("Voice 7") && !isMaleVoice("   "));
+  check("an on-device exact-language MALE voice beats Chrome's network 'Google' (female) voice", rankVoices(voices, "fr-FR")[0].name === "Matthieu");
+  check("EVERY returned voice is male, and a list with only female voices yields nothing at all", rankVoices(voices, "fr-FR").length > 0 && rankVoices(voices, "fr-FR").every((x) => isMaleVoice(x.name)) && rankVoices([v("Amélie", "fr-FR", true), v("Samantha", "fr-FR", true)], "fr-FR").length === 0);
+  check("a MALE network voice is still used when it's the only male voice for the language", rankVoices([v("Google UK English Male", "en-GB", false), v("Samantha", "en-GB", true)], "en-GB")[0].name === "Google UK English Male");
+  check("wrong-language voices are never returned", rankVoices([v("Samantha", "en-US", true)], "fr-FR").length === 0);
+  check("a voice that already failed this session is excluded from the ranking", rankVoices([v("Matthieu", "fr-FR", true), v("Henri", "fr-FR", true), v("Amélie", "fr-FR", true)], "fr-FR", new Set(["Matthieu"]))[0].name === "Henri");
+  check("an underscore-style lang tag (fr_FR, some Android builds) still matches", rankVoices([v("Matthieu", "fr_FR", true)], "fr-FR").length === 1);
+}
+
+section("TTS rewrite — invariants: no silent drain, no stuck 'speaking', no stale callbacks, never left paused (source pins)");
+{
+  const tts = readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8");
+  check("a failed chunk is retried once (re-queued at the front) instead of silently skipped", /if \(!item\.retried\) queueRef\.current\.unshift\(\{ text: item\.text, retried: true \}\);/.test(tts));
+  check("the voice that failed is excluded for the rest of the session, so the retry uses a different one", /badVoicesRef\.current\.add\(voice\.voiceURI\)/.test(tts));
+  check("a second failure is surfaced to the student (lastDiagnostic) instead of vanishing", /setLastDiagnostic\(fr\(\)\s*\n?\s*\? `La synthèse vocale a échoué/.test(tts));
+  check("the diagnostic is bilingual (follows the speech language, no FR/EN mixing)", /`Speech playback failed \(\$\{reason\}\)/.test(tts));
+  check("a normal successful speak never sets a diagnostic (no happy-path noise)", !/Using this browser's built-in speech/.test(tts));
+  check("every chunk has a START timeout (dropped utterance → retry, never hangs)", /setTimeout\(\(\) => settle\(true, "never-started"\), START_TIMEOUT_MS\)/.test(tts));
+  check("every started BROWSER chunk has a RUN ceiling (onend never arriving can't leave speaking stuck true)", /browserRunTimeoutMs\(item\.text\)/.test(tts) && /settle\(false, "timeout"\)/.test(tts));
+  // The other half of "all voices cut off early": cloud playback used to be cut off by that same
+  // text-length GUESS at how long the speech ought to take (~110ms/char), which pauses, emphasis or just a
+  // slower voice legitimately exceed — so it PAUSED the element mid-sentence. Playback is now bounded by
+  // PROGRESS (a stall detector) plus a generous absolute ceiling, neither of which can fire during healthy
+  // playback. The old guess must not come back.
+  check("cloud playback is never cut off by a text-length duration guess — only by a stall or the backstop", !/runTimeoutMs\(/.test(tts.replace(/browserRunTimeoutMs/g, "X")) && /PLAY_STALL_MS = 10_000/.test(tts) && /PLAY_CEILING_MS = 15 \* 60_000/.test(tts) && /ontimeupdate/.test(tts));
+  check("the stall detector only fires when there is genuinely no progress, and it resets on progress", /lastProgressAt = Date\.now\(\)/.test(tts) && /Date\.now\(\) - lastProgressAt < PLAY_STALL_MS/.test(tts));
+  check("settle() is idempotent — onend/onerror/timeouts can't double-advance the queue", /if \(settled\) return;\s*\n\s*settled = true;/.test(tts));
+  check("speak() and cancel() bump the generation; handlers check it before acting", /const gen = \+\+genRef\.current;/.test(tts) && /genRef\.current\+\+;/.test(tts) && /if \(genRef\.current !== gen\) return;/.test(tts));
+  check("a paused engine is resumed before speaking (a paused engine queues silently forever)", /if \(engine\.paused\) engine\.resume\(\);/.test(tts));
+  check("the risky pause()/resume() keepalive is gone (only needed for network voices, which are no longer preferred)", !/engine\.pause\(\)|speechSynthesis\.pause\(\)/.test(tts));
+  check("unlock() never touches an engine that's already speaking (no mic-toggle cross-talk)", /if \(engine\.speaking \|\| engine\.pending\) return;/.test(tts));
+  check("unlock() never queues an EMPTY utterance (a known stuck-queue trigger)", !/new SpeechSynthesisUtterance\(""\)/.test(tts));
+}
+
+section("MCQ-dodge no longer licenses an answer reveal (source pins — reported live, 'B — yes.'/'Yes — (0, 4]')");
+{
+  // Reported live: a student repeatedly tried to skip/dodge an active MCQ practice problem ("move on to
+  // another one", "it's good", vague non-answers) and the tutor eventually resolved it FOR them anyway —
+  // neither the HINT LADDER's (c)/(d) exceptions nor canvas mode had any rule against treating "wrap up
+  // the loose end before switching" as valid license to reveal.
+  const claudeSrcDodge = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("the HINT LADDER exception list now has a negative case (e) for evasion, distinct from (c)/(d)", /\(e\) they're trying to skip\/change ` \+\s*\n\s*`the subject WITHOUT a genuine attempt/.test(claudeSrcDodge) || claudeSrcDodge.includes("(e) they're trying to skip/change"));
+  check("canvas mode explicitly says to let a dodged MCQ go unanswered rather than resolving it for them", claudeSrcDodge.includes("IF THEY TRY TO SKIP/MOVE ON WITHOUT A GENUINE ATTEMPT"));
+}
+
+section("TTS 'never works again' — speak trigger keyed on the newest message, not chat length (chat-cap bug)");
+{
+  // Reported live: after a while in a session TTS never worked again, with NOTHING in the console — speak()
+  // was never called. The server caps chat at CHAT_CAP=30 (server/index.ts); once a session hits it, every
+  // turn adds 2 messages and drops 2, so the length stays at 30 and `chat.length > spokenCount` was never
+  // true again. Both voice surfaces now key on the newest message's identity instead.
+  const mk = (n) => Array.from({ length: n }, (_, i) => ({ role: i % 2 ? "assistant" : "user", at: `2026-10-04T10:${String(i).padStart(2, "0")}:00Z`, text: `m${i}` }));
+  const atCap = mk(30);
+  const nextTurn = [...atCap, { role: "user", at: "2026-10-04T11:00:00Z", text: "q" }, { role: "assistant", at: "2026-10-04T11:00:05Z", text: "a" }].slice(-30);
+  check("a new reply at the chat cap changes the key even though the LENGTH is identical (30 → 30)", nextTurn.length === atCap.length && lastMessageKey(nextTurn) !== lastMessageKey(atCap));
+  check("an unchanged chat (a plain re-render) keeps the same key — no double-speak", lastMessageKey(mk(10)) === lastMessageKey(mk(10)));
+  check("empty/undefined chat yields an empty key, no crash", lastMessageKey(undefined) === "" && lastMessageKey([]) === "");
+  for (const [file, label] of [["../client/study/AskOttoPanel.tsx", "AskOttoPanel"], ["../client/TaskCard.tsx", "TaskCard"]]) {
+    const src = readFileSync(new URL(file, import.meta.url), "utf8");
+    check(`${label} no longer triggers speech on chat length`, !/spokenCountRef/.test(src) && !/\[task\.chat\?\.length, voiceModeOn/.test(src));
+    check(`${label} triggers speech on lastMessageKey, and skips history on first render`, /const tailKey = lastMessageKey\(task\.chat\);/.test(src) && /if \(spokenKeyRef\.current === null\) \{ spokenKeyRef\.current = tailKey; return; \}/.test(src));
+  }
+}
+
+section("TTS — WAV wrapping + fluid chunking (unit tests)");
+{
+  // pcmToWav stays exported and tested: it is the one place a bare PCM buffer becomes playable audio, and it
+  // was already needed once when a provider returned headerless PCM. The free provider today returns real
+  // MP3s, so this is insurance rather than a live path — cheap to keep honest.
+  const pcm = Buffer.alloc(4800);
+  const wav = pcmToWav(pcm, 24000);
+  check("WAV = 44-byte header + the PCM payload", wav.length === 44 + pcm.length);
+  check("RIFF/WAVE/fmt/data markers are in place", wav.toString("ascii", 0, 4) === "RIFF" && wav.toString("ascii", 8, 12) === "WAVE" && wav.toString("ascii", 12, 16) === "fmt " && wav.toString("ascii", 36, 40) === "data");
+  check("sample rate, PCM format and data length are written correctly", wav.readUInt32LE(24) === 24000 && wav.readUInt16LE(20) === 1 && wav.readUInt32LE(40) === pcm.length && wav.readUInt32LE(4) === 36 + pcm.length);
+  // Chunking: AS FEW REQUESTS AS POSSIBLE per reply — the free provider refuses an over-long synthesis
+  // outright ("Usage Limit exceeded" at ~1500 characters, verified live), and a chunk that trips that
+  // ceiling loses the REST of the reply's audio, which is exactly the "voice cuts off early" symptom.
+  // Joined text is also what makes the neural voice sound fluid (a request per sentence resets intonation
+  // at every period).
+  check("a one-sentence reply is one chunk", cloudChunks(["Bonjour."]).length === 1);
+  check("an ordinary multi-sentence reply is ONE chunk (not one request per sentence)", cloudChunks(["A.", "B.", "C."]).length === 1 && cloudChunks(["A.", "B.", "C."])[0] === "A. B. C.");
+  const long = Array.from({ length: 40 }, (_, i) => `Sentence number ${i} is here and is moderately long.`);
+  const chunks = cloudChunks(long);
+  check("only a genuinely long reply splits at all, into provider-safe ~900-char chunks, nothing lost", chunks.length > 1 && chunks.every((c) => c.length <= 900) && chunks.join(" ") === long.join(" "));
+  check("a long reply still splits into FEWER, bigger chunks than one-per-sentence would", chunks.length < long.length);
+  // The client's chunk size and the server's cap must agree: they drifted once (the client sent up to 1800
+  // characters and the server sliced at 1000), which is what silently truncated every long reply's audio.
+  const ttsChunkSrc = readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8");
+  check("the client asks for chunks at the provider-safe size, in lockstep with the server's cap", /const CLOUD_CHUNK_MAX_CHARS = 900;/.test(ttsChunkSrc) && /const TTS_CHUNK_MAX = 900;/.test(readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8")));
+}
+
+section("TTS — one free provider, a MALE-ONLY voice pool, retried voice-by-voice and chunk-by-chunk (source pins)");
+{
+  // Direct asks: use a FREE tts api, never a female voice, "even if it fails, use another free male voice".
+  // The server's synthesizeSpeech is the single place those three rules live, so pin the shape of it: a
+  // per-language pool of male voice names, one attempt per chunk per voice, and a hard stop (never a
+  // female voice, never a half-spoken reply) when the pool is exhausted.
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const fn = claude.slice(claude.indexOf("export async function synthesizeSpeech"), claude.indexOf("export function wordWrapChunks"));
+  check("a free, keyless provider is used (its public form endpoint — no account, no API key)", /https:\/\/ttsmp3\.com\/makemp3_new\.php/.test(claude) && /source: "ttsmp3"/.test(claude));
+  check("the request looks like a browser (a bare server fetch is refused by these free endpoints)", /User-Agent": BROWSER_UA/.test(claude) && /Referer": "https:\/\/ttsmp3\.com\/"/.test(claude));
+  check("the voice name is sent in the field the endpoint actually reads", /lang: voice/.test(claude));
+  check("synthesizeSpeech speaks each chunk with the pool in order, one voice at a time (never in parallel)", /for \(const chunk of chunks\)/.test(fn) && /await synthesizeChunkWithVoice\(chunk, voices\[i\]\)/.test(fn));
+  check("a chunk the whole male pool refuses fails the reply loudly rather than returning partial audio", /if \(!done\) return last;/.test(fn));
+  check("no Gemini TTS key, model or voice constant survives anywhere in the server", !/GEMINI_TTS|callGeminiTts/.test(claude));
+
+  // ── Container tags: the provider tags EACH synthesis with its own ID3v2 header ────────────────────────
+  // Verified live on a 1350-character French reply: the second chunk's tag landed at byte 356,588 — exactly
+  // the first chunk's length — and an <audio> element that meets an ID3v2 header mid-file stops there. That
+  // is the "long replies cut off early" half of the voice reports (the server's 1000-char slice was the
+  // other half, and it only ever affected replies over 1000 characters — which is why short ones were fine).
+  const id3 = (size) => Buffer.concat([
+    Buffer.from([0x49, 0x44, 0x33, 4, 0, 0, (size >> 21) & 0x7f, (size >> 14) & 0x7f, (size >> 7) & 0x7f, size & 0x7f]),
+    Buffer.alloc(size, 0x11),
+  ]);
+  const frames = Buffer.alloc(300, 0xff);
+  check("a leading ID3v2 tag is stripped, leaving raw frames", stripId3v2(Buffer.concat([id3(40), frames])).length === 300 && stripId3v2(Buffer.concat([id3(40), frames]))[0] === 0xff);
+  check("an untagged MP3 is returned byte-for-byte", stripId3v2(frames).length === 300 && stripId3v1(frames).length === 300);
+  check("a tag whose declared size exceeds the buffer never eats the audio (returns it unchanged)", stripId3v2(id3(4000)).length === 4010);
+  check("a trailing ID3v1 tag ('TAG' + 125 bytes) is stripped too", stripId3v1(Buffer.concat([frames, Buffer.from("TAG"), Buffer.alloc(125, 0x22)])).length === 300);
+  check("the concatenation strips each later chunk's container tag (one continuous MPEG stream)", /const body = stripId3v1\(r\.mp3\);/.test(claude) && /parts\.push\(parts\.length === 0 \? body : stripId3v2\(body\)\);/.test(claude));
+
+  // ── The success signal: `success` is NOT always present ──────────────────────────────────────────────
+  // Probed live, same voice + same text one call apart: a FRESH synthesis carries "success":1, while a
+  // CACHE HIT answers {"Error":0,"Cached":1,"URL":"…"} with NO `success` field at all. And in tutoring the
+  // cached case is the common one — the same short acknowledgements get spoken turn after turn — so
+  // requiring `success` rejected every repeated phrase, walked the entire male pool and then failed the
+  // reply. The only signal that can be trusted is the presence of an audio URL.
+  check("success is judged by the AUDIO URL, not by a `success` field the cache-hit response omits", /const url = typeof json\?\.URL === "string" \? json\.URL : "";/.test(claude) && /if \(!url\) return \{ error: `voice \$\{voice\} rejected/.test(claude) && !/json\?\.success/.test(claude));
+  check("and the provider's own refusal wording still reaches the log line", /String\(json\?\.Error \?\? "no audio url"\)/.test(claude));
+}
+
+section("Answers are NEVER revealed — chat prompt and every practice-problem surface (source pins)");
+{
+  // Reported live: "it gives answer, this should never happen" — the tutor finished the student's work
+  // ("−1/8 + 6 = 47/8, so you've got…", "it's 3x − 2") under a "(d) finish a mechanical last step" exception,
+  // and every practice-problem surface revealed the answer on a wrong attempt.
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("the 'finish a mechanical last step' exception is gone from the hint ladder", !/finish a mechanical last step/.test(claude));
+  check("the prompt forbids producing any value/step the student hasn't stated, and says to ASK instead", claude.includes("Never produce a value, step result, or piece of") && claude.includes("ASK them to do it"));
+  const surfaces = [["../client/study/artifacts/BoardArtifact.tsx", "Board"], ["../client/study/InlineProblem.tsx", "InlineProblem"], ["../client/ui.tsx", "journal practice card"]];
+  for (const [file, label] of surfaces) {
+    const src = readFileSync(new URL(file, import.meta.url), "utf8");
+    check(`${label}: a wrong attempt never prints the answer`, !/the answer was: \$\{problem\.answer\}|la réponse était : \$\{problem\.answer\}|the correct answer: \$\{problem\.answer\}|la bonne réponse : \$\{problem\.answer\}/.test(src));
+  }
+  for (const [file, label] of surfaces.slice(0, 2)) {
+    const src = readFileSync(new URL(file, import.meta.url), "utf8");
+    check(`${label}: MCQ only counts as answered when the CORRECT option is picked (a wrong pick just strikes it out)`, /picked !== null && (state\.)?picked === problem\.correct/.test(src) && /wrong\.includes\(oi\)/.test(src));
+    check(`${label}: the ✓ and explanation only show once answered correctly; a miss says "try again"`, /answered && oi === problem\.correct \? "correct"/.test(src) && /Not quite — try (another option|again)\./.test(src));
+    check(`${label}: typed answers use the shared lenient matcher (pi, fractions, units)`, /practiceAnswerMatches\(/.test(src));
+  }
+}
+
+section("Problem guidance never gives the answer away — format/hint 'e.g.' leak (reported live: 'e.g. x = 3' when the answer was x = 3)");
+{
+  check("the reported leak is detected", leaksAnswer("the x-coordinate only, e.g. x = 3", "x = 3"));
+  check("…also when the stored answer is the bare value", leaksAnswer("the x-coordinate only, e.g. x = 3", "3"));
+  check("a different number is not a leak", !leaksAnswer("the x-coordinate only, e.g. x = 7", "3"));
+  check("'3' does not match inside '13' or '3.5'", !leaksAnswer("give 13 or 3.5 style", "3"));
+  check("a symbolic answer is detected too", leaksAnswer("in the form y = mx + c, e.g. y = 2x − 5", "y = 2x − 5"));
+  check("scrub keeps the useful instruction and drops only the leaking example", scrubAnswerLeak("the x-coordinate only, e.g. x = 3", "x = 3") === "the x-coordinate only");
+  check("scrub drops the text entirely if the answer is still there without the example", scrubAnswerLeak("answer: 3", "3") === undefined);
+  check("non-leaking guidance passes through untouched", scrubAnswerLeak("two decimal places, in m/s", "4.27") === "two decimal places, in m/s");
+  const fr = makeProblemLeak({ question: "Find where the graph crosses its asymptote.", answer: "x = 3", format: "the x-coordinate only, e.g. x = 3", hint: "Set the remainder to zero — you should get x = 3." });
+  check("makeProblem: the leaking format example is stripped", fr.problem && fr.problem.format === "the x-coordinate only");
+  check("makeProblem: a hint that states the answer is dropped", fr.problem && fr.problem.hint === undefined);
+  const mcq = makeProblemLeak({ question: "Slant asymptote?", options: ["y = 2x − 5", "y = 2x + 5"], correct: 0, hint: "It's y = 2x − 5." });
+  check("makeProblem (MCQ): a hint naming the correct option is dropped", mcq.problem && mcq.problem.hint === undefined);
+  const daily = makePracticeLeak({ problem: "Solve 2x + 4 = 10.", answer: "3", format: "a single number, e.g. 3" });
+  check("makePracticeProblem (journal): the leaking example is stripped", daily.problem && daily.problem.format === "a single number");
+}
+
+section("TTS never falls straight to the browser voice — the free cloud voice is the only primary (source pins)");
+{
+  // Direct request: the browser's own speechSynthesis must never be the primary voice. /api/tts answers from
+  // the free, keyless male-voice pool (see the pool section above); when it fails, the client plays NOTHING
+  // for that reply rather than substituting a browser voice.
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("the provider validates it actually got audio back, not an error page with a 200", /if \(!url\) return \{ error/.test(claude) && /if \(!res\.ok\) return \{ error/.test(claude) && /if \(!audio\.ok\)/.test(claude) && /if \(!mp3\.length\)/.test(claude));
+  check("the provider's own rejection wording is reported, so a log line names the real cause", /rejected: \$\{String\(json\?\.Error/.test(claude));
+
+  const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const ttsRoute = idx.slice(idx.indexOf('app.post("/api/tts"'), idx.indexOf('app.post("/api/tts"') + 2600);
+  const ttsRegion = claude.slice(claude.indexOf("const TTS_MALE_VOICES"), claude.indexOf("export function wordWrapChunks"));
+  check("one consistent voice: ONE provider, one pool, no hedging/racing between voice tiers", !/TTS_HEDGE_MS|Promise\.race|geminiDownUntil/.test(ttsRegion));
+  check("a reply is never split into several parallel voice requests (they change the voice mid-reply)", !/leadSplit/.test(readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8")));
+  check("the route reports a real failure instead of serving empty/cached audio", /res\.status\(out\.status === 429 \? 429 : 502\)/.test(ttsRoute));
+}
+
+section("Clarity fixes — 'I'm not understanding' escalates, rephrasing isn't a different approach, explicit write-requests honored (source pins)");
+{
+  // Reported live: a sign-test ("try theta=phi=60 degrees...") got re-asked FOUR times with only cosmetic
+  // rewording while the student got visibly more lost ("I'm not understanding", "at what", "let's just
+  // move on"), and an explicit "can you just write on the board" request was answered with more chat text
+  // instead of an actual board entry.
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("an explicit 'I don't understand' is treated as its own escalation signal, distinct from a bare 'I don't know'", claude.includes('an explicit') && claude.includes('"I don\'t understand"/"I\'m not understanding" IS its own signal'));
+  check("rephrasing the same question is explicitly called out as NOT a different approach", claude.includes('rephrasing the SAME test/') && claude.includes("question in other words is NOT different"));
+  check("the write-to-board tool rule requires honoring an EXPLICIT written-anchor request the same turn", claude.includes("If the student EXPLICITLY") && claude.includes('asks you to write/put something on the board'));
+}
+
+section("Chat bubble color — user bubble uses dedicated fixed-saturation tokens, not the theme-dependent --accent (source pins)");
+{
+  // Reported live: "text is grey on blue background". Root cause: dark mode lightened --accent
+  // (for buttons/links) but the chat bubbles reused that same variable with white text — white-on-pastel
+  // had very low contrast, which read as grey. Fix: dedicated --chat-user-bg/--chat-user-bg-2 tokens with
+  // a fixed saturation regardless of theme. (Restyle note: the suite went light-only and the accent went
+  // orange in the Framer-prototype restyle, so the "fixed" value is now the suite orange #FF752B — the
+  // pins below still assert exactly what matters: a literal fixed value, and no dark-mode redefinition.)
+  const css = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
+  check("--chat-user-bg is defined as a fixed literal hex in :root (not a var() reference)", /--chat-user-bg:\s*#[0-9A-Fa-f]{6}\s*;/.test(css));
+  check(".chat-user (TaskCard's chat) uses --chat-user-bg, not the theme-lightened --accent", /\.chat-user\s*\{[^}]*--chat-user-bg-2[^}]*--chat-user-bg/s.test(css));
+  check(".sm-ai-msg-user (Study Mode's Ask Otto chat) uses --chat-user-bg, not --accent", /\.sm-ai-msg-user\s*\{[^}]*--chat-user-bg/s.test(css));
+  const darkBlock = css.slice(css.indexOf("@media (prefers-color-scheme: dark)"), css.indexOf("@media (prefers-color-scheme: dark)") + 1200);
+  check("--chat-user-bg is NOT redefined inside the dark-mode block (must stay fixed, unlike --accent)", !darkBlock.includes("--chat-user-bg"));
+  // The actual root cause (confirmed live, reproduced by diffing the built CSS): client/tally.css loads
+  // AFTER client/styles.css (see main.tsx's import order) and had its OWN leftover `.chat-user { color:
+  // var(--ink-2) }` rule from an older plain-text chat design — same selector, later in the cascade, so it
+  // silently won and overrode styles.css's `color: #fff`, independent of light/dark mode or the bubble
+  // background fix above. Changing only the background (as the first pass at this bug did) was not enough.
+  const tally = readFileSync(new URL("../client/tally.css", import.meta.url), "utf8");
+  check("tally.css no longer overrides .chat-user's text color (that stale rule was the actual bug)", !/\.chat-user\s*\{[^}]*color/.test(tally));
+  const mainTs = readFileSync(new URL("../client/main.tsx", import.meta.url), "utf8");
+  check("tally.css still loads after styles.css (so this regression can recur if a color rule is re-added there)", mainTs.indexOf('"./styles.css"') < mainTs.indexOf('"./tally.css"'));
+}
+
+section("Phone restriction — flashcard review + READ-ONLY tasks, no chat; iPad is untouched (source pins)");
+{
+  // "limit the things you can do on mobile... not on the iPad" — useIsPhone's 767px breakpoint already
+  // excludes iPad (smallest portrait width 768px), reused here (and in StudyMode.tsx, which already had
+  // its own copy of this exact check) rather than adding a second device-detection mechanism.
+  // Refined by a later instruction: a phone should ALSO see the task list and "what it planned" — but
+  // purely as a view, with no chat and nothing to act on.
+  const hook = readFileSync(new URL("../client/useIsPhone.ts", import.meta.url), "utf8");
+  check("useIsPhone uses the 767px breakpoint (keeps iPad, min width 768px, OUT of 'phone')", /max-width:\s*767px/.test(hook));
+  check("useIsPhone is reactive (matchMedia change listener), not a one-time read", /addEventListener\("change"/.test(hook));
+
+  const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  check("App.tsx imports the shared useIsPhone hook", /import \{ useIsPhone \} from "\.\/useIsPhone\.ts"/.test(app));
+  check("tasks + flashcards + settings are reachable on phone; anything else redirects to the task list", /PHONE_ALLOWED_ROUTES\s*=\s*\["", "tasks", "log", "settings"\]/.test(app) && /r\.startsWith\("task\/"\)/.test(app) && /!phoneRouteAllowed\(route\)\) navigate\("tasks"\)/.test(app));
+  check("Tutor/Study/Error log/Admin stay hidden on phone, but Tasks does NOT", /\{!isPhone && <a[\s\S]{0,200}href="\/tutor"/.test(app) && /\{!isPhone && <a[\s\S]{0,200}href="\/errorlog"/.test(app) && !/\{!isPhone && <a[\s\S]{0,200}href="\/tasks"/.test(app));
+  // The point of the phone task view: READ it, don't work on it. No chat (TaskFocus owns the chat), no
+  // ticking steps off, no Study Mode, no dismiss, no add-task.
+  check("a phone opens TaskReadOnly instead of TaskFocus (which is where chat lives)", /isPhone \? \(\s*<TaskReadOnly task=\{openTask\} \/>/.test(app));
+  check("task rows on phone are view-only (readOnly) and can't launch Study Mode", /readOnly=\{isPhone\}/.test(app) && /STUDY_MODE_ENABLED && !isPhone \?/.test(app));
+  // (Restyled to the Framer prototype: the old topbar's Refresh ghost button is gone — the generate
+  // action now lives only in the dashboard's own empty states, and add-task stayed phone-hidden.)
+  check("add-task and the refresh/generate action are hidden on phone", /\{!isPhone && <div className="dash-addtask">/.test(app) && !/\{!isPhone && \(route === "" \|\| route === "tasks"/.test(app));
+  const card = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
+  check("TaskCardRow's readOnly hides the tick-off, Study Mode and dismiss controls", /!isDone && !readOnly \? \(/.test(card) && /!isDone && !readOnly && onEnterStudyMode/.test(card) && /!isDone && !leaving && !readOnly && <button className="card-x"/.test(card));
+  // "no chat for the moment" is the explicit constraint here, not "no interaction at all" — opening a link
+  // (added later) is still a read of the task, not an action ON it, same spirit as the rest of this view.
+  check("TaskReadOnly renders the plan (steps + done state) and has no chat (TaskChat/sendChat) at all", /export function TaskReadOnly/.test(card) && /task-readonly-steps/.test(card) && !/TaskReadOnly[\s\S]{0,4000}<TaskChat/.test(card) && !/TaskReadOnly[\s\S]{0,4000}sendChat/.test(card));
+  check("StudyLogPage gets a phoneOnly prop and forces the flashcards tab when set", /StudyLogPage lang=\{status\?\.language\} tasks=\{tasks\} status=\{status\} phoneOnly=\{isPhone\}/.test(app) && /useState<"journal" \| "flashcards">\(phoneOnly \? "flashcards" : "journal"\)/.test(app));
+
+  const studyMode = readFileSync(new URL("../client/study/StudyMode.tsx", import.meta.url), "utf8");
+  check("StudyMode.tsx now reuses the shared useIsPhone hook instead of its own copy", /import \{ useIsPhone \} from "\.\.\/useIsPhone\.ts"/.test(studyMode) && /const isPhone = useIsPhone\(\);/.test(studyMode));
+}
+
+section("leaksAnyProblemAnswer — board/diagram/chat-reply guard against stating a problem's answer outright");
+{
+  // Reported live: a multi-part trig problem ("(a) find cos θ [2] (b) hence find cos 2θ [2]") — the chat
+  // Socratically withheld the answer, but a separate WRITE_TO_BOARD "summary" entry spelled out the FULL
+  // derivation including the still-unsolved part's final value ("cos θ = −4/5. Then cos 2θ = ... = 7/25").
+  // Every other surface (CREATE_PROBLEM's own format/hint, the MCQ/free-response UI) was already guarded by
+  // leaksAnswer/scrubAnswerLeak; board entries, diagram captions, and the chat reply itself were not.
+  const trig = { id: "p1", question: "(a) find cos θ [2]  (b) hence find cos 2θ [2]", answer: "7/25", why: "...", createdAt: "" };
+  check("a board 'summary' entry stating the final answer outright is caught", leaksAnyProblemAnswer("Then cos 2θ = 1 − 2sin²θ = 1 − 18/25 = 7/25.", [trig]));
+  check("plain prose mentioning the value without context is still caught (word-boundary match via leaksAnswer)", leaksAnyProblemAnswer("so cos 2theta = 7/25 overall", [trig]));
+  check("text that never states the value is NOT flagged", !leaksAnyProblemAnswer("Hence find cos 2θ using the double-angle formula — which version applies here?", [trig]));
+  check("an MCQ problem's correct OPTION text is also covered, not just free-response `answer`", leaksAnyProblemAnswer("it has to be 7/25 since cos is negative", [{ id: "p2", question: "q", options: ["1/4", "7/25", "3/5"], correct: 1, createdAt: "" }]));
+  check("a short (<3 char) secret is skipped — same false-positive guard as leaksAnswer/revealsAnswer", !leaksAnyProblemAnswer("the answer is 5 apples", [{ id: "p3", question: "q", answer: "5", createdAt: "" }]));
+  check("an unrelated problem's answer doesn't false-positive against a different problem's text", !leaksAnyProblemAnswer("cos theta is minus four fifths", [trig]));
+
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("WRITE_TO_BOARD rejects a leaking entry before it's ever created", /leaksAnyProblemAnswer\(String\(input\?\.text \|\| ""\), \[\.\.\.\(opts\?\.currentProblems \|\| \[\]\), \.\.\.result\.problems\]\)\) content = "REJECTED: that states a problem's answer outright/.test(claude));
+  check("DRAW_ON_BOARD checks both the caption and every op's text/latex for a leak", /input\.ops\.map\(\(o: any\) => `\$\{o\?\.text \|\| ""\} \$\{o\?\.latex \|\| ""\}`/.test(claude));
+  check("the chat reply itself gets the same backstop inside finish(), discarding artifacts like the CHAT_DOES_WORK guardrail does", /leaksAnyProblemAnswer\(reply, \[\.\.\.\(opts\?\.currentProblems \|\| \[\]\), \.\.\.result\.problems\]\)\)/.test(claude));
+  check("CREATE_PROBLEM_TOOL's own description now spells out the exact failure mode with a concrete example (answer = final part only)", claude.includes("`answer` MUST be the FINAL lettered part's value ONLY") && claude.includes("e.g. '7/25'") && claude.includes("e.g. '-4/5'"));
+  // Reported live: a multi-step physics problem's generated `answer` was only reachable via ONE specific
+  // intermediate-rounding path, so a student's equally valid alternate path (different rounding, g=9.8 vs
+  // 9.81) kept getting marked wrong by the widget. Pin that CREATE_PROBLEM_TOOL now tells the model to
+  // avoid baking in that ambiguity in the first place: carry full precision through intermediate steps, and
+  // state any non-conventional constant explicitly so every valid path converges on the same number.
+  check("CREATE_PROBLEM_TOOL warns against rounding intermediate steps when computing a multi-step numeric answer", claude.includes("NEVER round an intermediate result") && claude.includes("state the exact value to use directly in `question`"));
+}
+
+section("HINT LADDER — a substitution's result must not be computed FOR the student while narrating the next step (source pin)");
+{
+  // Reported live: "so you've got 1 − 25/169 sitting there... Yeah, 144/169 — and in Q2 you want the positive
+  // root there." The student hadn't done that subtraction yet ("how did you land on 144 over 169 I never did
+  // any of that"), and Otto had to admit "I jumped ahead; you hadn't done that subtraction." This is the same
+  // "never produce a value they haven't stated themselves" rule as the −1/8+6 and 3x−2 cases already pinned
+  // below, extended to cover computing a named substitution's result rather than just asking for it.
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("the rule explicitly covers computing a substitution's result while narrating the next step", claude.includes("not a substitution's RESULT even while narrating the next step") && claude.includes("1 − 25/169 sitting there, which comes to 144/169"));
+  check("it tells the model to split naming-the-next-computation from doing it, rather than banning naming it", claude.includes("Naming WHICH computation comes next is fine") && claude.includes("computing it FOR them in the same breath is not"));
+}
+
+section("HINT LADDER — a trailed-off/incomplete answer isn't license to finish their sentence AND jump ahead (source pin)");
+{
+  // Reported live ("draws conclusions too quickly"): student wrote "the normal force has to be bigger than"
+  // and stopped mid-thought. Otto's next line both finished that sentence for them AND jumped straight to
+  // the next concept ("the leftover has to be ma") — two things the student should have said themselves,
+  // handed over together because the first one trailed off instead of being met with "bigger than what?".
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("the prompt distinguishes a trailed-off answer from a finished wrong/right one", claude.includes("DON'T TREAT A TRAILED-OFF ANSWER AS A FINISHED ONE") && claude.includes('force has to be bigger than" with nothing after'));
+  check("it names the exact live failure: completing their sentence AND advancing the lesson in one breath", claude.includes("line both completed it for them AND jumped straight to the next concept") && claude.includes('the leftover has') && claude.includes('to be ma")'));
+}
+
+section("makeInteractiveEntry — CREATE_INTERACTIVE validation (allowlisted scripts, stripped iframes, size cap)");
+{
+  // New feature: AI-authored interactive/3D scenes on the board, rendered in a sandboxed iframe with no
+  // allow-same-origin. The server-side sanitizer is the FIRST layer (before the sandbox attributes even
+  // matter) — it must only allow a script from the same CDN this app's own CSP already trusts, and strip
+  // anything that tries to nest another frame.
+  check("a missing caption is rejected", "error" in makeInteractiveEntry({ html: "<div>hi</div>" }));
+  check("empty html is rejected", "error" in makeInteractiveEntry({ caption: "A scene", html: "" }));
+  check("oversized html is rejected", "error" in makeInteractiveEntry({ caption: "A scene", html: "x".repeat(8001) }));
+  check("ordinary html with no scripts passes through unchanged", (() => {
+    const r = makeInteractiveEntry({ caption: "A scene", html: "<svg><circle cx='1' cy='1' r='1'/></svg>" });
+    return "entry" in r && r.entry.html === "<svg><circle cx='1' cy='1' r='1'/></svg>" && r.entry.kind === "interactive" && r.entry.text === "A scene";
+  })());
+  check("a script from the allowlisted CDN (jsdelivr) survives", (() => {
+    const r = makeInteractiveEntry({ caption: "3D cone", html: "<script src=\"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js\"></script><div id=\"x\"></div>" });
+    return "entry" in r && r.entry.html.includes("cdn.jsdelivr.net/npm/three");
+  })());
+  check("a script from cdnjs also survives", (() => {
+    const r = makeInteractiveEntry({ caption: "Chart", html: "<script src=\"https://cdnjs.cloudflare.com/ajax/libs/chart.js/4.4.0/chart.umd.min.js\"></script>" });
+    return "entry" in r && r.entry.html.includes("cdnjs.cloudflare.com");
+  })());
+  check("a script from ANY other origin is stripped outright", (() => {
+    const r = makeInteractiveEntry({ caption: "Sketchy", html: "<script src=\"https://evil.example.com/steal.js\"></script><div>still here</div>" });
+    return "entry" in r && !r.entry.html.includes("evil.example.com") && r.entry.html.includes("still here");
+  })());
+  check("a nested iframe is stripped", (() => {
+    const r = makeInteractiveEntry({ caption: "Nested", html: "<div>before</div><iframe src=\"https://example.com\"></iframe><div>after</div>" });
+    return "entry" in r && !r.entry.html.includes("<iframe") && r.entry.html.includes("before") && r.entry.html.includes("after");
+  })());
+  check("nested object/embed tags are stripped too", (() => {
+    const r = makeInteractiveEntry({ caption: "Nested2", html: "<object data=\"x\"></object><embed src=\"y\"/>" });
+    return "entry" in r && !r.entry.html.includes("<object") && !r.entry.html.includes("<embed");
+  })());
+  check("CREATE_INTERACTIVE's answer-leak guard reuses leaksAnyProblemAnswer the same way WRITE_TO_BOARD/DRAW_ON_BOARD do", (() => {
+    const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+    return /name === "CREATE_INTERACTIVE"/.test(claude) && /leaksAnyProblemAnswer\(`\$\{input\?\.caption \|\| ""\} \$\{input\?\.html \|\| ""\}`/.test(claude);
+  })());
+}
+
+section("CREATE_INTERACTIVE — sandboxed, scoped to Study Mode, capped (source pins)");
+{
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("CREATE_INTERACTIVE requires BOTH primer (Tutor) AND canvas mode — never the regular task-chat tool list", (() => {
+    const boardToolsBlock = claude.slice(claude.indexOf("const boardTools = opts?.primer"), claude.indexOf("const tools = opts?.canvasMode"));
+    const regularLine = claude.split("\n").find((l) => l.includes("CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL"));
+    return boardToolsBlock.includes("opts?.canvasMode ? [CREATE_INTERACTIVE_TOOL]") && !!regularLine && !regularLine.includes("CREATE_INTERACTIVE");
+  })());
+  check("its own per-board cap is separate from WRITE_TO_BOARD/DRAW_ON_BOARD's", claude.includes('e.kind === "interactive").length >= 2'));
+
+  const board = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  check("the iframe's sandbox attribute is exactly \"allow-scripts\" (no allow-same-origin/allow-top-navigation/allow-popups)", /sandbox="allow-scripts"/.test(board));
+  check("KIND_LABEL/KIND_GLYPH both have an 'interactive' entry", /interactive: \["Interactif", "Interactive"\]/.test(board) && /interactive: "◈"/.test(board));
+
+  // THE bug that would have made every scene blank in production: a `srcdoc` iframe INHERITS the embedding
+  // page's CSP, and this app's script-src has no 'unsafe-inline' — so the model's script AND our own guard
+  // were both silently blocked. The scene is served from its own same-origin route instead, which carries
+  // its own policy. These pins exist so nobody "simplifies" it back to srcdoc.
+  check("the frame navigates to the /api/interactive route — never srcdoc (which inherits the app's CSP)", /src=\{`\/api\/interactive\//.test(board) && !/srcDoc/.test(board));
+  const idxSrc = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  check("the route serves the scene with its OWN csp and a relaxed X-Frame-Options", /app\.get\("\/api\/interactive\/:taskId\/:entryId"/.test(idxSrc) && /INTERACTIVE_SCENE_CSP/.test(idxSrc) && /"X-Frame-Options", "SAMEORIGIN"/.test(idxSrc));
+  check("the route 404s anything that isn't an interactive board entry on a task you own", /entry\.kind !== "interactive"/.test(idxSrc) && /req\.session\.tasks \|\| \[\]\)\.find/.test(idxSrc));
+  check("that scene CSP allows inline script + the two allowlisted CDNs, and nothing else out (connect-src 'none')", /script-src 'unsafe-inline' https:\/\/cdn\.jsdelivr\.net https:\/\/cdnjs\.cloudflare\.com/.test(claude) && /connect-src 'none'/.test(claude));
+  const vercel = readFileSync(new URL("../vercel.json", import.meta.url), "utf8");
+  check("vercel.json's edge headers EXCLUDE the scene route (they'd otherwise re-apply the app CSP + XFO: DENY and re-break it)", /\(\?!assets\/\|api\/interactive\/\)/.test(vercel));
+
+  // Direct instruction: "make sure artifacts aren't blank". The sandbox has NO allow-same-origin, so the
+  // parent can't inspect the frame to detect a blank scene — the guard has to run inside the frame itself.
+  check("the served document installs an in-frame error handler so a thrown scene shows a message, not a void", /addEventListener\('error'/.test(claude) && /__otto_fallback/.test(claude));
+  check("it also catches 'ran fine, drew nothing' after load (no painted canvas/svg/img and no text)", /querySelector\('canvas,svg,img,video'\)/.test(claude) && /getBoundingClientRect\(\)\.height>8/.test(claude));
+  check("the fallback tells the student what to do instead of showing an empty box", /This interactive didn't load/.test(claude) && /Ask Otto to explain it in the chat instead/.test(claude));
+
+  check("the tool's own prompt pushes no-library-first and requires a guarded fallback when one IS loaded", claude.includes("NEVER SHIP SOMETHING THAT CAN RENDER BLANK") && claude.includes("PREFER NO LIBRARY") && claude.includes("if (typeof THREE === 'undefined')"));
+  check("the prompt requires something visible on the first frame, before any interaction", claude.includes("Draw something visible on the FIRST"));
+}
+
+section("Landing page redesign — prototype copy, real features only, no fabricated testimonials or certifications (source pins)");
+{
+  // Direct instruction after reviewing a competitor's landing page: redesign Otto's, but explicitly WITHOUT
+  // inventing customer testimonials (fabricated reviews attributed to fictional people) or claiming
+  // certifications (SOC 2, ISO 27001, SAML SSO) this app doesn't hold — the user confirmed both calls.
+  // Later restyled to the Otto Framer prototype: the long feature/integrations grids were replaced by the
+  // prototype's two-column "01/PROACTIVE TASKS · 02/PERSONAL TUTOR" section with honest sample cards —
+  // still real, still nothing fabricated; the prototype's copy is the marketing now.
+  const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const landing = app.slice(app.indexOf("export function Landing("), app.indexOf("// ── Legal pages"));
+  check("no fabricated testimonial content (no quote attributed to a named 'customer')", !/testimonial/i.test(landing));
+  check("no certifications this app doesn't hold (SOC 2 / ISO 27001 / SAML)", !/SOC\s*2/i.test(landing) && !/ISO\s*27001/i.test(landing) && !/SAML/i.test(landing));
+  check("the two-column prototype section names the two real halves of the product (proactive tasks + personal tutor)", landing.includes("features-framer") && /PROACTIVE TASKS/.test(landing) && /PERSONAL TUTOR/.test(landing));
+  check("the sample cards use the prototype's honest examples (derivatives task, slope question)", /Get ready for derivatives/.test(landing) && /What does the slope tell us/.test(landing));
+  check("the hero copy matches the prototype (Less busywork. More understanding.)", /Less busywork\. More understanding\./.test(landing));
+  check("the footer keeps Privacy/Terms (+ Research, not Unlimited) and the Research page stays reachable", landing.includes('href="/terms"') && landing.includes('href="/research"') && !landing.includes('href="/unlimited"'));
+}
+
+section("Task detail view — removed the big bold current-step hero, 'To get started', and the 'Done' bullet log (source pins)");
+{
+  // Direct instruction: remove three duplicated surfaces from each task's detail view (TaskFocus) — the
+  // big bold hero for the ordinary current step, "To get started" (task.firstAction), and the "Done"
+  // section (task.did's bullet log) — each of these restated something StepList/the artifact chips already
+  // show. Other StepHero states (done/waiting/failed/a draft to send/all-complete/no-steps-yet) are kept:
+  // those carry real actions (Retry, Run now, Looks good, a draft review) that exist nowhere else.
+  const card = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
+  check("StepHero's ordinary current-step branch (after `const s = steps[currentIdx]`) is gone — it now returns null there", /remove the big bold hero for the ordinary "here's the current step" case/.test(card) && !/const s = steps\[currentIdx\];\s*\n\s*const gatesAnother/.test(card));
+  check("StepHero's other states (done/waiting/failed/sendable/complete/empty) are all still there", /hero-done/.test(card) && /hero-waiting/.test(card) && /hero-failed/.test(card) && /hero-sendable/.test(card) && /hero-complete/.test(card) && /hero-empty/.test(card));
+  check("the 'To get started' / firstAction paragraph is removed from TaskFocus's render", !/first-action-label/.test(card) && card.includes('remove "To get started" (task.firstAction)'));
+  check("task.firstAction itself is untouched server-side — only the render was removed", card.includes("task.firstAction itself (server/claude.ts)") && card.includes("is left alone — only this render is removed"));
+  check("the 'Done' bullet log (task.did) is removed from PreparedPanel (TaskFocus's artifact section)", card.includes('remove the "Done" section') && !/\{artifactCount > 0 \? <span className="prepared-label">\{L\("Fait", "Done"\)\}/.test(card));
+  check("StepList (every step, current one included, with its own full controls) is untouched — nothing lost, just de-duplicated", /function StepList\(/.test(card) && /onStepDone\(i\)/.test(card));
+}
+
+section("TTS timeouts — a retry across the male pool must finish inside the client's own patience (source pins)");
+{
+  // Reported live, with console logs: "signal timed out" twice in a row, then "skipping this reply's audio"
+  // — total silence on a reply. Root cause: the client's own fetch timeout was SHORTER than the server-side
+  // work it was waiting for (one provider attempt, then the NEXT male voice in the pool), so the client gave
+  // up and aborted the whole /api/tts request mid-flight. Both sides now have a documented budget and the
+  // client's is strictly larger than the worst case one chunk can cost server-side.
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const ttsSynthSrc = readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8");
+  check("the provider call itself is bounded (a hung endpoint can't hold the reply hostage)", /const TTS_TIMEOUT_MS = 12_000;/.test(claude) && /signal: AbortSignal\.timeout\(TTS_TIMEOUT_MS\)/.test(claude));
+  check("the client's fetch timeout comfortably exceeds one provider attempt plus the next male voice's attempt", /CLOUD_FETCH_TIMEOUT_MS = 25_000/.test(ttsSynthSrc) && 25_000 > 2 * 12_000);
+}
+
+section("HINT LADDER — a conceptual carryover between parts must be asked, not asserted (source pin)");
+{
+  // Reported live: "it already calculated the friction and forces, it didn't ask the user" — a 20°/25°
+  // inclined-plane problem where μ = tan20° carries over to the 25° case because μ depends on the surfaces,
+  // not the angle. The student asked "how am I supposed to know that", and Otto answered its own question
+  // ("μ came out as tan 20°, and the surfaces haven't changed, so μ is still tan 20° at 25°") instead of
+  // turning the reason into a question. Same "never hand over what they haven't stated" rule as the
+  // mechanical-arithmetic and substitution-result cases already pinned above, extended to a carried-over
+  // CONCEPTUAL fact, not just a computed number.
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("the rule explicitly covers a conceptual carryover between parts, not just arithmetic", claude.includes("THIS ALSO COVERS A CONCEPTUAL CARRYOVER, not just arithmetic") && claude.includes("μ is the same at 25° because it depends on the"));
+  check("it gives the question to ask instead of the assertion to avoid", claude.includes('does μ depend on the angle, or on') && claude.includes('"μ came out') && claude.includes("the surfaces haven't changed, so μ is still tan 20° at 25°"));
+}
+
+section("WRITE_TO_BOARD must not get ahead of the chat — only record a step once the student has actually reached it (source pin)");
+{
+  // Reported live: "it just derived the forces automatically, it should ask user to do it normally" — the
+  // board already showed the finished net-force expression ('F_net down slope = mg sin25 - mg cos25 *
+  // tan20') while the chat was still walking the student through deriving exactly that, piece by piece.
+  // leaksAnyProblemAnswer doesn't catch this: there's no CREATE_PROBLEM answer being leaked, just the
+  // board racing ahead of the Socratic pacing on a live derivation with no stored "answer" to check against
+  // — this needed its own explicit rule on the tool itself, distinct from the answer-leak guard.
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("WRITE_TO_BOARD's own description forbids writing a later step before the student reaches it", claude.includes("NEVER GET AHEAD OF THE CHAT") && claude.includes("never a later step of the SAME derivation they haven't reached yet"));
+  check("it cites the exact live failure (the finished F_net line written while chat was still deriving it)", claude.includes("F_net down slope = mg sin25 - mg cos25 * tan20") && claude.includes("the board had done the derivation FOR them"));
+  check("it gives the concrete fix: ask the question first, write the entry after they answer", claude.includes("ask the question first and write the entry after they answer it"));
+}
+
+section("TTS voice — MALE ONLY, and arrows read as a word (source pins)");
+{
+  // Direct request, verbatim: "do not use a female voice; only use a male voice. Do not fall back to any
+  // female voice. Just use a male voice, even if it fails, use another free male voice." The pool below is
+  // every voice the tutor can ever sound like — so the pin is on the POOL's contents, not on one default.
+  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const pool = claude.slice(claude.indexOf("const TTS_MALE_VOICES"), claude.indexOf("const TTS_CHUNK_MAX"));
+  const names = [...pool.matchAll(/"([A-Za-z]+)"/g)].map((m) => m[1]).filter((n) => !["fr", "en"].includes(n));
+  check("every voice in the pool is a MALE voice name, and there is a fallback voice in each language", names.includes("Mathieu") && names.includes("Matthew") && names.length >= 6 && !names.includes("Chantal") && !names.includes("Gabrielle"));
+  check("French has its own pool entry (never reusing an English voice for French text)", /fr: \["Mathieu"\]/.test(pool) && /en: \["Matthew"/.test(pool));
+
+  // Direct request: "make sure here it doesn't say the arrow but replaces by word" — a worked-math arrow
+  // ("t² = 9.18 → t = 3.03 s") either got read literally as "arrow" or mangled by the TTS engine.
+  check("a unicode arrow is read as a word, not a symbol", toSpeakableText("t² = 9.18 → t = 3.03 s") === "t² = 9.18 gives t = 3.03 s");
+  check("an ASCII '->' arrow is also replaced", toSpeakableText("x -> y") === "x gives y");
+  check("a '=>' arrow is also replaced", toSpeakableText("A => B") === "A gives B");
+  check("spacing around the substituted word is normal regardless of how tight the arrow was in source", toSpeakableText("a→b") === "a gives b");
+
+  // Reported live: a worked-math reply with real LaTeX ("$\sin\left(\frac{\pi}{12}\right)$") was read aloud
+  // LITERALLY — "dollar sin backslash left parenthesis backslash frac pi 12 ..." — because only markdown was
+  // ever stripped before speech, never LaTeX.
+  check("inline $...$ math has its delimiters removed, not read as 'dollar'", !stripLatexForSpeech("$x = 2$").includes("$"));
+  check("\\left and \\right are silent (no sound of their own)", !/left|right/i.test(stripLatexForSpeech("\\sin\\left(x\\right)")));
+  check("\\frac becomes 'A over B', not read as a command", stripLatexForSpeech("\\frac{\\pi}{12}").replace(/\s+/g, " ") === "( pi ) over (12)");
+  check("the exact reported phrase reads as real words, no backslash/dollar/brace survives", (() => {
+    const out = toSpeakableText("Find the exact value of $\\sin\\left(\\frac{\\pi}{12}\\right)$");
+    return !/[\\${}]/.test(out) && /pi/.test(out) && /over/.test(out) && /\bsine\b/.test(out);
+  })());
+  check("\\sqrt{x} becomes 'the square root of x'", stripLatexForSpeech("\\sqrt{x}") === "the square root of (x)");
+  check("a superscript ^{2} becomes 'to the power of 2'", stripLatexForSpeech("x^{2}").trim() === "x to the power of 2");
+  check("a bare superscript ^2 (no braces) also becomes 'to the power of 2'", stripLatexForSpeech("x^2").trim() === "x to the power of 2");
+  check("greek letters are spoken, not left as backslash-commands", stripLatexForSpeech("\\theta + \\pi").includes("theta") && stripLatexForSpeech("\\theta + \\pi").includes("pi") && !stripLatexForSpeech("\\theta + \\pi").includes("\\"));
+  check("\\cdot and \\leq read as words", stripLatexForSpeech("a \\cdot b \\leq c").includes("times") && stripLatexForSpeech("a \\cdot b \\leq c").includes("less than or equal to"));
+  check("an unrecognized LaTeX command is dropped rather than read character-by-character", !stripLatexForSpeech("\\somethingweird{x}").includes("\\"));
+  check("plain text with no LaTeX passes through unchanged", stripLatexForSpeech("just plain text") === "just plain text");
+
+  // Reported live: "sin A cos B + cos A sin B" was read with the bare abbreviation ("sin", "cos") instead of
+  // the word a tutor actually says ("sine", "cosine") — true for plain text (no backslash at all, as an
+  // angle-addition identity is often typed) as much as for real LaTeX \sin/\cos.
+  check("plain-text trig abbreviations (no backslash) are spoken as full words", stripLatexForSpeech("sin A cos B + cos A sin B") === "sine A cosine B + cosine A sine B");
+  check("LaTeX \\sin/\\cos are also spoken as full words, not left as the abbreviation", stripLatexForSpeech("\\sin(x) + \\cos(x)") === "sine (x) + cosine (x)");
+  check("longer trig names (sinh/arcsin) match whole, no stray trailing letter left over", stripLatexForSpeech("\\sinh(x)") === "hyperbolic sine (x)" && stripLatexForSpeech("arcsin(x)") === "arc sine(x)");
+  check("the abbreviation only expands as a whole word — 'cousin'/'cost'/'cosy' are never touched", stripLatexForSpeech("cousin, cost, cosy") === "cousin, cost, cosy");
+
+  // Direct request: abbreviations/shorthand shouldn't stay literal when they actually mean something else —
+  // "ab" inside a real formula means a×b, not the word "ab". Scoped to genuine LaTeX math zones ($...$ etc)
+  // so ordinary prose outside a formula ("the area is ab, by the way") is never second-guessed.
+  check("implicit multiplication inside real math: 'ab' is spoken as 'a times b'", stripLatexForSpeech("$ab$") === "a times b");
+  check("implicit multiplication still applies inside a longer formula ($x = ab + c$)", stripLatexForSpeech("$x = ab + c$").includes("a times b"));
+  check("three concatenated variables chain the word 'times' between each pair", stripLatexForSpeech("$abc$") === "a times b times c");
+  check("outside any math delimiter, the same letters are left as the ordinary English word", stripLatexForSpeech("the area is ab, by the way") === "the area is ab, by the way");
+  check("words this pipeline itself produces (over/sub/root/sine/pi/...) survive the expansion pass unharmed", stripLatexForSpeech("$\\frac{\\pi}{12}$").replace(/\s+/g, " ").trim() === "( pi ) over (12)");
+}
+
+section("Bilingual copy — French and English never bleed into each other (source pins + a repo-wide sweep)");
+{
+  // Reported live: "sometimes it changes like french is mixed with english or so in copy". Two distinct
+  // failure modes were behind it, both fixed here and both pinned below:
+  //  (1) an L(fr, en) pair written the WRONG WAY ROUND — the landing page's "Log in" link rendered
+  //      "Log in" in French and "Se connecter" in English, and the language toggle's aria-label did the
+  //      same swap — and
+  //  (2) a string hardcoded in English and never wrapped in L() at all, so a French student saw English
+  //      regardless of the toggle (a whole Study Mode setup screen, the camera consent panel, the citation
+  //      hint, the tutor's guardrail tag, the crash fallback...).
+  const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
+  const appSrc = read("../client/App.tsx");
+
+  check("the language toggle's aria-label follows the language, not the reverse", /aria-label=\{en \? "Switch language" : "Changer de langue"\}/.test(appSrc) && !/en \? "Changer de langue"/.test(appSrc));
+  check("the landing page's login link is French-first (it rendered \"Log in\" in French)", /\{L\("Se connecter", "Log in"\)\}/.test(appSrc));
+
+  // A sweep over every L(fr, en) pair in the client: the first argument must not read as English while the
+  // second reads as French. Catches the swap class wherever a future one lands, not just the two above.
+  const FR_WORDS = new Set("le la les des une pour avec dans sur ton tes nous vous est sont était tout tous très rien qui quoi comment pourquoi quand cette ces mon ma mes ses avoir fait faire bien déjà encore aussi mais alors donc ici après avant entre vers chaque autre même sans votre notre leurs leur aux cela chose compte enregistrer supprimer envoyer continuer commencer terminer fermer ouvrir retour suivant précédent question réponse sujet matière élève étudiant professeur classe cours exercice leçon devoir réviser révision objectif matériel outils minute heure attention reste restant mieux assez prêt tâches semaine jour mois année fois devoirs contrôles réglages pendant active réactive chercher nouvelles seules tranquille vérification apparaîtront caméra aperçu enregistré téléversé mouvement visage yeux estimation navigateur jamais cliquer déposer fichiers travail pause utilisation mot définitions intérieur rotation glisser surface bureau sauvé exactement repris besoin commencer garde contenu récemment copié copier remplir moins titre passer soumettre généré vérifier contre classe guide style avant valid étudier commencé panneau ajouter terminer étapes terminée terminé".split(/\s+/));
+  const EN_WORDS = new Set("the and with your you what this that these those from for of is are was were been have has had will would can could should make made all every very good morning evening hello thanks thank yes not nothing yet already now today tomorrow yesterday week month year time thing things other others same also but if then so here there small big great new next last ready continue start finish close open view back question answer note notes card cards subject student teacher class course exercise lesson homework revise revision effort progress goal goals plan materials tools minute minutes hour hours attention left remain remaining better enough little resume session generated check against exact guide before submitting rotate drag surface desk saved where off need everything starting keeps contained focus trended recently copy copied fill least title upcoming events deadlines documents shared enrich study whenever want free workspace help tied task search add remove edit delete save cancel confirm retry again enter select choose done loading error success warning info previous skip reloading usually fixes hit unexpected budget sweep tasks appear own complete sorted priority deadline urgent important caught keeping eye still checking taking while log sign out switch language camera live only recorded uploaded turn model private optional tracks face eyes movement estimate concentration video stays browser never click drop upload files images pomodoro auto alternate work break use type word definitions inside mode missed closest grade grades published accessed".split(/\s+/));
+  const scoreString = (s) => {
+    const toks = s.toLowerCase().replace(/[’']/g, " ").replace(/[^a-zà-öø-ÿ]+/gi, " ").trim().split(/\s+/).filter(Boolean);
+    let fr = 0, en = 0;
+    for (const w of toks) { if (FR_WORDS.has(w)) fr++; if (EN_WORDS.has(w)) en++; }
+    if (/[àâäçéèêëîïôöùûüœ]/i.test(s)) fr += 3;
+    return { fr, en };
+  };
+  // Literal-only, non-nested scan of `L("...", "...")` — the vast majority of pairs are plain literals, and
+  // a pair built from expressions (a template with variables) is deliberately skipped rather than guessed at.
+  const swappedPairs = [];
+  const clientFiles = [];
+  const walkClient = (dir) => {
+    for (const name of readdirSync(new URL(dir, import.meta.url), { withFileTypes: true })) {
+      if (name.isDirectory()) walkClient(`${dir}${name.name}/`);
+      else if (/\.tsx?$/.test(name.name)) clientFiles.push(`${dir}${name.name}`);
+    }
+  };
+  walkClient("../client/");
+  for (const rel of clientFiles) {
+    const src = read(rel);
+    const re = /(?<![\w.$])L\(\s*(["'])((?:(?!\1)[^\\]|\\.)*)\1\s*,\s*(["'])((?:(?!\3)[^\\]|\\.)*)\3\s*[,)]/g;
+    let m;
+    while ((m = re.exec(src))) {
+      const first = m[2], second = m[4];
+      const a = scoreString(first), b = scoreString(second);
+      if (a.en >= 2 && a.fr === 0 && b.fr >= 2 && b.en === 0) swappedPairs.push(`${rel}: ${JSON.stringify(first)} | ${JSON.stringify(second)}`);
+    }
+  }
+  check(`no L(fr, en) pair is written the wrong way round (${swappedPairs.length} found)`, swappedPairs.length === 0);
+  if (swappedPairs.length) console.log("    " + swappedPairs.join("\n    "));
+
+  // The specific strings that were hardcoded English — each must now be a bilingual pair, and the English
+  // side must appear exactly ONCE in the file (inside that pair) so it can only ever render in English.
+  const bilingual = (rel, fr, en) => {
+    const src = read(rel);
+    const occurrences = src.split(`"${en}"`).length - 1;
+    check(`${rel.split("/").pop()}: "${en.slice(0, 44)}" is French-first now`, src.includes(`L("${fr}", "${en}")`) && occurrences === 1);
+  };
+  bilingual("../client/study/StudySetup.tsx", "Reprendre la séance précédente", "Resume previous session");
+  bilingual("../client/study/StudySetup.tsx", "Matériel pour cette séance", "Materials for this session");
+  bilingual("../client/study/StudySetup.tsx", "Clique ou glisse-dépose", "Click or drag & drop");
+  bilingual("../client/study/StudySetup.tsx", "Commencer à réviser", "Start studying");
+  bilingual("../client/study/StudySetup.tsx", "MODE ÉTUDE", "STUDY MODE");
+  bilingual("../client/study/artifacts/CameraArtifact.tsx", "Caméra de concentration privée", "Private focus camera");
+  bilingual("../client/study/artifacts/CameraArtifact.tsx", "Autoriser la caméra", "Allow camera");
+  bilingual("../client/study/artifacts/CameraArtifact.tsx", "Éteindre la caméra", "Turn camera off");
+  bilingual("../client/study/artifacts/GraphBlock.tsx", "Surface 3D — fais glisser pour tourner", "3D surface — drag to rotate");
+  const citeSrc = read("../client/study/artifacts/CitationArtifact.tsx");
+  check("CitationArtifact: the date row labels and the generated citation itself follow the student's language", citeSrc.includes('L("Publié le", "Published")') && citeSrc.includes('L("Consulté le", "Accessed")') && citeSrc.includes('en ? "(n.d.)." : "(s.d.)."') && citeSrc.includes('en ? "Accessed" : "Consulté le"'));
+  check("the tutor's guardrail tag reuses the same bilingual wording as the task chat", read("../client/study/AskOttoPanel.tsx").includes('L("Otto guide, ne fait pas à ta place", "Otto guides, doesn\'t do it for you")'));
+  check("a camera permission failure surfaces a CODE the display site can translate (not a baked-in sentence)", /error: "unsupported" \| "denied" \| null/.test(read("../client/study/useFocusCamera.ts")) && !/setError\("Camera access/.test(read("../client/study/useFocusCamera.ts")));
+  check("gaze/movement statuses stay English KEYS (session averages compare against them) with separate display labels", /GAZE_LABELS/.test(read("../client/study/useFaceTracking.ts")) && /gazeStatus === "On screen"/.test(read("../client/study/useFocusCamera.ts")));
+  check("the crash fallback outside LangProvider reads the persisted language instead of assuming English", /localStorage.getItem\("otto-landing-lang"\)/.test(read("../client/main.tsx")) && !/<h1>Something went wrong<\/h1>/.test(read("../client/main.tsx")));
+}
+
+section("Production readiness — the two CSP copies agree, and the Docker build keeps what it needs (source pins)");
+{
+  // The app ships TWO copies of the same Content-Security-Policy: server/index.ts (the self-hosted/Docker
+  // path, where Express sets the header) and vercel.json (the Vercel path, where their edge serves it).
+  // They had silently drifted — style-src was missing https://fonts.googleapis.com in the Express copy
+  // while vercel.json already had it, so on the Docker path every page silently fell back to a system font.
+  // A directive-by-directive comparison is what actually catches that class of bug.
+  const serverSrc = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const vercelRaw = readFileSync(new URL("../vercel.json", import.meta.url), "utf8");
+  const cspOf = (block) => Object.fromEntries(block.split(";").map((d) => d.trim()).filter(Boolean).map((d) => {
+    const i = d.indexOf(" ");
+    return [d.slice(0, i), d.slice(i + 1).trim().split(/\s+/).sort().join(" ")];
+  }));
+  const startMarker = 'const CSP = [';
+  const cspArraySrc = serverSrc.slice(serverSrc.indexOf(startMarker), serverSrc.indexOf('].join("; ");'));
+  const exprCsp = cspOf(cspArraySrc.split("\n").filter((l) => /^\s*"[a-z-]+ /.test(l)).map((l) => l.trim().replace(/^"|",?$/g, "").replace(/"\s*\+\s*"/g, "")).join("; "));
+  const vercelCsp = cspOf((vercelRaw.match(/Content-Security-Policy",\s*"value":\s*"([^"]+)"/) || [])[1] || "");
+  const directions = (o) => Object.keys(o).sort().join(" ");
+  check("both CSP copies declare the same directives", directions(exprCsp) === directions(vercelCsp));
+  const differing = Object.keys(exprCsp).filter((k) => vercelCsp[k] && exprCsp[k] !== vercelCsp[k]);
+  check(`no directive drifted between the Express CSP and vercel.json (${differing.join(", ") || "none"})`, differing.length === 0);
+  check("the Express CSP allows the Google Fonts stylesheet both stylesheets @import", /style-src[^"]*https:\/\/fonts\.googleapis\.com/.test(cspArraySrc));
+
+  // .dockerignore must NOT exclude scripts/: `npm run build` ends with scripts/prerender-landing.tsx, so
+  // ignoring it made the Docker image build die on ERR_MODULE_NOT_FOUND after vite had already finished
+  // (verified by reproducing the ignore list in a scratch copy).
+  const dockerignore = readFileSync(new URL("../.dockerignore", import.meta.url), "utf8");
+  check(".dockerignore keeps scripts/ (a Docker build needs scripts/prerender-landing.tsx)",
+    !dockerignore.split("\n").some((l) => l.trim() === "scripts" || l.trim() === "scripts/"));
+  check(".dockerignore still excludes the host node_modules and any .env (host binaries + secrets)",
+    dockerignore.split("\n").some((l) => l.trim() === "node_modules") && dockerignore.split("\n").some((l) => l.trim() === ".env"));
+
+  // The runtime image must never carry devDependencies: `npm start` needs only tsx + cross-env, both of
+  // which are production dependencies (see the multi-stage Dockerfile).
+  const dockerfile = readFileSync(new URL("../Dockerfile", import.meta.url), "utf8");
+  const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  check("the runtime stage installs production dependencies only", /npm ci --omit=dev/.test(dockerfile) && /AS runtime/.test(dockerfile) && /AS build/.test(dockerfile));
+  check("the Docker runtime drops root", /^USER node$/m.test(dockerfile));
+  check("the Docker healthcheck probes the API's own /healthz", /HEALTHCHECK[\s\S]{0,200}\/healthz/.test(dockerfile));
+  check("npm start's two runtime deps are production dependencies (tsx, cross-env)", !!pkg.dependencies.tsx && !!pkg.dependencies["cross-env"]);
+
+  // Unused runtime dependencies are pure supply-chain surface — cors (no permissive CORS is used anywhere;
+  // the CSRF design depends on that) and bcryptjs (auth moved to Supabase) were both sitting in
+  // `dependencies` with zero imports.
+  for (const dead of ["cors", "bcryptjs", "googleapis"]) {
+    check(`the unused ${dead} dependency is gone from package.json`, !pkg.dependencies[dead]);
+  }
+  check("no client/server source imports cors, bcryptjs or googleapis", (() => {
+    const walkDir = (dir) => {
+      for (const e of readdirSync(new URL(dir, import.meta.url), { withFileTypes: true })) {
+        if (e.isDirectory()) { if (!/node_modules|dist|\.git/.test(e.name)) walkDir(`${dir}${e.name}/`); }
+        else if (/\.tsx?$/.test(e.name)) { if (/from "(cors|bcryptjs|googleapis)"/.test(readFileSync(new URL(`${dir}${e.name}`, import.meta.url), "utf8"))) return false; }
+      }
+      return true;
+    };
+    return walkDir("../server/") && walkDir("../client/");
+  })());
+}
+
+section("No emoji in the rendered app — real icons (lucide-react) instead (repo-wide sweep)");
+{
+  // Direct request: "remove emojis if u can from app". Emoji have no fixed appearance — the same codepoint
+  // renders as a full-color image on one OS/browser and as a monochrome glyph (or a tofu box) on another,
+  // which is exactly why VoiceControls already switched the mic/speaker buttons to lucide icons. Anything
+  // with EMOJI PRESENTATION is now an icon; the app's own monochrome typographic vocabulary (✓ ✗ ✕ ○ ✦ ◎
+  // and the CSS ::before marks) is deliberately kept — those are plain text glyphs, not emoji.
+  const EMOJI_PRESENTATION = /[\u{1F000}-\u{1FAFF}\u{FE0F}\u{2049}\u{203C}\u{23E9}-\u{23FA}\u{25B6}\u{26A0}\u{2705}\u{270F}\u{274C}\u{27A1}\u{2B06}\u{2B07}\u{1F004}]/u;
+  const offenders = [];
+  const walk = (dir) => {
+    for (const e of readdirSync(new URL(dir, import.meta.url), { withFileTypes: true })) {
+      if (e.isDirectory()) { if (!/node_modules|dist|\.git/.test(e.name)) walk(`${dir}${e.name}/`); continue; }
+      if (!/\.(tsx?|css|html)$/.test(e.name)) continue;
+      // Comments are exempt on purpose: they document WHY an emoji was removed ("a 📝/🗂️/✅ renders
+      // differently per platform"), and no comment is ever rendered to the student.
+      const src = readFileSync(new URL(`${dir}${e.name}`, import.meta.url), "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .split("\n").map((l) => l.replace(/\/\/.*$/, "")).join("\n");
+      src.split("\n").forEach((l, i) => { if (EMOJI_PRESENTATION.test(l)) offenders.push(`${dir}${e.name}:${i + 1}`); });
+    }
+  };
+  walk("../client/");
+  walk("../server/");
+  walk("../shared/");
+  check(`no emoji-presentation character is left in any rendered client/server source (found: ${offenders.slice(0, 6).join(", ") || "none"})`, offenders.length === 0);
+  // And the replacements are real icons, not a different glyph font: the components that used to render emoji
+  // now import from lucide-react (the project's established icon library).
+  for (const [file, icons] of [
+    ["../client/study/AskOttoPanel.tsx", ["Paperclip", "TriangleAlert", "Volume2", "StickyNote"]],
+    ["../client/tutor/TutorSession.tsx", ["ArrowRight", "TrendingUp", "RotateCcw", "MessageCircle", "Lightbulb", "CircleHelp"]],
+    ["../client/study/FocusTracker.tsx", ["Target"]],
+    ["../client/study/SessionHeader.tsx", ["Timer"]],
+    ["../client/study/ToolsDrawer.tsx", ["StickyNote", "Quote", "PenLine"]],
+    ["../client/TaskCard.tsx", ["MessageCircle", "Layers"]],
+  ]) {
+    const src = readFileSync(new URL(file, import.meta.url), "utf8");
+    check(`${file.split("/").pop()} renders its former emoji as lucide icons (${icons.join(", ")})`, /from "lucide-react"/.test(src) && icons.every((i) => new RegExp(`\\b${i}\\b`).test(src)));
+  }
+}
+
+const { runTutorSim } = await import("./tutor-sim.mjs");
+await runTutorSim(check, section);
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

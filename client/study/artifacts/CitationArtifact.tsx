@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useContext, useState } from "react";
 import type { ArtifactState } from "../StudyTypes.ts";
-import { useLang } from "../../ui.tsx";
+import { LangContext, useLang } from "../../ui.tsx";
 
 interface CitationArtifactProps {
   artifact: ArtifactState;
@@ -19,22 +19,25 @@ function invertName(name: string): string {
   return `${last}, ${first}`;
 }
 
-function formatDate(iso: string, style: Style): string {
+// The citation's own fixed words and date format follow the STUDENT'S language, not the style's origin —
+// a French student writing an APA bibliography writes "(s.d.)" and "Consulté le 6 octobre 2026".
+function formatDate(iso: string, style: Style, en: boolean): string {
   if (!iso) return "";
   const d = new Date(`${iso}T00:00:00`);
   if (isNaN(d.getTime())) return iso;
-  if (style === "apa") return `(${d.getFullYear()}, ${d.toLocaleDateString("en-US", { month: "long", day: "numeric" })})`;
-  if (style === "mla") return d.toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" });
-  return d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }); // chicago
+  const loc = en ? "en-US" : "fr-FR";
+  if (style === "apa") return `(${d.getFullYear()}, ${d.toLocaleDateString(loc, { month: "long", day: "numeric" })})`;
+  if (style === "mla") return d.toLocaleDateString(loc, { day: "numeric", month: "short", year: "numeric" });
+  return d.toLocaleDateString(loc, { month: "long", day: "numeric", year: "numeric" }); // chicago
 }
 
-function buildCitation(style: Style, f: { author: string; title: string; site: string; url: string; published: string; accessed: string }): string {
+function buildCitation(style: Style, f: { author: string; title: string; site: string; url: string; published: string; accessed: string }, en: boolean): string {
   const today = new Date().toISOString().slice(0, 10);
   const accessed = f.accessed || today;
   if (style === "apa") {
     const parts = [
       f.author ? `${invertName(f.author)}.` : "",
-      f.published ? `${formatDate(f.published, "apa")}.` : "(n.d.).",
+      f.published ? `${formatDate(f.published, "apa", en)}.` : (en ? "(n.d.)." : "(s.d.)."),
       f.title ? `${f.title}.` : "",
       f.site ? `${f.site}.` : "",
       f.url || "",
@@ -46,9 +49,9 @@ function buildCitation(style: Style, f: { author: string; title: string; site: s
       f.author ? `${invertName(f.author)}.` : "",
       f.title ? `"${f.title}."` : "",
       f.site ? `${f.site},` : "",
-      f.published ? `${formatDate(f.published, "mla")},` : "",
+      f.published ? `${formatDate(f.published, "mla", en)},` : "",
       f.url ? `${f.url}.` : "",
-      `Accessed ${formatDate(accessed, "mla")}.`,
+      `${en ? "Accessed" : "Consulté le"} ${formatDate(accessed, "mla", en)}.`,
     ].filter(Boolean);
     return parts.join(" ");
   }
@@ -57,7 +60,7 @@ function buildCitation(style: Style, f: { author: string; title: string; site: s
     f.author ? `${invertName(f.author)}.` : "",
     f.title ? `"${f.title}."` : "",
     f.site ? `${f.site}.` : "",
-    f.published ? `Published ${formatDate(f.published, "chicago")}.` : "",
+    f.published ? `${en ? "Published" : "Publié le"} ${formatDate(f.published, "chicago", en)}.` : "",
     f.url ? `${f.url}.` : "",
   ].filter(Boolean);
   return parts.join(" ");
@@ -65,6 +68,7 @@ function buildCitation(style: Style, f: { author: string; title: string; site: s
 
 export function CitationArtifact({ artifact, onChange }: CitationArtifactProps) {
   const L = useLang();
+  const uiEn = useContext(LangContext) === "en";
   const cs = artifact.contentState || {};
   const style = (cs.style as Style) || "apa";
   const author = (cs.author as string) || "";
@@ -76,7 +80,7 @@ export function CitationArtifact({ artifact, onChange }: CitationArtifactProps) 
   const [copied, setCopied] = useState(false);
 
   const set = (patch: Record<string, unknown>) => { setCopied(false); onChange({ ...cs, ...patch }); };
-  const citation = buildCitation(style, { author, title, site, url, published, accessed });
+  const citation = buildCitation(style, { author, title, site, url, published, accessed }, uiEn);
 
   const copy = async () => {
     try { await navigator.clipboard.writeText(citation); setCopied(true); setTimeout(() => setCopied(false), 1500); }
@@ -103,22 +107,22 @@ export function CitationArtifact({ artifact, onChange }: CitationArtifactProps) 
         <input value={site} onChange={(e) => set({ site: e.target.value })} placeholder={L("Nom du site ou de l'éditeur", "Site or publisher name")} />
         <input value={url} onChange={(e) => set({ url: e.target.value })} placeholder={L("URL", "URL")} />
         <label>
-          Published
+          {L("Publié le", "Published")}
           <input type="date" value={published} onChange={(e) => set({ published: e.target.value })} />
         </label>
         <label>
-          Accessed
+          {L("Consulté le", "Accessed")}
           <input type="date" value={accessed} onChange={(e) => set({ accessed: e.target.value })} placeholder={L("Aujourd'hui", "Today")} />
         </label>
       </div>
 
       <div className="sm-citation-output">
-        <p>{citation || "Fill in at least a title to generate a citation."}</p>
+        <p>{citation || L("Remplis au moins un titre pour générer une citation.", "Fill in at least a title to generate a citation.")}</p>
         {citation && (
-          <button className="sm-btn sm-btn-primary sm-btn-sm" onClick={copy}>{copied ? "Copied!" : "Copy"}</button>
+          <button className="sm-btn sm-btn-primary sm-btn-sm" onClick={copy}>{copied ? L("Copié !", "Copied!") : L("Copier", "Copy")}</button>
         )}
       </div>
-      <p className="sm-citation-hint">Generated — double-check against your class's exact style guide before submitting.</p>
+      <p className="sm-citation-hint">{L("Généré — vérifie contre le guide de style exact de ta classe avant de rendre.", "Generated — double-check against your class's exact style guide before submitting.")}</p>
     </div>
   );
 }

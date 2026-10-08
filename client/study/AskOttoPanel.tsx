@@ -1,13 +1,19 @@
 import { useRef, useEffect, useState, useContext, useCallback } from "react";
+import type { ReactNode } from "react";
+import { Paperclip, TriangleAlert, Volume2, Square, StickyNote, Layers, CircleCheck } from "lucide-react";
 import type { WebTask } from "../../shared/types.ts";
-import { renderChatText, useThinkingWord, useLang, LangContext, CondensedUserMessage, FirstTimeHint } from "../ui.tsx";
+import { renderChatText, useThinkingWord, useLang, LangContext, CondensedUserMessage, FirstTimeHint, useNotify } from "../ui.tsx";
 import { useSpeechRecognition } from "../voice/useSpeechRecognition.ts";
 import { useSpeechSynthesis } from "../voice/useSpeechSynthesis.ts";
+import { lastMessageKey } from "../voice/replyKey.ts";
 import { useVoiceModePref } from "../voice/useVoiceModePref.ts";
 import { VoiceControls } from "../voice/VoiceControls.tsx";
 import { createEchoFilter } from "../voice/echoGuard.ts";
 import { findArithmeticClaims } from "../../server/arithmetic.ts";
 import { InlineProblem } from "./InlineProblem.tsx";
+import { extractPdfText } from "./pdfText.ts";
+import { api } from "../api.ts";
+import { OttoAvatar } from "../tutor/OttoAvatar.tsx";
 
 interface AskOttoPanelProps {
   task: WebTask;
@@ -24,13 +30,6 @@ interface AskOttoPanelProps {
   /** Optional overrides (Tutor Session) for the empty-state line and input placeholder. */
   emptyText?: string;
   placeholder?: string;
-  /** Tutor Session only — a spoken lesson is the whole premise of that surface (unlike a normal per-task
-   *  chat, which is text-first with voice as an opt-in extra), so it starts the session already listening
-   *  instead of making the student find and tap the mic toggle themselves. Applied once, on mount, via the
-   *  SAME toggle a manual tap would use — never forces it back on if the student explicitly turns it off.
-   *  Requested, not guaranteed: browsers with no SpeechRecognition (Firefox) stay text-first — voiceModeOn
-   *  is never force-enabled where there's no microphone support at all. */
-  startInVoiceMode?: boolean;
   /** Tutor Session only — reports the voice loop's state upward ({@link TutorSession}) so the BOARD pane
    *  (not just the chat's mic button) can show Listening…/Speaking…/Voice on. In a voice-first session the
    *  student's eyes are on the board, not the chat input — the state indicator has to live where they look. */
@@ -41,6 +40,13 @@ interface AskOttoPanelProps {
    *  false-trigger from speaker echo or a throat-clear; two real words is intent. Kept local to Tutor
    *  Session — the per-task chat in TaskCard.tsx keeps its pause-and-resume behavior. */
   bargeIn?: boolean;
+  /** "dock" (Tutor stage): no transcript at all — Otto is just his avatar plus the LATEST answer in one
+   *  bubble, and the student's input sits right under it. Every voice/echo/send behavior is shared with the
+   *  full chat; only the rendering differs. */
+  variant?: "chat" | "dock";
+  /** Dock only — one-tap replies shown under Otto's bubble. Research on AI tutors: students ignore tutors
+   *  that make them compose every message; a tap is the lowest-friction way to say "hint", "I'm lost". */
+  quickReplies?: { label: ReactNode; text: string }[];
 }
 
 // The text currently being spoken aloud (the newest assistant reply) — the echo guard's reference: Otto
@@ -72,7 +78,7 @@ function arithmeticMismatches(text: string): { raw: string; lhs: string; claimed
 // other drawers, so the title bar/close/drag/resize handles all come from ArtifactCanvas's generic wrapper.
 export function AskOttoPanel({
   task, currentStep, input, setInput, sending, error, pendingMsg, onSend,
-  onOpenNote, onOpenDeck, onOpenQuiz, emptyText, placeholder, startInVoiceMode, onVoiceStateChange, bargeIn,
+  onOpenNote, onOpenDeck, onOpenQuiz, emptyText, placeholder, onVoiceStateChange, bargeIn, variant = "chat", quickReplies,
 }: AskOttoPanelProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -83,20 +89,10 @@ export function AskOttoPanel({
   const speechLang = en ? "en-US" : "fr-FR";
   const synth = useSpeechSynthesis(speechLang);
   const [voiceModeOn, toggleVoiceMode] = useVoiceModePref();
-  // Applied once — a ref (not state) so it can never re-fire and fight a student who deliberately turns
-  // voice mode back off mid-session.
-  const autoVoiceAppliedRef = useRef(false);
-  const recogSupportedRef = useRef(false);
-  useEffect(() => {
-    // Only flip the pref when SpeechRecognition actually exists here — force-enabling voice mode on
-    // Firefox (no recognition support; VoiceControls hides itself) would leave the student in a state
-    // where Otto speaks but can never hear them, with no mic button to turn it off with.
-    if (startInVoiceMode && !voiceModeOn && !autoVoiceAppliedRef.current && recogSupportedRef.current) {
-      autoVoiceAppliedRef.current = true;
-      toggleVoiceMode();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [startInVoiceMode]);
+  // NO auto-enable, ever: voice mode (mic + auto-speak) starts OFF on every load and only an explicit tap
+  // on the mic button turns it on — see useVoiceModePref.ts's product-rule comment. A mount effect that
+  // flipped the pref on automatically used to live here; removed along with the persisted pref itself so
+  // no code path can open the microphone without the student tapping it.
   const L = useLang();
   // Fires per detected utterance while listening — ignore a stray recognition result that lands while a
   // previous message is still in flight rather than firing a second send on top of it.
@@ -115,6 +111,47 @@ export function AskOttoPanel({
   // after it, and drops a verbatim repeat of the just-spoken reply regardless of timing.
   const echoFilterRef = useRef(createEchoFilter());
   const [micError, setMicError] = useState<[string, string] | null>(null);
+  // File attach — "upload a file into the tutor" (a PDF worksheet, a photo of an exercise, a plain text
+  // note): three file types need three different extraction paths, but all three land the same way —
+  // appended into the textarea as quoted context ahead of whatever the student types, so they can still
+  // add their own question on top before sending, nothing auto-sends on its own.
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [attaching, setAttaching] = useState(false);
+  const notify = useNotify();
+  const MAX_ATTACH_CHARS = 6000;
+  const appendAttachment = (label: string, text: string) => {
+    const block = `[${label}]\n"""\n${text.trim().slice(0, MAX_ATTACH_CHARS)}\n"""\n\n`;
+    setInput(block + input);
+  };
+  const onAttachFile = async (file: File) => {
+    setAttaching(true);
+    try {
+      if (file.type === "application/pdf") {
+        const text = await extractPdfText(file);
+        if (!text) { notify(L("Impossible de lire ce PDF (page scannée sans texte ?).", "Couldn't read that PDF (a scanned page with no text layer?)."), "error"); return; }
+        appendAttachment(file.name, text);
+      } else if (file.type.startsWith("image/")) {
+        const dataUrl: string = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(file);
+        });
+        const { description } = await api.readPhoto(dataUrl);
+        appendAttachment(file.name, description);
+      } else if (file.type.startsWith("text/") || /\.(txt|md)$/i.test(file.name)) {
+        appendAttachment(file.name, await file.text());
+      } else {
+        notify(L("Type de fichier non pris en charge — PDF, image ou texte uniquement.", "Unsupported file type — PDF, image, or plain text only."), "error");
+        return;
+      }
+      inputRef.current?.focus();
+    } catch (e: any) {
+      notify(e?.message || L("Impossible de lire ce fichier — réessaie.", "Couldn't read that file — try again."), "error");
+    } finally {
+      setAttaching(false);
+    }
+  };
   const recog = useSpeechRecognition({
     lang: speechLang,
     onResult: (text) => {
@@ -144,9 +181,6 @@ export function AskOttoPanel({
     else if (!synth.speaking && wasSpeakingEchoRef.current) echoFilterRef.current.speechEnded();
     wasSpeakingEchoRef.current = synth.speaking;
   }, [synth.speaking, task]);
-  // Assigned only AFTER recog exists — the mount-time autoVoice effect above reads this ref (it must never
-  // touch recog directly: recog is declared below that effect, so a direct use would be a TDZ crash).
-  recogSupportedRef.current = recog.supported;
   // Report voice-loop state upward (board-pane pill in Tutor Session) on every change. Fired from an
   // effect, not inline in render, so a parent setState during this child's render never happens.
   useEffect(() => {
@@ -200,19 +234,23 @@ export function AskOttoPanel({
     wasBusyRef.current = busy;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sending, synth.speaking, voiceModeOn, bargeIn]);
-  // Speak the reply once it arrives — tracked by chat length so a re-render (not a new message) never
-  // re-triggers it, and so turning voice mode on mid-conversation only speaks FUTURE replies, not the
-  // whole history at once.
-  const spokenCountRef = useRef(0);
+  // Speak each new assistant reply exactly once — keyed on the newest message's IDENTITY, not chat length
+  // (see lastMessageKey: the server's chat cap keeps the length constant once a session gets long, which
+  // silently stopped all speech). The key is tracked even while voice mode is off, so turning it on
+  // mid-conversation only speaks FUTURE replies, never the history.
+  const tailKey = lastMessageKey(task.chat);
+  const spokenKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    const chat = task.chat || [];
-    if (chat.length > spokenCountRef.current) {
-      const last = chat[chat.length - 1];
-      if (voiceModeOn && last?.role === "assistant") synth.speak(last.text);
+    if (spokenKeyRef.current === null) { spokenKeyRef.current = tailKey; return; } // first render: history
+    if (tailKey === spokenKeyRef.current) return;
+    spokenKeyRef.current = tailKey;
+    const last = task.chat?.[task.chat.length - 1];
+    if (voiceModeOn && last?.role === "assistant") {
+      console.log("[tts] speaking assistant message:", last.text.slice(0, 60));
+      synth.speak(last.text);
     }
-    spokenCountRef.current = chat.length;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [task.chat?.length, voiceModeOn]);
+  }, [tailKey, voiceModeOn]);
   // Grows up to 3 lines (CSS max-height on .sm-ai-input) then scrolls internally — was a single-line
   // <input>, so anything longer than one line just scrolled sideways out of view while typing. Re-measured
   // on every `input` change (typing AND a programmatic clear after send), not just onChange, so sending a
@@ -235,6 +273,130 @@ export function AskOttoPanel({
     const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
     userScrolledRef.current = !isNearBottom;
   }, []);
+
+  const diagnostics = (
+    <>
+      {error ? (
+        <div className="sm-ai-error">
+          {error}
+          <button type="button" className="sm-btn sm-btn-ghost sm-btn-sm" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending}>{L("Réessayer", "Retry")}</button>
+        </div>
+      ) : null}
+      {/* Real mic failure surfacing (permission denied, no mic, network) — previously silent. */}
+      {micError ? <div className="sm-ai-error" role="alert">{L(micError[0], micError[1])}</div> : null}
+      {/* TTS diagnostic (useSpeechSynthesis's lastDiagnostic): which speech path actually ran and, when it
+          fell back, WHY. Voice failures were the last fully-silent surface in this panel — a 501 from a
+          missing server key, a CSP-blocked audio element, and a vendor outage all looked like "Otto just
+          doesn't talk," indistinguishable from voice mode doing nothing at all. Muted one-liner (not an
+          alert): speech DID happen via the fallback, so this explains rather than alarms. Only while voice
+          mode is on, so the line never appears in text-only sessions. */}
+      {voiceModeOn && synth.lastDiagnostic ? (
+        <div className="sm-ai-tts-note" role="status">{synth.lastDiagnostic}</div>
+      ) : null}
+
+    </>
+  );
+  const inputRow = (
+    <>
+      <div className="sm-ai-input-row">
+        <textarea
+          ref={inputRef}
+          className="sm-ai-input"
+          rows={1}
+          aria-label={L("Ton message à Otto", "Your message to Otto")}
+          placeholder={placeholder ?? L("De quoi as-tu besoin ?", "What do you need help with?")}
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(undefined, voiceModeOn); } }}
+          disabled={sending}
+          autoFocus
+        />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/pdf,image/png,image/jpeg,image/webp,text/plain,.md"
+          style={{ display: "none" }}
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) void onAttachFile(f); e.target.value = ""; }}
+        />
+        <button
+          type="button"
+          className="sm-btn sm-btn-ghost sm-btn-sm sm-ai-attach-btn"
+          disabled={attaching || sending}
+          onClick={() => fileInputRef.current?.click()}
+          title={L("Joindre un fichier (PDF, image, texte)", "Attach a file (PDF, image, text)")}
+        >
+          {attaching ? "…" : <Paperclip size={15} aria-hidden="true" />}
+        </button>
+        <VoiceControls
+          supported={recog.supported}
+          voiceModeOn={voiceModeOn}
+          listening={recog.listening}
+          speaking={synth.speaking}
+          interimTranscript={recog.interimTranscript}
+          // unlock() only matters before the FIRST speak() of a session unlocks autoplay — calling it again
+          // on every OFF click too (previously unconditional) meant it fired its own raw
+          // speak()/cancel() pair on the real engine at the exact moment the real synth.cancel() effect
+          // (keyed on voiceModeOn, one render tick later) was ALSO about to cancel a real in-flight
+          // utterance — two uncoordinated callers hitting speechSynthesis back to back, the documented
+          // Chrome trigger for a subsequent speak() silently never firing onstart. Reported live as "TTS
+          // breaks specifically when I turn the mic off then back on." Only unlock on the ON transition.
+          onToggle={() => { if (!voiceModeOn) synth.unlock(); toggleVoiceMode(); }}
+          en={en}
+        />
+        <button className="sm-btn sm-btn-primary" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending || !input.trim()}>
+          {L("Envoyer", "Send")}
+        </button>
+      </div>
+    </>
+  );
+
+  if (variant === "dock") {
+    const lastReply = [...(task.chat || [])].reverse().find((m) => m.role === "assistant");
+    const mood = recog.listening && voiceModeOn && !synth.speaking && !sending ? "listening" : synth.speaking ? "speaking" : sending ? "thinking" : "idle";
+    const mismatches = lastReply ? arithmeticMismatches(lastReply.text) : [];
+    return (
+      <div className="otto-dock">
+        <div className="otto-dock-row">
+          <OttoAvatar mood={mood} size={56} />
+          <div className="otto-bubble" role="log" aria-live="polite" aria-label={L("Réponse d'Otto", "Otto's answer")}>
+            {sending ? (
+              <div className="otto-bubble-thinking" role="status">
+                <span className="sm-typing-dots" aria-hidden="true"><i /><i /><i /></span>
+                {thinkingWord ? <span className="sm-typing-slow">{thinkingWord}…</span> : null}
+              </div>
+            ) : lastReply ? (
+              <>
+                <div className="otto-bubble-text" key={lastMessageKey(task.chat)}>{renderChatText(lastReply.text)}</div>
+                {mismatches.length ? (
+                  <div className="sm-ai-calc-check" role="note">
+                    <span className="sm-ai-calc-check-icon" aria-hidden="true"><TriangleAlert size={13} /></span>
+                    <span>{L("Vérifie ce calcul avec Otto : ", "Double-check this with Otto: ")}<code>{mismatches[0].raw}</code></span>
+                  </div>
+                ) : null}
+                <button
+                  type="button" className="otto-replay"
+                  onClick={() => (synth.speaking ? synth.cancel() : (synth.unlock(), synth.speak(lastReply.text)))}
+                  title={synth.speaking ? L("Arrêter la voix", "Stop voice") : L("Réécouter", "Listen again")}
+                  aria-label={synth.speaking ? L("Arrêter la voix", "Stop voice") : L("Réécouter", "Listen again")}
+                >{synth.speaking ? <Square size={13} aria-hidden="true" /> : <Volume2 size={15} aria-hidden="true" />}</button>
+              </>
+            ) : (
+              <p className="otto-bubble-empty">{emptyText ?? ""}</p>
+            )}
+          </div>
+        </div>
+        {quickReplies?.length && !sending ? (
+          <div className="otto-quick" role="group" aria-label={L("Réponses rapides", "Quick replies")}>
+            {quickReplies.map((q) => (
+              <button key={q.text} type="button" className="otto-quick-btn" onClick={() => onSend(q.text, voiceModeOn)}>{q.label}</button>
+            ))}
+          </div>
+        ) : null}
+        {diagnostics}
+        {inputRow}
+      </div>
+    );
+  }
 
   return (
     <div className="sm-ai-embed">
@@ -259,18 +421,28 @@ export function AskOttoPanel({
                     : task.quizzes?.some((q) => q.id === a.id);
                   if (!exists) return null;
                   const open = a.kind === "note" ? onOpenNote : a.kind === "deck" ? onOpenDeck : onOpenQuiz;
-                  return <button key={a.id} type="button" className="sm-btn sm-btn-ghost sm-btn-sm" onClick={() => open(a.id, a.title)}>{a.title}</button>;
+                  // Real lucide icons, not emoji — same reasoning as VoiceControls: a 📝/🗂️/✅ renders
+                  // differently (or not at all) across OS/browser combinations and reads ambiguous at a
+                  // glance, while an icon is unambiguous on every platform (explicit request: no emoji in
+                  // the app).
+                  const icon = a.kind === "note" ? <StickyNote size={13} /> : a.kind === "deck" ? <Layers size={13} /> : <CircleCheck size={13} />;
+                  return (
+                    <button key={a.id} type="button" className="sm-ai-artifact-chip" onClick={() => open(a.id, a.title)}>
+                      <span className="sm-ai-artifact-chip-icon" aria-hidden="true">{icon}</span>
+                      {a.title}
+                    </button>
+                  );
                 })}
               </div>
             ) : null}
             {m.role === "assistant" && m.guardrail ? (
-              <span className="sm-ai-guardrail-tag">Otto guides, doesn't do it for you</span>
+              <span className="sm-ai-guardrail-tag">{L("Otto guide, ne fait pas à ta place", "Otto guides, doesn't do it for you")}</span>
             ) : null}
             {m.role === "assistant" && (() => {
               const mismatches = arithmeticMismatches(m.text);
               return mismatches.length ? (
                 <div className="sm-ai-calc-check" role="note">
-                  <span className="sm-ai-calc-check-icon" aria-hidden="true">⚠</span>
+                  <span className="sm-ai-calc-check-icon" aria-hidden="true"><TriangleAlert size={13} /></span>
                   <span>
                     {L("Vérifie ce calcul avec Otto : ", "Double-check this with Otto: ")}
                     <code>{mismatches[0].raw}</code>
@@ -296,41 +468,8 @@ export function AskOttoPanel({
         <div ref={endRef} />
       </div>
 
-      {error ? (
-        <div className="sm-ai-error">
-          {error}
-          <button type="button" className="sm-btn sm-btn-ghost sm-btn-sm" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending}>Retry</button>
-        </div>
-      ) : null}
-      {/* Real mic failure surfacing (permission denied, no mic, network) — previously silent. */}
-      {micError ? <div className="sm-ai-error" role="alert">{L(micError[0], micError[1])}</div> : null}
-
-      <div className="sm-ai-input-row">
-        <textarea
-          ref={inputRef}
-          className="sm-ai-input"
-          rows={1}
-          aria-label={L("Ton message à Otto", "Your message to Otto")}
-          placeholder={placeholder ?? L("De quoi as-tu besoin ?", "What do you need help with?")}
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(undefined, voiceModeOn); } }}
-          disabled={sending}
-          autoFocus
-        />
-        <VoiceControls
-          supported={recog.supported}
-          voiceModeOn={voiceModeOn}
-          listening={recog.listening}
-          speaking={synth.speaking}
-          interimTranscript={recog.interimTranscript}
-          onToggle={toggleVoiceMode}
-          en={en}
-        />
-        <button className="sm-btn sm-btn-primary" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending || !input.trim()}>
-          {L("Envoyer", "Send")}
-        </button>
-      </div>
+      {diagnostics}
+      {inputRow}
     </div>
   );
 }

@@ -130,7 +130,7 @@ export function DictionaryArtifact({ artifact, onChange, language = "en" }: Dict
       <div className="sm-dictionary-results">
         {status === "error" && <p className="sm-dictionary-error">{error}</p>}
         {!entry && status !== "error" && (
-          <p className="sm-artifact-empty">Type a word to see definitions inside Study Mode.</p>
+          <p className="sm-artifact-empty">{uiEn ? "Type a word to see definitions inside Study Mode." : "Tape un mot pour voir les définitions dans le mode étude."}</p>
         )}
         {entry && (
           <>

@@ -1,4 +1,5 @@
 // Shared task model — imported by both the Express backend and the React client.
+import { normalizeCoursework, type CourseworkDoc } from "./coursework.ts";
 
 export type Quadrant = "do" | "schedule" | "delegate" | "later";
 
@@ -234,6 +235,14 @@ export interface Profile {
   // reporting a small `PronoteTestItem`, `subject`, and `deadline` is the same low-friction pattern as the
   // `grades` self-report above, not a new mechanism.
   manualExams?: { id: string; subject: string; deadline: string }[];
+  // Documents uploaded per subject (shared/coursework.ts): a bounded summary + excerpt the tutor and chat can cite.
+  coursework?: CourseworkDoc[];
+  // When the student finished (or skipped) the first-run tour — server-side so it follows the account across devices.
+  onboardedAt?: string;
+  // Page guides already shown (ids like "tasks", "tutor-session") — server-side so a guide never repeats on another device.
+  toursSeen?: string[];
+  // The subjects this student takes (picked in onboarding): ordered first wherever a subject is chosen.
+  subjects?: string[];
   // A student-maintained log of specific mistakes — "what question, what I got wrong, what to do about it
   // next time" — grouped by subject (see errorLogBySubject below). Distinct from journal flashcards
   // (client/App.tsx's StudyLogPage): a flashcard is "review this fact again"; an error-log entry is "here's
@@ -285,6 +294,18 @@ export interface Profile {
    *  is strong). It may only select the FORM an explanation takes — e.g. diagram-first vs. a worked example
    *  vs. reading-first — never the substance or the level. No consumer reads this yet (groundwork). */
   learningStyle?: "visual" | "auditory" | "reading" | "kinesthetic" | "mixed";
+  /** How much scaffolding the tutor gives when the student is stuck, student-selectable in Settings as a
+   *  3-position slider/bar — a DIFFERENT axis from `learningStyle` above (that's presentation/FORM; this
+   *  is PACING/how much the tutor walks through vs. just nudges). "steps" = walk through the reasoning
+   *  step by step before handing it back for the next move; "hints" = a single pointed hint, then hand it
+   *  straight back; "balanced" (the slider's middle/default position) = Otto's own judgment call per the
+   *  hint ladder (server/claude.ts), same as before this preference existed — an explicit value, not just
+   *  "unset," so the slider always has a definite position to render even for a brand-new account.
+   *  Undefined behaves identically to "balanced" (hintDensityLine returns "" for both). NEITHER "steps"
+   *  nor "hints" ever changes whether the tutor gives the direct answer — that's enforced unconditionally
+   *  elsewhere (the HINT LADDER's "never release the final answer outright" rule) and is not configurable
+   *  by this preference; it only adjusts HOW MUCH is shown on the way there. */
+  hintDensity?: "steps" | "hints" | "balanced";
   /** Aggregated face tracking concentration and focus telemetry statistics over past study sessions. */
   focusStats?: {
     totalTrackedSessions: number;
@@ -458,6 +479,10 @@ export function normalizeProfile(p: any): Profile {
           deadline: typeof e?.deadline === "string" ? e.deadline : "",
         })).filter((e: { subject: string; deadline: string }) => e.subject && e.deadline).slice(0, 100)
       : undefined,
+    coursework: normalizeCoursework(p?.coursework),
+    onboardedAt: typeof p?.onboardedAt === "string" ? p.onboardedAt : undefined,
+    toursSeen: Array.isArray(p?.toursSeen) ? [...new Set<string>(p.toursSeen.map((t: any) => String(t).slice(0, 40)).filter(Boolean))].slice(0, 40) : undefined,
+    subjects: Array.isArray(p?.subjects) ? [...new Set<string>(p.subjects.map((t: any) => String(t).trim().slice(0, 60)).filter(Boolean))].slice(0, 14) : undefined,
     errorLog: Array.isArray(p?.errorLog)
       ? p.errorLog.map((e: any) => ({
           id: typeof e?.id === "string" && e.id ? e.id : newId(),
@@ -488,6 +513,7 @@ export function normalizeProfile(p: any): Profile {
     track: ["ib", "ap", "bac", "other"].includes(p?.track) ? p.track : undefined,
     yearLevel: typeof p?.yearLevel === "string" ? p.yearLevel.trim().slice(0, 40) || undefined : undefined,
     learningStyle: ["visual", "auditory", "reading", "kinesthetic", "mixed"].includes(p?.learningStyle) ? p.learningStyle : undefined,
+    hintDensity: ["steps", "hints", "balanced"].includes(p?.hintDensity) ? p.hintDensity : undefined,
     focusStats: p?.focusStats && typeof p.focusStats === "object" ? {
       totalTrackedSessions: Number(p.focusStats.totalTrackedSessions) || 0,
       avgConcentration: Math.min(100, Math.max(0, Number(p.focusStats.avgConcentration) || 0)),
@@ -557,6 +583,57 @@ export function milestonesBySubject(list: NonNullable<Profile["milestones"]> | u
     entries: [...entries].sort((a, b) => Date.parse(b.achievedAt) - Date.parse(a.achievedAt)),
   })).sort((a, b) => b.entries.length - a.entries.length);
 }
+// Tunable weights for subjectMastery below — a product-judgment placeholder, not a derived constant.
+// Named/exported so they're trivially adjustable later without hunting through the formula itself.
+export const MASTERY_LEITNER_WEIGHT = 0.6;
+export const MASTERY_MILESTONE_WEIGHT = 0.4;
+// Milestones older than this contribute ~nothing to the recency score (linear decay to 0) — an
+// achievement from months ago says little about CURRENT mastery, unlike a flashcard's Leitner box
+// (which already encodes recency via spaced-repetition scheduling).
+const MASTERY_MILESTONE_DECAY_DAYS = 90;
+// How many "fresh" (near-zero-decay) milestones it takes to max out the milestone half of the score —
+// a single recent "got it" shouldn't alone read as full subject mastery.
+const MASTERY_MILESTONES_FOR_FULL_SCORE = 3;
+/** Direct request: "clear progress metrics" per subject, based purely on tutor-session activity — NOT
+ *  grades (explicitly excluded: grades are Pronote/manual-sourced and lag real activity, unrelated to
+ *  what the tutor has actually seen the student do). Combines two EXISTING signals, no new tracked
+ *  state: (1) the Leitner "known" ratio across that subject's flashcards (shared/types.ts's own
+ *  nextLeitnerReview box field, already written on every card review) and (2) a recency-weighted count
+ *  of that subject's milestones (milestonesBySubject above — qualitative "what's clicked" log).
+ *  Returns null (never a fabricated 0%) when NEITHER signal has any data for this subject — a subject
+ *  never touched via Otto's tutor/flashcards shouldn't claim "0% mastery", that's just "no data yet".
+ *  Gracefully degrades to whichever single signal IS available when only one exists, renormalizing the
+ *  weight instead of silently treating the missing one as 0. */
+export function subjectMastery(tasks: WebTask[], milestones: Profile["milestones"] | undefined, subject: string, now: Date = new Date()): number | null {
+  const subjectKey = subject.toLowerCase();
+  let totalCards = 0;
+  let knownCards = 0;
+  for (const t of tasks) {
+    if ((t.sourceSubject || "").toLowerCase() !== subjectKey) continue;
+    for (const deck of t.flashcards || []) {
+      for (const card of deck.cards) {
+        if (card.notNeeded) continue; // excluded from every other "still shaky"/scoring signal too
+        totalCards++;
+        if (card.review?.box === 2) knownCards++;
+      }
+    }
+  }
+  const leitnerRatio = totalCards > 0 ? knownCards / totalCards : null;
+
+  const subjectEntries = (milestones || []).filter((m) => m.subject.toLowerCase() === subjectKey);
+  let milestoneWeight = 0;
+  for (const m of subjectEntries) {
+    const daysAgo = (now.getTime() - Date.parse(m.achievedAt)) / 86_400_000;
+    milestoneWeight += Math.max(0, 1 - daysAgo / MASTERY_MILESTONE_DECAY_DAYS);
+  }
+  const milestoneScore = subjectEntries.length > 0 ? Math.min(1, milestoneWeight / MASTERY_MILESTONES_FOR_FULL_SCORE) : null;
+
+  if (leitnerRatio === null && milestoneScore === null) return null;
+  if (leitnerRatio === null) return milestoneScore;
+  if (milestoneScore === null) return leitnerRatio;
+  return MASTERY_LEITNER_WEIGHT * leitnerRatio + MASTERY_MILESTONE_WEIGHT * milestoneScore;
+}
+
 /** Is this a resolvable IANA timezone? (Intl throws on an unknown zone.) */
 export function isValidTz(tz: string): boolean {
   try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); return true; } catch { return false; }
@@ -1219,6 +1296,11 @@ export interface WebTask {
    *  each SET_OBJECTIVES call (not append-only), so the list always reflects Otto's current read of progress
    *  rather than accumulating stale/superseded objectives across a long session. */
   objectives?: TaskObjective[];
+  /** Subject mastery (see subjectMastery below), 0-1 or null for "no data yet" — never fabricated. Set
+   *  server-side only on /api/study/free (session start/resume), not on the hot, frequently-polled
+   *  /api/tasks or kick routes, so this doesn't add per-poll CPU cost to paths that were just trimmed
+   *  for egress. Computed fresh each time a session starts; not itself persisted/durable state. */
+  mastery?: number | null;
   /** ONE free-response practice problem for the day's math/physics/science themes (Study Journal daily
    *  entries only — see generateDailyStudyCards in server/claude.ts) — deliberately NOT multiple choice:
    *  the student types their own answer and it's checked against `answer` (see practiceAnswerMatches
@@ -1371,6 +1453,8 @@ export interface DailyPracticeProblem {
  *  `DailyPracticeProblem` (one free-response per day). */
 export interface TaskProblem {
   id: string;
+  /** Client-only, sent with chat turns: the student has already answered this one correctly. */
+  solved?: boolean;
   /** The question/prompt itself — one clear sentence or a short problem statement. */
   question: string;
   /** MCQ mode: 2-4 options. When present, the student picks one and gets immediate feedback.
@@ -1400,15 +1484,41 @@ export interface TaskProblem {
  *  0-800 x 0-600 space so the model never has to reason about the container's actual pixel size — the
  *  renderer scales the viewBox to fit. */
 export type DiagramOp =
-  | { op: "line"; x1: number; y1: number; x2: number; y2: number; arrow?: boolean; color?: string }
+  | { op: "line"; x1: number; y1: number; x2: number; y2: number; arrow?: boolean; dashed?: boolean; color?: string }
   | { op: "rect"; x: number; y: number; w: number; h: number; fill?: boolean; color?: string }
-  | { op: "circle"; cx: number; cy: number; r: number; fill?: boolean; color?: string }
-  | { op: "polyline"; points: { x: number; y: number }[]; color?: string }
-  | { op: "label"; x: number; y: number; text: string; size?: "sm" | "md" | "lg" }
+  | { op: "circle"; cx: number; cy: number; r: number; fill?: boolean; dashed?: boolean; color?: string }
+  | { op: "polyline"; points: { x: number; y: number }[]; dashed?: boolean; color?: string }
+  /** Closed shape (outline, optionally lightly filled). */
+  | { op: "polygon"; points: { x: number; y: number }[]; fill?: boolean; color?: string }
+  /** Circular arc about (cx,cy) from screen-angle a0 to a1 in degrees (y points DOWN, so counter-clockwise on screen is a1 < a0); sweeps the way from a0 to a1, may exceed 180°. */
+  | { op: "arc"; cx: number; cy: number; r: number; a0: number; a1: number; dashed?: boolean; color?: string }
+  | { op: "label"; x: number; y: number; text: string; size?: "sm" | "md" | "lg"; anchor?: "start" | "middle" }
   | { op: "axes"; x: number; y: number; w: number; h: number; xLabel?: string; yLabel?: string }
   /** Real typeset math (KaTeX), not the plain-text approximation formatMath (client/ui.tsx) does for chat.
    *  `latex` is raw LaTeX with no surrounding $/\( \) delimiters — e.g. "\\frac{2}{x-1} + \\frac{3}{x+2}". */
   | { op: "equation"; x: number; y: number; latex: string };
+
+/** A function graph the tutor puts on the board (GRAPH_ON_BOARD). Expressions are plain math in x and the
+ *  slider parameters ("a*x^2 + b*x + c", "sin(k x)"), compiled by shared/mathExpr.ts — never eval'd. */
+export interface GraphSpec {
+  /** "function" (default): curves y = f(x). "bars": a labelled bar chart. "histogram": raw numbers binned.
+   *  "surface": a rotatable 3D surface z = f(x, y). */
+  kind?: "function" | "bars" | "histogram" | "surface";
+  bars?: { label: string; value: number }[];
+  data?: number[];
+  bins?: number;
+  /** surface only: z as an expression in x, y (and the slider params); the x/y window is xmin..xmax × ymin..ymax. */
+  z?: string;
+  fns: { expr: string; label?: string; color?: "blue" | "red" | "green" | "orange" | "purple" | "ink"; dashed?: boolean }[];
+  /** Up to 3 sliders the student can drag; each is a single-letter name usable in every expression. */
+  params?: { name: string; min: number; max: number; value: number; step?: number; label?: string }[];
+  xmin: number; xmax: number;
+  ymin?: number; ymax?: number;
+  /** Marked points (a root, a vertex, a data point); with `connect` they are joined into a line (a data plot). */
+  points?: { x: number; y: number; label?: string }[];
+  connect?: boolean;
+  xLabel?: string; yLabel?: string;
+}
 
 export interface BoardEntry {
   id: string;
@@ -1427,7 +1537,7 @@ export interface BoardEntry {
    *  (see `outline`) — for essay-based/humanities content (history causes, source analysis, an essay plan)
    *  where a flat sentence or a spatial diagram both fit poorly; math/science still reach for
    *  formula/diagram first. */
-  kind?: "note" | "instruction" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "gap";
+  kind?: "note" | "instruction" | "question" | "given" | "result" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "interactive" | "graph" | "gap";
   /** Who authored this entry — "otto" (default for backward compat) or "student". Student-owned entries are
    *  never silently rewritten by Otto. Used to visually distinguish Otto's scaffolding from the student's
    *  own work on the board (see BoardArtifact.tsx). */
@@ -1440,6 +1550,8 @@ export interface BoardEntry {
    *  at 15 ops server-side (makeDiagramEntry, server/claude.ts): enough for a labeled triangle or a small
    *  graph, not enough to build a full illustration op-by-op. */
   diagram?: DiagramOp[];
+  /** Present only when kind === "graph" (GRAPH_ON_BOARD) — a live, slider-driven function plot. */
+  graph?: GraphSpec;
   /** Present only when kind === "outline" — one or more headed sections, each a short list of bullet
    *  points. Built for a history/essay-style board (causes-of-an-event, a source's key points, an essay's
    *  section-by-section plan) the same way `diagram` is built for a geometric figure: structure the model
@@ -1447,6 +1559,12 @@ export interface BoardEntry {
    *  server-side (makeOutlineEntry) at 6 sections x 8 bullets — enough for a real essay plan, not a whole
    *  textbook chapter in one entry. */
   outline?: { heading: string; bullets: string[] }[];
+  /** Present only when kind === "interactive" — sanitized, self-contained HTML/JS (CREATE_INTERACTIVE
+   *  tool), rendered in a sandboxed iframe (BoardArtifact.tsx) with NO allow-same-origin: it cannot read
+   *  this app's DOM/cookies/storage or navigate the parent. See makeInteractiveEntry (server/claude.ts)
+   *  for the server-side script-source allowlist and tag-stripping that runs before this ever reaches
+   *  the client. */
+  html?: string;
   at: string;
 }
 
@@ -1572,10 +1690,35 @@ export function validateThemeTokens(raw: unknown): ThemeTokens {
 function normalizeMinus(s: string): string {
   return s.replace(/[−‐-―－]/g, "-");
 }
+// π support: makePracticeProblem/generateDailyPracticeProblem's own prompt (server/claude.ts) explicitly
+// tells the student they may type the plain-text word "pi" for π — but neither Number() nor the plain
+// fraction regex below has any notion of π, so EVERY pi-valued answer (any trig/radian problem, e.g.
+// "5π/6") was silently marked wrong no matter how the student wrote it. Reported live. Handled as its own
+// pattern, not folded into the a/b fraction regex above, since "5pi/6" is coefficient·π÷denominator — a
+// different shape than a plain "a/b" fraction (the numerator here isn't itself a number). Covers the forms
+// the AI's own prompt + a student's natural typing would actually produce: "pi", "-pi", "2pi", "5pi/6",
+// "pi/4" — and the literal symbol "π" (normalized to the word "pi" first, so one code path handles both).
+function parsePi(s: string): number {
+  const t = s.replace(/π/g, "pi");
+  const coefOf = (raw: string): number => (raw === "" ? 1 : raw === "-" ? -1 : Number(raw));
+  const overDen = t.match(/^(-?\d*(?:\.\d+)?)\s*pi\s*\/\s*(-?\d+(?:\.\d+)?)$/i);
+  if (overDen) {
+    const coef = coefOf(overDen[1]), den = Number(overDen[2]);
+    if (Number.isFinite(coef) && Number.isFinite(den) && den !== 0) return (coef * Math.PI) / den;
+  }
+  const bare = t.match(/^(-?\d*(?:\.\d+)?)\s*pi$/i);
+  if (bare) {
+    const coef = coefOf(bare[1]);
+    if (Number.isFinite(coef)) return coef * Math.PI;
+  }
+  return NaN;
+}
 function parseNumericOrFraction(s: string): number {
   const cleaned = normalizeMinus(s).replace(/,/g, "");
   const direct = Number(cleaned);
   if (Number.isFinite(direct)) return direct;
+  const pi = parsePi(cleaned);
+  if (Number.isFinite(pi)) return pi;
   const frac = cleaned.match(/^(-?\d+(?:\.\d+)?)\s*\/\s*(-?\d+(?:\.\d+)?)$/);
   if (frac) {
     const num = Number(frac[1]), den = Number(frac[2]);
@@ -1583,13 +1726,34 @@ function parseNumericOrFraction(s: string): number {
   }
   return NaN;
 }
+// A multi-step numeric problem (physics, chemistry, finance) routinely has more than one legitimate path
+// to the final number — g = 9.8 vs 9.81, rounding an intermediate angle vs carrying full precision through
+// to the last step — and those paths can disagree by a few percent even though both are "correct".
+// Reported live, twice: first a student's correctly-derived 7.28 N (g=9.8, rounded intermediate angle) vs
+// 7.43 N (exact, no intermediate rounding) were BOTH marked wrong against a stored `answer` that was just
+// one specific path through the same calculation (back when this was a flat 1e-6 exact-match); then, after
+// a first widening to 3%/0.05, a case where Otto's own chat reply called the student's answer correct while
+// this same check still said "Not quite" — 3% still wasn't generous enough for every legitimate alternate
+// path. Widened again (5%, 0.08 floor). A plain integer-looking answer ("4", a count, an MCQ-style exact
+// value) stays tight — loosening those risks accepting a genuinely wrong value. The signal used to tell the
+// two apart: whether the STORED answer itself was given with a decimal point. A decimal answer is a rounded
+// result of a computation, so a reasonable alternate path landing within a few percent is almost always the
+// same physical quantity; a bare integer is treated as exact.
+function numbersMatch(given: number, correct: string | number): boolean {
+  const correctNum = typeof correct === "number" ? correct : parseNumericOrFraction(correct);
+  const looksDecimal = typeof correct === "string" && /\.\d/.test(correct);
+  if (!looksDecimal) return Math.abs(given - correctNum) < 1e-6 * Math.max(1, Math.abs(correctNum));
+  const relTol = Math.abs(correctNum) * 0.05; // covers g=9.8-vs-9.81/9.8-vs-10 and a couple of rounded steps
+  const absFloor = 0.08; // last-digit rounding drift for small answers (7.42 vs 7.43, 1.94 vs 1.97)
+  return Math.abs(given - correctNum) <= Math.max(relTol, absFloor);
+}
 export function practiceAnswerMatches(given: string, correct: string): boolean {
   const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ").replace(/^[a-z]\s*=\s*/, "").replace(/\.$/, "");
   const g = norm(given), c = norm(correct);
   if (!g) return false;
   if (g === c) return true;
-  const gn = parseNumericOrFraction(g), cn = parseNumericOrFraction(c);
-  if (Number.isFinite(gn) && Number.isFinite(cn)) return Math.abs(gn - cn) < 1e-6 * Math.max(1, Math.abs(cn));
+  const gn = parseNumericOrFraction(g);
+  if (Number.isFinite(gn) && Number.isFinite(parseNumericOrFraction(c))) return numbersMatch(gn, c);
   // Leading-number fallback: makePracticeProblem's own prompt (server/claude.ts) tells the STUDENT to
   // include a unit ("format" field says so explicitly) and stores the correct answer WITH one too ("84 m") —
   // but a student who types just the number ("84") has the numerically exact right answer, only missing
@@ -1604,7 +1768,7 @@ export function practiceAnswerMatches(given: string, correct: string): boolean {
     return m ? Number(m[0].replace(",", ".")) : NaN;
   };
   const gln = leadingNum(g), cln = leadingNum(c);
-  if (Number.isFinite(gln) && Number.isFinite(cln)) return Math.abs(gln - cln) < 1e-6 * Math.max(1, Math.abs(cln));
+  if (Number.isFinite(gln) && Number.isFinite(cln)) return numbersMatch(gln, c.match(/-?\d+\.\d+/)?.[0] ?? cln);
   return false;
 }
 
@@ -1625,6 +1789,8 @@ export interface ConnectionStatus {
   genPerDay?: number;         // how many times/day Otto scans for new tasks (1–4) — drives the client sweep cadence
   timezone?: string;          // the account's captured IANA timezone (client compares to detect a change)
   customTheme?: ThemeTokens;  // AI-personalized theme override, if the student opted in (see validateThemeTokens)
+  onboarded?: boolean;  // the basic onboarding has been finished/skipped (or the account clearly predates it)
+  toursSeen?: string[]; // page guides already shown on this account (Profile.toursSeen)
   betaFeatures?: boolean;     // opt-in gate for bandit personalization / focus camera / AI theme — see Profile's own doc comment
   overBudget?: boolean;       // month-to-date AI spend has crossed the cap — gen/exec paused until it resets
   unlimited?: boolean;        // account has no monthly AI spend cap (set via the /unlimited page)

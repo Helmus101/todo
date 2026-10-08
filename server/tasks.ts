@@ -363,10 +363,22 @@ function looseDup(a: string, b: string): boolean {
  *  per-task blobs (a full conversation thread can be several KB; audit is N-entry JSON) and are never
  *  needed again once a task is done/dismissed. Only the most-recent 3 audit entries are retained so the
  *  completed-task card can still show its last outcome without shipping the full history. */
+/** A sortable recency string for a task whatever shape its timestamp was stored in. Stored/synced tasks
+ *  have been seen with `updatedAt`/`createdAt` as a number (epoch ms) or a Date-like object, not only an ISO
+ *  string — calling `.localeCompare` on those threw "is not a function" and aborted the whole sweep. */
+export function recencyStamp(t: { updatedAt?: unknown; createdAt?: unknown }): string {
+  for (const v of [t.updatedAt, t.createdAt]) {
+    if (typeof v === "string" && v) return v;
+    if (typeof v === "number" && Number.isFinite(v)) return new Date(v).toISOString();
+    if (v instanceof Date && !Number.isNaN(v.getTime())) return v.toISOString();
+  }
+  return "";
+}
+
 export function pruneHandled(list: WebTask[], keep: number): WebTask[] {
   const active = list.filter((t) => t.status !== "done" && t.status !== "dismissed");
   const handled = list.filter((t) => t.status === "done" || t.status === "dismissed")
-    .sort((a, b) => (b.updatedAt || b.createdAt || "").localeCompare(a.updatedAt || a.createdAt || ""))
+    .sort((a, b) => recencyStamp(b).localeCompare(recencyStamp(a)))
     .slice(0, keep)
     .map((t) => ({ ...t, chat: undefined, audit: t.audit?.slice(-3) }));
   return [...active, ...handled];
@@ -393,7 +405,20 @@ export function stripProfileForResponse(profile: any): any {
 // a weekly summary for 8 weeks (~2 months, tightened from 26); a monthly summary is small and rare enough
 // (one per month) to just keep indefinitely. The DECK is the expensive part (dozens of cards), not the
 // text — dropping decks and keeping logText saves far more than the reverse would.
-const STUDYLOG_DAY_ARTIFACT_TTL_MS = 7 * 86_400_000;
+//
+// REVISED, on a direct report: dropping the DECK entirely made going back in time read as "the flashcards are
+// gone" — a journal entry a week old showed only its raw text, with the cards the student had actually made
+// that day simply absent. That is the opposite of what a journal is for. So past the TTL the CARD CONTENT
+// stays and only the per-card spaced-repetition STATE (`review`: Leitner box, dueAt, seen/correct counters) is
+// dropped. That is the right thing to age out anyway: the box/dueAt numbers are what make a card keep
+// resurfacing in FUTURE decks, and after a month they are stale by definition. A content-only deck is small
+// (a few hundred bytes of text per card, no counters), which is why it can stay indefinitely while the
+// counters can't. One real consequence, stated plainly: a card whose box state was dropped stops being fed
+// back as a "weak card" into new decks — after 30 days of reinforcement that is the correct trade.
+//
+// Two TTLs because the two artifacts differ: 30 days for a day's deck (the user asked for "at least the past
+// 30 days"), 8 weeks for a weekly summary (which is already an aggregate and much smaller).
+const STUDYLOG_DAY_ARTIFACT_TTL_MS = 30 * 86_400_000;
 const STUDYLOG_WEEK_ARTIFACT_TTL_MS = 8 * 7 * 86_400_000;
 export function trimOldStudylogArtifacts(list: WebTask[], now: Date = new Date()): WebTask[] {
   return list.map((t) => {
@@ -405,7 +430,16 @@ export function trimOldStudylogArtifacts(list: WebTask[], now: Date = new Date()
     const age = now.getTime() - (Date.parse(dateStr) || now.getTime());
     const ttl = isWeek ? STUDYLOG_WEEK_ARTIFACT_TTL_MS : STUDYLOG_DAY_ARTIFACT_TTL_MS;
     if (age < ttl) return t;
-    return { ...t, flashcards: undefined, quizzes: undefined, practiceProblem: undefined };
+    let stripped = false;
+    const flashcards = (t.flashcards || []).map((deck) => {
+      if (!deck.cards.some((c) => c.review)) return deck; // already stripped — don't rebuild it every commit
+      stripped = true;
+      return { ...deck, cards: deck.cards.map((c) => ({ ...c, review: undefined })) };
+    });
+    // Nothing left to strip AND nothing else to drop → the original object, so this stays a true no-op (it runs
+    // on EVERY commit, so rebuilding identical objects every time would be pure garbage).
+    if (!stripped && !t.quizzes?.length && !t.practiceProblem) return t;
+    return { ...t, flashcards: flashcards.length ? flashcards : undefined, quizzes: undefined, practiceProblem: undefined };
   });
 }
 
@@ -808,6 +842,13 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     })() : undefined,
     // Union by id, same reasoning as manual grade entries above — a manually-logged exam added on one
     // device must survive a merge against another device's copy that doesn't have it yet.
+    // Union by id (a delete persists cloud-first in its route). onboardedAt keeps the earliest stamp.
+    coursework: (p1.coursework?.length || p2.coursework?.length)
+      ? [...new Map([...(p1.coursework || []), ...(p2.coursework || [])].map((d) => [d.id, d])).values()].slice(0, 60)
+      : undefined,
+    onboardedAt: [p1.onboardedAt, p2.onboardedAt].filter(Boolean).sort()[0],
+    toursSeen: (p1.toursSeen?.length || p2.toursSeen?.length) ? [...new Set([...(p1.toursSeen || []), ...(p2.toursSeen || [])])].slice(0, 40) : undefined,
+    subjects: p2.subjects ?? p1.subjects,
     manualExams: (p1.manualExams?.length || p2.manualExams?.length)
       ? [...new Map([...(p1.manualExams || []), ...(p2.manualExams || [])].map((e) => [e.id, e])).values()]
       : undefined,
@@ -1054,7 +1095,7 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
   // live: a task dismissed one day came back days later.
   const handled = existing
     .filter((t) => t.status === "done" || t.status === "dismissed")
-    .sort((a, b) => (b.updatedAt || b.createdAt || "").localeCompare(a.updatedAt || a.createdAt || ""))
+    .sort((a, b) => recencyStamp(b).localeCompare(recencyStamp(a)))
     .map((t) => ({
       title: t.title,
       why: t.why,
@@ -1150,6 +1191,7 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
             } catch (e: any) { console.warn("[tasks] supplementary non-Google sweep failed:", e?.message || e); }
           }
         }
+        attachLocationLinks(result, items);
         return result;
       }
     } catch (e: any) { console.warn("[tasks] discovery pipeline failed, falling back to agent sweep:", e?.message || e); }
@@ -1162,6 +1204,29 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
   for (const u of gen.profileUpdates) applyProfileUpdate(profile, u);
   const result = foldGenerated(existing, gen.tasks, profile.highPriorityPeople || []);
   return result;
+}
+
+/** Deterministic: a Calendar event with a real `location` field (an address/venue — see calendarToItems,
+ *  server/discover.ts) gets a "get there" Google Maps link attached to its task, matched by the SAME stable
+ *  `anchorKey` (`calendar:<eventId>`) the rest of the dedupe pipeline already keys on. Never asks the AI
+ *  classifier to recall/invent the address — a wrong address in a maps link actively sends the student to
+ *  the wrong place, which is worse than no link at all, so this reads the event's own structured field
+ *  directly instead of trusting a model to transcribe it correctly from prose. Idempotent (checks for an
+ *  existing maps link first) so re-running a sweep on an already-linked task is a no-op. Exported for tests. */
+export function googleMapsDirectionsUrl(location: string): string {
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(location)}`;
+}
+export function attachLocationLinks(result: WebTask[], items: { anchorKey: string; location?: string }[]): void {
+  for (const item of items) {
+    if (!item.location) continue;
+    const task = result.find((t) => t.anchorKey === item.anchorKey);
+    if (!task) continue;
+    if ((task.links || []).some((l) => /maps\.google\.com|google\.com\/maps/.test(l.url))) continue;
+    // label "Open" (not a descriptive string) so the client's own linkKind (TaskCard.tsx) relabels it from
+    // the URL itself as "Itinéraire"/"Directions" in the student's actual language, same convention the
+    // other evidence links here already lean on for that fallback.
+    task.links = [...(task.links || []), { label: "Open", url: googleMapsDirectionsUrl(item.location) }];
+  }
 }
 
 /** Pure post-processing of a sweep's output: absorb duplicates into the existing list, cap genuinely NEW

@@ -26,12 +26,11 @@
     { "source": "/sitemap.xml", "destination": "/sitemap.xml" },
     { "source": "/llms.txt", "destination": "/llms.txt" },
     { "source": "/og-image.png", "destination": "/og-image.png" },
-    { "source": "/otto-tabs-extension.zip", "destination": "/otto-tabs-extension.zip" },
     { "source": "/:path*", "destination": "/index.html" }
   ],
   "headers": [
     {
-      "source": "/((?!assets/).*)",
+      "source": "/((?!assets/|api/interactive/).*)",
       "headers": [
         { "key": "Cache-Control", "value": "no-cache" },
         { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; script-src-elem 'self' https://cdn.jsdelivr.net; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https://logos.composio.dev; media-src 'self' blob: data:; connect-src 'self' https://freedictionaryapi.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://cdn.jsdelivr.net https://storage.googleapis.com; frame-src 'self' blob: https:; font-src 'self' data: https://fonts.gstatic.com; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'" },

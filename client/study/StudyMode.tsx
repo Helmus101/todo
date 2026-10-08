@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+// Icon, not the 🎯 emoji (explicit request: no emoji in the app; here it signals the focus-camera reading).
+import { Target } from "lucide-react";
 import type { WebTask } from "../../shared/types.ts";
 import type {
   StudyEnvironment,
@@ -11,7 +13,7 @@ import type {
   FocusSessionMetrics,
 } from "./StudyTypes.ts";
 import { getEnvironmentByTask, saveEnvironment, saveSession, saveFile, getFile, deleteFile } from "./StudyDB.ts";
-import { startStudyBlocking, stopStudyBlocking } from "./extensionBridge.ts";
+import { useIsPhone } from "../useIsPhone.ts";
 import { StudySetup, type PomodoroChoice, type AudioChoice } from "./StudySetup.tsx";
 import { SessionHeader } from "./SessionHeader.tsx";
 import { ArtifactCanvas } from "./ArtifactCanvas.tsx";
@@ -29,6 +31,7 @@ import { NoisePlayer, type NoiseType } from "./noise.ts";
 import { tileWithinBounds } from "./tileLayout.ts";
 import { extractPdfText } from "./pdfText.ts";
 import { useFocusCamera } from "./useFocusCamera.ts";
+import { GAZE_LABELS } from "./useFaceTracking.ts";
 
 interface StudyModeProps {
   task: WebTask;
@@ -86,22 +89,23 @@ function detectTemplate(task: WebTask): WorkspaceTemplate {
 }
 
 // ── Build initial artifact layout from template ───────────────────────────────
-// Ask Otto (chat) + the Board, at the same x/y/w/h openOrFocusChat/openOrFocusBoard use when adding either
-// on demand. Shared by buildInitialArtifacts (every session starts with both already on the desk — direct
-// instruction: they were previously opt-in, only appearing once the student clicked "Ask Otto" or once Otto
-// itself first wrote to the board, which read as two separate, easy-to-miss side features rather than the
-// tutor always being right there) and resumeSession's backfill (a session saved before this change won't
-// have them yet). zIndex 100 — comfortably above buildInitialArtifacts' template tools (zIndex 1-2), same
-// as every other artifact added post-session-start; tileWithinBounds re-tiles every freeform artifact
-// (these included) around whatever the template's own tools reserve, so they never sit on top of them.
-// lang ("fr" | "en") localizes the window titles created here; titles persist in the saved environment,
-// so they're resolved once at creation time (a mid-session language switch keeps the existing titles —
-// same as every other deliberately-placed desk state).
-function defaultChatAndBoard(envId: string, taskId: string, lang: "fr" | "en"): ArtifactState[] {
+// Ask Otto (chat), at the same x/y/w/h openOrFocusChat uses when adding it on demand. Shared by
+// buildInitialArtifacts (every session starts with it already on the desk — direct instruction: it was
+// previously opt-in, only appearing once the student clicked "Ask Otto", which read as an easy-to-miss
+// side feature rather than the tutor always being right there) and resumeSession's backfill (a session
+// saved before this change won't have it yet). zIndex 100 — comfortably above buildInitialArtifacts'
+// template tools (zIndex 1-2), same as every other artifact added post-session-start; tileWithinBounds
+// re-tiles every freeform artifact (this included) around whatever the template's own tools reserve, so
+// it never sits on top of them.
+// Direct instruction: the Board is a TUTOR-ONLY surface now (TutorSession.tsx) — Study Mode's own
+// freeform canvas no longer defaults to one, can't add one from the tools drawer, and no longer
+// auto-surfaces one on write (see the removed openOrFocusBoard and its call site). This function used to
+// return [chat, board] together; now it's just chat, kept as its own small helper (rather than inlined)
+// so resumeSession's backfill-if-missing logic below doesn't need its own separate construction.
+function defaultChatArtifacts(envId: string, taskId: string): ArtifactState[] {
   const base = { environmentId: envId, taskId, zIndex: 100, minimized: false, maximized: false, dockSide: "none" as const, contentState: {} };
   return [
     { ...base, id: crypto.randomUUID(), type: "chat", title: "Ask Otto", x: 55, y: 10, width: 38, height: 78 },
-    { ...base, id: crypto.randomUUID(), type: "board", title: lang === "en" ? "Board" : "Tableau", x: 8, y: 10, width: 34, height: 70 },
   ];
 }
 
@@ -112,7 +116,7 @@ function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskI
   const firstPDF = materials.find(m => m.type === "pdf");
   const firstVideo = materials.find(m => m.type === "video");
   const firstDoc = materials.find(m => m.type === "document");
-  const chatAndBoard = defaultChatAndBoard(envId, taskId, lang);
+  const chatArtifacts = defaultChatArtifacts(envId, taskId);
 
   switch (template) {
     case "WRITING":
@@ -141,7 +145,7 @@ function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskI
           dockSide: firstDoc ? "left" : "none",
           zIndex: 2,
         },
-        ...chatAndBoard,
+        ...chatArtifacts,
       ];
 
     case "READING": {
@@ -168,7 +172,7 @@ function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskI
           dockSide: source ? "right" : "none",
           zIndex: 2,
         },
-        ...chatAndBoard,
+        ...chatArtifacts,
       ];
     }
 
@@ -194,7 +198,7 @@ function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskI
           dockSide: source ? "right" : "none",
           zIndex: 2,
         },
-        ...chatAndBoard,
+        ...chatArtifacts,
       ];
     }
 
@@ -208,7 +212,7 @@ function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskI
           x: 20, y: 10,
           width: 60, height: 75,
         },
-        ...chatAndBoard,
+        ...chatArtifacts,
       ];
 
     case "RESEARCH": {
@@ -233,7 +237,7 @@ function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskI
           dockSide: source ? "right" : "none",
           zIndex: 2,
         },
-        ...chatAndBoard,
+        ...chatArtifacts,
       ];
     }
 
@@ -247,7 +251,7 @@ function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskI
           x: 20, y: 10,
           width: 60, height: 75,
         },
-        ...chatAndBoard,
+        ...chatArtifacts,
       ];
   }
 }
@@ -410,16 +414,7 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
   const totalSteps = task.steps?.length ?? 0;
 
   // ── Check if device is phone ──────────────────────────────────────────────
-  // Reactive (matchMedia listener), not a one-time innerWidth read at mount — a student rotating a phone
-  // or resizing a desktop window past the 768px line otherwise kept the stale verdict until the next
-  // unrelated re-render.
-  const [isPhone, setIsPhone] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches);
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 767px)");
-    const onChange = () => setIsPhone(mq.matches);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
+  const isPhone = useIsPhone();
 
   // ── Load or create environment ────────────────────────────────────────────
   useEffect(() => {
@@ -729,7 +724,6 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
     setElapsedSeconds(0);
     setPhaseSeconds(0);
     setPhase("session");
-    startStudyBlocking(); // no-op if the Otto Tabs extension isn't installed — see extensionBridge.ts
     enterFullscreen(); // called synchronously from the Start button's click, so the browser's user-gesture requirement is satisfied
     const logId = crypto.randomUUID();
     setSessionLog({
@@ -752,16 +746,15 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
     setSessionStatus("active");
     setPhaseSeconds(0);
     setPhase("session"); // was missing — clicking "Resume" flipped status but left the setup screen on-screen
-    // Backfill chat/board for a session saved before both became default-present (see buildInitialArtifacts/
-    // defaultChatAndBoard) — added ONLY if genuinely missing, and never touches an existing one (no
-    // un-minimizing, no z-index bump): this is a silent resume, not the explicit click openOrFocusChat/
-    // openOrFocusBoard are for, so it must never undo a layout the student deliberately left minimized.
-    const missingTypes = (["chat", "board"] as const).filter((t) => !env.artifacts.some((a) => a.type === t));
-    const backfill = missingTypes.length ? defaultChatAndBoard(env.id, task.id, language).filter((a) => missingTypes.includes(a.type as "chat" | "board")) : [];
+    // Backfill chat for a session saved before it became default-present (see buildInitialArtifacts/
+    // defaultChatArtifacts) — added ONLY if genuinely missing, and never touches an existing one (no
+    // un-minimizing, no z-index bump): this is a silent resume, not the explicit click openOrFocusChat is for,
+    // so it must never undo a layout the student deliberately left minimized.
+    const backfill = env.artifacts.some((a) => a.type === "chat") ? [] : defaultChatArtifacts(env.id, task.id);
     updateEnv({ sessionStatus: "active", ...(backfill.length ? { artifacts: [...env.artifacts, ...backfill] } : {}) });
     enterFullscreen(); // called synchronously from the Resume button's click
     void api.recordMetric("study_session_resumed", 1);
-  }, [env, updateEnv, enterFullscreen, task.id, language]);
+  }, [env, updateEnv, enterFullscreen, task.id]);
 
   // ── Break ─────────────────────────────────────────────────────────────────
   const startBreak = useCallback(() => {
@@ -779,18 +772,15 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
     updateEnv({ sessionStatus: "active" });
   }, [updateEnv, resumeMusicAfterBreak]);
 
-  // ── End session ───────────────────────────────────────────────────────────
-  // `unblockSites` defaults to true (the official End flow always unblocks) but is explicitly false when
-  // this same function is reused for the header's plain back-arrow exit (see onBack below) — reported live
+  // ── End session ──────────────────────────────────────────────────────
+  // This same function is reused for the header's plain back-arrow exit (see onBack below) — reported live
   // as session time, task-completion, and camera-focus metrics ALL going unrecorded (and the RL bandit
   // never getting a reward) for that exit path, because this entire function — the ONLY place any of that
   // reporting happens — used to run exclusively from EndSessionModal's long-press-gated button. A plain
   // back-click is almost certainly how most students actually leave; silently skipping this for that case
-  // meant most real session data never reached the bandit or Focus Analytics at all, not just the rare
-  // long-press path. Site-blocking itself stays gated on the deliberate long-press (per
-  // extensionBridge.ts's own comment: "closing the tab or reloading mid-session does NOT bypass the
-  // block") — only the analytics/reward reporting below is now shared between both exits.
-  const endSession = useCallback(async (review?: { finished?: string; confusing?: string; nextStep?: string }, unblockSites = true) => {
+  // meant most real session data never reached the bandit or Focus Analytics at all. Both exits now share
+  // the full analytics/reward reporting below.
+  const endSession = useCallback(async (review?: { finished?: string; confusing?: string; nextStep?: string }) => {
     if (timerRef.current) clearInterval(timerRef.current);
     noiseRef.current?.stop();
     stopCustomAudio();
@@ -798,9 +788,6 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
     // Stop the focus camera before unmounting so useFocusCamera's stopCamera saves the focus session
     // to /api/focus/session (the cleanup-only effect just stops the stream, skipping that save).
     focusCamera.stopCamera();
-    // Only for the official End flow — see the comment above this function for why a casual back-exit
-    // must NOT do this. No-op if the extension isn't installed.
-    if (unblockSites) stopStudyBlocking();
     if (env) {
       const acc = faceMetricsAccumulatorRef.current;
       const focusMetrics = acc.count > 0 ? {
@@ -982,25 +969,8 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
     });
   }, [env, task.id, addArtifact, updateArtifact]);
 
-  // Same find-or-focus pattern as openOrFocusChat — the Board is meant to be ONE persistent surface per
-  // task, not a new artifact every time it's opened or every time Otto writes to it. "Always accessible"
-  // (per the feature ask) means: reachable from the tools drawer at any time, AND auto-surfaced (see the
-  // effect below) the moment Otto actually writes something, without the student having to go find it.
-  const openOrFocusBoard = useCallback(() => {
-    if (!env) return;
-    const existing = env.artifacts.find(a => a.type === "board");
-    if (existing) {
-      const nextZ = Math.max(0, ...env.artifacts.map(a => a.zIndex)) + 1;
-      updateArtifact(existing.id, { minimized: false, zIndex: nextZ });
-      return;
-    }
-    addArtifact({
-      id: crypto.randomUUID(), type: "board", title: language === "en" ? "Board" : "Tableau",
-      x: 8, y: 10, width: 34, height: 70, zIndex: 100,
-      minimized: false, maximized: false, dockSide: "none", contentState: {},
-      taskId: task.id, environmentId: env.id,
-    });
-  }, [env, task.id, addArtifact, updateArtifact, language]);
+  // openOrFocusBoard (the Board's equivalent of openOrFocusChat) was removed per direct instruction: the
+  // Board is a TUTOR-ONLY surface now (TutorSession.tsx) — Study Mode's canvas no longer has one to open.
 
   const removeArtifact = useCallback((id: string) => {
     setEnv(prev => {
@@ -1120,13 +1090,9 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
           openArtifactByKind("quiz", q.id, q.title);
         }
       }
-      // Same idea for the Board — if Otto wrote something new to it this turn, surface it (find-or-focus,
-      // not a new artifact every time) rather than leaving the student to notice it was updated on their
-      // own. This is what makes "always accessible" actually mean something beyond "reachable if you go
-      // looking" — the first time it's genuinely relevant, it comes to them. `updated` is the full cloud
-      // array now (board/problems are cloud-persisted again), so compare against the PRE-call counts to
-      // detect this turn's growth, same pattern as newQuizzes just above.
-      if ((updated.board?.length || 0) > (task.board?.length || 0) || (updated.problems?.length || 0) > (task.problems?.length || 0)) openOrFocusBoard();
+      // The board-surfacing step that used to live here (openOrFocusBoard) was removed — Study Mode's
+      // canvas no longer offers a Board (see chatAboutTask's tools gating, server/claude.ts), so `updated`
+      // never carries board/problems growth to react to any more.
     } catch (e: any) {
       setChatError(e?.message || "Couldn't send that — try again.");
       setChatInput(message);
@@ -1134,7 +1100,7 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
       setChatSending(false);
       setPendingMsg(null);
     }
-  }, [chatInput, chatSending, env, task, onTaskUpdate, openArtifactByKind, addArtifact, openOrFocusBoard, language]);
+  }, [chatInput, chatSending, env, task, onTaskUpdate, openArtifactByKind, addArtifact, language]);
 
   // ── Task checklist, right from the desk ─────────────────────────────────────
   // Previously Study Mode could only READ steps (TaskDetailDrawer/TaskInfoArtifact were plain text) — ticking
@@ -1173,12 +1139,12 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
   // ── Phone block ───────────────────────────────────────────────────────────
   if (isPhone) {
     return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh", padding: "32px", textAlign: "center", backgroundColor: "#0f0f0f", color: "#e0e0e0" }}>
-        <h2 style={{ marginBottom: "12px", fontWeight: 600 }}>{language === "en" ? "Study Mode requires a larger screen" : "Le mode révision demande un écran plus grand"}</h2>
-        <p style={{ color: "#888", lineHeight: 1.6, maxWidth: "300px" }}>{language === "en"
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh", padding: "32px", textAlign: "center", backgroundColor: "var(--bg)", color: "var(--ink)" }}>
+        <h2 style={{ marginBottom: "12px", fontWeight: 600, fontFamily: "var(--display)", letterSpacing: "var(--tracking-tight)" }}>{language === "en" ? "Study Mode requires a larger screen" : "Le mode révision demande un écran plus grand"}</h2>
+        <p style={{ color: "var(--ink-2)", lineHeight: 1.6, maxWidth: "300px" }}>{language === "en"
           ? "Study Mode is designed for laptop and iPad. Continue using Otto on this device, and switch to a larger screen to start a study session."
           : "Le mode révision est conçu pour l'ordinateur et l'iPad. Continue d'utiliser Otto sur cet appareil, et passe à un écran plus grand pour lancer une session."}</p>
-        <button onClick={onExit} style={{ marginTop: "24px", padding: "12px 24px", borderRadius: "8px", border: "1px solid #333", background: "none", color: "#e0e0e0", cursor: "pointer" }}>{language === "en" ? "← Back to tasks" : "← Retour aux tâches"}</button>
+        <button onClick={onExit} style={{ marginTop: "24px", padding: "12px 24px", borderRadius: "var(--radius-sm)", border: "1px solid var(--line)", background: "none", color: "var(--ink)", cursor: "pointer" }}>{language === "en" ? "← Back to tasks" : "← Retour aux tâches"}</button>
       </div>
     );
   }
@@ -1235,7 +1201,7 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
         // own comment for why that silently dropped most real session data. Calls the SAME reporting
         // endSession uses, just without unblocking sites (that stays gated on the deliberate long-press
         // End action) and without a review prompt (this is a casual exit, not the reflective End flow).
-        onBack={() => { void endSession(undefined, false); }}
+        onBack={() => { void endSession(); }}
         onSubmitStep={() => setShowSubtaskSubmit(true)}
         isFullscreen={isFullscreen}
         onToggleFullscreen={() => (isFullscreen ? exitFullscreen() : enterFullscreen())}
@@ -1261,27 +1227,32 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
       }}>
         {focusCamera.enabled && focusCamera.tracking.status === "ready" && (
           <div style={{
-            display: "flex", alignItems: "center", gap: "6px", padding: "4px 10px", borderRadius: "20px",
-            background: "rgba(0,0,0,0.5)", backdropFilter: "blur(8px)", fontSize: "12px", color: "#e0e0e0",
-            pointerEvents: "none",
+            display: "flex", alignItems: "center", gap: "6px", padding: "4px 10px", borderRadius: "var(--radius-pill)",
+            background: "var(--surface-glass)", border: "1px solid var(--line-glass)",
+            backdropFilter: "blur(var(--blur)) saturate(180%)", WebkitBackdropFilter: "blur(var(--blur)) saturate(180%)",
+            fontSize: "12px", color: "var(--ink)", pointerEvents: "none",
           }}>
-            <span style={{ fontSize: "16px" }}>
-              {focusCamera.tracking.concentration >= 70 ? "🎯" : focusCamera.tracking.concentration >= 40 ? "◐" : "○"}
+            <span style={{ fontSize: "16px", display: "inline-flex", alignItems: "center" }}>
+              {focusCamera.tracking.concentration >= 70 ? <Target size={16} aria-hidden="true" /> : focusCamera.tracking.concentration >= 40 ? "◐" : "○"}
             </span>
             <span>{focusCamera.tracking.concentration}</span>
-            <span style={{ opacity: 0.6, fontSize: 10 }}>{focusCamera.tracking.gazeStatus}</span>
+            <span style={{ opacity: 0.6, fontSize: 10 }}>
+              {(() => { const g = GAZE_LABELS[focusCamera.tracking.gazeStatus] || [focusCamera.tracking.gazeStatus, focusCamera.tracking.gazeStatus]; return language === "en" ? g[1] : g[0]; })()}
+            </span>
           </div>
         )}
         <button
           onClick={() => focusCamera.enabled ? focusCamera.stopCamera() : void focusCamera.startCamera()}
           style={{
-            padding: "4px 10px", borderRadius: "20px", border: "1px solid rgba(255,255,255,0.15)",
-            background: focusCamera.enabled ? "rgba(80,200,120,0.2)" : "rgba(0,0,0,0.5)",
-            backdropFilter: "blur(8px)", fontSize: "12px", color: "#e0e0e0", cursor: "pointer",
+            padding: "4px 10px", borderRadius: "var(--radius-pill)",
+            border: focusCamera.enabled ? "1px solid var(--ok)" : "1px solid var(--line-glass)",
+            background: focusCamera.enabled ? "color-mix(in srgb, var(--ok) 15%, var(--surface-glass))" : "var(--surface-glass)",
+            backdropFilter: "blur(var(--blur)) saturate(180%)", WebkitBackdropFilter: "blur(var(--blur)) saturate(180%)",
+            fontSize: "12px", color: "var(--ink)", cursor: "pointer",
           }}
           title={language === "en" ? "Toggle focus tracking (webcam)" : "Suivi de concentration (caméra)"}
         >
-          {focusCamera.enabled ? "◉ Focus on" : "○ Focus off"}
+          {focusCamera.enabled ? (language === "en" ? "◉ Focus on" : "◉ Concentration on") : (language === "en" ? "○ Focus off" : "○ Concentration off")}
         </button>
       </div>}
 
@@ -1402,10 +1373,6 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
               setOpenPanel(null);
             }}
             onAddTool={(type) => {
-              // Board is a single persistent surface per task (find-or-focus, see openOrFocusBoard) —
-              // opening it from the tools drawer must not spawn a second one alongside whatever Otto's
-              // already written to.
-              if (type === "board") { openOrFocusBoard(); setOpenPanel(null); return; }
               // Same "don't trust the caller" posture as onAddLink's own gdoc re-check just above: the
               // drawer already omits this tool when betaFeatures is off, but re-checking here means this
               // stays safe even if another caller is ever added later.

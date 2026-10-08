@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
+import { Pencil } from "lucide-react";
 import type { ArtifactState } from "../StudyTypes.ts";
 import { startStroke, inkExtend, renderAllStrokes, type InkPoint, type InkStroke } from "../../ink.ts";
 
@@ -112,7 +113,7 @@ export function WhiteboardArtifact({ artifact, onChange }: WhiteboardArtifactPro
   return (
     <div className="sm-whiteboard-body">
       <div className="sm-whiteboard-toolbar">
-        <button className={`sm-wb-btn ${tool === "pen" ? "active" : ""}`} onClick={() => setTool("pen")}>✏ Pen</button>
+        <button className={`sm-wb-btn ${tool === "pen" ? "active" : ""}`} onClick={() => setTool("pen")}><Pencil size={13} aria-hidden="true" /> Pen</button>
         <button className={`sm-wb-btn ${tool === "eraser" ? "active" : ""}`} onClick={() => setTool("eraser")}>◻ Erase</button>
         <input type="color" value={color} onChange={e => setColor(e.target.value)} style={{ width: 28, height: 28, border: "none", borderRadius: 4, cursor: "pointer" }} />
         <select value={strokeWidth} onChange={e => setStrokeWidth(Number(e.target.value))} className="sm-wb-select">

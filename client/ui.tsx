@@ -87,20 +87,42 @@ const THINKING_WORDS = [
   "Establishing relationships", "Generating hypotheses", "Refining the model", "Resolving inconsistencies",
   "Finalizing the synthesis",
 ];
-/** Cycles through THINKING_WORDS at a fixed interval while `active` — one shared hook so every chat surface
- *  (TaskCard.tsx's TaskChat, AskOttoPanel.tsx) shows the same "Otto is working" vibe instead of each
- *  reimplementing its own timer. Starts at a random offset each time it activates so two chats open at once
- *  (or the same chat across two messages) don't visibly march in lockstep. Returns null while inactive so
- *  callers can render nothing/fall back to a plain "…" instead of a stale leftover word. */
+// Second/third tiers for a genuinely long wait (chatAboutTask can run up to CHAT_DEADLINE_MS, ~2min, once
+// tool rounds + correction retries stack up) — same playful single-word-jargon register as THINKING_WORDS
+// above, not a tone shift into a generic "please wait" — but honest about elapsed time instead of cycling
+// the SAME "just started" vibe for two straight minutes, which was the actual "feels slow" complaint (the
+// AI call itself isn't faster, but the student stops being misled about how much longer to expect).
+const STILL_WORKING_WORDS = [
+  "Double-checking", "Cross-verifying", "Working through the details", "Still reasoning through it",
+  "Tracing it back", "Checking the logic", "Making sure this lands right", "Taking a closer look",
+];
+const TAKING_LONGER_WORDS = [
+  "Still working on a thorough answer", "This one's taking a bit longer", "Nearly there",
+  "Pulling together a solid answer", "Almost ready",
+];
+const THINKING_BAND_MS = 8_000;
+const STILL_WORKING_BAND_MS = 25_000;
+/** Cycles through a time-aware word band at a fixed interval while `active` — one shared hook so every
+ *  chat surface (TaskCard.tsx's TaskChat, AskOttoPanel.tsx) shows the same "Otto is working" vibe instead
+ *  of each reimplementing its own timer. Starts at a random offset each time it activates so two chats
+ *  open at once (or the same chat across two messages) don't visibly march in lockstep. Returns null while
+ *  inactive so callers can render nothing/fall back to a plain "…" instead of a stale leftover word. */
 export function useThinkingWord(active: boolean, intervalMs = 1400): string | null {
   const [i, setI] = useState(0);
+  const [elapsedMs, setElapsedMs] = useState(0);
   useEffect(() => {
-    if (!active) return;
+    if (!active) { setElapsedMs(0); return; }
+    const startedAt = Date.now();
     setI(Math.floor(Math.random() * THINKING_WORDS.length));
-    const id = setInterval(() => setI((v) => (v + 1) % THINKING_WORDS.length), intervalMs);
+    const id = setInterval(() => {
+      setElapsedMs(Date.now() - startedAt);
+      setI((v) => v + 1);
+    }, intervalMs);
     return () => clearInterval(id);
   }, [active, intervalMs]);
-  return active ? THINKING_WORDS[i] : null;
+  if (!active) return null;
+  const words = elapsedMs >= STILL_WORKING_BAND_MS ? TAKING_LONGER_WORDS : elapsedMs >= THINKING_BAND_MS ? STILL_WORKING_WORDS : THINKING_WORDS;
+  return words[i % words.length];
 }
 
 /** Today as a bare "YYYY-MM-DD" — for comparing against a milestone's targetDate (same bare-string
@@ -238,27 +260,24 @@ export function fmtWhen(when: string, L?: (fr: string, en: string) => string): s
   return s;
 }
 
-// Open a URL in a new tab. Prefers the Otto Chrome extension (web/extension/) — it sets a DOM flag and
-// relays postMessage to chrome.tabs.create, so tabs can open UNATTENDED during auto-do. Without it, falls
-// back to window.open (works on a user click).
-export const TAB_GROUP = "Otto"; // all tabs Otto opens go into this one named group
-const extPresent = () => document.documentElement.getAttribute("data-weave-ext") === "1";
-// Open one or many tabs. With the extension, they go into a NAMED tab group (per task); without it,
-// window.open (no grouping possible from a plain page).
-export function openTab(url: string, group?: string) {
-  if (extPresent()) window.postMessage({ type: "weave-open-tab", url, group }, window.location.origin);
-  else window.open(url, "_blank", "noopener");
+// Open a URL in a new tab via window.open (with noopener so the opened page can't reach back into this
+// one via window.opener).
+// Kept as a label for the (formerly extension-managed) Otto tab group; grouping now happens only in the
+// browser's own tab UI. The optional group args are accepted and ignored so callers don't have to change.
+export const TAB_GROUP = "Otto";
+export function openTab(url: string, _group?: string) {
+  window.open(url, "_blank", "noopener");
 }
-export function openTabs(urls: string[], group?: string) {
+export function openTabs(urls: string[], _group?: string) {
   if (!urls.length) return;
-  if (extPresent()) window.postMessage({ type: "weave-open-tabs", urls, group }, window.location.origin);
-  else urls.forEach((u) => window.open(u, "_blank", "noopener"));
+  urls.forEach((u) => window.open(u, "_blank", "noopener"));
 }
 
 // Auto-open created documents (Doc/Sheet/Slides) when a task finishes — handy, but capped so you're never
-// flooded with tabs, only via the extension (a plain window.open would be popup-blocked without a click),
-// and EACH doc opens at most ONCE EVER. The opened-URL set is PERSISTED (localStorage) so reopening the app
-// never re-opens the same tabs again. Toggle in Settings (default ON).
+// flooded with tabs. Browser popup blockers usually reject window.open without a user click, so in practice
+// this only fires for opens that happen in a user-gesture context; EACH doc still opens at most ONCE EVER.
+// The opened-URL set is PERSISTED (localStorage) so reopening the app never re-opens the same tabs again.
+// Toggle in Settings (default ON).
 const DOC_RE = /docs\.google\.com\/(document|spreadsheets|presentation)/i;
 const OPENED_KEY = "otto-opened-docs";
 const openedDocs: Set<string> = (() => { try { return new Set<string>(JSON.parse(localStorage.getItem(OPENED_KEY) || "[]")); } catch { return new Set(); } })();
@@ -269,7 +288,7 @@ const markDocsOpened = (urls: string[]) => {
 let sessionDocsOpened = 0;               // burst control: cap how many open within one session load
 const SESSION_DOC_CAP = 4;               // ceiling on auto-opened docs per session load
 const PER_TASK_DOC_CAP = 2;              // and per task
-// Auto-opening created docs is OFF by default — it needs the Tabs extension, so it's opt-in ("1" = on).
+// Auto-opening created docs is OFF by default — it's opt-in ("1" = on).
 const autoOpenDocsOn = () => { try { return localStorage.getItem("otto-autoopen-docs") === "1"; } catch { return false; } };
 
 /** Auto-open the docs a finished task created, respecting every cap. Encapsulated here (rather than inlined
@@ -356,14 +375,14 @@ const scriptify = (s: string, map: Record<string, string>, marker: string): stri
   [...s].every((c) => map[c]) ? [...s].map((c) => map[c]).join("") : `${marker}${s.length > 1 ? `(${s})` : s}`;
 const LATEX_SYMBOLS: [RegExp, string][] = [
   [/\\times/g, "×"], [/\\cdot/g, "·"], [/\\div/g, "÷"], [/\\pm/g, "±"], [/\\mp/g, "∓"],
-  [/\\leq?/g, "≤"], [/\\geq?/g, "≥"], [/\\neq/g, "≠"], [/\\approx/g, "≈"], [/\\equiv/g, "≡"], [/\\propto/g, "∝"],
+  [/\\leq?(?![a-zA-Z])/g, "≤"], [/\\geq?(?![a-zA-Z])/g, "≥"], [/\\neq/g, "≠"], [/\\approx/g, "≈"], [/\\equiv/g, "≡"], [/\\propto/g, "∝"],
   [/\\Longrightarrow/g, "⟹"], [/\\longrightarrow/g, "⟶"], [/\\Rightarrow/g, "⇒"], [/\\Leftarrow/g, "⇐"],
   [/\\(right|left)?arrow|\\to(?![a-zA-Z])/g, "→"], [/\\Leftrightarrow|\\iff(?![a-zA-Z])/g, "⇔"], [/\\leftrightarrow/g, "↔"], [/\\infty/g, "∞"],
   [/\\pi/g, "π"], [/\\theta/g, "θ"], [/\\alpha/g, "α"], [/\\beta/g, "β"], [/\\gamma/g, "γ"], [/\\Gamma/g, "Γ"],
   [/\\[Dd]elta/g, "Δ"], [/\\lambda/g, "λ"], [/\\mu/g, "μ"], [/\\sigma/g, "σ"], [/\\phi/g, "φ"], [/\\omega/g, "ω"],
   [/\\Omega/g, "Ω"], [/\\eta/g, "η"], [/\\rho/g, "ρ"], [/\\tau/g, "τ"], [/\\chi/g, "χ"], [/\\psi/g, "ψ"], [/\\nu/g, "ν"], [/\\xi/g, "ξ"], [/\\zeta/g, "ζ"], [/\\kappa/g, "κ"],
   [/\\sum/g, "Σ"], [/\\prod/g, "Π"], [/\\int/g, "∫"], [/\\oint/g, "∮"], [/\\forall/g, "∀"], [/\\exists/g, "∃"],
-  [/\\in/g, "∈"], [/\\notin/g, "∉"], [/\\subseteq/g, "⊆"], [/\\subset/g, "⊂"], [/\\cup/g, "∪"], [/\\cap/g, "∩"], [/\\emptyset|\\varnothing/g, "∅"],
+  [/\\in(?![a-zA-Z])/g, "∈"], [/\\notin/g, "∉"], [/\\subseteq/g, "⊆"], [/\\subset/g, "⊂"], [/\\cup(?![a-zA-Z])/g, "∪"], [/\\cap(?![a-zA-Z])/g, "∩"], [/\\emptyset|\\varnothing/g, "∅"],
   [/\\partial/g, "∂"], [/\\nabla/g, "∇"], [/\\mid/g, "|"], [/\\setminus/g, "\\"],
   [/\\cdots/g, "⋯"], [/\\ldots|\\dots/g, "…"], [/\\vdots/g, "⋮"], [/\\ddots/g, "⋱"],
   // Function names — roman (upright), never treated as adjacent-variable multiplication like a bare "sin".
@@ -430,13 +449,17 @@ function formatMath(text: string): string {
   return s.replace(/[{}]/g, "").replace(/ {2,}/g, " ").trim();
 }
 
+export { formatMath, boldify };
+
 /** Light markdown → JSX for an in-app note (CREATE_NOTE's body): headings, **bold**, and bullet/numbered
  *  lists. Never sent anywhere — this only ever renders inside the popup, so a small hand-rolled pass is
  *  enough (no need for a full markdown library just for this). */
 /** `**bold**` → <b>. Module-scope (not a closure inside renderNoteBody) so renderChatText can reuse it. */
 function boldify(s: string): ReactNode {
-  const parts = s.split(/(\*\*[^*]+\*\*)/g);
-  return parts.map((p, i) => (p.startsWith("**") && p.endsWith("**") ? <b key={i}>{p.slice(2, -2)}</b> : p));
+  // **bold** and ==highlight== (the tutor marks the key part of a passage/problem/working with ==…==).
+  const parts = s.split(/(\*\*[^*]+\*\*|==[^=\n]+==)/g);
+  return parts.map((p, i) => (p.startsWith("**") && p.endsWith("**") ? <b key={i}>{p.slice(2, -2)}</b>
+    : p.length > 4 && p.startsWith("==") && p.endsWith("==") ? <mark key={i} className="otto-mark">{p.slice(2, -2)}</mark> : p));
 }
 
 // A GFM-style pipe row: "| a | b | c |" (leading/trailing pipes optional). Splits on unescaped `|`.
@@ -754,16 +777,22 @@ function StudyHelpPanel({ taskId, card }: { taskId?: string; card: StudyHelpCard
 /** Drillable flashcard viewer (CREATE_FLASHCARDS): click flips the card, → marks it right and
  *  advances, ← marks it wrong and advances. Ends on a score summary with a restart. Keyboard-first so a
  *  student can drill an entire deck without touching the mouse. */
-function loadDeckProgress(deckId: string): { i: number; right: number[]; wrong: number[] } | null {
+// Keyed by userId too, same reasoning as localDecks.ts's deck-CONTENT store — a bare deck.id key is
+// GLOBAL across every account on this browser, so a different account landing on a deck that happens to
+// share an id (or just reading stale progress left behind by the account before it) would see/resume
+// someone else's review position. "anon" is the pre-fix key's effective namespace, so a signed-out caller
+// degrades to the old (still account-unscoped, but that's inherent to being signed out) behavior.
+function deckProgressKey(deckId: string, userId: string | null): string { return `otto-deck:${userId || "anon"}:${deckId}`; }
+function loadDeckProgress(deckId: string, userId: string | null): { i: number; right: number[]; wrong: number[] } | null {
   try {
-    const raw = localStorage.getItem(`otto-deck:${deckId}`);
+    const raw = localStorage.getItem(deckProgressKey(deckId, userId));
     if (!raw) return null;
     const p = JSON.parse(raw);
     if (!Number.isInteger(p?.i) || !Array.isArray(p?.right) || !Array.isArray(p?.wrong)) return null;
     return { i: p.i, right: p.right, wrong: p.wrong };
   } catch { return null; }
 }
-export function FlashcardDeck({ deck, onReview, onNotNeeded, taskId, onAllCorrect, onlyIndices }: { deck: TaskFlashcards; onReview?: (cardIndex: number, correct: boolean) => void; onNotNeeded?: (cardIndex: number) => void; taskId?: string; onAllCorrect?: () => void;
+export function FlashcardDeck({ deck, onReview, onNotNeeded, taskId, onAllCorrect, onlyIndices, userId }: { deck: TaskFlashcards; onReview?: (cardIndex: number, correct: boolean) => void; onNotNeeded?: (cardIndex: number) => void; taskId?: string; onAllCorrect?: () => void; userId?: string | null;
   /** Restricts the review pass to exactly these card indices (still excludes `notNeeded` ones) instead of
    *  every card in the deck — the DueReviews cross-task view (App.tsx) needs this: a deck's spaced-
    *  repetition schedule (nextLeitnerReview, shared/types.ts) can have most of its cards sitting on a
@@ -775,7 +804,7 @@ export function FlashcardDeck({ deck, onReview, onNotNeeded, taskId, onAllCorrec
   onlyIndices?: number[];
 }) {
   const L = useLang();
-  const saved = useRef(loadDeckProgress(deck.id)).current;
+  const saved = useRef(loadDeckProgress(deck.id, userId ?? null)).current;
   const [i, setI] = useState(saved?.i ?? 0);
   const [flipped, setFlipped] = useState(false);
   const [right, setRight] = useState<number[]>(saved?.right ?? []);
@@ -861,10 +890,10 @@ export function FlashcardDeck({ deck, onReview, onNotNeeded, taskId, onAllCorrec
   useEffect(() => {
     if (retryQueue) return;
     try {
-      if (done) { localStorage.removeItem(`otto-deck:${deck.id}`); return; }
-      localStorage.setItem(`otto-deck:${deck.id}`, JSON.stringify({ i, right, wrong }));
+      if (done) { localStorage.removeItem(deckProgressKey(deck.id, userId ?? null)); return; }
+      localStorage.setItem(deckProgressKey(deck.id, userId ?? null), JSON.stringify({ i, right, wrong }));
     } catch { /* private browsing / storage full — progress just won't survive a reload, not fatal */ }
-  }, [deck.id, i, right, wrong, done, retryQueue]);
+  }, [deck.id, userId, i, right, wrong, done, retryQueue]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (done) return;
@@ -962,9 +991,12 @@ export function FlashcardDeck({ deck, onReview, onNotNeeded, taskId, onAllCorrec
  *  the interaction — lock on pick, reveal the right answer, explain why — has nothing in common with a flip. */
 // Read once at mount time (lazy initializer) — never re-read after, so a later edit to this quiz's own
 // progress by THIS component doesn't loop back through localStorage on its own writes.
-function loadQuizProgress(quizId: string): { i: number; right: number[]; wrongIdx: number[]; order: number[] | null } | null {
+// Same account-scoping fix as FlashcardDeck's loadDeckProgress/deckProgressKey above — a bare quizId key
+// is global across every account on this browser.
+function quizProgressKey(quizId: string, userId: string | null): string { return `otto-quiz:${userId || "anon"}:${quizId}`; }
+function loadQuizProgress(quizId: string, userId: string | null): { i: number; right: number[]; wrongIdx: number[]; order: number[] | null } | null {
   try {
-    const raw = localStorage.getItem(`otto-quiz:${quizId}`);
+    const raw = localStorage.getItem(quizProgressKey(quizId, userId));
     if (!raw) return null;
     const p = JSON.parse(raw);
     if (!Number.isInteger(p?.i) || !Array.isArray(p?.right) || !Array.isArray(p?.wrongIdx)) return null;
@@ -1005,9 +1037,9 @@ function QuizWrongReflection({ subject, question }: { subject: string; question:
   );
 }
 
-export function QuizPlayer({ quiz, taskId, subject }: { quiz: TaskQuiz; taskId?: string; subject?: string }) {
+export function QuizPlayer({ quiz, taskId, subject, userId }: { quiz: TaskQuiz; taskId?: string; subject?: string; userId?: string | null }) {
   const L = useLang();
-  const saved = useRef(loadQuizProgress(quiz.id)).current;
+  const saved = useRef(loadQuizProgress(quiz.id, userId ?? null)).current;
   const [i, setI] = useState(saved?.i ?? 0);
   const [picked, setPicked] = useState<number | null>(null);
   const [right, setRight] = useState<number[]>(saved?.right ?? []);
@@ -1050,10 +1082,10 @@ export function QuizPlayer({ quiz, taskId, subject }: { quiz: TaskQuiz; taskId?:
   // mid-pick) — just enough that "I got interrupted" doesn't mean starting the whole quiz over.
   useEffect(() => {
     try {
-      if (done) { localStorage.removeItem(`otto-quiz:${quiz.id}`); return; }
-      localStorage.setItem(`otto-quiz:${quiz.id}`, JSON.stringify({ i, right, wrongIdx, order }));
+      if (done) { localStorage.removeItem(quizProgressKey(quiz.id, userId ?? null)); return; }
+      localStorage.setItem(quizProgressKey(quiz.id, userId ?? null), JSON.stringify({ i, right, wrongIdx, order }));
     } catch { /* private browsing / storage full — progress just won't survive a reload, not fatal */ }
-  }, [quiz.id, i, right, wrongIdx, order, done]);
+  }, [quiz.id, userId, i, right, wrongIdx, order, done]);
   // Only the "advance past a picked answer" shortcut remains — no number-key shortcut to PICK an answer:
   // that let a student cycle 1/2/3/4 blind without reading the options, defeating the point of a
   // discrimination check (see the tool's own doc comment above CREATE_QUIZ_TOOL). Enter deliberately does
@@ -1202,7 +1234,7 @@ export function PracticeProblemCard({ problem, taskId, onAnswered }: { problem: 
         <p className={`practice-problem-verdict ${result.correct ? "correct" : "wrong"}`} role="status" aria-live="polite">
           {result.correct
             ? L("✓ Correct.", "✓ Correct.")
-            : L(`✗ Pas tout à fait — la bonne réponse : ${problem.answer}`, `✗ Not quite — the correct answer: ${problem.answer}`)}
+            : L("✗ Pas tout à fait — réessaie (l'indice d'Otto juste en dessous peut t'aider).", "✗ Not quite — try again (Otto's hint just below can help).")}
         </p>
       ) : null}
       {taskId ? (
@@ -1221,7 +1253,7 @@ export function PracticeProblemCard({ problem, taskId, onAnswered }: { problem: 
 // both at once. Only the TOP of the stack responds; closing it pops back to whichever modal was underneath.
 const modalStack: (() => void)[] = [];
 
-export function TaskModal({ onClose, children, nested, title }: { onClose: () => void; children: ReactNode; nested?: boolean; title?: string }) {
+export function TaskModal({ onClose, children, nested, title, wide }: { onClose: () => void; children: ReactNode; nested?: boolean; title?: string; wide?: boolean }) {
   // Closing used to unmount instantly (a hard cut, no exit motion) while opening got a full pop-in —
   // asymmetric and the one modal-close moment in the app that read as unpolished. Mirror the entrance:
   // play a quick close animation, THEN unmount. The animation itself is now a real `motion.div` spring
@@ -1334,7 +1366,7 @@ export function TaskModal({ onClose, children, nested, title }: { onClose: () =>
           quiz's own <h3>, or TaskFocus's <h2>) in whatever markup that component chooses, so there's no
           reliable element to point an id at from here — the caller passes the same text as a plain string
           instead. Falls back to a generic name so the dialog is never announced completely unlabelled. */}
-      <motion.div ref={panelRef} className={`task-modal ${nested ? "nested" : ""}`} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={title || L("Détails", "Details")} tabIndex={-1} {...panelMotion}>
+      <motion.div ref={panelRef} className={`task-modal ${nested ? "nested" : ""} ${wide ? "wide" : ""}`} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={title || L("Détails", "Details")} tabIndex={-1} {...panelMotion}>
         <button className={`task-modal-x ${nested ? "nested" : ""}`} onClick={doClose} aria-label={L("Fermer", "Close")}>✕</button>
         {children}
       </motion.div>

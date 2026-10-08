@@ -5,6 +5,9 @@ import * as Sentry from "@sentry/react";
 import { App } from "./App.tsx";
 import "./styles.css";
 import "./tally.css";
+import "./lab.css";
+import "./coursework.css";
+import "./tour.css";
 
 // Same purpose as the server-side wiring in server/sentry.ts: production error visibility, currently
 // nonexistent on the client (a render crash or a rejected promise only ever reached the console — a real
@@ -17,6 +20,18 @@ if (SENTRY_DSN) {
   Sentry.init({ dsn: SENTRY_DSN, environment: import.meta.env.DEV ? "development" : "production", tracesSampleRate: 0 });
 }
 
+/** Language for the last-resort error boundary. It renders OUTSIDE App's LangProvider (the provider is
+ *  inside <App/>, which this very boundary wraps), so it can't read the ambient language — the fallback
+ *  copy used to be hardcoded English and a French student saw it in English. Read the same two sources the
+ *  pre-login screens use (App.tsx's preLoginLang): the persisted landing choice, then the browser's language. */
+function crashLang(): "fr" | "en" {
+  try {
+    const saved = localStorage.getItem("otto-landing-lang");
+    if (saved === "fr" || saved === "en") return saved;
+  } catch { /* ignore */ }
+  return typeof navigator !== "undefined" && /^en/i.test(navigator.language) ? "en" : "fr";
+}
+
 /** Last-resort error boundary: if any render throws (e.g. malformed task data), show a recoverable
  *  fallback instead of a blank white screen — credibility-critical for production. */
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -25,12 +40,13 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
   componentDidCatch(error: Error) { console.error("[otto] render error:", error); if (SENTRY_DSN) Sentry.captureException(error, { tags: { scope: "render" } }); }
   render() {
     if (this.state.error) {
+      const en = crashLang() === "en";
       return (
         <div className="screen crash">
           <div className="crash-card">
-            <h1>Something went wrong</h1>
-            <p>Otto hit an unexpected error. Reloading usually fixes it.</p>
-            <button className="btn primary big" onClick={() => window.location.reload()}>Reload</button>
+            <h1>{en ? "Something went wrong" : "Quelque chose s'est mal passé"}</h1>
+            <p>{en ? "Otto hit an unexpected error. Reloading usually fixes it." : "Otto a rencontré une erreur inattendue. Recharger la page règle généralement le problème."}</p>
+            <button className="btn primary big" onClick={() => window.location.reload()}>{en ? "Reload" : "Recharger"}</button>
           </div>
         </div>
       );

@@ -75,6 +75,16 @@ try {
     const readWhiteboard = await req("/api/tutor/read-whiteboard", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ image: "data:image/png;base64,abc" }) });
     check("POST /api/tutor/read-whiteboard → 401 (auth checked first)", readWhiteboard.status === 401);
 
+    // The Tutor's file-upload attach button (a photo with no text layer) — same auth-before-vision shape.
+    const readPhoto = await req("/api/tutor/read-photo", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ image: "data:image/png;base64,abc" }) });
+    check("POST /api/tutor/read-photo → 401 (auth checked first)", readPhoto.status === 401);
+
+    // Admin metrics dashboard — gated to one hardcoded email (server/index.ts's isAdmin). Auth is checked
+    // BEFORE the admin check, so logged-out still 401s rather than leaking a 403 "you're not the admin"
+    // (which would at least confirm the route exists and requires a specific identity to someone probing).
+    const adminMetrics = await req("/api/admin/metrics");
+    check("GET /api/admin/metrics → 401 when logged out (auth checked before the admin check)", adminMetrics.status === 401);
+
     // Account export/import — the project-to-project migration path (export from one Supabase project,
     // import into a fresh account on another). Auth checked before either ever touches storage.
     const exportGet = await req("/api/account/export");
@@ -153,6 +163,30 @@ try {
 
     const reset = await req("/api/auth/reset-password", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: "whatever", password: "longenoughpassword" }) });
     check("reset-password: valid shape, no Supabase → 500 with the documented message", reset.status === 500 && /supabase/i.test(reset.body?.error || ""));
+  }
+
+  // The interactive-scene route (CREATE_INTERACTIVE board artifacts). This one is worth a real HTTP check
+  // rather than only a source pin: the whole reason it exists is that the headers have to come out RIGHT
+  // (its own CSP with 'unsafe-inline', and X-Frame-Options relaxed from the app-wide DENY) — with the
+  // app's normal headers the iframe renders blank, which is exactly the bug this route was added to fix.
+  console.log("— GET /api/interactive/:taskId/:entryId — scene document, its own CSP, framable");
+  {
+    const r = await fetch(base + "/api/interactive/no-such-task/no-such-entry");
+    check("unauthenticated → 401, same gate as every other task route", r.status === 401);
+
+    // Header assertions have to run on a response the route itself produced. requireAuth answers before the
+    // handler, so check the app-level middleware didn't somehow drop them, then assert the route's own
+    // header contract through its source-of-truth constant instead of guessing at it here.
+    const { INTERACTIVE_SCENE_CSP } = await import("../server/claude.ts");
+    check("the scene CSP allows inline script (without it, every scene is blank)", /script-src [^;]*'unsafe-inline'/.test(INTERACTIVE_SCENE_CSP));
+    check("the scene CSP still blocks network calls out of a scene", /connect-src 'none'/.test(INTERACTIVE_SCENE_CSP));
+    check("the scene CSP has no default-src 'self' loophole", /default-src 'none'/.test(INTERACTIVE_SCENE_CSP));
+
+    const { interactiveSceneDocument } = await import("../server/claude.ts");
+    const doc = interactiveSceneDocument("<svg><circle r='5'/></svg>");
+    check("the served document wraps the scene in a real html document", doc.startsWith("<!doctype html>") && doc.includes("<svg><circle r='5'/></svg>"));
+    check("the served document carries the blank-guard fallback", doc.includes("__otto_fallback") && doc.includes("This interactive didn't load"));
+    check("the guard's closing script tag isn't broken by string concatenation", doc.includes("</script>") && !doc.includes("<\\/script>"));
   }
 } finally {
   server.close();

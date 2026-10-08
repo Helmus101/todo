@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { TaskProblem } from "../../shared/types.ts";
+import { practiceAnswerMatches } from "../../shared/types.ts";
 import { stripStrayMarkdown, useLang } from "../ui.tsx";
 
 interface InlineProblemProps {
@@ -15,19 +16,19 @@ export function InlineProblem({ problem }: InlineProblemProps) {
   const L = useLang();
   const isMCQ = Array.isArray(problem.options) && problem.options!.length >= 2 && typeof problem.correct === "number";
   const [picked, setPicked] = useState<number | null>(null);
+  const [wrong, setWrong] = useState<number[]>([]);
   const [textAnswer, setTextAnswer] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [showHint, setShowHint] = useState(false);
 
-  // Free-response check: trimmed, case-insensitive comparison
-  const checkFreeResponse = (): boolean => {
-    if (!problem.answer) return false;
-    const normalize = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
-    return normalize(textAnswer) === normalize(problem.answer);
-  };
+  // Same lenient matcher as everywhere else ("5pi/6" = "5π/6", "7/2" = "3.5").
+  const checkFreeResponse = (): boolean => !!problem.answer && practiceAnswerMatches(textAnswer, problem.answer);
 
-  const isCorrect = isMCQ ? picked === problem.correct : submitted ? checkFreeResponse() : false;
-  const answered = isMCQ ? picked !== null : submitted;
+  // NEVER reveals the answer (same rule as the Board): a miss says "try again"; the ✓ and the explanation
+  // only appear once the student gets it right themselves.
+  const answered = isMCQ ? picked !== null && picked === problem.correct : submitted && checkFreeResponse();
+  const missed = !answered && (isMCQ ? wrong.length > 0 : submitted);
+  const pick = (oi: number) => { if (oi === problem.correct) setPicked(oi); else setWrong((w) => [...w.filter((x) => x !== oi), oi]); };
 
   return (
     <div className="sm-inline-problem">
@@ -53,14 +54,14 @@ export function InlineProblem({ problem }: InlineProblemProps) {
       {isMCQ ? (
         <div className="sm-inline-problem-opts">
           {problem.options!.map((opt, oi) => {
-            const state = !answered ? "" : oi === problem.correct ? "correct" : oi === picked ? "wrong" : "";
+            const state = answered && oi === problem.correct ? "correct" : wrong.includes(oi) ? "wrong" : "";
             return (
               <button
                 key={oi}
                 type="button"
                 className={`quiz-opt ${state}`}
-                disabled={answered}
-                onClick={() => setPicked(oi)}
+                disabled={answered || wrong.includes(oi)}
+                onClick={() => pick(oi)}
               >
                 <span className="quiz-opt-text">{stripStrayMarkdown(opt)}</span>
                 {state === "correct" && <span className="quiz-opt-mark" aria-hidden="true">✓</span>}
@@ -71,12 +72,8 @@ export function InlineProblem({ problem }: InlineProblemProps) {
         </div>
       ) : (
         <div className="sm-inline-problem-free">
-          {submitted ? (
-            <div className={`sm-inline-problem-result ${isCorrect ? "correct" : "wrong"}`}>
-              {isCorrect
-                ? L("Correct !", "Correct!")
-                : L(`Non — la réponse était : ${problem.answer}`, `Not quite — the answer was: ${problem.answer}`)}
-            </div>
+          {answered ? (
+            <div className="sm-inline-problem-result correct">{L("Correct !", "Correct!")}</div>
           ) : (
             <div className="sm-inline-problem-input-row">
               <input
@@ -84,9 +81,8 @@ export function InlineProblem({ problem }: InlineProblemProps) {
                 className="sm-inline-problem-input"
                 placeholder={L("Ta réponse…", "Your answer…")}
                 value={textAnswer}
-                onChange={e => setTextAnswer(e.target.value)}
+                onChange={e => { setTextAnswer(e.target.value); setSubmitted(false); }}
                 onKeyDown={e => { if (e.key === "Enter" && textAnswer.trim()) setSubmitted(true); }}
-                disabled={submitted}
                 autoFocus
               />
               <button
@@ -102,6 +98,11 @@ export function InlineProblem({ problem }: InlineProblemProps) {
         </div>
       )}
 
+      {missed ? (
+        <div className="sm-inline-problem-result wrong" role="status">
+          {isMCQ ? L("Pas tout à fait — essaie une autre réponse.", "Not quite — try another option.") : L("Pas tout à fait — réessaie.", "Not quite — try again.")}
+        </div>
+      ) : null}
       {answered && problem.why ? (
         <div className="sm-inline-problem-why">{stripStrayMarkdown(problem.why)}</div>
       ) : null}

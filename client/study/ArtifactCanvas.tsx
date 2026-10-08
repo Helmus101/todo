@@ -19,7 +19,6 @@ import { CitationArtifact } from "./artifacts/CitationArtifact.tsx";
 import { ChatArtifact } from "./artifacts/ChatArtifact.tsx";
 import { TaskInfoArtifact } from "./artifacts/TaskInfoArtifact.tsx";
 import { CameraArtifact } from "./artifacts/CameraArtifact.tsx";
-import { BoardArtifact } from "./artifacts/BoardArtifact.tsx";
 import { useLang } from "../ui.tsx";
 
 interface ArtifactCanvasProps {
@@ -203,7 +202,10 @@ export function ArtifactCanvas({
       case "camera":
         return camera ? <CameraArtifact camera={camera} /> : null;
       case "board":
-        return <BoardArtifact task={task} />;
+        // The Board is a TUTOR-ONLY surface now (TutorSession.tsx) — Study Mode's canvas no longer creates
+        // one, but a session saved from before this change can still carry a legacy "board" artifact in its
+        // layout; render nothing rather than crash or resurrect board content on this surface.
+        return null;
       default:
         return null;
     }

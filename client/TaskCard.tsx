@@ -13,7 +13,7 @@ import { useEffect, useState, useRef, useContext, useCallback, type ReactNode, t
 import type { WebTask, TaskStep, Profile } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight, deadlineEpoch } from "../shared/types.ts";
 import { api } from "./api.ts";
-import { BookOpen } from "lucide-react";
+import { BookOpen, MessageCircle, Layers, CircleHelp, Rows3 } from "lucide-react";
 import {
   LangContext, useLang, todayIso, fmtDate, relTime, statusChip, subtitle, quadrantLabel, sourceAttributionLine,
   fmtWhen, TAB_GROUP, openTab, openTabs, autoOpenTaskDocs,
@@ -22,8 +22,8 @@ import {
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
 import { createEchoFilter } from "./voice/echoGuard.ts";
 import { useSpeechSynthesis } from "./voice/useSpeechSynthesis.ts";
+import { lastMessageKey } from "./voice/replyKey.ts";
 import { useVoiceModePref } from "./voice/useVoiceModePref.ts";
-import { BoardArtifact } from "./study/artifacts/BoardArtifact.tsx";
 import { getLocalThread } from "./localChatBoard.ts";
 import { VoiceControls } from "./voice/VoiceControls.tsx";
 
@@ -165,9 +165,13 @@ function TaskPlanningPanel({ task }: { task: WebTask }) {
 
 /* ─────────────────────────────── collapsed row ─────────────────────────────── */
 
-export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isNew, index, onOpen, onEnterStudyMode }: {
+export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isNew, index, onOpen, onEnterStudyMode, readOnly }: {
   task: WebTask; onChange: (t: WebTask[]) => void; onTask?: (t: WebTask) => void; retrying?: boolean; onConfirmed?: (id: string) => void;
   isNew?: boolean; index?: number; onOpen: () => void; onEnterStudyMode?: () => void;
+  /** Phone (see useIsPhone): the row is a VIEW of the task, nothing more — no tick-off, no Study Mode, no
+   *  dismiss. Direct instruction: on a phone you should "just be able to see the tasks and what it planned",
+   *  not act on them. Opening the row still works; it lands on the read-only TaskReadOnly view below. */
+  readOnly?: boolean;
 }) {
   const L = useLang();
   const cardEn = useContext(LangContext) === "en";
@@ -233,7 +237,7 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
           real button itself (real visible content, not an invisible layer), which is the standard,
           maximally-compatible pattern every list-based mobile app uses. .card-check/.card-x moved to true
           siblings, since a <button> can't contain another <button>. */}
-      {!isDone ? (
+      {!isDone && !readOnly ? (
         <button type="button" className={`card-check ${leaving && leaveKind === "confirm" ? "checked" : ""}`}
           title={L("Marquer comme fait", "Mark as done")} aria-label={L(`Marquer « ${task.title} » comme faite`, `Mark "${task.title}" as done`)} disabled={leaving}
           onClick={() => void leave(() => api.confirm(task.id), "confirm", task)}>
@@ -243,7 +247,7 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
       {/* Study Mode button — any active task, not just ones that already have steps: it's a general
           workspace (materials, notes, chat with Otto) useful even before a plan exists yet, not something
           that should stay hidden while a task is still being generated/refined. */}
-      {!isDone && onEnterStudyMode && (
+      {!isDone && !readOnly && onEnterStudyMode && (
         <button type="button" className="card-study" title={L("Mode étude", "Study Mode")} aria-label={L(`Mode étude pour : ${task.title}`, `Study Mode for: ${task.title}`)} disabled={leaving} onClick={(e) => { e.stopPropagation(); onEnterStudyMode(); }}>
           <BookOpen aria-hidden="true" size={16} />
         </button>
@@ -275,7 +279,7 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
       </button>
       {/* Quick dismiss — remove a task in one click without opening it. Hover-revealed so the row stays clean.
           Hidden once the row is already leaving (dismissing or confirming) — a second click has nothing to do. */}
-      {!isDone && !leaving && <button className="card-x" title={L("Ignorer", "Dismiss")} aria-label={L(`Ignorer « ${task.title} »`, `Dismiss "${task.title}"`)} onClick={() => void leave(() => api.dismiss(task.id), "dismiss", task)}>×</button>}
+      {!isDone && !leaving && !readOnly && <button className="card-x" title={L("Ignorer", "Dismiss")} aria-label={L(`Ignorer « ${task.title} »`, `Dismiss "${task.title}"`)} onClick={() => void leave(() => api.dismiss(task.id), "dismiss", task)}>×</button>}
       {leaving && leaveKind === "confirm" ? <span className="confirm-check" aria-hidden="true">✓</span> : null}
     </div>
   );
@@ -287,16 +291,28 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
  * are what say "look here first," not a box. Everything else today's list has (chips, spinner, dismiss)
  * stays on the quiet `TaskCardRow`s underneath; duplicating that chrome here would just be more noise
  * around the one thing meant to stand out. */
-export function TaskHero({ task, onOpen }: { task: WebTask; onOpen: () => void }) {
+export function TaskHero({ task, onOpen, onChange, onTask, onConfirmed, readOnly }: {
+  task: WebTask; onOpen: () => void;
+  onChange: (t: WebTask[]) => void; onTask?: (t: WebTask) => void; onConfirmed?: (id: string) => void; readOnly?: boolean;
+}) {
   const L = useLang();
   const cardEn = useContext(LangContext) === "en";
+  // Same confirm machinery as the rows (useTaskLeave) so the hero's "Done for now" checkbox behaves
+  // identically to a row checkbox: optimistic status flip, hold-then-remove animation, rollback on error.
+  const { leaving, leave } = useTaskLeave(task.id, { onChange, onTask, onConfirmed });
   const chip = statusChip(task, false, cardEn);
   const showChip = chip && chip.tone === "attention" ? chip : null;
   const w = taskDateLabel(task, L);
+  // The prototype's hero previews the plan as a numbered list ("01 / Review the derivative rules") under
+  // the CTA — read-only; the real step controls stay in the task detail view. First three is a preview,
+  // not the whole plan.
+  const heroSteps = (task.steps || []).filter((s) => s.text?.trim()).slice(0, 3);
 
   return (
-    <div className="dash-hero">
-      <div className="dash-hero-kicker">{L("Ta priorité", "Your next priority")}</div>
+    <div className={`dash-hero ${leaving ? "confirming" : ""}`}>
+      {/* The prototype leads with the subject ("Mathematics"); fall back to the priority label when a
+          task has no subject. */}
+      <div className="dash-hero-kicker">{task.sourceSubject || L("Ta priorité", "Your next priority")}</div>
       <h2 className="dash-hero-title">{stripStrayMarkdown(task.title)}</h2>
       {task.goal ? <div className="task-goal-banner"><span className="task-goal-tag">{L("Objectif", "Goal")}:</span> {stripStrayMarkdown(task.goal)}</div> : null}
       {(task.nudgeLine || task.why) ? <p className="dash-hero-why">{stripStrayMarkdown(task.nudgeLine || task.why)}</p> : null}
@@ -306,13 +322,141 @@ export function TaskHero({ task, onOpen }: { task: WebTask; onOpen: () => void }
           {task.taskType ? <span className="chip chip-tasktype">{task.taskType.replace(/_/g, " ")}</span> : null}
           {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
           {w ? <span className="when">{w}</span> : null}
-          <span className={`card-quadrant card-quadrant-${task.quadrant}`}>{quadrantLabel(task.quadrant, cardEn)}</span>
           {showChip ? <span className={`chip chip-${showChip.tone}`}>{showChip.label}</span> : null}
         </div>
       ) : null}
       <button type="button" className="btn primary big dash-hero-cta" onClick={onOpen}>
-        {L("Continuer", "Continue")}
+        {L("Avance dessus avec Otto", "Work through this with Otto")}
       </button>
+      {/* The prototype's quiet "Done for now" checkbox under the CTA — same optimistic confirm as the
+          rows, so the task animates away exactly like a row confirm would. */}
+      {!readOnly && (
+        <label className="dash-hero-done">
+          <input type="checkbox" disabled={leaving} onChange={() => void leave(() => api.confirm(task.id), "confirm", task)} />
+          <span>{L("Fait pour l'instant", "Done for now")}</span>
+        </label>
+      )}
+      {!!heroSteps.length && (
+        <ol className="dash-hero-steps">
+          {heroSteps.map((s, i) => (
+            <li key={i}>
+              <span className="dash-hero-step-num" aria-hidden>{String(i + 1).padStart(2, "0")}</span>
+              <span>{stripStrayMarkdown(s.text)}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+      {/* Same destination as the CTA (the task detail view) — the prototype's quiet secondary access to
+          the plan and Otto's prepared materials. */}
+      <button type="button" className="btn ghost dash-hero-plan" onClick={onOpen}>
+        {L("Voir le plan et les documents", "View plan & materials")}
+      </button>
+    </div>
+  );
+}
+
+/** PHONE ONLY — a task you can read but not touch. Deliberately NOT a "readOnly" mode threaded through
+ *  TaskFocus below: that component owns step-completion queueing, optimistic ticks, chat, artifact popups
+ *  and Study Mode entry, and gating every one of those from the inside would be a large, risky edit to the
+ *  most race-sensitive component in the app for no gain. This renders the same underlying data (what the
+ *  task is, when it's due, and the plan Otto wrote) straight from the WebTask, with no handlers at all.
+ *  Chat is absent on purpose — direct instruction, "no chat for the moment" on a phone. */
+export function TaskReadOnly({ task }: { task: WebTask }) {
+  const L = useLang();
+  const cardEn = useContext(LangContext) === "en";
+  const w = taskDateLabel(task, L);
+  const steps = task.steps || [];
+  const doneCount = steps.filter((s) => s.done).length;
+  const preparedCount = (task.notes?.length || 0) + (task.flashcards?.length || 0) + (task.quizzes?.length || 0) + (task.links?.length || 0) + (task.did?.length || 0);
+  const linkKind = (u?: string) => {
+    const s = u || "";
+    if (/docs\.google\.com\/document/.test(s)) return L("Document", "Doc");
+    if (/docs\.google\.com\/spreadsheets/.test(s)) return L("Feuille", "Sheet");
+    if (/docs\.google\.com\/presentation/.test(s)) return L("Diapositives", "Slides");
+    if (/docs\.google\.com\/forms|forms\.gle/.test(s)) return L("Formulaire", "Form");
+    if (/mail\.google\.com/.test(s)) return /#drafts/.test(s) ? L("Brouillon", "Draft") : L("Email", "Email");
+    if (/calendar\.google\.com/.test(s)) return L("Événement", "Event");
+    if (/drive\.google\.com/.test(s)) return L("Fichier", "File");
+    if (/maps\.google\.com|google\.com\/maps/.test(s)) return L("Itinéraire", "Directions");
+    if (/^tel:/.test(s)) return L("Appel", "Call");
+    if (/notion\.so/.test(s)) return "Notion";
+    try { return u ? new URL(u).hostname.replace(/^www\./, "") : ""; } catch { return ""; }
+  };
+  return (
+    <div className="task-readonly">
+      {(task.sourceSubject || w) ? (
+        <div className="task-readonly-meta">
+          {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
+          {w ? <span className="when">{w}</span> : null}
+          <span className={`card-quadrant card-quadrant-${task.quadrant}`}>{quadrantLabel(task.quadrant, cardEn)}</span>
+        </div>
+      ) : null}
+      {task.goal ? <div className="task-goal-banner"><span className="task-goal-tag">{L("Objectif", "Goal")}:</span> {stripStrayMarkdown(task.goal)}</div> : null}
+      {(task.nudgeLine || task.why) ? <p className="task-readonly-why">{stripStrayMarkdown(task.nudgeLine || task.why)}</p> : null}
+      {steps.length ? (
+        <>
+          <h4 className="task-readonly-head">
+            {L("Le plan d'Otto", "Otto's plan")}
+            <span className="task-readonly-count">{doneCount}/{steps.length}</span>
+          </h4>
+          <ol className="task-readonly-steps">
+            {steps.map((s, i) => (
+              <li key={i} className={s.done ? "is-done" : ""}>
+                <span className="task-readonly-tick" aria-hidden="true">{s.done ? "✓" : "○"}</span>
+                <span className="task-readonly-text">
+                  {stripStrayMarkdown(s.text)}
+                  {s.result ? <span className="task-readonly-result">{stripStrayMarkdown(s.result)}</span> : null}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </>
+      ) : (
+        <p className="task-readonly-why">{L("Otto n'a pas encore écrit de plan pour celle-ci.", "Otto hasn't written a plan for this one yet.")}</p>
+      )}
+      {/* Artifacts, links, and board - now visible on mobile */}
+      {preparedCount > 0 ? (
+        <div className="tf-prepared-inline">
+          {task.did?.length ? (
+            <>
+              <span className="prepared-label">{L("Fait", "Done")}</span>
+              <ul className="bullets">{task.did.map((d, i) => <li key={i}>{stripStrayMarkdown(d)}</li>)}</ul>
+            </>
+          ) : null}
+          {(task.notes?.length || task.flashcards?.length || task.quizzes?.length) ? (
+            <>
+              <span className="prepared-label">{L("Créé pour toi", "Made for you")}</span>
+              <div className="note-chips prepared-chips">
+                {task.notes?.map((n) => (
+                  <div key={n.id} className="note-chip" style={{ pointerEvents: "none" }}>
+                    <span className="note-chip-icon" aria-hidden="true">▤</span>
+                    <span className="note-chip-text"><span className="note-chip-title">{n.title}</span><span className="note-chip-meta">{L("Fiche", "Note")}</span></span>
+                  </div>
+                ))}
+                {task.flashcards?.map((f) => (
+                  <div key={f.id} className="note-chip" style={{ pointerEvents: "none" }}>
+                    <span className="note-chip-icon" aria-hidden="true"><Layers size={13} /></span>
+                    <span className="note-chip-text"><span className="note-chip-title">{f.title}</span><span className="note-chip-meta">{L(`${f.cards.length} cartes`, `${f.cards.length} cards`)}</span></span>
+                  </div>
+                ))}
+                {task.quizzes?.map((qz) => (
+                  <div key={qz.id} className="note-chip" style={{ pointerEvents: "none" }}>
+                    <span className="note-chip-icon" aria-hidden="true">?</span>
+                    <span className="note-chip-text"><span className="note-chip-title">{qz.title}</span><span className="note-chip-meta">{L(`${qz.questions.length} questions`, `${qz.questions.length} questions`)}</span></span>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : null}
+          {task.links?.length ? (
+            <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url} onClick={(e) => { e.preventDefault(); openTab(l.url, TAB_GROUP); }}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url)) || L("Ouvrir le lien", "Open link")} ↗</a></li>)}</ul>
+          ) : null}
+        </div>
+      ) : null}
+      <p className="task-readonly-foot">
+        {L("Sur téléphone, Otto est en lecture seule. Ouvre-le sur un ordinateur ou un iPad pour travailler dessus.",
+           "On a phone, Otto is read-only. Open it on a laptop or iPad to actually work on this.")}
+      </p>
     </div>
   );
 }
@@ -462,27 +606,10 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
   const [chatStep, setChatStep] = useState<number | null>(null);
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
-  const chatContainerRef = useRef<HTMLDivElement | null>(null);
-  const userScrolledRef = useRef(false);
-  
-  // Auto-scroll to bottom only if user hasn't deliberately scrolled up
-  useEffect(() => {
-    const container = chatContainerRef.current;
-    if (!container) return;
-    
-    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
-    
-    if (isNearBottom) {
-      chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-    }
-  }, [task.chat?.length, chatSending]);
-  
-  // Track user scroll intention
-  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    const container = e.currentTarget;
-    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
-    userScrolledRef.current = !isNearBottom;
-  }, []);
+  // (The old autoscroll effect that lived here is gone — it read a chatContainerRef that was never
+  // attached to any DOM node, so it early-returned on every run and never scrolled anything. The real
+  // always-scroll-to-bottom now lives inside TaskChat below, next to the actual thread container and
+  // its end marker.)
   // Grows up to 3 lines (CSS max-height on .chat-input) then scrolls internally — was a single-line <input>,
   // so anything longer than one line just scrolled sideways out of view while typing. Re-measured on every
   // `chatInput` change (typing AND the programmatic clear after send), so sending correctly shrinks it back.
@@ -524,6 +651,10 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
   // words before sending. Prefilled + focused, NOT auto-sent — they almost always want to add "je bloque
   // sur la partie b", and auto-sending would burn a paid call on text they didn't write themselves.
   const askAboutStep = (i: number, text: string) => {
+    // MUST open the popup too: the chat input lives inside the Ask Otto modal, so prefilling+focus with
+    // the popup closed was literally invisible (focus() on an unmounted ref = no-op) — reported live as
+    // "the help button doesn't work". Opening it makes the prefilled, step-scoped draft visible.
+    setOpenChat(true);
     setChatStep(i);
     setChatInput(L(`Aide-moi avec : ${text}`, `Help me with: ${text}`));
     chatInputRef.current?.focus();
@@ -575,7 +706,8 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
         {(task.nudgeLine || task.why) ? <p className="tf-why">{stripStrayMarkdown(task.nudgeLine || task.why)}</p> : null}
         {sourceAttributionLine(task, cardEn) ? <p className="card-source-attribution">{sourceAttributionLine(task, cardEn)}</p> : null}
         <div className="tf-meta">
-          {task.taskType ? <span className="chip chip-tasktype">{task.taskType.replace(/_/g, " ")}</span> : null}
+          {/* taskType deliberately NOT shown ("flashcards"/"practice_problem" read like internal debug
+              metadata, not anything a student chose) — the header keeps subject · date · quadrant · status. */}
           {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
           {taskDateLabel(task, L) ? <span className={`when ${(deadlineEpoch(task.when) - Date.now()) / 86_400_000 <= 3 ? "when-soon" : ""}`}>{taskDateLabel(task, L)}</span> : null}
           {!isDone ? <span className={`card-quadrant card-quadrant-${task.quadrant}`}>{quadrantLabel(task.quadrant, cardEn)}</span> : null}
@@ -599,7 +731,13 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
         <div className="deck-progress-bar"><div className="deck-progress-fill" style={{ width: `${(doneCount / steps.length) * 100}%` }} /></div>
       ) : null}
 
-      {/* (C) the hero — the single thing to do right now. */}
+      {/* (C) the hero — but NOT for an ordinary "here's the current step" display (direct instruction:
+          remove the big bold hero for the first/current step — StepList right below already shows every
+          step, current one included, so this was the same content twice). StepHero still renders for every
+          OTHER state (done/waiting/failed/a draft to send/all-steps-complete/no-steps-yet) — those convey
+          something StepList can't (a Retry/Run-now/Looks-good button, a draft review, a failure message),
+          so they stay. See StepHero's own last branch (the one after `const s = steps[currentIdx]`) for
+          exactly what got suppressed. */}
       <StepHero
         task={task} steps={steps} currentIdx={currentIdx} isDone={isDone} cStatus={cStatus}
         retrying={retrying} running={running} decided={decided} setDecided={setDecided}
@@ -616,28 +754,14 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
           step list. */}
       {!isDone ? (
         <button type="button" className="btn primary xs tf-ask-otto" onClick={() => setOpenChat(true)}>
-          💬 {L("Demander à Otto — besoin d'aide ?", "Ask Otto — need help?")}
+          <MessageCircle size={14} aria-hidden="true" /> {L("Demander à Otto — besoin d'aide ?", "Ask Otto — need help?")}
         </button>
       ) : null}
 
-      {/* The anti-procrastination hook: the smallest possible first move, small enough it's hard to say
-          no to (see FIRST ACTION in server/claude.ts) — a stuck student needs permission to start, not
-          another item on the plan, so this sits BELOW the hero (which is the real current step) rather
-          than competing with it for the "one thing to do" spot. */}
-      {task.firstAction && !isDone ? (
-        <p className="first-action">
-          <span className="first-action-label">{L("Pour démarrer", "To get started")}</span>
-          {task.firstAction.text}
-          {/* The 2-minute rule (GTD): anything genuinely this quick shouldn't get filed away for later at
-              all — say so plainly instead of just stating a duration, so the badge itself is the nudge to
-              knock it out right now rather than something to schedule. */}
-          {task.firstAction.minutes ? (
-            task.firstAction.minutes <= 2
-              ? <span className="first-action-minutes quick-win">{L("2 min — fais-le maintenant", "2 min — just do it now")}</span>
-              : <span className="first-action-minutes">~{task.firstAction.minutes} {L("min", "min")}</span>
-          ) : null}
-        </p>
-      ) : null}
+      {/* Direct instruction: remove "To get started" (task.firstAction) — same reasoning as removing the
+          current-step hero above: the step it names is already the current/next entry in StepList below,
+          so this was a second place pointing at the same thing. task.firstAction itself (server/claude.ts)
+          is left alone — only this render is removed. */}
 
       {/* "What Otto prepared" used to live behind a collapsed disclosure, same tier as "All steps" — easy to
           miss entirely on a task that's mostly notable FOR what got made (a brief, a deck). It's not a big
@@ -656,24 +780,16 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
             open={openPanel === "steps"} onToggle={() => togglePanel("steps")}>
             <StepList task={task} steps={steps} decided={decided} setDecided={setDecided}
               onStepDone={markStepDone} onUndo={undoStep}
-              onAsk={askAboutStep} onChange={onChange} onTask={onTask} onAnswer={answerStep} answering={answering} />
+              onAsk={askAboutStep} onTask={onTask} onAnswer={answerStep} answering={answering} />
           </Disclosure>
         ) : null}
       </div>
 
-      {/* The tutor's Board (WRITE_TO_BOARD, server/claude.ts) was already persisted onto task.board/
-          task.problems by every chat turn — but outside Study Mode, nothing ever RENDERED it. A student
-          asking a question in the plain task chat (not Study Mode) who got told "look at the board above"
-          saw nothing at all, because there was no "above" for it to be. Same component Study Mode's desk
-          uses; only shown once there's actually something on it, same "count > 0" gating as PreparedPanel. */}
-      {(task.board?.length || task.problems?.length) ? (
-        <div className="tf-board-inline">
-          <BoardArtifact task={task} />
-        </div>
-      ) : null}
+      {/* Direct instruction: the board is a Tutor-only surface — plain task chat never shows one (and, as
+          of this change, never writes one either; see chatAboutTask's tools gating in server/claude.ts). */}
 
       {openChat ? (
-        <TaskModal onClose={() => setOpenChat(false)} nested title={L("Demander à Otto", "Ask Otto")}>
+        <TaskModal onClose={() => setOpenChat(false)} nested wide title={L("Demander à Otto", "Ask Otto")}>
           <TaskChat
             task={task} input={chatInput} setInput={setChatInput} sending={chatSending} error={chatError}
             pendingMsg={pendingMsg} slow={chatSlow} verySlow={chatVerySlow} onSend={sendChat}
@@ -683,17 +799,8 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
         </TaskModal>
       ) : null}
 
-      {/* (F) the quiet exit. "C'est bon" lives in the hero's done state, not down here. */}
-      <div className="tf-foot">
-        {isDone ? (
-          <span className="done-footer">{task.status === "dismissed" ? L("Ignorée", "Dismissed") : L("Terminée", "Done")}{task.updatedAt ? ` ${relTime(task.updatedAt, L)}` : ""}</span>
-        ) : (
-          <button className="btn xs ghost" title={L("Retirer cette tâche", "Remove this task")} onClick={() => void leave(() => api.dismiss(task.id), "dismiss", task)}>{L("Ignorer", "Dismiss")}</button>
-        )}
-      </div>
-
       <ArtifactPopups task={task} onTask={onTask} openNote={openNote} openDeck={openDeck} openQuiz={openQuiz}
-        setOpenNote={setOpenNote} setOpenDeck={setOpenDeck} setOpenQuiz={setOpenQuiz} />
+        setOpenNote={setOpenNote} setOpenDeck={setOpenDeck} setOpenQuiz={setOpenQuiz} userId={userId ?? null} />
     </div>
   );
 }
@@ -890,111 +997,39 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
     );
   }
 
-  const s = steps[currentIdx];
-  const gatesAnother = steps.some((o, j) => j !== currentIdx && o.dependsOn === currentIdx);
-  return (
-    <div className="step-hero">
-      <div className="step-hero-top">
-        <span className="hero-kicker">{L("À faire maintenant", "Do this now")}</span>
-        {s.difficulty ? (
-          <span className={`step-diff step-diff-${s.difficulty}`}>
-            {s.difficulty === "easy" ? L("Facile", "Easy") : s.difficulty === "hard" ? L("Difficile", "Hard") : L("Moyen", "Medium")}
-          </span>
-        ) : null}
-      </div>
-      <p className="hero-step">{withInlineLinks(s.text)}</p>
-      {/* NOTE: doneWhen is no longer displayed on individual steps - it belongs on the main task's Definition of Done */}
-      {/* NOTE: checkpoint is no longer displayed on individual steps - it belongs on the main task's Definition of Done */}
-      {s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate, L)}`, `by ${fmtDate(s.targetDate, L)}`)}</span> : null}
-      {s.minutes ? <SessionTimer key={currentIdx} minutes={s.minutes} /> : null}
-      {s.result ? <span className="step-result note">{s.result}</span> : null}
-      {/* A step Otto can DO but is missing ONE piece of info for (server sets `question`, optionally
-          `options` — see the "submit" tool schema in server/claude.ts) — this used to be computed and
-          stored with no UI at all, so the step just sat there with a generic input and no indication of
-          what was actually needed. The question IS the label now, tap-to-answer when there are likely
-          answers, free text always available as a fallback. Answering RUNS the step (api.runStep), since
-          it's automatable — different from the plain "what did you decide" box below. */}
-      {s.question ? (
-        <div className="step-question">
-          <p className="step-question-text">{withInlineLinks(s.question)}</p>
-          {s.options?.length ? (
-            <div className="step-question-opts">
-              {s.options.map((opt, oi) => (
-                <button key={oi} type="button" className="btn xs" disabled={answering === currentIdx} onClick={() => onAnswer(currentIdx, opt)}>{opt}</button>
-              ))}
-              {answering === currentIdx ? <span className="card-spin" aria-hidden="true" /> : null}
-            </div>
-          ) : null}
-          <input
-            className="step-input"
-            placeholder={s.options?.length ? L("Ou écris ta propre réponse…", "Or type your own answer…") : L("Écris ta réponse…", "Type your answer…")}
-            value={decided[currentIdx] || ""}
-            disabled={answering === currentIdx}
-            onChange={(e) => setDecided((d) => ({ ...d, [currentIdx]: e.target.value }))}
-            onKeyDown={(e) => { if (e.key === "Enter") onAnswer(currentIdx, decided[currentIdx] || ""); }}
-          />
-        </div>
-      ) : gatesAnother && !s.automatable ? (
-        <>
-        {/* "What did you decide?" only when this step GATES a later one — then it feeds that next step. A
-            persistent label (not just a placeholder, which vanishes once typing starts) so it stays clear
-            this is required to move on, not optional extra info. */}
-        <label className="step-input-label" htmlFor="step-input-hero">{L("Optionnel — note ce que tu as décidé :", "Optional — note what you decided:")}</label>
-        <input
-          id="step-input-hero"
-          className="step-input"
-          placeholder={L("ex : j'ai choisi le sujet X…", "e.g. I picked topic X…")}
-          value={decided[currentIdx] || ""}
-          onChange={(e) => setDecided((d) => ({ ...d, [currentIdx]: e.target.value }))}
-          onKeyDown={(e) => { if (e.key === "Enter") onStepDone(currentIdx); }}
-        />
-        </>
-      ) : null}
-      {/* One button, not three: a step with a link opens it (and — if nothing further is needed from the
-          user — marks itself done in the same click); otherwise it flips to "Done" once opened. A step
-          with no link is just "Done". "I'm stuck" is dropped here — the tutor chat right below is always
-          one glance away, so a dedicated help button on every step was one more thing competing for
-          attention for a path that already exists. */}
-      {/* A step with a question answers THROUGH that box above (which runs the step) — a separate "C'est
-          fait" here would let it be marked done without ever actually answering, so it's dropped. */}
-      {!s.question ? (
-        <div className="hero-acts">
-          {s.url && !(openedIdx === currentIdx) ? (
-            <button
-              className="btn primary"
-              title={s.url}
-              onClick={() => {
-                openTab(s.url!, TAB_GROUP);
-                if (s.automatable) onStepDone(currentIdx);
-                else setOpenedIdx(currentIdx);
-              }}
-            >
-              {L(`Ouvrir ${linkKind(s.url, L) || "le lien"} ↗`, `Open ${linkKind(s.url, L) || "link"} ↗`)}
-            </button>
-          ) : (
-            <button className="btn primary" onClick={() => onStepDone(currentIdx)}>{L("C'est fait", "Done")}</button>
-          )}
-        </div>
-      ) : null}
-    </div>
-  );
+  // Direct instruction: remove the big bold hero for the ordinary "here's the current step" case —
+  // StepList (the "All steps" disclosure right below) already shows every step, current one included, with
+  // its own full mark-done/question-answer/decide UI (see that component), so this was the same content
+  // and the same controls duplicated in two places on the same card.
+  return null;
 }
 
 /* ─────────────────────────────── panels ─────────────────────────────── */
 
-function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk, onChange, onTask, onAnswer, answering }: {
+function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk, onTask, onAnswer, answering }: {
   task: WebTask; steps: TaskStep[];
   decided: Record<number, string>; setDecided: Dispatch<SetStateAction<Record<number, string>>>;
   onStepDone: (i: number) => void; onUndo: (i: number) => void; onAsk: (i: number, text: string) => void;
-  onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void;
+  onTask: (t: WebTask) => void;
   onAnswer: (i: number, answer: string) => void; answering: number | null;
 }) {
   const L = useLang();
   const notify = useNotify();
   const [expanding, setExpanding] = useState<number | null>(null);
+  // Both routes answer with the FULL server task list; we apply ONLY this task's entry, via onTask
+  // (merge-by-id + localMutations stamp) — never onChange(list), which is wired straight to setTasks and
+  // would wholesale-replace the dashboard with this response, letting a request that was already in
+  // flight BEFORE the expand (kick tick, poll) clobber the fresh substeps the moment it resolves. Same
+  // bug class the file documents at setStepDoneLocal: "MUST be onTask, never onChange" — expand/runSubstep
+  // were the last two call sites still doing it, reported live as "the breakdown shows for two seconds,
+  // then hides".
+  const applyTaskFromList = (list: WebTask[]) => {
+    const t = Array.isArray(list) ? list.find((x) => x.id === task.id) : undefined;
+    if (t) onTask(t);
+  };
   const expandStep = async (i: number) => {
     setExpanding(i);
-    try { onChange(await api.expandStep(task.id, i)); }
+    try { applyTaskFromList(await api.expandStep(task.id, i)); }
     catch (e: any) { notify(e?.message || L("Impossible de détailler cette étape.", "Couldn't break this step down."), "error"); }
     finally { setExpanding((cur) => (cur === i ? null : cur)); }
   };
@@ -1005,7 +1040,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
   const runSubstep = async (i: number, subIndex: number) => {
     const key = `${i}-${subIndex}`;
     setRunningSub(key);
-    try { onChange(await api.runSubstep(task.id, i, subIndex)); }
+    try { applyTaskFromList(await api.runSubstep(task.id, i, subIndex)); }
     catch (e: any) { notify(e?.message || L("Otto n'a pas réussi à répondre.", "Otto couldn't get an answer."), "error"); }
     finally { setRunningSub((cur) => (cur === key ? null : cur)); }
   };
@@ -1018,7 +1053,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
     // onTask merges by id — onChange([...]) here would replace the ENTIRE task list with this one task
     // (onChange is wired straight to App.tsx's setTasks, which takes it as a literal new array, not a patch).
     onTask({ ...task, steps: optimistic });
-    try { onChange(await api.substepDone(task.id, i, subIndex, done)); }
+    try { applyTaskFromList(await api.substepDone(task.id, i, subIndex, done)); }
     catch (e: any) {
       onTask(task); // revert the optimistic flip
       notify(e?.message || L("Impossible d'enregistrer cette sous-étape.", "Couldn't save this sub-step."), "error");
@@ -1033,7 +1068,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
     let res: WebTask[] | null = null;
     try {
       for (const i of idxs) if (steps[i].automatable) res = await api.stepDone(task.id, i, true, L("Ouvert ↗", "Opened ↗"));
-      if (res) onChange(res);
+      if (res) applyTaskFromList(res); // same merge-by-id rule as expand/runSubstep — never wholesale setTasks
     } catch (e: any) {
       // The tabs already opened (that part can't fail) — only the "mark done" half failed, so say so
       // without implying the tabs themselves didn't open.
@@ -1210,12 +1245,10 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
   const hiddenCount = allChips.length - visibleChips.length;
   return (
     <>
-      {task.did?.length ? (
-        <>
-          {artifactCount > 0 ? <span className="prepared-label">{L("Fait", "Done")}</span> : null}
-          <ul className="bullets">{task.did.map((d, i) => <li key={i}>{withInlineLinks(d)}</li>)}</ul>
-        </>
-      ) : null}
+      {/* Direct instruction: remove the "Done" section (task.did's bullet log of what Otto did) from each
+          task's detail view — the artifact chips right below already show what got made; this was a second,
+          plain-text echo of mostly the same thing. task.did itself is untouched (still written server-side,
+          still shown on TaskReadOnly's phone-only read view), only this render is removed. */}
       {/* In-app notes, flashcard decks and quizzes — no external tab, they open right here in a popup.
           Row-card layout (icon badge + title + meta) rather than an inline pill: these are real artifacts
           worth a proper tap target, not tags, and stacking them makes it obvious there are several. The
@@ -1234,7 +1267,7 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
               </button>
             ) : c.kind === "deck" ? (
               <button key={c.item.id} type="button" className="note-chip" onClick={() => onOpenDeck(c.item.id)}>
-                <span className="note-chip-icon" aria-hidden="true">❏</span>
+                <span className="note-chip-icon" aria-hidden="true"><Layers size={13} /></span>
                 <span className="note-chip-text"><span className="note-chip-title">{c.item.title}</span><span className="note-chip-meta">{L(`${c.item.cards.length} cartes`, `${c.item.cards.length} cards`)}</span></span>
               </button>
             ) : (
@@ -1252,10 +1285,7 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
         </>
       ) : null}
       {task.links?.length ? (
-        // A plain <a target="_blank"> here opened a tab the extension's Study Mode site-block then
-        // immediately redirected to blocked.html (see background.js's doOpenInGroup for why) — going
-        // through openTab() instead allowlists this exact host first when the extension is present, same
-        // fix as TaskDetailDrawer.tsx's own source links.
+        // openTab() opens via window.open with noopener (see client/ui.tsx).
         <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url} onClick={(e) => { e.preventDefault(); openTab(l.url, TAB_GROUP); }}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url, L)) || L("Ouvrir le lien", "Open link")} ↗</a></li>)}</ul>
       ) : null}
     </>
@@ -1274,12 +1304,24 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
   const en = L("fr", "en") === "en";
   const thinkingWord = useThinkingWord(sending);
   const speechLang = en ? "en-US" : "fr-FR";
-  const chatContainerRef = useRef<HTMLDivElement | null>(null);
-  const userScrolledRef = useRef(false);
-  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    const container = e.currentTarget;
-    userScrolledRef.current = container.scrollHeight - container.scrollTop - container.clientHeight >= 100;
-  }, []);
+  // AUTO-SCROLL — ALWAYS: the thread lands on its newest message when it opens, and every new turn (the
+  // student's own message, the pending echo, Otto's reply, the typing indicator) keeps the bottom in
+  // view. Nothing scrolled it before: the only autoscroll effect lived in the PARENT and read a
+  // chatContainerRef that was never attached to any DOM node, so a student opening a task with history
+  // always landed at the TOP of the conversation and had to scroll down to see Otto's last answer.
+  // Anchored on the thread's end marker with block:"nearest" — it scrolls the thread's own 260px
+  // scroller (and, only if needed, an outer panel) the minimum amount to bring the newest message in.
+  const chatMountedRef = useRef(false);
+  useEffect(() => {
+    if (!chatMountedRef.current) {
+      chatMountedRef.current = true;
+      // Two frames: the messages (markdown, artifact chips) haven't laid out on first paint, so the end
+      // marker still sits high — scrolling now would land mid-history instead of at the bottom.
+      const raf = requestAnimationFrame(() => requestAnimationFrame(() => endRef.current?.scrollIntoView({ block: "nearest" })));
+      return () => cancelAnimationFrame(raf);
+    }
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [task.chat?.length, sending, pendingMsg]);
   const synth = useSpeechSynthesis(speechLang);
   const [voiceModeOn, toggleVoiceMode] = useVoiceModePref();
   const sendingRef = useRef(sending);
@@ -1325,22 +1367,23 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
   // mic stays open during TTS and echo is handled textually (isLikelyEcho above). Pausing the recognizer
   // was the thing that made interruption impossible — no audio reaches a dead mic — and its settle-delay
   // reopen only existed to serve that pause. The voiceModeOn effect above still aborts on toggle-off.
-  const spokenCountRef = useRef(0);
+  // Keyed on the newest message's identity, not chat length — see lastMessageKey (chat cap bug).
+  const tailKey = lastMessageKey(task.chat);
+  const spokenKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    const chat = task.chat || [];
-    if (chat.length > spokenCountRef.current) {
-      const last = chat[chat.length - 1];
-      if (voiceModeOn && last?.role === "assistant") synth.speak(last.text);
-    }
-    spokenCountRef.current = chat.length;
+    if (spokenKeyRef.current === null) { spokenKeyRef.current = tailKey; return; }
+    if (tailKey === spokenKeyRef.current) return;
+    spokenKeyRef.current = tailKey;
+    const last = task.chat?.[task.chat.length - 1];
+    if (voiceModeOn && last?.role === "assistant") synth.speak(last.text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [task.chat?.length, voiceModeOn]);
+  }, [tailKey, voiceModeOn]);
   return (
     <section className="task-chat">
       <h3>{L("Demander à Otto", "Ask Otto")}</h3>
       {/* role="log" so a screen reader announces replies as they arrive — the thread updates without any
           navigation, so without this a blind student would never know an answer had come back. */}
-      <div className="chat-thread" role="log" aria-live="polite" aria-label={L("Conversation avec Otto", "Conversation with Otto")} ref={chatContainerRef} onScroll={handleScroll}>
+      <div className="chat-thread" role="log" aria-live="polite" aria-label={L("Conversation avec Otto", "Conversation with Otto")}>
         {!task.chat?.length && !pendingMsg ? (
           <p className="muted small">{L("Dis-lui ce qui bloque. Il explique, il ne donne pas la réponse.", "Say what's blocking you. It'll explain — not hand you the answer.")}</p>
         ) : task.chat?.map((m, i) => (
@@ -1374,7 +1417,7 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
                     : a.kind === "deck" ? task.flashcards?.some((f) => f.id === a.id)
                     : task.quizzes?.some((q) => q.id === a.id);
                   if (!exists) return null; // evicted by ARTIFACT_CAP — render nothing rather than crash
-                  const icon = a.kind === "note" ? "▤" : a.kind === "deck" ? "❏" : "?";
+                  const icon = a.kind === "note" ? <Rows3 size={13} /> : a.kind === "deck" ? <Layers size={13} /> : <CircleHelp size={13} />;
                   const open = a.kind === "note" ? onOpenNote : a.kind === "deck" ? onOpenDeck : onOpenQuiz;
                   return <button key={a.id} type="button" className="btn xs ghost note-chip" onClick={() => open(a.id)}><span aria-hidden="true">{icon}</span> {a.title}</button>;
                 })}
@@ -1594,9 +1637,9 @@ function SendableReview({ task, onTask }: {
 /** The note/deck/quiz viewers, mounted once for the whole focus view (both the chat chips and the
  *  "prepared" panel open them). A chip can reference an id ARTIFACT_CAP has since evicted — that renders
  *  as nothing rather than crashing. */
-function ArtifactPopups({ task, onTask, openNote, openDeck, openQuiz, setOpenNote, setOpenDeck, setOpenQuiz }: {
+function ArtifactPopups({ task, onTask, openNote, openDeck, openQuiz, setOpenNote, setOpenDeck, setOpenQuiz, userId }: {
   task: WebTask; onTask: (t: WebTask) => void; openNote: string | null; openDeck: string | null; openQuiz: string | null;
-  setOpenNote: (v: null) => void; setOpenDeck: (v: null) => void; setOpenQuiz: (v: null) => void;
+  setOpenNote: (v: null) => void; setOpenDeck: (v: null) => void; setOpenQuiz: (v: null) => void; userId: string | null;
 }) {
   const note = openNote ? task.notes?.find((x) => x.id === openNote) : null;
   const deck = openDeck ? task.flashcards?.find((x) => x.id === openDeck) : null;
@@ -1625,8 +1668,8 @@ function ArtifactPopups({ task, onTask, openNote, openDeck, openQuiz, setOpenNot
           </div>
         </TaskModal>
       ) : null}
-      {deck ? <TaskModal onClose={() => setOpenDeck(null)} nested title={deck.title}><FlashcardDeck deck={deck} onReview={onReview} onNotNeeded={onNotNeeded} taskId={task.id} onAllCorrect={() => setOpenDeck(null)} /></TaskModal> : null}
-      {quiz ? <TaskModal onClose={() => setOpenQuiz(null)} nested title={quiz.title}><QuizPlayer quiz={quiz} taskId={task.id} subject={task.sourceSubject} /></TaskModal> : null}
+      {deck ? <TaskModal onClose={() => setOpenDeck(null)} nested title={deck.title}><FlashcardDeck deck={deck} onReview={onReview} onNotNeeded={onNotNeeded} taskId={task.id} onAllCorrect={() => setOpenDeck(null)} userId={userId} /></TaskModal> : null}
+      {quiz ? <TaskModal onClose={() => setOpenQuiz(null)} nested title={quiz.title}><QuizPlayer quiz={quiz} taskId={task.id} subject={task.sourceSubject} userId={userId} /></TaskModal> : null}
     </>
   );
 }

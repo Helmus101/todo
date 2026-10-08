@@ -20,6 +20,28 @@ export interface FaceTrackingState {
   errorMessage?: string;     // detailed error message for debugging
 }
 
+// The status strings above are ENGLISH KEYS, not copy: this module also compares against those exact
+// literals to average a session (useFocusCamera.ts counts `gazeStatus === "On screen"`, StudyMode counts
+// `movementStatus === "Restless"`), so translating them here would silently break those tallies. Every
+// student-facing surface instead looks the key up in these maps — [French, English] — and falls through to
+// the raw key for anything unmapped, so a future status shows up rather than rendering blank.
+export const GAZE_LABELS: Record<string, [string, string]> = {
+  "On screen": ["Sur l'écran", "On screen"],
+  "Looking left": ["Regarde à gauche", "Looking left"],
+  "Looking right": ["Regarde à droite", "Looking right"],
+  "Looking up": ["Regarde en haut", "Looking up"],
+  "Looking down": ["Regarde en bas", "Looking down"],
+  "Turned left": ["Tourné à gauche", "Turned left"],
+  "Turned right": ["Tourné à droite", "Turned right"],
+  "No face": ["Aucun visage", "No face"],
+};
+export const MOVEMENT_LABELS: Record<string, [string, string]> = {
+  "Still": ["Immobile", "Still"],
+  "Slight": ["Léger", "Slight"],
+  "Active": ["Actif", "Active"],
+  "Restless": ["Agité", "Restless"],
+};
+
 const IDLE: FaceTrackingState = {
   status: "idle",
   faceDetected: false,

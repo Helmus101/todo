@@ -1,4 +1,10 @@
 import { useRef, useState } from "react";
+import type { ReactNode } from "react";
+// Real icons instead of glyph/emoji strings (explicit request: no emoji in the app). A dingbat like ❏ or ☰
+// falls back to the platform's emoji font on some Android/Windows builds and renders as a COLOR glyph there
+// while staying monochrome elsewhere — an SVG icon looks the same on every platform, which is the same
+// reasoning VoiceControls already documented for the mic/speaker buttons.
+import { ListTodo, PenLine, StickyNote, Quote, Camera, NotebookPen, SquareFunction, BookA } from "lucide-react";
 import type { ArtifactType, WorkspaceTemplate } from "./StudyTypes.ts";
 import { useSmClose, SmSurface, useLang } from "../ui.tsx";
 
@@ -20,20 +26,18 @@ interface ToolsDrawerProps {
 // label is [fr, en] — resolved through useLang at render time (module-level, so the hook can't be used
 // directly on this const). Tool labels should stay in sync with the titles StudyMode.tsx gives the
 // artifacts it creates for each type (see buildInitialArtifacts/openOrFocus*).
-const ALL_TOOLS: { type: ArtifactType; label: [string, string]; icon: string; templates: WorkspaceTemplate[] }[] = [
-  { type: "task", label: ["Infos tâche", "Task info"], icon: "☰", templates: ["WRITING", "READING", "PROBLEM_SOLVING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
-  // Recommended everywhere — unlike the other tools, this one isn't something the student reaches for; it's
-  // where Otto writes unprompted (formulas, instructions, summaries), so it should always be one click away
-  // regardless of what kind of task this is.
-  { type: "board", label: ["Tableau", "Board"], icon: "▦", templates: ["WRITING", "READING", "PROBLEM_SOLVING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
-  { type: "camera", label: ["Caméra privée", "Private camera"], icon: "◉", templates: ["WRITING", "READING", "PROBLEM_SOLVING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
-  { type: "notes", label: ["Notes", "Notes"], icon: "▤", templates: ["WRITING", "READING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
-  { type: "scratchpad", label: ["Brouillon", "Scratchpad"], icon: "✎", templates: ["PROBLEM_SOLVING", "WRITING", "RESEARCH", "STANDARD", "PROJECT"] },
+const ALL_TOOLS: { type: ArtifactType; label: [string, string]; icon: ReactNode; templates: WorkspaceTemplate[] }[] = [
+  { type: "task", label: ["Infos tâche", "Task info"], icon: <ListTodo size={14} aria-hidden="true" />, templates: ["WRITING", "READING", "PROBLEM_SOLVING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
+  // The Board tool used to live here — removed per direct instruction: the board is a TUTOR-ONLY surface
+  // now (TutorSession.tsx), not something Study Mode's own freeform canvas offers any more.
+  { type: "camera", label: ["Caméra privée", "Private camera"], icon: <Camera size={14} aria-hidden="true" />, templates: ["WRITING", "READING", "PROBLEM_SOLVING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
+  { type: "notes", label: ["Notes", "Notes"], icon: <NotebookPen size={14} aria-hidden="true" />, templates: ["WRITING", "READING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
+  { type: "scratchpad", label: ["Brouillon", "Scratchpad"], icon: <PenLine size={14} aria-hidden="true" />, templates: ["PROBLEM_SOLVING", "WRITING", "RESEARCH", "STANDARD", "PROJECT"] },
   { type: "calculator", label: ["Calculatrice", "Calculator"], icon: "123", templates: ["PROBLEM_SOLVING", "STANDARD"] },
-  { type: "desmos", label: ["Graphique Desmos", "Desmos Graph"], icon: "f(x)", templates: ["WRITING", "READING", "PROBLEM_SOLVING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
-  { type: "dictionary", label: ["Dictionnaire", "Dictionary"], icon: "Aa", templates: ["WRITING", "READING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
-  { type: "sticky", label: ["Pense-bête", "Sticky Note"], icon: "❏", templates: ["WRITING", "READING", "RESEARCH", "REVISION", "PROJECT", "STANDARD", "PROBLEM_SOLVING"] },
-  { type: "citation", label: ["Citation", "Citation"], icon: "❞", templates: ["WRITING", "RESEARCH", "PROJECT"] },
+  { type: "desmos", label: ["Graphique Desmos", "Desmos Graph"], icon: <SquareFunction size={14} aria-hidden="true" />, templates: ["WRITING", "READING", "PROBLEM_SOLVING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
+  { type: "dictionary", label: ["Dictionnaire", "Dictionary"], icon: <BookA size={14} aria-hidden="true" />, templates: ["WRITING", "READING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
+  { type: "sticky", label: ["Pense-bête", "Sticky Note"], icon: <StickyNote size={14} aria-hidden="true" />, templates: ["WRITING", "READING", "RESEARCH", "REVISION", "PROJECT", "STANDARD", "PROBLEM_SOLVING"] },
+  { type: "citation", label: ["Citation", "Citation"], icon: <Quote size={14} aria-hidden="true" />, templates: ["WRITING", "RESEARCH", "PROJECT"] },
 ];
 
 // Only real Google Docs/Sheets/Slides documents — not an arbitrary-URL opener. Anything else (a random

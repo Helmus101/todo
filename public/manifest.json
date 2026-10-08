@@ -1,7 +1,7 @@
 {
-  "name": "Otto — le prolongement de Pronote qui te guide",
+  "name": "Otto — tes devoirs en un plan clair",
   "short_name": "Otto",
-  "description": "Otto se branche sur ton Pronote et transforme tes devoirs et contrôles en un plan clair pour aujourd'hui — il te guide pas à pas, jamais l'exercice à ta place.",
+  "description": "Otto se branche sur tes devoirs (Pronote, Gmail/Calendar, ou tes propres tâches) et les transforme en un plan clair pour aujourd'hui — il te guide pas à pas, jamais l'exercice à ta place.",
   "lang": "fr",
   "start_url": "/",
   "display": "standalone",

@@ -1,0 +1,49 @@
+.cw { max-width: 760px; margin: 0 auto; padding-bottom: var(--space-8); }
+.cw-sub { color: var(--ink-2); font-size: var(--text-md); margin: 6px 0 var(--space-5); max-width: 60ch; }
+.cw-upload { padding: var(--space-5); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-xl); display: flex; flex-direction: column; gap: var(--space-3); }
+.cw-step { display: flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); margin-top: var(--space-2); }
+.cw-num { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: var(--ink); color: var(--bg); font-size: 11px; letter-spacing: 0; }
+.cw-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.cw-chip { font: inherit; font-size: var(--text-sm); padding: 7px 14px; border-radius: var(--radius-pill); border: 1px solid var(--line); background: var(--bg); color: var(--ink); cursor: pointer; transition: border-color .12s, background .12s; }
+.cw-chip:hover { border-color: var(--ink-3); }
+.cw-chip.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.cw-chip:focus-visible, .cw-del:focus-visible, .cw-ask:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.cw-custom { padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); font: inherit; max-width: 320px; }
+.cw-drop { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: var(--space-6) var(--space-4); border: 1.5px dashed var(--line); border-radius: var(--radius-lg); text-align: center; background: var(--bg); transition: border-color .15s, background .15s; }
+.cw-drop.over { border-color: var(--accent); background: var(--accent-soft); }
+.cw-drop.disabled { opacity: .6; }
+.cw-drop p { margin: 0; font-weight: 500; }
+.cw-drop small { color: var(--ink-3); font-size: 12px; max-width: 52ch; }
+.cw-jobs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.cw-jobs li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 12px; border: 1px solid var(--line-soft); border-radius: var(--radius); font-size: var(--text-sm); background: var(--bg); }
+.cw-job-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cw-jobs li.done .cw-job-state { color: var(--ok); } .cw-jobs li.error .cw-job-state { color: var(--vermilion); }
+.cw-library { margin-top: var(--space-7); }
+.cw-lib-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: var(--space-3); }
+.cw-lib-head h2 { margin: 0; }
+.cw-lib-head select { padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); font: inherit; font-size: var(--text-sm); }
+.cw-subject { display: flex; align-items: center; gap: 8px; margin: var(--space-5) 0 var(--space-2); font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); font-weight: 500; }
+.cw-subject span { background: var(--bg-2); border-radius: var(--radius-pill); padding: 1px 8px; }
+.cw-doc { padding: var(--space-4); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); margin-bottom: var(--space-3); }
+.cw-doc summary { display: flex; justify-content: space-between; align-items: center; gap: 10px; cursor: pointer; list-style: none; }
+.cw-doc summary::-webkit-details-marker { display: none; }
+.cw-doc summary::before { content: "▸"; color: var(--ink-3); font-size: 11px; margin-right: 2px; transition: transform .15s ease; flex: none; }
+.cw-doc[open] summary::before { transform: rotate(90deg); }
+.cw-doc h4 { margin: 0; font-size: var(--text-md); font-weight: 600; flex: 1; min-width: 0; }
+.cw-del { border: 0; background: transparent; color: var(--ink-3); cursor: pointer; font-size: 14px; padding: 2px 6px; border-radius: 4px; }
+.cw-del:hover { color: var(--vermilion); background: var(--bg-2); }
+.cw-doc summary .cw-meta { margin: 0; font-size: 12px; color: var(--ink-3); font-family: var(--mono); flex: none; white-space: nowrap; }
+.cw-summary { margin: 10px 0 8px; color: var(--ink); line-height: 1.55; font-size: var(--text-base); }
+.cw-points { margin: 0 0 8px; padding-left: 18px; color: var(--ink-2); font-size: var(--text-sm); }
+/* "What Otto read" — the stored excerpt (shared/coursework.ts) behind its own collapse, so the student can
+   check exactly what the tutor is quoting without the library turning into a wall of document text. */
+.cw-read { margin: 6px 0 8px; border-top: 1px dashed var(--line); padding-top: 6px; }
+.cw-read summary { display: block; cursor: pointer; font-size: 12px; color: var(--ink-3); list-style: none; }
+.cw-read summary::-webkit-details-marker { display: none; }
+.cw-read summary::before { content: "▸ "; font-size: 10px; }
+.cw-read[open] summary::before { content: "▾ "; }
+.cw-excerpt { margin: 8px 0 0; padding: 10px 12px; background: var(--bg-2); border-radius: var(--radius-md); color: var(--ink-2); font-size: 13px; line-height: 1.6; white-space: pre-wrap; max-height: 260px; overflow: auto; }
+.cw-ask { font-size: var(--text-sm); color: var(--ink); text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+.cw-ask:hover { text-decoration-color: var(--ink); }
+.cw-empty, .cw-muted { color: var(--ink-2); }
+@media (max-width: 640px) { .cw-upload { padding: var(--space-4); } }
