@@ -397,13 +397,11 @@ export function App() {
   // still wins because it sets signedOutRef before calling the server.
   const lastAuthenticatedStatusRef = useRef<ConnectionStatus | null>(CACHED_STATUS?.loggedIn ? CACHED_STATUS : null);
   const [route] = usePathRoute();
-  // Phone-sized screens (iPhone, not iPad — see useIsPhone's 767px breakpoint) get a deliberately reduced
-  // app: review flashcards (/log's "Cartes" tab), and READ the task list — see what's there and what Otto
-  // planned — plus Settings. Everything that means actually working (chat, Study Mode's whiteboard, ticking
-  // steps off, the tutor) stays off the phone: those surfaces are dense multi-pane layouts that don't work
-  // at that size, and a half-working version of them is worse than a clean read-only one.
+  // Phone-sized screens keep the focused tutor available alongside the task list, journal, and settings.
+  // Dense workspaces remain restricted, but tutor is intentionally designed as a single-column, touch-first
+  // surface and must be reachable from a phone without being redirected back to Today.
   const isPhone = useIsPhone();
-  const PHONE_ALLOWED_ROUTES = ["", "tasks", "log", "settings"];
+  const PHONE_ALLOWED_ROUTES = ["", "tasks", "log", "settings", "tutor"];
   const phoneRouteAllowed = (r: string) => PHONE_ALLOWED_ROUTES.includes(r) || r.startsWith("task/") || r.startsWith("tutor/session/");
   useEffect(() => {
     if (isPhone && status?.loggedIn && !phoneRouteAllowed(route)) navigate("tasks");
@@ -1099,12 +1097,12 @@ export function App() {
           >
             {en ? "Today" : "Aujourd'hui"}
           </a>
-          {!isPhone && <a
+          <a
             className={`topnav-link ${route === "tutor" || route.startsWith("tutor/session/") ? "active" : ""}`}
             href="/tutor"
           >
             {en ? "Tutor" : "Tuteur"}
-          </a>}
+          </a>
           <a
             className={`topnav-link ${route === "log" ? "active" : ""}`}
             href="/log"
