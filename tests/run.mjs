@@ -284,7 +284,7 @@ section("Tutor graphs — safe expression compiler + GRAPH_ON_BOARD validation")
   const surf = makeGraphEntry({ caption: "Saddle", kind: "surface", z: "z = x^2 - y^2", xmin: -2, xmax: 2, ymin: -2, ymax: 2 });
   check("3D surface z=f(x,y) validates and needs a y-range", "entry" in surf && surf.entry.graph.z === "x^2 - y^2" && "error" in makeGraphEntry({ caption: "s", kind: "surface", z: "x*y", xmin: -1, xmax: 1 }) && /two variables/i.test(makeGraphEntry({ caption: "c", xmin: -1, xmax: 1, fns: [{ expr: "x*y" }] }).error || ""));
   check("tutor has GRAPH_ON_BOARD in boardTools + handler", (src.match(/GRAPH_ON_BOARD_TOOL/g) || []).length >= 2 && /name === "GRAPH_ON_BOARD"/.test(src));
-  check("board renders graph entries; ==highlight== renders as a mark and is stripped for speech", /<GraphBlock spec=\{e\.graph\}/.test(board) && /otto-mark/.test(ui) && /==\(\[\^=\\n\]\+\)==/.test(readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8")));
+  check("board renders graph entries; ==marks== are stripped for speech and never highlighted", /<GraphBlock spec=\{e\.graph\}/.test(board) && !/otto-mark/.test(ui) && /==\(\[\^=\\n\]\+\)==/.test(readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8")));
 }
 section("Primer replies — tightenForChat keeps it short and keeps the closing question");
 {
@@ -1711,11 +1711,11 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   // 'current problem' duplicate-render trap the pin guarded against no longer exists in the file.)
   // Dual coding / document structure: kind:"focus" is the lesson's heading — pinned at the top as a
   // header strip, excluded from the flowing entries, latest wins if a session ever writes a second one.
-  check("kind:\"focus\" renders as a pinned header, not inline in the flow", /sm-board-focus-pin/.test(boardSrc) && /e\.kind !== "focus"/.test(boardSrc));
+  check("kind:\"focus\" renders as a pinned header, not inline in the flow", /sm-board-focus-line/.test(boardSrc) && /e\.kind !== "focus"/.test(boardSrc));
   // The board as a drafted WORKSHEET (research: gradual release + completion effect + ICAP — the visible
   // artifact of a session is the student's own thinking, laid out like a lesson page, written in live).
   check("board has a worksheet header (date + subject)", /sm-board-header/.test(boardSrc) && /sm-board-header-subject/.test(boardSrc));
-  check("board entries carry worksheet section numbers", /sm-board-section-num/.test(boardSrc));
+  check("board is flat: plain lines, no section numbers or boxes", /sm-board-line/.test(boardSrc) && !/sm-board-section-num/.test(boardSrc));
   check("kind:\"summary\" renders as an ordinary line — no trace box, no heading, no category", !/ReasoningTrace|sm-board-trace/.test(boardSrc));
   check("a deliberately unfinished worked line gets an 'à toi de finir' completion chip (completion effect, visible)", /isCompletionGap/.test(boardSrc) && /sm-board-todo-chip/.test(boardSrc));
   check("new entries write themselves in (drafted, not swapped)", /sm-board-writein/.test(boardSrc));
@@ -4776,11 +4776,11 @@ section("Phone restriction — flashcard review + READ-ONLY tasks, no chat; iPad
 
   const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
   check("App.tsx imports the shared useIsPhone hook", /import \{ useIsPhone \} from "\.\/useIsPhone\.ts"/.test(app));
-  check("tasks + flashcards + settings are reachable on phone; anything else redirects to the task list", /PHONE_ALLOWED_ROUTES\s*=\s*\["", "tasks", "log", "settings"\]/.test(app) && /r\.startsWith\("task\/"\)/.test(app) && /!phoneRouteAllowed\(route\)\) navigate\("tasks"\)/.test(app));
-  check("Tutor/Study/Error log/Admin stay hidden on phone, but Tasks does NOT", /\{!isPhone && <a[\s\S]{0,200}href="\/tutor"/.test(app) && /\{!isPhone && <a[\s\S]{0,200}href="\/errorlog"/.test(app) && !/\{!isPhone && <a[\s\S]{0,200}href="\/tasks"/.test(app));
+  check("tasks + flashcards + settings are reachable on phone; anything else redirects to the task list", /PHONE_ALLOWED_ROUTES\s*=\s*\["", "tasks", "log", "settings", "tutor"\]/.test(app) && /r\.startsWith\("task\/"\)/.test(app) && /!phoneRouteAllowed\(route\)\) navigate\("tasks"\)/.test(app));
+  check("Tutor/Study/Error log/Admin stay hidden on phone, but Tasks does NOT", /\{!isPhone && <a[\s\S]{0,200}href="\/errorlog"/.test(app) && !/\{!isPhone && <a[\s\S]{0,200}href="\/tasks"/.test(app));
   // The point of the phone task view: READ it, don't work on it. No chat (TaskFocus owns the chat), no
   // ticking steps off, no Study Mode, no dismiss, no add-task.
-  check("a phone opens TaskReadOnly instead of TaskFocus (which is where chat lives)", /isPhone \? \(\s*<TaskReadOnly task=\{openTask\} \/>/.test(app));
+  check("a phone opens TaskReadOnly instead of TaskFocus (which is where chat lives)", /isPhone \? \(\s*<TaskReadOnly task=\{openTask\}/.test(app));
   check("task rows on phone are view-only (readOnly) and can't launch Study Mode", /readOnly=\{isPhone\}/.test(app) && /STUDY_MODE_ENABLED && !isPhone \?/.test(app));
   // (Restyled to the Framer prototype: the old topbar's Refresh ghost button is gone — the generate
   // action now lives only in the dashboard's own empty states, and add-task stayed phone-hidden.)

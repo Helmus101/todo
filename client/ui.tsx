@@ -459,7 +459,7 @@ function boldify(s: string): ReactNode {
   // **bold** and ==highlight== (the tutor marks the key part of a passage/problem/working with ==…==).
   const parts = s.split(/(\*\*[^*]+\*\*|==[^=\n]+==)/g);
   return parts.map((p, i) => (p.startsWith("**") && p.endsWith("**") ? <b key={i}>{p.slice(2, -2)}</b>
-    : p.length > 4 && p.startsWith("==") && p.endsWith("==") ? <mark key={i} className="otto-mark">{p.slice(2, -2)}</mark> : p));
+    : p.length > 4 && p.startsWith("==") && p.endsWith("==") ? p.slice(2, -2) : p));
 }
 
 // A GFM-style pipe row: "| a | b | c |" (leading/trailing pipes optional). Splits on unescaped `|`.

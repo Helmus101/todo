@@ -177,6 +177,13 @@ function InlineEquation({ latex }: { latex: string }) {
 // no heading, no numbering, no category, just the work written out (kind:"summary" now renders like any
 // other text entry). traceLines below stays exported: it still backs the model's own header-peeling and tests.
 
+/** The student's reasoning, written as plain lines on the page — one step per line, no heading, no boxes. */
+function PlainSteps({ text }: { text: string }) {
+  const lines = traceLines(text);
+  if (!lines.length) return null;
+  return <>{lines.map((l, i) => <div key={i} className="sm-board-line"><MathText text={autoMathLine(l)} /></div>)}</>;
+}
+
 /** Real typeset math (stacked fractions, exponents, roots) instead of formatMath's plain-text approximation
  *  (client/ui.tsx) — this is what makes "2/(x-1) + 3/(x+2)" actually show as a fraction, not a slash. KaTeX
  *  throws on malformed LaTeX (a model slip, an unbalanced brace); caught here so ONE bad equation renders as
@@ -332,7 +339,6 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
         className={`sm-board-problem sm-board-problem-solved-compact sm-board-writein${fresh ? " sm-board-reveal" : ""}`}
         style={fresh ? { animationDuration: `.35s, ${Math.min(1.6, Math.max(0.5, problem.question.length / 90))}s` } : undefined}
       >
-        <span className="sm-board-section-num" aria-hidden="true">{String(sectionNumber).padStart(2, "0")}</span>
         <div className="sm-board-entry-main">
           <div className="sm-board-problem-compact-inner">
             <span className="sm-board-problem-compact-mark" aria-hidden="true">✓</span>
@@ -351,8 +357,6 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
       className={`sm-board-problem sm-board-writein${answered ? " sm-board-problem-solved" : ""}${fresh ? " sm-board-reveal" : ""}`}
       style={fresh ? { animationDuration: `.35s, ${Math.min(1.6, Math.max(0.5, problem.question.length / 90))}s` } : undefined}
     >
-
-      <span className="sm-board-section-num" aria-hidden="true">{String(sectionNumber).padStart(2, "0")}</span>
       <div className="sm-board-entry-main">
       <div className="sm-board-problem-heading-row">
         <div className="sm-board-problem-label">{answered ? (en ? "Resolved" : "Résolu") : (en ? "Try it" : "À toi")}</div>
@@ -479,8 +483,6 @@ export function BoardArtifact({ task, writing, onProblemResult, onClearBoard }: 
   const flowEntries = entries
     .filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i)
     .filter(e => e.kind !== "focus" && (e.kind as string) !== "problem" && e.kind !== "annotation");
-  // Otto's pointers: a short note attached to the entry it is about (highlight / circle a mistake / point at it).
-  const annotationsFor = (id: string) => entries.filter((a) => a.kind === "annotation" && a.targetId === id);
 
   // THE FLOW: entries (by their `at`) and problems (by `createdAt`) merged and sorted by timestamp —
   // the board reads top-to-bottom in the order the session actually happened. A missing/unparseable
@@ -622,12 +624,7 @@ export function BoardArtifact({ task, writing, onProblemResult, onClearBoard }: 
       {/* The pinned session goal (kind:"focus") — always the FIRST thing on the board, like the heading of
           a lesson page: the day's arc stays visible no matter how long the flow below grows. The latest
           focus wins if a session ever writes a second one. */}
-      {latestFocus ? (
-        <div className="sm-board-focus-pin">
-          <span className="sm-board-entry-kind"><span className="sm-board-glyph">{KIND_GLYPH.focus}</span>{L(...KIND_LABEL.focus)}</span>
-          <div className="sm-board-focus-text">{renderChatText(latestFocus.text)}</div>
-        </div>
-      ) : null}
+      {latestFocus ? <div className="sm-board-line sm-board-focus-line"><MathText text={autoMathLine(stripStrayMarkdown(latestFocus.text))} /></div> : null}
 
       {flowItems.length > 8 && (
         <div className="sm-board-archive-bar">
@@ -666,10 +663,9 @@ export function BoardArtifact({ task, writing, onProblemResult, onClearBoard }: 
           return (
             <div
               key={item.key}
-              className={`sm-board-entry sm-board-entry-${e.kind || "note"} sm-board-writein${fresh ? " sm-board-reveal" : ""}${e.owner === "student" ? " sm-board-entry-student" : ""}${isPastGap ? " sm-board-entry-faded" : ""}`}
+              className={`sm-board-entry sm-board-entry-${e.kind || "note"} sm-board-writein${fresh ? " sm-board-reveal" : ""}`}
               style={fresh ? { animationDuration: `.35s, ${revealDuration(e.text)}s` } : undefined}
             >
-              <span className="sm-board-section-num" aria-hidden="true">{String(idx + 1).padStart(2, "0")}</span>
               <div className="sm-board-entry-main">
               {/* No kind-label chip here on purpose (removed: "Formule"/"Définition"/"Insight"/…) — the board
                   reads as ONE continuous document the tutor is working on, not a form with labeled fields.
@@ -703,6 +699,8 @@ export function BoardArtifact({ task, writing, onProblemResult, onClearBoard }: 
                     </svg>
                   </>
                 )
+              ) : e.kind === "summary" ? (
+                <PlainSteps text={e.text} />
               ) : e.kind === "outline" && e.outline?.length ? (
                 <>
                   {stripStrayMarkdown(e.text) ? <div className="sm-board-entry-text sm-board-outline-title">{stripStrayMarkdown(e.text)}</div> : null}
@@ -729,18 +727,12 @@ export function BoardArtifact({ task, writing, onProblemResult, onClearBoard }: 
                 </>
               ) : (
                 <>
-                  <div className={`sm-board-entry-text${e.kind === "gap" ? " sm-board-gap-text" : ""}`}>{e.kind === "given" || e.kind === "result" ? <div style={{ whiteSpace: "pre-wrap" }}><MathText text={autoMathLine(stripStrayMarkdown(e.kind === "result" ? e.text.replace(/^\s*(?:established|établi|found|result|trouvé)\s*:\s*/i, "") : e.text))} /></div> : e.kind === "formula" || (/[\\$]|\\[a-zA-Z]/.test(e.text) && !/```/.test(e.text)) ? <div style={{ whiteSpace: "pre-wrap" }}><MathText text={autoMathLine(stripStrayMarkdown(e.text))} /></div> : renderChatText(e.text)}</div>
+                  <div className="sm-board-line"><MathText text={autoMathLine(stripStrayMarkdown(e.kind === "result" ? e.text.replace(/^\s*(?:established|établi|found|result|trouvé)\s*:\s*/i, "") : e.text))} /></div>
                   {(e.kind === "gap" || isCompletionGap(e.text)) ? (
                     <span className="sm-board-todo-chip">{e.gapAction ? (en ? `Your turn: ${e.gapAction}` : `À toi : ${e.gapAction}`) : (en ? "Your turn to finish" : "À toi de finir")}</span>
                   ) : null}
                 </>
               )}
-              {annotationsFor(e.id).map((a) => (
-                <div key={a.id} className={`sm-board-annot sm-board-annot-${a.tone || "focus"}`} role="note">
-                  <span className="sm-board-annot-pin" aria-hidden="true">{a.tone === "error" ? "!" : a.tone === "good" ? "✓" : a.tone === "hint" ? "?" : "→"}</span>
-                  <MathText text={autoMathLine(stripStrayMarkdown(a.text))} />
-                </div>
-              ))}
               </div>
             </div>
           );
