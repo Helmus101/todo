@@ -1537,7 +1537,15 @@ export interface BoardEntry {
    *  (see `outline`) — for essay-based/humanities content (history causes, source analysis, an essay plan)
    *  where a flat sentence or a spatial diagram both fit poorly; math/science still reach for
    *  formula/diagram first. */
-  kind?: "note" | "instruction" | "question" | "given" | "result" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "interactive" | "graph";
+  kind?: "note" | "instruction" | "question" | "given" | "result" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "interactive" | "graph" | "gap";
+  /** Who authored this entry — "otto" (default for backward compat) or "student". Student-owned entries are
+   *  never silently rewritten by Otto. Used to visually distinguish Otto's scaffolding from the student's
+   *  own work on the board (see BoardArtifact.tsx). */
+  owner?: "otto" | "student";
+  /** Present only when kind === "gap" — the answer the student is expected to fill in. The board renders this
+   *  as an interactive blank the student must complete (the completion effect: doing the last step yourself
+   *  is where the learning happens). Otto must NEVER reveal this value in chat while the gap is open. */
+  expectedAnswer?: string;
   /** Present only when kind === "diagram" — the figure's shapes, rendered as SVG (BoardArtifact.tsx). Capped
    *  at 15 ops server-side (makeDiagramEntry, server/claude.ts): enough for a labeled triangle or a small
    *  graph, not enough to build a full illustration op-by-op. */

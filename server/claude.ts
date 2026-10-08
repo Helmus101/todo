@@ -2576,7 +2576,9 @@ const WRITE_TO_BOARD_TOOL = {
   description: "Write ONE short entry onto the student's persistent tutor Board — a visible, always-accessible surface separate from the chat thread, NOT limited to practice problems. The board is a document being BUILT entry by entry across the session: it opens with the day's focus, collects the key definitions and formulas as they come up, credits the student's own insights, and ends with a summary of their reasoning. Each call adds ONE entry; the next thing gets its own entry later as the session moves on. ONE idea per call and no walls of PROSE — but a short multi-line block of WORKING (each line one move, the last line left as '= ?' for them to finish) IS one entry, and it is the fastest way to make the page look like the paper you'd both be writing on. What belongs here is decided by one test: would the student otherwise have to hold it in their head, or scroll back through chat to find it? (given values and the goal, a formula in play, the cases a problem splits into, a diagram, the sub-goal they're on, a key term's gloss, their own insight). Anything that fails that test stays in chat. Don't narrate that you're writing it ('let me jot that down') — just call the tool. NEVER GET AHEAD OF THE CHAT: a 'summary'/'formula'/'note' entry records a step ONLY once the student has actually said/derived it in chat THAT turn — never a later step of the SAME derivation they haven't reached yet, even symbolically with no numbers (reported live: the board already showed 'F_net down slope = mg sin25 - mg cos25 * tan20' as a finished line while the chat was still walking the student through deriving exactly that, one piece at a time — the board had done the derivation FOR them, just quietly, on a different surface than chat). If you're tempted to write the NEXT formula before asking the question that gets them there, ask the question first and write the entry after they answer it.",
   input_schema: { type: "object", properties: {
     text: { type: "string", description: "the entry itself — plain text/light markdown, ONE idea, in KEYWORDS AND STRUCTURE rather than prose: ~25 words of prose max, and fewer is better. Write the skeleton of the idea, never a restatement of what you just said in chat (a board that repeats your sentences measurably hurts learning — the redundancy effect). Annotate like handwritten notes: 'term = plain gloss' on its own line; relationships as arrows ('A --pushes--> B'); contrasts stacked with '<-' margin asides ('NOT x <- what you'd expect' / 'BUT y <- the actual point'); dash lines for anything sequential, one idea each. Anything with REAL SPATIAL POSITION — a shape, a triangle, a number line, points on axes — belongs in DRAW_ON_BOARD instead, which renders an actual figure. For kind:'outline' this is just a one-line title (the sections go in `outline` below) — for anything else, reserve a fenced ASCII block here for genuinely textual structure (a small table) where neither a real drawing nor an outline fits. ANY such ASCII sketch MUST be wrapped in a triple-backtick code fence (```\\n...\\n```) — the board renders a fenced block as monospace, preserving every space exactly as typed; UNFENCED text renders ONE LINE PER LINE as ordinary page lines — which is exactly what you want for a step-by-step derivation (each line one move), so do NOT fence working; a fence is ONLY for a shape whose exact spacing IS the content." },
-    kind: { type: "string", enum: ["note", "instruction", "question", "given", "result", "formula", "summary", "focus", "insight", "definition", "outline"], description: "styling/role hint: 'given' for the problem's data / statement exactly as given (typeset maths in $…$); 'result' for something the STUDENT has just derived, found or confirmed that matters for the next part (an equation, a value, a simplified form — in $…$, labelled in a few words, only once THEY reached it); 'question' for EVERY guiding question you ask the student about the work — the question itself, short, maths in $…$ (it stays on the page while they think; never include its answer); 'focus' ONCE to open a session's document — today's arc, where you start and what you're building toward; 'instruction' for a directive to start/try something; 'definition' the first time a key term comes up — the term in **bold**, then a plain-language definition; 'formula' for a plain fact/rule worth keeping visible in words (not real math notation — for an actual expression/equation with a fraction, exponent, or root, use DRAW_ON_BOARD's 'equation' op instead, which typesets it for real instead of describing it in text); 'insight' when the STUDENT has a genuine aha in their own words — credit them by name ('Will's insight: ...'); 'summary' for a recap of the STUDENT's reasoning — it renders as the 'how you got there' reasoning trace, so it is for THEIR reasoning and NOT the default kind: most entries are plain text ('note', 'given', 'formula', 'definition', 'question', 'result'), written as ordinary page lines, one idea per line; 'outline' for headed, bulleted structure — a timeline, the causes/effects of an event, a source's key points, an essay's section-by-section plan (REQUIRES the separate `outline` field below, with real sections and bullets — this is the DEFAULT reach for history/literature/language-arts/social-science content instead of trying to force it into a flat sentence); 'note' for anything else. Defaults to 'note' if omitted." },
+    kind: { type: "string", enum: ["note", "instruction", "question", "given", "result", "formula", "summary", "focus", "insight", "definition", "outline", "gap"], description: "styling/role hint: 'given' for the problem's data / statement exactly as given (typeset maths in $…$); 'result' for something the STUDENT has just derived, found or confirmed that matters for the next part (an equation, a value, a simplified form — in $…$, labelled in a few words, only once THEY reached it); 'question' for EVERY guiding question you ask the student about the work — the question itself, short, maths in $…$ (it stays on the page while they think; never include its answer); 'focus' ONCE to open a session's document — today's arc, where you start and what you're building toward; 'instruction' for a directive to start/try something; 'definition' the first time a key term comes up — the term in **bold**, then a plain-language definition; 'formula' for a plain fact/rule worth keeping visible in words (not real math notation — for an actual expression/equation with a fraction, exponent, or root, use DRAW_ON_BOARD's 'equation' op instead, which typesets it for real instead of describing it in text); 'insight' when the STUDENT has a genuine aha in their own words — credit them by name ('Will's insight: ...'); 'summary' for a recap of the STUDENT's reasoning — it renders as the 'how you got there' reasoning trace, so it is for THEIR reasoning and NOT the default kind: most entries are plain text ('note', 'given', 'formula', 'definition', 'question', 'result'), written as ordinary page lines, one idea per line; 'outline' for headed, bulleted structure — a timeline, the causes/effects of an event, a source's key points, an essay's section-by-section plan (REQUIRES the separate `outline` field below, with real sections and bullets — this is the DEFAULT reach for history/literature/language-arts/social-science content instead of trying to force it into a flat sentence); 'gap' for a DELIBERATELY INCOMPLETE step or equation the student must finish — the `text` contains the setup with a '?' where the answer goes (e.g. 'a = ? / m' or 'F_net = ?'), and you MUST also set `expectedAnswer` to the value the student should produce. This is the completion effect: Otto supplies the method, the student performs the final transformation. Use gaps aggressively — every worked line should end in a gap before the student fills it, rather than Otto completing every step. 'note' for anything else. Defaults to 'note' if omitted." },
+    expectedAnswer: { type: "string", description: "REQUIRED when kind is 'gap', omitted otherwise. The value the student should fill in — e.g. '10/3', '4.5', 'friction'. Otto must NEVER reveal this in chat while the gap is open; the student discovers it by working through the problem." },
+    owner: { type: "string", enum: ["otto", "student"], description: "Who wrote this entry. 'otto' (default) for everything Otto writes. 'student' ONLY for entries transcribing the student's OWN work (their equations, their reasoning steps, their answers) — use this when you're putting their actual work onto the board so it's visually distinguishable from your scaffolding. Otto never silently rewrites or overwrites student-owned entries." },
     outline: {
       type: "array",
       description: "REQUIRED when kind is 'outline', omitted otherwise. 1-6 headed sections, each with 1-8 short bullets — e.g. for 'why did the Provisional Government fail?': [{heading: 'Kept fighting WWI', bullets: ['lost the army', 'lost the people']}, {heading: 'Lenin\\'s slogan', bullets: ['Peace, Land, Bread']}]. Bullets are KEYWORDS, same discipline as `text` above — not full sentences.",
@@ -2880,7 +2882,7 @@ export function makeProblem(input: any): { problem: TaskProblem } | { error: str
   };
 }
 
-const BOARD_KINDS = new Set(["note", "instruction", "question", "given", "result", "formula", "summary", "focus", "insight", "definition", "outline"]);
+const BOARD_KINDS = new Set(["note", "instruction", "question", "given", "result", "formula", "summary", "focus", "insight", "definition", "outline", "gap"]);
 const MAX_OUTLINE_SECTIONS = 6;
 const MAX_OUTLINE_BULLETS = 8;
 export function makeBoardEntry(input: any): { entry: BoardEntry } | { error: string } {
@@ -2903,7 +2905,9 @@ export function makeBoardEntry(input: any): { entry: BoardEntry } | { error: str
     if (!outline.length) return { error: "ERROR: kind:'outline' needs at least one section with a heading and bullets — pass the `outline` field, not just `text`." };
     return { entry: { id: randomUUID(), text, kind, outline, at: new Date().toISOString() } };
   }
-  return { entry: { id: randomUUID(), text, ...(kind ? { kind } : {}), at: new Date().toISOString() } };
+  const owner: BoardEntry["owner"] = input?.owner === "student" ? "student" : "otto";
+  const expectedAnswer = kind === "gap" && input?.expectedAnswer ? String(input.expectedAnswer).trim().slice(0, 200) : undefined;
+  return { entry: { id: randomUUID(), text, ...(kind ? { kind } : {}), ...(owner === "student" ? { owner } : {}), ...(expectedAnswer ? { expectedAnswer } : {}), at: new Date().toISOString() } };
 }
 
 /** Full-replace validator for SET_OBJECTIVES — mirrors the tool's own contract (the model always sends the
@@ -7727,7 +7731,7 @@ export async function chatAboutTask(
       `can see it, don't ask them to describe it back to you; a NEW WRITE_TO_BOARD call adds to this, it ` +
       `never replaces it). Everything listed here is ALREADY DONE or already asked — never redo or re-explain ` +
       `it; continue from the LAST entry:\n` +
-      boardEntries.map((e) => `- [${e.kind || "note"}] ${e.text}` +
+      boardEntries.map((e) => `- [${e.kind || "note"}]${e.owner === "student" ? " (STUDENT'S WORK)" : ""}${e.kind === "gap" ? " (GAP — student must fill)" : ""} ${e.text}` +
         (e.kind === "outline" && e.outline?.length ? "\n" + e.outline.map((s) => `  · ${s.heading}: ${s.bullets.join("; ")}`).join("\n") : "")
       ).join("\n") +
       (currentProblems.length ? (boardEntries.length ? "\n" : "") +
@@ -8083,6 +8087,38 @@ export async function chatAboutTask(
     `ever fill in the blank. The student's voice should be heard more than yours — draw out what they ` +
     `already know or suspect, then build from there. Never lecture when a question would surface their ` +
     `thinking.\n` +
+    `NEVER GIVE THE ANSWER — THIS IS THE ONE UNBREAKABLE RULE. You are a tutor, not an answer key. When the ` +
+    `student should be solving something (a step, a calculation, a reasoning link), you supply the METHOD ` +
+    `and the SCAFFOLDING, never the result. A worked line ends in a GAP ("a = ? / m"), not in the answer — ` +
+    `use WRITE_TO_BOARD with kind:"gap" and expectedAnswer to make the gap visible on the board. If the ` +
+    `student says "just tell me the answer" or "what is it?", you say no — kindly, but no: "I'll give you ` +
+    `the first step. You do the next one." The only time you may state a result is AFTER the student has ` +
+    `produced it themselves (to confirm), or when the concept is completely new and they've failed through ` +
+    `the full escalation ladder below. Answering for them is not helping — it's removing the only moment ` +
+    `where learning actually happens.\n` +
+    `THE HINT ESCALATION LADDER — your default operating procedure when a student is stuck. You start at ` +
+    `Level 0 and climb ONE level per turn only when the student can't answer at the current level. NEVER ` +
+    `skip levels (jumping straight to an explanation wastes the diagnostic value of the lower levels), and ` +
+    `NEVER stay at the same level for more than two turns — if they can't do it twice at this level, go up:\n` +
+    `  Level 0 — OPEN QUESTION: "What do you think happens to quantity demanded?" (broad, lets them try)\n` +
+    `  Level 1 — NARROW QUESTION: "If the price rises, do consumers buy more or less?" (forces a direction)\n` +
+    `  Level 2 — HINT: "Think about the law of demand." (names the relevant concept without applying it)\n` +
+    `  Level 3 — PARTIAL STEP: "So if price rises, quantity demanded ___." (fill-in-the-blank — they say it)\n` +
+    `  Level 4 — EXPLAIN, THEN IMMEDIATELY MAKE THEM USE IT: "Quantity demanded falls because... Now try ` +
+    `    this one: [new problem on the same skill]." (the ONLY level where you state the answer — and only ` +
+    `    after they've failed all four levels above, not as a convenience)\n` +
+    `After ANY level where the student produces the answer themselves, DROP BACK to Level 0 for the next ` +
+    `concept — don't assume they need scaffolding forever. The better the student becomes, the LESS you do: ` +
+    `reduce scaffolding as independence grows (this is anti-dependence — the goal is a student who no longer ` +
+    `needs you, not one who depends on you more).\n` +
+    `WHEN NOT TO BE SOCRATIC — pure questioning becomes frustrating and inefficient if overused. Switch to ` +
+    `direct explanation (Level 4, then immediately "now you try") WITHOUT climbing the ladder when:\n` +
+    `  - The student explicitly asks for an explanation ("can you just explain it?")\n` +
+    `  - The concept is completely new (no prior knowledge to draw out)\n` +
+    `  - A prerequisite is missing (you can't Socratic them into knowing something they've never seen)\n` +
+    `  - The student is visibly frustrated (rule 0 flagged it) and another question would push them away\n` +
+    `In each of these cases: explain concisely → ask them to apply it immediately → evaluate their attempt → ` +
+    `return to the Socratic default. Never explain and move on — always make them USE the idea right after.\n` +
     `ARISTOTELIAN REASONING — BUILD FROM FIRST PRINCIPLES. Start every concept with "What do we already ` +
     `know is true?" — build step-by-step from premises they accept. Make logical chains explicit: "Given ` +
     `that X is true, what must follow?" "If A and B, then what?" Teach inference patterns, not just formulas. ` +
@@ -8449,6 +8485,17 @@ export async function chatAboutTask(
     `problem needs a value nobody has stated yet, either ask them for it, or if you're supplying an example ` +
     `value yourself, SAY so explicitly ("let's say μk = 0.3 for this one") and put it on the board as a given ` +
     `— never let an invented number blend in as if it were part of the original problem.\n` +
+    `GAPS — THE BOARD'S MOST IMPORTANT KIND. When you work through a problem step by step, every worked line ` +
+    `should end in a GAP, not in a completed answer. Use kind:"gap" with expectedAnswer set to the value the ` +
+    `student must produce: 'F = ma → 10 = 3a → a = ?' is a gap, 'a = 10/3' is YOU doing their work. The gap ` +
+    `IS the learning — the completion effect (Sweller): the student who fills in the last transformation is ` +
+    `the student who learns it; the student who reads a fully solved line learns nothing. Supply the method, ` +
+    `leave the final step blank, and let THEM fill it. Never reveal the expectedAnswer in chat while the gap ` +
+    `is open.\n` +
+    `STUDENT-OWNED ENTRIES — when the student produces their own work (an equation they wrote, a reasoning ` +
+    `step they said in chat that's worth keeping on the board), transcribe it with owner:"student". This ` +
+    `visually marks it as THEIR work, not yours — and you must NEVER silently rewrite or overwrite a ` +
+    `student-owned entry. If they made an error, write a SEPARATE entry pointing at it, don't edit theirs.\n` +
     `BE CONCISE — KEYWORDS AND STRUCTURE, NEVER PROSE. The rule most easily got wrong. Board text that ` +
     `RESTATES a sentence you just said in chat measurably HURTS learning (the redundancy effect: the student ` +
     `spends working memory reconciling two copies of the same thing instead of learning it). The one documented ` +

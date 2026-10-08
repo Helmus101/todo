@@ -47,6 +47,7 @@ const KIND_LABEL: Record<string, [string, string]> = {
   definition: ["Définition", "Definition"],
   diagram: ["Figure", "Figure"],
   outline: ["Plan", "Outline"],
+  gap: ["À toi de jouer", "Your turn"],
   interactive: ["Interactif", "Interactive"],
   graph: ["Graphique", "Graph"],
 };
@@ -65,6 +66,7 @@ const KIND_GLYPH: Record<string, string> = {
   definition: "≡",
   diagram: "◫",
   outline: "▤",
+  gap: "?",
   interactive: "◈",
   graph: "◠",
 };
@@ -623,7 +625,7 @@ export function BoardArtifact({ task, writing, onProblemResult, onAnswer, answer
           return (
             <div
               key={item.key}
-              className={`sm-board-entry sm-board-entry-${e.kind || "note"} sm-board-writein${fresh ? " sm-board-reveal" : ""}`}
+              className={`sm-board-entry sm-board-entry-${e.kind || "note"} sm-board-writein${fresh ? " sm-board-reveal" : ""}${e.owner === "student" ? " sm-board-entry-student" : ""}`}
               style={fresh ? { animationDuration: `.35s, ${revealDuration(e.text)}s` } : undefined}
             >
               <span className="sm-board-section-num" aria-hidden="true">{String(idx + 1).padStart(2, "0")}</span>
@@ -688,8 +690,8 @@ export function BoardArtifact({ task, writing, onProblemResult, onAnswer, answer
                 </>
               ) : (
                 <>
-                  <div className="sm-board-entry-text">{e.kind === "question" || e.kind === "given" || e.kind === "result" ? <div style={{ whiteSpace: "pre-wrap" }}><MathText text={autoMathLine(stripStrayMarkdown(e.kind === "result" ? e.text.replace(/^\s*(?:established|établi|found|result|trouvé)\s*:\s*/i, "") : e.text))} /></div> : e.kind === "formula" ? <div style={{ whiteSpace: "pre-wrap" }}><MathText text={autoMathLine(stripStrayMarkdown(e.text))} /></div> : renderChatText(e.text)}</div>
-                  {isCompletionGap(e.text) ? (
+                  <div className={`sm-board-entry-text${e.kind === "gap" ? " sm-board-gap-text" : ""}`}>{e.kind === "question" || e.kind === "given" || e.kind === "result" ? <div style={{ whiteSpace: "pre-wrap" }}><MathText text={autoMathLine(stripStrayMarkdown(e.kind === "result" ? e.text.replace(/^\s*(?:established|établi|found|result|trouvé)\s*:\s*/i, "") : e.text))} /></div> : e.kind === "formula" ? <div style={{ whiteSpace: "pre-wrap" }}><MathText text={autoMathLine(stripStrayMarkdown(e.text))} /></div> : renderChatText(e.text)}</div>
+                  {(e.kind === "gap" || isCompletionGap(e.text)) ? (
                     <span className="sm-board-todo-chip">{en ? "Your turn to finish" : "À toi de finir"}</span>
                   ) : null}
                   {/* Answer right where the question lives, instead of having to scroll down to chat —
