@@ -1718,13 +1718,32 @@ function parseNumericOrFraction(s: string): number {
   }
   return NaN;
 }
+// A multi-step numeric problem (physics, chemistry, finance) routinely has more than one legitimate path
+// to the final number — g = 9.8 vs 9.81, rounding an intermediate angle vs carrying full precision through
+// to the last step — and those paths can disagree by a percent or two even though both are "correct".
+// Reported live: a student's correctly-derived 7.28 N (g=9.8, rounded intermediate angle) and 7.43 N
+// (exact, no intermediate rounding) were BOTH marked wrong against a problem whose stored `answer` was
+// just one specific path through the same calculation — the tolerance below was a flat relative 1e-6,
+// i.e. exact-match. A plain integer-looking answer ("4", a count, an MCQ-style exact value) should stay
+// tight — loosening those risks accepting a genuinely wrong value. The signal used to tell the two apart:
+// whether the STORED answer itself was given with a decimal point. A decimal answer is a rounded result of
+// a computation, so a reasonable alternate path landing within a few percent is almost always the same
+// physical quantity; a bare integer is treated as exact.
+function numbersMatch(given: number, correct: string | number): boolean {
+  const correctNum = typeof correct === "number" ? correct : parseNumericOrFraction(correct);
+  const looksDecimal = typeof correct === "string" && /\.\d/.test(correct);
+  if (!looksDecimal) return Math.abs(given - correctNum) < 1e-6 * Math.max(1, Math.abs(correctNum));
+  const relTol = Math.abs(correctNum) * 0.03; // covers g=9.8-vs-9.81 and a single intermediate rounding step
+  const absFloor = 0.05; // last-digit rounding drift for small answers (7.42 vs 7.43)
+  return Math.abs(given - correctNum) <= Math.max(relTol, absFloor);
+}
 export function practiceAnswerMatches(given: string, correct: string): boolean {
   const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ").replace(/^[a-z]\s*=\s*/, "").replace(/\.$/, "");
   const g = norm(given), c = norm(correct);
   if (!g) return false;
   if (g === c) return true;
-  const gn = parseNumericOrFraction(g), cn = parseNumericOrFraction(c);
-  if (Number.isFinite(gn) && Number.isFinite(cn)) return Math.abs(gn - cn) < 1e-6 * Math.max(1, Math.abs(cn));
+  const gn = parseNumericOrFraction(g);
+  if (Number.isFinite(gn) && Number.isFinite(parseNumericOrFraction(c))) return numbersMatch(gn, c);
   // Leading-number fallback: makePracticeProblem's own prompt (server/claude.ts) tells the STUDENT to
   // include a unit ("format" field says so explicitly) and stores the correct answer WITH one too ("84 m") —
   // but a student who types just the number ("84") has the numerically exact right answer, only missing
@@ -1739,7 +1758,7 @@ export function practiceAnswerMatches(given: string, correct: string): boolean {
     return m ? Number(m[0].replace(",", ".")) : NaN;
   };
   const gln = leadingNum(g), cln = leadingNum(c);
-  if (Number.isFinite(gln) && Number.isFinite(cln)) return Math.abs(gln - cln) < 1e-6 * Math.max(1, Math.abs(cln));
+  if (Number.isFinite(gln) && Number.isFinite(cln)) return numbersMatch(gln, c.match(/-?\d+\.\d+/)?.[0] ?? cln);
   return false;
 }
 
