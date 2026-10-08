@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync, readdirSync } from "node:fs";
-import { recencyStamp, dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor, attachLocationLinks, googleMapsDirectionsUrl } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, shouldNudgeBoardContent, mathInPlay, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem, detectLang, visionReady, describeWhiteboard, academicBlock, sessionRecapLine } from "../server/claude.ts";
+import { recencyStamp, dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor, attachLocationLinks, googleMapsDirectionsUrl, trimOldStudylogArtifacts } from "../server/tasks.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, shouldNudgeBoardContent, mathInPlay, newMathOffBoard, replyIntroducesNewMath, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem, detectLang, visionReady, describeWhiteboard, academicBlock, sessionRecapLine } from "../server/claude.ts";
 import { evaluateArithmetic, parseNumber, findArithmeticClaims, hasArithmetic } from "../server/arithmetic.ts";
 import { isLikelyEcho, createEchoFilter, normalizeForEcho } from "../client/voice/echoGuard.ts";
 import { speechErrorMessage } from "../client/voice/speechErrors.ts";
@@ -27,7 +27,7 @@ import { COURSES, findCourse, normText, subjectMatches, matchesUnit, unitMastery
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, subjectFrequency, orderingBoost, twoMinuteRuleBoost } from "../server/patterns.ts";
 
 import { compileExpr } from "../shared/mathExpr.ts";
-import { makeGraphEntry, earlierDigest, isSubstantiveStep, courseworkLine, fallbackCourseworkSummary } from "../server/claude.ts";
+import { makeGraphEntry, earlierDigest, isSubstantiveStep, courseworkLine, fallbackCourseworkSummary, chunkCourseworkText } from "../server/claude.ts";
 import { canonSubject, sameSubject, normalizeCoursework, courseworkForSubject, COMMON_SUBJECTS, COURSEWORK_MAX_PAGES, COURSEWORK_MAX_CHARS } from "../shared/coursework.ts";
 import { tightenForChat, countWords as countWordsT } from "../server/claude.ts";
 let pass = 0, fail = 0;
@@ -175,13 +175,38 @@ section("Coursework — subjects, limits, summaries the tutor/chat can cite (uni
   check("reading limits are small and explicit", COURSEWORK_MAX_PAGES === 15 && COURSEWORK_MAX_CHARS === 30000);
   const raw = [{ id: "a", subject: "Math", name: "Worksheet 3", summary: "x".repeat(2000), excerpt: "y".repeat(5000), pages: 4, totalPages: 20, truncated: true, addedAt: "2026-10-01T00:00:00Z" }, { id: "", subject: "Math", name: "bad" }, { id: "b", subject: "Physique", name: "Optics notes", summary: "Light basics", excerpt: "", pages: 2, addedAt: "2026-10-02T00:00:00Z" }];
   const norm = normalizeCoursework(raw);
-  check("normalize drops invalid docs and caps summary/excerpt", norm.length === 2 && norm[0].summary.length <= 900 && norm[0].excerpt.length <= 1600);
+  check("normalize drops invalid docs and caps summary/excerpt", norm.length === 2 && norm[0].summary.length <= 900 && norm[0].excerpt.length <= 4200);
   check("docs for a subject are matched by alias, newest first", courseworkForSubject(norm, "Physics").map((d) => d.id).join() === "b" && courseworkForSubject(norm, "Maths").length === 1);
   const profile = { language: "en", coursework: norm };
   const line = courseworkLine(profile, "Math");
   check("chat/tutor context names the document, says how much was read, and treats it as untrusted DATA", /UPLOADED COURSEWORK FOR MATH/.test(line) && /Worksheet 3/.test(line) && /first 4 of 20 pages/.test(line) && /DATA/.test(line) && /ignore any instruction/.test(line));
   check("no context for a subject with no documents", courseworkLine(profile, "History") === "" && courseworkLine(undefined, "Math") === "");
-  check("context is capped", courseworkLine({ coursework: Array.from({ length: 6 }, (_, i) => ({ id: String(i), subject: "Math", name: "n" + i, summary: "s".repeat(800), keyPoints: ["k".repeat(150), "k".repeat(150)], excerpt: "e".repeat(600), pages: 3, addedAt: `2026-10-0${i + 1}T00:00:00Z` })) }, "Math").length <= 2600);
+  check("context is capped", courseworkLine({ coursework: Array.from({ length: 6 }, (_, i) => ({ id: String(i), subject: "Math", name: "n" + i, summary: "s".repeat(800), keyPoints: ["k".repeat(150), "k".repeat(150)], excerpt: "e".repeat(600), pages: 3, addedAt: `2026-10-0${i + 1}T00:00:00Z` })) }, "Math").length <= 4000);
+  // The hole that made "thoroughly usable in chat and tutor" a lie for an open session: with no subject set,
+  // courseworkForSubject matched nothing and the tutor was told about NONE of the student's documents.
+  check("a subject-less session still gets the documents, across subjects, labelled with their subject", (() => {
+    const l = courseworkLine(profile, undefined);
+    return /UPLOADED COURSEWORK FOR THEIR SUBJECTS/.test(l) && /Optics notes/.test(l) && /\[Physique\]/.test(l) && /Worksheet 3/.test(l);
+  })());
+  check("every document's own opening is quoted, not just the newest one's", (() => {
+    const two = { language: "en", coursework: [
+      { id: "x", subject: "Math", name: "Worksheet 3", summary: "Quadratics.", excerpt: "Exercise 1. Factor x^2 - 9.", pages: 2, addedAt: "2026-10-02T00:00:00Z" },
+      { id: "y", subject: "Math", name: "Worksheet 2", summary: "Fractions.", excerpt: "Exercise 4. Simplify 6/8.", pages: 2, addedAt: "2026-10-01T00:00:00Z" },
+    ] };
+    const l = courseworkLine(two, "Math");
+    return /Factor x\^2 - 9/.test(l) && /Simplify 6\/8/.test(l);
+  })());
+  check("the block tells the tutor to ground exercises in the document's own numbered questions and to say when a question isn't in it", (() => {
+    const l = courseworkLine(profile, "Math");
+    return /name the ones you're setting/.test(l) && /ISN'T answered by it/.test(l);
+  })());
+  // Reading the first 15 pages means reading the WHOLE slice: a single 12 000-char read silently dropped
+  // everything past roughly page 6 (the summariser's old `.slice(0, 12000)`).
+  check("a document longer than one window is split in order, covering the whole slice, and a short one stays a single window", (() => {
+    const long = "x".repeat(COURSEWORK_MAX_CHARS);
+    const wins = chunkCourseworkText(long);
+    return wins.length === 3 && wins.every((w) => w.length <= 12000) && wins.join("").length === COURSEWORK_MAX_CHARS && chunkCourseworkText("short text").length === 1 && chunkCourseworkText("").length === 0;
+  })());
   check("fallback summary (no AI) is the first sentences, bounded", fallbackCourseworkSummary("First sentence here. Second one follows. " + "More text. ".repeat(100)).length <= 430 && fallbackCourseworkSummary("") === "");
   const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
   const cwRoute = idx.slice(idx.indexOf('app.post("/api/coursework"'), idx.indexOf('app.post("/api/coursework"') + 4200);
@@ -193,6 +218,38 @@ section("Coursework — subjects, limits, summaries the tutor/chat can cite (uni
   check("the browser reads only the first pages (limited PDF reader) and the page tells the student the limit", /extractPdfTextLimited\(file, COURSEWORK_MAX_PAGES, COURSEWORK_MAX_CHARS\)/.test(page) && /Math\.min\(doc\.numPages, maxPages\)/.test(pdf));
   check("Coursework is in the nav and routed", /href="\/coursework"/.test(readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8")) && /route === "coursework"/.test(readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8")));
   check("each uploaded document is collapsible (details/summary), not a flat always-open card", /<details key={d\.id} className="cw-doc"/.test(page) && /<summary>/.test(page));
+  check("document cards start COLLAPSED, and what Otto read is collapsible in its own right", !/open={list\.length === 1}/.test(page) && /cw-read/.test(page) && /Ce qu'Otto a lu/.test(page));
+}
+section("Journal — old decks stay readable, and a day's deck is the NEWEST one (unit + source pins)");
+{
+  const deckWith = (createdAt, n) => ({ id: `d-${createdAt}-${n}`, title: "t", createdAt, cards: Array.from({ length: n }, (_, i) => ({ front: `f${i}`, back: `b${i}`, review: { box: 2, dueAt: "2026-01-01T00:00:00Z", seen: 2, correct: 1 } })) });
+  const studyDay = (logDate, cards) => ({ id: `t-${logDate}`, title: logDate, source: "studylog", logDate, logText: "what I learned today", flashcards: [deckWith("2026-01-01T00:00:00Z", cards)] });
+  const now = new Date("2026-10-08T12:00:00Z");
+  const fresh = trimOldStudylogArtifacts([studyDay("2026-10-01", 12)], now);
+  check("a recent day keeps its deck AND its review state", fresh[0].flashcards[0].cards.length === 12 && !!fresh[0].flashcards[0].cards[0].review);
+  // Reported live: "when i go a week before it only shows entry" — the deck was being deleted whole past the
+  // TTL, so a journal day a week old showed its text and no cards at all.
+  const old = trimOldStudylogArtifacts([studyDay("2026-08-01", 12)], now);
+  check("a 68-day-old day still shows its CARDS, and keeps its entry text", old[0].flashcards[0].cards.length === 12 && old[0].logText === "what I learned today");
+  check("past the TTL the stale Leitner state (box/dueAt) is what gets dropped, so nothing old keeps resurfacing", old[0].flashcards[0].cards.every((c) => c.review === undefined));
+  check("the retention window is at least the 30 days that were asked for", trimOldStudylogArtifacts([studyDay("2026-09-09", 5)], now)[0].flashcards[0].cards.every((c) => !!c.review));
+  check("trimming is idempotent — the hook runs on EVERY commit, so an already-trimmed task is returned as-is", (() => { const once = trimOldStudylogArtifacts([studyDay("2026-08-01", 12)], now); return trimOldStudylogArtifacts(once, now)[0] === once[0]; })());
+  const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  check("the journal day/week/month views resolve to the NEWEST deck, never flashcards[0] (the stale-deck bug behind 'only 10 show')",
+    /const dayDeck = newestDeck\(dayTask\)/.test(app) && /const summaryDeck = newestDeck\(summary\)/.test(app) && /const monthDeck = newestDeck\(monthSummary\)/.test(app) && !/flashcards\?\.\[0\]/.test(app));
+}
+section("RL personalization — one learner, board-driving moves, richer reward, more context (unit + source pins)");
+{
+  const adapt = readFileSync(new URL("../server/tutorAdapt.ts", import.meta.url), "utf8");
+  check("each of the seven learned moves carries a concrete BOARD action, so the policy's choice is visible on the page",
+    /Put that question ON THE BOARD/.test(adapt) && /put THAT shrunk step on the board/.test(adapt) && /put it on the board LINE BY LINE/.test(adapt) &&
+    /put a figure on the board/.test(adapt) && /put the MAPPING on the board/.test(adapt) && /put THAT back on the board/.test(adapt) && /write the rule up on the board/.test(adapt));
+  const pol = readFileSync(new URL("../server/tutorPolicy.ts", import.meta.url), "utf8");
+  check("the policy is v2 with the three added context features (mastery, objective progress, board richness)",
+    /v: 2/.test(pol) && /p\.v !== 2/.test(pol) && /mastery\?: number/.test(pol) && /objectiveProgress\?: number/.test(pol) && /boardRich\?: number/.test(pol));
+  const idx2 = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  check("the route feeds the policy what the previous turn PRODUCED (board write + objectives ticked off), tracked across turns",
+    /lastTurnBoardWrite/.test(idx2) && /lastTurnObjectivesDone/.test(idx2) && /objectivesAdvanced/.test(idx2) && /boardRich: Math\.min\(1, \(t\.board \|\| \[\]\)\.length \/ 12\)/.test(idx2));
 }
 section("Tutor graphs — safe expression compiler + GRAPH_ON_BOARD validation");
 {
@@ -1764,12 +1821,19 @@ section("shouldNudgeBoardWrite — a confirmed student math step must land on th
   // A SECOND, distinct miss: the tutor's own reply carries real math while the board is still EMPTY. Nothing
   // caught that before — shouldNudgeBoardWrite needs a confirmation and nudgeReasoning needed a
   // student-contributed step — so a session could talk math for several turns with an empty board.
-  check("real math in the reply with an EMPTY board is its own nudge trigger", shouldNudgeBoardContent("Let's use F_net = mg sin25 − mg cos25·tan20 first.", true, false) && shouldNudgeBoardContent("sin²θ + cos²θ = 1 is the formula in play.", true, false));
-  check("that trigger can never nag mid-session: anything already on the board disables it", !shouldNudgeBoardContent("F_net = mg sin25", false, false));
-  check("and it never fires when the turn already wrote", !shouldNudgeBoardContent("F_net = mg sin25", true, true));
-  check("a content-free reply (just the next question) does not trigger it", !shouldNudgeBoardContent("What do you notice about the two angles here?", true, false));
+  check("real working in the reply with an EMPTY board is its own nudge trigger", shouldNudgeBoardContent("Let's use F_net = mg sin25 − mg cos25·tan20 first.", "", false) && shouldNudgeBoardContent("sin²θ + cos²θ = 1 is the formula in play.", "", false));
+  // The gate that used to be here — "anything already on the board disables it" — was the bug: a session
+  // wrote its focus line and then did every derivation in chat with no correction ever. What disables it now
+  // is the board ALREADY CARRYING that working, not the board merely having something on it.
+  check("it still fires mid-session when the reply introduces working the page doesn't have", shouldNudgeBoardContent("F_net = mg sin25", "Today's focus: forces on a slope", false) && shouldNudgeBoardContent("so x = 7 or x = −4/3", "given: 3sec²x − 28 = 0", false));
+  check("but working the board already carries is not a miss — a quoted formula isn't new", !shouldNudgeBoardContent("So we use F_net = mg sin25 here.", "F_net = mg sin25 − mg cos25·tan20", false) && !shouldNudgeBoardContent("$x = 2$ follows from it.", "solve: $x = 2$", false));
+  check("and it never fires when the turn already wrote", !shouldNudgeBoardContent("F_net = mg sin25", "", true));
+  check("a content-free reply (just the next question) does not trigger it", !shouldNudgeBoardContent("What do you notice about the two angles here?", "", false));
   check("mathInPlay is the shared, single definition of board-worthy math", mathInPlay("x = 2") && mathInPlay("the formula for the area") && !mathInPlay("the author uses irony throughout"));
-  check("an empty board with math in the reply gets a corrective round (not just a student step)", /shouldNudgeBoardContent\(draft, true, false\)/.test(claudeSrc5) && /studentStep \|\| contentMissedBoard/.test(claudeSrc5));
+  check("newMathOffBoard lists exactly the working the page lacks, normalized so formatting doesn't matter", newMathOffBoard("so 2x = 8 and $y = 3$", "Given: 2x = 8").join("|") === "y = 3" && newMathOffBoard("nothing to see", "").length === 0);
+  check("it ignores a stray '=' in prose (no real working), so a literature turn is never nudged", !replyIntroducesNewMath("the author's tone = ironic throughout", "") && !shouldNudgeBoardContent("the author's tone = ironic", "", false));
+  check("a reply with working the board lacks gets a corrective round, mid-session or not (not just a student step)", /shouldNudgeBoardContent\(draft, boardTextNow, false\)/.test(claudeSrc5) && /studentStep \|\| contentMissedBoard/.test(claudeSrc5) && /boardNow = \[\.\.\.\(opts\?\.currentBoard \|\| \[\]\), \.\.\.result\.board\]/.test(claudeSrc5));
+  check("the mid-session corrective round asks for the WORKING line-by-line with a gap, and says NOT to use a reasoning trace for it", /put the WORKING up: SEPARATE LINES, one move per line/.test(claudeSrc5) && /Do NOT reach for kind \\"summary\\" for this/.test(claudeSrc5));
 }
 
 section("Board usage — the 'use the board' guidance is UNCONDITIONAL (it used to require a non-empty board, source pins)");
@@ -1783,6 +1847,17 @@ section("Board usage — the 'use the board' guidance is UNCONDITIONAL (it used 
   check("the empty-board case is called out explicitly, with what to put up first", block.includes("NOTHING IS ON THE BOARD YET") && block.includes('kind:"focus"'));
   check("and it names the failure mode being corrected (explaining in chat instead of showing it)", block.includes("SHOW IT, DON'T JUST SAY IT") && block.includes("the commonest way the document ends up empty"));
   check("it states the frequency expected: content-bearing turns normally END with one new entry", block.includes("HOW OFTEN") && block.includes("should normally END with ONE new board entry"));
+  // Reported live: "for board now it mostly does is how you got there" — summary/reasoning-trace was the only
+  // kind the strong rules named, so the page filled up with traces instead of being a page.
+  check("it rebalances the KIND mix: a reasoning trace is for the student's own reasoning, the rest is plain text",
+    block.includes("NOT EVERY ENTRY IS A REASONING TRACE") && block.includes("should be plain text") && block.includes("wearing a costume"));
+  check("it teaches the line-by-line working with the next line left as a gap",
+    block.includes("SHOW THE WORKING, LINE BY LINE") && block.includes("the NEXT line left as the gap") && block.includes("never about a line of working"));
+  check("it gives permission to ask when unsure, and puts the question on the board",
+    block.includes("ASK IF YOU'RE UNSURE") && block.includes("Guiding questions belong on the board"));
+  check("the big board section carries the paper test for any turn", /THE TEST FOR ANY TURN[\s\S]{0,160}what would be on it by now\?/.test(src));
+  check("the one non-optional write is no longer hard-wired to kind:\"summary\"", /THE ONE WRITE THAT ISN'T OPTIONAL[\s\S]{0,700}the KIND follows what they actually did/.test(src) && !/THE ONE WRITE THAT ISN'T OPTIONAL[\s\S]{0,300}call WRITE_TO_BOARD with kind:\"summary\" before your reply ends/.test(src));
+  check("the fence rule is corrected: ordinary step lines are NOT fenced, only exact-space shapes are", /UNFENCED text renders ONE LINE PER LINE/.test(src) && /a fence is ONLY for a shape whose exact spacing IS the content/.test(src));
 }
 
 section("Arithmetic ground truth — evaluator, claim extractor, CREATE_CALC (server/arithmetic.ts + claude.ts)");

@@ -238,6 +238,16 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
   }, [task?.id, task?.chat?.length, task?.sourceSubject, userId, openerAskedFor, openerLang]);
   const [exerciseDone, setExerciseDone] = useState(false);
   const [surfaceEl, setSurfaceEl] = useState<HTMLDivElement | null>(null);
+  // The session's focus objectives (SET_OBJECTIVES), opened from the ◎ chip in the crumb bar. Declared here
+  // with every other hook — the stage view has an early return ABOVE, and a hook after it is exactly the
+  // React #310 crash this file already had once (see the commit that fixed a hooks-after-early-return bug).
+  const [objectivesOpen, setObjectivesOpen] = useState(false);
+  useEffect(() => {
+    if (!objectivesOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setObjectivesOpen(false); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [objectivesOpen]);
   const send = useCallback(async (override?: string, voiceMode?: boolean) => {
     let message = (override ?? input).trim();
     if (!message || sending || !task) return;
@@ -670,9 +680,19 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
         <button type="button" className="tutor-crumb-link" onClick={onExit}>{L("Toutes les séances", "All sessions")}</button>
         {task.sourceSubject ? <span className="tutor-crumb-subject">{task.sourceSubject}</span> : null}
         {!!task.objectives?.length && (
-          <span className="ts-chip" title={task.objectives.map((o) => `${o.done ? "✓" : "○"} ${o.label}`).join("\n")}>
+          // A real control now, not a hover-only tooltip: the objectives were only ever readable by hovering
+          // the chip, which meant the one thing the session is aiming at was effectively invisible. Report-live
+          // ask: show them. Toggles the checklist panel right under the bar.
+          <button
+            type="button"
+            className="ts-chip ts-chip-btn"
+            aria-expanded={objectivesOpen}
+            aria-controls="ts-objectives"
+            title={objectivesOpen ? L("Masquer les objectifs", "Hide the objectives") : L("Voir les objectifs de la séance", "See this session's objectives")}
+            onClick={() => setObjectivesOpen((o) => !o)}
+          >
             ◎ {objDone}/{task.objectives.length}{typeof task.mastery === "number" ? ` · ${Math.round(task.mastery * 100)}%` : ""}
-          </span>
+          </button>
         )}
         <button type="button" className="btn ghost tutor-chat-btn" data-tour="ts-chat" onClick={() => setChatDrawer(true)} aria-label={L("Ouvrir le chat", "Open chat")}>
           <MessageCircle size={14} aria-hidden="true" /> {L("Chat", "Chat")}
@@ -681,6 +701,23 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
           {endingSession ? L("Fin…", "Ending…") : L("Terminer la séance", "End session")}
         </button>
       </header>
+      {objectivesOpen && !!task.objectives?.length && (
+        <div className="ts-objectives" id="ts-objectives" role="region" aria-label={L("Objectifs de la séance", "Session objectives")}>
+          <h3>{L("Objectifs de la séance", "This session's objectives")}</h3>
+          <ul>
+            {task.objectives.map((o, i) => (
+              <li key={o.id || `${i}:${o.label}`} className={o.done ? "done" : undefined}>
+                <span className="ts-obj-mark" aria-hidden="true">{o.done ? "✓" : "○"}</span>
+                <span className="ts-obj-label"><MathText text={o.label} /></span>
+              </li>
+            ))}
+          </ul>
+          <p className="ts-obj-hint">
+            {L(`${objDone}/${task.objectives.length} validés — Otto coche quand tu lui montres que c'est compris.`,
+              `${objDone}/${task.objectives.length} done — Otto ticks one off when you show him you've got it.`)}
+          </p>
+        </div>
+      )}
       <section className="ts-canvas" aria-label={L("Tableau", "Board")}>
         <div className="tutor-board-body ts-board-body" ref={setSurfaceEl} style={{ display: desmosOpen ? "none" : undefined }}>
           <BoardArtifact task={task} writing={sending} onProblemResult={onProblemResult} />

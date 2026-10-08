@@ -1558,6 +1558,17 @@ app.post("/api/tutor/opener", requireAuth, rateLimit(30, 60_000), ah(async (req,
 // narration the board has already distilled, not load-bearing context. Halved rather than cut further: still
 // comfortably covers "what did we just say two messages ago" continuity, which IS still needed turn to turn.
 const CHAT_CAP = 60;
+// Did the PREVIOUS tutor turn write anything to the board? The RL policy is scored by what a move PRODUCED
+// (tutorAdapt's TurnOutcome), and "the board grew and the student engaged with it" is real evidence a
+// teaching move worked — but it is only observable ACROSS turns, so the one fact needed next turn is stashed
+// here. In-memory and best-effort, exactly like tutorPolicy's own pending-action map: a restart costs one
+// unscored turn and nothing else. Keyed per (user, task) so two sessions can't score each other's writes.
+const lastTurnBoardWrite = new Map<string, boolean>();
+// Session objectives marked done as of the END of the previous turn, same idea and same lifetime as
+// lastTurnBoardWrite: "an objective got ticked off" is only observable as a DIFFERENCE across turns, and the
+// client resends the full objective list each turn (SET_OBJECTIVES' own replace-everything contract).
+const lastTurnObjectivesDone = new Map<string, number>();
+const LAST_TURN_BOARD_CAP = 2000;
 app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour discuter.", "AI is paused — resume it in Settings to chat.") }); return; }
   if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
@@ -1607,7 +1618,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     .slice(-12)
     .map((p: any) => ({ id: "", createdAt: "", solved: p.solved === true, question: String(p.question).slice(0, 600), ...(Array.isArray(p.options) ? { options: p.options.map((o: any) => String(o).slice(0, 300)).slice(0, 6) } : {}) }));
   const currentObjectivesRaw = Array.isArray(req.body?.objectives) ? req.body.objectives : [];
-  const currentObjectives = currentObjectivesRaw
+  const currentObjectives: { id: string; label: string; done: boolean }[] = currentObjectivesRaw
     .filter((o: any) => o && typeof o.label === "string" && o.label.trim())
     .slice(-6)
     .map((o: any) => ({ id: "", label: String(o.label).slice(0, 160), done: Boolean(o.done) }));
@@ -1671,13 +1682,34 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     // that has been working for them (Thompson-sampling bandit, scored by how they reacted to the previous move).
     // Primer (stage) turns only; best-effort — a failure here must never block the reply.
     let repair = "", moveLine = "";
+    // Key for the cross-turn RL bookkeeping below — declared out here so the recording at the end of the turn
+    // (after the board/objectives are actually persisted) can use it, not only the planning block.
+    const planKey = `${req.session.user}:${t.id}`;
     if (req.body?.primer === true) {
       try {
         repair = repairLine(message, history);
         // The RL policy: a small neural network, trained online per student (REINFORCE), that picks the teaching move and
-        // pace for this turn. Weights persist per student; the previous turn's action is scored by how they just reacted.
+        // pace for this turn. Weights persist per student; the previous turn's action is scored by how they just reacted
+        // AND by what that turn actually produced (see TurnOutcome — the board it wrote, the objectives it ticked off).
         const polState = await loadBanditState(req.session.user!, "tutorpolicy");
-        const plan = planTurn({ userKey: `${req.session.user}:${t.id}`, message, history, subject: t.sourceSubject, policy: parsePolicy((polState as any)?.policy) });
+        // What the PREVIOUS turn produced, for this turn's scoring (see TurnOutcome). `previousObjectivesDone`
+        // is the count recorded at the end of that turn; the client's own list is the current truth, so the
+        // difference is how many got newly ticked off in between. No stored count (first turn, or a restart)
+        // means "nothing to attribute", never a guess.
+        const previousObjectivesDone = lastTurnObjectivesDone.get(planKey);
+        const objectivesDoneNow = currentObjectives.filter((o) => o.done).length;
+        const plan = planTurn({
+          userKey: planKey, message, history, subject: t.sourceSubject, policy: parsePolicy((polState as any)?.policy),
+          outcome: {
+            prevWroteBoard: lastTurnBoardWrite.get(planKey),
+            objectivesAdvanced: previousObjectivesDone === undefined ? 0 : Math.max(0, objectivesDoneNow - previousObjectivesDone),
+          },
+          context: {
+            mastery: subjectSignal?.correctRate ?? (typeof t.mastery === "number" ? t.mastery : undefined),
+            objectiveProgress: currentObjectives.length ? objectivesDoneNow / currentObjectives.length : undefined,
+            boardRich: Math.min(1, (t.board || []).length / 12),
+          },
+        });
         moveLine = plan.line;
         if (plan.learned) {
           void saveBanditState(req.session.user!, "tutorpolicy", { policy: plan.policy } as any).catch(() => {});
@@ -1766,6 +1798,13 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     if (newChat.length) t.chat = [...(t.chat || []), ...newChat].slice(-CHAT_CAP);
     if (out.board.length) t.board = [...(t.board || []), ...out.board].slice(-tasks.BOARD_MERGE_CAP);
     if (out.problems.length) t.problems = [...(t.problems || []), ...out.problems].slice(-tasks.ARTIFACT_CAP);
+    // Record what THIS turn produced, for the next turn's RL scoring (see lastTurnBoardWrite's own comment).
+    // `out.objectives` is SET_OBJECTIVES' full replacement list when it ran, and is never written onto `t`
+    // here (the client owns the live list) — so it is exactly the count to remember.
+    if (lastTurnBoardWrite.size >= LAST_TURN_BOARD_CAP) lastTurnBoardWrite.delete(lastTurnBoardWrite.keys().next().value as string);
+    if (lastTurnObjectivesDone.size >= LAST_TURN_BOARD_CAP) lastTurnObjectivesDone.delete(lastTurnObjectivesDone.keys().next().value as string);
+    lastTurnBoardWrite.set(planKey, out.board.length > 0);
+    lastTurnObjectivesDone.set(planKey, (out.objectives || currentObjectives).filter((o) => o.done).length);
     t.updatedAt = now;
     await commit(req);
     res.json({ reply: out.reply, chatDelta: newChat, board: out.board, problems: out.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped, task: t });
@@ -3400,7 +3439,9 @@ app.post("/api/coursework", requireAuth, rateLimit(15, 60_000), ah(async (req, r
     id, subject, name,
     summary: sum?.summary || fallbackCourseworkSummary(text),
     keyPoints: sum?.keyPoints?.length ? sum.keyPoints : undefined,
-    excerpt: text.replace(/\s+/g, " ").slice(0, 1500),
+    // 4000 chars, not 1500: `courseworkLine` quotes each document's own opening to the tutor, and a worksheet's
+    // actual questions must be inside that quote for "set an exercise from their worksheet" to mean anything.
+    excerpt: text.replace(/\s+/g, " ").slice(0, 4000),
     pages, totalPages, truncated: truncated || undefined,
     addedAt: new Date().toISOString(),
   };

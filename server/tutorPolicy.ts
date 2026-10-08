@@ -17,11 +17,17 @@ export type Move = (typeof MOVES)[number];
 export type Pace = (typeof PACES)[number];
 
 const SUBJECT_BUCKETS = 6;
-export const FEATURE_DIM = 5 /* last reaction one-hot */ + 1 /* stuck streak */ + 1 /* turn depth */ + SUBJECT_BUCKETS + 2 /* time of day */ + 1 /* message length */ + 1 /* has maths */ + 1 /* recent wrong exercises */ + 1 /* repeated-student flag */ + MOVES.length /* previous move */ + 1 /* bias */;
+/** v2 adds three context features the policy can genuinely personalize on and the caller ALREADY has (see
+ *  planTurn's `context`): subject mastery, how far through this session's objectives the student is, and how
+ *  full the board already is — a page that has been built up changes what a student needs next (more
+ *  scaffolding, or room to stretch). Bumping `Policy.v` to 2 is what makes old weights get DISCARDED cleanly
+ *  at parse time instead of being misread against a longer feature vector (the arrays would still be
+ *  numeric — silently wrong — which is exactly the failure a version field exists to prevent). */
+export const FEATURE_DIM = 5 /* last reaction one-hot */ + 1 /* stuck streak */ + 1 /* turn depth */ + SUBJECT_BUCKETS + 2 /* time of day */ + 1 /* message length */ + 1 /* has maths */ + 1 /* recent wrong exercises */ + 1 /* repeated-student flag */ + MOVES.length /* previous move */ + 1 /* bias */ + 3 /* mastery, objective progress, board richness */;
 const HIDDEN = 14;
 
 export interface Policy {
-  v: 1;
+  v: 2;
   W1: number[]; b1: number[];            // HIDDEN × FEATURE_DIM, HIDDEN
   Wm: number[]; bm: number[];            // MOVES × HIDDEN, MOVES
   Wp: number[]; bp: number[];            // PACES × HIDDEN, PACES
@@ -40,6 +46,13 @@ export interface Context {
   recentWrong: number;                    // wrong exercises among the last few student messages
   repeatedStudent: boolean;
   prevMove?: Move;
+  /** 0-1 subject mastery (task.mastery / the subject's own correct-rate signal). Undefined when there is no
+   *  evidence yet — encoded as a neutral 0.5 rather than 0, which would read as "this student knows nothing". */
+  mastery?: number;
+  /** 0-1 fraction of this session's objectives already marked done. Undefined when no objectives were set. */
+  objectiveProgress?: number;
+  /** 0-1 how full the board already is — a page that has been built up changes what they need next. */
+  boardRich?: number;
 }
 
 // deterministic tiny PRNG so weights init / sampling are reproducible in tests
@@ -53,7 +66,7 @@ export function initPolicy(seed = 7): Policy {
   const r = rng(seed);
   const mat = (n: number, scale: number) => Array.from({ length: n }, () => gauss(r) * scale);
   return {
-    v: 1,
+    v: 2,
     W1: mat(HIDDEN * FEATURE_DIM, 0.25), b1: new Array(HIDDEN).fill(0),
     Wm: mat(MOVES.length * HIDDEN, 0.05), bm: new Array(MOVES.length).fill(0),   // near-uniform to start
     Wp: mat(PACES.length * HIDDEN, 0.05), bp: [0, 0.3, 0],                       // "steady" slightly favoured at first
@@ -81,6 +94,9 @@ export function featuresFor(c: Context): number[] {
   x[i++] = Math.min(c.recentWrong, 3) / 3;
   x[i++] = c.repeatedStudent ? 1 : 0;
   if (c.prevMove) x[i + MOVES.indexOf(c.prevMove)] = 1; i += MOVES.length;
+  x[i++] = c.mastery === undefined ? 0.5 : Math.max(0, Math.min(1, c.mastery));
+  x[i++] = Math.max(0, Math.min(1, c.objectiveProgress ?? 0));
+  x[i++] = Math.max(0, Math.min(1, c.boardRich ?? 0));
   x[i++] = 1;
   return x;
 }
@@ -160,6 +176,6 @@ export function summarize(p: Policy): { updates: number; flow: { move: Move; pac
 export function parsePolicy(raw: unknown): Policy | null {
   const p = raw as Policy | undefined;
   const ok = (a: unknown, n: number) => Array.isArray(a) && a.length === n && a.every((v) => typeof v === "number" && Number.isFinite(v));
-  if (!p || p.v !== 1 || !ok(p.W1, HIDDEN * FEATURE_DIM) || !ok(p.b1, HIDDEN) || !ok(p.Wm, MOVES.length * HIDDEN) || !ok(p.bm, MOVES.length) || !ok(p.Wp, PACES.length * HIDDEN) || !ok(p.bp, PACES.length) || !Number.isFinite(p.baseline) || !Number.isFinite(p.updates)) return null;
+  if (!p || p.v !== 2 || !ok(p.W1, HIDDEN * FEATURE_DIM) || !ok(p.b1, HIDDEN) || !ok(p.Wm, MOVES.length * HIDDEN) || !ok(p.bm, MOVES.length) || !ok(p.Wp, PACES.length * HIDDEN) || !ok(p.bp, PACES.length) || !Number.isFinite(p.baseline) || !Number.isFinite(p.updates)) return null;
   return p;
 }

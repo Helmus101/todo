@@ -2598,10 +2598,19 @@ function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" | "en"; 
     finally { setGenBusy(false); }
   };
 
+  // NEWEST deck wins — deliberately not `flashcards[0]`. A journal day normally holds exactly one deck (the
+  // save route replaces it in place), but a cross-device/list merge can legitimately end up holding two copies
+  // of the same day under different deck ids, and the merge sorts decks oldest-first — so `[0]` handed the
+  // student a STALE deck from before the day was regenerated. Reported live as a journal day showing only 10
+  // cards when the newer deck for that same day had many more. The newest copy is the one that day's current
+  // entry actually generated; the same reasoning applies to the week/month summaries below.
+  const newestDeck = (t: WebTask | null | undefined): NonNullable<WebTask["flashcards"]>[number] | undefined =>
+    (t?.flashcards || []).reduce<NonNullable<WebTask["flashcards"]>[number] | undefined>(
+      (best, d) => (best && (Date.parse(best.createdAt || "") || 0) > (Date.parse(d.createdAt || "") || 0) ? best : d), undefined);
   const dayTask = days[selected];
-  const dayDeck = dayTask?.flashcards?.[0];
+  const dayDeck = newestDeck(dayTask);
   const dayQuiz = dayTask?.quizzes?.[0];
-  const summaryDeck = summary?.flashcards?.[0];
+  const summaryDeck = newestDeck(summary);
   const summaryQuiz = summary?.quizzes?.[0];
   const anyEntryThisWeek = days.some((d) => d?.logText?.trim());
   const onDayReview = dayTask && dayDeck ? (cardIndex: number, correct: boolean) => {
@@ -2621,7 +2630,7 @@ function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" | "en"; 
     }).catch(() => {});
   } : undefined;
 
-  const monthDeck = monthSummary?.flashcards?.[0];
+  const monthDeck = newestDeck(monthSummary);
   const monthQuiz = monthSummary?.quizzes?.[0];
   const onMonthReview = monthSummary && monthDeck ? (cardIndex: number, correct: boolean) => {
     void api.reviewFlashcard(monthSummary.id, monthDeck.id, cardIndex, correct).then((list) => {

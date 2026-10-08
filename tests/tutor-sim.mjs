@@ -118,19 +118,25 @@ export async function runTutorSim(check, section) {
 
   // Adaptation: loop detection, repeat guard, and the move bandit (RL) — pure helpers from server/tutorAdapt.ts.
   const adA = await import("../server/tutorAdapt.ts");
-  const adB = await import("../server/bandit.ts");
   const adaptHist = [{ role: "user", text: "tan squared is sec squared minus one" }, { role: "assistant", text: "What is tan x in terms of sine and cosine?" }, { role: "user", text: "I told you tan squared is sec squared minus one" }];
   check("'I told you' reads as frustrated and triggers a REPAIR directive", adA.reactionTo("I told you already, it's sec squared minus one", adaptHist).frustrated && /REPAIR/.test(adA.repairLine("I told you already", adaptHist)));
   check("a normal attempt does not trigger REPAIR", adA.repairLine("so the bracket is sec x minus 3", adaptHist) === "");
   check("saying the same thing again is detected as repeated", adA.reactionTo("tan squared equals sec squared minus one", adaptHist).repeated);
   check("near-copy replies are flagged as a loop / repeat", adA.repeatsRecentReply("What is tan x in terms of sine and cosine?", adaptHist) && !adA.repeatsRecentReply("Try drawing the right triangle with angle x.", adaptHist));
-  let adst = {}, adkey = "move|Math|stuck";
-  for (let n = 0; n < 40; n++) adst = adB.updatePosterior(adst, adkey, "visual", 1), adst = adB.updatePosterior(adst, adkey, "probe", 0);
-  let adwins = 0; for (let n = 0; n < 50; n++) if (adB.chooseArm(adA.TUTOR_MOVE_ARMS, adst, adkey).arm.id === "visual") adwins++;
-  check("the move bandit learns: the move that keeps working is served most", adwins > 35);
-  const adplan1 = adA.planMove({ userKey: "u:t", message: "ok", history: [], state: adst, contextKey: adkey, update: adB.updatePosterior });
-  const adplan2 = adA.planMove({ userKey: "u:t", message: "I told you, that's not working", history: [{ role: "user", text: "a" }, { role: "assistant", text: "b" }], state: adst, contextKey: adkey, update: adB.updatePosterior });
-  check("a move that just failed is never served twice in a row and its failure is scored", adplan2.arm !== adplan1.arm && adplan2.scoredPrev?.arm === adplan1.arm && adplan2.scoredPrev.reward === 0);
+  // ONE move-learner: the REINFORCE policy in server/tutorPolicy.ts. The duplicate Thompson-sampling move
+  // bandit that used to live in tutorAdapt.ts (TUTOR_MOVE_ARMS/planMove) was removed — it was reachable from
+  // tests alone, and two learners choosing the same decision from different posteriors is a personalization
+  // bug, not a feature (whichever ran last would win, while the "learned" line shown to the student described
+  // a policy that hadn't actually picked the move).
+  check("the duplicate move bandit is gone — tutorAdapt exports ONE learner's directive text, not a second chooser", adA.TUTOR_MOVE_ARMS === undefined && adA.planMove === undefined);
+  // Richer reward: the student's message still decides it, and what the previous turn PRODUCED now blends in.
+  const attemptMsg = "the bracket is sec x minus 3";
+  check("a board write the student engaged with raises the score of the move that produced it",
+    adA.reactionTo(attemptMsg, adaptHist).reward === 0.75 && adA.reactionTo(attemptMsg, adaptHist, { prevWroteBoard: true }).reward === 0.85);
+  check("a bad reaction is never rescued by a board write, and an objective ticked off always counts as the teaching landing",
+    adA.reactionTo("I told you, that's not working", adaptHist, { prevWroteBoard: true }).reward === 0 &&
+    adA.reactionTo("ok", adaptHist, { objectivesAdvanced: 1 }).reward === 0.6 &&
+    adA.reactionTo("ok", adaptHist).reward === 0.4);
 
   // Geometry figures: the model states the maths, the compiler does the drawing (shared/geometry.ts).
   const geo = buildGeometry({ triangle: { names: ["A", "B", "C"], sides: [3, 4, 5] }, angles: [{ at: "C", from: "A", to: "B", right: true }] });

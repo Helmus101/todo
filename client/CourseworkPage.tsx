@@ -136,7 +136,10 @@ export function Coursework({ onTasksChanged }: { onTasksChanged?: () => void }) 
             <div key={subj} className="cw-group">
               <h3 className="cw-subject">{subj}<span>{list.length}</span></h3>
               {list.map((d) => (
-                <details key={d.id} className="cw-doc" open={list.length === 1}>
+                // Collapsed by default (direct request): the library is a list of what's filed, and a single
+                // document auto-expanding pushed the rest of the list down for no reason. The summary, key
+                // points and what Otto actually read appear on expand — one click, and the list stays scannable.
+                <details key={d.id} className="cw-doc">
                   <summary>
                     <h4>{d.name}</h4>
                     <span className="cw-meta">{d.truncated ? L(`Pages 1–${d.pages}${d.totalPages ? ` sur ${d.totalPages}` : ""} lues`, `Read pages 1–${d.pages}${d.totalPages ? ` of ${d.totalPages}` : ""}`) : L("Lu en entier", "Read in full")}{d.taskIds?.length ? ` · ${L(`${d.taskIds.length} tâche(s) créée(s)`, `${d.taskIds.length} task(s) created`)}` : ""}</span>
@@ -144,6 +147,14 @@ export function Coursework({ onTasksChanged }: { onTasksChanged?: () => void }) 
                   </summary>
                   <p className="cw-summary">{d.summary}</p>
                   {d.keyPoints?.length ? <ul className="cw-points">{d.keyPoints.map((k, i) => <li key={i}>{k}</li>)}</ul> : null}
+                  {/* What Otto actually read, quotable and collapsible in its own right — the stored excerpt
+                      (see shared/coursework.ts), so the student can check what the tutor is citing. */}
+                  {d.excerpt?.trim() ? (
+                    <details className="cw-read">
+                      <summary>{L("Ce qu'Otto a lu", "What Otto read")}</summary>
+                      <p className="cw-excerpt">{d.excerpt}</p>
+                    </details>
+                  ) : null}
                   <a className="cw-ask" href="/tutor">{L("Étudier avec le tuteur →", "Study this with the tutor →")}</a>
                 </details>
               ))}

@@ -7,22 +7,26 @@
 //  2. MOVES — a small Thompson-sampling bandit (server/bandit.ts, same machinery as the other decisions)
 //     over teaching moves. Each turn's move is scored by the student's NEXT message (got it / a real attempt
 //     = reward, frustration or repeating = penalty) and a move that just failed is never served twice in a row.
-import { chooseArm } from "./bandit.ts";
-import type { BanditState } from "./bandit.ts";
+// One move-learner for the whole tutor. There used to be TWO: this file's Thompson-sampling bandit over
+// teaching moves (planMove/TUTOR_MOVE_ARMS) and server/tutorPolicy.ts's REINFORCE net. Only the net was ever
+// called by the app — planMove was reachable from tests alone — and two learners choosing the same decision
+// from different posteriors is a personalization bug waiting to happen (whichever ran last would win, and the
+// "learned" line shown to the student could describe a policy that didn't actually pick the move). The bandit
+// is gone; server/tutorPolicy.ts is the single source of truth, and MOVE_TEXT below is the directive text for
+// its moves.
 
-export interface TutorMoveArm { id: "probe" | "smaller-step" | "worked-parallel" | "visual" | "analogy" | "reflect-back" | "direct-hint" }
-export const TUTOR_MOVE_ARMS: TutorMoveArm[] = [
-  { id: "probe" }, { id: "smaller-step" }, { id: "worked-parallel" }, { id: "visual" }, { id: "analogy" }, { id: "reflect-back" }, { id: "direct-hint" },
-];
-
-const MOVE_TEXT: Record<TutorMoveArm["id"], string> = {
-  probe: "ask what they currently think and where exactly it stops making sense — one open question, then listen.",
-  "smaller-step": "shrink the step: split what you were about to ask into a tiny first piece they can answer in a few words.",
-  "worked-parallel": "show a PARALLEL worked example (same method, different numbers) on the board, leave its last line open, then ask them to do the same on their problem.",
-  visual: "stop using words: put a picture on the board (GEOMETRY_ON_BOARD for geometry, DRAW_ON_BOARD, GRAPH_ON_BOARD or a small CREATE_INTERACTIVE) and ask what they notice in it.",
-  analogy: "give one everyday analogy for the idea (a real-life situation, not another formula) and ask how it maps onto their problem.",
-  "reflect-back": "say back, in your own words, what you think they just said or tried, and ask if you got it right before going further.",
-  "direct-hint": "give ONE concrete hint (the rule or the first move, never the answer), then ask them to take the step.",
+/** Each learned move carries a CONCRETE board action, not just a conversational one. The RL policy chooses
+ *  HOW to teach; the board is where the teaching is visible (see claude.ts's board section: the page is the
+ *  student's paper, working goes up line by line, and the next line is left as a gap). Telling the policy what
+ *  to put up is what stops a "visual" turn from being a paragraph about a picture — it draws instead. */
+const MOVE_TEXT: Record<Move, string> = {
+  probe: "ask what they currently think and where exactly it stops making sense — ONE open question, then listen. Put that question ON THE BOARD (kind:'question') so it stays in front of them while they think.",
+  "smaller-step": "shrink the step: split what you were about to ask into a tiny first piece they can answer in a few words, and put THAT shrunk step on the board as its own short entry, ending in the gap ('= ?') they are meant to fill.",
+  "worked-parallel": "show a PARALLEL worked example (same method, different numbers) and put it on the board LINE BY LINE — each line one move, maths in $…$ — with the last line left open as '= ?' for them, then ask them to do the same on their own problem.",
+  visual: "stop using words: put a figure on the board (GEOMETRY_ON_BOARD for geometry, DRAW_ON_BOARD, GRAPH_ON_BOARD or a small CREATE_INTERACTIVE) and ask what they notice in it.",
+  analogy: "give one everyday analogy for the idea (a real-life situation, not another formula), put the MAPPING on the board as short arrow lines (for example 'voltage --pushes--> current'), and ask how it maps onto their problem.",
+  "reflect-back": "say back, in your own words, what you think they just said or tried, and put THAT back on the board as a short entry (kind:'summary' is right here — it is THEIR reasoning being reflected) before asking whether you got it right.",
+  "direct-hint": "give ONE concrete hint (the rule or the first move, never the answer), write the rule up on the board (kind:'formula') with the next line left as a gap, then ask them to take the step.",
 };
 
 // What a stuck / frustrated student actually types (EN + FR). Deliberately specific phrases — a bare "no" or
@@ -45,19 +49,45 @@ export function similarity(a: string, b: string): number {
 
 export interface Reaction { reward: number; frustrated: boolean; repeated: boolean; label: "frustrated" | "repeated" | "positive" | "attempt" | "neutral" }
 
-/** How the student reacted to the PREVIOUS Otto turn, read from their new message. reward ∈ [0,1]; ≥ 0.5 is a win. */
-export function reactionTo(message: string, history: { role: string; text: string }[]): Reaction {
+/** What the PREVIOUS tutor turn actually PRODUCED, over and above what the student typed back. The reaction to
+ *  a move used to be the student's next message and nothing else — but a tutoring move's real payoff is often
+ *  visible in the session itself: the board grew (the move's board action landed), or an objective got ticked
+ *  off (the teaching worked end-to-end). Both are already known to the caller, so they are folded into the
+ *  reward rather than ignored. Every field is optional and only BLENDS what the message already says — a
+ *  frustrated student's 0 stays 0, and a signal that doesn't apply is omitted rather than counted as failure
+ *  (the same posture as computeReward's optional terms in bandit.ts). */
+export interface TurnOutcome {
+  /** Did the turn that served the previous move write to the board? Only counts WITH a positive reaction —
+   *  a page that grew while the student got more lost is not evidence the move worked. */
+  prevWroteBoard?: boolean;
+  /** How many session objectives were newly completed since the previous turn (SET_OBJECTIVES, see claude.ts). */
+  objectivesAdvanced?: number;
+}
+
+/** How the student reacted to the PREVIOUS Otto turn, read from their new message (and, when supplied, what
+ *  that turn produced). reward ∈ [0,1]; ≥ 0.5 is a win. */
+export function reactionTo(message: string, history: { role: string; text: string }[], outcome?: TurnOutcome): Reaction {
   const m = message.trim();
   const priorUsers = history.filter((h) => h.role === "user").slice(-4).map((h) => h.text);
   const frustrated = FRUSTRATED.test(m);
   const repeated = !frustrated && priorUsers.some((u) => similarity(u, m) >= 0.6);
-  if (frustrated) return { reward: 0, frustrated: true, repeated, label: "frustrated" };
-  if (repeated) return { reward: 0.1, frustrated: false, repeated: true, label: "repeated" };
-  const ex = /^\[Exercise\].*marked (right|wrong)/s.exec(m);
-  if (ex) return { reward: ex[1] === "right" ? 1 : 0.3, frustrated: false, repeated: false, label: ex[1] === "right" ? "positive" : "neutral" };
-  if (POSITIVE.test(m)) return { reward: 1, frustrated: false, repeated: false, label: "positive" };
-  if (m.split(/\s+/).length >= 4 || /[0-9=]/.test(m)) return { reward: 0.75, frustrated: false, repeated: false, label: "attempt" };
-  return { reward: 0.4, frustrated: false, repeated: false, label: "neutral" };
+  const base = (() => {
+    if (frustrated) return { reward: 0, frustrated: true, repeated, label: "frustrated" as const };
+    if (repeated) return { reward: 0.1, frustrated: false, repeated: true, label: "repeated" as const };
+    const ex = /^\[Exercise\].*marked (right|wrong)/s.exec(m);
+    if (ex) return { reward: ex[1] === "right" ? 1 : 0.3, frustrated: false, repeated: false, label: (ex[1] === "right" ? "positive" : "neutral") as Reaction["label"] };
+    if (POSITIVE.test(m)) return { reward: 1, frustrated: false, repeated: false, label: "positive" as const };
+    if (m.split(/\s+/).length >= 4 || /[0-9=]/.test(m)) return { reward: 0.75, frustrated: false, repeated: false, label: "attempt" as const };
+    return { reward: 0.4, frustrated: false, repeated: false, label: "neutral" as const };
+  })();
+  let reward = base.reward;
+  // The move's own board action landed AND the student engaged → a small, bounded nudge upward. Deliberately
+  // additive-on-success only: it can never turn a bad reaction into a "win" (0 + 0.1 is still far below 0.5),
+  // which keeps the Bernoulli reduction's meaning intact.
+  if (outcome?.prevWroteBoard && reward >= 0.5) reward = Math.min(1, reward + 0.1);
+  // An objective ticked off is end-to-end evidence the teaching landed, whatever the student happened to type.
+  if ((outcome?.objectivesAdvanced || 0) > 0) reward = Math.max(reward, 0.6);
+  return { ...base, reward };
 }
 
 /** Is Otto going round in circles? True when its last replies are near-copies of each other. */
@@ -86,32 +116,9 @@ export function repairLine(message: string, history: { role: string; text: strin
     `Your recent replies — do NOT resemble any of them:\n${recent}\n`;
 }
 
-// Last move served per (user, task) so the NEXT message can score it. In-memory and best-effort: losing it on a
-// restart only costs one unscored turn.
-const lastMove = new Map<string, TutorMoveArm["id"]>();
-const LAST_MOVE_CAP = 2000;
-
-export interface MoveDecision { arm: TutorMoveArm["id"]; line: string; scoredPrev?: { arm: TutorMoveArm["id"]; reward: number }; state?: BanditState }
-
-/** Score the move served last turn against the student's reaction now, then pick this turn's move. `state` is the
- *  user's stored bandit state; the returned `state` is the updated one to persist (undefined if nothing changed). */
-export function planMove(opts: { userKey: string; message: string; history: { role: string; text: string }[]; state: BanditState; contextKey: string; update: (s: BanditState, key: string, arm: string, reward: number) => BanditState; rng?: () => number }): MoveDecision {
-  const reaction = reactionTo(opts.message, opts.history);
-  const prev = lastMove.get(opts.userKey);
-  let state = opts.state, scoredPrev: MoveDecision["scoredPrev"];
-  if (prev && opts.history.length >= 2) {
-    state = opts.update(state, opts.contextKey, prev, reaction.reward);
-    scoredPrev = { arm: prev, reward: reaction.reward };
-  }
-  // Never serve a move twice in a row once it has just failed; otherwise Thompson sampling decides (and keeps exploring).
-  const failedPrev = prev && reaction.reward < 0.5 ? prev : undefined;
-  const pool = TUTOR_MOVE_ARMS.filter((a) => a.id !== failedPrev);
-  const arm = chooseArm(pool, state, opts.contextKey, opts.rng).arm.id;
-  if (lastMove.size >= LAST_MOVE_CAP) lastMove.delete(lastMove.keys().next().value as string);
-  lastMove.set(opts.userKey, arm);
-  const line = `\nTEACHING MOVE THIS TURN (chosen from what has worked for THIS student): ${MOVE_TEXT[arm]} Keep every other rule — short, Socratic, never the answer.\n`;
-  return { arm, line, scoredPrev, state };
-}
+// (The dead move bandit's per-(user,task) `lastMove` map, MoveDecision, and `planMove` were removed here —
+// see the comment above MOVE_TEXT. tutorPolicy.ts's own `pendingExp` map is the one that scores the previous
+// turn's action against the student's reaction.)
 
 const HARSH_OPENERS: [RegExp, string][] = [
   [/^(?:careful|watch out|attention)\s*[—–:,-]\s*/i, "Hm, let's check that — "],
@@ -294,9 +301,9 @@ const PENDING_CAP = 2000;
 export interface TurnPlan { move: Move; pace: Pace; line: string; policy: Policy; learned?: { move: Move; reward: number }; stuck: boolean }
 /** One turn of the RL loop: (1) score + learn from the PREVIOUS turn's action using how the student just reacted,
  *  (2) pick this turn's move and pace from the updated policy, (3) hand back the directive line + new weights. */
-export function planTurn(o: { userKey: string; message: string; history: { role: string; text: string }[]; subject?: string; policy: Policy | null; now?: Date; rng?: () => number }): TurnPlan {
+export function planTurn(o: { userKey: string; message: string; history: { role: string; text: string }[]; subject?: string; policy: Policy | null; now?: Date; rng?: () => number; outcome?: TurnOutcome; context?: { mastery?: number; objectiveProgress?: number; boardRich?: number } }): TurnPlan {
   let policy = o.policy || initPolicy();
-  const reaction = reactionTo(o.message, o.history);
+  const reaction = reactionTo(o.message, o.history, o.outcome);
   const prev = pendingExp.get(o.userKey);
   let learned: TurnPlan["learned"];
   if (prev && o.history.length >= 2) {
@@ -309,6 +316,7 @@ export function planTurn(o: { userKey: string; message: string; history: { role:
     subject: o.subject, hour: (o.now || new Date()).getHours(), messageWords: o.message.trim().split(/\s+/).filter(Boolean).length,
     hasMaths: /[0-9=+\-*/^√π]/.test(o.message), recentWrong: users.filter((m) => /^\[Exercise\].*marked wrong/s.test(m.trim())).length,
     repeatedStudent: reaction.repeated, prevMove: prev?.move,
+    mastery: o.context?.mastery, objectiveProgress: o.context?.objectiveProgress, boardRich: o.context?.boardRich,
   };
   const failed = prev && reaction.reward < 0.5 ? prev.move : undefined;
   const a = act(policy, ctx, o.rng, failed);

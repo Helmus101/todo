@@ -405,7 +405,20 @@ export function stripProfileForResponse(profile: any): any {
 // a weekly summary for 8 weeks (~2 months, tightened from 26); a monthly summary is small and rare enough
 // (one per month) to just keep indefinitely. The DECK is the expensive part (dozens of cards), not the
 // text — dropping decks and keeping logText saves far more than the reverse would.
-const STUDYLOG_DAY_ARTIFACT_TTL_MS = 7 * 86_400_000;
+//
+// REVISED, on a direct report: dropping the DECK entirely made going back in time read as "the flashcards are
+// gone" — a journal entry a week old showed only its raw text, with the cards the student had actually made
+// that day simply absent. That is the opposite of what a journal is for. So past the TTL the CARD CONTENT
+// stays and only the per-card spaced-repetition STATE (`review`: Leitner box, dueAt, seen/correct counters) is
+// dropped. That is the right thing to age out anyway: the box/dueAt numbers are what make a card keep
+// resurfacing in FUTURE decks, and after a month they are stale by definition. A content-only deck is small
+// (a few hundred bytes of text per card, no counters), which is why it can stay indefinitely while the
+// counters can't. One real consequence, stated plainly: a card whose box state was dropped stops being fed
+// back as a "weak card" into new decks — after 30 days of reinforcement that is the correct trade.
+//
+// Two TTLs because the two artifacts differ: 30 days for a day's deck (the user asked for "at least the past
+// 30 days"), 8 weeks for a weekly summary (which is already an aggregate and much smaller).
+const STUDYLOG_DAY_ARTIFACT_TTL_MS = 30 * 86_400_000;
 const STUDYLOG_WEEK_ARTIFACT_TTL_MS = 8 * 7 * 86_400_000;
 export function trimOldStudylogArtifacts(list: WebTask[], now: Date = new Date()): WebTask[] {
   return list.map((t) => {
@@ -417,7 +430,16 @@ export function trimOldStudylogArtifacts(list: WebTask[], now: Date = new Date()
     const age = now.getTime() - (Date.parse(dateStr) || now.getTime());
     const ttl = isWeek ? STUDYLOG_WEEK_ARTIFACT_TTL_MS : STUDYLOG_DAY_ARTIFACT_TTL_MS;
     if (age < ttl) return t;
-    return { ...t, flashcards: undefined, quizzes: undefined, practiceProblem: undefined };
+    let stripped = false;
+    const flashcards = (t.flashcards || []).map((deck) => {
+      if (!deck.cards.some((c) => c.review)) return deck; // already stripped — don't rebuild it every commit
+      stripped = true;
+      return { ...deck, cards: deck.cards.map((c) => ({ ...c, review: undefined })) };
+    });
+    // Nothing left to strip AND nothing else to drop → the original object, so this stays a true no-op (it runs
+    // on EVERY commit, so rebuilding identical objects every time would be pure garbage).
+    if (!stripped && !t.quizzes?.length && !t.practiceProblem) return t;
+    return { ...t, flashcards: flashcards.length ? flashcards : undefined, quizzes: undefined, practiceProblem: undefined };
   });
 }
 

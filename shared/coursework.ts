@@ -22,7 +22,10 @@ export interface CourseworkDoc {
   /** Plain-language summary (≤ ~110 words) the tutor/chat can cite. */
   summary: string;
   keyPoints?: string[];
-  /** The first ~1500 characters of what was read, kept so the tutor can quote exact wording. */
+  /** The first ~4000 characters of what was read, kept so the tutor can quote exact wording (and, for a
+   *  worksheet, set exercises from its own numbered questions). Raised from 1500: a single opening paragraph
+   *  rarely holds the questions themselves, so "ground your exercises in their worksheet" had almost nothing
+   *  to ground on. */
   excerpt: string;
   /** Pages actually read / total pages when known (PDF). */
   pages: number;
@@ -81,7 +84,7 @@ export function normalizeCoursework(raw: any): CourseworkDoc[] | undefined {
       id, subject, name,
       summary: String(d?.summary || "").trim().slice(0, 900),
       keyPoints: Array.isArray(d?.keyPoints) ? d.keyPoints.map((k: any) => String(k).trim().slice(0, 160)).filter(Boolean).slice(0, 6) : undefined,
-      excerpt: String(d?.excerpt || "").slice(0, 1600),
+      excerpt: String(d?.excerpt || "").slice(0, 4200),
       pages: Math.max(0, Math.min(999, Math.round(Number(d?.pages) || 0))),
       totalPages: Number(d?.totalPages) > 0 ? Math.min(9999, Math.round(Number(d.totalPages))) : undefined,
       truncated: d?.truncated === true ? true : undefined,
