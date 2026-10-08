@@ -28,6 +28,7 @@ const KIND_LABEL: Record<string, [string, string]> = {
   definition: ["Définition", "Definition"],
   diagram: ["Figure", "Figure"],
   outline: ["Plan", "Outline"],
+  gap: ["À toi de jouer", "Your turn"],
 };
 
 // Quiet margin glyph per kind — a worksheet's annotations, not badges. Typographic on purpose (no icon
@@ -41,6 +42,7 @@ const KIND_GLYPH: Record<string, string> = {
   definition: "≡",
   diagram: "◫",
   outline: "▤",
+  gap: "?",
 };
 
 const LABEL_SIZE: Record<string, number> = { sm: 12, md: 14, lg: 18 };
@@ -450,7 +452,7 @@ export function BoardArtifact({ task, writing }: BoardArtifactProps) {
           return (
             <div
               key={item.key}
-              className={`sm-board-entry sm-board-entry-${e.kind || "note"} sm-board-writein${fresh ? " sm-board-reveal" : ""}`}
+              className={`sm-board-entry sm-board-entry-${e.kind || "note"} sm-board-writein${fresh ? " sm-board-reveal" : ""}${e.owner === "student" ? " sm-board-entry-student" : ""}`}
               style={fresh ? { animationDuration: `.35s, ${revealDuration(e.text)}s` } : undefined}
             >
               <span className="sm-board-section-num" aria-hidden="true">{String(idx + 1).padStart(2, "0")}</span>
@@ -505,8 +507,8 @@ export function BoardArtifact({ task, writing }: BoardArtifactProps) {
                 </>
               ) : (
                 <>
-                  <div className="sm-board-entry-text">{renderChatText(e.text)}</div>
-                  {isCompletionGap(e.text) ? (
+                  <div className={`sm-board-entry-text${e.kind === "gap" ? " sm-board-gap-text" : ""}`}>{renderChatText(e.text)}</div>
+                  {(e.kind === "gap" || isCompletionGap(e.text)) ? (
                     <span className="sm-board-todo-chip">{en ? "Your turn to finish" : "À toi de finir"}</span>
                   ) : null}
                 </>
