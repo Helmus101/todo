@@ -898,8 +898,23 @@ app.post("/api/integrations/pronote/disconnect", requireAuth, async (req, res) =
   } catch (e: any) { console.error(e);
     res.status(500).json({ error: M(req, "Impossible de déconnecter Pronote — réessaie.", "Couldn't disconnect Pronote — try again.") }); }
 });
-// Read-only: the raw Pronote grade averages, for anything that just wants to display them.
-app.post("/api/pronote/grades/sync", requireAuth, rateLimit(6, 60_000), async (req, res) => {
+  // Read-only: the raw Pronote grade averages, for anything that just wants to display them.
+  app.post("/api/pronote/grades/sync", requireAuth, rateLimit(6, 60_000), async (req, res) => {
+  try {
+  const live = await pronoteSvc.pronoteGrades(req.session.user!);
+  if (!live.length) { res.status(502).json({ error: M(req, "Pronote n'a renvoyé aucune note publiée sur les périodes disponibles.", "Pronote connected successfully, but returned no published subject grades across available periods.") }); return; }
+  const profile = (req.session.profile ||= emptyProfile());
+  pronoteSvc.applyPronoteGrades(profile, live);
+  await commit(req);
+  res.json({ grades: live, synced: true });
+  } catch (e: any) {
+  res.status(502).json({ error: e?.message || M(req, "Impossible de récupérer les notes depuis Pronote.", "Could not pull grades from Pronote.") });
+  }
+  });
+  app.get("/api/pronote/grades", requireAuth, async (req, res) => {
+  const cached = (req.session.profile?.grades || [])
+  .filter((grade) => grade.source === "pronote")
+  .map((grade) => ({ subject: grade.subject, average: grade.grade, outOf: grade.scale }));
   try {
     const live = await pronoteSvc.pronoteGrades(req.session.user!);
     if (!live.length) { res.status(502).json({ error: M(req, "Pronote n'a renvoyé aucune note. Vérifie la période en cours et la connexion.", "Pronote returned no subject grades. Check the current period and connection.") }); return; }
@@ -3281,7 +3296,7 @@ app.get("/api/usage", requireAuth, async (req, res) => {
     res.status(500).json({ error: M(req, "échec de la récupération de l'utilisation", "usage failed") }); }
 });
 
-// ── Profile (who the user is) — available once logged in ───────────────────────
+// ── Profile (who the user is) — available once logged in ────────────��──────────
 const listKey = (c: string) => (c === "preference" ? "preferences" : c === "person" ? "people" : c === "project" ? "projects" : c === "course" ? "courses" : "");
 app.get("/api/profile", requireAuth, (req, res) => { res.json(tasks.stripProfileForResponse(req.session.profile || emptyProfile())); });
 app.post("/api/profile", requireAuth, async (req, res) => {
