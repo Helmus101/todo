@@ -30,6 +30,9 @@ import { compileExpr } from "../shared/mathExpr.ts";
 import { makeGraphEntry, earlierDigest, isSubstantiveStep, courseworkLine, fallbackCourseworkSummary, chunkCourseworkText } from "../server/claude.ts";
 import { canonSubject, sameSubject, normalizeCoursework, courseworkForSubject, COMMON_SUBJECTS, COURSEWORK_MAX_PAGES, COURSEWORK_MAX_CHARS } from "../shared/coursework.ts";
 import { tightenForChat, countWords as countWordsT } from "../server/claude.ts";
+import { diffBoard, recordBoardEvents, objectiveEvents, problemEvents, boardTrajectoryBlock, boardSurfaceBlock, tagStudentAnswer, selfCorrections, boardFingerprint } from "../server/boardEvents.ts";
+import { classifyTurnAction, buildTutorDecision, recordTutorDecision, TUTOR_DECISION_CAP } from "../server/actionSpace.ts";
+import { emptySessionState, loadOrInitSessionState, updateSessionState, persistSessionState, sessionStateBlock } from "../server/sessionState.ts";
 let pass = 0, fail = 0;
 const check = (name, cond) => { cond ? pass++ : (fail++, console.log("  FAIL:", name)); };
 const section = (name) => console.log(`— ${name}`);
@@ -5123,6 +5126,89 @@ section("No emoji in the rendered app — real icons (lucide-react) instead (rep
     const src = readFileSync(new URL(file, import.meta.url), "utf8");
     check(`${file.split("/").pop()} renders its former emoji as lucide icons (${icons.join(", ")})`, /from "lucide-react"/.test(src) && icons.every((i) => new RegExp(`\\b${i}\\b`).test(src)));
   }
+}
+
+section("boardEvents.ts — diffing/trajectory/surface-block (now wired into the live chat route)");
+{
+  const now = new Date("2026-10-08T12:00:00.000Z");
+  const e1 = { id: "a", kind: "formula", text: "F = ma", at: "2026-10-08T11:58:00.000Z" };
+  const e2 = { id: "b", kind: "question", text: "What force opposes motion?", at: "2026-10-08T11:59:00.000Z" };
+  check("a brand-new entry is an otto-wrote/student-wrote event", diffBoard([], [e1], now).length === 1 && diffBoard([], [e1], now)[0].kind === "otto-wrote");
+  check("a student-owned entry is tagged student-wrote", diffBoard([], [{ ...e1, owner: "student" }], now)[0].kind === "student-wrote");
+  check("a removed entry is an erased event", diffBoard([e1], [], now).some((ev) => ev.kind === "erased"));
+  check("a changed entry (same id, different text) is a rewrote event", diffBoard([e1], [{ ...e1, text: "ΣF = ma" }], now).some((ev) => ev.kind === "rewrote"));
+  check("an unchanged board produces no events at all", diffBoard([e1, e2], [e1, e2], now).length === 0);
+  check("objectiveEvents fires only on a NEW true (never re-fires on an already-done objective)", objectiveEvents([{ id: "o1", label: "X", done: false }], [{ id: "o1", label: "X", done: true }], now).length === 1 && objectiveEvents([{ id: "o1", label: "X", done: true }], [{ id: "o1", label: "X", done: true }], now).length === 0);
+  check("problemEvents fires problem-created then problem-solved on the SAME id across two calls", problemEvents([], [{ id: "p1", question: "Q", createdAt: "x" }], now)[0].kind === "problem-created" && problemEvents([{ id: "p1", question: "Q", createdAt: "x", solved: false }], [{ id: "p1", question: "Q", createdAt: "x", solved: true }], now)[0].kind === "problem-solved");
+  check("recordBoardEvents appends and caps", recordBoardEvents(Array.from({ length: 79 }, (_, i) => ({ at: String(i), kind: "otto-wrote", detail: "x" })), [{ at: "80", kind: "otto-wrote", detail: "y" }]).length === 80);
+  check("boardTrajectoryBlock is silent with no events at all", boardTrajectoryBlock([]) === "" && boardTrajectoryBlock(undefined) === "");
+  check("boardTrajectoryBlock speaks up once a student erase/rewrite is in the stream", /WHAT JUST HAPPENED ON THE BOARD/.test(boardTrajectoryBlock([{ at: now.toISOString(), kind: "erased", detail: "removed their own entry" }])));
+  check("boardSurfaceBlock tags ownership and status", /STUDENT'S WORK/.test(boardSurfaceBlock([{ id: "s1", kind: "result", text: "N = mg", owner: "student", status: "incorrect", at: now.toISOString() }], [])) && /marked WRONG/.test(boardSurfaceBlock([{ id: "s1", kind: "result", text: "N = mg", owner: "student", status: "incorrect", at: now.toISOString() }], [])));
+  check("tagStudentAnswer attaches to the newest open question/gap, owner=student", tagStudentAnswer([e2], "friction", { at: now })?.at(-1)?.owner === "student" && tagStudentAnswer([e2], "friction", { at: now })?.at(-1)?.text === "friction");
+  check("tagStudentAnswer is a no-op when nothing is open to answer", tagStudentAnswer([e1], "42", { at: now }) === undefined || tagStudentAnswer([e1], "42", { at: now })?.length === 1);
+  check("selfCorrections finds a rewrite preceded by an erase", selfCorrections([{ at: "1", kind: "erased", detail: "x" }, { at: "2", kind: "rewrote", detail: "y" }]).length === 1);
+  check("boardFingerprint is case/whitespace-insensitive but content-sensitive", boardFingerprint({ kind: "note", text: "Hello   World" }) === boardFingerprint({ kind: "note", text: "hello world" }) && boardFingerprint({ kind: "note", text: "A" }) !== boardFingerprint({ kind: "note", text: "B" }));
+}
+
+section("actionSpace.ts — deterministic teaching-action classification + decision log (source + unit)");
+{
+  const now = new Date("2026-10-08T12:00:00.000Z");
+  const base = { reply: "ok", newBoardEntries: [], newProblems: [] };
+  check("a new problem classifies as CREATE_PROBLEM", classifyTurnAction({ ...base, newProblems: [{ id: "p", question: "Q", createdAt: "x" }] }).action === "CREATE_PROBLEM");
+  check("a gap entry classifies as CREATE_GAP", classifyTurnAction({ ...base, newBoardEntries: [{ id: "g", kind: "gap", text: "x", at: "y" }] }).action === "CREATE_GAP");
+  check("an all-equation diagram classifies as WRITE_EQUATION, a real shape as CREATE_DIAGRAM", classifyTurnAction({ ...base, newBoardEntries: [{ id: "d", kind: "diagram", text: "x", at: "y", diagram: [{ op: "equation", latex: "x" }] }] }).action === "WRITE_EQUATION" && classifyTurnAction({ ...base, newBoardEntries: [{ id: "d", kind: "diagram", text: "x", at: "y", diagram: [{ op: "line", x1: 0, y1: 0, x2: 1, y2: 1 }] }] }).action === "CREATE_DIAGRAM");
+  check("a graph entry classifies as CREATE_GRAPH", classifyTurnAction({ ...base, newBoardEntries: [{ id: "gr", kind: "graph", text: "x", at: "y" }] }).action === "CREATE_GRAPH");
+  check("a board question with no prior open question is ASK_QUESTION; with one already open, ASK_FOLLOWUP", classifyTurnAction({ ...base, newBoardEntries: [{ id: "q", kind: "question", text: "x", at: "y" }] }).action === "ASK_QUESTION" && classifyTurnAction({ ...base, newBoardEntries: [{ id: "q", kind: "question", text: "x", at: "y" }], priorBoard: [{ id: "q0", kind: "question", text: "earlier", at: "z" }] }).action === "ASK_FOLLOWUP");
+  check("no tool call, reply ends in '?' → ASK_QUESTION", classifyTurnAction({ ...base, reply: "What happens next?" }).action === "ASK_QUESTION");
+  check("no tool call, short content-free reply → WAIT", classifyTurnAction({ ...base, reply: "Good, keep going." }).action === "WAIT");
+  check("no tool call, longer explanatory reply with no question → EXPLAIN", classifyTurnAction({ ...base, reply: "The normal force balances the perpendicular component of weight on the incline, which is why it isn't simply equal to mg." }).action === "EXPLAIN");
+  const decision = buildTutorDecision({ ...base, newProblems: [{ id: "p", question: "Q", createdAt: "x" }], now, taskId: "t1", subject: "Physics" });
+  check("buildTutorDecision fills taskId/subject/at/action/why", decision.taskId === "t1" && decision.subject === "Physics" && decision.action === "CREATE_PROBLEM" && decision.at === now.toISOString() && decision.why.length > 0);
+  check("recordTutorDecision appends and caps", recordTutorDecision(Array.from({ length: TUTOR_DECISION_CAP - 1 }, () => decision), decision).length === TUTOR_DECISION_CAP);
+  const idxSrc2 = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  check("the chat route actually calls buildTutorDecision/recordTutorDecision on the live path, not just imports them", /buildTutorDecision\(\{/.test(idxSrc2) && /recordTutorDecision\(/.test(idxSrc2));
+}
+
+section("sessionState.ts — app-owned per-task session state (source + unit)");
+{
+  const now = new Date("2026-10-08T12:00:00.000Z");
+  const fresh = emptySessionState("t1", now);
+  check("a fresh session starts neutral (independence 0.6, everything else 0)", fresh.independence === 0.6 && fresh.hintRung === 0 && fresh.turns === 0);
+  check("loadOrInitSessionState finds an existing task's state or starts fresh", loadOrInitSessionState({ tutorSessions: [fresh] }, "t1", now).turns === 0 && loadOrInitSessionState({ tutorSessions: [fresh] }, "t2", now) !== fresh);
+  const afterHint = updateSessionState(fresh, { action: "GIVE_HINT", boardLength: 3, success: false }, now);
+  check("a hint bumps hintRung and interventions, pulls independence down", afterHint.hintRung === 2 && afterHint.interventions === 1 && afterHint.independence < fresh.independence);
+  const afterExplain = updateSessionState(afterHint, { action: "EXPLAIN", boardLength: 3, success: false }, now);
+  check("hintRung is a HIGH-WATER MARK — EXPLAIN (rung 6) after a hint (rung 2) jumps, never drops back down later", afterExplain.hintRung === 6);
+  const afterIndependentWin = updateSessionState(afterExplain, { action: "ASK_QUESTION", boardLength: 3, success: true }, now);
+  check("an independent success (not itself an intervention) pulls independence back up", afterIndependentWin.independence > afterExplain.independence);
+  const afterRung = updateSessionState(afterIndependentWin, { action: "ASK_QUESTION", boardLength: 3, success: true }, now);
+  check("hintRung never decreases even after several non-intervention turns", afterRung.hintRung === 6);
+  const frustrated = updateSessionState(fresh, { action: "ASK_QUESTION", boardLength: 1, success: false, frustrated: true }, now);
+  check("a frustrated reaction raises the frustration reading", frustrated.frustration > fresh.frustration);
+  check("persistSessionState upserts by taskId and caps the list", persistSessionState([fresh], updateSessionState(fresh, { action: "WAIT", boardLength: 0, success: false }, now)).length === 1);
+  check("sessionStateBlock is silent on turn 0 (nothing to report yet), speaks up after", sessionStateBlock(fresh) === "" && /SESSION STATE/.test(sessionStateBlock(afterHint)));
+  const idxSrc3 = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  check("the chat route calls loadOrInitSessionState before the chatAboutTask call and updateSessionState/persistSessionState after it", /loadOrInitSessionState\(profile, t\.id, turnNow\)/.test(idxSrc3) && /updateSessionState\(sessionStateBefore/.test(idxSrc3) && /persistSessionState\(profile\.tutorSessions/.test(idxSrc3));
+
+  // CRITICAL: normalizeProfile builds a brand-new object from an explicit field whitelist — anything not
+  // listed is silently DROPPED on every load (server/store.ts calls it on every loadState). Without
+  // listing tutorSessions/tutorDecisions there, this entire wiring effort would write successfully, then
+  // lose everything on the very next cloud round-trip. Pinned here because it's exactly the kind of bug
+  // that passes every other test (the write succeeds, the very next read silently has nothing).
+  const roundTripped = normalizeProfile({ tutorSessions: [afterHint], tutorDecisions: [{ at: now.toISOString(), action: "GIVE_HINT", why: "test" }] });
+  check("tutorSessions/tutorDecisions survive a normalizeProfile round-trip (the exact shape loadState re-validates on every load)", roundTripped.tutorSessions?.length === 1 && roundTripped.tutorSessions[0].taskId === "t1" && roundTripped.tutorDecisions?.length === 1 && roundTripped.tutorDecisions[0].action === "GIVE_HINT");
+  check("a malformed tutorSessions/tutorDecisions entry is dropped, not crashed on", normalizeProfile({ tutorSessions: [{ garbage: true }], tutorDecisions: [{ garbage: true }] }).tutorSessions?.length === 0 && normalizeProfile({ tutorSessions: [{ garbage: true }], tutorDecisions: [{ garbage: true }] }).tutorDecisions?.length === 0);
+  check("conceptModel/conceptGraph also survive the round-trip (shallow shape check, deep validation deferred to their own server-side normalizers)", normalizeProfile({ conceptModel: { concepts: {}, updatedAt: now.toISOString() } }).conceptModel !== undefined && normalizeProfile({ conceptGraph: { nodes: {}, updatedAt: now.toISOString() } }).conceptGraph !== undefined && normalizeProfile({}).conceptModel === undefined);
+}
+
+section("server/index.ts chat route — board-event/session-state wiring is on the LIVE path (source pins)");
+{
+  const idxSrc4 = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  check("tagStudentAnswer is called before chatAboutTask, primer-gated", /tagStudentAnswer\(currentBoard, message, \{ at: turnNow \}\)/.test(idxSrc4));
+  check("chatAboutTask is called with boardEvents/sessionState in opts", /boardEvents: t\.boardEvents, sessionState: sessionStateBefore/.test(idxSrc4));
+  check("diffBoard/objectiveEvents/problemEvents are all called after chatAboutTask returns, and recorded onto t.boardEvents", /diffBoard\(currentBoard, boardAfter, turnNow\)/.test(idxSrc4) && /objectiveEvents\(currentObjectives, objectivesAfter, turnNow\)/.test(idxSrc4) && /problemEvents\(currentProblems, problemsAfter, turnNow\)/.test(idxSrc4) && /t\.boardEvents = recordBoardEvents\(t\.boardEvents, events\)/.test(idxSrc4));
+  check("the whole wiring block is best-effort (never blocks the reply on a failure)", /catch \{ \/\* best-effort — never blocks the reply \*\/ \}/.test(idxSrc4));
+  check("the client-sent board sanitizer now preserves owner/status/concept, not just text/kind/diagram/outline", /\.\.\.\(b\.owner === "student" \|\| b\.owner === "otto" \? \{ owner: b\.owner \} : \{\}\)/.test(idxSrc4) && /\.\.\.\(b\.status === "correct" \|\| b\.status === "incorrect" \? \{ status: b\.status \} : \{\}\)/.test(idxSrc4));
 }
 
 const { runTutorSim } = await import("./tutor-sim.mjs");

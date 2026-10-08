@@ -13,7 +13,10 @@ import type { CourseworkDoc } from "../shared/coursework.ts";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, FocusSession } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY, subjectMastery } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
-import { planTurn, repairLine } from "./tutorAdapt.ts";
+import { planTurn, repairLine, reactionTo } from "./tutorAdapt.ts";
+import { diffBoard, recordBoardEvents, objectiveEvents, problemEvents, tagStudentAnswer, selfCorrections } from "./boardEvents.ts";
+import { buildTutorDecision, recordTutorDecision } from "./actionSpace.ts";
+import { loadOrInitSessionState, updateSessionState, persistSessionState } from "./sessionState.ts";
 import { parsePolicy, summarize as summarizePolicy, initPolicy } from "./tutorPolicy.ts";
 import { summarizeCoursework, fallbackCourseworkSummary, aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto, ttsReady, synthesizeSpeech, TTS_MAX_TEXT, tutorOpener, interactiveSceneDocument, INTERACTIVE_SCENE_CSP } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken, getAdminMetrics } from "./store.ts";
@@ -1622,7 +1625,13 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
   const currentBoard = currentBoardRaw
     .filter((b: any) => b && typeof b.text === "string" && b.text.trim())
     .slice(-60)
-    .map((b: any) => ({ id: "", at: "", text: String(b.text).slice(0, 600), ...(typeof b.kind === "string" ? { kind: b.kind } : {}), ...(Array.isArray(b.diagram) ? { diagram: b.diagram.slice(0, 40).filter((o: any) => o && typeof o.op === "string") } : {}), ...(b.kind === "outline" && Array.isArray(b.outline) ? { outline: b.outline.slice(0, 6).map((s: any) => ({ heading: String(s?.heading || "").slice(0, 120), bullets: (Array.isArray(s?.bullets) ? s.bullets : []).map((x: any) => String(x).slice(0, 200)).slice(0, 8) })) } : {}) }));
+    .map((b: any) => ({ id: "", at: "", text: String(b.text).slice(0, 600), ...(typeof b.kind === "string" ? { kind: b.kind } : {}), ...(Array.isArray(b.diagram) ? { diagram: b.diagram.slice(0, 40).filter((o: any) => o && typeof o.op === "string") } : {}), ...(b.kind === "outline" && Array.isArray(b.outline) ? { outline: b.outline.slice(0, 6).map((s: any) => ({ heading: String(s?.heading || "").slice(0, 120), bullets: (Array.isArray(s?.bullets) ? s.bullets : []).map((x: any) => String(x).slice(0, 200)).slice(0, 8) })) } : {}),
+      // Ownership/status/concept — dropped here before (only text/kind/diagram/outline survived the
+      // client round-trip), which silently defeated boardSurfaceBlock's "STUDENT'S WORK"/"marked WRONG"
+      // tags and tagStudentAnswer's own target-finding downstream: both need these to actually be present.
+      ...(b.owner === "student" || b.owner === "otto" ? { owner: b.owner } : {}),
+      ...(b.status === "correct" || b.status === "incorrect" ? { status: b.status } : {}),
+      ...(typeof b.concept === "string" && b.concept.trim() ? { concept: b.concept.trim().slice(0, 80) } : {}) }));
   const currentProblemsRaw = Array.isArray(req.body?.problems) ? req.body.problems : [];
   const currentProblems = currentProblemsRaw
     .filter((p: any) => p && typeof p.question === "string" && p.question.trim())
@@ -1729,13 +1738,23 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
         if (repair) void recordMetric(req.session.user!, "tutor_repair_triggered", 1);
       } catch { /* best-effort */ }
     }
+    // Wiring the previously-disconnected board-event/session-state scaffolding (server/boardEvents.ts,
+    // server/sessionState.ts) — Tutor turns only, same gating as the RL policy just above: these are all
+    // genuinely primer-scoped (the board itself is Tutor-only now, see TASK_CHAT_BOARD's removal).
+    const turnNow = new Date();
+    // If the student's message is answering an open board question/gap, attribute it to them BEFORE the
+    // model ever sees the board — app-side attribution is the point of spec §11 ("the tutor must never be
+    // the one deciding which work was its own"). A no-op (returns the board unchanged) when there's
+    // nothing open to answer.
+    const boardForTurn = req.body?.primer === true ? tagStudentAnswer(currentBoard, message, { at: turnNow }) : currentBoard;
+    const sessionStateBefore = req.body?.primer === true ? loadOrInitSessionState(profile, t.id, turnNow) : undefined;
     const out = await chatAboutTask(
       { title: t.title, why: t.why, context: t.context, steps: t.steps, source: t.source, sourceDetail: t.sourceDetail, sourceSubject: t.sourceSubject, sourceDue: t.sourceDue, flashcards: t.flashcards, quizzes: t.quizzes },
       history.map((h) => ({ role: h.role, text: h.text })),
       message,
       profile,
       academic,
-      { stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, primer: req.body?.primer === true, recentJournal, currentBoard, currentProblems, currentObjectives, repair, moveLine, opening, notNeeded: tasks.notNeededFronts(req.session.tasks || [], t.sourceSubject) },
+      { stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, primer: req.body?.primer === true, recentJournal, currentBoard: boardForTurn, currentProblems, currentObjectives, repair, moveLine, opening, notNeeded: tasks.notNeededFronts(req.session.tasks || [], t.sourceSubject), boardEvents: t.boardEvents, sessionState: sessionStateBefore },
     );
     addUsage(profile, out.tokens, "chat"); // untracked before — a tool-calling turn can now cost like a small run
     bumpActivityHour(profile, new Date(), t.sourceSubject);
@@ -1809,6 +1828,29 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     if (newChat.length) t.chat = [...(t.chat || []), ...newChat].slice(-CHAT_CAP);
     if (out.board.length) t.board = [...(t.board || []), ...out.board].slice(-tasks.BOARD_MERGE_CAP);
     if (out.problems.length) t.problems = [...(t.problems || []), ...out.problems].slice(-tasks.ARTIFACT_CAP);
+    // Board event log + session state + action log (server/boardEvents.ts, server/sessionState.ts,
+    // server/actionSpace.ts) — previously-written, never-called scaffolding; see the plan this wires up.
+    // Diffed against `currentBoard` (the board BEFORE this turn, i.e. before the student-answer tag too),
+    // so the tagged attempt shows up in the trajectory exactly like Otto's own writes do.
+    if (req.body?.primer === true && sessionStateBefore) {
+      try {
+        const boardAfter = [...boardForTurn, ...out.board];
+        const objectivesAfter = out.objectives || currentObjectives;
+        const problemsAfter = [...currentProblems, ...out.problems];
+        const events = [
+          ...diffBoard(currentBoard, boardAfter, turnNow),
+          ...objectiveEvents(currentObjectives, objectivesAfter, turnNow),
+          ...problemEvents(currentProblems, problemsAfter, turnNow),
+        ];
+        if (events.length) t.boardEvents = recordBoardEvents(t.boardEvents, events);
+        const decision = buildTutorDecision({ reply: out.reply, newBoardEntries: out.board, newProblems: out.problems, priorBoard: currentBoard, now: turnNow, taskId: t.id, subject: t.sourceSubject });
+        profile.tutorDecisions = recordTutorDecision(profile.tutorDecisions, decision);
+        const success = events.some((e) => e.kind === "objective-done" || e.kind === "problem-solved") || selfCorrections(events).length > 0;
+        const reaction = reactionTo(message, history);
+        const sessionStateAfter = updateSessionState(sessionStateBefore, { action: decision.action, frustrated: reaction.frustrated, boardLength: boardAfter.length, success }, turnNow);
+        profile.tutorSessions = persistSessionState(profile.tutorSessions, sessionStateAfter);
+      } catch { /* best-effort — never blocks the reply */ }
+    }
     // Record what THIS turn produced, for the next turn's RL scoring (see lastTurnBoardWrite's own comment).
     // `out.objectives` is SET_OBJECTIVES' full replacement list when it ran, and is never written onto `t`
     // here (the client owns the live list) — so it is exactly the count to remember.

@@ -1,5 +1,10 @@
 // Shared task model — imported by both the Express backend and the React client.
 import { normalizeCoursework, type CourseworkDoc } from "./coursework.ts";
+// The adaptive-agent layer's shapes (the persistent student model, the concept graph, the app-owned session
+// state, the board event stream and the action space). They live in their own shared module so the client can
+// type the transparency panel without importing any server code — see shared/agentTypes.ts.
+import type { StudentModelShape, ConceptGraphShape, TutorSessionStateShape, TutorDecisionShape, BoardEventShape } from "./agentTypes.ts";
+import { SESSION_CAP } from "./agentTypes.ts";
 
 export type Quadrant = "do" | "schedule" | "delegate" | "later";
 
@@ -73,6 +78,27 @@ export interface Profile {
     unaidedRate: number;  // success without hints
     fadeIndex: number;  // are hint levels trending down?
   }>;
+  // The WEEKLY SERIES the same-named snapshot above was always meant to be derived from — see
+  // server/hintLadder.ts. The snapshot alone (one week, overwritten in place) could never answer the
+  // question the anti-dependence rules actually ask ("are hint levels TRENDING down?"), which is why
+  // server/dependenceMetrics.ts's array-based functions had no caller: there was nothing to feed them.
+  // Capped at 52 entries per domain (a year of weeks) in normalizeProfile, newest last.
+  dependenceHistory?: Record<string, DependenceMetric[]>;
+  // The persistent, per-CONCEPT student model (server/studentModel.ts) — what Otto believes about how this
+  // student learns, with the evidence behind each belief. One object so it's validated, capped and reset as
+  // a unit. Fully visible in the transparency panel (spec §30) and resettable from Settings.
+  conceptModel?: StudentModelShape;
+  // The concept/prerequisite graph (server/conceptGraph.ts) — the curated spine plus the concepts discovered
+  // in this student's own courses and uploaded documents. Persisted so discovery is paid for once.
+  conceptGraph?: ConceptGraphShape;
+  // Per-task tutor session state (server/sessionState.ts), newest last, capped — the app-owned record of
+  // where a session had got to (objective, live concept, rung used, interventions issued, independence), so
+  // a resumed session doesn't restart from nothing and the learning curve across sessions is readable.
+  tutorSessions?: TutorSessionStateShape[];
+  // The agent's own decision log (server/actionSpace.ts) — one entry per tutor turn: which action was chosen,
+  // at what it was aimed, and why. NEVER shown to the student (spec §45 is explicit that this exists to make
+  // the agent debuggable), so it is bounded aggressively and reset alongside the concept model.
+  tutorDecisions?: TutorDecisionShape[];
   // Consent records (parental/guardian consent for under-13s)
   consentRecords?: {
     guardianId?: string;
@@ -524,6 +550,24 @@ export function normalizeProfile(p: any): Profile {
         ? (Object.fromEntries(Object.entries(p.focusStats.subjectFocus).filter(([, v]) => typeof v === "number")) as Record<string, number>)
         : undefined,
     } : undefined,
+    // The adaptive-agent fields (agentTypes.ts) were being silently DROPPED on every normalize cycle —
+    // this function builds a brand-new object from an explicit whitelist, so anything not listed here
+    // vanishes the next time a profile round-trips through loadState (server/store.ts calls
+    // normalizeProfile on every load). That's exactly how server/sessionState.ts/server/actionSpace.ts's
+    // writes would have been quietly undone. Deep validation of conceptModel/conceptGraph belongs to their
+    // own server-side normalizers (normalizeStudentModel/normalizeConceptGraph) — this file can't import
+    // those (shared/types.ts is also the client bundle), so this is a shallow, defensive pass-through:
+    // keep it only if it's a plausibly-shaped object, let the server-side normalizers do the real work
+    // once those are wired up (not yet, for these two — see the plan's "explicitly deferred" section).
+    conceptModel: p?.conceptModel && typeof p.conceptModel === "object" && p.conceptModel.concepts && typeof p.conceptModel.concepts === "object" ? p.conceptModel : undefined,
+    conceptGraph: p?.conceptGraph && typeof p.conceptGraph === "object" && p.conceptGraph.nodes && typeof p.conceptGraph.nodes === "object" ? p.conceptGraph : undefined,
+    // Validated more concretely — these two are actively read/written every Tutor turn as of this change.
+    tutorSessions: Array.isArray(p?.tutorSessions)
+      ? p.tutorSessions.filter((s: any) => s && typeof s.taskId === "string" && typeof s.updatedAt === "string").slice(-SESSION_CAP)
+      : undefined,
+    tutorDecisions: Array.isArray(p?.tutorDecisions)
+      ? p.tutorDecisions.filter((d: any) => d && typeof d.at === "string" && typeof d.action === "string" && typeof d.why === "string").slice(-40)
+      : undefined,
   };
 }
 
@@ -1290,6 +1334,12 @@ export interface WebTask {
    *  something the student has to be shown a specific artifact chip to find. Append-only from Otto's side
    *  (WRITE_TO_BOARD tool); grows over the life of the task, across sessions, same as `chat`. */
   board?: BoardEntry[];
+  /** The board EVENT STREAM (server/boardEvents.ts) — what HAPPENED on the board (wrote/erased/rewrote/
+   *  answered), diffed turn over turn, distinct from `board` itself (the current state). Capped
+   *  (BOARD_EVENT_CAP, shared/agentTypes.ts) — a session-scale trajectory signal, not an archive. Read by
+   *  chatAboutTask to build the "what just happened" prompt block (boardTrajectoryBlock) so a self-
+   *  correction or an erase-and-retry is visible as reasoning, not silently lost the next turn. */
+  boardEvents?: BoardEventShape[];
   /** This session's learning objectives (SET_OBJECTIVES tool) — a short checklist Otto lays out once a
    *  topic is chosen (3-6 items) and updates `done` on as the student demonstrates each one, instead of the
    *  single free-text `focus` board entry. Client-local, same as chat/board/problems: replaced wholesale on
@@ -1546,6 +1596,16 @@ export interface BoardEntry {
    *  as an interactive blank the student must complete (the completion effect: doing the last step yourself
    *  is where the learning happens). Otto must NEVER reveal this value in chat while the gap is open. */
   expectedAnswer?: string;
+  /** How a STUDENT-authored entry turned out — set by the app (never by the model), the moment the student
+   *  answers on the board (see server/boardEvents.ts's tagStudentAnswer). Purely presentational: it lets the
+   *  page keep a wrong attempt visible and struck through instead of either silently deleting it or letting
+   *  it read as correct, which is §12's "a wrong turn is part of the trajectory" made visible. Otto's own
+   *  entries never carry this — it is a record of the student's work, not a grade of Otto's. */
+  status?: "correct" | "incorrect";
+  /** The concept this entry is about, when the writer knew it — the join between the board and the persistent
+   *  student model (server/studentModel.ts). Optional and loose: a board entry is not required to be about a
+   *  named concept, and an unnamed one simply carries no evidence. */
+  concept?: string;
   /** Present only when kind === "diagram" — the figure's shapes, rendered as SVG (BoardArtifact.tsx). Capped
    *  at 15 ops server-side (makeDiagramEntry, server/claude.ts): enough for a labeled triangle or a small
    *  graph, not enough to build a full illustration op-by-op. */

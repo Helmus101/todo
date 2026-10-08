@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { WebTask, Quadrant, TaskLink, Profile, Sendable, AddUsageCategory, TaskStep, BoardEntry } from "../shared/types.ts";
+import { BOARD_EVENT_CAP } from "../shared/agentTypes.ts";
 import { dedupeFacts, sameFact, canonStatus, sortWithinQuadrant, addUsage, isHandled, tzOf, deadlineEpoch, normalizeWhen, gradesBySubject } from "../shared/types.ts";
 import { generateTasks, classifyCandidates, pickOneTask, runTask as aiRun, type ProfileUpdate, type RefinedTask, type AcademicContext } from "./claude.ts";
 import { readOnly, scopeTools, DOC_LINK, type AgentTools } from "./integrations.ts";
@@ -678,7 +679,7 @@ export const AUDIT_CAP = 20;
 // session can rack up a couple dozen short board writes, and this is the ONE running record of what Otto
 // actually wrote/summarized during a session, so it gets a more generous cap than the other artifact types.
 export const BOARD_MERGE_CAP = 60;
-function unionStudyArtifacts(winner: WebTask, loser: WebTask): Partial<Pick<WebTask, "notes" | "flashcards" | "quizzes" | "board" | "problems">> | null {
+function unionStudyArtifacts(winner: WebTask, loser: WebTask): Partial<Pick<WebTask, "notes" | "flashcards" | "quizzes" | "board" | "problems" | "boardEvents">> | null {
   const merge = <T extends { id: string }>(a: T[] | undefined, b: T[] | undefined, atOf: (x: T) => string, cap: number): T[] | undefined => {
     if (!b?.length) return undefined;                       // nothing on the losing side → keep winner's
     const seen = new Set((a || []).map((x) => x.id));
@@ -700,10 +701,22 @@ function unionStudyArtifacts(winner: WebTask, loser: WebTask): Partial<Pick<WebT
   // and board delete" — chat already had its own union (see mergeTaskLists), board/problems never did.
   const board = merge(winner.board, loser.board, (x: BoardEntry) => x.at, BOARD_MERGE_CAP);
   const problems = merge(winner.problems, loser.problems, createdAtOf, ARTIFACT_CAP);
-  if (!notes && !flashcards && !quizzes && !board && !problems) return null;
+  // Events have no `id` (they're derived diffs, not authored entities) — dedupe by content (at+kind+detail)
+  // instead, same chronological-concat-then-cap shape as the id-keyed merge above.
+  const boardEvents = (() => {
+    const b = loser.boardEvents;
+    if (!b?.length) return undefined;
+    const seen = new Set((winner.boardEvents || []).map((e) => `${e.at}|${e.kind}|${e.detail}`));
+    const extra = b.filter((e) => !seen.has(`${e.at}|${e.kind}|${e.detail}`));
+    if (!extra.length) return undefined;
+    return [...(winner.boardEvents || []), ...extra]
+      .sort((x, y) => (Date.parse(x.at) || 0) - (Date.parse(y.at) || 0))
+      .slice(-BOARD_EVENT_CAP);
+  })();
+  if (!notes && !flashcards && !quizzes && !board && !problems && !boardEvents) return null;
   return {
     ...(notes ? { notes } : {}), ...(flashcards ? { flashcards } : {}), ...(quizzes ? { quizzes } : {}),
-    ...(board ? { board } : {}), ...(problems ? { problems } : {}),
+    ...(board ? { board } : {}), ...(problems ? { problems } : {}), ...(boardEvents ? { boardEvents } : {}),
   };
 }
 

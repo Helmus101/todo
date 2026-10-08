@@ -16,6 +16,10 @@ import { getPolicyProfile } from "./policyProfiles.ts";
 import { getAgeAppropriateMoves, getNextThinkingMove, getThinkingMovePrompt, shouldUseThinkingMove } from "./thinkingMoves.ts";
 import { getMaxHintLevel, isGraduationMoment } from "./dependenceMetrics.ts";
 import { evaluateArithmetic, findArithmeticClaims, hasArithmetic } from "./arithmetic.ts";
+import { boardSurfaceBlock, boardTrajectoryBlock, type BoardEvent } from "./boardEvents.ts";
+import { buildTutorDecision } from "./actionSpace.ts";
+import { sessionStateBlock } from "./sessionState.ts";
+import type { TutorSessionStateShape, TutorDecisionShape } from "../shared/agentTypes.ts";
 
 // Temporary: Otto does the reversible PREP work (research, outline steps, create a resource doc, draft an
 // email) but never does anything irreversible (send, post, delete, calendar-write) — every action that
@@ -7707,7 +7711,7 @@ export async function chatAboutTask(
   message: string,
   profile?: Profile,
   academic?: AcademicContext,
-  opts?: { stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string; growthTrend?: "up"; subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; voiceMode?: boolean; canvasMode?: boolean; recentJournal?: { date: string; text: string }[]; primer?: boolean; currentBoard?: BoardEntry[]; currentProblems?: TaskProblem[]; currentObjectives?: TaskObjective[]; notNeeded?: string[]; repair?: string; moveLine?: string; opening?: { role: string; text: string }[] },
+  opts?: { stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string; growthTrend?: "up"; subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; voiceMode?: boolean; canvasMode?: boolean; recentJournal?: { date: string; text: string }[]; primer?: boolean; currentBoard?: BoardEntry[]; currentProblems?: TaskProblem[]; currentObjectives?: TaskObjective[]; notNeeded?: string[]; repair?: string; moveLine?: string; opening?: { role: string; text: string }[]; boardEvents?: BoardEvent[]; sessionState?: TutorSessionStateShape },
 ): Promise<ChatResult> {
   const steps = task.steps || [];
   // Substeps (a step's own on-demand sub-checklist, ticked independently — see Profile.grades-style comment
@@ -7726,18 +7730,16 @@ export async function chatAboutTask(
   // you're pointing at". Oldest first (reading order, matches how the board itself renders).
   const boardEntries = opts?.currentBoard || [];
   const currentProblems = opts?.currentProblems || [];
-  const boardBlock = (boardEntries.length || currentProblems.length)
-    ? `\nWHAT'S CURRENTLY ON THE BOARD (the visible surface next to this chat — you can see it, the student ` +
-      `can see it, don't ask them to describe it back to you; a NEW WRITE_TO_BOARD call adds to this, it ` +
-      `never replaces it). Everything listed here is ALREADY DONE or already asked — never redo or re-explain ` +
-      `it; continue from the LAST entry:\n` +
-      boardEntries.map((e) => `- [${e.kind || "note"}]${e.owner === "student" ? " (STUDENT'S WORK)" : ""}${e.kind === "gap" ? " (GAP — student must fill)" : ""} ${e.text}` +
-        (e.kind === "outline" && e.outline?.length ? "\n" + e.outline.map((s) => `  · ${s.heading}: ${s.bullets.join("; ")}`).join("\n") : "")
-      ).join("\n") +
-      (currentProblems.length ? (boardEntries.length ? "\n" : "") +
-        currentProblems.map((p) => `- [problem] ${p.question}${p.options?.length ? ` (options: ${p.options.join(" / ")})` : ""}`).join("\n") : "") +
-      "\n"
-    : "";
+  // boardSurfaceBlock (server/boardEvents.ts) replaces what used to be a hand-rolled duplicate of the same
+  // logic here — same content, plus the concept/status tags this inline version never had (spec §11's
+  // ownership distinction made visible: "STUDENT'S WORK", "marked WRONG"/"marked correct").
+  const boardBlock = boardSurfaceBlock(boardEntries, currentProblems);
+  // THE TRAJECTORY (spec §12) — what HAPPENED on the board across past turns, not just its current state.
+  // Silent unless there's something worth saying (boardTrajectoryBlock's own gate).
+  const trajectoryBlock = boardTrajectoryBlock(opts?.boardEvents);
+  // SESSION STATE (spec §18) — app-tracked turn count/hint rung/independence, read-only context; empty on
+  // a session's first turn (sessionStateBlock's own gate).
+  const sessionBlock = opts?.sessionState ? sessionStateBlock(opts.sessionState) : "";
   const objectives = opts?.currentObjectives || [];
   const objectivesBlock = objectives.length
     ? `\nTODAY'S SESSION OBJECTIVES (student-visible checklist, set via SET_OBJECTIVES — update it, don't ` +
@@ -8691,7 +8693,7 @@ export async function chatAboutTask(
     boardIntegrationBlock +
     contextAwarenessBlock +
     dynamicContext +
-    `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}${boardBlock}${objectivesBlock}` +
+    `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}${boardBlock}${trajectoryBlock}${sessionBlock}${objectivesBlock}` +
     assignmentBlock(task, tzOf(profile)) + profileBlock(profile) + academicBlock(academic) + materialsBlock(opts?.materials) +
     PRIMER_CLOSING_REMINDER;
   // 10, not the whole thread: every one of these is resent verbatim on every turn AND every intra-turn

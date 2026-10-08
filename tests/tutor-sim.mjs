@@ -101,7 +101,10 @@ export async function runTutorSim(check, section) {
   const sys = String(calls[0].messages[0].content);
   check("the system prompt carries the Socratic/board contract the tutor is held to", /SOUND LIKE A PERSON/.test(sys) && /THE BOARD IS THE WORKING/.test(sys) && /EXERCISE RESULTS ARRIVE AS/.test(sys) && /ASK what they want to do now/.test(sys) && /NEVER STATE THE CONCLUSION YOURSELF/.test(sys));
   r = await run("next", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }], problems: [problem], board: [{ id: "b1", kind: "summary", text: "Factor first", at: new Date().toISOString() }] });
-  check("the board + current problem are shown to the model as ALREADY DONE context", /WHAT'S CURRENTLY ON THE BOARD/.test(String(calls[0].messages[0].content)) && /\[summary\] Factor first/.test(String(calls[0].messages[0].content)) && /\[problem\] Solve x² − 5x \+ 6 = 0/.test(String(calls[0].messages[0].content)));
+  // boardSurfaceBlock (server/boardEvents.ts, wired in to replace the old hand-rolled block) always tags
+  // an Otto-owned entry "(yours)" — spec §11's ownership distinction made explicit even with nothing to
+  // contrast against yet, not just when a student entry is also present.
+  check("the board + current problem are shown to the model as ALREADY DONE context", /WHAT'S CURRENTLY ON THE BOARD/.test(String(calls[0].messages[0].content)) && /\[summary\] \(yours\) Factor first/.test(String(calls[0].messages[0].content)) && /\[problem\] Solve x² − 5x \+ 6 = 0/.test(String(calls[0].messages[0].content)));
 
   // 11. Coursework: the summarizer parses/caps what the model returns, and uploaded docs reach the tutor's prompt.
   script = () => ({ content: JSON.stringify({ summary: "A worksheet on factoring quadratics with 8 exercises.", keyPoints: ["difference of squares", "sum and product of roots"], tasks: [{ title: "Do exercises 1-8 of the factoring worksheet", why: "set by the sheet", due: "2026-10-12" }, { title: "x", why: "too short" }, { title: "Redo the odd-numbered exercises with a timer", why: "practice", due: "next friday" }, { title: "Do the extension problems", why: "bonus" }, { title: "Fifth task that must be dropped", why: "cap" }] }) });
