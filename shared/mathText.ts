@@ -36,8 +36,31 @@ export function plainMathToLatex(run: string): string {
   return s.replace(/\s{2,}/g, " ").trim();
 }
 
+/** A bare LaTeX run the model wrote WITHOUT $…$ (reported live on the board: "x = \tfracπ3, \tfrac5π3"
+ *  printed as raw commands, or as jammed plain text). Wrap such a run in $…$ so KaTeX typesets it instead.
+ *  Only a run that carries a real expression after the command (operator, digit, greek, or a {group}) is
+ *  touched — prose that merely mentions a command is left alone — and segments already inside $…$ / \(…\)
+ *  are never re-wrapped. */
+export function wrapRawLatex(line: string): string {
+  if (!/\\[a-zA-Z]+/.test(line)) return line;
+  const parts = line.split(/(\$[^$\n]*\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\])/g);
+  return parts.map((seg) => {
+    if (!seg) return "";
+    if (/^\$|^\\\(|^\\\[/.test(seg)) return seg;
+    return seg.replace(/\\[a-zA-Z]+(?:\s*\{[^{}]*\}|\s*[A-Za-z](?![A-Za-z])|[\d+\-*/().=^_,:πθμ√∞\s])+/g, (m) => {
+      // Trailing whitespace stays OUTSIDE the $…$ so two wrapped runs don't butt together ("π/3,5π/3").
+      const body = m.replace(/\s+$/, "");
+      if (!/[=+\-*/0-9πθμ√^{}]/.test(body.replace(/\\[a-zA-Z]+/g, ""))) return m;
+      return `$${body.trim()}$${m.slice(body.length)}`;
+    });
+  }).join("");
+}
+
 /** Wrap each math run of a plain line in $…$ (leaves prose alone). */
 export function autoMathLine(line: string): string {
+  // Bare LaTeX first: without this the line trips the early return below and the commands are printed
+  // literally (or read as prose) instead of typesetting.
+  line = wrapRawLatex(line);
   if (/\$|\\\(|\\\[|\\[a-zA-Z]+\{/.test(line)) return line;
   // peel trailing sentence punctuation off a maths token ("5π/12?" → "5π/12" + "?") so it stays outside the $…$
   const toks = line.split(/(\s+)/).flatMap((t) => { const m = /^(.+?)([?!.,;:]+)$/.exec(t); return m && isMathToken(m[1]) && !/^\s+$/.test(t) ? [m[1], m[2]] : [t]; });

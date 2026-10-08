@@ -31,6 +31,7 @@ import { makeGraphEntry, earlierDigest, isSubstantiveStep, courseworkLine, fallb
 import { canonSubject, sameSubject, normalizeCoursework, courseworkForSubject, COMMON_SUBJECTS, COURSEWORK_MAX_PAGES, COURSEWORK_MAX_CHARS } from "../shared/coursework.ts";
 import { tightenForChat, countWords as countWordsT } from "../server/claude.ts";
 import { replyStatesValue, studentStatedAnswer } from "../server/tutorAdapt.ts";
+import { autoMathLine, wrapRawLatex } from "../shared/mathText.ts";
 import { diffBoard, recordBoardEvents, objectiveEvents, problemEvents, boardTrajectoryBlock, boardSurfaceBlock, tagStudentAnswer, selfCorrections, boardFingerprint } from "../server/boardEvents.ts";
 import { classifyTurnAction, buildTutorDecision, recordTutorDecision, TUTOR_DECISION_CAP } from "../server/actionSpace.ts";
 import { emptySessionState, loadOrInitSessionState, updateSessionState, persistSessionState, sessionStateBlock } from "../server/sessionState.ts";
@@ -2178,6 +2179,16 @@ section("Fully Socratic tutor — policy every turn, never the gap's value, one 
   const boardCss = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
   check("the board wears no category captions and no trace box (no 'Given' / '✓ Established' / numbered trace)",
     !/content: "Given"|content: "✓ Established"/.test(labSrc) && !/sm-board-trace/.test(boardCss) && !/sm-board-answer-input/.test(boardCss));
+
+  // 6. Board maths actually typesets (reported live: a solution line printed raw "x = \tfracπ3, \tfrac5π3"
+  //    and a jammed "cosx= 21​" instead of π/3, 5π3). Bare LaTeX runs get wrapped so KaTeX renders them;
+  //    prose that merely mentions a command, and anything already in $…$, is left alone.
+  check("a bare LaTeX solution line is wrapped for KaTeX instead of printed literally",
+    autoMathLine("x = \\tfracπ3, \\tfrac5π3") === "x = $\\tfracπ3,$ $\\tfrac5π3$" &&
+    autoMathLine("\\frac{a}{b} = 1").includes("$\\frac{a}{b} = 1$"));
+  check("prose that merely mentions a command is never wrapped, and $…$ is never double-wrapped",
+    wrapRawLatex("use \\frac formula here") === "use \\frac formula here" &&
+    autoMathLine("$\\cos x = \\tfrac12$") === "$\\cos x = \\tfrac12$");
 }
 
 section("loadState survives a missing-column schema-drift error (source pins)");
