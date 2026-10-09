@@ -2061,11 +2061,11 @@ const ADMIN_EMAIL = "tjong.willem@gmail.com";
 function isAdminUser(email?: string | null): boolean {
   return (email || "").toLowerCase() === ADMIN_EMAIL;
 }
-type AdminUserRow = { email: string; taskCount: number; tutorSessionCount: number; tutorMinutes: number };
-type AdminSortKey = "email" | "taskCount" | "tutorSessionCount" | "tutorMinutes";
+type AdminUserRow = { email: string; taskCount: number; completedTaskCount: number; tutorSessionCount: number; tutorMinutes: number };
+type AdminSortKey = "email" | "taskCount" | "completedTaskCount" | "tutorSessionCount" | "tutorMinutes";
 function AdminPage() {
   const L = useLang();
-  const [metrics, setMetrics] = useState<{ userCount: number; taskCount: number; tutorSessionCount: number; tutorMinutesTotal: number; tasksBySource: Record<string, number>; byUser: AdminUserRow[] } | null>(null);
+  const [metrics, setMetrics] = useState<{ userCount: number; taskCount: number; completedTaskCount: number; tutorSessionCount: number; tutorMinutesTotal: number; tasksBySource: Record<string, number>; byUser: AdminUserRow[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<AdminSortKey>("taskCount");
   const [sortDesc, setSortDesc] = useState(true);
@@ -2081,6 +2081,7 @@ function AdminPage() {
   const cards: { label: [string, string]; value: string }[] = metrics ? [
     { label: ["Utilisateurs", "Users"], value: String(metrics.userCount) },
     { label: ["Tâches", "Tasks"], value: String(metrics.taskCount) },
+    { label: ["Tâches terminées", "Tasks completed"], value: String(metrics.completedTaskCount) },
     { label: ["Séances de tuteur", "Tutor sessions"], value: String(metrics.tutorSessionCount) },
     { label: ["Minutes de tuteur (total)", "Tutor minutes (total)"], value: String(metrics.tutorMinutesTotal) },
   ] : [];
@@ -2118,6 +2119,7 @@ function AdminPage() {
                     {([
                       ["email", "Utilisateur", "User"],
                       ["taskCount", "Tâches", "Tasks"],
+                      ["completedTaskCount", "Terminées", "Completed"],
                       ["tutorSessionCount", "Séances", "Sessions"],
                       ["tutorMinutes", "Minutes", "Minutes"],
                     ] as [AdminSortKey, string, string][]).map(([key, fr, en]) => (
@@ -2136,6 +2138,7 @@ function AdminPage() {
                     <tr key={u.email}>
                       <td className="admin-table-email">{u.email}</td>
                       <td>{u.taskCount}</td>
+                      <td>{u.completedTaskCount}</td>
                       <td>{u.tutorSessionCount}</td>
                       <td>{u.tutorMinutes}</td>
                     </tr>

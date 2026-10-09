@@ -1020,12 +1020,14 @@ export async function exportJobsAndEvents(userEmail: string): Promise<{ jobs: Jo
 export interface AdminUserMetrics {
   email: string;
   taskCount: number;
+  completedTaskCount: number;
   tutorSessionCount: number;
   tutorMinutes: number;
 }
 export interface AdminMetrics {
   userCount: number;
   taskCount: number;
+  completedTaskCount: number;
   tutorSessionCount: number;
   tutorMinutesTotal: number;
   tasksBySource: Record<string, number>;
@@ -1055,6 +1057,7 @@ export async function getAdminMetrics(): Promise<AdminMetrics | null> {
       if (!data || data.length < ADMIN_METRICS_PAGE) break;
     }
     let taskCount = 0;
+    let completedTaskCount = 0;
     let tutorSessionCount = 0;
     // Headline total = the SUM of the per-user rounded column, so the table always adds up to the card
     // (summing the raw floats and rounding once could differ from the displayed column by a minute or two —
@@ -1066,11 +1069,16 @@ export async function getAdminMetrics(): Promise<AdminMetrics | null> {
       const email = String((row as any).email || "unknown");
       const tasks: any[] = Array.isArray((row as any).tasks) ? (row as any).tasks : [];
       taskCount += tasks.length;
+      let userCompletedTasks = 0;
       let userTutorSessions = 0;
       let userTutorMinutes = 0;
       for (const t of tasks) {
         const src = String(t?.source || "unknown");
         tasksBySource[src] = (tasksBySource[src] || 0) + 1;
+        // "done" is the one status that means Otto's work was confirmed handled (see TaskStatus's own
+        // doc comment in shared/types.ts) — "dismissed" is also "handled" in isHandled's sense but means
+        // the student dropped it, the opposite of what "completed" asks here.
+        if (t?.status === "done") { completedTaskCount++; userCompletedTasks++; }
         if (src === "freestudy") {
           // SAME substance gate TutorSession.tsx's saveAndClose uses to decide whether a session is even
           // worth keeping (a real user message or board content) — reported live: without this, the count
@@ -1092,10 +1100,10 @@ export async function getAdminMetrics(): Promise<AdminMetrics | null> {
       }
       const roundedMinutes = Math.round(userTutorMinutes);
       tutorMinutesTotal += roundedMinutes;
-      byUser.push({ email, taskCount: tasks.length, tutorSessionCount: userTutorSessions, tutorMinutes: roundedMinutes });
+      byUser.push({ email, taskCount: tasks.length, completedTaskCount: userCompletedTasks, tutorSessionCount: userTutorSessions, tutorMinutes: roundedMinutes });
     }
     byUser.sort((a, b) => b.taskCount - a.taskCount);
-    const value = { userCount: rows.length, taskCount, tutorSessionCount, tutorMinutesTotal, tasksBySource, byUser };
+    const value = { userCount: rows.length, taskCount, completedTaskCount, tutorSessionCount, tutorMinutesTotal, tasksBySource, byUser };
     adminMetricsCache = { at: Date.now(), value };
     return value;
   } catch (e) {

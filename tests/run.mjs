@@ -4534,6 +4534,15 @@ section("Admin metrics dashboard — gated to one hardcoded email, server AND cl
     !/\.limit\(ADMIN_METRICS|ADMIN_METRICS_ACCOUNT_LIMIT/.test(storeSrcAdmin));
   check("the headline tutor-minutes card is exactly the sum of the displayed per-user column",
     /tutorMinutesTotal \+= roundedMinutes/.test(adminFn) && /tutorMinutesTotal, tasksBySource, byUser/.test(adminFn));
+  // "make sure in admin we can see how many tasks were completed too" — completed means status "done"
+  // specifically (not "dismissed", which the student dropped rather than finished), tracked both as an
+  // app-wide total and per-account, same shape as every other metric here.
+  check("completed tasks ('done' status, not 'dismissed') are counted app-wide and per-account",
+    /if \(t\?\.status === "done"\) \{ completedTaskCount\+\+; userCompletedTasks\+\+; \}/.test(adminFn) &&
+    /completedTaskCount: userCompletedTasks/.test(adminFn) && /completedTaskCount, tutorSessionCount, tutorMinutesTotal/.test(adminFn));
+  check("the client surfaces completed tasks as both a headline card and a sortable table column",
+    /completedTaskCount/.test(appSrcAdmin) && /\["completedTaskCount", "Terminées", "Completed"\]/.test(appSrcAdmin) &&
+    /Tâches terminées", "Tasks completed"/.test(appSrcAdmin));
 }
 
 section("Kick loop egress/CPU fix — hidden-tab guard, trimmed payload, ETag (source pins)");
