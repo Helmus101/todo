@@ -2679,7 +2679,7 @@ app.post("/api/study/free", requireAuth, rateLimit(20, 60_000), ah(async (req, r
     // explicit "new session" request).
     const active = list.find((t) => t.source === "freestudy" && !isHandled(t.status));
     if (active) {
-      if (active.sourceSubject) active.mastery = subjectMastery(list, req.session.profile?.milestones, active.sourceSubject);
+      if (active.sourceSubject) { try { active.mastery = subjectMastery(list, req.session.profile?.milestones, active.sourceSubject); } catch { /* mastery is a nicety */ } }
       res.json(list); return;
     }
   }
@@ -2704,8 +2704,9 @@ app.post("/api/study/free", requireAuth, rateLimit(20, 60_000), ah(async (req, r
     urgency: 0, importance: 0, quadrant: e.quadrant, score: e.score, status: "needs_review",
     createdAt: now, anchorKey: `freestudy:${id}`,
     sourceSubject: subject,
-    mastery: subject ? subjectMastery(list, req.session.profile?.milestones, subject) : undefined,
+    mastery: undefined,
   };
+  if (subject) { try { t.mastery = subjectMastery(list, req.session.profile?.milestones, subject); } catch { /* mastery is a nicety */ } }
   list.push(t);
   req.session.tasks = list;
   await commit(req);
@@ -3283,7 +3284,10 @@ app.get("/api/usage", requireAuth, async (req, res) => {
 
 // ── Profile (who the user is) — available once logged in ───────────────────────
 const listKey = (c: string) => (c === "preference" ? "preferences" : c === "person" ? "people" : c === "project" ? "projects" : c === "course" ? "courses" : "");
-app.get("/api/profile", requireAuth, (req, res) => { res.json(tasks.stripProfileForResponse(req.session.profile || emptyProfile())); });
+app.get("/api/profile", requireAuth, (req, res) => {
+  try { res.json(tasks.stripProfileForResponse(req.session.profile || emptyProfile())); }
+  catch (e: any) { console.error(e); res.json(emptyProfile()); }
+});
 app.post("/api/profile", requireAuth, async (req, res) => {
   try {
     const p = (req.session.profile ||= emptyProfile());

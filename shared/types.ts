@@ -655,7 +655,7 @@ export function subjectMastery(tasks: WebTask[], milestones: Profile["milestones
   for (const t of tasks) {
     if ((t.sourceSubject || "").toLowerCase() !== subjectKey) continue;
     for (const deck of t.flashcards || []) {
-      for (const card of deck.cards) {
+      for (const card of deck?.cards || []) {
         if (card.notNeeded) continue; // excluded from every other "still shaky"/scoring signal too
         totalCards++;
         if (card.review?.box === 2) knownCards++;
@@ -664,7 +664,7 @@ export function subjectMastery(tasks: WebTask[], milestones: Profile["milestones
   }
   const leitnerRatio = totalCards > 0 ? knownCards / totalCards : null;
 
-  const subjectEntries = (milestones || []).filter((m) => m.subject.toLowerCase() === subjectKey);
+  const subjectEntries = (milestones || []).filter((m) => String(m?.subject || "").toLowerCase() === subjectKey);
   let milestoneWeight = 0;
   for (const m of subjectEntries) {
     const daysAgo = (now.getTime() - Date.parse(m.achievedAt)) / 86_400_000;
