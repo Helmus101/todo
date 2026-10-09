@@ -20,7 +20,7 @@
 :root {
   /* Minimalist palette — extracted from the live Otto Framer prototype's computed styles:
      warm white canvas, near-black ink (#1D1D1F), graphite secondary text (#6E6E73),
-     one warm orange accent (#FF752B) for CTAs/progress/active nav. */
+     one warm orange accent (#111111) for CTAs/progress/active nav. */
   --bg: #FFFFFF;
   --surface: #FFFFFF;
   --surface-raised: #FFFFFF;
@@ -33,16 +33,16 @@
   --line-glass: #E5E5EA;
 
   /* Accent: Orange as primary accent color for buttons, highlights, focus states */
-  --accent: #FF752B;
-  --accent-hover: #F26A22;
-  --accent-active: #E05A18;
-  --accent-soft: rgba(255, 117, 43, 0.10);
+  --accent: #111111;
+  --accent-hover: #000000;
+  --accent-active: #000000;
+  --accent-soft: rgba(17, 17, 17, 0.10);
   --accent-rgb: 255, 117, 43;
-  --brand-mark: #FF752B;
+  --brand-mark: #111111;
   --focus-ring: var(--accent);
   /* Chat bubbles use orange with white text */
-  --chat-user-bg: #FF752B;
-  --chat-user-bg-2: #F26A22;
+  --chat-user-bg: #111111;
+  --chat-user-bg-2: #000000;
   
   --bg-2: #F5F5F4;
   --bg-3: #EBEBEA;
@@ -357,14 +357,14 @@ input:focus, textarea:focus {
 .btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .btn.primary {
   background: var(--accent); border-color: var(--accent); color: #fff;
-  box-shadow: 0 2px 8px rgba(255, 117, 43, 0.25), 0 1px 3px rgba(255, 117, 43, 0.15);
+  box-shadow: 0 2px 8px rgba(17, 17, 17, 0.25), 0 1px 3px rgba(17, 17, 17, 0.15);
 } /* the irreversible act — cobalt */
 /* hover: hover — see .card:hover's comment: an unscoped :hover transform can shift a real button out from
    under a finger between touchdown and touchup on iOS Safari, silently dropping the tap. */
 @media (hover: hover) {
-  .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); box-shadow: 0 4px 16px rgba(255, 117, 43, 0.35), 0 2px 8px rgba(255, 117, 43, 0.2); }
+  .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); box-shadow: 0 4px 16px rgba(17, 17, 17, 0.35), 0 2px 8px rgba(17, 17, 17, 0.2); }
 }
-.btn.primary:active { background: var(--accent-active); box-shadow: 0 2px 8px rgba(255, 117, 43, 0.25), 0 1px 3px rgba(255, 117, 43, 0.15); }
+.btn.primary:active { background: var(--accent-active); box-shadow: 0 2px 8px rgba(17, 17, 17, 0.25), 0 1px 3px rgba(17, 17, 17, 0.15); }
 .btn.ghost { background: transparent; border-color: transparent; color: var(--accent); box-shadow: none; }
 .btn.ghost:hover { background: var(--accent-soft); }
 /* Destructive confirm ONLY (delete / payment) — vermilion, never a marketing accent. */

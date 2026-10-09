@@ -1666,8 +1666,8 @@ section("PageInfoHint — dashboard orientation caption");
   const React = await import("react");
   const { PageInfoHint } = await import("../client/ui.tsx");
   const html = renderToStaticMarkup(React.createElement(PageInfoHint, { pageKey: "test-page", text: "Explains the thing." }));
-  check("renders the hint text", html.includes("Explains the thing."));
-  check("renders a dismiss button", /page-info-hint-x/.test(html));
+  check("coach marks / how-this-page-works captions are OFF (minimal UI: nothing to dismiss)", html === "");
+
 }
 // Beta-features gate (Profile.betaFeatures, shared/types.ts): the 7 bandit-personalization call sites and
 // the AI theme route must all check it before doing any real personalization — server/index.ts and
@@ -1943,6 +1943,11 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     check("a failed write keeps the data and retries (nothing is lost on a blip)", w2.length === 1 && w2[0] === 7); }
   { const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
     check("commit() is write-behind (scheduler) except the journal saves; shutdown and tab-hide flush it", /scheduler\.schedule\(email, \{ tasks: localTasks, profile: localProfile \}\)/.test(idx) && /process\.once\(sig/.test(idx) && /\/api\/sync\/flush/.test(idx) && !/review[\s\S]{0,900}awaitCloud: true[\s\S]{0,40}\n\}\)\);\n\/\/ "Not something I need/.test(idx)); }
+  { const css = readFileSync(new URL("../client/minimal.css", import.meta.url), "utf8"); const main = readFileSync(new URL("../client/main.tsx", import.meta.url), "utf8"); const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+    check("minimal UI layer is loaded last and removes shadows, gradients, radii, uppercase labels, cream and the orange accent", /import "\.\/minimal\.css";\s*$/m.test(main.replace(/\n\s*\n/g, "\n").trim() + "\n") || main.indexOf("minimal.css") > main.indexOf("tour.css"));
+    check("minimal layer sets one black accent and zero radii", /--accent: #111/.test(css) && /border-radius: 0 !important/.test(css) && /box-shadow: none !important/.test(css) && /text-transform: none !important/.test(css) && /background-image: none !important/.test(css));
+    check("landing is one headline, one sentence, one button — no feature cards, numbering or kickers", /landing-min-main/.test(app) && !/feature-number-framer|sample-task-framer|hero-title-framer/.test(app));
+    check("no hard-coded orange accent remains in the stylesheets", !/#ff752b|#f26a22|#e05a18|#d97757/i.test(readFileSync(new URL("../client/styles.css", import.meta.url), "utf8") + readFileSync(new URL("../client/tally.css", import.meta.url), "utf8"))); }
   check("board is flat: plain lines, no section numbers or boxes", /sm-board-line/.test(boardSrc) && !/sm-board-section-num/.test(boardSrc));
   check("kind:\"summary\" renders as an ordinary line — no trace box, no heading, no category", !/ReasoningTrace|sm-board-trace/.test(boardSrc));
   check("a deliberately unfinished worked line gets an 'à toi de finir' completion chip (completion effect, visible)", /isCompletionGap/.test(boardSrc) && /sm-board-todo-chip/.test(boardSrc));
@@ -5305,9 +5310,6 @@ section("Landing page redesign — prototype copy, real features only, no fabric
   const landing = app.slice(app.indexOf("export function Landing("), app.indexOf("// ── Legal pages"));
   check("no fabricated testimonial content (no quote attributed to a named 'customer')", !/testimonial/i.test(landing));
   check("no certifications this app doesn't hold (SOC 2 / ISO 27001 / SAML)", !/SOC\s*2/i.test(landing) && !/ISO\s*27001/i.test(landing) && !/SAML/i.test(landing));
-  check("the two-column prototype section names the two real halves of the product (proactive tasks + personal tutor)", landing.includes("features-framer") && /PROACTIVE TASKS/.test(landing) && /PERSONAL TUTOR/.test(landing));
-  check("the sample cards use the prototype's honest examples (derivatives task, slope question)", /Get ready for derivatives/.test(landing) && /What does the slope tell us/.test(landing));
-  check("the hero copy matches the prototype (Less busywork. More understanding.)", /Less busywork\. More understanding\./.test(landing));
   check("the footer keeps Privacy/Terms (+ Research, not Unlimited) and the Research page stays reachable", landing.includes('href="/terms"') && landing.includes('href="/research"') && !landing.includes('href="/unlimited"'));
 }
 

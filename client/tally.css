@@ -1,7 +1,7 @@
 /* ────────────────────────────────────────────────────────────────────────────
    Otto prototype UI — full application theme.
    Warm white canvas, near-black ink (#1D1D1F), graphite secondary (#6E6E73),
-   warm orange CTA (#FF752B) — tokens extracted from the Otto Framer prototype's
+   warm orange CTA (#111111) — tokens extracted from the Otto Framer prototype's
    live computed styles. Inter typography, hairline borders, pill buttons.
    Loaded AFTER styles.css (see main.tsx) so it wins the cascade; its token block
    mirrors styles.css's so both files stay in lockstep.
@@ -19,15 +19,15 @@
   --line: #E5E5EA;
   --line-soft: #F4F4F5;
   --line-glass: #E5E5EA;
-  --accent: #FF752B;
-  --accent-hover: #F26A22;
-  --accent-active: #E05A18;
-  --accent-soft: rgba(255, 117, 43, 0.10);
+  --accent: #111111;
+  --accent-hover: #000000;
+  --accent-active: #000000;
+  --accent-soft: rgba(17, 17, 17, 0.10);
   --accent-rgb: 255, 117, 43;
-  --accent-2: #FF752B;
-  --accent-2-soft: rgba(255, 117, 43, 0.10);
+  --accent-2: #111111;
+  --accent-2-soft: rgba(17, 17, 17, 0.10);
   --accent-2-rgb: 255, 117, 43;
-  --focus-ring: rgba(255, 117, 43, 0.35);
+  --focus-ring: rgba(17, 17, 17, 0.35);
   --bg-2: #F5F5F4;
   --bg-3: #EBEBEA;
   --graphite: #6E6E73;
@@ -88,7 +88,7 @@ body {
 a { color: var(--accent); }
 a:hover { color: var(--accent-hover); }
 
-::selection { background: rgba(255, 117, 43, 0.14); }
+::selection { background: rgba(17, 17, 17, 0.14); }
 
 /* Focus rings — Tally uses a soft blue ring */
 :focus-visible {

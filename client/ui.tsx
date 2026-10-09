@@ -39,9 +39,12 @@ export function useLang(): (fr: string, en: string) => string {
  *  useFirstTime.ts), then gets out of the way for good.
  *  `id` must be unique per feature and stable across releases (it's the persistence key). Renders nothing
  *  once dismissed or already seen — cheap to leave mounted unconditionally at a feature's entry point. */
+/** Coach marks, first-visit tours and "how this page works" captions are off: an interface that needs a tour to be understood
+ *  should be simpler, not annotated. Flip to true to bring them back. */
+export const COACH_MARKS = false;
 export function FirstTimeHint({ id, title, body, className }: { id: string; title: string; body: string; className?: string }) {
   const [isFirst, dismiss] = useFirstTime(id);
-  if (!isFirst) return null;
+  if (!COACH_MARKS || !isFirst) return null;
   return (
     <div className={`first-time-hint ${className || ""}`} role="note">
       <div className="first-time-hint-body">
@@ -184,7 +187,7 @@ export function PageInfoHint({ pageKey, text }: { pageKey: string; text: string 
   const [dismissed, setDismissed] = useState(() => {
     try { return localStorage.getItem(storageKey) === "1"; } catch { return false; }
   });
-  if (dismissed) return null;
+  if (!COACH_MARKS || dismissed) return null;
   return (
     <p className="page-info-hint muted small">
       {text}

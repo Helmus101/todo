@@ -1196,15 +1196,9 @@ export function App() {
                 no greeting-by-clock. Under it ONE gray line joins the date to the "Three priorities…"
                 reassurance with a middle dot ("Monday, 5 October · Three priorities. Everything else
                 can wait.") instead of a separate uppercase date label above the title. */}
-            <h1 className="list-head">{en ? "Your day, under control." : "Ta journée, sous contrôle."}</h1>
-            <p className="page-sub" style={{ marginTop: 10 }}>
-              {todayLong(status?.language)}{en ? " · Three priorities. Everything else can wait." : " · Trois priorités. Le reste peut attendre."}
-            </p>
-            {momentumSubject ? (
-              <p className="dash-momentum">
-                {T("dashboard.momentum", { subject: momentumSubject })}
-              </p>
-            ) : null}
+            {/* Warm, plain, human: a greeting by first name, then the date — no tagline, no progress widgets. */}
+            <h1 className="list-head">{(status?.name || "").trim().split(/\s+/)[0] ? (en ? `Hi ${(status?.name || "").trim().split(/\s+/)[0]}.` : `Salut ${(status?.name || "").trim().split(/\s+/)[0]}.`) : todayLong(status?.language)}</h1>
+            {(status?.name || "").trim() ? <p className="page-sub" style={{ marginTop: 6 }}>{todayLong(status?.language)}</p> : null}
             {/* One plain sentence instead of the old "3 active · 1 processing · 5 done" mono readout —
                 that read like debug output, not like something written for a stressed 17-year-old. A second
                 sentence names what's actually next (the hero task) rather than just a count, so the line
@@ -1226,20 +1220,6 @@ export function App() {
                 <span className="scan-note"><span className="scan-dot" /> {en ? "checking…" : "vérification…"}</span>
               ) : null}
             </p>
-            {/* Today's progress, not all-time — see doneToday. Hidden when there's nothing to measure.
-                The prototype puts the caption ("1 of 3 complete · A good start.") ABOVE the bar. */}
-            {todayTotal > 0 && (
-              <>
-                <p className="dash-progress-caption">
-                  {en
-                    ? `${doneToday} of ${todayTotal} complete · ${doneToday === 0 ? "Ready when you are." : doneToday >= todayTotal ? "All done for today." : "A good start."}`
-                    : `${doneToday} sur ${todayTotal} terminée${doneToday > 1 ? "s" : ""} · ${doneToday === 0 ? "Prêt quand tu veux." : doneToday >= todayTotal ? "Tout est fait pour aujourd'hui." : "Un bon début."}`}
-                </p>
-                <div className="dash-progress" role="img" aria-label={en ? `${doneToday} of ${todayTotal} done today` : `${doneToday} sur ${todayTotal} faites aujourd'hui`}>
-                  <div className="dash-progress-fill" style={{ width: `${Math.round((doneToday / todayTotal) * 100)}%` }} />
-                </div>
-              </>
-            )}
           </div>
           {/* Onboarding's sidebar tour explains what the Tasks tab IS, but never what "Do now"/"This
               week"/"Later" actually mean or how a task lands in one — the one piece of real complexity
@@ -3793,110 +3773,25 @@ function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status
 export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChange: (v: "fr" | "en") => void }) {
   const en = lang === "en";
   const L = (fr: string, e: string) => (en ? e : fr);
-
   return (
-    <div className="landing landing-framer">
-      {/* Framer-style Navigation */}
-      <header className="landing-nav-framer">
-        <span className="brand-framer"><Logo size={20} /> <span className="brand-name-framer">otto</span></span>
-        <nav className="landing-navlinks-framer">
-          {/* The prototype's nav link leads somewhere real: the /research page, the long-form write-up of
-              Otto's learning philosophy (the research the approach is grounded in) — not an in-page anchor. */}
-          <a href="/research" className="nav-link-framer">{L("Notre approche", "Our approach")}</a>
-          <button type="button" className="lang-toggle-framer" onClick={() => onLangChange(en ? "fr" : "en")} aria-label={en ? "Switch language" : "Changer de langue"}>{en ? "FR" : "EN"}</button>
-          <a className="btn ghost-framer" href="/login">{L("Se connecter", "Log in")}</a>
+    <div className="landing landing-min">
+      <header className="landing-min-nav">
+        <span className="landing-min-brand">otto</span>
+        <nav>
+          <a href="/research">{L("Approche", "Approach")}</a>
+          <button type="button" onClick={() => onLangChange(en ? "fr" : "en")} aria-label={en ? "Switch language" : "Changer de langue"}>{en ? "FR" : "EN"}</button>
+          <a href="/login">{L("Se connecter", "Log in")}</a>
         </nav>
       </header>
-
-      {/* Hero Section */}
-      <main className="hero-framer">
-        <h1 className="hero-title-framer">
-          {en ? "Less busywork. More understanding." : "Moins de travail. Plus de compréhension."}
-        </h1>
-
-        <p className="hero-sub-framer">
-          {en
-            ? "Your school day, organized. Your questions, worked through. Otto brings proactive planning and personal tutoring together."
-            : "Ta journée d'école, organisée. Tes questions, résolues. Otto réunit la planification proactive et le tutorat personnel."}
-        </p>
-
-        <div className="hero-cta-framer">
-          <a className="btn primary-framer" href="/signup">{en ? "Open Otto" : "Ouvrir Otto"}</a>
-        </div>
-
-        <p className="hero-tagline-framer">
-          {en ? "A study companion, not a shortcut." : "Un compagnon d'étude, pas un raccourci."}
-        </p>
+      <main className="landing-min-main">
+        <h1>{L("Ta journée d'école, organisée. Tes questions, résolues pas à pas.", "Your school day, organised. Your questions, worked through step by step.")}</h1>
+        <p>{L("Je suis Otto. Je m'occupe de ton planning, et quand tu bloques sur quelque chose, on le comprend ensemble — sans que je te donne la réponse.", "I'm Otto. I keep track of your school week, and when you get stuck on something we work it out together — I'll help you think, not hand you the answer.")}</p>
+        <p><a className="landing-min-cta" href="/signup">{L("Commencer", "Get started")}</a></p>
       </main>
-
-      {/* Two-column Feature Section */}
-      <section id="features" className="features-framer">
-        <div className="feature-column-framer">
-          <div className="feature-number-framer">01</div>
-          <h2 className="feature-title-framer">{en ? "PROACTIVE TASKS" : "TÂCHES PROACTIVES"}</h2>
-          <h3 className="feature-heading-framer">
-            {en ? "Your day, already sorted." : "Ta journée, déjà organisée."}
-          </h3>
-          <p className="feature-desc-framer">
-            {en
-              ? "Pronote, Gmail, Calendar, Drive — they all become priorities, with materials and steps ready before you sit down."
-              : "Pronote, Gmail, Calendar, Drive — tout devient priorité, avec les matériaux et les étapes prêts avant même que tu t'installes."}
-          </p>
-
-          {/* Sample Task Card */}
-          <div className="sample-task-framer">
-            <div className="sample-task-subject-framer">
-              {en ? "MATHEMATICS · TOMORROW" : "MATHÉMATIQUES · DEMAIN"}
-            </div>
-            <h4 className="sample-task-title-framer">
-              {en ? "Get ready for derivatives" : "Prépare-toi aux dérivées"}
-            </h4>
-            <p className="sample-task-meta-framer">
-              {en ? "15 min review · 2 practice questions" : "15 min de révision · 2 questions d'exercice"}
-            </p>
-          </div>
-        </div>
-
-        <div className="feature-column-framer">
-          <div className="feature-number-framer">02</div>
-          <h2 className="feature-title-framer">{en ? "PERSONAL TUTOR" : "TUTEUR PERSONNEL"}</h2>
-          <h3 className="feature-heading-framer">
-            {en ? "A nudge. Not the answer." : "Un coup de pouce. Pas la réponse."}
-          </h3>
-          <p className="feature-desc-framer">
-            {en
-              ? "Stuck on a concept? Otto asks questions, adapts its approach, and helps you find your own way through."
-              : "Bloqué sur un concept ? Otto pose des questions, adapte son approche et t'aide à trouver ton propre chemin."}
-          </p>
-
-          {/* Sample Tutor Interaction */}
-          <div className="sample-tutor-framer">
-            <div className="sample-tutor-label-framer">
-              {en ? "OTTO / YOUR TUTOR" : "OTTO / TON TUTEUR"}
-            </div>
-            <p className="sample-tutor-question-framer">
-              {en ? "What does the slope tell us about how this function changes?" : "Que nous dit la pente sur la façon dont cette fonction change ?"}
-            </p>
-            <p className="sample-tutor-prompt-framer">
-              {en ? "Start with your observations — what do you notice?" : "Commence par tes observations — que remarques-tu ?"}
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* Footer */}
-      <footer className="landing-footer-framer">
-        <div className="footer-brand-framer">
-          otto · {en ? "Made for learning, not shortcuts." : "Fait pour apprendre, pas pour tricher."}
-        </div>
-        <nav className="footer-links-framer">
-          <a href="/privacy">{en ? "Privacy" : "Confidentialité"}</a>
-          <a href="/terms">{en ? "Terms" : "Conditions"}</a>
-          {/* Not in the prototype's footer, but /research is this landing's long-form "Research" section —
-              dropping the link during the restyle would orphan the page entirely. (The /unlimited page
-              stays reachable through its own routes; it's just not a footer link any more.) */}
-          <a href="/research">{en ? "Research" : "Recherche"}</a>
-        </nav>
+      <footer className="landing-min-foot">
+        <a href="/privacy">{L("Confidentialité", "Privacy")}</a>
+        <a href="/terms">{L("Conditions", "Terms")}</a>
+        <a href="/research">{L("Recherche", "Research")}</a>
       </footer>
     </div>
   );

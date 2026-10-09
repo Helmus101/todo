@@ -1,0 +1,115 @@
+/* ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   MINIMAL — loaded last. One decision: the interface is TEXT on a plain page, separated by hairlines.
+   No cards, no pills, no shadows, no gradients, no rounded corners, no tinted backgrounds, no decorative icons,
+   no uppercase micro-labels, no numbered sections, no accent colour (black; red only for errors).
+   Everything else in the stylesheets still applies — this layer removes the decoration from it.
+   ───────────────────────────────────────────────────────────────────────────────────────────────────────────── */
+:root {
+  --bg: #fff; --surface: #fff; --surface-raised: #fff; --surface-glass: #fff;
+  --ink: #111; --ink-2: #555; --ink-3: #8a8a8a; --graphite: #555;
+  --line: #d9d9d9; --line-soft: #ececec; --line-glass: #d9d9d9;
+  --accent: #111; --accent-hover: #000; --accent-active: #000; --accent-soft: #f3f3f3; --accent-rgb: 17, 17, 17;
+  --brand-mark: #111; --focus-ring: #111; --chat-user-bg: #111; --chat-user-bg-2: #111;
+  --bg-2: #f6f6f6; --bg-3: #ececec; --vermilion: #c40000; --ok: #111; --amber: #111; --warn: #c40000;
+  --radius-2xs: 0; --radius-xs: 0; --radius-sm: 0; --radius: 0; --radius-lg: 0; --radius-xl: 0; --radius-2xl: 0; --radius-pill: 0;
+  --display: "Helvetica Neue", Helvetica, Arial, sans-serif; --sans: "Helvetica Neue", Helvetica, Arial, sans-serif; --font-serif: "Helvetica Neue", Helvetica, Arial, sans-serif; --font-hand: "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+html, body { background: #fff; color: var(--ink); font-family: var(--sans); font-size: 16px; line-height: 1.5; }
+
+/* strip decoration everywhere */
+*, *::before, *::after {
+  box-shadow: none !important; text-shadow: none !important; filter: none;
+  background-image: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
+  border-radius: 0 !important; text-transform: none !important; letter-spacing: normal !important;
+}
+/* one typeface, one weight for headings, modest sizes */
+h1, h2, h3, h4, .list-head, .brand, [class*="title"], [class*="heading"] { font-family: var(--sans) !important; font-weight: 600 !important; }
+h1, .list-head { font-size: 1.5rem !important; line-height: 1.25 !important; }
+h2 { font-size: 1.15rem !important; }
+h3, h4 { font-size: 1rem !important; }
+
+/* containers are plain: no card chrome — a hairline between items instead */
+[class*="card"], [class*="panel"], [class*="tile"], [class*="box"]:not(input):not([class*="checkbox"]), .intro, .paused-banner {
+  background: transparent !important; border-top: 0 !important; border-left: 0 !important; border-right: 0 !important;
+}
+[class*="card"] { border-bottom: 1px solid var(--line-soft) !important; padding-left: 0 !important; padding-right: 0 !important; }
+[class*="panel"], [class*="tile"] { border-bottom: 0 !important; }
+
+/* pills, badges, chips, status dots → plain text */
+[class*="badge"], [class*="pill"], [class*="chip"], [class*="-dot"], .scan-dot {
+  background: transparent !important; border: 0 !important; padding: 0 !important; color: var(--ink-2) !important; font-weight: 400 !important;
+}
+[class*="-dot"], .scan-dot { display: none !important; }
+.dash-progress, .dash-progress-fill, [class*="progress-bar"] { display: none !important; }
+
+/* buttons: primary = black block, everything else = text */
+button, .btn { border-radius: 0 !important; }
+.btn.primary, button.primary, .btn-primary, .sm-btn-primary, .primary-framer, .landing-min-cta {
+  background: #111 !important; color: #fff !important; border: 1px solid #111 !important;
+}
+.btn.ghost, .btn.xs, .sm-btn:not(.sm-btn-primary), .btn:not(.primary) { background: transparent !important; color: var(--ink) !important; border: 0 !important; text-decoration: underline; padding-left: 0; padding-right: 0; }
+input, select, textarea { border: 0 !important; border-bottom: 1px solid var(--ink) !important; background: transparent !important; padding-left: 0 !important; }
+input[type="checkbox"], input[type="radio"] { border-bottom: 0 !important; }
+a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
+:focus-visible { outline: 2px solid #111 !important; outline-offset: 2px; }
+
+/* nav: text, underline the current page */
+.topnav, header.topnav, .app-header { border-bottom: 1px solid var(--line) !important; background: #fff !important; }
+.topnav-link { color: var(--ink-2); text-decoration: none; border-bottom: 1px solid transparent; }
+.topnav-link.active { color: var(--ink); border-bottom-color: var(--ink) !important; }
+
+/* decorative icons and avatars go; functional toolbar icons stay (they have no wrapper background now) */
+h1 svg, h2 svg, h3 svg, [class*="title"] svg, [class*="empty"] svg, .brand svg, [class*="avatar"]:not(.tutor-face), [class*="mascot"] { display: none !important; }
+
+/* page rhythm: one column, generous whitespace, no dividers except where they separate items */
+.list-wrap, main { max-width: 640px; margin-left: auto; margin-right: auto; }
+.tutor-stage, .ts-board-body, .studylog-page { max-width: none; }
+hr { border: 0; border-top: 1px solid var(--line-soft); }
+
+/* landing */
+.landing-min { max-width: 560px; margin: 0 auto; padding: 24px 20px 60px; min-height: 100vh; display: flex; flex-direction: column; }
+.landing-min-nav { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 18vh; }
+.landing-min-brand { font-weight: 600; }
+.landing-min-nav nav { display: flex; gap: 20px; align-items: baseline; }
+.landing-min-nav button { background: none; border: 0; padding: 0; font: inherit; color: var(--ink); text-decoration: underline; cursor: pointer; }
+.landing-min-main h1 { font-size: 1.6rem !important; max-width: 24ch; margin: 0 0 16px; }
+.landing-min-main p { color: var(--ink-2); margin: 0 0 24px; max-width: 46ch; }
+.landing-min-cta { display: inline-block; padding: 10px 18px; text-decoration: none !important; }
+.landing-min-foot { margin-top: auto; padding-top: 80px; display: flex; gap: 20px; font-size: .85rem; }
+.landing-min-foot a { color: var(--ink-2); }
+
+/* tutor: the board is already plain lines; just neutralise accent tints and framing */
+.tc-toolbar { border: 1px solid var(--line) !important; background: #fff !important; }
+.tc-btn.on, .tc-swatch.on { outline: 2px solid #111; }
+.sm-board-entry, .sm-board-problem, .sm-board-answer-row { background: transparent !important; }
+
+/* second pass */
+.landing-min-main { max-width: none !important; margin: 0 !important; }
+.landing-min-nav, .landing-min-foot { max-width: none; }
+[class*="card"]::before, [class*="card"]::after, .quadrant-bar, [class*="accent-bar"] { display: none !important; }
+.add-task-row, .add-task { border: 0 !important; border-bottom: 1px solid var(--ink) !important; background: transparent !important; }
+.add-task-row input { border-bottom: 0 !important; }
+.empty-mark, .empty-state svg { display: none !important; }
+
+.tutor-landing-inner { align-items: flex-start; text-align: left; }
+.tutor-start-form { border: 0 !important; background: transparent !important; }
+[class*="see-more"], .more-tasks, button[class*="more"] { background: transparent !important; border: 0 !important; }
+
+/* third pass: remaining boxes and tints */
+.settings-sec, .int-acct, .lang-toggle, .cw-upload, .cw-drop, .empty-state, .danger-zone { border: 0 !important; background: transparent !important; padding-left: 0 !important; padding-right: 0 !important; }
+.settings-sec { border-bottom: 1px solid var(--line-soft) !important; }
+.danger-zone { color: var(--vermilion); }
+.cw-drop { border-top: 1px solid var(--line) !important; border-bottom: 1px solid var(--line) !important; }
+.acct-avatar, .cw-num { display: none !important; }
+.switch-track { background: var(--bg-3) !important; }
+:where(button) { background: transparent !important; }
+
+/* Otto keeps a face — he is a person to talk to, not a dashboard. Drawn as plain as possible: an outline and two eyes. */
+.tutor-face { background: transparent !important; border: 1.5px solid var(--ink) !important; }
+.tutor-face-eye { background: var(--ink) !important; }
+.tutor-landing-inner { align-items: center; text-align: center; }
+/* no icon decoration on text controls (hint / I'm lost / another one, chips, nav) — words are enough */
+.btn svg, [class*="chip"] svg, [class*="pill"] svg, .tutor-chips svg, .ts-chips svg, [class*="followup"] svg, [class*="next"] button svg { display: none !important; }
+.sm-board-empty-line { font-size: 1.4rem !important; line-height: 1.3 !important; }
+.sm-board-empty-sub { font-size: 1rem !important; }
+.tutor-landing-inner div { border: 0 !important; background: transparent !important; }
