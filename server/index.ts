@@ -310,8 +310,10 @@ const commit = async (req: express.Request, opts?: { awaitCloud?: boolean }) => 
     await syncCloud(true);
     sessionDirtyCache.set(sessionId, currentHash);
   } else if (isDirty) {
-    // Dirty but not awaitCloud: sync in background and update dirty flag
-    void syncCloud().catch((e) => reportError("commit-sync-cloud-detached", e));
+    // Dirty but not awaitCloud: the session row no longer carries profile/tasks (store.ts slims it), so the
+    // account row is the ONLY durable copy — await the write rather than detaching it (a detached write can be
+    // frozen mid-flight on serverless, which used to be covered by the session blob duplicate).
+    await syncCloud().catch((e) => reportError("commit-sync-cloud", e));
     sessionDirtyCache.set(sessionId, currentHash);
   }
   // else: not dirty and not awaitCloud — skip cloud sync entirely (no-op read-only path)
@@ -1101,7 +1103,7 @@ app.post("/api/settings/unlimited", requireAuth, async (req, res) => {
     p.unlimited = true;
     void recordEvent(req.session.user!, "settings_changed", { message: "unlimited enabled" });
     await commit(req);
-    res.json(p);
+    res.json(tasks.stripProfileForResponse(p));
   } catch (e: any) { console.error(e);
     res.status(500).json({ error: M(req, "Impossible d'enregistrer — réessaie.", "Couldn't save — try again.") }); }
 });
@@ -2679,7 +2681,7 @@ app.post("/api/study/free", requireAuth, rateLimit(20, 60_000), ah(async (req, r
     // explicit "new session" request).
     const active = list.find((t) => t.source === "freestudy" && !isHandled(t.status));
     if (active) {
-      if (active.sourceSubject) active.mastery = subjectMastery(list, req.session.profile?.milestones, active.sourceSubject);
+      if (active.sourceSubject) { try { active.mastery = subjectMastery(list, req.session.profile?.milestones, active.sourceSubject); } catch { /* mastery is a nicety */ } }
       res.json(list); return;
     }
   }
@@ -2704,8 +2706,9 @@ app.post("/api/study/free", requireAuth, rateLimit(20, 60_000), ah(async (req, r
     urgency: 0, importance: 0, quadrant: e.quadrant, score: e.score, status: "needs_review",
     createdAt: now, anchorKey: `freestudy:${id}`,
     sourceSubject: subject,
-    mastery: subject ? subjectMastery(list, req.session.profile?.milestones, subject) : undefined,
+    mastery: undefined,
   };
+  if (subject) { try { t.mastery = subjectMastery(list, req.session.profile?.milestones, subject); } catch { /* mastery is a nicety */ } }
   list.push(t);
   req.session.tasks = list;
   await commit(req);
@@ -3283,7 +3286,10 @@ app.get("/api/usage", requireAuth, async (req, res) => {
 
 // ── Profile (who the user is) — available once logged in ───────────────────────
 const listKey = (c: string) => (c === "preference" ? "preferences" : c === "person" ? "people" : c === "project" ? "projects" : c === "course" ? "courses" : "");
-app.get("/api/profile", requireAuth, (req, res) => { res.json(tasks.stripProfileForResponse(req.session.profile || emptyProfile())); });
+app.get("/api/profile", requireAuth, (req, res) => {
+  try { res.json(tasks.stripProfileForResponse(req.session.profile || emptyProfile())); }
+  catch (e: any) { console.error(e); res.json(emptyProfile()); }
+});
 app.post("/api/profile", requireAuth, async (req, res) => {
   try {
     const p = (req.session.profile ||= emptyProfile());

@@ -799,7 +799,7 @@ function loadDeckProgress(deckId: string, userId: string | null): { i: number; r
     return { i: p.i, right: p.right, wrong: p.wrong };
   } catch { return null; }
 }
-export function FlashcardDeck({ deck, onReview, onNotNeeded, taskId, onAllCorrect, onlyIndices, userId }: { deck: TaskFlashcards; onReview?: (cardIndex: number, correct: boolean) => void; onNotNeeded?: (cardIndex: number) => void; taskId?: string; onAllCorrect?: () => void; userId?: string | null;
+function FlashcardDeckInner({ deck, onReview, onNotNeeded, taskId, onAllCorrect, onlyIndices, userId }: { deck: TaskFlashcards; onReview?: (cardIndex: number, correct: boolean) => void; onNotNeeded?: (cardIndex: number) => void; taskId?: string; onAllCorrect?: () => void; userId?: string | null;
   /** Restricts the review pass to exactly these card indices (still excludes `notNeeded` ones) instead of
    *  every card in the deck — the DueReviews cross-task view (App.tsx) needs this: a deck's spaced-
    *  repetition schedule (nextLeitnerReview, shared/types.ts) can have most of its cards sitting on a
@@ -845,8 +845,10 @@ export function FlashcardDeck({ deck, onReview, onNotNeeded, taskId, onAllCorrec
   const [dropped, setDropped] = useState<number[]>([]);
   const inScope = baseSeq.length - dropped.length;
   const seqLen = retryQueue ? retryQueue.length : baseSeq.length;
-  const done = i >= seqLen;
   const cardIndex = retryQueue ? retryQueue[i] : baseSeq[i];
+  // A deck that shrank under us (regenerated/replaced server-side while this pass was open) leaves cardIndex
+  // pointing past the end — treat that as "finished" instead of crashing on card.review.
+  const done = i >= seqLen || !deck.cards[cardIndex];
   const card = !done ? deck.cards[cardIndex] : null;
   const mark = (ok: boolean) => {
     if (!card) return;
@@ -990,6 +992,13 @@ export function FlashcardDeck({ deck, onReview, onNotNeeded, taskId, onAllCorrec
       <StudyHelpPanel taskId={taskId} card={{ kind: "flashcard", front: card!.front, back: card!.back }} />
     </div>
   );
+}
+
+/** Keyed by deck id + size: the review pass freezes its card order at mount, so reusing one mounted instance for
+ *  a DIFFERENT deck (switching journal days/weeks) kept the first deck's card count and indexed past the end of
+ *  a shorter one ("Cannot read properties of undefined (reading 'review')"). A new deck is a fresh pass. */
+export function FlashcardDeck(props: React.ComponentProps<typeof FlashcardDeckInner>) {
+  return <FlashcardDeckInner key={`${props.deck.id}:${props.deck.cards.length}`} {...props} />;
 }
 
 /** An MCQ quiz player — answer, get immediate right/wrong + a one-line explanation, then advance; a score

@@ -161,6 +161,7 @@ export async function makeSessionStore(): Promise<session.Store | undefined> {
   // given entries are re-inserted (moved conceptually to "recently used") via delete+set in `touch()` below.
   const GET_CACHE_MAX = 500;
   const getCache = new Map<string, { at: number; sess: any }>();
+  const lastWritten = new Map<string, string>();
   const cacheSet = (sid: string, sess: any) => {
     getCache.delete(sid); // re-insert to the end so this counts as "most recently used" for eviction below
     getCache.set(sid, { at: Date.now(), sess });
@@ -186,9 +187,20 @@ export async function makeSessionStore(): Promise<session.Store | undefined> {
       // burst (extremely common: a route calls commit() then the response handler re-reads) would otherwise
       // do a real round-trip anyway, right after we already had the answer in hand.
       cacheSet(sid, sess);
-      c.from(SESSIONS).upsert({ sid, sess, expire: expiry(sess) }, { onConflict: "sid" }).then(
-        ({ error }) => { if (error) reportError("session-store-set", error); cb?.(error || undefined); },
-        (e) => { reportError("session-store-set", e); cb?.(e); },
+      // EGRESS/CPU: the account's profile + tasks already live in their own row (saveState, written by
+      // commit()). Persisting them a SECOND time inside every session row doubled every write and made each
+      // cold-instance session read drag the whole blob across the wire. Persist only the slim session
+      // (user, cookie, small flags); the "re-hydrate from the account row" middleware in index.ts restores
+      // tasks/profile from loadState (cached) when a fresh instance reads a slim session.
+      const { tasks: _t, profile: _p, ...slim } = sess || {};
+      const payload = JSON.stringify(slim);
+      // Skip identical rewrites (touching the session on every request used to re-upload it unchanged).
+      if (lastWritten.get(sid) === payload) { cb?.(); return; }
+      lastWritten.set(sid, payload);
+      while (lastWritten.size > GET_CACHE_MAX) { const oldest = lastWritten.keys().next().value; if (oldest === undefined) break; lastWritten.delete(oldest); }
+      c.from(SESSIONS).upsert({ sid, sess: slim, expire: expiry(sess) }, { onConflict: "sid" }).then(
+        ({ error }) => { if (error) { lastWritten.delete(sid); reportError("session-store-set", error); } cb?.(error || undefined); },
+        (e) => { lastWritten.delete(sid); reportError("session-store-set", e); cb?.(e); },
       );
     }
     destroy(sid: string, cb?: (err?: any) => void) {
@@ -1027,8 +1039,13 @@ export interface AdminMetrics {
  *  numbers is worse than no dashboard). ADMIN_METRICS_MAX_ROWS is only a runaway guard. */
 const ADMIN_METRICS_PAGE = 1000;
 const ADMIN_METRICS_MAX_ROWS = 100_000;
+// Every account's FULL task blob is read to compute these — by far the heaviest read in the app — so a
+// dashboard visit must not repeat it: serve the last result for 10 minutes (a headcount doesn't need seconds).
+let adminMetricsCache: { at: number; value: AdminMetrics } | null = null;
+const ADMIN_METRICS_TTL_MS = 600_000;
 export async function getAdminMetrics(): Promise<AdminMetrics | null> {
   if (!client) return null;
+  if (adminMetricsCache && Date.now() - adminMetricsCache.at < ADMIN_METRICS_TTL_MS) return adminMetricsCache.value;
   try {
     const rows: { email?: unknown; tasks?: unknown }[] = [];
     for (let from = 0; from < ADMIN_METRICS_MAX_ROWS; from += ADMIN_METRICS_PAGE) {
@@ -1078,7 +1095,9 @@ export async function getAdminMetrics(): Promise<AdminMetrics | null> {
       byUser.push({ email, taskCount: tasks.length, tutorSessionCount: userTutorSessions, tutorMinutes: roundedMinutes });
     }
     byUser.sort((a, b) => b.taskCount - a.taskCount);
-    return { userCount: rows.length, taskCount, tutorSessionCount, tutorMinutesTotal, tasksBySource, byUser };
+    const value = { userCount: rows.length, taskCount, tutorSessionCount, tutorMinutesTotal, tasksBySource, byUser };
+    adminMetricsCache = { at: Date.now(), value };
+    return value;
   } catch (e) {
     reportError("admin-metrics", e);
     return null;

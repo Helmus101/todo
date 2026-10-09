@@ -1770,6 +1770,9 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   // The board as a drafted WORKSHEET (research: gradual release + completion effect + ICAP — the visible
   // artifact of a session is the student's own thinking, laid out like a lesson page, written in live).
   check("board has a worksheet header (date + subject)", /sm-board-header/.test(boardSrc) && /sm-board-header-subject/.test(boardSrc));
+  { const ui2 = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8"); const app2 = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+    check("FlashcardDeck remounts per deck (id+size) so a different/shorter deck never indexes past the end", /function FlashcardDeckInner/.test(ui2) && /key=\{`\$\{props\.deck\.id\}:\$\{props\.deck\.cards\.length\}`\}/.test(ui2) && /!deck\.cards\[cardIndex\]/.test(ui2));
+    check("tutor/session/<id> route reads the id from segment 2", /sessionId=\{route\.split\("\/"\)\[2\]\}/.test(app2)); }
   check("board is flat: plain lines, no section numbers or boxes", /sm-board-line/.test(boardSrc) && !/sm-board-section-num/.test(boardSrc));
   check("kind:\"summary\" renders as an ordinary line — no trace box, no heading, no category", !/ReasoningTrace|sm-board-trace/.test(boardSrc));
   check("a deliberately unfinished worked line gets an 'à toi de finir' completion chip (completion effect, visible)", /isCompletionGap/.test(boardSrc) && /sm-board-todo-chip/.test(boardSrc));

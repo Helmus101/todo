@@ -144,7 +144,7 @@ async function req(url: string, init?: RequestInit, retries = 6, isCsrfRetry = f
       if (r.status === 403 && !isCsrfRetry && freshToken && freshToken !== (init?.headers as any)?.["x-csrf-token"]) {
         return req(url, { ...init, headers: { ...(init?.headers || {}), "x-csrf-token": freshToken } }, retries, true, cacheEtag);
       }
-      if (r.status >= 500 && attempt < retries) {
+      if (r.status >= 500 && attempt < Math.min(retries, method === "GET" ? 2 : retries)) {
         const ct = r.headers.get("content-type") || "";
         if (!ct.includes("application/json")) { await sleep(500 + attempt * 250); continue; } // proxy error page → retry
       }
