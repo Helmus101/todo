@@ -582,7 +582,7 @@ export function methodAhead(reply: string, said: string[]): string[] {
   const hay = said.join(" ").toLowerCase();
   const out = new Set<string>();
   for (const sentence of reply.split(/(?<=[.!?\n])\s+/)) {
-    if (!/[=≈]|\bequals?\b|\buse the\b|\bapply the\b|\bremember\b/i.test(sentence)) continue;
+    if (!/[=≈→]|\bequals?\b|\bgives?\b|\buse the\b|\bapply the\b|\bremember\b|\bcalculator\b/i.test(sentence)) continue;
     for (const m of sentence.matchAll(METHOD_WORDS)) {
       const w = m[1].toLowerCase();
       if (!hay.includes(w) && !(w === "slope" && /gradient/.test(hay)) && !(w === "gradient" && /slope/.test(hay))) out.add(w);
@@ -602,4 +602,44 @@ export function onTopic(text: string, context: string[]): boolean {
   const words = (s: string) => new Set((s.toLowerCase().match(/[a-zà-ÿ]{4,}/g) || []).filter((w) => !GROUND_STOP.has(w)));
   const ctx = words(context.join(" "));
   return [...words(t)].some((w) => ctx.has(w) || [...ctx].some((c) => c.length >= 6 && w.length >= 6 && c.slice(0, 6) === w.slice(0, 6)));
+}
+
+// ---- Listen first: answer THEIR question, respond to THEIR work, only then guide ----
+const Q_STOP = new Set("what whats what's does do did is are was the a an of to it this that mean means show shows stand stands for in on about why how which who when where wait so um uh and or but then you your tell me again exactly really just actually".split(" "));
+/** The student is asking what something IS or MEANS ("what does m show", "what's M1", "what is a slope?"): returns the term
+ *  they are asking about, or null when it isn't a clarification question. */
+export function clarificationTerm(message: string): string | null {
+  const m = message.replace(/\[[^\]]*\]/g, " ").replace(/\s+/g, " ").trim();
+  if (!m || m.length > 140 || /^\[/.test(message.trim())) return null;
+  if (!/^(?:wait[, ]+)?(?:what(?:'s|s| is| are| does| do)?|why|how come|which|who|i (?:don'?t|do not) (?:get|understand|know what)|c'est quoi|qu'est-ce|que veut|pourquoi)\b/i.test(m) && !/\?\s*$/.test(m)) return null;
+  const toks = (m.toLowerCase().match(/[a-zà-ÿ][a-zà-ÿ0-9₀-₉_]*/g) || []).filter((w) => !Q_STOP.has(w));
+  return toks.length ? toks[toks.length - 1].replace(/[₀-₉_]/g, (c) => (c === "_" ? "" : String("₀₁₂₃₄₅₆₇₈₉".indexOf(c)))) : null;
+}
+export const CLARIFY_BLOCK = `\n\nTHEY ASKED A QUESTION ABOUT WHAT SOMETHING IS OR MEANS. Answer THAT, and only that, this turn — a tutor who ignores the question and carries on with their own plan isn't listening. In one or two short sentences, say what the thing is IN THIS PROBLEM (e.g. "m₁ is just the name for the slope of the first line"), pointing at where it is on the board or in the problem, then ask ONE small question that makes THEM connect it to what they have ("which line has slope 5?"). A question about a term is NOT a request for the next step: don't escalate the help, don't advance your own plan, don't calculate anything for them, and don't write anything new on the board.\n`;
+
+/** The reply to a clarification question never mentions the term they asked about — it carried on with its own plan. */
+export function ignoresQuestion(reply: string, message: string): boolean {
+  const term = clarificationTerm(message);
+  if (!term) return false;
+  const norm = (s: string) => s.toLowerCase().replace(/[₀-₉]/g, (c) => String("₀₁₂₃₄₅₆₇₈₉".indexOf(c))).replace(/[_$\\{}\s]/g, "");
+  const r = norm(reply);
+  if (term.length >= 2) return !r.includes(norm(term));
+  return !new RegExp(`(?<![a-z0-9])${term}(?![a-z]|\\d)`, "i").test(reply.replace(/[_$\\{}]/g, "").replace(/[₀-₉]/g, (c) => String("₀₁₂₃₄₅₆₇₈₉".indexOf(c))));
+}
+
+/** The student reported real work (a value, a claim) and the reply says nothing about it: no number and no real word
+ *  of theirs appears. ("I found the intersection is x = 3/14" → "Got the formula up there. Now plug in…") */
+export function ignoresWork(reply: string, message: string): boolean {
+  const m = message.replace(/\[[^\]]*\]/g, " ").trim();
+  if (!m || /\?/.test(m) || clarificationTerm(m) || /^\[/.test(message.trim())) return false;
+  const nums = (m.match(/\d+(?:[.,]\d+)?/g) || []);
+  if (!nums.length) return false;
+  const words = (m.toLowerCase().match(/[a-zà-ÿ]{5,}/g) || []).filter((w) => !GROUND_STOP.has(w));
+  const r = reply.toLowerCase();
+  return !nums.some((n) => new RegExp(`(?<![\\d.])${n.replace(/[.,]/, "[.,]")}(?![\\d])`).test(r)) && !words.some((w) => r.includes(w.slice(0, Math.max(5, w.length - 2))));
+}
+
+/** The student explicitly wants something written down. */
+export function asksToWrite(message: string): boolean {
+  return /\b(?:write|put|add|note)\b[^.?!]{0,30}\b(?:board|down|up)\b|\bon the board\b|\bwrite (?:it|that|this)\b|\bnote (?:it|that) (?:down|for me)\b|écris|note[- ]le/i.test(message);
 }

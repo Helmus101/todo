@@ -6,7 +6,7 @@ import { sourcesForTrack, sourceForUrl, cleanProblemSource, excerptAround, findS
 import { normalizeWidget, shuffledNotSolved, projectileStats } from "../shared/widgets.ts";
 import { buildTrigScene, solveTwoAngles } from "../shared/trigScene.ts";
 import { sanitizeSvg as sanSvg2 } from "../shared/svgSafe.ts";
-import { onTopic } from "../server/tutorAdapt.ts";
+import { onTopic, clarificationTerm, ignoresQuestion, ignoresWork, asksToWrite } from "../server/tutorAdapt.ts";
 import { praiseUngrounded, misattributes, methodAhead, wantsHelp } from "../server/tutorAdapt.ts";
 import { asksToDraw, praisesNothing } from "../server/tutorAdapt.ts";
 import { studentProblemStatement, boardCoversStatement, pendingCaseTraps, closesWithMissedCase, handsOverCalculation, equationAhead, repeatedClaim, arithmeticAhead, caseTrapBlock, isDrawingTurn, drawingLooksSpatial } from "../server/tutorAdapt.ts";
@@ -1895,6 +1895,10 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   check("chatter is not student work: 'Gary left avocado on the ground' is off-topic, maths and on-topic words are not", !onTopic("Gary left avocado on the ground", ["find the acute angle between y = 5x - 2 and y = x/3 - 1", "What do you notice about their two slopes?"]) && onTopic("intersect and I found the point of intersection is when x equals 3 over 14", ["lines"]) && onTopic("the lines cross", ["The two lines on the board", "intersect"]) && onTopic("one slope is five", []));
   { const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"); const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
     check("off-topic chatter never becomes board work or evidence, and the tutor can't board-write the method early", /!onTopic\(out\.plan\.studentStep\.text, ctx\) && !onTopic\(message, ctx\)\) \{ delete out\.plan\.studentStep; delete out\.plan\.evidence; \}/.test(idx) && /writes the method \(\$\{ahead\.join/.test(cl)); }
+  // ── Listen first (reported live: "what does m show" / "what's M1" answered with arctan and a calculator) ──
+  check("clarification questions are recognised with the term they ask about", clarificationTerm("what does m show") === "m" && clarificationTerm("what's M1") === "m1" && clarificationTerm("what is a slope?") === "slope" && clarificationTerm("I found x = 3/14") === null && clarificationTerm("[Exercise] I answered 4") === null);
+  check("a reply that carries on with its own plan instead of answering the question is caught", ignoresQuestion("Punch it into the calculator — what angle does arctan(1/3) give you in degrees?", "what's M1") && !ignoresQuestion("m₁ is just the name for the slope of the first line — which line has slope 5?", "what's M1") && ignoresQuestion("arctan(5) gives that angle with the x-axis. Do the same for the other slope.", "what does m show"));
+  check("a reply that says nothing about the work they just reported is caught", ignoresWork("Got the formula up there. Now plug m1 = 5 into it — what do you get?", "intersect and I found the point of intersection is when x equals to over 14") && !ignoresWork("x = 3/14 — check it: does it make both lines give the same y?", "I found the point of intersection is when x equals 3 over 14") && !ignoresWork("What do you notice?", "hmm") && asksToWrite("can you write that on the board") && !asksToWrite("what's m1"));
   check("board is flat: plain lines, no section numbers or boxes", /sm-board-line/.test(boardSrc) && !/sm-board-section-num/.test(boardSrc));
   check("kind:\"summary\" renders as an ordinary line — no trace box, no heading, no category", !/ReasoningTrace|sm-board-trace/.test(boardSrc));
   check("a deliberately unfinished worked line gets an 'à toi de finir' completion chip (completion effect, visible)", /isCompletionGap/.test(boardSrc) && /sm-board-todo-chip/.test(boardSrc));

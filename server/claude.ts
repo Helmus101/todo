@@ -7,7 +7,7 @@ import { COURSEWORK_MAX_CHARS, courseworkForSubject, sameSubject } from "../shar
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { buildGeometry } from "../shared/geometry.ts";
-import { studentProblemStatement, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, misattributes, methodAhead, wantsHelp, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
+import { studentProblemStatement, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, misattributes, methodAhead, wantsHelp, clarificationTerm, CLARIFY_BLOCK, ignoresQuestion, ignoresWork, asksToWrite, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -7600,6 +7600,7 @@ const PRIMER_PERSONA =
   `nudge. Fragments are fine. Never open with praise-filler ("Great question!", "Absolutely!"), never ` +
   `recap what they said back at length, never announce what you're about to do ("Let me explain…").\n` +
   `- GROUND EVERY REPLY IN WHAT THEY ACTUALLY SAID. React only to the exact words, numbers and steps they gave. Never praise ("spot on", "exactly", "great") a step they didn't take; never say "you've got X" / "as you said" about something they didn't say; never assume what a garbled or very short message meant (say you didn't catch it); and never state a formula or method ("tan θ = slope") before THEY reach for it — if they were not close, ask a smaller question instead of telling. If they suggest something concrete ("let's graph it"), do that first. For problems about lines, curves or data, put the graph on the board with GRAPH_ON_BOARD as soon as they want a picture.\n` +
+  `- LISTEN BEFORE YOU GUIDE. Read what they just said and decide what it IS: a question about a term or notation (answer THAT in a sentence or two, in terms of THIS problem, then ask one small connecting question — never skip it to carry on with your plan); real work or a claim (respond to it first: right, partly, or not what's needed, and how they could tell); stuck (the smallest possible nudge); chatter (one line, then back). You are guiding THEM, not walking them down a path you already chose — if they head somewhere else, follow them and steer by questions. The board is for the problem and what THEY work out: don't pin formulas, notes or definitions they didn't ask for.\n` +
   `- NEVER GIVE THE ANSWER — NOT EVEN SLIPPED IN: never state the final value, the result of the step they're about to take, the option letter, or "so it's X" for what they're meant to find. If they ask for it, don't say it: hand them a smaller piece ("what's the first thing you'd do with that?") and make them produce the next line themselves. Before sending, re-read your reply: if it contains the thing they were supposed to figure out, delete that part and turn it into a question.\n` +
   `- CRITICAL, KINDLY — A THINKING PARTNER, NOT A CHEERLEADER: check every claim and step they make by ` +
   `recomputing it from the givens on the board (and re-reading their words) before you react. Praise only what ` +
@@ -8911,7 +8912,7 @@ export async function chatAboutTask(
     boardIntegrationBlock +
     contextAwarenessBlock +
     dynamicContext +
-    `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}${boardBlock}${trajectoryBlock}${sessionBlock}${opts?.primer && opts?.policy && opts?.sessionState ? tutorPolicyBlock(opts.policy, opts.sessionState) : ""}${opts?.primer ? caseTrapBlock(pendingCaseTraps(message, history)) : ""}${opts?.primer && repeatedClaim(message, history) ? REPEATED_CLAIM_BLOCK : ""}${opts?.primer && isDrawingTurn(message) ? DRAWING_TURN_BLOCK : ""}${objectivesBlock}` +
+    `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}${boardBlock}${trajectoryBlock}${sessionBlock}${opts?.primer && opts?.policy && opts?.sessionState ? tutorPolicyBlock(opts.policy, opts.sessionState) : ""}${opts?.primer ? caseTrapBlock(pendingCaseTraps(message, history)) : ""}${opts?.primer && repeatedClaim(message, history) ? REPEATED_CLAIM_BLOCK : ""}${opts?.primer && clarificationTerm(message) ? CLARIFY_BLOCK : ""}${opts?.primer && isDrawingTurn(message) ? DRAWING_TURN_BLOCK : ""}${objectivesBlock}` +
     assignmentBlock(task, tzOf(profile)) + profileBlock(profile) + academicBlock(academic) + materialsBlock(opts?.materials) +
     PRIMER_CLOSING_REMINDER;
   // 10, not the whole thread: every one of these is resent verbatim on every turn AND every intra-turn
@@ -9238,6 +9239,22 @@ export async function chatAboutTask(
       console.log(`${new Date().toISOString()} [chat] round ${round}: ungrounded reply — ${why}`);
       messages.push({ role: "assistant", content: draft });
       messages.push({ role: "user", content: `Rewrite that reply — ${why}. Respond ONLY to what the student actually said or did: reflect it back in their own words (e.g. the exact values/terms they gave), say plainly if it isn't there yet, don't praise anything that wasn't a correct step, don't attribute ideas to them, and don't introduce a formula or method they haven't reached for — ask ONE question that gets THEM to bring it up. If they suggested something concrete (like graphing it), do that first.` });
+      return true;
+    };
+    // LISTEN FIRST. A question about a term ("what does m show", "what's M1") gets an answer ABOUT THAT TERM, and real work they report
+    // ("I found the intersection at x = 3/14") gets a response before anything else — never a reply that carries on with Otto's own
+    // plan as if they hadn't spoken (reported live: three clarifying questions in a row answered with arctan and a calculator).
+    let listenFixed = false;
+    const guardListen = (draft: string, round: number, lastRound: boolean): boolean => {
+      if (!opts?.primer || listenFixed || lastRound || result.guardrailTripped) return false;
+      const q = ignoresQuestion(draft, message), w = !q && ignoresWork(draft, message);
+      if (!q && !w) return false;
+      listenFixed = true;
+      console.log(`${new Date().toISOString()} [chat] round ${round}: reply ignored what the student said (${q ? "their question" : "their work"}) — asking for a reply that listens`);
+      messages.push({ role: "assistant", content: draft });
+      messages.push({ role: "user", content: q
+        ? `They asked "${message.slice(0, 120)}" — a question about "${clarificationTerm(message)}" — and your reply never addresses it, it just carries on with your plan. Answer THEIR question first: in one or two short sentences say what that is in THIS problem (pointing at the board/problem), then ask ONE small question that makes them connect it. Don't advance to the next step, don't calculate, don't give a formula.`
+        : `They told you something concrete ("${message.slice(0, 140)}") and your reply says nothing about it. Respond to IT first, in their words: is it right, partly right, or not what this question needs (and how can they tell)? Don't confirm what you haven't checked, don't give the answer, don't jump to your own next step. Then ask ONE question that builds on what THEY did.` });
       return true;
     };
     // A multi-solution trap (SSA ambiguous triangle, trig equation's second solution, ±) that nobody raised, while the
@@ -9574,6 +9591,7 @@ export async function chatAboutTask(
       if (guardRedraw(textContent, round, lastRound)) continue;
       if (guardAheadMath(textContent, round, lastRound)) continue;
       if (guardDrawRequest(textContent, round, lastRound)) continue;
+      if (guardListen(textContent, round, lastRound)) continue;
       if (guardGrounded(textContent, round, lastRound)) continue;
       if (guardEmptyPraise(textContent, round, lastRound)) continue;
       if (guardOwnArithmetic(textContent, round, lastRound)) continue;
@@ -9582,6 +9600,7 @@ export async function chatAboutTask(
         if (guardRedraw(textContent, round, lastRound)) continue;
         if (guardAheadMath(textContent, round, lastRound)) continue;
         if (guardDrawRequest(textContent, round, lastRound)) continue;
+        if (guardListen(textContent, round, lastRound)) continue;
         if (guardGrounded(textContent, round, lastRound)) continue;
         if (guardEmptyPraise(textContent, round, lastRound)) continue;
         if (guardOwnArithmetic(textContent, round, lastRound)) continue;
@@ -9686,6 +9705,15 @@ export async function chatAboutTask(
           else if (opts?.primer && opts?.policy && opts.policy.maxLevel <= 3 && !wantsHelp(message) && !["given", "focus", "instruction"].includes(String(input?.kind)) && String(input?.owner) !== "student" && methodAhead(String(input?.text || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), message, ...ownGivens()]).length) {
             const ahead = methodAhead(String(input?.text || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), message, ...ownGivens()]);
             content = `REJECTED: this writes the method (${ahead.join(", ")}) before the student reached for it. Don't put it up — ask the question that gets THEM to say which relationship connects what they have, then write their idea.`;
+          }
+          // KEEP THE BOARD FOR WHAT MATTERS. While the help level is low, Otto doesn't pin formulas, notes, definitions or insights the
+          // student didn't ask for — the board is for the problem, their own work and what they asked to see (reported live: "Got the
+          // formula up there" before they'd said a word about method; a clarifying question must never add anything new to the board).
+          else if (opts?.primer && opts?.policy && opts.policy.maxLevel <= 3 && !wantsHelp(message) && !asksToWrite(message) && ["formula", "note", "definition", "insight", "outline"].includes(String(input?.kind || "note")) && String(input?.owner) !== "student") {
+            content = "REJECTED: that's your own material, not something they asked for or worked out — keep the board for the problem and THEIR steps. Say it in chat as a question instead, or wait until they reach for it.";
+          }
+          else if (opts?.primer && clarificationTerm(message) && String(input?.owner) !== "student" && !["given", "focus"].includes(String(input?.kind))) {
+            content = "REJECTED: they asked what something means — answer in chat; don't add anything to the board for a clarifying question.";
           }
           // Content-level duplicate check — the client can only dedupe by id,
           // and every write gets a fresh UUID, so a re-written formula previously stacked a second visual
