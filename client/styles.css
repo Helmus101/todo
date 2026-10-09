@@ -10,8 +10,7 @@
    nearest one loaded (700), so the intended in-between weight would never actually render.
    Baskervville (serif display) + Handlee (journal handwriting) were extracted from the Otto Framer
    prototype's own @font-face rules — they're its two non-Inter voices, not guesses. */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;550;600;650;700&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Baskervville:ital@0;1&family=Handlee&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Handlee&display=swap');
 
 /* Otto brand system — the "consent line": Otto's own (reversible) work reads quiet/graphite; anything that
    needs a person reads cobalt. Colour is semantic, not decorative — see the 90/8/2 budget in the brand book.

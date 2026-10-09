@@ -41,11 +41,11 @@ const MESSAGES: Catalog = {
   "dashboard.greeting.morning": { fr: "Bonjour", en: "Good morning" },
   "dashboard.greeting.afternoon": { fr: "Bon après-midi", en: "Good afternoon" },
   "dashboard.greeting.evening": { fr: "Bonsoir", en: "Good evening" },
-  "dashboard.allCaughtUp": { fr: "Tu es à jour.", en: "You're all caught up." },
-  "dashboard.doneForToday": { fr: "C'est tout pour aujourd'hui.", en: "That's everything for today." },
+  "dashboard.allCaughtUp": { fr: "Rien en retard. Profites-en pour prendre de l'avance.", en: "Nothing outstanding. Use the time to get ahead." },
+  "dashboard.doneForToday": { fr: "Fait pour aujourd'hui. Demain, vise plus haut.", en: "Done for today. Aim higher tomorrow." },
   // {count}/{plural} are computed by the caller (a plain "" or "s"), not by this module — see t()'s own
   // doc comment on why this stays plain string interpolation instead of a full ICU plural engine.
-  "dashboard.thingsLeft": { fr: "{count} chose{plural} à faire aujourd'hui", en: "{count} thing{plural} left today" },
+  "dashboard.thingsLeft": { fr: "{count} chose{plural} à faire aujourd'hui. Commence par la plus dure", en: "{count} thing{plural} left today. Start with the hardest" },
   "dashboard.alreadyDone": { fr: " — {count} déjà faite{plural}", en: " — {count} already done" },
   "dashboard.nextUp": { fr: " Ensuite : {title}.", en: " Next up: {title}." },
   "dashboard.momentum": {

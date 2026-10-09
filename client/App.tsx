@@ -3784,9 +3784,9 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
         </nav>
       </header>
       <main className="landing-min-main">
-        <h1>{L("Ta journée d'école, organisée. Tes questions, résolues pas à pas.", "Your school day, organised. Your questions, worked through step by step.")}</h1>
-        <p>{L("Je suis Otto. Je m'occupe de ton planning, et quand tu bloques sur quelque chose, on le comprend ensemble — sans que je te donne la réponse.", "I'm Otto. I keep track of your school week, and when you get stuck on something we work it out together — I'll help you think, not hand you the answer.")}</p>
-        <p><a className="landing-min-cta" href="/signup">{L("Commencer", "Get started")}</a></p>
+        <h1>{L("Un partenaire de réflexion, pas une machine à réponses.", "A thinking partner, not an answer machine.")}</h1>
+        <p>{L("Otto organise ta semaine, puis il t'oblige à faire le travail toi-même : il questionne ton raisonnement, repère tes failles et ne pense jamais à ta place. Fait pour les élèves qui veulent être affûtés, pas juste en avance sur leurs devoirs.", "Otto runs your school week, then makes you do the thinking: it questions your reasoning, finds the gaps in it, and never thinks for you. Built for students who want to be sharp, not just finished.")}</p>
+        <p><a className="landing-min-cta" href="/signup">{L("Commencer à réfléchir", "Start thinking")}</a></p>
       </main>
       <footer className="landing-min-foot">
         <a href="/privacy">{L("Confidentialité", "Privacy")}</a>
