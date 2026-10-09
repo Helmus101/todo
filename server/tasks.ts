@@ -983,6 +983,25 @@ export function nothingToPrepare(t: { source?: string; sourceDetail?: string }):
  * Only fills the GAP — candidates already covered by a classified-and-kept task (matched by anchorKey) are
  * left alone, so this never creates a duplicate alongside a richer AI-written task for the same assignment.
  */
+/** The NAME a Pronote homework task deserves — report-live: "always rewrite full task name from Pronote,
+ *  not just the subject … never just subject" (pasted cards literally titled "French Literature" /
+ *  "Math Analysis and Approaches HL", the subject repeated as title AND subject line). The teacher's own
+ *  description (the énoncé, carried in the candidate's snippet) IS the full task name. With no real text
+ *  (hasAssignmentText rejects a bare "Due <date>" placeholder), fall back to a subject + due-date line —
+ *  which still says what the work is; never collapse to the bare subject. */
+export function homeworkTaskTitle(subject: string | undefined, snippet: string, en: boolean, dueIso?: string): string {
+  if (hasAssignmentText(snippet)) {
+    // One line: fold whitespace and drop teacher-attachment markers ([Pièce jointe : …]) a title shouldn't carry.
+    const line = snippet.replace(/\[Pièce jointe[^\]]*\]/gi, " ").replace(/\s+/g, " ").trim();
+    if (line) return line.slice(0, 120);
+  }
+  const due = (dueIso || "").slice(0, 10);
+  const s = subject?.trim();
+  return (s
+    ? (en ? `${s} — homework due ${due}` : `${s} — devoir pour le ${due}`)
+    : (en ? `Homework due ${due}` : `Devoirs pour le ${due}`)
+  ).slice(0, 120);
+}
 export function forceWeekCoverage(
   candidates: { sourceApp: string; anchorKey: string; snippet: string; timestamp?: string; subject?: string; labels: string[] }[],
   coveredAnchors: (string | undefined)[],
@@ -1009,9 +1028,12 @@ export function forceWeekCoverage(
     const urgency = Math.max(0.35, Math.min(0.9, (isTest ? 0.4 : 0.5) + (isTest ? 7 - daysLeft : 2 - daysLeft) * (isTest ? 0.08 : 0.15)));
     const importance = isTest ? 0.75 : 0.55;
     out.push({
+      // NEVER the bare subject (report-live: cards titled "French Literature" / "Math Analysis and
+      // Approaches HL" — subject-only names): homework takes its full name from the énoncé via
+      // homeworkTaskTitle; the test branch already has a proper action line.
       title: (isTest
         ? (en ? `Start reviewing for the ${c.subject || "class"} test` : `Commencer à réviser pour le contrôle de ${c.subject || "la matière"}`)
-        : (en ? `${c.subject || "Homework"}` : `${c.subject || "Devoir"}`)).slice(0, 120),
+        : homeworkTaskTitle(c.subject, c.snippet, en, c.timestamp)).slice(0, 120),
       // "Due this week" used to be hardcoded here even for items up to 21 days out once daysAhead was
       // widened past WEEK_COVERAGE_DAYS — genuinely misleading for something 3 weeks away. Phrase off the
       // real daysLeft instead: still "this week" language when it actually is, a plain due-date line otherwise.

@@ -1,6 +1,6 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync, readdirSync } from "node:fs";
-import { recencyStamp, dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor, attachLocationLinks, googleMapsDirectionsUrl, trimOldStudylogArtifacts } from "../server/tasks.ts";
+import { recencyStamp, dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, homeworkTaskTitle, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor, attachLocationLinks, googleMapsDirectionsUrl, trimOldStudylogArtifacts } from "../server/tasks.ts";
 import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, shouldNudgeBoardContent, mathInPlay, newMathOffBoard, replyIntroducesNewMath, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem, detectLang, visionReady, describeWhiteboard, academicBlock, sessionRecapLine } from "../server/claude.ts";
 import { evaluateArithmetic, parseNumber, findArithmeticClaims, hasArithmetic } from "../server/arithmetic.ts";
 import { isLikelyEcho, createEchoFilter, normalizeForEcho } from "../client/voice/echoGuard.ts";
@@ -3367,6 +3367,32 @@ section("forceWeekCoverage — everything due this week gets a task, no matter w
   // become a task automatically, not just the classifier's/quality-bar's picks within the next week.
   const wideOut = forceWeekCoverage(candidates, ["pronote:hw2"], { now, daysAhead: 28 });
   check("a wider daysAhead override covers an item beyond the default 7-day window", wideOut.some((t) => t.anchorKey === "pronote:hw3"));
+
+  // Report-live: "for tasks always rewrite full task name from Pronote — not just subject … never just
+  // subject" (pasted cards literally titled "French Literature" / "Math Analysis and Approaches HL",
+  // with the same subject repeated on the line below). The safety-net path used to title homework with
+  // the bare subject; now it carries the énoncé, or subject + due date, never the subject alone.
+  check("a forced homework's NAME is the full énoncé, never the bare subject",
+    out.find((t) => t.anchorKey === "pronote:hw1")?.title === "Exercices 12 à 15 p.87 — mécanique du point");
+  check("with no énoncé the name still says what's due — subject + date, never just the subject", (() => {
+    const [t] = forceWeekCoverage([{ sourceApp: "pronote", anchorKey: "pronote:nodetail", snippet: "Due 2026-09-02", timestamp: "2026-08-14T00:00:00Z", subject: "French Literature", labels: ["homework"] }], [], { now });
+    return !!t && t.title !== "French Literature" && t.title.includes("French Literature") && t.title.includes("2026-08-14");
+  })());
+  check("homeworkTaskTitle — the exact reported titles, unit-tested", (() => {
+    const withText = homeworkTaskTitle("Math Analysis and Approaches HL", "Start practising for the English Lang & Lit in-class Paper 1", true, "2026-08-14T00:00:00Z");
+    const without = homeworkTaskTitle("Math Analysis and Approaches HL", "", true, "2026-08-14T00:00:00Z");
+    return withText === "Start practising for the English Lang & Lit in-class Paper 1"
+      && without !== "Math Analysis and Approaches HL" && without.includes("Math Analysis and Approaches HL") && without.includes("2026-08-14");
+  })());
+  // Cards saved BEFORE the generation fix still hold bare-subject names — the list rewrites them at
+  // display time from the stored énoncé (sourceDetail), on all three title surfaces.
+  const cardSrc = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
+  check("the task list rewrites a bare-subject stored title from the Pronote énoncé (all three surfaces)",
+    /function taskDisplayName/.test(cardSrc) &&
+    /className="card-title">[\s\S]{0,160}taskDisplayName\(task\)/.test(cardSrc) &&
+    /<h2 className="dash-hero-title">\{taskDisplayName\(task\)\}<\/h2>/.test(cardSrc) &&
+    /<h2 className="tf-title">\{taskDisplayName\(task\)\}<\/h2>/.test(cardSrc) &&
+    /sourceDetail/.test(cardSrc));
 }
 
 section("nothingToPrepare — a bare Pronote test placeholder never gets auto-run");

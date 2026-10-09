@@ -27,6 +27,30 @@ import { useVoiceModePref } from "./voice/useVoiceModePref.ts";
 import { getLocalThread } from "./localChatBoard.ts";
 import { VoiceControls } from "./voice/VoiceControls.tsx";
 
+/** The NAME shown for a task — report-live: "always rewrite full task name from Pronote, not just the
+ *  subject … never just subject" (cards literally titled "French Literature" / "Math Analysis and
+ *  Approaches HL", subject shown twice). New cards no longer GENERATE bare names (homeworkTaskTitle in
+ *  server/tasks.ts), but every card saved before that fix still carries one — so the display rewrites it
+ *  from the teacher's own énoncé (sourceDetail) whenever the stored name is just the subject (or a
+ *  "<subject> homework"-style stub) and there is fuller text to show. Everything else passes through. */
+function taskDisplayName(task: WebTask): string {
+  const stored = String(task.title || "").trim();
+  const subj = String(task.sourceSubject || "").trim();
+  if (subj) {
+    const t = stored.toLowerCase();
+    const bare = t === subj.toLowerCase()
+      || t === `${subj} homework`.toLowerCase()
+      || t === `${subj} devoir`.toLowerCase()
+      || t === `${subj} test`.toLowerCase();
+    const detail = String(task.sourceDetail || "").replace(/\[Pièce jointe[^\]]*\]/gi, " ").replace(/\s+/g, " ").trim();
+    if (bare && detail) {
+      const full = stripStrayMarkdown(detail);
+      if (full && full !== stored) return full.slice(0, 140);
+    }
+  }
+  return stripStrayMarkdown(stored);
+}
+
 /**
  * The leave animation + API call for finishing or dismissing a task. Extracted so the collapsed row and the
  * open task view can share ONE implementation — the CSS animations key off the exact class strings this
@@ -254,7 +278,7 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
       )}
       <button type="button" className="card-main" onClick={onOpen} aria-label={L(`Ouvrir : ${task.title}`, `Open: ${task.title}`)}>
         <span className="card-text">
-          <span className="card-title">{isNew ? <span className="new-dot" title={L("Nouveau", "New")} /> : null}{stripStrayMarkdown(task.title)}</span>
+          <span className="card-title">{isNew ? <span className="new-dot" title={L("Nouveau", "New")} /> : null}{taskDisplayName(task)}</span>
           {/* Compact row: at most subject + one of {due date, secondary text} — the quadrant word-label
               used to also render here, stacking up to 4 distinct pieces into one 2-line-clamped span on
               every ordinary task (direct instruction: cut crowding). Urgency is still visible via the
@@ -313,7 +337,7 @@ export function TaskHero({ task, onOpen, onChange, onTask, onConfirmed, readOnly
       {/* The prototype leads with the subject ("Mathematics"); fall back to the priority label when a
           task has no subject. */}
       <div className="dash-hero-kicker">{task.sourceSubject || L("Ta priorité", "Your next priority")}</div>
-      <h2 className="dash-hero-title">{stripStrayMarkdown(task.title)}</h2>
+      <h2 className="dash-hero-title">{taskDisplayName(task)}</h2>
       {task.goal ? <div className="task-goal-banner"><span className="task-goal-tag">{L("Objectif", "Goal")}:</span> {stripStrayMarkdown(task.goal)}</div> : null}
       {(task.nudgeLine || task.why) ? <p className="dash-hero-why">{stripStrayMarkdown(task.nudgeLine || task.why)}</p> : null}
       {sourceAttributionLine(task, cardEn) ? <p className="card-source-attribution">{sourceAttributionLine(task, cardEn)}</p> : null}
@@ -702,7 +726,7 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
       {/* (A) header — title and deadline only. Everything else that used to crowd this line moved into the
           hero (in-flight state) or was dropped (priority chip). */}
       <div className="tf-head">
-        <h2 className="tf-title">{stripStrayMarkdown(task.title)}</h2>
+        <h2 className="tf-title">{taskDisplayName(task)}</h2>
         {task.goal ? (
           <div className="task-goal-banner">
             <span className="task-goal-tag">{L("Objectif de fin", "Definition of Done")}:</span> {stripStrayMarkdown(task.goal)}
