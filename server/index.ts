@@ -14,6 +14,8 @@ import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, Fo
 import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY, subjectMastery } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
 import { planTurn, repairLine, reactionTo, onTopic } from "./tutorAdapt.ts";
+import { buildTasksPayload } from "./taskDelta.ts";
+import { makeSyncScheduler } from "./syncScheduler.ts";
 import { diffBoard, recordBoardEvents, objectiveEvents, problemEvents, tagStudentAnswer, selfCorrections } from "./boardEvents.ts";
 import { buildTutorDecision, recordTutorDecision } from "./actionSpace.ts";
 import { loadOrInitSessionState, persistSessionState } from "./sessionState.ts";
@@ -239,6 +241,17 @@ function outgoingTasks(list: WebTask[] | undefined): WebTask[] {
   });
 }
 
+
+// ── Delta task lists ─────────────────────────────────────────────────────────────────────────────────────────────
+// Every route that returns "the task list" used to ship ALL of it, every time (hundreds of KB raw per response, the biggest
+// egress driver). The client now sends `x-have`: "<first 8 of task id><6-char content hash>,…" for the tasks it already holds;
+// we answer with ONLY the tasks whose hash changed plus the id ORDER ({__delta, order, changed}). Hashes ignore the two
+// response-only overlays (score boost, nudgeLine) so alternating routes don't thrash. No `x-have` (first load, many tasks,
+// another account) → the full list, each task tagged with its hash so the NEXT request can be a delta.
+function tasksPayload(req: express.Request, list: WebTask[] | undefined, outgoing: WebTask[] = outgoingTasks(list)): any {
+  return buildTasksPayload(outgoing, req.headers["x-have"]);
+}
+
 const saveSession = (req: express.Request) => new Promise<void>((r) => req.session.save((err) => { if (err) console.warn("[session] save failed:", (err as any)?.message || err); r(); }));
 // Cross-device/tab merges live in tasks.ts so the session-free job runner shares the EXACT same
 // semantics (progressed copy wins, step ticks union, entity dedupe, structured settings preserved).
@@ -253,6 +266,29 @@ const sessionDirtyCache = new Map<string, string>();
 // Persist the session AND this ACCOUNT's durable state (profile + tasks) to the cloud, keyed by the
 // account email — so it follows the account across devices and survives restarts. (Integration
 // connections live in Composio, keyed by the same account email, so there's nothing extra to store.)
+// Merge this instance's view into the account row and write it. `throwOnError` is for the awaited journal-save path, which also
+// bypasses the read cache (the one place a stale base could lose a concurrent write); background flushes use the cached read.
+async function writeAccount(email: string, localTasks: WebTask[], localProfile: Profile, o: { throwOnError?: boolean; bypassCache?: boolean } = {}): Promise<void> {
+  const throwOnError = !!o.throwOnError;
+  try {
+    const current = await loadState(email, { bypassCache: !!o.bypassCache });
+    const mergedTasks = mergeTasks(current.tasks || [], localTasks);
+    const mergedProfile = mergeProfiles(current.profile || emptyProfile(), localProfile);
+    await saveState(email, { profile: mergedProfile, tasks: mergedTasks }, { throwOnError });
+  } catch (e) {
+    reportError("commit-sync-cloud-merge", e);
+    // Fallback write on merge failure — same throwOnError contract, so an awaiting caller still finds out if this ALSO fails.
+    await saveState(email, { profile: localProfile, tasks: localTasks }, { throwOnError });
+  }
+}
+const scheduler = makeSyncScheduler<WebTask[]>(
+  async (email, snap) => { await writeAccount(email, snap.tasks, snap.profile as Profile, { throwOnError: true }); },
+  { debounceMs: 6000, maxWaitMs: 25000 },
+);
+// A recycled instance must not take the last few seconds of someone's work with it.
+for (const sig of ["SIGTERM", "SIGINT"] as const) process.once(sig, () => { void scheduler.flushAll().finally(() => process.exit(0)); });
+process.once("beforeExit", () => { void scheduler.flushAll(); });
+
 const commit = async (req: express.Request, opts?: { awaitCloud?: boolean }) => {
   // Only the session-store write is awaited BY DEFAULT: it's what a same-device follow-up request depends
   // on (sessions are cloud-backed too — makeSessionStore() — so this is the account's cross-request
@@ -293,43 +329,17 @@ const commit = async (req: express.Request, opts?: { awaitCloud?: boolean }) => 
   const lastHash = sessionDirtyCache.get(sessionId);
   const isDirty = lastHash !== currentHash;
   
-  const syncCloud = async (throwOnError?: boolean) => {
-    try {
-      // `throwOnError` is only ever passed true for the awaitCloud path (a journal save, a flashcard
-      // review) — exactly the low-frequency, high-value write where merging against a STALE cached cloud
-      // snapshot (loadState's own 5min per-instance cache, see store.ts) is least acceptable: on
-      // serverless, this request's warm instance may not be the one that performed the account's most
-      // recent write, so its cache can lag another instance's write by up to 5 minutes. Reported live as
-      // flashcard counts that varied between views and "flashcards not reliably saving to the cloud" —
-      // a merge computed against a stale base can lose a concurrent write instead of unioning it.
-      // bypassCache:true always hits Supabase directly here, same as the GET routes that already need
-      // this guarantee (studylog week/month). The default (non-awaitCloud, high-frequency) path keeps the
-      // cache — those calls are frequent enough that paying a full Supabase read every time isn't worth it,
-      // and losing a merge there is already covered by the NEXT awaitCloud write reconciling things.
-      const current = await loadState(email, { bypassCache: !!throwOnError });
-      const mergedTasks = mergeTasks(current.tasks || [], localTasks);
-      const mergedProfile = mergeProfiles(current.profile || emptyProfile(), localProfile);
-      await saveState(email, { profile: mergedProfile, tasks: mergedTasks }, { throwOnError });
-    } catch (e) {
-      reportError("commit-sync-cloud-merge", e);
-      // Fallback write on merge failure — same throwOnError contract, so an `awaitCloud` caller still finds
-      // out if this ALSO fails, instead of the request looking like a success while nothing was saved.
-      await saveState(email, { profile: localProfile, tasks: localTasks }, { throwOnError });
-    }
-  };
-  
   if (opts?.awaitCloud) {
-    // High-value write: always sync to cloud and update dirty flag
-    await syncCloud(true);
+    // High-value write (a journal save): written NOW, with a fresh read of the account row, and it supersedes anything pending.
+    scheduler.cancel(email);
+    await writeAccount(email, localTasks, localProfile, { throwOnError: true, bypassCache: true });
     sessionDirtyCache.set(sessionId, currentHash);
   } else if (isDirty) {
-    // Dirty but not awaitCloud: the session row no longer carries profile/tasks (store.ts slims it), so the
-    // account row is the ONLY durable copy — await the write rather than detaching it (a detached write can be
-    // frozen mid-flight on serverless, which used to be covered by the session blob duplicate).
-    await syncCloud().catch((e) => reportError("commit-sync-cloud", e));
+    // Everything else is WRITE-BEHIND: the latest snapshot is held in memory and written ONCE after a quiet period (see
+    // syncScheduler.ts) — a burst of step ticks / flashcard reviews / chat turns is one Supabase write, not dozens.
+    scheduler.schedule(email, { tasks: localTasks, profile: localProfile });
     sessionDirtyCache.set(sessionId, currentHash);
   }
-  // else: not dirty and not awaitCloud — skip cloud sync entirely (no-op read-only path)
 };
 
 // Simple synchronous task-mutating routes (confirm/reject/dismiss/step-done) used to just `find()` in
@@ -1258,7 +1268,7 @@ app.get("/api/tasks", requireAuth, async (req, res) => {
   // overwhelming-majority of polls where nothing actually changed since the last fetch. (Only true now
   // that the ordering boosts are response-only — while they mutated persisted scores on every poll, the
   // body changed every tick and every poll paid the full payload.)
-  const tasksJson = JSON.stringify(withNudge);
+  const tasksJson = JSON.stringify(tasksPayload(req, req.session.tasks, withNudge));
   const etag = `"${createHash("sha1").update(tasksJson).digest("hex").slice(0, 16)}"`;
   res.setHeader("ETag", etag);
   if (req.headers["if-none-match"] === etag) { res.status(304).end(); return; }
@@ -1378,7 +1388,7 @@ app.post("/api/tasks", requireAuth, rateLimit(20, 60_000), async (req, res) => {
   // generated twice". A replay of an already-applied clientId is a no-op: return the current list as-is,
   // no refine call, no enqueue, no duplicate.
   const clientId = typeof req.body?.clientId === "string" ? req.body.clientId.slice(0, 80) : undefined;
-  if (clientId && (req.session.tasks || []).some((t) => t.clientId === clientId)) { res.json(outgoingTasks(req.session.tasks)); return; }
+  if (clientId && (req.session.tasks || []).some((t) => t.clientId === clientId)) { res.json(tasksPayload(req, req.session.tasks)); return; }
   // Optional explicit date (personal commitments — a job shift, a club meeting, an appointment) from a
   // native <input type="date">: only accept a real calendar date, never arbitrary free text here (that's
   // what the title/AI-refinement path is for) — a bad value silently becomes "no date" rather than a 500.
@@ -1427,7 +1437,7 @@ app.post("/api/tasks", requireAuth, rateLimit(20, 60_000), async (req, res) => {
       // on Queued with no progress" bug reported live from a fresh manual task.
       try { await jobs.enqueueAndDrain(req.session.user!, "execute_task", added.id, undefined, false); } catch { /* client kick / cron will still pick it up */ }
     }
-    res.json(outgoingTasks(req.session.tasks));
+    res.json(tasksPayload(req, req.session.tasks));
   } catch (e: any) {
     console.error(e);
     res.status(500).json({ error: M(req, "Impossible d'ajouter cette tâche — réessaie.", "Couldn't add that task — try again.") });
@@ -1468,7 +1478,7 @@ app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 60_000), async (req
     if (refined) addUsage(req.session.profile ||= emptyProfile(), refined.tokens, "manual_refine");
     tasks.applyRefinement(req.session.tasks || [], t.id, refined);
     await commit(req);
-    res.json(outgoingTasks(req.session.tasks));
+    res.json(tasksPayload(req, req.session.tasks));
   } catch (e: any) { console.error(e);
     res.status(500).json({ error: M(req, "Impossible d'affiner cette tâche — réessaie.", "Couldn't refine that task — try again.") }); }
 });
@@ -1515,7 +1525,7 @@ app.post("/api/tasks/:id/regenerate", requireAuth, rateLimit(5, 60_000), async (
       await commit(req);
     }
     
-    res.json(outgoingTasks(req.session.tasks));
+    res.json(tasksPayload(req, req.session.tasks));
   } catch (e: any) {
     console.error("[tasks] regenerate error:", e);
     console.error(e);
@@ -1906,7 +1916,12 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     lastTurnObjectivesDone.set(planKey, (out.objectives || currentObjectives).filter((o) => o.done).length);
     t.updatedAt = now;
     await commit(req);
-    res.json({ reply: out.reply, chatDelta: newChat, board: out.board, boardCleared: out.boardCleared, problems: out.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped, task: t });
+    // The tutor screen merges by id from `board`/`problems`/`chatDelta` and keeps its own chat — so it doesn't need the WHOLE task (its full
+    // chat + board history) shipped back every turn. That echo grew with the session and was the biggest per-turn payload.
+    const leanTask = req.body?.primer === true
+      ? { id: t.id, title: t.title, status: t.status, source: t.source, sourceSubject: t.sourceSubject, updatedAt: t.updatedAt, createdAt: t.createdAt, objectives: t.objectives, mastery: t.mastery, board: out.boardCleared ? t.board : out.board, problems: out.problems }
+      : t;
+    res.json({ reply: out.reply, chatDelta: newChat, board: out.board, boardCleared: out.boardCleared, problems: out.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped, task: leanTask });
   } catch (e: any) {
     console.error(e);
     res.status(500).json({ error: M(req, "échec de la discussion", "chat failed") });
@@ -2055,7 +2070,7 @@ app.post("/api/tasks/:id/confirm", requireAuth, rateLimit(60, 60_000), async (re
     }
     void recordMetric(req.session.user!, "task_completed", 1, task.source || "n/a");
     if (task.shownAt) void recordMetric(req.session.user!, "task_time_to_completion_seconds", (Date.now() - Date.parse(task.shownAt)) / 1000, task.source || "n/a");
-    res.json(outgoingTasks(req.session.tasks));
+    res.json(tasksPayload(req, req.session.tasks));
   } catch (e: any) { reportError("tasks-confirm", e, { taskId: id }); console.error(e);
     res.status(500).json({ error: M(req, "Impossible de confirmer cette tâche — réessaie.", "Couldn't confirm that task — try again.") }); }
 });
@@ -2066,7 +2081,7 @@ app.post("/api/tasks/:id/reject", requireAuth, rateLimit(60, 60_000), async (req
     if (!task) { res.status(404).json({ error: M(req, "Tâche introuvable — elle a peut-être déjà été traitée ailleurs.", "Task not found — it may have already been handled elsewhere.") }); return; }
     tasks.reject(req.session.tasks || [], id);
     await commit(req);
-    res.json(outgoingTasks(req.session.tasks));
+    res.json(tasksPayload(req, req.session.tasks));
   } catch (e: any) { reportError("tasks-reject", e, { taskId: id }); console.error(e);
     res.status(500).json({ error: M(req, "Impossible de rejeter cette tâche — réessaie.", "Couldn't reject that task — try again.") }); }
 });
@@ -2080,7 +2095,7 @@ app.post("/api/tasks/:id/dismiss", requireAuth, rateLimit(60, 60_000), async (re
     await commit(req);
     void recordEvent(req.session.user!, "dismissed", { taskId: id, message: "You dismissed it — similar tasks won't come back" });
     void recordMetric(req.session.user!, "task_dismissed", 1, task.source || "n/a");
-    res.json(outgoingTasks(req.session.tasks));
+    res.json(tasksPayload(req, req.session.tasks));
   } catch (e: any) { reportError("tasks-dismiss", e, { taskId: id }); console.error(e);
     res.status(500).json({ error: M(req, "Impossible d'ignorer cette tâche — réessaie.", "Couldn't dismiss that task — try again.") }); }
 });
@@ -2143,7 +2158,7 @@ app.post("/api/tasks/:id/step/:index/done", requireAuth, rateLimit(60, 60_000), 
       void recordEvent(req.session.user, "task_outcome_computed", { taskId: id, message: `${outcome.checkpointsPassed}/${outcome.checkpointsTotal} checkpoints passed; struggled with: ${failureList}` });
     }
     await commit(req);
-    res.json(outgoingTasks(req.session.tasks));
+    res.json(tasksPayload(req, req.session.tasks));
   } catch (e: any) { reportError("tasks-step-done", e); console.error(e);
     res.status(500).json({ error: M(req, "Impossible de mettre à jour l'étape — réessaie.", "Couldn't update the step — try again.") }); }
 });
@@ -2166,14 +2181,14 @@ app.post("/api/tasks/:id/flashcard/:deckId/:cardIndex/review", requireAuth, rate
   task.updatedAt = new Date().toISOString();
   if (req.session.profile) { bumpActivityHour(req.session.profile, new Date(), task.sourceSubject); req.session.profile.lastTutorActivityAt = new Date().toISOString(); }
   void recordMetric(req.session.user!, "flashcard_review", correct ? 1 : 0, task.source || "n/a");
-  await commit(req, { awaitCloud: true });
+  await commit(req);
   // "How often you go back and redo flashcards" signal — a card seen several times with a low correct-rate
   // is exactly the "you might need to study this material more" case from the personalization ask. 3+ seen
   // avoids flagging normal early misses; the correct-rate itself is the metric value (bucketed by the
   // card's own front so it's identifiable later without storing the whole card text as structured data).
   const seen = card.review.seen, ok = card.review.correct;
   if (seen >= 3) void recordMetric(req.session.user!, "flashcard_struggle", ok / seen, task.source || "n/a", card.front.slice(0, 120));
-  res.json(outgoingTasks(req.session.tasks));
+  res.json(tasksPayload(req, req.session.tasks));
 }));
 // "Not something I need to learn" — distinct from marking a card WRONG. A wrong card is a real gap and stays
 // in the spaced-repetition rotation; a not-needed card is Otto misjudging the student's syllabus/level, so it
@@ -2187,8 +2202,8 @@ app.post("/api/tasks/:id/flashcard/:deckId/:cardIndex/not-needed", requireAuth, 
   if (notNeeded) card.notNeeded = true; else delete card.notNeeded;
   task.updatedAt = new Date().toISOString();
   void recordMetric(req.session.user!, "flashcard_not_needed", notNeeded ? 1 : 0, task.sourceSubject || task.source || "n/a", card.front.slice(0, 120));
-  await commit(req, { awaitCloud: true });
-  res.json(outgoingTasks(req.session.tasks));
+  await commit(req);
+  res.json(tasksPayload(req, req.session.tasks));
 }));
 // Record one quiz attempt (a full pass through the quiz, not per-question) — mirrors the flashcard review
 // route above: deterministic, no AI call, just persists the score so it survives closing the popup. Capped
@@ -2211,8 +2226,8 @@ app.post("/api/tasks/:id/quiz/:quizId/attempt", requireAuth, rateLimit(200, 60_0
   // leaving a real gap in the "when is this student actually active" pattern (predictNextEngagement).
   if (req.session.profile) { bumpActivityHour(req.session.profile, new Date(), task.sourceSubject); req.session.profile.lastTutorActivityAt = new Date().toISOString(); }
   void recordMetric(req.session.user!, "quiz_attempt_score_ratio", score / total, task.source || "n/a");
-  await commit(req, { awaitCloud: true });
-  res.json(outgoingTasks(req.session.tasks));
+  await commit(req);
+  res.json(tasksPayload(req, req.session.tasks));
 }));
 // A student's OWN note, written by hand right after a quiz/flashcard mistake — "what I got wrong and what
 // to remember" — not an AI-generated fiche. Deterministic, no AI call: this is exactly the kind of thing
@@ -2230,8 +2245,8 @@ app.post("/api/tasks/:id/notes", requireAuth, rateLimit(60, 60_000), ah(async (r
   task.notes = [...(task.notes || []), note].slice(-tasks.ARTIFACT_CAP);
   task.updatedAt = new Date().toISOString();
   void recordMetric(req.session.user!, "chat_artifact_created", 1, "manual_note");
-  await commit(req, { awaitCloud: true });
-  res.json(outgoingTasks(req.session.tasks));
+  await commit(req);
+  res.json(tasksPayload(req, req.session.tasks));
 }));
 // Check a typed answer against a daily practice problem (see DailyPracticeProblem/practiceAnswerMatches in
 // shared/types.ts) — deterministic, no AI call, same "instant, no round-trip surprise" posture as the
@@ -2251,8 +2266,8 @@ app.post("/api/tasks/:id/practice-problem/attempt", requireAuth, rateLimit(200, 
   if (req.session.profile) { bumpActivityHour(req.session.profile, new Date(), task.sourceSubject); req.session.profile.lastTutorActivityAt = new Date().toISOString(); }
   void recordMetric(req.session.user!, "practice_problem_attempted", 1);
   void recordMetric(req.session.user!, "practice_problem_correct", correct ? 1 : 0);
-  await commit(req, { awaitCloud: true });
-  res.json(outgoingTasks(req.session.tasks));
+  await commit(req);
+  res.json(tasksPayload(req, req.session.tasks));
 }));
 // Cards due for review RIGHT NOW, across every task — not scoped to one deck's own view, since spaced
 // repetition only actually compounds if the student can see everything due at a glance instead of having
@@ -2296,7 +2311,7 @@ app.get("/api/reviews/due", requireAuth, ah(async (req, res) => {
   }
   if (admitted.size !== admittedAtStart) {
     tasks.setReviewSetDeckIdsToday(profile, [...admitted], new Date(now));
-    await commit(req, { awaitCloud: true });
+    await commit(req);
   }
   res.json({ due, setsShown: admitted.size, setCap: MAX_DUE_SETS_PER_DAY });
 }));
@@ -2334,7 +2349,7 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
     // Clearing an entry — keep the (now-empty) task shell rather than deleting, so re-typing later just
     // upserts the same anchor again instead of minting a fresh id.
     if (t) { t.logText = ""; t.flashcards = []; t.quizzes = []; t.practiceProblem = undefined; t.updatedAt = new Date().toISOString(); await commit(req, { awaitCloud: true }); }
-    res.json(outgoingTasks(req.session.tasks));
+    res.json(tasksPayload(req, req.session.tasks));
     return;
   }
   if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour générer des cartes.", "AI is paused — resume it in Settings to generate flashcards.") }); return; }
@@ -2378,7 +2393,7 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
   if (t.flashcards?.length && !textChanged) {
     t.updatedAt = new Date().toISOString();
     await commit(req, { awaitCloud: true });
-    res.json(outgoingTasks(req.session.tasks));
+    res.json(tasksPayload(req, req.session.tasks));
     return;
   }
   // Score the OUTGOING deck (if any) against the flashcard-style bandit before it's replaced — its Leitner
@@ -2472,7 +2487,7 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
     // for why the default fire-and-forget mode is genuinely at risk here. (commit() itself now also trims
     // old studylog artifacts on every call — see its own comment — so that no longer needs to happen here.)
     await commit(req, { awaitCloud: true });
-    res.json(outgoingTasks(req.session.tasks));
+    res.json(tasksPayload(req, req.session.tasks));
   } catch (e: any) { console.error(e);
     res.status(500).json({ error: M(req, "Impossible de créer des cartes à partir de ça — réessaie.", "Couldn't make flashcards from that — try again.") }); }
 }));
@@ -2577,7 +2592,7 @@ app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 60_000), ah(as
       if (qr.quiz) void recordMetric(req.session.user!, "quiz_created", qr.quiz.questions.length, "weekly");
     } catch { /* best-effort — the deck above already succeeded regardless */ }
     await commit(req, { awaitCloud: true });
-    res.json(outgoingTasks(req.session.tasks));
+    res.json(tasksPayload(req, req.session.tasks));
   } catch (e: any) { console.error(e);
     res.status(500).json({ error: M(req, "Impossible de créer le résumé de la semaine — réessaie.", "Couldn't build the week summary — try again.") }); }
 }));
@@ -2665,7 +2680,7 @@ app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 60_000), ah(a
       if (qr.quiz) void recordMetric(req.session.user!, "quiz_created", qr.quiz.questions.length, "monthly");
     } catch { /* best-effort — the deck above already succeeded regardless */ }
     await commit(req, { awaitCloud: true });
-    res.json(outgoingTasks(req.session.tasks));
+    res.json(tasksPayload(req, req.session.tasks));
   } catch (e: any) { console.error(e);
     res.status(500).json({ error: M(req, "Impossible de créer le résumé du mois — réessaie.", "Couldn't build the month summary — try again.") }); }
 }));
@@ -2731,7 +2746,7 @@ app.post("/api/study/free", requireAuth, rateLimit(20, 60_000), ah(async (req, r
   list.push(t);
   req.session.tasks = list;
   await commit(req);
-  res.json(outgoingTasks(req.session.tasks));
+  res.json(tasksPayload(req, req.session.tasks));
 }));
 
 // Server-side text extraction for a document material's URL — so the "Ask Otto" chat can reference what's
@@ -3013,9 +3028,9 @@ app.post("/api/tasks/:id/step/:index/expand", requireAuth, rateLimit(20, 60_000)
       // then the cron drain (cloud-only, no session) rebuilt the task WITHOUT the substeps and committed
       // it with a NEWER updatedAt, legitimately overwriting the client seconds later. Reported live as
       // "breaking down a task shows the substeps for two seconds and then they hide".
-      await commit(req, { awaitCloud: true });
+      await commit(req);
     }
-    res.json(outgoingTasks(req.session.tasks));
+    res.json(tasksPayload(req, req.session.tasks));
   } catch (e: any) { console.error(e);
     res.status(500).json({ error: M(req, "Impossible de découper cette étape — réessaie.", "Couldn't break this step down — try again.") }); }
 });
@@ -3036,8 +3051,8 @@ app.post("/api/tasks/:id/step/:index/substep/:subIndex/done", requireAuth, rateL
       task.updatedAt = new Date().toISOString();
       // awaitCloud — same substeps-vanish reasoning as the expand route above: a sub-step tick lost to a
       // frozen background write would resurrect as UNdone on the next cloud-only rebuild.
-      await commit(req, { awaitCloud: true });
-      res.json(outgoingTasks(req.session.tasks));
+      await commit(req);
+      res.json(tasksPayload(req, req.session.tasks));
   } catch (e: any) { console.error(e);
     res.status(500).json({ error: M(req, "Impossible d'enregistrer cette sous-étape — réessaie.", "Couldn't save this sub-step — try again.") }); }
 });
@@ -3061,7 +3076,7 @@ app.post("/api/tasks/:id/step/:index/substep/:subIndex/run", requireAuth, rateLi
     sub.done = true;
     task.updatedAt = new Date().toISOString();
     await commit(req);
-    res.json(outgoingTasks(req.session.tasks));
+    res.json(tasksPayload(req, req.session.tasks));
   } catch (e: any) { console.error(e);
     res.status(500).json({ error: M(req, "Otto n'a pas réussi à répondre.", "Otto couldn't come up with a reply.") }); }
 });
@@ -3089,7 +3104,7 @@ app.post("/api/tasks/:id/reschedule", requireAuth, rateLimit(60, 60_000), async 
     task.updatedAt = new Date().toISOString();
     tasks.applyDeadlineUrgency([task]);
     await commit(req);
-    res.json(outgoingTasks(req.session.tasks));
+    res.json(tasksPayload(req, req.session.tasks));
   } catch (e: any) { console.error(e);
     res.status(500).json({ error: M(req, "Impossible de déplacer cette tâche — réessaie.", "Couldn't move that task — try again.") }); }
 });
@@ -3151,6 +3166,13 @@ app.get("/api/tasks/:id/events", requireAuth, ah(async (req, res) => {
 // Client-driven drain "kick": while any of the user's jobs are queued (e.g. execution queued by a sweep),
 // the OPEN client kicks one job at a time so online users see work happen within seconds, not at the next
 // cron tick. Each kick is one bounded function invocation — serverless-friendly.
+// Flush this account's write-behind snapshot NOW — the client calls it (keepalive) when the tab is hidden/closed, so the
+// last few seconds of work never wait on the quiet-period timer.
+app.post("/api/sync/flush", requireAuth, async (req, res) => {
+  try { if (req.session.user) await scheduler.flush(req.session.user); } catch { /* the scheduler retries */ }
+  res.json({ ok: true });
+});
+
 app.post("/api/jobs/kick", requireAuth, rateLimit(60, 60_000), async (req, res) => {
   try {
     // MUST scope to this account — an unscoped drain() claims the GLOBAL oldest queued job across every
@@ -3307,7 +3329,14 @@ app.get("/api/usage", requireAuth, async (req, res) => {
 // ── Profile (who the user is) — available once logged in ───────────────────────
 const listKey = (c: string) => (c === "preference" ? "preferences" : c === "person" ? "people" : c === "project" ? "projects" : c === "course" ? "courses" : "");
 app.get("/api/profile", requireAuth, (req, res) => {
-  try { res.json(tasks.stripProfileForResponse(req.session.profile || emptyProfile())); }
+  try {
+    // ETag: every page that shows profile data re-fetches it on mount; an unchanged profile costs a 304, not the whole body again.
+    const body = JSON.stringify(tasks.stripProfileForResponse(req.session.profile || emptyProfile()));
+    const etag = `"${createHash("sha1").update(body).digest("hex").slice(0, 16)}"`;
+    res.setHeader("ETag", etag);
+    if (req.headers["if-none-match"] === etag) { res.status(304).end(); return; }
+    res.type("json").send(body);
+  }
   catch (e: any) { console.error(e); res.json(emptyProfile()); }
 });
 app.post("/api/profile", requireAuth, async (req, res) => {
