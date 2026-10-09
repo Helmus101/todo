@@ -14,6 +14,7 @@ import { InlineProblem } from "./InlineProblem.tsx";
 import { extractPdfText } from "./pdfText.ts";
 import { api } from "../api.ts";
 import { OttoAvatar } from "../tutor/OttoAvatar.tsx";
+import { MathText } from "./artifacts/BoardArtifact.tsx";
 
 interface AskOttoPanelProps {
   task: WebTask;
@@ -381,7 +382,11 @@ export function AskOttoPanel({
                 >{synth.speaking ? <Square size={13} aria-hidden="true" /> : <Volume2 size={15} aria-hidden="true" />}</button>
               </>
             ) : (
-              <p className="otto-bubble-empty">{emptyText ?? ""}</p>
+              // MathText, not raw text: the opener quotes real board maths ("Solve for $x ∈ [0, 2\pi]$: …")
+              // and used to print with literal $…$ / \\cos when pasted verbatim (report-live). A div, not a
+              // <p>: MathText's fallback path returns renderChatText's own <p>/<ul> blocks, and <p> in <p> is
+              // invalid DOM (the chat variant below already carries that warning comment).
+              <div className="otto-bubble-empty">{emptyText ? <MathText text={emptyText} /> : ""}</div>
             )}
           </div>
         </div>
@@ -402,9 +407,9 @@ export function AskOttoPanel({
     <div className="sm-ai-embed">
       <div className="sm-ai-chat" role="log" aria-live="polite" aria-label={L("Conversation avec Otto", "Conversation with Otto")} ref={chatContainerRef} onScroll={handleScroll}>
         {!task.chat?.length && !pendingMsg ? (
-          <p className="sm-ai-empty">
-            {emptyText ?? `Ask anything about ${currentStep ? `"${currentStep.text}"` : task.title}.`}
-          </p>
+          <div className="sm-ai-empty">
+            <MathText text={emptyText ?? `Ask anything about ${currentStep ? `"${currentStep.text}"` : task.title}.`} />
+          </div>
         ) : task.chat?.map((m, i) => (
           <div key={i} className={`sm-ai-msg sm-ai-msg-${m.role}`}>
             <span className={`sm-ai-sender sm-ai-sender-${m.role}`}>{m.role === "user" ? "You" : "Otto"}</span>

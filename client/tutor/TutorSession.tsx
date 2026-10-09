@@ -676,9 +676,16 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
   const lastTopic = lastSame ? sessionTopic(lastSame) : "";
   const lastWhen = lastSame ? relativeWhen(lastSame.endTime, Date.now(), openerLang) : "";
   const subj = task.sourceSubject;
+  // ONE time reference only: the old template stacked a fixed lead on top of relativeWhen's stamp and read
+  // as machine-stitched — reported live as 'Hey! Last time, earlier today, we worked on "…"'. Lead with the
+  // stamp itself ("Earlier today we worked on…" / "Hier, on a bossé sur…"); "Last time" is only the
+  // fallback when the stamp is unknown.
+  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+  const leadFr = lastWhen ? `${cap(lastWhen)}, on` : "La dernière fois, on";
+  const leadEn = lastWhen ? `${cap(lastWhen)} we` : "Last time we";
   const instantOpener = lastTopic
-    ? L(`Salut ! ${lastWhen ? `La dernière fois, ${lastWhen}, on` : "La dernière fois on"} a bossé sur « ${lastTopic} ». Qu'est-ce que tu en retiens ?`,
-        `Hey! ${lastWhen ? `Last time, ${lastWhen}, we` : "Last time we"} worked on "${lastTopic}". What do you still remember?`)
+    ? L(`Salut ! ${leadFr} a bossé sur « ${lastTopic} ». Qu'est-ce que tu en retiens ?`,
+        `Hey! ${leadEn} worked on "${lastTopic}". What do you still remember?`)
     : subj
       ? L(`Salut ! Sur quoi tu bloques en ${subj} ? Écris, dessine ou parle — je t'écoute.`, `Hey! What's tripping you up in ${subj}? Type, draw or just talk — I'm listening.`)
       : L("Salut ! Sur quoi tu bloques ? Écris, dessine ou parle.", "Hey! What are you stuck on? Type, draw or just talk.");

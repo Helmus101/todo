@@ -2141,7 +2141,9 @@ export async function tutorOpener(
     `what they ACTUALLY worked on — the real equation, the technique, the topic as it appeared on the board ` +
     `— never a generic category, and never a board caption or a placeholder label (a label like "The ` +
     `equation to work with" is a heading on the board, NOT something the student studied). When the memory ` +
-    `says when it happened, a light time reference ("yesterday", "the other day") is welcome.\n` +
+    `says when it happened, a light time reference ("yesterday", "the other day") is welcome — but use ` +
+    `exactly ONE time reference: never stack "last time" on top of the stamp ("Last time, earlier today, ` +
+    `we…" reads as machine-stitched — write "Earlier today we worked on X" instead).\n` +
     `NEVER invent a topic, a detail, or a number that isn't in the memory — and that includes inventing a ` +
     `RECOLLECTION: "last time we were working on X" when nothing on record says X is a lie the student can ` +
     `catch, and it is the exact placeholder this line exists to replace. When nothing is on record, say ` +

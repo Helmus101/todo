@@ -134,6 +134,18 @@ section("Tutor opener — Otto's first line is REAL memory, never a template or 
   check("the old recap helper that never reached the model is gone (one memory path, not two)", !sessionsSrc.includes("pastSessionsLine") && !ts.includes("pastSessionsLine"));
   const apiSrc = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
   check("the client has exactly one opener call, and it is best-effort by design", /tutorOpener: \(subject: string, pastSessions/.test(apiSrc) && /post\("\/api\/tutor\/opener", \{ subject, pastSessions \}\)/.test(apiSrc));
+
+  // Report-live, verbatim: 'Hey! Last time, earlier today, we worked on "Solve for $x \\in [0, 2\\pi]$:
+  // $\\cos 2x + 3\\cos x = 1$". What do you still remember?' — TWO defects: the instant line stacked a
+  // fixed lead on top of relativeWhen's stamp, and the bubble rendered the opener as RAW TEXT, so the
+  // LaTeX it quotes from the board printed with literal $…$ instead of typesetting.
+  const askSrc = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
+  check("the opener bubble typesets its maths — emptyText goes through MathText, never raw {emptyText}",
+    /<MathText text=\{emptyText/.test(askSrc) && !/<p className="otto-bubble-empty">\s*\{emptyText/.test(askSrc) && !/<p className="sm-ai-empty">\s*\{emptyText/.test(askSrc));
+  check("the instant line uses ONE time reference — the 'Last time, <stamp>' stacking is gone",
+    !/Last time, \$\{lastWhen\}/.test(ts) && /const leadEn = lastWhen/.test(ts) && /const leadFr = lastWhen/.test(ts));
+  check("the server opener is told the same: exactly one time reference, never stacked",
+    /ONE time reference/.test(src) && /never stack "last time"/.test(src));
 }
 
 section("Tutor stage — End session always ends; the stage is screen-height with ONE scroller the ink lives on (source pins)");
