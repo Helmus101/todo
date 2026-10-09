@@ -165,6 +165,20 @@ export function selfCorrections(events: BoardEvent[] | undefined, lookback = 12)
  *  block that makes the §11 ownership distinction visible to the tutor instead of implicit. Student-owned
  *  entries are called out because "this is my equation" vs "this is the student's proposed equation" is the
  *  distinction every diagnosis depends on. */
+/** What a figure on the board SHOWS, in words — so when the student comments on something Otto drew, the tutor knows
+ *  what is actually on the board (labels, equations, shapes), not just its caption. Compact on purpose. */
+export function figureSummary(e: BoardEntry): string {
+  if (e.kind === "diagram" && e.diagram?.length) {
+    const labels = e.diagram.filter((o: any) => o.op === "label").map((o: any) => String(o.text)).slice(0, 14);
+    const eqs = e.diagram.filter((o: any) => o.op === "equation").map((o: any) => String(o.latex)).slice(0, 4);
+    const shapes = [...new Set(e.diagram.map((o: any) => o.op).filter((x: string) => x !== "label" && x !== "equation"))];
+    return ` — FIGURE: shapes ${shapes.join(", ") || "none"}${labels.length ? `; labels: ${labels.join(", ")}` : ""}${eqs.length ? `; equations: ${eqs.join(" ; ")}` : ""}`.slice(0, 420);
+  }
+  if (e.kind === "graph" && e.graph) return ` — GRAPH: ${(e.graph.fns || []).map((f) => f.expr).join(", ") || e.graph.kind || ""}`.slice(0, 200);
+  if (e.kind === "widget" && e.widget) return ` — ACTIVITY: ${e.widget.type}`;
+  return "";
+}
+
 export function boardSurfaceBlock(entries: BoardEntry[] | undefined, problems: TaskProblem[] | undefined, opts: { limit?: number } = {}): string {
   const board = (entries || []).slice(-(opts.limit ?? 40));
   const probs = (problems || []).slice(-8);
@@ -181,7 +195,7 @@ export function boardSurfaceBlock(entries: BoardEntry[] | undefined, problems: T
       e.status === "incorrect" ? "marked WRONG" : e.status === "correct" ? "marked correct" : "",
       e.concept ? `concept: ${e.concept}` : "",
     ].filter(Boolean);
-    lines.push(`- [${e.kind || "note"}] (${tags.join("; ")}) ${e.text.slice(0, 400)}` +
+    lines.push(`- [${e.kind || "note"}] (${tags.join("; ")}) ${e.text.slice(0, 400)}${figureSummary(e)}` +
       (e.kind === "outline" && e.outline?.length ? "\n" + e.outline.map((s) => `  · ${s.heading}: ${s.bullets.join("; ")}`).join("\n") : ""));
   }
   for (const p of probs) lines.push(`- [problem] ${p.question.slice(0, 300)}${p.options?.length ? ` (options: ${p.options.join(" / ")})` : ""}${p.solved ? " — SOLVED" : ""}`);

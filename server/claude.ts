@@ -7,7 +7,7 @@ import { COURSEWORK_MAX_CHARS, courseworkForSubject, sameSubject } from "../shar
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { buildGeometry } from "../shared/geometry.ts";
-import { repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
+import { studentProblemStatement, boardCoversStatement, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -8826,7 +8826,7 @@ export async function chatAboutTask(
     boardIntegrationBlock +
     contextAwarenessBlock +
     dynamicContext +
-    `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}${boardBlock}${trajectoryBlock}${sessionBlock}${opts?.primer && opts?.policy && opts?.sessionState ? tutorPolicyBlock(opts.policy, opts.sessionState) : ""}${objectivesBlock}` +
+    `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}${boardBlock}${trajectoryBlock}${sessionBlock}${opts?.primer && opts?.policy && opts?.sessionState ? tutorPolicyBlock(opts.policy, opts.sessionState) : ""}${opts?.primer ? caseTrapBlock(pendingCaseTraps(message, history)) : ""}${opts?.primer && isDrawingTurn(message) ? DRAWING_TURN_BLOCK : ""}${objectivesBlock}` +
     assignmentBlock(task, tzOf(profile)) + profileBlock(profile) + academicBlock(academic) + materialsBlock(opts?.materials) +
     PRIMER_CLOSING_REMINDER;
   // 10, not the whole thread: every one of these is resent verbatim on every turn AND every intra-turn
@@ -8919,6 +8919,15 @@ export async function chatAboutTask(
       reply = fr
         ? "Je ne vais pas te donner cette valeur directement — qu'est-ce que tu obtiens si tu continues à partir de là où tu en es ?"
         : "I won't hand you that value directly — what do you get if you carry on from where you are?";
+    }
+    // A problem the STUDENT poses goes on the board the moment it's posed, whether or not the model remembered to put
+    // it there (reported live: they stated a full triangle problem and the board stayed empty).
+    if (opts?.primer && !result.guardrailTripped) {
+      const stmt = studentProblemStatement(message);
+      if (stmt && !result.problems.length) {
+        const onBoard = [...(opts?.currentBoard || []).map((e) => e.text), ...(opts?.currentProblems || []).map((p) => p.question), ...result.board.map((e) => e.text), ...result.board.flatMap((e) => (e.diagram || []).map((o: any) => o.latex || ""))];
+        if (!boardCoversStatement(stmt, onBoard)) result.board.unshift({ id: randomUUID(), text: stmt, kind: "given", owner: "student", at: new Date().toISOString() } as BoardEntry);
+      }
     }
     // 2400 (was 1200): a genuine tutoring turn — a method walked through step by step, or a parallel worked
     // example — legitimately runs longer than a one-line nudge, and truncating mid-explanation is worse than
@@ -9057,6 +9066,60 @@ export async function chatAboutTask(
       console.log(`${new Date().toISOString()} [chat] round ${round}: reply asks the student nothing — asking for a guiding question`);
       messages.push({ role: "assistant", content: draft });
       messages.push({ role: "user", content: "That reply doesn't ask the student anything, so they just receive information. Keep what's useful but end on ONE short guiding question that makes THEM take the next step or explain their thinking (never the answer, never a yes/no they can guess). Don't mention this instruction." });
+      return true;
+    };
+    // What counts as "given" for the setup-equation check: the problem statements, the student's own board lines, and
+    // given-kind entries — NOT the tutor's earlier derived lines (those would launder a step into the givens).
+    const ownGivens = (): string[] => [
+      ...(opts?.currentBoard || []).filter((e) => e.kind === "given" || e.owner === "student").map((e) => e.text),
+      ...(opts?.currentProblems || []).map((p) => p.question),
+    ];
+    // Same rule for the REPLY: the tutor mentioning an equation the student never wrote ("distribute that tan 25° on the
+    // right side") means it built one off-screen. One corrective round: ask for the setup instead.
+    let aheadMathFixed = false;
+    const guardAheadMath = (draft: string, round: number, lastRound: boolean): boolean => {
+      if (!opts?.primer || aheadMathFixed || lastRound || result.guardrailTripped) return false;
+      if (equationAhead(draft, [...history.filter((h) => h.role === "user").map((h) => h.text), message], ownGivens()).length === 0) return false;
+      aheadMathFixed = true;
+      console.log(`${new Date().toISOString()} [chat] round ${round}: reply states an equation step the student never reached — asking for the setup instead`);
+      messages.push({ role: "assistant", content: draft });
+      messages.push({ role: "user", content: "That reply writes out an equation (or refers to one) that the student never wrote — the setup is THEIR work. Rewrite it without that equation: ask the question that gets them to build it themselves (which relationship links the quantities, what each side stands for), and nothing more." });
+      return true;
+    };
+    // The student showed a drawing: comment AND redraw it cleaner. If the reply came back with no figure, one corrective round.
+    let redrawFixed = false;
+    const guardRedraw = (draft: string, round: number, lastRound: boolean): boolean => {
+      if (!opts?.primer || redrawFixed || lastRound || result.guardrailTripped || !isDrawingTurn(message) || !drawingLooksSpatial(message)) return false;
+      if (result.board.some((e) => e.kind === "diagram" || e.kind === "graph")) return false;
+      redrawFixed = true;
+      console.log(`${new Date().toISOString()} [chat] round ${round}: the student showed a drawing but nothing was redrawn — asking for the cleaner redraw`);
+      messages.push({ role: "assistant", content: draft });
+      messages.push({ role: "user", content: "They showed you a drawing and you haven't redrawn it. Call GEOMETRY_ON_BOARD (triangles/circles/angles) or DRAW_ON_BOARD (anything else) NOW to redraw THEIR drawing cleaner — same shapes, labels and numbers, nothing added — then reply with a one- or two-sentence comment on it and ONE question." });
+      return true;
+    };
+    // A multi-solution trap (SSA ambiguous triangle, trig equation's second solution, ±) that nobody raised, while the
+    // reply closes the problem or offers "another one": the student shouldn't have to ask "isn't there another case?".
+    // One corrective round: raise it as a QUESTION (never announce it).
+    let missedCaseFixed = false;
+    const guardMissedCase = (draft: string, round: number, lastRound: boolean): boolean => {
+      if (!opts?.primer || missedCaseFixed || lastRound || result.guardrailTripped) return false;
+      const traps = pendingCaseTraps(message, history, draft);
+      if (!closesWithMissedCase(draft, traps)) return false;
+      missedCaseFixed = true;
+      console.log(`${new Date().toISOString()} [chat] round ${round}: reply closes the problem but "${traps[0].hint}" was never raised — asking for the case check`);
+      messages.push({ role: "assistant", content: draft });
+      messages.push({ role: "user", content: `Don't close this yet — ${traps[0].hint}, and nobody has raised it. Rewrite the reply WITHOUT saying it's solved or offering another problem: keep any short acknowledgement of what they just did, then end on ONE question that makes THEM check whether there is another case/solution (e.g. "how many triangles could fit these numbers?"). Do NOT tell them the answer to that question.` });
+      return true;
+    };
+    // The tutor wrote the calculation ("180° − 45.6°") and only asked the student to evaluate it: the thinking
+    // (which operation, why) was the point. One corrective round: ask for the idea, let THEM write the line.
+    let handedCalcFixed = false;
+    const guardHandedCalc = (draft: string, round: number, lastRound: boolean): boolean => {
+      if (!opts?.primer || handedCalcFixed || lastRound || result.guardrailTripped || !handsOverCalculation(draft, message)) return false;
+      handedCalcFixed = true;
+      console.log(`${new Date().toISOString()} [chat] round ${round}: reply wrote the calculation for the student — asking for the idea instead`);
+      messages.push({ role: "assistant", content: draft });
+      messages.push({ role: "user", content: "That reply wrote the calculation out for them and only asked them to evaluate it — choosing the operation WAS the thinking. Rewrite it without the expression: ask what relationship/rule tells them the next quantity (e.g. \"which other angle between 0° and 180° has the same sine?\") and let THEM produce the line. No numbers from the step they're about to take." });
       return true;
     };
     // ONE QUESTION AT A TIME. Two questions in one reply split their attention: they answer the easy one and
@@ -9363,6 +9426,14 @@ export async function chatAboutTask(
         if (guardArtifactClaim(textContent, round, lastRound)) continue;
         if (guardAskedValue(textContent, round, lastRound)) continue;
         if (guardQuestion(textContent, round, lastRound)) continue;
+      if (guardMissedCase(textContent, round, lastRound)) continue;
+      if (guardHandedCalc(textContent, round, lastRound)) continue;
+      if (guardRedraw(textContent, round, lastRound)) continue;
+      if (guardAheadMath(textContent, round, lastRound)) continue;
+        if (guardMissedCase(textContent, round, lastRound)) continue;
+        if (guardHandedCalc(textContent, round, lastRound)) continue;
+        if (guardRedraw(textContent, round, lastRound)) continue;
+        if (guardAheadMath(textContent, round, lastRound)) continue;
         if (guardGapAnswer(textContent, round, lastRound)) continue;
         if (guardOneQuestion(textContent, round, lastRound)) continue;
         if (guardPoseOnBoard(textContent, round, lastRound)) continue;
@@ -9453,6 +9524,12 @@ export async function chatAboutTask(
             const missing = traceAheadOfStudent(String(input?.text || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), message], [...(opts?.currentBoard || []).filter((e) => e.kind !== "summary").map((e) => e.text), ...(opts?.currentProblems || []).map((p) => p.question)]);
             content = `REJECTED: "How you got there" and "result" entries record only what the STUDENT has actually said or done, and this line contains ${missing.join(", ")} which they never reached — that's a step you'd be taking for them. Write only the steps they've stated (in your own words). If they haven't got there yet, write nothing and ask them the question instead.`;
           }
+          // The tutor must not BUILD the setup equation for them ("x·tan40° = (x+500)·tan25°" appearing out of nowhere is the
+          // tutor doing the work): a worked-out equation piece nobody said and no given contains is refused.
+          else if (opts?.primer && !["given", "focus"].includes(String(input?.kind)) && String(input?.owner) !== "student" && equationAhead(String(input?.text || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), message], ownGivens()).length) {
+            const missing = equationAhead(String(input?.text || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), message], ownGivens());
+            content = `REJECTED: this writes an equation step (${missing.join(", ")}) that the student never reached — building the setup is THEIR work. Don't write it; ask the question that gets them to produce it (e.g. "what ratio links h, the angle and that distance?") and write their line once they say it.`;
+          }
           // Content-level duplicate check — the client can only dedupe by id,
           // and every write gets a fresh UUID, so a re-written formula previously stacked a second visual
           // copy. Checked against BOTH what the student already sees (opts.currentBoard, delivered live
@@ -9469,6 +9546,7 @@ export async function chatAboutTask(
           // Its own smaller cap, separate from WRITE_TO_BOARD's — a figure is heavier to render (SVG, not
           // text) and a turn with several genuine diagrams is already an unusual turn.
           if (result.board.filter((e) => e.kind === "diagram").length >= 3) content = "LIMIT: you've already drawn a few figures this message — that's enough for one turn.";
+          else if (opts?.primer && equationAhead((Array.isArray(input?.ops) ? input.ops : []).filter((o: any) => o?.op === "equation").map((o: any) => String(o?.latex || "")).join(" ; "), [...history.filter((h) => h.role === "user").map((h) => h.text), message], ownGivens()).length) content = "REJECTED: that figure contains an equation step the student never reached — building the setup is THEIR work. Draw the situation without it and ask them to build the equation.";
           // Same answer-leak guard as WRITE_TO_BOARD above — a figure's caption or an equation/label op can
           // state a value just as plainly as prose can.
           else if (leaksAnyProblemAnswer([input?.caption, ...(Array.isArray(input?.ops) ? input.ops.map((o: any) => `${o?.text || ""} ${o?.latex || ""}`) : [])].join(" "), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that figure states a problem's answer outright — redraw it without that value.";
