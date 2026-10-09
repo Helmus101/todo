@@ -18,10 +18,21 @@ export interface QuestionSource { name: string; host: string; tracks: QuestionTr
 export interface SourceQuestion { sourceName: string; url: string; title: string; excerpt: string }
 
 export const QUESTION_SOURCES: QuestionSource[] = [
+  // IB — question banks, mark-scheme sites and teacher-run resource sites (IB's own past papers aren't public).
   { name: "IB Documents", host: "ibdocuments.com", tracks: ["ib"] },
   { name: "Revision Village", host: "revisionvillage.com", tracks: ["ib"] },
+  { name: "Save My Exams", host: "savemyexams.com", tracks: ["ib"] },
+  { name: "IB Maths Resources", host: "ibmathsresources.com", tracks: ["ib"] },
+  { name: "ThinkIB", host: "thinkib.net", tracks: ["ib"] },
+  { name: "IB Academy", host: "ib.academy", tracks: ["ib"] },
+  { name: "Khan Academy", host: "khanacademy.org", tracks: ["ib", "ap"] },
+  // AP — College Board's free-response archive and AP-specific practice sites.
   { name: "AP Central (College Board)", host: "apcentral.collegeboard.org", tracks: ["ap"] },
   { name: "College Board", host: "collegeboard.org", tracks: ["ap"] },
+  { name: "Albert", host: "albert.io", tracks: ["ap"] },
+  { name: "Fiveable", host: "fiveable.me", tracks: ["ap"] },
+  { name: "CrackAP", host: "crackap.com", tracks: ["ap"] },
+  { name: "Save My Exams (AP)", host: "savemyexams.com", tracks: ["ap"] },
 ];
 
 const hostOf = (url: string): string => { try { return new URL(url).hostname.replace(/^www\./, "").toLowerCase(); } catch { return ""; } };
@@ -79,7 +90,7 @@ export function excerptAround(text: string, topic: string, max = 1400): string {
 }
 
 export interface SourceDeps {
-  search: (q: string) => Promise<{ title: string; url: string; snippet: string }[]>;
+  search: (q: string, domains: string[]) => Promise<{ title: string; url: string; snippet: string }[]>;
   fetchPage: (url: string) => Promise<string>;
 }
 
@@ -90,7 +101,7 @@ async function realFetchPage(url: string): Promise<string> {
   if (!r.ok || !/text\/html|text\/plain/i.test(ct)) return "";
   return htmlToText((await r.text()).slice(0, 1_500_000));
 }
-export const realSourceDeps: SourceDeps = { search: webSearch, fetchPage: realFetchPage };
+export const realSourceDeps: SourceDeps = { search: (q, domains) => webSearch(q, { domains }), fetchPage: realFetchPage };
 
 const cache = new Map<string, { at: number; value: SourceQuestion[] }>();
 const CACHE_TTL_MS = 24 * 3600_000;
@@ -111,23 +122,23 @@ export async function findSourceQuestions(
   const out: SourceQuestion[] = [];
   const seen = new Set<string>();
   const run = async () => {
-    for (const src of sources) {
+    // ONE search restricted to every registered host for this track (native includeDomains where the provider
+    // supports it), then walk the results in rank order — a source with nothing simply contributes nothing.
+    const hosts = [...new Set(sources.map((x) => x.host))];
+    let results: { title: string; url: string; snippet: string }[] = [];
+    try { results = await deps.search(`${input.subject || ""} ${topic} practice questions exam`.replace(/\s+/g, " ").trim(), hosts); } catch { return; }
+    for (const r of results.slice(0, 8)) {
       if (out.length >= limit) break;
-      let results: { title: string; url: string; snippet: string }[] = [];
-      try { results = await deps.search(`site:${src.host} ${input.subject || ""} ${topic} questions`.replace(/\s+/g, " ").trim()); } catch { continue; }
-      for (const r of results.slice(0, 4)) {
-        if (out.length >= limit) break;
-        // The search is advisory — re-check the host ourselves so a stray result can never smuggle in a foreign page.
-        const found = r?.url ? sourceForUrl(r.url) : undefined;
-        if (!found || seen.has(r.url) || !sources.some((x) => x.host === found.host)) continue;
-        seen.add(r.url);
-        let page = "";
-        try { page = await deps.fetchPage(r.url); } catch { /* unreachable or blocked — try the next result */ }
-        // A page we can't read (login wall) still has a snippet from the search itself: use that if it's on-topic.
-        const excerpt = excerptAround(page, topic) || excerptAround(`${r.title}. ${r.snippet || ""}`, topic, 600);
-        if (!excerpt) continue;
-        out.push({ sourceName: sourceForUrl(r.url)!.name, url: r.url, title: clamp(String(r.title || ""), 140), excerpt });
-      }
+      // The search is advisory — re-check the host ourselves so a stray result can never smuggle in a foreign page.
+      const found = r?.url ? sourceForUrl(r.url) : undefined;
+      if (!found || seen.has(r.url) || !sources.some((x) => x.host === found.host)) continue;
+      seen.add(r.url);
+      let page = "";
+      try { page = await deps.fetchPage(r.url); } catch { /* unreachable or blocked — fall back to the snippet */ }
+      // A page we can't read (login wall) still has a snippet from the search itself: use that if it's on-topic.
+      const excerpt = excerptAround(page, topic) || excerptAround(`${r.title}. ${r.snippet || ""}`, topic, 600);
+      if (!excerpt) continue;
+      out.push({ sourceName: found.name, url: r.url, title: clamp(String(r.title || ""), 140), excerpt });
     }
   };
   // Hard overall bound: the tutor's whole turn has a latency budget, so a slow source is abandoned, not awaited.
