@@ -9681,6 +9681,12 @@ export async function chatAboutTask(
             const missing = equationAhead(String(input?.text || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), message], ownGivens());
             content = `REJECTED: this writes an equation step (${missing.join(", ")}) that the student never reached — building the setup is THEIR work. Don't write it; ask the question that gets them to produce it (e.g. "what ratio links h, the angle and that distance?") and write their line once they say it.`;
           }
+          // The tutor must not put the METHOD on the board ("tan θ = |m1 − m2| / (1 + m1m2)") before the student reached for it, unless they
+          // asked for help — the board is where their own reasoning goes, not where the tutor hands over the approach.
+          else if (opts?.primer && opts?.policy && opts.policy.maxLevel <= 3 && !wantsHelp(message) && !["given", "focus", "instruction"].includes(String(input?.kind)) && String(input?.owner) !== "student" && methodAhead(String(input?.text || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), message, ...ownGivens()]).length) {
+            const ahead = methodAhead(String(input?.text || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), message, ...ownGivens()]);
+            content = `REJECTED: this writes the method (${ahead.join(", ")}) before the student reached for it. Don't put it up — ask the question that gets THEM to say which relationship connects what they have, then write their idea.`;
+          }
           // Content-level duplicate check — the client can only dedupe by id,
           // and every write gets a fresh UUID, so a re-written formula previously stacked a second visual
           // copy. Checked against BOTH what the student already sees (opts.currentBoard, delivered live

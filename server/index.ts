@@ -13,7 +13,7 @@ import type { CourseworkDoc } from "../shared/coursework.ts";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, FocusSession } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY, subjectMastery } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
-import { planTurn, repairLine, reactionTo } from "./tutorAdapt.ts";
+import { planTurn, repairLine, reactionTo, onTopic } from "./tutorAdapt.ts";
 import { diffBoard, recordBoardEvents, objectiveEvents, problemEvents, tagStudentAnswer, selfCorrections } from "./boardEvents.ts";
 import { buildTutorDecision, recordTutorDecision } from "./actionSpace.ts";
 import { loadOrInitSessionState, persistSessionState } from "./sessionState.ts";
@@ -1787,6 +1787,12 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     );
     // The student's own step, as the model transcribed it from what they said, lands on the board as THEIR work
     // (owner student, marked correct/incorrect) — the board is shared paper, not Otto's notebook (spec §10/§11).
+    // ...but only when it is actually about the lesson. Chatter ("Gary left avocado on the ground") is not a step: it must never be
+    // written up as their work or counted as evidence about what they know.
+    if (req.body?.primer === true && out.plan?.studentStep) {
+      const ctx = [t.title || "", t.sourceSubject || "", ...currentBoard.map((e: { text: string }) => e.text), ...(req.body?.problems || []).map((p: any) => String(p?.question || "")), ...history.filter((h) => h.role === "assistant").slice(-3).map((h) => h.text)];
+      if (!onTopic(out.plan.studentStep.text, ctx) && !onTopic(message, ctx)) { delete out.plan.studentStep; delete out.plan.evidence; }
+    }
     if (req.body?.primer === true && out.plan?.studentStep && !out.guardrailTripped) {
       const se = studentStepEntry(out.plan, turnNow, out.plan.concept);
       const norm = (x: string) => x.toLowerCase().replace(/[\s$]/g, "");

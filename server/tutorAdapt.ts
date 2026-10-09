@@ -590,3 +590,16 @@ export function methodAhead(reply: string, said: string[]): string[] {
   }
   return [...out];
 }
+
+// ---- Off-topic messages never become "student work" ----
+/** Does what the student said have anything to do with the problem/lesson in play? Math content (digits, operators,
+ *  degrees) always counts; otherwise it must share a real word with the problem, the board or what Otto just asked.
+ *  "Gary left avocado on the ground" shares nothing → it is chatter, not a step. */
+export function onTopic(text: string, context: string[]): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (/\d|=|[+×*/^√π∫°]|\b(?:equals?|plus|minus|times|over|divided|squared|slope|angle|sin|cos|tan|log|root|sum|value)\b/i.test(t)) return true;
+  const words = (s: string) => new Set((s.toLowerCase().match(/[a-zà-ÿ]{4,}/g) || []).filter((w) => !GROUND_STOP.has(w)));
+  const ctx = words(context.join(" "));
+  return [...words(t)].some((w) => ctx.has(w) || [...ctx].some((c) => c.length >= 6 && w.length >= 6 && c.slice(0, 6) === w.slice(0, 6)));
+}
