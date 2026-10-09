@@ -7,7 +7,7 @@ import { COURSEWORK_MAX_CHARS, courseworkForSubject, sameSubject } from "../shar
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { buildGeometry } from "../shared/geometry.ts";
-import { studentProblemStatement, boardCoversStatement, equationAhead, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
+import { studentProblemStatement, boardCoversStatement, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -8826,7 +8826,7 @@ export async function chatAboutTask(
     boardIntegrationBlock +
     contextAwarenessBlock +
     dynamicContext +
-    `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}${boardBlock}${trajectoryBlock}${sessionBlock}${opts?.primer && opts?.policy && opts?.sessionState ? tutorPolicyBlock(opts.policy, opts.sessionState) : ""}${opts?.primer ? caseTrapBlock(pendingCaseTraps(message, history)) : ""}${objectivesBlock}` +
+    `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}${boardBlock}${trajectoryBlock}${sessionBlock}${opts?.primer && opts?.policy && opts?.sessionState ? tutorPolicyBlock(opts.policy, opts.sessionState) : ""}${opts?.primer ? caseTrapBlock(pendingCaseTraps(message, history)) : ""}${opts?.primer && isDrawingTurn(message) ? DRAWING_TURN_BLOCK : ""}${objectivesBlock}` +
     assignmentBlock(task, tzOf(profile)) + profileBlock(profile) + academicBlock(academic) + materialsBlock(opts?.materials) +
     PRIMER_CLOSING_REMINDER;
   // 10, not the whole thread: every one of these is resent verbatim on every turn AND every intra-turn
@@ -9084,6 +9084,17 @@ export async function chatAboutTask(
       console.log(`${new Date().toISOString()} [chat] round ${round}: reply states an equation step the student never reached — asking for the setup instead`);
       messages.push({ role: "assistant", content: draft });
       messages.push({ role: "user", content: "That reply writes out an equation (or refers to one) that the student never wrote — the setup is THEIR work. Rewrite it without that equation: ask the question that gets them to build it themselves (which relationship links the quantities, what each side stands for), and nothing more." });
+      return true;
+    };
+    // The student showed a drawing: comment AND redraw it cleaner. If the reply came back with no figure, one corrective round.
+    let redrawFixed = false;
+    const guardRedraw = (draft: string, round: number, lastRound: boolean): boolean => {
+      if (!opts?.primer || redrawFixed || lastRound || result.guardrailTripped || !isDrawingTurn(message) || !drawingLooksSpatial(message)) return false;
+      if (result.board.some((e) => e.kind === "diagram" || e.kind === "graph")) return false;
+      redrawFixed = true;
+      console.log(`${new Date().toISOString()} [chat] round ${round}: the student showed a drawing but nothing was redrawn — asking for the cleaner redraw`);
+      messages.push({ role: "assistant", content: draft });
+      messages.push({ role: "user", content: "They showed you a drawing and you haven't redrawn it. Call GEOMETRY_ON_BOARD (triangles/circles/angles) or DRAW_ON_BOARD (anything else) NOW to redraw THEIR drawing cleaner — same shapes, labels and numbers, nothing added — then reply with a one- or two-sentence comment on it and ONE question." });
       return true;
     };
     // A multi-solution trap (SSA ambiguous triangle, trig equation's second solution, ±) that nobody raised, while the
@@ -9417,9 +9428,11 @@ export async function chatAboutTask(
         if (guardQuestion(textContent, round, lastRound)) continue;
       if (guardMissedCase(textContent, round, lastRound)) continue;
       if (guardHandedCalc(textContent, round, lastRound)) continue;
+      if (guardRedraw(textContent, round, lastRound)) continue;
       if (guardAheadMath(textContent, round, lastRound)) continue;
         if (guardMissedCase(textContent, round, lastRound)) continue;
         if (guardHandedCalc(textContent, round, lastRound)) continue;
+        if (guardRedraw(textContent, round, lastRound)) continue;
         if (guardAheadMath(textContent, round, lastRound)) continue;
         if (guardGapAnswer(textContent, round, lastRound)) continue;
         if (guardOneQuestion(textContent, round, lastRound)) continue;

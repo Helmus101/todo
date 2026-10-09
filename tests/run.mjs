@@ -4,7 +4,7 @@ import { recencyStamp, dedupeTasks, foldGenerated, applyProfileUpdate, mergeTask
 import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, shouldNudgeBoardContent, mathInPlay, newMathOffBoard, replyIntroducesNewMath, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem, makeProblem, detectLang, visionReady, describeWhiteboard, academicBlock, sessionRecapLine } from "../server/claude.ts";
 import { sourcesForTrack, sourceForUrl, cleanProblemSource, excerptAround, findSourceQuestions } from "../server/questionSources.ts";
 import { normalizeWidget, shuffledNotSolved, projectileStats } from "../shared/widgets.ts";
-import { studentProblemStatement, boardCoversStatement, pendingCaseTraps, closesWithMissedCase, handsOverCalculation, equationAhead, caseTrapBlock } from "../server/tutorAdapt.ts";
+import { studentProblemStatement, boardCoversStatement, pendingCaseTraps, closesWithMissedCase, handsOverCalculation, equationAhead, caseTrapBlock, isDrawingTurn, drawingLooksSpatial } from "../server/tutorAdapt.ts";
 import { webSearch, rankResults } from "../server/websearch.ts";
 import { evaluateArithmetic, parseNumber, findArithmeticClaims, hasArithmetic } from "../server/arithmetic.ts";
 import { isLikelyEcho, createEchoFilter, normalizeForEcho } from "../client/voice/echoGuard.ts";
@@ -191,7 +191,7 @@ section("Whiteboard — invited any time, read in board context, infinite blank 
     /Board context UNDER the ink/.test(canvasSrc) &&
     canvasSrc.indexOf("Board context UNDER the ink") < canvasSrc.indexOf("f.drawImage(c, sx \* dpr"));
   check("the ink page always keeps a big blank area under the last entry, and never sizes below its own ink",
-    /const blank = Math\.max\(400, Math\.round\(surf\.clientHeight \* 0\.6\)\)/.test(canvasSrc) &&
+    /const blank = Math\.max\(520, Math\.round\(surf\.clientHeight\)\)/.test(canvasSrc) &&
     /inkBottom\(\) \+ 240/.test(canvasSrc));
   check("a stroke reaching the bottom edge EXTENDS the page instead of hitting a wall (infinite canvas)",
     /y > size\.current\.h - 200\) fit\(\)/.test(canvasSrc));
@@ -1837,6 +1837,9 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     check("board coverage recognises a statement already up there", boardCoversStatement("find a = 35 cm, b = 50 cm, A = 30°", ["Triangle ABC: $a=35$ cm, $b=50$ cm, $A=30^\\circ$"]) && !boardCoversStatement("find a = 35 cm, b = 50 cm, A = 30°", ["something else entirely 7"])); }
   check("writing the calculation for them is caught; echoing theirs is not", handsOverCalculation("Obtuse B₂ = 180° - 45.6° What does that second angle come out to?", "isn't there another case too") && handsOverCalculation("50 × 0.5 / 35 = 25/35. What does that fraction simplify to?", "hmm") && !handsOverCalculation("You said 180 - 45.6 — what does that give?", "so 180 - 45.6 is what I do") && !handsOverCalculation("Which other angle has the same sine?", "another case?"));
   check("a setup equation the student never wrote is caught; the student's own and general formulas pass", equationAhead("x tan(40°) = (x + 500) tan(25°)", ["we label BJ as k"], ["470 + h", "angles of depression 25 and 40"]).length > 0 && equationAhead("$\\frac{a}{\\sin A} = \\frac{b}{\\sin B}$", [], []).length === 0 && equationAhead("tan 25° = (470+h)/BJ", ["tan 25 equals 470 + h over BJ"], []).length === 0);
+  check("a shown drawing is recognised (both the Show-Otto and auto-read formats) and spatial ones are redrawn", isDrawingTurn("Here's what I drew: a triangle") && isDrawingTurn("x\n\n[What I wrote/drew on the board: a diagram]") && !isDrawingTurn("hello") && drawingLooksSpatial("Here's what I drew: a triangle with an angle") && !drawingLooksSpatial("Here's what I drew: 2x + 3 = 7"));
+  { const tc2 = readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8"); const be = readFileSync(new URL("../server/boardEvents.ts", import.meta.url), "utf8");
+    check("whiteboard: a full blank page under the lesson, and Otto's figures are rasterised into what Otto is shown", /tc-page/.test(tc2) && /Math\.max\(520, Math\.round\(surf\.clientHeight\)\)/.test(tc2) && /svg\.sm-board-diagram/.test(tc2) && /figureSummary/.test(be)); }
   check("board is flat: plain lines, no section numbers or boxes", /sm-board-line/.test(boardSrc) && !/sm-board-section-num/.test(boardSrc));
   check("kind:\"summary\" renders as an ordinary line — no trace box, no heading, no category", !/ReasoningTrace|sm-board-trace/.test(boardSrc));
   check("a deliberately unfinished worked line gets an 'à toi de finir' completion chip (completion effect, visible)", /isCompletionGap/.test(boardSrc) && /sm-board-todo-chip/.test(boardSrc));

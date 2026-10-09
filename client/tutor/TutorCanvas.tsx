@@ -73,6 +73,7 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
   const [typing, setTyping] = useState<{ x: number; y: number; value: string } | null>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState<{ top: number; height: number } | null>(null);
   const textRef = useRef<HTMLInputElement>(null);
 
   const repaint = useCallback(() => {
@@ -106,11 +107,13 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
     const w = surf.clientWidth;
     if (!w) return; // hidden (Desmos open) — keep the old size, repaint on return
     const board = surf.firstElementChild as HTMLElement | null;
-    const blank = Math.max(400, Math.round(surf.clientHeight * 0.6));
+    // A FULL blank page under the lesson (a whole pane tall): scroll down and there is clean paper to draw on.
+    const blank = Math.max(520, Math.round(surf.clientHeight));
     const h = Math.max(surf.clientHeight, board ? board.offsetTop + board.offsetHeight + blank : 0, inkBottom() + 240);
     if (Math.abs(size.current.w - w) < 0.5 && Math.abs(size.current.h - h) < 0.5) return;
     const dpr = window.devicePixelRatio || 1;
     size.current = { w, h };
+    setPage(board ? { top: board.offsetTop + board.offsetHeight, height: blank } : null);
     c.style.height = `${h}px`;
     c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
     repaint();
@@ -238,6 +241,25 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
         if (printed >= 12) break;
       }
     }
+    // Otto's own FIGURES (a drawn diagram, a graph, an activity's picture) under the ink too — when the student circles
+    // or comments on something Otto drew, the vision read has to see that figure, not just the words around it.
+    const figs = Array.from(surface?.querySelectorAll<SVGSVGElement>("svg.sm-board-diagram, .sm-widget svg") ?? []);
+    for (const svg of figs) {
+      const r = svg.getBoundingClientRect();
+      if (!r.width || !r.height) continue;
+      const ex = r.left - canvasRect.left, ey = r.top - canvasRect.top;
+      if (ex + r.width < sx || ey + r.height < sy || ex > sx + sw || ey > sy + sh) continue;
+      try {
+        const clone = svg.cloneNode(true) as SVGSVGElement;
+        clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+        clone.setAttribute("width", String(Math.round(r.width))); clone.setAttribute("height", String(Math.round(r.height)));
+        clone.style.color = "#18181B";
+        const url = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(new XMLSerializer().serializeToString(clone).replace(/currentColor/g, "#18181B").replace(/var\(--[a-z0-9-]+\)/gi, "#18181B"));
+        const img = new Image();
+        await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = () => rej(new Error("svg")); img.src = url; });
+        f.drawImage(img, (ex - sx) * dpr * scale, (ey - sy) * dpr * scale, r.width * dpr * scale, r.height * dpr * scale);
+      } catch { /* a figure that won't rasterise is skipped — the text around it is still painted */ }
+    }
     f.drawImage(c, sx * dpr, sy * dpr, sw * dpr, sh * dpr, 0, 0, flat.width, flat.height);
     const { description } = await api.readWhiteboard(flat.toDataURL("image/png"));
     seenStamp.current = inkStamp.current;
@@ -273,6 +295,11 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
     <>
       {surface && createPortal(
         <>
+          {page && !hidden && (
+            <div className="tc-page" style={{ top: page.top, height: page.height }} aria-hidden>
+              <span>{L("Ta page — dessine ici, puis « Montrer à Otto »", "Your page — draw here, then “Show Otto”")}</span>
+            </div>
+          )}
           <canvas
             ref={canvasRef}
             className={`tc-canvas tool-${tool}`}

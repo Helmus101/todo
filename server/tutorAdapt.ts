@@ -476,3 +476,20 @@ export function equationAhead(text: string, studentTexts: string[], givens: stri
   const said = norm([...studentTexts, ...givens].join(" \n ")).replace(/[()]/g, "");
   return [...pieces].filter((p) => !said.includes(p));
 }
+
+// ---- The student shows Otto a drawing ----
+const DRAWING_MARKER = /Here's what I drew:|Voici ce que j['’]ai dessiné|What I wrote\/drew on the board:|Ce que j['’]ai écrit\/dessiné/i;
+/** The message carries a read of the student's whiteboard drawing (the "Show Otto" button, or ink read automatically). */
+export function isDrawingTurn(message: string): boolean { return DRAWING_MARKER.test(message); }
+/** Does the drawing look spatial (a figure worth redrawing) rather than just handwriting? */
+export function drawingLooksSpatial(message: string): boolean {
+  return /\b(?:diagram|triangle|circle|line|lines|axis|axes|graph|sketch|shape|angle|arrow|rectangle|square|polygon|figure|vector|curve|cliff|vertical|horizontal|schéma|triangle|cercle|droite|axe|courbe)\b/i.test(message);
+}
+/** System-prompt block for a turn where the student showed a drawing. */
+export const DRAWING_TURN_BLOCK = `
+
+THE STUDENT JUST SHOWED YOU A DRAWING (the text after "Here's what I drew" is a vision read of their whiteboard — it may mis-transcribe; trust the labels and numbers you can cross-check against the board). Do exactly this, in ONE reply:
+1. COMMENT on it first, in one or two short sentences: say what is genuinely right about it (be specific — "you've put the 470 on the vertical side"), and if something looks off or missing, raise it as a QUESTION, never a correction.
+2. Then REDRAW THE SAME THING, cleaner and clearer, with GEOMETRY_ON_BOARD (any triangle/circle/polygon/angles) or DRAW_ON_BOARD (everything else): the same shapes, the same labels, the same numbers, the same layout — only neater (straight lines, correct proportions, readable labels, right angles marked). Add NOTHING they didn't draw: no solved values, no extra construction, no next step. If part of their drawing is doubtful, draw it as they drew it and ask about it.
+3. End with ONE short question about the next step. The board also shows what you drew earlier (listed above) — if they were commenting on one of YOUR figures, use what is on the board together with their marks.
+`;

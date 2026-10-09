@@ -415,6 +415,15 @@ export async function runTutorSim(check, section) {
     r = await run("we label BJ as k", { history: [{ role: "user", text: "two boats 500 m apart, angles of depression 25 and 40, cliff 470 m" }, { role: "assistant", text: "ok" }] });
     check("end to end: the tutor can't write the setup equation the student never built", !r.boardAll.some((e) => /tan\(40/.test(e.text)));
   }
+  // The student shows a drawing: comment + a cleaner redraw (even if the model first forgets the redraw)
+  {
+    const drawn = "my diagram\n\nHere's what I drew: a right triangle with a vertical side marked 470, angle 25 at the bottom left and a horizontal line labelled 500";
+    script = (b, i) => i === 0 ? { content: "Nice — you put the 470 on the vertical side. What does the 25° tell you about the angle at the top?" }
+      : i === 1 ? { content: "", tool_calls: [tc("GEOMETRY_ON_BOARD", { caption: "Your sketch, cleaned up", triangle: { names: ["A", "B", "C"], sides: [3, 4, 5] }, angles: [{ at: "C", from: "A", to: "B", right: true }] })] }
+      : { content: "Nice — you put the 470 on the vertical side. What does the 25° tell you about the angle at the top?" };
+    r = await run(drawn, { history: [{ role: "user", text: "two boats" }, { role: "assistant", text: "ok" }] });
+    check("end to end: a shown drawing gets the system block and is redrawn on the board even if the first reply forgot", /THE STUDENT JUST SHOWED YOU A DRAWING/.test(String(calls[0].messages[0].content)) && r.boardAll.some((e) => e.kind === "diagram") && /\?/.test(r.reply));
+  }
   // ANNOTATE_BOARD — Otto points at an existing entry instead of explaining the mistake in chat
   {
     const board = [{ id: "e1", kind: "given", text: "A block on a 30° slope", at: "" }, { id: "e2", kind: "result", owner: "student", status: "incorrect", text: "N = mg", at: "" }];

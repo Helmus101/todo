@@ -7517,3 +7517,8 @@ mark.otto-mark { background: linear-gradient(transparent 12%, color-mix(in srgb,
 .tutor-review-body { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
 .tutor-review-body .tutor-chat-history { max-height: none; padding: 20px; }
 .tutor-review-empty { padding: 32px; text-align: center; color: var(--ink-2); }
+
+/* The blank page under the lesson (tutor whiteboard): clean ruled paper, a whole pane tall. */
+.tc-page { position: absolute; left: 0; right: 0; z-index: 1; border-top: 1px dashed var(--line); pointer-events: none;
+  background-image: repeating-linear-gradient(to bottom, transparent 0, transparent 31px, color-mix(in srgb, var(--line) 70%, transparent) 31px, color-mix(in srgb, var(--line) 70%, transparent) 32px); }
+.tc-page > span { position: absolute; top: 8px; left: 14px; font-size: .8rem; color: var(--ink-3, #8a867b); }
