@@ -200,6 +200,9 @@ export interface TutorSessionStateShape {
   minutes?: number;
   /** The model's last plan, so the next turn can check "did what I expected happen?". */
   lastPlan?: { action: string; why?: string; expectedNext?: string; diagnosis?: string };
+  /** The tutor's running LEDGER for the problem in play: facts it has verified ("TRUE: …") and student claims it has
+   *  judged wrong ("WRONG: …"). Fed back every turn so a verdict is never silently contradicted. */
+  ledger?: string[];
 }
 
 export const SESSION_CAP = 8;

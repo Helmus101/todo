@@ -435,6 +435,12 @@ export async function runTutorSim(check, section) {
     r = await run("draw it again", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
     check("end to end: a non-SVG call is bounced and the retry lands", r.boardAll.filter((e) => e.kind === "svg").length === 1);
   }
+  // The tutor must not compute the student's step for them ("Spot on — 40° − 25° = 15°")
+  {
+    script = (b, i) => i === 0 ? { content: "Spot on — 40° - 25° = 15° for that top angle. How can you use the sine rule now?" } : { content: "Yes, the angle at J on the ground is 25°. What does that make the angle at the top between the two sightlines?" };
+    r = await run("wait without setting tangent ratio we now know that the angle J is 25 degrees right", { history: [{ role: "user", text: "two boats 500 m apart, angles of depression 25 and 40 degrees, cliff 470 m" }, { role: "assistant", text: "ok" }] });
+    check("end to end: a reply that computes the student's step is rewritten into a question", !/15°/.test(r.reply) && /\?/.test(r.reply));
+  }
   // ANNOTATE_BOARD — Otto points at an existing entry instead of explaining the mistake in chat
   {
     const board = [{ id: "e1", kind: "given", text: "A block on a 30° slope", at: "" }, { id: "e2", kind: "result", owner: "student", status: "incorrect", text: "N = mg", at: "" }];
