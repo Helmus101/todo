@@ -195,7 +195,7 @@ section("Whiteboard — invited any time, read in board context, infinite blank 
     /Board context UNDER the ink/.test(canvasSrc) &&
     canvasSrc.indexOf("Board context UNDER the ink") < canvasSrc.indexOf("f.drawImage(c, sx \* dpr"));
   check("the ink page always keeps a big blank area under the last entry, and never sizes below its own ink",
-    /const blank = Math\.max\(520, Math\.round\(surf\.clientHeight\)\)/.test(canvasSrc) &&
+    /const blank = 120;/.test(canvasSrc) &&
     /inkBottom\(\) \+ 240/.test(canvasSrc));
   check("a stroke reaching the bottom edge EXTENDS the page instead of hitting a wall (infinite canvas)",
     /y > size\.current\.h - 200\) fit\(\)/.test(canvasSrc));
@@ -1843,7 +1843,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   check("a setup equation the student never wrote is caught; the student's own and general formulas pass", equationAhead("x tan(40°) = (x + 500) tan(25°)", ["we label BJ as k"], ["470 + h", "angles of depression 25 and 40"]).length > 0 && equationAhead("$\\frac{a}{\\sin A} = \\frac{b}{\\sin B}$", [], []).length === 0 && equationAhead("tan 25° = (470+h)/BJ", ["tan 25 equals 470 + h over BJ"], []).length === 0);
   check("a shown drawing is recognised (both the Show-Otto and auto-read formats) and spatial ones are redrawn", isDrawingTurn("Here's what I drew: a triangle") && isDrawingTurn("x\n\n[What I wrote/drew on the board: a diagram]") && !isDrawingTurn("hello") && drawingLooksSpatial("Here's what I drew: a triangle with an angle") && !drawingLooksSpatial("Here's what I drew: 2x + 3 = 7"));
   { const tc2 = readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8"); const be = readFileSync(new URL("../server/boardEvents.ts", import.meta.url), "utf8");
-    check("whiteboard: a full blank page under the lesson, and Otto's figures are rasterised into what Otto is shown", /tc-page/.test(tc2) && /Math\.max\(520, Math\.round\(surf\.clientHeight\)\)/.test(tc2) && /svg\.sm-board-diagram/.test(tc2) && /figureSummary/.test(be)); }
+    check("whiteboard: no big dead space under the lesson (a small margin that grows with the ink), and Otto's figures are rasterised into what Otto is shown", !/tc-page/.test(tc2) && /const blank = 120;/.test(tc2) && /svg\.sm-board-diagram/.test(tc2) && /figureSummary/.test(be)); }
   // ── Auto-laid-out concept diagrams (no KaTeX, no model coordinates) ──
   { const f = normalizeFlow({ type: "flow", nodes: [{ id: "a", label: "Start" }, { id: "b", label: "Decide", shape: "diamond" }, { id: "c", label: "Yes path" }, { id: "d", label: "No path" }, { id: "e", label: "End" }], edges: [{ from: "a", to: "b" }, { from: "b", to: "c", label: "yes" }, { from: "b", to: "d", label: "no" }, { from: "c", to: "e" }, { from: "d", to: "e" }, { from: "e", to: "b" }] });
     const L = layoutFlow(f.flow);
@@ -1870,6 +1870,8 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   check("the tutor computing a step for the student is caught; echoing the student's own value is not", arithmeticAhead("Spot on — 40° - 25° = 15° for that top angle.", ["the angle J is 25 right"], ["angles of depression 25 and 40"]).length === 1 && arithmeticAhead("You said 15° — so 40° - 25° = 15° checks out.", ["I get 15 degrees"], []).length === 0);
   { const bt = readFileSync(new URL("../server/tutorBrain.ts", import.meta.url), "utf8");
     check("the plan carries a LEDGER the tutor keeps consistent (verify before speaking)", /"ledger":\[/.test(bt) && /VERIFY BEFORE YOU SPEAK/.test(bt) && /YOUR LEDGER for this problem/.test(bt) && /plan\.ledger = l/.test(bt)); }
+  { const bd = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+    check("figures contain no KaTeX: equation ops and equation-only figures are plain text, and figures crop to their content", !/<Equation key=\{i\} latex=\{op\.latex\}/.test(bd) && !/foreignObject/.test(bd.slice(bd.indexOf("function DiagramOpSVG"), bd.indexOf("function ProblemBlock") > 0 ? bd.indexOf("function ProblemBlock") : undefined)) && /opsViewBox\(e\.diagram\)/.test(bd) && /latexToPlain/.test(bd)); }
   check("board is flat: plain lines, no section numbers or boxes", /sm-board-line/.test(boardSrc) && !/sm-board-section-num/.test(boardSrc));
   check("kind:\"summary\" renders as an ordinary line — no trace box, no heading, no category", !/ReasoningTrace|sm-board-trace/.test(boardSrc));
   check("a deliberately unfinished worked line gets an 'à toi de finir' completion chip (completion effect, visible)", /isCompletionGap/.test(boardSrc) && /sm-board-todo-chip/.test(boardSrc));

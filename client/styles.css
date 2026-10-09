@@ -6031,11 +6031,10 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .sm-board-diagram {
   display: block;
   width: 100%;
-  aspect-ratio: 800 / 600;
+  height: auto;
+  max-height: 70vh;
   color: var(--ink);
   background: transparent;
-  border: 1px solid var(--line);
-  border-radius: 2px;
 }
 /* Phone-only read-only task view (TaskReadOnly, client/TaskCard.tsx) — a task you can read, not work on.
    Intentionally plain: no cards, no affordances that look tappable, since nothing here is. */
