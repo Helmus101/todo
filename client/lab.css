@@ -220,3 +220,12 @@ h1 { font-family: var(--display); font-weight: 400; letter-spacing: -0.025em; }
 .sm-widget-slider input { width: 100%; }
 .sm-widget-readout { display: flex; flex-direction: column; gap: 4px; font-variant-numeric: tabular-nums; }
 .sm-widget-link { align-self: flex-start; background: none; border: 0; padding: 0; color: var(--ink-3, #8a867b); text-decoration: underline; cursor: pointer; font: inherit; font-size: .85rem; }
+
+/* Room reserved for a drawing the student made on the blank page — Otto's next lines come after it. */
+.sm-board-sheet { width: 100%; pointer-events: none; }
+
+.tutor-fs-btn { margin-left: auto; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--ink); cursor: pointer; }
+.tutor-fs-btn:hover { border-color: var(--accent); }
+
+.sm-svgfig { width: 100%; max-width: 640px; margin: 6px 0 14px; color: var(--ink); }
+.sm-svgfig svg { width: 100%; height: auto; display: block; font-family: Inter, system-ui, sans-serif; }

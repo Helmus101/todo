@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import katex from "katex";
 import type { WebTask, BoardEntry, TaskProblem, DiagramOp } from "../../../shared/types.ts";
 import { practiceAnswerMatches } from "../../../shared/types.ts";
 import { autoMathLine } from "../../../shared/mathText.ts";
 import { GraphBlock } from "./GraphBlock.tsx";
 import { FlowDiagram } from "./FlowDiagram.tsx";
+import { sanitizeSvg } from "../../../shared/svgSafe.ts";
 import { WidgetBlock, type WidgetResult } from "./WidgetBlock.tsx";
 import { renderChatText, useLang, FirstTimeHint, stripStrayMarkdown, formatMath, boldify } from "../../ui.tsx";
 
@@ -27,6 +28,9 @@ interface BoardArtifactProps {
   onProblemResult?: (r: { problem: TaskProblem; given: string; correct: boolean; attempt: number }) => void;
   /** Tutor only — a match / order / sort activity was finished (how many slips), so Otto can react to it. */
   onWidgetResult?: (r: WidgetResult) => void;
+  /** Tutor only — each bump reserves `height` px of blank space right after the board's CURRENT last item: the
+   *  student drew on the blank page below, and whatever Otto writes next must land AFTER that drawing. */
+  sheetSignal?: { n: number; height: number };
 }
 
 const KIND_LABEL: Record<string, [string, string]> = {
@@ -440,7 +444,7 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
  *  and practice problems. ONE DOCUMENT, ONE FLOW: entries and problems interleave in the order the session
  *  actually produced them (a problem sits between the formula it exercises and the insight answering it —
  *  the lesson's story, not a problem section pinned on top). kind:"focus" stays pinned above as the heading. */
-export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult }: BoardArtifactProps) {
+export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, sheetSignal }: BoardArtifactProps) {
   const L = useLang();
   const endRef = useRef<HTMLDivElement>(null);
   const entries = task.board || [];
@@ -490,9 +494,22 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entries.length, problems.length]);
 
+  // Sheets: blank room kept for a drawing the student made BELOW the board, so Otto's next writes come after it.
+  const [sheets, setSheets] = useState<{ id: number; afterKey: string | null; height: number }[]>([]);
+  const lastSheetN = useRef(0);
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "nearest" });
-  }, [entries.length, problems.length]);
+    if (!sheetSignal || sheetSignal.n === lastSheetN.current || sheetSignal.height <= 0) return;
+    lastSheetN.current = sheetSignal.n;
+    const afterKey = flowItems.length ? flowItems[flowItems.length - 1].key : null;
+    setSheets((prev) => [...prev, { id: sheetSignal.n, afterKey, height: sheetSignal.height }]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sheetSignal?.n]);
+
+  // Default position: all the way down to the END of the board (the newest line) — the blank page for drawing is one
+  // more page below that, reached by scrolling, never the place the board opens on.
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+  }, [entries.length, problems.length, sheets.length]);
 
   // "Ink reveal" — an entry that just arrived writes itself onto the page (clip-path wipe, duration scaled
   // to how much text there is) instead of popping in fully formed, the "watching it actually get written"
@@ -619,8 +636,9 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult }
           Every step stays visible: an earlier version collapsed everything but the last four behind a
           show/hide disclosure, but the board is a lesson document — hiding the working is the opposite of
           what a student needs when they scroll back to see how they got here. */}
+      {sheets.filter((sh) => sh.afterKey === null).map((sh) => <div key={`sheet-${sh.id}`} className="sm-board-sheet" style={{ height: sh.height }} aria-hidden />)}
       {flowItems.map((item, idx) => {
-        return item.problem ? (
+        const node = item.problem ? (
           <ProblemBlock
             key={item.key}
             fresh={isFreshlyWritten(item.key)}
@@ -699,6 +717,12 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult }
                   <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>
                   <GraphBlock spec={e.graph} />
                 </>
+              ) : e.kind === "svg" && e.svg ? (
+                <>
+                  <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>
+                  {/* sanitised again on render (defence in depth): stored entries can come back from the cloud/local cache */}
+                  <div className="sm-svgfig" role="img" aria-label={e.text} dangerouslySetInnerHTML={{ __html: sanitizeSvg(e.svg) }} />
+                </>
               ) : e.kind === "flow" && e.flow ? (
                 <>
                   <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>
@@ -725,7 +749,8 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult }
               </div>
             </div>
           );
-        })()
+        })();
+        return <Fragment key={item.key}>{node}{sheets.filter((sh) => sh.afterKey === item.key).map((sh) => <div key={`sheet-${sh.id}`} className="sm-board-sheet" style={{ height: sh.height }} aria-hidden />)}</Fragment>;
       })}
 
       {/* The live drafting indicator — while the tutor's reply is being generated the document shows its

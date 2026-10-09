@@ -55,6 +55,10 @@ export interface TutorCanvasHandle {
   readUnseenInk: (force?: boolean) => Promise<string | null>;
   /** True when the page has any ink at all (seen or not). */
   hasInk: () => boolean;
+  /** Ink the student drew on the blank page BELOW the board that hasn't been "frozen" into the board's flow yet:
+   *  returns the height (px) of the sheet to keep for it, or 0. After this call the board makes room for it, so
+   *  whatever Otto writes next lands AFTER the drawing instead of on top of it. */
+  freezeSheet: () => number;
 }
 
 export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean; hidden: boolean; surface: HTMLElement | null; onDesmos: () => void }>(function TutorCanvas({ visionReady, hidden, surface, onDesmos }, handleRef) {
@@ -243,7 +247,7 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
     }
     // Otto's own FIGURES (a drawn diagram, a graph, an activity's picture) under the ink too — when the student circles
     // or comments on something Otto drew, the vision read has to see that figure, not just the words around it.
-    const figs = Array.from(surface?.querySelectorAll<SVGSVGElement>("svg.sm-board-diagram, svg.sm-flow, .sm-widget svg") ?? []);
+    const figs = Array.from(surface?.querySelectorAll<SVGSVGElement>("svg.sm-board-diagram, svg.sm-flow, .sm-svgfig svg, .sm-widget svg") ?? []);
     for (const svg of figs) {
       const r = svg.getBoundingClientRect();
       if (!r.width || !r.height) continue;
@@ -267,6 +271,15 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
   };
   useImperativeHandle(handleRef, () => ({
     hasUnseenInk: () => visionReady && !!canvasRef.current && items.current.some((i) => i.kind === "text" || i.tool !== "eraser") && inkStamp.current !== seenStamp.current,
+    freezeSheet: () => {
+      const surf = surface, board = surf?.firstElementChild as HTMLElement | null;
+      if (!surf || !board) return 0;
+      const boardBottom = board.offsetTop + board.offsetHeight;
+      const bottom = inkBottom();
+      if (bottom <= boardBottom + 8) return 0;
+      const h = Math.round(bottom - boardBottom + 32);
+      return h;
+    },
     hasInk: () => !!canvasRef.current && items.current.some((i) => i.kind === "text" || i.tool !== "eraser"),
     // `force`: the student explicitly asked Otto to look, so re-read even ink Otto has already seen.
     readUnseenInk: async (force?: boolean) => {

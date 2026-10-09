@@ -1592,7 +1592,7 @@ export interface BoardEntry {
    *  (see `outline`) — for essay-based/humanities content (history causes, source analysis, an essay plan)
    *  where a flat sentence or a spatial diagram both fit poorly; math/science still reach for
    *  formula/diagram first. */
-  kind?: "note" | "instruction" | "given" | "result" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "interactive" | "graph" | "widget" | "flow" | "gap" | "annotation";
+  kind?: "note" | "instruction" | "given" | "result" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "interactive" | "graph" | "widget" | "flow" | "svg" | "gap" | "annotation";
   /** Who authored this entry — "otto" (default for backward compat) or "student". Student-owned entries are
    *  never silently rewritten by Otto. Used to visually distinguish Otto's scaffolding from the student's
    *  own work on the board (see BoardArtifact.tsx). */
@@ -1629,6 +1629,8 @@ export interface BoardEntry {
   widget?: WidgetSpec;
   /** Present only when kind === "flow" (FLOW_ON_BOARD) — an auto-laid-out flowchart / cycle / timeline. */
   flow?: FlowSpec;
+  /** Present only when kind === "svg" (SVG_ON_BOARD) — a sanitised model-authored SVG diagram (shared/svgSafe.ts). */
+  svg?: string;
   /** Present only when kind === "outline" — one or more headed sections, each a short list of bullet
    *  points. Built for a history/essay-style board (causes-of-an-event, a source's key points, an essay's
    *  section-by-section plan) the same way `diagram` is built for a geometric figure: structure the model
