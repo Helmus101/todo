@@ -5,6 +5,7 @@ import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningS
 import { sourcesForTrack, sourceForUrl, cleanProblemSource, excerptAround, findSourceQuestions } from "../server/questionSources.ts";
 import { normalizeWidget, shuffledNotSolved, projectileStats } from "../shared/widgets.ts";
 import { studentProblemStatement, boardCoversStatement, pendingCaseTraps, closesWithMissedCase, handsOverCalculation, equationAhead, caseTrapBlock, isDrawingTurn, drawingLooksSpatial } from "../server/tutorAdapt.ts";
+import { sanitizeSvg, svgText } from "../shared/svgSafe.ts";
 import { normalizeFlow, layoutFlow } from "../shared/flow.ts";
 import { asksToLook } from "../shared/lookRequest.ts";
 import { webSearch, rankResults } from "../server/websearch.ts";
@@ -1853,6 +1854,17 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     check("bad diagrams are refused: <2 nodes, flow with no arrows, arrows to nowhere are dropped", !!normalizeFlow({ type: "flow", nodes: [{ id: "a", label: "x" }] }).error && !!normalizeFlow({ type: "flow", nodes: [{ id: "a", label: "x" }, { id: "b", label: "y" }] }).error && normalizeFlow({ type: "flow", nodes: [{ id: "a", label: "x" }, { id: "b", label: "y" }], edges: [{ from: "a", to: "b" }, { from: "a", to: "zzz" }] }).flow.edges.length === 1); }
   { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8"); const bd = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
     check("FLOW_ON_BOARD is wired (tool, handler, render) and diagram equations are no longer KaTeX", /FLOW_ON_BOARD_TOOL, \.\.\.\(opts\?\.canvasMode/.test(cl) && /name === "FLOW_ON_BOARD"/.test(cl) && /<FlowDiagram spec=\{e\.flow\}/.test(bd) && !/foreignObject x=\{x\} y=\{Math\.max\(0, op\.y - 36\)\}/.test(bd)); }
+  // ── Model-written SVG figures (SVG_ON_BOARD) ──
+  { const bad = '<svg width="100" onload="alert(1)" viewBox="0 0 10 10"><script>alert(1)</script><foreignObject><div>hi</div></foreignObject><image href="http://x/y.png"/><a href="javascript:alert(1)"><text>x</text></a><rect x="1" fill="url(http://evil)" stroke="url(#g)" onclick="x()"/><use href="http://evil/x.svg#a"/><style>*{}</style></svg>';
+    const o = sanitizeSvg(bad);
+    check("SVG sanitiser strips scripts, handlers, foreignObject, images, external refs and style", /^<svg /.test(o) && !/script|onload|onclick|foreignObject|<image|javascript|evil|<style|<a\b/i.test(o) && /<rect/.test(o) && /url\(#g\)/.test(o) && !/ width=/.test(o));
+    check("SVG sanitiser keeps a real figure intact and refuses non-SVG", (() => { const good = '<svg viewBox="0 0 800 500"><defs><marker id="a" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs><line x1="10" y1="10" x2="200" y2="10" stroke="currentColor" marker-end="url(#a)"/><text x="5" y="30" font-size="18">35 cm &amp; 30°</text></svg>'; const g = sanitizeSvg(good); return /marker-end="url\(#a\)"/.test(g) && /<marker /.test(g) && svgText(g) === "35 cm &amp; 30°" && sanitizeSvg("<div>hi</div>") === "" && sanitizeSvg("") === ""; })()); }
+  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8"); const bd = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+    check("SVG_ON_BOARD replaces DRAW_ON_BOARD for the tutor and is sanitised on write and on render", /SVG_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL/.test(cl) && !/DRAW_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL/.test(cl) && /sanitizeSvg\(e\.svg\)/.test(bd) && /NEVER LaTeX or KaTeX/.test(cl)); }
+  { const ts = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8"); const bd = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8"); const tc3 = readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8");
+    check("a drawing made on the blank page reserves room, so Otto's next lines come AFTER it", /freezeSheet/.test(tc3) && /canvasRef\.current\?\.freezeSheet\(\)/.test(ts) && /sheetSignal/.test(bd) && /sm-board-sheet/.test(bd) && /afterKey/.test(bd));
+    check("the board opens at the END of the content (blank page is one scroll further), not on the blank page", /scrollIntoView\(\{ block: "end", behavior: "smooth" \}\)/.test(bd));
+    check("tutor mode goes full screen on Start/Resume (a user gesture), with a toggle and exit on leave", /enterFullscreen\(\); \/\/ tutor mode/.test(ts) && (ts.match(/enterFullscreen\(\); \/\/ tutor mode/g) || []).length === 2 && /tutor-fs-btn/.test(ts) && /exitFullscreen\(\); \};/.test(ts)); }
   check("board is flat: plain lines, no section numbers or boxes", /sm-board-line/.test(boardSrc) && !/sm-board-section-num/.test(boardSrc));
   check("kind:\"summary\" renders as an ordinary line — no trace box, no heading, no category", !/ReasoningTrace|sm-board-trace/.test(boardSrc));
   check("a deliberately unfinished worked line gets an 'à toi de finir' completion chip (completion effect, visible)", /isCompletionGap/.test(boardSrc) && /sm-board-todo-chip/.test(boardSrc));
@@ -4773,7 +4785,7 @@ section("Tool-narrowing latency fix — core tutoring tools are NEVER dropped by
   // TUTOR-ONLY now — WRITE_TO_BOARD/DRAW_ON_BOARD/GEOMETRY_ON_BOARD/GRAPH_ON_BOARD/CREATE_PROBLEM/
   // SET_OBJECTIVES are no longer unconditional; they're gated behind `opts?.primer` via `boardTools`,
   // spread into both branches so a Tutor turn still gets them either way canvasMode is set.
-  for (const core of ["WRITE_TO_BOARD_TOOL", "DRAW_ON_BOARD_TOOL", "GEOMETRY_ON_BOARD_TOOL", "GRAPH_ON_BOARD_TOOL", "SET_OBJECTIVES_TOOL", "CREATE_PROBLEM_TOOL"]) {
+  for (const core of ["WRITE_TO_BOARD_TOOL", "SVG_ON_BOARD_TOOL", "GEOMETRY_ON_BOARD_TOOL", "GRAPH_ON_BOARD_TOOL", "SET_OBJECTIVES_TOOL", "CREATE_PROBLEM_TOOL"]) {
     check(`${core} is in boardTools (primer-gated), not listed directly in either tools branch`, new RegExp(`const boardTools = opts\\?\\.primer[\\s\\S]*?${core}`).test(toolsBlock) && (toolsBlock.match(new RegExp(core, "g")) || []).length === 1);
   }
   check("both branches spread boardTools in (a Tutor turn gets them whether canvasMode is set or not)", (toolsBlock.match(/\.\.\.boardTools,/g) || []).length === 2);

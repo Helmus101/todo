@@ -7,6 +7,7 @@ import { useLang, LangContext } from "../ui.tsx";
 import { AskOttoPanel } from "../study/AskOttoPanel.tsx";
 import { BoardArtifact, MathText } from "../study/artifacts/BoardArtifact.tsx";
 import { TutorDesmos } from "./TutorDesmos.tsx";
+import { enterFullscreen, exitFullscreen, inFullscreen } from "./fullscreen.ts";
 import { asksToLook } from "../../shared/lookRequest.ts";
 import { TutorCanvas, type TutorCanvasHandle } from "./TutorCanvas.tsx";
 import { PageTour } from "../PageTour.tsx";
@@ -233,6 +234,13 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   const openerLang: "fr" | "en" = useContext(LangContext);
   const [exerciseDone, setExerciseDone] = useState(false);
   const [surfaceEl, setSurfaceEl] = useState<HTMLDivElement | null>(null);
+  const [sheetSignal, setSheetSignal] = useState({ n: 0, height: 0 });
+  const [fs, setFs] = useState(false);
+  useEffect(() => {
+    const on = () => setFs(inFullscreen());
+    document.addEventListener("fullscreenchange", on); document.addEventListener("webkitfullscreenchange", on);
+    return () => { document.removeEventListener("fullscreenchange", on); document.removeEventListener("webkitfullscreenchange", on); exitFullscreen(); };
+  }, []);
   // The session's focus objectives (SET_OBJECTIVES), opened from the ◎ chip in the crumb bar. Declared here
   // with every other hook — the stage view has an early return ABOVE, and a hook after it is exactly the
   // React #310 crash this file already had once (see the commit that fixed a hooks-after-early-return bug).
@@ -254,6 +262,9 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       // Anything new on the whiteboard rides along with the message — draw, then just say "is this right?"
       // like you would to a person leaning over your page; no separate "send drawing" step needed.
       // No "show Otto" button: saying "look at my whiteboard" is enough — and that also re-reads ink Otto has already seen.
+      // A drawing made on the blank page below the board: keep room for it so Otto's next lines land AFTER it.
+      const sheetH = canvasRef.current?.freezeSheet() || 0;
+      if (sheetH > 0) setSheetSignal((s0) => ({ n: s0.n + 1, height: sheetH }));
       const wantsLook = !isAutoResult && asksToLook(message);
       const seen = await canvasRef.current?.readUnseenInk(wantsLook);
       if (seen) message += "\n\n" + L(`[Ce que j'ai écrit/dessiné sur le tableau : ${seen}]`, `[What I wrote/drew on the board: ${seen}]`);
@@ -381,6 +392,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   // first, and what happens next is their choice.
   const resumeActiveSession = useCallback(() => {
     if (!pendingActiveSession) return;
+    enterFullscreen(); // tutor mode is full screen (this click is the user gesture the browser requires)
     // chat/board/problems are cloud-persisted again now, so the task object itself is authoritative —
     // localStorage (getLocalThread) is only consulted as a fallback for whichever field is still empty in
     // the cloud copy (a session from the local-only era that never made it to the server).
@@ -411,6 +423,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
 
   const startNewSession = useCallback(async () => {
     if (!selectedSubject || startingSession) return;
+    enterFullscreen(); // tutor mode is full screen (this click is the user gesture the browser requires)
     setError(null);
     setStartingSession(true);
     try {
@@ -714,6 +727,9 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           session shouldn't offer a way back to the list, just the subject chip and End session. */}
       <header className="ts-bar tutor-crumbbar">
         {task.sourceSubject ? <span className="tutor-crumb-subject">{task.sourceSubject}</span> : null}
+        <button type="button" className="tutor-fs-btn" onClick={() => (fs ? exitFullscreen() : enterFullscreen())} aria-pressed={fs} aria-label={fs ? L("Quitter le plein écran", "Exit full screen") : L("Plein écran", "Full screen")} title={fs ? L("Quitter le plein écran", "Exit full screen") : L("Plein écran", "Full screen")}>
+          {fs ? <Minimize2 size={14} aria-hidden="true" /> : <Maximize2 size={14} aria-hidden="true" />}
+        </button>
         {!!task.objectives?.length && (
           // A real control now, not a hover-only tooltip: the objectives were only ever readable by hovering
           // the chip, which meant the one thing the session is aiming at was effectively invisible. Report-live
@@ -752,7 +768,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       )}
       <section className="ts-canvas" aria-label={L("Tableau", "Board")}>
         <div className="tutor-board-body ts-board-body" ref={setSurfaceEl} style={{ display: desmosOpen ? "none" : undefined }}>
-          <BoardArtifact task={task} writing={sending} onProblemResult={onProblemResult} onWidgetResult={onWidgetResult} />
+          <BoardArtifact task={task} writing={sending} onProblemResult={onProblemResult} onWidgetResult={onWidgetResult} sheetSignal={sheetSignal} />
         </div>
         {/* Desmos stays mounted once opened (an iframe that's removed reloads blank, losing the student's graph). */}
         {desmosOpen || desmosEverOpenedRef.current ? (

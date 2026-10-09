@@ -20,6 +20,7 @@ import { boardSurfaceBlock, boardTrajectoryBlock, type BoardEvent } from "./boar
 import { buildTutorDecision } from "./actionSpace.ts";
 import { normalizeWidget, WIDGET_TYPES } from "../shared/widgets.ts";
 import { normalizeFlow } from "../shared/flow.ts";
+import { sanitizeSvg, svgText, MAX_SVG_CHARS } from "../shared/svgSafe.ts";
 import { findSourceQuestions, cleanProblemSource, sourcesForTrack } from "./questionSources.ts";
 import { extractPlan, validatePlan, policyBlock as tutorPolicyBlock, PLAN_PROTOCOL, type TutorPlan, type TutorPolicy } from "./tutorBrain.ts";
 import { sessionStateBlock } from "./sessionState.ts";
@@ -2624,6 +2625,38 @@ export function makeWidgetEntry(input: any): { entry: BoardEntry } | { error: st
   const r = normalizeWidget(input);
   if ("error" in r) return r;
   return { entry: { id: randomUUID(), text: caption, kind: "widget", widget: r.widget, at: new Date().toISOString() } };
+}
+
+// The tutor's general drawing tool: it WRITES SVG, exactly the way Claude and ChatGPT draw diagrams. A model is far better at
+// composing a complete, well-labelled SVG than at emitting a list of shape ops with hand-picked coordinates. The app
+// sanitises it (shared/svgSafe.ts) and renders it inline, themed to the board. No KaTeX anywhere in a figure.
+const SVG_ON_BOARD_TOOL = {
+  name: "SVG_ON_BOARD",
+  description: "Draw ONE clear diagram on the board by writing SVG yourself — free-body diagrams, labelled geometry sketches, circuits, number lines, molecules, apparatus, maps, anatomy, supply-and-demand curves, annotated figures, anything spatial. " +
+    "Write a COMPLETE, self-contained `<svg viewBox=\"0 0 800 500\">…</svg>` (no width/height). Rules for a figure a student can actually read: " +
+    "(1) PLAN the layout first — keep everything inside the viewBox with 40px margins, one clear focal shape, generous spacing, nothing overlapping. " +
+    "(2) Use `stroke=\"currentColor\" fill=\"none\" stroke-width=\"2\"` for lines and `fill=\"currentColor\"` for text (so it follows the board's theme); at most TWO accent colours for what you want them to notice (e.g. #2563EB, #DC2626). " +
+    "(3) Draw to scale where proportions or angles matter (a 30° angle must LOOK like 30°); mark right angles with a small square and equal sides with ticks. " +
+    "(4) Label EVERY point, side and angle that the question mentions, with `<text font-size=\"18\" font-family=\"Inter, system-ui, sans-serif\">` placed just off the shape — plain text and unicode only (θ ° ² √ ± → ·), NEVER LaTeX or KaTeX. " +
+    "(5) Arrows: define `<marker id=\"a\" markerWidth=\"10\" markerHeight=\"10\" refX=\"8\" refY=\"5\" orient=\"auto\"><path d=\"M0,0 L10,5 L0,10 z\" fill=\"currentColor\"/></marker>` and use `marker-end=\"url(#a)\"`. " +
+    "(6) Show the SETUP and GIVEN values; show unknowns as '?' or a letter — never the answer to what they're solving. " +
+    "Only these elements work: svg g defs marker path line polyline polygon rect circle ellipse text tspan title desc linearGradient radialGradient stop clipPath symbol use. No <style>, scripts, images or HTML. " +
+    "For boxes-and-arrows concept diagrams use FLOW_ON_BOARD, for exact triangles/circles use GEOMETRY_ON_BOARD, for function plots GRAPH_ON_BOARD. One figure per call; redraw the WHOLE figure to add to it.",
+  input_schema: { type: "object", properties: {
+    caption: { type: "string", description: "one short line shown as the figure's title" },
+    svg: { type: "string", description: "the complete <svg viewBox=\"0 0 800 500\">…</svg> markup" },
+  }, required: ["caption", "svg"] },
+};
+
+export function makeSvgEntry(input: any): { entry: BoardEntry } | { error: string } {
+  const caption = String(input?.caption || "").trim().slice(0, 200);
+  if (!caption) return { error: "ERROR: caption is required." };
+  const raw = String(input?.svg || "");
+  if (raw.length > MAX_SVG_CHARS * 2) return { error: `REJECTED: the SVG is too long (max ${MAX_SVG_CHARS} characters) — simplify the figure.` };
+  const svg = sanitizeSvg(raw);
+  if (!svg) return { error: "ERROR: that wasn't usable SVG — send ONE complete <svg viewBox=\"0 0 800 500\">…</svg> using only: svg g defs marker path line polyline polygon rect circle ellipse text tspan title desc linearGradient radialGradient stop clipPath symbol use (no style/script/image/foreignObject), under " + MAX_SVG_CHARS + " characters." };
+  if (!/<(?:path|line|polyline|polygon|rect|circle|ellipse)\b/i.test(svg)) return { error: "ERROR: the SVG has no shapes — draw the figure (lines, shapes), not just text." };
+  return { entry: { id: randomUUID(), text: caption, kind: "svg", svg, at: new Date().toISOString() } };
 }
 
 // Concept diagrams with AUTOMATIC layout — flowcharts, cause→effect chains, cycles, timelines, trees. The model names
@@ -7680,7 +7713,7 @@ const PRIMER_PERSONA =
   `transformations, motion graphs, a line of best fit; also bar charts, histograms and 3D surfaces z=f(x,y)) use GRAPH_ON_BOARD, not CREATE_INTERACTIVE — it's instant, ` +
   `always renders, and gives the student real sliders and a hover readout. Plot the FAMILY or the setup, never ` +
   `the answer to what they're solving, then ask ONE question about what moving it shows.\n` +
-  `- DIAGRAMS: for any boxes-and-arrows idea (a process, cause→effect, a cycle, a timeline, a classification, an essay plan) use FLOW_ON_BOARD — you list the nodes and arrows, the app lays them out cleanly. Use GEOMETRY_ON_BOARD for shapes/angles and GRAPH_ON_BOARD for functions; reserve DRAW_ON_BOARD for the odd freehand figure, and never put equations inside a figure (labels are plain text; equations go in WRITE_TO_BOARD).\n` +
+  `- DIAGRAMS: for any boxes-and-arrows idea (a process, cause→effect, a cycle, a timeline, a classification, an essay plan) use FLOW_ON_BOARD — you list the nodes and arrows, the app lays them out cleanly. Use GEOMETRY_ON_BOARD for shapes/angles and GRAPH_ON_BOARD for functions; for EVERY other figure (free-body diagrams, sketches, circuits, apparatus, labelled situations like the lighthouse and boats) write the SVG yourself with SVG_ON_BOARD — plan the layout, label every point and value, draw to scale. Never put LaTeX/KaTeX in a figure (plain text and unicode labels; real equations go in WRITE_TO_BOARD).\n` +
   `- ACTIVITIES: when the student should DO something rather than read — pair terms, order steps, sort items, or play with a unit circle / projectile — use WIDGET_ON_BOARD (it always works and tells you how they did) instead of describing it or hand-writing HTML. Any subject. Prefer it over CREATE_INTERACTIVE.\n` +
   `- NO HIGHLIGHTING: write plainly — never wrap text in ==marks== or bold for emphasis.\n` +
   `- EXERCISE RESULTS ARRIVE AS "[Exercise] …" / "[Exercice] …" MESSAGES: the board just marked an answer and ` +
@@ -8910,7 +8943,7 @@ export async function chatAboutTask(
   // which no longer renders a board anywhere except the Tutor (TutorSession.tsx).
   const includeArtifactTools = wantsArtifactTools(message, history);
   const boardTools = opts?.primer
-    ? [CREATE_PROBLEM_TOOL, ...(sourcesForTrack(profile?.track).length ? [FIND_SOURCE_QUESTION_TOOL] : []), WRITE_TO_BOARD_TOOL, CLEAR_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, WIDGET_ON_BOARD_TOOL, FLOW_ON_BOARD_TOOL, ...(opts?.canvasMode ? [CREATE_INTERACTIVE_TOOL] : []), SET_OBJECTIVES_TOOL]
+    ? [CREATE_PROBLEM_TOOL, ...(sourcesForTrack(profile?.track).length ? [FIND_SOURCE_QUESTION_TOOL] : []), WRITE_TO_BOARD_TOOL, CLEAR_BOARD_TOOL, SVG_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, WIDGET_ON_BOARD_TOOL, FLOW_ON_BOARD_TOOL, ...(opts?.canvasMode ? [CREATE_INTERACTIVE_TOOL] : []), SET_OBJECTIVES_TOOL]
     : [];
   const tools = opts?.canvasMode
     ? [...boardTools, WEB_SEARCH_TOOL, READ_PAGE_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])]
@@ -9122,11 +9155,11 @@ export async function chatAboutTask(
     let redrawFixed = false;
     const guardRedraw = (draft: string, round: number, lastRound: boolean): boolean => {
       if (!opts?.primer || redrawFixed || lastRound || result.guardrailTripped || !isDrawingTurn(message) || !drawingLooksSpatial(message)) return false;
-      if (result.board.some((e) => e.kind === "diagram" || e.kind === "graph")) return false;
+      if (result.board.some((e) => e.kind === "diagram" || e.kind === "graph" || e.kind === "svg")) return false;
       redrawFixed = true;
       console.log(`${new Date().toISOString()} [chat] round ${round}: the student showed a drawing but nothing was redrawn — asking for the cleaner redraw`);
       messages.push({ role: "assistant", content: draft });
-      messages.push({ role: "user", content: "They showed you a drawing and you haven't redrawn it. Call GEOMETRY_ON_BOARD (triangles/circles/angles) or DRAW_ON_BOARD (anything else) NOW to redraw THEIR drawing cleaner — same shapes, labels and numbers, nothing added — then reply with a one- or two-sentence comment on it and ONE question." });
+      messages.push({ role: "user", content: "They showed you a drawing and you haven't redrawn it. Call GEOMETRY_ON_BOARD (triangles/circles/angles) or SVG_ON_BOARD (anything else) NOW to redraw THEIR drawing cleaner — same shapes, labels and numbers, nothing added — then reply with a one- or two-sentence comment on it and ONE question." });
       return true;
     };
     // A multi-solution trap (SSA ambiguous triangle, trig equation's second solution, ±) that nobody raised, while the
@@ -9602,6 +9635,11 @@ export async function chatAboutTask(
           if (result.board.filter((e) => e.kind === "graph").length >= 2) content = "LIMIT: you've already put a couple of graphs on the board this message — that's enough for one turn.";
           else if (leaksAnyProblemAnswer([input?.caption, ...(Array.isArray(input?.fns) ? input.fns.map((f: any) => f?.label || "") : [])].join(" "), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that graph's caption or labels state a problem's answer — title it by what to explore, not by the result.";
           else { const r = makeGraphEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Graphique : « ${r.entry.text.slice(0, 60)} »` : `Graph: "${r.entry.text.slice(0, 60)}"`); } }
+        } else if (name === "SVG_ON_BOARD") {
+          if (result.board.filter((e) => e.kind === "svg").length >= 2) content = "LIMIT: that's enough figures for one turn.";
+          else if (leaksAnyProblemAnswer(`${input?.caption || ""} ${svgText(sanitizeSvg(String(input?.svg || "")))}`, [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that figure labels a problem's answer outright — redraw it with the unknown shown as '?'.";
+          else if (opts?.primer && equationAhead(svgText(sanitizeSvg(String(input?.svg || ""))), [...history.filter((h) => h.role === "user").map((h) => h.text), message], ownGivens()).length) content = "REJECTED: that figure contains an equation step the student never reached — draw the situation (givens and unknowns) without it.";
+          else { const r = makeSvgEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Figure : « ${r.entry.text.slice(0, 60)} »` : `Figure: "${r.entry.text.slice(0, 60)}"`); } }
         } else if (name === "FLOW_ON_BOARD") {
           if (result.board.filter((e) => e.kind === "flow").length >= 2) content = "LIMIT: that's enough diagrams for one turn.";
           else if (leaksAnyProblemAnswer(JSON.stringify(input || {}), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that diagram states a problem's answer outright — label the boxes without the value.";

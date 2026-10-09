@@ -424,6 +424,17 @@ export async function runTutorSim(check, section) {
     r = await run(drawn, { history: [{ role: "user", text: "two boats" }, { role: "assistant", text: "ok" }] });
     check("end to end: a shown drawing gets the system block and is redrawn on the board even if the first reply forgot", /THE STUDENT JUST SHOWED YOU A DRAWING/.test(String(calls[0].messages[0].content)) && r.boardAll.some((e) => e.kind === "diagram") && /\?/.test(r.reply));
   }
+  // SVG_ON_BOARD — the tutor writes the figure itself; hostile markup is neutralised, an empty/non-SVG call is bounced for a retry
+  {
+    const fig = '<svg viewBox="0 0 800 500"><line x1="100" y1="400" x2="600" y2="400" stroke="currentColor" stroke-width="2"/><line x1="600" y1="400" x2="600" y2="100" stroke="currentColor" stroke-width="2"/><text x="610" y="250">470 m</text><script>alert(1)</script></svg>';
+    script = (b, i) => i === 0 ? { content: "", tool_calls: [tc("SVG_ON_BOARD", { caption: "Lighthouse and boats", svg: fig })] } : { content: "Which side does the 25° angle sit at?" };
+    r = await run("let's draw the situation", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
+    const f = r.boardAll.find((e) => e.kind === "svg");
+    check("end to end: the tutor's own SVG lands on the board, sanitised", !!f && /470 m/.test(f.svg) && !/script/.test(f.svg) && calls[0].tools.some((x) => x.function?.name === "SVG_ON_BOARD") && !calls[0].tools.some((x) => x.function?.name === "DRAW_ON_BOARD"));
+    script = (b, i) => i === 0 ? { content: "", tool_calls: [tc("SVG_ON_BOARD", { caption: "Bad", svg: "not svg at all" })] } : i === 1 ? { content: "", tool_calls: [tc("SVG_ON_BOARD", { caption: "Good", svg: fig })] } : { content: "What does the 25° tell you?" };
+    r = await run("draw it again", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
+    check("end to end: a non-SVG call is bounced and the retry lands", r.boardAll.filter((e) => e.kind === "svg").length === 1);
+  }
   // ANNOTATE_BOARD — Otto points at an existing entry instead of explaining the mistake in chat
   {
     const board = [{ id: "e1", kind: "given", text: "A block on a 30° slope", at: "" }, { id: "e2", kind: "result", owner: "student", status: "incorrect", text: "N = mg", at: "" }];
