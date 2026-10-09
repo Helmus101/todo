@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
-import { ArrowRight, TrendingUp, RotateCcw, MessageCircle, Lightbulb, CircleHelp, ChevronRight, ChevronDown } from "lucide-react";
+import { ArrowRight, TrendingUp, RotateCcw, MessageCircle, Lightbulb, CircleHelp, ChevronRight, ChevronDown, Maximize2, Minimize2 } from "lucide-react";
 import type { WebTask, TaskProblem } from "../../shared/types.ts";
 import { api } from "../api.ts";
 import { setLocalObjectives, getLocalThread } from "../localChatBoard.ts";
@@ -140,8 +140,8 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   // /tutor/session/<taskId> — so a refresh re-enters it (the task is cloud-persisted, so
   // peekForActiveSession offers Reprendre, and once the session is saved the same URL reopens it in
   // review) — and when the session ends the address falls back to the session list instead of pointing
-  // at a dead id. Fires only on an id TRANSITION: leaving mid-session via the "All sessions" crumb
-  // (which changes the route itself) must not yank the address back onto the session.
+  // at a dead id. Fires only on an id TRANSITION: a route change elsewhere (e.g. ending the session)
+  // must not yank the address back onto the session.
   const routedTaskRef = useRef<string | null>(null);
   useEffect(() => {
     const path = window.location.pathname.replace(/^\/+|\/+$/g, "");
@@ -152,18 +152,6 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       routedTaskRef.current = null;
       if (path.startsWith("tutor/session/")) goRoute("tutor");
     }
-  }, [task, goRoute]);
-
-  // "All sessions" (the in-session crumb) — the label finally tells the truth: land on the session list
-  // at /tutor WITHOUT ending the session. The task stays alive as pendingActiveSession, so the landing
-  // offers "Reprendre" right where the student left off (onExit used to dump them on the Tasks dashboard
-  // instead — reachable anyway from the landing's own back button).
-  const leaveToList = useCallback(() => {
-    if (task) { setPendingActiveSession(task); setTask(null); setSessionStart(null); }
-    setShowHistory(true);
-    setDesmosOpen(false);
-    desmosEverOpenedRef.current = false;
-    goRoute("tutor");
   }, [task, goRoute]);
 
   const saveAndClose = useCallback((task: WebTask, startedAt: string, reflection?: string) => {
@@ -718,9 +706,9 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   return (
     <main className={`tutor-stage${voiceState.voiceModeOn ? " voice-on" : ""}`}>
       <PageTour id="tutor-session" steps={TOURS["tutor-session"]} />
-      {/* Same breadcrumb chrome as the rest of the Tutor ("All sessions / Subject … End session"). */}
+      {/* Same breadcrumb chrome as the rest of the Tutor, minus "All sessions" — report-live: an active
+          session shouldn't offer a way back to the list, just the subject chip and End session. */}
       <header className="ts-bar tutor-crumbbar">
-        <button type="button" className="tutor-crumb-link" onClick={leaveToList}>{L("Toutes les séances", "All sessions")}</button>
         {task.sourceSubject ? <span className="tutor-crumb-subject">{task.sourceSubject}</span> : null}
         {!!task.objectives?.length && (
           // A real control now, not a hover-only tooltip: the objectives were only ever readable by hovering
@@ -778,11 +766,20 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
         />
       </section>
       <div className="ts-dock">
-        {/* The dock IS the chat (the floating island) — its expand button lives ON it (report-live: "it
-            isn't a dedicated chat button, just on the floating island with chat there can be an expand
-            button"). No past-sessions section either: in-session shows the CURRENT transcript only. */}
-        <button type="button" className="tutor-dock-chat-toggle" data-tour="ts-chat" aria-expanded={chatDrawer} onClick={() => setChatDrawer((v) => !v)}>
-          <MessageCircle size={13} aria-hidden="true" /> {chatDrawer ? L("Fermer", "Close") : L("Chat", "Chat")}
+        {/* The dock IS the chat (the floating island) — this is just its expand/collapse control, not a
+            separate "chat" entry point (report-live: it isn't a dedicated chat button, just an expand
+            button on the island where the answers already show). No past-sessions section either:
+            in-session shows the CURRENT transcript only. */}
+        <button
+          type="button"
+          className="tutor-dock-chat-toggle"
+          data-tour="ts-chat"
+          aria-expanded={chatDrawer}
+          aria-label={chatDrawer ? L("Réduire", "Collapse") : L("Agrandir", "Expand")}
+          title={chatDrawer ? L("Réduire", "Collapse") : L("Agrandir", "Expand")}
+          onClick={() => setChatDrawer((v) => !v)}
+        >
+          {chatDrawer ? <Minimize2 size={13} aria-hidden="true" /> : <Maximize2 size={13} aria-hidden="true" />}
         </button>
         {chatDrawer && (
           <div className="tutor-dock-chat">

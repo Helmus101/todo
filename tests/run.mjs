@@ -214,10 +214,11 @@ section("Tutor session routing — deep links resolve, the URL follows the live 
   check("when the session ends the address falls back to the list — and only on an id TRANSITION",
     /routedTaskRef\.current = null/.test(tutSrcR) &&
     tutSrcR.includes('if (path.startsWith("tutor/session/")) goRoute("tutor");'));
-  check("the 'All sessions' crumb lands on the session list WITHOUT ending the session (Reprendre survives)",
-    /tutor-crumb-link" onClick=\{leaveToList\}/.test(tutSrcR) &&
-    /if \(task\) \{ setPendingActiveSession\(task\); setTask\(null\); setSessionStart\(null\); \}/.test(tutSrcR) &&
-    /goRoute\("tutor"\);\n  \}, \[task, goRoute\]\);/.test(tutSrcR));
+  check("the active session header has no 'All sessions' link back to the list (report-live: shouldn't be there)",
+    !/tutor-crumb-link/.test(tutSrcR) && !/leaveToList/.test(tutSrcR));
+  check("the dock chat toggle is an expand/collapse control, not a labeled 'Chat' button",
+    /chatDrawer \? <Minimize2 size=\{13\} aria-hidden="true" \/> : <Maximize2 size=\{13\} aria-hidden="true" \/>/.test(tutSrcR) &&
+    !/\{chatDrawer \? L\("Fermer", "Close"\) : L\("Chat", "Chat"\)\}/.test(tutSrcR));
 }
 section("Tutor memory — earlier turns are condensed, not forgotten");
 {
@@ -3532,6 +3533,27 @@ section("formatMath — bare-caret exponents (no LaTeX escaping) render as real 
   check("bare caret text leaves no literal ^ behind", !render("x^2 + y^2 = z^2").includes("^"));
   check("plain prose with an underscore (no caret/backslash) is left untouched", render("see item_1 in the file").includes("item_1"));
   check("LaTeX-delimited math still converts (unaffected by the fast-path change)", render("\\(a^2+b^2\\)").includes("a²"));
+}
+// Reported live on the Tutor board: "\frac{35}{\sin 30^{\circ}} = \frac{50}{\sin B} \implies \sin B =
+// \frac{50\sin 30^{\circ}}{35}" rendered as the garbled "()/(3)5sin 30^° = (50)/(sin B) implies sin B =
+// ()/(5)0 sin 30^°35". Root cause: formatMath's old \frac{([^{}]*)}{([^{}]*)} regex can't match a
+// denominator that itself contains braces (here, the degree's own "^{\circ}") — it stops at the FIRST
+// "}" it finds, which belongs to the nested group, not the frac's own closing brace, desyncing every
+// match after it. Fixed with a real brace-nesting walk (convertBracedCommands/matchBrace/takeArg).
+section("formatMath — \\frac (and \\sqrt/\\binom/text-like commands) survive a NESTED braced argument");
+{
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const React = await import("react");
+  const render = (s) => renderToStaticMarkup(React.createElement(React.Fragment, null, uiModule.renderNoteBody(s)));
+  const out = render("\\frac{35}{\\sin 30^{\\circ}} = \\frac{50}{\\sin B} \\implies \\sin B = \\frac{50\\sin 30^{\\circ}}{35}");
+  check("the exact reported expression renders as a correct, non-garbled fraction chain",
+    out.includes("(35)/(sin 30°)") && out.includes("(50)/(sin B)") && out.includes("(50sin 30°)/(35)"));
+  check("no stray empty fraction slots or leftover digits from a desynced brace match", !out.includes("()/(") && !/\(\d\)\d/.test(out));
+  check("a frac nested INSIDE another frac's argument still converts (not just copied as raw text)",
+    render("\\frac{\\frac{1}{2}}{3}").includes("(1)/(2))/(3"));
+  check("\\sqrt with a braced nested fraction inside it still converts", render("\\sqrt{\\frac{1}{2}}").includes("√((1)/(2))"));
+  check("a malformed/unclosed \\frac falls back to just dropping the command name, not corrupting the rest",
+    !render("\\frac{1 is broken").includes("undefined"));
 }
 // Source-order pin, not a real interaction test (no DOM test runner exists — see the module-graph check
 // above for why). .card-main is the task row's real "open this task" control. An earlier version used a

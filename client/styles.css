@@ -7198,8 +7198,6 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   display: flex; align-items: center; gap: 14px;
   padding: 14px 4px 0;
 }
-.tutor-crumb-link { background: none; border: none; padding: 0; font: inherit; font-weight: 650; font-size: 15px; color: var(--ink); cursor: pointer; }
-.tutor-crumb-link:hover { color: var(--accent); }
 .tutor-crumb-subject { color: var(--ink-2); font-size: 15px; }
 /* The crumb's right-edge pusher used to be the dedicated chat button — that button is gone (the chat
    lives on the floating island now), so End session carries the right edge. */
@@ -7327,7 +7325,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
     gap: 8px 10px;
     padding: 10px 12px;
   }
-  .tutor-crumb-link, .tutor-crumb-subject { font-size: 14px; }
+  .tutor-crumb-subject { font-size: 14px; }
   .tutor-end-btn { margin-left: auto; min-height: 44px; padding: 8px 10px; }
   .ts-bar { padding-left: 12px; padding-right: 12px; }
   .ts-board-body { padding: 76px 8px 300px; }
@@ -7501,7 +7499,7 @@ mark.otto-mark { background: linear-gradient(transparent 12%, color-mix(in srgb,
 /* Chat on the tutor stage lives IN the floating island: the island's own expand button reveals the
    transcript above the input (report-live: "isn't a dedicated chat button, just on the floating island
    with chat there can be an expand button"). The old modal drawer + past-session list are gone. */
-.tutor-dock-chat-toggle { position: absolute; top: -34px; right: 6px; z-index: 5; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; font-size: 13px; font-weight: 650; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.10); }
+.tutor-dock-chat-toggle { position: absolute; top: -34px; right: 6px; z-index: 5; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.10); }
 .tutor-dock-chat-toggle:hover { color: var(--accent); border-color: var(--accent); }
 .tutor-dock-chat { max-height: min(46vh, 380px); overflow-y: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; margin-bottom: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.12); }
 .tutor-dock-chat-head { position: sticky; top: 0; z-index: 1; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--line-soft); background: var(--surface); color: var(--ink-2); font-size: 13px; }

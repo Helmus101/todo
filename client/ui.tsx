@@ -400,6 +400,74 @@ const LATEX_SYMBOLS: [RegExp, string][] = [
   [/\\(begin|end)\{[a-zA-Z*]+\}/g, ""], [/&/g, ""], [/\\\\/g, "\n"],
   [/\\(left|right|,|!|;|:|quad|qquad|displaystyle|textstyle)\b/g, ""],
 ];
+// Commands whose argument(s) are REAL LaTeX braces (can nest arbitrarily), not the fixed-depth `[^{}]*` a
+// plain regex can match. Reported live: "\frac{35}{\sin 30^{\circ}}" — the degree's own "^{\circ}" is a
+// braced group INSIDE the frac's denominator, so a `\frac\{([^{}]*)\}\{([^{}]*)\}` regex hunting for the
+// denominator's closing brace stopped at the circ group's inner "}" instead, slicing the denominator down
+// to "" and treating "\sin 30^" + whatever followed as unrelated leftover text — corrupting everything
+// from there on ("()/(3)5sin 30^° = (50)/(sin B) implies sin B = ()/(5)0 sin 30^°35"). Walks real brace
+// nesting instead, so a nested \frac/\sqrt/^{…} inside an argument can never desync the outer match.
+function matchBrace(s: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < s.length; i++) {
+    if (s[i] === "{") depth++;
+    else if (s[i] === "}") { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+}
+/** One argument at `pos`: a balanced "{…}" group, or — for the brace-less shorthand (`\frac12`) — a
+ *  single bare character. Returns [content, indexAfterArg], or null if there's nothing valid to take. */
+function takeArg(s: string, pos: number): [string, number] | null {
+  if (s[pos] === "{") {
+    const close = matchBrace(s, pos);
+    return close === -1 ? null : [s.slice(pos + 1, close), close + 1];
+  }
+  return pos < s.length && /\S/.test(s[pos]) ? [s[pos], pos + 1] : null;
+}
+const FRAC_CMDS = new Set(["frac", "dfrac", "tfrac", "cfrac"]);
+const MARK_CMDS: Record<string, string> = { overline: "̅", vec: "⃗", hat: "̂", bar: "̄", dot: "̇" };
+function convertBracedCommands(s: string): string {
+  const re = /\\(frac|dfrac|tfrac|cfrac|binom|sqrt|text|mathrm|mathbf|operatorname|overline|vec|hat|bar|dot)(?![a-zA-Z])/;
+  let out = "";
+  let i = 0;
+  while (i < s.length) {
+    const m = re.exec(s.slice(i));
+    if (!m) { out += s.slice(i); break; }
+    out += s.slice(i, i + m.index);
+    const name = m[1];
+    const pos = i + m.index + m[0].length;
+    // \sqrt[n]{x} (nth root) — the optional bracketed index, before the 1-arg cases below.
+    if (name === "sqrt" && s[pos] === "[") {
+      const closeBracket = s.indexOf("]", pos);
+      const arg = closeBracket !== -1 ? takeArg(s, closeBracket + 1) : null;
+      if (arg) { out += `${scriptify(s.slice(pos + 1, closeBracket), SUPERSCRIPT, "^")}√(${convertBracedCommands(arg[0])})`; i = arg[1]; continue; }
+    }
+    if (FRAC_CMDS.has(name) || name === "binom") {
+      const a = takeArg(s, pos);
+      const b = a ? takeArg(s, a[1]) : null;
+      if (a && b) {
+        out += name === "binom" ? `C(${convertBracedCommands(a[0])},${convertBracedCommands(b[0])})` : `(${convertBracedCommands(a[0])})/(${convertBracedCommands(b[0])})`;
+        i = b[1]; continue;
+      }
+    } else {
+      const a = takeArg(s, pos);
+      if (a) {
+        const inner = convertBracedCommands(a[0]);
+        // \overline{AB} / \vec{v} / \hat{x} / \bar{x} / \dot{x} — combining marks per character rather
+        // than dropping the annotation entirely (a segment bar, a vector arrow, and a derivative dot all
+        // change the MEANING of the expression, not just its styling). text/mathrm/mathbf/operatorname
+        // just unwrap to their plain content.
+        out += name === "sqrt" ? `√(${inner})` : MARK_CMDS[name] ? [...inner].map((c) => `${c}${MARK_CMDS[name]}`).join("") : inner;
+        i = a[1]; continue;
+      }
+    }
+    // No valid argument found (malformed input) — leave the command name itself, same as the old regexes
+    // implicitly did by simply not matching.
+    out += `\\${name}`;
+    i = pos;
+  }
+  return out;
+}
 function formatMath(text: string): string {
   // Reported live: a generated flashcard/quiz/practice-problem written as plain "x^2 + y^2 = z^2" (no LaTeX
   // escaping at all, just a bare caret — a common way both the model and students themselves write exponents)
@@ -413,29 +481,22 @@ function formatMath(text: string): string {
     // Strip the delimiter wrappers — \( \) \[ \] $ $ $$ $$ — the content inside is what actually gets
     // converted; the delimiters themselves are LaTeX plumbing a reader has no use for.
     .replace(/\\\[|\\\]|\\\(|\\\)/g, "")
-    .replace(/\$\$?/g, "")
+    .replace(/\$\$?/g, "");
+  s = convertBracedCommands(s);
+  s = s
     // \circ has no LATEX_SYMBOLS entry — reported live: "60^\circ" (an extremely common way to write a
     // degree measure, e.g. cos(60°) in the Law of Cosines) came out as raw "^\circ" text. Handle the
     // "^\circ" idiom directly as a plain degree symbol (no leftover caret) BEFORE the generic superscript
     // pass below would otherwise grab just the backslash as a one-character "exponent" and mangle it.
-    .replace(/\^\\circ/g, "°").replace(/\\circ/g, "°")
-    // [cdt]? — the old `d?` NEVER matched \tfrac (reported live: "F_{(avg)} = \tfrac{kx}{2}" printed as
-    // raw "F_(avg) = \tfrackx2" once the braces were stripped at the end of this function).
-    .replace(/\\[cdt]?frac\{([^{}]*)\}\{([^{}]*)\}/g, "($1)/($2)") // \frac, \dfrac, \tfrac, \cfrac
-    .replace(/\\[cdt]?frac(\S)(\S)/g, (_, a, b) => `(${a})/(${b})`) // brace-less form: \tfrac12 → (1)/(2)
-    // \sqrt[n]{x} (nth root) before the plain \sqrt{x} case, or the `[n]` would be left dangling.
-    .replace(/\\sqrt\[([^\]]*)\]\{([^{}]*)\}/g, (_, n, g) => `${scriptify(n, SUPERSCRIPT, "^")}√(${g})`)
-    .replace(/\\sqrt\{([^{}]*)\}/g, "√($1)")
-    .replace(/\\binom\{([^{}]*)\}\{([^{}]*)\}/g, "C($1,$2)")
-    .replace(/\\(text|mathrm|mathbf|operatorname)\{([^{}]*)\}/g, "$2")
-    // \overline{AB} / \vec{v} / \hat{x} / \bar{x} / \dot{x} — combining marks per character rather than
-    // dropping the annotation entirely (a segment bar, a vector arrow, and a derivative dot all change
-    // the MEANING of the expression, not just its styling).
-    .replace(/\\overline\{([^{}]*)\}/g, (_, g) => [...g].map((c: string) => `${c}̅`).join(""))
-    .replace(/\\vec\{([^{}]*)\}/g, (_, g) => [...g].map((c: string) => `${c}⃗`).join(""))
-    .replace(/\\hat\{([^{}]*)\}/g, (_, g) => [...g].map((c: string) => `${c}̂`).join(""))
-    .replace(/\\bar\{([^{}]*)\}/g, (_, g) => [...g].map((c: string) => `${c}̄`).join(""))
-    .replace(/\\dot\{([^{}]*)\}/g, (_, g) => [...g].map((c: string) => `${c}̇`).join(""));
+    // Runs AFTER convertBracedCommands: a frac/sqrt argument can itself contain "^{\circ}" (that's the
+    // nested-brace case this whole function exists to survive), and convertBracedCommands leaves that
+    // superscript syntax untouched (\circ isn't one of its commands), so it's still there to catch here.
+    // Braced form FIRST — "^{\circ}" (very common; \circ doesn't strictly need the braces but models and
+    // humans both write it) otherwise only has its "\circ" matched and stripped by the next line, leaving
+    // the caret and braces behind for the superscript pass below to turn into a bare, dangling "^°"
+    // (reported live, inside the same garbled expression as the frac bug above).
+    .replace(/\^\{\\circ\}/g, "°")
+    .replace(/\^\\circ/g, "°").replace(/\\circ/g, "°");
   for (const [re, rep] of LATEX_SYMBOLS) s = s.replace(re, rep);
   // ^{...}/_{...} (braced, so multi-char) then ^x/_x (single char) — braced form must run first or the
   // single-char pattern would fire on just the `{`.
