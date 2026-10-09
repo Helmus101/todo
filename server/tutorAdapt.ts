@@ -363,3 +363,116 @@ export function planTurn(o: { userKey: string; message: string; history: { role:
   return { move: a.move, pace: a.pace, line, policy, ...(learned ? { learned } : {}), stuck: ctx.stuckStreak > 0 };
 }
 export const _POLICY_MOVES_CHECK: readonly string[] = POLICY_MOVES;
+
+// ---- Problems the STUDENT poses, multi-solution traps, and "I wrote the calculation for you" ----
+
+const POSE_WORD = /\b(?:find|solve|determine|calculate|compute|evaluate|simplify|express|prove|show(?: that)?|work out|how (?:many|much|long|far|fast)|what(?:'s| is| are) (?:the|all)|trouve[rz]?|résous|calcule[rz]?|détermine[rz]?|démontre[rz]?|combien)\b/i;
+
+/** A problem the student states in chat ("find all unknown angles in triangle ABC where a=35 …"), cleaned up for the
+ *  board — or "" when the message isn't a problem statement. Voice dictation spells things out ("equals", "degrees",
+ *  "centimeters"), which is tidied; the student's own wording is otherwise kept. */
+export function studentProblemStatement(message: string): string {
+  const raw = message.replace(/\s+/g, " ").trim();
+  if (raw.length < 25 || raw.length > 900 || /^\[(?:Exercise|Exercice|Activity|Activité)\]/i.test(raw)) return "";
+  if (!POSE_WORD.test(raw)) return "";
+  const quantities = (raw.match(/\d+(?:[.,]\d+)?/g) || []).length + (raw.match(/\b(?:equals?|égale?s?)\b/gi) || []).length;
+  if (quantities < 2) return ""; // "find the main idea" is a request, not a posed problem
+  if (/^(?:can|could|would|will|please|peux|pouvez)\b.{0,40}\b(?:you|tu|vous)\b/i.test(raw) && quantities < 3) return "";
+  let t = raw
+    .replace(/^(?:all ?right|alright|okay|ok|so|um+|uh+|well|right|d['’]accord|alors|bon)[,.\s]+(?:so\s+)?(?:(?:first|now|next)\s+)?(?:i(?:'ll| will)?\s+(?:do|try|have|want)\s+)?/i, "")
+    .replace(/\bequals?\b/gi, "=").replace(/\bdegrees?\b/gi, "°").replace(/\bcentimet(?:er|re)s?\b/gi, "cm").replace(/\bmet(?:er|re)s?\b/gi, "m")
+    .replace(/\s*=\s*/g, " = ").replace(/\s+°/g, "°").replace(/\s{2,}/g, " ").trim();
+  t = t.charAt(0).toUpperCase() + t.slice(1);
+  return t.slice(0, 600);
+}
+
+/** Does any board entry / problem already carry this statement (by numbers + main words)? */
+export function boardCoversStatement(statement: string, boardTexts: string[]): boolean {
+  const nums = (statement.match(/\d+(?:[.,]\d+)?/g) || []).map((n) => n.replace(",", "."));
+  if (!nums.length) return false;
+  const hay = boardTexts.join("\n").replace(/[$\\{}]/g, " ").replace(/,/g, ".");
+  const hits = nums.filter((n) => new RegExp(`(?<![\\d.])${n.replace(".", "\\.")}(?![\\d])`).test(hay)).length;
+  return hits >= Math.max(2, Math.ceil(nums.length * 0.75));
+}
+
+interface CaseTrap { id: string; test: (t: string) => boolean; hint: string; covered: RegExp }
+const CASE_TRAPS: CaseTrap[] = [
+  {
+    id: "ssa",
+    test: (t) => /\btriangle\b|\bABC\b/i.test(t) && /(?:\bangle\b|°|degrees?)/i.test(t) && (t.match(/\b[a-c]\s*(?:=|equals)\s*\d/gi) || []).length >= 2
+      && /\b(?:find|solve|determine|all (?:the )?(?:unknown|missing)|sine (?:rule|law)|sin\b)/i.test(t),
+    hint: "two sides and a NON-included angle (SSA) can give TWO different triangles (the ambiguous case)",
+    covered: /ambiguous|second (?:case|triangle|solution|angle)|other (?:case|triangle|solution|angle)|obtuse|two (?:triangles|solutions|cases|possible)|180\s*[-−–]\s*(?:B|45|\d)|supplement/i,
+  },
+  {
+    id: "trig-eq",
+    test: (t) => /\b(?:sin|cos|tan)\s*\(?\s*[a-zθ]\w*\)?\s*=/i.test(t) && /\b(?:find all|all (?:values|solutions)|solve|interval|\[\s*0|0\s*[≤<]|0\s*to\s*(?:360|2π))/i.test(t),
+    hint: "a trig equation usually has MORE than one solution in the interval (the second quadrant / the period)",
+    covered: /second (?:solution|quadrant|angle)|other (?:solution|quadrant|angle)|180\s*[-−–]|period|all (?:the )?solutions|both/i,
+  },
+  {
+    id: "abs-or-square",
+    test: (t) => /\|[^|]{1,30}\|\s*=|\bx\^?2\s*=\s*\d|\bx²\s*=\s*\d|\bsquare root\b.*\bsolve\b/i.test(t),
+    hint: "an absolute-value or squared equation has TWO solutions (positive and negative)",
+    covered: /both|two (?:solutions|cases|roots|values)|±|negative (?:case|root|solution|value)|positive and negative/i,
+  },
+  {
+    id: "quadratic",
+    test: (t) => /\bsolve\b/i.test(t) && /\bx\^?2\b|x²|quadratic/i.test(t) && /=\s*0|quadratic/i.test(t),
+    hint: "a quadratic can have two roots (or none, or a double one)",
+    covered: /both|two (?:solutions|roots)|±|discriminant|other (?:root|solution)|second (?:root|solution)|roots?\b/i,
+  },
+];
+
+/** Multi-solution traps that apply to the problem under discussion and that nobody has raised yet. The student's
+ *  messages define the problem; the WHOLE conversation (including the tutor's own words) defines "raised". */
+export function pendingCaseTraps(message: string, history: { role: string; text: string }[], draft = ""): { id: string; hint: string }[] {
+  const userText = [...history.filter((h) => h.role === "user").map((h) => h.text), message].join(" \n ");
+  const all = `${history.map((h) => h.text).join(" \n ")} \n ${message} \n ${draft}`;
+  return CASE_TRAPS.filter((c) => c.test(userText) && !c.covered.test(all)).map((c) => ({ id: c.id, hint: c.hint }));
+}
+
+/** System-prompt block that makes the tutor raise the case itself — as a QUESTION, never as an announcement. */
+export function caseTrapBlock(traps: { hint: string }[]): string {
+  if (!traps.length) return "";
+  return `\n\nCASE CHECK (the student shouldn't have to raise this themselves): ${traps.map((t) => t.hint).join("; ")}. ` +
+    `Do not call the problem finished, and do not offer "another one", until the student has been ASKED whether there could be another case/solution — ` +
+    `ask it as a question once the first case is done ("how many triangles/solutions can fit these numbers?"), never announce it. ` +
+    `When they do raise or find the second case, don't write its calculation for them: ask what makes it possible (e.g. "which other angle between 0° and 180° has the same sine?") and let THEM produce it.\n`;
+}
+
+const WRAP_UP = /\b(?:whole|entire|full|complete|all)\b[^.!?]{0,30}\b(?:solved|done|finished|found|worked out)\b|\bsolved\b|\bthat'?s (?:it|everything|all|the lot)\b|\ball (?:angles|sides|unknowns?) (?:are )?(?:found|done)\b|\bnailed it\b|c['’]est tout|c['’]est résolu|\bterminé\b/i;
+const MOVE_ON = /\b(?:another|next one|harder|something else|want to try|autre|suivant|prochain)\b/i;
+/** True when the draft closes the problem (or moves on) while a multi-solution trap is still unraised. */
+export function closesWithMissedCase(draft: string, traps: { id: string }[]): boolean {
+  return traps.length > 0 && (WRAP_UP.test(draft) || MOVE_ON.test(draft)) ;
+}
+
+/** The tutor wrote out the calculation and only asked the student to EVALUATE it ("180° − 45.6° — what does that come
+ *  out to?"): choosing the operation was the real thinking, and it's been done for them. Echoing an expression the
+ *  student themselves just wrote is fine. */
+export function handsOverCalculation(reply: string, lastUser: string): boolean {
+  const ASKS_EVAL = /\b(?:what|how much)\b[^.?!]{0,40}\b(?:come|comes|work|works|equal|equals|give|gives|simplify|simplifies|reduce|reduces)\b[^.?!]{0,30}\?|\bcalculate (?:it|that|this)\b|\bwhat(?:'s| is) (?:the )?(?:result|value)\b|\bcombien (?:ça|cela|ca) (?:fait|donne)\b/i;
+  if (!ASKS_EVAL.test(reply)) return false;
+  const plain = reply.replace(/\\circ|\\degree|\^\s*\{?\\?circ\}?|\\[a-z]+/gi, " ").replace(/[$]/g, " ");
+  const exprs = [...plain.matchAll(/(\d+(?:\.\d+)?)\s*°?\s*([-−–+×x*/÷])\s*(\d+(?:\.\d+)?)/g)];
+  if (!exprs.length) return false;
+  const norm = (s: string) => s.replace(/\s+/g, "").replace(/[−–]/g, "-").replace(/[×x]/g, "*").replace(/÷/g, "/").replace(/°/g, "");
+  const user = norm(lastUser);
+  return exprs.some((m) => !user.includes(norm(m[0])) && !user.includes(`${m[1]}${norm(m[2])}${m[3]}`));
+}
+
+/** Specific, worked-out equation pieces in `text` — a trig value at a named angle ("tan(40°)") or a variable sum
+ *  ("x+500", "470+h") — that appear in NOTHING the student said and in no given. Those are the fingerprints of a
+ *  SETUP STEP the tutor took for them (the equation they were meant to build). General formulas ("a/sinA = b/sinB")
+ *  carry no such pieces, so teaching a formula is never flagged. */
+export function equationAhead(text: string, studentTexts: string[], givens: string[]): string[] {
+  const norm = (s: string) => s.toLowerCase().replace(/\\(?:circ|degree|left|right|cdot|times)|\^\s*\{?\\?circ\}?|degrees?|[°$\s{}\\*·×]/g, "").replace(/[−–]/g, "-");
+  const body = norm(text);
+  const pieces = new Set<string>();
+  for (const m of body.matchAll(/(?:sin|cos|tan)\(?\d+(?:\.\d+)?\)?/g)) pieces.add(m[0].replace(/[()]/g, ""));
+  for (const m of body.matchAll(/\(?[a-z]\+\d+(?:\.\d+)?\)?|\(?\d+(?:\.\d+)?\+[a-z]\)?/g)) pieces.add(m[0].replace(/[()]/g, ""));
+  if (!pieces.size) return [];
+  const said = norm([...studentTexts, ...givens].join(" \n ")).replace(/[()]/g, "");
+  return [...pieces].filter((p) => !said.includes(p));
+}

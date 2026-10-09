@@ -401,6 +401,20 @@ export async function runTutorSim(check, section) {
     check("...and the binding TUTOR POLICY + plan protocol are in the tutor's prompt", /TUTOR POLICY FOR THIS TURN/.test(String(calls[0].messages[0].content)) && /HOW YOU THINK EACH TURN/.test(String(calls[0].messages[0].content)));
   }
 
+  // A problem the STUDENT poses lands on the board even if the model never writes it; a closing reply on an SSA triangle is turned into the case check
+  {
+    const ssa = "find all unknown angles inside the triangle ABC where a equals 35 centimeters b equals 50 centimeters angle A equals 30 degrees";
+    script = () => ({ content: "Which rule connects two sides and an opposite angle?" });
+    r = await run(ssa, { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "What do you want to work on?" }] });
+    const given = r.boardAll.find((e) => e.kind === "given" && e.owner === "student");
+    check("end to end: the student's posed problem is put on the board for them", !!given && /35 cm/.test(given.text) && /30°/.test(given.text) && /^Find all unknown angles/.test(given.text));
+    script = (b, i) => i === 0 ? { content: "Side c ≈ 67.8 cm. That's the whole triangle solved. Want another one?" } : { content: "Before we move on — how many different triangles could fit a = 35, b = 50 and A = 30°?" };
+    r = await run("67.8", { history: [{ role: "user", text: ssa }, { role: "assistant", text: "ok" }, { role: "user", text: "sin B = 0.714 so B = 45.6, C = 104.4" }, { role: "assistant", text: "Good. Side c?" }], board: [{ id: "g", kind: "given", text: "Triangle ABC: a = 35 cm, b = 50 cm, A = 30°", at: "" }] });
+    check("end to end: closing an SSA triangle without the second case is turned into a question about it", !/whole triangle solved/i.test(r.reply) && /how many/i.test(r.reply));
+    script = (b, i) => i === 0 ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "x tan(40°) = (x + 500) tan(25°)", kind: "formula" })] } : { content: "What ratio links h, the angle and that distance?" };
+    r = await run("we label BJ as k", { history: [{ role: "user", text: "two boats 500 m apart, angles of depression 25 and 40, cliff 470 m" }, { role: "assistant", text: "ok" }] });
+    check("end to end: the tutor can't write the setup equation the student never built", !r.boardAll.some((e) => /tan\(40/.test(e.text)));
+  }
   // ANNOTATE_BOARD — Otto points at an existing entry instead of explaining the mistake in chat
   {
     const board = [{ id: "e1", kind: "given", text: "A block on a 30° slope", at: "" }, { id: "e2", kind: "result", owner: "student", status: "incorrect", text: "N = mg", at: "" }];
