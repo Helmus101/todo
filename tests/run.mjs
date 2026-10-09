@@ -1787,6 +1787,8 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   { const ui2 = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8"); const app2 = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
     check("FlashcardDeck remounts per deck (id+size) so a different/shorter deck never indexes past the end", /function FlashcardDeckInner/.test(ui2) && /key=\{`\$\{props\.deck\.id\}:\$\{props\.deck\.cards\.length\}`\}/.test(ui2) && /!deck\.cards\[cardIndex\]/.test(ui2));
     check("tutor/session/<id> route reads the id from segment 2", /sessionId=\{route\.split\("\/"\)\[2\]\}/.test(app2)); }
+  { const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+    check("task-list responses slim finished tutor sessions; x-powered-by off; URL fetch refuses redirects", /function outgoingTasks/.test(idx) && !/res\.json\(req\.session\.tasks/.test(idx.replace(/\/\/.*$/gm, "")) && /app\.disable\("x-powered-by"\)/.test(idx) && /redirect: "error"/.test(idx)); }
   check("board is flat: plain lines, no section numbers or boxes", /sm-board-line/.test(boardSrc) && !/sm-board-section-num/.test(boardSrc));
   check("kind:\"summary\" renders as an ordinary line — no trace box, no heading, no category", !/ReasoningTrace|sm-board-trace/.test(boardSrc));
   check("a deliberately unfinished worked line gets an 'à toi de finir' completion chip (completion effect, visible)", /isCompletionGap/.test(boardSrc) && /sm-board-todo-chip/.test(boardSrc));
