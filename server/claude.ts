@@ -18,6 +18,7 @@ import { getMaxHintLevel, isGraduationMoment } from "./dependenceMetrics.ts";
 import { evaluateArithmetic, findArithmeticClaims, hasArithmetic } from "./arithmetic.ts";
 import { boardSurfaceBlock, boardTrajectoryBlock, type BoardEvent } from "./boardEvents.ts";
 import { buildTutorDecision } from "./actionSpace.ts";
+import { findSourceQuestions, cleanProblemSource, sourcesForTrack } from "./questionSources.ts";
 import { extractPlan, validatePlan, policyBlock as tutorPolicyBlock, PLAN_PROTOCOL, type TutorPlan, type TutorPolicy } from "./tutorBrain.ts";
 import { sessionStateBlock } from "./sessionState.ts";
 import type { TutorSessionStateShape, TutorDecisionShape } from "../shared/agentTypes.ts";
@@ -2573,8 +2574,17 @@ const CREATE_PROBLEM_TOOL = {
     answer: { type: "string", description: "Free-response mode only: the expected answer — SHORT and checkable (a number, a simple expression, a single word), checked loosely (trimmed, case-insensitive, and with a few-percent tolerance on decimal numeric answers to absorb ordinary rounding). An EXERCISE is ONLY for a question with exactly ONE correct, short answer. NEVER create one for anything open-ended (explain, why, describe, justify, prove/show that, compare, discuss, multi-part (a)(b)(c)) — ask those in the conversation. If you can't state one short answer, it is not an exercise. Omit for MCQ mode. MULTI-STEP NUMERIC PROBLEMS (physics/chem/finance): compute this value by carrying full precision through every intermediate step — NEVER round an intermediate result (an angle, a sub-total) before using it in a later step, since that can shift the final value by several percent and make a student's equally valid, less-rounded calculation get marked wrong. If a constant isn't a fixed convention (g, a rate, a density), state the exact value to use directly in `question` so every valid path converges on the same number." },
     why: { type: "string", description: "one line on why the answer is right — this is what makes the problem teach instead of just score" },
     hint: { type: "string", description: "an optional hint the student can reveal before answering" },
+    sourceUrl: { type: "string", description: "ONLY when this exercise is adapted from a FIND_SOURCE_QUESTION result: that result's url, exactly. Never invent one." },
     format: { type: "string", description: "free-response mode only: guidance on expected format/units/notation (e.g. 'two decimal places, in m/s'). NEVER use the real answer as an example — use a placeholder ('x = a') or a different value." },
   }, required: ["question"] },
+};
+
+// IB / AP students practise on registered sources (IB Documents, Revision Village, College Board AP Central).
+// Offered ONLY to those programs; for everyone else exercises are generated exactly as before.
+const FIND_SOURCE_QUESTION_TOOL = {
+  name: "FIND_SOURCE_QUESTION",
+  description: "Look up real practice questions on the topic from the student's registered source (IB: IB Documents / Revision Village; AP: College Board AP Central). Call this ONCE, before you write an exercise, when the topic is something exam-style questions exist for. Returns up to 2 excerpts with a url. If one fits, ADAPT it into your CREATE_PROBLEM (reword and re-number it — never paste long passages verbatim) and pass its url as sourceUrl so the student gets a link to the original. If it returns nothing usable, write the exercise yourself as usual — never invent a source or a url.",
+  input_schema: { type: "object", properties: { topic: { type: "string", description: "the specific topic/skill, e.g. 'integration by parts' or 'Le Chatelier equilibrium shifts'" } }, required: ["topic"] },
 };
 
 // Unlike every other CREATE_* tool here, this one is ALWAYS in the tool list — canvas mode or not (see
@@ -2901,6 +2911,7 @@ export function makeProblem(input: any): { problem: TaskProblem } | { error: str
       ...(why ? { why } : {}),
       ...(hint ? { hint } : {}),
       ...(format ? { format } : {}),
+      ...(cleanProblemSource(input?.sourceUrl) ? { source: cleanProblemSource(input?.sourceUrl) } : {}),
       createdAt: new Date().toISOString(),
     },
   };
@@ -7936,7 +7947,7 @@ export async function chatAboutTask(
   // anyway.
   const dynamicContext = nowBlock() + courseworkLine(profile, task.sourceSubject) + studentNameLine(profile?.name) + dueLine(task.sourceDue, tzOf(profile)) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + syllabusGroundingLine(profile, task.sourceSubject) + learningStyleLine(profile) + hintDensityLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + sessionRecapLine(profile?.sessions, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine + (opts?.primer ? (opts?.moveLine || "") + (opts?.repair || "") + spokenMathHint(message) + scaffoldLine(message, history) + probeLine(message, history) + cheerLine(message, history, opts?.currentObjectives) : "");
   const sys =
-    (opts?.primer ? PRIMER_PERSONA + PLAN_PROTOCOL : "") +
+    (opts?.primer ? PRIMER_PERSONA + PLAN_PROTOCOL + (sourcesForTrack(profile?.track).length ? `\n\nREAL QUESTIONS FIRST: this student is on the ${profile?.track === "ib" ? "IB (IB Documents / Revision Village)" : "AP (College Board AP Central)"} track. Before you write an exercise on an exam-style topic, call FIND_SOURCE_QUESTION once and adapt a fitting result (reword and re-number it, cite it via sourceUrl) instead of inventing the question from scratch. If it returns NONE, write it yourself as usual. Everything else about exercises (one at a time, single short answer, never reveal it) is unchanged.\n` : "") : "") +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
     `good tutor they can't afford to hire: patient, genuinely curious about how THEY think, and interested ` +
     `in them actually understanding the material — not in getting the assignment off their plate. Ground ` +
@@ -8820,7 +8831,7 @@ export async function chatAboutTask(
   // which no longer renders a board anywhere except the Tutor (TutorSession.tsx).
   const includeArtifactTools = wantsArtifactTools(message, history);
   const boardTools = opts?.primer
-    ? [CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, CLEAR_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, ...(opts?.canvasMode ? [CREATE_INTERACTIVE_TOOL] : []), SET_OBJECTIVES_TOOL]
+    ? [CREATE_PROBLEM_TOOL, ...(sourcesForTrack(profile?.track).length ? [FIND_SOURCE_QUESTION_TOOL] : []), WRITE_TO_BOARD_TOOL, CLEAR_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, ...(opts?.canvasMode ? [CREATE_INTERACTIVE_TOOL] : []), SET_OBJECTIVES_TOOL]
     : [];
   const tools = opts?.canvasMode
     ? [...boardTools, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])]
@@ -9354,6 +9365,12 @@ export async function chatAboutTask(
         } else if (name === "CREATE_QUIZ") {
           if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
           else { const r = makeQuiz(input); if ("error" in r) content = r.error; else { result.quizzes.push(r.quiz); content = JSON.stringify({ ok: true, id: r.quiz.id, count: r.quiz.questions.length }); logAudit("artifact", fr ? `Quiz créé : « ${r.quiz.title} » (${r.quiz.questions.length} questions)` : `Quiz created: "${r.quiz.title}" (${r.quiz.questions.length} questions)`); } }
+        } else if (name === "FIND_SOURCE_QUESTION") {
+          const found = await findSourceQuestions({ track: profile?.track, subject: task.sourceSubject, topic: String((input as any)?.topic || "") });
+          content = found.length
+            ? JSON.stringify(found.map((f) => ({ source: f.sourceName, url: f.url, title: f.title, excerpt: f.excerpt })))
+            : "NONE: nothing usable from the registered sources for this topic — write the exercise yourself, without a sourceUrl.";
+          logAudit("tool", fr ? `Source de questions : ${found.length} résultat(s)` : `Question source lookup: ${found.length} result(s)`);
         } else if (name === "CREATE_PROBLEM") {
           if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
           // Same content-level dedupe as WRITE_TO_BOARD (isDuplicateBoardEntry) — checked against BOTH what

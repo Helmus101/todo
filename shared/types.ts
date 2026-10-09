@@ -1521,6 +1521,9 @@ export interface TaskProblem {
   hint?: string;
   /** Guidance on expected format/units/notation for free-response mode (e.g. "two decimal places, in m/s"). */
   format?: string;
+  /** Where the question comes from when it was adapted from a registered source (IB Documents, Revision Village,
+   *  AP Central…) — shown as a link under the question. Absent for generated questions. */
+  source?: { name: string; url: string };
   createdAt: string;
 }
 

@@ -185,3 +185,4 @@ h1 { font-family: var(--display); font-weight: 400; letter-spacing: -0.025em; }
 /* Flat board: everything is plain writing on the page, normal size, no boxes or colour. */
 .sm-board-line { font-size: 1rem; line-height: 1.65; color: var(--ink); margin: 2px 0 10px; }
 .sm-board-focus-line { font-weight: 500; }
+.sm-board-problem-source { display: inline-block; margin-top: 6px; font-size: .85rem; color: var(--ink-3, #8a867b); text-decoration: underline; }
