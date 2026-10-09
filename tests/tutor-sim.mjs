@@ -462,6 +462,16 @@ export async function runTutorSim(check, section) {
     r = await run("so one slope is five the other is one over three can we maybe graph it right", { history: hist });
     check("end to end: 'maybe graph it' puts the graph on the board, and the ungrounded 'Great! tan θ = slope' never reaches them", r.boardAll.some((e) => e.kind === "graph") && !/tan\(?θ/.test(r.reply) && /slopes/.test(r.reply));
   }
+  // LISTEN FIRST — the reported lines session: "what's M1" must be answered about M1, and the intersection they found must be responded to
+  {
+    const hist = [{ role: "user", text: "find the acute angle between y = 5x - 2 and y = x/3 - 1" }, { role: "assistant", text: "What do you notice about their two slopes?" }, { role: "user", text: "what does m show" }, { role: "assistant", text: "m is the slope of a line. Which slope is 5?" }];
+    script = (b, i) => i === 0 ? { content: "Punch it into the calculator — what angle does arctan(1/3) give you in degrees?" } : { content: "M1 is just the name for the slope of the first line, y = 5x − 2. Which number in that equation is its slope?" };
+    r = await run("what's M1", { history: hist });
+    check("end to end: a question about a term is answered about that term, not with the next step of the plan", /M1/.test(r.reply) && !/arctan|calculator/.test(r.reply) && r.boardAll.length === 0);
+    script = (b, i) => i === 0 ? { content: "Got the formula up there. Now plug m1 = 5 into it — what do you get?" } : { content: "x = 3/14 — plug it into both equations: do they give the same y?" };
+    r = await run("intersect and I found the point of intersection is when x equals to over 14", { history: hist.slice(0, 2) });
+    check("end to end: the work they report is responded to before anything else", /14/.test(r.reply) && !/formula up there/.test(r.reply));
+  }
   // ANNOTATE_BOARD — Otto points at an existing entry instead of explaining the mistake in chat
   {
     const board = [{ id: "e1", kind: "given", text: "A block on a 30° slope", at: "" }, { id: "e2", kind: "result", owner: "student", status: "incorrect", text: "N = mg", at: "" }];
