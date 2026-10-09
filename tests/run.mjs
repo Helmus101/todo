@@ -126,9 +126,11 @@ section("Tutor opener — Otto's first line is REAL memory, never a template or 
   check("a session with nothing real is dropped instead of being sent as a hollow row", sessionMemoryForPrompt([captionSession], "Maths", Date.now(), "en").length === 0);
   check("the memory is capped at three sessions so the opener request stays small", sessionMemoryForPrompt([1, 2, 3, 4, 5].map((n) => ({ ...old, id: `x${n}` })), "Maths", Date.now(), "en").length === 3);
   const ts = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
-  check("opening a session asks for the real opening line, grounded in the browser's own record", /api\.tutorOpener\(task\.sourceSubject \|\| "", memory\)/.test(ts) && /sessionMemoryForPrompt\(getTutorSessions\(userId\), task\.sourceSubject, Date\.now\(\), openerLang\)/.test(ts));
-  check("it is asked exactly once per session and only while the session is still blank", /if \(!id \|\| task\.chat\?\.length \|\| openerAskedFor === id\) return;/.test(ts) && /setOpenerAskedFor\(id\)/.test(ts));
-  check("the instant line stays as the fallback — a failed or slow opener never leaves an empty greeting", /const openerText = realOpener && realOpener\.id === task\.id \? realOpener\.text : instantOpener;/.test(ts) && /the instant line stays/.test(ts));
+  // Report-live: "for the thing with automatic opening don't make it complicated, just use a template
+  // like we worked on supply and demand" — so the opener is ONE local template with no model round-trip:
+  // no api.tutorOpener call, no realOpener state, no openerAskedFor — nothing that can fail, double-render
+  // or stack a second time reference. (server/claude.ts's tutorOpener + route stay for API compatibility.)
+  check("the opener is a plain local template — no model round-trip from the session component", !/api\.tutorOpener\(/.test(ts) && !/setRealOpener/.test(ts) && !/setOpenerAskedFor/.test(ts) && /const openerText = instantOpener;/.test(ts));
   check("the instant line no longer quotes the first raw board text as 'what we worked on'", !/lastSame\?\.summary\.split/.test(ts) && /sessionTopic\(lastSame\)/.test(ts) && /relativeWhen\(lastSame\.endTime/.test(ts));
   const sessionsSrc = readFileSync(new URL("../client/tutor/tutorSessions.ts", import.meta.url), "utf8");
   check("the old recap helper that never reached the model is gone (one memory path, not two)", !sessionsSrc.includes("pastSessionsLine") && !ts.includes("pastSessionsLine"));
@@ -2158,12 +2160,26 @@ section("Tutor Session — sessions never auto-start, and past boards read at a 
   check("an in-progress session is offered back ONLY via an explicit Resume button (no auto-open on mount)", /resumeActiveSession/.test(tutorSrc) && /onClick=\{resumeActiveSession\}/.test(tutorSrc) && /L\("Reprendre", "Resume"\)/.test(tutorSrc));
   check("Start is the only create path and always passes fresh (a new lesson starts clean)", /api\.studyFreeSession\(true, selectedSubject\)/.test(tutorSrc));
   check("voice stays manual (no startInVoiceMode on the panel — the mic toggle is the student's)", !/startInVoiceMode=/.test(tutorSrc));
-  // Direct request: "refine ui for past boards" — each history item shows the board AT A GLANCE (first
-  // few entries as compact lines) before the full reopenable board behind the View button.
-  check("past sessions show the board at a glance (capped 3-line preview)", /tutor-history-takeaways/.test(tutorSrc) && /tutor-history-board/.test(tutorSrc) && /slice\(0, 3\)/.test(tutorSrc));
-  check("history modals are subject-titled (which lesson's board/chat am I reopening?)", /openBoardSession\.subject \? ` · \$\{openBoardSession\.subject\}`/.test(tutorSrc));
+  // Report-live: "for summary there should be ONE title — what was the main thing — and then a bit of
+  // description", NOT a wall of board lines (the example: Spring compression → energy transfer…, E = kx²…,
+  // repeated under a 'Board at a glance' heading). The card is sessionCardTitle + sessionCardDesc only.
+  check("a past session's card is ONE title + a short description — the board-lines wall is gone",
+    /sessionCardTitle\(s\)/.test(tutorSrc) && /sessionCardDesc\(s\)/.test(tutorSrc) &&
+    !/tutor-history-takeaways/.test(tutorSrc) && !/tutor-history-board/.test(tutorSrc) && !/slice\(0, 3\)/.test(tutorSrc));
+  // Report-live: "viewing session and board from past should show in whole page and only have see board
+  // or chat, not session" — two FULL-PAGE routes, no modal stack, no vague "View session" entry.
+  check("past sessions open as full-page /board and /chat routes — never a modal, never 'View session'",
+    /href=\{`\/tutor\/session\/\$\{s\.id\}\/board`\}/.test(tutorSrc) && /href=\{`\/tutor\/session\/\$\{s\.id\}\/chat`\}/.test(tutorSrc) &&
+    !/Voir la séance/.test(tutorSrc) && !/setOpenBoardSession/.test(tutorSrc) && !/openChatSession/.test(tutorSrc));
+  // Report-live: "make sure in session u cant see past chat and it isn't a dedicated chat button, just on
+  // the floating island with chat there can be an expand button".
+  check("in-session chat is the floating island's own expand button — no dedicated button, no past chats",
+    /tutor-dock-chat-toggle/.test(tutorSrc) && /className="ts-dock"[\s\S]*?tutor-dock-chat-toggle/.test(tutorSrc) &&
+    !/tutor-chat-btn/.test(tutorSrc) && !/tutor-chat-past/.test(tutorSrc) && !/setChatDrawer\(true\)/.test(tutorSrc));
   const stylesSrc = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
-  check("the at-a-glance history styles actually exist", /\.tutor-history-takeaways/.test(stylesSrc) && /\.tutor-history-board li::before/.test(stylesSrc));
+  check("the new history-card, island-chat and review styles actually exist (old ones are gone)",
+    /\.tutor-history-desc/.test(stylesSrc) && /\.tutor-dock-chat-toggle/.test(stylesSrc) && /\.tutor-review-tab/.test(stylesSrc) &&
+    !/\.tutor-history-takeaways/.test(stylesSrc) && !/\.tutor-chat-past/.test(stylesSrc) && !/\.tutor-crumbbar \.tutor-chat-btn/.test(stylesSrc));
 }
 
 section("Voice-mode board rules — gesture research, not dictation (prompt pins)");
@@ -2545,7 +2561,10 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   // ending used to only save a FLATTENED TEXT preview (boardEntries: string[]) of the board, losing any
   // diagram/equation structure; the real board is now saved too and reopenable.
   check("ending a session saves the FULL board (diagrams/equations intact), not just flattened text", /board: task\.board \|\| \[\]/.test(tutorSrc));
-  check("a past session's full board can be reopened (View board button + modal)", /setOpenBoardSession/.test(tutorSrc) && /<BoardArtifact task=\{\{ board: openBoardSession\.board \}/.test(tutorSrc));
+  check("a past session's full board reopens FULL PAGE (/tutor/session/<id>/board renders BoardArtifact)",
+    /const reviewSession = sessionId && userId \? getTutorSessions\(userId\)\.find/.test(tutorSrc) &&
+    /<BoardArtifact task=\{\{ board: reviewSession\.board \} as unknown as WebTask\}/.test(tutorSrc) &&
+    /reviewView === "chat"/.test(tutorSrc));
   // Voice stays off through start/resume — the student turns it on with the mic toggle themselves.
   check("starting or resuming a session leaves voice OFF (explicit mic tap to enable)", !/setWantVoice\(true\)/.test(tutorSrc));
   // Otto is an avatar docked over the canvas (no transcript): voice state shows on the avatar itself

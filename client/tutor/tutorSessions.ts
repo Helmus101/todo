@@ -103,6 +103,37 @@ export function sessionTopic(s: TutorSessionSummary): string {
   if (!pick || CAPTION_RE.test(pick) || pick === "Session completed") return "";
   return pick.length > 90 ? pick.slice(0, 88).trimEnd() + "…" : pick;
 }
+
+const cleanCardLine = (raw: unknown): string => String(raw || "").replace(/\*\*|__|`|#/g, "").replace(/\s+/g, " ").trim();
+/** The past session's real board lines as ONE-line strings, markdown noise stripped, captions skipped. */
+function cardLines(s: TutorSessionSummary): string[] {
+  return (s.boardEntries || []).map(cleanCardLine).filter((t) => t && !CAPTION_RE.test(t) && t !== "Session completed");
+}
+const clampLine = (t: string, n: number) => (t.length > n ? t.slice(0, n - 2).trimEnd() + "…" : t);
+/** The card's ONE title — what the main thing WAS ("Force vs energy", "Supply and demand") — not the wall
+ *  of six board lines the raw summary dumps (report-live: the past-session card printed every line twice).
+ *  Prefers a TOPIC-SHAPED line: short and equation-free (a title is a name, not a formula); falls back to
+ *  the rich sessionTopic when the board is all working, and "" when there is nothing nameable (a bare
+ *  "3 messages" recap is already shown in the heading row — repeating it as a title helps nobody).
+ *  Exported for tests. */
+export function sessionCardTitle(s: TutorSessionSummary): string {
+  const lines = cardLines(s);
+  const topic = lines.find((t) => t.length <= 60 && !/[=+×÷^√<>≠≤≥→⇒]/.test(t));
+  if (topic) return clampLine(topic, 70);
+  const rich = sessionTopic(s);
+  if (rich) return clampLine(rich, 70);
+  const first = cleanCardLine((s.summary || "").split(" — ")[0]).split("\n")[0];
+  return /^\d+\s*messages?$/i.test(first) ? "" : clampLine(first, 70);
+}
+/** ONE line of description under the title: the most substantive remaining board line (an equation or a
+ *  →-statement beats an aside), capped so the card stays a card. "" when there is nothing beyond the
+ *  title. Exported for tests. */
+export function sessionCardDesc(s: TutorSessionSummary): string {
+  const title = sessionCardTitle(s);
+  const lines = cardLines(s).filter((t) => t !== title);
+  const pick = lines.find((t) => /[=+×÷^√<>≠≤≥→⇒]|\d/.test(t)) || lines[0] || "";
+  return clampLine(pick, 140);
+}
 /** When a past session happened, in the student's own language and only as precisely as it's actually known
  *  ("yesterday", "3 days ago", "last week") — "" for an unknown/unparseable stamp, never a guess. Exported
  *  for tests. */

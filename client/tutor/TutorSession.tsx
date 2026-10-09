@@ -3,7 +3,7 @@ import { ArrowRight, TrendingUp, RotateCcw, MessageCircle, Lightbulb, CircleHelp
 import type { WebTask, TaskProblem } from "../../shared/types.ts";
 import { api } from "../api.ts";
 import { setLocalObjectives, getLocalThread } from "../localChatBoard.ts";
-import { useLang, LangContext, TaskModal, formatMath } from "../ui.tsx";
+import { useLang, LangContext } from "../ui.tsx";
 import { AskOttoPanel } from "../study/AskOttoPanel.tsx";
 import { BoardArtifact, MathText } from "../study/artifacts/BoardArtifact.tsx";
 import { TutorDesmos } from "./TutorDesmos.tsx";
@@ -11,7 +11,7 @@ import { TutorCanvas, type TutorCanvasHandle } from "./TutorCanvas.tsx";
 import { PageTour } from "../PageTour.tsx";
 import { TOURS } from "../tours.ts";
 import { COMMON_SUBJECTS } from "../../shared/coursework.ts";
-import { buildSessionSummary, saveTutorSession, getTutorSessions, sessionMemoryForPrompt, sessionTopic, relativeWhen, type TutorSessionSummary } from "./tutorSessions.ts";
+import { buildSessionSummary, saveTutorSession, getTutorSessions, sessionCardTitle, sessionCardDesc, sessionTopic, relativeWhen, type TutorSessionSummary } from "./tutorSessions.ts";
 
 // A dismiss that silently fails (a network blip, a momentary 429) used to just be swallowed — the session
 // then never actually ends server-side and comes back as a "Reprendre?" ghost on every future visit
@@ -51,7 +51,7 @@ export function mergeBoardById<T extends { id: string; at?: string; createdAt?: 
   return [...existing, ...fresh].map((x, i) => ({ x, i })).sort((a, b) => when(a.x) - when(b.x) || a.i - b.i).map((o) => o.x);
 }
 
-export function TutorSession({ userId, onExit, visionReady, sessionId }: { userId: string | null; onExit: () => void; visionReady: boolean; sessionId?: string }) {
+export function TutorSession({ userId, onExit, visionReady, sessionId, reviewView }: { userId: string | null; onExit: () => void; visionReady: boolean; sessionId?: string; reviewView?: string }) {
   const L = useLang();
   const [task, setTask] = useState<WebTask | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -63,17 +63,13 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
   const [pastSessions, setPastSessions] = useState<TutorSessionSummary[]>([]);
   const [endingSession, setEndingSession] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-  const [openBoardSession, setOpenBoardSession] = useState<TutorSessionSummary | null>(null);
-  const [openChatSession, setOpenChatSession] = useState<TutorSessionSummary | null>(null);
   // The stage hides the transcript on purpose, but it is always one tap away: this drawer.
   const [chatDrawer, setChatDrawer] = useState(false);
   // End-of-session reflection (IB "reflective"): before a real session closes, one optional question.
   const [reflectOpen, setReflectOpen] = useState(false);
   const [reflectText, setReflectText] = useState("");
-  const [chatExpanded, setChatExpanded] = useState(false);
-  const [openPast, setOpenPast] = useState<Record<string, boolean>>({});
   const chatEndRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { if (chatDrawer) chatEndRef.current?.scrollIntoView({ block: "end" }); }, [chatDrawer, chatExpanded, task?.chat?.length]);
+  useEffect(() => { if (chatDrawer) chatEndRef.current?.scrollIntoView({ block: "end" }); }, [chatDrawer, task?.chat?.length]);
   // The landing screen asks WHAT to study before starting — the subject is stamped onto the session
   // (sourceSubject, visible to the tutor prompt) and carried into history as the session's label.
   // The student's own subjects (set in onboarding) come first; the shared common list follows.
@@ -131,20 +127,6 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
   useEffect(() => {
     setPastSessions(getTutorSessions(userId));
   }, [userId]);
-
-  // If a sessionId is provided via route, load that session from history
-  useEffect(() => {
-    if (sessionId && userId) {
-      const sessions = getTutorSessions(userId);
-      const session = sessions.find((s) => s.id === sessionId);
-      if (session) {
-        // Load the session in review mode - show board and chat
-        setOpenBoardSession(session);
-        setOpenChatSession(session);
-        setShowHistory(true);
-      }
-    }
-  }, [sessionId, userId]);
 
   // ── Session ↔ URL routing ─────────────────────────────────────────────────────────────
   /** Client-side route change — the same pushState + synthetic popstate App.tsx's `navigate` performs,
@@ -252,28 +234,14 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
   // True from the moment a batch carrying a CORRECT exercise result is sent until the student's next own message.
   // (Hooks live up here, above every early return below — a hook after one crashes the page with React #310 the
   // moment `task` goes from loading to loaded.)
-  // OTTO SPEAKS FIRST — FOR REAL. The instant line below is still rendered with no model call (blank-page
-  // friction is what makes students abandon AI tutors), but it is only a PLACEHOLDER: as soon as the
-  // session opens, the server is asked for the real opening line, grounded in this browser's own record of
-  // the last sessions (the actual board lines and what the student asked — see sessionMemoryForPrompt) plus
-  // everything the server knows about them. It replaces the placeholder when it lands; if it never does
-  // (offline, AI paused, a slow provider) the student keeps the instant line, never an empty greeting.
-  const [openerAskedFor, setOpenerAskedFor] = useState<string | null>(null);
-  const [realOpener, setRealOpener] = useState<{ id: string; text: string } | null>(null);
+  // OTTO'S FIRST LINE IS THE PLAIN TEMPLATE BELOW — no model round-trip. Direct ask: the automatic opening
+  // shouldn't be complicated, "just use a template like we worked on supply and demand". So: one grounded
+  // line built locally from sessionTopic (what the last session actually worked on), rendered instantly,
+  // nothing that can fail — no openerAskedFor, no realOpener, no api.tutorOpener call. (server/claude.ts's
+  // tutorOpener and its route stay untouched for API compatibility; they are simply no longer called.)
   // Same source of truth the interface itself reads (see LangContext) — the opener's language must match
   // the UI the student is looking at, not a second guess at it.
   const openerLang: "fr" | "en" = useContext(LangContext);
-  useEffect(() => {
-    const id = task?.id;
-    if (!id || task.chat?.length || openerAskedFor === id) return;
-    setOpenerAskedFor(id);
-    let cancelled = false;
-    const memory = sessionMemoryForPrompt(getTutorSessions(userId), task.sourceSubject, Date.now(), openerLang);
-    void api.tutorOpener(task.sourceSubject || "", memory)
-      .then((r) => { if (!cancelled && r?.opener) setRealOpener({ id, text: r.opener }); })
-      .catch(() => { /* the instant line stays — this is an enhancement, never a blocker */ });
-    return () => { cancelled = true; };
-  }, [task?.id, task?.chat?.length, task?.sourceSubject, userId, openerAskedFor, openerLang]);
   const [exerciseDone, setExerciseDone] = useState(false);
   const [surfaceEl, setSurfaceEl] = useState<HTMLDivElement | null>(null);
   // The session's focus objectives (SET_OBJECTIVES), opened from the ◎ chip in the crumb bar. Declared here
@@ -505,6 +473,60 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
     </button>
   );
 
+  // FULL-PAGE review of a past session (/tutor/session/<id>/board|chat) — one whole page with exactly two
+  // choices: see the board or read the chat (report-live: "viewing session and board from past should show
+  // in whole page and only have see board or chat, not session"). Derived from the route itself, no modal
+  // state: the URL IS the view, so refresh, back/forward and shared links all land in the right place and
+  // nothing stacks over the landing. (The URL-sync effect above never fires here: routedTaskRef is only
+  // set once a LIVE task exists, so a review URL is never yanked back to /tutor.)
+  const reviewSession = sessionId && userId ? getTutorSessions(userId).find((s) => s.id === sessionId) : undefined;
+  if (reviewSession) {
+    const view: "board" | "chat" = reviewView === "chat" ? "chat" : "board";
+    const hasBoard = !!reviewSession.board?.length;
+    const hasChat = !!reviewSession.chat?.length;
+    const base = `/tutor/session/${reviewSession.id}`;
+    const dateStr = new Date(reviewSession.endTime).toLocaleDateString(L("fr-FR", "en-US"), { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    return (
+      <main className="list-wrap tutor-review">
+        <a href="/tutor" className="tutor-back-btn">← {L("Toutes les séances", "All sessions")}</a>
+        <div className="tutor-review-head">
+          <span className="tutor-review-subject">{reviewSession.subject || L("Séance passée", "Past session")}</span>
+          <span className="tutor-review-meta">{dateStr} · {reviewSession.messageCount} {L("messages", "messages")}</span>
+        </div>
+        <div className="tutor-review-tabs">
+          {hasBoard && (
+            <a className={`tutor-review-tab${view === "board" ? " on" : ""}`} href={`${base}/board`} aria-current={view === "board" ? "page" : undefined}>
+              {L("Voir le tableau", "See the board")}
+            </a>
+          )}
+          {hasChat && (
+            <a className={`tutor-review-tab${view === "chat" ? " on" : ""}`} href={`${base}/chat`} aria-current={view === "chat" ? "page" : undefined}>
+              {L("Voir le chat", "See the chat")}
+            </a>
+          )}
+        </div>
+        <div className="tutor-review-body">
+          {!hasBoard && !hasChat ? (
+            <p className="tutor-review-empty">{L("Rien à revoir ici — cette séance n'a ni tableau ni chat sauvegardés.", "Nothing to review — this session has no saved board or chat.")}</p>
+          ) : view === "board" ? (
+            hasBoard ? <BoardArtifact task={{ board: reviewSession.board } as unknown as WebTask} /> : <p className="tutor-review-empty">{L("Pas de tableau pour cette séance.", "No board for this session.")}</p>
+          ) : hasChat ? (
+            <div className="tutor-chat-history">
+              {reviewSession.chat!.map((msg, i) => (
+                <div key={i} className={`tutor-chat-message ${msg.role}`}>
+                  <div className="tutor-chat-role">{msg.role === "user" ? L("Toi", "You") : L("Otto", "Otto")}</div>
+                  <div className="tutor-chat-text"><MathText text={msg.text} /></div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="tutor-review-empty">{L("Pas de chat pour cette séance.", "No chat for this session.")}</p>
+          )}
+        </div>
+      </main>
+    );
+  }
+
   if (loadError) {
     return (
       <main className="list-wrap">{backButton}<div className="empty-state">
@@ -598,42 +620,29 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
                             )}
                           </span>
                         </div>
+                        {/* ONE title (the main thing) + ONE short description — report-live: the card used to
+                            dump the summary AND the first three board lines, the same wall twice. Both
+                            helpers live beside sessionTopic in tutorSessions.ts. */}
                         <div className="tutor-history-topic">
                           {s.subject && <span className="tutor-history-subject-pill">{s.subject}</span>}
-                          <span>{formatMath(s.summary.split(" — ")[0])}</span>
+                          {sessionCardTitle(s) && <span className="tutor-history-title">{sessionCardTitle(s)}</span>}
                         </div>
-                        {/* Board at a glance — the first few things Otto actually wrote that session, as the
-                            compact scannable record (the full reopenable board is one click below). Capped at
-                            3 lines so a long session's history item stays a preview, not a transcript. */}
-                        {!!s.boardEntries?.length && (
-                          <div className="tutor-history-takeaways">
-                            <div className="tutor-history-section-label">{L("Le tableau en bref", "Board at a glance")}</div>
-                            <ul className="tutor-history-board">
-                              {s.boardEntries.filter(Boolean).slice(0, 3).map((line, bi) => {
-                                const formattedLine = formatMath(line);
-                                const displayLine = formattedLine.length > 140 ? `${formattedLine.slice(0, 140)}…` : formattedLine;
-                                return <li key={bi}>{displayLine}</li>;
-                              })}
-                            </ul>
-                          </div>
-                        )}
+                        {sessionCardDesc(s) && <p className="tutor-history-desc">{sessionCardDesc(s)}</p>}
                       </div>
-                      {/* Full board (diagrams/equations, not just the flattened text preview above) — only
-                          present for a session ended after this was added; an older saved session has no
-                          `board` field to reopen. */}
+                      {/* TWO choices only, both FULL PAGES (/tutor/session/<id>/board|chat) — report-live:
+                          "viewing session and board from past should show in whole page and only have see
+                          board or chat, not session". No vague "View session" entry, no modals stacked over
+                          the landing; an older saved session may have no `board` field to reopen. */}
                       <div className="tutor-history-actions">
-                        <a href={`/tutor/session/${s.id}`} className="btn ghost xs tutor-history-view-board">
-                          {L("Voir la séance", "View session")}
-                        </a>
                         {!!s.board?.length && (
-                          <button type="button" className="btn ghost xs tutor-history-view-board" onClick={() => setOpenBoardSession(s)}>
-                            {L("Voir le tableau", "View board")}
-                          </button>
+                          <a href={`/tutor/session/${s.id}/board`} className="btn ghost xs tutor-history-view-board">
+                            {L("Voir le tableau", "See the board")}
+                          </a>
                         )}
                         {!!s.chat?.length && (
-                          <button type="button" className="btn ghost xs tutor-history-view-chat" onClick={() => setOpenChatSession(s)}>
-                            {L("Voir le chat", "View chat")}
-                          </button>
+                          <a href={`/tutor/session/${s.id}/chat`} className="btn ghost xs tutor-history-view-chat">
+                            {L("Voir le chat", "See the chat")}
+                          </a>
                         )}
                       </div>
                     </li>
@@ -643,23 +652,6 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
             </div>
           )}
         </div>
-        {openBoardSession && (
-          <TaskModal onClose={() => setOpenBoardSession(null)} title={L("Le tableau", "Board") + (openBoardSession.subject ? ` · ${openBoardSession.subject}` : "")}>
-            <BoardArtifact task={{ board: openBoardSession.board } as unknown as WebTask} />
-          </TaskModal>
-        )}
-        {openChatSession && (
-          <TaskModal onClose={() => setOpenChatSession(null)} title={L("Le chat", "Chat") + (openChatSession.subject ? ` · ${openChatSession.subject}` : "")}>
-            <div className="tutor-chat-history">
-              {openChatSession.chat?.map((msg, i) => (
-                <div key={i} className={`tutor-chat-message ${msg.role}`}>
-                  <div className="tutor-chat-role">{msg.role === "user" ? L("Toi", "You") : L("Otto", "Otto")}</div>
-                  <div className="tutor-chat-text"><MathText text={msg.text} /></div>
-                </div>
-              ))}
-            </div>
-          </TaskModal>
-        )}
       </main>
     );
   }
@@ -667,7 +659,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
   const noop = () => {};
   const fresh = !task.chat?.length && !pendingMsg;
   const objDone = task.objectives?.filter((o) => o.done).length ?? 0;
-  // The INSTANT greeting (shown before the real one arrives — see the opener effect above). When this
+  // Otto's opening line — one local template, no model call (see the opener note above). When this
   // subject has a past session it is a retrieval question about what was ACTUALLY worked on, named with the
   // topic sessionTopic picked out of that session's real board (never a board caption like "The equation to
   // work with", which is what used to get quoted back here and made the line read as a placeholder);
@@ -689,8 +681,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
     : subj
       ? L(`Salut ! Sur quoi tu bloques en ${subj} ? Écris, dessine ou parle — je t'écoute.`, `Hey! What's tripping you up in ${subj}? Type, draw or just talk — I'm listening.`)
       : L("Salut ! Sur quoi tu bloques ? Écris, dessine ou parle.", "Hey! What are you stuck on? Type, draw or just talk.");
-  // The real line wins as soon as it lands; the instant one covers the gap (and any failure).
-  const openerText = realOpener && realOpener.id === task.id ? realOpener.text : instantOpener;
+  const openerText = instantOpener;
   const starters = [
     { label: L("Je bloque sur un exercice", "I'm stuck on a problem"), text: L("Je bloque sur un exercice.", "I'm stuck on a problem.") },
     { label: L("Explique-moi un cours", "Teach me a topic"), text: L("J'aimerais comprendre un chapitre.", "I'd like to understand a topic.") },
@@ -740,9 +731,6 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
             ◎ {objDone}/{task.objectives.length}{typeof task.mastery === "number" ? ` · ${Math.round(task.mastery * 100)}%` : ""}
           </button>
         )}
-        <button type="button" className="btn ghost tutor-chat-btn" data-tour="ts-chat" onClick={() => setChatDrawer(true)} aria-label={L("Ouvrir le chat", "Open chat")}>
-          <MessageCircle size={14} aria-hidden="true" /> {L("Chat", "Chat")}
-        </button>
         <button className="btn ghost tutor-end-btn" disabled={endingSession} onClick={() => { const real = (task.chat || []).filter((m) => m.role === "user").length >= 3; if (real) setReflectOpen(true); else void endSession(); }}>
           {endingSession ? L("Fin…", "Ending…") : L("Terminer la séance", "End session")}
         </button>
@@ -784,6 +772,30 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
         />
       </section>
       <div className="ts-dock">
+        {/* The dock IS the chat (the floating island) — its expand button lives ON it (report-live: "it
+            isn't a dedicated chat button, just on the floating island with chat there can be an expand
+            button"). No past-sessions section either: in-session shows the CURRENT transcript only. */}
+        <button type="button" className="tutor-dock-chat-toggle" data-tour="ts-chat" aria-expanded={chatDrawer} onClick={() => setChatDrawer((v) => !v)}>
+          <MessageCircle size={13} aria-hidden="true" /> {chatDrawer ? L("Fermer", "Close") : L("Chat", "Chat")}
+        </button>
+        {chatDrawer && (
+          <div className="tutor-dock-chat">
+            <div className="tutor-dock-chat-head">
+              <span>{task.chat?.length || 0} {L("messages", "messages")}</span>
+              <button type="button" className="btn ghost xs" onClick={() => setChatDrawer(false)}>{L("Réduire", "Collapse")}</button>
+            </div>
+            <div className="tutor-chat-history">
+              {!task.chat?.length && <p className="tutor-chat-empty">{L("Rien encore — dis bonjour à Otto.", "Nothing yet — say hi to Otto.")}</p>}
+              {task.chat?.map((msg, i) => (
+                <div key={i} className={`tutor-chat-message ${msg.role}`}>
+                  <div className="tutor-chat-role">{msg.role === "user" ? L("Toi", "You") : "Otto"}</div>
+                  <div className="tutor-chat-text"><MathText text={msg.text} /></div>
+                </div>
+              ))}
+              <div ref={chatEndRef} />
+            </div>
+          </div>
+        )}
         <AskOttoPanel
           variant="dock"
           task={task} currentStep={undefined} input={input} setInput={setInput} sending={sending}
@@ -807,48 +819,6 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
             </div>
           </div>
         </div>
-      )}
-      {chatDrawer && (
-        <TaskModal wide onClose={() => { setChatDrawer(false); setChatExpanded(false); }} title={L("Chat avec Otto", "Chat with Otto")}>
-          <div className={`tutor-chat-drawer${chatExpanded ? " expanded" : ""}`}>
-            <div className="tutor-chat-toolbar">
-              <span>{task.chat?.length || 0} {L("messages", "messages")}</span>
-              <button type="button" className="btn ghost xs" onClick={() => setChatExpanded((v) => !v)}>{chatExpanded ? L("Réduire", "Collapse") : L("Agrandir", "Expand")}</button>
-            </div>
-            <div className="tutor-chat-history">
-              {!task.chat?.length && <p className="tutor-chat-empty">{L("Rien encore — dis bonjour à Otto.", "Nothing yet — say hi to Otto.")}</p>}
-              {task.chat?.map((msg, i) => (
-                <div key={i} className={`tutor-chat-message ${msg.role}`}>
-                  <div className="tutor-chat-role">{msg.role === "user" ? L("Toi", "You") : "Otto"}</div>
-                  <div className="tutor-chat-text"><MathText text={msg.text} /></div>
-                </div>
-              ))}
-              <div ref={chatEndRef} />
-            </div>
-            {pastSessions.some((ps) => ps.chat?.length) && (
-              <details className="tutor-chat-past">
-                <summary>{L("Séances passées", "Past sessions")} ({pastSessions.filter((ps) => ps.chat?.length).length})</summary>
-                {pastSessions.filter((ps) => ps.chat?.length).map((ps) => (
-                  <details key={ps.id} className="tutor-chat-past-item" onToggle={(e) => setOpenPast((o) => ({ ...o, [ps.id]: (e.currentTarget as HTMLDetailsElement).open }))}>
-                    <summary>
-                      {new Date(ps.startTime || ps.endTime).toLocaleDateString()}{ps.subject ? ` · ${ps.subject}` : ""} — {(ps.summary || "").replace(/[*`#>_\-]+/g, " ").replace(/\s+/g, " ").trim().split(" — ")[0].slice(0, 70) || `${ps.messageCount} ${L("messages", "messages")}`}
-                    </summary>
-                    {openPast[ps.id] && (
-                      <div className="tutor-chat-history">
-                        {ps.chat!.map((msg, i) => (
-                          <div key={i} className={`tutor-chat-message ${msg.role}`}>
-                            <div className="tutor-chat-role">{msg.role === "user" ? L("Toi", "You") : "Otto"}</div>
-                            <div className="tutor-chat-text"><MathText text={msg.text} /></div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </details>
-                ))}
-              </details>
-            )}
-          </div>
-        </TaskModal>
       )}
     </main>
   );

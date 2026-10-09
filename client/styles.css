@@ -7201,7 +7201,9 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .tutor-crumb-link { background: none; border: none; padding: 0; font: inherit; font-weight: 650; font-size: 15px; color: var(--ink); cursor: pointer; }
 .tutor-crumb-link:hover { color: var(--accent); }
 .tutor-crumb-subject { color: var(--ink-2); font-size: 15px; }
-.tutor-crumbbar .tutor-chat-btn { margin-left: auto; }
+/* The crumb's right-edge pusher used to be the dedicated chat button — that button is gone (the chat
+   lives on the floating island now), so End session carries the right edge. */
+.tutor-crumbbar .tutor-end-btn { margin-left: auto; }
 
 /* Past-session reference shown on a fresh session start */
 .tutor-past-ref { font-size: 0.9rem; color: var(--ink-2); font-style: italic; }
@@ -7225,11 +7227,10 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .tutor-history-topic { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; line-height: 1.4; font-size: 1.1rem; font-weight: 600; color: var(--ink); margin-bottom: 12px; }
 .tutor-history-subject-pill { flex: 0 0 auto; padding: 4px 10px; border-radius: var(--radius-pill); background: var(--accent-soft); color: var(--accent); font-size: 0.8rem; font-weight: 600; line-height: 1.4; text-transform: uppercase; letter-spacing: 0.04em; }
 .tutor-history-subject-pill::after { content: ""; }
-.tutor-history-takeaways { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
-.tutor-history-section-label { margin-bottom: 8px; color: var(--ink-2); font-size: 0.8rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
-.tutor-history-board { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
-.tutor-history-board li { font-size: 0.9rem; color: var(--ink-2); padding-left: 18px; position: relative; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; line-height: 1.6; }
-.tutor-history-board li::before { content: ""; position: absolute; left: 3px; top: 0.65em; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+/* ONE title + ONE short description per past session (report-live) — the old board-lines preview
+   (takeaways/section-label/board) is gone; the card body is sessionCardDesc, quiet under the title. */
+.tutor-history-title { min-width: 0; }
+.tutor-history-desc { margin: -4px 0 4px; font-size: 0.95rem; color: var(--ink-2); line-height: 1.55; }
 
 .tutor-history-actions { display: flex; gap: 8px; margin-top: 16px; }
 .tutor-history-view-board, .tutor-history-view-chat { font-size: 0.85rem; padding: 8px 16px; font-weight: 500; }
@@ -7327,7 +7328,6 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
     padding: 10px 12px;
   }
   .tutor-crumb-link, .tutor-crumb-subject { font-size: 14px; }
-  .tutor-crumbbar .tutor-chat-btn { margin-left: 0; }
   .tutor-end-btn { margin-left: auto; min-height: 44px; padding: 8px 10px; }
   .ts-bar { padding-left: 12px; padding-right: 12px; }
   .ts-board-body { padding: 76px 8px 300px; }
@@ -7498,13 +7498,24 @@ mark.otto-mark { background: linear-gradient(transparent 12%, color-mix(in srgb,
 @keyframes otto-mark-in { from { background-size: 0% 100%; } to { background-size: 100% 100%; } }
 @media (prefers-reduced-motion: reduce) { mark.otto-mark { animation: none; } }
 
-/* Chat drawer on the tutor stage — the transcript is hidden by design but always one tap away. */
-.tutor-chat-drawer .tutor-chat-history { max-height: 60vh; gap: 14px; }
+/* Chat on the tutor stage lives IN the floating island: the island's own expand button reveals the
+   transcript above the input (report-live: "isn't a dedicated chat button, just on the floating island
+   with chat there can be an expand button"). The old modal drawer + past-session list are gone. */
+.tutor-dock-chat-toggle { position: absolute; top: -34px; right: 6px; z-index: 5; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; font-size: 13px; font-weight: 650; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.10); }
+.tutor-dock-chat-toggle:hover { color: var(--accent); border-color: var(--accent); }
+.tutor-dock-chat { max-height: min(46vh, 380px); overflow-y: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; margin-bottom: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.12); }
+.tutor-dock-chat-head { position: sticky; top: 0; z-index: 1; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--line-soft); background: var(--surface); color: var(--ink-2); font-size: 13px; }
+.tutor-dock-chat .tutor-chat-history { max-height: none; padding: 14px; gap: 14px; }
 .tutor-chat-empty { color: var(--ink-2); text-align: center; margin: 24px 0; }
-.tutor-chat-past { margin-top: 12px; padding: 0 16px 12px; }
-.tutor-chat-past > summary, .tutor-chat-past-item > summary { cursor: pointer; font-weight: 600; color: var(--ink-2); padding: 8px 0; }
-.tutor-chat-past-item { border-top: 1px solid var(--line); }
-.tutor-chat-past-item .tutor-chat-history { padding: 8px 0 12px; max-height: 40vh; }
-.tutor-chat-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 0 16px; color: var(--ink-2); font-size: 13px; }
-.tutor-chat-drawer.expanded .tutor-chat-history { max-height: calc(100dvh - 220px); }
-.tutor-chat-drawer.expanded .tutor-chat-text { max-width: 92%; }
+
+/* Full-page past-session review (/tutor/session/<id>/board|chat) — one whole page, exactly two tabs
+   (see the board / read the chat), nothing else (report-live: "only have see board or chat"). */
+.tutor-review-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; margin: 4px 0 16px; }
+.tutor-review-subject { font-size: 1.25rem; font-weight: 700; color: var(--ink); }
+.tutor-review-meta { color: var(--ink-3); font-size: 0.9rem; }
+.tutor-review-tabs { display: flex; gap: 8px; border-bottom: 1px solid var(--line); margin-bottom: 20px; }
+.tutor-review-tab { padding: 9px 16px; font-weight: 650; font-size: 14.5px; color: var(--ink-2); text-decoration: none; border-bottom: 2px solid transparent; }
+.tutor-review-tab.on { color: var(--accent); border-bottom-color: var(--accent); }
+.tutor-review-body { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+.tutor-review-body .tutor-chat-history { max-height: none; padding: 20px; }
+.tutor-review-empty { padding: 32px; text-align: center; color: var(--ink-2); }
