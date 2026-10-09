@@ -441,6 +441,18 @@ export async function runTutorSim(check, section) {
     r = await run("wait without setting tangent ratio we now know that the angle J is 25 degrees right", { history: [{ role: "user", text: "two boats 500 m apart, angles of depression 25 and 40 degrees, cliff 470 m" }, { role: "assistant", text: "ok" }] });
     check("end to end: a reply that computes the student's step is rewritten into a question", !/15°/.test(r.reply) && /\?/.test(r.reply));
   }
+  // "Can you just draw it" must produce a figure — and the lighthouse figure is computed, not hand-drawn
+  {
+    script = (b, i) => i === 0 ? { content: "Look at the two right-angled triangles — how would you write the tangent ratio?" }
+      : i === 1 ? { content: "", tool_calls: [tc("TRIG_SCENE_ON_BOARD", { caption: "The lighthouse and the boats", mode: "depression", observers: [{ name: "J", angle: 25 }, { name: "K", angle: 40 }], separation: 500, towerHeight: 470, unknownTop: "h" })] }
+      : { content: "That's the situation, to scale. Which angle sits at boat J on the ground?" };
+    r = await run("can you just draw it out for me please", { history: [{ role: "user", text: "two boats J and K 500 m apart, lighthouse on a 470 m cliff, angles of depression 25 and 40" }, { role: "assistant", text: "ok" }] });
+    const fig = r.boardAll.find((e) => e.kind === "svg");
+    check("end to end: a request to draw is never answered with just a question — the computed figure lands", !!fig && /500 m/.test(fig.svg) && /470 m/.test(fig.svg) && (fig.svg.match(/25°/g) || []).length === 2 && calls[0].tools.some((x) => x.function?.name === "TRIG_SCENE_ON_BOARD"));
+    script = (b, i) => i === 0 ? { content: "Spot on — you've got the two sides lined up. How does the sine rule combine those?" } : { content: "Sorry, I didn't quite catch that — where are you in the problem right now?" };
+    r = await run("to do", { history: [{ role: "user", text: "find TJ" }, { role: "assistant", text: "ok" }] });
+    check("end to end: no 'spot on' for a message with nothing in it", !/spot on/i.test(r.reply));
+  }
   // ANNOTATE_BOARD — Otto points at an existing entry instead of explaining the mistake in chat
   {
     const board = [{ id: "e1", kind: "given", text: "A block on a 30° slope", at: "" }, { id: "e2", kind: "result", owner: "student", status: "incorrect", text: "N = mg", at: "" }];

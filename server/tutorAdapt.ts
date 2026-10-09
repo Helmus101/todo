@@ -524,3 +524,20 @@ export function arithmeticAhead(reply: string, studentTexts: string[], givens: s
   }
   return out;
 }
+
+// ---- "Just draw it" and praise for nothing ----
+/** The student is asking Otto to DRAW/show the picture (not describing their own drawing). */
+export function asksToDraw(message: string): boolean {
+  const m = String(message || "");
+  if (m.length > 320 || isDrawingTurn(m) || /\bi (?:drew|am drawing|'ll draw|will draw|created a drawing)\b|my (?:drawing|diagram|sketch)/i.test(m)) return false;
+  return /\b(?:draw|sketch|illustrate|dessine[rz]?|dessin|schéma|diagram)\b/i.test(m) && /\b(?:can you|could you|please|just|for me|again|show|do it|try|make|peux-tu|pouvez|s'il)\b|^draw\b/i.test(m)
+    || /\bshow (?:me )?(?:the )?(?:angles|diagram|picture|figure|situation|it)\b/i.test(m);
+}
+const PRAISE_OPEN = /^\s*(?:spot on|exactly|correct|that'?s (?:right|it|correct)|great|nice|perfect|well done|yes[,!.\s]|you(?:'ve| have) got)/i;
+/** The student said nothing checkable ("to do", "yeah", a stray name) — there is nothing to praise. */
+export function lowSignal(message: string): boolean {
+  const t = message.replace(/\[[^\]]*\]/g, "").trim();
+  if (!t || /^\[/.test(message.trim())) return false;
+  return t.split(/\s+/).length <= 4 && !/\d|=|[+\-×*/^]/.test(t) && !/\?/.test(t);
+}
+export function praisesNothing(reply: string, message: string): boolean { return PRAISE_OPEN.test(reply) && lowSignal(message); }

@@ -7,7 +7,7 @@ import { COURSEWORK_MAX_CHARS, courseworkForSubject, sameSubject } from "../shar
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { buildGeometry } from "../shared/geometry.ts";
-import { studentProblemStatement, boardCoversStatement, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
+import { studentProblemStatement, boardCoversStatement, asksToDraw, praisesNothing, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -20,6 +20,7 @@ import { boardSurfaceBlock, boardTrajectoryBlock, type BoardEvent } from "./boar
 import { buildTutorDecision } from "./actionSpace.ts";
 import { normalizeWidget, WIDGET_TYPES } from "../shared/widgets.ts";
 import { normalizeFlow } from "../shared/flow.ts";
+import { buildTrigScene } from "../shared/trigScene.ts";
 import { sanitizeSvg, svgText, MAX_SVG_CHARS } from "../shared/svgSafe.ts";
 import { findSourceQuestions, cleanProblemSource, sourcesForTrack } from "./questionSources.ts";
 import { extractPlan, validatePlan, policyBlock as tutorPolicyBlock, PLAN_PROTOCOL, type TutorPlan, type TutorPolicy } from "./tutorBrain.ts";
@@ -2626,6 +2627,23 @@ export function makeWidgetEntry(input: any): { entry: BoardEntry } | { error: st
   if ("error" in r) return r;
   return { entry: { id: randomUUID(), text: caption, kind: "widget", widget: r.widget, at: new Date().toISOString() } };
 }
+
+// Angle of elevation / depression problems (lighthouse and boats, a tower and a tree, a plane and a runway): the app
+// COMPUTES the figure — the model keeps mis-placing which angle sits where — so use this instead of drawing them by hand.
+const TRIG_SCENE_ON_BOARD_TOOL = {
+  name: "TRIG_SCENE_ON_BOARD",
+  description: "Draw an angle-of-elevation / angle-of-depression situation CORRECTLY, to scale: a tower, cliff, lighthouse or building at the base B with top T, and one or two observers (boats, people, points) on the ground in line with it. " +
+    "It marks the angle of depression at the top (measured from the horizontal) AND the equal angle of elevation at the ground (alternate angles), labels only the GIVEN values, and shows unknown lengths as letters. " +
+    "USE THIS for any such problem the moment the student wants a picture (or asks you to draw it) — never hand-draw these. " +
+    "mode \"depression\" (angles measured down from the top) or \"elevation\" (angles measured up from the ground). observers: 1-2 items {name, angle in degrees}. separation: distance between two observers (if given). towerHeight: the KNOWN height (e.g. the 470 m cliff). unknownTop: a letter (e.g. \"h\") when the thing to find sits ON TOP of the known height (a lighthouse on a cliff); omit it when towerHeight is the whole height. distance: base-to-observer distance for ONE observer, if given. Never reveal the unknown.",
+  input_schema: { type: "object", properties: {
+    caption: { type: "string", description: "one short line, e.g. 'The lighthouse and the two boats'" },
+    mode: { type: "string", enum: ["depression", "elevation"] },
+    observers: { type: "array", description: "1-2 observers on the ground", items: { type: "object", properties: { name: { type: "string" }, angle: { type: "number" } }, required: ["angle"] } },
+    separation: { type: "number" }, towerHeight: { type: "number" }, unknownTop: { type: "string" }, distance: { type: "number" },
+    baseName: { type: "string" }, topName: { type: "string" }, units: { type: "string" },
+  }, required: ["caption", "observers"] },
+};
 
 // The tutor's general drawing tool: it WRITES SVG, exactly the way Claude and ChatGPT draw diagrams. A model is far better at
 // composing a complete, well-labelled SVG than at emitting a list of shape ops with hand-picked coordinates. The app
@@ -7713,6 +7731,7 @@ const PRIMER_PERSONA =
   `transformations, motion graphs, a line of best fit; also bar charts, histograms and 3D surfaces z=f(x,y)) use GRAPH_ON_BOARD, not CREATE_INTERACTIVE — it's instant, ` +
   `always renders, and gives the student real sliders and a hover readout. Plot the FAMILY or the setup, never ` +
   `the answer to what they're solving, then ask ONE question about what moving it shows.\n` +
+  `- ELEVATION / DEPRESSION problems (towers, cliffs, lighthouses, boats, planes): the moment a picture would help, or they ask you to draw it, call TRIG_SCENE_ON_BOARD — it draws it correctly to scale with the angles in the right places. Never hand-draw these, and never answer a request to draw with another question.\n` +
   `- DIAGRAMS: for any boxes-and-arrows idea (a process, cause→effect, a cycle, a timeline, a classification, an essay plan) use FLOW_ON_BOARD — you list the nodes and arrows, the app lays them out cleanly. Use GEOMETRY_ON_BOARD for shapes/angles and GRAPH_ON_BOARD for functions; for EVERY other figure (free-body diagrams, sketches, circuits, apparatus, labelled situations like the lighthouse and boats) write the SVG yourself with SVG_ON_BOARD — plan the layout, label every point and value, draw to scale. Never put LaTeX/KaTeX in a figure (plain text and unicode labels; real equations go in WRITE_TO_BOARD).\n` +
   `- ACTIVITIES: when the student should DO something rather than read — pair terms, order steps, sort items, or play with a unit circle / projectile — use WIDGET_ON_BOARD (it always works and tells you how they did) instead of describing it or hand-writing HTML. Any subject. Prefer it over CREATE_INTERACTIVE.\n` +
   `- NO HIGHLIGHTING: write plainly — never wrap text in ==marks== or bold for emphasis.\n` +
@@ -8943,7 +8962,7 @@ export async function chatAboutTask(
   // which no longer renders a board anywhere except the Tutor (TutorSession.tsx).
   const includeArtifactTools = wantsArtifactTools(message, history);
   const boardTools = opts?.primer
-    ? [CREATE_PROBLEM_TOOL, ...(sourcesForTrack(profile?.track).length ? [FIND_SOURCE_QUESTION_TOOL] : []), WRITE_TO_BOARD_TOOL, CLEAR_BOARD_TOOL, SVG_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, WIDGET_ON_BOARD_TOOL, FLOW_ON_BOARD_TOOL, ...(opts?.canvasMode ? [CREATE_INTERACTIVE_TOOL] : []), SET_OBJECTIVES_TOOL]
+    ? [CREATE_PROBLEM_TOOL, ...(sourcesForTrack(profile?.track).length ? [FIND_SOURCE_QUESTION_TOOL] : []), WRITE_TO_BOARD_TOOL, CLEAR_BOARD_TOOL, SVG_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, WIDGET_ON_BOARD_TOOL, FLOW_ON_BOARD_TOOL, ...(opts?.canvasMode ? [CREATE_INTERACTIVE_TOOL] : []), SET_OBJECTIVES_TOOL]
     : [];
   const tools = opts?.canvasMode
     ? [...boardTools, WEB_SEARCH_TOOL, READ_PAGE_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])]
@@ -9172,6 +9191,28 @@ export async function chatAboutTask(
       console.log(`${new Date().toISOString()} [chat] round ${round}: reply computed a step for the student (${bad[0]}) — asking for a question instead`);
       messages.push({ role: "assistant", content: draft });
       messages.push({ role: "user", content: `That reply worked out "${bad[0]}" for them — the student never produced that value, so you did their step. Rewrite it WITHOUT stating that result: ask what they get / which relationship gives it, and let THEM compute it. (If they asked whether their own claim is right, judge THEIR claim plainly — yes/no and why — without supplying new values.)` });
+      return true;
+    };
+    // They asked Otto to DRAW it and the reply came back with a question instead — a refusal in disguise (reported live: five
+    // "can you just draw it" in a row, five questions back). One corrective round that forces a real figure.
+    let drawReqFixed = false;
+    const guardDrawRequest = (draft: string, round: number, lastRound: boolean): boolean => {
+      if (!opts?.primer || drawReqFixed || lastRound || result.guardrailTripped || !asksToDraw(message)) return false;
+      if (result.board.some((e) => ["diagram", "svg", "graph", "flow", "widget"].includes(String(e.kind)))) return false;
+      drawReqFixed = true;
+      console.log(`${new Date().toISOString()} [chat] round ${round}: they asked for a drawing and none was made — asking for the figure`);
+      messages.push({ role: "assistant", content: draft });
+      messages.push({ role: "user", content: "They asked you to DRAW it, and you answered with a question instead — that's a refusal. Call the right drawing tool NOW: TRIG_SCENE_ON_BOARD for angles of elevation/depression, GEOMETRY_ON_BOARD for triangles/circles, FLOW_ON_BOARD for processes, otherwise SVG_ON_BOARD (a fully labelled figure with the GIVEN values and the unknowns as letters). Then one short line about what's on it and ONE question." });
+      return true;
+    };
+    // "Spot on" to a message with nothing in it ("to do", "yeah") — praise for nothing teaches them nothing.
+    let emptyPraiseFixed = false;
+    const guardEmptyPraise = (draft: string, round: number, lastRound: boolean): boolean => {
+      if (!opts?.primer || emptyPraiseFixed || lastRound || result.guardrailTripped || !praisesNothing(draft, message)) return false;
+      emptyPraiseFixed = true;
+      console.log(`${new Date().toISOString()} [chat] round ${round}: praise for a message with nothing checkable in it — asking for a plain question`);
+      messages.push({ role: "assistant", content: draft });
+      messages.push({ role: "user", content: "They said nothing checkable (a fragment or a stray word, maybe a mis-heard voice message) — there is nothing to praise, and \"spot on\" teaches them nothing. Don't praise or assume what they meant: say you didn't quite catch it and ask ONE short question about where they are in the problem." });
       return true;
     };
     // A multi-solution trap (SSA ambiguous triangle, trig equation's second solution, ±) that nobody raised, while the
@@ -9507,11 +9548,15 @@ export async function chatAboutTask(
       if (guardHandedCalc(textContent, round, lastRound)) continue;
       if (guardRedraw(textContent, round, lastRound)) continue;
       if (guardAheadMath(textContent, round, lastRound)) continue;
+      if (guardDrawRequest(textContent, round, lastRound)) continue;
+      if (guardEmptyPraise(textContent, round, lastRound)) continue;
       if (guardOwnArithmetic(textContent, round, lastRound)) continue;
         if (guardMissedCase(textContent, round, lastRound)) continue;
         if (guardHandedCalc(textContent, round, lastRound)) continue;
         if (guardRedraw(textContent, round, lastRound)) continue;
         if (guardAheadMath(textContent, round, lastRound)) continue;
+        if (guardDrawRequest(textContent, round, lastRound)) continue;
+        if (guardEmptyPraise(textContent, round, lastRound)) continue;
         if (guardOwnArithmetic(textContent, round, lastRound)) continue;
         if (guardGapAnswer(textContent, round, lastRound)) continue;
         if (guardOneQuestion(textContent, round, lastRound)) continue;
@@ -9649,6 +9694,24 @@ export async function chatAboutTask(
           if (result.board.filter((e) => e.kind === "graph").length >= 2) content = "LIMIT: you've already put a couple of graphs on the board this message — that's enough for one turn.";
           else if (leaksAnyProblemAnswer([input?.caption, ...(Array.isArray(input?.fns) ? input.fns.map((f: any) => f?.label || "") : [])].join(" "), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that graph's caption or labels state a problem's answer — title it by what to explore, not by the result.";
           else { const r = makeGraphEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Graphique : « ${r.entry.text.slice(0, 60)} »` : `Graph: "${r.entry.text.slice(0, 60)}"`); } }
+        } else if (name === "TRIG_SCENE_ON_BOARD") {
+          if (result.board.filter((e) => e.kind === "svg").length >= 2) content = "LIMIT: that's enough figures for one turn.";
+          else {
+            const inp: any = input || {};
+            const caption = String(inp.caption || "").trim().slice(0, 200) || (fr ? "Situation" : "The situation");
+            const built = buildTrigScene({ mode: inp.mode, observers: Array.isArray(inp.observers) ? inp.observers : [], separation: inp.separation, towerHeight: inp.towerHeight, unknownTop: typeof inp.unknownTop === "string" ? inp.unknownTop.slice(0, 3) : undefined, distance: inp.distance, baseName: inp.baseName, topName: inp.topName, units: inp.units });
+            if ("error" in built) content = built.error;
+            else {
+              const svg = sanitizeSvg(built.svg);
+              if (!svg) content = "ERROR: couldn't build that scene.";
+              else {
+                const entry: BoardEntry = { id: randomUUID(), text: caption, kind: "svg", svg, at: new Date().toISOString() };
+                result.board.push(entry);
+                content = JSON.stringify({ ok: true, id: entry.id, note: "Drawn to scale with the depression angles at the top and the equal elevation angles at the ground. Now ask ONE question; don't state values they haven't found." });
+                logAudit("artifact", fr ? `Figure : « ${caption.slice(0, 60)} »` : `Figure: "${caption.slice(0, 60)}"`);
+              }
+            }
+          }
         } else if (name === "SVG_ON_BOARD") {
           if (result.board.filter((e) => e.kind === "svg").length >= 2) content = "LIMIT: that's enough figures for one turn.";
           else if (leaksAnyProblemAnswer(`${input?.caption || ""} ${svgText(sanitizeSvg(String(input?.svg || "")))}`, [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that figure labels a problem's answer outright — redraw it with the unknown shown as '?'.";
