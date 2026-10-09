@@ -142,7 +142,16 @@ section("Tutor stage — End session always ends; the stage is screen-height wit
   const css = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
   const end = tut.slice(tut.indexOf("const endSession = useCallback"), tut.indexOf("const endSession = useCallback") + 1600);
   check("endSession no longer silently no-ops without a start time, and always leaves the screen (finally)", !/!sessionStart\) return/.test(end) && /\} finally \{[\s\S]*setTask\(null\)/.test(end) && /couldn't save the session summary/.test(end));
-  check("tutor stage is fixed to the screen height (it used to grow with the board and push End session away)", /\.tutor-stage \{[^}]*flex: none[^}]*height: 100dvh/.test(css));
+  // Report-live ask: the top nav STAYS on the tutor routes (it used to be dropped as a "focused surface").
+  // With the header back in flow, a flat 100dvh stage would push the dock 64px below the fold — the stage
+  // must be viewport-minus-nav, sized from the same --topnav-h the header wears (56px variant on phone).
+  const appShell = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  check("the top nav renders on EVERY route including tutor (the tutor-only hiding gate is gone)",
+    !/!route\.startsWith\("tutor"\) && \(/.test(appShell) && /className="topnav">/.test(appShell));
+  check("tutor stage is fixed to the screen-minus-nav height (it used to grow with the board and push End session away)",
+    /\.tutor-stage \{[^}]*flex: none[^}]*height: calc\(100dvh - var\(--topnav-h\)\)/.test(css) &&
+    /--topnav-h: calc\(64px \+ env\(safe-area-inset-top\)\)/.test(css) &&
+    /\.topnav \{[^}]*height: var\(--topnav-h\)/.test(css));
   check("the board component's own scroller is neutralised in the stage so the ink canvas is on the one real scroller", /\.ts-board-body \.sm-board-body \{ overflow: visible;/.test(css) && /createPortal\(/.test(readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8")));
   check("'Show Otto' lets the student say what to look at (note travels with the drawing)", /tc-ask/.test(readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8")) && /onSend=\{\(description, note\)/.test(tut));
   check("the whiteboard starts in select/hand mode, not draw — the board underneath must be usable right away", /useState<Tool>\("pan"\)/.test(readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8")));

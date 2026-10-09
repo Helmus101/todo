@@ -495,9 +495,10 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
     }
   }, [selectedSubject, startingSession, pendingActiveSession, sessionStart, saveAndClose, userId, L]);
 
-  // The Tutor route hides the app's top nav entirely (it's a focused, full-screen surface) — this is the
-  // ONE way back to Tasks that replaces it, present on the landing and error screens (the active session
-  // uses the breadcrumb bar's "All sessions" link instead).
+  // The app's top nav now STAYS VISIBLE on the Tutor route too (it used to be hidden as a "focused,
+  // full-screen surface" — report-live ask: keep it). This back button remains as the in-surface
+  // shortcut to Tasks on the landing and error screens (the active session uses the breadcrumb bar's
+  // "All sessions" link instead, which lands on the session list).
   const backButton = (
     <button type="button" className="tutor-back-btn" onClick={onExit} aria-label={L("Retour aux tâches", "Back to tasks")}>
       ← {L("Toutes les séances", "All sessions")}

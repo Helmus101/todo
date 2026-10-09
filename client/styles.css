@@ -445,21 +445,26 @@ input:focus, textarea:focus {
 /* Column: the single topnav header stacks above the page content (the old sidebar made this a row; it's
    gone — a row here would lay the header and the content side-by-side and squeeze the page into a
    narrow column on the right). */
-.app { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
+.app { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column;
+  /* One source of truth for the sticky header's height: .topnav wears it, and .tutor-stage subtracts it
+     from the viewport (the stage used to be a flat 100dvh because the nav was hidden on tutor routes). */
+  --topnav-h: calc(64px + env(safe-area-inset-top));
+}
 .spacer { flex: 1; }
 
 /* ─── Top nav — the prototype's single shell (replaces the old sidebar+topbar) ────
    Full-viewport app: one sticky header — lowercase "otto" wordmark left, plain text links right
    (Today/Tutor/Journal/Mistakes/Settings), active link in the orange. No sidebar, no page-title bar.
-   The Tutor session screen drops this header entirely (like the prototype's /tutor/session, which
-   carries its own "All sessions / Mathematics … End session" breadcrumb row instead).
+   Shown on Tutor too (it used to be dropped there as a "focused surface"): TutorSession keeps its own
+   "All sessions / Mathematics … End session" breadcrumb row BELOW this header, and .tutor-stage
+   subtracts --topnav-h from the viewport so the stage still fits the screen exactly.
    Phone: prototype keeps the same header (its screenshot at 880px is the narrow case) — links stay,
    wordmark shrinks, and the row stays legible. */
 .topnav {
   position: sticky; top: 0; z-index: 40;
   width: 100%;
   display: flex; align-items: center; justify-content: space-between; gap: var(--space-4);
-  height: calc(64px + env(safe-area-inset-top));
+  height: var(--topnav-h);
   padding: env(safe-area-inset-top) clamp(20px, 5vw, 48px) 0;
   background: var(--bg);
 }
@@ -483,7 +488,8 @@ input:focus, textarea:focus {
 /* Phone: same header, tightened — five links + wordmark must fit 360px, so step the type down
    and drop the gap. (The prototype's own narrow rendering does exactly this.) */
 @media (max-width: 640px) {
-  .topnav { height: calc(56px + env(safe-area-inset-top)); padding-left: 16px; padding-right: 16px; }
+  .app { --topnav-h: calc(56px + env(safe-area-inset-top)); }
+  .topnav { height: var(--topnav-h); padding-left: 16px; padding-right: 16px; }
   .topnav-brand { font-size: 19px; }
   .topnav-links { gap: 12px; }
   .topnav-link { font-size: 14px; padding: 8px 0; }
@@ -7314,7 +7320,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   .tutor-active-session-actions, .tutor-history-actions { flex-wrap: wrap; }
   .tutor-history-actions > * { flex: 1 1 140px; text-align: center; }
 
-  .tutor-stage { height: 100dvh; min-height: 100dvh; }
+  .tutor-stage { height: calc(100dvh - var(--topnav-h)); min-height: calc(100dvh - var(--topnav-h)); }
   .tutor-crumbbar {
     flex-wrap: wrap;
     gap: 8px 10px;
@@ -7361,7 +7367,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .sm-board-problem-nav-counter { font-size: 0.85rem; color: var(--ink-2); }
 
 /* ═══ Tutor stage — Gauth-style: one big canvas + Otto as an avatar (no chat transcript) ═══════════════ */
-.tutor-stage { position: relative; flex: none; width: 100%; min-height: 0; height: 100vh; height: 100dvh; max-height: 100dvh; display: flex; flex-direction: column; background: var(--bg); overflow: hidden; }
+.tutor-stage { position: relative; flex: none; width: 100%; min-height: 0; height: calc(100vh - var(--topnav-h)); height: calc(100dvh - var(--topnav-h)); max-height: calc(100dvh - var(--topnav-h)); display: flex; flex-direction: column; background: var(--bg); overflow: hidden; }
 .ts-bar { flex: none; z-index: 5; display: flex; align-items: center; gap: 14px; padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--line-soft); }
 .ts-chip { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: var(--radius-pill); background: var(--accent-soft); color: var(--accent); font-variant-numeric: tabular-nums; cursor: default; }
 .ts-chip.ts-chip-btn { border: 0; cursor: pointer; font: inherit; font-size: 12px; font-weight: 600; }

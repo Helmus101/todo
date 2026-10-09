@@ -1084,10 +1084,10 @@ export function App() {
     <div className="app">
       {/* Top nav — the prototype's single shell: lowercase "otto" wordmark left, plain text links right
           (Today/Tutor/Journal/Mistakes/Settings), active link in the orange. Replaces the old sidebar +
-          page-title topbar entirely. Hidden in Tutor: that screen is a full-screen, focused surface —
-          TutorSession carries its own breadcrumb row ("All sessions / Mathematics … End session"), the
-          same chrome the prototype's /tutor/session uses. */}
-      {!route.startsWith("tutor") && (
+          page-title topbar entirely. Shown on EVERY route including Tutor — it used to be hidden there as
+          a "focused, full-screen surface" (report-live ask: keep the nav). TutorSession still carries its
+          own breadcrumb row ("All sessions / Mathematics … End session") below this header, and the stage
+          subtracts --topnav-h from the viewport so it still fits exactly. */}
       <header className="topnav">
         <a className="topnav-brand" href="/tasks">otto</a>
         <nav className="topnav-links">
@@ -1137,7 +1137,6 @@ export function App() {
           )}
         </nav>
       </header>
-      )}
 
       {/* Main content area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'visible' }}>
