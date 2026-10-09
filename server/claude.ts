@@ -19,6 +19,7 @@ import { evaluateArithmetic, findArithmeticClaims, hasArithmetic } from "./arith
 import { boardSurfaceBlock, boardTrajectoryBlock, type BoardEvent } from "./boardEvents.ts";
 import { buildTutorDecision } from "./actionSpace.ts";
 import { normalizeWidget, WIDGET_TYPES } from "../shared/widgets.ts";
+import { normalizeFlow } from "../shared/flow.ts";
 import { findSourceQuestions, cleanProblemSource, sourcesForTrack } from "./questionSources.ts";
 import { extractPlan, validatePlan, policyBlock as tutorPolicyBlock, PLAN_PROTOCOL, type TutorPlan, type TutorPolicy } from "./tutorBrain.ts";
 import { sessionStateBlock } from "./sessionState.ts";
@@ -2625,6 +2626,37 @@ export function makeWidgetEntry(input: any): { entry: BoardEntry } | { error: st
   return { entry: { id: randomUUID(), text: caption, kind: "widget", widget: r.widget, at: new Date().toISOString() } };
 }
 
+// Concept diagrams with AUTOMATIC layout — flowcharts, cause→effect chains, cycles, timelines, trees. The model names
+// the boxes and arrows; the app lays them out (no coordinates to get wrong, no KaTeX), the way ChatGPT/Claude draw them.
+const FLOW_ON_BOARD_TOOL = {
+  name: "FLOW_ON_BOARD",
+  description: "Draw a CLEAR concept diagram on the board and let the app do the layout — you only list the boxes and the arrows. " +
+    "type \"flow\": a process, algorithm, cause→effect chain, argument structure, classification tree or any boxes-and-arrows idea (direction TD = top-down, LR = left-to-right; use shape \"diamond\" for a yes/no decision). " +
+    "type \"cycle\": a loop of stages (water/carbon/Krebs cycle, business cycle, feedback loop) — just list the stages in order. " +
+    "type \"timeline\": events in order (history, a process over time) — put the date in the label, e.g. \"1917 — October Revolution\". " +
+    "Use this for ANY non-geometric picture: biology/chemistry processes, history causes and sequences, economics flows, essay plans, code/algorithm steps, concept maps. " +
+    "Do NOT use it for triangles/circles/angles (GEOMETRY_ON_BOARD) or function graphs (GRAPH_ON_BOARD). " +
+    "Keep node labels SHORT (2-6 words, plain text — no LaTeX); 3-10 nodes; put detail in the optional `note`. Never put the answer to something they're working out in a label.",
+  input_schema: { type: "object", properties: {
+    caption: { type: "string", description: "one short line shown as the diagram's title" },
+    type: { type: "string", enum: ["flow", "cycle", "timeline"] },
+    direction: { type: "string", enum: ["TD", "LR"], description: "flow only: TD (default) or LR" },
+    nodes: { type: "array", description: "2-14 boxes", items: { type: "object", properties: {
+      id: { type: "string", description: "short unique id used by the edges" }, label: { type: "string" }, note: { type: "string", description: "optional smaller second line" },
+      shape: { type: "string", enum: ["box", "round", "diamond", "circle"] } }, required: ["id", "label"] } },
+    edges: { type: "array", description: "arrows. Optional for cycle/timeline (stages are joined in order); required for flow.", items: { type: "object", properties: {
+      from: { type: "string" }, to: { type: "string" }, label: { type: "string", description: "optional short text on the arrow (\"yes\", \"causes\", \"heat\")" } }, required: ["from", "to"] } },
+  }, required: ["caption", "type", "nodes"] },
+};
+
+export function makeFlowEntry(input: any): { entry: BoardEntry } | { error: string } {
+  const caption = String(input?.caption || "").trim().slice(0, 200);
+  if (!caption) return { error: "ERROR: caption is required." };
+  const r = normalizeFlow(input);
+  if ("error" in r) return r;
+  return { entry: { id: randomUUID(), text: caption, kind: "flow", flow: r.flow, at: new Date().toISOString() } };
+}
+
 // IB / AP students practise on registered sources (IB Documents, Revision Village, College Board AP Central).
 // Offered ONLY to those programs; for everyone else exercises are generated exactly as before.
 const FIND_SOURCE_QUESTION_TOOL = {
@@ -2678,8 +2710,7 @@ const CLEAR_BOARD_TOOL = {
 const DRAW_ON_BOARD_TOOL = {
   name: "DRAW_ON_BOARD",
   description: "Draw ONE small labeled figure onto the student's board — a real diagram (shapes, arrows, " +
-    "a labeled triangle, a number line, a simple graph) or real typeset math (an 'equation' op, rendered by " +
-    "KaTeX — actual stacked fractions, exponents, roots, not text like '2/(x-1)'), not ASCII art. Use this " +
+    "a labeled triangle, a number line, a simple graph) or plain-text equation labels (an 'equation' op is shown as readable text, NOT typeset — put real equations in WRITE_TO_BOARD instead), not ASCII art. Use this " +
     "instead of an ASCII/text diagram ANY time the content is genuinely spatial or geometric, AND any time " +
     "you say a real expression/equation/formula out loud or in chat — the student can't see a fraction bar " +
     "in spoken or plain text, so a formula worth keeping visible belongs here, not just described in words. " +
@@ -7649,6 +7680,7 @@ const PRIMER_PERSONA =
   `transformations, motion graphs, a line of best fit; also bar charts, histograms and 3D surfaces z=f(x,y)) use GRAPH_ON_BOARD, not CREATE_INTERACTIVE — it's instant, ` +
   `always renders, and gives the student real sliders and a hover readout. Plot the FAMILY or the setup, never ` +
   `the answer to what they're solving, then ask ONE question about what moving it shows.\n` +
+  `- DIAGRAMS: for any boxes-and-arrows idea (a process, cause→effect, a cycle, a timeline, a classification, an essay plan) use FLOW_ON_BOARD — you list the nodes and arrows, the app lays them out cleanly. Use GEOMETRY_ON_BOARD for shapes/angles and GRAPH_ON_BOARD for functions; reserve DRAW_ON_BOARD for the odd freehand figure, and never put equations inside a figure (labels are plain text; equations go in WRITE_TO_BOARD).\n` +
   `- ACTIVITIES: when the student should DO something rather than read — pair terms, order steps, sort items, or play with a unit circle / projectile — use WIDGET_ON_BOARD (it always works and tells you how they did) instead of describing it or hand-writing HTML. Any subject. Prefer it over CREATE_INTERACTIVE.\n` +
   `- NO HIGHLIGHTING: write plainly — never wrap text in ==marks== or bold for emphasis.\n` +
   `- EXERCISE RESULTS ARRIVE AS "[Exercise] …" / "[Exercice] …" MESSAGES: the board just marked an answer and ` +
@@ -8878,7 +8910,7 @@ export async function chatAboutTask(
   // which no longer renders a board anywhere except the Tutor (TutorSession.tsx).
   const includeArtifactTools = wantsArtifactTools(message, history);
   const boardTools = opts?.primer
-    ? [CREATE_PROBLEM_TOOL, ...(sourcesForTrack(profile?.track).length ? [FIND_SOURCE_QUESTION_TOOL] : []), WRITE_TO_BOARD_TOOL, CLEAR_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, WIDGET_ON_BOARD_TOOL, ...(opts?.canvasMode ? [CREATE_INTERACTIVE_TOOL] : []), SET_OBJECTIVES_TOOL]
+    ? [CREATE_PROBLEM_TOOL, ...(sourcesForTrack(profile?.track).length ? [FIND_SOURCE_QUESTION_TOOL] : []), WRITE_TO_BOARD_TOOL, CLEAR_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, WIDGET_ON_BOARD_TOOL, FLOW_ON_BOARD_TOOL, ...(opts?.canvasMode ? [CREATE_INTERACTIVE_TOOL] : []), SET_OBJECTIVES_TOOL]
     : [];
   const tools = opts?.canvasMode
     ? [...boardTools, WEB_SEARCH_TOOL, READ_PAGE_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])]
@@ -9570,6 +9602,10 @@ export async function chatAboutTask(
           if (result.board.filter((e) => e.kind === "graph").length >= 2) content = "LIMIT: you've already put a couple of graphs on the board this message — that's enough for one turn.";
           else if (leaksAnyProblemAnswer([input?.caption, ...(Array.isArray(input?.fns) ? input.fns.map((f: any) => f?.label || "") : [])].join(" "), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that graph's caption or labels state a problem's answer — title it by what to explore, not by the result.";
           else { const r = makeGraphEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Graphique : « ${r.entry.text.slice(0, 60)} »` : `Graph: "${r.entry.text.slice(0, 60)}"`); } }
+        } else if (name === "FLOW_ON_BOARD") {
+          if (result.board.filter((e) => e.kind === "flow").length >= 2) content = "LIMIT: that's enough diagrams for one turn.";
+          else if (leaksAnyProblemAnswer(JSON.stringify(input || {}), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that diagram states a problem's answer outright — label the boxes without the value.";
+          else { const r = makeFlowEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Schéma : « ${r.entry.text.slice(0, 60)} »` : `Diagram: "${r.entry.text.slice(0, 60)}"`); } }
         } else if (name === "WIDGET_ON_BOARD") {
           if (result.board.filter((e) => e.kind === "widget").length >= 1) content = "LIMIT: one activity per turn — let them do this one first.";
           else if (leaksAnyProblemAnswer(JSON.stringify(input || {}), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that activity states a problem's answer outright — build it around different content.";

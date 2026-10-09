@@ -4,6 +4,7 @@ import type { WebTask, BoardEntry, TaskProblem, DiagramOp } from "../../../share
 import { practiceAnswerMatches } from "../../../shared/types.ts";
 import { autoMathLine } from "../../../shared/mathText.ts";
 import { GraphBlock } from "./GraphBlock.tsx";
+import { FlowDiagram } from "./FlowDiagram.tsx";
 import { WidgetBlock, type WidgetResult } from "./WidgetBlock.tsx";
 import { renderChatText, useLang, FirstTimeHint, stripStrayMarkdown, formatMath, boldify } from "../../ui.tsx";
 
@@ -285,30 +286,9 @@ function DiagramOpSVG({ op }: { op: DiagramOp }) {
         </g>
       );
     case "equation": {
-      // Generous, uncapped-looking box (foreignObject can't auto-size to its HTML content in SVG) — KaTeX
-      // content is left-aligned and vertically centered inside it via CSS (.sm-board-eq below) so a short
-      // equation doesn't look adrift in a huge box and a long one still has real room.
-      //
-      // Two fixes to a real "doesn't work well for diagrams" complaint: (1) width used to be a bare
-      // `800 - x`, so an equation placed anywhere past x≈600 got squeezed into a shrinking sliver (down to
-      // nothing at x=800) instead of a usable box — now guaranteed a MIN_W-wide box by pulling its left
-      // edge back when there isn't enough room to the right, same way a tooltip flips sides near a screen
-      // edge. (2) height was a flat 70px, too short for anything with vertical structure — a fraction,
-      // a sum/integral with limits, an exponent stack — so real math routinely got visually clipped
-      // against whatever was drawn below it on the board. Taller now, and still overflow:visible
-      // (.sm-board-eq-box) as a second line of defense for the rare equation taller even than that.
-      const MIN_W = 220;
-      const x = Math.min(Math.max(0, op.x - 10), Math.max(0, 800 - MIN_W));
-      const width = 800 - x;
-      return (
-        <foreignObject x={x} y={Math.max(0, op.y - 36)} width={width} height={96}>
-          {/* No xmlns needed — React renders this div straight into the live DOM (not serialized XML), same
-              as any other JSX inside an SVG foreignObject. */}
-          <div className="sm-board-eq-box">
-            <Equation latex={op.latex} />
-          </div>
-        </foreignObject>
-      );
+      // Diagrams are plain SVG text now (no KaTeX): the equation is rendered as readable text next to the figure.
+      const t = formatMath(op.latex.replace(/\\(?:left|right)/g, "").replace(/\\cdot/g, "·").replace(/\\times/g, "×").replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, "($1)/($2)").replace(/\\([a-zA-Z]+)/g, "$1").replace(/[{}]/g, ""));
+      return <text x={op.x} y={op.y} fontSize={16} fill="currentColor" fontStyle="italic">{t}</text>;
     }
     default:
       return null;
@@ -718,6 +698,11 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult }
                 <>
                   <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>
                   <GraphBlock spec={e.graph} />
+                </>
+              ) : e.kind === "flow" && e.flow ? (
+                <>
+                  <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>
+                  <FlowDiagram spec={e.flow} />
                 </>
               ) : e.kind === "widget" && e.widget ? (
                 <>

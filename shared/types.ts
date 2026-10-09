@@ -4,6 +4,7 @@ import { normalizeCoursework, type CourseworkDoc } from "./coursework.ts";
 // state, the board event stream and the action space). They live in their own shared module so the client can
 // type the transparency panel without importing any server code — see shared/agentTypes.ts.
 import type { WidgetSpec } from "./widgets.ts";
+import type { FlowSpec } from "./flow.ts";
 import type { StudentModelShape, ConceptGraphShape, TutorSessionStateShape, TutorDecisionShape, BoardEventShape } from "./agentTypes.ts";
 import { SESSION_CAP } from "./agentTypes.ts";
 
@@ -1591,7 +1592,7 @@ export interface BoardEntry {
    *  (see `outline`) — for essay-based/humanities content (history causes, source analysis, an essay plan)
    *  where a flat sentence or a spatial diagram both fit poorly; math/science still reach for
    *  formula/diagram first. */
-  kind?: "note" | "instruction" | "given" | "result" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "interactive" | "graph" | "widget" | "gap" | "annotation";
+  kind?: "note" | "instruction" | "given" | "result" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "interactive" | "graph" | "widget" | "flow" | "gap" | "annotation";
   /** Who authored this entry — "otto" (default for backward compat) or "student". Student-owned entries are
    *  never silently rewritten by Otto. Used to visually distinguish Otto's scaffolding from the student's
    *  own work on the board (see BoardArtifact.tsx). */
@@ -1626,6 +1627,8 @@ export interface BoardEntry {
   /** Present only when kind === "widget" (WIDGET_ON_BOARD) — a pre-built interactive activity (match / order / sort /
    *  unit circle / projectile) rendered by the client from this content. */
   widget?: WidgetSpec;
+  /** Present only when kind === "flow" (FLOW_ON_BOARD) — an auto-laid-out flowchart / cycle / timeline. */
+  flow?: FlowSpec;
   /** Present only when kind === "outline" — one or more headed sections, each a short list of bullet
    *  points. Built for a history/essay-style board (causes-of-an-event, a source's key points, an essay's
    *  section-by-section plan) the same way `diagram` is built for a geometric figure: structure the model

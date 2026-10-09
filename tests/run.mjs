@@ -5,6 +5,8 @@ import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningS
 import { sourcesForTrack, sourceForUrl, cleanProblemSource, excerptAround, findSourceQuestions } from "../server/questionSources.ts";
 import { normalizeWidget, shuffledNotSolved, projectileStats } from "../shared/widgets.ts";
 import { studentProblemStatement, boardCoversStatement, pendingCaseTraps, closesWithMissedCase, handsOverCalculation, equationAhead, caseTrapBlock, isDrawingTurn, drawingLooksSpatial } from "../server/tutorAdapt.ts";
+import { normalizeFlow, layoutFlow } from "../shared/flow.ts";
+import { asksToLook } from "../shared/lookRequest.ts";
 import { webSearch, rankResults } from "../server/websearch.ts";
 import { evaluateArithmetic, parseNumber, findArithmeticClaims, hasArithmetic } from "../server/arithmetic.ts";
 import { isLikelyEcho, createEchoFilter, normalizeForEcho } from "../client/voice/echoGuard.ts";
@@ -171,7 +173,8 @@ section("Tutor stage — End session always ends; the stage is screen-height wit
     /--topnav-h: calc\(64px \+ env\(safe-area-inset-top\)\)/.test(css) &&
     /\.topnav \{[^}]*height: var\(--topnav-h\)/.test(css));
   check("the board component's own scroller is neutralised in the stage so the ink canvas is on the one real scroller", /\.ts-board-body \.sm-board-body \{ overflow: visible;/.test(css) && /createPortal\(/.test(readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8")));
-  check("'Show Otto' lets the student say what to look at (note travels with the drawing)", /tc-ask/.test(readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8")) && /onSend=\{\(description, note\)/.test(tut));
+  check("there is NO 'Show Otto' button: telling Otto to look at the whiteboard is enough", !/tc-show|Montrer à Otto|Show Otto/.test(readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8").replace(/ask Otto to take a look/g, "")) && /asksToLook\(message\)/.test(tut) && /readUnseenInk\(wantsLook\)/.test(tut));
+  check("a look-request is recognised in both languages; ordinary chat is not", asksToLook("can you look at my whiteboard") && asksToLook("regarde mon schéma s'il te plaît") && asksToLook("is this diagram right?") && asksToLook("check my drawing") && !asksToLook("what is the sine rule") && !asksToLook("look at the second equation"));
   check("the whiteboard starts in select/hand mode, not draw — the board underneath must be usable right away", /useState<Tool>\("pan"\)/.test(readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8")));
 }
 
@@ -386,7 +389,7 @@ section("Primer chat — thinking toggle with safe fallback, persona leads with 
   check("board reports every exercise attempt to the tutor (never the correct answer)", /onProblemResult\?\.\(\{ problem, given, correct, attempt \}\)/.test(board) && /\[Exercise\] I answered/.test(tut));
   check("finishing an exercise offers 'another / harder / go over the idea / something else' and the tutor asks instead of auto-creating the next problem", /justFinishedExercise \? nextChips/.test(tut) && /ASK what they want to do now/.test(readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8")) && /let THEM choose/.test(readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8")));
   check("automatic exercise results wait for the reply to settle and go out batched (never replacing the answer being read)", /resultsRef\.current\.splice\(0\)\.join/.test(tut) && /if \(sending \|\| voiceState\.speaking\) return;/.test(tut));
-  check("new whiteboard ink rides along with the next message (no separate send step)", /readUnseenInk\(\)/.test(tut) && /What I wrote\/drew on the board/.test(tut));
+  check("new whiteboard ink rides along with the next message (no separate send step)", /readUnseenInk\(wantsLook\)/.test(tut) && /What I wrote\/drew on the board/.test(tut));
 }
 
 section("runTask execution speed — no pointless tool-pick call, artifacts built concurrently (source pins)");
@@ -1813,7 +1816,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   check("explore widgets clamp their numbers; unknown types are refused", normalizeWidget({ type: "projectile", angle: 200, speed: 1, g: -3 }).widget.angle === 85 && normalizeWidget({ type: "unit_circle", angle: "abc" }).widget.angle === 30 && !!normalizeWidget({ type: "nope" }).error);
   check("projectile stats match the physics (45°, 20 m/s, g=9.8 → range ≈ 40.8 m)", Math.abs(projectileStats(45, 20, 9.8).range - 40.82) < 0.05);
   { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8"); const bd = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
-    check("WIDGET_ON_BOARD is wired: tool, handler, board render, tutor feedback", /WIDGET_ON_BOARD_TOOL, \.\.\.\(opts\?\.canvasMode/.test(cl) && /name === "WIDGET_ON_BOARD"/.test(cl) && /WidgetBlock/.test(bd) && /onWidgetResult/.test(readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8"))); }
+    check("WIDGET_ON_BOARD is wired: tool, handler, board render, tutor feedback", /WIDGET_ON_BOARD_TOOL, FLOW_ON_BOARD_TOOL/.test(cl) && /name === "WIDGET_ON_BOARD"/.test(cl) && /WidgetBlock/.test(bd) && /onWidgetResult/.test(readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8"))); }
   // ── Web search ──
   check("rankResults dedupes pages and enforces the domain restriction", rankResults([{ title: "a", url: "https://www.x.com/p?utm=1", snippet: "" }, { title: "a2", url: "https://x.com/p/", snippet: "" }, { title: "b", url: "https://evil.com/p", snippet: "" }], ["x.com"]).length === 1);
   { const realFetch = globalThis.fetch; let exaCalls = 0, body = null; process.env.EXA_API_KEY = "t";
@@ -1840,6 +1843,16 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   check("a shown drawing is recognised (both the Show-Otto and auto-read formats) and spatial ones are redrawn", isDrawingTurn("Here's what I drew: a triangle") && isDrawingTurn("x\n\n[What I wrote/drew on the board: a diagram]") && !isDrawingTurn("hello") && drawingLooksSpatial("Here's what I drew: a triangle with an angle") && !drawingLooksSpatial("Here's what I drew: 2x + 3 = 7"));
   { const tc2 = readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8"); const be = readFileSync(new URL("../server/boardEvents.ts", import.meta.url), "utf8");
     check("whiteboard: a full blank page under the lesson, and Otto's figures are rasterised into what Otto is shown", /tc-page/.test(tc2) && /Math\.max\(520, Math\.round\(surf\.clientHeight\)\)/.test(tc2) && /svg\.sm-board-diagram/.test(tc2) && /figureSummary/.test(be)); }
+  // ── Auto-laid-out concept diagrams (no KaTeX, no model coordinates) ──
+  { const f = normalizeFlow({ type: "flow", nodes: [{ id: "a", label: "Start" }, { id: "b", label: "Decide", shape: "diamond" }, { id: "c", label: "Yes path" }, { id: "d", label: "No path" }, { id: "e", label: "End" }], edges: [{ from: "a", to: "b" }, { from: "b", to: "c", label: "yes" }, { from: "b", to: "d", label: "no" }, { from: "c", to: "e" }, { from: "d", to: "e" }, { from: "e", to: "b" }] });
+    const L = layoutFlow(f.flow);
+    const overlap = L.nodes.some((a, i) => L.nodes.some((b, j) => i < j && a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h));
+    check("flow layout: every node placed once, none overlap, all inside the canvas, cycles tolerated", L.nodes.length === 5 && !overlap && L.nodes.every((n) => n.x >= 0 && n.y >= 0 && n.x + n.w <= L.width && n.y + n.h <= L.height) && L.edges.length === 6);
+    const c = layoutFlow(normalizeFlow({ type: "cycle", nodes: ["A", "B", "C", "D", "E"].map((x) => ({ id: x, label: "Stage " + x })) }).flow);
+    check("cycle joins the stages in a ring automatically; timeline needs no edges", c.edges.length === 5 && layoutFlow(normalizeFlow({ type: "timeline", nodes: [{ id: "1", label: "1914" }, { id: "2", label: "1917" }, { id: "3", label: "1921" }] }).flow).nodes.length === 3);
+    check("bad diagrams are refused: <2 nodes, flow with no arrows, arrows to nowhere are dropped", !!normalizeFlow({ type: "flow", nodes: [{ id: "a", label: "x" }] }).error && !!normalizeFlow({ type: "flow", nodes: [{ id: "a", label: "x" }, { id: "b", label: "y" }] }).error && normalizeFlow({ type: "flow", nodes: [{ id: "a", label: "x" }, { id: "b", label: "y" }], edges: [{ from: "a", to: "b" }, { from: "a", to: "zzz" }] }).flow.edges.length === 1); }
+  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8"); const bd = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+    check("FLOW_ON_BOARD is wired (tool, handler, render) and diagram equations are no longer KaTeX", /FLOW_ON_BOARD_TOOL, \.\.\.\(opts\?\.canvasMode/.test(cl) && /name === "FLOW_ON_BOARD"/.test(cl) && /<FlowDiagram spec=\{e\.flow\}/.test(bd) && !/foreignObject x=\{x\} y=\{Math\.max\(0, op\.y - 36\)\}/.test(bd)); }
   check("board is flat: plain lines, no section numbers or boxes", /sm-board-line/.test(boardSrc) && !/sm-board-section-num/.test(boardSrc));
   check("kind:\"summary\" renders as an ordinary line — no trace box, no heading, no category", !/ReasoningTrace|sm-board-trace/.test(boardSrc));
   check("a deliberately unfinished worked line gets an 'à toi de finir' completion chip (completion effect, visible)", /isCompletionGap/.test(boardSrc) && /sm-board-todo-chip/.test(boardSrc));

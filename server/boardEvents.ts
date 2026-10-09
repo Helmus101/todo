@@ -175,6 +175,7 @@ export function figureSummary(e: BoardEntry): string {
     return ` — FIGURE: shapes ${shapes.join(", ") || "none"}${labels.length ? `; labels: ${labels.join(", ")}` : ""}${eqs.length ? `; equations: ${eqs.join(" ; ")}` : ""}`.slice(0, 420);
   }
   if (e.kind === "graph" && e.graph) return ` — GRAPH: ${(e.graph.fns || []).map((f) => f.expr).join(", ") || e.graph.kind || ""}`.slice(0, 200);
+  if (e.kind === "flow" && e.flow) return ` — DIAGRAM (${e.flow.type}): ${e.flow.nodes.map((n) => n.label).join(" → ")}`.slice(0, 360);
   if (e.kind === "widget" && e.widget) return ` — ACTIVITY: ${e.widget.type}`;
   return "";
 }

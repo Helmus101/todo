@@ -7,6 +7,7 @@ import { useLang, LangContext } from "../ui.tsx";
 import { AskOttoPanel } from "../study/AskOttoPanel.tsx";
 import { BoardArtifact, MathText } from "../study/artifacts/BoardArtifact.tsx";
 import { TutorDesmos } from "./TutorDesmos.tsx";
+import { asksToLook } from "../../shared/lookRequest.ts";
 import { TutorCanvas, type TutorCanvasHandle } from "./TutorCanvas.tsx";
 import { PageTour } from "../PageTour.tsx";
 import { TOURS } from "../tours.ts";
@@ -252,8 +253,11 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     try {
       // Anything new on the whiteboard rides along with the message — draw, then just say "is this right?"
       // like you would to a person leaning over your page; no separate "send drawing" step needed.
-      const seen = await canvasRef.current?.readUnseenInk();
+      // No "show Otto" button: saying "look at my whiteboard" is enough — and that also re-reads ink Otto has already seen.
+      const wantsLook = !isAutoResult && asksToLook(message);
+      const seen = await canvasRef.current?.readUnseenInk(wantsLook);
       if (seen) message += "\n\n" + L(`[Ce que j'ai écrit/dessiné sur le tableau : ${seen}]`, `[What I wrote/drew on the board: ${seen}]`);
+      else if (wantsLook && !canvasRef.current?.hasInk()) message += "\n\n" + L("[Mon tableau est vide pour l'instant — je n'ai encore rien dessiné.]", "[My whiteboard is empty right now — I haven't drawn anything yet.]");
       // canvasMode: true — the Tutor UI has no way to OPEN a note/flashcard-deck/quiz artifact (onOpenNote/
       // onOpenDeck/onOpenQuiz are all no-ops below, since this screen is chat+board, not the task list's
       // artifact viewer). Without this flag the full tool set was still offered server-side, so the model
@@ -762,7 +766,6 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           hidden={desmosOpen}
           surface={surfaceEl}
           onDesmos={() => setDesmosOpen((o) => !o)}
-          onSend={(description, note) => void send((note ? note + "\n\n" : "") + L(`Voici ce que j'ai dessiné : ${description}`, `Here's what I drew: ${description}`))}
         />
       </section>
       <div className="ts-dock">

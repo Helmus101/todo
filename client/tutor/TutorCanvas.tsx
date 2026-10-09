@@ -43,7 +43,7 @@ function paint(ctx: CanvasRenderingContext2D, items: Item[], w: number, h: numbe
 /** The Tutor's whiteboard layer — a transparent ink surface laid OVER the lesson board (Gauth-style: one big
  *  canvas where Otto writes and the student writes back), with a floating tool pill. Strokes are kept as
  *  resolution-independent items and re-painted, which is what makes undo/redo, a real eraser and crisp
- *  hi-DPI rendering all fall out of one model. "Show Otto" flattens the ink onto white and sends it to the
+ *  hi-DPI rendering all fall out of one model. Reading the ink (when the student asks Otto to look, or sends a message after drawing) flattens it onto white and sends it to the
  *  vision endpoint (same path as before — nothing is stored server-side). The "hand" tool lets pointer
  *  events fall through so the board underneath can still be scrolled. Stays mounted for the whole session so
  *  the drawing survives toggling Desmos. */
@@ -52,13 +52,13 @@ export interface TutorCanvasHandle {
   hasUnseenInk: () => boolean;
   /** Reads the unseen ink (vision) and returns Otto's description of it, or null when there's nothing new /
    *  vision isn't available / the read failed. Marks the ink as seen on success so it's never sent twice. */
-  readUnseenInk: () => Promise<string | null>;
+  readUnseenInk: (force?: boolean) => Promise<string | null>;
+  /** True when the page has any ink at all (seen or not). */
+  hasInk: () => boolean;
 }
 
-export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean; hidden: boolean; surface: HTMLElement | null; onSend: (description: string, note?: string) => void; onDesmos: () => void }>(function TutorCanvas({ visionReady, hidden, surface, onSend, onDesmos }, handleRef) {
+export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean; hidden: boolean; surface: HTMLElement | null; onDesmos: () => void }>(function TutorCanvas({ visionReady, hidden, surface, onDesmos }, handleRef) {
   const L = useLang();
-  const [askOpen, setAskOpen] = useState(false);
-  const [askText, setAskText] = useState("");
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const items = useRef<Item[]>([]);
   const inkStamp = useRef(0);
@@ -243,7 +243,7 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
     }
     // Otto's own FIGURES (a drawn diagram, a graph, an activity's picture) under the ink too — when the student circles
     // or comments on something Otto drew, the vision read has to see that figure, not just the words around it.
-    const figs = Array.from(surface?.querySelectorAll<SVGSVGElement>("svg.sm-board-diagram, .sm-widget svg") ?? []);
+    const figs = Array.from(surface?.querySelectorAll<SVGSVGElement>("svg.sm-board-diagram, svg.sm-flow, .sm-widget svg") ?? []);
     for (const svg of figs) {
       const r = svg.getBoundingClientRect();
       if (!r.width || !r.height) continue;
@@ -267,25 +267,13 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
   };
   useImperativeHandle(handleRef, () => ({
     hasUnseenInk: () => visionReady && !!canvasRef.current && items.current.some((i) => i.kind === "text" || i.tool !== "eraser") && inkStamp.current !== seenStamp.current,
-    readUnseenInk: async () => {
-      if (!visionReady || !canvasRef.current || !items.current.some((i) => i.kind === "text" || i.tool !== "eraser") || inkStamp.current === seenStamp.current) return null;
+    hasInk: () => !!canvasRef.current && items.current.some((i) => i.kind === "text" || i.tool !== "eraser"),
+    // `force`: the student explicitly asked Otto to look, so re-read even ink Otto has already seen.
+    readUnseenInk: async (force?: boolean) => {
+      if (!visionReady || !canvasRef.current || !items.current.some((i) => i.kind === "text" || i.tool !== "eraser") || (!force && inkStamp.current === seenStamp.current)) return null;
       try { return await readInk(); } catch { return null; }
     },
   }));
-
-  const show = async () => {
-    const c = canvasRef.current;
-    if (!c || !hasInk || sending) return;
-    setSending(true); setError(null);
-    const note = askText.trim();
-    try {
-      const description = await readInk();
-      setAskOpen(false); setAskText("");
-      onSend(description, note || undefined);
-    } catch (e: any) {
-      setError(e?.status != null ? e.message : L("Otto n'a pas pu lire ton tableau — réessaie.", "Otto couldn't read your board — try again."));
-    } finally { setSending(false); }
-  };
 
   const btn = (t: Tool, icon: React.ReactNode, label: string, tourId?: string) => (
     <button type="button" data-tour={tourId} className={`tc-btn${tool === t ? " on" : ""}`} onClick={() => { if (typing) commitText(); setTool(t); }} title={label} aria-label={label} aria-pressed={tool === t}>{icon}</button>
@@ -297,7 +285,7 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
         <>
           {page && !hidden && (
             <div className="tc-page" style={{ top: page.top, height: page.height }} aria-hidden>
-              <span>{L("Ta page — dessine ici, puis « Montrer à Otto »", "Your page — draw here, then “Show Otto”")}</span>
+              <span>{L("Ta page — dessine ici, puis demande à Otto de regarder", "Your page — draw here, then ask Otto to take a look")}</span>
             </div>
           )}
           <canvas
@@ -336,28 +324,6 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
           <span className="tc-sep" aria-hidden />
           <button type="button" className={`tc-btn tc-fn${hidden ? " on" : ""}`} onClick={onDesmos} title={hidden ? L("Retour au tableau", "Back to the board") : "Desmos"} aria-label="Desmos" aria-pressed={hidden}>ƒ</button>
         </div>
-        {visionReady && hasInk && !hidden && (
-          <div className="tc-show-wrap" style={{ pointerEvents: "auto" }}>
-            {askOpen && (
-              <div className="tc-ask" role="dialog" aria-label={L("Dire à Otto quoi regarder", "Tell Otto what to look at")}>
-                <label htmlFor="tc-ask-input">{L("Qu'est-ce qu'Otto doit regarder ?", "What should Otto look at?")}</label>
-                <textarea id="tc-ask-input" rows={2} autoFocus value={askText} maxLength={400}
-                  placeholder={L("ex. Vérifie ma 2e ligne · Est-ce que ce schéma est juste ?", "e.g. Check my 2nd line · Is this diagram right?")}
-                  onChange={(e) => setAskText(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void show(); } if (e.key === "Escape") setAskOpen(false); }} />
-                <div className="tc-ask-actions">
-                  <button type="button" className="btn ghost" onClick={() => setAskOpen(false)}>{L("Annuler", "Cancel")}</button>
-                  <button type="button" className="btn primary" disabled={sending} onClick={() => void show()}>{sending ? L("Otto regarde…", "Otto is looking…") : L("Envoyer", "Send")}</button>
-                </div>
-              </div>
-            )}
-            {!askOpen && (
-              <button type="button" className="tc-show" onClick={() => setAskOpen(true)}>
-                <Send size={16} /> {L("Montrer à Otto", "Show Otto")}
-              </button>
-            )}
-          </div>
-        )}
         {error && <div className="tc-error" role="alert" style={{ pointerEvents: "auto" }}>{error}</div>}
       </div>
     </>
