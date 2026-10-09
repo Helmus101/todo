@@ -7,7 +7,7 @@ import { COURSEWORK_MAX_CHARS, courseworkForSubject, sameSubject } from "../shar
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { buildGeometry } from "../shared/geometry.ts";
-import { studentProblemStatement, boardCoversStatement, asksToDraw, praisesNothing, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
+import { studentProblemStatement, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, misattributes, methodAhead, wantsHelp, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -7599,6 +7599,7 @@ const PRIMER_PERSONA =
   `("mm, close", "ah, that's the sign", "wait — say more about that"), then ONE small question or ONE tiny ` +
   `nudge. Fragments are fine. Never open with praise-filler ("Great question!", "Absolutely!"), never ` +
   `recap what they said back at length, never announce what you're about to do ("Let me explain…").\n` +
+  `- GROUND EVERY REPLY IN WHAT THEY ACTUALLY SAID. React only to the exact words, numbers and steps they gave. Never praise ("spot on", "exactly", "great") a step they didn't take; never say "you've got X" / "as you said" about something they didn't say; never assume what a garbled or very short message meant (say you didn't catch it); and never state a formula or method ("tan θ = slope") before THEY reach for it — if they were not close, ask a smaller question instead of telling. If they suggest something concrete ("let's graph it"), do that first. For problems about lines, curves or data, put the graph on the board with GRAPH_ON_BOARD as soon as they want a picture.\n` +
   `- NEVER GIVE THE ANSWER — NOT EVEN SLIPPED IN: never state the final value, the result of the step they're about to take, the option letter, or "so it's X" for what they're meant to find. If they ask for it, don't say it: hand them a smaller piece ("what's the first thing you'd do with that?") and make them produce the next line themselves. Before sending, re-read your reply: if it contains the thing they were supposed to figure out, delete that part and turn it into a question.\n` +
   `- CRITICAL, KINDLY — A THINKING PARTNER, NOT A CHEERLEADER: check every claim and step they make by ` +
   `recomputing it from the givens on the board (and re-reading their words) before you react. Praise only what ` +
@@ -9202,7 +9203,7 @@ export async function chatAboutTask(
       drawReqFixed = true;
       console.log(`${new Date().toISOString()} [chat] round ${round}: they asked for a drawing and none was made — asking for the figure`);
       messages.push({ role: "assistant", content: draft });
-      messages.push({ role: "user", content: "They asked you to DRAW it, and you answered with a question instead — that's a refusal. Call the right drawing tool NOW: TRIG_SCENE_ON_BOARD for angles of elevation/depression, GEOMETRY_ON_BOARD for triangles/circles, FLOW_ON_BOARD for processes, otherwise SVG_ON_BOARD (a fully labelled figure with the GIVEN values and the unknowns as letters). Then one short line about what's on it and ONE question." });
+      messages.push({ role: "user", content: "They asked you to DRAW it, and you answered with a question instead — that's a refusal. Call the right drawing tool NOW: GRAPH_ON_BOARD for lines/functions/data (plot them — no answer in the labels), TRIG_SCENE_ON_BOARD for angles of elevation/depression, GEOMETRY_ON_BOARD for triangles/circles, FLOW_ON_BOARD for processes, otherwise SVG_ON_BOARD (a fully labelled figure with the GIVEN values and the unknowns as letters). Then one short line about what's on it and ONE question." });
       return true;
     };
     // "Spot on" to a message with nothing in it ("to do", "yeah") — praise for nothing teaches them nothing.
@@ -9213,6 +9214,30 @@ export async function chatAboutTask(
       console.log(`${new Date().toISOString()} [chat] round ${round}: praise for a message with nothing checkable in it — asking for a plain question`);
       messages.push({ role: "assistant", content: draft });
       messages.push({ role: "user", content: "They said nothing checkable (a fragment or a stray word, maybe a mis-heard voice message) — there is nothing to praise, and \"spot on\" teaches them nothing. Don't praise or assume what they meant: say you didn't quite catch it and ask ONE short question about where they are in the problem." });
+      return true;
+    };
+    // GROUNDING. Respond only to what the student ACTUALLY said: no praise for a step they didn't take, no "you've got X" for
+    // something they never said, and no naming the method/formula before they reached for it (reported live: "tan(θ) = slope!"
+    // to a student who had only said the two slopes).
+    let groundedFixed = false;
+    const guardGrounded = (draft: string, round: number, lastRound: boolean): boolean => {
+      if (!opts?.primer || groundedFixed || lastRound || result.guardrailTripped) return false;
+      const studentTexts = [...history.filter((h) => h.role === "user").map((h) => h.text), message];
+      let why = "";
+      if (praiseUngrounded(draft, message, result.plan)) why = "it opens with praise, but nothing they said was a checkable correct step";
+      else {
+        const mis = misattributes(draft, studentTexts, (opts?.currentBoard || []).filter((e) => e.owner === "student").map((e) => e.text));
+        if (mis) why = `it credits them with something they never said ("${mis.slice(0, 80)}")`;
+        else if (opts?.policy && opts.policy.maxLevel <= 3 && !wantsHelp(message)) {
+          const ahead = methodAhead(draft, [...studentTexts, ...ownGivens()]);
+          if (ahead.length) why = `it names the method (${ahead.join(", ")}) before they reached for it`;
+        }
+      }
+      if (!why) return false;
+      groundedFixed = true;
+      console.log(`${new Date().toISOString()} [chat] round ${round}: ungrounded reply — ${why}`);
+      messages.push({ role: "assistant", content: draft });
+      messages.push({ role: "user", content: `Rewrite that reply — ${why}. Respond ONLY to what the student actually said or did: reflect it back in their own words (e.g. the exact values/terms they gave), say plainly if it isn't there yet, don't praise anything that wasn't a correct step, don't attribute ideas to them, and don't introduce a formula or method they haven't reached for — ask ONE question that gets THEM to bring it up. If they suggested something concrete (like graphing it), do that first.` });
       return true;
     };
     // A multi-solution trap (SSA ambiguous triangle, trig equation's second solution, ±) that nobody raised, while the
@@ -9549,6 +9574,7 @@ export async function chatAboutTask(
       if (guardRedraw(textContent, round, lastRound)) continue;
       if (guardAheadMath(textContent, round, lastRound)) continue;
       if (guardDrawRequest(textContent, round, lastRound)) continue;
+      if (guardGrounded(textContent, round, lastRound)) continue;
       if (guardEmptyPraise(textContent, round, lastRound)) continue;
       if (guardOwnArithmetic(textContent, round, lastRound)) continue;
         if (guardMissedCase(textContent, round, lastRound)) continue;
@@ -9556,6 +9582,7 @@ export async function chatAboutTask(
         if (guardRedraw(textContent, round, lastRound)) continue;
         if (guardAheadMath(textContent, round, lastRound)) continue;
         if (guardDrawRequest(textContent, round, lastRound)) continue;
+        if (guardGrounded(textContent, round, lastRound)) continue;
         if (guardEmptyPraise(textContent, round, lastRound)) continue;
         if (guardOwnArithmetic(textContent, round, lastRound)) continue;
         if (guardGapAnswer(textContent, round, lastRound)) continue;

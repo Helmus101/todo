@@ -530,6 +530,7 @@ export function arithmeticAhead(reply: string, studentTexts: string[], givens: s
 export function asksToDraw(message: string): boolean {
   const m = String(message || "");
   if (m.length > 320 || isDrawingTurn(m) || /\bi (?:drew|am drawing|'ll draw|will draw|created a drawing)\b|my (?:drawing|diagram|sketch)/i.test(m)) return false;
+  if (/\b(?:graph|plot|trace|représente)\b/i.test(m) && /\b(?:it|them|these|those|the (?:lines?|functions?|curves?|equations?)|can we|could we|let'?s|maybe|please|show|just)\b/i.test(m) && !/\bi (?:graphed|plotted)\b/i.test(m)) return true;
   return /\b(?:draw|sketch|illustrate|dessine[rz]?|dessin|schéma|diagram)\b/i.test(m) && /\b(?:can you|could you|please|just|for me|again|show|do it|try|make|peux-tu|pouvez|s'il)\b|^draw\b/i.test(m)
     || /\bshow (?:me )?(?:the )?(?:angles|diagram|picture|figure|situation|it)\b/i.test(m);
 }
@@ -541,3 +542,51 @@ export function lowSignal(message: string): boolean {
   return t.split(/\s+/).length <= 4 && !/\d|=|[+\-×*/^]/.test(t) && !/\?/.test(t);
 }
 export function praisesNothing(reply: string, message: string): boolean { return PRAISE_OPEN.test(reply) && lowSignal(message); }
+
+// ---- Grounding: respond only to what the student ACTUALLY said ----
+const SUCCESS_EVIDENCE = new Set(["solved-unaided", "solved-after-hint", "solved-after-partial", "solved-after-explanation", "self-corrected", "recall", "transfer-success"]);
+const PRAISE_START = /^\s*(?:spot on|exactly|correct|that'?s (?:right|it|correct|the idea)|nailed it|perfect|well done|nice (?:one|work|job|catch)|great[,!.]|great (?:job|work|catch|idea|thinking)|yes[,!.\s]|you(?:'ve| have) got (?:it|that|the))/i;
+/** Praise (or "you're right") when nothing the student said was a checkable, correct step. Uses the tutor's own plan
+ *  (its read of the student's last move) when it has one, and the plain "nothing was said" test either way. */
+export function praiseUngrounded(reply: string, message: string, plan?: { studentStep?: { status?: string }; evidence?: { kind?: string } } | null): boolean {
+  if (!PRAISE_START.test(reply)) return false;
+  if (lowSignal(message)) return true;
+  if (/^\[/.test(message.trim())) return false; // an exercise/activity result is a real signal, handled elsewhere
+  if (!plan) return false;
+  const ok = plan.studentStep?.status === "correct" || (plan.evidence?.kind ? SUCCESS_EVIDENCE.has(plan.evidence.kind) : false);
+  return !ok;
+}
+
+const GROUND_STOP = new Set("that this with have from what when where which their there about would could should these those them they then than just also into your yours been were will shall cannot dont doesnt isnt arent".split(" "));
+/** "You've got the two sides lined up" / "as you said, …" when the student never said it: the clause's content words
+ *  must (mostly) appear in what they actually said or wrote on the board. Returns the offending clause or null. */
+export function misattributes(reply: string, studentTexts: string[], studentBoard: string[] = []): string | null {
+  const said = new Set((studentTexts.concat(studentBoard).join(" ").toLowerCase().match(/[a-zà-ÿ0-9°]+/g) || []));
+  const re = /\b(?:you(?:'ve| have)?\s+(?:just\s+)?(?:said|mentioned|noticed|found|got|identified|written|wrote|drawn|drew|set up|lined up|worked out|figured out|spotted|used)|as you (?:said|noted|mentioned)|like you said|your (?:last|previous) (?:step|answer|idea))\b([^.?!\n]{0,90})/gi;
+  for (const m of reply.matchAll(re)) {
+    const words = (m[1].toLowerCase().match(/[a-zà-ÿ0-9°]{4,}/g) || []).filter((w) => !GROUND_STOP.has(w));
+    if (words.length < 2) continue;
+    const present = words.filter((w) => said.has(w) || [...said].some((s) => s.length >= 4 && (s.startsWith(w.slice(0, 5)) || w.startsWith(s.slice(0, 5))))).length;
+    if (present / words.length < 0.5) return m[0].trim();
+  }
+  return null;
+}
+
+const METHOD_WORDS = /\b(tan|sin|cos|arctan|arcsin|arccos|log|ln|sqrt|slope|gradient|derivative|integral|discriminant|quadratic formula|sine rule|cosine rule|pythagoras|chain rule|product rule|bayes|factorise|factorize|completing the square)\b/gi;
+export function wantsHelp(message: string): boolean {
+  return /\b(hint|help|stuck|lost|don'?t know|no idea|how (?:do|would|can) (?:i|we)|what (?:do i|should i)|explain|show me how|indice|aide|bloqué|perdu|je ne sais pas)\b/i.test(message);
+}
+/** The tutor names the METHOD/formula ("tan(θ) = slope") before the student reached for it. Only the words that
+ *  appear next to an equation sign in the reply count, and only when nobody (student, givens) has used them. */
+export function methodAhead(reply: string, said: string[]): string[] {
+  const hay = said.join(" ").toLowerCase();
+  const out = new Set<string>();
+  for (const sentence of reply.split(/(?<=[.!?\n])\s+/)) {
+    if (!/[=≈]|\bequals?\b|\buse the\b|\bapply the\b|\bremember\b/i.test(sentence)) continue;
+    for (const m of sentence.matchAll(METHOD_WORDS)) {
+      const w = m[1].toLowerCase();
+      if (!hay.includes(w) && !(w === "slope" && /gradient/.test(hay)) && !(w === "gradient" && /slope/.test(hay))) out.add(w);
+    }
+  }
+  return [...out];
+}

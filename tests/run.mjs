@@ -6,6 +6,7 @@ import { sourcesForTrack, sourceForUrl, cleanProblemSource, excerptAround, findS
 import { normalizeWidget, shuffledNotSolved, projectileStats } from "../shared/widgets.ts";
 import { buildTrigScene, solveTwoAngles } from "../shared/trigScene.ts";
 import { sanitizeSvg as sanSvg2 } from "../shared/svgSafe.ts";
+import { praiseUngrounded, misattributes, methodAhead, wantsHelp } from "../server/tutorAdapt.ts";
 import { asksToDraw, praisesNothing } from "../server/tutorAdapt.ts";
 import { studentProblemStatement, boardCoversStatement, pendingCaseTraps, closesWithMissedCase, handsOverCalculation, equationAhead, repeatedClaim, arithmeticAhead, caseTrapBlock, isDrawingTurn, drawingLooksSpatial } from "../server/tutorAdapt.ts";
 import { sanitizeSvg, svgText } from "../shared/svgSafe.ts";
@@ -1885,6 +1886,11 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     check("trig scene physics: the hidden solution used for scale is right (x≈625 m, total height ≈525 m → h≈55 m)", Math.abs(sol.x - 625.4) < 1 && Math.abs(sol.height - 524.8) < 1);
     const dupAttrs = [...sc.svg.matchAll(/<[a-z]+ ([^>]*)>/g)].some((m) => { const n = [...m[1].matchAll(/([a-z-]+)="/g)].map((x) => x[1]); return new Set(n).size !== n.length; });
     check("trig scene markup has no duplicate attributes; bad input is refused", !dupAttrs && !!buildTrigScene({ observers: [{ angle: 120 }] }).error && !!buildTrigScene({ observers: [{ angle: 30 }, { angle: 30.2 }] }).error); }
+  // ── Grounding (reported live: "tan(θ) = slope!" to a student who had only said the two slopes; "maybe graph it" ignored) ──
+  check("'maybe let's graph it' counts as a request for a picture; reporting their own graph does not", asksToDraw("so one slope is five the other is one over three can we maybe graph it right") && asksToDraw("let's plot them") && !asksToDraw("I graphed it and got a parabola") && !asksToDraw("what is a graph"));
+  check("praise is caught when the student's last move wasn't a correct step (plan or empty message), but allowed after a correct step", praiseUngrounded("Spot on! tan(θ) = slope.", "one slope is five the other is one over three", { studentStep: { status: "partial" } }) && praiseUngrounded("Great, you've got it.", "hmm", null) && !praiseUngrounded("Spot on!", "sin B = 25/35", { studentStep: { status: "correct" } }) && !praiseUngrounded("Hey Willem! Great to see you.", "hi", {}));
+  check("crediting the student with something they never said is caught; quoting them is not", !!misattributes("You've got the two sides lined up with their opposite angles.", ["to do"]) && misattributes("You said the slopes are five and one third.", ["so one slope is five the other is one over three"]) === null);
+  check("naming the method before the student reached for it is caught, unless they used it or asked for help", methodAhead("tan(θ) = slope! How do you find the angle between two lines?", ["find the acute angle between y=5x-2 and y=1/3x-1", "so one slope is five the other is one third"]).includes("tan") && methodAhead("What does tan(θ) = slope give you?", ["I think tan theta is the slope"]).length === 0 && wantsHelp("can I get a hint") && !wantsHelp("one slope is five"));
   check("board is flat: plain lines, no section numbers or boxes", /sm-board-line/.test(boardSrc) && !/sm-board-section-num/.test(boardSrc));
   check("kind:\"summary\" renders as an ordinary line — no trace box, no heading, no category", !/ReasoningTrace|sm-board-trace/.test(boardSrc));
   check("a deliberately unfinished worked line gets an 'à toi de finir' completion chip (completion effect, visible)", /isCompletionGap/.test(boardSrc) && /sm-board-todo-chip/.test(boardSrc));

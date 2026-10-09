@@ -453,6 +453,15 @@ export async function runTutorSim(check, section) {
     r = await run("to do", { history: [{ role: "user", text: "find TJ" }, { role: "assistant", text: "ok" }] });
     check("end to end: no 'spot on' for a message with nothing in it", !/spot on/i.test(r.reply));
   }
+  // "maybe graph it" is done first, and an ungrounded "Great, tan θ = slope!" is rewritten around what they actually said
+  {
+    const hist = [{ role: "user", text: "find the acute angle between lines y = 5x - 2 and y = x/3 - 1" }, { role: "assistant", text: "What are the slopes of those two lines?" }];
+    script = (b, i) => i === 0 ? { content: "Great! tan(θ) = slope. How do you find the angle between two lines?" }
+      : i === 1 ? { content: "", tool_calls: [tc("GRAPH_ON_BOARD", { caption: "The two lines", fns: [{ expr: "5*x - 2", label: "y = 5x − 2" }, { expr: "x/3 - 1", label: "y = x/3 − 1" }], xmin: -3, xmax: 4 })] }
+      : { content: "Here are both lines. You said the slopes are 5 and one third — where do you see them crossing?" };
+    r = await run("so one slope is five the other is one over three can we maybe graph it right", { history: hist });
+    check("end to end: 'maybe graph it' puts the graph on the board, and the ungrounded 'Great! tan θ = slope' never reaches them", r.boardAll.some((e) => e.kind === "graph") && !/tan\(?θ/.test(r.reply) && /slopes/.test(r.reply));
+  }
   // ANNOTATE_BOARD — Otto points at an existing entry instead of explaining the mistake in chat
   {
     const board = [{ id: "e1", kind: "given", text: "A block on a 30° slope", at: "" }, { id: "e2", kind: "result", owner: "student", status: "incorrect", text: "N = mg", at: "" }];
