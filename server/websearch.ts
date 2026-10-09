@@ -16,28 +16,82 @@
  * that happily returns a tangentially-related article (an unrelated person/place/topic that merely
  * shares a word with the query) — see wikipediaSearch's own relevance filter below.
  */
-export async function webSearch(query: string): Promise<{ title: string; url: string; snippet: string }[]> {
+export type SearchResult = { title: string; url: string; snippet: string };
+export interface SearchOpts {
+  /** Restrict results to these hosts (e.g. ["ibdocuments.com"]). Passed to the API providers natively, and as
+   *  site: terms + a post-filter for the keyless ones — a stray off-domain hit never gets through. */
+  domains?: string[];
+}
+
+const hostOfUrl = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, "").toLowerCase(); } catch { return ""; } };
+const inDomains = (u: string, domains: string[]) => { const h = hostOfUrl(u); return !!h && domains.some((d) => h === d || h.endsWith(`.${d}`)); };
+
+// Same question twice within minutes (a retry, two tool rounds, a daily deck + a chat) must not pay for two
+// searches. Bounded; failures/empties are NOT cached so a transient outage heals on the next call.
+const SEARCH_CACHE_TTL_MS = 10 * 60_000;
+const searchCache = new Map<string, { at: number; value: SearchResult[] }>();
+const inflight = new Map<string, Promise<SearchResult[]>>();
+
+export async function webSearch(query: string, opts: SearchOpts = {}): Promise<SearchResult[]> {
   const q = query.trim();
   if (!q) return [];
+  const domains = (opts.domains || []).map((d) => d.toLowerCase().replace(/^www\./, "")).filter(Boolean);
+  const key = `${domains.join(",")}|${q.toLowerCase()}`;
+  const hit = searchCache.get(key);
+  if (hit && Date.now() - hit.at < SEARCH_CACHE_TTL_MS) return hit.value;
+  const pending = inflight.get(key);
+  if (pending) return pending;
+  const p = searchUncached(q, domains).then((value) => {
+    if (value.length) {
+      searchCache.set(key, { at: Date.now(), value });
+      while (searchCache.size > 300) { const oldest = searchCache.keys().next().value; if (oldest === undefined) break; searchCache.delete(oldest); }
+    }
+    return value;
+  }).finally(() => { inflight.delete(key); });
+  inflight.set(key, p);
+  return p;
+}
 
-  // Primary: Exa — when configured, it replaces the whole keyless general-web stack (which is down
-  // more often than not these days). An empty-but-successful response still falls through to the
-  // keyless providers below, so a cap-exhausted or odd day degrades to the old behavior, not to nothing.
+/** Order results so on-domain and first-party hits lead, then drop exact-duplicate pages. */
+export function rankResults(results: SearchResult[], domains: string[]): SearchResult[] {
+  const seen = new Set<string>();
+  const out: SearchResult[] = [];
+  for (const r of results) {
+    if (!r?.url || !r.title) continue;
+    if (domains.length && !inDomains(r.url, domains)) continue;
+    const norm = r.url.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/[#?].*$/, "").replace(/\/$/, "");
+    if (seen.has(norm)) continue;
+    seen.add(norm);
+    out.push(r);
+  }
+  return out;
+}
+
+async function searchUncached(q: string, domains: string[]): Promise<SearchResult[]> {
+  // Primary API providers, in order: Exa → Tavily → Brave. Each is optional (key-gated); the first that returns
+  // anything wins, and an error or empty answer simply falls through to the next, then to the keyless stack.
+  const providers: [string, string | undefined, (q: string, key: string, domains: string[]) => Promise<SearchResult[]>][] = [
+    ["exa", process.env.EXA_API_KEY, exaSearch],
+    ["tavily", process.env.TAVILY_API_KEY, tavilySearch],
+    ["brave", process.env.BRAVE_API_KEY, braveSearch],
+  ];
   const exaKey = (process.env.EXA_API_KEY || "").trim();
-  if (exaKey) {
+  for (const [name, rawKey, fn] of providers) {
+    const key = (rawKey || "").trim();
+    if (!key) continue;
     try {
-      const exaResults = await exaSearch(q, exaKey);
-      if (exaResults.length) return exaResults.slice(0, 10);
+      const res = rankResults(await fn(q, key, domains), domains);
+      if (res.length) return res.slice(0, 10);
     } catch (err) {
-      console.warn(
-        `${new Date().toISOString()} [websearch] Exa search failed (${err instanceof Error ? err.message : err}) — falling back to keyless providers`
-      );
+      console.warn(`${new Date().toISOString()} [websearch] ${name} search failed (${err instanceof Error ? err.message : err}) — trying the next provider`);
     }
   }
-
+  // Keyless stack: domain restriction goes in the query text (site:) and is re-checked on the way out.
+  const siteTerms = domains.length ? ` (${domains.map((d) => `site:${d}`).join(" OR ")})` : "";
+  const query = q + siteTerms;
   const [generalSettled, wikiSettled] = await Promise.allSettled([
-    Promise.allSettled([duckDuckGoHtml(q), duckDuckGoLite(q), duckDuckGoInstant(q)]),
-    wikipediaSearch(q),
+    Promise.allSettled([duckDuckGoHtml(query), duckDuckGoLite(query), duckDuckGoInstant(query)]),
+    domains.length ? Promise.resolve([] as SearchResult[]) : wikipediaSearch(q),
   ]);
 
   const combined: { title: string; url: string; snippet: string }[] = [];
@@ -69,20 +123,21 @@ export async function webSearch(query: string): Promise<{ title: string; url: st
     );
   }
 
-  return combined.slice(0, 10);
+  return rankResults(combined, domains).slice(0, 10);
 }
 
 // ── Provider 0: Exa search API (primary; requires EXA_API_KEY) ──────────────
 // Request shape per Exa's canonical guidance: query + type "auto" + bare highlights — nothing else.
 // numResults defaults to 10 (exactly what we want); bare highlights:true auto-selects excerpt length;
 // don't stack text/summary or set category/domain filters — this is a general web-search tool.
-async function exaSearch(query: string, key: string): Promise<{ title: string; url: string; snippet: string }[]> {
+async function exaSearch(query: string, key: string, domains: string[] = []): Promise<{ title: string; url: string; snippet: string }[]> {
   const res = await fetch("https://api.exa.ai/search", {
     method: "POST",
     headers: { "x-api-key": key, "content-type": "application/json" },
     body: JSON.stringify({
       query,
       type: "auto",
+      ...(domains.length ? { includeDomains: domains } : {}),
       contents: { highlights: true },
     }),
     signal: AbortSignal.timeout(9000),
@@ -100,6 +155,49 @@ async function exaSearch(query: string, key: string): Promise<{ title: string; u
         .slice(0, 300),
     }))
     .filter((x: { title: string; url: string }) => x.title && x.url);
+}
+
+
+// ── Provider 0b: Tavily (TAVILY_API_KEY) ───────────────────────────────────
+async function tavilySearch(query: string, key: string, domains: string[] = []): Promise<SearchResult[]> {
+  const res = await fetch("https://api.tavily.com/search", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+    body: JSON.stringify({ query, max_results: 8, search_depth: "basic", ...(domains.length ? { include_domains: domains } : {}) }),
+    signal: AbortSignal.timeout(9000),
+  });
+  if (!res.ok) throw new Error(`tavily ${res.status}`);
+  const json = await res.json() as any;
+  return (Array.isArray(json?.results) ? json.results : []).map((r: any) => ({ title: String(r?.title || ""), url: String(r?.url || ""), snippet: String(r?.content || "").replace(/\s+/g, " ").trim().slice(0, 300) }));
+}
+
+// ── Provider 0c: Brave Search API (BRAVE_API_KEY) ──────────────────────────
+async function braveSearch(query: string, key: string, domains: string[] = []): Promise<SearchResult[]> {
+  const q = domains.length ? `${query} (${domains.map((d) => `site:${d}`).join(" OR ")})` : query;
+  const res = await fetch(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(q)}&count=10`, {
+    headers: { "x-subscription-token": key, accept: "application/json" },
+    signal: AbortSignal.timeout(9000),
+  });
+  if (!res.ok) throw new Error(`brave ${res.status}`);
+  const json = await res.json() as any;
+  return (Array.isArray(json?.web?.results) ? json.web.results : []).map((r: any) => ({ title: stripTags(String(r?.title || "")), url: String(r?.url || ""), snippet: stripTags(String(r?.description || "")).slice(0, 300) }));
+}
+
+/** Read one web page as plain text (for a result the snippet can't answer from). SSRF-checked, no redirects to
+ *  unchecked hosts, size/time capped; "" for anything unreadable. */
+export async function readPage(url: string, maxChars = 6000): Promise<string> {
+  try {
+    const { assertSafeExternalUrl } = await import("./pronote.ts");
+    await assertSafeExternalUrl(url);
+    const r = await fetch(url, { signal: AbortSignal.timeout(6000), redirect: "error", headers: { "user-agent": "Mozilla/5.0 (compatible; OttoStudyBot/1.0)" } });
+    const ct = r.headers.get("content-type") || "";
+    if (!r.ok || !/text\/html|text\/plain/i.test(ct)) return "";
+    const html = (await r.text()).slice(0, 1_500_000);
+    const text = html
+      .replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>|<noscript[\s\S]*?<\/noscript>|<nav[\s\S]*?<\/nav>|<footer[\s\S]*?<\/footer>/gi, " ")
+      .replace(/<\/(p|div|li|tr|h[1-6]|br)>/gi, "\n");
+    return stripTags(text.replace(/<\/?[^>]+>/g, (m) => (/^<\/(p|div|li|tr|h[1-6])/i.test(m) ? "\n" : " "))).slice(0, maxChars);
+  } catch { return ""; }
 }
 
 // ── Provider 1: DuckDuckGo HTML ─────────────────────────────────────────────

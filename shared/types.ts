@@ -3,6 +3,7 @@ import { normalizeCoursework, type CourseworkDoc } from "./coursework.ts";
 // The adaptive-agent layer's shapes (the persistent student model, the concept graph, the app-owned session
 // state, the board event stream and the action space). They live in their own shared module so the client can
 // type the transparency panel without importing any server code — see shared/agentTypes.ts.
+import type { WidgetSpec } from "./widgets.ts";
 import type { StudentModelShape, ConceptGraphShape, TutorSessionStateShape, TutorDecisionShape, BoardEventShape } from "./agentTypes.ts";
 import { SESSION_CAP } from "./agentTypes.ts";
 
@@ -1521,6 +1522,9 @@ export interface TaskProblem {
   hint?: string;
   /** Guidance on expected format/units/notation for free-response mode (e.g. "two decimal places, in m/s"). */
   format?: string;
+  /** Where the question comes from when it was adapted from a registered source (IB Documents, Revision Village,
+   *  AP Central…) — shown as a link under the question. Absent for generated questions. */
+  source?: { name: string; url: string };
   createdAt: string;
 }
 
@@ -1587,7 +1591,7 @@ export interface BoardEntry {
    *  (see `outline`) — for essay-based/humanities content (history causes, source analysis, an essay plan)
    *  where a flat sentence or a spatial diagram both fit poorly; math/science still reach for
    *  formula/diagram first. */
-  kind?: "note" | "instruction" | "given" | "result" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "interactive" | "graph" | "gap" | "annotation";
+  kind?: "note" | "instruction" | "given" | "result" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "interactive" | "graph" | "widget" | "gap" | "annotation";
   /** Who authored this entry — "otto" (default for backward compat) or "student". Student-owned entries are
    *  never silently rewritten by Otto. Used to visually distinguish Otto's scaffolding from the student's
    *  own work on the board (see BoardArtifact.tsx). */
@@ -1619,6 +1623,9 @@ export interface BoardEntry {
   diagram?: DiagramOp[];
   /** Present only when kind === "graph" (GRAPH_ON_BOARD) — a live, slider-driven function plot. */
   graph?: GraphSpec;
+  /** Present only when kind === "widget" (WIDGET_ON_BOARD) — a pre-built interactive activity (match / order / sort /
+   *  unit circle / projectile) rendered by the client from this content. */
+  widget?: WidgetSpec;
   /** Present only when kind === "outline" — one or more headed sections, each a short list of bullet
    *  points. Built for a history/essay-style board (causes-of-an-event, a source's key points, an essay's
    *  section-by-section plan) the same way `diagram` is built for a geometric figure: structure the model

@@ -346,6 +346,12 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       `[Exercise] I answered "${r.given.slice(0, 120)}" — marked ${r.correct ? "right" : "wrong"} (try #${r.attempt}).`));
     setResultTick((n) => n + 1);
   }, [L]);
+  const onWidgetResult = useCallback((r: { type: string; caption: string; mistakes: number; total: number }) => {
+    resultsRef.current.push(L(
+      `[Activité] J'ai terminé « ${r.caption.slice(0, 80)} » (${r.type}) — ${r.mistakes === 0 ? "sans erreur" : `${r.mistakes} erreur${r.mistakes > 1 ? "s" : ""}`}.`,
+      `[Activity] I finished "${r.caption.slice(0, 80)}" (${r.type}) — ${r.mistakes === 0 ? "no slips" : `${r.mistakes} slip${r.mistakes > 1 ? "s" : ""}`}.`));
+    setResultTick((n) => n + 1);
+  }, [L]);
   useEffect(() => {
     if (!task || !resultsRef.current.length) return;
     if (sending || voiceState.speaking) return; // re-evaluated when either settles
@@ -754,7 +760,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       )}
       <section className="ts-canvas" aria-label={L("Tableau", "Board")}>
         <div className="tutor-board-body ts-board-body" ref={setSurfaceEl} style={{ display: desmosOpen ? "none" : undefined }}>
-          <BoardArtifact task={task} writing={sending} onProblemResult={onProblemResult} />
+          <BoardArtifact task={task} writing={sending} onProblemResult={onProblemResult} onWidgetResult={onWidgetResult} />
         </div>
         {/* Desmos stays mounted once opened (an iframe that's removed reloads blank, losing the student's graph). */}
         {desmosOpen || desmosEverOpenedRef.current ? (

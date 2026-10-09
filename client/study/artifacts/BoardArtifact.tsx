@@ -4,6 +4,7 @@ import type { WebTask, BoardEntry, TaskProblem, DiagramOp } from "../../../share
 import { practiceAnswerMatches } from "../../../shared/types.ts";
 import { autoMathLine } from "../../../shared/mathText.ts";
 import { GraphBlock } from "./GraphBlock.tsx";
+import { WidgetBlock, type WidgetResult } from "./WidgetBlock.tsx";
 import { renderChatText, useLang, FirstTimeHint, stripStrayMarkdown, formatMath, boldify } from "../../ui.tsx";
 
 // A guarded DYNAMIC import, not a static `import "katex/dist/katex.min.css"` — this module is also pulled
@@ -23,6 +24,8 @@ interface BoardArtifactProps {
    *  ("what made you pick B?") instead of the board silently marking it. `attempt` counts tries on this
    *  problem including this one. Never carries the correct answer — only what the student gave. */
   onProblemResult?: (r: { problem: TaskProblem; given: string; correct: boolean; attempt: number }) => void;
+  /** Tutor only — a match / order / sort activity was finished (how many slips), so Otto can react to it. */
+  onWidgetResult?: (r: WidgetResult) => void;
 }
 
 const KIND_LABEL: Record<string, [string, string]> = {
@@ -40,6 +43,7 @@ const KIND_LABEL: Record<string, [string, string]> = {
   gap: ["À toi de jouer", "Your turn"],
   interactive: ["Interactif", "Interactive"],
   graph: ["Graphique", "Graph"],
+  widget: ["Activité", "Activity"],
 };
 
 // Quiet margin glyph per kind — a worksheet's annotations, not badges. Typographic on purpose (no icon
@@ -377,6 +381,7 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
         )}
       </div>
       <div className="sm-board-problem-q"><MathText text={stripStrayMarkdown(problem.question)} /></div>
+      {problem.source ? <a className="sm-board-problem-source" href={problem.source.url} target="_blank" rel="noopener noreferrer">{en ? "Source" : "Source"}: {problem.source.name} ↗</a> : null}
       {problem.format && !answered ? <div className="sm-board-problem-format"><MathText text={problem.format} /></div> : null}
       {problem.hint && !answered ? (
         <div className="sm-board-problem-hint-row">
@@ -455,7 +460,7 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
  *  and practice problems. ONE DOCUMENT, ONE FLOW: entries and problems interleave in the order the session
  *  actually produced them (a problem sits between the formula it exercises and the insight answering it —
  *  the lesson's story, not a problem section pinned on top). kind:"focus" stays pinned above as the heading. */
-export function BoardArtifact({ task, writing, onProblemResult }: BoardArtifactProps) {
+export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult }: BoardArtifactProps) {
   const L = useLang();
   const endRef = useRef<HTMLDivElement>(null);
   const entries = task.board || [];
@@ -713,6 +718,11 @@ export function BoardArtifact({ task, writing, onProblemResult }: BoardArtifactP
                 <>
                   <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>
                   <GraphBlock spec={e.graph} />
+                </>
+              ) : e.kind === "widget" && e.widget ? (
+                <>
+                  <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>
+                  <WidgetBlock id={e.id} caption={e.text} spec={e.widget} onResult={onWidgetResult} Text={MathText} />
                 </>
               ) : e.kind === "interactive" && e.html ? (
                 <>

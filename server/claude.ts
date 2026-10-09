@@ -18,6 +18,8 @@ import { getMaxHintLevel, isGraduationMoment } from "./dependenceMetrics.ts";
 import { evaluateArithmetic, findArithmeticClaims, hasArithmetic } from "./arithmetic.ts";
 import { boardSurfaceBlock, boardTrajectoryBlock, type BoardEvent } from "./boardEvents.ts";
 import { buildTutorDecision } from "./actionSpace.ts";
+import { normalizeWidget, WIDGET_TYPES } from "../shared/widgets.ts";
+import { findSourceQuestions, cleanProblemSource, sourcesForTrack } from "./questionSources.ts";
 import { extractPlan, validatePlan, policyBlock as tutorPolicyBlock, PLAN_PROTOCOL, type TutorPlan, type TutorPolicy } from "./tutorBrain.ts";
 import { sessionStateBlock } from "./sessionState.ts";
 import type { TutorSessionStateShape, TutorDecisionShape } from "../shared/agentTypes.ts";
@@ -991,7 +993,7 @@ export const PLAN_ONLY_OVERRIDE =
   `\n\nINCLUDE LINKS — when you recommend specific resources or reference specific emails/docs you found, ` +
   `include their URLs in "links" (or inline as markdown [text](url) in "steps"/"context") so the user can open ` +
   `them directly. Never describe finding something without giving a way to open it.`;
-import { webSearch } from "./websearch";
+import { webSearch, readPage } from "./websearch";
 import type { PronoteHomeworkItem, PronoteTestItem } from "./pronote.ts";
 
 export interface AcademicContext { homework?: PronoteHomeworkItem[]; tests?: PronoteTestItem[]; }
@@ -2471,13 +2473,28 @@ export function parseProfileUpdates(arr: any): ProfileUpdate[] {
 // so planning or doing a task can pull in external context (a person, a deadline, a how-to, a link).
 const WEB_SEARCH_TOOL = {
   name: "web_search",
-  description: "Search the web for current or background facts you can't get from the connected apps — a person/company, a deadline or figure, how to do something, a reference link. Returns top results (title, url, snippet).",
-  input_schema: { type: "object", properties: { query: { type: "string", description: "the search query" } }, required: ["query"] },
+  description: "Search the web for current or background facts you can't get from the connected apps — a person/company, a deadline or figure, how to do something, a reference link, a worked example, past-paper style questions. Returns top results (title, url, snippet). Write a SPECIFIC query (include the subject, level and exact topic, e.g. 'IB Math AA HL integration by parts worked example'), not a vague one; if the snippets don't answer it, call read_page on the best result instead of guessing. Optional `domains` restricts results to those sites (e.g. [\"khanacademy.org\"]).",
+  input_schema: { type: "object", properties: {
+    query: { type: "string", description: "the search query" },
+    domains: { type: "array", items: { type: "string" }, description: "optional: only return results from these sites, e.g. [\"collegeboard.org\"]" },
+  }, required: ["query"] },
+};
+const READ_PAGE_TOOL = {
+  name: "read_page",
+  description: "Read the text of ONE web page (a result from web_search) when its snippet isn't enough — to check a fact, find a worked example or pull the real wording. Returns up to ~5000 characters of plain text, or an empty string if the page is unreadable (then say so and rely on the snippet or your own knowledge). Only pass a url that web_search returned or the student gave you.",
+  input_schema: { type: "object", properties: { url: { type: "string", description: "the https url to read" } }, required: ["url"] },
 };
 async function runWebSearch(input: any): Promise<string> {
   const q = String(input?.query || "").trim();
   if (!q) return "[]";
-  return JSON.stringify((await webSearch(q)).slice(0, 6));
+  const domains = (Array.isArray(input?.domains) ? input.domains : []).map((d: unknown) => String(d || "").trim()).filter((d: string) => /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(d)).slice(0, 6);
+  return JSON.stringify((await webSearch(q, { domains })).slice(0, 6));
+}
+async function runReadPage(input: any): Promise<string> {
+  const url = String(input?.url || "").trim();
+  if (!/^https?:\/\//i.test(url)) return "ERROR: url must be an http(s) address from a search result.";
+  const text = await readPage(url, 5000);
+  return text || "EMPTY: that page couldn't be read (login wall, PDF, or blocked). Use the search snippet or your own knowledge, and say which.";
 }
 
 // The tutor's deterministic calculator (server/arithmetic.ts — the same evaluator the post-reply
@@ -2573,8 +2590,47 @@ const CREATE_PROBLEM_TOOL = {
     answer: { type: "string", description: "Free-response mode only: the expected answer — SHORT and checkable (a number, a simple expression, a single word), checked loosely (trimmed, case-insensitive, and with a few-percent tolerance on decimal numeric answers to absorb ordinary rounding). An EXERCISE is ONLY for a question with exactly ONE correct, short answer. NEVER create one for anything open-ended (explain, why, describe, justify, prove/show that, compare, discuss, multi-part (a)(b)(c)) — ask those in the conversation. If you can't state one short answer, it is not an exercise. Omit for MCQ mode. MULTI-STEP NUMERIC PROBLEMS (physics/chem/finance): compute this value by carrying full precision through every intermediate step — NEVER round an intermediate result (an angle, a sub-total) before using it in a later step, since that can shift the final value by several percent and make a student's equally valid, less-rounded calculation get marked wrong. If a constant isn't a fixed convention (g, a rate, a density), state the exact value to use directly in `question` so every valid path converges on the same number." },
     why: { type: "string", description: "one line on why the answer is right — this is what makes the problem teach instead of just score" },
     hint: { type: "string", description: "an optional hint the student can reveal before answering" },
+    sourceUrl: { type: "string", description: "ONLY when this exercise is adapted from a FIND_SOURCE_QUESTION result: that result's url, exactly. Never invent one." },
     format: { type: "string", description: "free-response mode only: guidance on expected format/units/notation (e.g. 'two decimal places, in m/s'). NEVER use the real answer as an example — use a placeholder ('x = a') or a different value." },
   }, required: ["question"] },
+};
+
+// Pre-built interactive ACTIVITIES — always render, themed, and report back how the student did. Prefer these over
+// CREATE_INTERACTIVE (model-written HTML) whenever one fits.
+const WIDGET_ON_BOARD_TOOL = {
+  name: "WIDGET_ON_BOARD",
+  description: "Put a ready-made interactive activity on the board — the student DOES something instead of reading. " +
+    "Types: `match` (pair 3-6 terms with their definitions/formulas/causes/translations), `order` (put 3-7 steps, events or stages in the right order — list them in the CORRECT order, the student sees them shuffled), " +
+    "`sort` (drop 4-10 items into 2-4 categories — e.g. acid/base, renewable/non-renewable, primary/secondary source; category is the 0-based index), " +
+    "`unit_circle` (drag the angle, watch the point and the cos/sin readout — to build intuition BEFORE asking them anything), `projectile` (angle/speed sliders and a live trajectory with range/height/time). " +
+    "match/order/sort check themselves and tell you afterwards how they went, so use them to practise or check a set of facts, not to teach from zero; the explore ones (unit_circle, projectile) are for noticing a pattern — ask ONE prediction question first. " +
+    "Works for ANY subject. One per turn; don't put the answer to something they're still working on in the labels.",
+  input_schema: { type: "object", properties: {
+    caption: { type: "string", description: "one short line shown above the activity, e.g. 'Match each term to its meaning' — an instruction, never the answer" },
+    type: { type: "string", enum: [...WIDGET_TYPES] },
+    pairs: { type: "array", description: "match only: 3-6 {left, right}", items: { type: "object", properties: { left: { type: "string" }, right: { type: "string" } }, required: ["left", "right"] } },
+    items: { type: "array", description: "order: strings in the CORRECT order. sort: {text, category} objects.", items: {} },
+    categories: { type: "array", description: "sort only: 2-4 category names", items: { type: "string" } },
+    angle: { type: "number", description: "unit_circle: starting angle in degrees (0-360). projectile: launch angle (5-85)." },
+    speed: { type: "number", description: "projectile only: launch speed in m/s (5-60)" },
+    g: { type: "number", description: "projectile only: gravity in m/s² (default 9.8; e.g. 1.6 for the Moon)" },
+  }, required: ["caption", "type"] },
+};
+
+export function makeWidgetEntry(input: any): { entry: BoardEntry } | { error: string } {
+  const caption = String(input?.caption || "").trim().slice(0, 200);
+  if (!caption) return { error: "ERROR: caption is required." };
+  const r = normalizeWidget(input);
+  if ("error" in r) return r;
+  return { entry: { id: randomUUID(), text: caption, kind: "widget", widget: r.widget, at: new Date().toISOString() } };
+}
+
+// IB / AP students practise on registered sources (IB Documents, Revision Village, College Board AP Central).
+// Offered ONLY to those programs; for everyone else exercises are generated exactly as before.
+const FIND_SOURCE_QUESTION_TOOL = {
+  name: "FIND_SOURCE_QUESTION",
+  description: "Look up real practice questions on the topic from the student's registered source (IB: IB Documents / Revision Village; AP: College Board AP Central). Call this ONCE, before you write an exercise, when the topic is something exam-style questions exist for. Returns up to 2 excerpts with a url. If one fits, ADAPT it into your CREATE_PROBLEM (reword and re-number it — never paste long passages verbatim) and pass its url as sourceUrl so the student gets a link to the original. If it returns nothing usable, write the exercise yourself as usual — never invent a source or a url.",
+  input_schema: { type: "object", properties: { topic: { type: "string", description: "the specific topic/skill, e.g. 'integration by parts' or 'Le Chatelier equilibrium shifts'" } }, required: ["topic"] },
 };
 
 // Unlike every other CREATE_* tool here, this one is ALWAYS in the tool list — canvas mode or not (see
@@ -2901,6 +2957,7 @@ export function makeProblem(input: any): { problem: TaskProblem } | { error: str
       ...(why ? { why } : {}),
       ...(hint ? { hint } : {}),
       ...(format ? { format } : {}),
+      ...(cleanProblemSource(input?.sourceUrl) ? { source: cleanProblemSource(input?.sourceUrl) } : {}),
       createdAt: new Date().toISOString(),
     },
   };
@@ -7592,6 +7649,7 @@ const PRIMER_PERSONA =
   `transformations, motion graphs, a line of best fit; also bar charts, histograms and 3D surfaces z=f(x,y)) use GRAPH_ON_BOARD, not CREATE_INTERACTIVE — it's instant, ` +
   `always renders, and gives the student real sliders and a hover readout. Plot the FAMILY or the setup, never ` +
   `the answer to what they're solving, then ask ONE question about what moving it shows.\n` +
+  `- ACTIVITIES: when the student should DO something rather than read — pair terms, order steps, sort items, or play with a unit circle / projectile — use WIDGET_ON_BOARD (it always works and tells you how they did) instead of describing it or hand-writing HTML. Any subject. Prefer it over CREATE_INTERACTIVE.\n` +
   `- NO HIGHLIGHTING: write plainly — never wrap text in ==marks== or bold for emphasis.\n` +
   `- EXERCISE RESULTS ARRIVE AS "[Exercise] …" / "[Exercice] …" MESSAGES: the board just marked an answer and ` +
   `told you what they gave and whether it was right — they did NOT type it, so don't thank them or quote the ` +
@@ -7936,7 +7994,7 @@ export async function chatAboutTask(
   // anyway.
   const dynamicContext = nowBlock() + courseworkLine(profile, task.sourceSubject) + studentNameLine(profile?.name) + dueLine(task.sourceDue, tzOf(profile)) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + syllabusGroundingLine(profile, task.sourceSubject) + learningStyleLine(profile) + hintDensityLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + sessionRecapLine(profile?.sessions, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine + (opts?.primer ? (opts?.moveLine || "") + (opts?.repair || "") + spokenMathHint(message) + scaffoldLine(message, history) + probeLine(message, history) + cheerLine(message, history, opts?.currentObjectives) : "");
   const sys =
-    (opts?.primer ? PRIMER_PERSONA + PLAN_PROTOCOL : "") +
+    (opts?.primer ? PRIMER_PERSONA + PLAN_PROTOCOL + (sourcesForTrack(profile?.track).length ? `\n\nREAL QUESTIONS FIRST: this student is on the ${profile?.track === "ib" ? "IB (IB Documents / Revision Village)" : "AP (College Board AP Central)"} track. Before you write an exercise on an exam-style topic, call FIND_SOURCE_QUESTION once and adapt a fitting result (reword and re-number it, cite it via sourceUrl) instead of inventing the question from scratch. If it returns NONE, write it yourself as usual. Everything else about exercises (one at a time, single short answer, never reveal it) is unchanged.\n` : "") : "") +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
     `good tutor they can't afford to hire: patient, genuinely curious about how THEY think, and interested ` +
     `in them actually understanding the material — not in getting the assignment off their plate. Ground ` +
@@ -8820,11 +8878,11 @@ export async function chatAboutTask(
   // which no longer renders a board anywhere except the Tutor (TutorSession.tsx).
   const includeArtifactTools = wantsArtifactTools(message, history);
   const boardTools = opts?.primer
-    ? [CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, CLEAR_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, ...(opts?.canvasMode ? [CREATE_INTERACTIVE_TOOL] : []), SET_OBJECTIVES_TOOL]
+    ? [CREATE_PROBLEM_TOOL, ...(sourcesForTrack(profile?.track).length ? [FIND_SOURCE_QUESTION_TOOL] : []), WRITE_TO_BOARD_TOOL, CLEAR_BOARD_TOOL, DRAW_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, WIDGET_ON_BOARD_TOOL, ...(opts?.canvasMode ? [CREATE_INTERACTIVE_TOOL] : []), SET_OBJECTIVES_TOOL]
     : [];
   const tools = opts?.canvasMode
-    ? [...boardTools, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])]
-    : [...(includeArtifactTools ? [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL] : []), ...boardTools, WEB_SEARCH_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])];
+    ? [...boardTools, WEB_SEARCH_TOOL, READ_PAGE_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])]
+    : [...(includeArtifactTools ? [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL] : []), ...boardTools, WEB_SEARCH_TOOL, READ_PAGE_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])];
   const empty = (): ChatResult => ({ reply: "", notes: [], flashcards: [], quizzes: [], problems: [], board: [], boardCleared: false, audit: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false });
   const result = empty();
   const logAudit = (kind: AuditEvent["kind"], label: string) => result.audit.push({ at: new Date().toISOString(), kind, label });
@@ -9328,6 +9386,10 @@ export async function chatAboutTask(
           content = await runWebSearch(input);
           logAudit("tool", fr ? `Recherche web : "${String((input as any)?.query || "").slice(0, 140)}"` : `Web search: "${String((input as any)?.query || "").slice(0, 140)}"`);
         }
+        else if (name === "read_page") {
+          content = await runReadPage(input);
+          logAudit("tool", fr ? `Page lue : ${String((input as any)?.url || "").slice(0, 140)}` : `Read page: ${String((input as any)?.url || "").slice(0, 140)}`);
+        }
         else if (name === "CREATE_CALC") {
           content = runCalcTool(input);
           logAudit("tool", fr ? `Vérifié au calculateur : "${String((input as any)?.expression || "").slice(0, 80)}"` : `Checked with calculator: "${String((input as any)?.expression || "").slice(0, 80)}"`);
@@ -9354,6 +9416,12 @@ export async function chatAboutTask(
         } else if (name === "CREATE_QUIZ") {
           if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
           else { const r = makeQuiz(input); if ("error" in r) content = r.error; else { result.quizzes.push(r.quiz); content = JSON.stringify({ ok: true, id: r.quiz.id, count: r.quiz.questions.length }); logAudit("artifact", fr ? `Quiz créé : « ${r.quiz.title} » (${r.quiz.questions.length} questions)` : `Quiz created: "${r.quiz.title}" (${r.quiz.questions.length} questions)`); } }
+        } else if (name === "FIND_SOURCE_QUESTION") {
+          const found = await findSourceQuestions({ track: profile?.track, subject: task.sourceSubject, topic: String((input as any)?.topic || "") });
+          content = found.length
+            ? JSON.stringify(found.map((f) => ({ source: f.sourceName, url: f.url, title: f.title, excerpt: f.excerpt })))
+            : "NONE: nothing usable from the registered sources for this topic — write the exercise yourself, without a sourceUrl.";
+          logAudit("tool", fr ? `Source de questions : ${found.length} résultat(s)` : `Question source lookup: ${found.length} result(s)`);
         } else if (name === "CREATE_PROBLEM") {
           if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
           // Same content-level dedupe as WRITE_TO_BOARD (isDuplicateBoardEntry) — checked against BOTH what
@@ -9424,6 +9492,10 @@ export async function chatAboutTask(
           if (result.board.filter((e) => e.kind === "graph").length >= 2) content = "LIMIT: you've already put a couple of graphs on the board this message — that's enough for one turn.";
           else if (leaksAnyProblemAnswer([input?.caption, ...(Array.isArray(input?.fns) ? input.fns.map((f: any) => f?.label || "") : [])].join(" "), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that graph's caption or labels state a problem's answer — title it by what to explore, not by the result.";
           else { const r = makeGraphEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Graphique : « ${r.entry.text.slice(0, 60)} »` : `Graph: "${r.entry.text.slice(0, 60)}"`); } }
+        } else if (name === "WIDGET_ON_BOARD") {
+          if (result.board.filter((e) => e.kind === "widget").length >= 1) content = "LIMIT: one activity per turn — let them do this one first.";
+          else if (leaksAnyProblemAnswer(JSON.stringify(input || {}), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that activity states a problem's answer outright — build it around different content.";
+          else { const r = makeWidgetEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Activité : « ${r.entry.text.slice(0, 60)} »` : `Activity: "${r.entry.text.slice(0, 60)}"`); } }
         } else if (name === "CREATE_INTERACTIVE") {
           // Own small cap, separate from WRITE_TO_BOARD/DRAW_ON_BOARD's — this is the heaviest entry kind
           // (a whole embedded iframe), and a session needing more than a couple is almost certainly
