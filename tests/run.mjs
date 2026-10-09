@@ -2278,6 +2278,12 @@ section("Tutor Session — sessions never auto-start, and past boards read at a 
   check("a past session's card is ONE title + a short description — the board-lines wall is gone",
     /sessionCardTitle\(s\)/.test(tutorSrc) && /sessionCardDesc\(s\)/.test(tutorSrc) &&
     !/tutor-history-takeaways/.test(tutorSrc) && !/tutor-history-board/.test(tutorSrc) && !/slice\(0, 3\)/.test(tutorSrc));
+  // Reported live: the past-sessions card printed raw LaTeX source verbatim — "y = 5x - 2, y =
+  // \frac{1}{3}x - 1" and "$\rightarrow$" shown as literal text instead of typeset — because the title/desc
+  // spans interpolated sessionCardTitle(s)/sessionCardDesc(s) directly instead of routing them through
+  // MathText (which runs autoMathLine + KaTeX). "math always in LaTeX, always rendered correctly".
+  check("the past-session card title/description render through MathText, not as raw interpolated strings",
+    /<MathText text=\{sessionCardTitle\(s\)\}/.test(tutorSrc) && /<MathText text=\{sessionCardDesc\(s\)\}/.test(tutorSrc));
   // Report-live: "viewing session and board from past should show in whole page and only have see board
   // or chat, not session" — two FULL-PAGE routes, no modal stack, no vague "View session" entry.
   check("past sessions open as full-page /board and /chat routes — never a modal, never 'View session'",

@@ -636,9 +636,9 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
                             helpers live beside sessionTopic in tutorSessions.ts. */}
                         <div className="tutor-history-topic">
                           {s.subject && <span className="tutor-history-subject-pill">{s.subject}</span>}
-                          {sessionCardTitle(s) && <span className="tutor-history-title">{sessionCardTitle(s)}</span>}
+                          {sessionCardTitle(s) && <span className="tutor-history-title"><MathText text={sessionCardTitle(s)} /></span>}
                         </div>
-                        {sessionCardDesc(s) && <p className="tutor-history-desc">{sessionCardDesc(s)}</p>}
+                        {sessionCardDesc(s) && <p className="tutor-history-desc"><MathText text={sessionCardDesc(s)} /></p>}
                       </div>
                       {/* TWO choices only, both FULL PAGES (/tutor/session/<id>/board|chat) — report-live:
                           "viewing session and board from past should show in whole page and only have see
