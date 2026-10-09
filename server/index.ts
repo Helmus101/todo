@@ -15,6 +15,7 @@ import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, is
 import { computeWorkload } from "./workload.ts";
 import { planTurn, repairLine, reactionTo, onTopic } from "./tutorAdapt.ts";
 import { buildTasksPayload } from "./taskDelta.ts";
+import { makeSyncScheduler } from "./syncScheduler.ts";
 import { diffBoard, recordBoardEvents, objectiveEvents, problemEvents, tagStudentAnswer, selfCorrections } from "./boardEvents.ts";
 import { buildTutorDecision, recordTutorDecision } from "./actionSpace.ts";
 import { loadOrInitSessionState, persistSessionState } from "./sessionState.ts";
@@ -265,6 +266,29 @@ const sessionDirtyCache = new Map<string, string>();
 // Persist the session AND this ACCOUNT's durable state (profile + tasks) to the cloud, keyed by the
 // account email — so it follows the account across devices and survives restarts. (Integration
 // connections live in Composio, keyed by the same account email, so there's nothing extra to store.)
+// Merge this instance's view into the account row and write it. `throwOnError` is for the awaited journal-save path, which also
+// bypasses the read cache (the one place a stale base could lose a concurrent write); background flushes use the cached read.
+async function writeAccount(email: string, localTasks: WebTask[], localProfile: Profile, o: { throwOnError?: boolean; bypassCache?: boolean } = {}): Promise<void> {
+  const throwOnError = !!o.throwOnError;
+  try {
+    const current = await loadState(email, { bypassCache: !!o.bypassCache });
+    const mergedTasks = mergeTasks(current.tasks || [], localTasks);
+    const mergedProfile = mergeProfiles(current.profile || emptyProfile(), localProfile);
+    await saveState(email, { profile: mergedProfile, tasks: mergedTasks }, { throwOnError });
+  } catch (e) {
+    reportError("commit-sync-cloud-merge", e);
+    // Fallback write on merge failure — same throwOnError contract, so an awaiting caller still finds out if this ALSO fails.
+    await saveState(email, { profile: localProfile, tasks: localTasks }, { throwOnError });
+  }
+}
+const scheduler = makeSyncScheduler<WebTask[]>(
+  async (email, snap) => { await writeAccount(email, snap.tasks, snap.profile as Profile, { throwOnError: true }); },
+  { debounceMs: 6000, maxWaitMs: 25000 },
+);
+// A recycled instance must not take the last few seconds of someone's work with it.
+for (const sig of ["SIGTERM", "SIGINT"] as const) process.once(sig, () => { void scheduler.flushAll().finally(() => process.exit(0)); });
+process.once("beforeExit", () => { void scheduler.flushAll(); });
+
 const commit = async (req: express.Request, opts?: { awaitCloud?: boolean }) => {
   // Only the session-store write is awaited BY DEFAULT: it's what a same-device follow-up request depends
   // on (sessions are cloud-backed too — makeSessionStore() — so this is the account's cross-request
@@ -305,43 +329,17 @@ const commit = async (req: express.Request, opts?: { awaitCloud?: boolean }) => 
   const lastHash = sessionDirtyCache.get(sessionId);
   const isDirty = lastHash !== currentHash;
   
-  const syncCloud = async (throwOnError?: boolean) => {
-    try {
-      // `throwOnError` is only ever passed true for the awaitCloud path (a journal save, a flashcard
-      // review) — exactly the low-frequency, high-value write where merging against a STALE cached cloud
-      // snapshot (loadState's own 5min per-instance cache, see store.ts) is least acceptable: on
-      // serverless, this request's warm instance may not be the one that performed the account's most
-      // recent write, so its cache can lag another instance's write by up to 5 minutes. Reported live as
-      // flashcard counts that varied between views and "flashcards not reliably saving to the cloud" —
-      // a merge computed against a stale base can lose a concurrent write instead of unioning it.
-      // bypassCache:true always hits Supabase directly here, same as the GET routes that already need
-      // this guarantee (studylog week/month). The default (non-awaitCloud, high-frequency) path keeps the
-      // cache — those calls are frequent enough that paying a full Supabase read every time isn't worth it,
-      // and losing a merge there is already covered by the NEXT awaitCloud write reconciling things.
-      const current = await loadState(email, { bypassCache: !!throwOnError });
-      const mergedTasks = mergeTasks(current.tasks || [], localTasks);
-      const mergedProfile = mergeProfiles(current.profile || emptyProfile(), localProfile);
-      await saveState(email, { profile: mergedProfile, tasks: mergedTasks }, { throwOnError });
-    } catch (e) {
-      reportError("commit-sync-cloud-merge", e);
-      // Fallback write on merge failure — same throwOnError contract, so an `awaitCloud` caller still finds
-      // out if this ALSO fails, instead of the request looking like a success while nothing was saved.
-      await saveState(email, { profile: localProfile, tasks: localTasks }, { throwOnError });
-    }
-  };
-  
   if (opts?.awaitCloud) {
-    // High-value write: always sync to cloud and update dirty flag
-    await syncCloud(true);
+    // High-value write (a journal save): written NOW, with a fresh read of the account row, and it supersedes anything pending.
+    scheduler.cancel(email);
+    await writeAccount(email, localTasks, localProfile, { throwOnError: true, bypassCache: true });
     sessionDirtyCache.set(sessionId, currentHash);
   } else if (isDirty) {
-    // Dirty but not awaitCloud: the session row no longer carries profile/tasks (store.ts slims it), so the
-    // account row is the ONLY durable copy — await the write rather than detaching it (a detached write can be
-    // frozen mid-flight on serverless, which used to be covered by the session blob duplicate).
-    await syncCloud().catch((e) => reportError("commit-sync-cloud", e));
+    // Everything else is WRITE-BEHIND: the latest snapshot is held in memory and written ONCE after a quiet period (see
+    // syncScheduler.ts) — a burst of step ticks / flashcard reviews / chat turns is one Supabase write, not dozens.
+    scheduler.schedule(email, { tasks: localTasks, profile: localProfile });
     sessionDirtyCache.set(sessionId, currentHash);
   }
-  // else: not dirty and not awaitCloud — skip cloud sync entirely (no-op read-only path)
 };
 
 // Simple synchronous task-mutating routes (confirm/reject/dismiss/step-done) used to just `find()` in
@@ -2183,7 +2181,7 @@ app.post("/api/tasks/:id/flashcard/:deckId/:cardIndex/review", requireAuth, rate
   task.updatedAt = new Date().toISOString();
   if (req.session.profile) { bumpActivityHour(req.session.profile, new Date(), task.sourceSubject); req.session.profile.lastTutorActivityAt = new Date().toISOString(); }
   void recordMetric(req.session.user!, "flashcard_review", correct ? 1 : 0, task.source || "n/a");
-  await commit(req, { awaitCloud: true });
+  await commit(req);
   // "How often you go back and redo flashcards" signal — a card seen several times with a low correct-rate
   // is exactly the "you might need to study this material more" case from the personalization ask. 3+ seen
   // avoids flagging normal early misses; the correct-rate itself is the metric value (bucketed by the
@@ -2204,7 +2202,7 @@ app.post("/api/tasks/:id/flashcard/:deckId/:cardIndex/not-needed", requireAuth, 
   if (notNeeded) card.notNeeded = true; else delete card.notNeeded;
   task.updatedAt = new Date().toISOString();
   void recordMetric(req.session.user!, "flashcard_not_needed", notNeeded ? 1 : 0, task.sourceSubject || task.source || "n/a", card.front.slice(0, 120));
-  await commit(req, { awaitCloud: true });
+  await commit(req);
   res.json(tasksPayload(req, req.session.tasks));
 }));
 // Record one quiz attempt (a full pass through the quiz, not per-question) — mirrors the flashcard review
@@ -2228,7 +2226,7 @@ app.post("/api/tasks/:id/quiz/:quizId/attempt", requireAuth, rateLimit(200, 60_0
   // leaving a real gap in the "when is this student actually active" pattern (predictNextEngagement).
   if (req.session.profile) { bumpActivityHour(req.session.profile, new Date(), task.sourceSubject); req.session.profile.lastTutorActivityAt = new Date().toISOString(); }
   void recordMetric(req.session.user!, "quiz_attempt_score_ratio", score / total, task.source || "n/a");
-  await commit(req, { awaitCloud: true });
+  await commit(req);
   res.json(tasksPayload(req, req.session.tasks));
 }));
 // A student's OWN note, written by hand right after a quiz/flashcard mistake — "what I got wrong and what
@@ -2247,7 +2245,7 @@ app.post("/api/tasks/:id/notes", requireAuth, rateLimit(60, 60_000), ah(async (r
   task.notes = [...(task.notes || []), note].slice(-tasks.ARTIFACT_CAP);
   task.updatedAt = new Date().toISOString();
   void recordMetric(req.session.user!, "chat_artifact_created", 1, "manual_note");
-  await commit(req, { awaitCloud: true });
+  await commit(req);
   res.json(tasksPayload(req, req.session.tasks));
 }));
 // Check a typed answer against a daily practice problem (see DailyPracticeProblem/practiceAnswerMatches in
@@ -2268,7 +2266,7 @@ app.post("/api/tasks/:id/practice-problem/attempt", requireAuth, rateLimit(200, 
   if (req.session.profile) { bumpActivityHour(req.session.profile, new Date(), task.sourceSubject); req.session.profile.lastTutorActivityAt = new Date().toISOString(); }
   void recordMetric(req.session.user!, "practice_problem_attempted", 1);
   void recordMetric(req.session.user!, "practice_problem_correct", correct ? 1 : 0);
-  await commit(req, { awaitCloud: true });
+  await commit(req);
   res.json(tasksPayload(req, req.session.tasks));
 }));
 // Cards due for review RIGHT NOW, across every task — not scoped to one deck's own view, since spaced
@@ -2313,7 +2311,7 @@ app.get("/api/reviews/due", requireAuth, ah(async (req, res) => {
   }
   if (admitted.size !== admittedAtStart) {
     tasks.setReviewSetDeckIdsToday(profile, [...admitted], new Date(now));
-    await commit(req, { awaitCloud: true });
+    await commit(req);
   }
   res.json({ due, setsShown: admitted.size, setCap: MAX_DUE_SETS_PER_DAY });
 }));
@@ -3030,7 +3028,7 @@ app.post("/api/tasks/:id/step/:index/expand", requireAuth, rateLimit(20, 60_000)
       // then the cron drain (cloud-only, no session) rebuilt the task WITHOUT the substeps and committed
       // it with a NEWER updatedAt, legitimately overwriting the client seconds later. Reported live as
       // "breaking down a task shows the substeps for two seconds and then they hide".
-      await commit(req, { awaitCloud: true });
+      await commit(req);
     }
     res.json(tasksPayload(req, req.session.tasks));
   } catch (e: any) { console.error(e);
@@ -3053,7 +3051,7 @@ app.post("/api/tasks/:id/step/:index/substep/:subIndex/done", requireAuth, rateL
       task.updatedAt = new Date().toISOString();
       // awaitCloud — same substeps-vanish reasoning as the expand route above: a sub-step tick lost to a
       // frozen background write would resurrect as UNdone on the next cloud-only rebuild.
-      await commit(req, { awaitCloud: true });
+      await commit(req);
       res.json(tasksPayload(req, req.session.tasks));
   } catch (e: any) { console.error(e);
     res.status(500).json({ error: M(req, "Impossible d'enregistrer cette sous-étape — réessaie.", "Couldn't save this sub-step — try again.") }); }
@@ -3168,6 +3166,13 @@ app.get("/api/tasks/:id/events", requireAuth, ah(async (req, res) => {
 // Client-driven drain "kick": while any of the user's jobs are queued (e.g. execution queued by a sweep),
 // the OPEN client kicks one job at a time so online users see work happen within seconds, not at the next
 // cron tick. Each kick is one bounded function invocation — serverless-friendly.
+// Flush this account's write-behind snapshot NOW — the client calls it (keepalive) when the tab is hidden/closed, so the
+// last few seconds of work never wait on the quiet-period timer.
+app.post("/api/sync/flush", requireAuth, async (req, res) => {
+  try { if (req.session.user) await scheduler.flush(req.session.user); } catch { /* the scheduler retries */ }
+  res.json({ ok: true });
+});
+
 app.post("/api/jobs/kick", requireAuth, rateLimit(60, 60_000), async (req, res) => {
   try {
     // MUST scope to this account — an unscoped drain() claims the GLOBAL oldest queued job across every

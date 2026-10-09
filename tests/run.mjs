@@ -4,6 +4,7 @@ import { recencyStamp, dedupeTasks, foldGenerated, applyProfileUpdate, mergeTask
 import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, shouldNudgeBoardContent, mathInPlay, newMathOffBoard, replyIntroducesNewMath, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem, makeProblem, detectLang, visionReady, describeWhiteboard, academicBlock, sessionRecapLine } from "../server/claude.ts";
 import { sourcesForTrack, sourceForUrl, cleanProblemSource, excerptAround, findSourceQuestions } from "../server/questionSources.ts";
 import { normalizeWidget, shuffledNotSolved, projectileStats } from "../shared/widgets.ts";
+import { makeSyncScheduler } from "../server/syncScheduler.ts";
 import { buildTasksPayload, parseHave } from "../server/taskDelta.ts";
 import { makeTaskSync } from "../client/taskDelta.ts";
 import { buildTrigScene, solveTwoAngles } from "../shared/trigScene.ts";
@@ -1922,6 +1923,26 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     check("an unresolvable delta throws (never silently renders a wrong list)", threw && parseHave("short") === null && parseHave(have)?.size === 60); }
   { const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"); const api = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
     check("every task-list route answers through tasksPayload; the client sends x-have and expands deltas; chat echoes a lean task", !/res\.json\(outgoingTasks\(/.test(idx) && /tasksPayload\(req, req\.session\.tasks, withNudge\)/.test(idx) && /"x-have"/.test(api) && /taskSync\.expand\(await r\.json\(\)\)/.test(api) && /const leanTask = req\.body\?\.primer === true/.test(idx)); }
+  // ── Write-behind: many mutations → one Supabase write ──
+  { let now = 0; const timers = []; const writes = [];
+    const fake = { setTimer: (fn, ms) => { const t = { fn, at: now + ms, dead: false }; timers.push(t); return t; }, clearTimer: (t) => { t.dead = true; }, now: () => now };
+    const advance = async (ms) => { now += ms; for (const t of timers.filter((x) => !x.dead && x.at <= now)) { t.dead = true; t.fn(); } await Promise.resolve(); await Promise.resolve(); };
+    const sch = makeSyncScheduler(async (key, snap) => { writes.push({ key, v: snap.tasks }); }, { debounceMs: 6000, maxWaitMs: 25000, ...fake });
+    for (let i = 1; i <= 40; i++) { sch.schedule("a@x", { tasks: i, profile: {} }); await advance(500); }   // 40 flashcard reviews over 20s
+    check("a burst of 40 mutations is NOT written while it's still going (debounced)", writes.length === 0 && sch.pending() === 1);
+    await advance(6000);
+    check("…and becomes ONE write of the LATEST snapshot after the quiet period", writes.length === 1 && writes[0].v === 40 && sch.pending() === 0);
+    writes.length = 0; for (let i = 1; i <= 80; i++) { sch.schedule("b@x", { tasks: i, profile: {} }); await advance(1000); }   // a non-stop 80s session
+    check("a never-quiet session is still flushed at the max wait (≤ 1 write per ~25s), never starved", writes.length >= 2 && writes.length <= 4 && writes.every((w) => w.key === "b@x"));
+    writes.length = 0; sch.schedule("c@x", { tasks: 1, profile: {} }); await sch.flush("c@x"); await sch.flush("c@x");
+    check("flush writes immediately, once (tab hidden / shutdown)", writes.length === 1);
+    await sch.flushAll(); writes.length = 0; sch.schedule("d@x", { tasks: 1, profile: {} }); sch.cancel("d@x"); await advance(60000);
+    check("cancel drops a snapshot a direct write superseded", writes.length === 0 && sch.pending() === 0);
+    let fail = true; const w2 = []; const sch2 = makeSyncScheduler(async (k, sn) => { if (fail) throw new Error("db down"); w2.push(sn.tasks); }, { debounceMs: 1000, maxWaitMs: 5000, ...fake });
+    sch2.schedule("e@x", { tasks: 7, profile: {} }); await advance(1000); fail = false; await advance(2500);
+    check("a failed write keeps the data and retries (nothing is lost on a blip)", w2.length === 1 && w2[0] === 7); }
+  { const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+    check("commit() is write-behind (scheduler) except the journal saves; shutdown and tab-hide flush it", /scheduler\.schedule\(email, \{ tasks: localTasks, profile: localProfile \}\)/.test(idx) && /process\.once\(sig/.test(idx) && /\/api\/sync\/flush/.test(idx) && !/review[\s\S]{0,900}awaitCloud: true[\s\S]{0,40}\n\}\)\);\n\/\/ "Not something I need/.test(idx)); }
   check("board is flat: plain lines, no section numbers or boxes", /sm-board-line/.test(boardSrc) && !/sm-board-section-num/.test(boardSrc));
   check("kind:\"summary\" renders as an ordinary line — no trace box, no heading, no category", !/ReasoningTrace|sm-board-trace/.test(boardSrc));
   check("a deliberately unfinished worked line gets an 'à toi de finir' completion chip (completion effect, visible)", /isCompletionGap/.test(boardSrc) && /sm-board-todo-chip/.test(boardSrc));
@@ -2663,10 +2684,10 @@ section("Task UX: breakdowns don't vanish, Help opens the chat, popup is bigger,
   const serverSrc2 = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
   const expandStart = serverSrc2.indexOf('app.post("/api/tasks/:id/step/:index/expand"');
   const expandBody = serverSrc2.slice(expandStart, expandStart + 2200);
-  check("expand route AWAITS the cloud write (substeps survive a serverless freeze + cron rebuild)", /await commit\(req, \{ awaitCloud: true \}\)/.test(expandBody));
+  check("expand route commits through the write-behind scheduler (flushed on a quiet period, tab hide and shutdown)", /await commit\(req\)/.test(expandBody));
   const subDoneStart = serverSrc2.indexOf('app.post("/api/tasks/:id/step/:index/substep/:subIndex/done"');
   const subDoneBody = serverSrc2.slice(subDoneStart, subDoneStart + 1200);
-  check("substep-done route awaits the cloud write too (a tick can't resurrect as undone)", /await commit\(req, \{ awaitCloud: true \}\)/.test(subDoneBody));
+  check("substep-done route is write-behind too — a burst of ticks is one write", /await commit\(req\)/.test(subDoneBody));
   const taskCardSrc = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
   const stepListBody = taskCardSrc.slice(taskCardSrc.indexOf("function StepList"), taskCardSrc.indexOf("function PreparedPanel"));
   check("expand/runSubstep apply via merge-by-id onTask, never wholesale setTasks", /applyTaskFromList\(await api\.expandStep/.test(stepListBody) && /applyTaskFromList\(await api\.runSubstep/.test(stepListBody) && !/onChange\(await api\.expandStep/.test(stepListBody));
@@ -4624,9 +4645,9 @@ section("commit()'s awaitCloud sync bypasses the stale-cache merge base (source 
   // worst exactly on the awaitCloud path (journal saves, flashcard reviews) this app explicitly calls its
   // highest-value, must-actually-persist writes.
   const idxSrc = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
-  const syncCloudFn = idxSrc.slice(idxSrc.indexOf("const syncCloud = async"), idxSrc.indexOf("if (opts?.awaitCloud) {"));
-  check("syncCloud's merge-base read bypasses the cache exactly when this is the awaitCloud (throwOnError) path", /loadState\(email, \{ bypassCache: !!throwOnError \}\)/.test(syncCloudFn));
-  check("the high-frequency, non-awaitCloud path still uses the cache (no behavior change for step-done/confirm)", /bypassCache: !!throwOnError/.test(syncCloudFn) && !/bypassCache: true/.test(syncCloudFn));
+  const syncCloudFn = idxSrc.slice(idxSrc.indexOf("async function writeAccount"), idxSrc.indexOf("const scheduler = makeSyncScheduler"));
+  check("the merge-base read bypasses the cache only when the caller asks (the awaited journal save)", /loadState\(email, \{ bypassCache: !!o\.bypassCache \}\)/.test(syncCloudFn));
+  check("background (write-behind) flushes use the cached read — no extra Supabase read per write", !/bypassCache: true/.test(syncCloudFn) && /await writeAccount\(email, snap\.tasks, snap\.profile as Profile, \{ throwOnError: true \}\)/.test(idxSrc));
 }
 
 section("Focus/visibility resync removed — only the Pronote keepalive stays on that heartbeat (source pin)");

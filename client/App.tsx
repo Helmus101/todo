@@ -765,9 +765,13 @@ export function App() {
     // serverless instance — fewer polls is the one lever that reduces total request volume regardless of
     // that, so this and the cache TTL bump are complementary, not redundant. 5 min still surfaces a new task
     // well within a normal session.
+    // Tab hidden or closing: ask the server to write its pending (write-behind) snapshot now. keepalive lets the request outlive the page.
+    const flushOnHide = () => { if (document.visibilityState === "hidden" && !signedOutRef.current) void api.flushSync(); };
+    document.addEventListener("visibilitychange", flushOnHide);
+    window.addEventListener("pagehide", flushOnHide);
     const syncTick = setInterval(() => { if (!document.hidden && !signedOutRef.current) { void syncTasks(); void loadStatus(); } }, 20 * 60_000);
     const fullTick = setInterval(on, 30 * 60_000); // periodic Pronote keepalive heartbeat — was also a budget/sweep refresh before that got removed above
-    return () => { document.removeEventListener("visibilitychange", on); window.removeEventListener("focus", on); clearInterval(syncTick); clearInterval(fullTick); };
+    return () => { document.removeEventListener("visibilitychange", on); window.removeEventListener("focus", on); document.removeEventListener("visibilitychange", flushOnHide); window.removeEventListener("pagehide", flushOnHide); clearInterval(syncTick); clearInterval(fullTick); };
   }, [connected, syncTasks, loadStatus, status?.pronoteConnected]);
 
   // THE SERVER OWNS EXECUTION. The browser no longer decides what runs — sweeps queue execution jobs

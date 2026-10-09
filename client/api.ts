@@ -433,6 +433,8 @@ export const api = {
   setProfilePreference: (key: string, value: any): Promise<Profile> => post("/api/profile/preference", { key, value }).then(normalizeProfile),
   delProfile: (category: string, index: number): Promise<Profile> => req(`/api/profile/${category}/${index}`, { method: "DELETE" }).then(j).then(normalizeProfile),
   clearProfile: (): Promise<Profile> => req("/api/profile", { method: "DELETE" }).then(j).then(normalizeProfile),
+  /** Ask the server to write its pending write-behind snapshot now (tab hidden/closing). keepalive: outlives the page; fire-and-forget. */
+  flushSync: (): Promise<void> => { try { return fetch("/api/sync/flush", { method: "POST", keepalive: true, headers: { ...(csrfToken ? { "x-csrf-token": csrfToken } : {}) } }).then(() => undefined).catch(() => undefined); } catch { return Promise.resolve(); } },
   logout: (): Promise<{ ok: boolean }> => post("/api/auth/logout").then((r) => { taskSync.reset(); return r; }),
   // GDPR self-serve: erasure (Art. 17) and portability (Art. 20) — no "email us and wait" step needed.
   deleteAccount: (): Promise<{ ok: boolean; errors: string[] }> => post("/api/account/delete"),
