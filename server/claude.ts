@@ -7,7 +7,7 @@ import { COURSEWORK_MAX_CHARS, courseworkForSubject, sameSubject } from "../shar
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { buildGeometry } from "../shared/geometry.ts";
-import { studentProblemStatement, boardCoversStatement, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
+import { studentProblemStatement, boardCoversStatement, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -8891,7 +8891,7 @@ export async function chatAboutTask(
     boardIntegrationBlock +
     contextAwarenessBlock +
     dynamicContext +
-    `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}${boardBlock}${trajectoryBlock}${sessionBlock}${opts?.primer && opts?.policy && opts?.sessionState ? tutorPolicyBlock(opts.policy, opts.sessionState) : ""}${opts?.primer ? caseTrapBlock(pendingCaseTraps(message, history)) : ""}${opts?.primer && isDrawingTurn(message) ? DRAWING_TURN_BLOCK : ""}${objectivesBlock}` +
+    `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}${boardBlock}${trajectoryBlock}${sessionBlock}${opts?.primer && opts?.policy && opts?.sessionState ? tutorPolicyBlock(opts.policy, opts.sessionState) : ""}${opts?.primer ? caseTrapBlock(pendingCaseTraps(message, history)) : ""}${opts?.primer && repeatedClaim(message, history) ? REPEATED_CLAIM_BLOCK : ""}${opts?.primer && isDrawingTurn(message) ? DRAWING_TURN_BLOCK : ""}${objectivesBlock}` +
     assignmentBlock(task, tzOf(profile)) + profileBlock(profile) + academicBlock(academic) + materialsBlock(opts?.materials) +
     PRIMER_CLOSING_REMINDER;
   // 10, not the whole thread: every one of these is resent verbatim on every turn AND every intra-turn
@@ -9160,6 +9160,18 @@ export async function chatAboutTask(
       console.log(`${new Date().toISOString()} [chat] round ${round}: the student showed a drawing but nothing was redrawn — asking for the cleaner redraw`);
       messages.push({ role: "assistant", content: draft });
       messages.push({ role: "user", content: "They showed you a drawing and you haven't redrawn it. Call GEOMETRY_ON_BOARD (triangles/circles/angles) or SVG_ON_BOARD (anything else) NOW to redraw THEIR drawing cleaner — same shapes, labels and numbers, nothing added — then reply with a one- or two-sentence comment on it and ONE question." });
+      return true;
+    };
+    // The tutor computed a step for them ("40° − 25° = 15°") — the arithmetic AND the decision to do it were theirs.
+    let ownArithFixed = false;
+    const guardOwnArithmetic = (draft: string, round: number, lastRound: boolean): boolean => {
+      if (!opts?.primer || ownArithFixed || lastRound || result.guardrailTripped) return false;
+      const bad = arithmeticAhead(draft, [...history.filter((h) => h.role === "user").map((h) => h.text), message], ownGivens());
+      if (!bad.length) return false;
+      ownArithFixed = true;
+      console.log(`${new Date().toISOString()} [chat] round ${round}: reply computed a step for the student (${bad[0]}) — asking for a question instead`);
+      messages.push({ role: "assistant", content: draft });
+      messages.push({ role: "user", content: `That reply worked out "${bad[0]}" for them — the student never produced that value, so you did their step. Rewrite it WITHOUT stating that result: ask what they get / which relationship gives it, and let THEM compute it. (If they asked whether their own claim is right, judge THEIR claim plainly — yes/no and why — without supplying new values.)` });
       return true;
     };
     // A multi-solution trap (SSA ambiguous triangle, trig equation's second solution, ±) that nobody raised, while the
@@ -9495,10 +9507,12 @@ export async function chatAboutTask(
       if (guardHandedCalc(textContent, round, lastRound)) continue;
       if (guardRedraw(textContent, round, lastRound)) continue;
       if (guardAheadMath(textContent, round, lastRound)) continue;
+      if (guardOwnArithmetic(textContent, round, lastRound)) continue;
         if (guardMissedCase(textContent, round, lastRound)) continue;
         if (guardHandedCalc(textContent, round, lastRound)) continue;
         if (guardRedraw(textContent, round, lastRound)) continue;
         if (guardAheadMath(textContent, round, lastRound)) continue;
+        if (guardOwnArithmetic(textContent, round, lastRound)) continue;
         if (guardGapAnswer(textContent, round, lastRound)) continue;
         if (guardOneQuestion(textContent, round, lastRound)) continue;
         if (guardPoseOnBoard(textContent, round, lastRound)) continue;

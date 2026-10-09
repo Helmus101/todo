@@ -493,3 +493,34 @@ THE STUDENT JUST SHOWED YOU A DRAWING (the text after "Here's what I drew" is a 
 2. Then REDRAW THE SAME THING, cleaner and clearer, with GEOMETRY_ON_BOARD (any triangle/circle/polygon/angles) or SVG_ON_BOARD (everything else — write the SVG): the same shapes, the same labels, the same numbers, the same layout — only neater (straight lines, correct proportions, readable labels, right angles marked). Add NOTHING they didn't draw: no solved values, no extra construction, no next step. If part of their drawing is doubtful, draw it as they drew it and ask about it.
 3. End with ONE short question about the next step. The board also shows what you drew earlier (listed above) — if they were commenting on one of YOUR figures, use what is on the board together with their marks.
 `;
+
+// ---- Consistency: answering the same question twice, and computing for the student ----
+
+/** The student asked (nearly) the same thing twice in a row — the previous answer didn't land or contradicted itself. */
+export function repeatedClaim(message: string, history: { role: string; text: string }[]): boolean {
+  const lastUser = [...history].reverse().find((h) => h.role === "user")?.text;
+  if (!lastUser || /^\[/.test(message) || /^\[/.test(lastUser)) return false;
+  const a = message.replace(/\s+/g, " ").trim(), b = lastUser.replace(/\s+/g, " ").trim();
+  if (a.length < 8 || b.length < 8) return false;
+  const tok = (t: string) => new Set(t.toLowerCase().replace(/[^a-z0-9à-ÿ°]+/g, " ").split(" ").filter((w) => w.length > 1 && !["no", "but", "wait", "so", "yes", "yeah", "ok", "okay", "um", "uh", "like", "just", "actually", "oui", "non", "mais"].includes(w)));
+  const ta = tok(a), tb = tok(b);
+  const [small, big] = ta.size <= tb.size ? [ta, tb] : [tb, ta];
+  if (small.size < 3) return false;
+  const shared = [...small].filter((w) => big.has(w)).length;
+  // the shorter restatement is mostly CONTAINED in the longer one ("no but angle J is 25° right" ⊂ "…we now know the angle J is 25° right")
+  return shared / small.size >= 0.7 || similarity(a, b) >= 0.55;
+}
+export const REPEATED_CLAIM_BLOCK = `\n\nTHEY JUST ASKED THE SAME THING AGAIN — your previous answer didn't land, or it contradicted something you said earlier. Don't flip your verdict to match their phrasing and don't repeat yourself: re-derive it from the givens and your ledger, answer the question plainly first (yes / no, in a few words, and the one-line reason), and if your earlier answer was wrong or inconsistent, say so openly ("I muddled that — here's the right way to see it"). Then ask your guiding question.\n`;
+
+/** "40° − 25° = 15°" written by the tutor where the result is a number nobody (student, givens, board) has produced:
+ *  the tutor did the step. Echoing a result the student already stated is fine. */
+export function arithmeticAhead(reply: string, studentTexts: string[], givens: string[]): string[] {
+  const plain = reply.replace(/\\circ|\\degree|\^\s*\{?\\?circ\}?|\\[a-z]+/gi, " ").replace(/[$]/g, " ");
+  const said = [...studentTexts, ...givens].join(" \n ").replace(/,/g, ".");
+  const out: string[] = [];
+  for (const m of plain.matchAll(/(\d+(?:\.\d+)?)\s*°?\s*[-−–+×x*/÷]\s*(\d+(?:\.\d+)?)\s*°?\s*(?:=|≈|equals|gives|makes)\s*(\d+(?:\.\d+)?)/g)) {
+    const result = m[3];
+    if (!new RegExp(`(?<![\\d.])${result.replace(".", "\\.")}(?![\\d])`).test(said)) out.push(m[0].trim());
+  }
+  return out;
+}
