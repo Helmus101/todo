@@ -1,4 +1,5 @@
 import type { CourseworkDoc } from "../shared/coursework.ts";
+import { taskSync } from "./taskDelta.ts";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, BoardEntry, TaskProblem, TaskObjective } from "../shared/types.ts";
 import { normalizeProfile } from "../shared/types.ts";
 
@@ -91,6 +92,11 @@ async function req(url: string, init?: RequestInit, retries = 6, isCsrfRetry = f
   // Also opted into by specific POST endpoints that poll on a fixed interval with no meaningful request
   // body (e.g. kick) — their response is cacheable the same way a GET's is, it's just not idempotent
   // server-side (it still does real work), so this only saves response BYTES, never the server-side call.
+  // Delta task lists: tell the server which tasks we already hold (see client/taskDelta.ts).
+  if (/^\/api\/(?:tasks(?!\/[^/]+\/chat\b)|study\/free|studylog)/.test(url)) {
+    const have = taskSync.haveHeader();
+    if (have) init = { ...init, headers: { ...(init?.headers || {}), "x-have": have } };
+  }
   const etagable = method === "GET" || cacheEtag;
   if (etagable) {
     const cached = etagCache.get(url);
@@ -181,7 +187,7 @@ const j = async (r: Response) => {
     err.status = r.status; // callers need this to tell "already running elsewhere" (409) from a real failure
     throw err;
   }
-  return r.json();
+  return taskSync.expand(await r.json());
 };
 // Comfortably under the serverless function's own execution ceiling, so a slow-but-working sweep gets told
 // "still running" by US (with a follow-up re-sync) rather than by the platform killing the request and
@@ -195,7 +201,7 @@ const post = (url: string, body?: unknown) =>
 // save) already has a valid token — capture it here, the one place both routes' responses are read.
 const authPost = (url: string, body: unknown): Promise<{ ok: boolean; error?: string; csrfToken?: string }> =>
   req(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
-    .then(async (r) => ({ ok: r.ok, ...(await r.json().catch(() => ({}))) }))
+    .then(async (r) => { taskSync.reset(); return { ok: r.ok, ...(await r.json().catch(() => ({}))) }; })
     .then((res) => { if (res.csrfToken) csrfToken = res.csrfToken; return res; });
 
 export const api = {
@@ -427,7 +433,7 @@ export const api = {
   setProfilePreference: (key: string, value: any): Promise<Profile> => post("/api/profile/preference", { key, value }).then(normalizeProfile),
   delProfile: (category: string, index: number): Promise<Profile> => req(`/api/profile/${category}/${index}`, { method: "DELETE" }).then(j).then(normalizeProfile),
   clearProfile: (): Promise<Profile> => req("/api/profile", { method: "DELETE" }).then(j).then(normalizeProfile),
-  logout: (): Promise<{ ok: boolean }> => post("/api/auth/logout"),
+  logout: (): Promise<{ ok: boolean }> => post("/api/auth/logout").then((r) => { taskSync.reset(); return r; }),
   // GDPR self-serve: erasure (Art. 17) and portability (Art. 20) — no "email us and wait" step needed.
   deleteAccount: (): Promise<{ ok: boolean; errors: string[] }> => post("/api/account/delete"),
   exportDataUrl: (): string => "/api/account/export",

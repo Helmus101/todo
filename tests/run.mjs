@@ -4,6 +4,8 @@ import { recencyStamp, dedupeTasks, foldGenerated, applyProfileUpdate, mergeTask
 import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, shouldNudgeBoardContent, mathInPlay, newMathOffBoard, replyIntroducesNewMath, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem, makeProblem, detectLang, visionReady, describeWhiteboard, academicBlock, sessionRecapLine } from "../server/claude.ts";
 import { sourcesForTrack, sourceForUrl, cleanProblemSource, excerptAround, findSourceQuestions } from "../server/questionSources.ts";
 import { normalizeWidget, shuffledNotSolved, projectileStats } from "../shared/widgets.ts";
+import { buildTasksPayload, parseHave } from "../server/taskDelta.ts";
+import { makeTaskSync } from "../client/taskDelta.ts";
 import { buildTrigScene, solveTwoAngles } from "../shared/trigScene.ts";
 import { sanitizeSvg as sanSvg2 } from "../shared/svgSafe.ts";
 import { onTopic, clarificationTerm, ignoresQuestion, ignoresWork, asksToWrite } from "../server/tutorAdapt.ts";
@@ -1899,6 +1901,27 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   check("clarification questions are recognised with the term they ask about", clarificationTerm("what does m show") === "m" && clarificationTerm("what's M1") === "m1" && clarificationTerm("what is a slope?") === "slope" && clarificationTerm("I found x = 3/14") === null && clarificationTerm("[Exercise] I answered 4") === null);
   check("a reply that carries on with its own plan instead of answering the question is caught", ignoresQuestion("Punch it into the calculator — what angle does arctan(1/3) give you in degrees?", "what's M1") && !ignoresQuestion("m₁ is just the name for the slope of the first line — which line has slope 5?", "what's M1") && ignoresQuestion("arctan(5) gives that angle with the x-axis. Do the same for the other slope.", "what does m show"));
   check("a reply that says nothing about the work they just reported is caught", ignoresWork("Got the formula up there. Now plug m1 = 5 into it — what do you get?", "intersect and I found the point of intersection is when x equals to over 14") && !ignoresWork("x = 3/14 — check it: does it make both lines give the same y?", "I found the point of intersection is when x equals 3 over 14") && !ignoresWork("What do you notice?", "hmm") && asksToWrite("can you write that on the board") && !asksToWrite("what's m1"));
+  // ── Delta task lists (egress): only changed tasks cross the wire ──
+  { const mk = (n) => Array.from({ length: n }, (_, i) => ({ id: `${String(i).padStart(8, "a")}-0000-4000-8000-000000000000`, title: "Task " + i, steps: [{ text: "x".repeat(200), done: false }], chat: Array.from({ length: 20 }, () => ({ text: "m".repeat(120) })), score: i }));
+    const sync = makeTaskSync();
+    const list = mk(60);
+    const first = buildTasksPayload(list, undefined);                      // first load: full list, tagged
+    const got1 = sync.expand(JSON.parse(JSON.stringify(first)));
+    check("first load returns the full list; the client strips the hash tags", got1.length === 60 && got1.every((t) => !("_h" in t)) && sync.size() === 60);
+    const have = sync.haveHeader();
+    const second = buildTasksPayload(list, have);                          // nothing changed
+    check("an unchanged poll sends no tasks at all (order only), and expands to the same list", second.__delta === true && second.changed.length === 0 && JSON.stringify(sync.expand(JSON.parse(JSON.stringify(second)))) === JSON.stringify(got1) && JSON.stringify(second).length < JSON.stringify(first).length / 20);
+    const edited = list.map((t, i) => (i === 7 ? { ...t, title: "Task 7 (edited)" } : t)).filter((t, i) => i !== 3);
+    const third = buildTasksPayload(edited, sync.haveHeader());
+    const got3 = sync.expand(JSON.parse(JSON.stringify(third)));
+    check("an edit sends just that task and a removal just drops from the order", third.changed.length === 1 && got3.length === 59 && got3.find((t) => t.id.startsWith("aaaaaaa7")).title === "Task 7 (edited)" && !got3.some((t) => t.title === "Task 3"));
+    const overlayA = buildTasksPayload(edited.map((t) => ({ ...t, score: t.score + 5, nudgeLine: "hurry" })), sync.haveHeader());
+    check("response-only overlays (score boost, nudge line) never make a task look changed", overlayA.__delta === true && overlayA.changed.length === 0);
+    check("a header that matches nothing (another account / stale client) gets every task", buildTasksPayload(list, "zzzzzzzz000000").changed.length === 60);
+    let threw = false; try { makeTaskSync().expand({ __delta: true, order: ["nope:abc123"], changed: [] }); } catch { threw = true; }
+    check("an unresolvable delta throws (never silently renders a wrong list)", threw && parseHave("short") === null && parseHave(have)?.size === 60); }
+  { const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"); const api = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
+    check("every task-list route answers through tasksPayload; the client sends x-have and expands deltas; chat echoes a lean task", !/res\.json\(outgoingTasks\(/.test(idx) && /tasksPayload\(req, req\.session\.tasks, withNudge\)/.test(idx) && /"x-have"/.test(api) && /taskSync\.expand\(await r\.json\(\)\)/.test(api) && /const leanTask = req\.body\?\.primer === true/.test(idx)); }
   check("board is flat: plain lines, no section numbers or boxes", /sm-board-line/.test(boardSrc) && !/sm-board-section-num/.test(boardSrc));
   check("kind:\"summary\" renders as an ordinary line — no trace box, no heading, no category", !/ReasoningTrace|sm-board-trace/.test(boardSrc));
   check("a deliberately unfinished worked line gets an 'à toi de finir' completion chip (completion effect, visible)", /isCompletionGap/.test(boardSrc) && /sm-board-todo-chip/.test(boardSrc));
