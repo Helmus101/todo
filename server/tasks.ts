@@ -389,7 +389,9 @@ export function pruneHandled(list: WebTask[], keep: number): WebTask[] {
  *  focusSessions is only needed on focus-specific routes, not on /api/tasks. */
 export function stripProfileForResponse(profile: any): any {
   if (!profile) return profile;
-  const { focusSessions, ...stripped } = profile;
+  // Server-only tutor state (student model, concept graph, decision log, per-session state) is never read by
+  // the client (the transparency view has its own endpoint) — dropping it keeps every page's profile fetch small.
+  const { focusSessions, conceptModel, conceptGraph, tutorDecisions, tutorSessions, ...stripped } = profile;
   return stripped;
 }
 

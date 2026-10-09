@@ -310,8 +310,10 @@ const commit = async (req: express.Request, opts?: { awaitCloud?: boolean }) => 
     await syncCloud(true);
     sessionDirtyCache.set(sessionId, currentHash);
   } else if (isDirty) {
-    // Dirty but not awaitCloud: sync in background and update dirty flag
-    void syncCloud().catch((e) => reportError("commit-sync-cloud-detached", e));
+    // Dirty but not awaitCloud: the session row no longer carries profile/tasks (store.ts slims it), so the
+    // account row is the ONLY durable copy — await the write rather than detaching it (a detached write can be
+    // frozen mid-flight on serverless, which used to be covered by the session blob duplicate).
+    await syncCloud().catch((e) => reportError("commit-sync-cloud", e));
     sessionDirtyCache.set(sessionId, currentHash);
   }
   // else: not dirty and not awaitCloud — skip cloud sync entirely (no-op read-only path)
@@ -1101,7 +1103,7 @@ app.post("/api/settings/unlimited", requireAuth, async (req, res) => {
     p.unlimited = true;
     void recordEvent(req.session.user!, "settings_changed", { message: "unlimited enabled" });
     await commit(req);
-    res.json(p);
+    res.json(tasks.stripProfileForResponse(p));
   } catch (e: any) { console.error(e);
     res.status(500).json({ error: M(req, "Impossible d'enregistrer — réessaie.", "Couldn't save — try again.") }); }
 });
