@@ -172,6 +172,27 @@ section("Whiteboard — invited any time, read in board context, infinite blank 
     /endRef\.current\?\.scrollIntoView/.test(readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8")) &&
     /new MutationObserver\(fit\)/.test(canvasSrc));
 }
+
+// Session routing: the address bar tracks the LIVE session and deep links actually resolve. Root bug
+// pinned below — routeOf strips the leading slash, so "tutor/session/<id>".split("/") is [tutor, session,
+// <id>]: index [3] was ALWAYS undefined, so no /tutor/session/<id> link (history anchor, refresh, shared
+// URL) ever loaded its session and the review effect sat dead code.
+section("Tutor session routing — deep links resolve, the URL follows the live session (source pins)");
+{
+  const appSrcR = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const tutSrcR = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  check("the session deep link reads split index [2] — [3] was always undefined and never loaded a session",
+    /sessionId=\{route\.split\("\/"\)\[2\]\}/.test(appSrcR) && !/sessionId=\{route\.split\("\/"\)\[3\]\}/.test(appSrcR));
+  check("opening/resuming a session pushes /tutor/session/<taskId> so a refresh re-enters the same session",
+    tutSrcR.includes("path !== `tutor/session/${task.id}`") && tutSrcR.includes("goRoute(`tutor/session/${task.id}`)"));
+  check("when the session ends the address falls back to the list — and only on an id TRANSITION",
+    /routedTaskRef\.current = null/.test(tutSrcR) &&
+    tutSrcR.includes('if (path.startsWith("tutor/session/")) goRoute("tutor");'));
+  check("the 'All sessions' crumb lands on the session list WITHOUT ending the session (Reprendre survives)",
+    /tutor-crumb-link" onClick=\{leaveToList\}/.test(tutSrcR) &&
+    /if \(task\) \{ setPendingActiveSession\(task\); setTask\(null\); setSessionStart\(null\); \}/.test(tutSrcR) &&
+    /goRoute\("tutor"\);\n  \}, \[task, goRoute\]\);/.test(tutSrcR));
+}
 section("Tutor memory — earlier turns are condensed, not forgotten");
 {
   const older = [{ role: "user", text: "I'm stuck on factoring x² − 5x + 6" }, { role: "assistant", text: "Which two numbers multiply to 6 and add to −5? Take your time." }, { role: "user", text: "[Exercise] I answered \"4\" — marked wrong (try #1)." }];

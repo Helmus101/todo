@@ -146,6 +146,44 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
     }
   }, [sessionId, userId]);
 
+  // ── Session ↔ URL routing ─────────────────────────────────────────────────────────────
+  /** Client-side route change — the same pushState + synthetic popstate App.tsx's `navigate` performs,
+   *  duplicated here (two lines) so this component never imports App.tsx, which already imports IT. */
+  const goRoute = useCallback((r: string) => {
+    window.history.pushState({}, "", `/${r}`);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, []);
+
+  // The address bar follows the LIVE session: opening or resuming a session moves to
+  // /tutor/session/<taskId> — so a refresh re-enters it (the task is cloud-persisted, so
+  // peekForActiveSession offers Reprendre, and once the session is saved the same URL reopens it in
+  // review) — and when the session ends the address falls back to the session list instead of pointing
+  // at a dead id. Fires only on an id TRANSITION: leaving mid-session via the "All sessions" crumb
+  // (which changes the route itself) must not yank the address back onto the session.
+  const routedTaskRef = useRef<string | null>(null);
+  useEffect(() => {
+    const path = window.location.pathname.replace(/^\/+|\/+$/g, "");
+    if (task) {
+      routedTaskRef.current = task.id;
+      if (path.startsWith("tutor") && path !== `tutor/session/${task.id}`) goRoute(`tutor/session/${task.id}`);
+    } else if (routedTaskRef.current) {
+      routedTaskRef.current = null;
+      if (path.startsWith("tutor/session/")) goRoute("tutor");
+    }
+  }, [task, goRoute]);
+
+  // "All sessions" (the in-session crumb) — the label finally tells the truth: land on the session list
+  // at /tutor WITHOUT ending the session. The task stays alive as pendingActiveSession, so the landing
+  // offers "Reprendre" right where the student left off (onExit used to dump them on the Tasks dashboard
+  // instead — reachable anyway from the landing's own back button).
+  const leaveToList = useCallback(() => {
+    if (task) { setPendingActiveSession(task); setTask(null); setSessionStart(null); }
+    setShowHistory(true);
+    setDesmosOpen(false);
+    desmosEverOpenedRef.current = false;
+    goRoute("tutor");
+  }, [task, goRoute]);
+
   const saveAndClose = useCallback((task: WebTask, startedAt: string, reflection?: string) => {
     const chat = task.chat || [];
     const board = task.board || [];
@@ -677,7 +715,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId }: { userI
       <PageTour id="tutor-session" steps={TOURS["tutor-session"]} />
       {/* Same breadcrumb chrome as the rest of the Tutor ("All sessions / Subject … End session"). */}
       <header className="ts-bar tutor-crumbbar">
-        <button type="button" className="tutor-crumb-link" onClick={onExit}>{L("Toutes les séances", "All sessions")}</button>
+        <button type="button" className="tutor-crumb-link" onClick={leaveToList}>{L("Toutes les séances", "All sessions")}</button>
         {task.sourceSubject ? <span className="tutor-crumb-subject">{task.sourceSubject}</span> : null}
         {!!task.objectives?.length && (
           // A real control now, not a hover-only tooltip: the objectives were only ever readable by hovering

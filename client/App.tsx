@@ -1169,7 +1169,10 @@ export function App() {
       ) : route === "tutor" ? (
         <TutorSession userId={status?.user || null} onExit={() => navigate("tasks")} visionReady={!!status?.visionReady} />
       ) : route.startsWith("tutor/session/") ? (
-        <TutorSession userId={status?.user || null} onExit={() => navigate("tasks")} visionReady={!!status?.visionReady} sessionId={route.split("/")[3]} />
+        // split index [2]: routeOf strips the leading slash, so "tutor/session/<id>" is ["tutor","session","<id>"].
+        // It used to read [3] — ALWAYS undefined — so every deep link/refresh/history anchor loaded as if no
+        // session id had been passed and the review effect below never fired.
+        <TutorSession userId={status?.user || null} onExit={() => navigate("tasks")} visionReady={!!status?.visionReady} sessionId={route.split("/")[2]} />
       ) : route === "study" ? (
         <StandaloneStudyEntry tasks={tasks} setTasks={setTasks} status={status} notify={notify} navigate={navigate} />
       ) : route === "coursework" ? (
