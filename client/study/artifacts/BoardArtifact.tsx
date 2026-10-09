@@ -252,6 +252,29 @@ function InteractiveFrame({ taskId, entryId }: { taskId: string; entryId: string
 /** Pure mapping from one DiagramOp (shared/types.ts) to its SVG element — DRAW_ON_BOARD's real-figure
  *  rendering, plus real typeset math via the "equation" op (KaTeX, see Equation above). Coordinates arrive
  *  already clamped to 0-800x0-600 server-side (makeDiagramEntry) — this component trusts that and just draws. */
+/** LaTeX → readable plain text for figure labels (figures are SVG text, never KaTeX). */
+function latexToPlain(latex: string): string {
+  return formatMath(latex.replace(/\\(?:left|right)/g, "").replace(/\\cdot/g, "·").replace(/\\times/g, "×").replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, "($1)/($2)").replace(/\\([a-zA-Z]+)/g, "$1").replace(/[{}]/g, ""));
+}
+/** Tight viewBox around what a figure actually draws (so no dead space above/below it), with a little margin. */
+function opsViewBox(ops: DiagramOp[]): string {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const add = (x: number, y: number, r = 0) => { x0 = Math.min(x0, x - r); y0 = Math.min(y0, y - r); x1 = Math.max(x1, x + r); y1 = Math.max(y1, y + r); };
+  for (const o of ops as any[]) {
+    if (o.op === "line") { add(o.x1, o.y1); add(o.x2, o.y2); }
+    else if (o.op === "rect") { add(o.x, o.y); add(o.x + o.w, o.y + o.h); }
+    else if (o.op === "circle" || o.op === "arc") add(o.cx, o.cy, o.r);
+    else if (o.op === "polyline" || o.op === "polygon") for (const p of o.points || []) add(p.x, p.y);
+    else if (o.op === "axes") { add(o.x, o.y); add(o.x + o.w, o.y + o.h); }
+    else if (o.op === "label") add(o.x + ((o.text || "").length * 5), o.y, 12);
+    else if (o.op === "equation") add(o.x + 140, o.y, 16);
+  }
+  if (!Number.isFinite(x0)) return "0 0 800 600";
+  const pad = 28;
+  x0 = Math.max(0, x0 - pad); y0 = Math.max(0, y0 - pad); x1 = Math.min(800, x1 + pad); y1 = Math.min(600, y1 + pad);
+  return `${Math.round(x0)} ${Math.round(y0)} ${Math.max(120, Math.round(x1 - x0))} ${Math.max(80, Math.round(y1 - y0))}`;
+}
+
 function DiagramOpSVG({ op }: { op: DiagramOp }) {
   const stroke = op.op !== "label" && "color" in op && op.color ? op.color : "currentColor";
   switch (op.op) {
@@ -291,7 +314,7 @@ function DiagramOpSVG({ op }: { op: DiagramOp }) {
       );
     case "equation": {
       // Diagrams are plain SVG text now (no KaTeX): the equation is rendered as readable text next to the figure.
-      const t = formatMath(op.latex.replace(/\\(?:left|right)/g, "").replace(/\\cdot/g, "·").replace(/\\times/g, "×").replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, "($1)/($2)").replace(/\\([a-zA-Z]+)/g, "$1").replace(/[{}]/g, ""));
+      const t = latexToPlain(op.latex);
       return <text x={op.x} y={op.y} fontSize={16} fill="currentColor" fontStyle="italic">{t}</text>;
     }
     default:
@@ -680,13 +703,13 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, 
                   <>
                     <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>
                     <div className="sm-board-eq-list">
-                      {e.diagram.map((op, i) => op.op === "equation" ? <Equation key={i} latex={op.latex} /> : null)}
+                      {e.diagram.map((op, i) => op.op === "equation" ? <div key={i} className="sm-board-line">{latexToPlain(op.latex)}</div> : null)}
                     </div>
                   </>
                 ) : (
                   <>
                     <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>
-                    <svg viewBox="0 0 800 600" className="sm-board-diagram" preserveAspectRatio="xMidYMid meet">
+                    <svg viewBox={opsViewBox(e.diagram)} className="sm-board-diagram" preserveAspectRatio="xMidYMid meet">
                       <defs>
                         <marker id="sm-diagram-arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
                           <path d="M0,0 L8,4 L0,8 z" fill="currentColor" />

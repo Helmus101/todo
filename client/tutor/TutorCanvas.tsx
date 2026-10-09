@@ -77,7 +77,6 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
   const [typing, setTyping] = useState<{ x: number; y: number; value: string } | null>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [page, setPage] = useState<{ top: number; height: number } | null>(null);
   const textRef = useRef<HTMLInputElement>(null);
 
   const repaint = useCallback(() => {
@@ -112,12 +111,11 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
     if (!w) return; // hidden (Desmos open) — keep the old size, repaint on return
     const board = surf.firstElementChild as HTMLElement | null;
     // A FULL blank page under the lesson (a whole pane tall): scroll down and there is clean paper to draw on.
-    const blank = Math.max(520, Math.round(surf.clientHeight));
+    const blank = 120; // just a little room under the last line; the page grows as a stroke reaches the bottom edge
     const h = Math.max(surf.clientHeight, board ? board.offsetTop + board.offsetHeight + blank : 0, inkBottom() + 240);
     if (Math.abs(size.current.w - w) < 0.5 && Math.abs(size.current.h - h) < 0.5) return;
     const dpr = window.devicePixelRatio || 1;
     size.current = { w, h };
-    setPage(board ? { top: board.offsetTop + board.offsetHeight, height: blank } : null);
     c.style.height = `${h}px`;
     c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
     repaint();
@@ -296,11 +294,6 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
     <>
       {surface && createPortal(
         <>
-          {page && !hidden && (
-            <div className="tc-page" style={{ top: page.top, height: page.height }} aria-hidden>
-              <span>{L("Ta page — dessine ici, puis demande à Otto de regarder", "Your page — draw here, then ask Otto to take a look")}</span>
-            </div>
-          )}
           <canvas
             ref={canvasRef}
             className={`tc-canvas tool-${tool}`}
