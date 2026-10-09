@@ -149,10 +149,10 @@ const STUDY_MODE_ENABLED = false;
  *  at 16px in a way finer geometric detail doesn't, which the previous half-moon-cut-by-a-line mark wasn't
  *  reliably (it read as a blank shape at tab-icon scale, per direct feedback). */
 function Logo({ size = 22 }: { size?: number }) {
+  // The mark: a plain "o" (Otto reads the same both ways) — a ring in the ink colour. Nothing else.
   return (
     <svg className="logo" width={size} height={size} viewBox="0 0 48 48" fill="none" aria-hidden="true">
-      <circle cx="24" cy="24" r="18" stroke="currentColor" strokeWidth="4" fill="none" />
-      <path d="M15 25 L21 31 L33 17" stroke="var(--brand-mark)" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <circle cx="24" cy="24" r="14" stroke="currentColor" strokeWidth="6" fill="none" />
     </svg>
   );
 }

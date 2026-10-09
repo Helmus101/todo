@@ -1,7 +1,7 @@
 // Network-first service worker. The old cache-first version served stale HTML after each
 // deploy (pointing at hashed assets that no longer existed) → blank page. Now: always try
 // the network; the cache is ONLY an offline fallback. API responses are never cached.
-const CACHE_NAME = "otto-v3"; // bumped to flush any stale cached response from before the vercel.json routing fix
+const CACHE_NAME = "otto-v4"; // bumped to flush any stale cached response from before the vercel.json routing fix
 
 self.addEventListener("install", (event) => {
   self.skipWaiting(); // replace the old (broken) worker immediately
