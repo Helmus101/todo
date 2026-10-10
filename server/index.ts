@@ -12,19 +12,13 @@ import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { CourseworkDoc } from "../shared/coursework.ts";
 import { equivalent, gapTarget, verifyStepAgainstGap } from "../shared/mathEquiv.ts";
 import { repairSpokenMath, spokenContextFrom } from "../shared/spokenMath.ts";
-import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, FocusSession } from "../shared/types.ts";
+import { runTutorTurn, detectSubject } from "./tutor.ts";
+import type { TutorOpenerMemory } from "./claude.ts";
+import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, FocusSession, BoardEntry, TaskObjective, TaskProblem } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY, subjectMastery } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
-import { planTurn, repairLine, reactionTo, onTopic } from "./tutorAdapt.ts";
 import { buildTasksPayload } from "./taskDelta.ts";
 import { makeSyncScheduler } from "./syncScheduler.ts";
-import { diffBoard, recordBoardEvents, objectiveEvents, problemEvents, tagStudentAnswer, selfCorrections } from "./boardEvents.ts";
-import { buildTutorDecision, recordTutorDecision } from "./actionSpace.ts";
-import { loadOrInitSessionState, persistSessionState } from "./sessionState.ts";
-import { computePolicy, applyTurn, studentStepEntry } from "./tutorBrain.ts";
-import { normalizeStudentModel, emptyStudentModel, studentModelSummary } from "./studentModel.ts";
-import { ensureGraph } from "./conceptGraph.ts";
-import { classifyTurnAction } from "./actionSpace.ts";
 import { parsePolicy, summarize as summarizePolicy, initPolicy } from "./tutorPolicy.ts";
 import { findSourceQuestions, sourcesForTrack } from "./questionSources.ts";
 import { schoolRecordLine } from "./schoolRecord.ts";
@@ -1636,17 +1630,6 @@ app.post("/api/tutor/opener", requireAuth, rateLimit(30, 60_000), ah(async (req,
 // narration the board has already distilled, not load-bearing context. Halved rather than cut further: still
 // comfortably covers "what did we just say two messages ago" continuity, which IS still needed turn to turn.
 const CHAT_CAP = 60;
-// Did the PREVIOUS tutor turn write anything to the board? The RL policy is scored by what a move PRODUCED
-// (tutorAdapt's TurnOutcome), and "the board grew and the student engaged with it" is real evidence a
-// teaching move worked — but it is only observable ACROSS turns, so the one fact needed next turn is stashed
-// here. In-memory and best-effort, exactly like tutorPolicy's own pending-action map: a restart costs one
-// unscored turn and nothing else. Keyed per (user, task) so two sessions can't score each other's writes.
-const lastTurnBoardWrite = new Map<string, boolean>();
-// Session objectives marked done as of the END of the previous turn, same idea and same lifetime as
-// lastTurnBoardWrite: "an objective got ticked off" is only observable as a DIFFERENCE across turns, and the
-// client resends the full objective list each turn (SET_OBJECTIVES' own replace-everything contract).
-const lastTurnObjectivesDone = new Map<string, number>();
-const LAST_TURN_BOARD_CAP = 2000;
 app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour discuter.", "AI is paused — resume it in Settings to chat.") }); return; }
   if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
@@ -1780,103 +1763,19 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
       .sort((a, b) => (b.logDate || "").localeCompare(a.logDate || ""))
       .slice(0, 14)
       .map((x) => ({ date: x.logDate!, text: x.logText!.trim() }));
-    // Adapt to THIS student: detect a stuck/looping conversation (REPAIR directive) and pick the teaching move
-    // that has been working for them (Thompson-sampling bandit, scored by how they reacted to the previous move).
-    // Primer (stage) turns only; best-effort — a failure here must never block the reply.
-    let repair = "", moveLine = "";
-    // Key for the cross-turn RL bookkeeping below — declared out here so the recording at the end of the turn
-    // (after the board/objectives are actually persisted) can use it, not only the planning block.
-    const planKey = `${req.session.user}:${t.id}`;
+    // THE TUTOR (/tutor stage): its own small engine — server/tutor.ts. Nothing below this block runs for it.
     if (req.body?.primer === true) {
-      try {
-        repair = repairLine(message, history);
-        // The RL policy: a small neural network, trained online per student (REINFORCE), that picks the teaching move and
-        // pace for this turn. Weights persist per student; the previous turn's action is scored by how they just reacted
-        // AND by what that turn actually produced (see TurnOutcome — the board it wrote, the objectives it ticked off).
-        const polState = await loadBanditState(req.session.user!, "tutorpolicy");
-        // What the PREVIOUS turn produced, for this turn's scoring (see TurnOutcome). `previousObjectivesDone`
-        // is the count recorded at the end of that turn; the client's own list is the current truth, so the
-        // difference is how many got newly ticked off in between. No stored count (first turn, or a restart)
-        // means "nothing to attribute", never a guess.
-        const previousObjectivesDone = lastTurnObjectivesDone.get(planKey);
-        const objectivesDoneNow = currentObjectives.filter((o) => o.done).length;
-        const plan = planTurn({
-          userKey: planKey, message, history, subject: t.sourceSubject, policy: parsePolicy((polState as any)?.policy),
-          outcome: {
-            prevWroteBoard: lastTurnBoardWrite.get(planKey),
-            objectivesAdvanced: previousObjectivesDone === undefined ? 0 : Math.max(0, objectivesDoneNow - previousObjectivesDone),
-          },
-          context: {
-            mastery: subjectSignal?.correctRate ?? (typeof t.mastery === "number" ? t.mastery : undefined),
-            objectiveProgress: currentObjectives.length ? objectivesDoneNow / currentObjectives.length : undefined,
-            boardRich: Math.min(1, (t.board || []).length / 12),
-          },
-        });
-        moveLine = plan.line;
-        if (plan.learned) {
-          void saveBanditState(req.session.user!, "tutorpolicy", { policy: plan.policy } as any).catch(() => {});
-          void recordSessionOutcome({ userEmail: req.session.user!, decisionKey: "tutorpolicy", arm: plan.learned.move, context: `${t.sourceSubject || "any"}|${plan.stuck ? "stuck" : "flow"}`, reward: plan.learned.reward, at: new Date().toISOString() });
-        }
-        if (repair) void recordMetric(req.session.user!, "tutor_repair_triggered", 1);
-      } catch { /* best-effort */ }
+      await tutorTurn(req, res, t, { message, history, currentBoard, currentObjectives, recentJournal, profile });
+      return;
     }
-    // Wiring the previously-disconnected board-event/session-state scaffolding (server/boardEvents.ts,
-    // server/sessionState.ts) — Tutor turns only, same gating as the RL policy just above: these are all
-    // genuinely primer-scoped (the board itself is Tutor-only now, see TASK_CHAT_BOARD's removal).
-    const turnNow = new Date();
-    // If the student's message is answering an open board question/gap, attribute it to them BEFORE the
-    // model ever sees the board — app-side attribution is the point of spec §11 ("the tutor must never be
-    // the one deciding which work was its own"). A no-op (returns the board unchanged) when there's
-    // nothing open to answer.
-    const boardForTurn = req.body?.primer === true ? tagStudentAnswer(currentBoard, message, { at: turnNow }) : currentBoard;
-    // Is the student's step right? Decided by CODE when the newest open gap has a checkable key — the model's
-    // own verdict (plan.studentStep) is overridden by this when they disagree (claude.ts).
-    // Spoken: the repaired reading (spokenMath.ts) is checked too, and a correct reading wins — when one
-    // plausible hearing of what they said is right, the student was right and the recognizer was wrong.
-    const stepVerdict = (() => {
-      if (req.body?.primer !== true) return undefined;
-      const raw = verifyStepAgainstGap(message, currentBoard);
-      if (raw?.verdict === "correct" || !req.body?.spoken) return raw;
-      const ctx = spokenContextFrom([t.title || "", t.context || "", ...currentBoard.map((e: { text: string }) => e.text)]);
-      const heard = [repairSpokenMath(message, ctx).interpreted, ...(spokenFromBody(req.body.spoken)?.alternatives || [])];
-      for (const h of heard) { const v = verifyStepAgainstGap(h, currentBoard); if (v?.verdict === "correct") return v; }
-      return raw;
-    })();
-    const sessionStateBefore = req.body?.primer === true ? loadOrInitSessionState(profile, t.id, turnNow) : undefined;
-    // THE TUTOR BRAIN (server/tutorBrain.ts): the app's policy for this turn — how much help is allowed, anti-dependence,
-    // wait/step-back/retest/transfer — computed from the session state + the persistent student model + the concept graph.
-    // The model gets it as a binding block and its hidden plan is validated against it (claude.ts).
-    const learner = req.body?.primer === true ? (normalizeStudentModel(profile.conceptModel) || emptyStudentModel()) : undefined;
-    const graph = req.body?.primer === true ? ensureGraph(profile.conceptGraph) : undefined;
-    let tutorPolicy: ReturnType<typeof computePolicy> | undefined;
-    if (sessionStateBefore) { try { tutorPolicy = computePolicy({ message, history, state: sessionStateBefore, model: learner, graph, subject: t.sourceSubject, board: boardForTurn, now: turnNow }); } catch (e: any) { console.warn("[tutor] policy failed:", e?.message || e); } }
     const out = await chatAboutTask(
       { title: t.title, why: t.why, context: t.context, steps: t.steps, source: t.source, sourceDetail: t.sourceDetail, sourceSubject: t.sourceSubject, sourceDue: t.sourceDue, flashcards: t.flashcards, quizzes: t.quizzes },
       history.map((h) => ({ role: h.role, text: h.text })),
       message,
       profile,
       academic,
-      { schoolRecord: schoolRecordLine(req.session.tasks, req.session.profile, t.sourceSubject), stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, spoken: spokenFromBody(req.body?.spoken), canvasMode: req.body?.canvasMode === true, primer: req.body?.primer === true, recentJournal, currentBoard: boardForTurn, currentProblems, currentObjectives, stepVerdict, repair, moveLine, opening, notNeeded: tasks.notNeededFronts(req.session.tasks || [], t.sourceSubject), boardEvents: t.boardEvents, sessionState: sessionStateBefore, policy: tutorPolicy },
+      { schoolRecord: schoolRecordLine(req.session.tasks, req.session.profile, t.sourceSubject), stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, recentJournal, currentBoard, currentProblems, currentObjectives, opening, notNeeded: tasks.notNeededFronts(req.session.tasks || [], t.sourceSubject) },
     );
-    // The student's own step, as the model transcribed it from what they said, lands on the board as THEIR work
-    // (owner student, marked correct/incorrect) — the board is shared paper, not Otto's notebook (spec §10/§11).
-    // ...but only when it is actually about the lesson. Chatter ("Gary left avocado on the ground") is not a step: it must never be
-    // written up as their work or counted as evidence about what they know.
-    if (req.body?.primer === true && out.plan?.studentStep) {
-      const ctx = [t.title || "", t.sourceSubject || "", ...currentBoard.map((e: { text: string }) => e.text), ...(req.body?.problems || []).map((p: any) => String(p?.question || "")), ...history.filter((h) => h.role === "assistant").slice(-3).map((h) => h.text)];
-      if (!onTopic(out.plan.studentStep.text, ctx) && !onTopic(message, ctx)) { delete out.plan.studentStep; delete out.plan.evidence; }
-    }
-    // The code-checked verdict beats the model's own: a step equivalent to the gap's key IS correct, one that
-    // isn't IS incorrect — this is what the student model, the hint ladder and the board's ✓/✗ learn from.
-    if (stepVerdict && out.plan) {
-      if (out.plan.studentStep) out.plan.studentStep.status = stepVerdict.verdict;
-      else out.plan.studentStep = { text: stepVerdict.given, status: stepVerdict.verdict };
-    }
-    if (req.body?.primer === true && out.plan?.studentStep && !out.guardrailTripped) {
-      const se = studentStepEntry(out.plan, turnNow, out.plan.concept);
-      const norm = (x: string) => x.toLowerCase().replace(/[\s$]/g, "");
-      if (se && ![...currentBoard, ...out.board].some((e) => norm(e.text) === norm(se.text))) out.board.unshift(se);
-    }
     addUsage(profile, out.tokens, "chat"); // untracked before — a tool-calling turn can now cost like a small run
     bumpActivityHour(profile, new Date(), t.sourceSubject);
     profile.lastTutorActivityAt = new Date().toISOString(); // drives shouldRefreshStudentModel's "real activity" gate
@@ -1950,52 +1849,101 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     if (out.boardCleared) t.board = out.board;
     else if (out.board.length) t.board = [...(t.board || []), ...out.board].slice(-tasks.BOARD_MERGE_CAP);
     if (out.problems.length) t.problems = [...(t.problems || []), ...out.problems].slice(-tasks.ARTIFACT_CAP);
-    // Board event log + session state + action log (server/boardEvents.ts, server/sessionState.ts,
-    // server/actionSpace.ts) — previously-written, never-called scaffolding; see the plan this wires up.
-    // Diffed against `currentBoard` (the board BEFORE this turn, i.e. before the student-answer tag too),
-    // so the tagged attempt shows up in the trajectory exactly like Otto's own writes do.
-    if (req.body?.primer === true && sessionStateBefore) {
-      try {
-        const boardAfter = out.boardCleared ? out.board : [...boardForTurn, ...out.board];
-        const objectivesAfter = out.objectives || currentObjectives;
-        const problemsAfter = [...currentProblems, ...out.problems];
-        const events = [
-          ...diffBoard(currentBoard, boardAfter, turnNow),
-          ...objectiveEvents(currentObjectives, objectivesAfter, turnNow),
-          ...problemEvents(currentProblems, problemsAfter, turnNow),
-        ];
-        if (events.length) t.boardEvents = recordBoardEvents(t.boardEvents, events);
-        // The app's update (spec §18/§21/§30): the model's plan + what the app measured (exercise results, board
-        // events) → session state, the evidence-based student model, the concept graph and the decision log.
-        const fallback = classifyTurnAction({ reply: out.reply, newBoardEntries: out.board, newProblems: out.problems, priorBoard: currentBoard });
-        const exerciseResults = [...message.matchAll(/\[(?:Exercise|Exercice)\][^\n]*?(right|wrong|juste|faux)[^\n]*?#\s*(\d+)/gi)].map((mm) => ({ correct: /right|juste/i.test(mm[1]), attempt: Number(mm[2]) || 1 }));
-        const applied = applyTurn(sessionStateBefore, learner, graph, { plan: out.plan || null, fallbackAction: fallback.action, fallbackWhy: fallback.why, ...(out.planCorrection ? { correctedFrom: out.planCorrection.from, correctReason: out.planCorrection.reason } : {}), message, history, subject: t.sourceSubject, exerciseResults, now: turnNow });
-        profile.tutorDecisions = recordTutorDecision(profile.tutorDecisions, { ...applied.decision, taskId: t.id });
-        profile.tutorSessions = persistSessionState(profile.tutorSessions, { ...applied.state, boardRichness: Math.min(1, boardAfter.length / 12) });
-        profile.conceptModel = applied.model;
-        if (applied.graph) profile.conceptGraph = applied.graph;
-      } catch { /* best-effort — never blocks the reply */ }
-    }
-    // Record what THIS turn produced, for the next turn's RL scoring (see lastTurnBoardWrite's own comment).
-    // `out.objectives` is SET_OBJECTIVES' full replacement list when it ran, and is never written onto `t`
-    // here (the client owns the live list) — so it is exactly the count to remember.
-    if (lastTurnBoardWrite.size >= LAST_TURN_BOARD_CAP) lastTurnBoardWrite.delete(lastTurnBoardWrite.keys().next().value as string);
-    if (lastTurnObjectivesDone.size >= LAST_TURN_BOARD_CAP) lastTurnObjectivesDone.delete(lastTurnObjectivesDone.keys().next().value as string);
-    lastTurnBoardWrite.set(planKey, out.board.length > 0);
-    lastTurnObjectivesDone.set(planKey, (out.objectives || currentObjectives).filter((o) => o.done).length);
     t.updatedAt = now;
     await commit(req);
     // The tutor screen merges by id from `board`/`problems`/`chatDelta` and keeps its own chat — so it doesn't need the WHOLE task (its full
     // chat + board history) shipped back every turn. That echo grew with the session and was the biggest per-turn payload.
-    const leanTask = req.body?.primer === true
-      ? { id: t.id, title: t.title, status: t.status, source: t.source, sourceSubject: t.sourceSubject, updatedAt: t.updatedAt, createdAt: t.createdAt, objectives: t.objectives, mastery: t.mastery, board: out.boardCleared ? t.board : out.board, problems: out.problems }
-      : t;
+    const leanTask = t;
     res.json({ reply: out.reply, chatDelta: newChat, board: out.board, boardCleared: out.boardCleared, problems: out.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped, task: leanTask });
   } catch (e: any) {
     console.error(e);
     res.status(500).json({ error: M(req, "échec de la discussion", "chat failed") });
   }
 });
+
+/** The browser's record of recent tutor sessions (sessionMemoryForPrompt), sanitized: it only ever becomes
+ *  background text in the prompt, so only short strings survive. */
+function memoryFromBody(raw: unknown): TutorOpenerMemory[] {
+  if (!Array.isArray(raw)) return [];
+  const str = (x: unknown, n: number) => (typeof x === "string" ? x.slice(0, n) : undefined);
+  const strs = (x: unknown) => (Array.isArray(x) ? x.map((y) => str(y, 200)).filter((y): y is string => !!y).slice(0, 6) : []);
+  return raw.slice(0, 3).filter((m) => m && typeof m === "object").map((m: any) => ({ when: str(m.when, 40), subject: str(m.subject, 60), lines: strs(m.lines), asked: strs(m.asked) }));
+}
+
+/** One tutor turn: what the student said → server/tutor.ts → the board, problems and reply, persisted on the
+ *  session's task. The step verdict (code-checked against the open gap) and the problems' answer keys come
+ *  from the SERVER's own copy of the board, never from the request. */
+async function tutorTurn(
+  req: express.Request, res: express.Response, t: WebTask,
+  c: { message: string; history: { role: "user" | "assistant"; text: string }[]; currentBoard: BoardEntry[]; currentObjectives: TaskObjective[]; recentJournal: { date: string; text: string }[]; profile: Profile },
+): Promise<void> {
+  const { message, history, currentBoard, currentObjectives, profile } = c;
+  // The session opens with one open question — no subject picker — so the subject is read from what they say.
+  if (!t.sourceSubject) {
+    const subject = detectSubject([message, ...history.filter((h) => h.role === "user").map((h) => h.text)].join("\n"));
+    if (subject) { t.sourceSubject = subject; t.title = `${subject} session`; }
+  }
+  // Problems on the board WITH their answer keys (the client only sends question/options/solved).
+  const sent = Array.isArray(req.body?.problems) ? req.body.problems : [];
+  const problems: TaskProblem[] = sent
+    .filter((p: any) => p && typeof p.question === "string" && p.question.trim())
+    .slice(-12)
+    .map((p: any) => {
+      const known = (t.problems || []).find((x) => x.question === p.question);
+      return { ...(known || { id: "", createdAt: "", question: String(p.question).slice(0, 600) }), solved: p.solved === true };
+    });
+  const spoken = spokenFromBody(req.body?.spoken);
+  // Is the student's step right? Code decides, against the newest open gap; for speech, a correct hearing wins.
+  const stepVerdict = (() => {
+    const raw = verifyStepAgainstGap(message, currentBoard);
+    if (raw?.verdict === "correct" || !spoken) return raw;
+    const ctx = spokenContextFrom([t.title || "", ...currentBoard.map((e) => e.text)]);
+    for (const h of [repairSpokenMath(message, ctx).interpreted, ...spoken.alternatives]) {
+      const v = verifyStepAgainstGap(h, currentBoard);
+      if (v?.verdict === "correct") return v;
+    }
+    return raw;
+  })();
+  const lang: "fr" | "en" = profile.language === "en" ? "en" : "fr";
+  const out = await runTutorTurn({
+    message, history, board: currentBoard, problems, objectives: currentObjectives, lang,
+    voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, spoken, stepVerdict,
+    context: { profile, subject: t.sourceSubject, journal: c.recentJournal, schoolRecord: schoolRecordLine(req.session.tasks, profile, t.sourceSubject), memory: memoryFromBody(req.body?.memory) },
+  });
+  addUsage(profile, out.tokens, "chat");
+  bumpActivityHour(profile, new Date(), t.sourceSubject);
+  profile.lastTutorActivityAt = new Date().toISOString();
+  void recordMetric(req.session.user!, "chat_message_sent", 1);
+  if (out.error || !out.reply.trim()) {
+    void recordMetric(req.session.user!, "chat_error", 1);
+    res.status(500).json({ error: M(req, "Otto n'a pas pu répondre — réessaie dans un instant.", "Otto couldn't reply just now — try again in a moment.") });
+    return;
+  }
+  if (out.guardrailTripped) void recordMetric(req.session.user!, "chat_guardrail_tripped", 1, "freestudy");
+  // The student's verified step goes on the board as THEIR line, marked right or wrong — unless it's already there.
+  if (stepVerdict && !out.boardCleared) {
+    const norm = (x: string) => x.toLowerCase().replace(/[\s$]/g, "");
+    if (![...currentBoard, ...out.board].some((e) => norm(e.text) === norm(stepVerdict.given))) {
+      out.board.unshift({ id: randomUUID(), text: stepVerdict.given, kind: "result", owner: "student", status: stepVerdict.verdict, at: new Date().toISOString() } as BoardEntry);
+    }
+  }
+  const now = new Date().toISOString();
+  const newChat = [
+    { role: "user" as const, text: message, at: now },
+    { role: "assistant" as const, text: out.reply, at: now, ...(out.problems.length ? { artifacts: out.problems.map((p) => ({ kind: "problem" as const, id: p.id, title: p.question.slice(0, 60) })) } : {}), ...(out.guardrailTripped ? { guardrail: true } : {}) },
+  ];
+  t.chat = [...(t.chat || []), ...newChat].slice(-CHAT_CAP);
+  if (out.boardCleared) t.board = out.board;
+  else if (out.board.length) t.board = [...(t.board || []), ...out.board].slice(-tasks.BOARD_MERGE_CAP);
+  if (out.problems.length) t.problems = [...(t.problems || []), ...out.problems].slice(-tasks.ARTIFACT_CAP);
+  if (out.objectives) t.objectives = out.objectives;
+  t.updatedAt = now;
+  await commit(req);
+  res.json({
+    reply: out.reply, chatDelta: newChat, board: out.board, boardCleared: out.boardCleared, problems: out.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped,
+    task: { id: t.id, title: t.title, status: t.status, source: t.source, sourceSubject: t.sourceSubject, updatedAt: t.updatedAt, createdAt: t.createdAt, objectives: t.objectives, board: out.boardCleared ? t.board : out.board, problems: out.problems },
+  });
+}
 
 // A tiny nudge-me sidebar next to a flashcard/quiz question — NOT the per-task chat above: no task lookup
 // beyond auth (the card content comes straight from the client, since it's already showing it), no

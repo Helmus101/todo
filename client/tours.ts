@@ -11,7 +11,7 @@ export const TOURS: Record<string, TourStep[]> = {
     { target: ".topnav-links", title: ["Le reste d'Otto", "The rest of Otto"], body: ["Tuteur pour apprendre en réfléchissant, Journal pour retenir, Erreurs pour ne plus les refaire, Cours pour ajouter tes documents, Réglages pour tout ajuster. Chaque page te montrera comment elle marche la première fois.", "Tutor to learn by thinking, Journal to remember, Mistakes so you don't repeat them, Coursework for your documents, Settings to tune it all. Each page shows you how it works the first time you open it."] },
   ],
   "tutor-landing": [
-    { target: "#tutor-subject-select", title: ["Choisis une matière", "Pick a subject"], body: ["Otto adapte son niveau, ses exemples et même tes documents de cours à la matière choisie.", "Otto adapts his level, examples and even your uploaded coursework to the subject you pick."], action: ["À toi : ouvre la liste.", "Try it: open the list."], interactive: true },
+    { target: "#tutor-opening", title: ["Dis-moi sur quoi tu bosses", "Tell Otto what you're working on"], body: ["Colle un exercice, nomme un chapitre ou décris ce qui bloque — Otto comprend la matière tout seul.", "Paste a problem, name a topic or say what's blocking you — Otto works out the subject on his own."], action: ["À toi : écris une phrase.", "Try it: type a sentence."], interactive: true },
     { target: ".tutor-start-btn", title: ["Lance une séance", "Start a session"], body: ["Une séance = un tableau blanc partagé et Otto qui te pose des questions plutôt que de donner la réponse.", "A session = a shared whiteboard and Otto asking you questions instead of handing you the answer."] },
   ],
   "tutor-session": [

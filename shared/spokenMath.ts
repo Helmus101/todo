@@ -66,13 +66,18 @@ export function repairSpokenMath(transcript: string, ctx: SpokenContext): Spoken
     s = s.replace(re, (m) => { if (m.toLowerCase() === to) return m; changes.push({ from: m, to, why }); return to; });
   }
 
-  if (trigInPlay && ctx.angles.length) {
-    // "1025" / "1015": "tan" heard as "ten" and fused with the angle that follows it.
+  // "1025" / "1015": "tan" heard as "ten" and fused with the angle that follows it. An angle on the board is
+  // enough to propose it (a bare "1025" next to a 25° angle is rarely a real number); without trig in play
+  // it stays a guess for the tutor to confirm.
+  if (ctx.angles.length && /\b10\d{2}\b\s*(?:=|over|\/)/i.test(s)) {
     s = s.replace(/\b10(\d{1,2})\b/g, (m, a: string) => {
       if (!knownAngle(a)) return m;
       changes.push({ from: m, to: `tan ${a}°`, why: `"tan" heard as "ten" and merged with the ${a}° angle on the board` });
+      if (!trigInPlay) low = true;
       return `tan ${a}°`;
     });
+  }
+  if (trigInPlay && ctx.angles.length) {
     // "<soundalike> 25" → "tan 25°": a function-sounding word right before a known angle.
     s = s.replace(/(^|.{0,12}?)\b([A-Za-z]+|10)\s+(?:of\s+)?(\d{1,3})(?!\d)(\s*°)?(?=(.{0,12}))/g, (m, before: string, w: string, a: string, deg: string | undefined, after: string) => {
       if (!knownAngle(a)) return m;
