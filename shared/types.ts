@@ -1279,6 +1279,8 @@ export interface WebTask {
   sourceDetail?: string;
   /** The real subject as Pronote names it ("Physique-Chimie") — drives per-subject artifact shaping. */
   sourceSubject?: string;
+  /** Free-study tutor session: the exact topic the student picked at the start ("Théorème de Pythagore", "Chapter 3 exercises"). */
+  sourceTopic?: string;
   /** The source item's own due date (ISO) — Pronote's, not the model's reading of it. */
   sourceDue?: string;
   /** Daily study-log entry text (source:"studylog" only) — what the student typed for that day/week. Not
