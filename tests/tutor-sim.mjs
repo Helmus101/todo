@@ -104,7 +104,7 @@ export async function runTutorSim(check, section) {
 
   // 10. Persona + board context the model is actually given.
   const sys = String(calls[0].messages[0].content);
-  check("the system prompt carries the Socratic/board contract the tutor is held to", /SOUND LIKE A PERSON/.test(sys) && /THE BOARD IS THE WORKING/.test(sys) && /EXERCISE RESULTS ARRIVE AS/.test(sys) && /ASK what they want to do now/.test(sys) && /NEVER STATE THE CONCLUSION YOURSELF/.test(sys));
+  check("the system prompt carries the Socratic/board contract the tutor is held to", /THE CORE — WHO YOU ARE/.test(sys) && /THE BOARD IS THEIR PAPER/.test(sys) && /EXERCISE RESULTS ARRIVE AS/.test(sys) && /ASK what they want to do now/.test(sys) && /NEVER STATE THE CONCLUSION YOURSELF/.test(sys));
   r = await run("next", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }], problems: [problem], board: [{ id: "b1", kind: "summary", text: "Factor first", at: new Date().toISOString() }] });
   // boardSurfaceBlock (server/boardEvents.ts, wired in to replace the old hand-rolled block) always tags
   // an Otto-owned entry "(yours)" — spec §11's ownership distinction made explicit even with nothing to
@@ -186,7 +186,7 @@ export async function runTutorSim(check, section) {
   script = () => ({ content: "Mm. What happens to the −3 when you distribute it?" });
   await run("so it is 3 sec x", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
   const sysTxt = String(calls[0].messages[0].content);
-  check("the tutor is told to be critical-but-kind: verify every step, never wave a wrong step through, justify, never erase the board", /CRITICAL, KINDLY/.test(sysTxt) && /never wave it through/.test(sysTxt) && /ever erased/.test(sysTxt));
+  check("the tutor is told to be critical-but-kind: verify every step, never wave a wrong step through, justify, never erase the board", /SOUND HUMAN/.test(sysTxt) && /never wave it through/.test(sysTxt) && /ever erased/.test(sysTxt));
 
   // Exercises are only for ONE-answer questions.
   check("a short single-answer exercise is accepted", !("error" in makeProblem({ question: "Simplify $\\cos^2\\theta(1+\\tan^2\\theta)$ to a single number.", answer: "1" })) && !("error" in makeProblem({ question: "Solve 2x + 3 = 11.", answer: "x = 4" })));
@@ -224,11 +224,11 @@ export async function runTutorSim(check, section) {
   const exR = "[Exercise] I answered \"4\" — marked right (try #1).";
   check("milestone cheer: a streak of right exercises, or all objectives done; not on a plain turn or a single right answer", /MILESTONE/.test(adA.cheerLine(exR, [{ role: "user", text: exR }, { role: "assistant", text: "nice?" }])) && /every objective/.test(adA.cheerLine("ok", [], [{ done: true }, { done: true }])) && adA.cheerLine("x = 4", [], [{ done: true }, { done: false }]) === "" && adA.cheerLine(exR, []) === "");
   check("when stuck, the first rung normalises before shrinking the step", /NORMALISE/.test(adA.scaffoldLine("idk", [])));
-  check("the persona has the warm-older-student voice and uses what it knows about the student", /WARM OLDER STUDENT/.test(String(calls[0].messages[0].content)) && /use what you know about them/.test(String(calls[0].messages[0].content)));
+  check("the persona has the warm-older-student voice and uses what it knows about the student", /kind older student/.test(String(calls[0].messages[0].content)) && /Use what you know about them/.test(String(calls[0].messages[0].content)));
 
   check("plain-text maths in a trace line is wrapped as LaTeX (fractions, roots, greek, functions); prose and existing $…$ are left alone", autoMathLine("Evaluated: (√3/2)(√2/2) - (√2/2)(1/2)") === "Evaluated: $(\\frac{\\sqrt{3}}{2})(\\frac{\\sqrt{2}}{2}) - (\\frac{\\sqrt{2}}{2})(\\frac{1}{2})$" && /\$A = \\frac\{\\pi\}\{3\}\$, \$B = \\frac\{\\pi\}\{4\}\$/.test(autoMathLine("Substituted A = π/3, B = π/4")) && autoMathLine("Add up to 5π/12?") === "Add up to $\\frac{5\\pi}{12}$?" && autoMathLine("He should try again") === "He should try again" && autoMathLine("so $x^2$ is 4") === "so $x^2$ is 4" && /special-angle/.test(autoMathLine("mapped special-angle values for A = π/3")));
   check("an instruction ('Find … by writing π/12 as …') counts as asking: a board line that already shows the decomposition is detected", adA.boardStatesAskedValue("Find the exact value of sin(π/12) by writing π/12 as the difference of two special angles.", [{ text: "x", diagram: [{ latex: "\\sin(π/12) = \\sin(π/3 - π/4)" }] }]).length === 1 && adA.boardStatesAskedValue("Find the exact value of sin(π/12) by writing it as a difference of angles.", [{ text: "Target: sin(π/12) = ?" }]).length === 0);
-  check("the persona makes the first move (the key idea / decomposition) the student's and asks for LaTeX on the board", /THE FIRST MOVE IS THEIRS/.test(String(calls[0].messages[0].content)) && /ALWAYS WRITE MATHS IN LaTeX/.test(String(calls[0].messages[0].content)));
+  check("the persona makes the first move (the key idea / decomposition) the student's and asks for LaTeX on the board", /THE FIRST MOVE IS THEIRS/.test(String(calls[0].messages[0].content)) && /is LaTeX between/.test(String(calls[0].messages[0].content)));
 
   const loose = buildGeometry({ points: { A: [0, 0], B: [6, 0], C: [2, 4] } });
   check("points with no sides given are joined into a closed shape (never a figure of loose dots)", !loose.error && loose.ops.filter((o) => o.op === "line").length === 3 && buildGeometry({ points: { A: [0, 0], B: [3, 4] } }).ops.filter((o) => o.op === "line").length === 1);
@@ -244,13 +244,13 @@ export async function runTutorSim(check, section) {
   check("end to end: the guiding question stays in chat — nothing question-shaped lands on the board", !r.boardAll.some((e) => e.kind === "question" || /special angles add up/.test(e.text)));
 
   const sysT = String(calls[0].messages[0].content);
-  check("the persona makes the board the student's paper for every subject (given / result / question / formulas / outlines / mnemonics)", /THE BOARD IS THEIR PAPER/.test(sysT) && /kind "result"/.test(sysT) && /kind "given"/.test(sysT) && /history\/economics\/literature/.test(sysT));
+  check("the persona makes the board the student's paper for every subject (given / result / question / formulas / outlines / mnemonics)", /THE BOARD IS THEIR PAPER/.test(sysT) && /kind "result"/.test(sysT) && /kind "given"/.test(sysT) && /history, economics, literature/.test(sysT));
   // a student step with an empty board still gets the write-to-board nudge (summary + result)
   script = (b, i) => i === 0 ? { content: "Right, that's the sum formula. Which two special angles add up to 5π/12?" } : i === 1 ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "Established: $\\sin(A+B)=\\sin A\\cos B+\\cos A\\sin B$", kind: "result" })] } : { content: "Right, that's the sum formula. Which two special angles add up to 5π/12?" };
   r = await run("so I use sin(A+B) = sin A cos B + cos A sin B", { history: [{ role: "user", text: "find sin(5π/12)" }, { role: "assistant", text: "ok" }] });
   check("a student step gets the nudge; a 'result' entry lands (kind result)", /kind \\\"result\\\"|kind \"result\"/.test(JSON.stringify(calls[1].messages)) || r.board.some((e) => e.kind === "result"));
 
-  check("the board guidance is judgement, not a checklist (no forced entries, no repeats)", /GUIDE TO YOUR JUDGEMENT|a guide to your judgement/.test(String(calls[0].messages[0].content)) && /never write an entry just to have written one/.test(String(calls[0].messages[0].content)));
+  check("the board guidance is judgement, not a checklist (no forced entries, no repeats)", /Add something only when it helps/.test(String(calls[0].messages[0].content)) && /never an entry just to have written one/.test(String(calls[0].messages[0].content)));
   script = () => ({ content: "Nice. Which factor first?" });
   r = await run("ok", { history: [{ role: "user", text: "solve x^2-5x+6" }, { role: "assistant", text: "ok" }], board: [{ id: "g", kind: "gap", text: "x² − 5x + 6 = (x − ?)(x − ?)", at: "" }] });
   check("the board never grows a question card — questions are asked and answered in chat only", r.boardAll.every((e) => e.kind !== "question" && !/Which factor first/.test(e.text)));
@@ -449,7 +449,19 @@ export async function runTutorSim(check, section) {
     r = await run("can you just draw it out for me please", { history: [{ role: "user", text: "two boats J and K 500 m apart, lighthouse on a 470 m cliff, angles of depression 25 and 40" }, { role: "assistant", text: "ok" }] });
     const fig = r.boardAll.find((e) => e.kind === "svg");
     check("end to end: a request to draw is never answered with just a question — the computed figure lands", !!fig && /500 m/.test(fig.svg) && /470 m/.test(fig.svg) && (fig.svg.match(/25°/g) || []).length === 1 && calls[0].tools.some((x) => x.function?.name === "TRIG_SCENE_ON_BOARD"));
-    script = (b, i) => i === 0 ? { content: "Spot on — you've got the two sides lined up. How does the sine rule combine those?" } : { content: "Sorry, I didn't quite catch that — where are you in the problem right now?" };
+    // KNOW THE ANSWER BEFORE YOU ASK: a reply that states the unit and then asks for the unit is sent back once.
+  script = (b, i) => i === 0
+    ? { content: '<plan>{"action":"ask_question","level":0,"ask":"what is the unit of work","ask_answer":"J"}</plan>750 J — exactly. What are the units on that?' }
+    : { content: "Exactly. Now the same push took 2.5 s — what could you work out from that?" };
+  r = await run("750", { history: [{ role: "user", text: "work is force times distance" }, { role: "assistant", text: "ok" }] });
+  check("end to end: a reply that already states the answer to the question it asks ('750 J — what are the units?') is corrected once", !/what are the units/i.test(r.reply) && /2\.5 s/.test(r.reply) && calls.some((b) => /already states "J"/.test(lastUserText(b))));
+  // LISTEN: "I don't know" / an idea in their own words reach the tutor as directives.
+  script = () => ({ content: "Okay — that's the missing piece. It's called the watt: one joule per second. So what's the power here?" });
+  r = await run("oh no I don't know", { history: [{ role: "user", text: "joules per second" }, { role: "assistant", text: "what's it called?" }] });
+  check("a student who says they don't know gets the CONFUSED directive (tell the fact, drop a level, never another riddle)", calls.some((b) => /THEY JUST TOLD YOU THEY ARE LOST OR DON'T KNOW/.test(JSON.stringify(b.messages))));
+  r = await run("wait so then power is basically work over time", { history: [{ role: "user", text: "300" }, { role: "assistant", text: "yes, 300" }] });
+  check("an idea in their own words reaches the tutor as the thing to respond to first", calls.some((b) => /THEY JUST PUT AN IDEA IN THEIR OWN WORDS/.test(JSON.stringify(b.messages))));
+  script = (b, i) => i === 0 ? { content: "Spot on — you've got the two sides lined up. How does the sine rule combine those?" } : { content: "Sorry, I didn't quite catch that — where are you in the problem right now?" };
     r = await run("to do", { history: [{ role: "user", text: "find TJ" }, { role: "assistant", text: "ok" }] });
     check("end to end: no 'spot on' for a message with nothing in it", !/spot on/i.test(r.reply));
   }

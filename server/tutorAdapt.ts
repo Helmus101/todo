@@ -813,3 +813,33 @@ export function echoesStudentWords(boardText: string, studentMessage: string): b
   for (let i = 0; i + 4 <= b.length; i++) if (m.includes(b.slice(i, i + 4).join(" "))) return true;
   return false;
 }
+
+/** The reply already CONTAINS the answer to the question it asks ("750 J — what are the units?"). `askAnswer` is what the tutor wrote in its
+ *  plan as the correct answer to its own question. Unit-like answers (J, W, m/s) are detected as number+unit; word/number answers as a whole
+ *  token. Anything the student themselves said doesn't count (echoing their own word is fine). Pure. */
+export function statesOwnAnswer(reply: string, askAnswer: string | undefined, studentTexts: string[]): boolean {
+  const ans = String(askAnswer || "").replace(/\\(?:text|mathrm|textbf)\{([^}]*)\}/g, "$1").replace(/[$\\{}]/g, "").replace(/\s+/g, " ").trim();
+  if (!ans || ans.length > 40) return false;
+  const theirs = studentTexts.join(" ").replace(/\\(?:text|mathrm)\{([^}]*)\}/g, "$1").replace(/[$\\{}]/g, "");
+  const text = String(reply || "").replace(/\\(?:text|mathrm)\{([^}]*)\}/g, "$1").replace(/[$\\{}]/g, "");
+  const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (/^[A-Za-zμΩ°%/·]{1,6}$/.test(ans) && !/^(?:a|an|the|it|yes|no|is|are|of|to|in|on|or|so)$/i.test(ans)) {
+    const re = new RegExp(`\\d(?:[.,]\\d+)?\\s*(?:\\\\,)?\\s*${esc(ans)}(?![A-Za-z])`);
+    return re.test(text) && !re.test(theirs);
+  }
+  const re = new RegExp(`(?<![\\p{L}\\d])${esc(ans)}(?![\\p{L}\\d])`, "iu");
+  if (ans.replace(/\s+/g, "").length < 3) return false;
+  return re.test(text) && !re.test(theirs);
+}
+
+/** What the student's message IS, when it isn't plain work: lost / "I don't know", or an idea voiced in their own words. Each returns a
+ *  directive block for the tutor's context so the reply answers THAT first instead of marching on with its plan. */
+export const CONFUSED_BLOCK = `\n\nTHEY JUST TOLD YOU THEY ARE LOST OR DON'T KNOW. Do not ask the next question on your plan. Say back what you heard in a few words ("okay — that's the missing piece"), then drop a level: if it is a FACT that cannot be reasoned out (a unit's or law's name, a definition, a convention, a date) tell them in one short sentence and have them use it straight away; otherwise explain the ONE missing idea in plain words with a concrete everyday example and ask them to try it. Never repeat a question they could not answer, never hint at a name with a riddle twice.\n`;
+export const INSIGHT_BLOCK = `\n\nTHEY JUST PUT AN IDEA IN THEIR OWN WORDS ("so power is work over time"). That is the most important thing in their message: respond to IT first — say whether it holds and what to tighten, in a few words — let them state it precisely if it is loose, and make it the next step. Do not carry on with the old question as if they had not spoken.\n`;
+export function listenCue(message: string): "confused" | "insight" | null {
+  const m = String(message || "").trim();
+  if (!m || /^\[(?:Exercise|Exercice|Activity|Activité)\]/i.test(m)) return null;
+  if (/\b(?:i (?:don'?t|do not|really don'?t) (?:know|get|understand)|no idea|i'?m lost|i am lost|still (?:don'?t|do not) get|(?:i'?m )?confused|je (?:ne )?(?:sais|comprends) pas|aucune idée|je suis perdu)\b/i.test(m)) return "confused";
+  if (m.length >= 18 && (/\b(?:oh|ah|wait|okay|ok)\b[^.?!]{0,40}\bso\b/i.test(m) || /\bso\b[^.?!]{0,70}\b(?:is|are|means?)\b[^.?!]{0,20}\b(?:basically|just|like|the same|how fast|rate|over)\b/i.test(m) || /\bbasically\b/i.test(m))) return "insight";
+  return null;
+}
