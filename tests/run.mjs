@@ -2976,7 +2976,7 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   // One quick client-side retry absorbs a transient blip; past that,
   // the reply's audio is silently skipped (lastDiagnostic set) rather than switching voices mid-session.
   check("a cloud chunk gets exactly one quick retry before being given up on", /CLOUD_RETRY_DELAY_MS/.test(ttsSynthSrc) && /await sleep\(CLOUD_RETRY_DELAY_MS\)/.test(ttsSynthSrc));
-  check("a cloud fetch failure never falls through to the browser voice — it's skipped silently instead", !/noteCloudFailure/.test(ttsSynthSrc) && !/speakWithBrowser\(gen, chunks/.test(ttsSynthSrc) && /skipping this reply's audio \(never the browser voice\)/.test(ttsSynthSrc));
+  check("a cloud fetch failure never falls through to the browser voice — it's skipped silently instead", !/noteCloudFailure/.test(ttsSynthSrc) && !/speakWithBrowser\(gen, chunks/.test(ttsSynthSrc) && /failedEverywhere\("cloud-unavailable"\)/.test(ttsSynthSrc));
   check("a cloud playback failure is also skipped silently, never the browser voice", /playback-failed/.test(ttsSynthSrc));
   check("speak() only ever uses the browser voice when there's literally no <audio> element to play cloud audio with", /const useCloud = audioSupported;/.test(ttsSynthSrc));
   check("the browser fallback (the no-<audio>-support edge case) still speaks via speechSynthesis", /engine\.speak\(utter\)/.test(ttsSynthSrc) && !/speakViaFreeTTS/.test(ttsSynthSrc));
