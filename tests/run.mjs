@@ -369,8 +369,7 @@ section("RL personalization — one learner, board-driving moves, richer reward,
   check("the policy is v2 with the three added context features (mastery, objective progress, board richness)",
     /v: 2/.test(pol) && /p\.v !== 2/.test(pol) && /mastery\?: number/.test(pol) && /objectiveProgress\?: number/.test(pol) && /boardRich\?: number/.test(pol));
   const idx2 = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
-  check("the route feeds the policy what the previous turn PRODUCED (board write + objectives ticked off), tracked across turns",
-    /lastTurnBoardWrite/.test(idx2) && /lastTurnObjectivesDone/.test(idx2) && /objectivesAdvanced/.test(idx2) && /boardRich: Math\.min\(1, \(t\.board \|\| \[\]\)\.length \/ 12\)/.test(idx2));
+  check("the tutor turn no longer runs the learned policy (simplified engine, server/tutor.ts)", !/planTurn\(|lastTurnBoardWrite/.test(idx2) && /runTutorTurn\(/.test(idx2));
 }
 section("Tutor graphs — safe expression compiler + GRAPH_ON_BOARD validation");
 {
@@ -2095,7 +2094,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   check("naming the method before the student reached for it is caught, unless they used it or asked for help", methodAhead("tan(θ) = slope! How do you find the angle between two lines?", ["find the acute angle between y=5x-2 and y=1/3x-1", "so one slope is five the other is one third"]).includes("tan") && methodAhead("What does tan(θ) = slope give you?", ["I think tan theta is the slope"]).length === 0 && wantsHelp("can I get a hint") && !wantsHelp("one slope is five"));
   check("chatter is not student work: 'Gary left avocado on the ground' is off-topic, maths and on-topic words are not", !onTopic("Gary left avocado on the ground", ["find the acute angle between y = 5x - 2 and y = x/3 - 1", "What do you notice about their two slopes?"]) && onTopic("intersect and I found the point of intersection is when x equals 3 over 14", ["lines"]) && onTopic("the lines cross", ["The two lines on the board", "intersect"]) && onTopic("one slope is five", []));
   { const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"); const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
-    check("off-topic chatter never becomes board work or evidence, and the tutor can't board-write the method early", /!onTopic\(out\.plan\.studentStep\.text, ctx\) && !onTopic\(message, ctx\)\) \{ delete out\.plan\.studentStep; delete out\.plan\.evidence; \}/.test(idx) && /writes the method \(\$\{ahead\.join/.test(cl)); }
+    check("off-topic chatter never becomes board work: only a code-verified step is written up as the student's line", /stepVerdict && !out\.boardCleared/.test(idx) && !/out\.plan\.studentStep/.test(idx)); }
   // ── Listen first (reported live: "what does m show" / "what's M1" answered with arctan and a calculator) ──
   check("clarification questions are recognised with the term they ask about", clarificationTerm("what does m show") === "m" && clarificationTerm("what's M1") === "m1" && clarificationTerm("what is a slope?") === "slope" && clarificationTerm("I found x = 3/14") === null && clarificationTerm("[Exercise] I answered 4") === null);
   check("a reply that carries on with its own plan instead of answering the question is caught", ignoresQuestion("Punch it into the calculator — what angle does arctan(1/3) give you in degrees?", "what's M1") && !ignoresQuestion("m₁ is just the name for the slope of the first line — which line has slope 5?", "what's M1") && ignoresQuestion("arctan(5) gives that angle with the x-axis. Do the same for the other slope.", "what does m show"));
@@ -2120,7 +2119,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     let threw = false; try { makeTaskSync().expand({ __delta: true, order: ["nope:abc123"], changed: [] }); } catch { threw = true; }
     check("an unresolvable delta throws (never silently renders a wrong list)", threw && parseHave("short") === null && parseHave(have)?.size === 60); }
   { const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"); const api = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
-    check("every task-list route answers through tasksPayload; the client sends x-have and expands deltas; chat echoes a lean task", !/res\.json\(outgoingTasks\(/.test(idx) && /tasksPayload\(req, req\.session\.tasks, withNudge\)/.test(idx) && /"x-have"/.test(api) && /taskSync\.expand\(await r\.json\(\)\)/.test(api) && /const leanTask = req\.body\?\.primer === true/.test(idx)); }
+    check("every task-list route answers through tasksPayload; the client sends x-have and expands deltas; chat echoes a lean task", !/res\.json\(outgoingTasks\(/.test(idx) && /tasksPayload\(req, req\.session\.tasks, withNudge\)/.test(idx) && /"x-have"/.test(api) && /taskSync\.expand\(await r\.json\(\)\)/.test(api) && /task: \{ id: t\.id, title: t\.title, status: t\.status/.test(idx)); }
   // ── Write-behind: many mutations → one Supabase write ──
   { let now = 0; const timers = []; const writes = [];
     const fake = { setTimer: (fn, ms) => { const t = { fn, at: now + ms, dead: false }; timers.push(t); return t; }, clearTimer: (t) => { t.dead = true; }, now: () => now };
@@ -2521,7 +2520,7 @@ section("Tutor Session — sessions never auto-start, and past boards read at a 
     return /peekForActiveSession/.test(tutorSrc) && /api\.tasks\(\)\.then/.test(peekBody) && !/setTask\(/.test(peekBody) && /setPendingActiveSession\(t \|\| null\)/.test(peekBody) && !/api\.studyFreeSession\(\)\.then/.test(tutorSrc);
   })());
   check("an in-progress session is offered back ONLY via an explicit Resume button (no auto-open on mount)", /resumeActiveSession/.test(tutorSrc) && /onClick=\{resumeActiveSession\}/.test(tutorSrc) && /L\("Reprendre", "Resume"\)/.test(tutorSrc));
-  check("Start is the only create path and always passes fresh (a new lesson starts clean)", /api\.studyFreeSession\(true, selectedSubject\)/.test(tutorSrc));
+  check("Start is the only create path and always passes fresh (a new lesson starts clean)", /api\.studyFreeSession\(true\)/.test(tutorSrc));
   check("voice stays manual (no startInVoiceMode on the panel — the mic toggle is the student's)", !/startInVoiceMode=/.test(tutorSrc));
   // Report-live: "for summary there should be ONE title — what was the main thing — and then a bit of
   // description", NOT a wall of board lines (the example: Spring compression → energy transfer…, E = kx²…,
@@ -2870,7 +2869,7 @@ section("/api/study/free — resumes an active freestudy session by default, onl
   // subject. Start must require a picked subject and pass fresh:true (plus that subject) — a NEW lesson is
   // always a BLANK session, never a resume of an old one; resuming an in-progress session is only the
   // landing's explicit "Reprendre" click (resumeActiveSession).
-  check("Start requires a subject and creates a BLANK fresh session (never resumes an old thread)", /api\.studyFreeSession\(true, selectedSubject\)/.test(tutorSrc) && /if \(!selectedSubject( \|\| \w+)?\) return;/.test(tutorSrc));
+  check("Start asks ONE open question (no subject picker), creates a BLANK fresh session, and sends the answer as the first message", /api\.studyFreeSession\(true\)/.test(tutorSrc) && !/tutor-subject-select/.test(tutorSrc) && /id="tutor-opening"/.test(tutorSrc) && /firstMessageRef\.current = firstMessage/.test(tutorSrc));
   // Reported live twice: "Reprendre" silently loaded an EMPTY chat/board despite real prior conversation.
   // Root cause both times was the same class of bug — guessing at raw localStorage keys
   // (`otto-chat-${id}-${userId}` etc.) that client/localChatBoard.ts has never written (it keeps ONE
@@ -5844,7 +5843,6 @@ section("actionSpace.ts — deterministic teaching-action classification + decis
   check("buildTutorDecision fills taskId/subject/at/action/why", decision.taskId === "t1" && decision.subject === "Physics" && decision.action === "CREATE_PROBLEM" && decision.at === now.toISOString() && decision.why.length > 0);
   check("recordTutorDecision appends and caps", recordTutorDecision(Array.from({ length: TUTOR_DECISION_CAP - 1 }, () => decision), decision).length === TUTOR_DECISION_CAP);
   const idxSrc2 = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
-  check("the chat route actually records a decision on the live path (tutorBrain applyTurn → recordTutorDecision), not just imports it", /applyTurn\(sessionStateBefore/.test(idxSrc2) && /recordTutorDecision\(/.test(idxSrc2));
 }
 
 section("sessionState.ts — app-owned per-task session state (source + unit)");
@@ -5865,8 +5863,6 @@ section("sessionState.ts — app-owned per-task session state (source + unit)");
   check("a frustrated reaction raises the frustration reading", frustrated.frustration > fresh.frustration);
   check("persistSessionState upserts by taskId and caps the list", persistSessionState([fresh], updateSessionState(fresh, { action: "WAIT", boardLength: 0, success: false }, now)).length === 1);
   check("sessionStateBlock is silent on turn 0 (nothing to report yet), speaks up after", sessionStateBlock(fresh) === "" && /SESSION STATE/.test(sessionStateBlock(afterHint)));
-  const idxSrc3 = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
-  check("the chat route calls loadOrInitSessionState before the chatAboutTask call and updateSessionState/persistSessionState after it", /loadOrInitSessionState\(profile, t\.id, turnNow\)/.test(idxSrc3) && /applyTurn\(sessionStateBefore/.test(idxSrc3) && /persistSessionState\(profile\.tutorSessions/.test(idxSrc3));
 
   // CRITICAL: normalizeProfile builds a brand-new object from an explicit field whitelist — anything not
   // listed is silently DROPPED on every load (server/store.ts calls it on every loadState). Without
@@ -5879,13 +5875,9 @@ section("sessionState.ts — app-owned per-task session state (source + unit)");
   check("conceptModel/conceptGraph also survive the round-trip (shallow shape check, deep validation deferred to their own server-side normalizers)", normalizeProfile({ conceptModel: { concepts: {}, updatedAt: now.toISOString() } }).conceptModel !== undefined && normalizeProfile({ conceptGraph: { nodes: {}, updatedAt: now.toISOString() } }).conceptGraph !== undefined && normalizeProfile({}).conceptModel === undefined);
 }
 
-section("server/index.ts chat route — board-event/session-state wiring is on the LIVE path (source pins)");
+section("server/index.ts chat route — the client-sent board survives the round trip (source pins)");
 {
   const idxSrc4 = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
-  check("tagStudentAnswer is called before chatAboutTask, primer-gated", /tagStudentAnswer\(currentBoard, message, \{ at: turnNow \}\)/.test(idxSrc4));
-  check("chatAboutTask is called with boardEvents/sessionState in opts", /boardEvents: t\.boardEvents, sessionState: sessionStateBefore/.test(idxSrc4));
-  check("diffBoard/objectiveEvents/problemEvents are all called after chatAboutTask returns, and recorded onto t.boardEvents", /diffBoard\(currentBoard, boardAfter, turnNow\)/.test(idxSrc4) && /objectiveEvents\(currentObjectives, objectivesAfter, turnNow\)/.test(idxSrc4) && /problemEvents\(currentProblems, problemsAfter, turnNow\)/.test(idxSrc4) && /t\.boardEvents = recordBoardEvents\(t\.boardEvents, events\)/.test(idxSrc4));
-  check("the whole wiring block is best-effort (never blocks the reply on a failure)", /catch \{ \/\* best-effort — never blocks the reply \*\/ \}/.test(idxSrc4));
   check("the client-sent board sanitizer now preserves owner/status/concept, not just text/kind/diagram/outline", /\.\.\.\(b\.owner === "student" \|\| b\.owner === "otto" \? \{ owner: b\.owner \} : \{\}\)/.test(idxSrc4) && /\.\.\.\(b\.status === "correct" \|\| b\.status === "incorrect" \? \{ status: b\.status \} : \{\}\)/.test(idxSrc4));
 }
 
@@ -5984,5 +5976,7 @@ await runTutorSim(check, section);
   const f3 = currentFocus([], [], [{ role: "user", text: "solve x^2-5x+6" }]);
   check("currentFocus: open exercise > board givens > how the session began", /open exercise: Find m/.test(f1) && /1000 kg, 24 m/.test(f2) && /x\^2-5x\+6/.test(f3) && focusBlock("") === "" && /CURRENT FOCUS/.test(focusBlock(f1)));
 }
+const { runTutorEngineSim } = await import("./tutor-engine-sim.mjs");
+await runTutorEngineSim(check, section);
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -12,8 +12,7 @@ import { asksToLook } from "../../shared/lookRequest.ts";
 import { TutorCanvas, type TutorCanvasHandle } from "./TutorCanvas.tsx";
 import { PageTour } from "../PageTour.tsx";
 import { TOURS } from "../tours.ts";
-import { COMMON_SUBJECTS } from "../../shared/coursework.ts";
-import { buildSessionSummary, saveTutorSession, getTutorSessions, sessionCardTitle, sessionCardDesc, sessionTopic, relativeWhen, type TutorSessionSummary } from "./tutorSessions.ts";
+import { buildSessionSummary, saveTutorSession, getTutorSessions, sessionCardTitle, sessionCardDesc, sessionTopic, relativeWhen, sessionMemoryForPrompt, type TutorSessionSummary } from "./tutorSessions.ts";
 
 // A dismiss that silently fails (a network blip, a momentary 429) used to just be swallowed — the session
 // then never actually ends server-side and comes back as a "Reprendre?" ghost on every future visit
@@ -72,14 +71,12 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   const [reflectText, setReflectText] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
   useEffect(() => { if (chatDrawer) chatEndRef.current?.scrollIntoView({ block: "end" }); }, [chatDrawer, task?.chat?.length]);
-  // The landing screen asks WHAT to study before starting — the subject is stamped onto the session
-  // (sourceSubject, visible to the tutor prompt) and carried into history as the session's label.
-  // The student's own subjects (set in onboarding) come first; the shared common list follows.
-  const [mySubjects, setMySubjects] = useState<string[]>([]);
-  useEffect(() => { void api.profile().then((p) => setMySubjects(p.subjects || [])).catch(() => { /* the common list is enough */ }); }, []);
-  const subjectOptions = [...new Set<string>([...mySubjects, ...COMMON_SUBJECTS])];
-  const [selectedSubject, setSelectedSubject] = useState("");
+  // The landing asks ONE open question — "what are we working on?" — instead of a subject picker. Whatever the
+  // student writes there becomes the session's first message; the server reads the subject from it.
+  const [openingDraft, setOpeningDraft] = useState("");
   const [startingSession, setStartingSession] = useState(false);
+  // The first message, held until the new session's task exists (send() needs it) — then sent once.
+  const firstMessageRef = useRef<string | null>(null);
   // What the mount peek found: a freestudy session still in progress (or null).
   const [pendingActiveSession, setPendingActiveSession] = useState<WebTask | null>(null);
   // Voice is MANUAL here — the mic toggle in the chat panel is the student's choice, never forced on by
@@ -277,7 +274,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       // come back as a hard "Otto couldn't reply" with no message at all. canvasMode restricts the tutor to
       // CREATE_PROBLEM (individual, inline, answerable right on the board) instead — the only artifact this
       // screen actually knows how to show.
-      const response = await api.chat(task.id, message, task.chat || [], task.board || [], (task.problems || []).map((p) => ({ ...p, solved: solvedRef.current.has(p.id) })), undefined, undefined, voiceMode, true, true, task.objectives || [], spoken, { id: task.id, source: task.source, sourceSubject: task.sourceSubject, createdAt: task.createdAt });
+      const response = await api.chat(task.id, message, task.chat || [], task.board || [], (task.problems || []).map((p) => ({ ...p, solved: solvedRef.current.has(p.id) })), undefined, undefined, voiceMode, true, true, task.objectives || [], spoken, { id: task.id, source: task.source, sourceSubject: task.sourceSubject, createdAt: task.createdAt }, sessionMemoryForPrompt(pastSessions, task.sourceSubject, Date.now(), openerLang));
       const { task: updated, objectives, boardCleared } = response as typeof response & { boardCleared?: boolean };
       // objectives is only ever the FULL replacement list (SET_OBJECTIVES' own contract), or undefined
       // when Otto didn't touch it this turn — never overwrite the existing list with an empty one.
@@ -342,6 +339,14 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   const solvedRef = useRef<Set<string>>(new Set());
   const sendRef = useRef(send);
   sendRef.current = send;
+  // The landing's answer to "what are we working on?" is the session's first message — sent once the new
+  // session's task exists.
+  useEffect(() => {
+    const first = firstMessageRef.current;
+    if (!task || !first || sending) return;
+    firstMessageRef.current = null;
+    void sendRef.current(first);
+  }, [task, sending]);
   const onProblemResult = useCallback((r: { problem: TaskProblem; given: string; correct: boolean; attempt: number }) => {
     if (r.correct) solvedRef.current.add(r.problem.id);
     resultsRef.current.push(L(
@@ -434,8 +439,8 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     desmosEverOpenedRef.current = false;
   }, [pendingActiveSession, userId]);
 
-  const startNewSession = useCallback(async () => {
-    if (!selectedSubject || startingSession) return;
+  const startNewSession = useCallback(async (firstMessage?: string) => {
+    if (startingSession) return;
     enterFullscreen(); // tutor mode is full screen (this click is the user gesture the browser requires)
     setError(null);
     setStartingSession(true);
@@ -452,11 +457,13 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       // the same subject label ("Math" comes up again and again), so a plain .find() from the front could
       // grab a stale, already-ended session instead of the one just created — the source of "a supposedly
       // empty new session shows old content." Search from the end, and require it not be dismissed/done.
-      const list = await api.studyFreeSession(true, selectedSubject);
+      // No subject: the server reads it from the first thing the student says (server/tutor.ts detectSubject).
+      const list = await api.studyFreeSession(true);
       const t = Array.isArray(list)
-        ? [...list].reverse().find((x) => x.source === "freestudy" && x.sourceSubject === selectedSubject && x.status !== "dismissed" && x.status !== "done")
+        ? [...list].reverse().find((x) => x.source === "freestudy" && x.status !== "dismissed" && x.status !== "done")
         : undefined;
       if (t) {
+        firstMessageRef.current = firstMessage?.trim() || null;
         // No local-storage cleanup needed here: `t.id` is a fresh randomUUID minted by /api/study/free —
         // it has never existed before, so localChatBoard.ts's combined map has no entry for it to clear.
         // (This used to call localStorage.removeItem on guessed per-task keys that module has never
@@ -485,7 +492,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     } finally {
       setStartingSession(false);
     }
-  }, [selectedSubject, startingSession, pendingActiveSession, sessionStart, saveAndClose, userId, L]);
+  }, [startingSession, pendingActiveSession, sessionStart, saveAndClose, userId, L]);
 
   // The app's top nav now STAYS VISIBLE on the Tutor route too (it used to be hidden as a "focused,
   // full-screen surface" — report-live ask: keep it). This back button remains as the in-surface
@@ -593,33 +600,26 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
             </div>
           )}
 
-          {/* Always show subject selector so you can create a new session even when one is active —
-              rendered as the prototype's single wide pill: subject select left, orange "Start a session"
-              button right, no separate label above. The gate stays (the button is disabled until a
-              subject is picked) but the affordance is always visible. */}
-          <div className="tutor-start-row">
-            <select
-              id="tutor-subject-select"
-              value={selectedSubject}
-              onChange={(e) => setSelectedSubject(e.target.value)}
-              className="tutor-start-select"
-              aria-label={L("Matière", "Subject")}
-            >
-              <option value="">{L("Choisir une matière", "Choose a subject")}</option>
-              {subjectOptions.map((subj) => (
-                <option key={subj} value={subj}>{subj}</option>
-              ))}
-            </select>
-            <button
-              className="btn primary tutor-start-btn"
-              onClick={() => void startNewSession()}
-              disabled={startingSession || !selectedSubject}
-            >
-              {startingSession
-                ? L("Démarrage…", "Starting…")
-                : L("On s'y met", "Let's work")}
+          {/* ONE open question — no subject picker. What they write is the session's first message; the
+              subject is read from it. Starting with nothing written is fine too: Otto then asks. */}
+          <form
+            className="tutor-start-ask"
+            onSubmit={(e) => { e.preventDefault(); void startNewSession(openingDraft); }}
+          >
+            <label htmlFor="tutor-opening" className="tutor-start-question">{L("Sur quoi on travaille ?", "What are we working on?")}</label>
+            <textarea
+              id="tutor-opening"
+              className="tutor-start-input"
+              rows={3}
+              value={openingDraft}
+              onChange={(e) => setOpeningDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void startNewSession(openingDraft); } }}
+              placeholder={L("Un exercice, un chapitre à comprendre, une dissertation… colle l'énoncé ou raconte-moi.", "A problem, a topic to understand, an essay… paste the question or just tell me.")}
+            />
+            <button type="submit" className="btn primary tutor-start-btn" disabled={startingSession}>
+              {startingSession ? L("Démarrage…", "Starting…") : L("On s'y met", "Let's work")}
             </button>
-          </div>
+          </form>
 
           {pastSessions.length > 0 && (
             <div className="tutor-past-sessions">

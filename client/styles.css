@@ -7186,6 +7186,18 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   padding: 10px 4px; outline: none; cursor: pointer; font-family: inherit;
 }
 .tutor-start-btn { flex: none; font-size: 1.05rem; padding: 13px 28px; font-weight: 600; }
+/* The landing's one open question: "What are we working on?" — a roomy card, the answer starts the session. */
+.tutor-start-ask {
+  display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 640px; text-align: left;
+  padding: 16px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface);
+}
+.tutor-start-question { font-weight: 600; color: var(--ink); font-size: 1.05rem; }
+.tutor-start-input {
+  width: 100%; min-height: 84px; resize: vertical; border: none; outline: none; background: transparent;
+  font: inherit; font-size: 1rem; line-height: 1.5; color: var(--ink);
+}
+.tutor-start-input::placeholder { color: var(--ink-3); }
+.tutor-start-ask .tutor-start-btn { align-self: flex-end; }
 /* End-session button in the breadcrumb bar */
 .tutor-pane-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .tutor-end-btn { font-size: 13px; padding: 6px 16px; font-weight: 500; }
@@ -7314,6 +7326,8 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   }
   .tutor-start-select { min-height: 48px; padding: 10px 12px; }
   .tutor-start-btn { width: 100%; min-height: 48px; padding: 12px 18px; }
+  .tutor-start-ask { padding: 12px; }
+  .tutor-start-ask .tutor-start-btn { align-self: stretch; }
   .tutor-active-session-card { width: 100%; max-width: none; padding: 16px; }
   .tutor-active-session-actions, .tutor-history-actions { flex-wrap: wrap; }
   .tutor-history-actions > * { flex: 1 1 140px; text-align: center; }
