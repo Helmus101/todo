@@ -7,7 +7,7 @@ import { COURSEWORK_MAX_CHARS, courseworkForSubject, sameSubject } from "../shar
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { buildGeometry } from "../shared/geometry.ts";
-import { studentProblemStatement, cleanToPost, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, misattributes, methodAhead, wantsHelp, clarificationTerm, CLARIFY_BLOCK, ignoresQuestion, ignoresWork, asksToWrite, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
+import { studentProblemStatement, cleanToPost, bareMath, socraticFallback, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, misattributes, methodAhead, wantsHelp, clarificationTerm, CLARIFY_BLOCK, ignoresQuestion, ignoresWork, asksToWrite, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -9025,6 +9025,15 @@ export async function chatAboutTask(
     // claimed to prevent. truncateCleanly backs up to the last sentence end (falling back to the last word
     // boundary if there's no sentence break inside the cap) and marks the cut with an ellipsis, so a
     // response is never handed back looking like it broke mid-thought.
+    // Safety net AFTER every corrective round: a reply that is just a formula, or still writes a step the student never
+    // reached, is never shipped — it becomes a plain Socratic question, and the tutor's own derived "result" lines
+    // from that turn are dropped so nothing solves it on the board either.
+    if (opts?.primer && history.length >= 1 && !result.guardrailTripped
+      && (bareMath(reply) || equationAhead(reply, [...history.filter((h) => h.role === "user").map((h) => h.text), message], [...(opts?.currentBoard || []).filter((e) => e.kind === "given" || e.owner === "student").map((e) => e.text), ...(opts?.currentProblems || []).map((p) => p.question)]).length)) {
+      console.log(`${new Date().toISOString()} [chat] safety net: reply was bare maths / a step the student hasn't reached — replacing with a Socratic question`);
+      reply = socraticFallback(fr);
+      result.board = result.board.filter((e) => !["result", "formula"].includes(String(e.kind)) || e.owner === "student");
+    }
     const cleaned = truncateCleanly(reply.trim(), 2400);
     if (!cleaned) {
       result.error = true;

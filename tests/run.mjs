@@ -8,6 +8,7 @@ import { makeSyncScheduler } from "../server/syncScheduler.ts";
 import { buildTasksPayload, parseHave } from "../server/taskDelta.ts";
 import { makeTaskSync } from "../client/taskDelta.ts";
 import { buildTrigScene, solveTwoAngles } from "../shared/trigScene.ts";
+import { bareMath } from "../server/tutorAdapt.ts";
 import { stripPseudoTools } from "../server/tutorBrain.ts";
 import { sanitizeSvg as sanSvg2 } from "../shared/svgSafe.ts";
 import { onTopic, clarificationTerm, ignoresQuestion, ignoresWork, asksToWrite } from "../server/tutorAdapt.ts";
@@ -1894,6 +1895,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     check("trig scene markup has no duplicate attributes; bad input is refused", !dupAttrs && !!buildTrigScene({ observers: [{ angle: 120 }] }).error && !!buildTrigScene({ observers: [{ angle: 30 }, { angle: 30.2 }] }).error);
     check("trig scene gives the tutor the geometry: sight lines start at the top T, vertical = cliff + h, no solved value", /starts at T/.test(sc.facts) && /470 m \+ h/.test(sc.facts) && /alternate/.test(sc.facts) && !/\b(?:55\d|56\d|\d{3}\.\d)/.test(sc.facts)); }
   check("tool calls typed as text never reach the student", stripPseudoTools("<syntax_error></syntax_error><write_to_board><kind>result</kind><text>distance = (470 + H)/tan 40</text></write_to_board>Ah, exactly — what next?") === "Ah, exactly — what next?" && stripPseudoTools("plain reply") === "plain reply" && stripPseudoTools("<chat>Using that height.</chat>") === "Using that height.");
+  check("a reply that is only a formula is bare maths; a sentence with maths is not", bareMath("distance K = (470)/(tan 40)") && bareMath("(470 + H)/(tan 25°) - (470 + H)/(tan 40°) = 500") && !bareMath("Which side is opposite the 40° angle here?") && !bareMath("Good, now what does the tan 40° ratio give you for the horizontal distance?"));
   // ── Grounding (reported live: "tan(θ) = slope!" to a student who had only said the two slopes; "maybe graph it" ignored) ──
   check("'maybe let's graph it' counts as a request for a picture; reporting their own graph does not", asksToDraw("so one slope is five the other is one over three can we maybe graph it right") && asksToDraw("let's plot them") && !asksToDraw("I graphed it and got a parabola") && !asksToDraw("what is a graph"));
   check("praise is caught when the student's last move wasn't a correct step (plan or empty message), but allowed after a correct step", praiseUngrounded("Spot on! tan(θ) = slope.", "one slope is five the other is one over three", { studentStep: { status: "partial" } }) && praiseUngrounded("Great, you've got it.", "hmm", null) && !praiseUngrounded("Spot on!", "sin B = 25/35", { studentStep: { status: "correct" } }) && !praiseUngrounded("Hey Willem! Great to see you.", "hi", {}));
