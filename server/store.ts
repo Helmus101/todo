@@ -359,10 +359,13 @@ const STATE_CACHE_TTL_MS = 300_000; // 5min — was 3min. Same lever as makeSess
 // Mutations always invalidate (saveState/cacheSetState), and POST /api/jobs/kick reads with bypassCache: true
 // when freshness matters, so the wider window only affects best-effort poll merges.
 const STATE_CACHE_MAX = 500;
-const stateCache = new Map<string, { at: number; state: AccountState }>();
-function cacheSetState(email: string, state: AccountState) {
+// `ver` is the row's updated_at when we read it. Every writer of this table (saveState, savePronoteConnection) bumps it, so
+// a ~60-byte `select updated_at` can prove a cached copy is still current — which is how a stale or `bypassCache` read
+// avoids re-downloading the whole profile+tasks blob (the dominant PostgREST egress) when nothing changed.
+const stateCache = new Map<string, { at: number; state: AccountState; ver?: string }>();
+function cacheSetState(email: string, state: AccountState, ver?: string) {
   stateCache.delete(email);
-  stateCache.set(email, { at: Date.now(), state });
+  stateCache.set(email, { at: Date.now(), state, ver });
   while (stateCache.size > STATE_CACHE_MAX) { const oldest = stateCache.keys().next().value; if (oldest === undefined) break; stateCache.delete(oldest); }
 }
 
@@ -377,10 +380,15 @@ function cacheSetState(email: string, state: AccountState) {
  *  bounded; every other call site keeps the cached read this function defaults to. */
 export async function loadState(email?: string, opts?: { bypassCache?: boolean }): Promise<AccountState> {
   if (!client || !email) return { profile: emptyProfile(), tasks: [] };
-  const cached = opts?.bypassCache ? undefined : stateCache.get(email);
-  if (cached && Date.now() - cached.at < STATE_CACHE_TTL_MS) return cached.state;
+  const held = stateCache.get(email);
+  if (held && !opts?.bypassCache && Date.now() - held.at < STATE_CACHE_TTL_MS) return held.state;
+  // Expired or bypassed: ask only for the row's version first; an unchanged row means the cached copy is still right.
+  if (held?.ver) {
+    const { data: v } = await withRetry("load-ver", async () => client!.from(TABLE).select("updated_at").eq("email", email).maybeSingle());
+    if ((v as any)?.updated_at && (v as any).updated_at === held.ver) { held.at = Date.now(); return held.state; }
+  }
   let { data, error } = await withRetry("load", async () =>
-    client!.from(TABLE).select("profile,tasks,google,pronote,blackbaud,studySessions,studyProfile").eq("email", email).maybeSingle());
+    client!.from(TABLE).select("profile,tasks,google,pronote,blackbaud,studySessions,studyProfile,updated_at").eq("email", email).maybeSingle());
   // A missing column (schema drift — a migration that shipped in code but was never run against this
   // database; see supabase.sql's own note on studySessions/studyProfile, added after exactly this happened
   // live) is a DIFFERENT failure than "the database is unreachable." Postgres fails the ENTIRE query when
@@ -404,7 +412,7 @@ export async function loadState(email?: string, opts?: { bypassCache?: boolean }
     ? { ...(d.blackbaud as StoredBlackbaud), accessToken: decryptSecret(d.blackbaud.accessToken) }
     : undefined;
   const result = { profile: normalizeProfile(d?.profile), tasks: Array.isArray(d?.tasks) ? d.tasks : [], google, pronote, blackbaud, studySessions: d?.studySessions, studyProfile: d?.studyProfile };
-  cacheSetState(email, result);
+  cacheSetState(email, result, typeof d?.updated_at === "string" ? d.updated_at : undefined);
   return result;
 }
 
@@ -925,7 +933,8 @@ export async function finishJob(id: string, workerId: string, outcome: "succeede
 export async function getLatestJob(userEmail: string, type: JobType): Promise<Job | null> {
   const db = await jobsDb();
   if (db) {
-    const { data } = await db.from(JOBS).select("*").eq("user_email", userEmail).eq("type", type).order("created_at", { ascending: false }).limit(1);
+    // Everything BUT input/output: callers only read status/timestamps/error, and a sweep job's output can be a whole task list.
+    const { data } = await db.from(JOBS).select("id,user_email,task_id,type,status,attempt_count,max_attempts,idempotency_key,locked_until,locked_by,last_error,created_at,started_at,finished_at").eq("user_email", userEmail).eq("type", type).order("created_at", { ascending: false }).limit(1);
     return (data?.[0] as Job) || null;
   }
   const mine = memJobs.filter((j) => j.user_email === userEmail && j.type === type);
