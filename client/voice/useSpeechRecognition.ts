@@ -4,12 +4,13 @@ import { speechErrorMessage } from "./speechErrors.ts";
 // The Web Speech API's SpeechRecognition isn't in TS's default DOM lib (it's still non-standard,
 // webkit-prefixed in most browsers) — declare just the surface this hook actually uses rather than pulling
 // in a whole ambient-types package for one interface.
-interface SpeechRecognitionResultLike { isFinal: boolean; 0: { transcript: string } }
+interface SpeechRecognitionResultLike { isFinal: boolean; length?: number; [index: number]: { transcript: string } | undefined; 0: { transcript: string } }
 interface SpeechRecognitionEventLike { resultIndex: number; results: ArrayLike<SpeechRecognitionResultLike> }
 interface SpeechRecognitionLike extends EventTarget {
   lang: string;
   continuous: boolean;
   interimResults: boolean;
+  maxAlternatives?: number;
   start(): void;
   stop(): void;
   abort(): void;
@@ -29,7 +30,7 @@ export interface UseSpeechRecognitionOptions {
   /** Fires once per detected utterance (the browser's own voice-activity endpointing — a natural pause in
    *  speech — marks a result `isFinal`), not once per start()/stop() cycle. In continuous/always-on mode
    *  this can fire many times across one long-running listen session. Never fires with empty/whitespace text. */
-  onResult: (transcript: string) => void;
+  onResult: (transcript: string, meta?: { alternatives: string[] }) => void;
   /** Fires on EVERY recognition event with the live, not-yet-final text ("" between utterances) — the
    *  barge-in channel. Final results only arrive after the browser's pause detection, which is far too
    *  late to interrupt a sentence mid-word; interim text streams in word by word while the utterance is
@@ -84,12 +85,18 @@ export function useSpeechRecognition({ lang, onResult, onInterim, onError }: Use
   // message; if another final (or renewed interim activity) arrives first, append to the SAME buffer and
   // restart the wait — so one real pause mid-utterance joins into one message instead of firing early.
   const pendingFinalRef = useRef("");
+  // The recognizer's runner-up readings of the buffered utterance (maxAlternatives), one full-text variant
+  // per alternative segment. Speech recognition mishears maths constantly ("tan 25" → "10 25", "adjacent"
+  // → "json"); the runner-up is often the right one, so the tutor gets to see it too.
+  const pendingAltsRef = useRef<string[]>([]);
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flushPending = useCallback(() => {
     if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
     const text = pendingFinalRef.current.trim();
+    const alternatives = pendingAltsRef.current.map((a) => a.trim()).filter((a) => a && a !== text).slice(0, 3);
     pendingFinalRef.current = "";
-    if (text) onResultRef.current(text);
+    pendingAltsRef.current = [];
+    if (text) onResultRef.current(text, { alternatives });
   }, []);
   const scheduleFlush = useCallback(() => {
     if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
@@ -102,6 +109,7 @@ export function useSpeechRecognition({ lang, onResult, onInterim, onError }: Use
     rec.lang = lang;
     rec.continuous = true;      // don't stop after one utterance — this IS the always-on behavior
     rec.interimResults = true;
+    rec.maxAlternatives = 3;
     rec.onresult = (e) => {
       let interim = "";
       // Each `isFinal` result is ONE complete utterance per the browser's own pause detection — fire
@@ -112,7 +120,14 @@ export function useSpeechRecognition({ lang, onResult, onInterim, onError }: Use
         if (r.isFinal) {
           const text = r[0].transcript.trim();
           if (text) {
-            pendingFinalRef.current = pendingFinalRef.current ? `${pendingFinalRef.current} ${text}` : text;
+            const before = pendingFinalRef.current;
+            // Earlier alternatives get this segment appended; this segment's own alternatives get the earlier text.
+            pendingAltsRef.current = pendingAltsRef.current.map((a) => `${a} ${text}`);
+            for (let k = 1; k < Math.min(r.length ?? 1, 3); k++) {
+              const alt = r[k]?.transcript?.trim();
+              if (alt && alt !== text) pendingAltsRef.current.push(before ? `${before} ${alt}` : alt);
+            }
+            pendingFinalRef.current = before ? `${before} ${text}` : text;
             scheduleFlush();
           }
         } else {

@@ -5799,6 +5799,41 @@ section("server/index.ts chat route — board-event/session-state wiring is on t
   check("the client-sent board sanitizer now preserves owner/status/concept, not just text/kind/diagram/outline", /\.\.\.\(b\.owner === "student" \|\| b\.owner === "otto" \? \{ owner: b\.owner \} : \{\}\)/.test(idxSrc4) && /\.\.\.\(b\.status === "correct" \|\| b\.status === "incorrect" \? \{ status: b\.status \} : \{\}\)/.test(idxSrc4));
 }
 
+section("tutor + board: LaTeX renders, steps are checked by code, speech slips are repaired");
+{
+  const { latexToPlainText } = await import("../shared/mathText.ts");
+  const { equivalent, toExprSource, gapTarget, verifyStepAgainstGap } = await import("../shared/mathEquiv.ts");
+  const { repairSpokenMath, spokenContextFrom } = await import("../shared/spokenMath.ts");
+  const { unrenderableMath } = await import("../server/latexCheck.ts");
+  const katex = (await import("katex")).default;
+  const nested = "\\displaystyle \\frac{h}{100 + \\frac{h}{\\tan(25^\\circ)}} = \\tan(15^\\circ)";
+  // Reported live on the tower problem: this exact line printed as raw source.
+  check("layout/degree commands are not 'prose words' — the nested tower equation goes to KaTeX", looksLikeRealMath(nested) && looksLikeRealMath("\\left(\\frac{h}{b}\\right) = \\tan 25^\\circ"));
+  check("…while prose wrapped in \\text{} still trips the prose gate", !looksLikeRealMath("\\text{under a force of} 10"));
+  check("a bare nested \\frac is wrapped as ONE balanced $…$ span", autoMathLine(`replace it: ${nested.replace("\\displaystyle ", "")}`) === `replace it: $${nested.replace("\\displaystyle ", "")}$`);
+  check("KaTeX renders HTML only (no hidden MathML copy to double the text)", !/katex-mathml/.test(katex.renderToString("\\frac{1}{4}", { output: "html" })));
+  const boardSrcK = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  const mainSrcK = readFileSync(new URL("../client/main.tsx", import.meta.url), "utf8");
+  check("both board renderers pass output:'html' and the stylesheet is imported statically", (boardSrcK.match(/output: "html"/g) || []).length >= 3 && /import "katex\/dist\/katex\.min\.css";/.test(mainSrcK));
+  check("a failed equation falls back to readable text, never raw \\commands", latexToPlainText(nested) === "h/(100 + h/tan(25°)) = tan(15°)");
+  check("the server refuses an unbalanced \\frac and passes a good one", !!unrenderableMath("$\\frac{h}{100 + \\tan(25^\\circ)$") && unrenderableMath(`$${nested}$`) === null);
+  // Deterministic equivalence: the verdict on a step is code, not the model's guess.
+  check("h/tan(25°) ≡ \\frac{h}{\\tan 25^\\circ} ≡ h cot 25° (degrees honoured)", equivalent("h/tan(25°)", "\\frac{h}{\\tan 25^\\circ}") === "correct" && equivalent("h cot 25°", "h/tan(25°)") === "correct");
+  check("h·tan(25°) is NOT equivalent; numbers compare as values (0.25 = 1/4 = 25%)", equivalent("h*tan(25°)", "h/tan(25°)") === "incorrect" && equivalent("0.25", "\\frac14") === "correct" && equivalent("25%", "1/4") === "correct" && equivalent("1/4", "0.2") === "incorrect");
+  check("an unreadable answer is 'unknown', never 'incorrect'", equivalent("@@", "x") === "unknown" && equivalent("the angle", "x") === "unknown");
+  check("a leading 'b =' is dropped and the gap's letter is found", toExprSource("b = h/2", "b") === "h/2" && gapTarget("$b = ?$") === "b");
+  const gapBoard = [{ kind: "gap", text: "b = ?", expectedAnswer: "\\frac{h}{\\tan(25^\\circ)}" }];
+  check("a chat step is checked against the newest open gap", verifyStepAgainstGap("so b = h / tan 25°", gapBoard)?.verdict === "correct" && verifyStepAgainstGap("b = h tan 25°", gapBoard)?.verdict === "incorrect" && verifyStepAgainstGap("I'm not sure", gapBoard) === undefined);
+  // Speech-to-text slips, from the reported session.
+  const ctx = spokenContextFrom(["Observers A and B at 15° and 25°, 100 m apart", "$\\tan(25^\\circ) = \\frac{h}{b}$"]);
+  check("context: angles 15/25 and tan are in play", ctx.angles.includes(15) && ctx.angles.includes(25) && ctx.fns.includes("tan"));
+  check("'1025 = height over b' → 'tan 25° = …' (ten+angle merged)", repairSpokenMath("1025 = height over b", ctx).interpreted === "tan 25° = height over b");
+  check("'opposite over json' → 'opposite over adjacent'", repairSpokenMath("opposite over json", ctx).interpreted === "opposite over adjacent");
+  check("'h over count 25' → 'h over tan 25°'; an everyday 'I can 15…' is left alone", repairSpokenMath("b equals h over count 25", ctx).interpreted === "b equals h over tan 25°" && repairSpokenMath("I can 15 do it", ctx).changes.length === 0);
+  check("a letter heard as a digit ('…/8' for h) is flagged as a low-confidence guess", repairSpokenMath("b = count 25/8", ctx).confidence === "low");
+  check("nothing maths-like → nothing changed", repairSpokenMath("can you help me", ctx).changes.length === 0);
+}
+
 const { runTutorSim } = await import("./tutor-sim.mjs");
 await runTutorSim(check, section);
 console.log(`\n${pass} passed, ${fail} failed`);

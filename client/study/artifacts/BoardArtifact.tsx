@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import katex from "katex";
 import type { WebTask, BoardEntry, TaskProblem, DiagramOp } from "../../../shared/types.ts";
 import { practiceAnswerMatches } from "../../../shared/types.ts";
-import { autoMathLine, repairLatex } from "../../../shared/mathText.ts";
+import { autoMathLine, repairLatex, latexToPlainText } from "../../../shared/mathText.ts";
 import { GraphBlock } from "./GraphBlock.tsx";
 import { FlowDiagram } from "./FlowDiagram.tsx";
 import { sanitizeSvg } from "../../../shared/svgSafe.ts";
@@ -14,6 +14,9 @@ import { renderChatText, useLang, FirstTimeHint, stripStrayMarkdown, formatMath,
 // ESM loader hard-crashes on a bare `.css` specifier with ERR_UNKNOWN_FILE_EXTENSION. `typeof window` is
 // false in that Node test run, so the import() call inside is never reached there; in an actual browser
 // (Vite), it resolves normally and Vite bundles/injects the stylesheet as it would any CSS import.
+// The stylesheet is ALSO imported statically from client/main.tsx: without it KaTeX's hidden MathML copy
+// shows next to the HTML copy (every equation printed twice). Both renderers below also pass
+// output:"html", so even a missing stylesheet can no longer double the text.
 if (typeof window !== "undefined") { void import("katex/dist/katex.min.css"); }
 
 interface BoardArtifactProps {
@@ -31,6 +34,44 @@ interface BoardArtifactProps {
   /** Tutor only — each bump reserves `height` px of blank space right after the board's CURRENT last item: the
    *  student drew on the blank page below, and whatever Otto writes next must land AFTER that drawing. */
   sheetSignal?: { n: number; height: number };
+  /** Tutor only — a gap with an answer key ("b = ?") gets an answer box; the attempt is graded by the SERVER
+   *  (numeric equivalence, shared/mathEquiv.ts) and the result reaches Otto like an exercise result does. */
+  onGapCheck?: (entry: BoardEntry, given: string) => Promise<"correct" | "incorrect" | "unknown">;
+}
+
+/** The answer box under an open gap. "unknown" (an answer the checker couldn't read) is never shown as
+ *  wrong — it says Otto will look at it, and the attempt still goes to the tutor. */
+function GapAnswer({ entry, onCheck, en }: { entry: BoardEntry; onCheck: NonNullable<BoardArtifactProps["onGapCheck"]>; en: boolean }) {
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [verdict, setVerdict] = useState<"correct" | "incorrect" | "unknown" | null>(null);
+  const submit = async () => {
+    const given = value.trim();
+    if (!given || busy) return;
+    setBusy(true);
+    try { setVerdict(await onCheck(entry, given)); } catch { setVerdict("unknown"); } finally { setBusy(false); }
+  };
+  if (verdict === "correct") return <div className="sm-inline-problem-result correct">{en ? "Correct!" : "Correct !"}</div>;
+  return (
+    <div className="sm-board-problem-free sm-board-gap-answer">
+      <div className="sm-inline-problem-input-row">
+        <input
+          type="text"
+          className="sm-inline-problem-input"
+          placeholder={en ? "Your line… e.g. h/tan(25°)" : "Ta ligne… ex. h/tan(25°)"}
+          value={value}
+          onChange={(e) => { setValue(e.target.value); if (verdict) setVerdict(null); }}
+          onKeyDown={(e) => { if (e.key === "Enter") void submit(); }}
+          aria-label={en ? "Your answer for this line" : "Ta réponse pour cette ligne"}
+        />
+        <button type="button" className="sm-btn sm-btn-primary sm-btn-sm" disabled={!value.trim() || busy} onClick={() => void submit()}>
+          {en ? "Check" : "Vérifier"}
+        </button>
+      </div>
+      {verdict === "incorrect" ? <div className="sm-inline-problem-result wrong" role="status">{en ? "Not quite — Otto will help you check it." : "Pas tout à fait — Otto va t'aider à vérifier."}</div> : null}
+      {verdict === "unknown" ? <div className="sm-inline-problem-result" role="status">{en ? "Sent to Otto to look at." : "Envoyé à Otto pour qu'il regarde."}</div> : null}
+    </div>
+  );
 }
 
 const KIND_LABEL: Record<string, [string, string]> = {
@@ -155,7 +196,10 @@ const MATH_WORD_ALLOW = new Set([
   "sinh", "cosh", "tanh", "arcsin", "arccos", "arctan", "gcd",
 ]);
 export function looksLikeRealMath(latex: string): boolean {
-  const words = latex.match(/\p{L}{3,}/gu) || [];
+  // A backslash command is never prose: "\displaystyle \frac{h}{100+\tan 25^\circ}" fell back to raw source
+  // because "displaystyle" and "circ" counted as two English words (reported live on the tower problem).
+  // Only bare words count; the words inside \text{…} are still bare, so prose-in-\text still trips the gate.
+  const words = latex.replace(/\\[a-zA-Z]+/g, " ").match(/\p{L}{3,}/gu) || [];
   const prose = words.filter((w) => !MATH_WORD_ALLOW.has(w.toLowerCase()));
   return prose.length < 2;
 }
@@ -186,10 +230,10 @@ export function MathText({ text }: { text: string }) {
 
 function InlineEquation({ latex }: { latex: string }) {
   const html = useMemo(() => {
-    try { return katex.renderToString(/\\frac|\\sqrt/.test(latex) ? `\\displaystyle ${latex}` : latex, { throwOnError: false, strict: false, trust: false, displayMode: false }); } catch { return null; }
+    try { return katex.renderToString(/\\frac|\\sqrt/.test(latex) ? `\\displaystyle ${latex}` : latex, { throwOnError: false, strict: false, trust: false, displayMode: false, output: "html" }); } catch { return null; }
   }, [latex]);
-  if (html === null) return <span>{latex}</span>;
-  return <span className="sm-inline-eq" dangerouslySetInnerHTML={{ __html: html }} />;
+  if (html === null) return <span>{latexToPlain(latex)}</span>;
+  return <span className="sm-inline-eq" role="math" aria-label={latexToPlain(latex)} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 // The "how you got there" reasoning-trace box is gone by direct instruction — a board line is a board line:
@@ -216,11 +260,11 @@ function PlainSteps({ text }: { text: string }) {
  *  directly, but there's no reason to ever opt into trusting it. */
 function Equation({ latex }: { latex: string }) {
   const html = useMemo(() => {
-    try { return katex.renderToString(latex, { throwOnError: true, strict: false, trust: false, displayMode: true }); }
-    catch { try { return katex.renderToString(latex, { throwOnError: false, strict: false, trust: false, displayMode: true }); } catch { return null; } }
+    try { return katex.renderToString(latex, { throwOnError: true, strict: false, trust: false, displayMode: true, output: "html" }); }
+    catch { try { return katex.renderToString(latex, { throwOnError: false, strict: false, trust: false, displayMode: true, output: "html" }); } catch { return null; } }
   }, [latex]);
-  if (html === null) return <span className="sm-board-eq-fallback">{latex}</span>;
-  return <span className="sm-board-eq" dangerouslySetInnerHTML={{ __html: html }} />;
+  if (html === null) return <span className="sm-board-eq-fallback">{latexToPlain(latex)}</span>;
+  return <span className="sm-board-eq" role="math" aria-label={latexToPlain(latex)} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 /** An AI-authored interactive scene (CREATE_INTERACTIVE, server/claude.ts) — rendered in a sandboxed
@@ -254,7 +298,7 @@ function InteractiveFrame({ taskId, entryId }: { taskId: string; entryId: string
  *  already clamped to 0-800x0-600 server-side (makeDiagramEntry) — this component trusts that and just draws. */
 /** LaTeX → readable plain text for figure labels (figures are SVG text, never KaTeX). */
 function latexToPlain(latex: string): string {
-  return formatMath(latex.replace(/\\(?:left|right)/g, "").replace(/\\cdot/g, "·").replace(/\\times/g, "×").replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, "($1)/($2)").replace(/\\([a-zA-Z]+)/g, "$1").replace(/[{}]/g, ""));
+  return formatMath(latexToPlainText(latex));
 }
 /** Tight viewBox around what a figure actually draws (so no dead space above/below it), with a little margin. */
 function opsViewBox(ops: DiagramOp[]): string {
@@ -467,7 +511,7 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
  *  and practice problems. ONE DOCUMENT, ONE FLOW: entries and problems interleave in the order the session
  *  actually produced them (a problem sits between the formula it exercises and the insight answering it —
  *  the lesson's story, not a problem section pinned on top). kind:"focus" stays pinned above as the heading. */
-export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, sheetSignal }: BoardArtifactProps) {
+export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, sheetSignal, onGapCheck }: BoardArtifactProps) {
   const L = useLang();
   const endRef = useRef<HTMLDivElement>(null);
   const entries = task.board || [];
@@ -701,14 +745,14 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, 
                   // that fixed canvas to keep its geometry proportional; a bare equation doesn't — it's just
                   // typeset text that should size to its own content and wrap like the rest of the board.
                   <>
-                    <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>
+                    <div className="sm-board-entry-text sm-board-diagram-caption"><MathText text={stripStrayMarkdown(e.text)} /></div>
                     <div className="sm-board-eq-list">
                       {e.diagram.map((op, i) => op.op === "equation" ? <div key={i} className="sm-board-line">{latexToPlain(op.latex)}</div> : null)}
                     </div>
                   </>
                 ) : (
                   <>
-                    <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>
+                    <div className="sm-board-entry-text sm-board-diagram-caption"><MathText text={stripStrayMarkdown(e.text)} /></div>
                     <svg viewBox={opsViewBox(e.diagram)} className="sm-board-diagram" preserveAspectRatio="xMidYMid meet">
                       <defs>
                         <marker id="sm-diagram-arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
@@ -729,7 +773,7 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, 
                       <div key={i} className="sm-board-outline-section">
                         <div className="sm-board-outline-heading">{stripStrayMarkdown(section.heading)}</div>
                         <ul className="sm-board-outline-bullets">
-                          {section.bullets.map((b, j) => <li key={j}>{renderChatText(b)}</li>)}
+                          {section.bullets.map((b, j) => <li key={j}><MathText text={b} /></li>)}
                         </ul>
                       </div>
                     ))}
@@ -737,28 +781,28 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, 
                 </>
               ) : e.kind === "graph" && e.graph ? (
                 <>
-                  <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>
+                  <div className="sm-board-entry-text sm-board-diagram-caption"><MathText text={stripStrayMarkdown(e.text)} /></div>
                   <GraphBlock spec={e.graph} />
                 </>
               ) : e.kind === "svg" && e.svg ? (
                 <>
-                  <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>
+                  <div className="sm-board-entry-text sm-board-diagram-caption"><MathText text={stripStrayMarkdown(e.text)} /></div>
                   {/* sanitised again on render (defence in depth): stored entries can come back from the cloud/local cache */}
-                  <div className="sm-svgfig" role="img" aria-label={e.text} dangerouslySetInnerHTML={{ __html: sanitizeSvg(e.svg) }} />
+                  <div className="sm-svgfig" role="img" aria-label={latexToPlain(e.text)} dangerouslySetInnerHTML={{ __html: sanitizeSvg(e.svg) }} />
                 </>
               ) : e.kind === "flow" && e.flow ? (
                 <>
-                  <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>
+                  <div className="sm-board-entry-text sm-board-diagram-caption"><MathText text={stripStrayMarkdown(e.text)} /></div>
                   <FlowDiagram spec={e.flow} />
                 </>
               ) : e.kind === "widget" && e.widget ? (
                 <>
-                  <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>
+                  <div className="sm-board-entry-text sm-board-diagram-caption"><MathText text={stripStrayMarkdown(e.text)} /></div>
                   <WidgetBlock id={e.id} caption={e.text} spec={e.widget} onResult={onWidgetResult} Text={MathText} />
                 </>
               ) : e.kind === "interactive" && e.html ? (
                 <>
-                  <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>
+                  <div className="sm-board-entry-text sm-board-diagram-caption"><MathText text={stripStrayMarkdown(e.text)} /></div>
                   <InteractiveFrame taskId={task.id} entryId={e.id} />
                 </>
               ) : (
@@ -767,6 +811,7 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, 
                   {(e.kind === "gap" || isCompletionGap(e.text)) ? (
                     <span className="sm-board-todo-chip">{e.gapAction ? (en ? `Your turn: ${e.gapAction}` : `À toi : ${e.gapAction}`) : (en ? "Your turn to finish" : "À toi de finir")}</span>
                   ) : null}
+                  {e.kind === "gap" && e.expectedAnswer && e.status !== "correct" && !flowItems.slice(idx + 1).some((it) => it.entry?.kind === "gap") && onGapCheck ? <GapAnswer entry={e} onCheck={onGapCheck} en={en} /> : null}
                 </>
               )}
               </div>

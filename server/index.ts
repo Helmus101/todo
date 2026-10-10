@@ -10,6 +10,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { CourseworkDoc } from "../shared/coursework.ts";
+import { equivalent, gapTarget, verifyStepAgainstGap } from "../shared/mathEquiv.ts";
+import { repairSpokenMath, spokenContextFrom } from "../shared/spokenMath.ts";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, FocusSession } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY, subjectMastery } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
@@ -235,6 +237,14 @@ app.use(async (req, _res, next) => {
 /** Response-only slimming of the task list (never persisted): a finished/dismissed tutor session keeps its
  *  whole chat + board + events in the account row, but the client keeps its own session history locally and
  *  never reads them from the list — shipping them on every response was the biggest avoidable payload. */
+/** The `spoken` field of a chat request (a message that came from speech recognition): only well-formed
+ *  string alternatives survive, capped, so a malformed body can't smuggle anything else into the prompt. */
+function spokenFromBody(raw: unknown): { alternatives: string[] } | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const alts = Array.isArray((raw as any).alternatives) ? (raw as any).alternatives : [];
+  return { alternatives: alts.filter((a: unknown): a is string => typeof a === "string").map((a: string) => a.slice(0, 300)).slice(0, 3) };
+}
+
 function outgoingTasks(list: WebTask[] | undefined): WebTask[] {
   return (list || []).map((t) => {
     if (t.source !== "freestudy" || !isHandled(t.status)) return t;
@@ -1460,6 +1470,22 @@ app.post("/api/tasks", requireAuth, rateLimit(20, 60_000), async (req, res) => {
 // comment saying so, which is why it's said here).
 // The frame itself still carries sandbox="allow-scripts" with NO allow-same-origin (BoardArtifact.tsx), so
 // the scene runs in an opaque origin regardless of what this document is allowed to do.
+// Grade a student's answer to a board gap ("b = ?") by CODE, not by the model: the gap's expectedAnswer is read
+// from the server's own copy of the board and compared by numeric equivalence (shared/mathEquiv.ts), so
+// "h/tan(25°)", "\\frac{h}{\\tan 25^\\circ}" and "h cot 25°" are all right. "unknown" (an answer the checker
+// can't parse) is never reported as wrong — the tutor reads it in chat instead. The key never leaves here.
+app.post("/api/tasks/:id/board/:entryId/check", requireAuth, rateLimit(120, 60_000), ah(async (req, res) => {
+  const t = await findTaskOrReload(req, String(req.params.id));
+  const entry = (t?.board || []).find((e) => e.id === String(req.params.entryId));
+  if (!t || !entry || entry.kind !== "gap" || !entry.expectedAnswer) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
+  const answer = typeof req.body?.answer === "string" ? req.body.answer.slice(0, 300) : "";
+  if (!answer.trim()) { res.status(400).json({ error: M(req, "Écris une réponse d'abord.", "Write an answer first.") }); return; }
+  const target = gapTarget(entry.text);
+  let verdict = equivalent(answer, entry.expectedAnswer, target);
+  if (verdict === "unknown" && practiceAnswerMatches(answer, entry.expectedAnswer)) verdict = "correct";
+  res.json({ verdict });
+}));
+
 app.get("/api/interactive/:taskId/:entryId", requireAuth, rateLimit(120, 60_000), (req, res) => {
   const t = (req.session.tasks || []).find((x) => x.id === String(req.params.taskId));
   const entry = (t?.board || []).find((e) => e.id === String(req.params.entryId));
@@ -1667,7 +1693,11 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
       ...(typeof b.concept === "string" && b.concept.trim() ? { concept: b.concept.trim().slice(0, 80) } : {}),
       // The gap's "what to do next" chip (BoardArtifact) — dropped here with owner/status before, which
       // silently reverted every gap to the generic "Your turn to finish" after one round trip.
-      ...(typeof b.gapAction === "string" && b.gapAction.trim() ? { gapAction: b.gapAction.trim().slice(0, 60) } : {}) }));
+      ...(typeof b.gapAction === "string" && b.gapAction.trim() ? { gapAction: b.gapAction.trim().slice(0, 60) } : {}),
+      // A gap's answer key comes from the SERVER's own copy of the board, never from the request body (the
+      // client could otherwise "set" the answer it is graded against). Without it the open-gap leak guard and
+      // the step verdict below only ever saw gaps written in this same turn.
+      ...(b.kind === "gap" && typeof b.id === "string" ? (() => { const k = (t.board || []).find((e) => e.id === b.id)?.expectedAnswer; return k ? { expectedAnswer: k } : {}; })() : {}) }));
   const currentProblemsRaw = Array.isArray(req.body?.problems) ? req.body.problems : [];
   const currentProblems = currentProblemsRaw
     .filter((p: any) => p && typeof p.question === "string" && p.question.trim())
@@ -1783,6 +1813,19 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     // the one deciding which work was its own"). A no-op (returns the board unchanged) when there's
     // nothing open to answer.
     const boardForTurn = req.body?.primer === true ? tagStudentAnswer(currentBoard, message, { at: turnNow }) : currentBoard;
+    // Is the student's step right? Decided by CODE when the newest open gap has a checkable key — the model's
+    // own verdict (plan.studentStep) is overridden by this when they disagree (claude.ts).
+    // Spoken: the repaired reading (spokenMath.ts) is checked too, and a correct reading wins — when one
+    // plausible hearing of what they said is right, the student was right and the recognizer was wrong.
+    const stepVerdict = (() => {
+      if (req.body?.primer !== true) return undefined;
+      const raw = verifyStepAgainstGap(message, currentBoard);
+      if (raw?.verdict === "correct" || !req.body?.spoken) return raw;
+      const ctx = spokenContextFrom([t.title || "", t.context || "", ...currentBoard.map((e: { text: string }) => e.text)]);
+      const heard = [repairSpokenMath(message, ctx).interpreted, ...(spokenFromBody(req.body.spoken)?.alternatives || [])];
+      for (const h of heard) { const v = verifyStepAgainstGap(h, currentBoard); if (v?.verdict === "correct") return v; }
+      return raw;
+    })();
     const sessionStateBefore = req.body?.primer === true ? loadOrInitSessionState(profile, t.id, turnNow) : undefined;
     // THE TUTOR BRAIN (server/tutorBrain.ts): the app's policy for this turn — how much help is allowed, anti-dependence,
     // wait/step-back/retest/transfer — computed from the session state + the persistent student model + the concept graph.
@@ -1797,7 +1840,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
       message,
       profile,
       academic,
-      { schoolRecord: schoolRecordLine(req.session.tasks, req.session.profile, t.sourceSubject), stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, primer: req.body?.primer === true, recentJournal, currentBoard: boardForTurn, currentProblems, currentObjectives, repair, moveLine, opening, notNeeded: tasks.notNeededFronts(req.session.tasks || [], t.sourceSubject), boardEvents: t.boardEvents, sessionState: sessionStateBefore, policy: tutorPolicy },
+      { schoolRecord: schoolRecordLine(req.session.tasks, req.session.profile, t.sourceSubject), stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, spoken: spokenFromBody(req.body?.spoken), canvasMode: req.body?.canvasMode === true, primer: req.body?.primer === true, recentJournal, currentBoard: boardForTurn, currentProblems, currentObjectives, stepVerdict, repair, moveLine, opening, notNeeded: tasks.notNeededFronts(req.session.tasks || [], t.sourceSubject), boardEvents: t.boardEvents, sessionState: sessionStateBefore, policy: tutorPolicy },
     );
     // The student's own step, as the model transcribed it from what they said, lands on the board as THEIR work
     // (owner student, marked correct/incorrect) — the board is shared paper, not Otto's notebook (spec §10/§11).
@@ -1806,6 +1849,12 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     if (req.body?.primer === true && out.plan?.studentStep) {
       const ctx = [t.title || "", t.sourceSubject || "", ...currentBoard.map((e: { text: string }) => e.text), ...(req.body?.problems || []).map((p: any) => String(p?.question || "")), ...history.filter((h) => h.role === "assistant").slice(-3).map((h) => h.text)];
       if (!onTopic(out.plan.studentStep.text, ctx) && !onTopic(message, ctx)) { delete out.plan.studentStep; delete out.plan.evidence; }
+    }
+    // The code-checked verdict beats the model's own: a step equivalent to the gap's key IS correct, one that
+    // isn't IS incorrect — this is what the student model, the hint ladder and the board's ✓/✗ learn from.
+    if (stepVerdict && out.plan) {
+      if (out.plan.studentStep) out.plan.studentStep.status = stepVerdict.verdict;
+      else out.plan.studentStep = { text: stepVerdict.given, status: stepVerdict.verdict };
     }
     if (req.body?.primer === true && out.plan?.studentStep && !out.guardrailTripped) {
       const se = studentStepEntry(out.plan, turnNow, out.plan.concept);

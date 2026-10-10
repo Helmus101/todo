@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { Analytics } from "@vercel/analytics/react";
 import * as Sentry from "@sentry/react";
 import { App } from "./App.tsx";
+import "katex/dist/katex.min.css";
 import "./styles.css";
 import "./tally.css";
 import "./lab.css";
