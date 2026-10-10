@@ -130,7 +130,8 @@ async function loadUser(email: string): Promise<{ profile: Profile; list: WebTas
  *  explicit `null` as "clear it", so that shape is no longer destructive either way — but this function
  *  still has no reason to name those columns at all.) Cached read, same reasoning as loadUser above. */
 async function commitUser(email: string, profile: Profile, list: WebTask[]): Promise<void> {
-  const current = await store.loadState(email);
+  // Validated read (version check; full row only if it changed) — this merge is followed by a write, so a stale cached base must never be merged into.
+  const current = await store.loadState(email, { bypassCache: true });
   const mergedTasks = tasks.mergeTaskLists(current.tasks || [], list);
   const mergedProfile = tasks.mergeProfileStates(current.profile || emptyProfile(), profile);
   await store.saveState(email, { profile: mergedProfile, tasks: mergedTasks });

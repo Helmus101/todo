@@ -386,7 +386,8 @@ export async function loadState(email?: string, opts?: { bypassCache?: boolean }
   const held = stateCache.get(email);
   if (held && !opts?.bypassCache && Date.now() - held.at < STATE_CACHE_TTL_MS) return held.state;
   // Over this profile's daily PostgREST budget: serve what we hold (writes still invalidate/replace it) rather than read more.
-  if (held && egress.over(email)) return held.state;
+  // (only while the copy is recent: beyond 15 minutes it is validated with the cheap version check below, so a task another process added is never hidden for the rest of the day)
+  if (held && !opts?.bypassCache && egress.over(email) && Date.now() - held.at < 900_000) return held.state;
   // Expired or bypassed: ask only for the row's version first; an unchanged row means the cached copy is still right.
   if (held?.ver) {
     const { data: v } = await withRetry("load-ver", async () => client!.from(TABLE).select("updated_at").eq("email", email).maybeSingle());

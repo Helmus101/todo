@@ -704,6 +704,7 @@ export function socraticFallback(fr: boolean): string {
     : "Walk me through what you just wrote: what does each part stand for, and where does it come from?";
 }
 
+import { autoMathLine } from "../shared/mathText.ts";
 export { repairLatex } from "../shared/mathText.ts";
 
 /** Math lines on the board are ALWAYS typeset: a formula/result/given/summary line that is bare maths (an equation or LaTeX
@@ -721,7 +722,7 @@ export function latexifyBoardLine(text: string, kind?: string): string {
     if (!/[=\\^]/.test(body)) return line;
     const words = body.replace(/\\[a-zA-Z]+/g, " ").match(/[A-Za-zÀ-ÿ]{3,}/g) || [];
     if (words.length > 2) return line; // prose with an equation inside: leave it to the model's own $…$
-    return `${bullet}$${body.replace(/°/g, "^\\circ")}$`;
+    return bullet + autoMathLine(body.replace(/°/g, "°")); // the same plain→LaTeX conversion the page uses: tan→\\tan, (h)/(b)→\\frac{h}{b}, °→^\\circ
   });
   return lines.join("\n");
 }
@@ -791,4 +792,54 @@ export function evalMathExpr(src: string): number | null {
     throw new Error("ident");
   };
   try { const v = expr(); return i === s.length && Number.isFinite(v) ? v : null; } catch { return null; }
+}
+
+/** A problem posed in PROSE (no "=" anywhere): several numbers with units or angles plus a question — "a tower stands on level
+ *  ground; from A the elevation is 15°, from B, 100 m closer, 25°. What's the first thing you'd set up?". Pure. */
+export function posesProblemInProse(draft: string): boolean {
+  const t = String(draft || "").replace(/\$/g, " ").replace(/\^?\{?\\(?:circ|degree)\}?/g, "°");
+  if (!/[?？]/.test(t)) return false;
+  // At least two quantities carrying a unit or an angle sign ("12 g", "100 m", "25°") — a lone "25°" is just a question about an angle.
+  const quantities = t.match(/\d+(?:[.,]\d+)?\s?(?:°|(?:m|cm|mm|km|kg|g|s|min|h|N|J|V|A|W|mol|L|mL|%|degrees?)\b)/gi) || [];
+  return quantities.length >= 2 && t.length >= 50;
+}
+
+/** A board line that copies the student's own words: 4+ consecutive words of it appear verbatim in their message ("so now we can do
+ *  opposite over adjacent so…"). The board shows clean maths, never a transcript of speech. Pure. */
+export function echoesStudentWords(boardText: string, studentMessage: string): boolean {
+  const words = (x: string) => String(x || "").toLowerCase().replace(/\$[^$]*\$/g, " ").replace(/[^a-zà-ÿ\s']/g, " ").split(/\s+/).filter((w) => w.length >= 2);
+  const b = words(boardText), m = words(studentMessage).join(" ");
+  if (b.length < 4) return false;
+  for (let i = 0; i + 4 <= b.length; i++) if (m.includes(b.slice(i, i + 4).join(" "))) return true;
+  return false;
+}
+
+/** The reply already CONTAINS the answer to the question it asks ("750 J — what are the units?"). `askAnswer` is what the tutor wrote in its
+ *  plan as the correct answer to its own question. Unit-like answers (J, W, m/s) are detected as number+unit; word/number answers as a whole
+ *  token. Anything the student themselves said doesn't count (echoing their own word is fine). Pure. */
+export function statesOwnAnswer(reply: string, askAnswer: string | undefined, studentTexts: string[]): boolean {
+  const ans = String(askAnswer || "").replace(/\\(?:text|mathrm|textbf)\{([^}]*)\}/g, "$1").replace(/[$\\{}]/g, "").replace(/\s+/g, " ").trim();
+  if (!ans || ans.length > 40) return false;
+  const theirs = studentTexts.join(" ").replace(/\\(?:text|mathrm)\{([^}]*)\}/g, "$1").replace(/[$\\{}]/g, "");
+  const text = String(reply || "").replace(/\\(?:text|mathrm)\{([^}]*)\}/g, "$1").replace(/[$\\{}]/g, "");
+  const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (/^[A-Za-zμΩ°%/·]{1,6}$/.test(ans) && !/^(?:a|an|the|it|yes|no|is|are|of|to|in|on|or|so)$/i.test(ans)) {
+    const re = new RegExp(`\\d(?:[.,]\\d+)?\\s*(?:\\\\,)?\\s*${esc(ans)}(?![A-Za-z])`);
+    return re.test(text) && !re.test(theirs);
+  }
+  const re = new RegExp(`(?<![\\p{L}\\d])${esc(ans)}(?![\\p{L}\\d])`, "iu");
+  if (ans.replace(/\s+/g, "").length < 3) return false;
+  return re.test(text) && !re.test(theirs);
+}
+
+/** What the student's message IS, when it isn't plain work: lost / "I don't know", or an idea voiced in their own words. Each returns a
+ *  directive block for the tutor's context so the reply answers THAT first instead of marching on with its plan. */
+export const CONFUSED_BLOCK = `\n\nTHEY JUST TOLD YOU THEY ARE LOST OR DON'T KNOW. Do not ask the next question on your plan. Say back what you heard in a few words ("okay — that's the missing piece"), then drop a level: if it is a FACT that cannot be reasoned out (a unit's or law's name, a definition, a convention, a date) tell them in one short sentence and have them use it straight away; otherwise explain the ONE missing idea in plain words with a concrete everyday example and ask them to try it. Never repeat a question they could not answer, never hint at a name with a riddle twice.\n`;
+export const INSIGHT_BLOCK = `\n\nTHEY JUST PUT AN IDEA IN THEIR OWN WORDS ("so power is work over time"). That is the most important thing in their message: respond to IT first — say whether it holds and what to tighten, in a few words — let them state it precisely if it is loose, and make it the next step. Do not carry on with the old question as if they had not spoken.\n`;
+export function listenCue(message: string): "confused" | "insight" | null {
+  const m = String(message || "").trim();
+  if (!m || /^\[(?:Exercise|Exercice|Activity|Activité)\]/i.test(m)) return null;
+  if (/\b(?:i (?:don'?t|do not|really don'?t) (?:know|get|understand)|no idea|i'?m lost|i am lost|still (?:don'?t|do not) get|(?:i'?m )?confused|je (?:ne )?(?:sais|comprends) pas|aucune idée|je suis perdu)\b/i.test(m)) return "confused";
+  if (m.length >= 18 && (/\b(?:oh|ah|wait|okay|ok)\b[^.?!]{0,40}\bso\b/i.test(m) || /\bso\b[^.?!]{0,70}\b(?:is|are|means?)\b[^.?!]{0,20}\b(?:basically|just|like|the same|how fast|rate|over)\b/i.test(m) || /\bbasically\b/i.test(m))) return "insight";
+  return null;
 }

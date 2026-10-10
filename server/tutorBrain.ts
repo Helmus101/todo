@@ -47,6 +47,9 @@ export interface TutorPlan {
   route?: string[];
   /** True when their last move is on that route (or an equally short valid one); false = they diverged → bring them back with a question. */
   onRoute?: boolean;
+  /** The ONE question about to be asked, and its correct answer as the tutor itself worked it out (value + unit). */
+  ask?: string;
+  askAnswer?: string;
 }
 
 const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
@@ -73,6 +76,8 @@ export function normalizePlan(raw: unknown): TutorPlan | null {
   const st = r.student_step ?? r.studentStep;
   if (st && typeof st === "object" && str(st.text, 300) && ["correct", "incorrect", "partial"].includes(st.status)) plan.studentStep = { text: str(st.text, 300), status: st.status };
   if (Array.isArray(r.route)) { const rt = r.route.map((x: unknown) => str(x, 120)).filter(Boolean).slice(0, 7); if (rt.length) plan.route = rt; }
+  if (typeof r.ask_answer === "string" || typeof r.askAnswer === "string") plan.askAnswer = str(r.ask_answer ?? r.askAnswer, 80);
+  if (typeof r.ask === "string") plan.ask = str(r.ask, 160);
   if (typeof r.on_route === "boolean") plan.onRoute = r.on_route; else if (typeof r.onRoute === "boolean") plan.onRoute = r.onRoute;
   if (Array.isArray(r.ledger)) { const l = r.ledger.map((x: unknown) => str(x, 140)).filter(Boolean).slice(0, 10); if (l.length) plan.ledger = l; }
   const g = r.goal;
@@ -470,7 +475,8 @@ export const PLAN_PROTOCOL =
   `"concept":"the concept in play, short","prerequisite":"a prerequisite concept if relevant","action":"ONE of ${TUTOR_ACTIONS.join("|")}",` +
   `"level":0-6,"target":"board entry or idea you aim at","why":"why this action now","expected_next":"what you expect them to do next",` +
   `"evidence":{"kind":"solved-unaided|solved-after-hint|solved-after-partial|solved-after-explanation|self-corrected|mistake|misconception|recall|recall-miss|transfer-success|transfer-fail","detail":"..."},` +
-  `"student_step":{"text":"their step, typeset-ready ($…$ maths)","status":"correct|incorrect|partial"},"ledger":["TRUE: angle TJB = 25° (alternate angles)","WRONG: they said J = 40°"],"route":["the 3-6 key moves of the QUICKEST sound solution, as short ideas, never numbers"],"on_route":true,"goal":{"type":"understand|homework|exam|mastery|review|debug|learn","minutes":N},"objective":"session objective"}</plan>\n` +
+  `"student_step":{"text":"their step, typeset-ready ($…$ maths)","status":"correct|incorrect|partial"},"ledger":["TRUE: angle TJB = 25° (alternate angles)","WRONG: they said J = 40°"],"route":["the 3-6 key moves of the QUICKEST sound solution, as short ideas, never numbers"],"on_route":true,"ask":"the ONE question you are about to ask","ask_answer":"its correct answer, worked out by YOU right now (value + unit)","goal":{"type":"understand|homework|exam|mastery|review|debug|learn","minutes":N},"objective":"session objective"}</plan>\n` +
+  `KNOW THE ANSWER BEFORE YOU ASK: fill "ask" and "ask_answer" BEFORE you write the reply — solve your own question first (CREATE_CALC for arithmetic), including its unit. Then your reply must not contain that answer, and must not ask about something your own sentence already states ("750 J — what are the units?" is a mistake: you wrote the unit, then asked for it). ` +
   `VERIFY BEFORE YOU SPEAK: before you confirm or reject ANY claim of theirs — and before you state any number — derive it yourself from the givens (use CREATE_CALC for arithmetic; a triangle's angles sum to 180°; an angle of depression equals the angle of elevation at the ground; re-read what the problem actually gives). ` +
   `PLAN THE QUICKEST ROUTE FIRST: the moment a problem is in play (theirs or one you set) and you have no route yet, work out the most efficient correct solution yourself — the fewest steps, no helper unknowns you can eliminate — and write it in "route" as 3-6 short IDEAS (e.g. "two right triangles share the height", "each horizontal distance is height over tan", "their difference is the given separation", "solve that one equation for the height"). Keep "route" in every later plan until a new problem starts. Every turn set "on_route": true if their move is on it (or equally short and valid), false if they diverged. When false, never chase the tangent and never name the step you want: ask the one question about the IDEA that makes the route's next step visible. This applies to every subject and problem type.\n` +
   `Record the cumulative verified facts and judged claims in "ledger" (replace it each turn, ≤10 short items, keep what still matters). The ledger is YOUR memory: never contradict it without saying you were wrong, and when they repeat a question, answer it plainly (yes/no and why) from the ledger. Never state a value you computed for THEM to find — judge theirs.\n` +
