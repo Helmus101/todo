@@ -927,3 +927,10 @@ export function startsNewProblem(text: string, existingTexts: string[]): boolean
   return !boardCoversStatement(t, existingTexts);
 }
 export const NO_UNPROMPTED_EXERCISE = "REJECTED: they didn't ask for a new problem. Keep helping with what they are doing right now — answer what they asked, guide the step they're on. When the current one is finished, OFFER another in one short question (\"want another one on this?\") and wait for a yes; never set one unasked.";
+
+/** A board line that is a list of givens ("Skier: mass m = 75 kg, height h = 30 m, friction loss W_f = 4000 J") or a worded scenario: 2+ quantities with units/angles. */
+export function looksLikeGivensOrScenario(text: string): boolean {
+  const t = String(text || "").replace(/\$/g, " ").replace(/\\(?:text|mathrm)\{([^}]*)\}/g, "$1");
+  const quantities = t.match(/\d+(?:[.,]\d+)?\s?(?:°|(?:m|cm|mm|km|kg|g|s|min|h|N|J|V|A|W|mol|L|mL|%|kJ|kW|MJ|m\/s|ms)\b)/g) || [];
+  return quantities.length >= 2;
+}
