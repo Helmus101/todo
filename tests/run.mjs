@@ -8,6 +8,7 @@ import { normalizeWidget, shuffledNotSolved, projectileStats } from "../shared/w
 import { makeSyncScheduler } from "../server/syncScheduler.ts";
 import { buildTasksPayload, parseHave } from "../server/taskDelta.ts";
 import { makeTaskSync } from "../client/taskDelta.ts";
+import { buildSolid } from "../shared/solid3d.ts";
 import { evalMathExpr } from "../server/tutorAdapt.ts";
 import { namesExactStep, bubbleDoesMath } from "../server/tutorAdapt.ts";
 import { statesOwnMath, asksToWrite as asksToWrite2 } from "../server/tutorAdapt.ts";
@@ -1879,7 +1880,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     check("SVG sanitiser strips scripts, handlers, foreignObject, images, external refs and style", /^<svg /.test(o) && !/script|onload|onclick|foreignObject|<image|javascript|evil|<style|<a\b/i.test(o) && /<rect/.test(o) && /url\(#g\)/.test(o) && !/ width=/.test(o));
     check("SVG sanitiser keeps a real figure intact and refuses non-SVG", (() => { const good = '<svg viewBox="0 0 800 500"><defs><marker id="a" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs><line x1="10" y1="10" x2="200" y2="10" stroke="currentColor" marker-end="url(#a)"/><text x="5" y="30" font-size="18">35 cm &amp; 30°</text></svg>'; const g = sanitizeSvg(good); return /marker-end="url\(#a\)"/.test(g) && /<marker /.test(g) && svgText(g) === "35 cm &amp; 30°" && sanitizeSvg("<div>hi</div>") === "" && sanitizeSvg("") === ""; })()); }
   { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8"); const bd = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
-    check("SVG_ON_BOARD replaces DRAW_ON_BOARD for the tutor and is sanitised on write and on render", /SVG_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL/.test(cl) && !/DRAW_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL/.test(cl) && /sanitizeSvg\(e\.svg\)/.test(bd) && /NEVER LaTeX or KaTeX/.test(cl)); }
+    check("SVG_ON_BOARD replaces DRAW_ON_BOARD for the tutor and is sanitised on write and on render", /SVG_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, SOLID_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL/.test(cl) && !/DRAW_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL/.test(cl) && /sanitizeSvg\(e\.svg\)/.test(bd) && /NEVER LaTeX or KaTeX/.test(cl)); }
   { const ts = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8"); const bd = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8"); const tc3 = readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8");
     check("a drawing made on the blank page reserves room, so Otto's next lines come AFTER it", /freezeSheet/.test(tc3) && /canvasRef\.current\?\.freezeSheet\(\)/.test(ts) && /sheetSignal/.test(bd) && /sm-board-sheet/.test(bd) && /afterKey/.test(bd));
     check("the board opens at the END of the content (blank page is one scroll further), not on the blank page", /scrollIntoView\(\{ block: "end", behavior: "smooth" \}\)/.test(bd));
@@ -1996,6 +1997,14 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
       wrongKey.problem?.answer === "112.0" && rightKey.problem?.answer === "112.0" && noCheck.problem?.answer === "38.9");
     check("the tutor is adaptive (fluent streak → big chunk, slip → shrink) and never blames the app for a wrong key",
       /THEY ARE FLUENT/.test(tb) && /THEY JUST SLIPPED/.test(tb) && /stepStreak/.test(tb) && /NEVER BLAME THE APP/.test(cl) && /BE ADAPTIVE, NOT A SCRIPT/.test(cl)); }
+  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+    const cu = buildSolid({ shape: "cuboid", width: 8, height: 5, depth: 6, dims: { width: "8 cm", height: "5 cm", depth: "6 cm" }, highlight: [{ from: "A", to: "G", label: "d" }] });
+    const py = buildSolid({ shape: "pyramid", width: 6, height: 7, depth: 6, dims: { width: "6 cm", height: "h" } });
+    const cy = buildSolid({ shape: "cylinder", radius: 2, height: 5, dims: { radius: "r", height: "h" } });
+    const sv = (x) => ("svg" in x ? x.svg : "");
+    check("3D solids are computed: cuboid has all 8 named vertices, 3 dashed hidden edges, only the given dimensions and the highlighted diagonal; pyramid/cylinder/cone/sphere/prism all build; bad shapes are refused",
+      "svg" in cu && ["A", "B", "C", "D", "E", "F", "G", "H"].every((v) => new RegExp(`>${v}<`).test(sv(cu))) && (sv(cu).match(/stroke-dasharray="7 6"/g) || []).length === 3 + 0 && />8 cm</.test(sv(cu)) && />d</.test(sv(cu)) && !/>[0-9.]+ ?m</.test(sv(buildSolid({ shape: "cuboid", width: 3, height: 2, depth: 2 }))) && "svg" in py && />E</.test(sv(py)) && "svg" in cy && /<ellipse/.test(sv(cy)) && ["cone", "sphere", "prism", "cube"].every((sh) => "svg" in buildSolid({ shape: sh, width: 3, height: 4, depth: 5, radius: 2 })) && "error" in buildSolid({ shape: "torus" }));
+    check("SOLID_ON_BOARD is a tutor tool: offered with the board tools, handled into a sanitized svg entry with the geometry facts, and named in the persona and the draw-request round", /const SOLID_ON_BOARD_TOOL = /.test(cl) && /SVG_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, SOLID_ON_BOARD_TOOL/.test(cl) && /name === "SOLID_ON_BOARD"/.test(cl) && /3D SOLIDS \(cuboid/.test(cl) && /SOLID_ON_BOARD for 3D solids/.test(cl)); }
   check("tool calls typed as text never reach the student", stripPseudoTools("<syntax_error></syntax_error><write_to_board><kind>result</kind><text>distance = (470 + H)/tan 40</text></write_to_board>Ah, exactly — what next?") === "Ah, exactly — what next?" && stripPseudoTools("plain reply") === "plain reply" && stripPseudoTools("<chat>Using that height.</chat>") === "Using that height.");
   check("a reply that is only a formula is bare maths; a sentence with maths is not", bareMath("distance K = (470)/(tan 40)") && bareMath("(470 + H)/(tan 25°) - (470 + H)/(tan 40°) = 500") && !bareMath("Which side is opposite the 40° angle here?") && !bareMath("Good, now what does the tan 40° ratio give you for the horizontal distance?"));
   // ── Grounding (reported live: "tan(θ) = slope!" to a student who had only said the two slopes; "maybe graph it" ignored) ──

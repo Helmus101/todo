@@ -21,6 +21,7 @@ import { buildTutorDecision } from "./actionSpace.ts";
 import { normalizeWidget, WIDGET_TYPES } from "../shared/widgets.ts";
 import { normalizeFlow } from "../shared/flow.ts";
 import { buildTrigScene } from "../shared/trigScene.ts";
+import { buildSolid } from "../shared/solid3d.ts";
 import { unrenderableMath } from "./latexCheck.ts";
 import { repairSpokenMath, spokenContextFrom, type SpokenRepair } from "../shared/spokenMath.ts";
 import { sanitizeSvg, svgText, MAX_SVG_CHARS } from "../shared/svgSafe.ts";
@@ -2650,6 +2651,23 @@ const TRIG_SCENE_ON_BOARD_TOOL = {
     separation: { type: "number" }, towerHeight: { type: "number" }, unknownTop: { type: "string" }, distance: { type: "number" },
     baseName: { type: "string" }, topName: { type: "string" }, units: { type: "string" },
   }, required: ["caption", "observers"] },
+};
+
+// 3D solids (cuboid, cube, pyramid, prism, cylinder, cone, sphere): the app COMPUTES the figure in the textbook oblique projection —
+// hidden edges dashed, vertices named, only GIVEN dimensions labelled — so use this instead of hand-drawing a solid.
+const SOLID_ON_BOARD_TOOL = {
+  name: "SOLID_ON_BOARD",
+  description: "Draw a 3D solid correctly on the board: cuboid, cube, pyramid (square base), prism (triangular), cylinder, cone or sphere. The app computes the projection (front face true shape, depth receding up-right), draws hidden edges dashed and names the vertices (cuboid: front ABCD, back EFGH behind A,B,C,D; pyramid: base ABCD, apex E; prism: front ABC, back DEF). " +
+    "Give proportions in width/height/depth (or radius) and put ONLY the values the problem GIVES (or letters for unknowns) in dims — never a value they are asked to find. highlight draws extra lines between named vertices (e.g. the space diagonal A to G, a slant height) in colour. " +
+    "USE THIS for any 3D shape problem (volume, surface area, diagonals, angles between a line and a plane) the moment a picture would help or they ask for one; for 2D figures use GEOMETRY_ON_BOARD, for anything else SVG_ON_BOARD.",
+  input_schema: { type: "object", properties: {
+    caption: { type: "string", description: "one short line, e.g. 'The cuboid ABCDEFGH'" },
+    shape: { type: "string", enum: ["cuboid", "cube", "pyramid", "prism", "cylinder", "cone", "sphere"] },
+    width: { type: "number" }, height: { type: "number" }, depth: { type: "number" }, radius: { type: "number" },
+    dims: { type: "object", description: "labels to print: given values like '8 cm' or letters like 'h'", properties: { width: { type: "string" }, height: { type: "string" }, depth: { type: "string" }, radius: { type: "string" } } },
+    labels: { type: "boolean", description: "name the vertices (default true)" },
+    highlight: { type: "array", description: "up to 3 lines between named vertices", items: { type: "object", properties: { from: { type: "string" }, to: { type: "string" }, label: { type: "string" }, dashed: { type: "boolean" } }, required: ["from", "to"] } },
+  }, required: ["caption", "shape"] },
 };
 
 // The tutor's general drawing tool: it WRITES SVG, exactly the way Claude and ChatGPT draw diagrams. A model is far better at
@@ -7774,6 +7792,7 @@ const PRIMER_PERSONA =
   `- WRITE WHAT THEY ASK YOU TO WRITE: when they say "write these on the board" / "put my equations up", write ALL of them, exactly as they stated them, as separate board lines in that same turn — it is THEIR work, so it is never "ahead of them". Don't ask another question first.\n` +
   `- STAY ON THEIR GOAL, AND KEEP IT EFFICIENT: when they say what they are solving for ("we need h, not k"), that is the goal — never steer them to isolate a different unknown. When their method works but a shorter one exists (e.g. two right triangles sharing the height: eliminate the helper variable at once — the difference of the two horizontal distances h/tan A − h/tan B equals the separation), do not state it: once they have their setup, ask the ONE question that exposes it ("what is the gap between those two distances, and how long is it?"). Prefer one equation in the wanted unknown over a chain of substitutions.\n` +
   `- READ THE FIGURE BEFORE YOU CORRECT: when you drew it, the GEOMETRY line tells you exactly what it shows. Before you tell a student they are wrong, check their claim against the givens and that geometry — if it matches, say so plainly (\"yes — the vertical is the cliff plus h\"). Never contradict a correct student, and never write the formula for them.\n` +
+  `- 3D SOLIDS (cuboid, cube, pyramid, prism, cylinder, cone, sphere): call SOLID_ON_BOARD — it draws the solid correctly with hidden edges dashed and named vertices; never hand-draw a solid. For any other 3D idea (vectors in 3D axes, a plane, a net) write SVG_ON_BOARD in oblique projection: front face true shape, depth receding up-right at half length, hidden edges dashed.\n` +
   `- ELEVATION / DEPRESSION problems (towers, cliffs, lighthouses, boats, planes): the moment a picture would help, or they ask you to draw it, call TRIG_SCENE_ON_BOARD — it draws it correctly to scale with the angles in the right places. Never hand-draw these, and never answer a request to draw with another question.\n` +
   `- DIAGRAMS: for any boxes-and-arrows idea (a process, cause→effect, a cycle, a timeline, a classification, an essay plan) use FLOW_ON_BOARD — you list the nodes and arrows, the app lays them out cleanly. Use GEOMETRY_ON_BOARD for shapes/angles and GRAPH_ON_BOARD for functions; for EVERY other figure (free-body diagrams, sketches, circuits, apparatus, labelled situations like the lighthouse and boats) write the SVG yourself with SVG_ON_BOARD — plan the layout, label every point and value, draw to scale. Never put LaTeX/KaTeX in a figure (plain text and unicode labels; real equations go in WRITE_TO_BOARD).\n` +
   `- ACTIVITIES: when the student should DO something rather than read — pair terms, order steps, sort items, or play with a unit circle / projectile — use WIDGET_ON_BOARD (it always works and tells you how they did) instead of describing it or hand-writing HTML. Any subject. Prefer it over CREATE_INTERACTIVE.\n` +
@@ -9024,7 +9043,7 @@ export async function chatAboutTask(
   // which no longer renders a board anywhere except the Tutor (TutorSession.tsx).
   const includeArtifactTools = wantsArtifactTools(message, history);
   const boardTools = opts?.primer
-    ? [CREATE_PROBLEM_TOOL, ...(sourcesForTrack(profile?.track).length ? [FIND_SOURCE_QUESTION_TOOL] : []), WRITE_TO_BOARD_TOOL, CLEAR_BOARD_TOOL, SVG_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, WIDGET_ON_BOARD_TOOL, FLOW_ON_BOARD_TOOL, ...(opts?.canvasMode ? [CREATE_INTERACTIVE_TOOL] : []), SET_OBJECTIVES_TOOL]
+    ? [CREATE_PROBLEM_TOOL, ...(sourcesForTrack(profile?.track).length ? [FIND_SOURCE_QUESTION_TOOL] : []), WRITE_TO_BOARD_TOOL, CLEAR_BOARD_TOOL, SVG_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, SOLID_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, WIDGET_ON_BOARD_TOOL, FLOW_ON_BOARD_TOOL, ...(opts?.canvasMode ? [CREATE_INTERACTIVE_TOOL] : []), SET_OBJECTIVES_TOOL]
     : [];
   const tools = opts?.canvasMode
     ? [...boardTools, WEB_SEARCH_TOOL, READ_PAGE_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])]
@@ -9274,7 +9293,7 @@ export async function chatAboutTask(
       drawReqFixed = true;
       console.log(`${new Date().toISOString()} [chat] round ${round}: they asked for a drawing and none was made — asking for the figure`);
       messages.push({ role: "assistant", content: draft });
-      messages.push({ role: "user", content: "They asked you to DRAW it, and you answered with a question instead — that's a refusal. Call the right drawing tool NOW: GRAPH_ON_BOARD for lines/functions/data (plot them — no answer in the labels), TRIG_SCENE_ON_BOARD for angles of elevation/depression, GEOMETRY_ON_BOARD for triangles/circles, FLOW_ON_BOARD for processes, otherwise SVG_ON_BOARD (a fully labelled figure with the GIVEN values and the unknowns as letters). Then one short line about what's on it and ONE question." });
+      messages.push({ role: "user", content: "They asked you to DRAW it, and you answered with a question instead — that's a refusal. Call the right drawing tool NOW: GRAPH_ON_BOARD for lines/functions/data (plot them — no answer in the labels), TRIG_SCENE_ON_BOARD for angles of elevation/depression, GEOMETRY_ON_BOARD for triangles/circles, SOLID_ON_BOARD for 3D solids (cuboid, pyramid, prism, cylinder, cone, sphere), FLOW_ON_BOARD for processes, otherwise SVG_ON_BOARD (a fully labelled figure with the GIVEN values and the unknowns as letters). Then one short line about what's on it and ONE question." });
       return true;
     };
     // The board is the working surface, not a thing to ask for: when they ask for something written and nothing went up this
@@ -9873,6 +9892,24 @@ export async function chatAboutTask(
                 result.board.push(entry);
                 content = JSON.stringify({ ok: true, id: entry.id, geometry: built.facts, note: "Drawn to scale with only the GIVEN angles marked (the equal angle at the ground is for the student to find). Now ask ONE question; don't state values they haven't found." });
                 logAudit("artifact", fr ? `Figure : « ${caption.slice(0, 60)} »` : `Figure: "${caption.slice(0, 60)}"`);
+              }
+            }
+          }
+        } else if (name === "SOLID_ON_BOARD") {
+          if (result.board.filter((e) => e.kind === "svg").length >= 2) content = "LIMIT: that's enough figures for one turn.";
+          else {
+            const inp: any = input || {};
+            const caption = String(inp.caption || "").trim().slice(0, 200) || (fr ? "Solide" : "The solid");
+            const built = buildSolid({ shape: inp.shape, width: inp.width, height: inp.height, depth: inp.depth, radius: inp.radius, dims: inp.dims && typeof inp.dims === "object" ? inp.dims : undefined, labels: inp.labels, highlight: Array.isArray(inp.highlight) ? inp.highlight : undefined });
+            if ("error" in built) content = built.error;
+            else {
+              const svg = sanitizeSvg(built.svg);
+              if (!svg) content = "ERROR: couldn't build that solid.";
+              else {
+                const entry: BoardEntry = { id: randomUUID(), text: caption, kind: "svg", svg, facts: built.facts, at: new Date().toISOString() };
+                result.board.push(entry);
+                content = JSON.stringify({ ok: true, id: entry.id, geometry: built.facts, note: "Drawn to scale in oblique projection with only the GIVEN dimensions labelled. Now ask ONE question; don't state values they haven't found." });
+                logAudit("artifact", fr ? `Solide : « ${caption.slice(0, 60)} »` : `Solid: "${caption.slice(0, 60)}"`);
               }
             }
           }
