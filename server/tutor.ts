@@ -14,9 +14,10 @@ import type { BoardEntry, Profile, TaskObjective, TaskProblem } from "../shared/
 import { buildTrigScene } from "../shared/trigScene.ts";
 import { sanitizeSvg, svgText } from "../shared/svgSafe.ts";
 import { repairSpokenMath, spokenContextFrom, type SpokenRepair } from "../shared/spokenMath.ts";
+import { equationsAhead, asksForFormula } from "../shared/equationsAhead.ts";
 import { findArithmeticClaims } from "./arithmetic.ts";
 import { boardSurfaceBlock } from "./boardEvents.ts";
-import { replyStatesValue, socraticFallback, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn } from "./tutorAdapt.ts";
+import { replyStatesValue, socraticFallback, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario } from "./tutorAdapt.ts";
 import {
   createTutorChat, retryRequest, usageOf, parseToolArgs, stripLeakedToolCallSyntax, OUT,
   CREATE_PROBLEM_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, SVG_ON_BOARD_TOOL, FLOW_ON_BOARD_TOOL,
@@ -43,6 +44,7 @@ HOW YOU TALK
 SOCRATIC, FOR REAL
 - Never give the answer, the next step's result, or the option letter. Not even slipped in ("so it's 12, right?"). If they ask for it, give them a smaller piece instead.
 - Climb only as far as needed, one rung at a time: a question that makes them notice something → point at something on the board → hint the method (never the result) → a worked example with DIFFERENT numbers, last line left for them → only then state the general rule. Drop back down as soon as they're moving again.
+- Never derive an equation for them and never tell them which formula or equation to use. Ask first: "what do you know that links power and speed?", "which relationship involves the angle?". An equation goes on the board only once THEY have said it (then write it up as theirs). If they ask you outright for a formula or a definition, answer it.
 - The first move is theirs: the key idea of a problem (which identity, the substitution, how to set up the equation, how to split the angle) is never in your question or on the board. Ask what they'd try first.
 - Only their numbers: every figure you say is one they or the problem gave. Never compute ahead ("take the square root of 390.4"), never state something and then quiz them on it.
 - Concepts are different from answers: if they ask "what is X?" or "why does this work?", explain it briefly and clearly (an example or a picture beats a definition), then check understanding with a question that makes them use it.
@@ -84,7 +86,7 @@ const VOICE_BLOCK = `\n\nVOICE MODE: your reply is read aloud. Write it as speec
 // ── Tools (the board) ─────────────────────────────────────────────────────────────────────────────────
 const WRITE_TO_BOARD = {
   name: "WRITE_TO_BOARD",
-  description: "Write one short entry on the board: keywords and structure, not prose (≤ 25 words). Maths in LaTeX between $…$.",
+  description: "Write one short entry on the board: keywords and structure, not prose (≤ 25 words). Maths in LaTeX between $…$. Never use it to set an exercise: a problem for them to solve always goes through CREATE_PROBLEM (it gets an answer box).",
   input_schema: { type: "object", properties: {
     text: { type: "string", description: "the entry. Several short lines are fine for a worked sequence (one move per line)." },
     kind: { type: "string", enum: ["given", "formula", "definition", "result", "summary", "insight", "instruction", "focus", "outline", "gap"], description: "given = the problem's data; result = something they derived; summary = their reasoning so far; insight = their aha; gap = a line for THEM to finish (ends in '= ?'); outline = headed bullets." },
@@ -182,6 +184,21 @@ export function leakedValue(reply: string, message: string, board: BoardEntry[],
   return null;
 }
 
+/** The student asked to be given an exercise ("give me a problem", "test me", "un exercice"). Exported for tests. */
+export function wantsExercise(message: string): boolean {
+  return asksForProblem(message) || /\b(?:quiz|test) me\b|\binterroge[- ]moi\b|\b(?:un|des|un autre|nouvel?)\s+(?:exo|exercice|probl[èe]me)s?\b|\bpractice (?:problem|question)s?\b/i.test(String(message || ""));
+}
+
+/** A board line that sets up a problem nobody gave: a scenario/givens line (2+ quantities with units) carrying a
+ *  number that appears nowhere in what the student said or in a problem already posted. That's Otto inventing an
+ *  exercise as plain board text — it belongs in CREATE_PROBLEM, with an answer box. Exported for tests. */
+export function inventsProblemOnBoard(text: string, said: string[]): boolean {
+  if (!looksLikeGivensOrScenario(text)) return false;
+  const nums = (String(text).replace(/\\[a-zA-Z]+/g, " ").match(/\d+(?:[.,]\d+)?/g) || []).map((n) => n.replace(",", "."));
+  const heard = new Set((said.join(" ").match(/\d+(?:[.,]\d+)?/g) || []).map((n) => n.replace(",", ".")));
+  return nums.some((n) => !heard.has(n));
+}
+
 /** A wrong arithmetic claim in the reply ("12 × 3 = 38"), as a correction note for the model, or null. */
 export function wrongArithmetic(reply: string, message = ""): string | null {
   // A wrong claim the STUDENT made, quoted back to them, is the point of the reply — not Otto's own slip.
@@ -223,6 +240,8 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   ];
   const tools = tutorTools(!!input.canvasMode).map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } }));
 
+  const said = [...history.filter((h) => h.role === "user").map((h) => h.text), message, ...(spokenRepair ? [spokenRepair.interpreted, ...(input.spoken?.alternatives || [])] : []), ...problems.map((p) => p.question || ""), ...board.filter((b) => b.kind === "given" || b.owner === "student").map((b) => b.text)];
+  const wantsProblem = wantsExercise(message);
   const allBoard = () => [...(result.boardCleared ? [] : board), ...result.board];
   const allProblems = () => [...problems, ...result.problems];
   let corrected = false;
@@ -253,16 +272,26 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
         result.error = true;
         return result;
       }
+      // Hard guard 0: they asked for an exercise → it exists as a real problem (answer box), not just talk or board text.
+      if (wantsProblem && !result.problems.length && !corrected && !lastRound) {
+        corrected = true;
+        messages.push({ role: "assistant", content: text });
+        messages.push({ role: "user", content: "(They asked for an exercise. Create it now with CREATE_PROBLEM — full statement, one short answer, a check expression for a numeric answer, precision and unit in the hint — then a one-line message pointing them to it. Don't mention this note.)" });
+        continue;
+      }
       // Hard guard 1: never hand over an answer they're meant to find.
       const leaked = leakedValue(reply, message, allBoard(), allProblems());
       // Hard guard 2: arithmetic the reply asserts must be right.
       const badMath = leaked ? null : wrongArithmetic(reply, message);
-      if ((leaked || badMath) && !corrected && !lastRound) {
+      // Hard guard 3: never derive an equation or name the formula to use before they do — ask first.
+      const ahead = leaked || badMath || asksForFormula(message) ? [] : equationsAhead(reply, said);
+      if ((leaked || badMath || ahead.length) && !corrected && !lastRound) {
         corrected = true;
         messages.push({ role: "assistant", content: text });
         messages.push({ role: "user", content: leaked
           ? `(Your reply gives away ${leaked === "the problem's answer" ? "the answer to the open problem" : `the value of the open gap (${leaked})`} — the student must find it. Rewrite it: same idea, without that value, ending with one question that gets them there. Don't mention this note.)`
-          : `(Your reply contains a wrong calculation: ${badMath}. Rewrite it correctly. Don't mention this note.)` });
+          : badMath ? `(Your reply contains a wrong calculation: ${badMath}. Rewrite it correctly. Don't mention this note.)`
+          : `(Your reply hands them an equation they haven't stated: ${ahead.join("; ")}. Don't derive equations or tell them which formula to use. Rewrite it as a question that gets THEM to name the relationship (e.g. "what links power, force and speed?"), with no equation in it. Don't mention this note.)` });
         continue;
       }
       if (leaked) { result.guardrailTripped = true; result.reply = socraticFallback(fr); return result; }
@@ -275,7 +304,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       const name = tc.function?.name;
       const args = parseToolArgs(tc.function?.arguments) || {};
       let content: string;
-      try { content = applyTool(name, args, { message, result, allBoard, allProblems, spokenRepair, fr }); }
+      try { content = applyTool(name, args, { message, result, allBoard, allProblems, spokenRepair, fr, said, wantsExercise: wantsProblem }); }
       catch (e: any) { content = `ERROR: ${e?.message || e}`; }
       messages.push({ role: "tool", tool_call_id: tc.id, content });
     }
@@ -292,6 +321,9 @@ interface ToolCtx {
   allProblems: () => TaskProblem[];
   spokenRepair: SpokenRepair | null;
   fr: boolean;
+  /** Everything the student has said this session (and problems already posted) — the only legitimate source of givens. */
+  said: string[];
+  wantsExercise: boolean;
 }
 const LEAK = "REJECTED: that shows the answer to an open problem or gap — they must find it. Leave that value out (use '?').";
 const ok = (id?: string) => JSON.stringify({ ok: true, ...(id ? { id } : {}) });
@@ -314,6 +346,14 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       if (result.board.length >= 8) return "LIMIT: that's plenty on the board for one turn.";
       if (isDuplicateBoardEntry(c.allBoard(), input)) return "DUPLICATE: that's already on the board — point at it instead.";
       if (input.kind !== "gap" && leaks(text)) return LEAK;
+      // A problem is posted with CREATE_PROBLEM (answer box, checked key) — never as board text plus a "= ?" gap.
+      if (input.owner !== "student" && c.wantsExercise && !result.problems.length && (input.kind === "gap" || looksLikeGivensOrScenario(text)))
+        return "REJECTED: they asked for an exercise — post it with CREATE_PROBLEM (the full statement, one short answer, a check expression, precision and unit in the hint), not as board text.";
+      if (input.owner !== "student" && inventsProblemOnBoard(text, [...c.said, ...result.problems.map((q) => q.question)]))
+        return "REJECTED: that sets up a problem the student never gave. A new problem goes through CREATE_PROBLEM, and only when they ask for one; the board's givens come from THEIR problem.";
+      // Never derive an equation or show which formula to use: the student names the relationship first.
+      const ahead = input.owner !== "student" && !asksForFormula(c.message) ? equationsAhead(text, c.said) : [];
+      if (ahead.length) return `REJECTED: that writes an equation they haven't stated (${ahead[0]}). Don't derive it or show which formula to use — ask them what relationship they'd use, and write it up once THEY say it.`;
       const heard = boardRepeatsMishearing(text, c.spokenRepair);
       if (heard) return `REJECTED: "${heard}" is a speech-recognition slip — write what the student MEANT, typeset in $…$.`;
       const r = makeBoardEntry(input);
@@ -335,6 +375,7 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       if (!note) return "ERROR: a pointer needs a short note.";
       if (count("annotation") >= 2) return "LIMIT: two pointers per turn is plenty.";
       if (leaks(note)) return LEAK;
+      if (!asksForFormula(c.message) && equationsAhead(note, c.said).length) return "REJECTED: that note hands them an equation they haven't stated — point and ask instead.";
       const tone = ["error", "hint", "good", "focus"].includes(input.tone) ? input.tone : "focus";
       return push({ id: randomUUID(), text: note, kind: "annotation", targetId: hit.id, tone, owner: "otto", at: new Date().toISOString() } as BoardEntry);
     }

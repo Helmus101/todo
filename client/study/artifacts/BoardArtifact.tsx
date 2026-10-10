@@ -58,7 +58,7 @@ function GapAnswer({ entry, onCheck, en }: { entry: BoardEntry; onCheck: NonNull
         <input
           type="text"
           className="sm-inline-problem-input"
-          placeholder={en ? "Your line… e.g. h/tan(25°)" : "Ta ligne… ex. h/tan(25°)"}
+          placeholder={en ? "Your answer…" : "Ta réponse…"}
           value={value}
           onChange={(e) => { setValue(e.target.value); if (verdict) setVerdict(null); }}
           onKeyDown={(e) => { if (e.key === "Enter") void submit(); }}
