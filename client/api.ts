@@ -1,3 +1,4 @@
+import { boardLineNumbers } from "../shared/boardLines.ts";
 import type { CourseworkDoc } from "../shared/coursework.ts";
 import { taskSync } from "./taskDelta.ts";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, BoardEntry, TaskProblem, TaskObjective } from "../shared/types.ts";
@@ -470,7 +471,7 @@ export const api = {
       // The on-device thread can be long: send how the session began (first 3) + the recent tail, not all of it
       // (the server pins the opening verbatim and keeps its own window).
       message, history: (history.length > 66 ? [...history.slice(0, 3), ...history.slice(-62)] : history).map((h) => ({ role: h.role, text: h.text })),
-      board: board.map((b) => ({ id: b.id, text: b.text, kind: b.kind, outline: b.outline, diagram: b.diagram?.slice(0, 40), owner: b.owner, status: b.status, concept: b.concept, targetId: b.targetId })),
+      board: ((nums) => board.map((b) => ({ n: nums.get(b.id), id: b.id, text: b.text, kind: b.kind, outline: b.outline, diagram: b.diagram?.slice(0, 40), owner: b.owner, status: b.status, concept: b.concept, targetId: b.targetId })))(boardLineNumbers(board)),
       problems: problems.map((p) => ({ question: p.question, options: p.options, solved: p.solved === true })),
       stepIndex, materials, voiceMode, canvasMode, primer, objectives, spoken,
       // Who this tutor session is — lets the server rebuild a freestudy task it lost track of instead of 404ing.

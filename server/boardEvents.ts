@@ -190,7 +190,8 @@ export function boardSurfaceBlock(entries: BoardEntry[] | undefined, problems: T
     if (e.kind === "annotation") continue; // annotations are shown on the entry they point at, below
     const notes = board.filter((a) => a.kind === "annotation" && a.targetId && a.targetId === e.id).map((a) => `your note (${a.tone || "focus"}): ${a.text}`);
     const tags = [
-      `#${i + 1}`,
+      // The student's own margin number when the board came with one — so "#4" is the line THEY see as 4.
+      `#${e.n ?? i + 1}`,
       ...notes,
       e.owner === "student" ? "STUDENT'S WORK" : "yours",
       e.kind === "gap" ? "GAP — they must fill this" : "",

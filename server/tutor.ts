@@ -17,7 +17,7 @@ import { repairSpokenMath, spokenContextFrom, type SpokenRepair } from "../share
 import { equationsAhead, asksForFormula } from "../shared/equationsAhead.ts";
 import { findArithmeticClaims } from "./arithmetic.ts";
 import { boardSurfaceBlock } from "./boardEvents.ts";
-import { replyStatesValue, socraticFallback, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario, inventedNumbers, confirmsUnchecked, wrapsUpUnasked, blamesWidget, asksToWrite } from "./tutorAdapt.ts";
+import { replyStatesValue, socraticFallback, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario, inventedNumbers, confirmsUnchecked, wrapsUpUnasked, blamesWidget, asksToWrite, handsOverCalculation } from "./tutorAdapt.ts";
 import { latexToPlainText } from "../shared/mathText.ts";
 import { toExprSource } from "../shared/mathEquiv.ts";
 import { compileExpr } from "../shared/mathExpr.ts";
@@ -72,6 +72,7 @@ THE BOARD (shared digital paper)
 - Lists, tables, cheat sheets and anything longer than a sentence or two go on the board; the message just points at it.
 - Never put their sentences on the board (clean maths and structure only), and never erase: correct by adding the fixed version next to it.
 - Exercises: only when they ask for one (offer, then wait for a yes), and only for a single short checkable answer — state the precision (decimal places) and unit. Open questions (explain, why, compare) stay in the conversation.
+- Board lines are numbered in the margin (the #n in the board listing is the number THEY see). To point at a line, say its number ("look at line 4") or use ANNOTATE_BOARD — never a number that isn't there.
 - Use the board when it helps thinking, not every turn for its own sake.
 
 ANY SUBJECT
@@ -224,6 +225,37 @@ export function doubtsRightAnswer(reply: string, message: string): string | null
   return null;
 }
 
+/** A gap whose line is a pure number calculation ("900×9.8×sin(12°) + 900×0.4 + 360 = ?") has its key computed
+ *  HERE, not guessed by the model — a guessed "2553" for 2553.8 marked a right 2554.4 wrong (reported live).
+ *  Returns the computed value, or null when the line isn't a closed calculation. Exported for tests. */
+export function computedGapKey(text: string): number | null {
+  const plain = latexToPlainText(String(text || "").replace(/\$/g, " ")).replace(/(\d),(?=\d{3}(?!\d))/g, "$1");
+  const m = /(?:^|=|:)\s*([(\d][\d.\s×x*·/÷+\-−()°^√a-z]*?)\s*=\s*\?\s*$/i.exec(plain);
+  if (!m || !/[×x*·/÷+\-−^]/.test(m[1]) || (m[1].match(/\d+(?:\.\d+)?/g) || []).length < 2) return null;
+  const f = compileExpr(toExprSource(m[1]), []);
+  if ("error" in f) return null;
+  const v = f.fn({});
+  return Number.isFinite(v) ? Math.round(v * 1e4) / 1e4 : null;
+}
+
+/** A reply never OPENS harshly ("Careful, Willem —", "No,", "Wrong.", "Attention, …"): the lead-in (and a name right
+ *  after it) becomes a gentle one in the reply's language. Exported for tests. */
+export function softenOpener(reply: string, fr: boolean): string {
+  const t = reply.trimStart();
+  const name = "(?:,?\\s*[A-ZÀ-Ý][\\p{L}-]+)?";
+  const rules: [RegExp, string, string][] = [
+    [new RegExp(`^(?:careful|watch out|attention|hold on)${name}\\s*[—–:,!.-]+\\s*`, "iu"), "Hm, let's look at that — ", "Hmm, regardons ça — "],
+    [new RegExp(`^(?:no|nope|wrong|incorrect|not quite|non|faux|pas tout à fait)${name}\\s*[—–:,!.-]+\\s*`, "iu"), "Almost — ", "Presque — "],
+    [/^that(?:'|’)?s (?:not right|wrong|incorrect|not correct|false)[,.!:—–-]?\s*/i, "Let's check that together — ", "Vérifions ensemble — "],
+    [/^actually[,:]?\s+/i, "Hm, one thing — ", "Hmm, une chose — "],
+  ];
+  for (const [re, en, frRep] of rules) if (re.test(t)) {
+    const rest = t.replace(re, "");
+    return (fr ? frRep : en) + rest.charAt(0).toLowerCase() + rest.slice(1);
+  }
+  return reply;
+}
+
 /** A wrong arithmetic claim in the reply ("12 × 3 = 38"), as a correction note for the model, or null. */
 export function wrongArithmetic(reply: string, message = ""): string | null {
   // A wrong claim the STUDENT made, quoted back to them, is the point of the reply — not Otto's own slip.
@@ -314,6 +346,10 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       const invented = inventedNumbers(reply, [...said, ...allBoard().map((b) => b.text), ...allProblems().map((p) => p.question)]);
       if (invented.length) issues.push(`it uses numbers nobody gave (${invented.slice(0, 3).join(", ")}) — only their numbers and the problem's; never compute ahead or bring in a new scenario`);
       if (!doubt && confirmsUnchecked(reply, message, input.stepVerdict ? { studentStep: { status: input.stepVerdict.verdict } } : null)) issues.push("it confirms a value they didn't actually give (or one that's wrong) — react to THEIR number, and if it's off, ask which step they'd recheck");
+      const lines = new Set(allBoard().map((e, i) => e.n ?? i + 1));
+      const badLine = [...reply.matchAll(/\b(?:line|ligne)\s*#?\s*(\d{1,3})\b|(?<![\w&])#(\d{1,3})\b/gi)].map((m) => Number(m[1] || m[2])).find((n) => !lines.has(n));
+      if (badLine) issues.push(`it points at line ${badLine}, which doesn't exist on their board — use the line's real margin number from the board listing, or describe it`);
+      if (!doubt && handsOverCalculation(reply, message)) issues.push("it hands them the calculation (which numbers to multiply/add) — ask what THEY would compute next instead");
       if (wrapsUpUnasked(reply, message)) issues.push("it offers to wrap up or move on, which they didn't ask for — stay on the current work");
       if (blamesWidget(reply)) issues.push("it blames the app/widget — if an exercise's key disagrees with a right answer, say plainly the key was wrong");
       if (issues.length && !corrected && !lastRound) {
@@ -328,7 +364,8 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
         result.reply = fr ? "Oui, c'est juste — bien joué. Qu'est-ce qui t'a dit quels morceaux multiplier ?" : "Yes, that's right — nice work. What told you which pieces to multiply?";
         return result;
       }
-      result.reply = reply;
+      // Never open harshly ("Careful, Willem —", "No,", "Wrong"): softened in code, no extra round needed.
+      result.reply = softenOpener(reply, fr);
       return result;
     }
 
@@ -390,6 +427,7 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       // Never derive an equation or show which formula to use: the student names the relationship first.
       const ahead = input.owner !== "student" && !asksForFormula(c.message) ? equationsAhead(text, c.said) : [];
       if (ahead.length) return `REJECTED: that writes an equation they haven't stated (${ahead[0]}). Don't derive it or show which formula to use — ask them what relationship they'd use, and write it up once THEY say it.`;
+      if (input.kind === "gap") { const k = computedGapKey(text); if (k !== null) input.expectedAnswer = String(k); }
       const heard = boardRepeatsMishearing(text, c.spokenRepair);
       if (heard) return `REJECTED: "${heard}" is a speech-recognition slip — write what the student MEANT, typeset in $…$.`;
       const r = makeBoardEntry(input);
