@@ -455,6 +455,11 @@ export async function runTutorSim(check, section) {
     : { content: "Exactly. Now the same push took 2.5 s — what could you work out from that?" };
   r = await run("750", { history: [{ role: "user", text: "work is force times distance" }, { role: "assistant", text: "ok" }] });
   check("end to end: a reply that already states the answer to the question it asks ('750 J — what are the units?') is corrected once", !/what are the units/i.test(r.reply) && /2\.5 s/.test(r.reply) && calls.some((b) => /already states "J"/.test(lastUserText(b))));
+  // BOARD CONTENT: a cheat sheet pasted in the bubble goes on the board (corrective round, then the app's own fallback), bubble = one short line.
+  const SHEET = "Here is the quick cheat sheet: 1. Kinetic energy (E_k): the energy an object has because it is moving. 2. Gravitational potential energy (E_p): the energy stored because of height. 3. Work (W): energy transferred when a force moves something over a distance. 4. Power (P): the rate of energy transfer, in watts. 5. Efficiency: useful energy out over total energy in. Do any of those need an example?";
+  script = () => ({ content: SHEET });
+  r = await run("can you give me a cheat sheet of the five energy words", { history: [{ role: "user", text: "energy question" }, { role: "assistant", text: "ok" }] });
+  check("end to end: a cheat sheet in the bubble ends up on the board with a one-line bubble", r.board.filter((e) => e.kind === "definition").length === 5 && /put it on the board|mis au tableau/i.test(r.reply) && !/1\. Kinetic/.test(r.reply) && /Do any of those need an example\?/.test(r.reply) && r.reply.length < 120);
   // WHY: a why-question that is answered with a restatement + a question is sent back once for a real explanation.
   script = (b, i) => i === 0
     ? { content: "You're wondering why we even need to bother equating them when we already found the speed with SUVAT. Notice how m shows up on both sides?" }

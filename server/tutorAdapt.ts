@@ -863,3 +863,24 @@ export function ignoresWhy(draft: string): boolean {
   const real = declarative.filter((p) => p.split(/\s+/).length >= 7 && !/^(?:you(?:'re| are) (?:wondering|asking)|you want to know|you ask|good question|great question)\b/i.test(p));
   return real.length === 0;
 }
+
+/** Content that belongs on the BOARD, not in the tutor's tiny bubble: a numbered / bulleted list of 3+ items, or a long block (70+ words). */
+export function isBoardContent(reply: string): boolean {
+  const t = String(reply || "");
+  const items = (t.match(/(?:^|\n|\s)(?:\d{1,2}[.)]|[-•*])\s+\S/g) || []).length;
+  const words = t.replace(/\$[^$]*\$/g, " x ").split(/\s+/).filter(Boolean).length;
+  return items >= 3 || words >= 70;
+}
+
+/** Split a list-style reply into its board items and the closing question (kept for the bubble). */
+export function splitBoardContent(reply: string): { items: string[]; question: string } {
+  const t = String(reply || "").replace(/\r/g, "").trim();
+  const qMatch = /([^.!?\n]*[?？])\s*$/.exec(t);
+  const question = qMatch ? qMatch[1].trim() : "";
+  const body = (qMatch ? t.slice(0, qMatch.index) : t).trim();
+  let items = body.split(/\s*(?:^|\n|\s)(?:\d{1,2}[.)]|[-•*])\s+/).map((x) => x.trim()).filter((x) => x.length > 3);
+  if (items.length <= 1) items = (body.match(/[^.!?]+[.!?]+/g) || [body]).map((x) => x.trim()).filter((x) => x.length > 3);
+  // a lead-in sentence ("Here is the quick cheat sheet:") is not an item
+  items = items.filter((x, i) => !(i === 0 && /:\s*$/.test(x) || (i === 0 && items.length > 2 && /\b(?:here(?:'s| is| are)|voici)\b/i.test(x) && x.split(/\s+/).length <= 12)));
+  return { items: items.slice(0, 8), question };
+}

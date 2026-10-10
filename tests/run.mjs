@@ -8,6 +8,7 @@ import { normalizeWidget, shuffledNotSolved, projectileStats } from "../shared/w
 import { makeSyncScheduler } from "../server/syncScheduler.ts";
 import { buildTasksPayload, parseHave } from "../server/taskDelta.ts";
 import { makeTaskSync } from "../client/taskDelta.ts";
+import { isBoardContent, splitBoardContent } from "../server/tutorAdapt.ts";
 import { asksWhy, ignoresWhy } from "../server/tutorAdapt.ts";
 import { statesOwnAnswer, listenCue } from "../server/tutorAdapt.ts";
 import { buildSolid } from "../shared/solid3d.ts";
@@ -2030,6 +2031,10 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     check("a reply that restates the why-question or answers with a question explains nothing; a real explanation does not trip it",
       ignoresWhy("You're wondering why we even need to bother equating them when we already found the speed with SUVAT. Notice how m shows up on both sides?") && ignoresWhy("What do you think happens to the energy as it falls?") && !ignoresWhy("Because SUVAT only works when the acceleration is constant, but energy conservation works even when the force changes — that's why physicists reach for it. Does that make sense?") && !ignoresWhy("Good question. Energy conservation skips the time and the acceleration entirely, so it still works on a curved slide where SUVAT breaks."));
     check("the tutor answers why-questions: persona rule, per-turn directive, and a corrective round (guardAnswerWhy)", /A WHY question \("why do I need to equate those\?"/.test(cl) && /const guardAnswerWhy = /.test(cl) && (cl.match(/guardAnswerWhy\(textContent, round, lastRound\)/g) || []).length === 2 && /asksWhy\(message\) \? WHY_BLOCK/.test(cl)); }
+  { const sheet = "Here is the quick cheat sheet for all five: 1. Kinetic energy (E_k): The energy an object has because it's moving (E_k = (1)/(2)mv²). 2. Gravitational potential energy (E_p): The energy an object stores because of its height in a gravitational field (E_p = mgh). 3. Work (W): The amount of energy transferred when a force moves something over a distance (W = F × s, measured in Joules). 4. Power (P): How fast that work is done — the rate of energy transfer (P = (W)/(t), measured in Watts). 5. Efficiency: The proportion of total energy put into a system that actually comes out as useful energy. Do any of those five need a quick example, or are you feeling good about them?";
+    const sp = splitBoardContent(sheet);
+    check("a cheat sheet / list / long block is board content, not bubble content; a short nudge is not",
+      isBoardContent(sheet) && isBoardContent("1. force 2. distance 3. work") && !isBoardContent("Mm, close — which quantity is that asking for?") && sp.items.length === 5 && /^Kinetic energy/.test(sp.items[0]) && /^Efficiency/.test(sp.items[4]) && /feeling good about them\?$/.test(sp.question) && !sp.items.some((x) => /cheat sheet/i.test(x))); }
   check("tool calls typed as text never reach the student", stripPseudoTools("<syntax_error></syntax_error><write_to_board><kind>result</kind><text>distance = (470 + H)/tan 40</text></write_to_board>Ah, exactly — what next?") === "Ah, exactly — what next?" && stripPseudoTools("plain reply") === "plain reply" && stripPseudoTools("<chat>Using that height.</chat>") === "Using that height.");
   check("a reply that is only a formula is bare maths; a sentence with maths is not", bareMath("distance K = (470)/(tan 40)") && bareMath("(470 + H)/(tan 25°) - (470 + H)/(tan 40°) = 500") && !bareMath("Which side is opposite the 40° angle here?") && !bareMath("Good, now what does the tan 40° ratio give you for the horizontal distance?"));
   // ── Grounding (reported live: "tan(θ) = slope!" to a student who had only said the two slopes; "maybe graph it" ignored) ──

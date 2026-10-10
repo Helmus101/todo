@@ -7,7 +7,7 @@ import { COURSEWORK_MAX_CHARS, courseworkForSubject, sameSubject } from "../shar
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { buildGeometry } from "../shared/geometry.ts";
-import { studentProblemStatement, cleanToPost, posesProblemInProse, echoesStudentWords, repairLatex, latexifyBoardLine, statesOwnMath, asksWhy, ignoresWhy, WHY_BLOCK, statesOwnAnswer, listenCue, CONFUSED_BLOCK, INSIGHT_BLOCK, evalMathExpr, namesExactStep, bubbleDoesMath, bareMath, socraticFallback, voiceInputBlock, boardRepeatsMishearing, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, misattributes, methodAhead, wantsHelp, clarificationTerm, CLARIFY_BLOCK, ignoresQuestion, ignoresWork, asksToWrite, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
+import { studentProblemStatement, cleanToPost, posesProblemInProse, echoesStudentWords, repairLatex, latexifyBoardLine, statesOwnMath, isBoardContent, splitBoardContent, asksWhy, ignoresWhy, WHY_BLOCK, statesOwnAnswer, listenCue, CONFUSED_BLOCK, INSIGHT_BLOCK, evalMathExpr, namesExactStep, bubbleDoesMath, bareMath, socraticFallback, voiceInputBlock, boardRepeatsMishearing, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, misattributes, methodAhead, wantsHelp, clarificationTerm, CLARIFY_BLOCK, ignoresQuestion, ignoresWork, asksToWrite, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -7638,7 +7638,7 @@ const PRIMER_PERSONA =
   `2. KNOW THE ANSWER BEFORE YOU ASK. Before every question, privately solve it yourself — the value, the unit, the next two steps (CREATE_CALC for arithmetic) — and write it in your plan. Check each claim of theirs against the givens before you react. Never state a value, unit or method and then quiz them on it ("750 J — what are the units?"); never ask something your own earlier line answered. If you slip, say so plainly and fix it.\n` +
   `3. NEVER GIVE THE ANSWER, AND DO NO WORK FOR THEM. Don't state the final value, the result of the step they're about to take, the name they're asked for, or which operation to do. Use the smallest help that works: a question, a pointer to where to look, a smaller case, an analogy, a parallel example with different numbers. Stuck after a couple of nudges → be more concrete, never the answer. They think and they calculate; you guide. Re-read your reply before sending: if it contains what they were meant to find, turn that part into a question.\n` +
   `4. HAVE A ROUTE, FOLLOW THE STUDENT. When a problem starts, privately work out the quickest sound route (3–6 ideas) and steer toward it with questions about the IDEA. If they take another valid path that is about as short, go with them; if they drift, one question pulls them back. Pace to them: right steps in a row → a bigger chunk; a slip or "I don't know" → smaller. Never run a fixed script, never repeat a pattern that isn't working. Use what you know about them (earlier sessions, their mistakes, their journal) to start where they are.\n` +
-  `5. SOUND HUMAN — like a kind older student, never a quiz machine. Usually one or two short sentences (~35 words) and at most one question. Contractions, plain words, a flicker of humour; start with a real reaction to what they said ("ah, that's the idea", "hm, not quite — look at the units"). No praise-filler, no recaps, no announcing what you'll do, never harsh ("Wrong", "Incorrect"). Praise only what is right and say which part. When a step is wrong or shaky, never wave it through: point at the exact spot with a question. Make them justify ("why does that work?", "does it still hold if x is negative?") and, after a right answer, ask for the reason or a variation. Disagree openly and kindly. Answer in their language.\n` +
+  `5. SOUND HUMAN — like a kind older student, never a quiz machine. Usually one or two short sentences (~35 words) and at most one question. Anything longer — a list, a cheat sheet, definitions, a worked outline — goes on the BOARD (WRITE_TO_BOARD, one line per item, LaTeX maths) and the bubble just says you put it there plus one question; never paste it in the bubble. Contractions, plain words, a flicker of humour; start with a real reaction to what they said ("ah, that's the idea", "hm, not quite — look at the units"). No praise-filler, no recaps, no announcing what you'll do, never harsh ("Wrong", "Incorrect"). Praise only what is right and say which part. When a step is wrong or shaky, never wave it through: point at the exact spot with a question. Make them justify ("why does that work?", "does it still hold if x is negative?") and, after a right answer, ask for the reason or a variation. Disagree openly and kindly. Answer in their language.\n` +
   `6. THE BOARD IS THEIR PAPER. Put the givens (kind \"given\"), THEIR steps (kind \"summary\") and the result they reach (kind \"result\") on it as clean maths without being asked, and write what they ask you to write — the equation or value only, never their sentence, never the answer, never your own derived steps. All maths, on the board and in the bubble, is LaTeX between \$…\$. Nothing on the board is ever erased: correct by adding the fixed version next to it. It is for EVERY subject: in maths and the sciences the givens, the equation and their steps; in history, economics, literature, philosophy and languages a short outline of the argument, the key terms, a mnemonic. Add something only when it helps — never an entry just to have written one, never a repeat.\n` +
   `First turn with no history: say hello and ask what they're working on — don't quiz.\n` +
   `- READ IT BACK BEFORE YOU WORK ON IT: equations and problems arrive messy (typed fast, dictated by voice, a ` +
@@ -8953,6 +8953,18 @@ export async function chatAboutTask(
     // claimed to prevent. truncateCleanly backs up to the last sentence end (falling back to the last word
     // boundary if there's no sentence break inside the cap) and marks the cut with an ellipsis, so a
     // response is never handed back looking like it broke mid-thought.
+    // Fallback: still a wall of text after the corrective round → the app puts it on the board and the bubble just points there.
+    if (opts?.primer && !result.guardrailTripped && history.length >= 1 && isBoardContent(reply) && !result.board.some((e) => ["outline", "definition", "formula", "note", "summary", "result"].includes(String(e.kind)))) {
+      const { items, question } = splitBoardContent(reply);
+      if (items.length >= 2) {
+        for (const it of items.slice(0, 6)) {
+          const r = makeBoardEntry({ text: latexifyBoardLine(repairLatex(it), "definition").slice(0, 590), kind: "definition" });
+          if ("entry" in r) result.board.push(r.entry);
+        }
+        reply = (fr ? "Je l'ai mis au tableau." : "I put it on the board.") + (question ? ` ${question}` : (fr ? " Lequel veux-tu creuser ?" : " Which one do you want to dig into?"));
+        console.log(`${new Date().toISOString()} [chat] fallback: moved a list/long block from the bubble to the board (${items.length} items)`);
+      }
+    }
     // Safety net AFTER every corrective round: a reply that is just a formula, or still writes a step the student never
     // reached, is never shipped — it becomes a plain Socratic question, and the tutor's own derived "result" lines
     // from that turn are dropped so nothing solves it on the board either.
@@ -9184,6 +9196,18 @@ export async function chatAboutTask(
       console.log(`${new Date().toISOString()} [chat] round ${round}: the reply already contains the answer to the question it asks — asking for a fresh question`);
       messages.push({ role: "assistant", content: draft });
       messages.push({ role: "user", content: `Your reply already states "${String(result.plan.askAnswer).slice(0, 40)}" — the answer to the very question you are asking. Never quiz them on something you just said. Rewrite it: drop the part that gives it away and ask the question so THEY produce it (or, if you meant to confirm their value, ask the next real question instead). Keep it to one or two short sentences. Don't mention this instruction.` });
+      return true;
+    };
+    // The bubble is tiny: a list, a cheat sheet or a long block belongs on the BOARD, and the bubble just says it is there.
+    // One corrective round asks for it; if the model still sends the wall of text, the app moves it to the board itself.
+    let boardContentFixed = false;
+    const guardBoardContent = (draft: string, round: number, lastRound: boolean): boolean => {
+      if (!opts?.primer || boardContentFixed || lastRound || result.guardrailTripped || !isBoardContent(draft)) return false;
+      if (result.board.some((e) => ["outline", "definition", "formula", "note", "summary", "result"].includes(String(e.kind)))) return false;
+      boardContentFixed = true;
+      console.log(`${new Date().toISOString()} [chat] round ${round}: a list / long block in the bubble — asking for it on the board`);
+      messages.push({ role: "assistant", content: draft });
+      messages.push({ role: "user", content: "That is board content, not bubble content. Put it on the BOARD: WRITE_TO_BOARD (one definition or formula per line, maths in LaTeX between $…$, or an outline with short sections), then reply with ONE short sentence saying you put it on the board plus ONE question about it — never the list itself in the bubble. Don't mention this instruction." });
       return true;
     };
     // "Spot on" to a message with nothing in it ("to do", "yeah") — praise for nothing teaches them nothing.
@@ -9587,6 +9611,7 @@ export async function chatAboutTask(
       if (guardNoDoing(textContent, round, lastRound)) continue;
       if (guardOwnAnswer(textContent, round, lastRound)) continue;
       if (guardAnswerWhy(textContent, round, lastRound)) continue;
+      if (guardBoardContent(textContent, round, lastRound)) continue;
       if (guardListen(textContent, round, lastRound)) continue;
       if (guardGrounded(textContent, round, lastRound)) continue;
       if (guardEmptyPraise(textContent, round, lastRound)) continue;
@@ -9600,6 +9625,7 @@ export async function chatAboutTask(
         if (guardNoDoing(textContent, round, lastRound)) continue;
         if (guardOwnAnswer(textContent, round, lastRound)) continue;
         if (guardAnswerWhy(textContent, round, lastRound)) continue;
+        if (guardBoardContent(textContent, round, lastRound)) continue;
         if (guardListen(textContent, round, lastRound)) continue;
         if (guardGrounded(textContent, round, lastRound)) continue;
         if (guardEmptyPraise(textContent, round, lastRound)) continue;
