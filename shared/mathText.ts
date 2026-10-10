@@ -140,7 +140,9 @@ export function latexToPlainText(latex: string): string {
   let s = repairLatex(String(latex || ""));
   s = s.replace(/\\(?:displaystyle|textstyle|scriptstyle|left|right|big|Big|bigg|Bigg)\b/g, "")
     .replace(/\\[,;:! ]|\\q?quad\b/g, " ")
-    .replace(/\^\s*\{?\\circ\}?/g, "°").replace(/\\circ\b/g, "°")
+    // A brace is only consumed when it opened here: "^{\circ}" → °, but "\frac{h}{\tan 25^\circ}" keeps the
+    // frac's own closing brace (it used to be eaten, leaving "frac h tan 25°" as raw text).
+    .replace(/\^\s*(?:\{\s*\\circ\s*\}|\\circ)/g, "°").replace(/\\circ\b/g, "°")
     .replace(/\\(?:text|mathrm|mathbf|operatorname)\s*\{([^{}]*)\}/g, "$1")
     .replace(/\\sqrt\s*\{([^{}]*)\}/g, "√($1)")
     .replace(/\\(arcsin|arccos|arctan|sinh|cosh|tanh|sin|cos|tan|cot|sec|csc|log|ln|exp)\b/g, "$1");

@@ -6,6 +6,7 @@
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
 delete process.env.GEMINI_API_KEY;
 const { runTutorTurn, detectSubject, backgroundBlock, TUTOR_PROMPT, leakedValue, wantsExercise, inventsProblemOnBoard } = await import("../server/tutor.ts");
+const { equationsAhead } = await import("../shared/equationsAhead.ts");
 
 let script = () => ({ content: "" });
 let calls = [];
@@ -60,7 +61,7 @@ export async function runTutorEngineSim(check, section) {
   script = (b, i) => i === 0
     ? { tool_calls: [tc("WRITE_TO_BOARD", { text: "$\\frac{h}{100 + \\tan(25^\\circ)$", kind: "formula" }), tc("WRITE_TO_BOARD", { text: "$\\tan(15^\\circ) = \\frac{h}{100+b}$", kind: "formula" })] }
     : { content: "Look at the board — what links the two triangles?" };
-  r = await run("so what now", { board: gapBoard.slice(0, 1) });
+  r = await run("so tan 15 = h over 100 plus b", { board: gapBoard.slice(0, 1) });
   const toolMsgs = calls[1].messages.filter((m) => m.role === "tool").map((m) => m.content);
   check("the board takes maths that typesets and bounces LaTeX that doesn't (with KaTeX's error)", r.board.length === 1 && /tan\(15/.test(r.board[0].text) && /doesn't typeset/.test(toolMsgs[0]));
 
@@ -120,4 +121,25 @@ export async function runTutorEngineSim(check, section) {
   check("…but the student's own problem goes up as givens", r.board.length === 1);
   check("wantsExercise / inventsProblemOnBoard", wantsExercise("give me another problem") && wantsExercise("interroge-moi") && wantsExercise("quiz me") && !wantsExercise("I'm stuck on this one") &&
     inventsProblemOnBoard("A 2 kg block on a 30° ramp", ["help with ramps"]) && !inventsProblemOnBoard("A 2 kg block on a 30° ramp", ["a 2 kg block on a 30 degree ramp"]) && !inventsProblemOnBoard("$E = mgh$", []));
+
+  // "Never auto-derive equations or show which equations they need — ask them first."
+  const carBoard = [{ id: "c1", at: "", kind: "given", text: "Car: $m = 1000$ kg, slope $10^\\circ$, $v = 15$ m/s. Find the power against gravity." }];
+  script = (b, i) => i === 0
+    ? { tool_calls: [tc("WRITE_TO_BOARD", { text: "$P = mgv\\sin(10^\\circ)$", kind: "formula" })] }
+    : i === 1 ? { content: "Use $P = mgv\\sin\\theta$ — what do you get?" }
+    : { content: "What do you know that links power, force and speed?" };
+  r = await run("ok where do I start", { board: carBoard });
+  const boardTool = calls[1].messages.filter((m) => m.role === "tool").map((m) => m.content).join(" ");
+  check("Otto can't write the formula to use on the board before the student names it", r.board.length === 0 && /haven't stated/.test(boardTool));
+  check("…nor hand it over in the reply: rewritten into a question that asks them for the relationship", r.reply === "What do you know that links power, force and speed?" && /hands them an equation/.test(lastUser(calls[2])));
+  script = (b, i) => i === 0 ? { tool_calls: [tc("WRITE_TO_BOARD", { text: "$P = Fv$", kind: "formula", owner: "student" })] } : { content: "Good — and which force is F here?" };
+  r = await run("I think power is force times velocity", { board: carBoard });
+  check("once THEY say it (even in words), it goes on the board", r.board.length === 1 && calls.length === 2);
+  script = () => ({ content: "It's $P = \\frac{W}{t}$: work done per second. Where does that show up in your problem?" });
+  r = await run("what's the formula for power?", { board: carBoard });
+  check("asked outright for the formula → answering is fine", calls.length === 1 && /W/.test(r.reply));
+  check("equationsAhead: formulas count, givens/unknowns/their own lines don't",
+    equationsAhead("$F = mg\\sin\\theta$", ["find F"]).length === 1 && equationsAhead("$m = 1000$ kg, $v = 15$ m/s", []).length === 0 &&
+    equationsAhead("$b = ?$", []).length === 0 && equationsAhead("$\\tan 25^\\circ = \\frac{h}{b}$", ["tan 25 equals h over b"]).length === 0 &&
+    equationsAhead("Yes, b = h/tan(25°) — now the other triangle.", ["b = h/tan(25°)"]).length === 0);
 }
