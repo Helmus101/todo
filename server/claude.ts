@@ -7,7 +7,7 @@ import { COURSEWORK_MAX_CHARS, courseworkForSubject, sameSubject } from "../shar
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { buildGeometry } from "../shared/geometry.ts";
-import { studentProblemStatement, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, misattributes, methodAhead, wantsHelp, clarificationTerm, CLARIFY_BLOCK, ignoresQuestion, ignoresWork, asksToWrite, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
+import { studentProblemStatement, cleanToPost, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, misattributes, methodAhead, wantsHelp, clarificationTerm, CLARIFY_BLOCK, ignoresQuestion, ignoresWork, asksToWrite, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -9011,7 +9011,7 @@ export async function chatAboutTask(
     // it there (reported live: they stated a full triangle problem and the board stayed empty).
     if (opts?.primer && !result.guardrailTripped) {
       const stmt = studentProblemStatement(message);
-      if (stmt && !result.problems.length && !asksToDraw(message) && !result.board.some((e) => e.kind === "svg" || e.kind === "flow")) { // a drawn figure already carries the givens; never paste a spoken ramble beside it
+      if (stmt && cleanToPost(stmt) && !result.problems.length && !asksToDraw(message) && !result.board.some((e) => e.kind === "svg" || e.kind === "flow")) { // a drawn figure already carries the givens; never paste a spoken ramble beside it
         const onBoard = [...(opts?.currentBoard || []).map((e) => e.text), ...(opts?.currentProblems || []).map((p) => p.question), ...result.board.map((e) => e.text), ...result.board.flatMap((e) => (e.diagram || []).map((o: any) => o.latex || ""))];
         if (!boardCoversStatement(stmt, onBoard)) result.board.unshift({ id: randomUUID(), text: stmt, kind: "given", owner: "student", at: new Date().toISOString() } as BoardEntry);
       }

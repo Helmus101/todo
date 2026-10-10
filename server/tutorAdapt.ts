@@ -386,6 +386,15 @@ export function studentProblemStatement(message: string): string {
   return t.slice(0, 600);
 }
 
+/** A student's own words only go on the board when they ARE a clean problem statement — never a spoken ramble, a
+ *  request wrapped around a problem ("just draw it…"), or a pasted math-renderer dump (duplicated "25 ∘ 25 ∘"). */
+export function cleanToPost(statement: string): boolean {
+  if (!statement || statement.length > 420) return false;
+  if (/[∘\u200b]|\n/.test(statement)) return false;
+  if (/\b(?:yeah|um+|uh+|like|you know|i want|i mean|please|can you|could you|draw|sketch|show me|action|actually|basically|go back)\b/i.test(statement)) return false;
+  return true;
+}
+
 /** Does any board entry / problem already carry this statement (by numbers + main words)? */
 export function boardCoversStatement(statement: string, boardTexts: string[]): boolean {
   const nums = (statement.match(/\d+(?:[.,]\d+)?/g) || []).map((n) => n.replace(",", "."));
