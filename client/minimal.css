@@ -139,3 +139,17 @@ hr { border: 0; border-top: 1px solid var(--line-soft); }
 .chat-assistant { background-color: var(--accent-soft) !important; border-radius: 16px !important; border-bottom-left-radius: 5px !important; }
 .chat-send { background-color: #26221f !important; color: #fff !important; border-radius: 50% !important; width: 38px; height: 38px; }
 .chat-send:disabled { background-color: #b9b2a8 !important; opacity: 1; }
+
+/* Briefs (Otto's notes/fiches): a calm reading column — wider measure limit, generous leading and breathing room between blocks. */
+.note-popup, .sm-brief-body { padding: 28px 32px 36px !important; max-width: 720px; margin: 0 auto; font-size: 16.5px; line-height: 1.75; color: var(--ink); }
+.note-popup-title { margin: 0 32px 20px 0 !important; font-size: 26px; line-height: 1.25; font-weight: 600; }
+.note-popup-body > *:first-child, .sm-brief-body > *:first-child { margin-top: 0 !important; }
+.note-popup-body h3, .sm-brief-body h3 { font-size: 21px; line-height: 1.3; margin: 36px 0 12px !important; font-weight: 600; }
+.note-popup-body h4, .sm-brief-body h4 { font-size: 18px; line-height: 1.35; margin: 30px 0 10px !important; font-weight: 600; }
+.note-popup-body h5, .sm-brief-body h5 { font-size: 16.5px; margin: 24px 0 8px !important; font-weight: 600; color: var(--ink-2); }
+.note-popup-body p, .sm-brief-body p { margin: 0 0 16px !important; line-height: 1.75 !important; }
+.note-popup-body .note-list, .sm-brief-body .note-list { margin: 4px 0 20px !important; padding-left: 24px !important; }
+.note-popup-body .note-list li, .sm-brief-body .note-list li { margin: 0 0 10px !important; padding-left: 4px; line-height: 1.7; }
+.note-popup-body .note-table-wrap, .sm-brief-body .note-table-wrap { margin: 8px 0 24px; overflow-x: auto; }
+.note-popup-body .note-table th, .sm-brief-body .note-table th, .note-popup-body .note-table td, .sm-brief-body .note-table td { padding: 10px 14px !important; line-height: 1.55; }
+@media (max-width: 640px) { .note-popup, .sm-brief-body { padding: 20px 18px 28px !important; font-size: 16px; } .note-popup-title { font-size: 22px; } }
