@@ -104,7 +104,7 @@ hr { border: 0; border-top: 1px solid var(--line-soft); }
 .cw-drop { border-top: 1px solid var(--line) !important; border-bottom: 1px solid var(--line) !important; }
 .acct-avatar, .cw-num { display: none !important; }
 .switch-track { background: var(--bg-3) !important; }
-:where(button:not(.tc-swatch):not(.card-check):not(.step-mark)) { background: transparent !important; }
+:where(button:not(.tc-swatch):not(.card-check):not(.step-mark):not(.chat-send)) { background: transparent !important; }
 
 /* no icon decoration on text controls (hint / I'm lost / another one, chips, nav) — words are enough */
 .btn svg, [class*="chip"] svg, [class*="pill"] svg, .tutor-chips svg, .ts-chips svg, [class*="followup"] svg, [class*="next"] button svg { display: none !important; }
@@ -131,3 +131,11 @@ hr { border: 0; border-top: 1px solid var(--line-soft); }
 .sm-ai-input-row, .sm-ai-panel, .ts-dock, .tutor-dock { border-radius: 18px; }
 .deadline-edit { display: inline-flex; align-items: center; gap: 6px; }
 .deadline-edit input[type="date"] { font: inherit; padding: 2px 8px; }
+
+/* Task chat: the student's own message is a visible warm bubble (the gradient was stripped, which left white text on white),
+   and the send button stays a solid circle. */
+.chat-user { background-color: #3b3530 !important; color: #fff !important; border-radius: 16px !important; border-bottom-right-radius: 5px !important; }
+.chat-user .chat-sender, .chat-sender-user { color: rgba(255,255,255,0.7) !important; }
+.chat-assistant { background-color: var(--accent-soft) !important; border-radius: 16px !important; border-bottom-left-radius: 5px !important; }
+.chat-send { background-color: #26221f !important; color: #fff !important; border-radius: 50% !important; width: 38px; height: 38px; }
+.chat-send:disabled { background-color: #b9b2a8 !important; opacity: 1; }
