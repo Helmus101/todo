@@ -725,3 +725,35 @@ export function bubbleDoesMath(reply: string, studentTexts: string[]): boolean {
   }
   return false;
 }
+
+/** A tiny, safe numeric expression evaluator (no eval): numbers, + - * / ^ **, unary minus, parentheses, constants pi/e and the
+ *  functions sin cos tan asin acos atan sqrt ln log exp abs — plus DEGREE versions sind cosd tand asind acosd atand. Used to
+ *  verify an exercise's answer key independently of the model's own arithmetic. null when it can't be evaluated. */
+export function evalMathExpr(src: string): number | null {
+  const s = String(src || "").replace(/×/g, "*").replace(/÷/g, "/").replace(/\*\*/g, "^").replace(/\s+/g, "");
+  if (!s || s.length > 200 || !/^[0-9a-z+\-*/^().,]+$/i.test(s)) return null;
+  let i = 0;
+  const D = Math.PI / 180;
+  const FN: Record<string, (x: number) => number> = {
+    sin: Math.sin, cos: Math.cos, tan: Math.tan, asin: Math.asin, acos: Math.acos, atan: Math.atan, sqrt: Math.sqrt, ln: Math.log, log: Math.log10, exp: Math.exp, abs: Math.abs,
+    sind: (x) => Math.sin(x * D), cosd: (x) => Math.cos(x * D), tand: (x) => Math.tan(x * D), asind: (x) => Math.asin(x) / D, acosd: (x) => Math.acos(x) / D, atand: (x) => Math.atan(x) / D,
+  };
+  const peek = () => s[i];
+  const expr = (): number => { let v = term(); while (peek() === "+" || peek() === "-") { const op = s[i++]; const r = term(); v = op === "+" ? v + r : v - r; } return v; };
+  const term = (): number => { let v = unary(); while (peek() === "*" || peek() === "/") { const op = s[i++]; const r = unary(); v = op === "*" ? v * r : v / r; } return v; };
+  const unary = (): number => { if (peek() === "-") { i++; return -unary(); } if (peek() === "+") { i++; return unary(); } return pow(); };
+  const pow = (): number => { const b = atom(); if (peek() === "^") { i++; return Math.pow(b, unary()); } return b; };
+  const atom = (): number => {
+    if (peek() === "(") { i++; const v = expr(); if (s[i++] !== ")") throw new Error("paren"); return v; }
+    const num = /^\d+(?:\.\d+)?(?:e[+-]?\d+)?/i.exec(s.slice(i));
+    if (num) { i += num[0].length; return Number(num[0]); }
+    const id = /^[a-z]+/i.exec(s.slice(i));
+    if (!id) throw new Error("token");
+    const name = id[0].toLowerCase(); i += name.length;
+    if (name === "pi") return Math.PI;
+    if (name === "e") return Math.E;
+    if (FN[name] && peek() === "(") { i++; const v = expr(); if (s[i++] !== ")") throw new Error("paren"); return FN[name](v); }
+    throw new Error("ident");
+  };
+  try { const v = expr(); return i === s.length && Number.isFinite(v) ? v : null; } catch { return null; }
+}

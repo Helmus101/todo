@@ -206,6 +206,9 @@ export interface TutorSessionStateShape {
   /** The hidden QUICKEST route to the answer for the problem in play (3-6 short ideas) and whether they last left it. */
   route?: string[];
   offRoute?: boolean;
+  /** Consecutive correct student steps (reset by a wrong one) and the last step's verdict — drives the pace the tutor asks at. */
+  stepStreak?: number;
+  lastStepStatus?: string;
 }
 
 export const SESSION_CAP = 8;

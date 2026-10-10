@@ -8,6 +8,7 @@ import { normalizeWidget, shuffledNotSolved, projectileStats } from "../shared/w
 import { makeSyncScheduler } from "../server/syncScheduler.ts";
 import { buildTasksPayload, parseHave } from "../server/taskDelta.ts";
 import { makeTaskSync } from "../client/taskDelta.ts";
+import { evalMathExpr } from "../server/tutorAdapt.ts";
 import { namesExactStep, bubbleDoesMath } from "../server/tutorAdapt.ts";
 import { statesOwnMath, asksToWrite as asksToWrite2 } from "../server/tutorAdapt.ts";
 import { latexifyBoardLine } from "../server/tutorAdapt.ts";
@@ -1984,6 +1985,17 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
       /"route":\["the 3-6 key moves of the QUICKEST sound solution/.test(tb) && /PLAN THE QUICKEST ROUTE FIRST/.test(tb) && /YOUR PLANNED QUICKEST ROUTE/.test(tb) && /\(s as any\)\.route = plan\.route/.test(tb) && /THEY LEFT THE ROUTE/.test(tb) && /YOU DO NO WORK AND NAME NO OPERATION/.test(cl) && (cl.match(/guardNoDoing\(textContent, round, lastRound\)/g) || []).length === 2); }
   { const ts = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
     check("a live tutor session never flips into the read-only board/chat review page (its auto-saved summary shares the task id)", /const reviewSession = !task && sessionId && userId \? getTutorSessions\(userId\)/.test(ts)); }
+  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8"), tb = readFileSync(new URL("../server/tutorBrain.ts", import.meta.url), "utf8");
+    const v = evalMathExpr("100/(1/tand(30) - 1/tand(50))");
+    check("the safe evaluator computes degree trig and refuses anything else", Math.abs(v - 111.988) < 0.01 && evalMathExpr("2^3 + sqrt(16)") === 12 && evalMathExpr("process.exit(1)") === null && evalMathExpr("alert(1)") === null && evalMathExpr("1/0") === null && evalMathExpr("") === null);
+    const base = { question: "A tower of height $h$ … find $h$ to one decimal place.", format: "one decimal place", why: "w" };
+    const wrongKey = makeProblem({ ...base, answer: "38.9", check: "100/(1/tand(30) - 1/tand(50))" });
+    const rightKey = makeProblem({ ...base, answer: "112.0", check: "100/(1/tand(30) - 1/tand(50))" });
+    const noCheck = makeProblem({ ...base, answer: "38.9" });
+    check("an exercise's answer key is verified: a wrong key is replaced by the computed value (to the key's decimals), a right one kept, and no check leaves the key alone",
+      wrongKey.problem?.answer === "112.0" && rightKey.problem?.answer === "112.0" && noCheck.problem?.answer === "38.9");
+    check("the tutor is adaptive (fluent streak → big chunk, slip → shrink) and never blames the app for a wrong key",
+      /THEY ARE FLUENT/.test(tb) && /THEY JUST SLIPPED/.test(tb) && /stepStreak/.test(tb) && /NEVER BLAME THE APP/.test(cl) && /BE ADAPTIVE, NOT A SCRIPT/.test(cl)); }
   check("tool calls typed as text never reach the student", stripPseudoTools("<syntax_error></syntax_error><write_to_board><kind>result</kind><text>distance = (470 + H)/tan 40</text></write_to_board>Ah, exactly — what next?") === "Ah, exactly — what next?" && stripPseudoTools("plain reply") === "plain reply" && stripPseudoTools("<chat>Using that height.</chat>") === "Using that height.");
   check("a reply that is only a formula is bare maths; a sentence with maths is not", bareMath("distance K = (470)/(tan 40)") && bareMath("(470 + H)/(tan 25°) - (470 + H)/(tan 40°) = 500") && !bareMath("Which side is opposite the 40° angle here?") && !bareMath("Good, now what does the tan 40° ratio give you for the horizontal distance?"));
   // ── Grounding (reported live: "tan(θ) = slope!" to a student who had only said the two slopes; "maybe graph it" ignored) ──
