@@ -6,12 +6,12 @@
    ───────────────────────────────────────────────────────────────────────────────────────────────────────────── */
 :root {
   --bg: #fff; --surface: #fff; --surface-raised: #fff; --surface-glass: #fff;
-  --ink: #111; --ink-2: #555; --ink-3: #8a8a8a; --graphite: #555;
-  --line: #d9d9d9; --line-soft: #ececec; --line-glass: #d9d9d9;
-  --accent: #111; --accent-hover: #000; --accent-active: #000; --accent-soft: #f3f3f3; --accent-rgb: 17, 17, 17;
-  --brand-mark: #111; --focus-ring: #111; --chat-user-bg: #111; --chat-user-bg-2: #111;
-  --bg-2: #f6f6f6; --bg-3: #ececec; --vermilion: #c40000; --ok: #111; --amber: #111; --warn: #c40000;
-  --radius-2xs: 0; --radius-xs: 0; --radius-sm: 0; --radius: 0; --radius-lg: 0; --radius-xl: 0; --radius-2xl: 0; --radius-pill: 0;
+  --ink: #26221f; --ink-2: #5f5a54; --ink-3: #948d85; --graphite: #5f5a54;
+  --line: #e6e1da; --line-soft: #f0ece6; --line-glass: #e6e1da;
+  --accent: #26221f; --accent-hover: #000; --accent-active: #000; --accent-soft: #f4f1ec; --accent-rgb: 38, 34, 31;
+  --brand-mark: #26221f; --focus-ring: #26221f; --chat-user-bg: #26221f; --chat-user-bg-2: #26221f;
+  --bg-2: #f7f5f1; --bg-3: #ece8e1; --vermilion: #c40000; --ok: #111; --amber: #111; --warn: #c40000;
+  --radius-2xs: 4px; --radius-xs: 6px; --radius-sm: 8px; --radius: 10px; --radius-lg: 14px; --radius-xl: 18px; --radius-2xl: 22px; --radius-pill: 999px;
   --display: "Helvetica Neue", Helvetica, Arial, sans-serif; --sans: "Helvetica Neue", Helvetica, Arial, sans-serif; --font-serif: "Helvetica Neue", Helvetica, Arial, sans-serif; --font-hand: "Handlee", "Bradley Hand", "Segoe Print", cursive;
 }
 html, body { background: #fff; color: var(--ink); font-family: var(--sans); font-size: 16px; line-height: 1.5; }
@@ -20,7 +20,7 @@ html, body { background: #fff; color: var(--ink); font-family: var(--sans); font
 *, *::before, *::after {
   box-shadow: none !important; text-shadow: none !important; filter: none;
   background-image: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
-  border-radius: 0 !important; text-transform: none !important; letter-spacing: normal !important;
+  text-transform: none !important; letter-spacing: normal !important;
 }
 /* one typeface, one weight for headings, modest sizes */
 h1, h2, h3, h4, .list-head, .brand, [class*="title"], [class*="heading"] { font-family: var(--sans) !important; font-weight: 600 !important; }
@@ -43,15 +43,17 @@ h3, h4 { font-size: 1rem !important; }
 .dash-progress, .dash-progress-fill, [class*="progress-bar"] { display: none !important; }
 
 /* buttons: primary = black block, everything else = text */
-button, .btn { border-radius: 0 !important; }
+button, .btn { border-radius: 10px; }
 .btn.primary, button.primary, .btn-primary, .sm-btn-primary, .primary-framer, .landing-min-cta {
-  background: #111 !important; color: #fff !important; border: 1px solid #111 !important;
+  background: #26221f !important; color: #fff !important; border: 1px solid #26221f !important; border-radius: 10px !important;
 }
-.btn.ghost, .btn.xs, .sm-btn:not(.sm-btn-primary), .btn:not(.primary) { background: transparent !important; color: var(--ink) !important; border: 0 !important; text-decoration: underline; padding-left: 0; padding-right: 0; }
-input, select, textarea { border: 0 !important; border-bottom: 1px solid var(--ink) !important; background: transparent !important; padding-left: 0 !important; }
-input[type="checkbox"], input[type="radio"] { border-bottom: 0 !important; }
-a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
-:focus-visible { outline: 2px solid #111 !important; outline-offset: 2px; }
+.btn.ghost, .btn.xs, .sm-btn:not(.sm-btn-primary), .btn:not(.primary) { background: transparent !important; color: var(--ink) !important; border: 0 !important; text-decoration: none; padding-left: 10px; padding-right: 10px; border-radius: 10px !important; }
+.btn.ghost:hover, .btn.xs:hover, .sm-btn:not(.sm-btn-primary):hover, .btn:not(.primary):hover { background: var(--accent-soft) !important; }
+input, select, textarea { border: 1px solid var(--line) !important; border-radius: 10px !important; background: #fff !important; padding-left: 12px !important; }
+input:focus, select:focus, textarea:focus { border-color: var(--ink-3) !important; outline: 0 !important; }
+input[type="checkbox"], input[type="radio"] { padding-left: 0 !important; }
+a { color: var(--ink); text-decoration-color: var(--ink-3); text-underline-offset: 3px; }
+:focus-visible { outline: 2px solid var(--ink-3) !important; outline-offset: 2px; }
 
 /* nav: text, underline the current page */
 .topnav, header.topnav, .app-header { border-bottom: 1px solid var(--line) !important; background: #fff !important; }
@@ -74,12 +76,12 @@ hr { border: 0; border-top: 1px solid var(--line-soft); }
 .landing-min-nav button { background: none; border: 0; padding: 0; font: inherit; color: var(--ink); text-decoration: underline; cursor: pointer; }
 .landing-min-main h1 { font-size: 1.6rem !important; max-width: 24ch; margin: 0 0 16px; }
 .landing-min-main p { color: var(--ink-2); margin: 0 0 24px; max-width: 46ch; }
-.landing-min-cta { display: inline-block; padding: 10px 18px; text-decoration: none !important; }
+.landing-min-cta { display: inline-block; padding: 11px 20px; text-decoration: none !important; border-radius: 10px; }
 .landing-min-foot { margin-top: auto; padding-top: 80px; display: flex; gap: 20px; font-size: .85rem; }
 .landing-min-foot a { color: var(--ink-2); }
 
 /* tutor: the board is already plain lines; just neutralise accent tints and framing */
-.tc-toolbar { border: 1px solid var(--line) !important; background: #fff !important; }
+.tc-toolbar { border: 1px solid var(--line) !important; background: #fff !important; border-radius: 16px; }
 .tc-btn.on, .tc-swatch.on { outline: 2px solid #111; }
 .sm-board-entry, .sm-board-problem, .sm-board-answer-row { background: transparent !important; }
 
@@ -87,11 +89,11 @@ hr { border: 0; border-top: 1px solid var(--line-soft); }
 .landing-min-main { max-width: none !important; margin: 0 !important; }
 .landing-min-nav, .landing-min-foot { max-width: none; }
 .card::before, .card::after, .quadrant-bar, [class*="accent-bar"] { display: none !important; }
-.add-task-row, .add-task { border: 0 !important; border-bottom: 1px solid var(--ink) !important; background: transparent !important; }
-.add-task-row input { border-bottom: 0 !important; }
+.add-task-row, .add-task { border: 1px solid var(--line) !important; border-radius: 12px !important; background: #fff !important; padding: 2px 8px; }
+.add-task-row input { border: 0 !important; background: transparent !important; }
 .empty-mark, .empty-state svg { display: none !important; }
 
-.tutor-landing-inner { align-items: flex-start; text-align: left; }
+.tutor-landing-inner { align-items: center; text-align: center; }
 .tutor-start-form { border: 0 !important; background: transparent !important; }
 [class*="see-more"], .more-tasks, button[class*="more"] { background: transparent !important; border: 0 !important; }
 
@@ -104,26 +106,26 @@ hr { border: 0; border-top: 1px solid var(--line-soft); }
 .switch-track { background: var(--bg-3) !important; }
 :where(button:not(.tc-swatch):not(.card-check):not(.step-mark)) { background: transparent !important; }
 
-/* Otto keeps a face — he is a person to talk to, not a dashboard. Drawn as plain as possible: an outline and two eyes. */
-.tutor-face { background: transparent !important; border: 1.5px solid var(--ink) !important; }
-.tutor-face-eye { background: var(--ink) !important; }
-.tutor-landing-inner { align-items: center; text-align: center; }
 /* no icon decoration on text controls (hint / I'm lost / another one, chips, nav) — words are enough */
 .btn svg, [class*="chip"] svg, [class*="pill"] svg, .tutor-chips svg, .ts-chips svg, [class*="followup"] svg, [class*="next"] button svg { display: none !important; }
 .sm-board-empty-line { font-size: 1.4rem !important; line-height: 1.3 !important; }
 .sm-board-empty-sub { font-size: 1rem !important; }
-.tutor-landing-inner div { border: 0 !important; background: transparent !important; }
+.tutor-landing-inner > div:not(.tutor-face) { border: 0 !important; background: transparent !important; }
 
 /* ── Human touches (not decoration): clear check-offs, a handwritten board, markers in real colours, a face that smiles ── */
-.card-check, .step-mark { width: 24px !important; height: 24px !important; min-width: 24px; flex: none; border: 2px solid #111 !important; border-radius: 50% !important; background: #fff !important; position: relative; padding: 0; cursor: pointer; }
+.card-check, .step-mark { width: 24px !important; height: 24px !important; min-width: 24px; flex: none; border: 2px solid var(--ink) !important; border-radius: 50% !important; background: #fff !important; position: relative; padding: 0; cursor: pointer; }
 .card-check:hover, .step-mark:hover { background: #ececec !important; }
-.card-check.checked, .step-mark.done, .step-mark.checked { background: #111 !important; }
+.card-check.checked, .step-mark.done, .step-mark.checked { background: var(--ink) !important; }
 .card-check.checked::before, .step-mark.done::before, .step-mark.checked::before { content: "✓"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 15px; font-weight: 700; line-height: 1; }
 .card-check::after { display: none !important; }
 .tc-swatch { width: 22px !important; height: 22px !important; border-radius: 50% !important; border: 2px solid #fff !important; box-shadow: 0 0 0 1px rgba(0,0,0,.25) !important; padding: 0; }
 .tc-swatch.on { box-shadow: 0 0 0 2px #111 !important; outline: 0 !important; }
 .sm-board-line, .sm-board-entry-text, .sm-board-problem-q, .sm-board-gap-text, .sm-board-empty-line, .sm-board-empty-sub, .sm-board-diagram-caption, .sm-board-outline-heading, .sm-widget-hint { font-family: var(--font-hand) !important; }
 .sm-board-line, .sm-board-entry-text { font-size: 1.12rem; line-height: 1.55; }
-.tutor-face { border-radius: 50% !important; position: relative; }
-.tutor-face::after { content: ""; position: absolute; left: 50%; bottom: 24%; width: 24%; height: 11%; transform: translateX(-50%); border-bottom: 2px solid var(--ink); border-radius: 0 0 50% 50% !important; }
-.tutor-face-eye { border-radius: 50% !important; }
+
+/* warmth: rows respond to the pointer, panels breathe, the page isn't a grid of hard lines */
+.card { border-radius: 14px; transition: background .15s; }
+.card:hover { background: var(--bg-2) !important; }
+.card { border-bottom-color: var(--line-soft) !important; }
+.settings-sec { border-bottom-color: var(--line-soft) !important; }
+.sm-ai-input-row, .sm-ai-panel, .ts-dock, .tutor-dock { border-radius: 18px; }

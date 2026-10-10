@@ -620,9 +620,9 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, 
         <div className="sm-board-empty">
           {/* The prototype's board empty state: two big serif lines with a quiet promise under them —
               the page reads as an invitation, not as an error message about missing content. */}
-          <p className="sm-board-empty-line">{L("Travaillons ça ensemble.", "Let's work it out, together.")}</p>
-          <p className="sm-board-empty-line">{L("Qu'aimerais-tu mieux comprendre ?", "What would you like to understand better?")}</p>
-          <p className="sm-board-empty-sub">{L("On construit l'explication ensemble, une idée à la fois.", "We'll build the explanation together. One idea at a time.")}</p>
+          <p className="sm-board-empty-line">{L("On va le démonter ensemble.", "Let's take it apart together.")}</p>
+          <p className="sm-board-empty-line">{L("Qu'est-ce qui te résiste en ce moment ?", "What's beating you right now?")}</p>
+          <p className="sm-board-empty-sub">{L("Je ne te donne pas la réponse : tu la trouves, je te pousse. Une idée à la fois.", "I won't give you the answer — you find it, I push. One idea at a time.")}</p>
         </div>
         {writing ? (
           <div className="sm-board-drafting" role="status" aria-live="polite">

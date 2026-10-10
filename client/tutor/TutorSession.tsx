@@ -323,7 +323,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
         // student should ever have to read verbatim; `e.message` for those is generic browser text, not a
         // real server error. Only show the server's OWN message (it always sets `.status`, see api.ts's
         // `j()`); anything without one is a network-layer failure, so use the friendly fallback instead.
-        setError(e?.status != null ? e.message : L("Otto n'a pas pu répondre — réessaie.", "Otto couldn't reply — try again."));
+        setError(e?.status != null ? e.message : L("J'ai perdu le fil. Redis-le ?", "I lost the thread. Say that again?"));
         setInput(message);
       }
     } finally {
@@ -468,7 +468,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       }
       setPendingActiveSession(null);
     } catch {
-      setError(L("Impossible de démarrer la séance", "Couldn't start the session"));
+      setError(L("La séance n'a pas démarré. Relance.", "The session didn't start. Try again."));
     } finally {
       setStartingSession(false);
     }
@@ -541,7 +541,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   if (loadError) {
     return (
       <main className="list-wrap">{backButton}<div className="empty-state">
-        <h3>{L("Impossible de démarrer la séance", "Couldn't start the session")}</h3>
+        <h3>{L("La séance n'a pas démarré. Relance.", "The session didn't start. Try again.")}</h3>
         <button className="btn primary" onClick={() => { mountFetchStartedRef.current = false; peekForActiveSession(); }}>{L("Réessayer", "Try again")}</button>
       </div></main>
     );
@@ -694,9 +694,9 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       : L("Salut ! Sur quoi tu bloques ? Écris, dessine ou parle.", "Hey! What are you stuck on? Type, draw or just talk.");
   const openerText = instantOpener;
   const starters = [
-    { label: L("Je bloque sur un exercice", "I'm stuck on a problem"), text: L("Je bloque sur un exercice.", "I'm stuck on a problem.") },
-    { label: L("Explique-moi un cours", "Teach me a topic"), text: L("J'aimerais comprendre un chapitre.", "I'd like to understand a topic.") },
-    { label: L("Interroge-moi", "Quiz me"), text: L("Interroge-moi pour voir ce que je sais.", "Quiz me to see what I know.") },
+    { label: L("Je bloque sur un exercice", "I'm stuck — push me"), text: L("Je bloque sur un exercice.", "I'm stuck on a problem.") },
+    { label: L("Fais-moi comprendre un cours", "Make me understand a topic"), text: L("J'aimerais comprendre un chapitre.", "I'd like to understand a topic.") },
+    { label: L("Interroge-moi", "Test me"), text: L("Interroge-moi pour voir ce que je sais.", "Quiz me to see what I know.") },
   ];
   // Right after the student has completed an exercise: offer the next move as one-tap choices (Otto also asks
   // what they'd like to do — see the persona's EXERCISE RESULTS rule) instead of leaving them at a bare "solved".

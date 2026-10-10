@@ -302,6 +302,10 @@ const CACHED_TASKS: WebTask[] = (() => {
   try { const t = JSON.parse(localStorage.getItem("otto-tasks") || "[]"); return Array.isArray(t) ? t : []; } catch { return []; }
 })();
 
+// Start the task fetch NOW (parallel with /api/status) when the last visit was signed in, instead of waiting for status
+// to resolve first — the first sync consumes it, so the list refreshes one round-trip sooner.
+let EARLY_TASKS: Promise<WebTask[] | null> | null = CACHED_STATUS?.loggedIn ? api.tasks().catch(() => null) : null;
+
 // "New" indicator: task ids the user has already OPENED at least once, so a fresh card gets a small dot
 // until they look at it, then never again — permanent per-id memory (not a session flag), purely local
 // (no server field needed for something this cosmetic). Capped so a long-lived account's set can't grow
@@ -659,7 +663,8 @@ export function App() {
   // 15-min tick + focus re-sync retry a transient miss).
   const syncTasks = useCallback(async () => {
     if (signedOutRef.current) return;
-    const t = await api.tasks().catch(() => null);
+    const early = EARLY_TASKS; EARLY_TASKS = null;
+    const t = await (early ?? api.tasks().catch(() => null));
     if (signedOutRef.current) return; // signed out while the request was in flight — drop the stale response
     if (t) setTasks((prev) => keepLocalHandled(prev, retryFlags(t)));
     setLoaded(true);
@@ -1277,27 +1282,27 @@ export function App() {
                   connected ? (
                     <div className="empty-state">
                       <div className="empty-mark"><Logo size={28} /></div>
-                      <h3>{en ? `Otto is watching ${watching}${who ? `, ${who}` : ""}` : `Otto surveille ${watching}${who ? `, ${who}` : ""}`}</h3>
-                      <p>{en ? "It reads your homework and tests. Tasks arrive automatically." : "Il lit tes devoirs et contrôles. Les tâches arrivent automatiquement."}</p>
-                      <button className="btn primary" disabled={busy} onClick={() => void generate()}>{busy ? (en ? "Searching…" : "Recherche…") : (en ? "Check now" : "Vérifier maintenant")}</button>
+                      <h3>{en ? `I'm watching ${watching}${who ? `, ${who}` : ""}` : `Je surveille ${watching}${who ? `, ${who}` : ""}`}</h3>
+                      <p>{en ? "Homework and tests land here the moment I see them. Until then, use the quiet to get ahead." : "Devoirs et contrôles arrivent ici dès que je les vois. D'ici là, profite du calme pour prendre de l'avance."}</p>
+                      <button className="btn primary" disabled={busy} onClick={() => void generate()}>{busy ? (en ? "Looking…" : "Je regarde…") : (en ? "Look again" : "Regarde encore")}</button>
                     </div>
                   ) : (
                     <div className="empty-state">
                       <div className="empty-mark"><Logo size={28} /></div>
-                      <h3>{en ? `Nothing on your list yet${who ? `, ${who}` : ""}` : `Rien sur ta liste pour l'instant${who ? `, ${who}` : ""}`}</h3>
+                      <h3>{en ? `Nothing on your list${who ? `, ${who}` : ""} — suspicious` : `Rien sur ta liste${who ? `, ${who}` : ""} — suspect`}</h3>
                       <p>{en
-                        ? "Add a task above and Otto takes it from there — or connect an app in Settings so homework and deadlines arrive on their own."
-                        : "Ajoute une tâche ci-dessus et Otto s'occupe du reste — ou connecte une app dans les Réglages pour que devoirs et échéances arrivent tout seuls."}</p>
+                        ? "Add what you've been putting off. Or connect an app in Settings and I'll find the deadlines before you do."
+                        : "Ajoute ce que tu repousses. Ou connecte une app dans les Réglages et je trouverai les échéances avant toi."}</p>
                       <a className="btn ghost" href="/settings">{en ? "Connect an app" : "Connecter une app"}</a>
                     </div>
                   )
                 ) : (
                   <div className="empty-state">
                     <div className="empty-mark done"><span className="empty-check">✓</span></div>
-                    <h3>{en ? `All caught up${who ? `, ${who}` : ""}` : `Tout est à jour${who ? `, ${who}` : ""}`}</h3>
+                    <h3>{en ? `Clear${who ? `, ${who}` : ""}` : `C'est dégagé${who ? `, ${who}` : ""}`}</h3>
                     <p>{connected
-                      ? (en ? `You're all caught up — Otto's still keeping an eye on ${watching}.` : `Tu es à jour — Otto continue de surveiller ${watching}.`)
-                      : (en ? "You're all caught up. Nothing else needs your attention right now." : "Tu es à jour. Rien d'autre ne demande ton attention pour l'instant.")}</p>
+                      ? (en ? `Nothing outstanding. I'm still watching ${watching} — now get ahead on something hard.` : `Rien en retard. Je surveille toujours ${watching} — prends de l'avance sur quelque chose de dur.`)
+                      : (en ? "Nothing outstanding. Pick something hard and get ahead of it." : "Rien en retard. Choisis quelque chose de dur et prends de l'avance.")}</p>
                   </div>
                 );
               })() : (
@@ -1332,8 +1337,8 @@ export function App() {
                     {!showAllTasks ? (
                       <button className="btn xs ghost show-more-btn" onClick={() => setShowAllTasks(true)}>
                         {en
-                          ? `See ${live.length - 3} more task${live.length - 3 > 1 ? "s" : ""}…`
-                          : `Voir ${live.length - 3} tâche${live.length - 3 > 1 ? "s" : ""} de plus…`}
+                          ? `${live.length - 3} more waiting`
+                          : `${live.length - 3} de plus qui attendent`}
                       </button>
                     ) : (
                       <div className="list">
@@ -2205,7 +2210,7 @@ function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
     <main className="list-wrap">
       <div className="dash-head">
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--space-3)" }}>
-          <h1 className="list-head">{L("Des erreurs qui méritent d'être retenues.", "Mistakes worth remembering.")}</h1>
+          <h1 className="list-head">{L("Les erreurs que tu ne referas plus.", "The mistakes you won't make twice.")}</h1>
           <button className="btn primary" onClick={() => setShowAddForm(!showAddForm)}>
             {showAddForm ? L("Fermer", "Close") : L("+ Ajouter", "+ Add")}
           </button>
@@ -2262,8 +2267,8 @@ function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
       ) : groups.length === 0 ? (
         <div className="empty-state">
           <div className="empty-mark"><span className="empty-check">✓</span></div>
-          <h3>{L("Aucune erreur notée", "No mistakes logged yet")}</h3>
-          <p>{L("Ajoute ta première erreur pour commencer à préparer tes tests.", "Add your first mistake to start building your test prep log.")}</p>
+          <h3>{L("Aucune erreur notée. Soit tu maîtrises, soit tu évites.", "No mistakes logged. Either you've mastered it or you're avoiding it.")}</h3>
+          <p>{L("Note ta première erreur. C'est là que tu progresses vraiment.", "Log your first mistake. That's where you actually improve.")}</p>
           <button className="btn primary" onClick={() => setShowAddForm(true)}>{L("Ajouter une erreur", "Add a mistake")}</button>
         </div>
       ) : (
@@ -2946,9 +2951,9 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
 
   return (
     <main className="settings-page">
-      {/* The prototype's Settings head: "Make Otto yours." + "Your account, your connections, your pace." */}
-      <h1 className="list-head">{L("Fais d'Otto le tien.", "Make Otto yours.")}</h1>
-      <p className="page-sub" style={{ marginTop: 10, marginBottom: "var(--space-6)" }}>{L("Ton compte, tes connexions, ton rythme.", "Your account, your connections, your pace.")}</p>
+      {/* The prototype's Settings head: "Set the bar for Otto." + "Your account, your connections, your standards." */}
+      <h1 className="list-head">{L("Fixe le niveau d'exigence d'Otto.", "Set the bar for Otto.")}</h1>
+      <p className="page-sub" style={{ marginTop: 10, marginBottom: "var(--space-6)" }}>{L("Ton compte, tes connexions, tes exigences.", "Your account, your connections, your standards.")}</p>
       {profileError ? (
         <p className="rewrite-error">{L("Certaines infos du profil n'ont pas pu être chargées.", "Some profile info couldn't load.")} <button type="button" className="btn xs ghost" onClick={loadProfile}>{L("Réessayer", "Retry")}</button></p>
       ) : null}
@@ -3661,12 +3666,12 @@ function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status
       setBusy(false);
     }
   };
-  // The two main modes use the prototype's auth copy verbatim (login "Welcome back." · signup "A clearer
+  // The two main modes use the prototype's auth copy verbatim (login "You're back. Let's work." · signup "A clearer
   // day starts here."); forgot/reset keep their own explanatory copy — the prototype doesn't design those
   // states. French adapted through L() as everywhere else.
   const titles: Record<typeof mode, string> = {
     signup: L("Une journée plus claire commence ici.", "A clearer day starts here."),
-    login: L("Content de te revoir.", "Welcome back."),
+    login: L("Tu es de retour. Au travail.", "You're back. Let's work."),
     forgot: L("Mot de passe oublié", "Forgot password"),
     reset: L("Choisis un nouveau mot de passe", "Choose a new password"),
   };
@@ -4213,7 +4218,7 @@ function AddTask({ onAdded }: { onAdded: Dispatch<SetStateAction<WebTask[]>> }) 
       <span className="add-plus" aria-hidden="true">+</span>
       <input
         className="add-task-input"
-        placeholder={L("Qu'est-ce qu'il faut faire ?", "What needs to get done?")}
+        placeholder={L("Qu'est-ce que tu te dois de faire ensuite ?", "What do you owe yourself next?")}
         value={text}
         disabled={busy}
         onChange={(e) => setText(e.target.value)}

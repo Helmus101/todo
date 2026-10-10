@@ -461,7 +461,7 @@ export function AskOttoPanel({
         ))}
         {pendingMsg ? <div className="sm-ai-msg sm-ai-msg-user sm-ai-msg-pending">{pendingMsg}</div> : null}
         {sending ? (
-          <div className="sm-ai-msg sm-ai-msg-assistant sm-ai-typing" role="status" aria-label={L("Otto réfléchit", "Otto is thinking")}>
+          <div className="sm-ai-msg sm-ai-msg-assistant sm-ai-typing" role="status" aria-label={L("Otto te cuisine", "Otto is working on you")}>
             <span className="sm-typing-dots" aria-hidden="true"><i /><i /><i /></span>
             {/* The cycling word itself already reads as "still actively working" (it keeps changing), so it
                 replaces the old static "still thinking…"/"might be putting something together…" text

@@ -1463,7 +1463,7 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
             waiting, instead of swallowing what they just typed. */}
         {pendingMsg ? <div className="chat-msg chat-user chat-pending">{pendingMsg}</div> : null}
         {sending ? (
-          <div className="chat-msg chat-assistant chat-typing" role="status" aria-label={L("Otto réfléchit", "Otto is thinking")}>
+          <div className="chat-msg chat-assistant chat-typing" role="status" aria-label={L("Otto te cuisine", "Otto is working on you")}>
             <span className="typing-dots" aria-hidden="true"><i /><i /><i /></span>
             {/* Cycling word (see useThinkingWord, ui.tsx) replaces the old static "still thinking…"/"might
                 be putting something together…" text — it already reads as "still actively working" since
