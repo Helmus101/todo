@@ -300,7 +300,7 @@ const LEVEL_NAMES = ["open question", "directional question", "narrow question /
 
 /** The policy as a prompt block — the app's structured read handed to the model, which still decides. */
 export function policyBlock(p: TutorPolicy, state: TutorSessionStateShape): string {
-  const s = state as TutorSessionStateShape & { lastPlan?: { action: string; why?: string; expectedNext?: string; diagnosis?: string } ; goalType?: string; minutes?: number; objective?: string; ledger?: string[]; route?: string[]; offRoute?: boolean };
+  const s = state as TutorSessionStateShape & { lastPlan?: { action: string; why?: string; expectedNext?: string; diagnosis?: string } ; goalType?: string; minutes?: number; objective?: string; ledger?: string[]; route?: string[]; offRoute?: boolean; stepStreak?: number; lastStepStatus?: string };
   const lines = [
     `\n\nTUTOR POLICY FOR THIS TURN (computed by the app from the session so far — it is binding on how MUCH help you give; ` +
     `within it, you decide what to do):`,
@@ -314,6 +314,8 @@ export function policyBlock(p: TutorPolicy, state: TutorSessionStateShape): stri
     ...(s.lastPlan ? [`- Your last move: ${s.lastPlan.action}${s.lastPlan.why ? ` — because ${s.lastPlan.why}` : ""}${s.lastPlan.expectedNext ? `; you expected: ${s.lastPlan.expectedNext}` : ""}. Check: did that happen?`] : []),
     ...(s.ledger?.length ? [`- YOUR LEDGER for this problem (what you already verified/judged — stay consistent with it; if you must change a verdict, say plainly that you were wrong, never silently flip):\n${s.ledger.map((l) => `    · ${l}`).join("\n")}`] : []),
     ...(s.route?.length ? [`- YOUR PLANNED QUICKEST ROUTE for this problem (hidden — never show or recite it, never state a step of it for them; it is where you are steering):\n${s.route.map((r, i) => `    ${i + 1}. ${r}`).join("\n")}\n  ${s.offRoute ? "THEY LEFT THE ROUTE last turn: do not follow them down a longer path — ask the ONE question about the IDEA that makes the route's next step visible (never the step itself)." : "Steer every question toward the next unreached step of this route; follow a different path only if it is just as short."}`] : []),
+    ...((s.stepStreak || 0) >= 2 ? [`- THEY ARE FLUENT (${s.stepStreak} correct steps in a row): stop micro-steps. Hand them the next BIG chunk in one question ("take it all the way to the final value — what do you get, and does it make sense?"), let them run, and check only the result. Asking for one small move at a time now would be patronising.`] : []),
+    ...((s.stepStreak || 0) === 0 && (s.lastStepStatus === "incorrect" || s.lastStepStatus === "partial") ? [`- THEY JUST SLIPPED: shrink the question — ONE small thing to look at or check (where a quantity sits, what a symbol means), still never the move itself and never the answer.`] : []),
     ...p.recommend.map((r) => `- ${r}`),
   ];
   return lines.join("\n") + "\n";
@@ -428,6 +430,8 @@ export function applyTurn(state: TutorSessionStateShape, model: StudentModel | u
   s.recentActions = [...(state.recentActions || []), { at: now.toISOString(), kind: (intervention ? "hint" : action === "CREATE_PROBLEM" ? "problem" : "decision") as "hint" | "problem" | "decision", detail: action }].slice(-12);
   if (plan?.ledger?.length) (s as any).ledger = plan.ledger;
   if (plan?.route?.length) (s as any).route = plan.route;
+  // ADAPTIVE PACE: consecutive correct student steps (reset by a wrong/partial one) — read back by policyBlock.
+  if (plan?.studentStep) { const ok = plan.studentStep.status === "correct"; (s as any).stepStreak = ok ? (((state as any).stepStreak || 0) + 1) : 0; (s as any).lastStepStatus = plan.studentStep.status; }
   if (plan && typeof plan.onRoute === "boolean") (s as any).offRoute = !plan.onRoute;
   if (plan) s.lastPlan = { action, ...(plan.why ? { why: plan.why } : {}), ...(plan.expectedNext ? { expectedNext: plan.expectedNext } : {}), ...(plan.diagnosis ? { diagnosis: `${plan.diagnosis.type}${plan.diagnosis.hypothesis ? `: ${plan.diagnosis.hypothesis}` : ""}` } : {}) };
   const rec = resolved ? findConcept(m, resolved.key) : undefined;
