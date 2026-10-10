@@ -263,7 +263,7 @@ export async function runTutorSim(check, section) {
   const openP = { id: "p1", question: "Given sin θ = 3/5, find sin(2θ).", answer: "24/25", createdAt: new Date().toISOString() };
   script = (b, i) => i === 0 ? { content: "", tool_calls: [tc("CREATE_PROBLEM", { question: "What is the area of a circle of radius 3, in terms of π?", answer: "9π" })] } : { content: "What formula expands sin(2θ)?" };
   r = await run("I'm not sure", { problems: [openP], history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
-  check("no new exercise while one is unanswered (rejected, nothing piled on)", r.problems.length === 0 && /haven't answered the exercise/.test(JSON.stringify(calls[1].messages)));
+  check("no new exercise while one is unanswered (rejected, nothing piled on)", r.problems.length === 0 && /haven't answered the exercise|didn't ask for a new problem/.test(JSON.stringify(calls[1].messages)));
   r = await run("another one please", { problems: [openP], history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
   check("...but the student asking for another one gets it", r.problems.length === 1);
   r = await run("next", { problems: [{ ...openP, solved: true }], history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
@@ -466,6 +466,12 @@ export async function runTutorSim(check, section) {
     : i === 0 ? { content: "What energy does the car start with at the very top?" } : { content: "There's the problem — what do you get?" };
   r = await run("no let's do a new problem physics higher level", { history: [{ role: "user", text: "work power" }, { role: "assistant", text: "ok" }] });
   check("end to end: asked for a new problem, Otto ends up with a real exercise widget (bare-number key, exact value) instead of only chat text", r.problems.length === 1 && r.problems[0].answer === "529200" && /joules/.test(r.problems[0].format || "") && r.problems[0].value === 529200);
+  // UNPROMPTED EXERCISE: a plain answer from the student must not trigger a brand-new exercise.
+  script = (b, i) => i === 0
+    ? { content: "", tool_calls: [tc("CREATE_PROBLEM", { question: "A 1200 kg car rolls down a hill of height 45 m with friction doing 176,400 J of work. Find the new kinetic energy.", answer: "352800" })] }
+    : { content: "Yes — that's the whole energy at the top. What does it turn into at the bottom?" };
+  r = await run("529200", { history: [{ role: "user", text: "work power energy" }, { role: "assistant", text: "ok" }] });
+  check("end to end: after a plain answer Otto cannot set a new exercise nobody asked for", r.problems.length === 0 && calls.some((b) => /didn't ask for a new problem/.test(JSON.stringify(b.messages))));
   // WHY: a why-question that is answered with a restatement + a question is sent back once for a real explanation.
   script = (b, i) => i === 0
     ? { content: "You're wondering why we even need to bother equating them when we already found the speed with SUVAT. Notice how m shows up on both sides?" }

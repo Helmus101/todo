@@ -916,3 +916,14 @@ export function asksForProblem(message: string): boolean {
 export function asksWhichProblem(message: string): boolean {
   return /\b(?:which|what) (?:problem|question|exercise)\b|\b(?:don'?t|do not|can'?t) (?:see|find) (?:the |which |any |a )?(?:problem|question|exercise)\b|\bwhat are you (?:talking|asking) about\b|\bfor which (?:problem|question)\b|\bwhich one (?:are you|do you)\b/i.test(String(message || ""));
 }
+
+/** Does this tutor line START a new problem — a scenario with 2+ quantities (units / angles) and something to find — whose numbers are NOT already on the board? */
+export function startsNewProblem(text: string, existingTexts: string[]): boolean {
+  const t = String(text || "").replace(/\$/g, " ");
+  const quantities = t.match(/\d+(?:[.,]\d+)?\s?(?:°|(?:m|cm|mm|km|kg|g|s|min|h|N|J|V|A|W|mol|L|mL|%|kJ|kW|MJ)\b)/g) || [];
+  if (quantities.length < 2 || t.length < 40) return false;
+  if ((t.match(/[A-Za-zÀ-ÿ]{3,}/g) || []).length < 6) return false; // a scenario is told in words — a table of values or an equation is not
+  if (!/[?？]|=\s*\?|\b(?:find|calculate|determine|work out|what(?:'s| is)|how (?:much|fast|far|long))\b/i.test(t)) return false;
+  return !boardCoversStatement(t, existingTexts);
+}
+export const NO_UNPROMPTED_EXERCISE = "REJECTED: they didn't ask for a new problem. Keep helping with what they are doing right now — answer what they asked, guide the step they're on. When the current one is finished, OFFER another in one short question (\"want another one on this?\") and wait for a yes; never set one unasked.";
