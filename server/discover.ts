@@ -138,6 +138,29 @@ export function calendarToItems(data: any, now: number = Date.now(), account?: {
 function normalizeAssignmentText(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 60);
 }
+const ASSIGN_STOP = new Set(["exercices", "exercice", "exo", "exos", "pour", "dans", "avec", "that", "this", "with", "from", "page", "pages", "episode", "episodes", "emission", "cours"]);
+const assignTokens = (t: string): Set<string> => new Set(String(t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").split(/[^a-z0-9]+/).filter((w) => w.length > 3 && !ASSIGN_STOP.has(w)));
+/** Do two Pronote texts describe the same assignment? Pronote sometimes lists one homework twice with the text
+ *  slightly different ("Exercices n° : Exercices n° : France culture…" vs a cleaner copy), which defeats the exact
+ *  anchor key. Same distinctive words (≥ 60 % of the smaller set, at least 3) = same assignment. Pure. */
+export function sameAssignmentText(a: string, b: string): boolean {
+  const A = assignTokens(a), B = assignTokens(b);
+  const small = Math.min(A.size, B.size);
+  if (small < 3) return false;
+  let hit = 0;
+  for (const w of A) if (B.has(w)) hit++;
+  return hit / small >= 0.6;
+}
+/** Collapse Pronote homework items for the same subject + day whose texts describe the same assignment (keeps the longer text). */
+export function dedupePronoteHomework(items: SourceItem[]): SourceItem[] {
+  const out: SourceItem[] = [];
+  for (const it of items) {
+    const i = out.findIndex((k) => (k.subject || "").toLowerCase() === (it.subject || "").toLowerCase() && (k.timestamp || "").slice(0, 10) === (it.timestamp || "").slice(0, 10) && sameAssignmentText(k.snippet, it.snippet));
+    if (i < 0) out.push(it);
+    else if ((it.snippet || "").length > (out[i].snippet || "").length) out[i] = { ...it, url: it.url || out[i].url };
+  }
+  return out;
+}
 export function pronoteToItems(items: { id: string; subject: string; description: string; deadline: string; done: boolean; attachments?: { name: string; url: string }[] }[]): SourceItem[] {
   return items.map((a): SourceItem => {
     // A teacher-attached worksheet/link — until this, Otto had zero visibility that one even existed,
@@ -294,7 +317,7 @@ export async function discoverSourceItems(userEmail: string): Promise<{ items: S
       // cross-checked against each other before either becomes a candidate — see mergePronoteHomeworkAndTests.
       grab(async () => {
         const [homework, tests] = await Promise.all([pronoteHomework(userEmail), pronoteTests(userEmail)]);
-        return mergePronoteHomeworkAndTests(pronoteToItems(homework), pronoteTestsToItems(tests));
+        return mergePronoteHomeworkAndTests(dedupePronoteHomework(pronoteToItems(homework)), pronoteTestsToItems(tests));
       }),
     ] : []),
     // Blackbaud (school assignments) — MOCK-ONLY right now, see server/blackbaud.ts's file-level comment.

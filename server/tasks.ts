@@ -6,7 +6,7 @@ import { loadPronoteConnection } from "./store.ts";
 import { schoolRecordLine } from "./schoolRecord.ts";
 import { generateTasks, classifyCandidates, pickOneTask, runTask as aiRun, type ProfileUpdate, type RefinedTask, type AcademicContext } from "./claude.ts";
 import { readOnly, scopeTools, DOC_LINK, type AgentTools } from "./integrations.ts";
-import { discoverSourceItems, filterCandidates, hasAssignmentText } from "./discover.ts";
+import { discoverSourceItems, filterCandidates, hasAssignmentText, sameAssignmentText } from "./discover.ts";
 import { TEST_DAYS_AHEAD } from "./pronote.ts";
 import { aggregateSubjectSignals } from "./patterns.ts";
 
@@ -541,6 +541,9 @@ export function dedupeTasks(list: WebTask[]): WebTask[] {
       const kak = normKey(k.anchorKey);
       if (!!ak && kak === ak) { matchedByAnchor = true; return true; }             // SAME anchor (same thread/event) → dup
       if (!!link && linkOf(k) === link) { matchedByAnchor = true; return true; }   // same source link → dup
+      // The SAME Pronote homework listed twice with slightly different text: same subject + due day + same distinctive words.
+      if (t.source === "pronote" && k.source === "pronote" && !!t.sourceDetail && !!k.sourceDetail && (t.sourceSubject || "").toLowerCase() === (k.sourceSubject || "").toLowerCase()
+        && String(t.sourceDue || "").slice(0, 10) === String(k.sourceDue || "").slice(0, 10) && sameAssignmentText(t.sourceDetail, k.sourceDetail)) { matchedByAnchor = true; return true; }
       // Two tasks that BOTH carry a REAL anchor and those anchors DIFFER: if either side is already handled
       // (done/dismissed), they are distinct real-world items (e.g. an old done email vs a new fresh email).
       // But two ACTIVE same-title tasks (distinct anchors) still merge so visual duplicates never appear.
