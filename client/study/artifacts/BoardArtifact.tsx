@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import katex from "katex";
 import type { WebTask, BoardEntry, TaskProblem, DiagramOp } from "../../../shared/types.ts";
-import { practiceAnswerMatches } from "../../../shared/types.ts";
+import { practiceAnswerMatches, isNumericAnswer, problemIsPercent } from "../../../shared/types.ts";
 import { autoMathLine, repairLatex, latexToPlainText } from "../../../shared/mathText.ts";
 import { GraphBlock } from "./GraphBlock.tsx";
 import { FlowDiagram } from "./FlowDiagram.tsx";
@@ -473,7 +473,7 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
               <input
                 type="text"
                 className="sm-inline-problem-input"
-                placeholder={en ? "Your answer…" : "Ta réponse…"}
+                placeholder={isNumericAnswer(problem.answer) ? (en ? "Your answer (a number, no units)…" : "Ta réponse (un nombre, sans unité)…") : (en ? "Your answer…" : "Ta réponse…")}
                 value={state.textAnswer}
                 onChange={e => onTextAnswer(e.target.value)}
                 onKeyDown={e => { if (e.key === "Enter" && state.textAnswer.trim()) onSubmit(); }}
@@ -618,7 +618,7 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, 
 
   const submitProblem = (problemId: string) => {
     const pr = problems.find((p) => p.id === problemId);
-    if (pr && pr.answer) { const given = (problemState[problemId]?.textAnswer || "").trim(); if (given) reportResult(pr, given, practiceAnswerMatches(given, pr.answer)); }
+    if (pr && pr.answer) { const given = (problemState[problemId]?.textAnswer || "").trim(); if (given) reportResult(pr, given, practiceAnswerMatches(given, pr.answer, (pr as any).value, problemIsPercent(pr as any))); }
     setProblemState(prev => ({ ...prev, [problemId]: { ...prev[problemId] || { picked: null, textAnswer: "", submitted: false }, submitted: true } }));
   };
 
@@ -635,7 +635,7 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, 
   const checkFreeResponse = (problemId: string): boolean => {
     const problem = problems.find(p => p.id === problemId);
     if (!problem || !problem.answer) return false;
-    return practiceAnswerMatches(getProblemState(problemId).textAnswer, problem.answer);
+    return practiceAnswerMatches(getProblemState(problemId).textAnswer, problem.answer, (problem as any).value, problemIsPercent(problem as any));
   };
 
   const hint = (

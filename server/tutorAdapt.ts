@@ -884,3 +884,35 @@ export function splitBoardContent(reply: string): { items: string[]; question: s
   items = items.filter((x, i) => !(i === 0 && /:\s*$/.test(x) || (i === 0 && items.length > 2 && /\b(?:here(?:'s| is| are)|voici)\b/i.test(x) && x.split(/\s+/).length <= 12)));
   return { items: items.slice(0, 8), question };
 }
+
+/** Subject shorthand the student (or speech recognition) uses — "ep", "E_p", "PE", "ke" — that the tutor must read as the quantity, and SAY by name.
+ *  Returns "" when nothing recognisable appears in the recent conversation. */
+const GLOSS: { re: RegExp; line: string }[] = [
+  { re: /(?<![a-z])(?:e\s?_?\s?p|ep|pe|gpe|gp\.?e)(?![a-z])/i, line: `"ep" / "E_p" / "Ep" / "PE" = potential energy (gravitational, E_p = mgh, unless the problem is about a spring)` },
+  { re: /(?<![a-z])(?:e\s?_?\s?k|ek|ke|k\.?e)(?![a-z])/i, line: `"ek" / "E_k" / "Ek" / "KE" = kinetic energy (E_k = ½mv²)` },
+  { re: /(?<![a-z])(?:e\s?_?\s?t\s?h|eth)(?![a-z])/i, line: `"E_th" = thermal energy` },
+  { re: /(?<![a-z])(?:gpe)(?![a-z])/i, line: `"GPE" = gravitational potential energy` },
+  { re: /(?<![a-z])(?:eff|η|eta)(?![a-z])/i, line: `"η" / "eff" = efficiency (useful energy out ÷ total energy in)` },
+  { re: /(?<![a-z])(?:suvat)(?![a-z])/i, line: `"SUVAT" = the constant-acceleration equations (s, u, v, a, t)` },
+];
+export function notationGloss(message: string, history: { role: string; text: string }[] = []): string {
+  const text = [message, ...history.filter((h) => h.role === "user").slice(-6).map((h) => h.text)].join(" \n ");
+  const seen = GLOSS.filter((g) => g.re.test(text)).map((g) => g.line);
+  if (!seen.length) return "";
+  return `\n\nTHEIR SHORTHAND (read it as the quantity; in YOUR words always say the NAME — "potential energy", not "ep" — with the symbol in brackets the first time):\n${[...new Set(seen)].map((l) => `- ${l}`).join("\n")}\n`;
+}
+
+/** The student wants a (new) problem / exercise / question to work on — "can you do another exercise", "put a problem on the board", "give me a physics HL one". */
+export function asksForProblem(message: string): boolean {
+  const m = String(message || "");
+  if (m.length < 8 || /^\[(?:Exercise|Exercice|Activity|Activité)\]/i.test(m.trim())) return false;
+  return /\b(?:another|a new|new|next|different|one more|more)\b[^.?!]{0,30}\b(?:problem|exercise|question|one)\b/i.test(m)
+    || /\b(?:give|show|set|do|try|have|want)\b[^.?!]{0,25}\b(?:a|an|another|new|some)\b[^.?!]{0,25}\b(?:problem|exercise|question)\b/i.test(m)
+    || /\b(?:put|write|place)\b[^.?!]{0,30}\b(?:problem|exercise|question)\b[^.?!]{0,25}\b(?:board|up|there)\b/i.test(m)
+    || /\blet'?s do (?:a |another |one )?(?:new |another )?(?:problem|exercise|question|one)\b/i.test(m)
+    || /\b(?:un autre|une autre|nouvel|nouvelle)\b[^.?!]{0,20}\b(?:exercice|problème|question)\b/i.test(m);
+}
+/** "Which problem?", "I don't see the question you mean" — the tutor asked about a problem the student was never shown. */
+export function asksWhichProblem(message: string): boolean {
+  return /\b(?:which|what) (?:problem|question|exercise)\b|\b(?:don'?t|do not|can'?t) (?:see|find) (?:the |which |any |a )?(?:problem|question|exercise)\b|\bwhat are you (?:talking|asking) about\b|\bfor which (?:problem|question)\b|\bwhich one (?:are you|do you)\b/i.test(String(message || ""));
+}

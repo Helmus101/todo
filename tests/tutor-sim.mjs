@@ -460,6 +460,12 @@ export async function runTutorSim(check, section) {
   script = () => ({ content: SHEET });
   r = await run("can you give me a cheat sheet of the five energy words", { history: [{ role: "user", text: "energy question" }, { role: "assistant", text: "ok" }] });
   check("end to end: a cheat sheet in the bubble ends up on the board with a one-line bubble", r.board.filter((e) => e.kind === "definition").length === 5 && /put it on the board|mis au tableau/i.test(r.reply) && !/1\. Kinetic/.test(r.reply) && /Do any of those need an example\?/.test(r.reply) && r.reply.length < 120);
+  // PROBLEM AS WIDGET: asked for another exercise and answered with a chat question only → sent back to make a real exercise.
+  script = (b, i) => /real EXERCISE/.test(lastUserText(b)) && !b.messages.some((m) => m.role === "tool")
+    ? { content: "", tool_calls: [tc("CREATE_PROBLEM", { question: "A 1200 kg car rolls down a hill of height 45 m. Find its starting gravitational potential energy (g = 9.8 m/s²).", answer: "529200 J", check: "1200*9.8*45", format: "in joules" })] }
+    : i === 0 ? { content: "What energy does the car start with at the very top?" } : { content: "There's the problem — what do you get?" };
+  r = await run("no let's do a new problem physics higher level", { history: [{ role: "user", text: "work power" }, { role: "assistant", text: "ok" }] });
+  check("end to end: asked for a new problem, Otto ends up with a real exercise widget (bare-number key, exact value) instead of only chat text", r.problems.length === 1 && r.problems[0].answer === "529200" && /joules/.test(r.problems[0].format || "") && r.problems[0].value === 529200);
   // WHY: a why-question that is answered with a restatement + a question is sent back once for a real explanation.
   script = (b, i) => i === 0
     ? { content: "You're wondering why we even need to bother equating them when we already found the speed with SUVAT. Notice how m shows up on both sides?" }
