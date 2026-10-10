@@ -9030,8 +9030,8 @@ export async function chatAboutTask(
     // reached, is never shipped — it becomes a plain Socratic question, and the tutor's own derived "result" lines
     // from that turn are dropped so nothing solves it on the board either.
     if (opts?.primer && history.length >= 1 && !result.guardrailTripped
-      && (bareMath(reply) || equationAhead(reply, [...history.filter((h) => h.role === "user").map((h) => h.text), message], [...(opts?.currentBoard || []).filter((e) => e.kind === "given" || e.owner === "student").map((e) => e.text), ...(opts?.currentProblems || []).map((p) => p.question)]).length)) {
-      console.log(`${new Date().toISOString()} [chat] safety net: reply was bare maths / a step the student hasn't reached — replacing with a Socratic question`);
+      && bareMath(reply)) {
+      console.log(`${new Date().toISOString()} [chat] safety net: reply was only a formula — replacing with a question about what the student just wrote`);
       reply = socraticFallback(fr);
       result.board = result.board.filter((e) => !["result", "formula"].includes(String(e.kind)) || e.owner === "student");
     }

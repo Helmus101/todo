@@ -662,9 +662,9 @@ export function bareMath(reply: string): boolean {
   return words.length < 4;
 }
 
-/** Last-resort Socratic reply when a turn still ends up as bare maths or a step the student hasn't reached. */
+/** Last-resort Socratic reply when a turn still ends up as bare maths. It stays on what the student just said (never "let's go back"). */
 export function socraticFallback(fr: boolean): string {
   return fr
-    ? "Reprenons ton raisonnement : qu'est-ce que tu cherches exactement, et quelle relation le relie à ce que tu sais déjà ?"
-    : "Let's go back to your thinking: what exactly are you trying to find, and which relationship connects it to what you already know?";
+    ? "Explique-moi ce que tu viens d'écrire : que représente chaque morceau, et d'où vient-il ?"
+    : "Walk me through what you just wrote: what does each part stand for, and where does it come from?";
 }
