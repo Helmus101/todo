@@ -283,7 +283,10 @@ const sessionDirtyCache = new Map<string, string>();
 async function writeAccount(email: string, localTasks: WebTask[], localProfile: Profile, o: { throwOnError?: boolean; bypassCache?: boolean } = {}): Promise<void> {
   const throwOnError = !!o.throwOnError;
   try {
-    const current = await loadState(email, { bypassCache: !!o.bypassCache });
+    // ALWAYS a validated read (a ~60-byte version check; the full row only when it changed): this merge is followed by a WRITE of the
+    // merged row, and merging into a stale cached copy silently overwrote tasks another process had just added (the daily sweep's
+    // "2 new tasks" email arrived but the tasks were gone from the list).
+    const current = await loadState(email, { bypassCache: true });
     const mergedTasks = mergeTasks(current.tasks || [], localTasks);
     const mergedProfile = mergeProfiles(current.profile || emptyProfile(), localProfile);
     await saveState(email, { profile: mergedProfile, tasks: mergedTasks }, { throwOnError });
@@ -1198,7 +1201,9 @@ app.get("/api/tasks", requireAuth, async (req, res) => {
   try {
     if (req.session.user && cloudEnabled()) {
       const sessionTasks = req.session.tasks || [];
-      const cloud = await loadState(req.session.user);
+      // Validated read (version check ≈ 120 B; the full row only when it changed) so tasks another process just added — the daily
+      // sweep — appear on the very next load instead of waiting out the cache.
+      const cloud = await loadState(req.session.user, { bypassCache: true });
       const merged = mergeTasks(cloud.tasks || [], sessionTasks);
       // Reconcile the session copy only when the cloud copy actually differs. The overwhelmingly common
       // poll lands with both copies identical, and upserting the FULL session blob (profile + every task
