@@ -468,7 +468,7 @@ export async function runTutorSim(check, section) {
   check("end to end: asked for a new problem, Otto ends up with a real exercise widget (bare-number key, exact value) instead of only chat text", r.problems.length === 1 && r.problems[0].answer === "529200" && /joules/.test(r.problems[0].format || "") && r.problems[0].value === 529200);
   // UNPROMPTED EXERCISE: a plain answer from the student must not trigger a brand-new exercise.
   script = (b, i) => i === 0
-    ? { content: "", tool_calls: [tc("CREATE_PROBLEM", { question: "A 1200 kg car rolls down a hill of height 45 m with friction doing 176,400 J of work. Find the new kinetic energy.", answer: "352800" })] }
+    ? { content: "", tool_calls: [tc("CREATE_PROBLEM", { question: "A 1200 kg car rolls down a hill of height 45 m with friction doing 176,400 J of work. Find the new kinetic energy.", answer: "352800", check: "1200*9.8*45-176400" })] }
     : { content: "Yes — that's the whole energy at the top. What does it turn into at the bottom?" };
   r = await run("529200", { history: [{ role: "user", text: "work power energy" }, { role: "assistant", text: "ok" }] });
   check("end to end: after a plain answer Otto cannot set a new exercise nobody asked for", r.problems.length === 0 && calls.some((b) => /didn't ask for a new problem/.test(JSON.stringify(b.messages))));

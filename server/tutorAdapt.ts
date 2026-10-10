@@ -569,6 +569,36 @@ export function arithmeticAhead(reply: string, studentTexts: string[], givens: s
   return out;
 }
 
+/** What the session is about RIGHT NOW: the open exercise if there is one, else the givens on the board, else how the session began. */
+export function currentFocus(problems: { question: string; solved?: boolean }[], board: { kind?: string; owner?: string; text: string }[], opening: { role: string; text: string }[] = []): string {
+  const open = [...problems].reverse().find((p) => !p.solved);
+  if (open) return `the open exercise: ${open.question.replace(/\s+/g, " ").slice(0, 500)}`;
+  const givens = board.filter((e) => e.kind === "given" && e.owner !== "student").slice(-4).map((e) => e.text.replace(/\s+/g, " ")).join(" | ");
+  if (givens) return `the problem on the board: ${givens.slice(0, 500)}`;
+  const first = opening.find((m) => m.role === "user");
+  return first ? `the problem as the student first gave it: ${first.text.replace(/\s+/g, " ").slice(0, 500)}` : "";
+}
+export function focusBlock(focus: string): string {
+  if (!focus) return "";
+  return `CURRENT FOCUS — the ONLY thing this conversation is about right now is ${focus}\nEvery reply and every board line serves THAT: its givens, its numbers, its next step. Never bring in another scenario, other numbers or a different problem (a skier, a car, a tower…) unless the student asks for a new one. If they drift, answer in one friendly line and bring them back to the step they were on. If you are unsure which problem they mean, say which one you think it is and ask — never guess a new one.\n`;
+}
+
+/** Numbers the reply states (two+ significant digits, or decimals) that appear nowhere in the conversation, board or
+ *  givens — a figure Otto computed or made up on its own ("take the square root of 390.4") instead of the student's. */
+export function inventedNumbers(reply: string, sources: string[]): string[] {
+  const norm = (t: string) => t.replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1").replace(/(\d),(\d)/g, "$1.$2");
+  const hay = norm(sources.join(" \n "));
+  const plain = norm(reply.replace(/\\[a-z]+/gi, " ").replace(/\$/g, " "));
+  const out: string[] = [];
+  for (const m of plain.matchAll(/(?<![\d.])\d+(?:\.\d+)?(?![\d])/g)) {
+    const n = m[0];
+    if (!n.includes(".") && n.length < 3) continue;
+    if (n.includes(".") && n.replace(".", "").length < 3) continue;
+    if (!new RegExp(`(?<![\\d.])${n.replace(".", "\\.")}(?![\\d])`).test(hay)) out.push(n);
+  }
+  return [...new Set(out)];
+}
+
 // ---- "Just draw it" and praise for nothing ----
 /** The student is asking Otto to DRAW/show the picture (not describing their own drawing). */
 export function asksToDraw(message: string): boolean {
@@ -599,6 +629,29 @@ export function praiseUngrounded(reply: string, message: string, plan?: { studen
   if (!plan) return false;
   const ok = plan.studentStep?.status === "correct" || (plan.evidence?.kind ? SUCCESS_EVIDENCE.has(plan.evidence.kind) : false);
   return !ok;
+}
+
+const CONFIRM_ANY = /\b(?:spot on|(?:right )?on the money|exactly right|is (?:correct|right)|that'?s (?:right|correct)|nailed|crushed|you(?:'ve| have) got it)\b/i;
+const numVal = (t: string): number => Number(t.replace(/[\s,]/g, "").replace(",", "."));
+/** Otto confirms a value ("4,000 W is spot on! You crushed it") that the student's own working doesn't reach: their one
+ *  division gives something else (60,000 over 300 = 200), or its read of their last step wasn't "correct". */
+export function confirmsUnchecked(reply: string, message: string, plan?: { studentStep?: { status?: string } } | null): boolean {
+  const first = (reply.split(/(?<=[.!?])\s+/)[0] || "") + " " + (reply.split(/(?<=[.!?])\s+/)[1] || "");
+  if (!CONFIRM_ANY.test(first) || /^\[/.test(message.trim())) return false;
+  const status = plan?.studentStep?.status;
+  if (status && status !== "correct") return true;
+  const V = numVal((first.match(/\d[\d,]*(?:\.\d+)?/) || [""])[0]);
+  const mine = (message.replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1").match(/\d+(?:\.\d+)?/g) || []).map(Number);
+  // They gave numbers and Otto confirms a different one ("200,200 J is right on the money" after "200,000").
+  if (V && mine.length && !mine.some((n) => Math.abs(n - V) <= 1e-9 * Math.max(1, V)) && V >= 10) return true;
+  const divs = [...message.matchAll(/(\d[\d,]*(?:\.\d+)?)\s*(?:over|÷|\/|divided by)\s*(\d[\d,]*(?:\.\d+)?)/gi)];
+  if (divs.length !== 1 || !V) return false;
+  const q = numVal(divs[0][1]) / numVal(divs[0][2]);
+  return isFinite(q) && Math.abs(q - V) > 0.01 * Math.abs(V);
+}
+/** "Want to tackle one more, or call it a win?" when the student never asked to stop or move on. */
+export function wrapsUpUnasked(reply: string, message: string): boolean {
+  return /\b(?:ready for (?:another|one more)(?: one)?|call it a (?:win|day)|wrap (?:it |things )?up|tackle one more|ready for (?:another|the next)|want (?:to|another)[^.?!]{0,30}(?:one more|another|next))\b/i.test(reply) && !asksToMoveOn(message);
 }
 
 const GROUND_STOP = new Set("that this with have from what when where which their there about would could should these those them they then than just also into your yours been were will shall cannot dont doesnt isnt arent".split(" "));
@@ -936,4 +989,9 @@ export function looksLikeGivensOrScenario(text: string): boolean {
   const t = String(text || "").replace(/\$/g, " ").replace(/\\(?:text|mathrm)\{([^}]*)\}/g, "$1");
   const quantities = t.match(/\d+(?:[.,]\d+)?\s?(?:°|(?:m|cm|mm|km|kg|g|s|min|h|N|J|V|A|W|mol|L|mL|%|kJ|kW|MJ|m\/s|ms)\b)/g) || [];
   return quantities.length >= 2;
+}
+
+/** Otto blames the exercise widget / app for a mismatch ("those widgets can be picky", "weird hiccup", "my bad on the board"). */
+export function blamesWidget(reply: string): boolean {
+  return /\b(?:widgets?|the (?:checker|answer box|exercise box|app)|the board)\b[^.?!]{0,50}\b(?:picky|hiccup|glitch|bug|buggy|quirk|wrong|mistake|fussy|finicky|weird)|\b(?:picky|finicky|fussy|weird hiccup|glitch)\b|classic (?:percentage )?trap|my bad on the board/i.test(reply);
 }

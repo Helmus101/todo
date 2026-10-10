@@ -9,6 +9,10 @@ import { makeSyncScheduler } from "../server/syncScheduler.ts";
 import { buildTasksPayload, parseHave } from "../server/taskDelta.ts";
 import { makeTaskSync } from "../client/taskDelta.ts";
 import { looksLikeGivensOrScenario } from "../server/tutorAdapt.ts";
+import { confirmsUnchecked, wrapsUpUnasked } from "../server/tutorAdapt.ts";
+import { currentFocus, focusBlock } from "../server/tutorAdapt.ts";
+import { blamesWidget } from "../server/tutorAdapt.ts";
+import { inventedNumbers } from "../server/tutorAdapt.ts";
 import { makeProblem as makeProblemP } from "../server/claude.ts";
 import { startsNewProblem } from "../server/tutorAdapt.ts";
 import { asksForProblem, asksWhichProblem } from "../server/tutorAdapt.ts";
@@ -5052,7 +5056,7 @@ section("Tutor reply length — tightened the existing SHORT REPLIES trigger (so
 {
   const claudeSrcLen = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
   check("the SHORT REPLIES rule's trigger is tightened to match its own 1-3 sentence target (was a looser 5-sentence trigger)", claudeSrcLen.includes("if you find yourself writing more than 3") && claudeSrcLen.includes("sentences, stop"));
-  check("the existing PRIMER_CLOSING_REMINDER LENGTH check is untouched (still reinforces the same 1-3 sentence rule)", claudeSrcLen.includes("this genuinely 1-3 sentences?"));
+  check("the existing PRIMER_CLOSING_REMINDER LENGTH check is untouched (still reinforces the same 1-3 sentence rule)", claudeSrcLen.includes("is this genuinely 1-3 sentences?"));
 }
 
 section("wantsArtifactTools — latency fix: narrow the tool list only on a clearly short/conversational turn");
@@ -5940,5 +5944,45 @@ section("a live tutor session never 404s on chat (cross-instance race) and a pag
 
 const { runTutorSim } = await import("./tutor-sim.mjs");
 await runTutorSim(check, section);
+
+// ---- unearned confirmation / wrap-up / unverified key ----
+{
+  const msg = "so it is 60,000 over 300 and that makes a mass of 200";
+  const t1 = confirmsUnchecked("4,000 W is spot on! You crushed both the energy mechanics and the power calculation.", msg, null);
+  const t2 = confirmsUnchecked("Yes, 200 kg is spot on!", msg, null);
+  const t3 = confirmsUnchecked("Spot on!", "so acceleration equals one", { studentStep: { status: "correct" } });
+  const t4 = wrapsUpUnasked("Want to tackle one more, or call it a win for today?", msg);
+  const t5 = wrapsUpUnasked("Ready for another one?", msg);
+  const t6 = wrapsUpUnasked("What would you check next?", msg);
+  const k1 = makeProblemP({ question: "Find the mass m in kg.", answer: "4000" }, true);
+  const k2 = makeProblemP({ question: "Find the mass m in kg.", answer: "200", check: "60000/300" }, true);
+  const k3 = makeProblemP({ question: "Find the mass m in kg.", answer: "4000" });
+  const ok = t1 && !t2 && !t3 && t4 && t5 && !t6 && "error" in k1 && !("error" in k2) && !("error" in k3);
+  check("unearned praise / wrap-up / key without check", ok);
+}
+{
+  const src = ["so 9.8 * 24 is 235,200 total potential energy, friction force", "A 1000 kg car, 24 m, g = 9.8"];
+  const a = inventedNumbers("What do you get when you take the square root of 390.4 to find v?", src);
+  const b = inventedNumbers("So 235,200 J is the starting energy. What does the friction force do to it?", src);
+  const ok = a.includes("390.4") && b.length === 0;
+  check("invented numbers", ok);
+}
+{
+  const a = confirmsUnchecked("200,200 J is right on the money for your remaining kinetic energy!", "so now I have a real kinetic energy of 200,000 and that equals", null);
+  const b = confirmsUnchecked("400 for v² is spot on!", "images 200,000 not 200,200", null);
+  const c = confirmsUnchecked("529,200 J is spot on. That's all the energy.", "so 1200 times 9.8 times 45 which is equal to 529,200", null);
+  const d = blamesWidget("Those widgets can be picky about percentages vs decimals.");
+  const e = blamesWidget("Ah, the classic percentage trap! Check the units.");
+  const f = blamesWidget("What does the widget ask you for?");
+  const ok = a && b && !c && d && e && !f;
+  check("confirms a different number / blames the widget", ok);
+}
+
+{
+  const f1 = currentFocus([{ question: "Find m", solved: false }], [{ kind: "given", text: "1000 kg" }], []);
+  const f2 = currentFocus([{ question: "Find m", solved: true }], [{ kind: "given", text: "1000 kg, 24 m" }], []);
+  const f3 = currentFocus([], [], [{ role: "user", text: "solve x^2-5x+6" }]);
+  check("currentFocus: open exercise > board givens > how the session began", /open exercise: Find m/.test(f1) && /1000 kg, 24 m/.test(f2) && /x\^2-5x\+6/.test(f3) && focusBlock("") === "" && /CURRENT FOCUS/.test(focusBlock(f1)));
+}
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
