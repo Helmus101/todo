@@ -652,3 +652,19 @@ export function ignoresWork(reply: string, message: string): boolean {
 export function asksToWrite(message: string): boolean {
   return /\b(?:write|put|add|note)\b[^.?!]{0,30}\b(?:board|down|up)\b|\bon the board\b|\bwrite (?:it|that|this)\b|\bnote (?:it|that) (?:down|for me)\b|écris|note[- ]le/i.test(message);
 }
+
+/** A "reply" that is just a formula ("distance K = (470)/(tan 40)") — no sentence, so it is an answer dropped on the
+ *  student, not a tutor turn. Counts the real words left once maths is removed. */
+export function bareMath(reply: string): boolean {
+  const t = String(reply || "").replace(/\$[^$]*\$/g, " ").replace(/\\[a-zA-Z]+/g, " ");
+  if (!/[=+\-*/^]|\d/.test(t)) return false;
+  const words = t.replace(/\b(?:sin|cos|tan|log|ln|sqrt|distance|height)\b/gi, " ").match(/[A-Za-zÀ-ÿ]{3,}/g) || [];
+  return words.length < 4;
+}
+
+/** Last-resort Socratic reply when a turn still ends up as bare maths or a step the student hasn't reached. */
+export function socraticFallback(fr: boolean): string {
+  return fr
+    ? "Reprenons ton raisonnement : qu'est-ce que tu cherches exactement, et quelle relation le relie à ce que tu sais déjà ?"
+    : "Let's go back to your thinking: what exactly are you trying to find, and which relationship connects it to what you already know?";
+}
