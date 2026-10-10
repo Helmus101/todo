@@ -19,7 +19,7 @@ const rad = (d: number) => (d * Math.PI) / 180;
 const f = (n: number) => Math.round(n * 10) / 10;
 const esc = (s: string) => s.replace(/[<>&"]/g, "");
 
-export function buildTrigScene(input: TrigSceneIn): { svg: string } | { error: string } {
+export function buildTrigScene(input: TrigSceneIn): { svg: string; facts: string } | { error: string } {
   const mode = input.mode === "elevation" ? "elevation" : "depression";
   const units = esc(input.units || "m").slice(0, 6);
   const B = esc(input.baseName || "B").slice(0, 3), T = esc(input.topName || "T").slice(0, 3);
@@ -113,7 +113,12 @@ export function buildTrigScene(input: TrigSceneIn): { svg: string } | { error: s
   parts.push(`<circle cx="${f(bx)}" cy="${f(ty)}" r="4.5" fill="currentColor"/>`);
   parts.push(text(bx + 10, ty - 8, T, 'font-weight="600"'));
   const svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">${parts.join("")}</svg>`;
-  return { svg };
+  // Plain-language geometry for the TUTOR (structure only — never a solved value), so it reads the figure the way it is drawn.
+  const hv = knownH && input.unknownTop ? `${knownH} ${units} + ${input.unknownTop}` : knownH ? `${knownH} ${units}` : input.unknownTop || "the height";
+  const facts = mode === "depression"
+    ? `every line of sight starts at ${T}, the very TOP (${input.unknownTop ? `the top of the ${input.unknownTop} part, above the ${knownH} ${units} base` : "the top"}); each angle of depression is measured at ${T} from the HORIZONTAL down to the line of sight; the vertical side of each right triangle runs from ${T} to the ground = ${hv} (NOT just the lower part); the equal angle at ground level is by alternate angles; the nearer observer has the bigger angle (${obs.map((o) => `${o.name} ${o.angle}°`).join(", ")})`
+    : `each angle of elevation is measured at the observer on the ground between the ground and the line of sight up to ${T}; the vertical side is ${hv}; ${obs.map((o) => `${o.name} ${o.angle}°`).join(", ")}`;
+  return { svg, facts };
 }
 
 /** For the tests (and for sanity checks): the hidden solution used to place things to scale. */

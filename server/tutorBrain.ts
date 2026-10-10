@@ -81,8 +81,18 @@ export function normalizePlan(raw: unknown): TutorPlan | null {
 const PLAN_RE = /<plan>([\s\S]*?)<\/plan>/i;
 /** Pull the hidden plan out of a model reply and return the reply WITHOUT it. A malformed plan is dropped (the
  *  student never sees plan text either way); an unterminated `<plan>` at the very start is also stripped. */
+/** A model sometimes types a tool call as TEXT (<write_to_board>…</write_to_board>, <syntax_error/>) instead of calling it.
+ *  That text must never reach the student — and it bypassed every board guard, so it is dropped, not executed. */
+export function stripPseudoTools(text: string): string {
+  return String(text || "")
+    .replace(/<(syntax_error|write_to_board|graph_on_board|geometry_on_board|svg_on_board|trig_scene_on_board|flow_on_board|widget_on_board|create_problem|create_interactive|set_objectives|clear_board|find_source_question|web_search|read_page|function_calls|invoke|tool_call|tool_use)\b[^>]*>[\s\S]*?<\/\1>/gi, "")
+    .replace(/<\/?(?:syntax_error|write_to_board|graph_on_board|geometry_on_board|svg_on_board|trig_scene_on_board|flow_on_board|widget_on_board|create_problem|create_interactive|set_objectives|clear_board|function_calls|invoke|tool_call|tool_use|kind|text|parameter)\b[^>]*>/gi, "")
+    .replace(/<\/?chat>/gi, "")
+    .replace(/\n{3,}/g, "\n\n").trim();
+}
+
 export function extractPlan(text: string): { plan: TutorPlan | null; reply: string } {
-  const src = String(text || "");
+  const src = stripPseudoTools(String(text || ""));
   const m = PLAN_RE.exec(src);
   if (!m) {
     // A cut-off plan (the model ran out of tokens mid-plan) — never show JSON to a student.

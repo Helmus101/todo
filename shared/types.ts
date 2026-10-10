@@ -1631,6 +1631,8 @@ export interface BoardEntry {
   flow?: FlowSpec;
   /** Present only when kind === "svg" (SVG_ON_BOARD) — a sanitised model-authored SVG diagram (shared/svgSafe.ts). */
   svg?: string;
+  /** Plain-language geometry of a computed figure (TRIG_SCENE_ON_BOARD) — fed to the tutor so it reads the figure correctly; never shown. */
+  facts?: string;
   /** Present only when kind === "outline" — one or more headed sections, each a short list of bullet
    *  points. Built for a history/essay-style board (causes-of-an-event, a source's key points, an essay's
    *  section-by-section plan) the same way `diagram` is built for a geometric figure: structure the model
