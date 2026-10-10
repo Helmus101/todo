@@ -1589,6 +1589,9 @@ export interface GraphSpec {
 
 export interface BoardEntry {
   id: string;
+  /** The line number the student sees in the board's margin (shared/boardLines.ts) — sent with the board so the
+   *  tutor's "#n" means the same line. Never stored as truth: recomputed from the board each time. */
+  n?: number;
   /** Plain text/markdown-lite (renderChatText already handles this) — not restricted to any one format,
    *  since a formula, an instruction, and a summary all need different shapes. When kind === "diagram" this
    *  is still a one-line caption (not the figure itself — see `diagram` below), so the entry reads sensibly

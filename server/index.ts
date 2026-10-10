@@ -12,7 +12,7 @@ import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { CourseworkDoc } from "../shared/coursework.ts";
 import { equivalent, gapTarget, verifyStepAgainstGap } from "../shared/mathEquiv.ts";
 import { repairSpokenMath, spokenContextFrom } from "../shared/spokenMath.ts";
-import { runTutorTurn, detectSubject } from "./tutor.ts";
+import { runTutorTurn, detectSubject, computedGapKey } from "./tutor.ts";
 import type { TutorOpenerMemory } from "./claude.ts";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, FocusSession, BoardEntry, TaskObjective, TaskProblem } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY, subjectMastery } from "../shared/types.ts";
@@ -1480,8 +1480,10 @@ app.post("/api/tasks/:id/board/:entryId/check", requireAuth, rateLimit(120, 60_0
   const answer = typeof req.body?.answer === "string" ? req.body.answer.slice(0, 300) : "";
   if (!answer.trim()) { res.status(400).json({ error: M(req, "Écris une réponse d'abord.", "Write an answer first.") }); return; }
   const target = gapTarget(entry.text);
-  let verdict = equivalent(answer, entry.expectedAnswer, target);
-  if (verdict === "unknown" && practiceAnswerMatches(answer, entry.expectedAnswer)) verdict = "correct";
+  // A closed calculation's key is recomputed here, so a gap written with a guessed key still grades right.
+  const key = computedGapKey(entry.text)?.toString() ?? entry.expectedAnswer;
+  let verdict = equivalent(answer, key, target);
+  if (verdict === "unknown" && practiceAnswerMatches(answer, key)) verdict = "correct";
   res.json({ verdict });
 }));
 
@@ -1683,7 +1685,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
   const currentBoard = currentBoardRaw
     .filter((b: any) => b && typeof b.text === "string" && b.text.trim())
     .slice(-60)
-    .map((b: any) => ({ id: typeof b.id === "string" ? b.id.slice(0, 64) : "", at: "", text: String(b.text).slice(0, 600), ...(typeof b.targetId === "string" ? { targetId: b.targetId.slice(0, 64) } : {}), ...(typeof b.kind === "string" ? { kind: b.kind } : {}), ...(Array.isArray(b.diagram) ? { diagram: b.diagram.slice(0, 40).filter((o: any) => o && typeof o.op === "string") } : {}), ...(b.kind === "outline" && Array.isArray(b.outline) ? { outline: b.outline.slice(0, 6).map((s: any) => ({ heading: String(s?.heading || "").slice(0, 120), bullets: (Array.isArray(s?.bullets) ? s.bullets : []).map((x: any) => String(x).slice(0, 200)).slice(0, 8) })) } : {}),
+    .map((b: any) => ({ id: typeof b.id === "string" ? b.id.slice(0, 64) : "", at: "", text: String(b.text).slice(0, 600), ...(Number.isInteger(b.n) && b.n > 0 && b.n < 10000 ? { n: b.n } : {}), ...(typeof b.targetId === "string" ? { targetId: b.targetId.slice(0, 64) } : {}), ...(typeof b.kind === "string" ? { kind: b.kind } : {}), ...(Array.isArray(b.diagram) ? { diagram: b.diagram.slice(0, 40).filter((o: any) => o && typeof o.op === "string") } : {}), ...(b.kind === "outline" && Array.isArray(b.outline) ? { outline: b.outline.slice(0, 6).map((s: any) => ({ heading: String(s?.heading || "").slice(0, 120), bullets: (Array.isArray(s?.bullets) ? s.bullets : []).map((x: any) => String(x).slice(0, 200)).slice(0, 8) })) } : {}),
       // Ownership/status/concept — dropped here before (only text/kind/diagram/outline survived the
       // client round-trip), which silently defeated boardSurfaceBlock's "STUDENT'S WORK"/"marked WRONG"
       // tags and tagStudentAnswer's own target-finding downstream: both need these to actually be present.
@@ -1696,7 +1698,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
       // A gap's answer key comes from the SERVER's own copy of the board, never from the request body (the
       // client could otherwise "set" the answer it is graded against). Without it the open-gap leak guard and
       // the step verdict below only ever saw gaps written in this same turn.
-      ...(b.kind === "gap" && typeof b.id === "string" ? (() => { const k = (t.board || []).find((e) => e.id === b.id)?.expectedAnswer; return k ? { expectedAnswer: k } : {}; })() : {}) }));
+      ...(b.kind === "gap" && typeof b.id === "string" ? (() => { const stored = (t.board || []).find((e) => e.id === b.id); const k = stored ? (computedGapKey(stored.text)?.toString() ?? stored.expectedAnswer) : undefined; return k ? { expectedAnswer: k } : {}; })() : {}) }));
   const currentProblemsRaw = Array.isArray(req.body?.problems) ? req.body.problems : [];
   const currentProblems = currentProblemsRaw
     .filter((p: any) => p && typeof p.question === "string" && p.question.trim())

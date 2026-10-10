@@ -5,8 +5,13 @@
 // carries the conversation first and the background second.
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
 delete process.env.GEMINI_API_KEY;
-const { runTutorTurn, detectSubject, backgroundBlock, TUTOR_PROMPT, leakedValue, wantsExercise, inventsProblemOnBoard, doubtsRightAnswer } = await import("../server/tutor.ts");
+const { runTutorTurn, detectSubject, backgroundBlock, TUTOR_PROMPT, leakedValue, wantsExercise, inventsProblemOnBoard, doubtsRightAnswer, softenOpener, computedGapKey } = await import("../server/tutor.ts");
+const { equivalent } = await import("../shared/mathEquiv.ts");
 const { equationsAhead } = await import("../shared/equationsAhead.ts");
+const { boardLineNumbers } = await import("../shared/boardLines.ts");
+const { boardSurfaceBlock } = await import("../server/boardEvents.ts");
+const { resolveBoardTarget, makeProblem } = await import("../server/claude.ts");
+const { practiceAnswerMatches } = await import("../shared/types.ts");
 
 let script = () => ({ content: "" });
 let calls = [];
@@ -172,4 +177,50 @@ export async function runTutorEngineSim(check, section) {
   script = () => ({ content: "Ah, let's re-run that one: $800 \\times 9.8 \\times \\sin(15^\\circ) \\times 12$. What do you get when you multiply those out?" });
   r = await run('[Exercise] I answered "24350" — marked right (try #1).');
   check("…and after the app marked it right, never a re-run", /that's right/.test(r.reply) && !/re-run/.test(r.reply));
+
+  // Reported live: the student said "the force along the slope plus accelerating force minus 360" and Otto put the
+  // whole substituted set-up on the board for them: "Total force = 900×9.8×sin(12°) + 900×0.4 + 360 = ?".
+  const truck = [{ id: "pT", question: "A 900 kg truck accelerates at 0.4 m/s² up a 12° slope against 360 N of friction. Find the engine's force.", answer: "2553", createdAt: "" }];
+  script = (b, i) => i === 0
+    ? { tool_calls: [tc("WRITE_TO_BOARD", { text: "Total force $= 900 \\times 9.8 \\times \\sin(12^\\circ) + 900 \\times 0.4 + 360 = ?$", kind: "gap", expectedAnswer: "2553", gapAction: "add the three forces" })] }
+    : { content: "Careful, Willem — the friction isn't something you subtract here. Does it help the engine or fight it?" };
+  r = await run("the total force is basically the force along the slope plus accelerating force minus 360 newtons right", { problems: truck });
+  const tool2 = calls[1].messages.filter((m) => m.role === "tool").map((m) => m.content).join(" ");
+  check("a substituted set-up the student hasn't built never goes on the board", r.board.length === 0 && /haven't stated/.test(tool2));
+  check("…and the reply doesn't open harshly ('Careful, Willem —' is softened)", /^Hm, let's look at that — the friction/.test(r.reply));
+  script = (b, i) => i === 0 ? { tool_calls: [tc("WRITE_TO_BOARD", { text: "$F = 900 \\times 9.8 \\times \\sin(12^\\circ) + 900 \\times 0.4 + 360$", kind: "summary", owner: "student" })] } : { content: "That's your line on the board — what does it come to?" };
+  r = await run("so 900 times 9.8 times sine 12 plus 900 times 0.4 plus 360", { problems: truck });
+  check("…but once THEY say it, it's written up as theirs", r.board.length === 1);
+  check("softenOpener works in French too", softenOpener("Attention, Willem : le frottement s'oppose au mouvement.", true) === "Hmm, regardons ça — le frottement s'oppose au mouvement.");
+
+  // Reported live: "It's already on the board, Willem — line 40. … what's 900 × 9.8 × sin(12°), what's 900 × 0.4,
+  // and then add the 360?" — the board showed NO line numbers (and had no line 40), and the reply handed over the
+  // substituted pieces to compute.
+  const numbered = [
+    { id: "l1", n: 1, at: "2026-10-10T10:00:00Z", kind: "given", text: "Truck: 900 kg, 12° slope, a = 0.4 m/s², friction 360 N" },
+    { id: "l2", n: 2, at: "2026-10-10T10:01:00Z", kind: "summary", owner: "student", text: "F = gravity along slope + ma + friction" },
+  ];
+  script = (b, i) => i === 0
+    ? { content: "It's already on the board, Willem — line 40. Take each of the three pieces on its own: what's 900 × 9.8 × sin(12°), what's 900 × 0.4, and then add the 360?" }
+    : { content: "Your plan's on line 2. Which of those three pieces would you work out first?" };
+  r = await run("plus ok I get it", { board: numbered, problems: truck });
+  const fix = lastUser(calls[1]);
+  check("a line number that isn't on their board is corrected, and handing over the calculation is too", /line 40, which doesn't exist/.test(fix) && /hands them the calculation/.test(fix) && /line 2/.test(r.reply));
+  check("the prompt's board listing uses the student's own margin numbers", /#2; .*STUDENT'S WORK/.test(boardSurfaceBlock(numbered, [])) && /- \[given\] \(#1/.test(boardSurfaceBlock(numbered, [])));
+  check("ANNOTATE_BOARD's #n resolves by the margin number", resolveBoardTarget("#2", [{ id: "x", n: 7, at: "", text: "a" }, ...numbered])?.id === "l2");
+  const nums = boardLineNumbers([{ id: "b", at: "2026-10-10T10:05:00Z", kind: "result" }, { id: "f", at: "2026-10-10T09:00:00Z", kind: "focus" }, { id: "a", at: "2026-10-10T10:00:00Z", kind: "given" }, { id: "p", at: "2026-10-10T10:02:00Z", kind: "annotation" }, { id: "a", at: "2026-10-10T10:00:00Z", kind: "given" }]);
+  check("boardLineNumbers: time order, focus/annotations unnumbered, duplicates once", nums.get("a") === 1 && nums.get("b") === 2 && !nums.has("f") && !nums.has("p") && nums.size === 2);
+
+  // Reported live: "2554.4" for 900×9.8×sin(12°) + 900×0.4 + 360 marked "Not quite" — the model's key was a guessed
+  // 2553 (true value 2553.8) and plain numbers had no rounding allowance.
+  check("a gap on a closed calculation gets its key computed by code", Math.abs(computedGapKey("Total force $= 900 \\times 9.8 \\times \\sin(12^\\circ) + 900 \\times 0.4 + 360 = ?$") - 2553.78) < 0.01 && computedGapKey("$b = ?$") === null);
+  check("a plain-number answer is allowed ordinary rounding (0.5%), a real slip is not", equivalent("2554.4", "2553.78") === "correct" && equivalent("2,554.4", "2553.78") === "correct" && equivalent("2600", "2553.78") === "incorrect" && equivalent("1/4", "0.2") === "incorrect");
+
+  // Reported live: "25538" and "25537" marked wrong for a truck's power on a 12° slope. The model's check used a
+  // plain sin(12) — evaluated in RADIANS — so the "verified" key became −40126; and "25,538" was parsed as 25.538.
+  const truckP = makeProblem({ question: "A 900 kg truck accelerates at 0.4 m/s² up a 12° slope against 360 N of friction, at 10 m/s. What power (W) does the engine deliver?", answer: "25,538", check: "(900*9.8*sin(12)+900*0.4+360)*10" }, true);
+  check("a check expression on a problem stated in degrees evaluates trig in degrees (key stays 25538)", "problem" in truckP && truckP.problem.answer.replace(",", "") === "25538" && Math.abs(truckP.problem.value - 25537.81) < 0.01);
+  check("…so 25538, 25537 and 25537.8 are all right", "problem" in truckP && ["25538", "25537", "25537.8", "25,538 W"].every((g) => practiceAnswerMatches(g, truckP.problem.answer, truckP.problem.value)));
+  const radP = makeProblem({ question: "Find sin(π/6).", answer: "0.5", check: "sin(pi/6)" }, true);
+  check("…while a problem in radians keeps radians", "problem" in radP && radP.problem.answer === "0.5");
 }

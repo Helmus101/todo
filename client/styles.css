@@ -6002,6 +6002,13 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 }
 /* Last 2-3 entries (current work) get slightly warmer background to distinguish from reference material */
 .sm-board-entry:last-child { border-bottom: none; }
+/* Margin line numbers — the same numbers the tutor uses ("look at line 4"). Quiet, like a ruled notebook's margin. */
+.sm-board-entry { position: relative; }
+.sm-board-lineno {
+  position: absolute; left: -30px; top: calc(var(--space-3) + 4px); width: 22px; text-align: right;
+  font-size: 11px; font-variant-numeric: tabular-nums; color: var(--ink-3); user-select: none;
+}
+@media (max-width: 640px) { .sm-board-lineno { left: -20px; width: 16px; font-size: 10px; } }
 .sm-board-entry-formula { font-family: var(--mono, monospace); }
 /* The session document's OPENING heading — "Today's focus". Slightly larger/bolder, like a page title, but
    still just text sitting on the page — nothing about it is boxed differently from any other entry. */

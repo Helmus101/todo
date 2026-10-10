@@ -27,7 +27,11 @@ function isFormula(side: string): boolean {
   // Units after a number are not symbols ("1000 kg", "15 m/s").
   const t = latexToPlainText(side.replace(/\$/g, " ")).replace(/(\d)\s*(?:kg|km|cm|mm|m\/s²?|m\/s\^?2|m|s|n|j|w|kw|kj|g|h|min|v|a|mol|l|ml|%|°)(?![a-z])/gi, "$1");
   const symbols = (t.match(/\b(?:sin|cos|tan|cot|log|ln|sqrt|exp)\b|[a-zA-Zα-ωΑ-Ω]/g) || []);
-  return symbols.length >= 2;
+  if (symbols.length >= 2) return true;
+  // A substituted set-up is a formula too: three or more numbers chained by operators ("900×9.8×sin(12°)+900×0.4+360"
+  // — reported live, written on the board before the student had built it). Building it IS the student's work.
+  const operators = (t.replace(/^[-−]/, "").match(/\d[)°]*\s*[+\-−×*·/÷]\s*[(\d.a-z]/gi) || []).length;
+  return operators >= 2;
 }
 
 const FUNCS = /^(?:sin|cos|tan|cot|sec|csc|log|ln|exp|sqrt|arcsin|arccos|arctan)$/i;
@@ -50,7 +54,8 @@ function mathRun(side: string, fromEnd: boolean): string {
 
 /** Equations in `text` that the student hasn't reached: returns each one ("P = mgv sin θ") — empty when none. */
 export function equationsAhead(text: string, said: string[]): string[] {
-  const plain = latexToPlainText(String(text || "").replace(/\$/g, " "));
+  // Thousands separators out first, so "25,526" isn't split into two segments at the comma.
+  const plain = latexToPlainText(String(text || "").replace(/\$/g, " ")).replace(/(\d),(?=\d{3}(?!\d))/g, "$1");
   const heard = said.map((x) => norm(x, true)).join(" | ");
   const saidSides = said.flatMap((x) => latexToPlainText(x.replace(/\$/g, " ")).split(/[=\n,;]/)).map((x) => x.trim()).filter((x) => x && x.length < 80);
   const out: string[] = [];
@@ -64,7 +69,11 @@ export function equationsAhead(text: string, said: string[]): string[] {
     const reached = formulaSides.every((f) => {
       const n = norm(f);
       if (n.length >= 2 && (heard.includes(n) || heard.replace(/\bis\b|est/g, "").includes(n))) return true;
-      return saidSides.some((s) => equivalent(f, s) === "correct");
+      if (saidSides.some((s) => equivalent(f, s) === "correct")) return true;
+      // A substituted set-up they spoke ("mass 1000 times g 9.8 sine 10 times 15"): every number in it came from one
+      // of their messages — they built it, the words around the numbers just don't normalize the same way.
+      const nums = (f.match(/\d+(?:\.\d+)?/g) || []);
+      return nums.length >= 3 && said.some((x) => { const theirs = new Set(x.replace(/(\d),(?=\d{3}(?!\d))/g, "$1").match(/\d+(?:\.\d+)?/g) || []); return nums.every((n) => theirs.has(n)); });
     });
     if (!reached) out.push(seg.trim().slice(0, 80));
   }

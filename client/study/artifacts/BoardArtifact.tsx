@@ -6,6 +6,7 @@ import { autoMathLine, repairLatex, latexToPlainText } from "../../../shared/mat
 import { GraphBlock } from "./GraphBlock.tsx";
 import { FlowDiagram } from "./FlowDiagram.tsx";
 import { sanitizeSvg } from "../../../shared/svgSafe.ts";
+import { boardLineNumbers } from "../../../shared/boardLines.ts";
 import { WidgetBlock, type WidgetResult } from "./WidgetBlock.tsx";
 import { renderChatText, useLang, FirstTimeHint, stripStrayMarkdown, formatMath, boldify } from "../../ui.tsx";
 
@@ -549,6 +550,9 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, 
     .filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i)
     .filter(e => e.kind !== "focus" && (e.kind as string) !== "problem" && e.kind !== "annotation");
 
+  // The margin line numbers — the SAME numbering the tutor reads (#n), so "look at line 4" is findable.
+  const lineNo = useMemo(() => boardLineNumbers(entries), [entries]);
+
   // THE FLOW: entries (by their `at`) and problems (by `createdAt`) merged and sorted by timestamp —
   // the board reads top-to-bottom in the order the session actually happened. A missing/unparseable
   // timestamp sorts to the end (defensive; both writers always stamp).
@@ -730,6 +734,7 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, 
               className={`sm-board-entry sm-board-entry-${e.kind || "note"} sm-board-writein${fresh ? " sm-board-reveal" : ""}`}
               style={fresh ? { animationDuration: `.35s, ${revealDuration(e.text)}s` } : undefined}
             >
+              {lineNo.get(e.id) ? <span className="sm-board-lineno" aria-label={en ? `line ${lineNo.get(e.id)}` : `ligne ${lineNo.get(e.id)}`}>{lineNo.get(e.id)}</span> : null}
               <div className="sm-board-entry-main">
               {/* No kind-label chip here on purpose (removed: "Formule"/"Définition"/"Insight"/…) — the board
                   reads as ONE continuous document the tutor is working on, not a form with labeled fields.

@@ -496,7 +496,7 @@ export function closesWithMissedCase(draft: string, traps: { id: string }[]): bo
  *  out to?"): choosing the operation was the real thinking, and it's been done for them. Echoing an expression the
  *  student themselves just wrote is fine. */
 export function handsOverCalculation(reply: string, lastUser: string): boolean {
-  const ASKS_EVAL = /\bwhat (?:do|did|will|would) you (?:get|find|obtain)\b|\b(?:what|how much)\b[^.?!]{0,40}\b(?:come|comes|work|works|equal|equals|give|gives|simplify|simplifies|reduce|reduces)\b[^.?!]{0,30}\?|\bcalculate (?:it|that|this)\b|\bwhat(?:'s| is) (?:the )?(?:result|value)\b|\bcombien (?:ça|cela|ca) (?:fait|donne)\b/i;
+  const ASKS_EVAL = /\bwhat (?:do|did|will|would) you (?:get|find|obtain)\b|\b(?:what|how much)\b[^.?!]{0,40}\b(?:come|comes|work|works|equal|equals|give|gives|simplify|simplifies|reduce|reduces)\b[^.?!]{0,30}\?|\bcalculate (?:it|that|this)\b|\bwhat(?:'s| is| are)\s+\$?\d[\d.,]*\s*(?:×|x|\*|\\times|\/|÷|\+|-)|\bwhat(?:'s| is) (?:the )?(?:result|value)\b|\bcombien (?:ça|cela|ca) (?:fait|donne)\b/i;
   if (!ASKS_EVAL.test(reply)) return false;
   const plain = reply.replace(/\\circ|\\degree|\^\s*\{?\\?circ\}?|\\[a-z]+/gi, " ").replace(/[$]/g, " ");
   const exprs = [...plain.matchAll(/(\d+(?:\.\d+)?)\s*°?\s*([-−–+×x*/÷])\s*(\d+(?:\.\d+)?)/g)];

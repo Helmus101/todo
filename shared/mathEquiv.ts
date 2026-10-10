@@ -49,6 +49,7 @@ function unfracs(s: string): string {
  *  "b =" (the variable the gap asks for) is dropped. Exported for tests. */
 export function toExprSource(input: string, target?: string): string {
   let s = String(input || "").trim().replace(/^\$+|\$+$/g, "").replace(/^\\\(|\\\)$/g, "");
+  s = s.replace(/(\d)[,\s](?=\d{3}(?!\d))/g, "$1"); // "2,554.4" / "25 526" → plain numbers
   if (target) s = s.replace(new RegExp(`^\\s*${target}\\s*=`), "");
   else s = s.replace(/^\s*[A-Za-z]\s*=(?!=)/, "");
   s = s.replace(/\\(?:left|right|displaystyle|textstyle|,|;|!|:|\s)/g, " ");
@@ -84,6 +85,10 @@ export function equivalent(given: string, expected: string, target?: string): Ve
   const fb = compileExpr(b, vars);
   if ("error" in fa || "error" in fb) return "unknown";
   let compared = 0;
+  // A plain NUMBER answer is allowed ordinary rounding (0.5%): "2554.4" for 900×9.8×sin(12°)+360+360 = 2553.8 is the
+  // student rounding sin 12° to 0.208, not a wrong answer (reported live: marked "Not quite"). Expressions with
+  // variables stay exact — there, a difference is a different expression.
+  const tol = vars.length === 0 ? 5e-3 : 1e-6;
   // Deterministic pseudo-random points (no Math.random — the same inputs always get the same verdict).
   let seed = 12345;
   const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
@@ -93,7 +98,7 @@ export function equivalent(given: string, expected: string, target?: string): Ve
     const x = fa.fn(point), y = fb.fn(point);
     if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
     compared++;
-    if (Math.abs(x - y) > 1e-6 * Math.max(1, Math.abs(x), Math.abs(y))) return "incorrect";
+    if (Math.abs(x - y) > tol * Math.max(1, Math.abs(x), Math.abs(y))) return "incorrect";
   }
   return compared >= 3 ? "correct" : "unknown";
 }

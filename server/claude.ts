@@ -3040,9 +3040,15 @@ export function makeProblem(input: any, requireCheck = false): { problem: TaskPr
   let answer = input?.answer ? String(input.answer).trim().slice(0, 200) : undefined;
   // The answer key is verified, not trusted: when the model supplies a `check` expression, the app evaluates it and, if the
   // key disagrees (beyond ~1 %), the COMPUTED value wins — a wrong key marked a student's correct 112 wrong seven times.
-  const verified = !hasMCQ && input?.check ? evalMathExpr(String(input.check)) : null;
+  // Trig in degrees: a plain sin(12) in the check evaluates in RADIANS, which turned a right key (25,538 W for a 12°
+  // slope) into a "verified" −40,126 that marked the student's correct 25537.8 wrong (reported live). When the problem
+  // is stated in degrees, sin/cos/tan in the check mean degrees.
+  const checkSrc = input?.check ? String(input.check) : "";
+  const inDegrees = /°|\^\s*\{?\\circ|\bdeg(?:ree)?s?\b|\bdegrés?\b/i.test(question) && !/\bpi\b|π|\brad(?:ians?)?\b/i.test(question + " " + checkSrc);
+  const verified = !hasMCQ && checkSrc ? evalMathExpr(inDegrees ? checkSrc.replace(/\b(sin|cos|tan)\s*\(/gi, "$1d(") : checkSrc) : null;
   if (verified != null) {
-    const given = answer ? Number(answer.replace(/,/g, ".").replace(/[^0-9.eE+-]/g, "")) : NaN;
+    // "25,538" is twenty-five thousand, not 25.538: thousands separators out before parsing the model's own key.
+    const given = answer ? Number(answer.replace(/(\d)[,\s](?=\d{3}(?!\d))/g, "$1").replace(/,/g, ".").replace(/[^0-9.eE+-]/g, "")) : NaN;
     if (!Number.isFinite(given) || Math.abs(given - verified) > Math.max(0.01, Math.abs(verified) * 0.01)) {
       const dec = (answer?.match(/[.,](\d+)/)?.[1] || (/(?:one|1) decimal|une décimale/i.test(String(input?.format || "")) ? "x" : "")).length;
       answer = Math.abs(verified) >= 1000 ? String(Math.round(verified)) : verified.toFixed(Number.isFinite(dec) && dec > 0 ? Math.min(dec, 4) : (Math.abs(verified - Math.round(verified)) < 1e-9 ? 0 : 1));
@@ -3110,7 +3116,13 @@ const BOARD_KINDS = new Set(["note", "instruction", "given", "result", "formula"
 export function resolveBoardTarget(target: string, board: BoardEntry[]): BoardEntry | null {
   const visible = board.slice(-40);
   const m = /^#?\s*(\d{1,3})$/.exec(String(target || "").trim());
-  if (m) { const n = Number(m[1]); return n >= 1 && n <= visible.length && visible[n - 1].kind !== "annotation" ? visible[n - 1] : null; }
+  if (m) {
+    const n = Number(m[1]);
+    // The student-visible margin number wins when the board carries one (shared/boardLines.ts).
+    const byNumber = board.find((e) => e.n === n && e.kind !== "annotation");
+    if (byNumber) return byNumber;
+    return n >= 1 && n <= visible.length && visible[n - 1].kind !== "annotation" ? visible[n - 1] : null;
+  }
   const id = String(target || "").trim();
   return id ? visible.find((e) => e.id === id && e.kind !== "annotation") || null : null;
 }
