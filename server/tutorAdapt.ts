@@ -704,6 +704,7 @@ export function socraticFallback(fr: boolean): string {
     : "Walk me through what you just wrote: what does each part stand for, and where does it come from?";
 }
 
+import { autoMathLine } from "../shared/mathText.ts";
 export { repairLatex } from "../shared/mathText.ts";
 
 /** Math lines on the board are ALWAYS typeset: a formula/result/given/summary line that is bare maths (an equation or LaTeX
@@ -721,7 +722,7 @@ export function latexifyBoardLine(text: string, kind?: string): string {
     if (!/[=\\^]/.test(body)) return line;
     const words = body.replace(/\\[a-zA-Z]+/g, " ").match(/[A-Za-zÀ-ÿ]{3,}/g) || [];
     if (words.length > 2) return line; // prose with an equation inside: leave it to the model's own $…$
-    return `${bullet}$${body.replace(/°/g, "^\\circ")}$`;
+    return bullet + autoMathLine(body.replace(/°/g, "°")); // the same plain→LaTeX conversion the page uses: tan→\\tan, (h)/(b)→\\frac{h}{b}, °→^\\circ
   });
   return lines.join("\n");
 }
@@ -801,4 +802,14 @@ export function posesProblemInProse(draft: string): boolean {
   // At least two quantities carrying a unit or an angle sign ("12 g", "100 m", "25°") — a lone "25°" is just a question about an angle.
   const quantities = t.match(/\d+(?:[.,]\d+)?\s?(?:°|(?:m|cm|mm|km|kg|g|s|min|h|N|J|V|A|W|mol|L|mL|%|degrees?)\b)/gi) || [];
   return quantities.length >= 2 && t.length >= 50;
+}
+
+/** A board line that copies the student's own words: 4+ consecutive words of it appear verbatim in their message ("so now we can do
+ *  opposite over adjacent so…"). The board shows clean maths, never a transcript of speech. Pure. */
+export function echoesStudentWords(boardText: string, studentMessage: string): boolean {
+  const words = (x: string) => String(x || "").toLowerCase().replace(/\$[^$]*\$/g, " ").replace(/[^a-zà-ÿ\s']/g, " ").split(/\s+/).filter((w) => w.length >= 2);
+  const b = words(boardText), m = words(studentMessage).join(" ");
+  if (b.length < 4) return false;
+  for (let i = 0; i + 4 <= b.length; i++) if (m.includes(b.slice(i, i + 4).join(" "))) return true;
+  return false;
 }
