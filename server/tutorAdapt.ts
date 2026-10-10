@@ -569,6 +569,20 @@ export function arithmeticAhead(reply: string, studentTexts: string[], givens: s
   return out;
 }
 
+/** What the session is about RIGHT NOW: the open exercise if there is one, else the givens on the board, else how the session began. */
+export function currentFocus(problems: { question: string; solved?: boolean }[], board: { kind?: string; owner?: string; text: string }[], opening: { role: string; text: string }[] = []): string {
+  const open = [...problems].reverse().find((p) => !p.solved);
+  if (open) return `the open exercise: ${open.question.replace(/\s+/g, " ").slice(0, 500)}`;
+  const givens = board.filter((e) => e.kind === "given" && e.owner !== "student").slice(-4).map((e) => e.text.replace(/\s+/g, " ")).join(" | ");
+  if (givens) return `the problem on the board: ${givens.slice(0, 500)}`;
+  const first = opening.find((m) => m.role === "user");
+  return first ? `the problem as the student first gave it: ${first.text.replace(/\s+/g, " ").slice(0, 500)}` : "";
+}
+export function focusBlock(focus: string): string {
+  if (!focus) return "";
+  return `CURRENT FOCUS — the ONLY thing this conversation is about right now is ${focus}\nEvery reply and every board line serves THAT: its givens, its numbers, its next step. Never bring in another scenario, other numbers or a different problem (a skier, a car, a tower…) unless the student asks for a new one. If they drift, answer in one friendly line and bring them back to the step they were on. If you are unsure which problem they mean, say which one you think it is and ask — never guess a new one.\n`;
+}
+
 /** Numbers the reply states (two+ significant digits, or decimals) that appear nowhere in the conversation, board or
  *  givens — a figure Otto computed or made up on its own ("take the square root of 390.4") instead of the student's. */
 export function inventedNumbers(reply: string, sources: string[]): string[] {

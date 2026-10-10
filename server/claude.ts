@@ -7,7 +7,7 @@ import { COURSEWORK_MAX_CHARS, courseworkForSubject, sameSubject } from "../shar
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { buildGeometry } from "../shared/geometry.ts";
-import { studentProblemStatement, cleanToPost, posesProblemInProse, echoesStudentWords, repairLatex, latexifyBoardLine, statesOwnMath, startsNewProblem, looksLikeGivensOrScenario, NO_UNPROMPTED_EXERCISE, asksForProblem, asksWhichProblem, notationGloss, isBoardContent, splitBoardContent, asksWhy, ignoresWhy, WHY_BLOCK, statesOwnAnswer, listenCue, CONFUSED_BLOCK, INSIGHT_BLOCK, evalMathExpr, namesExactStep, bubbleDoesMath, bareMath, socraticFallback, voiceInputBlock, boardRepeatsMishearing, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, confirmsUnchecked, wrapsUpUnasked, blamesWidget, misattributes, methodAhead, wantsHelp, clarificationTerm, CLARIFY_BLOCK, ignoresQuestion, ignoresWork, asksToWrite, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, inventedNumbers, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
+import { studentProblemStatement, cleanToPost, posesProblemInProse, echoesStudentWords, repairLatex, latexifyBoardLine, statesOwnMath, startsNewProblem, looksLikeGivensOrScenario, NO_UNPROMPTED_EXERCISE, asksForProblem, asksWhichProblem, notationGloss, isBoardContent, splitBoardContent, asksWhy, ignoresWhy, WHY_BLOCK, statesOwnAnswer, listenCue, CONFUSED_BLOCK, INSIGHT_BLOCK, evalMathExpr, namesExactStep, bubbleDoesMath, bareMath, socraticFallback, voiceInputBlock, boardRepeatsMishearing, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, confirmsUnchecked, wrapsUpUnasked, blamesWidget, misattributes, methodAhead, wantsHelp, clarificationTerm, CLARIFY_BLOCK, ignoresQuestion, ignoresWork, asksToWrite, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, inventedNumbers, currentFocus, focusBlock, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -7754,40 +7754,7 @@ const PRIMER_PERSONA =
   `- RETRIEVAL OVER RE-EXPLAINING: when they come back to a topic you've covered before, ask them to recall ` +
   `it first ("what do you remember about…?") before teaching anything; a right answer given for the wrong ` +
   `reason deserves a "why does that work?".\n\n` +
-  `YOU ARE THE PRIMER — READ THIS FIRST, IT OVERRIDES ANYTHING BELOW THAT CONFLICTS.\n` +
-  `You are a devoted, endlessly patient private tutor, like Aristotle with Alexander, or the Primer in ` +
-  `The Diamond Age. Your default student is a LYCÉE/IB TEENAGER (roughly 14-18) — that's who this app is ` +
-  `built for and who you should assume you're talking to unless the STUDENT'S YEAR/GRADE LEVEL line below ` +
-  `says otherwise (occasionally a younger sibling or an adult learner uses it — adjust down or up from this ` +
-  `teen default when the signals clearly say so, never the other way around). You teach whatever they're ` +
-  `working on — maths, sciences, languages, humanities, anything on their actual syllabus — but the skill in ` +
-  `front of you is the vehicle, not the point: what you're really doing every single turn is building their ` +
-  `capacity to THINK — to reason from first principles, catch their own errors, plan before executing, and ` +
-  `transfer a method from the problem you're on to the next one they'll meet alone, in an exam, without you.\n` +
-  `THE POLICY PROFILE BELOW (if present) tells you the age-appropriate constraints for this session:\n` +
-  `- Maximum hint ladder rungs\n` +
-  `- Wait time before offering hints\n` +
-  `- When direct explanation is allowed\n` +
-  `- Which thinking moves to exercise\n` +
-  `- Abstraction level (concrete → pictorial → abstract)\n` +
-  `- Praise style (process-specific, effort-only, minimal)\n` +
-  `- Session caps (respect these — don't extend sessions past the hard cap)\n` +
-  `Follow these constraints exactly. The policy profile is reviewed by educators and child-development experts — it is not a suggestion.\n` +
-  `- ON A GENUINELY NEW TOPIC, NAME THE PLAN BEFORE YOU DIAGNOSE. Check the context below (milestones, error ` +
-  `log, past sessions) — if there's truly nothing there yet for what they just said they want to work on, ` +
-  `this is a first pass at it. Before your first diagnostic question, say in ONE short spoken sentence what ` +
-  `the arc looks like ("we'll get the basics of friction down, then work up to inclines") — not a bullet list, ` +
-  `not a syllabus, just a sentence that tells them where this is headed, the way a real tutor sitting down ` +
-  `with you would before diving in. Skip this entirely once there IS relevant history for the topic (errorLog/` +
-  `milestones/past sessions already covering it) — that's a CONTINUING topic, and repeating the same plan ` +
-  `they've already heard reads as not remembering them; go straight into diagnosing from where they left off.\n` +
-  `- SUBJECTS: work through their actual syllabus material (maths, physics, philo, langues, whatever it is) at ` +
-  `their real year's level, using the methods their own teacher/exam board would expect — not a simplified ` +
-  `substitute. If a younger child ever is the student, drop to sounding-out/counting-with-objects fundamentals ` +
-  `instead; the mechanism stays the same either way: diagnose, hint, let them try, check understanding, build ` +
-  `on it, then name the transferable move they just used.\n` +
-  `- NEVER be an answer machine; never shame; keep everything safe and age-appropriate; if they ask off-topic ` +
-  `things, answer simply and steer back gently. Respond in the student's language.\n\n`;
+  `THE BASICS. Your student is a lycée/IB teenager unless the year/grade line below says otherwise. Teach their actual syllabus at their real level; the skill is the vehicle, building their ability to THINK on their own is the point. Follow the policy profile below (hint rungs, wait time, praise style, session caps) exactly. On a brand-new topic, say the arc in one short sentence before your first question; on a continuing one go straight in. Off-topic → answer simply, steer back. Reply in the student's language.\n\n`;
 // The "find the misconception before teaching" rule deliberately does NOT live here — it's owned by the
 // Bridge framework in the main methodology block below (rule 1a: identify the error, find the flawed
 // reasoning, remediate). Two independently-worded copies of the same rule inside an already ~18k-token
@@ -7801,20 +7768,7 @@ const PRIMER_PERSONA =
 // protecting get a short, sharp, LAST-READ restatement instead of relying on where they first appeared.
 // Deliberately terse: this is a reminder of rules already stated in full above, not a new explanation.
 const PRIMER_CLOSING_REMINDER =
-  `\n\nBEFORE YOU REPLY — quick check: (1) Did you just answer or reformulate their question instead of ` +
-  `asking one sharp question aimed at THEIR specific misconception first? If this is a new question/error ` +
-  `and you haven't diagnosed yet, ask — don't explain. (2) Are you talking like a real person to a teenager ` +
-  `(short, direct, respectful) rather than a lecture or a children's-book voice? (3) LENGTH — count it: is ` +
-  `this genuinely 1-3 sentences? Reproduced live: replies were consistently running 4-6 sentences (a short ` +
-  `paragraph plus a follow-up question) — that's already too long even when every sentence is good. Cut it ` +
-  `down to the ONE thing that matters most this turn; the rest can wait for their next message. (4) If a ` +
-  `problem is active (CREATE_PROBLEM/canvas mode), did you just retype the question or its options into this ` +
-  `reply? Reproduced live: asked "what's the question", the WHOLE thing got pasted back including all four ` +
-  `options — it's already on their screen, so "it's right there" is the answer, never the full text again. ` +
-  `(5) LANGUAGE: what language has the student actually been writing in THIS conversation (check their last ` +
-  `few messages, not just their profile default)? Reproduced live: a chat that correctly answered in English ` +
-  `for several turns suddenly switched to French mid-conversation for no reason — reply in the SAME language ` +
-  `they've been using, every turn, even deep into a long exchange.`;
+  `\n\nBEFORE YOU REPLY: (1) Am I on the CURRENT FOCUS, using only the student's and the problem's numbers? (2) Did I hear what they actually said and answer it? (3) LENGTH: is this genuinely 1-3 sentences? One question, no answer or step handed over. (4) Same language as their last messages. (5) Nothing pasted that's already on their screen.`;
 
 /**
  * Reply in a per-task coaching thread. Grounded in that ONE task's own context/steps/why so the student
@@ -8894,6 +8848,7 @@ export async function chatAboutTask(
   const messages: any[] = [
     { role: "system", content: sys },
     ...(digestText ? [{ role: "system", content: digestText }] : []),
+    ...(opts?.primer ? (() => { const fb = focusBlock(currentFocus(opts?.currentProblems || [], opts?.currentBoard || [], opts?.opening || [])); return fb ? [{ role: "system", content: fb }] : []; })() : []),
     ...history.slice(-histWindow).map((h) => ({ role: h.role, content: h.text })),
     { role: "user", content: message },
   ];
@@ -9163,7 +9118,7 @@ export async function chatAboutTask(
     let inventedFixed = false;
     const guardInvented = (draft: string, round: number, lastRound: boolean): boolean => {
       if (!opts?.primer || inventedFixed || lastRound || result.guardrailTripped) return false;
-      const src = [message, ...heard, ...history.map((h) => h.text), ...ownGivens(), ...(opts?.currentBoard || []).map((e) => e.text), ...result.board.map((e) => e.text), ...result.problems.map((p) => p.question)];
+      const src = [message, ...heard, ...history.map((h) => h.text), ...(opts?.opening || []).map((m) => m.text), ...ownGivens(), ...(opts?.currentBoard || []).map((e) => e.text), ...result.board.map((e) => e.text), ...result.problems.map((p) => p.question)];
       const bad = inventedNumbers(draft, src);
       if (!bad.length) return false;
       inventedFixed = true;
@@ -9788,6 +9743,7 @@ export async function chatAboutTask(
           // response from spamming dozens of entries in one turn.
           if (opts?.primer && asksForProblem(message) && !result.problems.length && ["given", "gap", "note", "instruction", "focus"].includes(String((input as any)?.kind)) && looksLikeGivensOrScenario(String((input as any)?.text || ""))) content = "REJECTED: they asked for a PROBLEM — create it first with CREATE_PROBLEM (the full statement with every given, one final answer: a bare number with its precision and unit in the hint, or multiple choice). The givens appear with the exercise; do not write them on the board as plain text instead.";
           else if (opts?.primer && history.length >= 1 && !asksForProblem(message) && !asksWhichProblem(message) && !asksToMoveOn(message) && !studentProblemStatement(message) && ["given", "gap", "note", "instruction", "focus", "result"].includes(String((input as any)?.kind)) && startsNewProblem(String((input as any)?.text || ""), [...(opts?.currentBoard || []).map((e) => e.text), ...(opts?.currentProblems || []).map((p) => p.question), ...result.board.map((e) => e.text), ...history.map((h) => h.text), message])) content = NO_UNPROMPTED_EXERCISE;
+          else if (opts?.primer && history.length >= 1 && ["given", "result", "summary", "focus"].includes(String((input as any)?.kind)) && inventedNumbers(String((input as any)?.text || ""), [message, ...heard, ...history.map((h) => h.text), ...(opts?.opening || []).map((m) => m.text), ...ownGivens(), ...(opts?.currentBoard || []).map((e) => e.text), ...result.board.map((e) => e.text), ...result.problems.map((p) => p.question)]).length) content = "REJECTED: that board line has numbers nobody gave — the student, the problem and the board are the only source of numbers. Stay on the CURRENT FOCUS; write only what they said or the problem states, or ask them for the next step.";
           else if (opts?.primer && ["summary", "result", "given", "note", "insight"].includes(String((input as any)?.kind)) && echoesStudentWords(String((input as any)?.text || ""), message)) content = "REJECTED: that line copies the student's own words. The board shows clean MATHS, never a transcript of what they said — rewrite it as just the equation or value in LaTeX between $…$ (e.g. $\\tan(25^\\circ) = \\frac{h}{b}$), with no words from their sentence, or write nothing.";
           else if (result.board.length >= 3) content = "LIMIT: three entries is a full turn on the board (setting up a new problem — the given, the question, one starting line — is exactly three). Keep what's up there and put the rest in your reply.";
           // "How you got there" is the STUDENT's reasoning: a line carrying a π-term / root / fraction that nothing the

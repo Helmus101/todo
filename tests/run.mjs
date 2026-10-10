@@ -10,6 +10,7 @@ import { buildTasksPayload, parseHave } from "../server/taskDelta.ts";
 import { makeTaskSync } from "../client/taskDelta.ts";
 import { looksLikeGivensOrScenario } from "../server/tutorAdapt.ts";
 import { confirmsUnchecked, wrapsUpUnasked } from "../server/tutorAdapt.ts";
+import { currentFocus, focusBlock } from "../server/tutorAdapt.ts";
 import { blamesWidget } from "../server/tutorAdapt.ts";
 import { inventedNumbers } from "../server/tutorAdapt.ts";
 import { makeProblem as makeProblemP } from "../server/claude.ts";
@@ -5055,7 +5056,7 @@ section("Tutor reply length — tightened the existing SHORT REPLIES trigger (so
 {
   const claudeSrcLen = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
   check("the SHORT REPLIES rule's trigger is tightened to match its own 1-3 sentence target (was a looser 5-sentence trigger)", claudeSrcLen.includes("if you find yourself writing more than 3") && claudeSrcLen.includes("sentences, stop"));
-  check("the existing PRIMER_CLOSING_REMINDER LENGTH check is untouched (still reinforces the same 1-3 sentence rule)", claudeSrcLen.includes("this genuinely 1-3 sentences?"));
+  check("the existing PRIMER_CLOSING_REMINDER LENGTH check is untouched (still reinforces the same 1-3 sentence rule)", claudeSrcLen.includes("is this genuinely 1-3 sentences?"));
 }
 
 section("wantsArtifactTools — latency fix: narrow the tool list only on a clearly short/conversational turn");
@@ -5977,5 +5978,11 @@ await runTutorSim(check, section);
   check("confirms a different number / blames the widget", ok);
 }
 
+{
+  const f1 = currentFocus([{ question: "Find m", solved: false }], [{ kind: "given", text: "1000 kg" }], []);
+  const f2 = currentFocus([{ question: "Find m", solved: true }], [{ kind: "given", text: "1000 kg, 24 m" }], []);
+  const f3 = currentFocus([], [], [{ role: "user", text: "solve x^2-5x+6" }]);
+  check("currentFocus: open exercise > board givens > how the session began", /open exercise: Find m/.test(f1) && /1000 kg, 24 m/.test(f2) && /x\^2-5x\+6/.test(f3) && focusBlock("") === "" && /CURRENT FOCUS/.test(focusBlock(f1)));
+}
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
