@@ -43,6 +43,10 @@ export interface TutorPlan {
   objective?: string;
   /** Cumulative verified facts / judged claims for the problem in play (see PLAN_PROTOCOL). */
   ledger?: string[];
+  /** The quickest sound route to the answer, written ONCE when a problem starts (hidden) and kept until a new problem begins. */
+  route?: string[];
+  /** True when their last move is on that route (or an equally short valid one); false = they diverged → bring them back with a question. */
+  onRoute?: boolean;
 }
 
 const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
@@ -68,6 +72,8 @@ export function normalizePlan(raw: unknown): TutorPlan | null {
   if (ev && typeof ev === "object" && PLAN_EVIDENCE.includes(ev.kind)) plan.evidence = { kind: ev.kind, ...(str(ev.detail, 240) ? { detail: str(ev.detail, 240) } : {}) };
   const st = r.student_step ?? r.studentStep;
   if (st && typeof st === "object" && str(st.text, 300) && ["correct", "incorrect", "partial"].includes(st.status)) plan.studentStep = { text: str(st.text, 300), status: st.status };
+  if (Array.isArray(r.route)) { const rt = r.route.map((x: unknown) => str(x, 120)).filter(Boolean).slice(0, 7); if (rt.length) plan.route = rt; }
+  if (typeof r.on_route === "boolean") plan.onRoute = r.on_route; else if (typeof r.onRoute === "boolean") plan.onRoute = r.onRoute;
   if (Array.isArray(r.ledger)) { const l = r.ledger.map((x: unknown) => str(x, 140)).filter(Boolean).slice(0, 10); if (l.length) plan.ledger = l; }
   const g = r.goal;
   if (g && typeof g === "object") {
@@ -294,7 +300,7 @@ const LEVEL_NAMES = ["open question", "directional question", "narrow question /
 
 /** The policy as a prompt block — the app's structured read handed to the model, which still decides. */
 export function policyBlock(p: TutorPolicy, state: TutorSessionStateShape): string {
-  const s = state as TutorSessionStateShape & { lastPlan?: { action: string; why?: string; expectedNext?: string; diagnosis?: string } ; goalType?: string; minutes?: number; objective?: string; ledger?: string[] };
+  const s = state as TutorSessionStateShape & { lastPlan?: { action: string; why?: string; expectedNext?: string; diagnosis?: string } ; goalType?: string; minutes?: number; objective?: string; ledger?: string[]; route?: string[]; offRoute?: boolean };
   const lines = [
     `\n\nTUTOR POLICY FOR THIS TURN (computed by the app from the session so far — it is binding on how MUCH help you give; ` +
     `within it, you decide what to do):`,
@@ -307,6 +313,7 @@ export function policyBlock(p: TutorPolicy, state: TutorSessionStateShape): stri
     ...(s.goalType || s.minutes ? [`- Their goal: ${s.goalType || "?"}${s.minutes ? `, ~${s.minutes} min available` : ""} → pace: ${p.timeMode}`] : []),
     ...(s.lastPlan ? [`- Your last move: ${s.lastPlan.action}${s.lastPlan.why ? ` — because ${s.lastPlan.why}` : ""}${s.lastPlan.expectedNext ? `; you expected: ${s.lastPlan.expectedNext}` : ""}. Check: did that happen?`] : []),
     ...(s.ledger?.length ? [`- YOUR LEDGER for this problem (what you already verified/judged — stay consistent with it; if you must change a verdict, say plainly that you were wrong, never silently flip):\n${s.ledger.map((l) => `    · ${l}`).join("\n")}`] : []),
+    ...(s.route?.length ? [`- YOUR PLANNED QUICKEST ROUTE for this problem (hidden — never show or recite it, never state a step of it for them; it is where you are steering):\n${s.route.map((r, i) => `    ${i + 1}. ${r}`).join("\n")}\n  ${s.offRoute ? "THEY LEFT THE ROUTE last turn: do not follow them down a longer path — ask the ONE question about the IDEA that makes the route's next step visible (never the step itself)." : "Steer every question toward the next unreached step of this route; follow a different path only if it is just as short."}`] : []),
     ...p.recommend.map((r) => `- ${r}`),
   ];
   return lines.join("\n") + "\n";
@@ -420,6 +427,8 @@ export function applyTurn(state: TutorSessionStateShape, model: StudentModel | u
   s.updatedAt = now.toISOString();
   s.recentActions = [...(state.recentActions || []), { at: now.toISOString(), kind: (intervention ? "hint" : action === "CREATE_PROBLEM" ? "problem" : "decision") as "hint" | "problem" | "decision", detail: action }].slice(-12);
   if (plan?.ledger?.length) (s as any).ledger = plan.ledger;
+  if (plan?.route?.length) (s as any).route = plan.route;
+  if (plan && typeof plan.onRoute === "boolean") (s as any).offRoute = !plan.onRoute;
   if (plan) s.lastPlan = { action, ...(plan.why ? { why: plan.why } : {}), ...(plan.expectedNext ? { expectedNext: plan.expectedNext } : {}), ...(plan.diagnosis ? { diagnosis: `${plan.diagnosis.type}${plan.diagnosis.hypothesis ? `: ${plan.diagnosis.hypothesis}` : ""}` } : {}) };
   const rec = resolved ? findConcept(m, resolved.key) : undefined;
   if (rec) { s.mastery = rec.mastery; s.confidence = rec.confidence; const mis = liveMisconceptions(rec, now)[0]; s.liveMisconception = mis?.text; }
@@ -457,8 +466,9 @@ export const PLAN_PROTOCOL =
   `"concept":"the concept in play, short","prerequisite":"a prerequisite concept if relevant","action":"ONE of ${TUTOR_ACTIONS.join("|")}",` +
   `"level":0-6,"target":"board entry or idea you aim at","why":"why this action now","expected_next":"what you expect them to do next",` +
   `"evidence":{"kind":"solved-unaided|solved-after-hint|solved-after-partial|solved-after-explanation|self-corrected|mistake|misconception|recall|recall-miss|transfer-success|transfer-fail","detail":"..."},` +
-  `"student_step":{"text":"their step, typeset-ready ($…$ maths)","status":"correct|incorrect|partial"},"ledger":["TRUE: angle TJB = 25° (alternate angles)","WRONG: they said J = 40°"],"goal":{"type":"understand|homework|exam|mastery|review|debug|learn","minutes":N},"objective":"session objective"}</plan>\n` +
+  `"student_step":{"text":"their step, typeset-ready ($…$ maths)","status":"correct|incorrect|partial"},"ledger":["TRUE: angle TJB = 25° (alternate angles)","WRONG: they said J = 40°"],"route":["the 3-6 key moves of the QUICKEST sound solution, as short ideas, never numbers"],"on_route":true,"goal":{"type":"understand|homework|exam|mastery|review|debug|learn","minutes":N},"objective":"session objective"}</plan>\n` +
   `VERIFY BEFORE YOU SPEAK: before you confirm or reject ANY claim of theirs — and before you state any number — derive it yourself from the givens (use CREATE_CALC for arithmetic; a triangle's angles sum to 180°; an angle of depression equals the angle of elevation at the ground; re-read what the problem actually gives). ` +
+  `PLAN THE QUICKEST ROUTE FIRST: the moment a problem is in play (theirs or one you set) and you have no route yet, work out the most efficient correct solution yourself — the fewest steps, no helper unknowns you can eliminate — and write it in "route" as 3-6 short IDEAS (e.g. "two right triangles share the height", "each horizontal distance is height over tan", "their difference is the given separation", "solve that one equation for the height"). Keep "route" in every later plan until a new problem starts. Every turn set "on_route": true if their move is on it (or equally short and valid), false if they diverged. When false, never chase the tangent and never name the step you want: ask the one question about the IDEA that makes the route's next step visible. This applies to every subject and problem type.\n` +
   `Record the cumulative verified facts and judged claims in "ledger" (replace it each turn, ≤10 short items, keep what still matters). The ledger is YOUR memory: never contradict it without saying you were wrong, and when they repeat a question, answer it plainly (yes/no and why) from the ledger. Never state a value you computed for THEM to find — judge theirs.\n` +
   `then your reply to the student. Rules: include only the fields that apply (action is required; evidence ONLY when ` +
   `their last move actually showed something about the concept; student_step ONLY when they proposed a step/answer ` +

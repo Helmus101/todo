@@ -55,7 +55,7 @@ export function wrapRawLatex(line: string): string {
   return parts.map((seg) => {
     if (!seg) return "";
     if (/^\$|^\\\(|^\\\[/.test(seg)) return seg;
-    return seg.replace(/\\[a-zA-Z]+(?:\s*\{[^{}]*\}|\s*[A-Za-z](?![A-Za-z])|[\d+\-*/().=^_,:πθμ√∞\s])+/g, (m) => {
+    return seg.replace(/\\[a-zA-Z]+(?:\s*\{[^{}]*\}|\s*\\[a-zA-Z]+|\s*[A-Za-z](?![A-Za-z])|[\d+\-*/().=^_,:πθμ√∞\s])+/g, (m) => {
       // Trailing whitespace stays OUTSIDE the $…$ so two wrapped runs don't butt together ("π/3,5π/3").
       const body = m.replace(/\s+$/, "");
       if (!/[=+\-*/0-9πθμ√^{}]/.test(body.replace(/\\[a-zA-Z]+/g, ""))) return m;
@@ -112,3 +112,17 @@ export function autoMathLine(line: string): string {
   if (run.length) { trail = ""; flush(); }
   return stripBackslashesOutsideMath(out.join(""));
 }
+
+/** Repair LaTeX whose backslash a JSON/tool round-trip ate: "\\cdot"→"cdot", "^\\circ"→"^circ", and "\\t"/"\\f"/"\\b" turned into a
+ *  tab / form-feed / backspace character ("\\tan"→TAB+"an", "\\frac"→FF+"rac"). Without this the board shows "k cdot \\tan 50^circ". Pure. */
+export function repairLatex(text: string): string {
+  const t = String(text || "");
+  const mathy = /[=^\\]/.test(t); // a bare "cdot" is only repaired inside something that already looks like maths
+  return t
+    .replace(/\x09(?=an\b|imes\b|heta\b|ext\b|o\b)/g, "\\t")
+    .replace(/\x0c(?=rac\b|dfrac\b)/g, "\\f")
+    .replace(/\x08(?=eta\b|inom\b|ar\b)/g, "\\b")
+    .replace(/\^\{?circ\}?/g, "^\\circ")
+    .replace(/(?<=[\s)\d])cdot(?=[\s(\d\\])/g, (m) => (mathy ? "\\cdot" : m));
+}
+

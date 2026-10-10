@@ -8,6 +8,8 @@ import { normalizeWidget, shuffledNotSolved, projectileStats } from "../shared/w
 import { makeSyncScheduler } from "../server/syncScheduler.ts";
 import { buildTasksPayload, parseHave } from "../server/taskDelta.ts";
 import { makeTaskSync } from "../client/taskDelta.ts";
+import { namesExactStep, bubbleDoesMath } from "../server/tutorAdapt.ts";
+import { statesOwnMath, asksToWrite as asksToWrite2 } from "../server/tutorAdapt.ts";
 import { latexifyBoardLine } from "../server/tutorAdapt.ts";
 import { repairLatex } from "../server/tutorAdapt.ts";
 import { makeEgressMeter } from "../server/egress.ts";
@@ -1966,6 +1968,20 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     check("board math is always typeset: bare equations are wrapped in $…$ (degrees → ^\\circ), prose and already-delimited lines are left alone, other kinds untouched",
       latexifyBoardLine(String.raw`\tan 30^\circ = \frac{h}{100+k}`, "formula") === String.raw`$\tan 30^\circ = \frac{h}{100+k}$` && latexifyBoardLine("tan 30° = h/(100+k)", "result") === "$tan 30^\\circ = h/(100+k)$" && latexifyBoardLine("- k = 5\n- both lines of sight start at the top", "summary") === "- $k = 5$\n- both lines of sight start at the top" && latexifyBoardLine("Use $x = 3°$ here", "summary") === "Use $x = 3^\\circ$ here" && latexifyBoardLine("x = 3", "note") === "x = 3");
     check("the tutor is told to write ALL maths in LaTeX (board and chat bubble) and the board write path applies it", /ALWAYS WRITE MATHS IN LaTeX/.test(cl) && !/no raw LaTeX in the bubble/.test(cl) && /latexifyBoardLine\(repairLatex\(/.test(cl)); }
+  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+    check("bare LaTeX with ^\\circ / \\cdot chains typesets as ONE span (it used to split into '$\\tan 30^$$\\circ =$' and print raw)",
+      autoMathLine(String.raw`\tan 30^\circ = \frac{h}{100+k}`) === String.raw`$\tan 30^\circ = \frac{h}{100+k}$` && /\$\\cdot \\tan 50\^\\circ = \(100\+k\) \\cdot \\tan 30\^\\circ\$/.test(autoMathLine(String.raw`k \cdot \tan 50^\circ = (100+k) \cdot \tan 30^\circ`)));
+    check("asking to 'write the equations' counts as a board request; a spoken or written step of their own is recognised as work to record",
+      asksToWrite2("can you write the equation they're not rendering properly") && asksToWrite2("write the values of tan 30 and tan 50 please") && statesOwnMath("tan 30 equals h over 100 plus k") && statesOwnMath("k = h/tan30 - 100") && !statesOwnMath("ok sure") && !statesOwnMath("why does that work?"));
+    check("the board is used without being asked: one corrective round writes a requested or student-stated step (their words, LaTeX), and the persona says to record their work unprompted",
+      /const guardBoardUse = /.test(cl) && (cl.match(/guardBoardUse\(textContent, round, lastRound\)/g) || []).length === 2 && /RECORD THEIR WORK WITHOUT BEING ASKED/.test(cl) && /nudgeReasoning/.test(cl) && /statesOwnMath\(message\) && !asksToDraw/.test(cl)); }
+  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8"), tb = readFileSync(new URL("../server/tutorBrain.ts", import.meta.url), "utf8");
+    check("the tutor never names the operation: 'multiply both sides by…', 'substitute that into…', 'factor out h' are caught; goal/idea questions are not",
+      namesExactStep("Can you multiply both sides by the denominator to get all the h terms on one side?") && namesExactStep("Now substitute that expression for h into your first equation — what does it look like?") && namesExactStep("How do you isolate k from that factored equation?") && namesExactStep("Now that you've factored out h, how do you finish?") === false && !namesExactStep("What are you trying to get on one side of the equation?") && !namesExactStep("What do those two triangles have in common?") && !namesExactStep("Which relationship links the height to the distance?"));
+    check("the bubble never does their maths: an equation they never wrote is caught; quoting their own is fine",
+      bubbleDoesMath("You said h = k tan 50, which gives k = h/tan 50. Next?", ["h = k tan 50"]) && !bubbleDoesMath("You wrote h = k tan 50. What do you notice?", ["so h = k tan 50 right"]) && !bubbleDoesMath("What is the gap between those two distances?", ["whatever"]));
+    check("a hidden QUICKEST ROUTE is planned per problem, kept in session state, shown back every turn, and off-route moves are steered back by a question about the idea",
+      /"route":\["the 3-6 key moves of the QUICKEST sound solution/.test(tb) && /PLAN THE QUICKEST ROUTE FIRST/.test(tb) && /YOUR PLANNED QUICKEST ROUTE/.test(tb) && /\(s as any\)\.route = plan\.route/.test(tb) && /THEY LEFT THE ROUTE/.test(tb) && /YOU DO NO WORK AND NAME NO OPERATION/.test(cl) && (cl.match(/guardNoDoing\(textContent, round, lastRound\)/g) || []).length === 2); }
   check("tool calls typed as text never reach the student", stripPseudoTools("<syntax_error></syntax_error><write_to_board><kind>result</kind><text>distance = (470 + H)/tan 40</text></write_to_board>Ah, exactly — what next?") === "Ah, exactly — what next?" && stripPseudoTools("plain reply") === "plain reply" && stripPseudoTools("<chat>Using that height.</chat>") === "Using that height.");
   check("a reply that is only a formula is bare maths; a sentence with maths is not", bareMath("distance K = (470)/(tan 40)") && bareMath("(470 + H)/(tan 25°) - (470 + H)/(tan 40°) = 500") && !bareMath("Which side is opposite the 40° angle here?") && !bareMath("Good, now what does the tan 40° ratio give you for the horizontal distance?"));
   // ── Grounding (reported live: "tan(θ) = slope!" to a student who had only said the two slopes; "maybe graph it" ignored) ──
@@ -2519,7 +2535,7 @@ section("Fully Socratic tutor — policy every turn, never the gap's value, one 
   //    and a jammed "cosx= 21​" instead of π/3, 5π3). Bare LaTeX runs get wrapped so KaTeX renders them;
   //    prose that merely mentions a command, and anything already in $…$, is left alone.
   check("a bare LaTeX solution line is wrapped for KaTeX instead of printed literally",
-    autoMathLine("x = \\tfracπ3, \\tfrac5π3") === "x = $\\tfracπ3,$ $\\tfrac5π3$" &&
+    autoMathLine("x = \\tfracπ3, \\tfrac5π3") === "x = $\\tfracπ3, \\tfrac5π3$" &&
     autoMathLine("\\frac{a}{b} = 1").includes("$\\frac{a}{b} = 1$"));
   check("prose that merely mentions a command is never wrapped, and $…$ is never double-wrapped",
     wrapRawLatex("use \\frac formula here") === "use \\frac formula here" &&
@@ -2548,7 +2564,7 @@ section("fractions always typeset — pseudo-fractions and bare \\tfrac lines ne
   // reaches KaTeX at all and falls straight through to formatMath's plain-text approximation.
   const bsrc = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
   check("MathText typesets bare model maths (autoMathLine runs before the $ split, on every caller's text)",
-    /const auto = autoMathLine\(text\)/.test(bsrc) && /renderChatText\(auto\)/.test(bsrc));
+    /const auto = autoMathLine\(repairLatex\(text\)\)/.test(bsrc) && /renderChatText\(auto\)/.test(bsrc));
   check("the KaTeX prose-gate knows the macros the tutor actually writes (tfrac/approx/Rightarrow/…)",
     /"tfrac", "dfrac", "cfrac", "approx", "Rightarrow"/.test(bsrc));
   check("the board never hides earlier working steps and has no clear-board control (removed by request)",

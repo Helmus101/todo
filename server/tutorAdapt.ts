@@ -650,7 +650,7 @@ export function ignoresWork(reply: string, message: string): boolean {
 
 /** The student explicitly wants something written down. */
 export function asksToWrite(message: string): boolean {
-  return /\b(?:write|put|add|note)\b[^.?!]{0,30}\b(?:board|down|up)\b|\bon the board\b|\bwrite (?:it|that|this)\b|\bnote (?:it|that) (?:down|for me)\b|écris|note[- ]le/i.test(message);
+  return /\b(?:write|put|add|note)\b[^.?!]{0,30}\b(?:board|down|up)\b|\bon the board\b|\bwrite (?:it|that|this)\b|\bnote (?:it|that) (?:down|for me)\b|\b(?:write|rewrite|show)\b[^.?!]{0,40}\b(?:equations?|values?|formulas?|steps?)\b|écris|note[- ]le/i.test(message);
 }
 
 /** A "reply" that is just a formula ("distance K = (470)/(tan 40)") — no sentence, so it is an answer dropped on the
@@ -669,18 +669,7 @@ export function socraticFallback(fr: boolean): string {
     : "Walk me through what you just wrote: what does each part stand for, and where does it come from?";
 }
 
-/** Repair LaTeX whose backslash a JSON/tool round-trip ate: "\\cdot"→"cdot", "^\\circ"→"^circ", and "\\t"/"\\f"/"\\b" turned into a
- *  tab / form-feed / backspace character ("\\tan"→TAB+"an", "\\frac"→FF+"rac"). Without this the board shows "k cdot \\tan 50^circ". Pure. */
-export function repairLatex(text: string): string {
-  const t = String(text || "");
-  const mathy = /[=^\\]/.test(t); // a bare "cdot" is only repaired inside something that already looks like maths
-  return t
-    .replace(/\x09(?=an\b|imes\b|heta\b|ext\b|o\b)/g, "\\t")
-    .replace(/\x0c(?=rac\b|dfrac\b)/g, "\\f")
-    .replace(/\x08(?=eta\b|inom\b|ar\b)/g, "\\b")
-    .replace(/\^\{?circ\}?/g, "^\\circ")
-    .replace(/(?<=[\s)\d])cdot(?=[\s(\d\\])/g, (m) => (mathy ? "\\cdot" : m));
-}
+export { repairLatex } from "../shared/mathText.ts";
 
 /** Math lines on the board are ALWAYS typeset: a formula/result/given/summary line that is bare maths (an equation or LaTeX
  *  commands with at most a couple of plain words, no $ already) is wrapped in $…$, and degree signs inside become ^\\circ.
@@ -700,4 +689,39 @@ export function latexifyBoardLine(text: string, kind?: string): string {
     return `${bullet}$${body.replace(/°/g, "^\\circ")}$`;
   });
   return lines.join("\n");
+}
+
+/** The student just stated work of their own — an equation, a relationship, a computed value — that belongs on the board
+ *  as their line. Spoken maths counts ("tan 30 equals h over 100 plus k"). */
+export function statesOwnMath(message: string): boolean {
+  const m = String(message || "");
+  if (m.trim().length < 12) return false;
+  return /[=]/.test(m) || /\b(?:equals?|égale?s?)\b/i.test(m) || /\b(?:sin|cos|tan|10 ?(?:of|de))\b[^.?!]{0,60}\b(?:over|divided|times|plus|minus)\b/i.test(m);
+}
+
+/** The reply tells the student WHICH operation to perform ("multiply both sides by…", "substitute that into…", "factor out h",
+ *  "divide by the bracket", "isolate k") — choosing the move was the thinking. Questions about the GOAL ("what would get all the h
+ *  terms together?") are fine; naming the operation is not. Pure. */
+export function namesExactStep(reply: string): boolean {
+  const t = String(reply || "").replace(/\$[^$]*\$/g, " X ");
+  const OP = "(?:multiply|divide|substitute|plug|factor(?:ise|ize)?(?: out)?|isolate|subtract|add|expand|rearrange|collect|cross-multiply|take the (?:square root|inverse|reciprocal)|apply the (?:sine|cosine|tangent) (?:rule|law)|use the (?:sine|cosine|tangent) (?:rule|law)|solve for)";
+  const lead = "(?:can you|could you|how (?:do|would|can) you|now,? |next,? |then,? |try to |you (?:should|need to|can|could|now) |let'?s |please )";
+  return new RegExp(`\\b${lead}\\s*${OP}\\b[^.?!]{0,70}\\b(?:both sides|each side|the (?:equation|expression|bracket|brackets|denominator|numerator|terms?|left|right)|that (?:equation|expression)|into|from|by|out)\\b`, "i").test(t)
+    || new RegExp(`^\\s*${OP}\\b[^.?!]{0,70}\\b(?:both sides|each side|the (?:equation|expression|bracket|denominator)|into|by)\\b`, "i").test(t)
+    || /\b(?:multiplier|multiplie[rz]|divise[rz]|substitue[rz]|factorise[rz]|isole[rz])\b[^.?!]{0,60}\b(?:des deux côtés|chaque côté|par|dans)\b/i.test(t);
+}
+
+/** An equation in the chat bubble (outside $…$ or inside) that the student never wrote: the bubble is a nudge in words; the
+ *  board carries the maths. Compares by alphanumerics only, so a spoken/garbled student version doesn't match — which is the
+ *  safe direction (the worst case is one extra corrective round). Pure. */
+export function bubbleDoesMath(reply: string, studentTexts: string[]): boolean {
+  const norm = (x: string) => x.toLowerCase().replace(/\\(?:circ|degree|cdot|left|right|displaystyle)/g, "").replace(/[^a-z0-9]/g, "");
+  const corpus = norm(studentTexts.join(" "));
+  const text = String(reply || "").replace(/\$([^$]+)\$/g, " $1 ");
+  // For each "=": the token just before it and the next three after it must both appear in what the student wrote.
+  for (const m of text.matchAll(/(\S+)\s*=\s*((?:\S+\s*){1,3})/g)) {
+    const left = norm(m[1]), right = norm(m[2].split(/[.?!]/)[0]);
+    if (left.length >= 1 && right.length >= 2 && !(corpus.includes(left) && corpus.includes(right))) return true;
+  }
+  return false;
 }
