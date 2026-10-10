@@ -245,6 +245,7 @@ export const api = {
   syncPronoteGrades: (): Promise<{ grades: { subject: string; average: number; outOf: number }[]; synced: boolean }> => post("/api/pronote/grades/sync"),
   workload: (): Promise<{ days: { date: string; items: { kind: "homework" | "test" | "task"; subject?: string; title: string; effort: number; taskId?: string; movable?: boolean }[]; totalEffort: number }[] }> =>
     req("/api/workload").then(j),
+  setDeadline: (id: string, when: string): Promise<WebTask[]> => post(`/api/tasks/${id}/deadline`, { when }),
   rescheduleTask: (id: string, when: string): Promise<WebTask[]> => post(`/api/tasks/${id}/reschedule`, { when }),
   setGrade: (subject: string, grade: number, scale?: number): Promise<Profile> => post("/api/profile/grade", { subject, grade, scale }).then(normalizeProfile),
   deleteGrade: (subject: string): Promise<Profile> => req(`/api/profile/grade/${encodeURIComponent(subject)}`, { method: "DELETE" }).then(j).then(normalizeProfile),

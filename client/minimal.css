@@ -129,3 +129,5 @@ hr { border: 0; border-top: 1px solid var(--line-soft); }
 .card { border-bottom-color: var(--line-soft) !important; }
 .settings-sec { border-bottom-color: var(--line-soft) !important; }
 .sm-ai-input-row, .sm-ai-panel, .ts-dock, .tutor-dock { border-radius: 18px; }
+.deadline-edit { display: inline-flex; align-items: center; gap: 6px; }
+.deadline-edit input[type="date"] { font: inherit; padding: 2px 8px; }

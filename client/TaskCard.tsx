@@ -518,6 +518,31 @@ export function TaskReadOnly({ task, onTask, userId }: { task: WebTask; onTask: 
 
 /* ─────────────────────────────── the focused task view ─────────────────────────────── */
 
+/** "Change deadline": a native date field (+ clear) on any live task, manual or found by Otto. */
+function DeadlineEdit({ task, onChange }: { task: WebTask; onChange: (t: WebTask[]) => void }) {
+  const L = useLang();
+  const notify = useNotify();
+  const [busy, setBusy] = useState(false);
+  const ms = deadlineEpoch(task.when);
+  const value = Number.isFinite(ms) && !task.whenApprox ? new Date(ms).toISOString().slice(0, 10) : "";
+  const save = async (v: string) => {
+    if (busy || v === value) return;
+    setBusy(true);
+    try { onChange(await api.setDeadline(task.id, v)); }
+    catch (e: any) { notify(e?.message || L("Impossible de changer l'échéance — réessaie.", "Couldn't change the deadline — try again."), "error"); }
+    setBusy(false);
+  };
+  return (
+    <span className="deadline-edit">
+      <label>
+        <span className="muted small">{L("Échéance", "Deadline")} </span>
+        <input type="date" value={value} disabled={busy} onChange={(e) => void save(e.target.value)} aria-label={L("Changer l'échéance", "Change the deadline")} />
+      </label>
+      {value ? <button type="button" className="ghost small" disabled={busy} onClick={() => void save("")}>{L("Effacer", "Clear")}</button> : null}
+    </span>
+  );
+}
+
 export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfirmed, onLeft, onEnterStudyMode, userId }: {
   task: WebTask; onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void; retrying?: boolean;
   onConfirmed?: (id: string) => void; onLeft?: (id: string) => void; onEnterStudyMode?: () => void;
@@ -765,6 +790,7 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
               metadata, not anything a student chose) — the header keeps subject · date · quadrant · status. */}
           {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
           {taskDateLabel(task, L) ? <span className={`when ${(deadlineEpoch(task.when) - Date.now()) / 86_400_000 <= 3 ? "when-soon" : ""}`}>{taskDateLabel(task, L)}</span> : null}
+          {!isDone ? <DeadlineEdit task={task} onChange={onChange} /> : null}
           {!isDone ? <span className={`card-quadrant card-quadrant-${task.quadrant}`}>{quadrantLabel(task.quadrant, cardEn)}</span> : null}
           {chip ? <span className={`chip chip-${chip.tone}`}>{chip.label}</span> : null}
           {task.audit?.some((a) => a.kind === "guardrail") ? <span className="row-guardrail" title={L("Otto a refusé de faire cette tâche à ta place ici — voir le journal d'activité", "Otto declined to do this one for you here — see the activity log")} aria-hidden="true">✦</span> : null}

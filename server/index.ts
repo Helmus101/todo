@@ -3112,6 +3112,33 @@ app.post("/api/tasks/:id/reschedule", requireAuth, rateLimit(60, 60_000), async 
     res.status(500).json({ error: M(req, "Impossible de déplacer cette tâche — réessaie.", "Couldn't move that task — try again.") }); }
 });
 
+// Change (or clear) any live task's deadline — manual tasks and tasks Otto found alike. A student knows their own
+// calendar better than a guess does: the new date replaces `when` (and `sourceDue`, which ranking prefers when
+// present), is treated as firm (not approximate), and urgency is re-derived. "" clears it back to an estimate.
+app.post("/api/tasks/:id/deadline", requireAuth, rateLimit(60, 60_000), async (req, res) => {
+  const id = String(req.params.id);
+  const raw = String(req.body?.when ?? "").trim();
+  if (raw && !/^\d{4}-\d{2}-\d{2}(?:T[\d:.]+Z?)?$/.test(raw)) { res.status(400).json({ error: M(req, "une date valide est requise", "a valid date is required") }); return; }
+  if (raw && Number.isNaN(Date.parse(raw))) { res.status(400).json({ error: M(req, "une date valide est requise", "a valid date is required") }); return; }
+  const task = (req.session.tasks || []).find((t) => t.id === id);
+  if (!task) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
+  if (isHandled(task.status)) { res.status(409).json({ error: M(req, "Cette tâche est déjà terminée ou ignorée.", "This task is already done or dismissed.") }); return; }
+  try {
+    if (raw) {
+      task.when = raw; task.whenApprox = false;
+      if (task.sourceDue) task.sourceDue = raw;
+    } else {
+      delete (task as any).sourceDue;
+      task.when = tasks.estimateWhen(task.quadrant); task.whenApprox = true;
+    }
+    task.updatedAt = new Date().toISOString();
+    tasks.applyDeadlineUrgency([task]);
+    await commit(req);
+    res.json(tasksPayload(req, req.session.tasks));
+  } catch (e: any) { console.error(e);
+    res.status(500).json({ error: M(req, "Impossible de changer l'échéance — réessaie.", "Couldn't change the deadline — try again.") }); }
+});
+
 // One-click send: fire a reviewed Gmail draft / composed Slack message — USER-confirmed, the ONLY send path.
 // The one route in the app with a real, irreversible EXTERNAL side effect per call (an actual email/message
 // leaves the student's real account) — rate-limited so a compromised session or a buggy client retry loop
