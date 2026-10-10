@@ -323,6 +323,11 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
         continue;
       }
       if (leaked) { result.guardrailTripped = true; result.reply = socraticFallback(fr); return result; }
+      // Still doubting a RIGHT answer after the correction round: never let it through — confirm it in code.
+      if (doubt && doubtsRightAnswer(reply, message)) {
+        result.reply = fr ? "Oui, c'est juste — bien joué. Qu'est-ce qui t'a dit quels morceaux multiplier ?" : "Yes, that's right — nice work. What told you which pieces to multiply?";
+        return result;
+      }
       result.reply = reply;
       return result;
     }

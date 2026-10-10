@@ -164,4 +164,12 @@ export async function runTutorEngineSim(check, section) {
   r = await run("1000 times 9.8 times sine 10 times 15", { opts: { voiceMode: true } });
   check("voice mode keeps the maths readable (× and sin survive, ½ isn't '12')", /1000 × 9\.8 × sin\(10°\) × 15/.test(r.reply) && /1\/2/.test(r.reply) && !/\\/.test(r.reply));
   check("doubtsRightAnswer leaves a genuinely wrong answer alone", doubtsRightAnswer("Check that again: $1000 \\times 9.8 \\times \\sin(10^\\circ) \\times 15$.", "5,526") === null);
+
+  // "Make sure": even if the rewrite STILL asks a right student to redo it, the student never sees that.
+  script = () => ({ content: "Let's check that multiplication again. Try $800 \\times 9.8 \\times \\sin(15^\\circ) \\times 12$. What does it give you?" });
+  r = await run("24,350 approximately");
+  check("a right answer is confirmed even when the model keeps doubting it (code fallback)", /that's right/.test(r.reply) && !/again/.test(r.reply));
+  script = () => ({ content: "Ah, let's re-run that one: $800 \\times 9.8 \\times \\sin(15^\\circ) \\times 12$. What do you get when you multiply those out?" });
+  r = await run('[Exercise] I answered "24350" — marked right (try #1).');
+  check("…and after the app marked it right, never a re-run", /that's right/.test(r.reply) && !/re-run/.test(r.reply));
 }
