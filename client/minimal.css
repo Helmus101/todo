@@ -153,3 +153,11 @@ hr { border: 0; border-top: 1px solid var(--line-soft); }
 .note-popup-body .note-table-wrap, .sm-brief-body .note-table-wrap { margin: 8px 0 24px; overflow-x: auto; }
 .note-popup-body .note-table th, .sm-brief-body .note-table th, .note-popup-body .note-table td, .sm-brief-body .note-table td { padding: 10px 14px !important; line-height: 1.55; }
 @media (max-width: 640px) { .note-popup, .sm-brief-body { padding: 20px 18px 28px !important; font-size: 16px; } .note-popup-title { font-size: 22px; } }
+
+/* Tutor landing: the exact-topic picker under the subject row */
+.tutor-topic { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; width: 100%; max-width: 560px; }
+.tutor-topic-label { font-size: 13px; color: var(--muted, #6b6b6b); }
+.tutor-topic-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.tutor-topic-chip { border: 1px solid var(--line, #e4e0da); background: transparent; color: inherit; border-radius: 999px; padding: 6px 12px; font-size: 13px; cursor: pointer; }
+.tutor-topic-chip.on, .tutor-topic-chip:hover { border-color: currentColor; }
+.tutor-topic-input { border: 1px solid var(--line, #e4e0da); border-radius: 12px; padding: 10px 14px; font: inherit; background: transparent; color: inherit; }

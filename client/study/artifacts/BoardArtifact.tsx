@@ -577,6 +577,14 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
   }, [entries.length, problems.length, sheets.length]);
+  // OPENING a board (a resumed session, a past one) lands on the bottom at once — no visible scroll from the top. Math and
+  // diagrams finish laying out a moment later and push the end down, so re-pin a few times while it settles.
+  useEffect(() => {
+    const jump = () => endRef.current?.scrollIntoView({ block: "end", behavior: "auto" });
+    jump();
+    const timers = [80, 250, 700].map((ms) => window.setTimeout(jump, ms));
+    return () => timers.forEach((t) => window.clearTimeout(t));
+  }, []);
 
   // "Ink reveal" — an entry that just arrived writes itself onto the page (clip-path wipe, duration scaled
   // to how much text there is) instead of popping in fully formed, the "watching it actually get written"

@@ -2775,6 +2775,7 @@ app.post("/api/study/free", requireAuth, rateLimit(20, 60_000), ah(async (req, r
   const now = new Date().toISOString();
   const fresh = req.body?.fresh === true;
   const subject = req.body?.subject as string | undefined;
+  const topic = typeof req.body?.topic === "string" ? req.body.topic.replace(/\s+/g, " ").trim().slice(0, 140) : "";
   const en = req.session.profile?.language === "en";
   
   if (!fresh) {
@@ -2803,8 +2804,9 @@ app.post("/api/study/free", requireAuth, rateLimit(20, 60_000), ah(async (req, r
   const id = randomUUID();
   const t: WebTask = {
     id, 
-    title: subject ? `${subject} session` : (en ? "Free study session" : "Séance de révision libre"),
-    why: en ? "Started on demand, not tied to a task." : "Lancée à la demande, sans tâche associée.",
+    title: topic ? topic : subject ? `${subject} session` : (en ? "Free study session" : "Séance de révision libre"),
+    why: topic ? (en ? `The student chose to work on exactly this: ${topic}${subject ? ` (${subject})` : ""}.` : `L'élève a choisi de travailler précisément : ${topic}${subject ? ` (${subject})` : ""}.`) : (en ? "Started on demand, not tied to a task." : "Lancée à la demande, sans tâche associée."),
+    ...(topic ? { sourceTopic: topic } : {}),
     source: "freestudy", risk: "low",
     urgency: 0, importance: 0, quadrant: e.quadrant, score: e.score, status: "needs_review",
     createdAt: now, anchorKey: `freestudy:${id}`,
