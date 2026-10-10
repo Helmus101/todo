@@ -149,10 +149,10 @@ const STUDY_MODE_ENABLED = false;
  *  at 16px in a way finer geometric detail doesn't, which the previous half-moon-cut-by-a-line mark wasn't
  *  reliably (it read as a blank shape at tab-icon scale, per direct feedback). */
 function Logo({ size = 22 }: { size?: number }) {
+  // The mark: a plain "o" (Otto reads the same both ways) — a ring in the ink colour. Nothing else.
   return (
     <svg className="logo" width={size} height={size} viewBox="0 0 48 48" fill="none" aria-hidden="true">
-      <circle cx="24" cy="24" r="18" stroke="currentColor" strokeWidth="4" fill="none" />
-      <path d="M15 25 L21 31 L33 17" stroke="var(--brand-mark)" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <circle cx="24" cy="24" r="14" stroke="currentColor" strokeWidth="6" fill="none" />
     </svg>
   );
 }
@@ -3784,9 +3784,9 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
         </nav>
       </header>
       <main className="landing-min-main">
-        <h1>{L("Ta journée d'école, organisée. Tes questions, résolues pas à pas.", "Your school day, organised. Your questions, worked through step by step.")}</h1>
-        <p>{L("Je suis Otto. Je m'occupe de ton planning, et quand tu bloques sur quelque chose, on le comprend ensemble — sans que je te donne la réponse.", "I'm Otto. I keep track of your school week, and when you get stuck on something we work it out together — I'll help you think, not hand you the answer.")}</p>
-        <p><a className="landing-min-cta" href="/signup">{L("Commencer", "Get started")}</a></p>
+        <h1>{L("Un partenaire de réflexion, pas une machine à réponses.", "A thinking partner, not an answer machine.")}</h1>
+        <p>{L("Otto organise ta semaine, puis il t'oblige à faire le travail toi-même : il questionne ton raisonnement, repère tes failles et ne pense jamais à ta place. Fait pour les élèves qui veulent être affûtés, pas juste en avance sur leurs devoirs.", "Otto runs your school week, then makes you do the thinking: it questions your reasoning, finds the gaps in it, and never thinks for you. Built for students who want to be sharp, not just finished.")}</p>
+        <p><a className="landing-min-cta" href="/signup">{L("Commencer à réfléchir", "Start thinking")}</a></p>
       </main>
       <footer className="landing-min-foot">
         <a href="/privacy">{L("Confidentialité", "Privacy")}</a>

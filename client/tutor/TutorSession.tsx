@@ -557,8 +557,8 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           {/* The prototype's cream-circle face — two dots, no mouth. The one illustration the whole
               design system allows, reused on the landing and the session screens. */}
           <div className="tutor-face" aria-hidden><span className="tutor-face-eye" /><span className="tutor-face-eye" /></div>
-          <h2 className="tutor-landing-title">{L("Salut, moi c'est Otto.", "Hi, I'm Otto.")}</h2>
-          <p className="tutor-landing-sub">{L("Qu'est-ce que tu veux comprendre aujourd'hui ?", "What would you like to understand today?")}</p>
+          <h2 className="tutor-landing-title">{L("Je suis Otto, ton partenaire de réflexion.", "I'm Otto, your thinking partner.")}</h2>
+          <p className="tutor-landing-sub">{L("Qu'est-ce qu'on aiguise aujourd'hui ? Je ne te donnerai pas les réponses — je te ferai les trouver.", "What are we sharpening today? I won't hand you answers — I'll make you find them.")}</p>
 
           {/* If there's an active session, show resume option */}
           {pendingActiveSession && (
@@ -602,7 +602,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
             >
               {startingSession
                 ? L("Démarrage…", "Starting…")
-                : L("Commencer une séance", "Start a session")}
+                : L("On s'y met", "Let's work")}
             </button>
           </div>
 

@@ -12,7 +12,7 @@
   --brand-mark: #111; --focus-ring: #111; --chat-user-bg: #111; --chat-user-bg-2: #111;
   --bg-2: #f6f6f6; --bg-3: #ececec; --vermilion: #c40000; --ok: #111; --amber: #111; --warn: #c40000;
   --radius-2xs: 0; --radius-xs: 0; --radius-sm: 0; --radius: 0; --radius-lg: 0; --radius-xl: 0; --radius-2xl: 0; --radius-pill: 0;
-  --display: "Helvetica Neue", Helvetica, Arial, sans-serif; --sans: "Helvetica Neue", Helvetica, Arial, sans-serif; --font-serif: "Helvetica Neue", Helvetica, Arial, sans-serif; --font-hand: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --display: "Helvetica Neue", Helvetica, Arial, sans-serif; --sans: "Helvetica Neue", Helvetica, Arial, sans-serif; --font-serif: "Helvetica Neue", Helvetica, Arial, sans-serif; --font-hand: "Handlee", "Bradley Hand", "Segoe Print", cursive;
 }
 html, body { background: #fff; color: var(--ink); font-family: var(--sans); font-size: 16px; line-height: 1.5; }
 
@@ -29,10 +29,10 @@ h2 { font-size: 1.15rem !important; }
 h3, h4 { font-size: 1rem !important; }
 
 /* containers are plain: no card chrome — a hairline between items instead */
-[class*="card"], [class*="panel"], [class*="tile"], [class*="box"]:not(input):not([class*="checkbox"]), .intro, .paused-banner {
+.card, [class*="panel"], [class*="tile"], [class*="box"]:not(input):not([class*="checkbox"]), .intro, .paused-banner {
   background: transparent !important; border-top: 0 !important; border-left: 0 !important; border-right: 0 !important;
 }
-[class*="card"] { border-bottom: 1px solid var(--line-soft) !important; padding-left: 0 !important; padding-right: 0 !important; }
+.card { border-bottom: 1px solid var(--line-soft) !important; padding-left: 0 !important; padding-right: 0 !important; }
 [class*="panel"], [class*="tile"] { border-bottom: 0 !important; }
 
 /* pills, badges, chips, status dots → plain text */
@@ -86,7 +86,7 @@ hr { border: 0; border-top: 1px solid var(--line-soft); }
 /* second pass */
 .landing-min-main { max-width: none !important; margin: 0 !important; }
 .landing-min-nav, .landing-min-foot { max-width: none; }
-[class*="card"]::before, [class*="card"]::after, .quadrant-bar, [class*="accent-bar"] { display: none !important; }
+.card::before, .card::after, .quadrant-bar, [class*="accent-bar"] { display: none !important; }
 .add-task-row, .add-task { border: 0 !important; border-bottom: 1px solid var(--ink) !important; background: transparent !important; }
 .add-task-row input { border-bottom: 0 !important; }
 .empty-mark, .empty-state svg { display: none !important; }
@@ -102,7 +102,7 @@ hr { border: 0; border-top: 1px solid var(--line-soft); }
 .cw-drop { border-top: 1px solid var(--line) !important; border-bottom: 1px solid var(--line) !important; }
 .acct-avatar, .cw-num { display: none !important; }
 .switch-track { background: var(--bg-3) !important; }
-:where(button) { background: transparent !important; }
+:where(button:not(.tc-swatch):not(.card-check):not(.step-mark)) { background: transparent !important; }
 
 /* Otto keeps a face — he is a person to talk to, not a dashboard. Drawn as plain as possible: an outline and two eyes. */
 .tutor-face { background: transparent !important; border: 1.5px solid var(--ink) !important; }
@@ -113,3 +113,17 @@ hr { border: 0; border-top: 1px solid var(--line-soft); }
 .sm-board-empty-line { font-size: 1.4rem !important; line-height: 1.3 !important; }
 .sm-board-empty-sub { font-size: 1rem !important; }
 .tutor-landing-inner div { border: 0 !important; background: transparent !important; }
+
+/* ── Human touches (not decoration): clear check-offs, a handwritten board, markers in real colours, a face that smiles ── */
+.card-check, .step-mark { width: 24px !important; height: 24px !important; min-width: 24px; flex: none; border: 2px solid #111 !important; border-radius: 50% !important; background: #fff !important; position: relative; padding: 0; cursor: pointer; }
+.card-check:hover, .step-mark:hover { background: #ececec !important; }
+.card-check.checked, .step-mark.done, .step-mark.checked { background: #111 !important; }
+.card-check.checked::before, .step-mark.done::before, .step-mark.checked::before { content: "✓"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 15px; font-weight: 700; line-height: 1; }
+.card-check::after { display: none !important; }
+.tc-swatch { width: 22px !important; height: 22px !important; border-radius: 50% !important; border: 2px solid #fff !important; box-shadow: 0 0 0 1px rgba(0,0,0,.25) !important; padding: 0; }
+.tc-swatch.on { box-shadow: 0 0 0 2px #111 !important; outline: 0 !important; }
+.sm-board-line, .sm-board-entry-text, .sm-board-problem-q, .sm-board-gap-text, .sm-board-empty-line, .sm-board-empty-sub, .sm-board-diagram-caption, .sm-board-outline-heading, .sm-widget-hint { font-family: var(--font-hand) !important; }
+.sm-board-line, .sm-board-entry-text { font-size: 1.12rem; line-height: 1.55; }
+.tutor-face { border-radius: 50% !important; position: relative; }
+.tutor-face::after { content: ""; position: absolute; left: 50%; bottom: 24%; width: 24%; height: 11%; transform: translateX(-50%); border-bottom: 2px solid var(--ink); border-radius: 0 0 50% 50% !important; }
+.tutor-face-eye { border-radius: 50% !important; }
