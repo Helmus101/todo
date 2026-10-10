@@ -472,6 +472,15 @@ export async function runTutorSim(check, section) {
     : { content: "Yes — that's the whole energy at the top. What does it turn into at the bottom?" };
   r = await run("529200", { history: [{ role: "user", text: "work power energy" }, { role: "assistant", text: "ok" }] });
   check("end to end: after a plain answer Otto cannot set a new exercise nobody asked for", r.problems.length === 0 && calls.some((b) => /didn't ask for a new problem/.test(JSON.stringify(b.messages))));
+  // NEW PROBLEM while one is still open: givens on the board as text are refused; CREATE_PROBLEM is allowed because they asked for a new one.
+  const openOne = { id: "p9", question: "An electric motor does 1200 J of useful work from 1600 J. Find the efficiency as a percentage.", answer: "75", createdAt: new Date().toISOString() };
+  script = (b, i) => i === 0
+    ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "Skier: mass m = 75 kg, height h = 30 m, friction loss W_f = 4000 J", kind: "given" })] }
+    : /PROBLEM — create it first/.test(JSON.stringify(b.messages)) && !b.messages.some((m) => m.role === "tool" && /"ok":true/.test(String(m.content)))
+      ? { content: "", tool_calls: [tc("CREATE_PROBLEM", { question: "A 75 kg skier starts from rest at a height of 30 m and loses 4000 J to friction. Find the speed at the bottom (g = 9.8 m/s²).", answer: "18.4", check: "sqrt(2*(75*9.8*30-4000)/75)", format: "to 1 decimal place, in m/s" })] }
+      : { content: "There's your new one — what do you get?" };
+  r = await run("can you do a new problem for me", { problems: [openOne], history: [{ role: "user", text: "efficiency" }, { role: "assistant", text: "ok" }] });
+  check("end to end: asked for a new problem while one is open, Otto's givens-as-text are refused and a real exercise is created instead", r.problems.length === 1 && r.board.length === 0 && r.problems[0].answer === "21.9" && r.problems[0].value > 21.9 && r.problems[0].value < 22);
   // WHY: a why-question that is answered with a restatement + a question is sent back once for a real explanation.
   script = (b, i) => i === 0
     ? { content: "You're wondering why we even need to bother equating them when we already found the speed with SUVAT. Notice how m shows up on both sides?" }
