@@ -7,7 +7,7 @@ import { COURSEWORK_MAX_CHARS, courseworkForSubject, sameSubject } from "../shar
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { buildGeometry } from "../shared/geometry.ts";
-import { studentProblemStatement, cleanToPost, repairLatex, latexifyBoardLine, statesOwnMath, evalMathExpr, namesExactStep, bubbleDoesMath, bareMath, socraticFallback, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, misattributes, methodAhead, wantsHelp, clarificationTerm, CLARIFY_BLOCK, ignoresQuestion, ignoresWork, asksToWrite, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
+import { studentProblemStatement, cleanToPost, repairLatex, latexifyBoardLine, statesOwnMath, evalMathExpr, namesExactStep, bubbleDoesMath, bareMath, socraticFallback, voiceInputBlock, boardRepeatsMishearing, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, misattributes, methodAhead, wantsHelp, clarificationTerm, CLARIFY_BLOCK, ignoresQuestion, ignoresWork, asksToWrite, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -21,6 +21,8 @@ import { buildTutorDecision } from "./actionSpace.ts";
 import { normalizeWidget, WIDGET_TYPES } from "../shared/widgets.ts";
 import { normalizeFlow } from "../shared/flow.ts";
 import { buildTrigScene } from "../shared/trigScene.ts";
+import { unrenderableMath } from "./latexCheck.ts";
+import { repairSpokenMath, spokenContextFrom, type SpokenRepair } from "../shared/spokenMath.ts";
 import { sanitizeSvg, svgText, MAX_SVG_CHARS } from "../shared/svgSafe.ts";
 import { findSourceQuestions, cleanProblemSource, sourcesForTrack } from "./questionSources.ts";
 import { extractPlan, validatePlan, policyBlock as tutorPolicyBlock, PLAN_PROTOCOL, type TutorPlan, type TutorPolicy } from "./tutorBrain.ts";
@@ -3092,6 +3094,10 @@ export function makeBoardEntry(input: any): { entry: BoardEntry } | { error: str
     if (!outline.length) return { error: "ERROR: kind:'outline' needs at least one section with a heading and bullets — pass the `outline` field, not just `text`." };
     return { entry: { id: randomUUID(), text, kind, outline, at: new Date().toISOString() } };
   }
+  // Bad LaTeX never reaches the board: one span KaTeX can't parse used to print as raw source. Bounce it back
+  // to the model (same one-corrective-round shape as the leak guards) with KaTeX's own error.
+  const bad = unrenderableMath(text);
+  if (bad) return { error: `REJECTED: this maths doesn't typeset — "${bad.latex.slice(0, 120)}" (${bad.message}). Fix the LaTeX (balanced braces, \\frac{a}{b}, \\tan, 25^\\circ) and call WRITE_TO_BOARD again; don't mention this.` };
   const owner: BoardEntry["owner"] = input?.owner === "student" ? "student" : "otto";
   const expectedAnswer = kind === "gap" && input?.expectedAnswer ? String(input.expectedAnswer).trim().slice(0, 200) : undefined;
   const gapAction = kind === "gap" && input?.gapAction ? String(input.gapAction).trim().replace(/\s+/g, " ").slice(0, 60) : undefined;
@@ -7675,13 +7681,23 @@ const PRIMER_PERSONA =
   `photo of handwriting) — "three times one over cotan squared" is ambiguous about what sits under which bar. ` +
   `Before doing anything with a new or unclear expression, write it on the board TYPESET (DRAW_ON_BOARD's ` +
   `equation op, full brackets and fraction bars) as your reading of it, and ask in one line whether that's what ` +
-  `they meant, naming the one ambiguity you weren't sure about. Treat a confirmed (or corrected) version as THE ` +
+  `they meant, naming the one ambiguity you weren't sure about — UNLESS the meaning is clear (for spoken input, ` +
+  `see SPOKEN INPUT: use the likely meaning and only confirm a real guess). Treat a confirmed (or corrected) version as THE ` +
   `GIVEN: redraw it whole if they correct it, then never re-read it differently, and refer back to it for the ` +
   `rest of the session. If a message is garbled or ambiguous, ask a short clarifying question instead of guessing.\n` +
   `- THE START OF THE SESSION STAYS WITH YOU: the problem as they first stated it (see HOW THIS SESSION BEGAN) ` +
   `and everything already settled on the board is shared ground — build on it, never re-derive or re-ask it.\n` +
   `- Socratic by default: don't explain what a question could draw out of them. Ask the smallest question ` +
   `that makes them take the next step themselves. Explain directly only after they're genuinely stuck twice.\n` +
+  `- PACE TO THEM, DON'T SCRIPT: a step they got right (VERIFIED BY CODE, or plainly right) is done — move on, ` +
+  `never make them re-derive, rewrite or "replace X with Y" on a line that already works. A fluent student gets ` +
+  `bigger steps and fewer gaps; a student who just slipped gets a smaller step and a figure. Vary how you help ` +
+  `(a question, a pointer to the figure, a quick check with numbers) instead of repeating the same kind of move.\n` +
+  `- ANOTHER WAY, ONCE IT'S SOLVED: when they finish a problem, name the method they used in a few words and ask ` +
+  `if they can see a different route (e.g. tower problems: substitution vs. h(cot α − cot β) = d; equations: ` +
+  `algebra vs. a graph; probability: a tree vs. the complement). Offer it, don't force it. If they take it up, ` +
+  `put ONLY the first line of the other route on the board (kind "insight", starting "Another way:") with a ` +
+  `gap for the next step — never the whole alternative solution. Then ask which route they'd use in an exam, and why.\n` +
   `- Answer in their language and register. Say "I" and "you", use contractions, think out loud a little ` +
   `("hm, what if we try…"). One idea per message. No lists, no headings, no bold walls.\n` +
   `- Use the board for anything they'd otherwise have to remember (a formula, a given, a diagram) INSTEAD of ` +
@@ -7921,14 +7937,33 @@ export function wantsArtifactTools(message: string, history: { role: "user" | "a
   const words = message.trim().split(/\s+/).filter(Boolean);
   return !(words.length > 0 && words.length <= 6 && !message.includes("?"));
 }
+/** The code-checked verdict on the student's step, as a binding prompt line. A correct step means MOVE ON —
+ *  don't make them re-derive what they just wrote (reported live: "replace 1025 with tan" micro-steps on a
+ *  line that was already right). A wrong one names nothing about the right answer. */
+export function stepVerdictLine(v?: { gap: string; given: string; verdict: "correct" | "incorrect" }): string {
+  if (!v) return "";
+  return v.verdict === "correct"
+    ? `\n\nVERIFIED BY CODE: the student's step «${v.given}» is CORRECT for the open gap «${v.gap}» (checked by numeric equivalence — trust this over your own reading). Acknowledge it in a few words, record it on the board as their line, and move to the NEXT step — do not ask them to re-derive, rewrite or justify what they just got right. If the problem is now solved, ask whether they see another way to it (name the method they used first).\n`
+    : `\n\nVERIFIED BY CODE: the student's step «${v.given}» is NOT equivalent to what the open gap «${v.gap}» needs (checked numerically — trust this over your own reading). Don't say "wrong" and never reveal the right expression: ask ONE question that makes them test their own line (plug in a value, check which side of the triangle is which, check the units).\n`;
+}
+
 export async function chatAboutTask(
   task: { title: string; why: string; context?: string; steps?: { text: string; done?: boolean; substeps?: { text: string; done: boolean }[] }[]; source?: string; sourceDetail?: string; sourceSubject?: string; sourceDue?: string; flashcards?: TaskFlashcards[]; quizzes?: TaskQuiz[] },
   history: { role: "user" | "assistant"; text: string }[],
   message: string,
   profile?: Profile,
   academic?: AcademicContext,
-  opts?: { schoolRecord?: string; stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string; growthTrend?: "up"; subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; voiceMode?: boolean; canvasMode?: boolean; recentJournal?: { date: string; text: string }[]; primer?: boolean; currentBoard?: BoardEntry[]; currentProblems?: TaskProblem[]; currentObjectives?: TaskObjective[]; notNeeded?: string[]; repair?: string; moveLine?: string; opening?: { role: string; text: string }[]; boardEvents?: BoardEvent[]; sessionState?: TutorSessionStateShape; policy?: TutorPolicy },
+  opts?: { schoolRecord?: string; stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string; growthTrend?: "up"; subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; voiceMode?: boolean; spoken?: { alternatives: string[] }; stepVerdict?: { gap: string; given: string; verdict: "correct" | "incorrect" }; canvasMode?: boolean; recentJournal?: { date: string; text: string }[]; primer?: boolean; currentBoard?: BoardEntry[]; currentProblems?: TaskProblem[]; currentObjectives?: TaskObjective[]; notNeeded?: string[]; repair?: string; moveLine?: string; opening?: { role: string; text: string }[]; boardEvents?: BoardEvent[]; sessionState?: TutorSessionStateShape; policy?: TutorPolicy },
 ): Promise<ChatResult> {
+  // Spoken input: the deterministic mishearing repair, computed once against what's in play (board lines,
+  // problems, the task itself) — it feeds the prompt (voiceInputBlock) and the board guard below.
+  const spokenRepair: SpokenRepair | null = opts?.spoken
+    ? repairSpokenMath(message, spokenContextFrom([task.title, task.context || "", ...(opts.currentBoard || []).map((b) => b.text || ""), ...(opts.currentProblems || []).map((p) => p.question || "")]))
+    : null;
+  // What the student SAID, as every guard that asks "did they reach this?" should read it: the raw message plus,
+  // when spoken, the repaired reading and the recognizer's alternatives — "1025 = height over b" did reach
+  // "tan 25° = h/b", and writing that line up as theirs is exactly right.
+  const heard = [message, ...(spokenRepair ? [spokenRepair.interpreted, ...(opts?.spoken?.alternatives || [])] : [])];
   const steps = task.steps || [];
   // Substeps (a step's own on-demand sub-checklist, ticked independently — see Profile.grades-style comment
   // on TaskStep.substeps) used to be invisible here: the tutor could see a step as "not done" while the
@@ -8103,7 +8138,7 @@ export async function chatAboutTask(
   // student, every task, every turn — so it belongs FIRST, where it can actually be cached; the volatile
   // per-request context goes last, right next to the equally-volatile TASK block it keeps company with
   // anyway.
-  const dynamicContext = nowBlock() + courseworkLine(profile, task.sourceSubject) + studentNameLine(profile?.name) + dueLine(task.sourceDue, tzOf(profile)) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + syllabusGroundingLine(profile, task.sourceSubject) + learningStyleLine(profile) + hintDensityLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + sessionRecapLine(profile?.sessions, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + (opts?.schoolRecord || "") + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine + (opts?.primer ? (opts?.moveLine || "") + (opts?.repair || "") + spokenMathHint(message) + scaffoldLine(message, history) + probeLine(message, history) + cheerLine(message, history, opts?.currentObjectives) : "");
+  const dynamicContext = nowBlock() + courseworkLine(profile, task.sourceSubject) + studentNameLine(profile?.name) + dueLine(task.sourceDue, tzOf(profile)) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + syllabusGroundingLine(profile, task.sourceSubject) + learningStyleLine(profile) + hintDensityLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + sessionRecapLine(profile?.sessions, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + (opts?.schoolRecord || "") + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine + (opts?.primer ? (opts?.moveLine || "") + (opts?.repair || "") + stepVerdictLine(opts?.stepVerdict) + (opts?.spoken && spokenRepair ? voiceInputBlock(message, opts.spoken.alternatives, spokenRepair) : spokenMathHint(message)) + scaffoldLine(message, history) + probeLine(message, history) + cheerLine(message, history, opts?.currentObjectives) : "");
   const sys =
     (opts?.primer ? PRIMER_PERSONA + PLAN_PROTOCOL + (sourcesForTrack(profile?.track).length ? `\n\nREAL QUESTIONS FIRST: this student is on the ${profile?.track === "ib" ? "IB (IB Documents / Revision Village)" : "AP (College Board AP Central)"} track. Before you write an exercise on an exam-style topic, call FIND_SOURCE_QUESTION once and adapt a fitting result (reword and re-number it, cite it via sourceUrl) instead of inventing the question from scratch. If it returns NONE, write it yourself as usual. Everything else about exercises (one at a time, single short answer, never reveal it) is unchanged.\n` : "") : "") +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
@@ -9200,7 +9235,7 @@ export async function chatAboutTask(
     let aheadMathFixed = false;
     const guardAheadMath = (draft: string, round: number, lastRound: boolean): boolean => {
       if (!opts?.primer || aheadMathFixed || lastRound || result.guardrailTripped) return false;
-      if (equationAhead(draft, [...history.filter((h) => h.role === "user").map((h) => h.text), message], ownGivens()).length === 0) return false;
+      if (equationAhead(draft, [...history.filter((h) => h.role === "user").map((h) => h.text), ...heard], ownGivens()).length === 0) return false;
       aheadMathFixed = true;
       console.log(`${new Date().toISOString()} [chat] round ${round}: reply states an equation step the student never reached — asking for the setup instead`);
       messages.push({ role: "assistant", content: draft });
@@ -9222,7 +9257,7 @@ export async function chatAboutTask(
     let ownArithFixed = false;
     const guardOwnArithmetic = (draft: string, round: number, lastRound: boolean): boolean => {
       if (!opts?.primer || ownArithFixed || lastRound || result.guardrailTripped) return false;
-      const bad = arithmeticAhead(draft, [...history.filter((h) => h.role === "user").map((h) => h.text), message], ownGivens());
+      const bad = arithmeticAhead(draft, [...history.filter((h) => h.role === "user").map((h) => h.text), ...heard], ownGivens());
       if (!bad.length) return false;
       ownArithFixed = true;
       console.log(`${new Date().toISOString()} [chat] round ${round}: reply computed a step for the student (${bad[0]}) — asking for a question instead`);
@@ -9261,7 +9296,7 @@ export async function chatAboutTask(
     let doingFixed = false;
     const guardNoDoing = (draft: string, round: number, lastRound: boolean): boolean => {
       if (!opts?.primer || doingFixed || lastRound || result.guardrailTripped || history.length < 1) return false;
-      const names = namesExactStep(draft), maths = bubbleDoesMath(draft, [...history.filter((h) => h.role === "user").map((h) => h.text), message]);
+      const names = namesExactStep(draft), maths = bubbleDoesMath(draft, [...history.filter((h) => h.role === "user").map((h) => h.text), ...heard]);
       if (!names && !maths) return false;
       doingFixed = true;
       console.log(`${new Date().toISOString()} [chat] round ${round}: reply ${names ? "names the exact operation" : "does maths for them"} — asking for a guiding question instead`);
@@ -9285,7 +9320,7 @@ export async function chatAboutTask(
     let groundedFixed = false;
     const guardGrounded = (draft: string, round: number, lastRound: boolean): boolean => {
       if (!opts?.primer || groundedFixed || lastRound || result.guardrailTripped) return false;
-      const studentTexts = [...history.filter((h) => h.role === "user").map((h) => h.text), message];
+      const studentTexts = [...history.filter((h) => h.role === "user").map((h) => h.text), ...heard];
       let why = "";
       if (praiseUngrounded(draft, message, result.plan)) why = "it opens with praise, but nothing they said was a checkable correct step";
       else {
@@ -9757,14 +9792,14 @@ export async function chatAboutTask(
           if (result.board.length >= 3) content = "LIMIT: three entries is a full turn on the board (setting up a new problem — the given, the question, one starting line — is exactly three). Keep what's up there and put the rest in your reply.";
           // "How you got there" is the STUDENT's reasoning: a line carrying a π-term / root / fraction that nothing the
           // student said (and no given) contains is a step the TUTOR took for them — refuse it.
-          else if (opts?.primer && !asksToWrite(message) && ["summary", "result"].includes(String(input?.kind)) && traceAheadOfStudent(String(input?.text || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), message], [...(opts?.currentBoard || []).filter((e) => e.kind !== "summary").map((e) => e.text), ...(opts?.currentProblems || []).map((p) => p.question)]).length) {
-            const missing = traceAheadOfStudent(String(input?.text || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), message], [...(opts?.currentBoard || []).filter((e) => e.kind !== "summary").map((e) => e.text), ...(opts?.currentProblems || []).map((p) => p.question)]);
+          else if (opts?.primer && !asksToWrite(message) && ["summary", "result"].includes(String(input?.kind)) && traceAheadOfStudent(String(input?.text || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), ...heard], [...(opts?.currentBoard || []).filter((e) => e.kind !== "summary").map((e) => e.text), ...(opts?.currentProblems || []).map((p) => p.question)]).length) {
+            const missing = traceAheadOfStudent(String(input?.text || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), ...heard], [...(opts?.currentBoard || []).filter((e) => e.kind !== "summary").map((e) => e.text), ...(opts?.currentProblems || []).map((p) => p.question)]);
             content = `REJECTED: "How you got there" and "result" entries record only what the STUDENT has actually said or done, and this line contains ${missing.join(", ")} which they never reached — that's a step you'd be taking for them. Write only the steps they've stated (in your own words). If they haven't got there yet, write nothing and ask them the question instead.`;
           }
           // The tutor must not BUILD the setup equation for them ("x·tan40° = (x+500)·tan25°" appearing out of nowhere is the
           // tutor doing the work): a worked-out equation piece nobody said and no given contains is refused.
-          else if (opts?.primer && !["given", "focus"].includes(String(input?.kind)) && String(input?.owner) !== "student" && equationAhead(String(input?.text || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), message], ownGivens()).length) {
-            const missing = equationAhead(String(input?.text || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), message], ownGivens());
+          else if (opts?.primer && !["given", "focus"].includes(String(input?.kind)) && String(input?.owner) !== "student" && equationAhead(String(input?.text || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), ...heard], ownGivens()).length) {
+            const missing = equationAhead(String(input?.text || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), ...heard], ownGivens());
             content = `REJECTED: this writes an equation step (${missing.join(", ")}) that the student never reached — building the setup is THEIR work. Don't write it; ask the question that gets them to produce it (e.g. "what ratio links h, the angle and that distance?") and write their line once they say it.`;
           }
           // The tutor must not put the METHOD on the board ("tan θ = |m1 − m2| / (1 + m1m2)") before the student reached for it, unless they
@@ -9793,12 +9828,13 @@ export async function chatAboutTask(
           // chat — see leaksAnyProblemAnswer's own comment. Checked against every problem currently in play,
           // same "both what they already see and what this turn made" scope as the duplicate check above.
           else if (leaksAnyProblemAnswer(String(input?.text || ""), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that states a problem's answer outright — rewrite this entry without that value. The answer only shows once they solve the problem themselves, in its own widget.";
+          else if (boardRepeatsMishearing(String(input?.text || ""), spokenRepair)) content = `REJECTED: that line repeats a speech-recognition slip ("${boardRepeatsMishearing(String(input?.text || ""), spokenRepair)}") — write what the student MEANT, typeset in $…$ (see SPOKEN INPUT), then call WRITE_TO_BOARD again.`;
           else { const r = makeBoardEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Écrit au tableau : « ${r.entry.text.slice(0, 60)} »` : `Written to board: "${r.entry.text.slice(0, 60)}"`); } }
         } else if (name === "DRAW_ON_BOARD") {
           // Its own smaller cap, separate from WRITE_TO_BOARD's — a figure is heavier to render (SVG, not
           // text) and a turn with several genuine diagrams is already an unusual turn.
           if (result.board.filter((e) => e.kind === "diagram").length >= 3) content = "LIMIT: you've already drawn a few figures this message — that's enough for one turn.";
-          else if (opts?.primer && equationAhead((Array.isArray(input?.ops) ? input.ops : []).filter((o: any) => o?.op === "equation").map((o: any) => String(o?.latex || "")).join(" ; "), [...history.filter((h) => h.role === "user").map((h) => h.text), message], ownGivens()).length) content = "REJECTED: that figure contains an equation step the student never reached — building the setup is THEIR work. Draw the situation without it and ask them to build the equation.";
+          else if (opts?.primer && equationAhead((Array.isArray(input?.ops) ? input.ops : []).filter((o: any) => o?.op === "equation").map((o: any) => String(o?.latex || "")).join(" ; "), [...history.filter((h) => h.role === "user").map((h) => h.text), ...heard], ownGivens()).length) content = "REJECTED: that figure contains an equation step the student never reached — building the setup is THEIR work. Draw the situation without it and ask them to build the equation.";
           // Same answer-leak guard as WRITE_TO_BOARD above — a figure's caption or an equation/label op can
           // state a value just as plainly as prose can.
           else if (leaksAnyProblemAnswer([input?.caption, ...(Array.isArray(input?.ops) ? input.ops.map((o: any) => `${o?.text || ""} ${o?.latex || ""}`) : [])].join(" "), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that figure states a problem's answer outright — redraw it without that value.";
@@ -9843,7 +9879,7 @@ export async function chatAboutTask(
         } else if (name === "SVG_ON_BOARD") {
           if (result.board.filter((e) => e.kind === "svg").length >= 2) content = "LIMIT: that's enough figures for one turn.";
           else if (leaksAnyProblemAnswer(`${input?.caption || ""} ${svgText(sanitizeSvg(String(input?.svg || "")))}`, [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that figure labels a problem's answer outright — redraw it with the unknown shown as '?'.";
-          else if (opts?.primer && equationAhead(svgText(sanitizeSvg(String(input?.svg || ""))), [...history.filter((h) => h.role === "user").map((h) => h.text), message], ownGivens()).length) content = "REJECTED: that figure contains an equation step the student never reached — draw the situation (givens and unknowns) without it.";
+          else if (opts?.primer && equationAhead(svgText(sanitizeSvg(String(input?.svg || ""))), [...history.filter((h) => h.role === "user").map((h) => h.text), ...heard], ownGivens()).length) content = "REJECTED: that figure contains an equation step the student never reached — draw the situation (givens and unknowns) without it.";
           else { const r = makeSvgEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Figure : « ${r.entry.text.slice(0, 60)} »` : `Figure: "${r.entry.text.slice(0, 60)}"`); } }
         } else if (name === "FLOW_ON_BOARD") {
           if (result.board.filter((e) => e.kind === "flow").length >= 2) content = "LIMIT: that's enough diagrams for one turn.";

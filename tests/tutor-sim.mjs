@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 // answer through, hands the thinking back, writes reasoning to the board, rejects bad/leaky tool calls and
 // keeps replies short. No network, no key needed.
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
-const { chatAboutTask, summarizeCoursework, makeGeometryEntry, makeProblem, isDuplicateProblem, isDuplicateBoardEntry, isDuplicateDiagram, wantsArtifactTools } = await import("../server/claude.ts");
+const { chatAboutTask, makeBoardEntry, summarizeCoursework, makeGeometryEntry, makeProblem, isDuplicateProblem, isDuplicateBoardEntry, isDuplicateDiagram, wantsArtifactTools } = await import("../server/claude.ts");
 const { buildGeometry } = await import("../shared/geometry.ts");
 const { autoMathLine } = await import("../shared/mathText.ts");
 const P = await import("../server/tutorPolicy.ts");
@@ -483,5 +483,34 @@ export async function runTutorSim(check, section) {
     script = (b, i) => i === 0 ? { content: "", tool_calls: [tc("ANNOTATE_BOARD", { target: "#2", note: "It should be 8.5 N, not mg", tone: "error" })] } : { content: "Which direction does N point?" };
     r = await run("is N = mg?", { board, problems: [{ id: "p1", question: "Block on 30° slope, m = 1 kg: find N", answer: "8.5 N", createdAt: "" }], history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
     check("a pointer that states the problem's answer is refused (point and ask, never tell)", !r.boardAll.some((e) => e.kind === "annotation") && /REJECTED/.test(JSON.stringify(calls[1].messages)));
+  }
+
+  section("Tutor simulation — spoken input repair, code-verified steps, LaTeX-safe board (tower problem)");
+  {
+    const towerBoard = [
+      { id: "g1", at: "", kind: "given", text: "Observers A and B, angles of elevation $15^\\circ$ and $25^\\circ$, AB = 100 m" },
+      { id: "f1", at: "", kind: "formula", text: "$\\tan(25^\\circ) = \\frac{h}{b}$, $\\tan(15^\\circ) = \\frac{h}{100+b}$" },
+    ];
+    // Spoken "tan 25 = h over b" arrives as "1025 = height over b": the prompt names the likely meaning and the
+    // board refuses a line that repeats the mishearing.
+    script = (b, i) => i === 0
+      ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "1025 = height over b", kind: "summary" })] }
+      : i === 1 ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "$\\tan(25^\\circ) = \\frac{h}{b}$", kind: "summary" })] }
+      : { content: "Right, two triangles. What does that give you for b?" };
+    let r = await run("1025 = height over b", { board: towerBoard, history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }], opts: { spoken: { alternatives: ["10 25 = height over b"] } } });
+    const sys = JSON.stringify(calls[0]?.messages || []);
+    check("spoken input: the prompt says it's a transcript and gives the board-aware reading (tan 25°)", /SPOKEN INPUT: the student SAID/.test(sys) && /tan 25°/.test(sys) && /10 25 = height over b/.test(sys));
+    check("spoken input: a board line repeating the mishearing (\"1025\") is rejected, the typeset reading lands", !r.board.some((e) => /1025/.test(e.text)) && r.board.some((e) => /\\tan\(25/.test(e.text)) && /speech-recognition slip/.test(JSON.stringify(calls[1]?.messages || [])));
+    // A typed message never gets the spoken block.
+    script = () => ({ content: "What does that give you for b?" });
+    await run("tan 25 = h/b", { board: towerBoard, history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
+    check("typed input: no SPOKEN INPUT block", !/SPOKEN INPUT: the student SAID/.test(JSON.stringify(calls[0]?.messages || [])));
+    // A code-verified step reaches the prompt as binding.
+    script = () => ({ content: "Nice. Now put that into the second equation — what do you get?" });
+    await run("b = h/tan(25°)", { board: towerBoard, history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }], opts: { stepVerdict: { gap: "b = ?", given: "b = h/tan(25°)", verdict: "correct" } } });
+    check("a code-verified correct step tells the tutor to move on, not re-derive", /VERIFIED BY CODE[^"]*CORRECT[^"]*move to the NEXT step/.test(JSON.stringify(calls[0]?.messages || [])));
+    // LaTeX that can't typeset never reaches the board; the model gets KaTeX's error to fix it.
+    const bad = makeBoardEntry({ text: "$\\frac{h}{100 + \\tan(25^\\circ)$", kind: "summary" });
+    check("an unbalanced \\frac is bounced back with KaTeX's error, never written", "error" in bad && /doesn't typeset/.test(bad.error) && "entry" in makeBoardEntry({ text: "$\\frac{h}{100 + b} = \\tan(15^\\circ)$" }));
   }
 }

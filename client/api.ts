@@ -461,14 +461,18 @@ export const api = {
   // `board`/`problems`: THIS turn's local copy of what's currently on the board — sent so the tutor can see
   // what it's already written (see chatAboutTask's boardBlock) instead of writing blind, which read live as
   // Otto asking the student to describe its own board back to it.
-  chat: (id: string, message: string, history: NonNullable<WebTask["chat"]>, board: BoardEntry[], problems: TaskProblem[], stepIndex?: number, materials?: { label: string; text: string }[], voiceMode?: boolean, canvasMode?: boolean, primer?: boolean, objectives?: TaskObjective[]): Promise<{ reply: string; chatDelta: NonNullable<WebTask["chat"]>; board: BoardEntry[]; problems: TaskProblem[]; objectives?: TaskObjective[]; guardrailTripped: boolean; task: WebTask; sessionCapReached?: boolean; subject?: string; sessionEnded?: boolean; error?: string }> =>
+  // Grade an answer to a board gap ("b = ?") on the server — the answer key never has to be trusted to the
+  // browser, and "h/tan(25°)" / "h cot 25°" / "\frac{h}{\tan 25^\circ}" are all graded alike (mathEquiv.ts).
+  checkGap: (id: string, entryId: string, answer: string): Promise<{ verdict: "correct" | "incorrect" | "unknown" }> =>
+    post(`/api/tasks/${encodeURIComponent(id)}/board/${encodeURIComponent(entryId)}/check`, { answer }),
+  chat: (id: string, message: string, history: NonNullable<WebTask["chat"]>, board: BoardEntry[], problems: TaskProblem[], stepIndex?: number, materials?: { label: string; text: string }[], voiceMode?: boolean, canvasMode?: boolean, primer?: boolean, objectives?: TaskObjective[], spoken?: { alternatives: string[] }): Promise<{ reply: string; chatDelta: NonNullable<WebTask["chat"]>; board: BoardEntry[]; problems: TaskProblem[]; objectives?: TaskObjective[]; guardrailTripped: boolean; task: WebTask; sessionCapReached?: boolean; subject?: string; sessionEnded?: boolean; error?: string }> =>
     post(`/api/tasks/${id}/chat`, {
       // The on-device thread can be long: send how the session began (first 3) + the recent tail, not all of it
       // (the server pins the opening verbatim and keeps its own window).
       message, history: (history.length > 66 ? [...history.slice(0, 3), ...history.slice(-62)] : history).map((h) => ({ role: h.role, text: h.text })),
       board: board.map((b) => ({ id: b.id, text: b.text, kind: b.kind, outline: b.outline, diagram: b.diagram?.slice(0, 40), owner: b.owner, status: b.status, concept: b.concept, targetId: b.targetId })),
       problems: problems.map((p) => ({ question: p.question, options: p.options, solved: p.solved === true })),
-      stepIndex, materials, voiceMode, canvasMode, primer, objectives,
+      stepIndex, materials, voiceMode, canvasMode, primer, objectives, spoken,
     }),
   // Otto's opening line for a tutor session (see tutorOpener in server/claude.ts): the browser's own
   // session history — the REAL board lines and the student's questions from their last sessions, which the

@@ -44,6 +44,12 @@ export function plainMathToLatex(run: string): string {
   return s.replace(/\s{2,}/g, " ").trim();
 }
 
+/** A {…} group with up to four levels of nesting. A flat `\{[^{}]*\}` stopped at the first inner brace, so a
+ *  nested "\frac{h}{100 + \frac{h}{\tan 25^\circ}}" was wrapped only up to "\frac{h}" and the rest printed raw
+ *  (reported live on the tower problem). */
+const BRACED = (() => { let g = "\\{[^{}]*\\}"; for (let i = 0; i < 3; i++) g = `\\{(?:[^{}]|${g})*\\}`; return g; })();
+const RAW_LATEX_RUN = new RegExp(`\\\\[a-zA-Z]+(?:\\s*${BRACED}|\\s*\\\\[a-zA-Z]+|\\s*[A-Za-z](?![A-Za-z])|[\\d+\\-*/().=^_,:πθμ√∞°\\s])+`, "g");
+
 /** A bare LaTeX run the model wrote WITHOUT $…$ (reported live on the board: "x = \tfracπ3, \tfrac5π3"
  *  printed as raw commands, or as jammed plain text). Wrap such a run in $…$ so KaTeX typesets it instead.
  *  Only a run that carries a real expression after the command (operator, digit, greek, or a {group}) is
@@ -55,7 +61,7 @@ export function wrapRawLatex(line: string): string {
   return parts.map((seg) => {
     if (!seg) return "";
     if (/^\$|^\\\(|^\\\[/.test(seg)) return seg;
-    return seg.replace(/\\[a-zA-Z]+(?:\s*\{[^{}]*\}|\s*\\[a-zA-Z]+|\s*[A-Za-z](?![A-Za-z])|[\d+\-*/().=^_,:πθμ√∞\s])+/g, (m) => {
+    return seg.replace(RAW_LATEX_RUN, (m) => {
       // Trailing whitespace stays OUTSIDE the $…$ so two wrapped runs don't butt together ("π/3,5π/3").
       const body = m.replace(/\s+$/, "");
       if (!/[=+\-*/0-9πθμ√^{}]/.test(body.replace(/\\[a-zA-Z]+/g, ""))) return m;
@@ -126,3 +132,25 @@ export function repairLatex(text: string): string {
     .replace(/(?<=[\s)\d])cdot(?=[\s(\d\\])/g, (m) => (mathy ? "\\cdot" : m));
 }
 
+
+/** LaTeX → readable plain text, for the places KaTeX can't go (SVG figure labels, aria-labels, the fallback
+ *  when KaTeX itself fails). Nested fractions resolve innermost-first, ^\circ becomes °, and layout-only
+ *  commands (\displaystyle, \left, \right, spacing) vanish instead of printing as "displaystyle" / "circ". */
+export function latexToPlainText(latex: string): string {
+  let s = repairLatex(String(latex || ""));
+  s = s.replace(/\\(?:displaystyle|textstyle|scriptstyle|left|right|big|Big|bigg|Bigg)\b/g, "")
+    .replace(/\\[,;:! ]|\\q?quad\b/g, " ")
+    .replace(/\^\s*\{?\\circ\}?/g, "°").replace(/\\circ\b/g, "°")
+    .replace(/\\(?:text|mathrm|mathbf|operatorname)\s*\{([^{}]*)\}/g, "$1")
+    .replace(/\\sqrt\s*\{([^{}]*)\}/g, "√($1)")
+    .replace(/\\(arcsin|arccos|arctan|sinh|cosh|tanh|sin|cos|tan|cot|sec|csc|log|ln|exp)\b/g, "$1");
+  for (let i = 0; i < 6 && /\\[dtc]?frac/.test(s); i++) {
+    s = s.replace(/\\[dtc]?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, (_, a: string, b: string) => {
+      const wrap = (x: string) => (/^[\w.°√π()]+$/u.test(x.trim()) ? x.trim() : `(${x.trim()})`);
+      return `${wrap(a)}/${wrap(b)}`;
+    }).replace(/\\[dtc]?frac\s*(\d)(\d)/g, "$1/$2");
+  }
+  const SYM: Record<string, string> = { cdot: "·", times: "×", div: "÷", pi: "π", theta: "θ", alpha: "α", beta: "β", infty: "∞", approx: "≈", neq: "≠", ne: "≠", leq: "≤", le: "≤", geq: "≥", ge: "≥", pm: "±", Rightarrow: "⇒", to: "→", rightarrow: "→" };
+  s = s.replace(/\\([a-zA-Z]+)/g, (_, c: string) => SYM[c] ?? c).replace(/[{}]/g, "");
+  return s.replace(/\s{2,}/g, " ").trim();
+}

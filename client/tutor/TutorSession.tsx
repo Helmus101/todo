@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { ArrowRight, TrendingUp, RotateCcw, MessageCircle, Lightbulb, CircleHelp, ChevronRight, ChevronDown, Maximize2, Minimize2 } from "lucide-react";
-import type { WebTask, TaskProblem } from "../../shared/types.ts";
+import type { WebTask, TaskProblem, BoardEntry } from "../../shared/types.ts";
 import { api } from "../api.ts";
 import { setLocalObjectives, getLocalThread } from "../localChatBoard.ts";
 import { useLang, LangContext } from "../ui.tsx";
@@ -251,7 +251,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [objectivesOpen]);
-  const send = useCallback(async (override?: string, voiceMode?: boolean) => {
+  const send = useCallback(async (override?: string, voiceMode?: boolean, spoken?: { alternatives: string[] }) => {
     let message = (override ?? input).trim();
     if (!message || sending || !task) return;
     const isAutoResult = /^\[(?:Exercise|Exercice)\]/.test(message);
@@ -277,7 +277,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       // come back as a hard "Otto couldn't reply" with no message at all. canvasMode restricts the tutor to
       // CREATE_PROBLEM (individual, inline, answerable right on the board) instead — the only artifact this
       // screen actually knows how to show.
-      const response = await api.chat(task.id, message, task.chat || [], task.board || [], (task.problems || []).map((p) => ({ ...p, solved: solvedRef.current.has(p.id) })), undefined, undefined, voiceMode, true, true, task.objectives || []);
+      const response = await api.chat(task.id, message, task.chat || [], task.board || [], (task.problems || []).map((p) => ({ ...p, solved: solvedRef.current.has(p.id) })), undefined, undefined, voiceMode, true, true, task.objectives || [], spoken);
       const { task: updated, objectives, boardCleared } = response as typeof response & { boardCleared?: boolean };
       // objectives is only ever the FULL replacement list (SET_OBJECTIVES' own contract), or undefined
       // when Otto didn't touch it this turn — never overwrite the existing list with an empty one.
@@ -349,6 +349,19 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       `[Exercise] I answered "${r.given.slice(0, 120)}" — marked ${r.correct ? "right" : "wrong"} (try #${r.attempt}).`));
     setResultTick((n) => n + 1);
   }, [L]);
+  // A board gap answered in place: graded by the server, then reported to Otto like an exercise result (the
+  // verdict rides along; Otto reacts to it like a person would, never reveals the key on a miss).
+  const onGapCheck = useCallback(async (entry: BoardEntry, given: string) => {
+    if (!task) return "unknown" as const;
+    const { verdict } = await api.checkGap(task.id, entry.id, given);
+    if (verdict === "correct") setTask((cur) => cur ? { ...cur, board: (cur.board || []).map((b) => b.id === entry.id ? { ...b, status: "correct" as const } : b) } : cur);
+    const line = entry.text.replace(/\s+/g, " ").slice(0, 100);
+    resultsRef.current.push(L(
+      `[Exercice] Au tableau, pour « ${line} », j'ai écrit « ${given.slice(0, 120)} » — ${verdict === "correct" ? "vérifié juste" : verdict === "incorrect" ? "vérifié faux" : "non vérifiable automatiquement"}.`,
+      `[Exercise] On the board line "${line}" I wrote "${given.slice(0, 120)}" — ${verdict === "correct" ? "checked right" : verdict === "incorrect" ? "checked wrong" : "couldn't be auto-checked"}.`));
+    setResultTick((n) => n + 1);
+    return verdict;
+  }, [task, L]);
   const onWidgetResult = useCallback((r: { type: string; caption: string; mistakes: number; total: number }) => {
     resultsRef.current.push(L(
       `[Activité] J'ai terminé « ${r.caption.slice(0, 80)} » (${r.type}) — ${r.mistakes === 0 ? "sans erreur" : `${r.mistakes} erreur${r.mistakes > 1 ? "s" : ""}`}.`,
@@ -770,7 +783,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       )}
       <section className="ts-canvas" aria-label={L("Tableau", "Board")}>
         <div className="tutor-board-body ts-board-body" ref={setSurfaceEl} style={{ display: desmosOpen ? "none" : undefined }}>
-          <BoardArtifact task={task} writing={sending} onProblemResult={onProblemResult} onWidgetResult={onWidgetResult} sheetSignal={sheetSignal} />
+          <BoardArtifact task={task} writing={sending} onProblemResult={onProblemResult} onWidgetResult={onWidgetResult} sheetSignal={sheetSignal} onGapCheck={onGapCheck} />
         </div>
         {/* Desmos stays mounted once opened (an iframe that's removed reloads blank, losing the student's graph). */}
         {desmosOpen || desmosEverOpenedRef.current ? (
@@ -823,7 +836,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
         <AskOttoPanel
           variant="dock"
           task={task} currentStep={undefined} input={input} setInput={setInput} sending={sending}
-          error={error} pendingMsg={pendingMsg} onSend={(o, v) => void send(o, v)}
+          error={error} pendingMsg={pendingMsg} onSend={(o, v, _canvas, sp) => void send(o, v, sp)}
           onOpenNote={noop} onOpenDeck={noop} onOpenQuiz={noop}
           emptyText={openerText}
           quickReplies={fresh ? starters : justFinishedExercise ? nextChips : followUps}

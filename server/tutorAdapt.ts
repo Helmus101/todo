@@ -1,3 +1,4 @@
+import type { SpokenRepair } from "../shared/spokenMath.ts";
 // Tutor adaptation — keeps Otto from looping and lets it learn, per student, WHICH teaching move works.
 //
 // Two layers, both pure and unit-tested (tests/run.mjs, tests/tutor-sim.mjs):
@@ -149,6 +150,40 @@ export function spokenMathHint(message: string): string {
   for (const [re, rep] of SPOKEN) s = s.replace(re, rep);
   s = s.replace(/\s+/g, " ").trim();
   return `\n\nDICTATED MATHS: the student's message looks spoken/transcribed. Literal symbol reading: «${s}». The GROUPING (what is under which fraction bar, what a bracket holds, what multiplies what) is NOT reliable in speech — write your typeset reading on the board and confirm it with them before working on it, and if a word looks like a transcription slip ("Cortex" for "cot x"), say what you took it to mean.\n`;
+}
+
+/** A message the student SPOKE (speech recognition, never typing). Always tells the tutor the input is a
+ *  transcript, hands it the recognizer's runner-up readings and the deterministic repair (spokenMath.ts), and
+ *  sets how to act on it: work from the likely meaning, confirm only a guess that changes the maths, never
+ *  quote the garbled words back or put them on the board. Replaces spokenMathHint's keyword trigger for voice
+ *  ("1025 = height over b" has no keyword at all, yet is "tan 25° = h / b"). */
+export function voiceInputBlock(message: string, alternatives: string[], repair: SpokenRepair): string {
+  const literal = spokenMathHint(message).match(/«([^»]*)»/)?.[1];
+  const alts = alternatives.filter((a) => a && a !== message).slice(0, 3);
+  const lines = [
+    `\n\nSPOKEN INPUT: the student SAID this; it reached you through speech recognition, which mishears maths (function names become numbers or words, letters become digits, grouping is lost). Raw transcript: «${message.slice(0, 400)}».`,
+    alts.length ? `The recognizer's other readings: ${alts.map((a) => `«${a.slice(0, 200)}»`).join(" · ")}.` : "",
+    literal ? `Literal symbol reading: «${literal}».` : "",
+    repair.changes.length
+      ? `Likely meaning given the board: «${repair.interpreted.slice(0, 400)}» (${repair.changes.map((c) => `"${c.from}" → "${c.to}": ${c.why}`).join("; ")}). Confidence: ${repair.confidence}.`
+      : "",
+    `HOW TO HANDLE IT: work from what they most likely MEANT, like a person in the room would. ${repair.confidence === "low" ? "At least one reading is a guess and it changes the maths — confirm it in ONE short clause inside your reply (\"you mean h over tan 25°, right?\") while still moving forward." : "If the likely meaning is clear, just use it — don't make them repeat themselves."} If you genuinely can't tell what they meant, ask once, offering your best reading. NEVER quote the garbled words back, never correct their pronunciation, and never write the raw transcript on the board: every board line uses the interpreted, typeset maths.\n`,
+  ];
+  return lines.filter(Boolean).join(" ");
+}
+
+/** True when a board line carries a raw-transcript token the repair flagged ("1025", "json", "count 25") —
+ *  the board must show the interpreted maths, never the mishearing (reported live: "1025 = height over B"
+ *  written on the board verbatim). */
+export function boardRepeatsMishearing(text: string, repair: SpokenRepair | null | undefined): string | null {
+  if (!repair) return null;
+  for (const c of repair.changes) {
+    const from = c.from.trim();
+    if (from.length < 2) continue; // a lone "8" (→ h) is far too common to police on the board
+    const re = new RegExp(`(?<![\\p{L}\\p{N}])${from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`, "iu");
+    if (re.test(text)) return from;
+  }
+  return null;
 }
 
 /** What the tutor is ASKING about: the specific values/expressions in its final question — angles/units ("270°",

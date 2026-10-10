@@ -24,7 +24,10 @@ interface AskOttoPanelProps {
   sending: boolean;
   error: string | null;
   pendingMsg: string | null;
-  onSend: (override?: string, voiceMode?: boolean) => void;
+  /** `spoken` is set only for a message that came straight from speech recognition (never for typing with
+   *  voice mode on) — it carries the recognizer's runner-up readings so the tutor can repair a mishearing.
+   *  (The third slot is StudyMode's canvasMode — never pass `spoken` there: an object would read as true.) */
+  onSend: (override?: string, voiceMode?: boolean, canvasMode?: boolean, spoken?: { alternatives: string[] }) => void;
   onOpenNote: (id: string, title: string) => void;
   onOpenDeck: (id: string, title: string) => void;
   onOpenQuiz: (id: string, title: string) => void;
@@ -155,13 +158,13 @@ export function AskOttoPanel({
   };
   const recog = useSpeechRecognition({
     lang: speechLang,
-    onResult: (text) => {
+    onResult: (text, meta) => {
       if (sendingRef.current) return;
       // Otto's own voice coming back (during speech, in the post-speech tail, or verbatim) is NEVER input.
       if (echoFilterRef.current.isEcho(text)) return;
       // Real student speech while Otto talks: interrupt him — cancel the TTS, the utterance still sends.
       if (speakingRef.current && bargeIn) synth.cancel();
-      onSend(text, true);
+      onSend(text, true, undefined, { alternatives: meta?.alternatives || [] });
     },
     // Live barge-in channel: interim text streams in while the student is still talking — cancel the TTS
     // the instant real speech is detected. Echo-filtered so Otto doesn't cancel himself.
