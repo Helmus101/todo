@@ -16,7 +16,7 @@ import { sanitizeSvg, svgText } from "../shared/svgSafe.ts";
 import { repairSpokenMath, spokenContextFrom, type SpokenRepair } from "../shared/spokenMath.ts";
 import { findArithmeticClaims } from "./arithmetic.ts";
 import { boardSurfaceBlock } from "./boardEvents.ts";
-import { replyStatesValue, socraticFallback, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn } from "./tutorAdapt.ts";
+import { replyStatesValue, socraticFallback, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario } from "./tutorAdapt.ts";
 import {
   createTutorChat, retryRequest, usageOf, parseToolArgs, stripLeakedToolCallSyntax, OUT,
   CREATE_PROBLEM_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, SVG_ON_BOARD_TOOL, FLOW_ON_BOARD_TOOL,
@@ -84,7 +84,7 @@ const VOICE_BLOCK = `\n\nVOICE MODE: your reply is read aloud. Write it as speec
 // ── Tools (the board) ─────────────────────────────────────────────────────────────────────────────────
 const WRITE_TO_BOARD = {
   name: "WRITE_TO_BOARD",
-  description: "Write one short entry on the board: keywords and structure, not prose (≤ 25 words). Maths in LaTeX between $…$.",
+  description: "Write one short entry on the board: keywords and structure, not prose (≤ 25 words). Maths in LaTeX between $…$. Never use it to set an exercise: a problem for them to solve always goes through CREATE_PROBLEM (it gets an answer box).",
   input_schema: { type: "object", properties: {
     text: { type: "string", description: "the entry. Several short lines are fine for a worked sequence (one move per line)." },
     kind: { type: "string", enum: ["given", "formula", "definition", "result", "summary", "insight", "instruction", "focus", "outline", "gap"], description: "given = the problem's data; result = something they derived; summary = their reasoning so far; insight = their aha; gap = a line for THEM to finish (ends in '= ?'); outline = headed bullets." },
@@ -182,6 +182,21 @@ export function leakedValue(reply: string, message: string, board: BoardEntry[],
   return null;
 }
 
+/** The student asked to be given an exercise ("give me a problem", "test me", "un exercice"). Exported for tests. */
+export function wantsExercise(message: string): boolean {
+  return asksForProblem(message) || /\b(?:quiz|test) me\b|\binterroge[- ]moi\b|\b(?:un|des|un autre|nouvel?)\s+(?:exo|exercice|probl[èe]me)s?\b|\bpractice (?:problem|question)s?\b/i.test(String(message || ""));
+}
+
+/** A board line that sets up a problem nobody gave: a scenario/givens line (2+ quantities with units) carrying a
+ *  number that appears nowhere in what the student said or in a problem already posted. That's Otto inventing an
+ *  exercise as plain board text — it belongs in CREATE_PROBLEM, with an answer box. Exported for tests. */
+export function inventsProblemOnBoard(text: string, said: string[]): boolean {
+  if (!looksLikeGivensOrScenario(text)) return false;
+  const nums = (String(text).replace(/\\[a-zA-Z]+/g, " ").match(/\d+(?:[.,]\d+)?/g) || []).map((n) => n.replace(",", "."));
+  const heard = new Set((said.join(" ").match(/\d+(?:[.,]\d+)?/g) || []).map((n) => n.replace(",", ".")));
+  return nums.some((n) => !heard.has(n));
+}
+
 /** A wrong arithmetic claim in the reply ("12 × 3 = 38"), as a correction note for the model, or null. */
 export function wrongArithmetic(reply: string, message = ""): string | null {
   // A wrong claim the STUDENT made, quoted back to them, is the point of the reply — not Otto's own slip.
@@ -223,6 +238,8 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   ];
   const tools = tutorTools(!!input.canvasMode).map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } }));
 
+  const said = [...history.filter((h) => h.role === "user").map((h) => h.text), message, ...(spokenRepair ? [spokenRepair.interpreted, ...(input.spoken?.alternatives || [])] : []), ...problems.map((p) => p.question || ""), ...board.filter((b) => b.kind === "given").map((b) => b.text)];
+  const wantsProblem = wantsExercise(message);
   const allBoard = () => [...(result.boardCleared ? [] : board), ...result.board];
   const allProblems = () => [...problems, ...result.problems];
   let corrected = false;
@@ -253,6 +270,13 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
         result.error = true;
         return result;
       }
+      // Hard guard 0: they asked for an exercise → it exists as a real problem (answer box), not just talk or board text.
+      if (wantsProblem && !result.problems.length && !corrected && !lastRound) {
+        corrected = true;
+        messages.push({ role: "assistant", content: text });
+        messages.push({ role: "user", content: "(They asked for an exercise. Create it now with CREATE_PROBLEM — full statement, one short answer, a check expression for a numeric answer, precision and unit in the hint — then a one-line message pointing them to it. Don't mention this note.)" });
+        continue;
+      }
       // Hard guard 1: never hand over an answer they're meant to find.
       const leaked = leakedValue(reply, message, allBoard(), allProblems());
       // Hard guard 2: arithmetic the reply asserts must be right.
@@ -275,7 +299,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       const name = tc.function?.name;
       const args = parseToolArgs(tc.function?.arguments) || {};
       let content: string;
-      try { content = applyTool(name, args, { message, result, allBoard, allProblems, spokenRepair, fr }); }
+      try { content = applyTool(name, args, { message, result, allBoard, allProblems, spokenRepair, fr, said, wantsExercise: wantsProblem }); }
       catch (e: any) { content = `ERROR: ${e?.message || e}`; }
       messages.push({ role: "tool", tool_call_id: tc.id, content });
     }
@@ -292,6 +316,9 @@ interface ToolCtx {
   allProblems: () => TaskProblem[];
   spokenRepair: SpokenRepair | null;
   fr: boolean;
+  /** Everything the student has said this session (and problems already posted) — the only legitimate source of givens. */
+  said: string[];
+  wantsExercise: boolean;
 }
 const LEAK = "REJECTED: that shows the answer to an open problem or gap — they must find it. Leave that value out (use '?').";
 const ok = (id?: string) => JSON.stringify({ ok: true, ...(id ? { id } : {}) });
@@ -314,6 +341,11 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       if (result.board.length >= 8) return "LIMIT: that's plenty on the board for one turn.";
       if (isDuplicateBoardEntry(c.allBoard(), input)) return "DUPLICATE: that's already on the board — point at it instead.";
       if (input.kind !== "gap" && leaks(text)) return LEAK;
+      // A problem is posted with CREATE_PROBLEM (answer box, checked key) — never as board text plus a "= ?" gap.
+      if (input.owner !== "student" && c.wantsExercise && !result.problems.length && (input.kind === "gap" || looksLikeGivensOrScenario(text)))
+        return "REJECTED: they asked for an exercise — post it with CREATE_PROBLEM (the full statement, one short answer, a check expression, precision and unit in the hint), not as board text.";
+      if (input.owner !== "student" && inventsProblemOnBoard(text, [...c.said, ...result.problems.map((q) => q.question)]))
+        return "REJECTED: that sets up a problem the student never gave. A new problem goes through CREATE_PROBLEM, and only when they ask for one; the board's givens come from THEIR problem.";
       const heard = boardRepeatsMishearing(text, c.spokenRepair);
       if (heard) return `REJECTED: "${heard}" is a speech-recognition slip — write what the student MEANT, typeset in $…$.`;
       const r = makeBoardEntry(input);

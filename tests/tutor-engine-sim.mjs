@@ -5,7 +5,7 @@
 // carries the conversation first and the background second.
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
 delete process.env.GEMINI_API_KEY;
-const { runTutorTurn, detectSubject, backgroundBlock, TUTOR_PROMPT, leakedValue } = await import("../server/tutor.ts");
+const { runTutorTurn, detectSubject, backgroundBlock, TUTOR_PROMPT, leakedValue, wantsExercise, inventsProblemOnBoard } = await import("../server/tutor.ts");
 
 let script = () => ({ content: "" });
 let calls = [];
@@ -96,4 +96,28 @@ export async function runTutorEngineSim(check, section) {
   check("subject detection: explicit words win, keywords decide otherwise, nothing → undefined",
     detectSubject("j'ai un exo de physique sur les forces") === "Physics" && detectSubject("solve x² − 5x + 6 = 0") === "Math" &&
     detectSubject("why did the cold war start") === "History" && detectSubject("help me plan my essay on Shakespeare") === "English" && detectSubject("hi") === undefined);
+
+  // Reported live: asked for a problem, Otto wrote "Car of mass 1000 kg climbs a hill of slope 10° at 15 m/s" and
+  // "Required power = mgv sin(10°) = ?" as board text + a gap, instead of an exercise with an answer box.
+  const carGiven = "Car of mass 1000 kg climbs a hill of slope $10^\\circ$ at a constant speed of 15 m/s.";
+  script = (b, i) => i === 0
+    ? { tool_calls: [tc("WRITE_TO_BOARD", { text: carGiven, kind: "given" }), tc("WRITE_TO_BOARD", { text: "Required power $= mgv\\sin(10^\\circ) = ?$", kind: "gap", expectedAnswer: "25500", gapAction: "find the power" })] }
+    : i === 1 ? { tool_calls: [tc("CREATE_PROBLEM", { question: carGiven + " What power (in W) is needed against gravity? Take $g = 9.8$.", answer: "25525", check: "1000*9.8*15*sind(10)", hint: "Round to the nearest watt." })] }
+    : { content: "It's on the board — what's your first move?" };
+  r = await run("give me a problem on power");
+  const rejected = calls[1].messages.filter((m) => m.role === "tool").map((m) => m.content).join(" ");
+  check("asked for a problem: board text + gap are refused, and a real exercise (answer box) is created instead", r.board.length === 0 && r.problems.length === 1 && /CREATE_PROBLEM/.test(rejected));
+
+  script = (b, i) => i === 0 ? { content: "Imagine a 1000 kg car going up a 10° hill at 15 m/s — what power does it need?" } : i === 1 ? { tool_calls: [tc("CREATE_PROBLEM", { question: carGiven + " What power (in W) is needed against gravity?", answer: "25525", check: "1000*9.8*15*sind(10)" })] } : { content: "Your turn — it's on the board." };
+  r = await run("test me");
+  check("asked for a problem but the draft only TALKS about one → one round to create it", r.problems.length === 1 && /They asked for an exercise/.test(lastUser(calls[1])));
+
+  script = (b, i) => i === 0 ? { tool_calls: [tc("WRITE_TO_BOARD", { text: "A 2 kg block slides 5 m down a 30° ramp", kind: "given" })] } : { content: "What do you want to work on?" };
+  r = await run("I want to understand energy");
+  check("Otto can't invent a problem as board givens (numbers nobody gave)", r.board.length === 0);
+  script = (b, i) => i === 0 ? { tool_calls: [tc("WRITE_TO_BOARD", { text: carGiven, kind: "given" })] } : { content: "What's being asked?" };
+  r = await run("A car of mass 1000 kg climbs a hill of slope 10 degrees at 15 m/s. Find the power needed.");
+  check("…but the student's own problem goes up as givens", r.board.length === 1);
+  check("wantsExercise / inventsProblemOnBoard", wantsExercise("give me another problem") && wantsExercise("interroge-moi") && wantsExercise("quiz me") && !wantsExercise("I'm stuck on this one") &&
+    inventsProblemOnBoard("A 2 kg block on a 30° ramp", ["help with ramps"]) && !inventsProblemOnBoard("A 2 kg block on a 30° ramp", ["a 2 kg block on a 30 degree ramp"]) && !inventsProblemOnBoard("$E = mgh$", []));
 }
