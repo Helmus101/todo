@@ -84,12 +84,14 @@ export function buildTrigScene(input: TrigSceneIn): { svg: string } | { error: s
     parts.push(line(bx, ty, x, gy, `stroke="${c}"`));
     parts.push(`<circle cx="${f(x)}" cy="${f(gy)}" r="4.5" fill="${c}"/>`);
     parts.push(text(x - 6, gy + 28, o.name, `font-weight="600" fill="${c}"`));
-    // angle at the observer (elevation) — between the ground (towards the base) and the sightline
-    const re = 38 + i * 16, a = rad(th);
-    const e0 = [x + re, gy], e1 = [x + re * Math.cos(a), gy - re * Math.sin(a)];
-    const elevationIsGiven = mode === "elevation";
-    parts.push(`<path d="M ${f(e0[0])} ${f(e0[1])} A ${re} ${re} 0 0 0 ${f(e1[0])} ${f(e1[1])}" fill="none" stroke="${c}" stroke-width="2"/>`);
-    parts.push(text(x + (re + 12) * Math.cos(a / 2), gy - (re + 12) * Math.sin(a / 2) + 6, `${th}°`, `fill="${c}" ${elevationIsGiven ? "" : 'opacity="0.9"'}`));
+    // elevation problems mark the angle at the observer; for depression the equal ground angle is the student's to find, so it is NOT drawn
+    const a = rad(th);
+    if (mode === "elevation") {
+      const re = 38 + i * 16;
+      const e0 = [x + re, gy], e1 = [x + re * Math.cos(a), gy - re * Math.sin(a)];
+      parts.push(`<path d="M ${f(e0[0])} ${f(e0[1])} A ${re} ${re} 0 0 0 ${f(e1[0])} ${f(e1[1])}" fill="none" stroke="${c}" stroke-width="2"/>`);
+      parts.push(text(x + (re + 12) * Math.cos(a / 2), gy - (re + 12) * Math.sin(a / 2) + 6, `${th}°`, `fill="${c}"`));
+    }
     // angle at the top (depression) — between the horizontal and the sightline
     if (mode === "depression") {
       const rt = 70 + i * 64;
@@ -99,7 +101,6 @@ export function buildTrigScene(input: TrigSceneIn): { svg: string } | { error: s
       parts.push(text(bx - rt - 8, ty - 9, `${th}°`, `fill="${c}" font-weight="600" text-anchor="end"`));
     }
   });
-  if (mode === "depression") parts.push(text(mL - 6, ty - 12, "angles of depression (from the horizontal)", 'font-size="14" opacity="0.75"'));
   // distance between the observers / from the base
   if (obs.length === 2 && sep) {
     const xs = dists.map(px).sort((a, b) => a - b), yb = gy + 54;

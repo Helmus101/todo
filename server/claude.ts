@@ -9011,7 +9011,7 @@ export async function chatAboutTask(
     // it there (reported live: they stated a full triangle problem and the board stayed empty).
     if (opts?.primer && !result.guardrailTripped) {
       const stmt = studentProblemStatement(message);
-      if (stmt && !result.problems.length) {
+      if (stmt && !result.problems.length && !asksToDraw(message) && !result.board.some((e) => e.kind === "svg" || e.kind === "flow")) { // a drawn figure already carries the givens; never paste a spoken ramble beside it
         const onBoard = [...(opts?.currentBoard || []).map((e) => e.text), ...(opts?.currentProblems || []).map((p) => p.question), ...result.board.map((e) => e.text), ...result.board.flatMap((e) => (e.diagram || []).map((o: any) => o.latex || ""))];
         if (!boardCoversStatement(stmt, onBoard)) result.board.unshift({ id: randomUUID(), text: stmt, kind: "given", owner: "student", at: new Date().toISOString() } as BoardEntry);
       }
@@ -9769,7 +9769,7 @@ export async function chatAboutTask(
               else {
                 const entry: BoardEntry = { id: randomUUID(), text: caption, kind: "svg", svg, at: new Date().toISOString() };
                 result.board.push(entry);
-                content = JSON.stringify({ ok: true, id: entry.id, note: "Drawn to scale with the depression angles at the top and the equal elevation angles at the ground. Now ask ONE question; don't state values they haven't found." });
+                content = JSON.stringify({ ok: true, id: entry.id, note: "Drawn to scale with only the GIVEN angles marked (the equal angle at the ground is for the student to find). Now ask ONE question; don't state values they haven't found." });
                 logAudit("artifact", fr ? `Figure : « ${caption.slice(0, 60)} »` : `Figure: "${caption.slice(0, 60)}"`);
               }
             }
