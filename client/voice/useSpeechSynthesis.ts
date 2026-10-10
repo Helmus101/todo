@@ -427,7 +427,6 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
   const fetchChunk = async (text: string, gen: number): Promise<string> => {
     try { return await fetchChunkOnce(text); }
     catch (e) {
-      console.warn(`[tts] cloud voice request failed, retrying once: ${(e as any)?.status ?? (e as any)?.message ?? e}`);
       await sleep(CLOUD_RETRY_DELAY_MS);
       if (genRef.current !== gen) throw e;
       return fetchChunkOnce(text);
@@ -481,7 +480,6 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
       try { url = await pending[i]; }
       catch (e) {
         if (genRef.current !== gen) return;
-        console.warn(`[tts] cloud voice failed twice — skipping this reply's audio (never the browser voice): ${(e as any)?.status ?? (e as any)?.message ?? e}`);
         failedEverywhere("cloud-unavailable");
         releaseUrls();
         setSpeaking(false);
@@ -491,7 +489,6 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
       try { await playUrl(url, chunks[i]); }
       catch (e) {
         if (genRef.current !== gen) return;
-        console.warn(`[tts] cloud audio failed to play — skipping this reply's audio (never the browser voice): ${(e as any)?.message ?? e}`);
         failedEverywhere("playback-failed");
         releaseUrls();
         setSpeaking(false);
@@ -523,7 +520,6 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
     // server-side voice pool's success. See this file's top-of-hook comment for why a cloud FAILURE never
     // falls through to the browser voice (that's handled inside speakWithCloud instead, as a silent skip).
     const useCloud = audioSupported;
-    console.info(`[tts] speaking ${sentences.length} sentence(s) via ${useCloud ? "cloud voice" : "browser voice (no <audio> support)"}`);
     if (useCloud) void speakWithCloud(gen, sentences);
     else speakWithBrowser(gen, sentences);
   // eslint-disable-next-line react-hooks/exhaustive-deps

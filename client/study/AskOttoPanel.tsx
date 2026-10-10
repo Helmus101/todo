@@ -250,7 +250,6 @@ export function AskOttoPanel({
     spokenKeyRef.current = tailKey;
     const last = task.chat?.[task.chat.length - 1];
     if (voiceModeOn && last?.role === "assistant") {
-      console.log("[tts] speaking assistant message:", last.text.slice(0, 60));
       synth.speak(last.text);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
