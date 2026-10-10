@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { WebTask, Quadrant, TaskLink, Profile, Sendable, AddUsageCategory, TaskStep, BoardEntry } from "../shared/types.ts";
 import { BOARD_EVENT_CAP } from "../shared/agentTypes.ts";
 import { dedupeFacts, sameFact, canonStatus, sortWithinQuadrant, addUsage, isHandled, tzOf, deadlineEpoch, normalizeWhen, gradesBySubject } from "../shared/types.ts";
+import { loadPronoteConnection } from "./store.ts";
 import { schoolRecordLine } from "./schoolRecord.ts";
 import { generateTasks, classifyCandidates, pickOneTask, runTask as aiRun, type ProfileUpdate, type RefinedTask, type AcademicContext } from "./claude.ts";
 import { readOnly, scopeTools, DOC_LINK, type AgentTools } from "./integrations.ts";
@@ -1122,7 +1123,30 @@ export function setReviewSetDeckIdsToday(profile: Profile, deckIds: string[], no
   profile.reviewSetsUpdatedAt = now.toISOString();
 }
 
+/** Every task that came from Pronote carries a link back to Pronote: the specific attachment/page when one was found,
+ *  otherwise the school's own Pronote address — so "where did this come from?" is always one tap. Pure; existing
+ *  links are kept (the specific one first) and nothing is added twice. */
+export function ensurePronoteLinks<T extends { source?: string; links?: TaskLink[] }>(list: T[], pronoteUrl: string | undefined, en = true): T[] {
+  const url = String(pronoteUrl || "").trim();
+  if (!/^https:\/\//i.test(url)) return list;
+  return list.map((t) => {
+    if (t.source !== "pronote") return t;
+    const links = t.links || [];
+    if (links.some((l) => l.url === url)) return t;
+    return { ...t, links: [...links, { label: en ? "Open in Pronote" : "Ouvrir dans Pronote", url }].slice(0, 6) };
+  });
+}
+
 export async function generate(existing: WebTask[], profile: Profile, extras?: AgentTools, userEmail?: string): Promise<WebTask[]> {
+  const out = await generateRaw(existing, profile, extras, userEmail);
+  if (!userEmail || !out.some((t) => t.source === "pronote")) return out;
+  try {
+    const stored = await loadPronoteConnection(userEmail);
+    return ensurePronoteLinks(out, stored?.url, profile.language === "en");
+  } catch { return out; }
+}
+
+async function generateRaw(existing: WebTask[], profile: Profile, extras?: AgentTools, userEmail?: string): Promise<WebTask[]> {
   // Tell the generator what's already finished/dismissed so it never resurfaces a handled to-do. Sorted by
   // recency (most recently actioned first) BEFORE the cap below truncates it — same reasoning as
   // pruneHandled's own sort (see its comment on "the exact 'I dismissed this and it came right back' failure
