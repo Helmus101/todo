@@ -481,6 +481,12 @@ export async function runTutorSim(check, section) {
       : { content: "There's your new one — what do you get?" };
   r = await run("can you do a new problem for me", { problems: [openOne], history: [{ role: "user", text: "efficiency" }, { role: "assistant", text: "ok" }] });
   check("end to end: asked for a new problem while one is open, Otto's givens-as-text are refused and a real exercise is created instead", r.problems.length === 1 && r.board.length === 0 && r.problems[0].answer === "21.9" && r.problems[0].value > 21.9 && r.problems[0].value < 22);
+  // NO WORK FOR THEM: "Go ahead and multiply 75 × 9.8 × 30" hands over the move AND the numbers → sent back for a guiding question.
+  script = (b, i) => i === 0
+    ? { content: "That's our new skier problem on the board! Go ahead and multiply 75 × 9.8 × 30 to find their starting potential energy. What do you get?" }
+    : { content: "It's up there now. Which quantities would give you the energy it starts with at the top?" };
+  r = await run("ok", { history: [{ role: "user", text: "new problem" }, { role: "assistant", text: "here" }] });
+  check("end to end: a reply that tells the student which operation to do on which numbers is rewritten into a guiding question", !/multiply 75/.test(r.reply) && /Which quantities/.test(r.reply));
   // WHY: a why-question that is answered with a restatement + a question is sent back once for a real explanation.
   script = (b, i) => i === 0
     ? { content: "You're wondering why we even need to bother equating them when we already found the speed with SUVAT. Notice how m shows up on both sides?" }

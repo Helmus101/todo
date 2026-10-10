@@ -496,7 +496,7 @@ export function closesWithMissedCase(draft: string, traps: { id: string }[]): bo
  *  out to?"): choosing the operation was the real thinking, and it's been done for them. Echoing an expression the
  *  student themselves just wrote is fine. */
 export function handsOverCalculation(reply: string, lastUser: string): boolean {
-  const ASKS_EVAL = /\b(?:what|how much)\b[^.?!]{0,40}\b(?:come|comes|work|works|equal|equals|give|gives|simplify|simplifies|reduce|reduces)\b[^.?!]{0,30}\?|\bcalculate (?:it|that|this)\b|\bwhat(?:'s| is) (?:the )?(?:result|value)\b|\bcombien (?:ça|cela|ca) (?:fait|donne)\b/i;
+  const ASKS_EVAL = /\bwhat (?:do|did|will|would) you (?:get|find|obtain)\b|\b(?:what|how much)\b[^.?!]{0,40}\b(?:come|comes|work|works|equal|equals|give|gives|simplify|simplifies|reduce|reduces)\b[^.?!]{0,30}\?|\bcalculate (?:it|that|this)\b|\bwhat(?:'s| is) (?:the )?(?:result|value)\b|\bcombien (?:ça|cela|ca) (?:fait|donne)\b/i;
   if (!ASKS_EVAL.test(reply)) return false;
   const plain = reply.replace(/\\circ|\\degree|\^\s*\{?\\?circ\}?|\\[a-z]+/gi, " ").replace(/[$]/g, " ");
   const exprs = [...plain.matchAll(/(\d+(?:\.\d+)?)\s*°?\s*([-−–+×x*/÷])\s*(\d+(?:\.\d+)?)/g)];
@@ -739,7 +739,10 @@ export function statesOwnMath(message: string): boolean {
  *  "divide by the bracket", "isolate k") — choosing the move was the thinking. Questions about the GOAL ("what would get all the h
  *  terms together?") are fine; naming the operation is not. Pure. */
 export function namesExactStep(reply: string): boolean {
-  const t = String(reply || "").replace(/\$[^$]*\$/g, " X ");
+  const raw = String(reply || "");
+  // "Go ahead and multiply 75 × 9.8 × 30" / "divide 750 by 2.5" / "plug in 1200 and 9.8": an operation word aimed at actual numbers is the move itself.
+  if (/\b(?:multiply|divide|add|subtract|plug(?: in)?|substitute|calculate|compute|work out|times)\b[^.?!]{0,30}\d[\d.,]*\s*(?:[×x*÷\/+−-]|by|and|times|plus|minus)\s*\d/i.test(raw.replace(/\$/g, " "))) return true;
+  const t = raw.replace(/\$[^$]*\$/g, " X ");
   const OP = "(?:multiply|divide|substitute|plug|factor(?:ise|ize)?(?: out)?|isolate|subtract|add|expand|rearrange|collect|cross-multiply|take the (?:square root|inverse|reciprocal)|apply the (?:sine|cosine|tangent) (?:rule|law)|use the (?:sine|cosine|tangent) (?:rule|law)|solve for)";
   const lead = "(?:can you|could you|how (?:do|would|can) you|now,? |next,? |then,? |try to |you (?:should|need to|can|could|now) |let'?s |please )";
   return new RegExp(`\\b${lead}\\s*${OP}\\b[^.?!]{0,70}\\b(?:both sides|each side|the (?:equation|expression|bracket|brackets|denominator|numerator|terms?|left|right)|that (?:equation|expression)|into|from|by|out)\\b`, "i").test(t)
