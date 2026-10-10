@@ -17,7 +17,10 @@ import { repairSpokenMath, spokenContextFrom, type SpokenRepair } from "../share
 import { equationsAhead, asksForFormula } from "../shared/equationsAhead.ts";
 import { findArithmeticClaims } from "./arithmetic.ts";
 import { boardSurfaceBlock } from "./boardEvents.ts";
-import { replyStatesValue, socraticFallback, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario } from "./tutorAdapt.ts";
+import { replyStatesValue, socraticFallback, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario, inventedNumbers, confirmsUnchecked, wrapsUpUnasked, blamesWidget, asksToWrite } from "./tutorAdapt.ts";
+import { latexToPlainText } from "../shared/mathText.ts";
+import { toExprSource } from "../shared/mathEquiv.ts";
+import { compileExpr } from "../shared/mathExpr.ts";
 import {
   createTutorChat, retryRequest, usageOf, parseToolArgs, stripLeakedToolCallSyntax, OUT,
   CREATE_PROBLEM_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, SVG_ON_BOARD_TOOL, FLOW_ON_BOARD_TOOL,
@@ -186,7 +189,7 @@ export function leakedValue(reply: string, message: string, board: BoardEntry[],
 
 /** The student asked to be given an exercise ("give me a problem", "test me", "un exercice"). Exported for tests. */
 export function wantsExercise(message: string): boolean {
-  return asksForProblem(message) || /\b(?:quiz|test) me\b|\binterroge[- ]moi\b|\b(?:un|des|un autre|nouvel?)\s+(?:exo|exercice|probl[èe]me)s?\b|\bpractice (?:problem|question)s?\b/i.test(String(message || ""));
+  return asksForProblem(message) || /\b(?:one|a|the)\s+(?:last|final|other)\s+(?:problem|exercise|question|one)\b|\bcan you (?:do|make|give|create)\b[^.?!]{0,20}\b(?:problem|exercise|question)\b|\b(?:quiz|test) me\b|\binterroge[- ]moi\b|\b(?:un|des|un autre|nouvel?)\s+(?:exo|exercice|probl[èe]me)s?\b|\bpractice (?:problem|question)s?\b/i.test(String(message || ""));
 }
 
 /** A board line that sets up a problem nobody gave: a scenario/givens line (2+ quantities with units) carrying a
@@ -197,6 +200,28 @@ export function inventsProblemOnBoard(text: string, said: string[]): boolean {
   const nums = (String(text).replace(/\\[a-zA-Z]+/g, " ").match(/\d+(?:[.,]\d+)?/g) || []).map((n) => n.replace(",", "."));
   const heard = new Set((said.join(" ").match(/\d+(?:[.,]\d+)?/g) || []).map((n) => n.replace(",", ".")));
   return nums.some((n) => !heard.has(n));
+}
+
+/** The reply asks them to recheck something that is RIGHT: the app already marked their exercise answer right, or
+ *  the number they just gave IS the value of the expression the reply tells them to redo ("235,200" vs "multiply
+ *  1200×9.8×20"; "24350" vs "800×9.8×sin(15°)×12"). Returns the correction note, or null. Exported for tests. */
+export function doubtsRightAnswer(reply: string, message: string): string | null {
+  const RECHECK = /\b(?:check (?:that|this|it|your|the)|(?:try|run|re-?run|work|do) (?:it |that |this )?(?:out )?again|re-?check|re-?run|let'?s (?:check|re-?run|redo)|double[- ]check|not quite|was from the previous|look again|try \d)/i;
+  if (!RECHECK.test(reply)) return null;
+  if (/\[(?:Exercise|Exercice)\][^\n]*(?:marked right|checked right|juste|vérifié juste)/i.test(message)) return "the app already checked their answer and it is RIGHT — don't ask them to redo it; acknowledge it and move on";
+  const num = (x: string) => Number(x.replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1").replace(",", "."));
+  const theirs = (message.match(/\d[\d\s,]*(?:\.\d+)?/g) || []).map((x) => num(x.trim())).filter((n) => Number.isFinite(n) && n >= 10);
+  if (!theirs.length) return null;
+  const plain = latexToPlainText(reply.replace(/\$/g, " "));
+  for (const m of plain.matchAll(/\d[\d.,]*\s*[×x*·]\s*[\d\s.,×x*·()°a-z]*\d[)°]*/gi)) {
+    const src = toExprSource(m[0].replace(/(\d),(\d{3})/g, "$1$2"));
+    const f = compileExpr(src, []);
+    if ("error" in f) continue;
+    const v = f.fn({});
+    const hit = Number.isFinite(v) && theirs.find((n) => Math.abs(n - v) <= 0.005 * Math.max(1, Math.abs(v)));
+    if (hit) return `their ${hit} IS ${m[0].trim()} (= ${Math.round(v * 100) / 100}) — they were RIGHT; confirm it instead of asking them to redo it`;
+  }
+  return null;
 }
 
 /** A wrong arithmetic claim in the reply ("12 × 3 = 38"), as a correction note for the model, or null. */
@@ -211,7 +236,9 @@ export function wrongArithmetic(reply: string, message = ""): string | null {
 function cleanReply(text: string, voice: boolean): string {
   let t = stripLeakedToolCallSyntax(String(text || "")).replace(/<plan>[\s\S]*?<\/plan>/gi, "").trim();
   t = t.replace(/^\s*(otto|tutor)\s*:\s*/i, "").replace(/\*\*(.+?)\*\*/g, "$1");
-  if (voice) t = t.replace(/\$([^$]+)\$/g, "$1").replace(/\\[a-zA-Z]+/g, "").replace(/[{}]/g, "");
+  // Read aloud: maths becomes readable text ("1000 × 9.8 × sin(10°) × 15", "1/2 mv^2"). It used to just delete every
+  // \command, so \times and \sin vanished and "\frac12" read as "12" — "multiply 10009.8(10°)15" (reported live).
+  if (voice) t = t.replace(/\$([^$]+)\$/g, (_, x: string) => latexToPlainText(x)).replace(/\\[a-zA-Z]+(?:\s*\{[^{}]*\})*/g, (m) => latexToPlainText(m));
   return t.trim();
 }
 
@@ -272,29 +299,35 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
         result.error = true;
         return result;
       }
-      // Hard guard 0: they asked for an exercise → it exists as a real problem (answer box), not just talk or board text.
-      if (wantsProblem && !result.problems.length && !corrected && !lastRound) {
-        corrected = true;
-        messages.push({ role: "assistant", content: text });
-        messages.push({ role: "user", content: "(They asked for an exercise. Create it now with CREATE_PROBLEM — full statement, one short answer, a check expression for a numeric answer, precision and unit in the hint — then a one-line message pointing them to it. Don't mention this note.)" });
-        continue;
-      }
-      // Hard guard 1: never hand over an answer they're meant to find.
+      // The hard checks, all at once: every problem found goes back in ONE correction round.
       const leaked = leakedValue(reply, message, allBoard(), allProblems());
-      // Hard guard 2: arithmetic the reply asserts must be right.
-      const badMath = leaked ? null : wrongArithmetic(reply, message);
-      // Hard guard 3: never derive an equation or name the formula to use before they do — ask first.
-      const ahead = leaked || badMath || asksForFormula(message) ? [] : equationsAhead(reply, said);
-      if ((leaked || badMath || ahead.length) && !corrected && !lastRound) {
+      const issues: string[] = [];
+      if (leaked) issues.push(`it gives away ${leaked === "the problem's answer" ? "the answer to the open problem" : `the value of the open gap (${leaked})`} — they must find it; keep the idea, drop the value, end with one question that gets them there`);
+      if (wantsProblem && !result.problems.length) issues.push("they asked for an exercise: create it now with CREATE_PROBLEM (full statement, one short answer, a check expression for a numeric answer, precision and unit in the hint), then one line pointing them to it");
+      if (asksToWrite(message) && !result.board.length) issues.push("they asked you to write it on the board: do it now (WRITE_TO_BOARD, clean maths in $…$, their numbers), then one short line");
+      const doubt = doubtsRightAnswer(reply, message);
+      if (doubt) issues.push(doubt);
+      const badMath = wrongArithmetic(reply, message);
+      if (badMath) issues.push(`it contains a wrong calculation: ${badMath}`);
+      const ahead = asksForFormula(message) ? [] : equationsAhead(reply, said);
+      if (ahead.length) issues.push(`it hands them an equation they haven't stated (${ahead.join("; ")}) — don't derive it or name the formula; ask what relationship they'd use`);
+      const invented = inventedNumbers(reply, [...said, ...allBoard().map((b) => b.text), ...allProblems().map((p) => p.question)]);
+      if (invented.length) issues.push(`it uses numbers nobody gave (${invented.slice(0, 3).join(", ")}) — only their numbers and the problem's; never compute ahead or bring in a new scenario`);
+      if (!doubt && confirmsUnchecked(reply, message, input.stepVerdict ? { studentStep: { status: input.stepVerdict.verdict } } : null)) issues.push("it confirms a value they didn't actually give (or one that's wrong) — react to THEIR number, and if it's off, ask which step they'd recheck");
+      if (wrapsUpUnasked(reply, message)) issues.push("it offers to wrap up or move on, which they didn't ask for — stay on the current work");
+      if (blamesWidget(reply)) issues.push("it blames the app/widget — if an exercise's key disagrees with a right answer, say plainly the key was wrong");
+      if (issues.length && !corrected && !lastRound) {
         corrected = true;
         messages.push({ role: "assistant", content: text });
-        messages.push({ role: "user", content: leaked
-          ? `(Your reply gives away ${leaked === "the problem's answer" ? "the answer to the open problem" : `the value of the open gap (${leaked})`} — the student must find it. Rewrite it: same idea, without that value, ending with one question that gets them there. Don't mention this note.)`
-          : badMath ? `(Your reply contains a wrong calculation: ${badMath}. Rewrite it correctly. Don't mention this note.)`
-          : `(Your reply hands them an equation they haven't stated: ${ahead.join("; ")}. Don't derive equations or tell them which formula to use. Rewrite it as a question that gets THEM to name the relationship (e.g. "what links power, force and speed?"), with no equation in it. Don't mention this note.)` });
+        messages.push({ role: "user", content: `(Fix your reply before the student sees it:\n- ${issues.join("\n- ")}\nThen send the corrected reply. Don't mention this note.)` });
         continue;
       }
       if (leaked) { result.guardrailTripped = true; result.reply = socraticFallback(fr); return result; }
+      // Still doubting a RIGHT answer after the correction round: never let it through — confirm it in code.
+      if (doubt && doubtsRightAnswer(reply, message)) {
+        result.reply = fr ? "Oui, c'est juste — bien joué. Qu'est-ce qui t'a dit quels morceaux multiplier ?" : "Yes, that's right — nice work. What told you which pieces to multiply?";
+        return result;
+      }
       result.reply = reply;
       return result;
     }
@@ -346,6 +379,9 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       if (result.board.length >= 8) return "LIMIT: that's plenty on the board for one turn.";
       if (isDuplicateBoardEntry(c.allBoard(), input)) return "DUPLICATE: that's already on the board — point at it instead.";
       if (input.kind !== "gap" && leaks(text)) return LEAK;
+      // A gap that already shows its own answer ("Power = 1000×9.8×sin(10°)×15 = 25,526?", reported live) isn't a gap.
+      const unsep = (x: string) => x.replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1");
+      if (input.kind === "gap" && input.expectedAnswer && replyStatesValue(unsep(text.replace(/=\s*\?\s*\$?\s*$/, "")), unsep(String(input.expectedAnswer)))) return "REJECTED: that gap line already shows its own answer — end it at '= ?', and leave the working for them.";
       // A problem is posted with CREATE_PROBLEM (answer box, checked key) — never as board text plus a "= ?" gap.
       if (input.owner !== "student" && c.wantsExercise && !result.problems.length && (input.kind === "gap" || looksLikeGivensOrScenario(text)))
         return "REJECTED: they asked for an exercise — post it with CREATE_PROBLEM (the full statement, one short answer, a check expression, precision and unit in the hint), not as board text.";
