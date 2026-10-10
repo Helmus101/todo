@@ -490,7 +490,9 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   // state: the URL IS the view, so refresh, back/forward and shared links all land in the right place and
   // nothing stacks over the landing. (The URL-sync effect above never fires here: routedTaskRef is only
   // set once a LIVE task exists, so a review URL is never yanked back to /tutor.)
-  const reviewSession = sessionId && userId ? getTutorSessions(userId).find((s) => s.id === sessionId) : undefined;
+  // A LIVE session is never shown as a review: its own summary is auto-saved under the same id (= the task id) as soon as there is
+  // something to keep, so without `!task` the first message flipped the live page into this read-only board/chat viewer.
+  const reviewSession = !task && sessionId && userId ? getTutorSessions(userId).find((s) => s.id === sessionId) : undefined;
   if (reviewSession) {
     const view: "board" | "chat" = reviewView === "chat" ? "chat" : "board";
     const hasBoard = !!reviewSession.board?.length;
