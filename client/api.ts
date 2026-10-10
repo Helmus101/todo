@@ -465,7 +465,7 @@ export const api = {
   // browser, and "h/tan(25°)" / "h cot 25°" / "\frac{h}{\tan 25^\circ}" are all graded alike (mathEquiv.ts).
   checkGap: (id: string, entryId: string, answer: string): Promise<{ verdict: "correct" | "incorrect" | "unknown" }> =>
     post(`/api/tasks/${encodeURIComponent(id)}/board/${encodeURIComponent(entryId)}/check`, { answer }),
-  chat: (id: string, message: string, history: NonNullable<WebTask["chat"]>, board: BoardEntry[], problems: TaskProblem[], stepIndex?: number, materials?: { label: string; text: string }[], voiceMode?: boolean, canvasMode?: boolean, primer?: boolean, objectives?: TaskObjective[], spoken?: { alternatives: string[] }): Promise<{ reply: string; chatDelta: NonNullable<WebTask["chat"]>; board: BoardEntry[]; problems: TaskProblem[]; objectives?: TaskObjective[]; guardrailTripped: boolean; task: WebTask; sessionCapReached?: boolean; subject?: string; sessionEnded?: boolean; error?: string }> =>
+  chat: (id: string, message: string, history: NonNullable<WebTask["chat"]>, board: BoardEntry[], problems: TaskProblem[], stepIndex?: number, materials?: { label: string; text: string }[], voiceMode?: boolean, canvasMode?: boolean, primer?: boolean, objectives?: TaskObjective[], spoken?: { alternatives: string[] }, session?: { id: string; source?: string; sourceSubject?: string; createdAt?: string }): Promise<{ reply: string; chatDelta: NonNullable<WebTask["chat"]>; board: BoardEntry[]; problems: TaskProblem[]; objectives?: TaskObjective[]; guardrailTripped: boolean; task: WebTask; sessionCapReached?: boolean; subject?: string; sessionEnded?: boolean; error?: string }> =>
     post(`/api/tasks/${id}/chat`, {
       // The on-device thread can be long: send how the session began (first 3) + the recent tail, not all of it
       // (the server pins the opening verbatim and keeps its own window).
@@ -473,6 +473,8 @@ export const api = {
       board: board.map((b) => ({ id: b.id, text: b.text, kind: b.kind, outline: b.outline, diagram: b.diagram?.slice(0, 40), owner: b.owner, status: b.status, concept: b.concept, targetId: b.targetId })),
       problems: problems.map((p) => ({ question: p.question, options: p.options, solved: p.solved === true })),
       stepIndex, materials, voiceMode, canvasMode, primer, objectives, spoken,
+      // Who this tutor session is — lets the server rebuild a freestudy task it lost track of instead of 404ing.
+      session,
     }),
   // Otto's opening line for a tutor session (see tutorOpener in server/claude.ts): the browser's own
   // session history — the REAL board lines and the student's questions from their last sessions, which the

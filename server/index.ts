@@ -1649,7 +1649,18 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
   
   const message = String(req.body?.message || "").trim().slice(0, 2000);
   if (!message) { res.status(400).json({ error: M(req, "Écris quelque chose d'abord.", "Say something first.") }); return; }
-  const t = await findTaskOrReload(req, String(req.params.id));
+  let t = await findTaskOrReload(req, String(req.params.id));
+  if (!t) {
+    // Last resort for a LIVE tutor session whose task never reached this instance or the cloud row (the
+    // cross-instance race above): rebuild it from what the client sent rather than 404 every message —
+    // the board, chat and problems ride along with every turn anyway, so nothing is lost.
+    const rebuilt = tasks.recoverTutorTask(String(req.params.id), req.body, req.session.tasks || [], req.session.profile?.language === "en");
+    if (rebuilt) {
+      console.warn("[chat] rebuilt missing freestudy task", rebuilt.id);
+      req.session.tasks = [...(req.session.tasks || []), rebuilt];
+      t = rebuilt;
+    }
+  }
   if (!t) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
   
 
@@ -2798,7 +2809,13 @@ app.post("/api/study/free", requireAuth, rateLimit(20, 60_000), ah(async (req, r
   if (subject) { try { t.mastery = subjectMastery(list, req.session.profile?.milestones, subject); } catch { /* mastery is a nicety */ } }
   list.push(t);
   req.session.tasks = list;
-  await commit(req);
+  // The new session must be in the ACCOUNT ROW before the page starts chatting: the slim session row never
+  // carries tasks (store.ts), so the next request on another serverless instance can only find this task
+  // through the cloud reload in findTaskOrReload — and a write-behind commit can still be pending (or lost
+  // to a frozen function) when that request lands. That was the live "/chat → 404 Not found" on a brand-new
+  // tutor session. One awaited write per session start; on a cloud error fall back to write-behind (the
+  // session still works on this instance, and the chat route can rebuild it — see recoverTutorTask).
+  try { await commit(req, { awaitCloud: true }); } catch (e: any) { console.warn("[study/free] awaited cloud write failed, falling back to write-behind:", e?.message || e); await commit(req); }
   res.json(tasksPayload(req, req.session.tasks));
 }));
 
