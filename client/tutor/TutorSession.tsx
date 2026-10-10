@@ -242,6 +242,30 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   // with every other hook — the stage view has an early return ABOVE, and a hook after it is exactly the
   // React #310 crash this file already had once (see the commit that fixed a hooks-after-early-return bug).
   const [objectivesOpen, setObjectivesOpen] = useState(false);
+  // The board makes room for Otto's dock at its REAL height: the dock floats over the board and grows with a long
+  // reply or the open chat history, which hid the newest board lines (reported). Its height goes into --dock-h (the
+  // board's bottom padding + scroll padding), and if the student was reading the end of the board when the dock
+  // grew, the board scrolls so that end stays visible above it.
+  const stageRef = useRef<HTMLElement>(null);
+  const dockRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const dock = dockRef.current, stage = stageRef.current;
+    if (!dock || !stage || typeof ResizeObserver === "undefined") return;
+    let last = 0;
+    const ro = new ResizeObserver(() => {
+      const h = Math.ceil(dock.getBoundingClientRect().height);
+      if (h === last) return;
+      const grew = h > last;
+      last = h;
+      stage.style.setProperty("--dock-h", `${h}px`);
+      const body = surfaceEl;
+      if (grew && body && body.scrollHeight - body.scrollTop - body.clientHeight < h + 160) {
+        requestAnimationFrame(() => body.scrollTo({ top: body.scrollHeight, behavior: "smooth" }));
+      }
+    });
+    ro.observe(dock);
+    return () => ro.disconnect();
+  }, [task?.id, surfaceEl]);
   useEffect(() => {
     if (!objectivesOpen) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setObjectivesOpen(false); };
@@ -736,7 +760,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   // sees only Otto's latest answer; everything worth keeping lands on the board instead of scrolling away
   // in a chat log. The full conversation is still saved with the session for the history view.
   return (
-    <main className={`tutor-stage${voiceState.voiceModeOn ? " voice-on" : ""}`}>
+    <main ref={stageRef} className={`tutor-stage${voiceState.voiceModeOn ? " voice-on" : ""}`}>
       <PageTour id="tutor-session" steps={TOURS["tutor-session"]} />
       {/* Same breadcrumb chrome as the rest of the Tutor, minus "All sessions" — report-live: an active
           session shouldn't offer a way back to the list, just the subject chip and End session. */}
@@ -799,7 +823,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           onDesmos={() => setDesmosOpen((o) => !o)}
         />
       </section>
-      <div className="ts-dock">
+      <div className="ts-dock" ref={dockRef}>
         {/* The dock IS the chat (the floating island) — this is just its expand/collapse control, not a
             separate "chat" entry point (report-live: it isn't a dedicated chat button, just an expand
             button on the island where the answers already show). No past-sessions section either:
