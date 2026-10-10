@@ -1764,3 +1764,27 @@ export async function applyAdaptiveRegeneration(task: WebTask, profile: Profile)
 
   return task;
 }
+
+/** A tutor (freestudy) session's task, rebuilt from the chat request when the server can't find it anywhere.
+ *  Only for a tutor turn (`primer`), only when the client says it IS a freestudy session, only for a
+ *  well-formed UUID, and NEVER for an id the account already has — a dismissed or finished session must not
+ *  come back to life. Same fields /api/study/free sets. Pure; exported for tests. */
+export function recoverTutorTask(id: string, body: any, existing: WebTask[], en: boolean): WebTask | null {
+  if (body?.primer !== true) return null;
+  const s = body?.session;
+  if (!s || typeof s !== "object" || s.source !== "freestudy" || s.id !== id) return null;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) return null;
+  if (existing.some((x) => x.id === id)) return null;
+  const subject = typeof s.sourceSubject === "string" && s.sourceSubject.trim() ? s.sourceSubject.trim().slice(0, 80) : undefined;
+  const createdAt = typeof s.createdAt === "string" && !Number.isNaN(Date.parse(s.createdAt)) ? new Date(s.createdAt).toISOString() : new Date().toISOString();
+  const e = eisenhower(0, 0);
+  return {
+    id,
+    title: subject ? `${subject} session` : (en ? "Free study session" : "Séance de révision libre"),
+    why: en ? "Started on demand, not tied to a task." : "Lancée à la demande, sans tâche associée.",
+    source: "freestudy", risk: "low",
+    urgency: 0, importance: 0, quadrant: e.quadrant, score: e.score, status: "needs_review",
+    createdAt, updatedAt: new Date().toISOString(), anchorKey: `freestudy:${id}`,
+    sourceSubject: subject,
+  };
+}

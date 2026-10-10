@@ -277,7 +277,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       // come back as a hard "Otto couldn't reply" with no message at all. canvasMode restricts the tutor to
       // CREATE_PROBLEM (individual, inline, answerable right on the board) instead — the only artifact this
       // screen actually knows how to show.
-      const response = await api.chat(task.id, message, task.chat || [], task.board || [], (task.problems || []).map((p) => ({ ...p, solved: solvedRef.current.has(p.id) })), undefined, undefined, voiceMode, true, true, task.objectives || [], spoken);
+      const response = await api.chat(task.id, message, task.chat || [], task.board || [], (task.problems || []).map((p) => ({ ...p, solved: solvedRef.current.has(p.id) })), undefined, undefined, voiceMode, true, true, task.objectives || [], spoken, { id: task.id, source: task.source, sourceSubject: task.sourceSubject, createdAt: task.createdAt });
       const { task: updated, objectives, boardCleared } = response as typeof response & { boardCleared?: boolean };
       // objectives is only ever the FULL replacement list (SET_OBJECTIVES' own contract), or undefined
       // when Otto didn't touch it this turn — never overwrite the existing list with an empty one.

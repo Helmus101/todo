@@ -5834,6 +5834,24 @@ section("tutor + board: LaTeX renders, steps are checked by code, speech slips a
   check("nothing maths-like → nothing changed", repairSpokenMath("can you help me", ctx).changes.length === 0);
 }
 
+section("a live tutor session never 404s on chat (cross-instance race) and a page load never dead-ends");
+{
+  const idxSrcR = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const freeRoute = idxSrcR.slice(idxSrcR.indexOf('app.post("/api/study/free"'), idxSrcR.indexOf("}));", idxSrcR.indexOf('app.post("/api/study/free"')));
+  check("a new tutor session is written to the account row before responding (awaitCloud)", /commit\(req, \{ awaitCloud: true \}\)/.test(freeRoute));
+  const chatRoute = idxSrcR.slice(idxSrcR.indexOf('app.post("/api/tasks/:id/chat"'), idxSrcR.indexOf('app.post("/api/tasks/:id/chat"') + 4000);
+  check("the chat route tries recoverTutorTask before answering 404", /tasks\.recoverTutorTask\(/.test(chatRoute) && chatRoute.indexOf("recoverTutorTask(") < chatRoute.indexOf('M(req, "Introuvable.", "Not found.")'));
+  const { recoverTutorTask } = await import("../server/tasks.ts");
+  const id = "365b3e82-8d63-439c-92b5-9eb2fecc2bdf";
+  const body = { primer: true, session: { id, source: "freestudy", sourceSubject: "Math", createdAt: "2026-10-10T10:00:00Z" } };
+  const rebuilt = recoverTutorTask(id, body, [], false);
+  check("a missing tutor session is rebuilt with the SAME id, as a live freestudy task", rebuilt?.id === id && rebuilt.source === "freestudy" && rebuilt.sourceSubject === "Math" && rebuilt.status === "needs_review");
+  check("…but never for a non-tutor turn, another source, a mismatched or malformed id", !recoverTutorTask(id, { ...body, primer: false }, [], false) && !recoverTutorTask(id, { ...body, session: { ...body.session, source: "gmail" } }, [], false) && !recoverTutorTask(id, { ...body, session: { ...body.session, id: "x" } }, [], false) && !recoverTutorTask("not-a-uuid", { ...body, session: { ...body.session, id: "not-a-uuid" } }, [], false));
+  check("…and never revives a session the account already has (a dismissed one stays dismissed)", !recoverTutorTask(id, body, [{ id, status: "dismissed" }], false));
+  const swSrc = readFileSync(new URL("../public/sw.js", import.meta.url), "utf8");
+  check("the service worker answers a failed page load with a retry + self-reloading page, not Response.error()", /event\.request\.mode === "navigate"\s*\?\s*fetch\(event\.request\)\.catch\(\(\) => offlinePage\(\)\)/.test(swSrc) && /function offlinePage\(\)/.test(swSrc) && /otto-v5/.test(swSrc));
+}
+
 const { runTutorSim } = await import("./tutor-sim.mjs");
 await runTutorSim(check, section);
 console.log(`\n${pass} passed, ${fail} failed`);
