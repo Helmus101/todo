@@ -843,3 +843,23 @@ export function listenCue(message: string): "confused" | "insight" | null {
   if (m.length >= 18 && (/\b(?:oh|ah|wait|okay|ok)\b[^.?!]{0,40}\bso\b/i.test(m) || /\bso\b[^.?!]{0,70}\b(?:is|are|means?)\b[^.?!]{0,20}\b(?:basically|just|like|the same|how fast|rate|over)\b/i.test(m) || /\bbasically\b/i.test(m))) return "insight";
   return null;
 }
+
+/** "Why do I need to equate those?", "what's the point of…", "how does X connect to Y", "I don't understand why" — a request to UNDERSTAND (purpose,
+ *  reason, connection), spoken or typed (voice messages often have no question mark). Not a request for the problem's answer. */
+export function asksWhy(message: string): boolean {
+  const m = String(message || "").trim();
+  if (m.length < 12 || /^\[(?:Exercise|Exercice|Activity|Activité)\]/i.test(m)) return false;
+  return /\b(?:why|how come|pourquoi|à quoi (?:ça )?sert)\b/i.test(m)
+    || /\bwhat(?:'s| is) the (?:point|reason|use|purpose|idea)\b/i.test(m)
+    || /\b(?:i )?(?:don'?t|do not|still don'?t|can'?t) (?:really )?(?:understand|get|see) (?:why|how|what|the point)\b/i.test(m)
+    || /\bhow (?:is|are|does|do) (?:this|that|it|these|those|[a-z]+) (?:related|connected|linked)\b/i.test(m)
+    || /\bwhat(?:'s| is) the difference between\b/i.test(m);
+}
+export const WHY_BLOCK = `\n\nTHEY ASKED WHY (the point, the reason, how two things connect). That is a request to UNDERSTAND, not for the problem's answer — "never give the answer" does not apply here. Answer it directly first, in 2–3 plain sentences with the actual reason, in words — no new equations (a concrete example or comparison helps). Only then, if it fits, one small question that checks it landed. Never reply to a why-question with a question that sidesteps it, with "notice that…", or by restating what they said ("You're wondering why…").\n`;
+/** The reply to a why-question gives no explanation: no plain (non-question) sentence of 7+ words, or only a restatement of their question. */
+export function ignoresWhy(draft: string): boolean {
+  const parts = String(draft || "").replace(/\s+/g, " ").match(/[^.!?]+[.!?]?/g) || [];
+  const declarative = parts.map((p) => p.trim()).filter((p) => p && !/[?？]$/.test(p));
+  const real = declarative.filter((p) => p.split(/\s+/).length >= 7 && !/^(?:you(?:'re| are) (?:wondering|asking)|you want to know|you ask|good question|great question)\b/i.test(p));
+  return real.length === 0;
+}

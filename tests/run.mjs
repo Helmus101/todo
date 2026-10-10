@@ -8,6 +8,7 @@ import { normalizeWidget, shuffledNotSolved, projectileStats } from "../shared/w
 import { makeSyncScheduler } from "../server/syncScheduler.ts";
 import { buildTasksPayload, parseHave } from "../server/taskDelta.ts";
 import { makeTaskSync } from "../client/taskDelta.ts";
+import { asksWhy, ignoresWhy } from "../server/tutorAdapt.ts";
 import { statesOwnAnswer, listenCue } from "../server/tutorAdapt.ts";
 import { buildSolid } from "../shared/solid3d.ts";
 import { echoesStudentWords } from "../server/tutorAdapt.ts";
@@ -2023,6 +2024,12 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
       /THE CORE — WHO YOU ARE AND HOW YOU TEACH/.test(cl) && ["1. LISTEN FIRST", "2. KNOW THE ANSWER BEFORE YOU ASK", "3. NEVER GIVE THE ANSWER, AND DO NO WORK FOR THEM", "4. HAVE A ROUTE, FOLLOW THE STUDENT", "5. SOUND HUMAN", "6. THE BOARD IS THEIR PAPER"].every((h) => cl.includes(h)) && /a fact nobody could reason out/.test(cl) && /"ask_answer":"its correct answer/.test(tb) && /KNOW THE ANSWER BEFORE YOU ASK: fill "ask" and "ask_answer"/.test(tb) && /const guardOwnAnswer = /.test(cl)); }
   { const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
     check("GET /api/tasks reconciles against a validated cloud read, so tasks the daily sweep added show on the next load", /const cloud = await loadState\(req\.session\.user, \{ bypassCache: true \}\);\s*\n\s*const merged = mergeTasks\(cloud\.tasks \|\| \[\], sessionTasks\);/.test(idx)); }
+  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+    check("a WHY / purpose / connection question is recognised (typed or spoken, with or without a question mark); a work step is not",
+      asksWhy("yeah ok understand but why do I need equate a potential energy to kinetic energy that's what I'm not understanding") && asksWhy("why are we doing 750 J over 5") && asksWhy("what's the point of this") && asksWhy("how is power related to work") && asksWhy("I don't understand why we use that") && asksWhy("what's the difference between speed and velocity") && !asksWhy("300") && !asksWhy("so then v squared is 392") && !asksWhy('[Exercise] I answered "19.8" — marked right (try #1).'));
+    check("a reply that restates the why-question or answers with a question explains nothing; a real explanation does not trip it",
+      ignoresWhy("You're wondering why we even need to bother equating them when we already found the speed with SUVAT. Notice how m shows up on both sides?") && ignoresWhy("What do you think happens to the energy as it falls?") && !ignoresWhy("Because SUVAT only works when the acceleration is constant, but energy conservation works even when the force changes — that's why physicists reach for it. Does that make sense?") && !ignoresWhy("Good question. Energy conservation skips the time and the acceleration entirely, so it still works on a curved slide where SUVAT breaks."));
+    check("the tutor answers why-questions: persona rule, per-turn directive, and a corrective round (guardAnswerWhy)", /A WHY question \("why do I need to equate those\?"/.test(cl) && /const guardAnswerWhy = /.test(cl) && (cl.match(/guardAnswerWhy\(textContent, round, lastRound\)/g) || []).length === 2 && /asksWhy\(message\) \? WHY_BLOCK/.test(cl)); }
   check("tool calls typed as text never reach the student", stripPseudoTools("<syntax_error></syntax_error><write_to_board><kind>result</kind><text>distance = (470 + H)/tan 40</text></write_to_board>Ah, exactly — what next?") === "Ah, exactly — what next?" && stripPseudoTools("plain reply") === "plain reply" && stripPseudoTools("<chat>Using that height.</chat>") === "Using that height.");
   check("a reply that is only a formula is bare maths; a sentence with maths is not", bareMath("distance K = (470)/(tan 40)") && bareMath("(470 + H)/(tan 25°) - (470 + H)/(tan 40°) = 500") && !bareMath("Which side is opposite the 40° angle here?") && !bareMath("Good, now what does the tan 40° ratio give you for the horizontal distance?"));
   // ── Grounding (reported live: "tan(θ) = slope!" to a student who had only said the two slopes; "maybe graph it" ignored) ──

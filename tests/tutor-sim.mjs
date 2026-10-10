@@ -455,6 +455,12 @@ export async function runTutorSim(check, section) {
     : { content: "Exactly. Now the same push took 2.5 s — what could you work out from that?" };
   r = await run("750", { history: [{ role: "user", text: "work is force times distance" }, { role: "assistant", text: "ok" }] });
   check("end to end: a reply that already states the answer to the question it asks ('750 J — what are the units?') is corrected once", !/what are the units/i.test(r.reply) && /2\.5 s/.test(r.reply) && calls.some((b) => /already states "J"/.test(lastUserText(b))));
+  // WHY: a why-question that is answered with a restatement + a question is sent back once for a real explanation.
+  script = (b, i) => i === 0
+    ? { content: "You're wondering why we even need to bother equating them when we already found the speed with SUVAT. Notice how m shows up on both sides?" }
+    : { content: "Because SUVAT needs a constant acceleration, while energy conservation skips time and acceleration entirely — so it still works on a curved slide. Does that make sense?" };
+  r = await run("yeah ok understand but why do I need equate a potential energy to kinetic energy that's what I'm not understanding", { history: [{ role: "user", text: "so mgh" }, { role: "assistant", text: "ok" }] });
+  check("end to end: a why-question gets a real explanation, not 'You're wondering why…' + a counter-question", !/you're wondering/i.test(r.reply) && /constant acceleration/.test(r.reply) && calls.some((b) => /gives no explanation/.test(lastUserText(b))) && calls.some((b) => /THEY ASKED WHY/.test(JSON.stringify(b.messages))));
   // LISTEN: "I don't know" / an idea in their own words reach the tutor as directives.
   script = () => ({ content: "Okay — that's the missing piece. It's called the watt: one joule per second. So what's the power here?" });
   r = await run("oh no I don't know", { history: [{ role: "user", text: "joules per second" }, { role: "assistant", text: "what's it called?" }] });
