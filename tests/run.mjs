@@ -2440,7 +2440,7 @@ section("isLikelyEcho — textual echo discrimination for real barge-in (client/
   check("Gemini TTS, the old synthesis race, StreamElements and Google Translate TTS are gone entirely", !/GEMINI_TTS|synthesizeSpeechRace|geminiDownUntil|callGeminiTts/.test(claudeSrc + serverSrc) && !/api\.streamelements\.com|translate\.google\.com|freetts\.org/.test(claudeSrc + serverSrc) && !/synthesizeSpeechFallback|synthesizeSpeechGoogleTranslate/.test(claudeSrc));
   check("the voice pool is a free, keyless, MALE-ONLY list with more than one fallback voice per language", /const TTS_MALE_VOICES: Record<"fr" \| "en", string\[\]> = \{\s*fr: \["Mathieu"\],\s*en: \["Matthew", "Brian", "Joey", "Justin", "Russell"\],\s*\};/.test(claudeSrc));
   check("no known FEMALE voice name appears anywhere in the server's TTS voices", !/Chantal|Gabrielle|Celine|Céline|Joanna|Salli|Kimberly|Samantha|Amelie|Amélie/.test(claudeSrc));
-  check("the pool is tried IN ORDER per chunk and a failure moves to the next male voice", /for \(let i = 0; i < voices\.length && !done; i\+\+\)/.test(ttsFn) && /trying the next male voice/.test(ttsFn));
+  check("the pool is tried IN ORDER per chunk and a failure moves to the next male voice", /for \(let i = 0; i < attempts\.length && !done; i\+\+\)/.test(ttsFn) && /voice attempt/.test(ttsFn));
   check("if no male voice can speak a chunk the whole reply fails loudly instead of serving half of it", /if \(!done\) return last;/.test(ttsFn) && /every male voice failed/.test(ttsBody));
   check("voice is always available — free + keyless means there is nothing to configure", /export function ttsReady\(\): boolean \{\s*return true;\s*\}/.test(claudeSrc));
   check("long replies are CHUNKED at the provider's own safe size, never truncated", /wordWrapChunks\(text, TTS_CHUNK_MAX\)/.test(ttsFn) && /const TTS_CHUNK_MAX = 900;/.test(claudeSrc));
@@ -2975,7 +2975,7 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   // One quick client-side retry absorbs a transient blip; past that,
   // the reply's audio is silently skipped (lastDiagnostic set) rather than switching voices mid-session.
   check("a cloud chunk gets exactly one quick retry before being given up on", /CLOUD_RETRY_DELAY_MS/.test(ttsSynthSrc) && /await sleep\(CLOUD_RETRY_DELAY_MS\)/.test(ttsSynthSrc));
-  check("a cloud fetch failure never falls through to the browser voice — it's skipped silently instead", !/noteCloudFailure/.test(ttsSynthSrc) && !/speakWithBrowser\(gen, chunks/.test(ttsSynthSrc) && /skipping this reply's audio \(never the browser voice\)/.test(ttsSynthSrc));
+  check("a cloud fetch failure never falls through to the browser voice — it's skipped silently instead", !/noteCloudFailure/.test(ttsSynthSrc) && !/speakWithBrowser\(gen, chunks/.test(ttsSynthSrc) && /failedEverywhere\("cloud-unavailable"\)/.test(ttsSynthSrc));
   check("a cloud playback failure is also skipped silently, never the browser voice", /playback-failed/.test(ttsSynthSrc));
   check("speak() only ever uses the browser voice when there's literally no <audio> element to play cloud audio with", /const useCloud = audioSupported;/.test(ttsSynthSrc));
   check("the browser fallback (the no-<audio>-support edge case) still speaks via speechSynthesis", /engine\.speak\(utter\)/.test(ttsSynthSrc) && !/speakViaFreeTTS/.test(ttsSynthSrc));
@@ -5216,7 +5216,7 @@ section("TTS — one free provider, a MALE-ONLY voice pool, retried voice-by-voi
   check("a free, keyless provider is used (its public form endpoint — no account, no API key)", /https:\/\/ttsmp3\.com\/makemp3_new\.php/.test(claude) && /source: "ttsmp3"/.test(claude));
   check("the request looks like a browser (a bare server fetch is refused by these free endpoints)", /User-Agent": BROWSER_UA/.test(claude) && /Referer": "https:\/\/ttsmp3\.com\/"/.test(claude));
   check("the voice name is sent in the field the endpoint actually reads", /lang: voice/.test(claude));
-  check("synthesizeSpeech speaks each chunk with the pool in order, one voice at a time (never in parallel)", /for \(const chunk of chunks\)/.test(fn) && /await synthesizeChunkWithVoice\(chunk, voices\[i\]\)/.test(fn));
+  check("synthesizeSpeech speaks each chunk with the pool in order, one voice at a time (never in parallel)", /for \(const chunk of chunks\)/.test(fn) && /synthesizeChunkWithVoice\(chunk, v\)/.test(fn) && /synthesizeChunkWithEdge\(chunk, v\)/.test(fn) && /await attempts\[i\]\(\)/.test(fn));
   check("a chunk the whole male pool refuses fails the reply loudly rather than returning partial audio", /if \(!done\) return last;/.test(fn));
   check("no Gemini TTS key, model or voice constant survives anywhere in the server", !/GEMINI_TTS|callGeminiTts/.test(claude));
 

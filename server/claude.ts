@@ -1711,6 +1711,34 @@ export function pcmToWav(pcm: Buffer, sampleRate: number, channels = 1, bitsPerS
   header.writeUInt32LE(pcm.length, 40);
   return Buffer.concat([header, pcm]);
 }
+
+// Primary voice: Microsoft Edge's Read Aloud service (neural, keyless, male voices only). ttsmp3 (below) used to be the only
+// source and started answering 502 for every voice, silencing the tutor — it is now the fallback.
+const EDGE_MALE_VOICES: Record<"fr" | "en", string[]> = {
+  fr: ["fr-FR-HenriNeural", "fr-CA-AntoineNeural"],
+  en: ["en-US-GuyNeural", "en-GB-RyanNeural", "en-US-ChristopherNeural"],
+};
+const xmlEscape = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+async function synthesizeChunkWithEdge(text: string, voice: string): Promise<{ mp3: Buffer } | { error: string; status: number }> {
+  try {
+    const { MsEdgeTTS, OUTPUT_FORMAT } = await import("msedge-tts");
+    const tts = new MsEdgeTTS();
+    await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+    const { audioStream } = tts.toStream(xmlEscape(text));
+    const mp3 = await new Promise<Buffer>((resolve, reject) => {
+      const parts: Buffer[] = [];
+      const timer = setTimeout(() => reject(new Error("timeout")), TTS_TIMEOUT_MS);
+      audioStream.on("data", (d: Buffer) => parts.push(Buffer.from(d)));
+      audioStream.on("error", (e: any) => { clearTimeout(timer); reject(e); });
+      audioStream.on("close", () => { clearTimeout(timer); resolve(Buffer.concat(parts)); });
+    });
+    try { (tts as any).close?.(); } catch { /* ignore */ }
+    if (!mp3.length) return { error: `edge ${voice} returned empty audio`, status: 502 };
+    return { mp3 };
+  } catch (e: any) {
+    return { error: `edge ${voice} failed: ${e?.message || e}`, status: 502 };
+  }
+}
 /** One male voice, one chunk, one attempt. Never throws. */
 async function synthesizeChunkWithVoice(text: string, voice: string): Promise<{ mp3: Buffer } | { error: string; status: number }> {
   try {
@@ -1789,8 +1817,12 @@ export async function synthesizeSpeech(text: string, lang: string): Promise<{ au
   let last: { error: string; status: number } = { error: "no male voice tried", status: 501 };
   for (const chunk of chunks) {
     let done = false;
-    for (let i = 0; i < voices.length && !done; i++) {
-      const r = await synthesizeChunkWithVoice(chunk, voices[i]);
+    const attempts: Array<() => Promise<{ mp3: Buffer } | { error: string; status: number }>> = [
+      ...EDGE_MALE_VOICES[lang === "fr" ? "fr" : "en"].map((v) => () => synthesizeChunkWithEdge(chunk, v)),
+      ...voices.map((v) => () => synthesizeChunkWithVoice(chunk, v)),
+    ];
+    for (let i = 0; i < attempts.length && !done; i++) {
+      const r = await attempts[i]();
       if (!("error" in r)) {
         // Container tags go on the WHOLE stream, not on each piece of it — see stripId3v2's comment for the
         // live-verified mid-stream tag that was silently stopping long replies at the chunk boundary.
@@ -1799,7 +1831,7 @@ export async function synthesizeSpeech(text: string, lang: string): Promise<{ au
         done = true; break;
       }
       last = r;
-      console.warn(`[tts] male voice ${voices[i]} failed (${r.error})${i < voices.length - 1 ? " — trying the next male voice" : ""}`);
+      console.warn(`[tts] voice attempt ${i + 1}/${attempts.length} failed (${r.error})`);
     }
     // No male voice could speak THIS chunk: give up on the whole reply rather than serve a half-spoken one.
     if (!done) return last;
@@ -7767,7 +7799,8 @@ const PRIMER_PERSONA =
   `- RETRIEVAL OVER RE-EXPLAINING: when they come back to a topic you've covered before, ask them to recall ` +
   `it first ("what do you remember about…?") before teaching anything; a right answer given for the wrong ` +
   `reason deserves a "why does that work?".\n\n` +
-  `THE BASICS. Your student is a lycée/IB teenager unless the year/grade line below says otherwise. Teach their actual syllabus at their real level; the skill is the vehicle, building their ability to THINK on their own is the point. Follow the policy profile below (hint rungs, wait time, praise style, session caps) exactly. On a brand-new topic, say the arc in one short sentence before your first question; on a continuing one go straight in. Off-topic → answer simply, steer back. Reply in the student's language.\n\n`;
+  `THE BASICS. Your student is a lycée/IB teenager unless the year/grade line below says otherwise. Teach their actual syllabus at their real level; the skill is the vehicle, building their ability to THINK on their own is the point. Follow the policy profile below (hint rungs, wait time, praise style, session caps) exactly. On a brand-new topic, say the arc in one short sentence before your first question; on a continuing one go straight in. Off-topic → answer simply, steer back. Reply in the student's language.\n` +
+  `- BY SUBJECT: work through their actual syllabus material (maths, physics, philo, langues, whatever it is) at their real year's level, using the methods their own teacher/exam board would expect — not a simplified substitute. Teach each subject the way it is really learned: maths/physics by setting up and reasoning before calculating; languages by producing and correcting sentences, not by lists; humanities and philosophy by arguments, evidence and counter-examples; sciences by predictions and causes. If a younger child ever is the student, drop to sounding-out/counting-with-objects fundamentals. The mechanism stays the same everywhere: diagnose, hint, let them try, check understanding, build on it, then name the transferable move they just used.\n\n`;
 // The "find the misconception before teaching" rule deliberately does NOT live here — it's owned by the
 // Bridge framework in the main methodology block below (rule 1a: identify the error, find the flawed
 // reasoning, remediate). Two independently-worded copies of the same rule inside an already ~18k-token
