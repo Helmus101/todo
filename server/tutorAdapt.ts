@@ -843,3 +843,87 @@ export function listenCue(message: string): "confused" | "insight" | null {
   if (m.length >= 18 && (/\b(?:oh|ah|wait|okay|ok)\b[^.?!]{0,40}\bso\b/i.test(m) || /\bso\b[^.?!]{0,70}\b(?:is|are|means?)\b[^.?!]{0,20}\b(?:basically|just|like|the same|how fast|rate|over)\b/i.test(m) || /\bbasically\b/i.test(m))) return "insight";
   return null;
 }
+
+/** "Why do I need to equate those?", "what's the point of…", "how does X connect to Y", "I don't understand why" — a request to UNDERSTAND (purpose,
+ *  reason, connection), spoken or typed (voice messages often have no question mark). Not a request for the problem's answer. */
+export function asksWhy(message: string): boolean {
+  const m = String(message || "").trim();
+  if (m.length < 12 || /^\[(?:Exercise|Exercice|Activity|Activité)\]/i.test(m)) return false;
+  return /\b(?:why|how come|pourquoi|à quoi (?:ça )?sert)\b/i.test(m)
+    || /\bwhat(?:'s| is) the (?:point|reason|use|purpose|idea)\b/i.test(m)
+    || /\b(?:i )?(?:don'?t|do not|still don'?t|can'?t) (?:really )?(?:understand|get|see) (?:why|how|what|the point)\b/i.test(m)
+    || /\bhow (?:is|are|does|do) (?:this|that|it|these|those|[a-z]+) (?:related|connected|linked)\b/i.test(m)
+    || /\bwhat(?:'s| is) the difference between\b/i.test(m);
+}
+export const WHY_BLOCK = `\n\nTHEY ASKED WHY (the point, the reason, how two things connect). That is a request to UNDERSTAND, not for the problem's answer — "never give the answer" does not apply here. Answer it directly first, in 2–3 plain sentences with the actual reason, in words — no new equations (a concrete example or comparison helps). Only then, if it fits, one small question that checks it landed. Never reply to a why-question with a question that sidesteps it, with "notice that…", or by restating what they said ("You're wondering why…").\n`;
+/** The reply to a why-question gives no explanation: no plain (non-question) sentence of 7+ words, or only a restatement of their question. */
+export function ignoresWhy(draft: string): boolean {
+  const parts = String(draft || "").replace(/\s+/g, " ").match(/[^.!?]+[.!?]?/g) || [];
+  const declarative = parts.map((p) => p.trim()).filter((p) => p && !/[?？]$/.test(p));
+  const real = declarative.filter((p) => p.split(/\s+/).length >= 7 && !/^(?:you(?:'re| are) (?:wondering|asking)|you want to know|you ask|good question|great question)\b/i.test(p));
+  return real.length === 0;
+}
+
+/** Content that belongs on the BOARD, not in the tutor's tiny bubble: a numbered / bulleted list of 3+ items, or a long block (70+ words). */
+export function isBoardContent(reply: string): boolean {
+  const t = String(reply || "");
+  const items = (t.match(/(?:^|\n|\s)(?:\d{1,2}[.)]|[-•*])\s+\S/g) || []).length;
+  const words = t.replace(/\$[^$]*\$/g, " x ").split(/\s+/).filter(Boolean).length;
+  return items >= 3 || words >= 70;
+}
+
+/** Split a list-style reply into its board items and the closing question (kept for the bubble). */
+export function splitBoardContent(reply: string): { items: string[]; question: string } {
+  const t = String(reply || "").replace(/\r/g, "").trim();
+  const qMatch = /([^.!?\n]*[?？])\s*$/.exec(t);
+  const question = qMatch ? qMatch[1].trim() : "";
+  const body = (qMatch ? t.slice(0, qMatch.index) : t).trim();
+  let items = body.split(/\s*(?:^|\n|\s)(?:\d{1,2}[.)]|[-•*])\s+/).map((x) => x.trim()).filter((x) => x.length > 3);
+  if (items.length <= 1) items = (body.match(/[^.!?]+[.!?]+/g) || [body]).map((x) => x.trim()).filter((x) => x.length > 3);
+  // a lead-in sentence ("Here is the quick cheat sheet:") is not an item
+  items = items.filter((x, i) => !(i === 0 && /:\s*$/.test(x) || (i === 0 && items.length > 2 && /\b(?:here(?:'s| is| are)|voici)\b/i.test(x) && x.split(/\s+/).length <= 12)));
+  return { items: items.slice(0, 8), question };
+}
+
+/** Subject shorthand the student (or speech recognition) uses — "ep", "E_p", "PE", "ke" — that the tutor must read as the quantity, and SAY by name.
+ *  Returns "" when nothing recognisable appears in the recent conversation. */
+const GLOSS: { re: RegExp; line: string }[] = [
+  { re: /(?<![a-z])(?:e\s?_?\s?p|ep|pe|gpe|gp\.?e)(?![a-z])/i, line: `"ep" / "E_p" / "Ep" / "PE" = potential energy (gravitational, E_p = mgh, unless the problem is about a spring)` },
+  { re: /(?<![a-z])(?:e\s?_?\s?k|ek|ke|k\.?e)(?![a-z])/i, line: `"ek" / "E_k" / "Ek" / "KE" = kinetic energy (E_k = ½mv²)` },
+  { re: /(?<![a-z])(?:e\s?_?\s?t\s?h|eth)(?![a-z])/i, line: `"E_th" = thermal energy` },
+  { re: /(?<![a-z])(?:gpe)(?![a-z])/i, line: `"GPE" = gravitational potential energy` },
+  { re: /(?<![a-z])(?:eff|η|eta)(?![a-z])/i, line: `"η" / "eff" = efficiency (useful energy out ÷ total energy in)` },
+  { re: /(?<![a-z])(?:suvat)(?![a-z])/i, line: `"SUVAT" = the constant-acceleration equations (s, u, v, a, t)` },
+];
+export function notationGloss(message: string, history: { role: string; text: string }[] = []): string {
+  const text = [message, ...history.filter((h) => h.role === "user").slice(-6).map((h) => h.text)].join(" \n ");
+  const seen = GLOSS.filter((g) => g.re.test(text)).map((g) => g.line);
+  if (!seen.length) return "";
+  return `\n\nTHEIR SHORTHAND (read it as the quantity; in YOUR words always say the NAME — "potential energy", not "ep" — with the symbol in brackets the first time):\n${[...new Set(seen)].map((l) => `- ${l}`).join("\n")}\n`;
+}
+
+/** The student wants a (new) problem / exercise / question to work on — "can you do another exercise", "put a problem on the board", "give me a physics HL one". */
+export function asksForProblem(message: string): boolean {
+  const m = String(message || "");
+  if (m.length < 8 || /^\[(?:Exercise|Exercice|Activity|Activité)\]/i.test(m.trim())) return false;
+  return /\b(?:another|a new|new|next|different|one more|more)\b[^.?!]{0,30}\b(?:problem|exercise|question|one)\b/i.test(m)
+    || /\b(?:give|show|set|do|try|have|want)\b[^.?!]{0,25}\b(?:a|an|another|new|some)\b[^.?!]{0,25}\b(?:problem|exercise|question)\b/i.test(m)
+    || /\b(?:put|write|place)\b[^.?!]{0,30}\b(?:problem|exercise|question)\b[^.?!]{0,25}\b(?:board|up|there)\b/i.test(m)
+    || /\blet'?s do (?:a |another |one )?(?:new |another )?(?:problem|exercise|question|one)\b/i.test(m)
+    || /\b(?:un autre|une autre|nouvel|nouvelle)\b[^.?!]{0,20}\b(?:exercice|problème|question)\b/i.test(m);
+}
+/** "Which problem?", "I don't see the question you mean" — the tutor asked about a problem the student was never shown. */
+export function asksWhichProblem(message: string): boolean {
+  return /\b(?:which|what) (?:problem|question|exercise)\b|\b(?:don'?t|do not|can'?t) (?:see|find) (?:the |which |any |a )?(?:problem|question|exercise)\b|\bwhat are you (?:talking|asking) about\b|\bfor which (?:problem|question)\b|\bwhich one (?:are you|do you)\b/i.test(String(message || ""));
+}
+
+/** Does this tutor line START a new problem — a scenario with 2+ quantities (units / angles) and something to find — whose numbers are NOT already on the board? */
+export function startsNewProblem(text: string, existingTexts: string[]): boolean {
+  const t = String(text || "").replace(/\$/g, " ");
+  const quantities = t.match(/\d+(?:[.,]\d+)?\s?(?:°|(?:m|cm|mm|km|kg|g|s|min|h|N|J|V|A|W|mol|L|mL|%|kJ|kW|MJ)\b)/g) || [];
+  if (quantities.length < 2 || t.length < 40) return false;
+  if ((t.match(/[A-Za-zÀ-ÿ]{3,}/g) || []).length < 6) return false; // a scenario is told in words — a table of values or an equation is not
+  if (!/[?？]|=\s*\?|\b(?:find|calculate|determine|work out|what(?:'s| is)|how (?:much|fast|far|long))\b/i.test(t)) return false;
+  return !boardCoversStatement(t, existingTexts);
+}
+export const NO_UNPROMPTED_EXERCISE = "REJECTED: they didn't ask for a new problem. Keep helping with what they are doing right now — answer what they asked, guide the step they're on. When the current one is finished, OFFER another in one short question (\"want another one on this?\") and wait for a yes; never set one unasked.";

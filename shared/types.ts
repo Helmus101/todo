@@ -1533,6 +1533,8 @@ export interface TaskProblem {
   hint?: string;
   /** Guidance on expected format/units/notation for free-response mode (e.g. "two decimal places, in m/s"). */
   format?: string;
+  /** The exact computed value of a numeric answer (from the problem's verified `check` expression) — the widget accepts anything within rounding of it. */
+  value?: number;
   /** Where the question comes from when it was adapted from a registered source (IB Documents, Revision Village,
    *  AP Central…) — shown as a link under the question. Absent for generated questions. */
   source?: { name: string; url: string };
@@ -1833,12 +1835,47 @@ function parseNumericOrFraction(s: string): number {
 function numbersMatch(given: number, correct: string | number): boolean {
   const correctNum = typeof correct === "number" ? correct : parseNumericOrFraction(correct);
   const looksDecimal = typeof correct === "string" && /\.\d/.test(correct);
-  if (!looksDecimal) return Math.abs(given - correctNum) < 1e-6 * Math.max(1, Math.abs(correctNum));
+  // A bare integer is exact — except a large one (≥ 50), which is nearly always a ROUNDED result ("112" for 111.99): allow rounding drift there.
+  if (!looksDecimal) return Math.abs(given - correctNum) < (Math.abs(correctNum) >= 50 ? Math.max(0.5, Math.abs(correctNum) * 0.005) : 1e-6 * Math.max(1, Math.abs(correctNum)));
   const relTol = Math.abs(correctNum) * 0.05; // covers g=9.8-vs-9.81/9.8-vs-10 and a couple of rounded steps
   const absFloor = 0.08; // last-digit rounding drift for small answers (7.42 vs 7.43, 1.94 vs 1.97)
   return Math.abs(given - correctNum) <= Math.max(relTol, absFloor);
 }
-export function practiceAnswerMatches(given: string, correct: string): boolean {
+/** The first number in free text, ignoring units, words and signs like "≈" or "=": "≈ 112 m", "h = 111,99 metres", "1 500 J", "1,500". NaN if none. */
+export function firstNumber(s: string): number {
+  let t = normalizeMinus(String(s || ""));
+  t = t.replace(/(\d)[ \u00a0,](?=\d{3}(?!\d))/g, "$1");          // thousands separators: 1 500 / 1,500
+  t = t.replace(/(\d),(?=\d)/g, "$1.");                             // decimal comma: 111,99
+  const m = t.match(/-?\d+(?:\.\d+)?(?:e-?\d+)?/i);
+  return m ? Number(m[0]) : NaN;
+}
+/** A free-response key that is a plain number (no unit text): the widget then asks for "a number". */
+export function isNumericAnswer(answer: string | undefined): boolean {
+  return !!answer && /^[\s≈~=]*[-−–]?\d[\d\s.,]*(?:e-?\d+)?\s*(?:\/\s*\d+(?:\.\d+)?)?\s*$/i.test(String(answer));
+}
+/** Does this exercise ask for a percentage? Then 0.75, 3/4, 75 and 75% are all the same right answer. */
+export function problemIsPercent(p: { question?: string; format?: string; answer?: string }): boolean {
+  return /%|percent|pourcent/i.test(`${p.question || ""} ${p.format || ""}`);
+}
+export function practiceAnswerMatches(given: string, correct: string, value?: number, percent?: boolean): boolean {
+  if (percent) {
+    // A percentage may be given as a fraction/decimal (0.75, 3/4) or as a percent (75, 75%): compare in percent.
+    const c = firstNumber(correct), gRaw = String(given || "");
+    const frac = /^\s*(-?\d+(?:[.,]\d+)?)\s*\/\s*(\d+(?:[.,]\d+)?)\s*$/.exec(gRaw);
+    const g = frac ? Number(frac[1].replace(",", ".")) / Number(frac[2].replace(",", ".")) : firstNumber(gRaw);
+    if (Number.isFinite(c) && Number.isFinite(g)) {
+      const hasPct = /%/.test(gRaw);
+      const asPercent = hasPct || frac || (g > 1 || g < 0) ? (frac ? g * 100 : g) : g * 100; // 0 ≤ g ≤ 1 without a % sign is a fraction
+      const tol = Math.max(Math.abs(c) * 0.006, 0.05);
+      const target = Number.isFinite(value as number) ? (value as number) : c;
+      if (Math.abs(asPercent - c) <= tol || Math.abs(asPercent - target) <= Math.max(Math.abs(target) * 0.006, 0.05) || Math.abs(g - c) <= tol) return true;
+    }
+  }
+  if (Number.isFinite(value as number)) {
+    // The problem's verified exact value: any answer within rounding of it is right, whatever units or words surround it.
+    const gv = firstNumber(given);
+    if (Number.isFinite(gv) && Math.abs(gv - (value as number)) <= Math.max(Math.abs(value as number) * 0.006, 0.05)) return true;
+  }
   const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ").replace(/^[a-z]\s*=\s*/, "").replace(/\.$/, "");
   const g = norm(given), c = norm(correct);
   if (!g) return false;
@@ -1859,7 +1896,10 @@ export function practiceAnswerMatches(given: string, correct: string): boolean {
     return m ? Number(m[0].replace(",", ".")) : NaN;
   };
   const gln = leadingNum(g), cln = leadingNum(c);
-  if (Number.isFinite(gln) && Number.isFinite(cln)) return numbersMatch(gln, c.match(/-?\d+\.\d+/)?.[0] ?? cln);
+  if (Number.isFinite(gln) && Number.isFinite(cln) && numbersMatch(gln, c.match(/-?\d+\.\d+/)?.[0] ?? cln)) return true;
+  // Last resort: the number may sit after words or signs ("≈ 112 m", "the height is 112 metres", "h≈111,99") — compare the first number on each side.
+  const gfn = firstNumber(g), cfn = firstNumber(c);
+  if (Number.isFinite(gfn) && Number.isFinite(cfn)) return numbersMatch(gfn, c.match(/-?\d+\.\d+/)?.[0] ?? cfn);
   return false;
 }
 

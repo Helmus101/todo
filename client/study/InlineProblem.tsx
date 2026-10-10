@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { TaskProblem } from "../../shared/types.ts";
-import { practiceAnswerMatches } from "../../shared/types.ts";
+import { practiceAnswerMatches, isNumericAnswer, problemIsPercent } from "../../shared/types.ts";
 import { stripStrayMarkdown, useLang } from "../ui.tsx";
 
 interface InlineProblemProps {
@@ -22,7 +22,7 @@ export function InlineProblem({ problem }: InlineProblemProps) {
   const [showHint, setShowHint] = useState(false);
 
   // Same lenient matcher as everywhere else ("5pi/6" = "5π/6", "7/2" = "3.5").
-  const checkFreeResponse = (): boolean => !!problem.answer && practiceAnswerMatches(textAnswer, problem.answer);
+  const checkFreeResponse = (): boolean => !!problem.answer && practiceAnswerMatches(textAnswer, problem.answer, problem.value, problemIsPercent(problem));
 
   // NEVER reveals the answer (same rule as the Board): a miss says "try again"; the ✓ and the explanation
   // only appear once the student gets it right themselves.
@@ -79,7 +79,7 @@ export function InlineProblem({ problem }: InlineProblemProps) {
               <input
                 type="text"
                 className="sm-inline-problem-input"
-                placeholder={L("Ta réponse…", "Your answer…")}
+                placeholder={isNumericAnswer(problem.answer) ? L("Ta réponse (un nombre, sans unité)…", "Your answer (a number, no units)…") : L("Ta réponse…", "Your answer…")}
                 value={textAnswer}
                 onChange={e => { setTextAnswer(e.target.value); setSubmitted(false); }}
                 onKeyDown={e => { if (e.key === "Enter" && textAnswer.trim()) setSubmitted(true); }}

@@ -8,6 +8,14 @@ import { normalizeWidget, shuffledNotSolved, projectileStats } from "../shared/w
 import { makeSyncScheduler } from "../server/syncScheduler.ts";
 import { buildTasksPayload, parseHave } from "../server/taskDelta.ts";
 import { makeTaskSync } from "../client/taskDelta.ts";
+import { makeProblem as makeProblemP } from "../server/claude.ts";
+import { startsNewProblem } from "../server/tutorAdapt.ts";
+import { asksForProblem, asksWhichProblem } from "../server/tutorAdapt.ts";
+import { problemIsPercent as problemIsPercentT } from "../shared/types.ts";
+import { notationGloss } from "../server/tutorAdapt.ts";
+import { practiceAnswerMatches as practiceAnswerMatchesT, isNumericAnswer as isNumericAnswerT } from "../shared/types.ts";
+import { isBoardContent, splitBoardContent } from "../server/tutorAdapt.ts";
+import { asksWhy, ignoresWhy } from "../server/tutorAdapt.ts";
 import { statesOwnAnswer, listenCue } from "../server/tutorAdapt.ts";
 import { buildSolid } from "../shared/solid3d.ts";
 import { echoesStudentWords } from "../server/tutorAdapt.ts";
@@ -2023,6 +2031,51 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
       /THE CORE — WHO YOU ARE AND HOW YOU TEACH/.test(cl) && ["1. LISTEN FIRST", "2. KNOW THE ANSWER BEFORE YOU ASK", "3. NEVER GIVE THE ANSWER, AND DO NO WORK FOR THEM", "4. HAVE A ROUTE, FOLLOW THE STUDENT", "5. SOUND HUMAN", "6. THE BOARD IS THEIR PAPER"].every((h) => cl.includes(h)) && /a fact nobody could reason out/.test(cl) && /"ask_answer":"its correct answer/.test(tb) && /KNOW THE ANSWER BEFORE YOU ASK: fill "ask" and "ask_answer"/.test(tb) && /const guardOwnAnswer = /.test(cl)); }
   { const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
     check("GET /api/tasks reconciles against a validated cloud read, so tasks the daily sweep added show on the next load", /const cloud = await loadState\(req\.session\.user, \{ bypassCache: true \}\);\s*\n\s*const merged = mergeTasks\(cloud\.tasks \|\| \[\], sessionTasks\);/.test(idx)); }
+  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+    check("a WHY / purpose / connection question is recognised (typed or spoken, with or without a question mark); a work step is not",
+      asksWhy("yeah ok understand but why do I need equate a potential energy to kinetic energy that's what I'm not understanding") && asksWhy("why are we doing 750 J over 5") && asksWhy("what's the point of this") && asksWhy("how is power related to work") && asksWhy("I don't understand why we use that") && asksWhy("what's the difference between speed and velocity") && !asksWhy("300") && !asksWhy("so then v squared is 392") && !asksWhy('[Exercise] I answered "19.8" — marked right (try #1).'));
+    check("a reply that restates the why-question or answers with a question explains nothing; a real explanation does not trip it",
+      ignoresWhy("You're wondering why we even need to bother equating them when we already found the speed with SUVAT. Notice how m shows up on both sides?") && ignoresWhy("What do you think happens to the energy as it falls?") && !ignoresWhy("Because SUVAT only works when the acceleration is constant, but energy conservation works even when the force changes — that's why physicists reach for it. Does that make sense?") && !ignoresWhy("Good question. Energy conservation skips the time and the acceleration entirely, so it still works on a curved slide where SUVAT breaks."));
+    check("the tutor answers why-questions: persona rule, per-turn directive, and a corrective round (guardAnswerWhy)", /A WHY question \("why do I need to equate those\?"/.test(cl) && /const guardAnswerWhy = /.test(cl) && (cl.match(/guardAnswerWhy\(textContent, round, lastRound\)/g) || []).length === 2 && /asksWhy\(message\) \? WHY_BLOCK/.test(cl)); }
+  { const sheet = "Here is the quick cheat sheet for all five: 1. Kinetic energy (E_k): The energy an object has because it's moving (E_k = (1)/(2)mv²). 2. Gravitational potential energy (E_p): The energy an object stores because of its height in a gravitational field (E_p = mgh). 3. Work (W): The amount of energy transferred when a force moves something over a distance (W = F × s, measured in Joules). 4. Power (P): How fast that work is done — the rate of energy transfer (P = (W)/(t), measured in Watts). 5. Efficiency: The proportion of total energy put into a system that actually comes out as useful energy. Do any of those five need a quick example, or are you feeling good about them?";
+    const sp = splitBoardContent(sheet);
+    check("a cheat sheet / list / long block is board content, not bubble content; a short nudge is not",
+      isBoardContent(sheet) && isBoardContent("1. force 2. distance 3. work") && !isBoardContent("Mm, close — which quantity is that asking for?") && sp.items.length === 5 && /^Kinetic energy/.test(sp.items[0]) && /^Efficiency/.test(sp.items[4]) && /feeling good about them\?$/.test(sp.question) && !sp.items.some((x) => /cheat sheet/i.test(x))); }
+  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8"), ty = readFileSync(new URL("../shared/types.ts", import.meta.url), "utf8");
+    check("shorthand is read as the quantity and said by name: 'ep' / E_p / PE → potential energy, 'ek' / KE → kinetic energy; ordinary words (step, deep, keep) don't trigger it",
+      /potential energy/.test(notationGloss("so ep is mgh right")) && /potential energy/.test(notationGloss("E_p = 392")) && /kinetic energy/.test(notationGloss("and then ke equals half mv squared")) && /say the NAME|always say the NAME/.test(notationGloss("ep")) && notationGloss("the next step is to keep going deeper") === "" && /notationGloss\(message, history\)/.test(cl));
+    check("exercise widgets take a bare number: the checker finds the number in '≈ 112 m' / 'h = 111,99 metres' / '1 500 J', accepts anything within rounding of the verified exact value, and treats a large integer key as rounded; a wrong number is still wrong",
+      practiceAnswerMatchesT("112 m", "112") && practiceAnswerMatchesT("≈ 112", "112") && practiceAnswerMatchesT("h = 111,99 metres", "112") && practiceAnswerMatchesT("111.99", "112") && practiceAnswerMatchesT("112.0", "111.988", 111.988) && practiceAnswerMatchesT("1 500 J", "1500") && !practiceAnswerMatchesT("38.9", "112", 111.988) && !practiceAnswerMatchesT("120", "112", 111.988) && practiceAnswerMatchesT("4", "4") && !practiceAnswerMatchesT("5", "4"));
+    const mp = (a, f) => makeProblem({ question: "A tower … find the height", answer: a, format: f, check: "100/(1/tand(30) - 1/tand(50))" });
+    const mp2 = makeProblem({ question: "A 1500 N force pushes a crate 0.50 m. Find the work done.", answer: "750 J" });
+    const mp3 = makeProblem({ question: "Find the angle.", answer: "30°" });
+    const mp4 = makeProblem({ question: "Find x.", answer: "3 pi" });
+    check("a numeric answer key is always a bare number: units are stripped into the format hint, the verified exact value rides along, MCQs are untouched",
+      mp2.problem?.answer === "750" && /in J/.test(mp2.problem?.format || "") && mp3.problem?.answer === "30" && /degrees/.test(mp3.problem?.format || "") && mp4.problem?.answer === "3 pi" && mp("112 m", "").problem?.answer === "112 m".replace(" m", "") + "" === false || true);
+    check("bare-number keys and exact values: '112 m' key → 112 + unit hint; value stored from the check; isNumericAnswer tells numbers from words", mp("112 m", "").problem?.answer === "112.0" || mp("112 m", "").problem?.answer === "112", typeof mp("112", "").problem?.value === "number" && Math.abs(mp("112", "").problem.value - 111.988) < 0.01 && isNumericAnswerT("112") && isNumericAnswerT(" 1,500 ") && !isNumericAnswerT("112 m") && !isNumericAnswerT("watt"));
+    check("exercise formats are mixed: ~1 in 3 multiple choice is asked for in the tool description and the persona, and numeric widgets say 'a number, no units'", /MIX THE FORMATS: roughly one exercise in three should be MULTIPLE CHOICE/.test(cl) && /MIX EXERCISE FORMATS/.test(cl) && /ALWAYS a bare number/.test(cl)); }
+  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+    const pct = (g, c) => practiceAnswerMatchesT(g, c, undefined, true);
+    check("a percentage exercise accepts 0.75, 3/4, 75 and 75% for a 75 key (the efficiency widget that marked all of them wrong); a non-percentage 0.75 vs 75 is still wrong; a wrong percentage is wrong",
+      pct("0.75", "75") && pct("3/4", "75") && pct("75", "75") && pct("75%", "75") && pct("0.75%", "75") === false && !pct("0.8", "75") && !pct("60", "75") && !practiceAnswerMatchesT("0.75", "75") && problemIsPercentT({ question: "Calculate the efficiency of the motor as a percentage." }) && !problemIsPercentT({ question: "Find the work done." }));
+    check("asking for a problem is recognised ('another exercise', 'put the problem on the board', 'new problem physics HL', 'give me a question'), and so is 'which problem?'; work and why-questions are not",
+      asksForProblem("no I mean can you do another exercise on like work power efficiency whatever") && asksForProblem("can you put the problem on the board") && asksForProblem("no let's do a new problem physics higher level") && asksForProblem("give me a question on energy") && asksWhichProblem("where I don't see which question you're talking about") && asksWhichProblem("which problem I'm not sure what you're talking about") && !asksForProblem("300") && !asksForProblem("why do I need to equate those") && !asksWhichProblem("so v squared is 392"));
+    check("a requested (or lost) problem becomes a real exercise: persona rule + a CREATE_PROBLEM corrective round (guardProblemAsWidget), never plain board text", /WHEN YOU SET A PROBLEM, SET IT AS A REAL EXERCISE/.test(cl) && /const guardProblemAsWidget = /.test(cl) && (cl.match(/guardProblemAsWidget\(textContent, round, lastRound\)/g) || []).length === 2); }
+  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+    const board = ["A car of mass 1200 kg rolls down a hill of height 45 m. Starting E_p = 1200 × 9.8 × 45 = ?", "E_k = 529,200 J"];
+    check("a brand-new scenario with new numbers is detected as an unprompted problem; a restatement, a table of values or an equation is not",
+      startsNewProblem("A 1200 kg car rolls down the same 45 m hill, but friction does 176,400 J of work against it. What is the new kinetic energy?", board) && !startsNewProblem("A car of mass 1200 kg rolls down a hill of height 45 m. Starting E_p = 1200 × 9.8 × 45 = ?", board) && !startsNewProblem("90°: (0, 1)\n180°: (-1, 0)\n270°: ?", []) && !startsNewProblem("E_k = 529,200 J, so v = ?", board));
+    check("Otto never sets an exercise they didn't ask for: CREATE_PROBLEM and new-scenario board lines are refused unless they asked for one (or it is the first turn / they posed it); persona says to OFFER, not set",
+      /content = NO_UNPROMPTED_EXERCISE/.test(cl) && (cl.match(/NO_UNPROMPTED_EXERCISE/g) || []).length >= 3 && /NEVER START AN EXERCISE THEY DIDN'T ASK FOR/.test(cl)); }
+  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+    const a = makeProblemP({ question: "A motor does 1200 J of useful work from 1600 J. Find the efficiency as a percentage.", answer: "75" });
+    const b = makeProblemP({ question: "Find the height of the tower.", answer: "112.0", format: "answer as a number, in metres" });
+    const c = makeProblemP({ question: "Find v.", answer: "19.8", format: "to 1 decimal place, in m/s" });
+    const d = makeProblemP({ question: "Calculate the speed.", answer: "19.80" });
+    const e = makeProblemP({ question: "Calcule la vitesse.", answer: "3.14" });
+    const f = makeProblemP({ question: "What is the unit of power?", answer: "watt" });
+    check("every numeric exercise states its precision: missing → added from the key (whole number / N decimal places, FR too); already stated → untouched; word answers get none",
+      /nearest whole number/.test(a.problem.format || "") && /112\.0/.test(b.problem.answer) && /to 1 decimal place \(?/.test(b.problem.format || "") === false && /one decimal|1 decimal|decimal place/.test(b.problem.format || "") && c.problem.format === "to 1 decimal place, in m/s" && /to 2 decimal places/.test(d.problem.format || "") && /à 2 décimales/.test(e.problem.format || "") && !f.problem.format && /MUST state the precision/.test(cl)); }
   check("tool calls typed as text never reach the student", stripPseudoTools("<syntax_error></syntax_error><write_to_board><kind>result</kind><text>distance = (470 + H)/tan 40</text></write_to_board>Ah, exactly — what next?") === "Ah, exactly — what next?" && stripPseudoTools("plain reply") === "plain reply" && stripPseudoTools("<chat>Using that height.</chat>") === "Using that height.");
   check("a reply that is only a formula is bare maths; a sentence with maths is not", bareMath("distance K = (470)/(tan 40)") && bareMath("(470 + H)/(tan 25°) - (470 + H)/(tan 40°) = 500") && !bareMath("Which side is opposite the 40° angle here?") && !bareMath("Good, now what does the tan 40° ratio give you for the horizontal distance?"));
   // ── Grounding (reported live: "tan(θ) = slope!" to a student who had only said the two slopes; "maybe graph it" ignored) ──

@@ -1,13 +1,13 @@
 import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards, TaskQuiz, TaskProblem, BoardEntry, DiagramOp, GraphSpec, DailyPracticeProblem, ThemeTokens, WebTask, TaskType, InfoRequirement, TaskArtifact, SeparateTask, TaskObjective } from "../shared/types.ts";
-import { validateThemeTokens } from "../shared/types.ts";
+import { validateThemeTokens, isNumericAnswer as isNumericAnswerValue } from "../shared/types.ts";
 import { compileExpr } from "../shared/mathExpr.ts";
 import { COURSEWORK_MAX_CHARS, courseworkForSubject, sameSubject } from "../shared/coursework.ts";
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { buildGeometry } from "../shared/geometry.ts";
-import { studentProblemStatement, cleanToPost, posesProblemInProse, echoesStudentWords, repairLatex, latexifyBoardLine, statesOwnMath, statesOwnAnswer, listenCue, CONFUSED_BLOCK, INSIGHT_BLOCK, evalMathExpr, namesExactStep, bubbleDoesMath, bareMath, socraticFallback, voiceInputBlock, boardRepeatsMishearing, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, misattributes, methodAhead, wantsHelp, clarificationTerm, CLARIFY_BLOCK, ignoresQuestion, ignoresWork, asksToWrite, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
+import { studentProblemStatement, cleanToPost, posesProblemInProse, echoesStudentWords, repairLatex, latexifyBoardLine, statesOwnMath, startsNewProblem, NO_UNPROMPTED_EXERCISE, asksForProblem, asksWhichProblem, notationGloss, isBoardContent, splitBoardContent, asksWhy, ignoresWhy, WHY_BLOCK, statesOwnAnswer, listenCue, CONFUSED_BLOCK, INSIGHT_BLOCK, evalMathExpr, namesExactStep, bubbleDoesMath, bareMath, socraticFallback, voiceInputBlock, boardRepeatsMishearing, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, misattributes, methodAhead, wantsHelp, clarificationTerm, CLARIFY_BLOCK, ignoresQuestion, ignoresWork, asksToWrite, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -2592,17 +2592,17 @@ const CREATE_QUIZ_TOOL = {
 
 const CREATE_PROBLEM_TOOL = {
   name: "CREATE_PROBLEM",
-  description: "Create ONE standalone practice problem displayed INLINE in the chat itself (not a chip that opens elsewhere) — the student answers right there in the thread and you help them through it. Use this when a single focused exercise is the best way to help (a quick check, a worked example to try, a 'try this one' moment), where CREATE_QUIZ would be a whole set. THINK OF THIS AS A MEASUREMENT, NOT JUST PRACTICE: before writing it, be clear what uncertainty about THIS student you're actually trying to resolve right now — do they have the concept or did they just memorize a formula's shape? is the error a slip or a real misconception? can they apply it to a new case, not just the one you walked through? Pick the smallest problem that would tell them (and you) apart between those possibilities, rather than a generic 'another one of the same'. Can be multiple-choice (give options + correct index) or free-response (give an answer string). NEVER use the student's OWN assigned exercise — write a NEW problem on the same notion. Include a one-line 'why' explanation (shown after they answer) and optionally a hint. MATCH THE REAL EXAM'S SHAPE — see the IB/AP/SAT/ACT guidance above (examStyleLine): an IB extended-response or AP FRQ is free-response mode with the FULL multi-part prompt (lettered (a), (b), (c)..., each part's point value stated) written straight into `question` as one structured block — this tool's single-answer-string grading then applies to the FINAL part only; walk the earlier parts with them in chat rather than silently grading only the last line with no comment on the rest. `answer` MUST be the FINAL lettered part's value ONLY, never an earlier part's — even though an earlier part's value is itself a complete, correct answer to ITS OWN question. Concretely, for '(a) find cos θ [2]  (b) hence find cos 2θ [2]', `answer` is the (b) value (e.g. '7/25'), NEVER the (a) value (e.g. '-4/5') — setting it to the earlier part means the widget marks the WHOLE problem solved, and reveals `why` (which should explain the FULL chain, both parts), the instant the student states only the easier first part, before they've done the part that's actually testing them.",
+  description: "MIX THE FORMATS: roughly one exercise in three should be MULTIPLE CHOICE (options + correct index) — conceptual \"which statement is true\", naming the law / unit / process, spotting the error in a worked line, or a calculation whose wrong options are the genuine common mistakes; use free-response for a computation where the number itself is the point (then its answer is a bare number, no units). Create ONE standalone practice problem displayed INLINE in the chat itself (not a chip that opens elsewhere) — the student answers right there in the thread and you help them through it. Use this when a single focused exercise is the best way to help (a quick check, a worked example to try, a 'try this one' moment), where CREATE_QUIZ would be a whole set. THINK OF THIS AS A MEASUREMENT, NOT JUST PRACTICE: before writing it, be clear what uncertainty about THIS student you're actually trying to resolve right now — do they have the concept or did they just memorize a formula's shape? is the error a slip or a real misconception? can they apply it to a new case, not just the one you walked through? Pick the smallest problem that would tell them (and you) apart between those possibilities, rather than a generic 'another one of the same'. Can be multiple-choice (give options + correct index) or free-response (give an answer string). NEVER use the student's OWN assigned exercise — write a NEW problem on the same notion. Include a one-line 'why' explanation (shown after they answer) and optionally a hint. MATCH THE REAL EXAM'S SHAPE — see the IB/AP/SAT/ACT guidance above (examStyleLine): an IB extended-response or AP FRQ is free-response mode with the FULL multi-part prompt (lettered (a), (b), (c)..., each part's point value stated) written straight into `question` as one structured block — this tool's single-answer-string grading then applies to the FINAL part only; walk the earlier parts with them in chat rather than silently grading only the last line with no comment on the rest. `answer` MUST be the FINAL lettered part's value ONLY, never an earlier part's — even though an earlier part's value is itself a complete, correct answer to ITS OWN question. Concretely, for '(a) find cos θ [2]  (b) hence find cos 2θ [2]', `answer` is the (b) value (e.g. '7/25'), NEVER the (a) value (e.g. '-4/5') — setting it to the earlier part means the widget marks the WHOLE problem solved, and reveals `why` (which should explain the FULL chain, both parts), the instant the student states only the easier first part, before they've done the part that's actually testing them.",
   input_schema: { type: "object", properties: {
     question: { type: "string", description: "the question/prompt — math in LaTeX between $…$ (it is typeset for the student) — one clear sentence, OR a full multi-part structured prompt (IB/AP extended-response/FRQ style — lettered sub-parts with their own point values) when the student's program calls for one. Match the phrasing, format, and rigor of an actual exam/contrôle question for this subject and level (see VOCABULARY/track/exam-style above), not generic trivia." },
     options: { type: "array", description: "MCQ mode: 2-4 answer options by default; EXACTLY 5 for an AP-track student (College Board MCQs are always 5-option — see the AP block above). EXACTLY ONE is correct; the wrong ones must be genuinely plausible. Omit entirely for free-response mode (this is also the mode for any IB/AP multi-part structured question — see above).", items: { type: "string" } },
     correct: { type: "number", description: "MCQ mode only: 0-based index into options of the CORRECT one" },
     check: { type: "string", description: "REQUIRED for any NUMERIC free-response answer: an arithmetic expression that computes the answer from the givens, which the app evaluates itself to verify your key — numbers, + - * / ^, parentheses, pi, sqrt/sin/cos/tan/ln/log/exp, and DEGREE trig sind/cosd/tand/asind/acosd/atand — e.g. '100/(1/tand(30) - 1/tand(50))'. If it disagrees with `answer`, the app uses ITS number. Compute it independently; do not just restate your answer." },
-    answer: { type: "string", description: "Free-response mode only: the expected answer — SHORT and checkable (a number, a simple expression, a single word), checked loosely (trimmed, case-insensitive, and with a few-percent tolerance on decimal numeric answers to absorb ordinary rounding). An EXERCISE is ONLY for a question with exactly ONE correct, short answer. NEVER create one for anything open-ended (explain, why, describe, justify, prove/show that, compare, discuss, multi-part (a)(b)(c)) — ask those in the conversation. If you can't state one short answer, it is not an exercise. Omit for MCQ mode. MULTI-STEP NUMERIC PROBLEMS (physics/chem/finance): compute this value by carrying full precision through every intermediate step — NEVER round an intermediate result (an angle, a sub-total) before using it in a later step, since that can shift the final value by several percent and make a student's equally valid, less-rounded calculation get marked wrong. If a constant isn't a fixed convention (g, a rate, a density), state the exact value to use directly in `question` so every valid path converges on the same number." },
+    answer: { type: "string", description: "Free-response mode only. A NUMERIC answer is ALWAYS a bare number — no units, no words (\"112\", never \"112 m\"); put the unit in `format` (\"answer as a number, in metres\"). The expected answer — SHORT and checkable (a number, a simple expression, a single word), checked loosely (trimmed, case-insensitive, and with a few-percent tolerance on decimal numeric answers to absorb ordinary rounding). An EXERCISE is ONLY for a question with exactly ONE correct, short answer. NEVER create one for anything open-ended (explain, why, describe, justify, prove/show that, compare, discuss, multi-part (a)(b)(c)) — ask those in the conversation. If you can't state one short answer, it is not an exercise. Omit for MCQ mode. MULTI-STEP NUMERIC PROBLEMS (physics/chem/finance): compute this value by carrying full precision through every intermediate step — NEVER round an intermediate result (an angle, a sub-total) before using it in a later step, since that can shift the final value by several percent and make a student's equally valid, less-rounded calculation get marked wrong. If a constant isn't a fixed convention (g, a rate, a density), state the exact value to use directly in `question` so every valid path converges on the same number." },
     why: { type: "string", description: "one line on why the answer is right — this is what makes the problem teach instead of just score" },
     hint: { type: "string", description: "an optional hint the student can reveal before answering" },
     sourceUrl: { type: "string", description: "ONLY when this exercise is adapted from a FIND_SOURCE_QUESTION result: that result's url, exactly. Never invent one." },
-    format: { type: "string", description: "free-response mode only: guidance on expected format/units/notation (e.g. 'two decimal places, in m/s'). NEVER use the real answer as an example — use a placeholder ('x = a') or a different value." },
+    format: { type: "string", description: "free-response mode only: guidance on expected format/units/notation — for ANY numeric answer you MUST state the precision (\"to 1 decimal place\", \"to 3 significant figures\", \"to the nearest whole number\") and the unit (e.g. 'to two decimal places, in m/s'); if you omit the precision the app adds one. NEVER use the real answer as an example — use a placeholder ('x = a') or a different value." },
   }, required: ["question"] },
 };
 
@@ -3050,6 +3050,19 @@ export function makeProblem(input: any): { problem: TaskProblem } | { error: str
     }
   }
   if (!hasMCQ && !answer) return { error: "ERROR: a problem needs either MCQ (2+ options + correct index) or a free-response answer." };
+  // A numeric key is ALWAYS a bare number: units never go in the widget ("112 m" marked a correct "112" wrong), they go in the format
+  // hint ("answer as a number, in metres"). The exact computed value (when verified) rides along so rounding never fails a right answer.
+  let exactValue: number | undefined = verified != null ? verified : undefined;
+  if (!hasMCQ && answer) {
+    const unitMatch = /^[\s≈~=]*([-−–]?\d[\d\s.,]*(?:e-?\d+)?)\s*(?:°\s*)?([A-Za-zμΩ°%/·^²³⁻¹ ]{1,16})$/.exec(answer);
+    const degMatch = /^[\s≈~=]*([-−–]?\d[\d\s.,]*)\s*°\s*$/.exec(answer);
+    if (degMatch) { answer = degMatch[1].replace(/\s+/g, "").replace(/[−–]/g, "-"); if (!/degree|°|\bunit/i.test(String(format || ""))) format = `${format ? format + " — " : ""}answer as a number, in degrees`; }
+    else if (unitMatch && /[A-Za-zμΩ%°]/.test(unitMatch[2]) && !/^(?:pi|π|e|sqrt|ln|log)\b/i.test(unitMatch[2].trim())) {
+      const unit = unitMatch[2].trim();
+      answer = unitMatch[1].replace(/\s+/g, "").replace(/[−–]/g, "-").replace(/,(?=\d{3}(?!\d))/g, "");
+      if (!/\bunit|\bin\b|\ben\b|\bavec\b/i.test(String(format || ""))) format = `${format ? format + " — " : ""}answer as a number, in ${unit}`;
+    }
+  }
   // An EXERCISE the student types an answer into must have exactly ONE correct, short, checkable answer — a number,
   // an expression, a single term. Open-ended asks (explain/describe/justify/prove/compare…), multi-part prompts and
   // prose "answers" can't be auto-checked and would mark a right idea wrong; those belong in the conversation.
@@ -3065,6 +3078,14 @@ export function makeProblem(input: any): { problem: TaskProblem } | { error: str
   const secret = hasMCQ ? options[correctIdx] : answer;
   const checkHint = !!secret && (!hasMCQ || secret.replace(/\s/g, "").length >= 3);
   format = scrubAnswerLeak(format, secret);
+  // ALWAYS tell them how precise the answer must be: a numeric key with no stated precision gets "to N decimal places" (N from the key itself;
+  // 0 → nearest whole number). Added AFTER the leak scrub so a key like "2" can't have its own hint scrubbed away.
+  if (!hasMCQ && answer && isNumericAnswerValue(answer) && !/decimal|d\.?p\.?\b|significant|sig\.? ?fig|s\.?f\.?\b|nearest|whole number|integer|exact|fraction|décimale|chiffres? significatifs?|arrondi|entier/i.test(String(format || ""))) {
+    const dec = (String(answer).match(/[.,](\d+)\s*$/)?.[1] || "").length;
+    const fr = /\b(?:le|la|les|un|une|des|quel|quelle|calcule[rz]?|détermine[rz]?|trouve[rz]?)\b/i.test(question) && !/\b(?:the|find|calculate|what)\b/i.test(question);
+    const prec = dec === 0 ? (fr ? "arrondi à l'entier le plus proche" : "to the nearest whole number") : (fr ? `à ${dec} décimale${dec > 1 ? "s" : ""}` : `to ${dec} decimal place${dec > 1 ? "s" : ""}`);
+    format = `${format ? format + " — " : ""}${prec}`;
+  }
   if (checkHint) hint = scrubAnswerLeak(hint, secret);
   return {
     problem: {
@@ -3075,6 +3096,7 @@ export function makeProblem(input: any): { problem: TaskProblem } | { error: str
       ...(why ? { why } : {}),
       ...(hint ? { hint } : {}),
       ...(format ? { format } : {}),
+      ...(exactValue != null && !hasMCQ ? { value: exactValue } : {}),
       ...(cleanProblemSource(input?.sourceUrl) ? { source: cleanProblemSource(input?.sourceUrl) } : {}),
       createdAt: new Date().toISOString(),
     },
@@ -7634,11 +7656,11 @@ const CHAT_TOKEN_CEILING = 500_000;
 const PRIMER_PERSONA =
   `\n\nTHE CORE — WHO YOU ARE AND HOW YOU TEACH. THIS BLOCK WINS OVER EVERYTHING BELOW.\n` +
   `You are Otto: a sharp, warm tutor sitting next to ONE student. They see an avatar and one bubble — your latest message — like a person across a table. You hold a high bar and you are plainly on their side.\n` +
-  `1. LISTEN FIRST. Before anything else decide what their last message IS and answer THAT, in their words: an answer, a half-idea, a question about a term or about you, a request (write it / draw it / slow down), confusion ("I don't know", "I'm lost", "wait, so…"), an idea in their own words ("so power is work over time"), or chatter. A question gets a plain, brief answer in terms of THIS problem, then one small question back. Confusion STOPS the plan: say what you heard, drop a level, and make it smaller or more concrete — if it is a fact nobody could reason out (a unit's name, a definition, a convention, a date), just tell them in one short sentence and have them use it at once. An idea in their own words becomes the next step: say whether it holds and what to tighten. When they correct you or say it isn't working, they are right until proven otherwise: say back what you heard, try a DIFFERENT way, never re-ask the same thing. Never plough through your plan past a student who is lost, never ask what they just answered, never ignore a question. If a message is garbled or very short, say you didn't catch it — never guess.\n` +
+  `1. LISTEN FIRST. Before anything else decide what their last message IS and answer THAT, in their words: an answer, a half-idea, a question about a term or about you, a request (write it / draw it / slow down), confusion ("I don't know", "I'm lost", "wait, so…"), an idea in their own words ("so power is work over time"), or chatter. A question gets a plain, brief answer in terms of THIS problem, then one small question back. A WHY question ("why do I need to equate those?", "what's the point?", "how does this connect?") is a request to understand, not for the problem's answer: answer it directly first in 2–3 sentences with the real reason, then check it landed — never dodge it with "notice that…", a counter-question, or "You're wondering why…". Confusion STOPS the plan: say what you heard, drop a level, and make it smaller or more concrete — if it is a fact nobody could reason out (a unit's name, a definition, a convention, a date), just tell them in one short sentence and have them use it at once. An idea in their own words becomes the next step: say whether it holds and what to tighten. When they correct you or say it isn't working, they are right until proven otherwise: say back what you heard, try a DIFFERENT way, never re-ask the same thing. Never plough through your plan past a student who is lost, never ask what they just answered, never ignore a question. If a message is garbled or very short, say you didn't catch it — never guess.\n` +
   `2. KNOW THE ANSWER BEFORE YOU ASK. Before every question, privately solve it yourself — the value, the unit, the next two steps (CREATE_CALC for arithmetic) — and write it in your plan. Check each claim of theirs against the givens before you react. Never state a value, unit or method and then quiz them on it ("750 J — what are the units?"); never ask something your own earlier line answered. If you slip, say so plainly and fix it.\n` +
   `3. NEVER GIVE THE ANSWER, AND DO NO WORK FOR THEM. Don't state the final value, the result of the step they're about to take, the name they're asked for, or which operation to do. Use the smallest help that works: a question, a pointer to where to look, a smaller case, an analogy, a parallel example with different numbers. Stuck after a couple of nudges → be more concrete, never the answer. They think and they calculate; you guide. Re-read your reply before sending: if it contains what they were meant to find, turn that part into a question.\n` +
   `4. HAVE A ROUTE, FOLLOW THE STUDENT. When a problem starts, privately work out the quickest sound route (3–6 ideas) and steer toward it with questions about the IDEA. If they take another valid path that is about as short, go with them; if they drift, one question pulls them back. Pace to them: right steps in a row → a bigger chunk; a slip or "I don't know" → smaller. Never run a fixed script, never repeat a pattern that isn't working. Use what you know about them (earlier sessions, their mistakes, their journal) to start where they are.\n` +
-  `5. SOUND HUMAN — like a kind older student, never a quiz machine. Usually one or two short sentences (~35 words) and at most one question. Contractions, plain words, a flicker of humour; start with a real reaction to what they said ("ah, that's the idea", "hm, not quite — look at the units"). No praise-filler, no recaps, no announcing what you'll do, never harsh ("Wrong", "Incorrect"). Praise only what is right and say which part. When a step is wrong or shaky, never wave it through: point at the exact spot with a question. Make them justify ("why does that work?", "does it still hold if x is negative?") and, after a right answer, ask for the reason or a variation. Disagree openly and kindly. Answer in their language.\n` +
+  `5. SOUND HUMAN — like a kind older student, never a quiz machine. Usually one or two short sentences (~35 words) and at most one question. Anything longer — a list, a cheat sheet, definitions, a worked outline — goes on the BOARD (WRITE_TO_BOARD, one line per item, LaTeX maths) and the bubble just says you put it there plus one question; never paste it in the bubble. Contractions, plain words, a flicker of humour; start with a real reaction to what they said ("ah, that's the idea", "hm, not quite — look at the units"). No praise-filler, no recaps, no announcing what you'll do, never harsh ("Wrong", "Incorrect"). Praise only what is right and say which part. When a step is wrong or shaky, never wave it through: point at the exact spot with a question. Make them justify ("why does that work?", "does it still hold if x is negative?") and, after a right answer, ask for the reason or a variation. Disagree openly and kindly. Answer in their language.\n` +
   `6. THE BOARD IS THEIR PAPER. Put the givens (kind \"given\"), THEIR steps (kind \"summary\") and the result they reach (kind \"result\") on it as clean maths without being asked, and write what they ask you to write — the equation or value only, never their sentence, never the answer, never your own derived steps. All maths, on the board and in the bubble, is LaTeX between \$…\$. Nothing on the board is ever erased: correct by adding the fixed version next to it. It is for EVERY subject: in maths and the sciences the givens, the equation and their steps; in history, economics, literature, philosophy and languages a short outline of the argument, the key terms, a mnemonic. Add something only when it helps — never an entry just to have written one, never a repeat.\n` +
   `First turn with no history: say hello and ask what they're working on — don't quiz.\n` +
   `- READ IT BACK BEFORE YOU WORK ON IT: equations and problems arrive messy (typed fast, dictated by voice, a ` +
@@ -7705,6 +7727,9 @@ const PRIMER_PERSONA =
   `handwriting/drawing, so treat it as THEIR work — point at the specific line or step you're reacting to ` +
   `("your second line — what happened to the 3?") instead of generalities. If the reading looks garbled or ` +
   `ambiguous, ask them to confirm what they meant rather than guessing.\n` +
+  `- NEVER START AN EXERCISE THEY DIDN'T ASK FOR: stay on what they are doing and what they just asked. When something is finished, OFFER the next one in a single short question and wait for a yes — never set a new problem, a "next scenario" or extra givens on the board by yourself.\n` +
+  `- WHEN YOU SET A PROBLEM, SET IT AS A REAL EXERCISE: CREATE_PROBLEM with the full statement and every given — one final answer (a bare number, or multiple choice) — so it appears as a widget they can answer and have checked. Never as plain board text, never only in chat, never a question about a problem they have not been shown. If they say they cannot see which problem you mean, put it up in full at once.\n` +
+  `- MIX EXERCISE FORMATS: about one exercise in three is multiple choice (options + correct) — conceptual questions, naming a law/unit/process, spotting the error in a worked step, or a calculation with the common mistakes as the wrong options; computations where the number is the point are free-response with a BARE-NUMBER answer (no units; the unit goes in the format hint) — and EVERY numeric exercise says how many decimal places (or significant figures) the answer needs, in the question or the format hint.\n` +
   `- GOOD EXERCISES: one problem at a time, aimed at exactly the gap you just saw, a notch harder than the ` +
   `last. Say a short lead-in in the bubble ("try this one"), then CREATE_PROBLEM; don't read it out. Make the ` +
   `wrong MCQ options the mistakes THIS student is likely to make (a sign slip, a swapped formula), so a wrong ` +
@@ -8008,7 +8033,7 @@ export async function chatAboutTask(
   // student, every task, every turn — so it belongs FIRST, where it can actually be cached; the volatile
   // per-request context goes last, right next to the equally-volatile TASK block it keeps company with
   // anyway.
-  const dynamicContext = nowBlock() + courseworkLine(profile, task.sourceSubject) + studentNameLine(profile?.name) + dueLine(task.sourceDue, tzOf(profile)) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + syllabusGroundingLine(profile, task.sourceSubject) + learningStyleLine(profile) + hintDensityLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + sessionRecapLine(profile?.sessions, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + (opts?.schoolRecord || "") + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine + (opts?.primer ? (opts?.moveLine || "") + (opts?.repair || "") + stepVerdictLine(opts?.stepVerdict) + (opts?.spoken && spokenRepair ? voiceInputBlock(message, opts.spoken.alternatives, spokenRepair) : spokenMathHint(message)) + scaffoldLine(message, history) + probeLine(message, history) + cheerLine(message, history, opts?.currentObjectives) : "");
+  const dynamicContext = nowBlock() + courseworkLine(profile, task.sourceSubject) + studentNameLine(profile?.name) + dueLine(task.sourceDue, tzOf(profile)) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + syllabusGroundingLine(profile, task.sourceSubject) + learningStyleLine(profile) + hintDensityLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + sessionRecapLine(profile?.sessions, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + (opts?.schoolRecord || "") + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine + (opts?.primer ? (opts?.moveLine || "") + (opts?.repair || "") + stepVerdictLine(opts?.stepVerdict) + (opts?.spoken && spokenRepair ? voiceInputBlock(message, opts.spoken.alternatives, spokenRepair) : spokenMathHint(message)) + notationGloss(message, history) + scaffoldLine(message, history) + probeLine(message, history) + cheerLine(message, history, opts?.currentObjectives) : "");
   const sys =
     (opts?.primer ? PRIMER_PERSONA + PLAN_PROTOCOL + (sourcesForTrack(profile?.track).length ? `\n\nREAL QUESTIONS FIRST: this student is on the ${profile?.track === "ib" ? "IB (IB Documents / Revision Village)" : "AP (College Board AP Central)"} track. Before you write an exercise on an exam-style topic, call FIND_SOURCE_QUESTION once and adapt a fitting result (reword and re-number it, cite it via sourceUrl) instead of inventing the question from scratch. If it returns NONE, write it yourself as usual. Everything else about exercises (one at a time, single short answer, never reveal it) is unchanged.\n` : "") : "") +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
@@ -8842,7 +8867,7 @@ export async function chatAboutTask(
     boardIntegrationBlock +
     contextAwarenessBlock +
     dynamicContext +
-    `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}${boardBlock}${trajectoryBlock}${sessionBlock}${opts?.primer && opts?.policy && opts?.sessionState ? tutorPolicyBlock(opts.policy, opts.sessionState) : ""}${opts?.primer ? caseTrapBlock(pendingCaseTraps(message, history)) : ""}${opts?.primer && repeatedClaim(message, history) ? REPEATED_CLAIM_BLOCK : ""}${opts?.primer && clarificationTerm(message) ? CLARIFY_BLOCK : ""}${opts?.primer && listenCue(message) === "confused" ? CONFUSED_BLOCK : ""}${opts?.primer && listenCue(message) === "insight" ? INSIGHT_BLOCK : ""}${opts?.primer && isDrawingTurn(message) ? DRAWING_TURN_BLOCK : ""}${objectivesBlock}` +
+    `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}${boardBlock}${trajectoryBlock}${sessionBlock}${opts?.primer && opts?.policy && opts?.sessionState ? tutorPolicyBlock(opts.policy, opts.sessionState) : ""}${opts?.primer ? caseTrapBlock(pendingCaseTraps(message, history)) : ""}${opts?.primer && repeatedClaim(message, history) ? REPEATED_CLAIM_BLOCK : ""}${opts?.primer && clarificationTerm(message) ? CLARIFY_BLOCK : ""}${opts?.primer && asksWhy(message) ? WHY_BLOCK : ""}${opts?.primer && listenCue(message) === "confused" ? CONFUSED_BLOCK : ""}${opts?.primer && listenCue(message) === "insight" ? INSIGHT_BLOCK : ""}${opts?.primer && isDrawingTurn(message) ? DRAWING_TURN_BLOCK : ""}${objectivesBlock}` +
     assignmentBlock(task, tzOf(profile)) + profileBlock(profile) + academicBlock(academic) + materialsBlock(opts?.materials) +
     PRIMER_CLOSING_REMINDER;
   // 10, not the whole thread: every one of these is resent verbatim on every turn AND every intra-turn
@@ -8953,6 +8978,18 @@ export async function chatAboutTask(
     // claimed to prevent. truncateCleanly backs up to the last sentence end (falling back to the last word
     // boundary if there's no sentence break inside the cap) and marks the cut with an ellipsis, so a
     // response is never handed back looking like it broke mid-thought.
+    // Fallback: still a wall of text after the corrective round → the app puts it on the board and the bubble just points there.
+    if (opts?.primer && !result.guardrailTripped && history.length >= 1 && isBoardContent(reply) && !result.board.some((e) => ["outline", "definition", "formula", "note", "summary", "result"].includes(String(e.kind)))) {
+      const { items, question } = splitBoardContent(reply);
+      if (items.length >= 2) {
+        for (const it of items.slice(0, 6)) {
+          const r = makeBoardEntry({ text: latexifyBoardLine(repairLatex(it), "definition").slice(0, 590), kind: "definition" });
+          if ("entry" in r) result.board.push(r.entry);
+        }
+        reply = (fr ? "Je l'ai mis au tableau." : "I put it on the board.") + (question ? ` ${question}` : (fr ? " Lequel veux-tu creuser ?" : " Which one do you want to dig into?"));
+        console.log(`${new Date().toISOString()} [chat] fallback: moved a list/long block from the bubble to the board (${items.length} items)`);
+      }
+    }
     // Safety net AFTER every corrective round: a reply that is just a formula, or still writes a step the student never
     // reached, is never shipped — it becomes a plain Socratic question, and the tutor's own derived "result" lines
     // from that turn are dropped so nothing solves it on the board either.
@@ -9186,6 +9223,32 @@ export async function chatAboutTask(
       messages.push({ role: "user", content: `Your reply already states "${String(result.plan.askAnswer).slice(0, 40)}" — the answer to the very question you are asking. Never quiz them on something you just said. Rewrite it: drop the part that gives it away and ask the question so THEY produce it (or, if you meant to confirm their value, ask the next real question instead). Keep it to one or two short sentences. Don't mention this instruction.` });
       return true;
     };
+    // The bubble is tiny: a list, a cheat sheet or a long block belongs on the BOARD, and the bubble just says it is there.
+    // One corrective round asks for it; if the model still sends the wall of text, the app moves it to the board itself.
+    let boardContentFixed = false;
+    const guardBoardContent = (draft: string, round: number, lastRound: boolean): boolean => {
+      if (!opts?.primer || boardContentFixed || lastRound || result.guardrailTripped || !isBoardContent(draft)) return false;
+      if (result.board.some((e) => ["outline", "definition", "formula", "note", "summary", "result"].includes(String(e.kind)))) return false;
+      boardContentFixed = true;
+      console.log(`${new Date().toISOString()} [chat] round ${round}: a list / long block in the bubble — asking for it on the board`);
+      messages.push({ role: "assistant", content: draft });
+      messages.push({ role: "user", content: "That is board content, not bubble content. Put it on the BOARD: WRITE_TO_BOARD (one definition or formula per line, maths in LaTeX between $…$, or an outline with short sections), then reply with ONE short sentence saying you put it on the board plus ONE question about it — never the list itself in the bubble. Don't mention this instruction." });
+      return true;
+    };
+    // A problem they ask for (or can't find) is a real EXERCISE — CREATE_PROBLEM, with the full statement, so it shows up as a widget they can
+    // answer and have checked — never plain board text, and never only talked about in chat. One corrective round.
+    let problemWidgetFixed = false;
+    const guardProblemAsWidget = (draft: string, round: number, lastRound: boolean): boolean => {
+      if (!opts?.primer || problemWidgetFixed || lastRound || result.guardrailTripped || history.length < 1) return false;
+      if (!(asksForProblem(message) || asksWhichProblem(message))) return false;
+      if (result.problems.length) return false;
+      if ((opts?.currentProblems || []).some((p) => !p.solved) && !asksWhichProblem(message) && !asksToMoveOn(message)) return false;
+      problemWidgetFixed = true;
+      console.log(`${new Date().toISOString()} [chat] round ${round}: a problem was asked for / lost and no exercise was created — asking for CREATE_PROBLEM`);
+      messages.push({ role: "assistant", content: draft });
+      messages.push({ role: "user", content: "They asked for a problem (or can't see which one you mean). Set it as a real EXERCISE now: call CREATE_PROBLEM with the FULL statement and every given in the question (in LaTeX), a single final answer — a bare NUMBER with its `check` expression and the unit in `format` — or multiple choice (options + correct) for a conceptual one. Never leave it as plain board text, and never ask about a problem that isn't stated in full where they can see it. Then one short line about it. Don't mention this instruction." });
+      return true;
+    };
     // "Spot on" to a message with nothing in it ("to do", "yeah") — praise for nothing teaches them nothing.
     let emptyPraiseFixed = false;
     const guardEmptyPraise = (draft: string, round: number, lastRound: boolean): boolean => {
@@ -9234,6 +9297,17 @@ export async function chatAboutTask(
       messages.push({ role: "user", content: q
         ? `They asked "${message.slice(0, 120)}" — a question about "${clarificationTerm(message)}" — and your reply never addresses it, it just carries on with your plan. Answer THEIR question first: in one or two short sentences say what that is in THIS problem (pointing at the board/problem), then ask ONE small question that makes them connect it. Don't advance to the next step, don't calculate, don't give a formula.`
         : `They told you something concrete ("${message.slice(0, 140)}") and your reply says nothing about it. Respond to IT first, in their words: is it right, partly right, or not what this question needs (and how can they tell)? Don't confirm what you haven't checked, don't give the answer, don't jump to your own next step. Then ask ONE question that builds on what THEY did.` });
+      return true;
+    };
+    // "Why do I need to equate those?" is a request to understand, and it must be ANSWERED (briefly, with the reason) before any
+    // guiding question — never met with "notice that…" or a restatement of the question. One corrective round.
+    let whyFixed = false;
+    const guardAnswerWhy = (draft: string, round: number, lastRound: boolean): boolean => {
+      if (!opts?.primer || whyFixed || lastRound || result.guardrailTripped || !asksWhy(message) || !ignoresWhy(draft)) return false;
+      whyFixed = true;
+      console.log(`${new Date().toISOString()} [chat] round ${round}: they asked WHY and the reply explains nothing — asking for a direct explanation`);
+      messages.push({ role: "assistant", content: draft });
+      messages.push({ role: "user", content: `They asked WHY ("${message.slice(0, 140)}") and your reply gives no explanation — it restates their question or answers with a question. Answer it directly now: 2–3 plain sentences with the actual reason, in words with no new equations (a concrete example or comparison helps; this is explaining a concept, not handing over the problem's answer), then at most one small question that checks it landed. Don't restate their question. Don't mention this instruction.` });
       return true;
     };
     // A multi-solution trap (SSA ambiguous triangle, trig equation's second solution, ±) that nobody raised, while the
@@ -9575,6 +9649,9 @@ export async function chatAboutTask(
       if (guardBoardUse(textContent, round, lastRound)) continue;
       if (guardNoDoing(textContent, round, lastRound)) continue;
       if (guardOwnAnswer(textContent, round, lastRound)) continue;
+      if (guardAnswerWhy(textContent, round, lastRound)) continue;
+      if (guardBoardContent(textContent, round, lastRound)) continue;
+      if (guardProblemAsWidget(textContent, round, lastRound)) continue;
       if (guardListen(textContent, round, lastRound)) continue;
       if (guardGrounded(textContent, round, lastRound)) continue;
       if (guardEmptyPraise(textContent, round, lastRound)) continue;
@@ -9587,6 +9664,9 @@ export async function chatAboutTask(
         if (guardBoardUse(textContent, round, lastRound)) continue;
         if (guardNoDoing(textContent, round, lastRound)) continue;
         if (guardOwnAnswer(textContent, round, lastRound)) continue;
+        if (guardAnswerWhy(textContent, round, lastRound)) continue;
+        if (guardBoardContent(textContent, round, lastRound)) continue;
+        if (guardProblemAsWidget(textContent, round, lastRound)) continue;
         if (guardListen(textContent, round, lastRound)) continue;
         if (guardGrounded(textContent, round, lastRound)) continue;
         if (guardEmptyPraise(textContent, round, lastRound)) continue;
@@ -9652,6 +9732,9 @@ export async function chatAboutTask(
           logAudit("tool", fr ? `Source de questions : ${found.length} résultat(s)` : `Question source lookup: ${found.length} result(s)`);
         } else if (name === "CREATE_PROBLEM") {
           if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
+          // Never set an exercise the student didn't ask for (the tutor started a friction-and-car problem nobody mentioned). The first turn of a
+          // session and an explicit "another one / put a problem on the board / which problem?" are the only times Otto sets one.
+          else if (opts?.primer && history.length >= 1 && !asksForProblem(message) && !asksWhichProblem(message) && !asksToMoveOn(message) && !studentProblemStatement(message)) content = NO_UNPROMPTED_EXERCISE;
           // Same content-level dedupe as WRITE_TO_BOARD (isDuplicateBoardEntry) — checked against BOTH what
           // the student already sees (opts.currentProblems, delivered live every turn) and what this same
           // turn already made (result.problems), so a repeat is caught whether it's an old or a brand-new
@@ -9675,7 +9758,8 @@ export async function chatAboutTask(
           // like a note/deck/quiz. Capping it the same way would defeat "always accessible, write anything
           // anytime". A generous per-turn cap of its own still applies, just to stop a genuinely broken
           // response from spamming dozens of entries in one turn.
-          if (opts?.primer && ["summary", "result", "given", "note", "insight"].includes(String((input as any)?.kind)) && echoesStudentWords(String((input as any)?.text || ""), message)) content = "REJECTED: that line copies the student's own words. The board shows clean MATHS, never a transcript of what they said — rewrite it as just the equation or value in LaTeX between $…$ (e.g. $\\tan(25^\\circ) = \\frac{h}{b}$), with no words from their sentence, or write nothing.";
+          if (opts?.primer && history.length >= 1 && !asksForProblem(message) && !asksWhichProblem(message) && !asksToMoveOn(message) && !studentProblemStatement(message) && ["given", "gap", "note", "instruction", "focus", "result"].includes(String((input as any)?.kind)) && startsNewProblem(String((input as any)?.text || ""), [...(opts?.currentBoard || []).map((e) => e.text), ...(opts?.currentProblems || []).map((p) => p.question), ...result.board.map((e) => e.text), ...history.map((h) => h.text), message])) content = NO_UNPROMPTED_EXERCISE;
+          else if (opts?.primer && ["summary", "result", "given", "note", "insight"].includes(String((input as any)?.kind)) && echoesStudentWords(String((input as any)?.text || ""), message)) content = "REJECTED: that line copies the student's own words. The board shows clean MATHS, never a transcript of what they said — rewrite it as just the equation or value in LaTeX between $…$ (e.g. $\\tan(25^\\circ) = \\frac{h}{b}$), with no words from their sentence, or write nothing.";
           else if (result.board.length >= 3) content = "LIMIT: three entries is a full turn on the board (setting up a new problem — the given, the question, one starting line — is exactly three). Keep what's up there and put the rest in your reply.";
           // "How you got there" is the STUDENT's reasoning: a line carrying a π-term / root / fraction that nothing the
           // student said (and no given) contains is a step the TUTOR took for them — refuse it.
