@@ -1,3 +1,4 @@
+import { makeEgressMeter, DEFAULT_EGRESS_BUDGET_BYTES } from "./egress.ts";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import session from "express-session";
 import type { Credentials } from "google-auth-library";
@@ -362,6 +363,8 @@ const STATE_CACHE_MAX = 500;
 // `ver` is the row's updated_at when we read it. Every writer of this table (saveState, savePronoteConnection) bumps it, so
 // a ~60-byte `select updated_at` can prove a cached copy is still current — which is how a stale or `bypassCache` read
 // avoids re-downloading the whole profile+tasks blob (the dominant PostgREST egress) when nothing changed.
+const egress = makeEgressMeter(Number(process.env.EGRESS_BUDGET_BYTES) > 0 ? Number(process.env.EGRESS_BUDGET_BYTES) : DEFAULT_EGRESS_BUDGET_BYTES);
+export const egressUsedToday = (email: string): number => egress.used(email);
 const stateCache = new Map<string, { at: number; state: AccountState; ver?: string }>();
 function cacheSetState(email: string, state: AccountState, ver?: string) {
   stateCache.delete(email);
@@ -382,9 +385,12 @@ export async function loadState(email?: string, opts?: { bypassCache?: boolean }
   if (!client || !email) return { profile: emptyProfile(), tasks: [] };
   const held = stateCache.get(email);
   if (held && !opts?.bypassCache && Date.now() - held.at < STATE_CACHE_TTL_MS) return held.state;
+  // Over this profile's daily PostgREST budget: serve what we hold (writes still invalidate/replace it) rather than read more.
+  if (held && egress.over(email)) return held.state;
   // Expired or bypassed: ask only for the row's version first; an unchanged row means the cached copy is still right.
   if (held?.ver) {
     const { data: v } = await withRetry("load-ver", async () => client!.from(TABLE).select("updated_at").eq("email", email).maybeSingle());
+    egress.note(email, 120);
     if ((v as any)?.updated_at && (v as any).updated_at === held.ver) { held.at = Date.now(); return held.state; }
   }
   let { data, error } = await withRetry("load", async () =>
@@ -404,6 +410,7 @@ export async function loadState(email?: string, opts?: { bypassCache?: boolean }
   }
   if (error) { console.warn("[store] load failed:", error.message); reportError("load-state", error, { email }); return { profile: emptyProfile(), tasks: [] }; }
   const d = data as any;
+  if (d) { const before = egress.used(email), after = egress.note(email, JSON.stringify(d).length); if (before < egress.budget && after >= egress.budget) console.warn(`[store] ${email} reached its daily PostgREST read budget (${Math.round(egress.budget / 1048576)} MB) — serving cached state for the rest of the day`); }
   const google = d?.google && d.google.tokens ? (d.google as StoredGoogle) : undefined;
   const pronote = d?.pronote && d.pronote.token
     ? { ...(d.pronote as StoredPronote), token: decryptSecret(d.pronote.token), ...(d.pronote.password ? { password: decryptSecret(d.pronote.password) } : {}) }
@@ -457,9 +464,17 @@ export async function saveState(email: string | undefined, state: AccountState, 
   // connectionColumnUpdates), so overwriting the cached entry with it would wrongly blank out fields this
   // save never touched. A plain delete costs one extra real read on the next loadState() for this email —
   // cheap and safe compared to reconstructing the merged shape by hand.
+  const heldBefore = stateCache.get(email);
   stateCache.delete(email);
   const { error } = await withRetry("save", async () =>
     client!.from(TABLE).upsert(row, { onConflict: "email" }).then((r) => ({ data: null, error: r.error })));
+  // Write-through: we know exactly what we just wrote and its updated_at, so the next read doesn't have to download the
+  // row again. Columns this save didn't touch (an undefined connection) keep the values we already held.
+  if (!error && heldBefore?.ver) {
+    const merged: AccountState = { ...heldBefore.state, profile: state.profile || emptyProfile(), tasks: state.tasks || [] };
+    for (const k of ["google", "pronote", "blackbaud", "studySessions", "studyProfile"] as const) if ((state as any)[k] !== undefined) (merged as any)[k] = (state as any)[k] === null ? undefined : (state as any)[k];
+    cacheSetState(email, merged, String(row.updated_at));
+  }
   if (error) {
     console.warn("[store] save failed:", error.message);
     reportError("save-state", error, { email });
@@ -506,9 +521,12 @@ export async function savePronoteConnection(email: string | undefined, pronote: 
     pronote: pronote ? { ...pronote, token: encryptSecret(pronote.token), ...(pronote.password ? { password: encryptSecret(pronote.password) } : {}) } : null,
     updated_at: new Date().toISOString(),
   };
+  const heldBefore = stateCache.get(email);
   stateCache.delete(email); // the whole-row cache holds a copy of this column too
   const { error } = await withRetry("save-pronote", async () =>
     client!.from(TABLE).upsert(row, { onConflict: "email" }).then((r) => ({ data: null, error: r.error })));
+  // Write-through (the token rotates often) — only when the held copy was verified moments ago, since this write touches one column and cannot vouch for the rest.
+  if (!error && heldBefore?.ver && Date.now() - heldBefore.at < 60_000) cacheSetState(email, { ...heldBefore.state, pronote }, row.updated_at);
   if (error) {
     console.warn("[store] pronote save failed:", error.message);
     reportError("save-pronote", error, { email });
