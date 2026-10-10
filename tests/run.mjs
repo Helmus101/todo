@@ -30,7 +30,7 @@ import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToIt
 import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, normalizeWhen, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, validateThemeTokens, normalizeProfile, milestonesBySubject } from "../shared/types.ts";
 import { sweepDueForDay, localDay, sweepDue, shouldRefreshStudentModel, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp } from "../server/workload.ts";
-import { stripHtml, applyPronoteGrades, isPrivateOrReservedIp, assertSafeExternalUrl } from "../server/pronote.ts";
+import { stripHtml, applyPronoteGrades, applyPronoteLessons, isPrivateOrReservedIp, assertSafeExternalUrl } from "../server/pronote.ts";
 import { connectionColumnUpdates } from "../server/store.ts";
 import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, contextKey, chooseArm, computeReward, computeCardReward, computeLatencyReward, updatePosterior, leadingArm } from "../server/bandit.ts";
 import { trimFreeTTSWatermark } from "../server/ttsTrim.ts";
@@ -1923,6 +1923,12 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     const d = dedupeTasks([{ ...base, id: "a", title: "Listen to France Culture Brazil episodes 2 and 3", anchorKey: "pronote:a", sourceDetail: "France culture émission cours histoire Brésil épisode écoutez notes" },
       { ...base, id: "b", title: "Exercices n°", anchorKey: "pronote:b", sourceDetail: "Exercices n° : France culture émission cours histoire Brésil épisode écoutez notes" }]);
     check("two task cards for the same Pronote homework (different anchors, same subject/day/words) collapse to one", d.length === 1); }
+  { const today = new Date().toISOString().slice(0, 10), old = new Date(Date.now() - 90 * 86_400_000).toISOString().slice(0, 10);
+    const pf = { pronoteLessons: [{ id: "r1:c1", subject: "Maths", date: today, text: "old text" }] };
+    applyPronoteLessons(pf, [{ id: "r1:c1", subject: "Maths", date: today, title: "Trigonométrie", text: "Loi des sinus et cas ambigu", files: [{ name: "fiche-sinus.pdf", url: "https://x/f" }] }, { id: "r0:c0", subject: "Maths", date: old, text: "ancien" }]);
+    const rec = schoolRecordLine([], pf, "Maths");
+    check("Pronote lesson content and teacher resources are stored (deduped by id, 60-day window) and reach the model's context",
+      pf.pronoteLessons.length === 1 && pf.pronoteLessons[0].text.startsWith("Loi des sinus") && /LESSON CONTENT AND TEACHER RESOURCES/.test(rec) && /Loi des sinus et cas ambigu/.test(rec) && /fiche-sinus\.pdf/.test(rec) && !/ancien/.test(rec)); }
   check("tool calls typed as text never reach the student", stripPseudoTools("<syntax_error></syntax_error><write_to_board><kind>result</kind><text>distance = (470 + H)/tan 40</text></write_to_board>Ah, exactly — what next?") === "Ah, exactly — what next?" && stripPseudoTools("plain reply") === "plain reply" && stripPseudoTools("<chat>Using that height.</chat>") === "Using that height.");
   check("a reply that is only a formula is bare maths; a sentence with maths is not", bareMath("distance K = (470)/(tan 40)") && bareMath("(470 + H)/(tan 25°) - (470 + H)/(tan 40°) = 500") && !bareMath("Which side is opposite the 40° angle here?") && !bareMath("Good, now what does the tan 40° ratio give you for the horizontal distance?"));
   // ── Grounding (reported live: "tan(θ) = slope!" to a student who had only said the two slopes; "maybe graph it" ignored) ──

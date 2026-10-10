@@ -884,6 +884,7 @@ app.post("/api/integrations/pronote/connect", requireAuth, rateLimit(8, 15 * 60_
       try {
         const p = (req.session.profile ||= emptyProfile());
         pronoteSvc.applyPronoteGrades(p, await pronoteSvc.pronoteGrades(req.session.user!));
+        await pronoteSvc.syncPronoteLessons(p, req.session.user!);
         await commit(req);
       } catch { /* best-effort */ }
     }
@@ -931,6 +932,7 @@ app.post("/api/pronote/grades/sync", requireAuth, rateLimit(6, 60_000), async (r
     if (!live.length) { res.status(502).json({ error: M(req, "Pronote n'a renvoyé aucune note. Vérifie la période en cours et la connexion.", "Pronote returned no subject grades. Check the current period and connection.") }); return; }
     const profile = (req.session.profile ||= emptyProfile());
     pronoteSvc.applyPronoteGrades(profile, live);
+    await pronoteSvc.syncPronoteLessons(profile, req.session.user!);
     await commit(req);
     res.json({ grades: live, synced: true });
   } catch (e: any) {

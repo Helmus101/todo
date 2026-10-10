@@ -265,6 +265,9 @@ export interface Profile {
   manualExams?: { id: string; subject: string; deadline: string }[];
   // Documents uploaded per subject (shared/coursework.ts): a bounded summary + excerpt the tutor and chat can cite.
   coursework?: CourseworkDoc[];
+  // What the teachers publish on Pronote ("contenu du cours" / ressources): lesson title + text and the files attached,
+  // newest first, capped. Refreshed by the daily sweep and "Sync from Pronote"; read by chat/tutor/task generation.
+  pronoteLessons?: { id: string; subject: string; date: string; title?: string; text: string; category?: string; files?: { name: string; url: string }[] }[];
   // When the student finished (or skipped) the first-run tour — server-side so it follows the account across devices.
   onboardedAt?: string;
   // Page guides already shown (ids like "tasks", "tutor-session") — server-side so a guide never repeats on another device.
@@ -508,6 +511,13 @@ export function normalizeProfile(p: any): Profile {
         })).filter((e: { subject: string; deadline: string }) => e.subject && e.deadline).slice(0, 100)
       : undefined,
     coursework: normalizeCoursework(p?.coursework),
+    pronoteLessons: Array.isArray(p?.pronoteLessons)
+      ? p.pronoteLessons.filter((l: any) => l && typeof l.id === "string" && typeof l.date === "string" && typeof l.text === "string").slice(0, 40).map((l: any) => ({
+          id: l.id.slice(0, 80), subject: String(l.subject || "").slice(0, 60), date: l.date.slice(0, 10), text: l.text.slice(0, 1500),
+          ...(l.title ? { title: String(l.title).slice(0, 140) } : {}), ...(l.category ? { category: String(l.category).slice(0, 40) } : {}),
+          ...(Array.isArray(l.files) && l.files.length ? { files: l.files.slice(0, 6).map((f: any) => ({ name: String(f?.name || "").slice(0, 120), url: String(f?.url || "").slice(0, 600) })) } : {}),
+        }))
+      : undefined,
     onboardedAt: typeof p?.onboardedAt === "string" ? p.onboardedAt : undefined,
     toursSeen: Array.isArray(p?.toursSeen) ? [...new Set<string>(p.toursSeen.map((t: any) => String(t).slice(0, 40)).filter(Boolean))].slice(0, 40) : undefined,
     subjects: Array.isArray(p?.subjects) ? [...new Set<string>(p.subjects.map((t: any) => String(t).trim().slice(0, 60)).filter(Boolean))].slice(0, 14) : undefined,

@@ -26,6 +26,14 @@ export function schoolRecordLine(list: WebTask[] | undefined, profile: Profile |
   const exams = (profile?.manualExams || []).slice(0, 5);
   if (exams.length) out.push("UPCOMING EXAMS THEY LOGGED: " + exams.map((e) => `${clip(e.subject, 24)} ${clip(e.deadline, 12)}`).join(", "));
 
+  // What teachers published on Pronote: lesson content ("contenu du cours") and attached resources, this subject first.
+  const lessons = (profile?.pronoteLessons || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+  const lPick = [...lessons.filter((l) => subject && same(l.subject, subject)), ...lessons.filter((l) => !(subject && same(l.subject, subject)))].slice(0, 8);
+  if (lPick.length) {
+    out.push("PRONOTE LESSON CONTENT AND TEACHER RESOURCES (what the teachers published for recent classes — the real course material):\n" + lPick.map((l) =>
+      `- ${l.date} [${clip(l.subject, 30)}]${l.category ? ` (${clip(l.category, 24)})` : ""}${l.title ? ` ${clip(l.title, 100)}` : ""}${l.text ? `: ${clip(l.text, 420)}` : ""}${l.files?.length ? ` — files: ${l.files.map((f) => clip(f.name, 50)).join(", ")}` : ""}`).join("\n"));
+  }
+
   // Journal: their own "what I learned today" entries (not the rolled-up week/month summaries), newest first.
   const journal = tasks
     .filter((t) => t.source === "studylog" && t.logDate && !t.logDate.startsWith("week:") && !t.logDate.startsWith("month:") && t.logText?.trim())
