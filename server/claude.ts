@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards, TaskQuiz, TaskProblem, BoardEntry, DiagramOp, GraphSpec, DailyPracticeProblem, ThemeTokens, WebTask, TaskType, InfoRequirement, TaskArtifact, SeparateTask, TaskObjective } from "../shared/types.ts";
-import { validateThemeTokens } from "../shared/types.ts";
+import { validateThemeTokens, isNumericAnswer as isNumericAnswerValue } from "../shared/types.ts";
 import { compileExpr } from "../shared/mathExpr.ts";
 import { COURSEWORK_MAX_CHARS, courseworkForSubject, sameSubject } from "../shared/coursework.ts";
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
@@ -2602,7 +2602,7 @@ const CREATE_PROBLEM_TOOL = {
     why: { type: "string", description: "one line on why the answer is right — this is what makes the problem teach instead of just score" },
     hint: { type: "string", description: "an optional hint the student can reveal before answering" },
     sourceUrl: { type: "string", description: "ONLY when this exercise is adapted from a FIND_SOURCE_QUESTION result: that result's url, exactly. Never invent one." },
-    format: { type: "string", description: "free-response mode only: guidance on expected format/units/notation (e.g. 'two decimal places, in m/s'). NEVER use the real answer as an example — use a placeholder ('x = a') or a different value." },
+    format: { type: "string", description: "free-response mode only: guidance on expected format/units/notation — for ANY numeric answer you MUST state the precision (\"to 1 decimal place\", \"to 3 significant figures\", \"to the nearest whole number\") and the unit (e.g. 'to two decimal places, in m/s'); if you omit the precision the app adds one. NEVER use the real answer as an example — use a placeholder ('x = a') or a different value." },
   }, required: ["question"] },
 };
 
@@ -3078,6 +3078,14 @@ export function makeProblem(input: any): { problem: TaskProblem } | { error: str
   const secret = hasMCQ ? options[correctIdx] : answer;
   const checkHint = !!secret && (!hasMCQ || secret.replace(/\s/g, "").length >= 3);
   format = scrubAnswerLeak(format, secret);
+  // ALWAYS tell them how precise the answer must be: a numeric key with no stated precision gets "to N decimal places" (N from the key itself;
+  // 0 → nearest whole number). Added AFTER the leak scrub so a key like "2" can't have its own hint scrubbed away.
+  if (!hasMCQ && answer && isNumericAnswerValue(answer) && !/decimal|d\.?p\.?\b|significant|sig\.? ?fig|s\.?f\.?\b|nearest|whole number|integer|exact|fraction|décimale|chiffres? significatifs?|arrondi|entier/i.test(String(format || ""))) {
+    const dec = (String(answer).match(/[.,](\d+)\s*$/)?.[1] || "").length;
+    const fr = /\b(?:le|la|les|un|une|des|quel|quelle|calcule[rz]?|détermine[rz]?|trouve[rz]?)\b/i.test(question) && !/\b(?:the|find|calculate|what)\b/i.test(question);
+    const prec = dec === 0 ? (fr ? "arrondi à l'entier le plus proche" : "to the nearest whole number") : (fr ? `à ${dec} décimale${dec > 1 ? "s" : ""}` : `to ${dec} decimal place${dec > 1 ? "s" : ""}`);
+    format = `${format ? format + " — " : ""}${prec}`;
+  }
   if (checkHint) hint = scrubAnswerLeak(hint, secret);
   return {
     problem: {
@@ -7721,7 +7729,7 @@ const PRIMER_PERSONA =
   `ambiguous, ask them to confirm what they meant rather than guessing.\n` +
   `- NEVER START AN EXERCISE THEY DIDN'T ASK FOR: stay on what they are doing and what they just asked. When something is finished, OFFER the next one in a single short question and wait for a yes — never set a new problem, a "next scenario" or extra givens on the board by yourself.\n` +
   `- WHEN YOU SET A PROBLEM, SET IT AS A REAL EXERCISE: CREATE_PROBLEM with the full statement and every given — one final answer (a bare number, or multiple choice) — so it appears as a widget they can answer and have checked. Never as plain board text, never only in chat, never a question about a problem they have not been shown. If they say they cannot see which problem you mean, put it up in full at once.\n` +
-  `- MIX EXERCISE FORMATS: about one exercise in three is multiple choice (options + correct) — conceptual questions, naming a law/unit/process, spotting the error in a worked step, or a calculation with the common mistakes as the wrong options; computations where the number is the point are free-response with a BARE-NUMBER answer (no units; the unit goes in the format hint).\n` +
+  `- MIX EXERCISE FORMATS: about one exercise in three is multiple choice (options + correct) — conceptual questions, naming a law/unit/process, spotting the error in a worked step, or a calculation with the common mistakes as the wrong options; computations where the number is the point are free-response with a BARE-NUMBER answer (no units; the unit goes in the format hint) — and EVERY numeric exercise says how many decimal places (or significant figures) the answer needs, in the question or the format hint.\n` +
   `- GOOD EXERCISES: one problem at a time, aimed at exactly the gap you just saw, a notch harder than the ` +
   `last. Say a short lead-in in the bubble ("try this one"), then CREATE_PROBLEM; don't read it out. Make the ` +
   `wrong MCQ options the mistakes THIS student is likely to make (a sign slip, a swapped formula), so a wrong ` +

@@ -8,6 +8,7 @@ import { normalizeWidget, shuffledNotSolved, projectileStats } from "../shared/w
 import { makeSyncScheduler } from "../server/syncScheduler.ts";
 import { buildTasksPayload, parseHave } from "../server/taskDelta.ts";
 import { makeTaskSync } from "../client/taskDelta.ts";
+import { makeProblem as makeProblemP } from "../server/claude.ts";
 import { startsNewProblem } from "../server/tutorAdapt.ts";
 import { asksForProblem, asksWhichProblem } from "../server/tutorAdapt.ts";
 import { problemIsPercent as problemIsPercentT } from "../shared/types.ts";
@@ -2066,6 +2067,15 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
       startsNewProblem("A 1200 kg car rolls down the same 45 m hill, but friction does 176,400 J of work against it. What is the new kinetic energy?", board) && !startsNewProblem("A car of mass 1200 kg rolls down a hill of height 45 m. Starting E_p = 1200 × 9.8 × 45 = ?", board) && !startsNewProblem("90°: (0, 1)\n180°: (-1, 0)\n270°: ?", []) && !startsNewProblem("E_k = 529,200 J, so v = ?", board));
     check("Otto never sets an exercise they didn't ask for: CREATE_PROBLEM and new-scenario board lines are refused unless they asked for one (or it is the first turn / they posed it); persona says to OFFER, not set",
       /content = NO_UNPROMPTED_EXERCISE/.test(cl) && (cl.match(/NO_UNPROMPTED_EXERCISE/g) || []).length >= 3 && /NEVER START AN EXERCISE THEY DIDN'T ASK FOR/.test(cl)); }
+  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+    const a = makeProblemP({ question: "A motor does 1200 J of useful work from 1600 J. Find the efficiency as a percentage.", answer: "75" });
+    const b = makeProblemP({ question: "Find the height of the tower.", answer: "112.0", format: "answer as a number, in metres" });
+    const c = makeProblemP({ question: "Find v.", answer: "19.8", format: "to 1 decimal place, in m/s" });
+    const d = makeProblemP({ question: "Calculate the speed.", answer: "19.80" });
+    const e = makeProblemP({ question: "Calcule la vitesse.", answer: "3.14" });
+    const f = makeProblemP({ question: "What is the unit of power?", answer: "watt" });
+    check("every numeric exercise states its precision: missing → added from the key (whole number / N decimal places, FR too); already stated → untouched; word answers get none",
+      /nearest whole number/.test(a.problem.format || "") && /112\.0/.test(b.problem.answer) && /to 1 decimal place \(?/.test(b.problem.format || "") === false && /one decimal|1 decimal|decimal place/.test(b.problem.format || "") && c.problem.format === "to 1 decimal place, in m/s" && /to 2 decimal places/.test(d.problem.format || "") && /à 2 décimales/.test(e.problem.format || "") && !f.problem.format && /MUST state the precision/.test(cl)); }
   check("tool calls typed as text never reach the student", stripPseudoTools("<syntax_error></syntax_error><write_to_board><kind>result</kind><text>distance = (470 + H)/tan 40</text></write_to_board>Ah, exactly — what next?") === "Ah, exactly — what next?" && stripPseudoTools("plain reply") === "plain reply" && stripPseudoTools("<chat>Using that height.</chat>") === "Using that height.");
   check("a reply that is only a formula is bare maths; a sentence with maths is not", bareMath("distance K = (470)/(tan 40)") && bareMath("(470 + H)/(tan 25°) - (470 + H)/(tan 40°) = 500") && !bareMath("Which side is opposite the 40° angle here?") && !bareMath("Good, now what does the tan 40° ratio give you for the horizontal distance?"));
   // ── Grounding (reported live: "tan(θ) = slope!" to a student who had only said the two slopes; "maybe graph it" ignored) ──
