@@ -7,6 +7,7 @@
  * (loadState → mutate → merge-with-fresh → saveState), never on an HTTP session, so a cron tick on a cold
  * serverless instance can execute a task end to end. The DB job row is the lock and the retry ledger.
  */
+import { schoolRecordLine } from "./schoolRecord.ts";
 import type { WebTask, Profile, TaskStatus } from "../shared/types.ts";
 import { emptyProfile, canonStatus, isHandled, isInFlight, tzOf, overMonthlyBudget, overInteractiveBudget, addUsage, learnedProductiveHour, bumpActivityHour } from "../shared/types.ts";
 import * as store from "./store.ts";
@@ -163,7 +164,7 @@ async function processSweep(job: store.Job): Promise<string> {
   let autoRunSpent = 0;
   for (const t of list.filter((x) => x.unrefined && !isHandled(x.status)).slice(0, 3)) {
     try {
-      const refined = await claude.refineManualTask(t.title, profile);
+      const refined = await claude.refineManualTask(t.title, profile, schoolRecordLine(list, profile, t.sourceSubject));
       if (refined) {
         // This call's cost was previously untracked entirely — refineManualTask returned no token info and
         // nothing here called addUsage, so a real DeepSeek spend on every unrefined manual task never

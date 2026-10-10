@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { WebTask, Quadrant, TaskLink, Profile, Sendable, AddUsageCategory, TaskStep, BoardEntry } from "../shared/types.ts";
 import { BOARD_EVENT_CAP } from "../shared/agentTypes.ts";
 import { dedupeFacts, sameFact, canonStatus, sortWithinQuadrant, addUsage, isHandled, tzOf, deadlineEpoch, normalizeWhen, gradesBySubject } from "../shared/types.ts";
+import { schoolRecordLine } from "./schoolRecord.ts";
 import { generateTasks, classifyCandidates, pickOneTask, runTask as aiRun, type ProfileUpdate, type RefinedTask, type AcademicContext } from "./claude.ts";
 import { readOnly, scopeTools, DOC_LINK, type AgentTools } from "./integrations.ts";
 import { discoverSourceItems, filterCandidates, hasAssignmentText } from "./discover.ts";
@@ -89,14 +90,15 @@ export function inAppContextFor(list: WebTask[], task: WebTask, profile?: Profil
     lines.push(`Time left on THIS task: ${daysLeft < 0 ? "overdue" : daysLeft < 1 ? "due within a day" : `${Math.floor(daysLeft)} days`}`);
   }
 
-  if (!lines.length) return "";
+  const school = schoolRecordLine(list, profile, task.sourceSubject);
+  if (!lines.length) return school.slice(0, 2600);
   const block = `\nWHAT OTTO ALREADY HAS IN-APP FOR THIS (the student's own history — use it, never redo it):\n` +
     lines.map((l) => `- ${l}`).join("\n") + "\n" +
     `Build on this: a step should USE an existing fiche/deck/quiz (open it, drill the weak cards, retake the quiz) ` +
     `rather than recreate it; skip work already done; lean on what earlier tasks in this subject showed is shaky; ` +
     `and size the plan to the time left and the other deadlines — with little time or a crowded week, keep ` +
     `only the highest-value steps.\n`;
-  return block.slice(0, 2200);
+  return block.slice(0, 2200) + school.slice(0, 2600);
 }
 
 function personalizationFor(list: WebTask[], subject: string | undefined): { subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; recentJournal?: { date: string; text: string }[]; notNeeded?: string[] } {
@@ -1220,7 +1222,7 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
           if (otherTools.length && supplementarySweepDue(profile)) {
             try {
               const otherActive = result.filter((t) => t.status !== "done" && t.status !== "dismissed").map((t) => ({ title: t.title, anchorKey: t.anchorKey }));
-              const gen2 = await generateTasks(profile, readOnly({ tools: otherTools, call: extras.call, connected: extras.connected }), handled, otherActive);
+              const gen2 = await generateTasks(profile, readOnly({ tools: otherTools, call: extras.call, connected: extras.connected }), handled, otherActive, schoolRecordLine(existing, profile));
               addUsage(profile, gen2.tokens, "sweep");
               profile.lastSupplementarySweepAt = new Date().toISOString();
               for (const u of gen2.profileUpdates) applyProfileUpdate(profile, u);
@@ -1236,7 +1238,7 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
 
   // FALLBACK — open-ended agent sweep over the read-only tool view (covers non-Google sources too).
   // Only reached when the deterministic pipeline couldn't attempt anything at all (e.g. Gmail not connected).
-  const gen = await generateTasks(profile, extras ? readOnly(extras) : undefined, handled, active);
+  const gen = await generateTasks(profile, extras ? readOnly(extras) : undefined, handled, active, schoolRecordLine(existing, profile));
   addUsage(profile, gen.tokens, "sweep");
   for (const u of gen.profileUpdates) applyProfileUpdate(profile, u);
   const result = foldGenerated(existing, gen.tasks, profile.highPriorityPeople || []);
