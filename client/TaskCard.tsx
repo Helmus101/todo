@@ -192,9 +192,10 @@ function TaskPlanningPanel({ task }: { task: WebTask }) {
 export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isNew, index, onOpen, onEnterStudyMode, readOnly }: {
   task: WebTask; onChange: (t: WebTask[]) => void; onTask?: (t: WebTask) => void; retrying?: boolean; onConfirmed?: (id: string) => void;
   isNew?: boolean; index?: number; onOpen: () => void; onEnterStudyMode?: () => void;
-  /** Phone (see useIsPhone): the row is a VIEW of the task, nothing more — no tick-off, no Study Mode, no
-   *  dismiss. Direct instruction: on a phone you should "just be able to see the tasks and what it planned",
-   *  not act on them. Opening the row still works; it lands on the read-only TaskReadOnly view below. */
+  /** Phone (see useIsPhone): no Study Mode, no dismiss, no opening into the full working surface —
+   *  opening the row lands on the read-only TaskReadOnly view below. Direct instruction, reversing an
+   *  earlier "nothing to act on" restriction: ticking a task off as done must still work on a phone, so
+   *  the check button is NOT gated behind this — see its own condition below. */
   readOnly?: boolean;
 }) {
   const L = useLang();
@@ -261,7 +262,7 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
           real button itself (real visible content, not an invisible layer), which is the standard,
           maximally-compatible pattern every list-based mobile app uses. .card-check/.card-x moved to true
           siblings, since a <button> can't contain another <button>. */}
-      {!isDone && !readOnly ? (
+      {!isDone ? (
         <button type="button" className={`card-check ${leaving && leaveKind === "confirm" ? "checked" : ""}`}
           title={L("Marquer comme fait", "Mark as done")} aria-label={L(`Marquer « ${task.title} » comme faite`, `Mark "${task.title}" as done`)} disabled={leaving}
           onClick={() => void leave(() => api.confirm(task.id), "confirm", task)}>
@@ -387,10 +388,32 @@ export function TaskHero({ task, onOpen, onChange, onTask, onConfirmed, readOnly
  *  Chat is absent on purpose — direct instruction, "no chat for the moment" on a phone. */
 export function TaskReadOnly({ task, onTask, userId }: { task: WebTask; onTask: (t: WebTask) => void; userId: string | null }) {
   const L = useLang();
+  const notify = useNotify();
   const [openNote, setOpenNote] = useState<string | null>(null);
   const [openDeck, setOpenDeck] = useState<string | null>(null);
   const [openQuiz, setOpenQuiz] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const cardEn = useContext(LangContext) === "en";
+  // Direct instruction: checking a task off as done must work on a phone too — this view otherwise has
+  // no onChange (list setter) the way TaskCardRow's useTaskLeave does, just the single-task patch, so a
+  // small self-contained confirm instead of reusing that hook. The parent's own task-modal effect
+  // (App.tsx) already closes the modal the instant the task's status is handled, so no onLeft is needed.
+  const markDone = async () => {
+    if (confirming) return;
+    setConfirming(true);
+    onTask({ ...task, status: "done", updatedAt: new Date().toISOString() });
+    try {
+      const list = await api.confirm(task.id);
+      if (!Array.isArray(list)) throw new Error((list as any)?.error || L("On dirait que tu as été déconnecté — recharge la page.", "Looks like you got logged out — reload the page."));
+      const updated = list.find((t) => t.id === task.id);
+      if (updated) onTask(updated);
+    } catch (e: any) {
+      onTask(task); // roll back the optimistic flip
+      notify(e?.message || L("Un imprévu est survenu — réessaie.", "Something went wrong on our end — try again."), "error");
+    } finally {
+      setConfirming(false);
+    }
+  };
   const w = taskDateLabel(task, L);
   const steps = task.steps || [];
   const doneCount = steps.filter((s) => s.done).length;
@@ -480,9 +503,12 @@ export function TaskReadOnly({ task, onTask, userId }: { task: WebTask; onTask: 
           ) : null}
         </div>
       ) : null}
+      <button type="button" className="btn primary task-readonly-done" disabled={confirming} onClick={() => void markDone()}>
+        {confirming ? L("…", "…") : L("Marquer comme fait", "Mark as done")}
+      </button>
       <p className="task-readonly-foot">
-        {L("Sur téléphone, Otto est en lecture seule. Ouvre-le sur un ordinateur ou un iPad pour travailler dessus.",
-           "On a phone, Otto is read-only. Open it on a laptop or iPad to actually work on this.")}
+        {L("Sur téléphone, Otto est en lecture seule pour le travail lui-même — ouvre-le sur un ordinateur ou un iPad pour ça.",
+           "On a phone, Otto is read-only for the actual work — open it on a laptop or iPad for that.")}
       </p>
       <ArtifactPopups task={task} onTask={onTask} openNote={openNote} openDeck={openDeck} openQuiz={openQuiz}
         setOpenNote={setOpenNote} setOpenDeck={setOpenDeck} setOpenQuiz={setOpenQuiz} userId={userId} />

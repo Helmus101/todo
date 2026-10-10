@@ -5148,8 +5148,9 @@ section("Phone restriction — flashcard review + READ-ONLY tasks, no chat; iPad
   // "limit the things you can do on mobile... not on the iPad" — useIsPhone's 767px breakpoint already
   // excludes iPad (smallest portrait width 768px), reused here (and in StudyMode.tsx, which already had
   // its own copy of this exact check) rather than adding a second device-detection mechanism.
-  // Refined by a later instruction: a phone should ALSO see the task list and "what it planned" — but
-  // purely as a view, with no chat and nothing to act on.
+  // Refined by a later instruction: a phone should ALSO see the task list and "what it planned" — mostly
+  // a view (no chat, no Study Mode, no dismiss) — and refined AGAIN by a direct instruction after that:
+  // checking a task off as done must still work on a phone, both from the row and from the open task.
   const hook = readFileSync(new URL("../client/useIsPhone.ts", import.meta.url), "utf8");
   check("useIsPhone uses the 767px breakpoint (keeps iPad, min width 768px, OUT of 'phone')", /max-width:\s*767px/.test(hook));
   check("useIsPhone is reactive (matchMedia change listener), not a one-time read", /addEventListener\("change"/.test(hook));
@@ -5166,7 +5167,11 @@ section("Phone restriction — flashcard review + READ-ONLY tasks, no chat; iPad
   // action now lives only in the dashboard's own empty states, and add-task stayed phone-hidden.)
   check("add-task and the refresh/generate action are hidden on phone", /\{!isPhone && <div className="dash-addtask">/.test(app) && !/\{!isPhone && \(route === "" \|\| route === "tasks"/.test(app));
   const card = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
-  check("TaskCardRow's readOnly hides the tick-off, Study Mode and dismiss controls", /!isDone && !readOnly \? \(/.test(card) && /!isDone && !readOnly && onEnterStudyMode/.test(card) && /!isDone && !leaving && !readOnly && <button className="card-x"/.test(card));
+  check("TaskCardRow's readOnly hides Study Mode and dismiss, but NOT the tick-off — direct instruction: checking a task off must still work on a phone",
+    /!isDone && !readOnly && onEnterStudyMode/.test(card) && /!isDone && !leaving && !readOnly && <button className="card-x"/.test(card) &&
+    /\{!isDone \? \(\s*<button type="button" className=\{`card-check/.test(card));
+  check("TaskReadOnly (the phone task-detail view) also has its own Mark as done button, wired to api.confirm",
+    /TaskReadOnly[\s\S]{0,6000}markDone[\s\S]{0,2000}api\.confirm\(task\.id\)/.test(card) && /task-readonly-done/.test(card));
   // "no chat for the moment" is the explicit constraint here, not "no interaction at all" — opening a link
   // (added later) is still a read of the task, not an action ON it, same spirit as the rest of this view.
   check("TaskReadOnly renders the plan (steps + done state) and has no chat (TaskChat/sendChat) at all", /export function TaskReadOnly/.test(card) && /task-readonly-steps/.test(card) && !/TaskReadOnly[\s\S]{0,4000}<TaskChat/.test(card) && !/TaskReadOnly[\s\S]{0,4000}sendChat/.test(card));
