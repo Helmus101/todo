@@ -203,6 +203,9 @@ export interface TutorSessionStateShape {
   /** The tutor's running LEDGER for the problem in play: facts it has verified ("TRUE: …") and student claims it has
    *  judged wrong ("WRONG: …"). Fed back every turn so a verdict is never silently contradicted. */
   ledger?: string[];
+  /** The hidden QUICKEST route to the answer for the problem in play (3-6 short ideas) and whether they last left it. */
+  route?: string[];
+  offRoute?: boolean;
 }
 
 export const SESSION_CAP = 8;

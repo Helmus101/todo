@@ -7,7 +7,7 @@ import { COURSEWORK_MAX_CHARS, courseworkForSubject, sameSubject } from "../shar
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { buildGeometry } from "../shared/geometry.ts";
-import { studentProblemStatement, cleanToPost, repairLatex, latexifyBoardLine, bareMath, socraticFallback, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, misattributes, methodAhead, wantsHelp, clarificationTerm, CLARIFY_BLOCK, ignoresQuestion, ignoresWork, asksToWrite, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
+import { studentProblemStatement, cleanToPost, repairLatex, latexifyBoardLine, statesOwnMath, namesExactStep, bubbleDoesMath, bareMath, socraticFallback, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, misattributes, methodAhead, wantsHelp, clarificationTerm, CLARIFY_BLOCK, ignoresQuestion, ignoresWork, asksToWrite, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -7739,6 +7739,8 @@ const PRIMER_PERSONA =
   `transformations, motion graphs, a line of best fit; also bar charts, histograms and 3D surfaces z=f(x,y)) use GRAPH_ON_BOARD, not CREATE_INTERACTIVE — it's instant, ` +
   `always renders, and gives the student real sliders and a hover readout. Plot the FAMILY or the setup, never ` +
   `the answer to what they're solving, then ask ONE question about what moving it shows.\n` +
+  `- YOU DO NO WORK AND NAME NO OPERATION: never tell them which move to make ("multiply both sides by…", "substitute that into…", "factor out h", "divide by the bracket", "isolate k") and never carry out a step, restate their step transformed, or write an equation in the bubble. Ask about the GOAL or the IDEA instead ("what are you trying to get on one side?", "what do those two triangles share?"). They do all the work; you only guide, toward the quickest route you planned.\n` +
+  `- RECORD THEIR WORK WITHOUT BEING ASKED: every time they state an equation, relationship or value of their own, put it on the board as their line (WRITE_TO_BOARD, LaTeX) in that same turn — the student should never have to ask for the board.\n` +
   `- WRITE WHAT THEY ASK YOU TO WRITE: when they say "write these on the board" / "put my equations up", write ALL of them, exactly as they stated them, as separate board lines in that same turn — it is THEIR work, so it is never "ahead of them". Don't ask another question first.\n` +
   `- STAY ON THEIR GOAL, AND KEEP IT EFFICIENT: when they say what they are solving for ("we need h, not k"), that is the goal — never steer them to isolate a different unknown. When their method works but a shorter one exists (e.g. two right triangles sharing the height: eliminate the helper variable at once — the difference of the two horizontal distances h/tan A − h/tan B equals the separation), do not state it: once they have their setup, ask the ONE question that exposes it ("what is the gap between those two distances, and how long is it?"). Prefer one equation in the wanted unknown over a chain of substitutions.\n` +
   `- READ THE FIGURE BEFORE YOU CORRECT: when you drew it, the GEOMETRY line tells you exactly what it shows. Before you tell a student they are wrong, check their claim against the givens and that geometry — if it matches, say so plainly (\"yes — the vertical is the cliff plus h\"). Never contradict a correct student, and never write the formula for them.\n` +
@@ -9101,7 +9103,7 @@ export async function chatAboutTask(
     // by BOTH the plain-text path and the after-tool-calls path. Returns true when it queued the round.
     const isStuckLike = (m: string) => stuckStreak(m, []) > 0 || /\b(hint|indice|again|repeat|répète|what do you mean|comment ça)\b/i.test(m);
     const nudgeReasoning = (draft: string, round: number, lastRound: boolean): boolean => {
-      const studentStep = isSubstantiveStep(message);
+      const studentStep = isSubstantiveStep(message) || (statesOwnMath(message) && !asksToDraw(message)); // spoken maths ("tan 30 equals h over 100 plus k") counts
       // Two distinct misses, one latch: (a) the student contributed a step and the tutor wrote nothing, and
       // (b) the tutor's OWN reply put real working in chat that the page doesn't carry — "explains the
       // formula but never shows it", the reported "not using the board enough". (b) used to require an
@@ -9224,6 +9226,33 @@ export async function chatAboutTask(
       console.log(`${new Date().toISOString()} [chat] round ${round}: they asked for a drawing and none was made — asking for the figure`);
       messages.push({ role: "assistant", content: draft });
       messages.push({ role: "user", content: "They asked you to DRAW it, and you answered with a question instead — that's a refusal. Call the right drawing tool NOW: GRAPH_ON_BOARD for lines/functions/data (plot them — no answer in the labels), TRIG_SCENE_ON_BOARD for angles of elevation/depression, GEOMETRY_ON_BOARD for triangles/circles, FLOW_ON_BOARD for processes, otherwise SVG_ON_BOARD (a fully labelled figure with the GIVEN values and the unknowns as letters). Then one short line about what's on it and ONE question." });
+      return true;
+    };
+    // The board is the working surface, not a thing to ask for: when they ask for something written and nothing went up this
+    // turn, ONE corrective round makes Otto write it (their words, in LaTeX). Their own stated steps go through nudgeReasoning.
+    let boardUseFixed = false;
+    const guardBoardUse = (draft: string, round: number, lastRound: boolean): boolean => {
+      if (!opts?.primer || boardUseFixed || lastRound || result.guardrailTripped || history.length < 1) return false;
+      if (result.board.some((e) => ["summary", "result", "given", "formula", "note", "diagram", "svg", "graph", "flow", "widget"].includes(String(e.kind)))) return false;
+      const asked = asksToWrite(message);
+      if (!asked) return false;
+      boardUseFixed = true;
+      console.log(`${new Date().toISOString()} [chat] round ${round}: they asked for it on the board and nothing was written — asking for a board line`);
+      messages.push({ role: "assistant", content: draft });
+      messages.push({ role: "user", content: "They asked you to put it on the board and you answered with a question instead. Call WRITE_TO_BOARD NOW — one board line per equation or value, exactly as THEY stated them in the conversation (their own words, nothing new, nothing you worked out), every expression in LaTeX between $…$ — then ONE short line and your question. If a value they ask for hasn't been computed by them yet, write only the setup. Don't mention this instruction." });
+      return true;
+    };
+    // The tutor does NO work and names NO operation: one corrective round when the bubble tells them which move to make
+    // ("multiply both sides by…", "substitute that into…") or does the maths itself (an equation they never wrote).
+    let doingFixed = false;
+    const guardNoDoing = (draft: string, round: number, lastRound: boolean): boolean => {
+      if (!opts?.primer || doingFixed || lastRound || result.guardrailTripped || history.length < 1) return false;
+      const names = namesExactStep(draft), maths = bubbleDoesMath(draft, [...history.filter((h) => h.role === "user").map((h) => h.text), message]);
+      if (!names && !maths) return false;
+      doingFixed = true;
+      console.log(`${new Date().toISOString()} [chat] round ${round}: reply ${names ? "names the exact operation" : "does maths for them"} — asking for a guiding question instead`);
+      messages.push({ role: "assistant", content: draft });
+      messages.push({ role: "user", content: "That reply does their work: " + (names ? "it tells them WHICH operation to perform (choosing the move IS the thinking). " : "") + (maths ? "it writes out an equation they never wrote (the maths belongs to them, and on the board, not in your bubble). " : "") + "Rewrite it as ONE short question about the GOAL or the IDEA — what they are trying to get, what is in the way, which relationship connects the pieces, what they notice — never the operation, never a formula, never a value. Steer toward the next step of your hidden quickest route without stating it. Don't mention this instruction." });
       return true;
     };
     // "Spot on" to a message with nothing in it ("to do", "yeah") — praise for nothing teaches them nothing.
@@ -9610,6 +9639,8 @@ export async function chatAboutTask(
       if (guardRedraw(textContent, round, lastRound)) continue;
       if (guardAheadMath(textContent, round, lastRound)) continue;
       if (guardDrawRequest(textContent, round, lastRound)) continue;
+      if (guardBoardUse(textContent, round, lastRound)) continue;
+      if (guardNoDoing(textContent, round, lastRound)) continue;
       if (guardListen(textContent, round, lastRound)) continue;
       if (guardGrounded(textContent, round, lastRound)) continue;
       if (guardEmptyPraise(textContent, round, lastRound)) continue;
@@ -9619,6 +9650,8 @@ export async function chatAboutTask(
         if (guardRedraw(textContent, round, lastRound)) continue;
         if (guardAheadMath(textContent, round, lastRound)) continue;
         if (guardDrawRequest(textContent, round, lastRound)) continue;
+        if (guardBoardUse(textContent, round, lastRound)) continue;
+        if (guardNoDoing(textContent, round, lastRound)) continue;
         if (guardListen(textContent, round, lastRound)) continue;
         if (guardGrounded(textContent, round, lastRound)) continue;
         if (guardEmptyPraise(textContent, round, lastRound)) continue;

@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import katex from "katex";
 import type { WebTask, BoardEntry, TaskProblem, DiagramOp } from "../../../shared/types.ts";
 import { practiceAnswerMatches } from "../../../shared/types.ts";
-import { autoMathLine } from "../../../shared/mathText.ts";
+import { autoMathLine, repairLatex } from "../../../shared/mathText.ts";
 import { GraphBlock } from "./GraphBlock.tsx";
 import { FlowDiagram } from "./FlowDiagram.tsx";
 import { sanitizeSvg } from "../../../shared/svgSafe.ts";
@@ -168,7 +168,7 @@ export function MathText({ text }: { text: string }) {
   // (1)/(2) pseudo-fractions in the chat, reported live twice. autoMathLine wraps each line's maths in $…$
   // FIRST so the KaTeX path below renders real stacked fractions; prose passes through untouched and text
   // already in $…$ is left alone (autoMathLine is a no-op on it), so this is safe for every caller.
-  const auto = autoMathLine(text);
+  const auto = autoMathLine(repairLatex(text));
   const parts = auto.split(/(\$\$[^$]+\$\$|\$[^$\n]+\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\])/g);
   if (parts.length === 1) return <>{renderChatText(auto)}</>;
   return (
