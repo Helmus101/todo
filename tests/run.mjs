@@ -4692,7 +4692,7 @@ section("Pronote is one option, not the premise — no-integration accounts get 
   check("the empty state names whichever source is actually connected (Pronote vs inbox)", /const watching = status\.pronoteConnected\s*\n\s*\? \(en \? "your Pronote" : "ton Pronote"\)\s*\n\s*: status\.googleConnected/.test(appSrcPronote));
   const firstRun = appSrcPronote.slice(appSrcPronote.indexOf("const watching = status.pronoteConnected"), appSrcPronote.indexOf("<div className={`list-focus-wrap"));
   check("with nothing connected, the first-run empty state points at Settings instead of a no-op 'Check now'", /href="\/settings">\{en \? "Connect an app"/.test(firstRun));
-  check("the all-caught-up line drops the Pronote claim when nothing is connected", /Nothing outstanding\. Pick something hard/.test(firstRun));
+  check("the all-caught-up line drops the Pronote claim when nothing is connected", /Nothing outstanding\. Pick the hardest thing/.test(firstRun));
   check("the connect card offers the whole picker rather than a single 'Connect my Pronote' CTA", !/Connect my Pronote/.test(appSrcPronote) && /Choose what to connect/.test(appSrcPronote));
   check("the skip escape hatch stays a real, equal choice — using Otto with nothing connected", /Use Otto without connecting/.test(appSrcPronote));
   check("the sweep's 'nothing new' note names the connected source, not Pronote by default", /nothing new from \$\{status\?\.pronoteConnected \? "Pronote" : status\?\.googleConnected \? "your inbox" : "your sources"\}/.test(appSrcPronote));

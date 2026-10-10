@@ -1238,7 +1238,7 @@ export function App() {
             <div className="intro paused-banner">
               <div className="intro-body">
                 <div className="intro-title">{en ? "Otto is paused" : "Otto est en pause"}</div>
-                <p>{en ? "Turn it back on in Settings to continue." : "Réactive-le dans les Réglages pour continuer."}</p>
+                <p>{en ? "Turn it back on in Settings whenever you're ready — nothing's been lost." : "Réactive-le dans les Réglages quand tu veux — rien n'a été perdu."}</p>
               </div>
               <button className="btn xs ghost" onClick={() => navigate("settings")}>{en ? "Settings" : "Réglages"}</button>
             </div>
@@ -1248,8 +1248,8 @@ export function App() {
               <div className="intro-body">
                 <div className="intro-title">{en ? "Monthly cap reached" : "Plafond mensuel atteint"}</div>
                 <p>{en
-                  ? `Otto has paused new work — it renews ${budget?.renewsOn ? fmtDay(budget.renewsOn, (fr, enS) => en ? enS : fr) : "on the 1st"}. Your tasks stay as they are.`
-                  : `Otto a mis en pause le nouveau travail — ça se renouvelle ${budget?.renewsOn ? fmtDay(budget.renewsOn, (fr, enS) => en ? enS : fr) : "le 1er"}. Tes tâches restent en place.`}</p>
+                  ? `Otto's paused new work for the month — it picks back up ${budget?.renewsOn ? fmtDay(budget.renewsOn, (fr, enS) => en ? enS : fr) : "on the 1st"}. Everything you've already got stays exactly as it is.`
+                  : `Otto a mis le nouveau travail en pause pour le mois — ça repart ${budget?.renewsOn ? fmtDay(budget.renewsOn, (fr, enS) => en ? enS : fr) : "le 1er"}. Tout ce que tu as déjà reste en place.`}</p>
               </div>
               <button className="btn xs ghost" onClick={() => navigate("settings")}>{en ? "Settings" : "Réglages"}</button>
             </div>
@@ -1283,7 +1283,7 @@ export function App() {
                     <div className="empty-state">
                       <div className="empty-mark"><Logo size={28} /></div>
                       <h3>{en ? `I'm watching ${watching}${who ? `, ${who}` : ""}` : `Je surveille ${watching}${who ? `, ${who}` : ""}`}</h3>
-                      <p>{en ? "Homework and tests land here the moment I see them. Until then, use the quiet to get ahead." : "Devoirs et contrôles arrivent ici dès que je les vois. D'ici là, profite du calme pour prendre de l'avance."}</p>
+                      <p>{en ? "Homework and tests land here the second I spot them. Until then — this quiet is yours, not empty time." : "Devoirs et contrôles arrivent ici dès que je les repère. D'ici là — ce calme est à toi, pas du temps mort."}</p>
                       <button className="btn primary" disabled={busy} onClick={() => void generate()}>{busy ? (en ? "Looking…" : "Je regarde…") : (en ? "Look again" : "Regarde encore")}</button>
                     </div>
                   ) : (
@@ -1291,8 +1291,8 @@ export function App() {
                       <div className="empty-mark"><Logo size={28} /></div>
                       <h3>{en ? `Nothing on your list${who ? `, ${who}` : ""} — suspicious` : `Rien sur ta liste${who ? `, ${who}` : ""} — suspect`}</h3>
                       <p>{en
-                        ? "Add what you've been putting off. Or connect an app in Settings and I'll find the deadlines before you do."
-                        : "Ajoute ce que tu repousses. Ou connecte une app dans les Réglages et je trouverai les échéances avant toi."}</p>
+                        ? "Add what you've been putting off — you already know what it is. Or connect an app in Settings and I'll find the deadlines before you do."
+                        : "Ajoute ce que tu repousses — tu sais déjà ce que c'est. Ou connecte une app dans les Réglages, je trouverai les échéances avant toi."}</p>
                       <a className="btn ghost" href="/settings">{en ? "Connect an app" : "Connecter une app"}</a>
                     </div>
                   )
@@ -1301,8 +1301,8 @@ export function App() {
                     <div className="empty-mark done"><span className="empty-check">✓</span></div>
                     <h3>{en ? `Clear${who ? `, ${who}` : ""}` : `C'est dégagé${who ? `, ${who}` : ""}`}</h3>
                     <p>{connected
-                      ? (en ? `Nothing outstanding. I'm still watching ${watching} — now get ahead on something hard.` : `Rien en retard. Je surveille toujours ${watching} — prends de l'avance sur quelque chose de dur.`)
-                      : (en ? "Nothing outstanding. Pick something hard and get ahead of it." : "Rien en retard. Choisis quelque chose de dur et prends de l'avance.")}</p>
+                      ? (en ? `Nothing outstanding. I'm still watching ${watching} — so go get ahead on something that's actually hard.` : `Rien en retard. Je surveille toujours ${watching} — alors prends de l'avance sur quelque chose de vraiment dur.`)
+                      : (en ? "Nothing outstanding. Pick the hardest thing on your plate and get ahead of it — that's the whole game." : "Rien en retard. Choisis la chose la plus dure sur ta liste et prends-la de vitesse — c'est tout le jeu.")}</p>
                   </div>
                 );
               })() : (

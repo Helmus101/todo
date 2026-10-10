@@ -41,16 +41,16 @@ const MESSAGES: Catalog = {
   "dashboard.greeting.morning": { fr: "Bonjour", en: "Good morning" },
   "dashboard.greeting.afternoon": { fr: "Bon après-midi", en: "Good afternoon" },
   "dashboard.greeting.evening": { fr: "Bonsoir", en: "Good evening" },
-  "dashboard.allCaughtUp": { fr: "Rien en retard. Profites-en pour prendre de l'avance.", en: "Nothing outstanding. Use the time to get ahead." },
-  "dashboard.doneForToday": { fr: "Fait pour aujourd'hui. Demain, vise plus haut.", en: "Done for today. Aim higher tomorrow." },
+  "dashboard.allCaughtUp": { fr: "Rien n'est dû. Ce n'est pas de la chance — c'est de la marge pour avancer.", en: "Nothing's due. That's not luck — it's room to get ahead." },
+  "dashboard.doneForToday": { fr: "La journée est réglée. Demain, commence par ce que tu préférerais éviter.", en: "Today's handled. Tomorrow, start with the thing you'd rather skip." },
   // {count}/{plural} are computed by the caller (a plain "" or "s"), not by this module — see t()'s own
   // doc comment on why this stays plain string interpolation instead of a full ICU plural engine.
-  "dashboard.thingsLeft": { fr: "{count} chose{plural} à faire aujourd'hui. Commence par la plus dure", en: "{count} thing{plural} left today. Start with the hardest" },
-  "dashboard.alreadyDone": { fr: " — {count} déjà faite{plural}", en: " — {count} already done" },
+  "dashboard.thingsLeft": { fr: "{count} chose{plural} à faire aujourd'hui — commence par celle que tu évites", en: "{count} thing{plural} left today — start with the one you're avoiding" },
+  "dashboard.alreadyDone": { fr: " — {count} déjà derrière toi", en: " — {count} already behind you" },
   "dashboard.nextUp": { fr: " Ensuite : {title}.", en: " Next up: {title}." },
   "dashboard.momentum": {
-    fr: "Tu progresses vraiment en {subject} en ce moment — continue comme ça.",
-    en: "You've been genuinely improving in {subject} lately — keep it up.",
+    fr: "Tu progresses vraiment en {subject} — ce n'est pas une impression. Continue.",
+    en: "You're actually getting better at {subject} — not imagining it. Keep going.",
   },
 };
 
