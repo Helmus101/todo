@@ -24,6 +24,7 @@ import { normalizeStudentModel, emptyStudentModel, studentModelSummary } from ".
 import { ensureGraph } from "./conceptGraph.ts";
 import { classifyTurnAction } from "./actionSpace.ts";
 import { parsePolicy, summarize as summarizePolicy, initPolicy } from "./tutorPolicy.ts";
+import { findSourceQuestions, sourcesForTrack } from "./questionSources.ts";
 import { schoolRecordLine } from "./schoolRecord.ts";
 import { summarizeCoursework, fallbackCourseworkSummary, aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto, ttsReady, synthesizeSpeech, TTS_MAX_TEXT, tutorOpener, interactiveSceneDocument, INTERACTIVE_SCENE_CSP } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken, getAdminMetrics } from "./store.ts";
@@ -3576,6 +3577,20 @@ app.post("/api/profile/subjects", requireAuth, ah(async (req, res) => {
   p.subjects = [...new Set<string>(list.map((s: unknown) => String(s).trim().slice(0, 60)).filter(Boolean))].slice(0, 14);
   await commit(req);
   res.json({ ok: true, subjects: p.subjects });
+}));
+
+// ── Exercises (route /exercises — reachable by URL only, not from the navbar) ──
+// Practice questions pulled from the registered sources for the student's programme (IB / AP): the same lookup the tutor
+// uses, shown to the student directly with a link to each original. Other programmes have no registered sources.
+app.post("/api/exercises/search", requireAuth, rateLimit(10, 60_000), ah(async (req, res) => {
+  const topic = String(req.body?.topic || "").trim().slice(0, 120);
+  const subject = String(req.body?.subject || "").trim().slice(0, 60);
+  const track = req.session.profile?.track;
+  const sources = sourcesForTrack(track).map((s) => ({ name: s.name, host: s.host }));
+  if (!topic) { res.status(400).json({ error: M(req, "Indique un sujet.", "Enter a topic.") }); return; }
+  if (!sources.length) { res.json({ track: track || null, sources, questions: [] }); return; }
+  const questions = await findSourceQuestions({ track, subject: subject || undefined, topic, limit: 6 }).catch(() => []);
+  res.json({ track, sources, questions });
 }));
 
 // ── Coursework ───────────────────────────────────────────────────────────────────────────────────────────────

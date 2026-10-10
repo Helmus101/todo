@@ -115,8 +115,8 @@ export async function findSourceQuestions(
   const sources = sourcesForTrack(input.track);
   const topic = String(input.topic || "").trim().slice(0, 120);
   if (!sources.length || !topic) return [];
-  const limit = Math.max(1, Math.min(3, input.limit ?? 2));
-  const key = `${input.track}|${(input.subject || "").toLowerCase()}|${topic.toLowerCase()}`;
+  const limit = Math.max(1, Math.min(6, input.limit ?? 2));
+  const key = `${input.track}|${(input.subject || "").toLowerCase()}|${topic.toLowerCase()}|${limit}`;
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value.slice(0, limit);
   const out: SourceQuestion[] = [];

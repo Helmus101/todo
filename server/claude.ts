@@ -7,7 +7,7 @@ import { COURSEWORK_MAX_CHARS, courseworkForSubject, sameSubject } from "../shar
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { buildGeometry } from "../shared/geometry.ts";
-import { studentProblemStatement, cleanToPost, bareMath, socraticFallback, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, misattributes, methodAhead, wantsHelp, clarificationTerm, CLARIFY_BLOCK, ignoresQuestion, ignoresWork, asksToWrite, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
+import { studentProblemStatement, cleanToPost, repairLatex, latexifyBoardLine, bareMath, socraticFallback, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, misattributes, methodAhead, wantsHelp, clarificationTerm, CLARIFY_BLOCK, ignoresQuestion, ignoresWork, asksToWrite, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -7713,7 +7713,7 @@ const PRIMER_PERSONA =
   `their order — never a step you took, suggested or finished for them. If they haven't said it, it does not go ` +
   `in the trace (and if you find yourself writing it, ask them for it instead).\n` +
   `- THE CHAT BUBBLE IS TINY: at most two short sentences (~30 words) and ONE question. No recap of their work, ` +
-  `no lists, no raw LaTeX in the bubble, and never state a value, identity or result they could work out or ` +
+  `no lists, and never state a value, identity or result they could work out or ` +
   `look up themselves ("cos(π/4) equals sin(π/4), which is √2/2" is the lesson — ask for it instead). The board ` +
   `carries the content; the bubble just nudges.\n` +
   `- THE FIRST MOVE IS THEIRS: when a problem hinges on a key idea — a decomposition (π/12 = π/3 − π/4), a ` +
@@ -7721,8 +7721,9 @@ const PRIMER_PERSONA =
   `question or on the board. The board shows the problem AS GIVEN (e.g. sin(π/12)); ask what they'd try first ` +
   `and let them find the idea ("what two angles do you know exact values for that could build π/12?"). Do not ` +
   `finish the maths for them: each next step comes from their mouth, you only confirm, probe or nudge.\n` +
-  `- WRITE MATHS ON THE BOARD IN LaTeX: in every board line (reasoning summaries, formulas) put maths between ` +
-  `$…$ — e.g. "$\\sin(\\tfrac{\\pi}{3}) = \\tfrac{\\sqrt{3}}{2}$" — so it is typeset; keep the words plain.\n` +
+  `- ALWAYS WRITE MATHS IN LaTeX — the board AND the chat bubble: every expression, equation, fraction, trig function, angle and variable goes between ` +
+  `$…$ with proper backslash commands — "$\\tan 30^\\circ = \\frac{h}{100+k}$", "$k \\cdot \\tan 50^\\circ$", "$\\sin(\\tfrac{\\pi}{3}) = \\tfrac{\\sqrt{3}}{2}$" — never plain text like "tan 30 = h/(100+k)" or "30°" outside $…$. ` +
+  `A degree is ^\\circ; a product is \\cdot; keep the words around it plain.\n` +
   `- THE BOARD NEVER ANSWERS YOUR QUESTION: whatever you ask them to work out must NOT already be written on the ` +
   `board. When you lay out a pattern or table (unit-circle values, a worked case, a list of examples), show the ` +
   `OTHER cases and leave the one you're asking about as "?" — never fill in the asked value and then ask for it.\n` +
@@ -7738,6 +7739,8 @@ const PRIMER_PERSONA =
   `transformations, motion graphs, a line of best fit; also bar charts, histograms and 3D surfaces z=f(x,y)) use GRAPH_ON_BOARD, not CREATE_INTERACTIVE — it's instant, ` +
   `always renders, and gives the student real sliders and a hover readout. Plot the FAMILY or the setup, never ` +
   `the answer to what they're solving, then ask ONE question about what moving it shows.\n` +
+  `- WRITE WHAT THEY ASK YOU TO WRITE: when they say "write these on the board" / "put my equations up", write ALL of them, exactly as they stated them, as separate board lines in that same turn — it is THEIR work, so it is never "ahead of them". Don't ask another question first.\n` +
+  `- STAY ON THEIR GOAL, AND KEEP IT EFFICIENT: when they say what they are solving for ("we need h, not k"), that is the goal — never steer them to isolate a different unknown. When their method works but a shorter one exists (e.g. two right triangles sharing the height: eliminate the helper variable at once — the difference of the two horizontal distances h/tan A − h/tan B equals the separation), do not state it: once they have their setup, ask the ONE question that exposes it ("what is the gap between those two distances, and how long is it?"). Prefer one equation in the wanted unknown over a chain of substitutions.\n` +
   `- READ THE FIGURE BEFORE YOU CORRECT: when you drew it, the GEOMETRY line tells you exactly what it shows. Before you tell a student they are wrong, check their claim against the givens and that geometry — if it matches, say so plainly (\"yes — the vertical is the cliff plus h\"). Never contradict a correct student, and never write the formula for them.\n` +
   `- ELEVATION / DEPRESSION problems (towers, cliffs, lighthouses, boats, planes): the moment a picture would help, or they ask you to draw it, call TRIG_SCENE_ON_BOARD — it draws it correctly to scale with the angles in the right places. Never hand-draw these, and never answer a request to draw with another question.\n` +
   `- DIAGRAMS: for any boxes-and-arrows idea (a process, cause→effect, a cycle, a timeline, a classification, an essay plan) use FLOW_ON_BOARD — you list the nodes and arrows, the app lays them out cleanly. Use GEOMETRY_ON_BOARD for shapes/angles and GRAPH_ON_BOARD for functions; for EVERY other figure (free-body diagrams, sketches, circuits, apparatus, labelled situations like the lighthouse and boats) write the SVG yourself with SVG_ON_BOARD — plan the layout, label every point and value, draw to scale. Never put LaTeX/KaTeX in a figure (plain text and unicode labels; real equations go in WRITE_TO_BOARD).\n` +
@@ -9038,6 +9041,7 @@ export async function chatAboutTask(
       reply = socraticFallback(fr);
       result.board = result.board.filter((e) => !["result", "formula"].includes(String(e.kind)) || e.owner === "student");
     }
+    reply = repairLatex(reply);
     const cleaned = truncateCleanly(reply.trim(), 2400);
     if (!cleaned) {
       result.error = true;
@@ -9697,6 +9701,7 @@ export async function chatAboutTask(
           content = JSON.stringify({ ok: true, message: "Board cleared." });
           logAudit("artifact", fr ? "Tableau réinitialisé" : "Board cleared");
         } else if (name === "WRITE_TO_BOARD") {
+          if (input && typeof (input as any).text === "string") (input as any).text = latexifyBoardLine(repairLatex((input as any).text), String((input as any).kind));
           // Deliberately NOT gated by madeEnough/CHAT_MAX_ARTIFACTS — a board entry is meant to be cheap
           // and frequent (a short instruction, a formula, a running summary), not a heavyweight artifact
           // like a note/deck/quiz. Capping it the same way would defeat "always accessible, write anything
@@ -9705,7 +9710,7 @@ export async function chatAboutTask(
           if (result.board.length >= 3) content = "LIMIT: three entries is a full turn on the board (setting up a new problem — the given, the question, one starting line — is exactly three). Keep what's up there and put the rest in your reply.";
           // "How you got there" is the STUDENT's reasoning: a line carrying a π-term / root / fraction that nothing the
           // student said (and no given) contains is a step the TUTOR took for them — refuse it.
-          else if (opts?.primer && ["summary", "result"].includes(String(input?.kind)) && traceAheadOfStudent(String(input?.text || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), message], [...(opts?.currentBoard || []).filter((e) => e.kind !== "summary").map((e) => e.text), ...(opts?.currentProblems || []).map((p) => p.question)]).length) {
+          else if (opts?.primer && !asksToWrite(message) && ["summary", "result"].includes(String(input?.kind)) && traceAheadOfStudent(String(input?.text || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), message], [...(opts?.currentBoard || []).filter((e) => e.kind !== "summary").map((e) => e.text), ...(opts?.currentProblems || []).map((p) => p.question)]).length) {
             const missing = traceAheadOfStudent(String(input?.text || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), message], [...(opts?.currentBoard || []).filter((e) => e.kind !== "summary").map((e) => e.text), ...(opts?.currentProblems || []).map((p) => p.question)]);
             content = `REJECTED: "How you got there" and "result" entries record only what the STUDENT has actually said or done, and this line contains ${missing.join(", ")} which they never reached — that's a step you'd be taking for them. Write only the steps they've stated (in your own words). If they haven't got there yet, write nothing and ask them the question instead.`;
           }
