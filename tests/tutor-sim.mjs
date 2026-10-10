@@ -448,7 +448,7 @@ export async function runTutorSim(check, section) {
       : { content: "That's the situation, to scale. Which angle sits at boat J on the ground?" };
     r = await run("can you just draw it out for me please", { history: [{ role: "user", text: "two boats J and K 500 m apart, lighthouse on a 470 m cliff, angles of depression 25 and 40" }, { role: "assistant", text: "ok" }] });
     const fig = r.boardAll.find((e) => e.kind === "svg");
-    check("end to end: a request to draw is never answered with just a question — the computed figure lands", !!fig && /500 m/.test(fig.svg) && /470 m/.test(fig.svg) && (fig.svg.match(/25°/g) || []).length === 2 && calls[0].tools.some((x) => x.function?.name === "TRIG_SCENE_ON_BOARD"));
+    check("end to end: a request to draw is never answered with just a question — the computed figure lands", !!fig && /500 m/.test(fig.svg) && /470 m/.test(fig.svg) && (fig.svg.match(/25°/g) || []).length === 1 && calls[0].tools.some((x) => x.function?.name === "TRIG_SCENE_ON_BOARD"));
     script = (b, i) => i === 0 ? { content: "Spot on — you've got the two sides lined up. How does the sine rule combine those?" } : { content: "Sorry, I didn't quite catch that — where are you in the problem right now?" };
     r = await run("to do", { history: [{ role: "user", text: "find TJ" }, { role: "assistant", text: "ok" }] });
     check("end to end: no 'spot on' for a message with nothing in it", !/spot on/i.test(r.reply));

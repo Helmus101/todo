@@ -19,7 +19,7 @@ const rad = (d: number) => (d * Math.PI) / 180;
 const f = (n: number) => Math.round(n * 10) / 10;
 const esc = (s: string) => s.replace(/[<>&"]/g, "");
 
-export function buildTrigScene(input: TrigSceneIn): { svg: string } | { error: string } {
+export function buildTrigScene(input: TrigSceneIn): { svg: string; facts: string } | { error: string } {
   const mode = input.mode === "elevation" ? "elevation" : "depression";
   const units = esc(input.units || "m").slice(0, 6);
   const B = esc(input.baseName || "B").slice(0, 3), T = esc(input.topName || "T").slice(0, 3);
@@ -84,12 +84,14 @@ export function buildTrigScene(input: TrigSceneIn): { svg: string } | { error: s
     parts.push(line(bx, ty, x, gy, `stroke="${c}"`));
     parts.push(`<circle cx="${f(x)}" cy="${f(gy)}" r="4.5" fill="${c}"/>`);
     parts.push(text(x - 6, gy + 28, o.name, `font-weight="600" fill="${c}"`));
-    // angle at the observer (elevation) — between the ground (towards the base) and the sightline
-    const re = 38 + i * 16, a = rad(th);
-    const e0 = [x + re, gy], e1 = [x + re * Math.cos(a), gy - re * Math.sin(a)];
-    const elevationIsGiven = mode === "elevation";
-    parts.push(`<path d="M ${f(e0[0])} ${f(e0[1])} A ${re} ${re} 0 0 0 ${f(e1[0])} ${f(e1[1])}" fill="none" stroke="${c}" stroke-width="2"/>`);
-    parts.push(text(x + (re + 12) * Math.cos(a / 2), gy - (re + 12) * Math.sin(a / 2) + 6, `${th}°`, `fill="${c}" ${elevationIsGiven ? "" : 'opacity="0.9"'}`));
+    // elevation problems mark the angle at the observer; for depression the equal ground angle is the student's to find, so it is NOT drawn
+    const a = rad(th);
+    if (mode === "elevation") {
+      const re = 38 + i * 16;
+      const e0 = [x + re, gy], e1 = [x + re * Math.cos(a), gy - re * Math.sin(a)];
+      parts.push(`<path d="M ${f(e0[0])} ${f(e0[1])} A ${re} ${re} 0 0 0 ${f(e1[0])} ${f(e1[1])}" fill="none" stroke="${c}" stroke-width="2"/>`);
+      parts.push(text(x + (re + 12) * Math.cos(a / 2), gy - (re + 12) * Math.sin(a / 2) + 6, `${th}°`, `fill="${c}"`));
+    }
     // angle at the top (depression) — between the horizontal and the sightline
     if (mode === "depression") {
       const rt = 70 + i * 64;
@@ -99,7 +101,6 @@ export function buildTrigScene(input: TrigSceneIn): { svg: string } | { error: s
       parts.push(text(bx - rt - 8, ty - 9, `${th}°`, `fill="${c}" font-weight="600" text-anchor="end"`));
     }
   });
-  if (mode === "depression") parts.push(text(mL - 6, ty - 12, "angles of depression (from the horizontal)", 'font-size="14" opacity="0.75"'));
   // distance between the observers / from the base
   if (obs.length === 2 && sep) {
     const xs = dists.map(px).sort((a, b) => a - b), yb = gy + 54;
@@ -112,7 +113,12 @@ export function buildTrigScene(input: TrigSceneIn): { svg: string } | { error: s
   parts.push(`<circle cx="${f(bx)}" cy="${f(ty)}" r="4.5" fill="currentColor"/>`);
   parts.push(text(bx + 10, ty - 8, T, 'font-weight="600"'));
   const svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">${parts.join("")}</svg>`;
-  return { svg };
+  // Plain-language geometry for the TUTOR (structure only — never a solved value), so it reads the figure the way it is drawn.
+  const hv = knownH && input.unknownTop ? `${knownH} ${units} + ${input.unknownTop}` : knownH ? `${knownH} ${units}` : input.unknownTop || "the height";
+  const facts = mode === "depression"
+    ? `every line of sight starts at ${T}, the very TOP (${input.unknownTop ? `the top of the ${input.unknownTop} part, above the ${knownH} ${units} base` : "the top"}); each angle of depression is measured at ${T} from the HORIZONTAL down to the line of sight; the vertical side of each right triangle runs from ${T} to the ground = ${hv} (NOT just the lower part); the equal angle at ground level is by alternate angles; the nearer observer has the bigger angle (${obs.map((o) => `${o.name} ${o.angle}°`).join(", ")})`
+    : `each angle of elevation is measured at the observer on the ground between the ground and the line of sight up to ${T}; the vertical side is ${hv}; ${obs.map((o) => `${o.name} ${o.angle}°`).join(", ")}`;
+  return { svg, facts };
 }
 
 /** For the tests (and for sanity checks): the hidden solution used to place things to scale. */

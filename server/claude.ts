@@ -7,7 +7,7 @@ import { COURSEWORK_MAX_CHARS, courseworkForSubject, sameSubject } from "../shar
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { buildGeometry } from "../shared/geometry.ts";
-import { studentProblemStatement, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, misattributes, methodAhead, wantsHelp, clarificationTerm, CLARIFY_BLOCK, ignoresQuestion, ignoresWork, asksToWrite, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
+import { studentProblemStatement, cleanToPost, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, misattributes, methodAhead, wantsHelp, clarificationTerm, CLARIFY_BLOCK, ignoresQuestion, ignoresWork, asksToWrite, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -7734,6 +7734,7 @@ const PRIMER_PERSONA =
   `transformations, motion graphs, a line of best fit; also bar charts, histograms and 3D surfaces z=f(x,y)) use GRAPH_ON_BOARD, not CREATE_INTERACTIVE — it's instant, ` +
   `always renders, and gives the student real sliders and a hover readout. Plot the FAMILY or the setup, never ` +
   `the answer to what they're solving, then ask ONE question about what moving it shows.\n` +
+  `- READ THE FIGURE BEFORE YOU CORRECT: when you drew it, the GEOMETRY line tells you exactly what it shows. Before you tell a student they are wrong, check their claim against the givens and that geometry — if it matches, say so plainly (\"yes — the vertical is the cliff plus h\"). Never contradict a correct student, and never write the formula for them.\n` +
   `- ELEVATION / DEPRESSION problems (towers, cliffs, lighthouses, boats, planes): the moment a picture would help, or they ask you to draw it, call TRIG_SCENE_ON_BOARD — it draws it correctly to scale with the angles in the right places. Never hand-draw these, and never answer a request to draw with another question.\n` +
   `- DIAGRAMS: for any boxes-and-arrows idea (a process, cause→effect, a cycle, a timeline, a classification, an essay plan) use FLOW_ON_BOARD — you list the nodes and arrows, the app lays them out cleanly. Use GEOMETRY_ON_BOARD for shapes/angles and GRAPH_ON_BOARD for functions; for EVERY other figure (free-body diagrams, sketches, circuits, apparatus, labelled situations like the lighthouse and boats) write the SVG yourself with SVG_ON_BOARD — plan the layout, label every point and value, draw to scale. Never put LaTeX/KaTeX in a figure (plain text and unicode labels; real equations go in WRITE_TO_BOARD).\n` +
   `- ACTIVITIES: when the student should DO something rather than read — pair terms, order steps, sort items, or play with a unit circle / projectile — use WIDGET_ON_BOARD (it always works and tells you how they did) instead of describing it or hand-writing HTML. Any subject. Prefer it over CREATE_INTERACTIVE.\n` +
@@ -9011,7 +9012,7 @@ export async function chatAboutTask(
     // it there (reported live: they stated a full triangle problem and the board stayed empty).
     if (opts?.primer && !result.guardrailTripped) {
       const stmt = studentProblemStatement(message);
-      if (stmt && !result.problems.length) {
+      if (stmt && cleanToPost(stmt) && !result.problems.length && !asksToDraw(message) && !result.board.some((e) => e.kind === "svg" || e.kind === "flow")) { // a drawn figure already carries the givens; never paste a spoken ramble beside it
         const onBoard = [...(opts?.currentBoard || []).map((e) => e.text), ...(opts?.currentProblems || []).map((p) => p.question), ...result.board.map((e) => e.text), ...result.board.flatMap((e) => (e.diagram || []).map((o: any) => o.latex || ""))];
         if (!boardCoversStatement(stmt, onBoard)) result.board.unshift({ id: randomUUID(), text: stmt, kind: "given", owner: "student", at: new Date().toISOString() } as BoardEntry);
       }
@@ -9767,9 +9768,9 @@ export async function chatAboutTask(
               const svg = sanitizeSvg(built.svg);
               if (!svg) content = "ERROR: couldn't build that scene.";
               else {
-                const entry: BoardEntry = { id: randomUUID(), text: caption, kind: "svg", svg, at: new Date().toISOString() };
+                const entry: BoardEntry = { id: randomUUID(), text: caption, kind: "svg", svg, facts: built.facts, at: new Date().toISOString() };
                 result.board.push(entry);
-                content = JSON.stringify({ ok: true, id: entry.id, note: "Drawn to scale with the depression angles at the top and the equal elevation angles at the ground. Now ask ONE question; don't state values they haven't found." });
+                content = JSON.stringify({ ok: true, id: entry.id, geometry: built.facts, note: "Drawn to scale with only the GIVEN angles marked (the equal angle at the ground is for the student to find). Now ask ONE question; don't state values they haven't found." });
                 logAudit("artifact", fr ? `Figure : « ${caption.slice(0, 60)} »` : `Figure: "${caption.slice(0, 60)}"`);
               }
             }
