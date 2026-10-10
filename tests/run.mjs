@@ -8,6 +8,8 @@ import { normalizeWidget, shuffledNotSolved, projectileStats } from "../shared/w
 import { makeSyncScheduler } from "../server/syncScheduler.ts";
 import { buildTasksPayload, parseHave } from "../server/taskDelta.ts";
 import { makeTaskSync } from "../client/taskDelta.ts";
+import { latexifyBoardLine } from "../server/tutorAdapt.ts";
+import { repairLatex } from "../server/tutorAdapt.ts";
 import { makeEgressMeter } from "../server/egress.ts";
 import { buildTrigScene, solveTwoAngles } from "../shared/trigScene.ts";
 import { bareMath } from "../server/tutorAdapt.ts";
@@ -1951,6 +1953,19 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
       !mid && over && !other && !m.over("a") && m.used("a") === 0 && /DEFAULT_EGRESS_BUDGET_BYTES = 10 \* 1024 \* 1024/.test(readFileSync(new URL("../server/egress.ts", import.meta.url), "utf8")));
     check("the store enforces it: over budget serves the held copy, saveState writes through the cache so the next read isn't a re-download",
       /held && egress\.over\(email\)/.test(st) && /egress\.note\(email, JSON\.stringify\(d\)\.length\)/.test(st) && /Write-through: we know exactly what we just wrote/.test(st) && /cacheSetState\(email, merged, String\(row\.updated_at\)\)/.test(st)); }
+  { const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8"), ex = readFileSync(new URL("../client/ExercisesPage.tsx", import.meta.url), "utf8"), idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"), tcs = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
+    const nav = app.slice(app.indexOf('className="topnav'), app.indexOf('className="topnav') + 6000);
+    check("/exercises shows questions pulled from the registered sources and is reachable by route only (no navbar link)", /route === "exercises"/.test(app) && /<ExercisesPage \/>/.test(app) && !/href="\/exercises"/.test(app) && !/navigate\("exercises"\)/.test(app) && !/\/exercises/.test(nav) && /exerciseSearch/.test(ex) && /Searched: /.test(ex) && /app\.post\("\/api\/exercises\/search"/.test(idx) && /sourcesForTrack\(track\)/.test(idx) && /findSourceQuestions\(\{ track, subject: subject \|\| undefined, topic, limit: 6 \}\)/.test(idx));
+    check("the deadline has an Edit button that opens a date field with Save / Cancel / Clear (not an always-open input)", /deadline-edit-btn/.test(tcs) && /setEditing\(true\)/.test(tcs) && /L\("Enregistrer", "Save"\)/.test(tcs) && /L\("Annuler", "Cancel"\)/.test(tcs)); }
+  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+    check("LaTeX whose backslash was eaten is repaired (cdot, ^circ, tab/form-feed tan/frac) and clean LaTeX is untouched",
+      repairLatex(String.raw`k cdot \tan 50^circ = (100+k) cdot \tan 30^circ`) === String.raw`k \cdot \tan 50^\circ = (100+k) \cdot \tan 30^\circ` && repairLatex("\x09an 30 = \x0crac{h}{k}") === String.raw`\tan 30 = \frac{h}{k}` && repairLatex(String.raw`\tan 30^\circ = \frac{h}{100+k}`) === String.raw`\tan 30^\circ = \frac{h}{100+k}` && repairLatex("plain words with cdot in prose") === "plain words with cdot in prose");
+    check("when the student asks Otto to write their equations up, the 'ahead of the student' trace guard does not refuse them; the persona says to write all of them, stay on their goal and keep the method efficient",
+      /!asksToWrite\(message\) && \["summary", "result"\]/.test(cl) && /WRITE WHAT THEY ASK YOU TO WRITE/.test(cl) && /STAY ON THEIR GOAL, AND KEEP IT EFFICIENT/.test(cl) && /reply = repairLatex\(reply\)/.test(cl)); }
+  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+    check("board math is always typeset: bare equations are wrapped in $…$ (degrees → ^\\circ), prose and already-delimited lines are left alone, other kinds untouched",
+      latexifyBoardLine(String.raw`\tan 30^\circ = \frac{h}{100+k}`, "formula") === String.raw`$\tan 30^\circ = \frac{h}{100+k}$` && latexifyBoardLine("tan 30° = h/(100+k)", "result") === "$tan 30^\\circ = h/(100+k)$" && latexifyBoardLine("- k = 5\n- both lines of sight start at the top", "summary") === "- $k = 5$\n- both lines of sight start at the top" && latexifyBoardLine("Use $x = 3°$ here", "summary") === "Use $x = 3^\\circ$ here" && latexifyBoardLine("x = 3", "note") === "x = 3");
+    check("the tutor is told to write ALL maths in LaTeX (board and chat bubble) and the board write path applies it", /ALWAYS WRITE MATHS IN LaTeX/.test(cl) && !/no raw LaTeX in the bubble/.test(cl) && /latexifyBoardLine\(repairLatex\(/.test(cl)); }
   check("tool calls typed as text never reach the student", stripPseudoTools("<syntax_error></syntax_error><write_to_board><kind>result</kind><text>distance = (470 + H)/tan 40</text></write_to_board>Ah, exactly — what next?") === "Ah, exactly — what next?" && stripPseudoTools("plain reply") === "plain reply" && stripPseudoTools("<chat>Using that height.</chat>") === "Using that height.");
   check("a reply that is only a formula is bare maths; a sentence with maths is not", bareMath("distance K = (470)/(tan 40)") && bareMath("(470 + H)/(tan 25°) - (470 + H)/(tan 40°) = 500") && !bareMath("Which side is opposite the 40° angle here?") && !bareMath("Good, now what does the tan 40° ratio give you for the horizontal distance?"));
   // ── Grounding (reported live: "tan(θ) = slope!" to a student who had only said the two slopes; "maybe graph it" ignored) ──
@@ -5220,7 +5235,7 @@ section("Phone restriction — flashcard review + READ-ONLY tasks, no chat; iPad
 
   const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
   check("App.tsx imports the shared useIsPhone hook", /import \{ useIsPhone \} from "\.\/useIsPhone\.ts"/.test(app));
-  check("tasks + flashcards + settings are reachable on phone; anything else redirects to the task list", /PHONE_ALLOWED_ROUTES\s*=\s*\["", "tasks", "log", "settings", "tutor"\]/.test(app) && /r\.startsWith\("task\/"\)/.test(app) && /!phoneRouteAllowed\(route\)\) navigate\("tasks"\)/.test(app));
+  check("tasks + flashcards + settings are reachable on phone; anything else redirects to the task list", /PHONE_ALLOWED_ROUTES\s*=\s*\["", "tasks", "log", "settings", "tutor", "exercises"\]/.test(app) && /r\.startsWith\("task\/"\)/.test(app) && /!phoneRouteAllowed\(route\)\) navigate\("tasks"\)/.test(app));
   check("Tutor/Study/Error log/Admin stay hidden on phone, but Tasks does NOT", /\{!isPhone && <a[\s\S]{0,200}href="\/errorlog"/.test(app) && !/\{!isPhone && <a[\s\S]{0,200}href="\/tasks"/.test(app));
   // The point of the phone task view: READ it, don't work on it. No chat (TaskFocus owns the chat), no
   // ticking steps off, no Study Mode, no dismiss, no add-task.

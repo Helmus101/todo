@@ -17,6 +17,7 @@ import { TaskCardRow, TaskFocus, TaskReadOnly } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
 import { TutorSession } from "./tutor/TutorSession.tsx";
 import { Coursework } from "./CourseworkPage.tsx";
+import { ExercisesPage } from "./ExercisesPage.tsx";
 import { TourProvider, PageTour } from "./PageTour.tsx";
 import { TOURS } from "./tours.ts";
 import { COMMON_SUBJECTS } from "../shared/coursework.ts";
@@ -405,7 +406,7 @@ export function App() {
   // Dense workspaces remain restricted, but tutor is intentionally designed as a single-column, touch-first
   // surface and must be reachable from a phone without being redirected back to Today.
   const isPhone = useIsPhone();
-  const PHONE_ALLOWED_ROUTES = ["", "tasks", "log", "settings", "tutor"];
+  const PHONE_ALLOWED_ROUTES = ["", "tasks", "log", "settings", "tutor", "exercises"];
   const phoneRouteAllowed = (r: string) => PHONE_ALLOWED_ROUTES.includes(r) || r.startsWith("task/") || r.startsWith("tutor/session/");
   useEffect(() => {
     if (isPhone && status?.loggedIn && !phoneRouteAllowed(route)) navigate("tasks");
@@ -1187,6 +1188,8 @@ export function App() {
         <Coursework onTasksChanged={() => { void api.tasks().then(setTasks).catch(() => {}); }} />
       ) : route === "errorlog" ? (
         <MistakeLogPage lang={status?.language} />
+      ) : route === "exercises" ? (
+        <ExercisesPage />
       ) : route === "admin" && isAdminUser(status?.user) ? (
         <AdminPage />
       ) : !status.googleConnected && !status.pronoteConnected && !skippedConnect ? (

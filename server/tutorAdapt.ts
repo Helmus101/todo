@@ -668,3 +668,36 @@ export function socraticFallback(fr: boolean): string {
     ? "Explique-moi ce que tu viens d'écrire : que représente chaque morceau, et d'où vient-il ?"
     : "Walk me through what you just wrote: what does each part stand for, and where does it come from?";
 }
+
+/** Repair LaTeX whose backslash a JSON/tool round-trip ate: "\\cdot"→"cdot", "^\\circ"→"^circ", and "\\t"/"\\f"/"\\b" turned into a
+ *  tab / form-feed / backspace character ("\\tan"→TAB+"an", "\\frac"→FF+"rac"). Without this the board shows "k cdot \\tan 50^circ". Pure. */
+export function repairLatex(text: string): string {
+  const t = String(text || "");
+  const mathy = /[=^\\]/.test(t); // a bare "cdot" is only repaired inside something that already looks like maths
+  return t
+    .replace(/\x09(?=an\b|imes\b|heta\b|ext\b|o\b)/g, "\\t")
+    .replace(/\x0c(?=rac\b|dfrac\b)/g, "\\f")
+    .replace(/\x08(?=eta\b|inom\b|ar\b)/g, "\\b")
+    .replace(/\^\{?circ\}?/g, "^\\circ")
+    .replace(/(?<=[\s)\d])cdot(?=[\s(\d\\])/g, (m) => (mathy ? "\\cdot" : m));
+}
+
+/** Math lines on the board are ALWAYS typeset: a formula/result/given/summary line that is bare maths (an equation or LaTeX
+ *  commands with at most a couple of plain words, no $ already) is wrapped in $…$, and degree signs inside become ^\\circ.
+ *  Lines that already carry $…$ are only touched inside the delimiters' degree signs. Pure. */
+export function latexifyBoardLine(text: string, kind?: string): string {
+  const t = String(text || "");
+  if (!["formula", "result", "given", "summary"].includes(String(kind))) return t;
+  const lines = t.split("\n").map((line) => {
+    const raw = line.trim();
+    if (!raw) return line;
+    if (raw.includes("$")) return line.replace(/\$([^$]+)\$/g, (_, m) => `$${m.replace(/°/g, "^\\circ")}$`);
+    const bullet = /^([-*]\s+)/.exec(raw)?.[1] || "";
+    const body = raw.slice(bullet.length);
+    if (!/[=\\^]/.test(body)) return line;
+    const words = body.replace(/\\[a-zA-Z]+/g, " ").match(/[A-Za-zÀ-ÿ]{3,}/g) || [];
+    if (words.length > 2) return line; // prose with an equation inside: leave it to the model's own $…$
+    return `${bullet}$${body.replace(/°/g, "^\\circ")}$`;
+  });
+  return lines.join("\n");
+}
