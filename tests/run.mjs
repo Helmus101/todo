@@ -1982,6 +1982,8 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
       bubbleDoesMath("You said h = k tan 50, which gives k = h/tan 50. Next?", ["h = k tan 50"]) && !bubbleDoesMath("You wrote h = k tan 50. What do you notice?", ["so h = k tan 50 right"]) && !bubbleDoesMath("What is the gap between those two distances?", ["whatever"]));
     check("a hidden QUICKEST ROUTE is planned per problem, kept in session state, shown back every turn, and off-route moves are steered back by a question about the idea",
       /"route":\["the 3-6 key moves of the QUICKEST sound solution/.test(tb) && /PLAN THE QUICKEST ROUTE FIRST/.test(tb) && /YOUR PLANNED QUICKEST ROUTE/.test(tb) && /\(s as any\)\.route = plan\.route/.test(tb) && /THEY LEFT THE ROUTE/.test(tb) && /YOU DO NO WORK AND NAME NO OPERATION/.test(cl) && (cl.match(/guardNoDoing\(textContent, round, lastRound\)/g) || []).length === 2); }
+  { const ts = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+    check("a live tutor session never flips into the read-only board/chat review page (its auto-saved summary shares the task id)", /const reviewSession = !task && sessionId && userId \? getTutorSessions\(userId\)/.test(ts)); }
   check("tool calls typed as text never reach the student", stripPseudoTools("<syntax_error></syntax_error><write_to_board><kind>result</kind><text>distance = (470 + H)/tan 40</text></write_to_board>Ah, exactly — what next?") === "Ah, exactly — what next?" && stripPseudoTools("plain reply") === "plain reply" && stripPseudoTools("<chat>Using that height.</chat>") === "Using that height.");
   check("a reply that is only a formula is bare maths; a sentence with maths is not", bareMath("distance K = (470)/(tan 40)") && bareMath("(470 + H)/(tan 25°) - (470 + H)/(tan 40°) = 500") && !bareMath("Which side is opposite the 40° angle here?") && !bareMath("Good, now what does the tan 40° ratio give you for the horizontal distance?"));
   // ── Grounding (reported live: "tan(θ) = slope!" to a student who had only said the two slopes; "maybe graph it" ignored) ──
@@ -2827,7 +2829,7 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   // diagram/equation structure; the real board is now saved too and reopenable.
   check("ending a session saves the FULL board (diagrams/equations intact), not just flattened text", /board: task\.board \|\| \[\]/.test(tutorSrc));
   check("a past session's full board reopens FULL PAGE (/tutor/session/<id>/board renders BoardArtifact)",
-    /const reviewSession = sessionId && userId \? getTutorSessions\(userId\)\.find/.test(tutorSrc) &&
+    /const reviewSession = !task && sessionId && userId \? getTutorSessions\(userId\)\.find/.test(tutorSrc) &&
     /<BoardArtifact task=\{\{ board: reviewSession\.board \} as unknown as WebTask\}/.test(tutorSrc) &&
     /reviewView === "chat"/.test(tutorSrc));
   // Voice stays off through start/resume — the student turns it on with the mic toggle themselves.
