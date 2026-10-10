@@ -24,6 +24,7 @@ import { normalizeStudentModel, emptyStudentModel, studentModelSummary } from ".
 import { ensureGraph } from "./conceptGraph.ts";
 import { classifyTurnAction } from "./actionSpace.ts";
 import { parsePolicy, summarize as summarizePolicy, initPolicy } from "./tutorPolicy.ts";
+import { schoolRecordLine } from "./schoolRecord.ts";
 import { summarizeCoursework, fallbackCourseworkSummary, aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto, ttsReady, synthesizeSpeech, TTS_MAX_TEXT, tutorOpener, interactiveSceneDocument, INTERACTIVE_SCENE_CSP } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken, getAdminMetrics } from "./store.ts";
 import { sendTransactionalEmail } from "./mailer.ts";
@@ -1400,7 +1401,7 @@ app.post("/api/tasks", requireAuth, rateLimit(20, 60_000), async (req, res) => {
   // title stuck around on the card. The execution run can still further sharpen it. When AI is
   // unavailable/paused/over budget, it goes in unrefined and the background sweep's auto-refine cleans it up.
   const ready = aiReady() && !isPaused(req) && !overBudget(req);
-  const refined = ready ? await refineManualTask(title, req.session.profile).catch(() => null) : null;
+  const refined = ready ? await refineManualTask(title, req.session.profile, schoolRecordLine(req.session.tasks, req.session.profile)).catch(() => null) : null;
   if (refined) addUsage(req.session.profile ||= emptyProfile(), refined.tokens, "manual_refine");
   try {
     req.session.tasks = tasks.addManual(req.session.tasks || [], title, refined, !ready, explicitWhen, clientId);
@@ -1474,7 +1475,7 @@ app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 60_000), async (req
   const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
   if (!t) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
   try {
-    const refined = await refineManualTask(t.title, req.session.profile);
+    const refined = await refineManualTask(t.title, req.session.profile, schoolRecordLine(req.session.tasks, req.session.profile, t.sourceSubject));
     if (refined) addUsage(req.session.profile ||= emptyProfile(), refined.tokens, "manual_refine");
     tasks.applyRefinement(req.session.tasks || [], t.id, refined);
     await commit(req);
@@ -1579,7 +1580,7 @@ app.post("/api/tutor/opener", requireAuth, rateLimit(30, 60_000), ah(async (req,
   })).filter((m: any) => m.lines.length || m.asked.length || (m.subject && m.when));
   try {
     const profile = req.session.profile ||= emptyProfile();
-    const out = await tutorOpener({ subject: subject || undefined, memory }, profile);
+    const out = await tutorOpener({ subject: subject || undefined, memory, schoolRecord: schoolRecordLine(req.session.tasks, profile, subject || undefined) }, profile);
     addUsage(profile, out.tokens, "chat");
     bumpActivityHour(profile, new Date(), subject || undefined);
     await commit(req);
@@ -1793,7 +1794,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
       message,
       profile,
       academic,
-      { stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, primer: req.body?.primer === true, recentJournal, currentBoard: boardForTurn, currentProblems, currentObjectives, repair, moveLine, opening, notNeeded: tasks.notNeededFronts(req.session.tasks || [], t.sourceSubject), boardEvents: t.boardEvents, sessionState: sessionStateBefore, policy: tutorPolicy },
+      { schoolRecord: schoolRecordLine(req.session.tasks, req.session.profile, t.sourceSubject), stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, primer: req.body?.primer === true, recentJournal, currentBoard: boardForTurn, currentProblems, currentObjectives, repair, moveLine, opening, notNeeded: tasks.notNeededFronts(req.session.tasks || [], t.sourceSubject), boardEvents: t.boardEvents, sessionState: sessionStateBefore, policy: tutorPolicy },
     );
     // The student's own step, as the model transcribed it from what they said, lands on the board as THEIR work
     // (owner student, marked correct/incorrect) — the board is shared paper, not Otto's notebook (spec §10/§11).

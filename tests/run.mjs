@@ -9,6 +9,7 @@ import { buildTasksPayload, parseHave } from "../server/taskDelta.ts";
 import { makeTaskSync } from "../client/taskDelta.ts";
 import { buildTrigScene, solveTwoAngles } from "../shared/trigScene.ts";
 import { bareMath } from "../server/tutorAdapt.ts";
+import { schoolRecordLine } from "../server/schoolRecord.ts";
 import { stripPseudoTools } from "../server/tutorBrain.ts";
 import { sanitizeSvg as sanSvg2 } from "../shared/svgSafe.ts";
 import { onTopic, clarificationTerm, ignoresQuestion, ignoresWork, asksToWrite } from "../server/tutorAdapt.ts";
@@ -1894,6 +1895,18 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     const dupAttrs = [...sc.svg.matchAll(/<[a-z]+ ([^>]*)>/g)].some((m) => { const n = [...m[1].matchAll(/([a-z-]+)="/g)].map((x) => x[1]); return new Set(n).size !== n.length; });
     check("trig scene markup has no duplicate attributes; bad input is refused", !dupAttrs && !!buildTrigScene({ observers: [{ angle: 120 }] }).error && !!buildTrigScene({ observers: [{ angle: 30 }, { angle: 30.2 }] }).error);
     check("trig scene gives the tutor the geometry: sight lines start at the top T, vertical = cliff + h, no solved value", /starts at T/.test(sc.facts) && /470 m \+ h/.test(sc.facts) && /alternate/.test(sc.facts) && !/\b(?:55\d|56\d|\d{3}\.\d)/.test(sc.facts)); }
+  { const L = [
+      { id: "1", title: "Exercices 4-6 p.112", source: "pronote", status: "todo", sourceSubject: "Maths", sourceDue: "2026-10-14" },
+      { id: "2", title: "DS fonctions", source: "pronote", status: "todo", sourceSubject: "Maths", sourceDue: "2026-10-20" },
+      { id: "3", title: "done one", source: "pronote", status: "done", sourceSubject: "Maths" },
+      { id: "4", title: "d", source: "studylog", status: "done", logDate: "2026-10-08", logText: "Learned the sine rule and the ambiguous case" },
+      { id: "5", title: "w", source: "studylog", status: "done", logDate: "week:2026-10-05", logText: "weekly rollup" },
+    ];
+    const prof = { grades: [{ id: "g", subject: "Maths", grade: 14, scale: 20, updatedAt: "x", source: "pronote" }], coursework: [{ id: "c", name: "Trig worksheet", subject: "Maths", summary: "Sine and cosine rule exercises", addedAt: "2026-10-01" }] };
+    const sr = schoolRecordLine(L, prof, "Maths");
+    check("school record: Pronote open work + averages, journal entries (not roll-ups) and coursework all reach the model", /Exercices 4-6/.test(sr) && /DS fonctions/.test(sr) && !/done one/.test(sr) && /Maths 14\/20/.test(sr) && /sine rule and the ambiguous case/.test(sr) && !/weekly rollup/.test(sr) && /Trig worksheet/.test(sr) && schoolRecordLine([], {}, "Maths") === "");
+    const srcs = ["claude.ts", "index.ts", "tasks.ts", "jobs.ts"].map((f) => readFileSync(new URL("../server/" + f, import.meta.url), "utf8")).join("\n");
+    check("school record is wired into chat, the tutor opener, task generation, manual-task parsing and task planning", (srcs.match(/schoolRecordLine\(/g) || []).length >= 8); }
   check("tool calls typed as text never reach the student", stripPseudoTools("<syntax_error></syntax_error><write_to_board><kind>result</kind><text>distance = (470 + H)/tan 40</text></write_to_board>Ah, exactly — what next?") === "Ah, exactly — what next?" && stripPseudoTools("plain reply") === "plain reply" && stripPseudoTools("<chat>Using that height.</chat>") === "Using that height.");
   check("a reply that is only a formula is bare maths; a sentence with maths is not", bareMath("distance K = (470)/(tan 40)") && bareMath("(470 + H)/(tan 25°) - (470 + H)/(tan 40°) = 500") && !bareMath("Which side is opposite the 40° angle here?") && !bareMath("Good, now what does the tan 40° ratio give you for the horizontal distance?"));
   // ── Grounding (reported live: "tan(θ) = slope!" to a student who had only said the two slopes; "maybe graph it" ignored) ──

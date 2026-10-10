@@ -2132,7 +2132,7 @@ export function cleanOpener(raw: string): string {
  *  completion included) — the route turns that into a quiet 502 and the client keeps its own instant line,
  *  so a failure here never leaves the student with an empty greeting. */
 export async function tutorOpener(
-  opts: { subject?: string; memory?: TutorOpenerMemory[] },
+  opts: { subject?: string; memory?: TutorOpenerMemory[]; schoolRecord?: string },
   profile?: Profile,
 ): Promise<{ opener: string; tokens: { in: number; out: number; cachedIn: number } }> {
   const subject = (opts.subject || "").trim();
@@ -2163,7 +2163,8 @@ export async function tutorOpener(
     sessionRecapLine(profile?.sessions, subject || undefined) +
     studentModelLine(profile) +
     milestoneLine(profile, subject || undefined) +
-    openerMemoryBlock(opts.memory);
+    openerMemoryBlock(opts.memory) +
+    (opts.schoolRecord || "");
   // The empty case is stated as its OWN instruction rather than left as an absence: with no memory block at
   // all, the model's default was to confabulate a warm "last time we were working on…" (verified live — it
   // invented a whole discriminant session for a student with no history), which is precisely the fake
@@ -3682,7 +3683,7 @@ export function parseGenerated(arr: any): GeneratedTask[] {
  */
 export interface GenerationResult { tasks: GeneratedTask[]; profileUpdates: ProfileUpdate[]; tokens?: { in: number; out: number; cachedIn?: number }; }
 
-export async function generateTasks(profile?: Profile, extras?: AgentTools, handled?: { title: string; anchorKey?: string }[], active?: { title: string; anchorKey?: string }[]): Promise<GenerationResult> {
+export async function generateTasks(profile?: Profile, extras?: AgentTools, handled?: { title: string; anchorKey?: string }[], active?: { title: string; anchorKey?: string }[], schoolRecord?: string): Promise<GenerationResult> {
   const empty: GenerationResult = { tasks: [], profileUpdates: [] };
   if (!extras?.tools?.length) return empty; // nothing connected to read
   // NO web_search here, deliberately: this runs UNATTENDED once a day per account (the cron sweep), not on
@@ -3711,7 +3712,7 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
     : "";
   const messages: any[] = [{
     role: "user",
-    content: nowBlock() + profileBlock(profile) + activeBlock + handledBlock +
+    content: nowBlock() + profileBlock(profile) + (schoolRecord || "") + activeBlock + handledBlock +
       `\n${connectedLine}\nSweep across all of them for everything genuinely awaiting me that is NOT already ` +
       `covered above — including what I promised others and haven't done yet (check my sent mail), and loose ` +
       `ends on my projects/people above — then call submit_tasks with the NEW actionable items. Respect my ` +
@@ -4654,7 +4655,7 @@ export async function enrichTaskIntentAndGoal(
  * 3. Infer desired outcome / definition of done (measurable completion condition)
  * 4. Determine information requirement (none, useful, required)
  */
-export async function refineManualTask(text: string, profile?: Profile): Promise<RefinedTask | null> {
+export async function refineManualTask(text: string, profile?: Profile, schoolRecord?: string): Promise<RefinedTask | null> {
   const raw = String(text || "").trim();
   if (!raw) return null;
   try {
@@ -4667,7 +4668,7 @@ export async function refineManualTask(text: string, profile?: Profile): Promise
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content:
-          languageLine(profile) + trackLine(profile) +
+          languageLine(profile) + trackLine(profile) + (schoolRecord || "") +
           "You are Otto's deterministic task parser. Do NOT immediately generate a to-do list. Progressive task pipeline:\n" +
           "1. PARSE: Extract subject (e.g. French, Physics, Math, History, or general), topic (e.g. figures de style), likely objective, and unknowns (missing details like class material, depth, deadline).\n" +
           "2. CLASSIFY TASK TYPE into exactly one of:\n" +
@@ -7904,7 +7905,7 @@ export async function chatAboutTask(
   message: string,
   profile?: Profile,
   academic?: AcademicContext,
-  opts?: { stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string; growthTrend?: "up"; subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; voiceMode?: boolean; canvasMode?: boolean; recentJournal?: { date: string; text: string }[]; primer?: boolean; currentBoard?: BoardEntry[]; currentProblems?: TaskProblem[]; currentObjectives?: TaskObjective[]; notNeeded?: string[]; repair?: string; moveLine?: string; opening?: { role: string; text: string }[]; boardEvents?: BoardEvent[]; sessionState?: TutorSessionStateShape; policy?: TutorPolicy },
+  opts?: { schoolRecord?: string; stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string; growthTrend?: "up"; subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; voiceMode?: boolean; canvasMode?: boolean; recentJournal?: { date: string; text: string }[]; primer?: boolean; currentBoard?: BoardEntry[]; currentProblems?: TaskProblem[]; currentObjectives?: TaskObjective[]; notNeeded?: string[]; repair?: string; moveLine?: string; opening?: { role: string; text: string }[]; boardEvents?: BoardEvent[]; sessionState?: TutorSessionStateShape; policy?: TutorPolicy },
 ): Promise<ChatResult> {
   const steps = task.steps || [];
   // Substeps (a step's own on-demand sub-checklist, ticked independently — see Profile.grades-style comment
@@ -8080,7 +8081,7 @@ export async function chatAboutTask(
   // student, every task, every turn — so it belongs FIRST, where it can actually be cached; the volatile
   // per-request context goes last, right next to the equally-volatile TASK block it keeps company with
   // anyway.
-  const dynamicContext = nowBlock() + courseworkLine(profile, task.sourceSubject) + studentNameLine(profile?.name) + dueLine(task.sourceDue, tzOf(profile)) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + syllabusGroundingLine(profile, task.sourceSubject) + learningStyleLine(profile) + hintDensityLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + sessionRecapLine(profile?.sessions, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine + (opts?.primer ? (opts?.moveLine || "") + (opts?.repair || "") + spokenMathHint(message) + scaffoldLine(message, history) + probeLine(message, history) + cheerLine(message, history, opts?.currentObjectives) : "");
+  const dynamicContext = nowBlock() + courseworkLine(profile, task.sourceSubject) + studentNameLine(profile?.name) + dueLine(task.sourceDue, tzOf(profile)) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + syllabusGroundingLine(profile, task.sourceSubject) + learningStyleLine(profile) + hintDensityLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + sessionRecapLine(profile?.sessions, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + (opts?.schoolRecord || "") + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine + (opts?.primer ? (opts?.moveLine || "") + (opts?.repair || "") + spokenMathHint(message) + scaffoldLine(message, history) + probeLine(message, history) + cheerLine(message, history, opts?.currentObjectives) : "");
   const sys =
     (opts?.primer ? PRIMER_PERSONA + PLAN_PROTOCOL + (sourcesForTrack(profile?.track).length ? `\n\nREAL QUESTIONS FIRST: this student is on the ${profile?.track === "ib" ? "IB (IB Documents / Revision Village)" : "AP (College Board AP Central)"} track. Before you write an exercise on an exam-style topic, call FIND_SOURCE_QUESTION once and adapt a fitting result (reword and re-number it, cite it via sourceUrl) instead of inventing the question from scratch. If it returns NONE, write it yourself as usual. Everything else about exercises (one at a time, single short answer, never reveal it) is unchanged.\n` : "") : "") +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
