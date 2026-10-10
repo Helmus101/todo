@@ -7,7 +7,7 @@ import { COURSEWORK_MAX_CHARS, courseworkForSubject, sameSubject } from "../shar
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { buildGeometry } from "../shared/geometry.ts";
-import { studentProblemStatement, cleanToPost, repairLatex, latexifyBoardLine, statesOwnMath, evalMathExpr, namesExactStep, bubbleDoesMath, bareMath, socraticFallback, voiceInputBlock, boardRepeatsMishearing, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, misattributes, methodAhead, wantsHelp, clarificationTerm, CLARIFY_BLOCK, ignoresQuestion, ignoresWork, asksToWrite, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
+import { studentProblemStatement, cleanToPost, posesProblemInProse, repairLatex, latexifyBoardLine, statesOwnMath, evalMathExpr, namesExactStep, bubbleDoesMath, bareMath, socraticFallback, voiceInputBlock, boardRepeatsMishearing, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, misattributes, methodAhead, wantsHelp, clarificationTerm, CLARIFY_BLOCK, ignoresQuestion, ignoresWork, asksToWrite, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -9418,14 +9418,16 @@ export async function chatAboutTask(
     const guardPoseOnBoard = (draft: string, round: number, lastRound: boolean): boolean => {
       if (!opts?.primer || poseFixed || lastRound || result.guardrailTripped) return false;
       if (result.problems.length || result.board.length) return false; // something already landed this turn
-      if (!/\?/.test(draft) || !POSE_VERB.test(draft)) return false;
+      const prose = posesProblemInProse(draft); // a worded problem (angles, lengths, quantities) needs no "=" to be a problem
+      if (!/\?/.test(draft) || (!POSE_VERB.test(draft) && !prose)) return false;
       const eqs = (draft.match(/[\p{L}\p{N}πθμ√^()\s.,+\-*/]{3,}=[\p{L}\p{N}π√^()\s.,+\-*/-]{1,40}/gu) || [])
         .map((m) => m.trim()).filter((m) => m.replace(/\s+/g, "").length >= 3);
-      if (!eqs.length) return false;
+      if (!eqs.length && !prose) return false;
+      if (!eqs.length && boardCoversStatement(draft, [...(opts?.currentBoard || []), ...(opts?.currentProblems || []).map((p) => p.question)].map((e: any) => String(e.text ?? e))) ) return false;
       const board = [...(opts?.currentBoard || []), ...result.board]
         .map((e) => `${e.text} ${(e.diagram || []).map((o: any) => o.latex || "").join(" ")} ${(e.outline || []).map((s) => `${s.heading} ${s.bullets.join(" ")}`).join(" ")}`)
         .join("\n").replace(/[\s$]/g, "").toLowerCase();
-      if (eqs.some((m) => board.includes(m.replace(/[\s$]/g, "").toLowerCase()))) return false; // already up there
+      if (eqs.length && eqs.some((m) => board.includes(m.replace(/[\s$]/g, "").toLowerCase()))) return false; // already up there
       poseFixed = true;
       console.log(`${new Date().toISOString()} [chat] round ${round}: a problem was posed in chat with nothing on the board — asking for it up there`);
       messages.push({ role: "assistant", content: draft });
