@@ -7,7 +7,7 @@ import { COURSEWORK_MAX_CHARS, courseworkForSubject, sameSubject } from "../shar
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { buildGeometry } from "../shared/geometry.ts";
-import { studentProblemStatement, cleanToPost, posesProblemInProse, echoesStudentWords, repairLatex, latexifyBoardLine, statesOwnMath, startsNewProblem, looksLikeGivensOrScenario, NO_UNPROMPTED_EXERCISE, asksForProblem, asksWhichProblem, notationGloss, isBoardContent, splitBoardContent, asksWhy, ignoresWhy, WHY_BLOCK, statesOwnAnswer, listenCue, CONFUSED_BLOCK, INSIGHT_BLOCK, evalMathExpr, namesExactStep, bubbleDoesMath, bareMath, socraticFallback, voiceInputBlock, boardRepeatsMishearing, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, misattributes, methodAhead, wantsHelp, clarificationTerm, CLARIFY_BLOCK, ignoresQuestion, ignoresWork, asksToWrite, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
+import { studentProblemStatement, cleanToPost, posesProblemInProse, echoesStudentWords, repairLatex, latexifyBoardLine, statesOwnMath, startsNewProblem, looksLikeGivensOrScenario, NO_UNPROMPTED_EXERCISE, asksForProblem, asksWhichProblem, notationGloss, isBoardContent, splitBoardContent, asksWhy, ignoresWhy, WHY_BLOCK, statesOwnAnswer, listenCue, CONFUSED_BLOCK, INSIGHT_BLOCK, evalMathExpr, namesExactStep, bubbleDoesMath, bareMath, socraticFallback, voiceInputBlock, boardRepeatsMishearing, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, confirmsUnchecked, wrapsUpUnasked, misattributes, methodAhead, wantsHelp, clarificationTerm, CLARIFY_BLOCK, ignoresQuestion, ignoresWork, asksToWrite, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, inventedNumbers, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -3022,7 +3022,7 @@ export function leaksAnyProblemAnswer(text: string, problems: TaskProblem[]): bo
   return secrets.some((s) => leaksAnswer(text, s));
 }
 
-export function makeProblem(input: any): { problem: TaskProblem } | { error: string } {
+export function makeProblem(input: any, requireCheck = false): { problem: TaskProblem } | { error: string } {
   // 600 chars fit "one clear sentence" but would chop a genuine IB extended-response/AP FRQ multi-part
   // prompt ((a)/(b)/(c), each with its own point value) mid-sentence — same reasoning, same raised cap, as
   // makeQuiz's own `q` field above.
@@ -3050,6 +3050,8 @@ export function makeProblem(input: any): { problem: TaskProblem } | { error: str
     }
   }
   if (!hasMCQ && !answer) return { error: "ERROR: a problem needs either MCQ (2+ options + correct index) or a free-response answer." };
+  // A numeric key must come with the expression that computes it — an unverified key is how a correct 200 got marked wrong.
+  if (requireCheck && !hasMCQ && answer && verified == null && !/[π√a-df-zA-DF-Z]\w*[π√]|[π√]/.test(answer) && isNumericAnswerValue(answer.replace(/[^0-9.,eE+\-−–]/g, "")) && /\d/.test(answer) && !/^[\s≈~=]*\d+\s*\/\s*\d+\s*$/.test(answer)) return { error: "REJECTED: give a `check` expression that COMPUTES the numeric answer from the givens (e.g. \"60000/(1*300)\") — the app verifies the key with it, so a wrong key can't mark a right answer wrong. Recompute it carefully, then call CREATE_PROBLEM again." };
   // A numeric key is ALWAYS a bare number: units never go in the widget ("112 m" marked a correct "112" wrong), they go in the format
   // hint ("answer as a number, in metres"). The exact computed value (when verified) rides along so rounding never fails a right answer.
   let exactValue: number | undefined = verified != null ? verified : undefined;
@@ -7666,7 +7668,8 @@ const PRIMER_PERSONA =
   `\n` +
   `THE LINES YOU NEVER CROSS. The app checks these every turn and sends a reply back if it breaks one, so don't test them; inside them, be free.\n` +
   `- NEVER GIVE THE ANSWER AND NEVER DO THE WORK: not the final value, not the result of the step they're about to take, not the name or value they were asked for, not which operation to perform. Guide with questions, pointers, smaller cases, analogies. They think and they calculate.\n` +
-  `- NEVER STATE SOMETHING AND THEN QUIZ IT ("750 J — what are the units?"), and never praise, confirm or reject a step you haven't checked.\n` +
+  `- NEVER STATE SOMETHING AND THEN QUIZ IT ("750 J — what are the units?"), and never praise, confirm or reject a step you haven't checked against the givens. "Spot on" is only for a value you recomputed and that matches THEIR number; if their numbers don't agree with each other (or with yours), say so kindly and ask which step they'd recheck.\n` +
+  `- ONLY THEIR NUMBERS, ONLY THEIR WORDS: every figure you write is one they or the problem gave. Never compute ahead ("take the square root of 390.4"), never draw a conclusion they didn't. React to what they just said ("you've got 235,200 J at the top, and you've just spotted friction"), then ask about THEIR next step. Don't offer to wrap up or move on ("call it a win?", "ready for another?") unless they ask.\n` +
   `- NEVER SET A PROBLEM THEY DIDN'T ASK FOR — offer, then wait for a yes. When they ask for one, set it as a real exercise (CREATE_PROBLEM): the full statement, one final answer — a bare number with its precision (how many decimal places) and unit in the hint, or multiple choice — never plain board text, never a question about a problem they haven't been shown.\n` +
   `- NEVER PUT THEIR WORDS ON THE BOARD: only clean maths and the structure above. The bubble stays tiny.\n` +
   `- NEVER INVENT: no facts, steps or reasons you haven't verified; never blame the app — if an exercise disagrees with an answer you believe is right, recompute and say plainly that the key was wrong.\n` +
@@ -9155,6 +9158,20 @@ export async function chatAboutTask(
       messages.push({ role: "user", content: "That reply writes out an equation (or refers to one) that the student never wrote — the setup is THEIR work. Rewrite it without that equation: ask the question that gets them to build it themselves (which relationship links the quantities, what each side stands for), and nothing more." });
       return true;
     };
+    // NUMBERS OUT OF NOWHERE. A figure in the reply that is in nothing the student said, the givens or the board is Otto's own
+    // computation or an invention (reported live: "take the square root of 390.4" after the student had only found 235,200 J).
+    let inventedFixed = false;
+    const guardInvented = (draft: string, round: number, lastRound: boolean): boolean => {
+      if (!opts?.primer || inventedFixed || lastRound || result.guardrailTripped) return false;
+      const src = [message, ...heard, ...history.map((h) => h.text), ...ownGivens(), ...(opts?.currentBoard || []).map((e) => e.text), ...result.board.map((e) => e.text), ...result.problems.map((p) => p.question)];
+      const bad = inventedNumbers(draft, src);
+      if (!bad.length) return false;
+      inventedFixed = true;
+      console.log(`${new Date().toISOString()} [chat] round ${round}: reply states numbers nobody gave (${bad.join(", ")}) — asking for a reply built on their words`);
+      messages.push({ role: "assistant", content: draft });
+      messages.push({ role: "user", content: `That reply states ${bad.join(", ")}, which neither the student nor the problem ever gave — it came from your own calculation or from nowhere, and it jumps ahead of what they said. Rewrite it built ONLY on what the student actually just said (reflect their result or their idea back, e.g. what they found and what they just raised) and ask ONE question about THEIR next step. No new numbers.` });
+      return true;
+    };
     // The student showed a drawing: comment AND redraw it cleaner. If the reply came back with no figure, one corrective round.
     let redrawFixed = false;
     const guardRedraw = (draft: string, round: number, lastRound: boolean): boolean => {
@@ -9274,6 +9291,8 @@ export async function chatAboutTask(
       const studentTexts = [...history.filter((h) => h.role === "user").map((h) => h.text), ...heard];
       let why = "";
       if (praiseUngrounded(draft, message, result.plan)) why = "it opens with praise, but nothing they said was a checkable correct step";
+      else if (confirmsUnchecked(draft, message, result.plan)) why = "it confirms a value (\"spot on\") that their own working doesn't reach — recompute it from the givens yourself first; if their numbers don't agree with each other or with your answer, say so kindly and ask which step they'd recheck, instead of praising";
+      else if (wrapsUpUnasked(draft, message)) why = "it offers to wrap up or move on ('call it a win', 'one more?') when they didn't ask — stay on their problem and ask about the next step or what they'd check";
       else {
         const mis = misattributes(draft, studentTexts, (opts?.currentBoard || []).filter((e) => e.owner === "student").map((e) => e.text));
         if (mis) why = `it credits them with something they never said ("${mis.slice(0, 80)}")`;
@@ -9661,6 +9680,7 @@ export async function chatAboutTask(
       if (guardListen(textContent, round, lastRound)) continue;
       if (guardGrounded(textContent, round, lastRound)) continue;
       if (guardEmptyPraise(textContent, round, lastRound)) continue;
+      if (guardInvented(textContent, round, lastRound)) continue;
       if (guardOwnArithmetic(textContent, round, lastRound)) continue;
         if (guardMissedCase(textContent, round, lastRound)) continue;
         if (guardHandedCalc(textContent, round, lastRound)) continue;
@@ -9676,6 +9696,7 @@ export async function chatAboutTask(
         if (guardListen(textContent, round, lastRound)) continue;
         if (guardGrounded(textContent, round, lastRound)) continue;
         if (guardEmptyPraise(textContent, round, lastRound)) continue;
+        if (guardInvented(textContent, round, lastRound)) continue;
         if (guardOwnArithmetic(textContent, round, lastRound)) continue;
         if (guardGapAnswer(textContent, round, lastRound)) continue;
         if (guardOneQuestion(textContent, round, lastRound)) continue;
@@ -9749,7 +9770,7 @@ export async function chatAboutTask(
           // they explicitly asked to move on / get another.
           else if (opts?.primer && !asksToMoveOn(message) && !asksForProblem(message) && [...(opts?.currentProblems || []).filter((p) => !p.solved), ...result.problems].length > 0) content = "REJECTED: they haven't answered the exercise already on the board — don't pile another on top. Help them with THAT one (a hint, a smaller question). Only create a new exercise once they've answered it or explicitly ask to skip / move on / get another.";
           else if (isDuplicateProblem([...(opts?.currentProblems || []), ...result.problems], input)) content = "DUPLICATE: that exact problem is already on the board — it's already there for them to answer, don't make it again.";
-          else { const r = makeProblem(input); if ("error" in r) content = r.error; else { result.problems.push(r.problem); content = JSON.stringify({ ok: true, id: r.problem.id }); logAudit("artifact", fr ? `Problème créé : « ${r.problem.question.slice(0, 60)} »` : `Problem created: "${r.problem.question.slice(0, 60)}"`); } }
+          else { const r = makeProblem(input, !!opts?.primer); if ("error" in r) content = r.error; else { result.problems.push(r.problem); content = JSON.stringify({ ok: true, id: r.problem.id }); logAudit("artifact", fr ? `Problème créé : « ${r.problem.question.slice(0, 60)} »` : `Problem created: "${r.problem.question.slice(0, 60)}"`); } }
         } else if (name === "CLEAR_BOARD") {
           result.boardCleared = true;
           const keepFocus = (input as any)?.keepFocus !== false;

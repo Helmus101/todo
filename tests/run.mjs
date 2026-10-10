@@ -9,6 +9,8 @@ import { makeSyncScheduler } from "../server/syncScheduler.ts";
 import { buildTasksPayload, parseHave } from "../server/taskDelta.ts";
 import { makeTaskSync } from "../client/taskDelta.ts";
 import { looksLikeGivensOrScenario } from "../server/tutorAdapt.ts";
+import { confirmsUnchecked, wrapsUpUnasked } from "../server/tutorAdapt.ts";
+import { inventedNumbers } from "../server/tutorAdapt.ts";
 import { makeProblem as makeProblemP } from "../server/claude.ts";
 import { startsNewProblem } from "../server/tutorAdapt.ts";
 import { asksForProblem, asksWhichProblem } from "../server/tutorAdapt.ts";
@@ -5942,3 +5944,28 @@ const { runTutorSim } = await import("./tutor-sim.mjs");
 await runTutorSim(check, section);
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
+
+// ---- unearned confirmation / wrap-up / unverified key ----
+{
+  const msg = "so it is 60,000 over 300 and that makes a mass of 200";
+  const t1 = confirmsUnchecked("4,000 W is spot on! You crushed both the energy mechanics and the power calculation.", msg, null);
+  const t2 = confirmsUnchecked("Yes, 200 kg is spot on!", msg, null);
+  const t3 = confirmsUnchecked("Spot on!", "so acceleration equals one", { studentStep: { status: "correct" } });
+  const t4 = wrapsUpUnasked("Want to tackle one more, or call it a win for today?", msg);
+  const t5 = wrapsUpUnasked("Ready for another one?", msg);
+  const t6 = wrapsUpUnasked("What would you check next?", msg);
+  const k1 = makeProblemP({ question: "Find the mass m in kg.", answer: "4000" }, true);
+  const k2 = makeProblemP({ question: "Find the mass m in kg.", answer: "200", check: "60000/300" }, true);
+  const k3 = makeProblemP({ question: "Find the mass m in kg.", answer: "4000" });
+  const ok = t1 && !t2 && !t3 && t4 && t5 && !t6 && "error" in k1 && !("error" in k2) && !("error" in k3);
+  console.log(ok ? "  ok  unearned praise / wrap-up / key without check" : "  FAIL: unearned praise / wrap-up / key without check " + JSON.stringify({t1,t2,t3,t4,t5,t6}));
+  if (!ok) process.exitCode = 1;
+}
+{
+  const src = ["so 9.8 * 24 is 235,200 total potential energy, friction force", "A 1000 kg car, 24 m, g = 9.8"];
+  const a = inventedNumbers("What do you get when you take the square root of 390.4 to find v?", src);
+  const b = inventedNumbers("So 235,200 J is the starting energy. What does the friction force do to it?", src);
+  const ok = a.includes("390.4") && b.length === 0;
+  console.log(ok ? "  ok  invented numbers" : "  FAIL: invented numbers " + JSON.stringify({ a, b }));
+  if (!ok) process.exitCode = 1;
+}

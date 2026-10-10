@@ -569,6 +569,22 @@ export function arithmeticAhead(reply: string, studentTexts: string[], givens: s
   return out;
 }
 
+/** Numbers the reply states (two+ significant digits, or decimals) that appear nowhere in the conversation, board or
+ *  givens — a figure Otto computed or made up on its own ("take the square root of 390.4") instead of the student's. */
+export function inventedNumbers(reply: string, sources: string[]): string[] {
+  const norm = (t: string) => t.replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1").replace(/(\d),(\d)/g, "$1.$2");
+  const hay = norm(sources.join(" \n "));
+  const plain = norm(reply.replace(/\\[a-z]+/gi, " ").replace(/\$/g, " "));
+  const out: string[] = [];
+  for (const m of plain.matchAll(/(?<![\d.])\d+(?:\.\d+)?(?![\d])/g)) {
+    const n = m[0];
+    if (!n.includes(".") && n.length < 3) continue;
+    if (n.includes(".") && n.replace(".", "").length < 3) continue;
+    if (!new RegExp(`(?<![\\d.])${n.replace(".", "\\.")}(?![\\d])`).test(hay)) out.push(n);
+  }
+  return [...new Set(out)];
+}
+
 // ---- "Just draw it" and praise for nothing ----
 /** The student is asking Otto to DRAW/show the picture (not describing their own drawing). */
 export function asksToDraw(message: string): boolean {
@@ -599,6 +615,26 @@ export function praiseUngrounded(reply: string, message: string, plan?: { studen
   if (!plan) return false;
   const ok = plan.studentStep?.status === "correct" || (plan.evidence?.kind ? SUCCESS_EVIDENCE.has(plan.evidence.kind) : false);
   return !ok;
+}
+
+const CONFIRM_ANY = /\b(?:spot on|exactly right|is (?:correct|right)|that'?s (?:right|correct)|nailed|crushed|you(?:'ve| have) got it)\b/i;
+const numVal = (t: string): number => Number(t.replace(/[\s,]/g, "").replace(",", "."));
+/** Otto confirms a value ("4,000 W is spot on! You crushed it") that the student's own working doesn't reach: their one
+ *  division gives something else (60,000 over 300 = 200), or its read of their last step wasn't "correct". */
+export function confirmsUnchecked(reply: string, message: string, plan?: { studentStep?: { status?: string } } | null): boolean {
+  const first = (reply.split(/(?<=[.!?])\s+/)[0] || "") + " " + (reply.split(/(?<=[.!?])\s+/)[1] || "");
+  if (!CONFIRM_ANY.test(first) || /^\[/.test(message.trim())) return false;
+  const status = plan?.studentStep?.status;
+  if (status && status !== "correct") return true;
+  const V = numVal((first.match(/\d[\d,]*(?:\.\d+)?/) || [""])[0]);
+  const divs = [...message.matchAll(/(\d[\d,]*(?:\.\d+)?)\s*(?:over|÷|\/|divided by)\s*(\d[\d,]*(?:\.\d+)?)/gi)];
+  if (divs.length !== 1 || !V) return false;
+  const q = numVal(divs[0][1]) / numVal(divs[0][2]);
+  return isFinite(q) && Math.abs(q - V) > 0.01 * Math.abs(V);
+}
+/** "Want to tackle one more, or call it a win?" when the student never asked to stop or move on. */
+export function wrapsUpUnasked(reply: string, message: string): boolean {
+  return /\b(?:ready for (?:another|one more)(?: one)?|call it a (?:win|day)|wrap (?:it |things )?up|tackle one more|ready for (?:another|the next)|want (?:to|another)[^.?!]{0,30}(?:one more|another|next))\b/i.test(reply) && !asksToMoveOn(message);
 }
 
 const GROUND_STOP = new Set("that this with have from what when where which their there about would could should these those them they then than just also into your yours been were will shall cannot dont doesnt isnt arent".split(" "));
