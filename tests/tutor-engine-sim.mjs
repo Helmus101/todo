@@ -5,7 +5,7 @@
 // carries the conversation first and the background second.
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
 delete process.env.GEMINI_API_KEY;
-const { runTutorTurn, detectSubject, backgroundBlock, TUTOR_PROMPT, leakedValue, wantsExercise, inventsProblemOnBoard } = await import("../server/tutor.ts");
+const { runTutorTurn, detectSubject, backgroundBlock, TUTOR_PROMPT, leakedValue, wantsExercise, inventsProblemOnBoard, doubtsRightAnswer } = await import("../server/tutor.ts");
 const { equationsAhead } = await import("../shared/equationsAhead.ts");
 
 let script = () => ({ content: "" });
@@ -111,7 +111,7 @@ export async function runTutorEngineSim(check, section) {
 
   script = (b, i) => i === 0 ? { content: "Imagine a 1000 kg car going up a 10° hill at 15 m/s — what power does it need?" } : i === 1 ? { tool_calls: [tc("CREATE_PROBLEM", { question: carGiven + " What power (in W) is needed against gravity?", answer: "25525", check: "1000*9.8*15*sind(10)" })] } : { content: "Your turn — it's on the board." };
   r = await run("test me");
-  check("asked for a problem but the draft only TALKS about one → one round to create it", r.problems.length === 1 && /They asked for an exercise/.test(lastUser(calls[1])));
+  check("asked for a problem but the draft only TALKS about one → one round to create it", r.problems.length === 1 && /asked for an exercise/i.test(lastUser(calls[1])));
 
   script = (b, i) => i === 0 ? { tool_calls: [tc("WRITE_TO_BOARD", { text: "A 2 kg block slides 5 m down a 30° ramp", kind: "given" })] } : { content: "What do you want to work on?" };
   r = await run("I want to understand energy");
@@ -142,4 +142,26 @@ export async function runTutorEngineSim(check, section) {
     equationsAhead("$F = mg\\sin\\theta$", ["find F"]).length === 1 && equationsAhead("$m = 1000$ kg, $v = 15$ m/s", []).length === 0 &&
     equationsAhead("$b = ?$", []).length === 0 && equationsAhead("$\\tan 25^\\circ = \\frac{h}{b}$", ["tan 25 equals h over b"]).length === 0 &&
     equationsAhead("Yes, b = h/tan(25°) — now the other triangle.", ["b = h/tan(25°)"]).length === 0);
+
+  // A live energy/power session (reported): Otto confirmed numbers the student never said, invented new ones,
+  // told a RIGHT student to redo their multiplication (twice — once after the app had marked it right), blamed the
+  // widget, offered to wrap up, ignored "write it on the board", and in voice mode read "×" and "sin" out of
+  // existence ("multiply 10009.8(10°)15").
+  script = (b, i) => i === 0 ? { content: "That 235,200 J was from the previous problem! Multiply $1200 \\times 9.8 \\times 20$. What do you get?" } : { content: "Yes — $1200 \\times 9.8 \\times 20$ really is 235,200 J. What does that energy turn into at the bottom?" };
+  r = await run("235,200", { problems: [{ id: "p9", question: "A 1200 kg car drops 20 m. Find its speed at the bottom.", answer: "19.8", createdAt: "" }] });
+  check("telling a RIGHT student to redo it is caught (their number IS the expression's value) and rewritten", /they were RIGHT/.test(lastUser(calls[1])) && /really is 235,200/.test(r.reply));
+  script = (b, i) => i === 0 ? { content: "Ah, let's re-run that one: $800 \\times 9.8 \\times \\sin(15^\\circ) \\times 12$." } : { content: "Right on — 24,350 W. What made the sin 15° the piece that matters?" };
+  r = await run('[Exercise] I answered "24350" — marked right (try #1).');
+  check("an exercise the app marked right is never sent back for a redo", /already checked their answer/.test(lastUser(calls[1])) && calls.length === 2);
+  script = (b, i) => i === 0 ? { content: "200,200 J is right on the money! What do you get when you take the square root of 390.4? And what is 15,000 J divided by 3 s? Ready for another one? Those widgets can be picky." } : { content: "You've got 200,000 J of kinetic energy left. What equation links that to v?" };
+  r = await run("so now I have a real kinetic energy of 200,000", { board: [{ id: "x", at: "", kind: "given", text: "1000 kg, 24 m, friction 35,200 J" }] });
+  const note = lastUser(calls[1]);
+  check("confirming a number they didn't say, inventing numbers, unasked wrap-up and blaming the widget all go back in ONE correction", calls.length === 2 && /confirms a value/.test(note) && /numbers nobody gave/.test(note) && /wrap up/.test(note) && /blames the app/.test(note));
+  script = (b, i) => i === 0 ? { content: "What are we trying to calculate first?" } : i === 1 ? { tool_calls: [tc("WRITE_TO_BOARD", { text: "$E_p = mgh = 1200 \\times 9.8 \\times 20$", kind: "summary", owner: "student" })] } : { content: "It's up there — what do you get?" };
+  r = await run("write write down the board", { history: [{ role: "user", text: "so E = mgh = 1200 times 9.8 times 20" }, { role: "assistant", text: "Good start." }] });
+  check("'write it on the board' is done, not answered with a question", r.board.length === 1 && /write it on the board/.test(lastUser(calls[1])));
+  script = () => ({ content: "Multiply $1000 \\times 9.8 \\times \\sin(10^\\circ) \\times 15$ — what do you get? Then $\\frac{1}{2}mv^2$." });
+  r = await run("1000 times 9.8 times sine 10 times 15", { opts: { voiceMode: true } });
+  check("voice mode keeps the maths readable (× and sin survive, ½ isn't '12')", /1000 × 9\.8 × sin\(10°\) × 15/.test(r.reply) && /1\/2/.test(r.reply) && !/\\/.test(r.reply));
+  check("doubtsRightAnswer leaves a genuinely wrong answer alone", doubtsRightAnswer("Check that again: $1000 \\times 9.8 \\times \\sin(10^\\circ) \\times 15$.", "5,526") === null);
 }
