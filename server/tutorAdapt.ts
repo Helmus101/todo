@@ -617,7 +617,7 @@ export function praiseUngrounded(reply: string, message: string, plan?: { studen
   return !ok;
 }
 
-const CONFIRM_ANY = /\b(?:spot on|exactly right|is (?:correct|right)|that'?s (?:right|correct)|nailed|crushed|you(?:'ve| have) got it)\b/i;
+const CONFIRM_ANY = /\b(?:spot on|(?:right )?on the money|exactly right|is (?:correct|right)|that'?s (?:right|correct)|nailed|crushed|you(?:'ve| have) got it)\b/i;
 const numVal = (t: string): number => Number(t.replace(/[\s,]/g, "").replace(",", "."));
 /** Otto confirms a value ("4,000 W is spot on! You crushed it") that the student's own working doesn't reach: their one
  *  division gives something else (60,000 over 300 = 200), or its read of their last step wasn't "correct". */
@@ -627,6 +627,9 @@ export function confirmsUnchecked(reply: string, message: string, plan?: { stude
   const status = plan?.studentStep?.status;
   if (status && status !== "correct") return true;
   const V = numVal((first.match(/\d[\d,]*(?:\.\d+)?/) || [""])[0]);
+  const mine = (message.replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1").match(/\d+(?:\.\d+)?/g) || []).map(Number);
+  // They gave numbers and Otto confirms a different one ("200,200 J is right on the money" after "200,000").
+  if (V && mine.length && !mine.some((n) => Math.abs(n - V) <= 1e-9 * Math.max(1, V)) && V >= 10) return true;
   const divs = [...message.matchAll(/(\d[\d,]*(?:\.\d+)?)\s*(?:over|÷|\/|divided by)\s*(\d[\d,]*(?:\.\d+)?)/gi)];
   if (divs.length !== 1 || !V) return false;
   const q = numVal(divs[0][1]) / numVal(divs[0][2]);
@@ -972,4 +975,9 @@ export function looksLikeGivensOrScenario(text: string): boolean {
   const t = String(text || "").replace(/\$/g, " ").replace(/\\(?:text|mathrm)\{([^}]*)\}/g, "$1");
   const quantities = t.match(/\d+(?:[.,]\d+)?\s?(?:°|(?:m|cm|mm|km|kg|g|s|min|h|N|J|V|A|W|mol|L|mL|%|kJ|kW|MJ|m\/s|ms)\b)/g) || [];
   return quantities.length >= 2;
+}
+
+/** Otto blames the exercise widget / app for a mismatch ("those widgets can be picky", "weird hiccup", "my bad on the board"). */
+export function blamesWidget(reply: string): boolean {
+  return /\b(?:widgets?|the (?:checker|answer box|exercise box|app)|the board)\b[^.?!]{0,50}\b(?:picky|hiccup|glitch|bug|buggy|quirk|wrong|mistake|fussy|finicky|weird)|\b(?:picky|finicky|fussy|weird hiccup|glitch)\b|classic (?:percentage )?trap|my bad on the board/i.test(reply);
 }
