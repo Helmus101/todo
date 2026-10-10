@@ -2,10 +2,11 @@ import { randomUUID } from "node:crypto";
 import type { WebTask, Quadrant, TaskLink, Profile, Sendable, AddUsageCategory, TaskStep, BoardEntry } from "../shared/types.ts";
 import { BOARD_EVENT_CAP } from "../shared/agentTypes.ts";
 import { dedupeFacts, sameFact, canonStatus, sortWithinQuadrant, addUsage, isHandled, tzOf, deadlineEpoch, normalizeWhen, gradesBySubject } from "../shared/types.ts";
+import { loadPronoteConnection } from "./store.ts";
 import { schoolRecordLine } from "./schoolRecord.ts";
 import { generateTasks, classifyCandidates, pickOneTask, runTask as aiRun, type ProfileUpdate, type RefinedTask, type AcademicContext } from "./claude.ts";
 import { readOnly, scopeTools, DOC_LINK, type AgentTools } from "./integrations.ts";
-import { discoverSourceItems, filterCandidates, hasAssignmentText } from "./discover.ts";
+import { discoverSourceItems, filterCandidates, hasAssignmentText, sameAssignmentText } from "./discover.ts";
 import { TEST_DAYS_AHEAD } from "./pronote.ts";
 import { aggregateSubjectSignals } from "./patterns.ts";
 
@@ -540,6 +541,9 @@ export function dedupeTasks(list: WebTask[]): WebTask[] {
       const kak = normKey(k.anchorKey);
       if (!!ak && kak === ak) { matchedByAnchor = true; return true; }             // SAME anchor (same thread/event) → dup
       if (!!link && linkOf(k) === link) { matchedByAnchor = true; return true; }   // same source link → dup
+      // The SAME Pronote homework listed twice with slightly different text: same subject + due day + same distinctive words.
+      if (t.source === "pronote" && k.source === "pronote" && !!t.sourceDetail && !!k.sourceDetail && (t.sourceSubject || "").toLowerCase() === (k.sourceSubject || "").toLowerCase()
+        && String(t.sourceDue || "").slice(0, 10) === String(k.sourceDue || "").slice(0, 10) && sameAssignmentText(t.sourceDetail, k.sourceDetail)) { matchedByAnchor = true; return true; }
       // Two tasks that BOTH carry a REAL anchor and those anchors DIFFER: if either side is already handled
       // (done/dismissed), they are distinct real-world items (e.g. an old done email vs a new fresh email).
       // But two ACTIVE same-title tasks (distinct anchors) still merge so visual duplicates never appear.
@@ -860,6 +864,9 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     // Union by id, same reasoning as manual grade entries above — a manually-logged exam added on one
     // device must survive a merge against another device's copy that doesn't have it yet.
     // Union by id (a delete persists cloud-first in its route). onboardedAt keeps the earliest stamp.
+    pronoteLessons: (p1.pronoteLessons?.length || p2.pronoteLessons?.length)
+      ? [...new Map([...(p1.pronoteLessons || []), ...(p2.pronoteLessons || [])].map((l) => [l.id, l])).values()].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 40)
+      : undefined,
     coursework: (p1.coursework?.length || p2.coursework?.length)
       ? [...new Map([...(p1.coursework || []), ...(p2.coursework || [])].map((d) => [d.id, d])).values()].slice(0, 60)
       : undefined,
@@ -1122,7 +1129,30 @@ export function setReviewSetDeckIdsToday(profile: Profile, deckIds: string[], no
   profile.reviewSetsUpdatedAt = now.toISOString();
 }
 
+/** Every task that came from Pronote carries a link back to Pronote: the specific attachment/page when one was found,
+ *  otherwise the school's own Pronote address — so "where did this come from?" is always one tap. Pure; existing
+ *  links are kept (the specific one first) and nothing is added twice. */
+export function ensurePronoteLinks<T extends { source?: string; links?: TaskLink[] }>(list: T[], pronoteUrl: string | undefined, en = true): T[] {
+  const url = String(pronoteUrl || "").trim();
+  if (!/^https:\/\//i.test(url)) return list;
+  return list.map((t) => {
+    if (t.source !== "pronote") return t;
+    const links = t.links || [];
+    if (links.some((l) => l.url === url)) return t;
+    return { ...t, links: [...links, { label: en ? "Open in Pronote" : "Ouvrir dans Pronote", url }].slice(0, 6) };
+  });
+}
+
 export async function generate(existing: WebTask[], profile: Profile, extras?: AgentTools, userEmail?: string): Promise<WebTask[]> {
+  const out = await generateRaw(existing, profile, extras, userEmail);
+  if (!userEmail || !out.some((t) => t.source === "pronote")) return out;
+  try {
+    const stored = await loadPronoteConnection(userEmail);
+    return ensurePronoteLinks(out, stored?.url, profile.language === "en");
+  } catch { return out; }
+}
+
+async function generateRaw(existing: WebTask[], profile: Profile, extras?: AgentTools, userEmail?: string): Promise<WebTask[]> {
   // Tell the generator what's already finished/dismissed so it never resurfaces a handled to-do. Sorted by
   // recency (most recently actioned first) BEFORE the cap below truncates it — same reasoning as
   // pruneHandled's own sort (see its comment on "the exact 'I dismissed this and it came right back' failure

@@ -14,7 +14,7 @@ import * as store from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as integrations from "./integrations.ts";
 import * as claude from "./claude.ts";
-import { pronoteConnected, pronoteGrades, pronoteHomework, pronoteTests, applyPronoteGrades } from "./pronote.ts";
+import { pronoteConnected, pronoteGrades, pronoteHomework, pronoteTests, applyPronoteGrades, syncPronoteLessons } from "./pronote.ts";
 import type { AcademicContext } from "./claude.ts";
 import { replanMilestones } from "./milestones.ts";
 import { contextKey as banditContextKey, chooseArm, GRANULARITY_ARMS, type BanditState } from "./bandit.ts";
@@ -198,7 +198,7 @@ async function processSweep(job: store.Job): Promise<string> {
   // for what it reports" merge as the manual Settings sync, just automatic so a student never has to think
   // about it. A failure here (Pronote down, no grades yet) never blocks the sweep itself.
   try {
-    if ((await pronoteConnected(email)).connected) applyPronoteGrades(profile, await pronoteGrades(email));
+    if ((await pronoteConnected(email)).connected) { applyPronoteGrades(profile, await pronoteGrades(email)); await syncPronoteLessons(profile, email); }
   } catch { /* best-effort */ }
   // Refresh Otto's synthesized "read" on this student (profile.studentModel) — the ONE new AI-spend site
   // this feature adds, and it deliberately lives HERE, inside the sweep's own already-checked
