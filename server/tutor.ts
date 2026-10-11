@@ -21,7 +21,7 @@ import { equationsAhead, asksForFormula } from "../shared/equationsAhead.ts";
 import { findArithmeticClaims } from "./arithmetic.ts";
 import { applyEntryAction } from "../shared/boardAdapter.ts";
 import { boardSurfaceBlock } from "./boardEvents.ts";
-import { replyStatesValue, socraticFallback, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario, inventedNumbers, claimsBoardWrite, stripBoardClaim, reachedResultUnrecorded, confirmsUnchecked, wrapsUpUnasked, blamesWidget, asksToWrite, handsOverCalculation, sendsBackToStatement, statesFormula, misstatesGiven } from "./tutorAdapt.ts";
+import { replyStatesValue, socraticFallback, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario, inventedNumbers, claimsBoardWrite, stripBoardClaim, posesProblemInProse, reachedResultUnrecorded, confirmsUnchecked, wrapsUpUnasked, blamesWidget, asksToWrite, handsOverCalculation, sendsBackToStatement, statesFormula, misstatesGiven } from "./tutorAdapt.ts";
 export { sendsBackToStatement, statesFormula, misstatesGiven } from "./tutorAdapt.ts";
 import { latexToPlainText } from "../shared/mathText.ts";
 import { toExprSource } from "../shared/mathEquiv.ts";
@@ -214,8 +214,16 @@ export interface TutorTurnResult {
 /** The model's hidden per-turn teaching decision. Parsed leniently — a missing or malformed plan never blocks a reply. */
 export interface TutorPlanLite { diagnosis?: string; action?: string; helpLevel?: number }
 const ACTIONS = ["probe", "hint", "visual", "explain", "example", "practice", "confirm"];
+/** How many unit-bearing quantities in the reply ("2 kg", "3 m", "400 N/m", "25°") appear nowhere in the conversation, board or problems. */
+export function newQuantities(reply: string, sources: string[]): number {
+  const hay = sources.join(" ").replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1");
+  const nums = (String(reply).replace(/\$/g, " ").match(/\d+(?:[.,]\d+)?(?=\s?(?:°|\\circ|(?:m|cm|mm|km|kg|g|s|min|h|N|J|V|A|W|mol|L|mL|%|degrees?)\b))/gi) || []).map((n) => n.replace(",", "."));
+  return new Set(nums.filter((n) => !new RegExp(`(?<![\\d.])${n.replace(".", "\\.")}(?![\\d])`).test(hay))).size;
+}
+/** The hidden plan: <plan>{json}</plan> — but models also close it with the wrong tag (</path>, </plan >) or not at all, which used to leak it into the reply. */
+const PLAN_RE = /<plan>\s*(\{[\s\S]*?\})\s*(?:<\/[a-z]*\s*>)?/i;
 export function parsePlan(text: string): TutorPlanLite | undefined {
-  const m = /<plan>([\s\S]*?)<\/plan>/i.exec(String(text || ""));
+  const m = PLAN_RE.exec(String(text || ""));
   if (!m) return undefined;
   try {
     const j = JSON.parse(m[1].trim());
@@ -429,7 +437,7 @@ export function wrongArithmetic(reply: string, message = ""): string | null {
 }
 
 function cleanReply(text: string, voice: boolean): string {
-  let t = stripLeakedToolCallSyntax(String(text || "")).replace(/<plan>[\s\S]*?<\/plan>/gi, "").trim();
+  let t = stripLeakedToolCallSyntax(String(text || "")).replace(/<plan>[\s\S]*?<\/plan>/gi, "").replace(new RegExp(PLAN_RE.source, "gi"), "").replace(/<\/?(?:plan|path)\s*>/gi, "").trim();
   t = t.replace(/^\s*(otto|tutor)\s*:\s*/i, "").replace(/\*\*(.+?)\*\*/g, "$1");
   // Read aloud: maths becomes readable text ("1000 × 9.8 × sin(10°) × 15", "1/2 mv^2"). It used to just delete every
   // \command, so \times and \sin vanished and "\frac12" read as "12" — "multiply 10009.8(10°)15" (reported live).
@@ -590,6 +598,10 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       // while they kept answering "12". Corrected with a prompt round; taken over in code below if it persists.
       const reread = sendsBackToStatement(reply, message);
       if (reread) issues.push(`it sends them back to the problem statement ("${reread}") to re-check something they ALREADY gave — don't re-ask it, use the value they said. If they misread it, say what the problem actually gives and why it differs. If the givens as written genuinely can't produce what the problem asks for, say so plainly ONCE (the numbers as given don't work out, and the one-line reason why) and offer to change one of them, instead of asking them to read it again`);
+      // A NEW problem posed only in the message ("If a 2 kg block drops 3 m onto a spring k = 400 N/m, how would you…?") with nothing on the board.
+      const quantitiesNew = posesProblemInProse(reply) && !result.problems.length && !result.board.length
+        ? newQuantities(reply, [...said, ...allBoard().map((b) => b.text), ...allProblems().map((p) => p.question)]) >= 2 : false;
+      if (quantitiesNew) issues.push("you set a new problem in the message only — nothing is on the board. Put it on the board: CREATE_PROBLEM when it is an exercise for them to solve (full statement, one checkable answer with a `check` expression), otherwise WRITE_TO_BOARD the givens and the question; the message then just points at it in one line");
       const claimedBoard = claimsBoardWrite(reply) && !result.board.length && !result.problems.length;
       if (claimedBoard) issues.push("you say you'll put (or have put) something on the board, but nothing was written this turn. Write it now (a new problem goes through CREATE_PROBLEM): ONE short clean line with WRITE_TO_BOARD (the result or step they reached, their numbers, maths in $…$, owner \"student\"; never their sentence), then reply. Only if there is truly nothing worth keeping, drop that sentence instead");
       else if (reachedResultUnrecorded(reply, message, result.board.length + result.problems.length)) issues.push("they just reached a result or step of their own and you confirmed it, but nothing went on the board. Record it: ONE short clean line with WRITE_TO_BOARD (kind result or summary, owner \"student\", their numbers, maths in $…$), then reply as you planned");

@@ -370,4 +370,14 @@ export async function runTutorEngineSim(check, section) {
   script = (b, i) => i === 0 ? { content: "", tool_calls: [tc("REMOVE_BOARD_LINE", { target: "t1" })] } : { content: "Taken off — it was my wrong line." };
   r = await run("that line is wrong", { board: editBoard });
   check("a tutor line can be taken off the active board (archived, reversible)", r.boardRemoved?.length === 1 && r.boardRemoved[0] === "t1");
+
+  const { parsePlan: pp } = await import("../server/tutor.ts");
+  script = () => ({ content: '<plan>{"diagnosis":"none","action":"probe","help_level":1}</path>Imagine a block sliding down a ramp. What is the first thing you would write?' });
+  r = await run("let's do energy");
+  check("a hidden plan closed with the wrong tag (</path>) is stripped, never shown, and still parsed", !/plan|path|diagnosis/.test(r.reply) && /Imagine a block/.test(r.reply) && pp('<plan>{"diagnosis":"none","action":"probe","help_level":1}</path>x')?.action === "probe");
+  script = (b, i) => i === 0 ? { content: "Imagine a block on a ramp. If a 2 kg block drops from a height of 3 m onto a spring with k = 400 N/m, how would you set up the energy conservation?" }
+    : i === 1 ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "$m = 2$ kg, $h = 3$ m, $k = 400$ N/m", kind: "given" })] }
+    : { content: "It's on the board — how would you set up the energy conservation?" };
+  r = await run("give me a spring problem");
+  check("a new scenario posed only in the message (no board write) is sent back to put it on the board", /nothing is on the board/.test(JSON.stringify(calls[1]?.messages || "")));
 }
