@@ -229,7 +229,7 @@ export async function runTutorEngineSim(check, section) {
     : i === 1 ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "Shared vs personal knowledge", kind: "note" })] }
     : { content: "Added it under the second heading. What structure would you use?" };
   r = await run("shared knowledge is the culture and language, personal knowledge is lived experience");
-  check("claiming a board write without calling a board tool sends the model back to actually write it", r.board.length === 1 && /no board tool ran/.test(JSON.stringify(calls[1]?.messages || [])));
+  check("claiming a board write without calling a board tool sends the model back to actually write it", r.board.length === 1 && /nothing was written this turn/.test(JSON.stringify(calls[1]?.messages || [])));
   script = () => ({ content: "Nailed the distinction. I've put your point up on the board. What structure would you use?" });
   r = await run("shared knowledge is the culture and language, personal knowledge is lived experience");
   check("if it still claims a board write with nothing written, the false claim is removed in code", !r.board.length && !/board/i.test(r.reply) && /\?$/.test(r.reply));

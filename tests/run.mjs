@@ -2520,7 +2520,7 @@ section("Tutor Session — sessions never auto-start, and past boards read at a 
     return /peekForActiveSession/.test(tutorSrc) && /api\.tasks\(\)\.then/.test(peekBody) && !/setTask\(/.test(peekBody) && /setPendingActiveSession\(t \|\| null\)/.test(peekBody) && !/api\.studyFreeSession\(\)\.then/.test(tutorSrc);
   })());
   check("an in-progress session is offered back ONLY via an explicit Resume button (no auto-open on mount)", /resumeActiveSession/.test(tutorSrc) && /onClick=\{resumeActiveSession\}/.test(tutorSrc) && /L\("Reprendre", "Resume"\)/.test(tutorSrc));
-  check("Start is the only create path and always passes fresh (a new lesson starts clean)", /api\.studyFreeSession\(true, selectedSubject, topic\.trim\(\)\)/.test(tutorSrc));
+  check("Start is the only create path and always passes fresh (a new lesson starts clean)", /api\.studyFreeSession\(true, chosenSubject\)/.test(tutorSrc));
   check("voice stays manual (no startInVoiceMode on the panel — the mic toggle is the student's)", !/startInVoiceMode=/.test(tutorSrc));
   // Report-live: "for summary there should be ONE title — what was the main thing — and then a bit of
   // description", NOT a wall of board lines (the example: Spring compression → energy transfer…, E = kx²…,
@@ -2869,7 +2869,7 @@ section("/api/study/free — resumes an active freestudy session by default, onl
   // subject. Start must require a picked subject and pass fresh:true (plus that subject) — a NEW lesson is
   // always a BLANK session, never a resume of an old one; resuming an in-progress session is only the
   // landing's explicit "Reprendre" click (resumeActiveSession).
-  check("Start requires a subject and creates a BLANK fresh session (never resumes an old thread)", /api\.studyFreeSession\(true, selectedSubject, topic\.trim\(\)\)/.test(tutorSrc) && /if \(!selectedSubject \|\| !topic\.trim\(\) \|\| startingSession\) return;/.test(tutorSrc));
+  check("Start requires a subject and creates a BLANK fresh session (never resumes an old thread)", /api\.studyFreeSession\(true, chosenSubject\)/.test(tutorSrc) && /if \(!chosenSubject \|\| startingSession\) return;/.test(tutorSrc));
   // Reported live twice: "Reprendre" silently loaded an EMPTY chat/board despite real prior conversation.
   // Root cause both times was the same class of bug — guessing at raw localStorage keys
   // (`otto-chat-${id}-${userId}` etc.) that client/localChatBoard.ts has never written (it keeps ONE
@@ -5997,7 +5997,7 @@ await runTutorSim(check, section);
 {
   const t = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
   const b = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
-  check("landing has no 'All sessions' back button; the exact topic is picked before starting", !/backButton/.test(t) && /tutor-topic-input/.test(t) && /!topic\.trim\(\)/.test(t));
+  check("landing has no 'All sessions' back button; the subject starts the session in one tap, and only 'Other' asks for a name", !/backButton/.test(t) && /tutor-topic-input/.test(t) && /selectedSubject === OTHER/.test(t) && !/What exactly/.test(t));
   check("ending a session is remembered locally first and finished on the next visit if the server call failed", /markEnded\(taskId\)/.test(t) && /!ended\.has\(x\.id\)/.test(t));
   check("a board opens on its bottom immediately (instant jump, re-pinned while layout settles)", /behavior: "auto"/.test(b) && /\[80, 250, 700\]/.test(b));
 }
@@ -6006,7 +6006,7 @@ await runTutorEngineSim(check, section);
 {
   const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
   const t = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
-  check("Hick's law: four primary nav links, the rest under a 'More' menu that closes on navigation; at most 3 one-tap chips and 4 topic suggestions", /className="topnav-more" key=\{route\}/.test(app) && /topnav-more-menu/.test(app) && !/Something else/.test(t) && /slice\(0, 4\)/.test(t));
+  check("Hick's law: four primary nav links, the rest under a 'More' menu that closes on navigation; at most 3 one-tap chips", /className="topnav-more" key=\{route\}/.test(app) && /topnav-more-menu/.test(app) && !/Something else/.test(t));
 }
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
