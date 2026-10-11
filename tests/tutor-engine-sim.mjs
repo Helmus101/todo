@@ -223,4 +223,14 @@ export async function runTutorEngineSim(check, section) {
   check("…so 25538, 25537 and 25537.8 are all right", "problem" in truckP && ["25538", "25537", "25537.8", "25,538 W"].every((g) => practiceAnswerMatches(g, truckP.problem.answer, truckP.problem.value)));
   const radP = makeProblem({ question: "Find sin(π/6).", answer: "0.5", check: "sin(pi/6)" }, true);
   check("…while a problem in radians keeps radians", "problem" in radP && radP.problem.answer === "0.5");
+
+  // "I've put your point on the board" with no board tool call: corrected once, then the false claim is stripped in code.
+  script = (b, i) => i === 0 ? { content: "Nailed the distinction. I've put your point up on the board. What structure would you use?" }
+    : i === 1 ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "Shared vs personal knowledge", kind: "note" })] }
+    : { content: "Added it under the second heading. What structure would you use?" };
+  r = await run("shared knowledge is the culture and language, personal knowledge is lived experience");
+  check("claiming a board write without calling a board tool sends the model back to actually write it", r.board.length === 1 && /no board tool ran/.test(JSON.stringify(calls[1]?.messages || [])));
+  script = () => ({ content: "Nailed the distinction. I've put your point up on the board. What structure would you use?" });
+  r = await run("shared knowledge is the culture and language, personal knowledge is lived experience");
+  check("if it still claims a board write with nothing written, the false claim is removed in code", !r.board.length && !/board/i.test(r.reply) && /\?$/.test(r.reply));
 }
