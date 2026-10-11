@@ -380,4 +380,8 @@ export async function runTutorEngineSim(check, section) {
     : { content: "It's on the board — how would you set up the energy conservation?" };
   r = await run("give me a spring problem");
   check("a new scenario posed only in the message (no board write) is sent back to put it on the board", /nothing is on the board/.test(JSON.stringify(calls[1]?.messages || "")));
+  const { solvedGapKey: sgk } = await import("../server/tutor.ts");
+  check("a gap that states an equation for its unknown is SOLVED in code (2·9.8·3 = ½(400)x² ⟹ x = ? → 0.5422), so a correct 0.54 is never 'checked wrong'",
+    Math.abs(sgk("$2 \\cdot 9.8 \\cdot 3 = \\frac{1}{2}(400)x^2 \\Longrightarrow x = ?$") - 0.542218) < 1e-5 && Math.abs(sgk("2·9.8·3 = ½(400)x² ⟹ x = ?") - 0.542218) < 1e-5 && sgk("3x + 1 = 10 ⟹ x = ?") === 3 && sgk("F = 5 ⟹ F = ?") === null
+    && equivalent("0.54", String(sgk("2·9.8·3 = ½(400)x² ⟹ x = ?")), "x") === "correct" && equivalent("0.55", "0.542218", "x") === "incorrect");
 }

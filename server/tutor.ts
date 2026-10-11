@@ -376,6 +376,36 @@ export function doubtsRightAnswer(reply: string, message: string, sol?: TutorSol
   return null;
 }
 
+/** A gap that states an equation and asks for its unknown ("2·9.8·3 = ½(400)x² ⟹ x = ?"): the key is SOLVED here, not taken from the model.
+ *  Finds the positive root of lhs − rhs numerically (scan + bisection); null unless there is exactly one clear positive root. Exported for tests. */
+export function solvedGapKey(text: string): number | null {
+  const plain = latexToPlainText(String(text || "").replace(/\$/g, " ")).replace(/(\d),(?=\d{3}(?!\d))/g, "$1");
+  const target = /([A-Za-z])\s*=\s*\?\s*$/.exec(plain)?.[1];
+  if (!target) return null;
+  const eq = plain.split(/⟹|⇒|Longrightarrow|Rightarrow|→|->|=>|\\Rightarrow/)[0].replace(/½/g, "(1/2)").replace(/[·⋅×]/g, "*").replace(/²/g, "^2").replace(/³/g, "^3");
+  const sides = eq.split("=");
+  if (sides.length !== 2 || !sides.every((x) => x.trim())) return null;
+  const re = new RegExp(`(?<![A-Za-z])${target}(?![A-Za-z])`);
+  if (!re.test(sides[0] + sides[1])) return null;
+  const l = compileExpr(toExprSource(sides[0].replace(/(?<=\d|\))\s*(?=[A-Za-z(])/g, "*")), [target]);
+  const r = compileExpr(toExprSource(sides[1].replace(/(?<=\d|\))\s*(?=[A-Za-z(])/g, "*")), [target]);
+  if ("error" in l || "error" in r) return null;
+  const f = (x: number) => l.fn({ [target]: x }) - r.fn({ [target]: x });
+  const roots: number[] = [];
+  let prev = 1e-6, fp = f(prev);
+  for (let x = 1e-6, step = 1.05; x < 1e6; x *= step) {
+    const cur = x * step, fc = f(cur);
+    if (Number.isFinite(fp) && Number.isFinite(fc) && fp * fc <= 0 && fp !== fc) {
+      let a = prev, b = cur;
+      for (let i = 0; i < 80; i++) { const m = (a + b) / 2; if (f(a) * f(m) <= 0) b = m; else a = m; }
+      const root = (a + b) / 2;
+      if (!roots.some((q) => Math.abs(q - root) < 1e-6 * Math.max(1, root))) roots.push(root);
+    }
+    prev = cur; fp = fc;
+  }
+  return roots.length === 1 ? Math.round(roots[0] * 1e6) / 1e6 : null;
+}
+
 /** A gap whose line is a pure number calculation ("900×9.8×sin(12°) + 900×0.4 + 360 = ?") has its key computed
  *  HERE, not guessed by the model — a guessed "2553" for 2553.8 marked a right 2554.4 wrong (reported live).
  *  Returns the computed value, or null when the line isn't a closed calculation. Exported for tests. */
@@ -785,7 +815,7 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       // Never derive an equation or show which formula to use: the student names the relationship first.
       const ahead = input.owner !== "student" && !asksForFormula(c.message) ? equationsAhead(text, c.said) : [];
       if (ahead.length) return `REJECTED: that writes an equation they haven't stated (${ahead[0]}). Don't derive it or show which formula to use — ask them what relationship they'd use, and write it up (owner:'student') once THEY say it. You can still write the givens, or the unknown as '… = ?'.`;
-      if (input.kind === "gap") { const k = computedGapKey(text); if (k !== null) input.expectedAnswer = String(k); }
+      if (input.kind === "gap") { const k = computedGapKey(text) ?? solvedGapKey(text); if (k !== null) input.expectedAnswer = String(k); }
       const heard = boardRepeatsMishearing(text, c.spokenRepair);
       if (heard) return `REJECTED: "${heard}" is a speech-recognition slip — write what the student MEANT, typeset in $…$.`;
       const r = makeBoardEntry(input);

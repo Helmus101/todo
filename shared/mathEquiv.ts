@@ -99,6 +99,11 @@ export function equivalent(given: string, expected: string, target?: string): Ve
     const x = fa.fn(point), y = fb.fn(point);
     if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
     compared++;
+    // A number the student rounded to the decimals they wrote ("0.54" for 0.5495…) is right even where that is more than 0.5 % off a small value.
+    if (vars.length === 0 && /^\s*-?\d+(?:[.,]\d+)?\s*$/.test(given)) {
+      const d = (given.split(/[.,]/)[1] || "").trim().length;
+      if (d >= 2 && Math.abs(Number(y.toFixed(d)) - Number(given.replace(",", "."))) < 1e-9) continue;
+    }
     if (Math.abs(x - y) > tol * Math.max(1, Math.abs(x), Math.abs(y))) {
       // An inverse-trig key evaluates in radians (θ = arcsin(0.501) → 0.525) while the student answers the angle in degrees (30), or the
       // other way round: accept either unit for a plain number (reported live: a correct 30° marked wrong, then "you're right" from Otto).

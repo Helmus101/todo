@@ -16,7 +16,7 @@ import { nextTeachingState, evidenceKindFor, reachedSolutionSteps } from "./tuto
 import { solveProblem, focusKeyOf, isNewProblem } from "./solver.ts";
 import { studentProblemStatement } from "./tutorAdapt.ts";
 import { recordConceptEvidence, normalizeStudentModel, emptyStudentModel } from "./studentModel.ts";
-import { runTutorTurn, detectSubject, computedGapKey, subjectsIn } from "./tutor.ts";
+import { runTutorTurn, detectSubject, computedGapKey, solvedGapKey, subjectsIn } from "./tutor.ts";
 import { selectJournal } from "./journal.ts";
 import type { TutorOpenerMemory } from "./claude.ts";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, FocusSession, BoardEntry, TaskObjective, TaskProblem } from "../shared/types.ts";
@@ -1488,7 +1488,7 @@ app.post("/api/tasks/:id/board/:entryId/check", requireAuth, rateLimit(120, 60_0
   if (!answer.trim()) { res.status(400).json({ error: M(req, "Écris une réponse d'abord.", "Write an answer first.") }); return; }
   const target = gapTarget(entry.text);
   // A closed calculation's key is recomputed here, so a gap written with a guessed key still grades right.
-  const key = computedGapKey(entry.text)?.toString() ?? entry.expectedAnswer;
+  const key = computedGapKey(entry.text)?.toString() ?? solvedGapKey(entry.text)?.toString() ?? entry.expectedAnswer;
   let verdict = equivalent(answer, key, target);
   if (verdict === "unknown" && practiceAnswerMatches(answer, key)) verdict = "correct";
   res.json({ verdict });
