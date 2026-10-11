@@ -256,6 +256,16 @@ export async function runTutorEngineSim(check, section) {
 
   const { dedupeParagraphs } = await import("../server/tutor.ts");
   check("a reply that repeats a whole paragraph keeps each paragraph once", dedupeParagraphs("Ah, my mistake.\n\nSo the angle is right.\n\nAh, my mistake.\n\nSo the angle is right.") === "Ah, my mistake.\n\nSo the angle is right." && dedupeParagraphs("One.\n\nTwo.") === "One.\n\nTwo.");
+  // Reported live (screenshot): the WHOLE multi-paragraph reply appeared twice in the same bubble, with
+  // only a SINGLE newline at the seam between the two copies (not a blank line) — the paragraph-level
+  // pass above can't catch that on its own, since it only splits on \n{2,}.
+  {
+    const whole = "Ah, check the mass of the block on the board, Willem — it's 2 kg, not 1 kg! So mg sin(30°) is 2 × 9.8 × 0.5, which gives 9.8 N.\n\nThat means your net force is 15 - 9.8 = 5.2 N, and multiplied by 4 meters gives 20.8 joules.\n\nNotice how that relates to the work-energy theorem: the total work done by all the forces equals the change in kinetic energy. What would the speed of that block be after moving 4 meters if it started from rest?";
+    const duplicated = whole + "\n" + whole; // single-newline seam — the exact reported shape
+    check("a whole multi-paragraph reply duplicated with only a single-newline seam collapses to one copy", dedupeParagraphs(duplicated) === whole);
+  }
+  // A real reply that legitimately has two genuinely different halves (no duplicate) must survive untouched.
+  check("a normal, non-duplicated multi-paragraph reply is never truncated", dedupeParagraphs("First part of the explanation.\nSecond, totally different part.") === "First part of the explanation.\nSecond, totally different part.");
 
   // They reach a result, Otto confirms it in words, nothing is on the board: one correction round asks for the write.
   script = (b, i) => i === 0 ? { content: "Spot on, Willem! Pi over two. What would you say about arccos(−1)?" }

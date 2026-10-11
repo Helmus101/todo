@@ -1952,8 +1952,17 @@ async function tutorTurn(
     try { profile.conceptModel = recordConceptEvidence(normalizeStudentModel(profile.conceptModel) || emptyStudentModel(), { label: skill, subject: t.sourceSubject, kind: evidence, evidence: message.slice(0, 80) }, new Date()); }
     catch { /* best-effort — never blocks the reply */ }
   }
-  // The student's verified step goes on the board as THEIR line, marked right or wrong — unless it's already there.
-  if (stepVerdict && !out.boardCleared) {
+  // The student's VERIFIED-CORRECT step goes on the board as their line — unless it's already there.
+  // Reported live: this used to write a WRONG attempt too ("marked right or wrong"), unconditionally,
+  // against whatever gap happened to still be open — including one the conversation had already moved
+  // past (Otto asks about a different quantity, the student does genuine scratch work on THAT instead,
+  // and every attempt still gets checked against the stale old gap). The board has no visual distinction
+  // for a wrong `result` entry's status (only a `gap` entry's status changes how it renders), so a wrong,
+  // stale-gap, zero-context guess rendered pixel-identical to a real given/result — pure clutter with no
+  // teaching value, three bare unlabeled numbers in a row. A genuinely wrong attempt at the CURRENT gap
+  // still reaches the student through the normal chat reply/correction path, which has real context;
+  // losing the bare, unexplained board entry for the incorrect case only drops noise, not information.
+  if (stepVerdict?.verdict === "correct" && !out.boardCleared) {
     const norm = (x: string) => x.toLowerCase().replace(/[\s$]/g, "");
     if (![...currentBoard, ...out.board].some((e) => norm(e.text) === norm(stepVerdict.given))) {
       out.board.unshift({ id: randomUUID(), text: stepVerdict.given, kind: "result", owner: "student", status: stepVerdict.verdict, at: turnStart } as BoardEntry);

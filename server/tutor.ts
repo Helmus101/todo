@@ -420,10 +420,27 @@ function cleanReply(text: string, voice: boolean): string {
   return dedupeParagraphs(t.trim());
 }
 /** A reply that repeats a whole paragraph (the model sometimes emits its message twice) keeps each paragraph once. Exported for tests. */
-export function dedupeParagraphs(text: string): string {
+export function dedupeParagraphs(rawText: string): string {
+  // Reported live: the WHOLE reply (several paragraphs, ending in a question) appeared twice back to back
+  // in the SAME bubble, with only a SINGLE newline at the seam between the two copies — the paragraph pass
+  // below only catches duplicates separated by a BLANK line, so a single-newline seam slips straight
+  // through it. Worse, running the paragraph pass FIRST can silently drop just the middle paragraph of a
+  // seamed duplicate (it matches an earlier paragraph's key on its own) while leaving the rest jumbled, so
+  // this whole-text check must run on the RAW text first, before paragraph-level processing reshapes it.
+  // If the back half of the text is a normalized duplicate of the front half, it's one message said twice,
+  // not two different paragraphs — try the newline nearest the midpoint as the seam (never a mid-sentence
+  // cut) and only act on a substantial, exact (whitespace/case insensitive) match.
+  const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
+  const mid = Math.floor(rawText.length / 2);
+  for (const cut of [rawText.lastIndexOf("\n", mid), rawText.indexOf("\n", mid)]) {
+    if (cut <= 0 || cut >= rawText.length - 1) continue;
+    const a = norm(rawText.slice(0, cut));
+    if (a.length < 20) continue;
+    if (a === norm(rawText.slice(cut))) { rawText = rawText.slice(0, cut).trim(); break; }
+  }
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const para of text.split(/\n{2,}/)) {
+  for (const para of rawText.split(/\n{2,}/)) {
     const key = para.replace(/\s+/g, " ").trim().toLowerCase();
     if (key && seen.has(key)) continue;
     seen.add(key);
