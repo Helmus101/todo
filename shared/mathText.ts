@@ -32,6 +32,8 @@ export function plainMathToLatex(run: string): string {
   s = s.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]/g, (c) => `^{${"⁰¹²³⁴⁵⁶⁷⁸⁹".indexOf(c)}}`);
   s = s.replace(/[₀₁₂₃₄₅₆₇₈₉]/g, (c) => `_{${"₀₁₂₃₄₅₆₇₈₉".indexOf(c)}}`);
   s = s.replace(/->|⟶|→/g, " \\to ").replace(/=>|⇒/g, " \\Rightarrow ").replace(/≤/g, "\\le ").replace(/≥/g, "\\ge ").replace(/≠/g, "\\ne ").replace(/≈/g, "\\approx ").replace(/×/g, "\\times ").replace(/·/g, "\\cdot ").replace(/÷/g, "\\div ").replace(/−/g, "-").replace(/°/g, "^\\circ ");
+  // a spelled-out "pi" is the constant, not p·i ("pi/2" printed as p over i/2 on the board)
+  s = s.replace(/(^|[^A-Za-z\\])(\d*)pi(?![A-Za-z])/g, "$1$2π");
   for (const [re, rep] of GREEK) s = s.replace(re, rep);
   s = s.replace(/\b(arcsin|arccos|arctan|sinh|cosh|tanh|sin|cos|tan|cot|sec|csc|log|ln|exp|lim)\b/g, "\\$1");
   // roots: √(expr) | √number | √letter

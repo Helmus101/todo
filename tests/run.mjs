@@ -6051,5 +6051,11 @@ await runTutorCompanionSim(check, section);
   const key = "\\arcsin\\left(\\frac{8.3\\sin(126^\\circ)}{13.4}\\right)";
   check("an inverse-trig key accepts the angle in degrees (30 for arcsin(…) = 30.07°) or radians, but not a wrong angle", eq("30", key, "θ") === "correct" && eq("0.525", key, "θ") === "correct" && eq("45", key, "θ") === "incorrect" && eq("5", "2+2") === "incorrect");
 }
+{
+  const { autoMathLine: aml } = await import("../shared/mathText.ts");
+  const cv = readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8");
+  check("a spelled-out 'pi' typesets as the constant (pi/2 → \\frac{\\pi}{2}, not p·i/2); words containing 'pi' are untouched", aml("pi/2") === "$\\frac{\\pi}{2}$" && aml("x = pi/2") === "$x = \\frac{\\pi}{2}$" && !/\\pi/.test(aml("a pipe and a spider")));
+  check("ink drawn out in the side margin reserves no blank space in the board column; a failed whiteboard read is told to Otto, not swallowed", /colL/.test(cv) && /p\.x >= colL && p\.x <= colR/.test(cv) && /couldn't be read just now/.test(cv));
+}
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
