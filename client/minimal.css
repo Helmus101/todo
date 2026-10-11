@@ -120,7 +120,10 @@ hr { border: 0; border-top: 1px solid var(--line-soft); }
 .card-check::after { display: none !important; }
 .tc-swatch { width: 22px !important; height: 22px !important; border-radius: 50% !important; border: 2px solid #fff !important; box-shadow: 0 0 0 1px rgba(0,0,0,.25) !important; padding: 0; }
 .tc-swatch.on { box-shadow: 0 0 0 2px #111 !important; outline: 0 !important; }
-.sm-board-line, .sm-board-entry-text, .sm-board-problem-q, .sm-board-gap-text, .sm-board-empty-line, .sm-board-empty-sub, .sm-board-diagram-caption, .sm-board-outline-heading, .sm-widget-hint { font-family: var(--font-hand) !important; }
+/* ONE board font (reported: "the board should all be the same font"): every word, label, number, chip, figure label
+   and answer box on the board is set in KaTeX's own textbook serif, so prose and typeset maths match exactly. KaTeX's
+   own spans keep their math fonts (italic variables, symbols). Overrides the old handwriting/mono/Inter mix. */
+.sm-board-body, .sm-board-body *:not(.katex):not(.katex *) { font-family: var(--font-board) !important; }
 .sm-board-line, .sm-board-entry-text { font-size: 1.12rem; line-height: 1.55; }
 
 /* warmth: rows respond to the pointer, panels breathe, the page isn't a grid of hard lines */

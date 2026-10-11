@@ -127,6 +127,8 @@
      Deliberately NOT used as the default anywhere else — see each usage site. */
   --font-serif: 'Baskervville', Georgia, 'Times New Roman', serif;
   --font-hand: 'Handlee', 'Bradley Hand', cursive;
+  /* The board's single typeface: KaTeX's textbook serif (loaded with katex.min.css), so words match the maths. */
+  --font-board: KaTeX_Main, 'Times New Roman', serif;
   
   font-optical-sizing: auto;
 }

@@ -2150,7 +2150,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     check("landing is one headline, one sentence, one button — no feature cards, numbering or kickers", /landing-min-main/.test(app) && !/feature-number-framer|sample-task-framer|hero-title-framer/.test(app));
     check("no hard-coded orange accent remains in the stylesheets", !/#ff752b|#f26a22|#e05a18|#d97757/i.test(readFileSync(new URL("../client/styles.css", import.meta.url), "utf8") + readFileSync(new URL("../client/tally.css", import.meta.url), "utf8"))); }
   { const css = readFileSync(new URL("../client/minimal.css", import.meta.url), "utf8"); const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8"); const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
-    check("task check-offs are clear circles with a visible check; marker swatches stay coloured; the board is handwritten", /\.card-check, \.step-mark \{[^}]*border: 2px solid var\(--ink\)/.test(css) && /\.card-check\.checked::before/.test(css) && /:where\(button:not\(\.tc-swatch\):not\(\.card-check\)/.test(css) && /\.sm-board-line[^{]*\{ font-family: var\(--font-hand\)/.test(css));
+    check("task check-offs are clear circles with a visible check; marker swatches stay coloured; the board is ONE font (KaTeX's textbook serif)", /\.card-check, \.step-mark \{[^}]*border: 2px solid var\(--ink\)/.test(css) && /\.card-check\.checked::before/.test(css) && /:where\(button:not\(\.tc-swatch\):not\(\.card-check\)/.test(css) && /\.sm-board-body, \.sm-board-body \*:not\(\.katex\):not\(\.katex \*\) \{ font-family: var\(--font-board\) !important; \}/.test(css));
     check("Otto keeps the original face (no overrides)", !/\.tutor-face::after/.test(css) && /avatar"\]:not\(\.tutor-face\)/.test(css));
     check("copy is bolder: thinking partner, not an answer machine; tutor voice holds a high bar", /thinking partner, not an answer machine/.test(app) && /You hold a high bar and you are plainly on their side/.test(cl)); }
   check("board is flat: plain lines, no section numbers or boxes", /sm-board-line/.test(boardSrc) && !/sm-board-section-num/.test(boardSrc));
@@ -4809,7 +4809,7 @@ section("Kick loop egress/CPU fix — hidden-tab guard, trimmed payload, ETag (s
   const serverSrcKick = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
   const kickStart = serverSrcKick.indexOf('app.post("/api/jobs/kick"');
   const kickRoute = serverSrcKick.slice(kickStart, serverSrcKick.indexOf('app.get("/api/cron/drain"', kickStart));
-  check("kick strips chat/board/problems/objectives before sending — this fires every 10s for the lifetime of any active job", /const \{ chat, board, problems, objectives, \.\.\.rest \} = t;/.test(kickRoute));
+  check("kick strips chat/board/problems/objectives before sending — this fires every 10s for the lifetime of any active job", /const \{ chat, board, problems, objectives, (?:solution, tutorState, )?\.\.\.rest \} = t;/.test(kickRoute));
   check("kick sets an ETag and honors If-None-Match, same pattern as /api/status and /api/tasks", /res\.setHeader\("ETag", etag\);[\s\S]*?if \(req\.headers\["if-none-match"\] === etag\) \{ res\.status\(304\)\.end\(\); return; \}/.test(kickRoute));
 
   const apiSrcKick = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
@@ -5956,6 +5956,16 @@ section("egress: finished work is compacted on every write (the account row is r
   check("compaction is applied at the one write choke point (store.saveState)", /state = \{ \.\.\.state, tasks: compactTasksForStorage\(state\.tasks \|\| \[\]\) \};/.test(readFileSync(new URL("../server/store.ts", import.meta.url), "utf8")));
 }
 
+section("the tutor's hidden worked solution and teaching state never reach the browser");
+{
+  const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const comp = readFileSync(new URL("../shared/taskCompaction.ts", import.meta.url), "utf8");
+  check("outgoingTasks, the job kick and the chat echo all strip solution/tutorState; finished tasks drop them",
+    /const \{ solution: _sol, tutorState: _ts, \.\.\.t \} = t0 as WebTask;/.test(idx) && /const \{ chat, board, problems, objectives, solution, tutorState, \.\.\.rest \} = t;/.test(idx) &&
+    /const \{ solution: _hiddenSolution, tutorState: _hiddenState, \.\.\.leanTask \} = t;/.test(idx) && /solution: _s, tutorState: _t/.test(comp));
+  check("the tutor route solves the focus problem once and records code-verified evidence", /if \(focus && focusKeyOf\(focus\) !== t\.solution\?\.focusKey\)/.test(idx) && /recordConceptEvidence\(/.test(idx) && /nextTeachingState\(t\.tutorState/.test(idx));
+}
+
 const { runTutorSim } = await import("./tutor-sim.mjs");
 await runTutorSim(check, section);
 
@@ -6007,6 +6017,8 @@ await runTutorSim(check, section);
 }
 const { runTutorEngineSim } = await import("./tutor-engine-sim.mjs");
 await runTutorEngineSim(check, section);
+const { runTutorCompanionSim } = await import("./tutor-companion-sim.mjs");
+await runTutorCompanionSim(check, section);
 {
   const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
   const t = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");

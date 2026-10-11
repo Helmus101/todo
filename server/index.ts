@@ -12,6 +12,10 @@ import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { CourseworkDoc } from "../shared/coursework.ts";
 import { equivalent, gapTarget, verifyStepAgainstGap } from "../shared/mathEquiv.ts";
 import { repairSpokenMath, spokenContextFrom } from "../shared/spokenMath.ts";
+import { nextTeachingState, evidenceKindFor, reachedSolutionSteps } from "./tutor.ts";
+import { solveProblem, focusKeyOf, isNewProblem } from "./solver.ts";
+import { studentProblemStatement } from "./tutorAdapt.ts";
+import { recordConceptEvidence, normalizeStudentModel, emptyStudentModel } from "./studentModel.ts";
 import { runTutorTurn, detectSubject, computedGapKey, subjectsIn } from "./tutor.ts";
 import { selectJournal } from "./journal.ts";
 import type { TutorOpenerMemory } from "./claude.ts";
@@ -241,7 +245,9 @@ function spokenFromBody(raw: unknown): { alternatives: string[] } | undefined {
 }
 
 function outgoingTasks(list: WebTask[] | undefined): WebTask[] {
-  return (list || []).map((t) => {
+  return (list || []).map((t0) => {
+    // The tutor's hidden worked solution and teaching state never reach the browser.
+    const { solution: _sol, tutorState: _ts, ...t } = t0 as WebTask;
     if (t.source !== "freestudy" || !isHandled(t.status)) return t;
     const { chat, board, boardEvents, problems, artifacts, ...rest } = t as any;
     return rest as WebTask;
@@ -1855,7 +1861,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     await commit(req);
     // The tutor screen merges by id from `board`/`problems`/`chatDelta` and keeps its own chat — so it doesn't need the WHOLE task (its full
     // chat + board history) shipped back every turn. That echo grew with the session and was the biggest per-turn payload.
-    const leanTask = t;
+    const { solution: _hiddenSolution, tutorState: _hiddenState, ...leanTask } = t;
     res.json({ reply: out.reply, chatDelta: newChat, board: out.board, boardCleared: out.boardCleared, problems: out.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped, task: leanTask });
   } catch (e: any) {
     console.error(e);
@@ -1907,8 +1913,21 @@ async function tutorTurn(
     return raw;
   })();
   const lang: "fr" | "en" = profile.language === "en" ? "en" : "fr";
+  // THE TUTOR KNOWS THE ANSWER: when the problem in focus changes (a new open exercise, or the student states a new
+  // problem), it is solved once by server/solver.ts and checked by code; every turn then steers by that solution.
+  const openProblem = [...problems].reverse().find((p) => !p.solved);
+  const statedRaw = studentProblemStatement(message);
+  // Their own working on the current problem (its numbers) is not a new problem — only a genuinely new statement is.
+  const stated = statedRaw && isNewProblem(statedRaw, t.solution) ? statedRaw : "";
+  const focus = openProblem?.question || stated;
+  if (focus && focusKeyOf(focus) !== t.solution?.focusKey) {
+    const solved = await solveProblem(focus, t.sourceSubject);
+    addUsage(profile, solved.tokens, "chat");
+    if (solved.solution) t.solution = solved.solution;
+  }
   const out = await runTutorTurn({
     message, history, board: currentBoard, problems, objectives: currentObjectives, lang,
+    solution: t.solution, teaching: t.tutorState,
     voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, spoken, stepVerdict,
     context: { profile, subject: t.sourceSubject, journal: c.recentJournal, journalMeta: c.journalMeta, schoolRecord: schoolRecordLine(req.session.tasks, profile, t.sourceSubject), memory: memoryFromBody(req.body?.memory) },
   });
@@ -1922,6 +1941,16 @@ async function tutorTurn(
     return;
   }
   if (out.guardrailTripped) void recordMetric(req.session.user!, "chat_guardrail_tripped", 1, "freestudy");
+  // The teaching state and what this turn PROVED about the skill — both from code-verified events.
+  const reached = reachedSolutionSteps(message, t.solution);
+  const helpBefore = t.tutorState?.helpLevel ?? 0;
+  t.tutorState = nextTeachingState(t.tutorState, { message, verdict: stepVerdict?.verdict, plan: out.plan, reachedStep: reached.length > 0 });
+  const evidence = evidenceKindFor({ message, verdict: stepVerdict?.verdict, reachedFinal: reached.includes(0), helpLevel: helpBefore });
+  const skill = t.solution?.skill || t.sourceSubject;
+  if (evidence && skill) {
+    try { profile.conceptModel = recordConceptEvidence(normalizeStudentModel(profile.conceptModel) || emptyStudentModel(), { label: skill, subject: t.sourceSubject, kind: evidence, evidence: message.slice(0, 80) }, new Date()); }
+    catch { /* best-effort — never blocks the reply */ }
+  }
   // The student's verified step goes on the board as THEIR line, marked right or wrong — unless it's already there.
   if (stepVerdict && !out.boardCleared) {
     const norm = (x: string) => x.toLowerCase().replace(/[\s$]/g, "");
@@ -3296,7 +3325,7 @@ app.post("/api/jobs/kick", requireAuth, rateLimit(60, 60_000), async (req, res) 
     // missing on an incoming task (see hydrateLocalThreads) — so omitting them here is a free win, not a
     // behavior change. Confirmed via code audit that nothing downstream of api.kick() reads them.
     const lightTasks = responseTasks.map((t: any) => {
-      const { chat, board, problems, objectives, ...rest } = t;
+      const { chat, board, problems, objectives, solution, tutorState, ...rest } = t;
       return rest;
     });
     const body = { active, activeTaskIds, tasks: lightTasks };

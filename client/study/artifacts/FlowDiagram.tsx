@@ -31,7 +31,7 @@ export function FlowDiagram({ spec }: { spec: FlowSpec }) {
         return (
           <g key={n.id}>
             <g fill="var(--surface, #fff)" stroke="currentColor" strokeWidth={1.6}>{shape}</g>
-            <text textAnchor="middle" fontSize={14} fill="currentColor" fontFamily="Inter, system-ui, sans-serif">
+            <text textAnchor="middle" fontSize={14} fill="currentColor" fontFamily="KaTeX_Main, 'Times New Roman', serif">
               {n.lines.map((l, i) => { const t = <tspan key={`l${i}`} x={cx} y={y} fontWeight={600}>{l}</tspan>; y += 18; return t; })}
               {n.noteLines.map((l, i) => { const t = <tspan key={`n${i}`} x={cx} y={y} fontSize={12} opacity={0.7}>{l}</tspan>; y += 15; return t; })}
             </text>
@@ -43,7 +43,7 @@ export function FlowDiagram({ spec }: { spec: FlowSpec }) {
         return (
           <g key={`el${i}`}>
             <rect x={e.lx - w / 2} y={e.ly - 10} width={w} height={20} rx={5} fill="var(--bg, #fff)" opacity={0.92} />
-            <text x={e.lx} y={e.ly + 4} textAnchor="middle" fontSize={12} fill="currentColor" fontFamily="Inter, system-ui, sans-serif">{e.label}</text>
+            <text x={e.lx} y={e.ly + 4} textAnchor="middle" fontSize={12} fill="currentColor" fontFamily="KaTeX_Main, 'Times New Roman', serif">{e.label}</text>
           </g>
         );
       })}

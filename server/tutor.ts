@@ -10,7 +10,10 @@
 //   · spoken input is repaired against the board, and the board never repeats a mishearing (spokenMath.ts)
 // Everything else — how Socratic to be, how much help, which board tool — is the prompt's job.
 import { randomUUID } from "node:crypto";
-import type { BoardEntry, Profile, TaskObjective, TaskProblem } from "../shared/types.ts";
+import type { BoardEntry, Profile, TaskObjective, TaskProblem, TutorSolution, TutorTeachingState } from "../shared/types.ts";
+import { solutionBlock } from "./solver.ts";
+import { buildInclineScene, type InclineForce } from "../shared/inclineScene.ts";
+import { studentModelBlock, normalizeStudentModel } from "./studentModel.ts";
 import { buildTrigScene } from "../shared/trigScene.ts";
 import { sanitizeSvg, svgText } from "../shared/svgSafe.ts";
 import { repairSpokenMath, spokenContextFrom, type SpokenRepair } from "../shared/spokenMath.ts";
@@ -33,61 +36,49 @@ import {
 import { repairLatex, latexifyBoardLine } from "./tutorAdapt.ts";
 
 // ── The prompt ────────────────────────────────────────────────────────────────────────────────────────
-export const TUTOR_PROMPT = `You are Otto, a tutor working one-on-one with a student. You talk with them like a real person sitting next to them, with a shared sheet of paper between you (the BOARD).
+export const TUTOR_PROMPT = `You are Otto, a learning companion working one-on-one with a student — a real person sitting next to them with a shared sheet of paper between you (the BOARD).
 
-YOUR ONE JOB: make them an independent thinker. They should leave able to solve the next problem without you. So THEY do the thinking: you ask, they answer; you point, they find; you check, they fix.
+MISSION: make them an independent thinker — they leave able to solve the next problem WITHOUT you. Success is what they can explain and do on their own, not how fast the answer appears. So they do the thinking; you choose, every turn, the single most useful teaching move.
 
-HOW YOU TALK
-- Hear them first. What did they actually say, and what's underneath (lost, curious, rushing, an idea forming, a side question)? Answer what they asked before you steer. If they correct you or say it isn't working, they're right until proven otherwise: try a different approach.
-- Like a person, not a worksheet. React to what they actually just said first ("ah, nice", "hm, close", "wait, where did the 3 go?"), then ONE question or ONE small nudge. Usually 1-3 short sentences. No lists, no headings, no lectures, no filler praise.
-- Answer in the language they write in. Use their name now and then if you know it.
-- Adapt to them. Fluent? Bigger steps, harder questions. Stuck or frustrated? Smaller steps, a figure, a warmer tone ("this one is fiddly, most people trip here"). Never repeat a question that didn't land: ask it differently.
-- Every reply ends with one clear thing for them to do or answer.
+EVERY TURN — THE LOOP (think it through, then act)
+1. Understand: what did they just say or do, what does it show about their thinking, how sure are they? Answer a question they asked before you steer.
+2. Diagnose (a hypothesis, not a verdict): is the gap conceptual (the idea), procedural (the method), computational (a slip), interpretive (misread the problem) or a missing prerequisite? Test it with a short question when you're unsure.
+3. Choose ONE move, the smallest that helps: probe (make them say what they know or explain their step) → hint (point at the principle, never the result) → visual (a figure or a pointer on the board) → explain (the missing idea, briefly and clearly — then hand the step back) → example (a worked case with DIFFERENT numbers, last line left for them) → practice (a similar problem, no hints). Drop back to probing the moment they're moving.
+4. Respond: a real reaction to what they said, then that one move. Usually 1-3 short sentences ending with ONE clear thing for them to do. Update the board only if it helps.
+5. Verify understanding: a right answer isn't proof. Once they get it, ask why it works or give a similar problem; when they finish, have them check it makes sense, name their method, and ask if they see another way (offer one) and which they'd use in an exam.
+Start your reply with a hidden plan, exactly: <plan>{"diagnosis":"conceptual|procedural|computational|interpretive|prerequisite|none","action":"probe|hint|visual|explain|example|practice|confirm","help_level":0-4}</plan> — the app strips it; the student never sees it.
 
-SOCRATIC, FOR REAL
-- Never give the answer, the next step's result, or the option letter. Not even slipped in ("so it's 12, right?"). If they ask for it, give them a smaller piece instead.
-- Climb only as far as needed, one rung at a time: a question that makes them notice something → point at something on the board → hint the method (never the result) → a worked example with DIFFERENT numbers, last line left for them → only then state the general rule. Drop back down as soon as they're moving again.
-- Never derive an equation for them and never tell them which formula or equation to use. Ask first: "what do you know that links power and speed?", "which relationship involves the angle?". An equation goes on the board only once THEY have said it (then write it up as theirs). If they ask you outright for a formula or a definition, answer it.
-- The first move is theirs: the key idea of a problem (which identity, the substitution, how to set up the equation, how to split the angle) is never in your question or on the board. Ask what they'd try first.
-- Only their numbers: every figure you say is one they or the problem gave. Never compute ahead ("take the square root of 390.4"), never state something and then quiz them on it.
-- Concepts are different from answers: if they ask "what is X?" or "why does this work?", explain it briefly and clearly (an example or a picture beats a definition), then check understanding with a question that makes them use it.
-- Ask real thinking questions: "what do you know?", "what are we looking for?", "why does that work?", "how could you check it?", "does it always hold?", "what would happen if…?", "how sure are you?".
-- Before a multi-step problem, ask for their plan first. When they're done, have them check their answer makes sense, name the method they used, and ask if they see another way (offer one if they don't, e.g. a graph instead of algebra, a tree instead of a formula). Then ask which they'd use in an exam and why.
-- Don't be rigid. A correct step is done: acknowledge it in a few words and move on, never make them redo or rewrite it. If they're stuck twice on the same thing, give a bigger piece.
+HOW MUCH HELP
+- Least help that unlocks them. Never trap a confused student in endless questions: if they're stuck twice (see TEACHING STATE), explain the missing idea directly, then give the step back. If they ask for an explanation, respect it.
+- Never give the answer, a step's result, or the option letter — not even slipped in ("so it's 12, right?"). Asked for it? Give a smaller piece.
+- The first move is theirs: the key idea (which identity, the substitution, how to set up the equation) is never in your question or on the board. Never derive an equation for them or name the formula to use — ask what relationship they'd use. If they ask outright for a formula or definition, answer it.
+- Only their numbers: every figure you say is one they or the problem gave. Never compute ahead, never state something and then quiz them on it.
+- Accept any valid method, even if it's not yours. A correct step is done: acknowledge it specifically and move on — never make them redo it.
 
-BE RIGHT
-- Before you ask or react, work the problem out yourself: the answer, the units, the quickest route. That's how you tell a good move from a slip.
-- Check every step they make yourself, from the givens, before reacting. "Spot on" is only for a value you recomputed and that matches THEIR number. Never confirm a wrong step, never call a right one wrong. If something's off, don't say "wrong": ask the question that lets them spot it.
-- A line starting "VERIFIED BY CODE" is the truth about their step. Trust it over your own reading.
-- If you're unsure what they meant, ask, offering your best reading.
-- Never invent facts or steps, and never blame the app: if an exercise's key disagrees with an answer you believe is right, recompute and say plainly that the key was wrong.
+BE RIGHT — YOU ALWAYS KNOW THE ANSWER
+- The WORKED SOLUTION block (when present) is the verified solution of the problem in focus: steer by it, check their numbers against its steps, watch for its common mistakes. Never reveal it.
+- Without one, work the problem out yourself before reacting. "Spot on" only for a value that matches THEIR number. Never confirm a wrong step, never call a right one wrong; if something's off, ask the question that lets them spot it.
+- A line starting "VERIFIED BY CODE" is the truth about their step. An answer box's "checked wrong" is not gospel: recompute first; if they're right, say so at once.
+- Never invent facts, never blame the app. If unsure what they meant, ask, offering your best reading.
 
-THE BOARD (shared digital paper)
-- The board holds the maths and structure; your message holds the conversation. Don't repeat one in the other.
-- Put things there they'd otherwise have to remember: the givens, a figure, the equation in play, their own steps (owner "student"), a definition, an outline. Maths always typeset in LaTeX between $…$ (e.g. $\\frac{h}{\\tan 25^\\circ}$).
-- Leave the next step as a GAP for them: WRITE_TO_BOARD kind "gap" with the line ending "= ?" and expectedAnswer set. Never write a step they haven't reached or the final answer.
-- When they solve or state something, write it up as their line. Point at a line with ANNOTATE_BOARD instead of re-explaining it.
-- Tools: CREATE_PROBLEM (one practice problem with an answer box, one at a time), GEOMETRY_ON_BOARD / TRIG_SCENE_ON_BOARD (exact figures), GRAPH_ON_BOARD (functions), SVG_ON_BOARD (any other drawing), FLOW_ON_BOARD (processes, causes, essay plans), WIDGET_ON_BOARD (match/sort/order activities), SET_OBJECTIVES (the session's goals, once you know what you're working on), CLEAR_BOARD (new topic).
-- The board never answers your own question: whatever you ask them to work out must not already be written there (leave it as "?").
-- Lists, tables, cheat sheets and anything longer than a sentence or two go on the board; the message just points at it.
-- Never put their sentences on the board (clean maths and structure only), and never erase: correct by adding the fixed version next to it.
-- Exercises: only when they ask for one (offer, then wait for a yes), and only for a single short checkable answer — state the precision (decimal places) and unit. Open questions (explain, why, compare) stay in the conversation.
-- Board lines are numbered in the margin (the #n in the board listing is the number THEY see). To point at a line, say its number ("look at line 4") or use ANNOTATE_BOARD — never a number that isn't there.
-- Never say you put something on the board unless you called a board tool THIS turn; if you want it there, write it first (a short heading or keyword line), then say so.
-- When a number they give isn't the one you asked for, check whether it is the right answer to a LATER step (e.g. the final angle, when you asked for the fraction) before calling it wrong; if so say so and fold it in. If an answer box or your own question was the thing that was off, say it plainly once and move on — don't apologise in circles.
-- "[Exercise] … checked wrong" is an answer box's verdict, not gospel: recompute the answer yourself BEFORE telling them it's wrong. If theirs is right (degrees vs radians, rounding, an equivalent form), say so at once — "that's right, the box was off" — and never ask them to redo it.
-- Teaching is mostly spoken conversation. The board gets only what is worth keeping — the givens, a result they reached, one key line — never every point they make or every turn.
+THE BOARD — shared paper, one worksheet per problem
+- It holds what's worth keeping: the givens, a figure, THEIR equations and results (owner "student"), a definition, an outline. Everything on it is about the problem you're working on — nothing else. Teaching itself is spoken.
+- Maths in LaTeX between $…$. Leave the next step as a GAP (kind "gap", line ending "= ?", expectedAnswer set). Never write a step they haven't reached or the answer; never answer your own question on the board.
+- Figures must be accurate, so use the tools that draw to scale: triangles/circles/polygons → GEOMETRY_ON_BOARD; towers, cliffs, angles of elevation → TRIG_SCENE_ON_BOARD; a block on a slope, forces → INCLINE_ON_BOARD; functions → GRAPH_ON_BOARD; processes, causes, essay plans → FLOW_ON_BOARD. SVG_ON_BOARD is only for qualitative pictures (a cell, apparatus, a map) — never for anything with angles or lengths.
+- Point at a line by its margin number ("look at line 4") or with ANNOTATE_BOARD. Never claim a board write you didn't make this turn.
+- Exercises (CREATE_PROBLEM): only when they ask for one; a single short checkable answer, with precision and unit stated. Open questions stay in the conversation. Lists and anything long go on the board; the message points at it.
 
 ANY SUBJECT
-- Maths/sciences: givens, figure, equation, gaps. History/economics: causes → effects, evidence, a timeline or argument outline. Essays/literature: thesis, structure, quotes; ask them to argue, never write it for them. Languages: vocabulary, a sentence to transform, their own attempt.
+- Maths/sciences: givens, figure, equation, gaps. History/economics: causes → effects, evidence, a timeline or argument outline. Essays/literature: thesis, structure, quotes — they argue, you never write it. Languages: vocabulary, a sentence to transform, their own attempt.
 
-SAFE AND KIND
-- Never harsh, never shaming; age-appropriate always. Off-topic → one friendly line, then back to the work. Don't offer to wrap up ("ready for another?", "call it a win?") unless they ask.
-- First turn with nothing said yet: say hello and ask what they're working on — don't quiz.
+HOW YOU SOUND
+- Like a person: warm, precise, a little demanding, on their side. React to what they actually said ("ah, nice", "hm, where did the 3 go?"). Specific feedback, no filler praise, never harsh. Answer in their language; use their name now and then.
+- Adapt: fluent → bigger steps; frustrated → smaller steps and a warmer tone ("this one's fiddly, most people trip here"). Never repeat a question that didn't land — ask it differently.
+- Off-topic → one friendly line, then back. Don't offer to wrap up unless they ask. First turn with nothing said yet: hello, and ask what they're working on.
 
 CONTEXT
-- What's happening in THIS conversation comes first. The background below (journal, past sessions, deadlines, profile) is there if it genuinely helps (a link to what they learned before, an upcoming test): use it lightly, never recite it.
-- Their JOURNAL is your memory of them: entries are dated and labelled by subject. When one bears on what they're doing, bring it up naturally in your own words ("on Tuesday you wrote that…", "you said last week this one tripped you up") — a short link to something they already know, or a struggle they mentioned. If they ask what's in their journal, answer from it. Never invent an entry.`;
+- THIS conversation comes first. The background (what they've proved before, journal, past sessions, deadlines) is there when it genuinely helps — start at their level, link to what they learned, never recite it, never invent it.
+- Their JOURNAL is your memory of them: dated entries labelled by subject. When one bears on what they're doing, bring it up naturally ("on Tuesday you wrote that…"). If they ask what's in their journal, answer from it. Never invent an entry.`;
 
 const VOICE_BLOCK = `\n\nVOICE MODE: your reply is read aloud. Write it as speech: no symbols, no LaTeX, no markdown in the reply. Every equation goes on the board, and you refer to it ("look at the second line").`;
 
@@ -111,8 +102,21 @@ const CLEAR_BOARD = {
 };
 const PROBLEM = { ...CREATE_PROBLEM_TOOL, description: "Put ONE practice problem on the board with an answer box (only when there is exactly one short, checkable answer). Only one unanswered problem at a time. Give `check` (an expression computing the answer) for any numeric answer." };
 
+const INCLINE_ON_BOARD = {
+  name: "INCLINE_ON_BOARD",
+  description: "Draw a block on an inclined plane, TO SCALE: the slope at exactly the given angle, the weight straight down, the normal perpendicular to the surface, components along/into the slope, friction against the motion. Use it for any slope / ramp / hill / force problem instead of drawing it yourself. Label only GIVEN values; put '?' for what they must find.",
+  input_schema: { type: "object", properties: {
+    angle: { type: "number", description: "slope angle in degrees" },
+    forces: { type: "array", items: { type: "string", enum: ["weight", "components", "normal", "friction", "applied"] }, description: "which arrows to draw — only the ones the student has reached or that the problem gives (default weight + normal)" },
+    motion: { type: "string", enum: ["up", "down", "none"], description: "which way the block moves along the slope (sets friction's direction)" },
+    labels: { type: "object", description: "optional labels: weight, normal, friction, applied, angle, block — GIVEN values only (e.g. {\"friction\":\"360 N\", \"applied\":\"F = ?\"})" },
+    caption: { type: "string" },
+  }, required: ["angle"] },
+};
+const SVG_QUALITATIVE = { ...SVG_ON_BOARD_TOOL, description: "Draw a QUALITATIVE picture only (a cell, apparatus, a map, a labelled sketch) by writing SVG. Never for anything with angles, lengths or forces to scale — those go through GEOMETRY_ON_BOARD, TRIG_SCENE_ON_BOARD, INCLINE_ON_BOARD or GRAPH_ON_BOARD, which draw accurately." };
+
 export function tutorTools(canvasMode: boolean) {
-  return [WRITE_TO_BOARD, PROBLEM, ANNOTATE_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, SVG_ON_BOARD_TOOL, FLOW_ON_BOARD_TOOL, WIDGET_ON_BOARD_TOOL, SET_OBJECTIVES_TOOL, CLEAR_BOARD, ...(canvasMode ? [CREATE_INTERACTIVE_TOOL] : [])];
+  return [WRITE_TO_BOARD, PROBLEM, ANNOTATE_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, INCLINE_ON_BOARD, GRAPH_ON_BOARD_TOOL, SVG_QUALITATIVE, FLOW_ON_BOARD_TOOL, WIDGET_ON_BOARD_TOOL, SET_OBJECTIVES_TOOL, CLEAR_BOARD, ...(canvasMode ? [CREATE_INTERACTIVE_TOOL] : [])];
 }
 
 // ── Context ───────────────────────────────────────────────────────────────────────────────────────────
@@ -134,6 +138,8 @@ export function backgroundBlock(c: TutorContext): string {
     studentNameLine(p?.name),
     personalContextLine(p),
     milestoneLine(p, c.subject),
+    // What they've PROVED (code-verified evidence per skill, server/studentModel.ts) — where to start, what to skip.
+    (() => { try { return studentModelBlock(normalizeStudentModel(p?.conceptModel), { subject: c.subject, limit: 6 }); } catch { return ""; } })(),
     errorLogLine(p, c.subject),
     recentJournalLine(c.journal, c.subject, c.journalMeta),
     sessionRecapLine(p?.sessions, c.subject),
@@ -162,6 +168,10 @@ export interface TutorTurnInput {
   canvasMode?: boolean;
   spoken?: { alternatives: string[] };
   stepVerdict?: { gap: string; given: string; verdict: "correct" | "incorrect" };
+  /** The verified worked solution of the problem in focus (server/solver.ts) — hidden, the tutor steers by it. */
+  solution?: TutorSolution;
+  /** Help given so far this session (nextTeachingState). */
+  teaching?: TutorTeachingState;
   lang: "fr" | "en";
 }
 
@@ -176,6 +186,95 @@ export interface TutorTurnResult {
   error?: boolean;
   /** A reply had to be replaced because it gave the answer away. */
   guardrailTripped: boolean;
+  /** The model's hidden plan for this turn (parsed from <plan>…</plan>, never shown). */
+  plan?: TutorPlanLite;
+}
+
+/** The model's hidden per-turn teaching decision. Parsed leniently — a missing or malformed plan never blocks a reply. */
+export interface TutorPlanLite { diagnosis?: string; action?: string; helpLevel?: number }
+const ACTIONS = ["probe", "hint", "visual", "explain", "example", "practice", "confirm"];
+export function parsePlan(text: string): TutorPlanLite | undefined {
+  const m = /<plan>([\s\S]*?)<\/plan>/i.exec(String(text || ""));
+  if (!m) return undefined;
+  try {
+    const j = JSON.parse(m[1].trim());
+    const action = ACTIONS.includes(String(j.action)) ? String(j.action) : undefined;
+    const helpLevel = Number.isFinite(Number(j.help_level)) ? Math.max(0, Math.min(4, Math.round(Number(j.help_level)))) : undefined;
+    return { ...(j.diagnosis ? { diagnosis: String(j.diagnosis).slice(0, 40) } : {}), ...(action ? { action } : {}), ...(helpLevel != null ? { helpLevel } : {}) };
+  } catch { return undefined; }
+}
+
+const STUCK = /\b(?:i (?:don'?t|do not) (?:know|get it|understand)|idk|no idea|i'?m (?:stuck|lost|confused)|not sure|je (?:ne )?sais pas|j'?sais pas|aucune idée|je suis (?:perdu|bloqué)e?|je comprends pas|help me|aide[- ]moi)\b/i;
+/** The teaching state after this turn — updated by CODE from what actually happened (a stuck message, a code-verified
+ *  wrong or right step), with the model's own help level only as the record of what it just gave. Pure. */
+export function nextTeachingState(prev: TutorTeachingState | undefined, ev: { message: string; verdict?: "correct" | "incorrect"; plan?: TutorPlanLite; reachedStep?: boolean }): TutorTeachingState {
+  const p = prev || { helpLevel: 0, stuckStreak: 0, turns: 0 };
+  const right = ev.verdict === "correct" || ev.reachedStep || /\[(?:Exercise|Exercice)\][^\n]*(?:marked right|checked right|juste)/i.test(ev.message);
+  const stuck = !right && (STUCK.test(ev.message) || ev.verdict === "incorrect" || /\[(?:Exercise|Exercice)\][^\n]*(?:marked wrong|checked wrong|faux)/i.test(ev.message));
+  return {
+    turns: p.turns + 1,
+    stuckStreak: right ? 0 : stuck ? p.stuckStreak + 1 : p.stuckStreak,
+    // A right step drops the help back toward probing; otherwise the level is what the tutor just gave.
+    helpLevel: right ? Math.max(0, (ev.plan?.helpLevel ?? p.helpLevel) - 2) : (ev.plan?.helpLevel ?? p.helpLevel),
+    ...(ev.plan?.action ? { lastAction: ev.plan.action } : p.lastAction ? { lastAction: p.lastAction } : {}),
+    ...(ev.plan?.diagnosis ? { lastDiagnosis: ev.plan.diagnosis } : p.lastDiagnosis ? { lastDiagnosis: p.lastDiagnosis } : {}),
+  };
+}
+
+/** The teaching state as a prompt block — what help has been given and what the next move should be. */
+export function teachingBlock(t: TutorTeachingState | undefined): string {
+  if (!t || !t.turns) return "";
+  const advice = t.stuckStreak >= 2
+    ? "They've been stuck " + t.stuckStreak + " turns in a row: questions aren't working. Explain the missing idea directly and briefly (or show a worked example with different numbers), then hand the next step back to them."
+    : t.stuckStreak === 1
+      ? "They were stuck last turn: go one rung up (a sharper hint, a pointer on the board, or a figure), not the same question again."
+      : "They're moving: keep the help light (a question or a nudge).";
+  return `\n\nTEACHING STATE (kept by the app): help level so far ${t.helpLevel}/4${t.lastAction ? `, last move: ${t.lastAction}` : ""}${t.lastDiagnosis ? `, last diagnosis: ${t.lastDiagnosis}` : ""}. ${advice}`;
+}
+
+/** Does `text` state the solution's final number? A number that's already in the problem statement (a given that
+ *  happens to equal the answer) doesn't count, nor do tiny numbers that read as step counters. */
+export function statesFinalAnswer(text: string, sol: TutorSolution | undefined): boolean {
+  if (!sol || sol.value == null) return false;
+  const v = sol.value;
+  const nums = (x: string) => (String(x || "").replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1").match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
+  const givens = new Set(nums(sol.statement).map((n) => Math.round(n * 1e6)));
+  if (givens.has(Math.round(v * 1e6))) return false;
+  if (Math.abs(v) < 10 && Number.isInteger(v)) {
+    // a small whole answer only counts when stated as the answer ("x = 4", "= 4", "is 4")
+    return new RegExp(`(?:=|\\bis|\\bequals?|\\bgives?)\\s*\\$?\\s*${v}(?![\\d.])`, "i").test(String(text || ""));
+  }
+  return nums(text).some((n) => Math.abs(n - v) <= Math.max(0.01, Math.abs(v) * 0.006));
+}
+
+/** What this turn PROVES about the skill, from code-verified events only (exercise results, gap/step verdicts,
+ *  the solution's final answer) — never the model's own opinion. The help already given decides how much a right
+ *  answer counts. Returns null when nothing was verified this turn. Exported for tests. */
+export function evidenceKindFor(ev: { message: string; verdict?: "correct" | "incorrect"; reachedFinal?: boolean; helpLevel: number }):
+  "solved-unaided" | "solved-after-hint" | "solved-after-partial" | "solved-after-explanation" | "mistake" | null {
+  const ex = /\[(?:Exercise|Exercice)\][^\n]*?(marked right|checked right|juste|marked wrong|checked wrong|faux)/i.exec(ev.message);
+  const right = ev.verdict === "correct" || ev.reachedFinal || (ex && /right|juste/i.test(ex[1]));
+  const wrong = !right && (ev.verdict === "incorrect" || (ex && /wrong|faux/i.test(ex[1])));
+  if (wrong) return "mistake";
+  if (!right) return null;
+  return ev.helpLevel <= 0 ? "solved-unaided" : ev.helpLevel <= 2 ? "solved-after-hint" : ev.helpLevel === 3 ? "solved-after-partial" : "solved-after-explanation";
+}
+
+/** A code verdict from the solution: the student's number matches a step (or the answer). */
+export function solutionMatchLine(message: string, sol: TutorSolution | undefined): string {
+  const r = reachedSolutionSteps(message, sol);
+  if (!r.length) return "";
+  return `\n\nVERIFIED BY CODE: the number they just gave matches ${r.includes(0) ? "the FINAL ANSWER" : `step ${r[0]} of the worked solution`} — it is RIGHT. Confirm it specifically, then ${r.includes(0) ? "have them check it makes sense and ask about another method or a similar problem" : "move to the next step"}.`;
+}
+
+/** The student's numbers that match a step of the verified solution — they've reached that step. Exported for tests. */
+export function reachedSolutionSteps(message: string, sol: TutorSolution | undefined): number[] {
+  if (!sol) return [];
+  const theirs = (String(message || "").replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1").match(/-?\d+(?:\.\d+)?/g) || []).map(Number).filter((n) => Number.isFinite(n) && Math.abs(n) >= 1);
+  const hits: number[] = [];
+  sol.steps.forEach((st, i) => { if (st.value != null && theirs.some((n) => Math.abs(n - st.value!) <= Math.max(0.01, Math.abs(st.value!) * 0.006))) hits.push(i + 1); });
+  if (sol.value != null && theirs.some((n) => Math.abs(n - sol.value!) <= Math.max(0.01, Math.abs(sol.value!) * 0.006))) hits.push(0);
+  return hits;
 }
 
 const MAX_TOOL_ROUNDS = 5;
@@ -183,7 +282,9 @@ const MAX_HISTORY = 30;
 
 /** The answer keys a reply must not state: open gaps (board + this turn) and unsolved problems. A value the
  *  student already said themselves is theirs, not a leak. Exported for tests. */
-export function leakedValue(reply: string, message: string, board: BoardEntry[], problems: TaskProblem[]): string | null {
+export function leakedValue(reply: string, message: string, board: BoardEntry[], problems: TaskProblem[], sol?: TutorSolution): string | null {
+  // The verified solution's final answer (as a number within rounding, or as text) is never said before they get it.
+  if (sol && statesFinalAnswer(reply, sol) && !statesFinalAnswer(message, sol)) return "the problem's answer";
   for (const g of board) {
     if (g.kind !== "gap" || !g.expectedAnswer || g.status === "correct") continue;
     if (replyStatesValue(reply, g.expectedAnswer) && !replyStatesValue(message, g.expectedAnswer)) return g.expectedAnswer;
@@ -211,13 +312,16 @@ export function inventsProblemOnBoard(text: string, said: string[]): boolean {
 /** The reply asks them to recheck something that is RIGHT: the app already marked their exercise answer right, or
  *  the number they just gave IS the value of the expression the reply tells them to redo ("235,200" vs "multiply
  *  1200×9.8×20"; "24350" vs "800×9.8×sin(15°)×12"). Returns the correction note, or null. Exported for tests. */
-export function doubtsRightAnswer(reply: string, message: string): string | null {
+export function doubtsRightAnswer(reply: string, message: string, sol?: TutorSolution): string | null {
   const RECHECK = /\b(?:check (?:that|this|it|your|the)|(?:try|run|re-?run|work|do) (?:it |that |this )?(?:out )?again|re-?check|re-?run|let'?s (?:check|re-?run|redo)|double[- ]check|not quite|was from the previous|look again|try \d)/i;
   if (!RECHECK.test(reply)) return null;
   if (/\[(?:Exercise|Exercice)\][^\n]*(?:marked right|checked right|juste|vérifié juste)/i.test(message)) return "the app already checked their answer and it is RIGHT — don't ask them to redo it; acknowledge it and move on";
   const num = (x: string) => Number(x.replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1").replace(",", "."));
   const theirs = (message.match(/\d[\d\s,]*(?:\.\d+)?/g) || []).map((x) => num(x.trim())).filter((n) => Number.isFinite(n) && n >= 10);
   if (!theirs.length) return null;
+  // Their number IS a step of the verified solution: right, whatever the reply's own arithmetic says.
+  const reached = reachedSolutionSteps(message, sol);
+  if (reached.length) return `their number is ${reached.includes(0) ? "the correct final answer" : `correct (it's step ${reached[0]} of the solution)`} — they were RIGHT; confirm it instead of asking them to redo it`;
   const plain = latexToPlainText(reply.replace(/\$/g, " "));
   for (const m of plain.matchAll(/\d[\d.,]*\s*[×x*·]\s*[\d\s.,×x*·()°a-z]*\d[)°]*/gi)) {
     const src = toExprSource(m[0].replace(/(\d),(\d{3})/g, "$1$2"));
@@ -259,6 +363,22 @@ export function softenOpener(reply: string, fr: boolean): string {
     return (fr ? frRep : en) + rest.charAt(0).toLowerCase() + rest.slice(1);
   }
   return reply;
+}
+
+const STOP = new Set("that this with have from what when where which their there about would could should these those them they then than just also into your yours been were will what the and for are but not you can how why does each other step line board".split(" "));
+/** Is a board line about the problem in focus? It must share a number or a real word with the focus (the solution's
+ *  statement, the givens, the problems, what the student said recently) — the board kept getting lines nobody asked
+ *  for (reported: "sometimes it just writes random stuff"). Empty focus (session just started) → anything goes. */
+export function relevantToFocus(text: string, focus: string[]): boolean {
+  const toks = (x: string) => {
+    const plain = latexToPlainText(String(x || "").replace(/\$/g, " ")).toLowerCase().replace(/(\d),(?=\d{3}(?!\d))/g, "$1");
+    return new Set([...(plain.match(/\d+(?:\.\d+)?/g) || []), ...(plain.match(/[a-zà-ÿ]{4,}/g) || []).filter((w) => !STOP.has(w))]);
+  };
+  const f = new Set(focus.flatMap((x) => [...toks(x)]));
+  if (!f.size) return true;
+  const mine = [...toks(text)];
+  if (!mine.length) return true; // pure symbols ("$F = ma$" with no numbers/words) can't be judged — let it through
+  return mine.some((w) => f.has(w) || [...f].some((g) => g.length >= 5 && w.length >= 5 && (g.startsWith(w.slice(0, 5)) || w.startsWith(g.slice(0, 5)))));
 }
 
 /** A wrong arithmetic claim in the reply ("12 × 3 = 38"), as a correction note for the model, or null. */
@@ -306,6 +426,9 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     + backgroundBlock(context)
     + objectivesBlock(objectives)
     + (boardSurfaceBlock(board, problems) || "\n\nTHE BOARD IS EMPTY.")
+    + solutionBlock(input.solution)
+    + solutionMatchLine(message, input.solution)
+    + teachingBlock(input.teaching)
     + stepVerdictLine(input.stepVerdict)
     + (input.spoken && spokenRepair ? voiceInputBlock(message, input.spoken.alternatives, spokenRepair) : "");
 
@@ -316,8 +439,9 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   ];
   const tools = tutorTools(!!input.canvasMode).map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } }));
 
-  const said = [...history.filter((h) => h.role === "user").map((h) => h.text), message, ...(spokenRepair ? [spokenRepair.interpreted, ...(input.spoken?.alternatives || [])] : []), ...problems.map((p) => p.question || ""), ...board.filter((b) => b.kind === "given" || b.owner === "student").map((b) => b.text)];
+  const said = [...history.filter((h) => h.role === "user").map((h) => h.text), message, input.solution?.statement || "", ...(spokenRepair ? [spokenRepair.interpreted, ...(input.spoken?.alternatives || [])] : []), ...problems.map((p) => p.question || ""), ...board.filter((b) => b.kind === "given" || b.owner === "student").map((b) => b.text)];
   const wantsProblem = wantsExercise(message);
+  const focus = [input.solution?.statement || "", ...problems.filter((p) => !p.solved).map((p) => p.question), ...board.filter((b) => b.kind === "given" || b.owner === "student").map((b) => b.text), ...history.filter((h) => h.role === "user").slice(-3).map((h) => h.text), message].filter(Boolean);
   const allBoard = () => [...(result.boardCleared ? [] : board), ...result.board];
   const allProblems = () => [...problems, ...result.problems];
   let corrected = false;
@@ -341,6 +465,8 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     const toolCalls: any[] = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
     const text = String(msg.content || "");
 
+    const plan = parsePlan(text);
+    if (plan) result.plan = plan;
     if (!toolCalls.length || lastRound) {
       const reply = cleanReply(text, !!input.voiceMode);
       if (!reply) {
@@ -349,12 +475,12 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
         return result;
       }
       // The hard checks, all at once: every problem found goes back in ONE correction round.
-      const leaked = leakedValue(reply, message, allBoard(), allProblems());
+      const leaked = leakedValue(reply, message, allBoard(), allProblems(), input.solution);
       const issues: string[] = [];
       if (leaked) issues.push(`it gives away ${leaked === "the problem's answer" ? "the answer to the open problem" : `the value of the open gap (${leaked})`} — they must find it; keep the idea, drop the value, end with one question that gets them there`);
       if (wantsProblem && !result.problems.length) issues.push("they asked for an exercise: create it now with CREATE_PROBLEM (full statement, one short answer, a check expression for a numeric answer, precision and unit in the hint), then one line pointing them to it");
       if (asksToWrite(message) && !result.board.length) issues.push("they asked you to write it on the board: do it now (WRITE_TO_BOARD, clean maths in $…$, their numbers), then one short line");
-      const doubt = doubtsRightAnswer(reply, message);
+      const doubt = doubtsRightAnswer(reply, message, input.solution);
       if (doubt) issues.push(doubt);
       const badMath = wrongArithmetic(reply, message);
       if (badMath) issues.push(`it contains a wrong calculation: ${badMath}`);
@@ -379,7 +505,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       }
       if (leaked) { result.guardrailTripped = true; result.reply = socraticFallback(fr); return result; }
       // Still doubting a RIGHT answer after the correction round: never let it through — confirm it in code.
-      if (doubt && doubtsRightAnswer(reply, message)) {
+      if (doubt && doubtsRightAnswer(reply, message, input.solution)) {
         result.reply = fr ? "Oui, c'est juste — bien joué. Qu'est-ce qui t'a dit quels morceaux multiplier ?" : "Yes, that's right — nice work. What told you which pieces to multiply?";
         return result;
       }
@@ -399,7 +525,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       const name = tc.function?.name;
       const args = parseToolArgs(tc.function?.arguments) || {};
       let content: string;
-      try { content = applyTool(name, args, { message, result, allBoard, allProblems, spokenRepair, fr, said, wantsExercise: wantsProblem }); }
+      try { content = applyTool(name, args, { message, result, allBoard, allProblems, spokenRepair, fr, said, wantsExercise: wantsProblem, focus }); }
       catch (e: any) { content = `ERROR: ${e?.message || e}`; }
       messages.push({ role: "tool", tool_call_id: tc.id, content });
     }
@@ -419,6 +545,8 @@ interface ToolCtx {
   /** Everything the student has said this session (and problems already posted) — the only legitimate source of givens. */
   said: string[];
   wantsExercise: boolean;
+  /** What the board is about right now: the solution's statement, givens, problems, recent student messages. */
+  focus: string[];
 }
 const LEAK = "REJECTED: that shows the answer to an open problem or gap — they must find it. Leave that value out (use '?').";
 const ok = (id?: string) => JSON.stringify({ ok: true, ...(id ? { id } : {}) });
@@ -438,7 +566,8 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
     case "WRITE_TO_BOARD": {
       if (typeof input.text === "string") input.text = latexifyBoardLine(repairLatex(input.text), String(input.kind || ""));
       const text = String(input.text || "");
-      if (result.board.length >= 8) return "LIMIT: that's plenty on the board for one turn.";
+      if (result.board.filter((e) => !["svg", "graph", "flow", "widget", "diagram", "annotation"].includes(String(e.kind))).length >= 3) return "LIMIT: three lines a turn is plenty — the board keeps only what's worth keeping.";
+      if (input.owner !== "student" && input.kind !== "focus" && !relevantToFocus(text, [...c.focus, ...c.result.problems.map((p) => p.question)])) return "REJECTED: that line isn't about the problem you're working on — the board only holds what this problem needs (its givens, their steps, the next gap).";
       if (isDuplicateBoardEntry(c.allBoard(), input)) return "DUPLICATE: that's already on the board — point at it instead.";
       if (input.kind !== "gap" && leaks(text)) return LEAK;
       // A gap that already shows its own answer ("Power = 1000×9.8×sin(10°)×15 = 25,526?", reported live) isn't a gap.
@@ -502,8 +631,21 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       const r = makeGraphEntry(input);
       return "error" in r ? r.error : push(r.entry);
     }
+    case "INCLINE_ON_BOARD": {
+      if (count("svg") >= 2) return "LIMIT: enough figures for one turn.";
+      if (leaks(JSON.stringify(input.labels || {}))) return LEAK;
+      const built = buildInclineScene({ angle: Number(input.angle), forces: Array.isArray(input.forces) ? input.forces as InclineForce[] : undefined, motion: input.motion, labels: input.labels && typeof input.labels === "object" ? input.labels : undefined });
+      if ("error" in built) return built.error;
+      const svg = sanitizeSvg(built.svg);
+      if (!svg) return "ERROR: couldn't build that figure.";
+      const caption = String(input.caption || "").trim().slice(0, 200) || (c.fr ? "Le plan incliné" : "The slope");
+      result.board.push({ id: randomUUID(), text: caption, kind: "svg", svg, facts: built.facts, at: new Date().toISOString() } as BoardEntry);
+      return JSON.stringify({ ok: true, geometry: built.facts });
+    }
     case "SVG_ON_BOARD": {
       if (count("svg") >= 2) return "LIMIT: enough figures for one turn.";
+      // Hand-drawn figures with angles/lengths/forces are never to scale — those go through the computed builders.
+      if (/\d+(?:\.\d+)?\s*(?:°|&#176;|deg)|\d+(?:\.\d+)?\s*(?:m|cm|km|mm|N|kg|m\/s)\b/.test(svgText(sanitizeSvg(String(input.svg || ""))))) return "REJECTED: a figure with angles, lengths or forces must be drawn to scale — use GEOMETRY_ON_BOARD (triangles, circles), TRIG_SCENE_ON_BOARD (elevation/depression), INCLINE_ON_BOARD (slopes and forces) or GRAPH_ON_BOARD (functions).";
       if (leaks(`${input.caption || ""} ${svgText(sanitizeSvg(String(input.svg || "")))}`)) return "REJECTED: that figure labels the answer — show the unknown as '?'.";
       const r = makeSvgEntry(input);
       return "error" in r ? r.error : push(r.entry);

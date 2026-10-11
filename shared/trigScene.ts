@@ -57,7 +57,7 @@ export function buildTrigScene(input: TrigSceneIn): { svg: string; facts: string
   const ty = gy - Ht * sc;                  // top y
   const parts: string[] = [];
   const line = (x1: number, y1: number, x2: number, y2: number, extra = "") => `<line x1="${f(x1)}" y1="${f(y1)}" x2="${f(x2)}" y2="${f(y2)}" ${/stroke="/.test(extra) ? "" : 'stroke="currentColor" '}${/stroke-width="/.test(extra) ? "" : 'stroke-width="2" '}${extra}/>`;
-  const text = (x: number, y: number, s: string, extra = "") => `<text x="${f(x)}" y="${f(y)}" ${/font-size="/.test(extra) ? "" : 'font-size="18" '}${/fill="/.test(extra) ? "" : 'fill="currentColor" '}font-family="Inter, system-ui, sans-serif" ${extra}>${esc(s)}</text>`;
+  const text = (x: number, y: number, s: string, extra = "") => `<text x="${f(x)}" y="${f(y)}" ${/font-size="/.test(extra) ? "" : 'font-size="18" '}${/fill="/.test(extra) ? "" : 'fill="currentColor" '}font-family="KaTeX_Main, 'Times New Roman', serif" ${extra}>${esc(s)}</text>`;
   const COLORS = ["#DC2626", "#2563EB"];
 
   // ground, tower
