@@ -596,7 +596,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     ? [...new Set<string>([
         ...openTasks.filter((x) => (x.sourceSubject || "").toLowerCase() === selectedSubject.toLowerCase()).map((x) => x.title.trim()),
         ...pastSessions.filter((x) => x.subject === selectedSubject).map((x) => sessionTopic(x)).filter(Boolean),
-      ])].filter((x) => x && x.length <= 90).slice(0, 6)
+      ])].filter((x) => x && x.length <= 90).slice(0, 4)
     : [];
 
   // No active session — the landing screen: start button + past sessions.
@@ -782,11 +782,11 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   // differently (or not at all) per OS/browser and reads ambiguous at a glance (explicit request: no emoji
   // in the app). The icon is decorative — the label text carries the meaning.
   const ic = { size: 14, "aria-hidden": true } as const;
+  // Hick's law: never more than three one-tap choices at a time (anything else, they can simply type).
   const nextChips = [
     { label: L("Un autre", "Another one"), text: L("J'en veux un autre comme celui-là.", "Another one like it, please.") },
     { label: L("Plus dur", "Harder"), text: L("Donne-m'en un plus difficile.", "Give me a harder one.") },
     { label: L("Revoir l'idée", "Go over the idea"), text: L("Reprenons l'idée derrière cet exercice.", "Let's go back over the idea behind that one.") },
-    { label: L("Autre chose", "Something else"), text: L("Je voudrais faire autre chose.", "I'd like to do something else.") },
   ];
   const followUps = [
     { label: L("Un indice", "Hint"), text: L("Tu peux me donner un petit indice ?", "Can I have a small hint?") },

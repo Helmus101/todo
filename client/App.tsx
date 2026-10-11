@@ -1125,26 +1125,16 @@ export function App() {
           >
             {en ? "Coursework" : "Cours"}
           </a>}
-          {!isPhone && <a
-            className={`topnav-link ${route === "errorlog" ? "active" : ""}`}
-            href="/errorlog"
-          >
-            {en ? "Mistakes" : "Erreurs"}
-          </a>}
-          <a
-            className={`topnav-link ${route === "settings" ? "active" : ""}`}
-            href="/settings"
-          >
-            {en ? "Settings" : "Réglages"}
-          </a>
-          {!isPhone && isAdminUser(status?.user) && (
-            <a
-              className={`topnav-link ${route === "admin" ? "active" : ""}`}
-              href="/admin"
-            >
-              Admin
-            </a>
-          )}
+          {/* Hick's law: four primary destinations stay in view; the rest sit one tap away under "More" so the bar offers fewer
+              choices at once. The "More" label itself lights up when one of its pages is open. */}
+          <details className="topnav-more" key={route}>
+            <summary className={`topnav-link ${["errorlog", "settings", "admin"].includes(route) ? "active" : ""}`}>{en ? "More" : "Plus"}</summary>
+            <div className="topnav-more-menu">
+              {!isPhone && <a className={`topnav-link ${route === "errorlog" ? "active" : ""}`} href="/errorlog">{en ? "Mistakes" : "Erreurs"}</a>}
+              <a className={`topnav-link ${route === "settings" ? "active" : ""}`} href="/settings">{en ? "Settings" : "Réglages"}</a>
+              {!isPhone && isAdminUser(status?.user) && <a className={`topnav-link ${route === "admin" ? "active" : ""}`} href="/admin">Admin</a>}
+            </div>
+          </details>
         </nav>
       </header>
 

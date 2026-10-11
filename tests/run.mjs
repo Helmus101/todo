@@ -5985,5 +5985,10 @@ await runTutorSim(check, section);
 }
 const { runTutorEngineSim } = await import("./tutor-engine-sim.mjs");
 await runTutorEngineSim(check, section);
+{
+  const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const t = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  check("Hick's law: four primary nav links, the rest under a 'More' menu that closes on navigation; at most 3 one-tap chips and 4 topic suggestions", /className="topnav-more" key=\{route\}/.test(app) && /topnav-more-menu/.test(app) && !/Something else/.test(t) && /slice\(0, 4\)/.test(t));
+}
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
