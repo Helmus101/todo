@@ -76,6 +76,7 @@ function varsIn(src: string): string[] {
 /** Are `given` and `expected` the same expression? Compared at 6 random points in each free variable (both
  *  sides' variables, so a stray letter makes them differ), relative tolerance 1e-6. `target` is the letter
  *  the gap asks for ("b"), dropped from a leading "b =". */
+const INVERSE_TRIG = /arc(?:sin|cos|tan)|\b(?:asin|acos|atan)\b|\\(?:sin|cos|tan)\^\{-1\}|(?:sin|cos|tan)\^\{?-1\}?/i;
 export function equivalent(given: string, expected: string, target?: string): Verdict {
   const a = toExprSource(given, target);
   const b = toExprSource(expected, target);
@@ -98,7 +99,16 @@ export function equivalent(given: string, expected: string, target?: string): Ve
     const x = fa.fn(point), y = fb.fn(point);
     if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
     compared++;
-    if (Math.abs(x - y) > tol * Math.max(1, Math.abs(x), Math.abs(y))) return "incorrect";
+    if (Math.abs(x - y) > tol * Math.max(1, Math.abs(x), Math.abs(y))) {
+      // An inverse-trig key evaluates in radians (θ = arcsin(0.501) → 0.525) while the student answers the angle in degrees (30), or the
+      // other way round: accept either unit for a plain number (reported live: a correct 30° marked wrong, then "you're right" from Otto).
+      if (vars.length === 0 && INVERSE_TRIG.test(`${given} ${expected}`) && !/°|degree|deg\b/i.test(given)) {
+        const deg = (r: number) => (r * 180) / Math.PI;
+        const close = (u: number, v: number) => Math.abs(u - v) <= tol * Math.max(1, Math.abs(u), Math.abs(v));
+        if (close(x, deg(y)) || close(deg(x), y)) return "correct";
+      }
+      return "incorrect";
+    }
   }
   return compared >= 3 ? "correct" : "unknown";
 }

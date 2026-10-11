@@ -6034,5 +6034,10 @@ await runTutorEngineSim(check, section);
   const css = readFileSync(new URL("../client/minimal.css", import.meta.url), "utf8");
   check("board blanks: gaps the tutor moved past lose their '?' and 'Your turn' chip; ink sheets are capped; less top padding", /sm-board-gap-past/.test(b) && /!isPastGap/.test(b) && /Math\.min\(sheetSignal\.height, 240\)/.test(b) && /\.sm-board-gap-past \.sm-board-todo-chip \{ display: none/.test(css));
 }
+{
+  const { equivalent: eq } = await import("../shared/mathEquiv.ts");
+  const key = "\\arcsin\\left(\\frac{8.3\\sin(126^\\circ)}{13.4}\\right)";
+  check("an inverse-trig key accepts the angle in degrees (30 for arcsin(…) = 30.07°) or radians, but not a wrong angle", eq("30", key, "θ") === "correct" && eq("0.525", key, "θ") === "correct" && eq("45", key, "θ") === "incorrect" && eq("5", "2+2") === "incorrect");
+}
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
