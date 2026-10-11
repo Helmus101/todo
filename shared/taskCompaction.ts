@@ -19,6 +19,7 @@ export function compactTasksForStorage(tasks: WebTask[]): WebTask[] {
   const out: WebTask[] = [];
   for (const t of list) {
     if (!isHandled(t.status)) { out.push(t); continue; }
+    // (finished tasks below never keep the tutor's hidden solution or teaching state)
     if (t.source === "freestudy") {
       if (!keptTutor.has(t.id)) continue;
       out.push({
@@ -31,7 +32,7 @@ export function compactTasksForStorage(tasks: WebTask[]): WebTask[] {
     }
     // Any other finished task: its conversation and board are done with; its notes/flashcards/quizzes are kept
     // (they're the student's material), its audit trail trimmed to the last few lines.
-    const { chat: _c, board: _b, boardEvents: _e, ...rest } = t as WebTask & { chat?: unknown; board?: unknown; boardEvents?: unknown };
+    const { chat: _c, board: _b, boardEvents: _e, solution: _s, tutorState: _t, ...rest } = t as WebTask & { chat?: unknown; board?: unknown; boardEvents?: unknown };
     out.push({ ...(rest as WebTask), ...(t.audit ? { audit: t.audit.slice(-3) } : {}) });
   }
   return out;

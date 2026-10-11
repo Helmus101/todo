@@ -821,6 +821,16 @@ export function bubbleDoesMath(reply: string, studentTexts: string[]): boolean {
 /** A tiny, safe numeric expression evaluator (no eval): numbers, + - * / ^ **, unary minus, parentheses, constants pi/e and the
  *  functions sin cos tan asin acos atan sqrt ln log exp abs — plus DEGREE versions sind cosd tand asind acosd atand. Used to
  *  verify an exercise's answer key independently of the model's own arithmetic. null when it can't be evaluated. */
+/** Evaluate a model-written `check` expression for a problem: when the problem is stated in DEGREES, plain
+ *  sin/cos/tan mean degrees (a plain sin(12) in radians turned a right key into −40,126 — reported live). Shared by
+ *  CREATE_PROBLEM's key verification and the solver. */
+export function evalCheckFor(check: string, problemText: string): number | null {
+  const src = String(check || "");
+  if (!src) return null;
+  const inDegrees = /°|\^\s*\{?\\circ|\bdeg(?:ree)?s?\b|\bdegrés?\b/i.test(problemText) && !/\bpi\b|π|\brad(?:ians?)?\b/i.test(problemText + " " + src);
+  return evalMathExpr(inDegrees ? src.replace(/\b(sin|cos|tan)\s*\(/gi, "$1d(") : src);
+}
+
 export function evalMathExpr(src: string): number | null {
   const s = String(src || "").replace(/×/g, "*").replace(/÷/g, "/").replace(/\*\*/g, "^").replace(/\s+/g, "");
   if (!s || s.length > 200 || !/^[0-9a-z+\-*/^().,]+$/i.test(s)) return null;

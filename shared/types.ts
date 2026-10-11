@@ -1214,6 +1214,32 @@ export interface Sendable {
   sent?: boolean;       // fired already (can't double-send)
 }
 
+/** A problem's worked solution, kept hidden from the student (server/solver.ts). */
+export interface TutorSolution {
+  /** What problem this solves (normalized statement) — a different focus means a new solve. */
+  focusKey: string;
+  statement: string;
+  finalAnswer: string;
+  /** The answer as a number when it is one, from the code-evaluated check expression. */
+  value?: number;
+  /** True only when code confirmed the answer (or the answer isn't numeric and needs no check). */
+  verified: boolean;
+  steps: { idea: string; result?: string; value?: number }[];
+  keyIdea?: string;
+  alternatives?: string[];
+  mistakes?: string[];
+  skill?: string;
+  at: string;
+}
+/** The tutor's running record of help given this session (server/tutor.ts). */
+export interface TutorTeachingState {
+  helpLevel: number;
+  stuckStreak: number;
+  lastAction?: string;
+  lastDiagnosis?: string;
+  turns: number;
+}
+
 export interface WebTask {
   id: string;
   title: string;
@@ -1356,6 +1382,11 @@ export interface WebTask {
    *  chatAboutTask to build the "what just happened" prompt block (boardTrajectoryBlock) so a self-
    *  correction or an erase-and-retry is visible as reasoning, not silently lost the next turn. */
   boardEvents?: BoardEventShape[];
+  /** Tutor only, SERVER-ONLY (stripped before any task reaches the client): the worked solution of the problem the
+   *  session is on, produced once by server/solver.ts and verified by code — what the tutor steers by. */
+  solution?: TutorSolution;
+  /** Tutor only, server-only: the running teaching state (help given, stuck streak) — see server/tutor.ts. */
+  tutorState?: TutorTeachingState;
   /** This session's learning objectives (SET_OBJECTIVES tool) — a short checklist Otto lays out once a
    *  topic is chosen (3-6 items) and updates `done` on as the student demonstrates each one, instead of the
    *  single free-text `focus` board entry. Client-local, same as chat/board/problems: replaced wholesale on
