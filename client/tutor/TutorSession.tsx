@@ -54,6 +54,11 @@ async function dismissWithRetry(taskId: string): Promise<boolean> {
  *  (see tutorSessions.ts), saves it locally, and dismisses the task so the next start creates a fresh one.
  *  Past session summaries are shown in a collapsible strip. */
 /** Union by id, keeping every existing item (never drops one), ordered by time. Pure. */
+/** The tutor's in-place corrections (by id) and removals (archived, kept) on its own lines — the only ways an existing line ever changes. */
+export function applyBoardEdits<T extends { id: string; text?: string; archived?: boolean }>(board: T[], edits?: { id: string; text: string }[], removed?: string[]): T[] {
+  if (!edits?.length && !removed?.length) return board;
+  return board.map((e) => { const ed = edits?.find((x) => x.id === e.id); if (ed) return { ...e, text: ed.text }; return removed?.includes(e.id) ? { ...e, archived: true } : e; });
+}
 export function mergeBoardById<T extends { id: string; at?: string; createdAt?: string }>(existing: T[], incoming: T[]): T[] {
   const seen = new Set(existing.map((x) => x.id));
   const fresh = incoming.filter((x) => x && !seen.has(x.id));
@@ -317,7 +322,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       // CREATE_PROBLEM (individual, inline, answerable right on the board) instead — the only artifact this
       // screen actually knows how to show.
       const response = await api.chat(task.id, message, task.chat || [], task.board || [], (task.problems || []).map((p) => ({ ...p, solved: solvedRef.current.has(p.id) })), undefined, undefined, voiceMode, true, true, task.objectives || [], spoken, { id: task.id, source: task.source, sourceSubject: task.sourceSubject, createdAt: task.createdAt }, sessionMemoryForPrompt(pastSessions, task.sourceSubject, Date.now(), openerLang));
-      const { task: updated, objectives, boardCleared } = response as typeof response & { boardCleared?: boolean };
+      const { task: updated, objectives, boardCleared, boardEdits, boardRemoved } = response as typeof response & { boardCleared?: boolean; boardEdits?: { id: string; text: string }[]; boardRemoved?: string[] };
       // objectives is only ever the FULL replacement list (SET_OBJECTIVES' own contract), or undefined
       // when Otto didn't touch it this turn — never overwrite the existing list with an empty one.
       const newObjectives = objectives?.length ? setLocalObjectives(task.id, objectives, userId) : (task.objectives || []);
@@ -330,7 +335,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       setTask({
         ...task,
         ...updated,
-        board: boardCleared ? updated?.board || [] : mergeBoardById(task.board || [], updated?.board || []),
+        board: boardCleared ? updated?.board || [] : applyBoardEdits(mergeBoardById(task.board || [], updated?.board || []), boardEdits, boardRemoved),
         problems: mergeBoardById(task.problems || [], updated?.problems || []),
         chat: [...(task.chat || []), ...(response.chatDelta || [])],
         objectives: newObjectives,

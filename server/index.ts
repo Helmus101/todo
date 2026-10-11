@@ -1690,7 +1690,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
   // answer when the student said they couldn't see what it meant — it had never been told).
   const currentBoardRaw = Array.isArray(req.body?.board) ? req.body.board : [];
   const currentBoard = currentBoardRaw
-    .filter((b: any) => b && typeof b.text === "string" && b.text.trim())
+    .filter((b: any) => b && typeof b.text === "string" && b.text.trim() && b.archived !== true)
     .slice(-60)
     .map((b: any) => ({ id: typeof b.id === "string" ? b.id.slice(0, 64) : "", at: "", text: String(b.text).slice(0, 600), ...(Number.isInteger(b.n) && b.n > 0 && b.n < 10000 ? { n: b.n } : {}), ...(typeof b.targetId === "string" ? { targetId: b.targetId.slice(0, 64) } : {}), ...(typeof b.kind === "string" ? { kind: b.kind } : {}), ...(Array.isArray(b.diagram) ? { diagram: b.diagram.slice(0, 40).filter((o: any) => o && typeof o.op === "string") } : {}), ...(b.kind === "outline" && Array.isArray(b.outline) ? { outline: b.outline.slice(0, 6).map((s: any) => ({ heading: String(s?.heading || "").slice(0, 120), bullets: (Array.isArray(s?.bullets) ? s.bullets : []).map((x: any) => String(x).slice(0, 200)).slice(0, 8) })) } : {}),
       // Ownership/status/concept — dropped here before (only text/kind/diagram/outline survived the
@@ -1974,6 +1974,10 @@ async function tutorTurn(
     { role: "assistant" as const, text: out.reply, at: now, ...(out.problems.length ? { artifacts: out.problems.map((p) => ({ kind: "problem" as const, id: p.id, title: p.question.slice(0, 60) })) } : {}), ...(out.guardrailTripped ? { guardrail: true } : {}) },
   ];
   t.chat = [...(t.chat || []), ...newChat].slice(-CHAT_CAP);
+  // In-place corrections / removals of the tutor's own lines (validated by shared/boardAdapter.ts): applied by id, never duplicated.
+  if (out.boardEdits?.length || out.boardRemoved?.length) {
+    t.board = (t.board || []).map((e) => { const ed = out.boardEdits?.find((x) => x.id === e.id); if (ed) return { ...e, text: ed.text }; return out.boardRemoved?.includes(e.id) ? { ...e, archived: true } : e; });
+  }
   if (out.boardCleared) t.board = out.board;
   else if (out.board.length) t.board = [...(t.board || []), ...out.board].slice(-tasks.BOARD_MERGE_CAP);
   if (out.problems.length) t.problems = [...(t.problems || []), ...out.problems].slice(-tasks.ARTIFACT_CAP);
@@ -1981,7 +1985,7 @@ async function tutorTurn(
   t.updatedAt = now;
   await commit(req);
   res.json({
-    reply: out.reply, chatDelta: newChat, board: out.board, boardCleared: out.boardCleared, problems: out.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped,
+    reply: out.reply, chatDelta: newChat, board: out.board, boardEdits: out.boardEdits, boardRemoved: out.boardRemoved, boardCleared: out.boardCleared, problems: out.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped,
     task: { id: t.id, title: t.title, status: t.status, source: t.source, sourceSubject: t.sourceSubject, updatedAt: t.updatedAt, createdAt: t.createdAt, objectives: t.objectives, board: out.boardCleared ? t.board : out.board, problems: out.problems },
   });
 }

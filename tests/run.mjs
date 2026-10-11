@@ -6099,5 +6099,49 @@ await runTutorCompanionSim(check, section);
   check("a spelled-out 'pi' typesets as the constant (pi/2 → \\frac{\\pi}{2}, not p·i/2); words containing 'pi' are untouched", aml("pi/2") === "$\\frac{\\pi}{2}$" && aml("x = pi/2") === "$x = \\frac{\\pi}{2}$" && !/\\pi/.test(aml("a pipe and a spider")));
   check("ink drawn out in the side margin reserves no blank space in the board column; a failed whiteboard read is told to Otto, not swallowed", /colL/.test(cv) && /p\.x >= colL && p\.x <= colR/.test(cv) && /couldn't be read just now/.test(cv));
 }
+{
+  const { emptyBoard, applyBoardAction: ap, boardSnapshot: snap } = await import("../shared/boardState.ts");
+  const { evalMathExpr: ev } = await import("../server/tutorAdapt.ts");
+  const eng = { evaluate: ev, now: () => "2026-10-11T12:00:00Z" };
+  let n = 0; eng.newId = () => `o${++n}`;
+  let st = emptyBoard("p1");
+  const run = (a) => { const r = ap(st, a, eng); st = r.state; return r.result; };
+  const prob = run({ action: "create", author: "system", object: { type: "problem", id: "prob", data: { statement: "A 15 N force moves a box 4 m", givens: [{ name: "F", value: 15, unit: "N" }, { name: "d", value: 4, unit: "m" }] } } });
+  run({ action: "create", object: { type: "equation", id: "angle", data: { latex: "\\theta = 0^\\circ", expr: "0" } } });
+  const w = run({ action: "append_step", step: { formula: "W = F d cos θ", substituted: "15×4×cos 0°", expr: "15*4*cos(0)", result: 60, unit: "J" }, dependsOn: ["angle"] });
+  const work = run({ action: "create", author: "student", object: { type: "equation", id: "mine", data: { latex: "W = 60" } } });
+  const hiddenStep = run({ action: "create", object: { type: "text", id: "sol", visible: false, data: { text: "full solution" } } });
+  const rev0 = st.revision;
+  check("1/3 inspect lists the existing objects; the original problem is stamped as problem-authored and never duplicated", snap(st).objects.length === 5 && st.objects.prob.author === "problem" && run({ action: "create", object: { type: "problem", data: { statement: "A 15 N force moves a box 4 m", givens: [] } } }).error?.code === "DUPLICATE");
+  const h = run({ action: "highlight", targetId: "angle", part: "θ" });
+  check("2 highlighting adds an emphasis object and leaves the highlighted one untouched (no recreate, same revision)", h.ok && st.objects.angle.revision === 1 && Object.values(st.objects).filter((o) => o.type === "equation").length === 2);
+  const v1 = run({ action: "validate", targetId: w.object.id });
+  check("deterministic validation: 15×4×cos0 = 60 → verified; a wrong claim → invalid, with the engine's value", v1.ok && st.objects[w.object.id].verification === "verified" && (run({ action: "update", targetId: w.object.id, patch: { result: 61 } }), run({ action: "validate", targetId: w.object.id }).note === "the engine computes 60") && st.objects[w.object.id].verification === "invalid");
+  run({ action: "update", targetId: w.object.id, patch: { result: 60 } }); run({ action: "validate", targetId: w.object.id });
+  const up = run({ action: "update", targetId: "angle", patch: { latex: "\\theta = 40^\\circ", expr: "40" } });
+  check("6/8 editing an input marks the dependent calculation stale (never shown verified); unaffected objects keep their state", up.ok && up.stale.includes(w.object.id) && st.objects[w.object.id].verification === "stale" && st.objects.mine.verification === "unverified" && st.objects.prob.revision === 1);
+  const forb = run({ action: "update", targetId: "mine", patch: { latex: "W = 0" } });
+  check("4 the tutor can't overwrite or remove student work; the student can edit their own", !forb.ok && forb.error.code === "FORBIDDEN_STUDENT_WORK" && run({ action: "remove", targetId: "mine" }).error.code === "FORBIDDEN_STUDENT_WORK" && run({ action: "update", author: "student", targetId: "mine", patch: { latex: "W = 60 J" } }).ok);
+  const stale = run({ action: "annotate", targetId: "angle", text: "the slope angle", baseRevision: rev0 });
+  check("5/10 an action built on an old board revision is rejected with an explicit error instead of clobbering newer work; unknown targets error too", !stale.ok && stale.error.code === "STALE_REVISION" && run({ action: "focus", targetId: "nope" }).error.code === "NOT_FOUND");
+  const ann = run({ action: "annotate", targetId: "angle", text: "the slope angle", baseRevision: st.revision });
+  check("13 an annotation sits right next to the object it explains and names its target", ann.ok && st.order[st.order.indexOf("angle") + 1] === ann.object.id && st.objects[ann.object.id].data.targetId === "angle");
+  check("14/15 hidden steps are absent from the student's view (only counted) until revealed; a reveal-all shows them", !snap(st, "student").objects.some((o) => o.id === "sol") && snap(st, "student").hiddenCount === 1 && run({ action: "reveal", all: true }).ok && snap(st, "student").objects.some((o) => o.id === "sol"));
+  const before16 = JSON.stringify(Object.keys(st.objects).sort());
+  const extra = run({ action: "create", object: { type: "text", id: "tmp", data: { text: "scratch" } } });
+  run({ action: "undo" });
+  check("16 undo reverses the intended action without deleting unrelated work", extra.ok && !st.objects.tmp && JSON.stringify(Object.keys(st.objects).sort()) === before16 && !!st.objects.mine);
+  check("reset needs an explicit scope, keeps the problem, and ARCHIVES student work instead of deleting it", run({ action: "reset" }).error.code === "SCOPE_REQUIRED" && run({ action: "reset", scope: "exercise" }).ok && !!st.objects.prob && st.objects.prob.status === "active" && st.objects.mine.status === "archived");
+  check("generated SVG is data, not code: scripts/handlers are rejected; organize only reorders", run({ action: "create", object: { type: "diagram", data: { caption: "x", svg: "<svg><script>alert(1)</script></svg>" } } }).error.code === "INVALID_PAYLOAD" && run({ action: "organize", order: ["nope"] }).error.code === "INVALID_PAYLOAD");
+}
+{
+  const { entriesToState: e2s, applyEntryAction: aea } = await import("../shared/boardAdapter.ts");
+  const ents = [{ id: "a", kind: "formula", text: "x", owner: "otto" }, { id: "b", kind: "result", text: "y", owner: "student" }, { id: "c", kind: "given", text: "z" }];
+  const st2 = e2s(ents);
+  check("adapter: entries load as objects with the right authors (otto→tutor, student, given→problem) in board order", st2.objects.a.author === "tutor" && st2.objects.b.author === "student" && st2.objects.c.author === "problem" && st2.order.join() === "a,b,c");
+  check("adapter: update/remove succeed on tutor lines, are refused on student lines, and unknown ids are NOT_FOUND", aea(ents, { action: "update", targetId: "a", patch: { text: "x2" } }).ok === true && aea(ents, { action: "update", targetId: "b", patch: { text: "q" } }).code === "FORBIDDEN_STUDENT_WORK" && aea(ents, { action: "remove", targetId: "zz" }).code === "NOT_FOUND");
+  const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"), bart = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  check("the route applies edits/removals by id (no duplicates), sends them to the client, hides archived lines from the board and from the tutor's listing", /out\.boardEdits\?\.length \|\| out\.boardRemoved\?\.length/.test(idx) && /boardEdits: out\.boardEdits, boardRemoved: out\.boardRemoved/.test(idx) && /b\.archived !== true/.test(idx) && /filter\(\(e\) => !e\.archived\)/.test(bart));
+}
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

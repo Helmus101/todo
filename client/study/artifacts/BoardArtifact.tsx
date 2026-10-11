@@ -503,7 +503,7 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
 export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, sheetSignal, onGapCheck }: BoardArtifactProps) {
   const L = useLang();
   const endRef = useRef<HTMLDivElement>(null);
-  const entries = task.board || [];
+  const entries = (task.board || []).filter((e) => !e.archived);
   const problems = task.problems || [];
   const [showHint, setShowHint] = useState<{ [key: string]: boolean }>({});
   const [problemState, setProblemState] = useState<{ [key: string]: ProblemState }>({});

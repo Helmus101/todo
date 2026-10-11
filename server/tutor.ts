@@ -19,6 +19,7 @@ import { sanitizeSvg, svgText } from "../shared/svgSafe.ts";
 import { repairSpokenMath, spokenContextFrom, type SpokenRepair } from "../shared/spokenMath.ts";
 import { equationsAhead, asksForFormula } from "../shared/equationsAhead.ts";
 import { findArithmeticClaims } from "./arithmetic.ts";
+import { applyEntryAction } from "../shared/boardAdapter.ts";
 import { boardSurfaceBlock } from "./boardEvents.ts";
 import { replyStatesValue, socraticFallback, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario, inventedNumbers, claimsBoardWrite, stripBoardClaim, reachedResultUnrecorded, confirmsUnchecked, wrapsUpUnasked, blamesWidget, asksToWrite, handsOverCalculation, sendsBackToStatement, statesFormula, misstatesGiven } from "./tutorAdapt.ts";
 export { sendsBackToStatement, statesFormula, misstatesGiven } from "./tutorAdapt.ts";
@@ -60,12 +61,15 @@ BE RIGHT — YOU ALWAYS KNOW THE ANSWER
 - The WORKED SOLUTION block (when present) is the verified solution of the problem in focus: steer by it, check their numbers against its steps, watch for its common mistakes. Never reveal it.
 - Without one, work the problem out yourself before reacting. "Spot on" only for a value that matches THEIR number. Never confirm a wrong step, never call a right one wrong; if something's off, ask the question that lets them spot it.
 - A line starting "VERIFIED BY CODE" is the truth about their step. An answer box's "checked wrong" is not gospel: recompute first; if they're right, say so at once.
+- A message that makes no sense for the subject (a stray sentence about something else, a name, "history") is almost always a mis-heard voice: say once, briefly, that you didn't catch it and ask what they meant. Never treat it as a request — don't clear the board, drop the problem or switch topic because of it. Say "here's a new problem on the board" only after CREATE_PROBLEM has succeeded.
+- If they ask why a line is on the board, tell the truth about it (e.g. "I wrote your 5.52 × 4 from what you said — and 5.52 isn't the net force, so that line is wrong") — never invent an explanation ("a stray note from an earlier run"). A wrong line gets fixed by adding the corrected one beside it.
 - Never invent facts, never blame the app, and NEVER change a given: the problem's numbers are exactly as written, even if they don't work out. If they can't produce what the question asks, say so plainly once and offer to change one — never swap a value to make it work. If unsure what they meant, ask, offering your best reading.
 
 THE BOARD — shared paper, one worksheet per problem
 - It holds what's worth keeping: the givens, a figure, THEIR equations and results (owner "student") — when they reach a result or finish a step, put it on the board right away, cleanly — a definition, an outline. Everything on it is about the problem you're working on — nothing else. Teaching itself is spoken.
 - Maths in LaTeX between $…$. When they ask you to write something, write it (their step goes in as owner "student"). Gaps are rare: most next steps are just asked in conversation; use a GAP (kind "gap", line ending "= ?", expectedAnswer set) only when they should fill in one specific line — at most one, never a second while one is open. Never write a step they haven't reached or the answer; never answer your own question on the board.
 - Figures must be accurate, so use the tools that draw to scale: triangles/circles/polygons → GEOMETRY_ON_BOARD; towers, cliffs, angles of elevation → TRIG_SCENE_ON_BOARD; a block on a slope, forces → INCLINE_ON_BOARD; functions → GRAPH_ON_BOARD; processes, causes, essay plans → FLOW_ON_BOARD. SVG_ON_BOARD is only for qualitative pictures (a cell, apparatus, a map) — never for anything with angles or lengths.
+- Fix a wrong line of YOURS in place with UPDATE_BOARD_LINE (or take it off with REMOVE_BOARD_LINE); the student's own lines are protected — add your corrected line beside theirs. Every board tool returns {ok:true…} or {ok:false,error:{code}}: only say a change happened if the result says ok.
 - Point at a line by its margin number ("look at line 4") or with ANNOTATE_BOARD. Never claim a board write you didn't make this turn.
 - NOTHING ON IT IS EVER DELETED — not their working, not an old problem, not a line you'd rather replace. There is no clear-board action: when the topic changes, ADD the new focus line and leave the old working there. Annotate or correct next to what they wrote; never overwrite it.
 - A formula or equation you put in your REPLY goes on the board too — maths lives on the board, words in the chat. Write it (or the step they reached) and then ask about the line; never leave maths only in the bubble.
@@ -86,6 +90,16 @@ CONTEXT
 const VOICE_BLOCK = `\n\nVOICE MODE: your reply is read aloud. Write it as speech: no symbols, no LaTeX, no markdown in the reply. Every equation goes on the board, and you refer to it ("look at the second line").`;
 
 // ── Tools (the board) ─────────────────────────────────────────────────────────────────────────────────
+const UPDATE_BOARD_LINE = {
+  name: "UPDATE_BOARD_LINE",
+  description: "Correct or reword ONE of YOUR OWN board lines in place (its #n from the board listing). Student-written lines can never be changed — add the corrected line beside theirs with WRITE_TO_BOARD instead. Use it for a wrong line you wrote, not to redraw the board.",
+  input_schema: { type: "object", properties: { target: { type: "string", description: "the line's #n (or id)" }, text: { type: "string", description: "the corrected line, maths in $…$" } }, required: ["target", "text"] },
+};
+const REMOVE_BOARD_LINE = {
+  name: "REMOVE_BOARD_LINE",
+  description: "Take ONE of YOUR OWN lines off the active board (reversible; it is archived, not destroyed). Never for student-written lines; never to clear the board.",
+  input_schema: { type: "object", properties: { target: { type: "string", description: "the line's #n (or id)" } }, required: ["target"] },
+};
 const WRITE_TO_BOARD = {
   name: "WRITE_TO_BOARD",
   description: "Write one short entry on the board: keywords and structure, not prose (≤ 25 words). Maths in LaTeX between $…$. Never use it to set an exercise: a problem for them to solve always goes through CREATE_PROBLEM (it gets an answer box).",
@@ -116,7 +130,7 @@ const SVG_QUALITATIVE = { ...SVG_ON_BOARD_TOOL, description: "Draw a QUALITATIVE
 export function tutorTools(canvasMode: boolean) {
   // No CLEAR_BOARD: the student's working is NEVER deleted — the board only grows (the tool still exists below so a
   // stray call is refused in words rather than wiping the page).
-  return [WRITE_TO_BOARD, PROBLEM, ANNOTATE_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, INCLINE_ON_BOARD, GRAPH_ON_BOARD_TOOL, SVG_QUALITATIVE, FLOW_ON_BOARD_TOOL, WIDGET_ON_BOARD_TOOL, SET_OBJECTIVES_TOOL, ...(canvasMode ? [CREATE_INTERACTIVE_TOOL] : [])];
+  return [WRITE_TO_BOARD, UPDATE_BOARD_LINE, REMOVE_BOARD_LINE, PROBLEM, ANNOTATE_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, INCLINE_ON_BOARD, GRAPH_ON_BOARD_TOOL, SVG_QUALITATIVE, FLOW_ON_BOARD_TOOL, WIDGET_ON_BOARD_TOOL, SET_OBJECTIVES_TOOL, ...(canvasMode ? [CREATE_INTERACTIVE_TOOL] : [])];
 }
 
 // ── Context ───────────────────────────────────────────────────────────────────────────────────────────
@@ -179,6 +193,9 @@ export interface TutorTurnResult {
   reply: string;
   board: BoardEntry[];
   boardCleared?: boolean;
+  /** In-place corrections to the tutor's OWN existing lines (id → new text) and lines taken off the active board (archived, never destroyed). */
+  boardEdits?: { id: string; text: string }[];
+  boardRemoved?: string[];
   problems: TaskProblem[];
   objectives?: TaskObjective[];
   tokens: { in: number; out: number; cachedIn: number };
@@ -574,7 +591,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       const reread = sendsBackToStatement(reply, message);
       if (reread) issues.push(`it sends them back to the problem statement ("${reread}") to re-check something they ALREADY gave — don't re-ask it, use the value they said. If they misread it, say what the problem actually gives and why it differs. If the givens as written genuinely can't produce what the problem asks for, say so plainly ONCE (the numbers as given don't work out, and the one-line reason why) and offer to change one of them, instead of asking them to read it again`);
       const claimedBoard = claimsBoardWrite(reply) && !result.board.length && !result.problems.length;
-      if (claimedBoard) issues.push("you say you'll put (or have put) something on the board, but nothing was written this turn. Write it now: ONE short clean line with WRITE_TO_BOARD (the result or step they reached, their numbers, maths in $…$, owner \"student\"; never their sentence), then reply. Only if there is truly nothing worth keeping, drop that sentence instead");
+      if (claimedBoard) issues.push("you say you'll put (or have put) something on the board, but nothing was written this turn. Write it now (a new problem goes through CREATE_PROBLEM): ONE short clean line with WRITE_TO_BOARD (the result or step they reached, their numbers, maths in $…$, owner \"student\"; never their sentence), then reply. Only if there is truly nothing worth keeping, drop that sentence instead");
       else if (reachedResultUnrecorded(reply, message, result.board.length + result.problems.length)) issues.push("they just reached a result or step of their own and you confirmed it, but nothing went on the board. Record it: ONE short clean line with WRITE_TO_BOARD (kind result or summary, owner \"student\", their numbers, maths in $…$), then reply as you planned");
       if (wrapsUpUnasked(reply, message)) issues.push("it offers to wrap up or move on, which they didn't ask for — stay on the current work");
       if (blamesWidget(reply)) issues.push("it blames the app/widget — if an exercise's key disagrees with a right answer, say plainly the key was wrong");
@@ -770,6 +787,26 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       if ("error" in r) return r.error;
       result.problems.push(r.problem);
       return ok(r.problem.id);
+    }
+    case "UPDATE_BOARD_LINE": {
+      const hit = resolveBoardTarget(String(input.target || ""), c.allBoard());
+      if (!hit?.id) return JSON.stringify({ ok: false, error: { code: "NOT_FOUND", message: "no such board line — use a #n from the board listing" } });
+      const text = latexifyBoardLine(repairLatex(String(input.text || "")), String(hit.kind || "")).trim();
+      if (!text) return JSON.stringify({ ok: false, error: { code: "INVALID_PAYLOAD", message: "the corrected line is empty" } });
+      if (leaks(text)) return LEAK;
+      const r = applyEntryAction(c.allBoard(), { action: "update", targetId: hit.id, patch: { text }, author: "tutor" });
+      if (!r.ok) return JSON.stringify({ ok: false, error: { code: r.code, message: r.code === "FORBIDDEN_STUDENT_WORK" ? "that line is the student's — leave it, and add your corrected line beside it with WRITE_TO_BOARD" : r.message } });
+      const mine = result.board.find((e) => e.id === hit.id);
+      if (mine) mine.text = text; else { result.boardEdits = [...(result.boardEdits || []).filter((x) => x.id !== hit.id), { id: hit.id, text }]; }
+      return JSON.stringify({ ok: true, id: hit.id, revision: r.result.ok ? r.result.revision : 0, stale: r.result.ok ? r.result.stale : [] });
+    }
+    case "REMOVE_BOARD_LINE": {
+      const hit = resolveBoardTarget(String(input.target || ""), c.allBoard());
+      if (!hit?.id) return JSON.stringify({ ok: false, error: { code: "NOT_FOUND", message: "no such board line — use a #n from the board listing" } });
+      const r = applyEntryAction(c.allBoard(), { action: "remove", targetId: hit.id, author: "tutor" });
+      if (!r.ok) return JSON.stringify({ ok: false, error: { code: r.code, message: r.code === "FORBIDDEN_STUDENT_WORK" ? "that line is the student's — it stays" : r.message } });
+      if (result.board.some((e) => e.id === hit.id)) result.board = result.board.filter((e) => e.id !== hit.id); else result.boardRemoved = [...(result.boardRemoved || []), hit.id];
+      return JSON.stringify({ ok: true, id: hit.id });
     }
     case "ANNOTATE_BOARD": {
       const hit = resolveBoardTarget(String(input.target || ""), c.allBoard());
