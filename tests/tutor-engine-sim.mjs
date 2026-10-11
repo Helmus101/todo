@@ -5,7 +5,7 @@
 // carries the conversation first and the background second.
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
 delete process.env.GEMINI_API_KEY;
-const { runTutorTurn, detectSubject, backgroundBlock, TUTOR_PROMPT, leakedValue, wantsExercise, inventsProblemOnBoard, doubtsRightAnswer, softenOpener, computedGapKey, nextTeachingState, sendsBackToStatement } = await import("../server/tutor.ts");
+const { runTutorTurn, detectSubject, backgroundBlock, TUTOR_PROMPT, leakedValue, wantsExercise, inventsProblemOnBoard, doubtsRightAnswer, softenOpener, computedGapKey, nextTeachingState, sendsBackToStatement, statesFormula, misstatesGiven, stripPraiseOpener, tutorTools, applyTool } = await import("../server/tutor.ts");
 const { equivalent } = await import("../shared/mathEquiv.ts");
 const { equationsAhead } = await import("../shared/equationsAhead.ts");
 const { boardLineNumbers } = await import("../shared/boardLines.ts");
@@ -317,4 +317,32 @@ export async function runTutorEngineSim(check, section) {
   script = () => ({ content: "Nice. Let's log that result on the board. What next?" });
   r = await run("so the angle is 30 degrees");
   check("'Let's log that on the board' with no write is sent back (promise = write), and stripped if it still isn't kept", /Let's log/.test(JSON.stringify(calls[1]?.messages || "")) || !/board/i.test(r.reply));
+
+  // Reported live, three asks: never delete the board, stop opening every reply with "Spot on", and put the
+  // maths on the board instead of leaving it in the chat bubble.
+  check("the board-clearing tool is not offered to the tutor", !tutorTools(false).some((t) => t.name === "CLEAR_BOARD"));
+  const blank = { reply: "", board: [], problems: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false };
+  const seen = [{ id: "b1", n: 1, at: "2026-10-11T10:00:00Z", kind: "given", text: "15 N box, 4 m up a 30° slope" }, { id: "b2", n: 2, at: "2026-10-11T10:01:00Z", kind: "result", owner: "student", text: "W = 60 J" }];
+  const refused = applyTool("CLEAR_BOARD", {}, { message: "let's clear the board", result: blank, allBoard: () => seen, allProblems: () => [], spokenRepair: null, fr: false, said: [], wantsExercise: false, focus: [], known: [], solution: undefined });
+  check("a stray clear-board call refuses in words and leaves every entry in place", /^REJECTED: the board is never cleared/.test(refused) && !blank.boardCleared && blank.board.length === 0);
+
+  check("stripPraiseOpener: a canned opener goes, the content stays",
+    stripPraiseOpener("Spot on, Willem! Energy conservation makes it super clean here.") === "Energy conservation makes it super clean here." &&
+    stripPraiseOpener("Exactly — 60 J. What's next?") === "60 J. What's next?" &&
+    stripPraiseOpener("The applied force is 15 N along the slope.") === "The applied force is 15 N along the slope." &&
+    stripPraiseOpener("Spot on!") === "Spot on!");
+  script = (b, i) => i === 0 ? { content: "Spot on, Willem! What does that give you for v?" } : { content: "That's 4.9 m/s — what made you take the square root?" };
+  r = await run("v squared is 24.5");
+  check("opening with canned praise is corrected, and the reply that ships never opens with it", /canned praise/.test(lastUser(calls[1])) && !/^\s*Spot on/i.test(r.reply));
+
+  check("statesFormula / misstatesGiven: a formula counts; a restated GIVEN that isn't in the problem is caught",
+    statesFormula("Initial potential energy mgh turns into kinetic energy ½mv², so you get gh = ½v².") &&
+    statesFormula("It's $W = F \\cdot d$ for a parallel force.") && !statesFormula("Look at line 3 — what do you notice?") &&
+    misstatesGiven("Let's look at the problem on the board: a 3 kg box pulled by a force of 15 N.", ["A 3 kg box pulled up by 12 N"]) === "15" &&
+    misstatesGiven("The problem says 12 N and friction of 2 N.", ["A 3 kg box pulled up by 12 N, friction 2 N"]) === null &&
+    misstatesGiven("Let's look at the problem statement: 3 × 9.8 × sin(20°) = 10.06.", ["A 3 kg box, 20° incline"]) === null);
+
+  script = () => ({ content: "Work is force times distance: W = Fd when the force is parallel. Which force do you mean?" });
+  r = await run("what's the formula for work", { board: [{ id: "g1", at: "", kind: "given", text: "15 N box, 4 m up a 30° slope" }] });
+  check("a formula in the reply goes on the board — the chat carries the words, the board carries the maths", r.board.length === 1 && /W = Fd/.test(r.board[0].text));
 }

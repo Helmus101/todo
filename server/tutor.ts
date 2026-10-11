@@ -20,8 +20,8 @@ import { repairSpokenMath, spokenContextFrom, type SpokenRepair } from "../share
 import { equationsAhead, asksForFormula } from "../shared/equationsAhead.ts";
 import { findArithmeticClaims } from "./arithmetic.ts";
 import { boardSurfaceBlock } from "./boardEvents.ts";
-import { replyStatesValue, socraticFallback, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario, inventedNumbers, claimsBoardWrite, stripBoardClaim, reachedResultUnrecorded, confirmsUnchecked, wrapsUpUnasked, blamesWidget, asksToWrite, handsOverCalculation, sendsBackToStatement } from "./tutorAdapt.ts";
-export { sendsBackToStatement } from "./tutorAdapt.ts";
+import { replyStatesValue, socraticFallback, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario, inventedNumbers, claimsBoardWrite, stripBoardClaim, reachedResultUnrecorded, confirmsUnchecked, wrapsUpUnasked, blamesWidget, asksToWrite, handsOverCalculation, sendsBackToStatement, statesFormula, misstatesGiven } from "./tutorAdapt.ts";
+export { sendsBackToStatement, statesFormula, misstatesGiven } from "./tutorAdapt.ts";
 import { latexToPlainText } from "../shared/mathText.ts";
 import { toExprSource } from "../shared/mathEquiv.ts";
 import { compileExpr } from "../shared/mathExpr.ts";
@@ -60,20 +60,22 @@ BE RIGHT — YOU ALWAYS KNOW THE ANSWER
 - The WORKED SOLUTION block (when present) is the verified solution of the problem in focus: steer by it, check their numbers against its steps, watch for its common mistakes. Never reveal it.
 - Without one, work the problem out yourself before reacting. "Spot on" only for a value that matches THEIR number. Never confirm a wrong step, never call a right one wrong; if something's off, ask the question that lets them spot it.
 - A line starting "VERIFIED BY CODE" is the truth about their step. An answer box's "checked wrong" is not gospel: recompute first; if they're right, say so at once.
-- Never invent facts, never blame the app. If unsure what they meant, ask, offering your best reading.
+- Never invent facts, never blame the app, and NEVER change a given: the problem's numbers are exactly as written, even if they don't work out. If they can't produce what the question asks, say so plainly once and offer to change one — never swap a value to make it work. If unsure what they meant, ask, offering your best reading.
 
 THE BOARD — shared paper, one worksheet per problem
 - It holds what's worth keeping: the givens, a figure, THEIR equations and results (owner "student") — when they reach a result or finish a step, put it on the board right away, cleanly — a definition, an outline. Everything on it is about the problem you're working on — nothing else. Teaching itself is spoken.
 - Maths in LaTeX between $…$. When they ask you to write something, write it (their step goes in as owner "student"). Gaps are rare: most next steps are just asked in conversation; use a GAP (kind "gap", line ending "= ?", expectedAnswer set) only when they should fill in one specific line — at most one, never a second while one is open. Never write a step they haven't reached or the answer; never answer your own question on the board.
 - Figures must be accurate, so use the tools that draw to scale: triangles/circles/polygons → GEOMETRY_ON_BOARD; towers, cliffs, angles of elevation → TRIG_SCENE_ON_BOARD; a block on a slope, forces → INCLINE_ON_BOARD; functions → GRAPH_ON_BOARD; processes, causes, essay plans → FLOW_ON_BOARD. SVG_ON_BOARD is only for qualitative pictures (a cell, apparatus, a map) — never for anything with angles or lengths.
 - Point at a line by its margin number ("look at line 4") or with ANNOTATE_BOARD. Never claim a board write you didn't make this turn.
+- NOTHING ON IT IS EVER DELETED — not their working, not an old problem, not a line you'd rather replace. There is no clear-board action: when the topic changes, ADD the new focus line and leave the old working there. Annotate or correct next to what they wrote; never overwrite it.
+- A formula or equation you put in your REPLY goes on the board too — maths lives on the board, words in the chat. Write it (or the step they reached) and then ask about the line; never leave maths only in the bubble.
 - Exercises (CREATE_PROBLEM): only when they ask for one; a single short checkable answer, with precision and unit stated. Open questions stay in the conversation. Lists and anything long go on the board; the message points at it.
 
 ANY SUBJECT
 - Maths/sciences: givens, figure, equation, gaps. History/economics: causes → effects, evidence, a timeline or argument outline. Essays/literature: thesis, structure, quotes — they argue, you never write it. Languages: vocabulary, a sentence to transform, their own attempt.
 
 HOW YOU SOUND
-- Like a person: warm, precise, a little demanding, on their side. React to what they actually said ("ah, nice", "hm, where did the 3 go?"). Specific feedback, no filler praise — don't open with "Spot on"/"Exactly": say what was right about their reasoning — never harsh. Answer in their language; use their name now and then.
+- Like a person: warm, precise, a little demanding, on their side. React to what they actually said ("ah, nice", "hm, where did the 3 go?"). Specific feedback, no filler praise — never OPEN a reply with canned praise ("Spot on", "Exactly", "Perfect", or those words with your name after): the first clause names what specifically was right about their reasoning, or goes straight to the next step. Never harsh. Answer in their language; use their name now and then.
 - Adapt: fluent → bigger steps; frustrated → smaller steps and a warmer tone ("this one's fiddly, most people trip here"). Never repeat a question that didn't land — ask it differently.
 - Off-topic → one friendly line, then back. Don't offer to wrap up unless they ask. First turn with nothing said yet: hello, and ask what they're working on.
 
@@ -96,11 +98,6 @@ const WRITE_TO_BOARD = {
     outline: { type: "array", description: "kind 'outline' only: [{heading, bullets[]}]", items: { type: "object", properties: { heading: { type: "string" }, bullets: { type: "array", items: { type: "string" } } }, required: ["heading", "bullets"] } },
   }, required: ["text"] },
 };
-const CLEAR_BOARD = {
-  name: "CLEAR_BOARD",
-  description: "Start a clean board for a new topic or problem. Keeps the session focus line unless keepFocus is false.",
-  input_schema: { type: "object", properties: { keepFocus: { type: "boolean" } } },
-};
 const PROBLEM = { ...CREATE_PROBLEM_TOOL, description: "Put ONE practice problem on the board with an answer box (only when there is exactly one short, checkable answer). Only one unanswered problem at a time. Give `check` (an expression computing the answer) for any numeric answer." };
 
 const INCLINE_ON_BOARD = {
@@ -117,7 +114,9 @@ const INCLINE_ON_BOARD = {
 const SVG_QUALITATIVE = { ...SVG_ON_BOARD_TOOL, description: "Draw a QUALITATIVE picture only (a cell, apparatus, a map, a labelled sketch) by writing SVG. Never for anything with angles, lengths or forces to scale — those go through GEOMETRY_ON_BOARD, TRIG_SCENE_ON_BOARD, INCLINE_ON_BOARD or GRAPH_ON_BOARD, which draw accurately." };
 
 export function tutorTools(canvasMode: boolean) {
-  return [WRITE_TO_BOARD, PROBLEM, ANNOTATE_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, INCLINE_ON_BOARD, GRAPH_ON_BOARD_TOOL, SVG_QUALITATIVE, FLOW_ON_BOARD_TOOL, WIDGET_ON_BOARD_TOOL, SET_OBJECTIVES_TOOL, CLEAR_BOARD, ...(canvasMode ? [CREATE_INTERACTIVE_TOOL] : [])];
+  // No CLEAR_BOARD: the student's working is NEVER deleted — the board only grows (the tool still exists below so a
+  // stray call is refused in words rather than wiping the page).
+  return [WRITE_TO_BOARD, PROBLEM, ANNOTATE_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, INCLINE_ON_BOARD, GRAPH_ON_BOARD_TOOL, SVG_QUALITATIVE, FLOW_ON_BOARD_TOOL, WIDGET_ON_BOARD_TOOL, SET_OBJECTIVES_TOOL, ...(canvasMode ? [CREATE_INTERACTIVE_TOOL] : [])];
 }
 
 // ── Context ───────────────────────────────────────────────────────────────────────────────────────────
@@ -420,6 +419,26 @@ function cleanReply(text: string, voice: boolean): string {
   if (voice) t = t.replace(/\$([^$]+)\$/g, (_, x: string) => latexToPlainText(x)).replace(/\\[a-zA-Z]+(?:\s*\{[^{}]*\})*/g, (m) => latexToPlainText(m));
   return dedupeParagraphs(t.trim());
 }
+/** Canned praise as an OPENER ("Spot on, Willem!", "Exactly — 60 J", "Perfect, that's 20.8"): the student sees it
+ *  first and it's the same every turn, so it carries no information (reported live: "don't always say spot on").
+ *  Stripped in code after the prompt's own rule has had its say. A praise word with a lowercase continuation
+ *  ("Spot on with using the component…") is left to the correction round instead of splicing a sentence open. */
+const PRAISE_OPENER = /^\s*(?:spot on|exactly|perfect|nailed it|well done|great (?:job|work|one))\s*[,.!:—–-]+\s*(?:[A-ZÀ-Ý][\p{L}'’-]+\s*[,.!:—–-]+\s*)?/iu;
+export function stripPraiseOpener(t: string): string {
+  const rest = t.trimStart().replace(PRAISE_OPENER, "").trimStart();
+  return rest.length >= 12 ? rest : t;
+}
+
+/** The one line of maths in a reply that belongs on the board: its own $…$ spans, or the clause around the "=". */
+function formulaLineFor(reply: string): string {
+  const spans = (reply.match(/\$[^$\n]{3,}\$/g) || []).slice(0, 3).join(" ");
+  if (spans) return spans.slice(0, 200);
+  const m = /[\p{L}\d²³)\]]\s*[=≈]\s*\S/u.exec(reply);
+  if (!m) return "";
+  const end = reply.slice(m.index).search(/[,;.!?;\n]/);
+  return (end > 0 ? reply.slice(m.index, m.index + end) : reply.slice(m.index)).replace(/\s+/g, " ").trim().slice(0, 200);
+}
+
 /** The comparison key for duplicate detection: case, ALL whitespace, and the glyph variants the model
  *  flip-flops between across two copies of the same sentence (− U+2212 vs hyphen, curly vs straight quotes).
  *  Whitespace used to be merely COLLAPSED, so one copy reading "−0.06N" and the other "-0.06 N" compared
@@ -543,6 +562,12 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       const badLine = [...reply.matchAll(/\b(?:line|ligne)\s*#?\s*(\d{1,3})\b|(?<![\w&])#(\d{1,3})\b/gi)].map((m) => Number(m[1] || m[2])).find((n) => !lines.has(n));
       if (badLine) issues.push(`it points at line ${badLine}, which doesn't exist on their board — use the line's real margin number from the board listing, or describe it`);
       if (!doubt && handsOverCalculation(reply, message)) issues.push("it hands them the calculation (which numbers to multiply/add) — ask what THEY would compute next instead");
+      // Canned praise as the OPENER — the same "Spot on, Willem!" every turn, with nothing specific in it.
+      if (PRAISE_OPENER.test(reply)) issues.push("it opens with canned praise (\"Spot on…\") — never open with praise: the first clause names what SPECIFICALLY was right about their reasoning, or go straight to the next step");
+      // Otto restates a GIVEN with a number that isn't in it — reported live: "the problem on the board: a 3 kg box
+      // is pulled up by a force of 15 N (let's use 15 N instead so it actually moves!)" when the exercise says 12 N.
+      const wrongGiven = misstatesGiven(reply, [...said, ...allBoard().map((b) => b.text)]);
+      if (wrongGiven) issues.push(`it says the problem gives ${wrongGiven}, which is not in it — NEVER change or invent a given: quote their numbers exactly as written, and if they don't work out, say so plainly instead of swapping one`);
       // Sending them back to the problem statement to re-check a value they just gave is the loop the student
       // cannot break — reported live, four turns of "what is the exact pulling force given in the problem text?"
       // while they kept answering "12". Corrected with a prompt round; taken over in code below if it persists.
@@ -593,14 +618,22 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
           : "Let's stop going back to the question and work with what you've given me: your numbers stand as they are. If they can't produce what the question asks for, then the question's numbers don't work — say the word and I'll change one so they do. Which line would you like to pin down first?";
         return result;
       }
+      // A formula in the reply and the board got nothing this turn: put the line up ourselves — the chat carries
+      // the words, the board carries the maths. Skipped when the reply is handing over an equation they never
+      // stated (that stays forbidden), and it can't add a second line to a turn that already wrote one.
+      if (statesFormula(reply) && !ahead.length && !result.board.length && !result.problems.length && !claimedBoard) {
+        const formulaLine = formulaLineFor(reply);
+        if (formulaLine) applyTool("WRITE_TO_BOARD", { text: formulaLine, kind: "formula" }, { message, result, allBoard, allProblems, spokenRepair, fr, said, wantsExercise: wantsProblem, focus, known, solution: input.solution, codeWrite: true });
+      }
       // Claimed a board write but never made one, even after the correction round: remove the false claim.
       if (claimsBoardWrite(reply) && !result.board.length && !result.problems.length) {
         const stripped = stripBoardClaim(reply);
         result.reply = softenOpener(stripped || (fr ? "Qu'est-ce que tu en dis ?" : "What do you make of that?"), fr);
         return result;
       }
-      // Never open harshly ("Careful, Willem —", "No,", "Wrong"): softened in code, no extra round needed.
-      result.reply = softenOpener(reply, fr);
+      // Never open harshly ("Careful, Willem —", "No,", "Wrong") and never with canned praise: both softened in
+      // code, no extra round needed — the opener is the first thing the student reads.
+      result.reply = softenOpener(stripPraiseOpener(reply), fr);
       return result;
     }
 
@@ -635,6 +668,9 @@ interface ToolCtx {
   known?: number[];
   /** The verified solution — its final answer never goes on the board before the student reaches it. */
   solution?: TutorSolution;
+  /** This write is made by CODE from the tutor's own reply (not proposed by the model), so the "is it about the
+   *  problem in focus" check is skipped — it is on-topic by construction. Every other guard still applies. */
+  codeWrite?: boolean;
 }
 
 /** Does `line` state an open gap's answer? Numbers/maths: anywhere (replyStatesValue). A WORD answer ("friction")
@@ -705,7 +741,7 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       if (input.kind === "gap" && result.board.some((e) => e.kind === "gap")) return "LIMIT: one gap a turn — ask the next step in chat instead.";
       if (input.kind === "gap" && lastLineIsOpenGap(c.allBoard())) return "REJECTED: the board already ends on an open gap they haven't filled — ask in chat instead of adding another '= ?' line.";
       if (result.board.filter((e) => !["svg", "graph", "flow", "widget", "diagram", "annotation"].includes(String(e.kind))).length >= 3) return "LIMIT: three lines a turn is plenty — the board keeps only what's worth keeping.";
-      if (input.owner !== "student" && input.kind !== "focus" && !relevantToFocus(text, [...c.focus, ...c.allBoard().map((b) => b.text), ...c.result.problems.map((p) => p.question)], c.known || [])) return "REJECTED: that line isn't about the problem you're working on. Write only this problem's givens, a step THEY reached (owner:'student'), or the next step as a gap ending in '= ?'.";
+      if (input.owner !== "student" && input.kind !== "focus" && !c.codeWrite && !relevantToFocus(text, [...c.focus, ...c.allBoard().map((b) => b.text), ...c.result.problems.map((p) => p.question)], c.known || [])) return "REJECTED: that line isn't about the problem you're working on. Write only this problem's givens, a step THEY reached (owner:'student'), or the next step as a gap ending in '= ?'.";
       if (isDuplicateBoardEntry(c.allBoard(), input)) return "DUPLICATE: that's already on the board — point at it instead.";
       if (input.kind !== "gap" && leaks(text)) return LEAK;
       if (input.owner !== "student" && statesFinalAnswer(text, c.solution) && !reachedSolutionSteps(c.message, c.solution).includes(0)) return LEAK;
@@ -814,10 +850,10 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       return ok();
     }
     case "CLEAR_BOARD": {
-      const focus = input.keepFocus !== false ? c.allBoard().find((e) => e.kind === "focus") : undefined;
-      result.boardCleared = true;
-      result.board = focus ? [focus] : [];
-      return ok();
+      // NEVER — reported live: Otto announced "let's clear the board" and the student's working was gone.
+      // The tool is no longer offered; if it is asked for anyway, nothing happens (spec 3.8 / §12: preserve
+      // student work, append rather than overwrite).
+      return "REJECTED: the board is never cleared — their working stays. Keep every existing entry and add only what's worth keeping.";
     }
     default:
       return `ERROR: unknown tool ${name}.`;

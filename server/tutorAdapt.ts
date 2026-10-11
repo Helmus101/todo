@@ -600,6 +600,36 @@ export function inventedNumbers(reply: string, sources: string[]): string[] {
 }
 
 // ---- "Just draw it" and praise for nothing ----
+/** The reply states a formula or equation ("W = F·d", "$mgh = \\frac{1}{2}mv^2$", "gh = ½v²"). Maths belongs ON
+ *  THE BOARD — a formula that only exists in the chat bubble is a lesson the student has to hold in their head
+ *  (reported live: Otto explained the whole work-energy relation in prose with the board empty). A bare number or
+ *  a sentence with no equation is not a formula. Pure. */
+export function statesFormula(reply: string): boolean {
+  const t = String(reply || "");
+  if (/\$[^$\n]*(?:[=≈]|\\frac|\\sqrt|\\times|\\cdot|\^)[^$\n]*\$/.test(t)) return true;
+  const plain = t.replace(/\$[^$\n]*\$/g, " ").replace(/\\[a-zA-Z]+/g, " ");
+  return /[\p{L}\dπθ²³½¾¼)\]]\s*[=≈]\s*\S/u.test(plain);
+}
+
+/** A sentence where Otto states WHAT THE PROBLEM GIVES, with a value that isn't in it — reported live: "let's look at
+ *  the problem on the board: a 3 kg box is pulled up by a force of 15 N (let's use 15 N instead so it actually
+ *  moves!)" when the exercise says 12 N. Replaces a given to make the numbers work, which is plain wrong: the
+ *  givens are theirs, not Otto's to edit. Sentences carrying arithmetic are skipped (they're a COMPUTATION of the
+ *  givens, not a restatement). Returns the offending value, or null. Pure. */
+const ATTRIBUTES_PROBLEM = /\b(?:the\s+)?(?:problem|question|exercise|statement|givens?|board)\b|(?:^|[:,])\s*(?:we(?:'re| are) given|given)\b/i;
+export function misstatesGiven(reply: string, sources: string[]): string | null {
+  const hay = (sources || []).join(" \n ").replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1");
+  const given = (n: string) => new RegExp(`(?<![\\d.])${n.replace(".", "\\.")}(?![\\d])`).test(hay);
+  for (const s of String(reply || "").split(/(?<=[.!?])\s+|\n+/)) {
+    if (!ATTRIBUTES_PROBLEM.test(s)) continue;
+    if (/[×÷*/^=]|\b(?:sin|cos|tan|sqrt|log|ln)\s*\(/i.test(s)) continue; // computed from the givens, not a restatement
+    const flat = s.replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1");
+    for (const m of flat.matchAll(/(?<![\d.])\d+(?:\.\d+)?(?![\d])/g)) if (!given(m[0])) return m[0];
+  }
+  return null;
+}
+
+// ---- "Just draw it" and praise for nothing ----
 /** The student is asking Otto to DRAW/show the picture (not describing their own drawing). */
 export function asksToDraw(message: string): boolean {
   const m = String(message || "");

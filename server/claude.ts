@@ -2804,7 +2804,9 @@ const WRITE_TO_BOARD_TOOL = {
 
 const CLEAR_BOARD_TOOL = {
   name: "CLEAR_BOARD",
-  description: "Clear or reset the tutor board when moving to a new topic, starting a new problem phase, or cleaning up workspace clutter. Preserves the pinned session focus/goal entry by default unless keepFocus is set to false.",
+  // DEAD: the board is never cleared (reported live — a student's working was wiped mid-lesson). Kept only so a
+  // stray call is answered with an explanation instead of deleting anything.
+  description: "Not available: the board is never cleared. Keep the existing entries and add what's worth keeping.",
   input_schema: {
     type: "object",
     properties: {
@@ -7968,9 +7970,8 @@ export async function chatAboutTask(
     `- NOT TOO MUCH, NOT TOO LITTLE — the budget a real teacher works to. Normally ONE new line per turn; ` +
     `up to three only when you're setting up a new problem (the given, the question, one starting formula); ` +
     `four or more in a turn that isn't a setup is transcription, not teaching. Keep the PAGE readable too: ` +
-    `when you move to a new problem, clear the old working (CLEAR_BOARD, keepFocus) or write the new focus ` +
-    `so the problem they're on stays visible, instead of appending forever until the useful lines are ` +
-    `buried. Under-writing is the other failure — a turn with a real formula, definition or student step and ` +
+    `when you move to a new problem, write the new focus line and LEAVE the old working where it is (the board is never cleared — their work is never deleted) so the problem they're on stays visible, ` +
+    `instead of appending aimlessly until nothing is legible. Under-writing is the other failure — a turn with a real formula, definition or student step and ` +
     `nothing up there is a lesson that happened only in the scrollback. A line is worth writing when they'd ` +
     `otherwise hold it in their head or scroll back for it; anything else stays in chat.\n` +
     `- SELF-EXPLANATION — the cheapest big gain in the research: when they get a step RIGHT and it carries ` +
@@ -8944,7 +8945,7 @@ export async function chatAboutTask(
   // which no longer renders a board anywhere except the Tutor (TutorSession.tsx).
   const includeArtifactTools = wantsArtifactTools(message, history);
   const boardTools = opts?.primer
-    ? [CREATE_PROBLEM_TOOL, ...(sourcesForTrack(profile?.track).length ? [FIND_SOURCE_QUESTION_TOOL] : []), WRITE_TO_BOARD_TOOL, CLEAR_BOARD_TOOL, SVG_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, SOLID_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, WIDGET_ON_BOARD_TOOL, FLOW_ON_BOARD_TOOL, ...(opts?.canvasMode ? [CREATE_INTERACTIVE_TOOL] : []), SET_OBJECTIVES_TOOL]
+    ? [CREATE_PROBLEM_TOOL, ...(sourcesForTrack(profile?.track).length ? [FIND_SOURCE_QUESTION_TOOL] : []), WRITE_TO_BOARD_TOOL, SVG_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, SOLID_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, WIDGET_ON_BOARD_TOOL, FLOW_ON_BOARD_TOOL, ...(opts?.canvasMode ? [CREATE_INTERACTIVE_TOOL] : []), SET_OBJECTIVES_TOOL]
     : [];
   const tools = opts?.canvasMode
     ? [...boardTools, WEB_SEARCH_TOOL, READ_PAGE_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])]
@@ -9787,14 +9788,10 @@ export async function chatAboutTask(
           // they explicitly asked to move on / get another.
           else if (opts?.primer && !asksToMoveOn(message) && !asksForProblem(message) && [...(opts?.currentProblems || []).filter((p) => !p.solved), ...result.problems].length > 0) content = "REJECTED: they haven't answered the exercise already on the board — don't pile another on top. Help them with THAT one (a hint, a smaller question). Only create a new exercise once they've answered it or explicitly ask to skip / move on / get another.";
           else if (isDuplicateProblem([...(opts?.currentProblems || []), ...result.problems], input)) content = "DUPLICATE: that exact problem is already on the board — it's already there for them to answer, don't make it again.";
-          else { const r = makeProblem(input, !!opts?.primer); if ("error" in r) content = r.error; else { result.problems.push(r.problem); content = JSON.stringify({ ok: true, id: r.problem.id }); logAudit("artifact", fr ? `Problème créé : « ${r.problem.question.slice(0, 60)} »` : `Problem created: "${r.problem.question.slice(0, 60)}"`); } }
-        } else if (name === "CLEAR_BOARD") {
-          result.boardCleared = true;
-          const keepFocus = (input as any)?.keepFocus !== false;
-          const focusEntry = keepFocus ? (opts?.currentBoard || []).find((e) => e.kind === "focus") : undefined;
-          result.board = focusEntry ? [focusEntry] : [];
-          content = JSON.stringify({ ok: true, message: "Board cleared." });
-          logAudit("artifact", fr ? "Tableau réinitialisé" : "Board cleared");
+          else { const r = makeProblem(input, !!opts?.primer); if ("error" in r) content = r.error; else { result.problems.push(r.problem); content = JSON.stringify({ ok: true, id: r.problem.id }); logAudit("artifact", fr ? `Problème créé : « ${r.problem.question.slice(0, 60)} »` : `Problem created: "${r.problem.question.slice(0, 60)}"`); } }          } else if (name === "CLEAR_BOARD") {
+          // Nothing is ever erased: the student's working stays. Reported live — Otto announced "let's clear the
+          // board" and the working was gone. boardCleared stays false so the client keeps every entry.
+          content = "REJECTED: the board is never cleared — their working stays. Keep every existing entry, and add the new focus line for the new topic.";
         } else if (name === "WRITE_TO_BOARD") {
           if (input && typeof (input as any).text === "string") (input as any).text = repairLatex((input as any).text); // typeset only AFTER the leak / ahead-of-student checks below (they read the plain text)
           // Deliberately NOT gated by madeEnough/CHAT_MAX_ARTIFACTS — a board entry is meant to be cheap
