@@ -5934,6 +5934,24 @@ section("a live tutor session never 404s on chat (cross-instance race) and a pag
   check("the service worker answers a failed page load with a retry + self-reloading page, not Response.error()", /event\.request\.mode === "navigate"\s*\?\s*fetch\(event\.request\)\.catch\(\(\) => offlinePage\(\)\)/.test(swSrc) && /function offlinePage\(\)/.test(swSrc) && /otto-v5/.test(swSrc));
 }
 
+section("egress: finished work is compacted on every write (the account row is re-downloaded on every full read)");
+{
+  const { compactTasksForStorage, ENDED_TUTOR_STUBS_KEPT } = await import("../shared/taskCompaction.ts");
+  const heavy = (id, status, source, at) => ({ id, title: "T", why: "w", source, status, risk: "low", urgency: 0, importance: 0, quadrant: "q4", score: 0, createdAt: at, updatedAt: at,
+    chat: [{ role: "user", text: "x".repeat(500), at }], board: [{ id: "b", at, kind: "summary", text: "y", svg: "z".repeat(4000) }], boardEvents: [{ at, kind: "wrote", detail: "d" }], problems: [{ id: "p", question: "q", createdAt: at }], notes: [{ id: "n", title: "keep me", body: "b" }], audit: Array.from({ length: 10 }, (_, i) => ({ at, kind: "tool", label: String(i) })) });
+  const live = heavy("live", "needs_review", "freestudy", "2026-10-11T10:00:00Z");
+  const ended = Array.from({ length: ENDED_TUTOR_STUBS_KEPT + 5 }, (_, i) => heavy("s" + i, "dismissed", "freestudy", new Date(Date.UTC(2026, 9, 10, 0, i)).toISOString()));
+  const doneHw = heavy("hw", "done", "pronote", "2026-10-09T10:00:00Z");
+  const openHw = heavy("open", "needs_review", "pronote", "2026-10-09T10:00:00Z");
+  const out = compactTasksForStorage([live, ...ended, doneHw, openHw]);
+  const byId = Object.fromEntries(out.map((t) => [t.id, t]));
+  check("active tasks (a live tutor session, open homework) are stored untouched", JSON.stringify(byId.live) === JSON.stringify(live) && JSON.stringify(byId.open) === JSON.stringify(openHw));
+  check("ended tutor sessions become tiny stubs (no chat/board/events/problems), newest 50 kept", !byId.s54.chat && !byId.s54.board && !byId.s54.boardEvents && !byId.s54.problems && byId.s54.status === "dismissed" && !byId.s0 && out.filter((t) => t.source === "freestudy" && t.status === "dismissed").length === ENDED_TUTOR_STUBS_KEPT);
+  check("other finished tasks drop chat/board/events but keep their notes; audit trimmed", !byId.hw.chat && !byId.hw.board && !byId.hw.boardEvents && byId.hw.notes?.[0]?.title === "keep me" && byId.hw.audit.length === 3);
+  check("task order is preserved", out[0].id === "live" && out[out.length - 1].id === "open");
+  check("compaction is applied at the one write choke point (store.saveState)", /state = \{ \.\.\.state, tasks: compactTasksForStorage\(state\.tasks \|\| \[\]\) \};/.test(readFileSync(new URL("../server/store.ts", import.meta.url), "utf8")));
+}
+
 const { runTutorSim } = await import("./tutor-sim.mjs");
 await runTutorSim(check, section);
 
