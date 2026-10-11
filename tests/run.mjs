@@ -4776,6 +4776,23 @@ section("generateWeeklyStudyDeck / generateMonthlyStudyDeck — the spaced-repet
   check("the monthly CONCISE system prompt now also tells the model to weight toward weak/unlearned concepts", /CONCISE month-end-review[\s\S]*?WEIGHT TOWARD[\s\S]*?box 0-1/.test(monthlyFn));
 }
 
+section("GEOMETRY_ON_BOARD — triangle.sides can't express an unknown, so it must never be used to draw one (source pin)");
+{
+  // Reported live (Tutor screenshot): a "find the unknown side x" problem (two sides + the angle between
+  // them, law of cosines) came out with x ALREADY LABELLED with a real, computed number — because
+  // `triangle.sides` takes exactly three numbers and always solves+labels all three; there's no way to pass
+  // "unknown" through it. The model had computed x itself just to satisfy the schema, silently handing the
+  // student the answer before they'd solved anything. Fixed with an explicit warning + worked example
+  // steering that exact case (two sides, included angle, unknown third side) to points+segments instead,
+  // where the unknown gets a letter label.
+  const gSrc = (() => { const s = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8"); const i = s.indexOf("export const GEOMETRY_ON_BOARD_TOOL"); return s.slice(i, s.indexOf("export const ANNOTATE_BOARD_TOOL")); })();
+  check("the tool warns that triangle.sides cannot express an unknown and always labels all three sides", /`triangle\.sides` CANNOT express an unknown/.test(gSrc) && /solves\+labels ALL three sides/.test(gSrc));
+  check("the warning explicitly names the law-of-cosines 'two sides + included angle, unknown third side' case", /two sides and the angle between them, find/.test(gSrc));
+  check("the tool tells the model NOT to compute the unknown itself just to satisfy the schema", /do NOT compute that value yourself and feed it into `triangle\.sides`/.test(gSrc));
+  check("a worked example routes exactly that case to points+segments with a LETTER label on the unknown side", /THIRD SIDE UNKNOWN \(never use `triangle` here\)/.test(gSrc) && /\{from:'B',to:'C',label:'x'\}/.test(gSrc));
+  check("the triangle field's own schema description repeats the restriction (FULLY-GIVEN \\(SSS\\) only)", /FULLY-GIVEN \(SSS\) triangle only/.test(gSrc) && /NEVER use this when any side is the student's unknown/.test(gSrc));
+}
+
 section("Admin metrics dashboard — gated to one hardcoded email, server AND client (source pins)");
 {
   const serverSrcAdmin = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");

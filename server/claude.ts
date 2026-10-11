@@ -3516,17 +3516,29 @@ export const GEOMETRY_ON_BOARD_TOOL = {
     "arcs and right-angle squares, tick marks for equal sides. NEVER work out pixel coordinates. Use this for ANY geometry " +
     "or trig-setup figure (ALWAYS say what joins what: `segments`/`polygons`, or use `triangle`); use CREATE_INTERACTIVE with JSXGraph when the student should drag points; use DRAW_ON_BOARD only for non-geometric sketches (arrows, number lines, free diagrams). " +
     "Show the GIVEN information only (lengths, angles the problem states) — label what the student must find with '?' " +
-    "or leave it unlabelled, never the answer. Redraw the WHOLE figure when adding to it (e.g. add the altitude). " +
-    "EXAMPLES: a 3-4-5 triangle with the right angle at C → triangle:{names:['A','B','C'], sides:[3,4,5]} (sides are [a=BC, b=CA, c=AB]) " +
-    "+ angles:[{at:'C',from:'A',to:'B',right:true}]. Triangle with altitude → triangle + " +
+    "or leave it unlabelled, never the answer. `triangle.sides` CANNOT express an unknown — it takes exactly three " +
+    "real numbers and solves+labels ALL three sides (that's what it's for: a fully-given SSS triangle). The moment " +
+    "ANY side or angle is the thing the student must find — including a 'two sides and the angle between them, find " +
+    "the third side' law-of-cosines setup — do NOT compute that value yourself and feed it into `triangle.sides` just " +
+    "to satisfy the schema: that silently draws and labels the answer before they've solved anything (reported live: " +
+    "a 'find x' triangle came out with x already labelled with a real, computed number). Use `points`+`segments` " +
+    "instead: place the two known-length vertices with plain coordinates (exact position doesn't matter, only that " +
+    "the figure looks roughly right), and give the unknown segment a LETTER label ('x', not a number). Redraw the " +
+    "WHOLE figure when adding to it (e.g. add the altitude). " +
+    "EXAMPLES: a 3-4-5 triangle with the right angle at C, ALL THREE SIDES GIVEN → triangle:{names:['A','B','C'], sides:[3,4,5]} " +
+    "(sides are [a=BC, b=CA, c=AB]) + angles:[{at:'C',from:'A',to:'B',right:true}]. Triangle with altitude → triangle + " +
     "derive:[{name:'H',kind:'foot',from:'A',onto:['B','C']}] + segments:[{from:'A',to:'H',dashed:true}] + angles:[{at:'H',from:'A',to:'B',right:true}]. " +
+    "Two sides 10 and 7 with a 65° angle between them, THIRD SIDE UNKNOWN (never use `triangle` here) → " +
+    "points:{A:[0,0], B:[10,0], C:[7*cos(65°),7*sin(65°)]} (compute C's coordinates from the given angle — that's " +
+    "trig on the GIVENS, not solving the unknown), segments:[{from:'A',to:'B',label:'10'},{from:'A',to:'C',label:'7'}," +
+    "{from:'B',to:'C',label:'x'}], angles:[{at:'A',from:'B',to:'C',label:'65°'}]. " +
     "Sector of radius 2 and angle 5π/6 → points:{O:[0,0]}, arcs:[{center:'O',r:2,from:0,to:150,label:'5π/6'}], " +
     "derive:[{name:'A',kind:'polar',from:'O',dist:2,deg:0},{name:'B',kind:'polar',from:'O',dist:2,deg:150}], segments:[{from:'O',to:'A',label:'2'},{from:'O',to:'B',label:'2'}]. " +
     "Two circles → circles:[{center:'O1',r:15},{center:'O2',r:10}] with points O1:[0,0], O2:[25,0].",
   input_schema: { type: "object", properties: {
     caption: { type: "string", description: "one short line, shown as the figure's title" },
     points: { type: "object", description: "named points in REAL units, maths orientation (y up): {\"A\":[0,0],\"B\":[4,0]}. Names are letters like A, B, O, H, A'." },
-    triangle: { type: "object", description: "alternative to points for a triangle: {names:[A,B,C], sides:[a,b,c]} where a=BC, b=CA, c=AB; solved exactly (law of cosines). Sides get length labels unless labelSides:false.", properties: { names: { type: "array", items: { type: "string" } }, sides: { type: "array", items: { type: "number" } }, labelSides: { type: "boolean" } } },
+    triangle: { type: "object", description: "alternative to points for a FULLY-GIVEN (SSS) triangle only: {names:[A,B,C], sides:[a,b,c]} where a=BC, b=CA, c=AB; solved exactly (law of cosines) and all three sides get a real numeric length label. NEVER use this when any side is the student's unknown — there is no way to omit or letter-label a `sides` entry, so doing so always draws the computed answer. Use `points`+`segments` for that case instead (see the tool description's own example).", properties: { names: { type: "array", items: { type: "string" } }, sides: { type: "array", items: { type: "number" } }, labelSides: { type: "boolean" } } },
     derive: { type: "array", description: "points computed in order: {name,kind:'midpoint',of:[P,Q]} | {name,kind:'foot',from:P,onto:[Q,R]} (foot of the perpendicular = altitude/height) | {name,kind:'polar',from:P,dist,deg} (a point at a distance and angle from P, degrees counter-clockwise from the +x axis).", items: { type: "object" } },
     segments: { type: "array", description: "\"AB\" or {from,to,label?,dashed?,ticks?(1-3 equal-side marks),arrow?,color?}. label is a length like \"5\" or \"x\".", items: {} },
     polygons: { type: "array", description: "closed shapes: \"ABC\" or {points:[...],fill?:true,color?}", items: {} },
