@@ -236,4 +236,7 @@ export async function runTutorEngineSim(check, section) {
 
   const jb = backgroundBlock({ subject: "Math", journal: [{ date: "2026-10-01", text: "Chain rule was shaky", subjects: ["Math"] }], journalMeta: { total: 5, subjects: { Math: 3, Physics: 2 } }, profile: {} });
   check("the tutor's background carries the journal: dated, labelled by subject, with the overall count — and the prompt tells it to use it", /STUDY JOURNAL/.test(jb) && /2026-10-01 \[Math\]/.test(jb) && /5 entries in all/.test(jb) && /JOURNAL is your memory/.test(TUTOR_PROMPT));
+
+  const { dedupeParagraphs } = await import("../server/tutor.ts");
+  check("a reply that repeats a whole paragraph keeps each paragraph once", dedupeParagraphs("Ah, my mistake.\n\nSo the angle is right.\n\nAh, my mistake.\n\nSo the angle is right.") === "Ah, my mistake.\n\nSo the angle is right." && dedupeParagraphs("One.\n\nTwo.") === "One.\n\nTwo.");
 }

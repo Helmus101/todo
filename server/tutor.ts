@@ -74,6 +74,7 @@ THE BOARD (shared digital paper)
 - Exercises: only when they ask for one (offer, then wait for a yes), and only for a single short checkable answer — state the precision (decimal places) and unit. Open questions (explain, why, compare) stay in the conversation.
 - Board lines are numbered in the margin (the #n in the board listing is the number THEY see). To point at a line, say its number ("look at line 4") or use ANNOTATE_BOARD — never a number that isn't there.
 - Never say you put something on the board unless you called a board tool THIS turn; if you want it there, write it first (a short heading or keyword line), then say so.
+- When a number they give isn't the one you asked for, check whether it is the right answer to a LATER step (e.g. the final angle, when you asked for the fraction) before calling it wrong; if so say so and fold it in. If an answer box or your own question was the thing that was off, say it plainly once and move on — don't apologise in circles.
 - Teaching is mostly spoken conversation. The board gets only what is worth keeping — the givens, a result they reached, one key line — never every point they make or every turn.
 
 ANY SUBJECT
@@ -274,7 +275,19 @@ function cleanReply(text: string, voice: boolean): string {
   // Read aloud: maths becomes readable text ("1000 × 9.8 × sin(10°) × 15", "1/2 mv^2"). It used to just delete every
   // \command, so \times and \sin vanished and "\frac12" read as "12" — "multiply 10009.8(10°)15" (reported live).
   if (voice) t = t.replace(/\$([^$]+)\$/g, (_, x: string) => latexToPlainText(x)).replace(/\\[a-zA-Z]+(?:\s*\{[^{}]*\})*/g, (m) => latexToPlainText(m));
-  return t.trim();
+  return dedupeParagraphs(t.trim());
+}
+/** A reply that repeats a whole paragraph (the model sometimes emits its message twice) keeps each paragraph once. Exported for tests. */
+export function dedupeParagraphs(text: string): string {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const para of text.split(/\n{2,}/)) {
+    const key = para.replace(/\s+/g, " ").trim().toLowerCase();
+    if (key && seen.has(key)) continue;
+    seen.add(key);
+    out.push(para.trim());
+  }
+  return out.join("\n\n");
 }
 
 export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResult> {
