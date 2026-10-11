@@ -4,6 +4,7 @@ import session from "express-session";
 import type { Credentials } from "google-auth-library";
 import type { WebTask, Profile, StudySession, StudyProfile } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile } from "../shared/types.ts";
+import { compactTasksForStorage } from "../shared/taskCompaction.ts";
 import { encryptSecret, decryptSecret } from "./crypto.ts";
 import { reportError } from "./sentry.ts";
 import type { BanditState } from "./bandit.ts";
@@ -459,6 +460,9 @@ export function connectionColumnUpdates(state: AccountState): Record<string, unk
  *  request path). Transient network failures are retried so a blip doesn't silently drop a write. */
 export async function saveState(email: string | undefined, state: AccountState, opts?: { throwOnError?: boolean }): Promise<void> {
   if (!client || !email) return;
+  // Finished work is compacted on EVERY write (shared/taskCompaction.ts): every later read downloads the whole row,
+  // so what an ended tutor session or a done task carries is paid for again on each read, all day.
+  state = { ...state, tasks: compactTasksForStorage(state.tasks || []) };
   const row: Record<string, unknown> = { email, profile: state.profile || emptyProfile(), tasks: state.tasks || [], updated_at: new Date().toISOString() };
   Object.assign(row, connectionColumnUpdates(state));
   // Invalidate rather than try to update-in-place: `state` here often omits google/pronote entirely (see
