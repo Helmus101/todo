@@ -681,7 +681,7 @@ export function confirmsUnchecked(reply: string, message: string, plan?: { stude
 }
 /** "Want to tackle one more, or call it a win?" when the student never asked to stop or move on. */
 export function wrapsUpUnasked(reply: string, message: string): boolean {
-  return /\b(?:ready for (?:another|one more)(?: one)?|call it a (?:win|day)|wrap (?:it |things )?up|tackle one more|ready for (?:another|the next)|want (?:to|another)[^.?!]{0,30}(?:one more|another|next))\b/i.test(reply) && !asksToMoveOn(message);
+  return /\b(?:ready for (?:another|one more)(?: one)?|call it a (?:win|day)|wrap (?:it |this |that |things )?(?:all )?up|tackle one more|ready for (?:another|the next)|want (?:to|another)[^.?!]{0,30}(?:one more|another|next))\b/i.test(reply) && !asksToMoveOn(message);
 }
 
 const GROUND_STOP = new Set("that this with have from what when where which their there about would could should these those them they then than just also into your yours been were will shall cannot dont doesnt isnt arent".split(" "));
@@ -1052,7 +1052,7 @@ export function blamesWidget(reply: string): boolean {
   return /\b(?:widgets?|the (?:checker|answer box|exercise box|app)|the board)\b[^.?!]{0,50}\b(?:picky|hiccup|glitch|bug|buggy|quirk|wrong|mistake|fussy|finicky|weird)|\b(?:picky|finicky|fussy|weird hiccup|glitch)\b|classic (?:percentage )?trap|my bad on the board/i.test(reply);
 }
 
-const BOARD_CLAIM = /\b(?:let'?s|i'?ll|i will|let me|going to|gonna)\s+(?:also\s+|now\s+|just\s+)?(?:log|put|write|add|record|jot|note|capture|pop|place)\b[^.?!\n]{0,60}\b(?:on|to|onto|up on|in)\s+(?:the |your )?board\b|\b(?:i(?:'ve| have|'ll| will)?|let me|just)\s+(?:also\s+|just\s+|now\s+)?(?:put|add(?:ed)?|wrote|written|write|jot(?:ted)?|plac(?:e|ed)|drew|draw(?:n)?|post(?:ed)?|not(?:e|ed)|sketch(?:ed)?|ma(?:de|ke))\b[^.?!\n]{0,70}\b(?:on|to|up on|onto|in)\s+(?:the |your )?board\b|\b(?:it'?s|that'?s|this is|is) (?:now )?(?:up )?on the board\b|\bup on the board\b|\bj'ai (?:mis|écrit|ajouté|noté|dessiné)\b[^.?!\n]{0,70}\btableau\b|\b(?:c'est|voilà)[^.?!\n]{0,20}au tableau\b/i;
+const BOARD_CLAIM = /\b(?:here(?:'s| is)|check out|take a look at|have a look at|look at)\b[^.?!\n]{0,40}\b(?:new|fresh|next|another|smoother)\b[^.?!\n]{0,40}\b(?:problem|one|question|exercise)\b|\b(?:let'?s|i'?ll|i will|let me|going to|gonna)\s+(?:also\s+|now\s+|just\s+)?(?:log|put|write|add|record|jot|note|capture|pop|place)\b[^.?!\n]{0,60}\b(?:on|to|onto|up on|in)\s+(?:the |your )?board\b|\b(?:i(?:'ve| have|'ll| will)?|let me|just)\s+(?:also\s+|just\s+|now\s+)?(?:put|add(?:ed)?|wrote|written|write|jot(?:ted)?|plac(?:e|ed)|drew|draw(?:n)?|post(?:ed)?|not(?:e|ed)|sketch(?:ed)?|ma(?:de|ke))\b[^.?!\n]{0,70}\b(?:on|to|up on|onto|in)\s+(?:the |your )?board\b|\b(?:it'?s|that'?s|this is|is) (?:now )?(?:up )?on the board\b|\bup on the board\b|\bj'ai (?:mis|écrit|ajouté|noté|dessiné)\b[^.?!\n]{0,70}\btableau\b|\b(?:c'est|voilà)[^.?!\n]{0,20}au tableau\b/i;
 /** The reply says Otto wrote/drew something on the board ("I've put your point up on the board"). Only true if a board tool actually ran. */
 export function claimsBoardWrite(reply: string): boolean { return BOARD_CLAIM.test(reply); }
 /** Drops every sentence that claims a board write — the code fallback when the model claimed it without doing it. */

@@ -345,4 +345,13 @@ export async function runTutorEngineSim(check, section) {
   script = () => ({ content: "Work is force times distance: W = Fd when the force is parallel. Which force do you mean?" });
   r = await run("what's the formula for work", { board: [{ id: "g1", at: "", kind: "given", text: "15 N box, 4 m up a 30° slope" }] });
   check("a formula in the reply goes on the board — the chat carries the words, the board carries the maths", r.board.length === 1 && /W = Fd/.test(r.board[0].text));
+
+  // "Here's a fresh one on the board" with no CREATE_PROBLEM, and "let's wrap this up", are both sent back.
+  script = () => ({ content: "Here is a fresh one on the board, Willem. Give it a go!" });
+  r = await run("let's do another one");
+  check("presenting a new problem 'on the board' without CREATE_PROBLEM is sent back to actually create it", /nothing was written this turn|CREATE_PROBLEM/.test(JSON.stringify(calls[1]?.messages || "")));
+  const { wrapsUpUnasked: wu } = await import("../server/tutorAdapt.ts");
+  check("'Let's wrap this up for now — great work!' counts as an unasked wrap-up", wu("You nailed it. Let's wrap this up for now — great work!", "yes it makes sense"));
+  const mp = makeProblem({ question: "A 3 kg box is pulled up a 20° slope by 12 N with 2 N friction over 5 m; find the speed.", answer: "1.0", check: "sqrt(2*(12-2-3*9.8*sin(20*pi/180))*5/3)" }, true);
+  check("a problem whose own check can't evaluate (impossible numbers: the pull can't beat gravity + friction) is refused with that reason", "error" in mp && /impossible|does not evaluate/.test(mp.error));
 }
