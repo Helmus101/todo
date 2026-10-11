@@ -6029,5 +6029,10 @@ await runTutorEngineSim(check, section);
   check("the tutor gets the entries about the current subject / what was just said first, with labels, dates and the overall count", ctx.entries[0].date === "2026-10-01" && ctx.total === 3 && /\[Math\]/.test(line) && /3 entries in all/.test(line) && /2026-10-01/.test(line) && tok.entries[0].date === "2026-10-03");
   check("admin journal count: real daily entries only (no roll-ups, no cleared entries)", countJournalEntries(list) === 3);
 }
+{
+  const b = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  const css = readFileSync(new URL("../client/minimal.css", import.meta.url), "utf8");
+  check("board blanks: gaps the tutor moved past lose their '?' and 'Your turn' chip; ink sheets are capped; less top padding", /sm-board-gap-past/.test(b) && /!isPastGap/.test(b) && /Math\.min\(sheetSignal\.height, 240\)/.test(b) && /\.sm-board-gap-past \.sm-board-todo-chip \{ display: none/.test(css));
+}
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -7404,7 +7404,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .ts-objectives li.done .ts-obj-mark { color: var(--accent); }
 .ts-objectives .ts-obj-hint { margin: 10px 0 0; font-size: 12px; color: var(--ink-2); }
 .ts-canvas { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--bg); background-image: radial-gradient(color-mix(in srgb, var(--line) 80%, transparent) 1px, transparent 1px); background-size: 24px 24px; }
-.ts-board-body { flex: 1; min-height: 0; overflow: auto; max-height: none; background-image: none; padding: 104px 16px 260px;
+.ts-board-body { flex: 1; min-height: 0; overflow: auto; max-height: none; background-image: none; padding: 72px 16px 260px;
   /* Room for Otto's dock, sized to the dock's REAL height (--dock-h, measured in TutorSession): a long reply or the
      open chat history made the dock taller than the old fixed 260px and hid the newest board lines (reported). The
      scroll padding makes "scroll to the newest line" stop above the dock instead of under it. */

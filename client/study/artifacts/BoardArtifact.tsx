@@ -572,7 +572,7 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, 
     if (!sheetSignal || sheetSignal.n === lastSheetN.current || sheetSignal.height <= 0) return;
     lastSheetN.current = sheetSignal.n;
     const afterKey = flowItems.length ? flowItems[flowItems.length - 1].key : null;
-    setSheets((prev) => [...prev, { id: sheetSignal.n, afterKey, height: sheetSignal.height }]);
+    setSheets((prev) => [...prev, { id: sheetSignal.n, afterKey, height: Math.min(sheetSignal.height, 240) }]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sheetSignal?.n]);
 
@@ -739,7 +739,7 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, 
           return (
             <div
               key={item.key}
-              className={`sm-board-entry sm-board-entry-${e.kind || "note"} sm-board-writein${fresh ? " sm-board-reveal" : ""}`}
+              className={`sm-board-entry sm-board-entry-${e.kind || "note"} sm-board-writein${fresh ? " sm-board-reveal" : ""}${isPastGap || (e.kind === "gap" && e.status === "correct") ? " sm-board-gap-past" : ""}`}
               style={fresh ? { animationDuration: `.35s, ${revealDuration(e.text)}s` } : undefined}
             >
               {lineNo.get(e.id) ? <span className="sm-board-lineno" aria-label={en ? `line ${lineNo.get(e.id)}` : `ligne ${lineNo.get(e.id)}`}>{lineNo.get(e.id)}</span> : null}
@@ -821,7 +821,7 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, 
               ) : (
                 <>
                   <div className="sm-board-line"><MathText text={autoMathLine(stripStrayMarkdown(e.kind === "result" ? e.text.replace(/^\s*(?:established|établi|found|result|trouvé)\s*:\s*/i, "") : e.text))} /></div>
-                  {(e.kind === "gap" || isCompletionGap(e.text)) ? (
+                  {((e.kind === "gap" || isCompletionGap(e.text)) && !isPastGap) ? (
                     <span className="sm-board-todo-chip">{e.gapAction ? (en ? `Your turn: ${e.gapAction}` : `À toi : ${e.gapAction}`) : (en ? "Your turn to finish" : "À toi de finir")}</span>
                   ) : null}
                   {e.kind === "gap" && e.expectedAnswer && e.status !== "correct" && !flowItems.slice(idx + 1).some((it) => it.entry?.kind === "gap") && onGapCheck ? <GapAnswer entry={e} onCheck={onGapCheck} en={en} /> : null}
