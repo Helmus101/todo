@@ -20,7 +20,7 @@ import { repairSpokenMath, spokenContextFrom, type SpokenRepair } from "../share
 import { equationsAhead, asksForFormula } from "../shared/equationsAhead.ts";
 import { findArithmeticClaims } from "./arithmetic.ts";
 import { boardSurfaceBlock } from "./boardEvents.ts";
-import { replyStatesValue, socraticFallback, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario, inventedNumbers, claimsBoardWrite, stripBoardClaim, confirmsUnchecked, wrapsUpUnasked, blamesWidget, asksToWrite, handsOverCalculation } from "./tutorAdapt.ts";
+import { replyStatesValue, socraticFallback, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario, inventedNumbers, claimsBoardWrite, stripBoardClaim, reachedResultUnrecorded, confirmsUnchecked, wrapsUpUnasked, blamesWidget, asksToWrite, handsOverCalculation } from "./tutorAdapt.ts";
 import { latexToPlainText } from "../shared/mathText.ts";
 import { toExprSource } from "../shared/mathEquiv.ts";
 import { compileExpr } from "../shared/mathExpr.ts";
@@ -62,7 +62,7 @@ BE RIGHT — YOU ALWAYS KNOW THE ANSWER
 - Never invent facts, never blame the app. If unsure what they meant, ask, offering your best reading.
 
 THE BOARD — shared paper, one worksheet per problem
-- It holds what's worth keeping: the givens, a figure, THEIR equations and results (owner "student"), a definition, an outline. Everything on it is about the problem you're working on — nothing else. Teaching itself is spoken.
+- It holds what's worth keeping: the givens, a figure, THEIR equations and results (owner "student") — when they reach a result or finish a step, put it on the board right away, cleanly — a definition, an outline. Everything on it is about the problem you're working on — nothing else. Teaching itself is spoken.
 - Maths in LaTeX between $…$. When they ask you to write something, write it (their step goes in as owner "student"). Gaps are rare: most next steps are just asked in conversation; use a GAP (kind "gap", line ending "= ?", expectedAnswer set) only when they should fill in one specific line — at most one, never a second while one is open. Never write a step they haven't reached or the answer; never answer your own question on the board.
 - Figures must be accurate, so use the tools that draw to scale: triangles/circles/polygons → GEOMETRY_ON_BOARD; towers, cliffs, angles of elevation → TRIG_SCENE_ON_BOARD; a block on a slope, forces → INCLINE_ON_BOARD; functions → GRAPH_ON_BOARD; processes, causes, essay plans → FLOW_ON_BOARD. SVG_ON_BOARD is only for qualitative pictures (a cell, apparatus, a map) — never for anything with angles or lengths.
 - Point at a line by its margin number ("look at line 4") or with ANNOTATE_BOARD. Never claim a board write you didn't make this turn.
@@ -72,7 +72,7 @@ ANY SUBJECT
 - Maths/sciences: givens, figure, equation, gaps. History/economics: causes → effects, evidence, a timeline or argument outline. Essays/literature: thesis, structure, quotes — they argue, you never write it. Languages: vocabulary, a sentence to transform, their own attempt.
 
 HOW YOU SOUND
-- Like a person: warm, precise, a little demanding, on their side. React to what they actually said ("ah, nice", "hm, where did the 3 go?"). Specific feedback, no filler praise, never harsh. Answer in their language; use their name now and then.
+- Like a person: warm, precise, a little demanding, on their side. React to what they actually said ("ah, nice", "hm, where did the 3 go?"). Specific feedback, no filler praise — don't open with "Spot on"/"Exactly": say what was right about their reasoning — never harsh. Answer in their language; use their name now and then.
 - Adapt: fluent → bigger steps; frustrated → smaller steps and a warmer tone ("this one's fiddly, most people trip here"). Never repeat a question that didn't land — ask it differently.
 - Off-topic → one friendly line, then back. Don't offer to wrap up unless they ask. First turn with nothing said yet: hello, and ask what they're working on.
 
@@ -507,7 +507,8 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       if (badLine) issues.push(`it points at line ${badLine}, which doesn't exist on their board — use the line's real margin number from the board listing, or describe it`);
       if (!doubt && handsOverCalculation(reply, message)) issues.push("it hands them the calculation (which numbers to multiply/add) — ask what THEY would compute next instead");
       const claimedBoard = claimsBoardWrite(reply) && !result.board.length && !result.problems.length;
-      if (claimedBoard) issues.push("you say you put something on the board, but nothing was written this turn. Most of the teaching is spoken conversation, so usually just drop that sentence and keep talking; only if it is a given, a result they reached or a key line worth keeping, call WRITE_TO_BOARD with ONE short line first. Never claim a board write you did not make");
+      if (claimedBoard) issues.push("you say you'll put (or have put) something on the board, but nothing was written this turn. Write it now: ONE short clean line with WRITE_TO_BOARD (the result or step they reached, their numbers, maths in $…$, owner \"student\"; never their sentence), then reply. Only if there is truly nothing worth keeping, drop that sentence instead");
+      else if (reachedResultUnrecorded(reply, message, result.board.length + result.problems.length)) issues.push("they just reached a result or step of their own and you confirmed it, but nothing went on the board. Record it: ONE short clean line with WRITE_TO_BOARD (kind result or summary, owner \"student\", their numbers, maths in $…$), then reply as you planned");
       if (wrapsUpUnasked(reply, message)) issues.push("it offers to wrap up or move on, which they didn't ask for — stay on the current work");
       if (blamesWidget(reply)) issues.push("it blames the app/widget — if an exercise's key disagrees with a right answer, say plainly the key was wrong");
       if (issues.length && !corrected && !lastRound) {

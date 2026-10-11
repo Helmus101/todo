@@ -273,7 +273,16 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
       const surf = surface, board = surf?.firstElementChild as HTMLElement | null;
       if (!surf || !board) return 0;
       const boardBottom = board.offsetTop + board.offsetHeight;
-      const bottom = inkBottom();
+      // Only ink that sits IN the board's text column needs room kept for it. A sketch drawn out in the side margin never collides with
+      // Otto's lines, and reserving blank space for it left a big empty gap in the middle of the board (reported).
+      const c = canvasRef.current;
+      const cr = c?.getBoundingClientRect(), br = board.getBoundingClientRect();
+      const colL = cr ? br.left - cr.left - 16 : 0, colR = cr ? br.right - cr.left + 16 : Infinity;
+      let bottom = 0;
+      for (const it of items.current) {
+        if (it.kind === "text") { if (it.x + it.value.length * it.size * 0.6 >= colL && it.x <= colR) bottom = Math.max(bottom, it.y + it.size * 1.4); }
+        else if (it.tool !== "eraser") for (const p of it.pts) if (p.x >= colL && p.x <= colR) bottom = Math.max(bottom, p.y + it.width);
+      }
       if (bottom <= boardBottom + 8) return 0;
       const h = Math.round(bottom - boardBottom + 32);
       return h;
@@ -282,7 +291,8 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
     // `force`: the student explicitly asked Otto to look, so re-read even ink Otto has already seen.
     readUnseenInk: async (force?: boolean) => {
       if (!visionReady || !canvasRef.current || !items.current.some((i) => i.kind === "text" || i.tool !== "eraser") || (!force && inkStamp.current === seenStamp.current)) return null;
-      try { return await readInk(); } catch { return null; }
+      // A failed read must not be silent: without this Otto never learns there is a drawing and carries on as if nothing was drawn.
+      try { return await readInk(); } catch { return L("(mon dessin n'a pas pu être lu — demande-moi de te le décrire)", "(my drawing couldn't be read just now — ask me to describe it)"); }
     },
   }));
 

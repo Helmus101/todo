@@ -239,4 +239,14 @@ export async function runTutorEngineSim(check, section) {
 
   const { dedupeParagraphs } = await import("../server/tutor.ts");
   check("a reply that repeats a whole paragraph keeps each paragraph once", dedupeParagraphs("Ah, my mistake.\n\nSo the angle is right.\n\nAh, my mistake.\n\nSo the angle is right.") === "Ah, my mistake.\n\nSo the angle is right." && dedupeParagraphs("One.\n\nTwo.") === "One.\n\nTwo.");
+
+  // They reach a result, Otto confirms it in words, nothing is on the board: one correction round asks for the write.
+  script = (b, i) => i === 0 ? { content: "Spot on, Willem! Pi over two. What would you say about arccos(−1)?" }
+    : i === 1 ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "$\\arccos(0) = \\frac{\\pi}{2}$", kind: "result", owner: "student" })] }
+    : { content: "Pi over two is on the board. What would you say about arccos(−1)?" };
+  r = await run("arccos of 0 is pi over 2");
+  check("a result they reached and Otto confirmed in words gets written on the board (their numbers, owner student)", r.board.length === 1 && r.board[0].owner === "student" && /nothing went on the board/.test(JSON.stringify(calls[1]?.messages || [])));
+  script = () => ({ content: "Nice. Let's log that result on the board. What next?" });
+  r = await run("so the angle is 30 degrees");
+  check("'Let's log that on the board' with no write is sent back (promise = write), and stripped if it still isn't kept", /Let's log/.test(JSON.stringify(calls[1]?.messages || "")) || !/board/i.test(r.reply));
 }
