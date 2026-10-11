@@ -2043,11 +2043,11 @@ const ADMIN_EMAIL = "tjong.willem@gmail.com";
 function isAdminUser(email?: string | null): boolean {
   return (email || "").toLowerCase() === ADMIN_EMAIL;
 }
-type AdminUserRow = { email: string; taskCount: number; completedTaskCount: number; tutorSessionCount: number; tutorMinutes: number };
-type AdminSortKey = "email" | "taskCount" | "completedTaskCount" | "tutorSessionCount" | "tutorMinutes";
+type AdminUserRow = { email: string; taskCount: number; completedTaskCount: number; tutorSessionCount: number; tutorMinutes: number; journalCount: number };
+type AdminSortKey = "email" | "taskCount" | "completedTaskCount" | "tutorSessionCount" | "tutorMinutes" | "journalCount";
 function AdminPage() {
   const L = useLang();
-  const [metrics, setMetrics] = useState<{ userCount: number; taskCount: number; completedTaskCount: number; tutorSessionCount: number; tutorMinutesTotal: number; tasksBySource: Record<string, number>; byUser: AdminUserRow[] } | null>(null);
+  const [metrics, setMetrics] = useState<{ userCount: number; taskCount: number; completedTaskCount: number; tutorSessionCount: number; tutorMinutesTotal: number; journalCount: number; tasksBySource: Record<string, number>; byUser: AdminUserRow[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<AdminSortKey>("taskCount");
   const [sortDesc, setSortDesc] = useState(true);
@@ -2066,6 +2066,7 @@ function AdminPage() {
     { label: ["Tâches terminées", "Tasks completed"], value: String(metrics.completedTaskCount) },
     { label: ["Séances de tuteur", "Tutor sessions"], value: String(metrics.tutorSessionCount) },
     { label: ["Minutes de tuteur (total)", "Tutor minutes (total)"], value: String(metrics.tutorMinutesTotal) },
+    { label: ["Entrées de journal", "Journal entries"], value: String(metrics.journalCount) },
   ] : [];
   return (
     <main className="list-wrap">
@@ -2104,6 +2105,7 @@ function AdminPage() {
                       ["completedTaskCount", "Terminées", "Completed"],
                       ["tutorSessionCount", "Séances", "Sessions"],
                       ["tutorMinutes", "Minutes", "Minutes"],
+                      ["journalCount", "Journal", "Journal"],
                     ] as [AdminSortKey, string, string][]).map(([key, fr, en]) => (
                       <th key={key} onClick={() => toggleSort(key)} className={sortKey === key ? "sorted" : ""}>
                         {L(fr, en)}{sortKey === key ? (sortDesc ? " ↓" : " ↑") : ""}
@@ -2123,6 +2125,7 @@ function AdminPage() {
                       <td>{u.completedTaskCount}</td>
                       <td>{u.tutorSessionCount}</td>
                       <td>{u.tutorMinutes}</td>
+                      <td>{u.journalCount}</td>
                     </tr>
                   ))}
                 </tbody>

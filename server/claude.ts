@@ -694,14 +694,18 @@ export function milestoneLine(p: Profile | undefined, subject: string | undefine
     `already got"):\n` +
     recent.map((m) => `- ${m.topic}: ${m.label}`).join("\n") + "\n";
 }
-export function recentJournalLine(entries: { date: string; text: string }[] | undefined, subject: string | undefined): string {
+export function recentJournalLine(entries: { date: string; text: string; subjects?: string[] }[] | undefined, subject: string | undefined, meta?: { total: number; subjects: Record<string, number> }): string {
   if (!entries?.length) return "";
-  const bySubject = subject ? entries.filter((e) => e.text.toLowerCase().includes(subject.toLowerCase())) : [];
-  const picked = (bySubject.length ? bySubject : entries).slice(0, 4);
-  if (!picked.length) return "";
-  return `\nTHEIR RECENT STUDY JOURNAL${subject && bySubject.length ? ` (mentions ${subject})` : ""} — what they've told ` +
-    `Otto they've actually been studying/learning lately; use it to know where they already are, not to quote it back:\n` +
-    picked.map((e) => `- ${e.date}: "${e.text.slice(0, 300)}"`).join("\n") + "\n";
+  // Entries arrive already ranked (journal.ts selectJournal: current subject, then relevance to what's being said, then newest). Without that
+  // ranking (older callers), fall back to a plain subject-name match.
+  const ranked = entries.some((e) => e.subjects) ? entries : (() => { const m = subject ? entries.filter((e) => e.text.toLowerCase().includes(subject.toLowerCase())) : []; return m.length ? m : entries; })();
+  const picked = ranked.slice(0, 6);
+  const overview = meta && meta.total > 0
+    ? ` They have ${meta.total} entr${meta.total === 1 ? "y" : "ies"} in all (${Object.entries(meta.subjects).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([s, n]) => `${s} ${n}`).join(", ") || "no subject labels yet"}); the ones below are the most relevant to now.`
+    : "";
+  return `\nTHEIR STUDY JOURNAL — their own words about what they studied and how it went; this is your memory of them.${overview} ` +
+    `Link to it naturally when it bears on what they're doing ("on ${picked[0].date} you wrote…") — never recite it, never invent an entry:\n` +
+    picked.map((e) => `- ${e.date}${e.subjects?.length ? ` [${e.subjects.join(", ")}]` : ""}: "${e.text.slice(0, 400)}"`).join("\n") + "\n";
 }
 /** The name the student themselves typed in Settings ("What should Otto call you?") — self-disclosed for
  *  exactly this purpose, unlike the rest of profile.name's uses which profileBlock deliberately keeps out
@@ -5762,7 +5766,7 @@ export async function runTask(
   // (the actual output of the "proactive" mission) knew none of it. Optional/best-effort: every one of
   // these lines degrades to "" silently when the signal isn't available (cold start, no sibling-task list
   // to compute a trend from, etc.), matching how chat already treats them.
-  personalization?: { subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; recentJournal?: { date: string; text: string }[]; notNeeded?: string[]; inApp?: string },
+  personalization?: { subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; recentJournal?: { date: string; text: string; subjects?: string[] }[]; journalMeta?: { total: number; subjects: Record<string, number> }; notNeeded?: string[]; inApp?: string },
 ): Promise<RunOutput> {
   // ── 5-STEP EXECUTION PIPELINE ──────────────────────────────────────────────
   // Once we have the task + definition of done, execution follows this order:
@@ -5813,7 +5817,7 @@ export async function runTask(
   const baseCtx = profileBlock(profile) + assignmentBlock(task, tzOf(profile)) + academicBlock(academic) + (personalization?.inApp || "") + focusBlock;
   const langLine = languageLine(profile) + courseworkLine(profile, task.sourceSubject) + trackLine(profile) + syllabusGroundingLine(profile, task.sourceSubject) + personalContextLine(profile) + studentModelLine(profile) +
     learningStyleLine(profile) + errorLogLine(profile, task.sourceSubject, personalization?.subjectSignal) +
-    recentJournalLine(personalization?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(personalization?.notNeeded);
+    recentJournalLine(personalization?.recentJournal, task.sourceSubject, personalization?.journalMeta) + weakCardLine(task) + notNeededLine(personalization?.notNeeded);
   const nowLine = nowBlock();
 
   /** Helper: one JSON chat call, accumulates tokens. Retries ONCE on truncation (finish_reason "length" OR
@@ -7857,7 +7861,7 @@ export async function chatAboutTask(
   message: string,
   profile?: Profile,
   academic?: AcademicContext,
-  opts?: { schoolRecord?: string; stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string; growthTrend?: "up"; subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; voiceMode?: boolean; spoken?: { alternatives: string[] }; stepVerdict?: { gap: string; given: string; verdict: "correct" | "incorrect" }; canvasMode?: boolean; recentJournal?: { date: string; text: string }[]; primer?: boolean; currentBoard?: BoardEntry[]; currentProblems?: TaskProblem[]; currentObjectives?: TaskObjective[]; notNeeded?: string[]; repair?: string; moveLine?: string; opening?: { role: string; text: string }[]; boardEvents?: BoardEvent[]; sessionState?: TutorSessionStateShape; policy?: TutorPolicy },
+  opts?: { schoolRecord?: string; stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string; growthTrend?: "up"; subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; voiceMode?: boolean; spoken?: { alternatives: string[] }; stepVerdict?: { gap: string; given: string; verdict: "correct" | "incorrect" }; canvasMode?: boolean; recentJournal?: { date: string; text: string; subjects?: string[] }[]; journalMeta?: { total: number; subjects: Record<string, number> }; primer?: boolean; currentBoard?: BoardEntry[]; currentProblems?: TaskProblem[]; currentObjectives?: TaskObjective[]; notNeeded?: string[]; repair?: string; moveLine?: string; opening?: { role: string; text: string }[]; boardEvents?: BoardEvent[]; sessionState?: TutorSessionStateShape; policy?: TutorPolicy },
 ): Promise<ChatResult> {
   // Spoken input: the deterministic mishearing repair, computed once against what's in play (board lines,
   // problems, the task itself) — it feeds the prompt (voiceInputBlock) and the board guard below.
@@ -8042,7 +8046,7 @@ export async function chatAboutTask(
   // student, every task, every turn — so it belongs FIRST, where it can actually be cached; the volatile
   // per-request context goes last, right next to the equally-volatile TASK block it keeps company with
   // anyway.
-  const dynamicContext = nowBlock() + courseworkLine(profile, task.sourceSubject) + studentNameLine(profile?.name) + dueLine(task.sourceDue, tzOf(profile)) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + syllabusGroundingLine(profile, task.sourceSubject) + learningStyleLine(profile) + hintDensityLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + sessionRecapLine(profile?.sessions, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + (opts?.schoolRecord || "") + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine + (opts?.primer ? (opts?.moveLine || "") + (opts?.repair || "") + stepVerdictLine(opts?.stepVerdict) + (opts?.spoken && spokenRepair ? voiceInputBlock(message, opts.spoken.alternatives, spokenRepair) : spokenMathHint(message)) + notationGloss(message, history) + scaffoldLine(message, history) + probeLine(message, history) + cheerLine(message, history, opts?.currentObjectives) : "");
+  const dynamicContext = nowBlock() + courseworkLine(profile, task.sourceSubject) + studentNameLine(profile?.name) + dueLine(task.sourceDue, tzOf(profile)) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + syllabusGroundingLine(profile, task.sourceSubject) + learningStyleLine(profile) + hintDensityLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + sessionRecapLine(profile?.sessions, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject, opts?.journalMeta) + (opts?.schoolRecord || "") + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine + (opts?.primer ? (opts?.moveLine || "") + (opts?.repair || "") + stepVerdictLine(opts?.stepVerdict) + (opts?.spoken && spokenRepair ? voiceInputBlock(message, opts.spoken.alternatives, spokenRepair) : spokenMathHint(message)) + notationGloss(message, history) + scaffoldLine(message, history) + probeLine(message, history) + cheerLine(message, history, opts?.currentObjectives) : "");
   const sys =
     (opts?.primer ? PRIMER_PERSONA + PLAN_PROTOCOL + (sourcesForTrack(profile?.track).length ? `\n\nREAL QUESTIONS FIRST: this student is on the ${profile?.track === "ib" ? "IB (IB Documents / Revision Village)" : "AP (College Board AP Central)"} track. Before you write an exercise on an exam-style topic, call FIND_SOURCE_QUESTION once and adapt a fitting result (reword and re-number it, cite it via sourceUrl) instead of inventing the question from scratch. If it returns NONE, write it yourself as usual. Everything else about exercises (one at a time, single short answer, never reveal it) is unchanged.\n` : "") : "") +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +

@@ -1287,6 +1287,8 @@ export interface WebTask {
    *  a to-do; these tasks are filtered out of the normal dashboard (see App.tsx) and only shown in the
    *  Journal tab. Capped ~4000 chars. */
   logText?: string;
+  /** Subjects this journal entry talks about (computed when the entry is saved); lets the tutor find the right entries. */
+  logSubjects?: string[];
   /** Which day (or week) a studylog task is for — "2026-08-30" for a daily entry, "week:2026-08-24" (that
    *  week's MONDAY, prefixed) for the week summary — a simple, year-boundary-safe week key rather than a
    *  formal ISO "2026-W35" string. The lookup key for find-or-create, instead of parsing anchorKey. */

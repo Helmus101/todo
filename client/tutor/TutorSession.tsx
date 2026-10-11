@@ -88,9 +88,10 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   useEffect(() => { void api.profile().then((p) => setMySubjects(p.subjects || [])).catch(() => { /* the common list is enough */ }); }, []);
   const subjectOptions = [...new Set<string>([...mySubjects, ...COMMON_SUBJECTS])];
   const [selectedSubject, setSelectedSubject] = useState("");
-  // The EXACT thing to work on inside that subject — picked (or typed) on the landing so the chat never has to ask "what are we working on?".
+  // Only used when the subject is "Other": the student names it here. Every other subject starts with one tap, no extra question.
+  const OTHER = "__other__";
   const [topic, setTopic] = useState("");
-  const [openTasks, setOpenTasks] = useState<WebTask[]>([]);
+  const chosenSubject = selectedSubject === OTHER ? topic.trim() : selectedSubject;
   const [startingSession, setStartingSession] = useState(false);
   // What the mount peek found: a freestudy session still in progress (or null).
   const [pendingActiveSession, setPendingActiveSession] = useState<WebTask | null>(null);
@@ -123,7 +124,6 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   const peekForActiveSession = useCallback(() => {
     setLoadError(false);
     api.tasks().then((list) => {
-      if (Array.isArray(list)) setOpenTasks(list.filter((x) => x.source !== "freestudy" && x.status !== "dismissed" && x.status !== "done"));
       const ended = new Set(endedIds());
       if (Array.isArray(list)) for (const x of list) if (ended.has(x.id) && x.status !== "dismissed" && x.status !== "done") void dismissWithRetry(x.id);
       const t = Array.isArray(list)
@@ -474,7 +474,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   }, [pendingActiveSession, userId]);
 
   const startNewSession = useCallback(async () => {
-    if (!selectedSubject || !topic.trim() || startingSession) return;
+    if (!chosenSubject || startingSession) return;
     enterFullscreen(); // tutor mode is full screen (this click is the user gesture the browser requires)
     setError(null);
     setStartingSession(true);
@@ -491,7 +491,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       // the same subject label ("Math" comes up again and again), so a plain .find() from the front could
       // grab a stale, already-ended session instead of the one just created — the source of "a supposedly
       // empty new session shows old content." Search from the end, and require it not be dismissed/done.
-      const list = await api.studyFreeSession(true, selectedSubject, topic.trim());
+      const list = await api.studyFreeSession(true, chosenSubject);
       const t = Array.isArray(list)
         ? [...list].reverse().find((x) => x.source === "freestudy" && x.status !== "dismissed" && x.status !== "done")
         : undefined;
@@ -524,7 +524,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     } finally {
       setStartingSession(false);
     }
-  }, [selectedSubject, topic, startingSession, pendingActiveSession, sessionStart, saveAndClose, userId, L]);
+  }, [chosenSubject, startingSession, pendingActiveSession, sessionStart, saveAndClose, userId, L]);
 
 
   // FULL-PAGE review of a past session (/tutor/session/<id>/board|chat) — one whole page with exactly two
@@ -592,12 +592,6 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     );
   }
 
-  const topicSuggestions = selectedSubject
-    ? [...new Set<string>([
-        ...openTasks.filter((x) => (x.sourceSubject || "").toLowerCase() === selectedSubject.toLowerCase()).map((x) => x.title.trim()),
-        ...pastSessions.filter((x) => x.subject === selectedSubject).map((x) => sessionTopic(x)).filter(Boolean),
-      ])].filter((x) => x && x.length <= 90).slice(0, 4)
-    : [];
 
   // No active session — the landing screen: start button + past sessions.
   if (!task) {
@@ -645,11 +639,12 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
               {subjectOptions.map((subj) => (
                 <option key={subj} value={subj}>{subj}</option>
               ))}
+              <option value={OTHER}>{L("Autre…", "Other…")}</option>
             </select>
             <button
               className="btn primary tutor-start-btn"
               onClick={() => void startNewSession()}
-              disabled={startingSession || !selectedSubject || !topic.trim()}
+              disabled={startingSession || !chosenSubject}
             >
               {startingSession
                 ? L("Démarrage…", "Starting…")
@@ -657,22 +652,16 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
             </button>
           </div>
 
-          {selectedSubject && (
+          {selectedSubject === OTHER && (
             <div className="tutor-topic">
-              <label className="tutor-topic-label" htmlFor="tutor-topic-input">{L("Sur quoi exactement ?", "What exactly?")}</label>
-              {topicSuggestions.length > 0 && (
-                <div className="tutor-topic-chips">
-                  {topicSuggestions.map((sug) => (
-                    <button key={sug} type="button" className={`tutor-topic-chip${topic === sug ? " on" : ""}`} onClick={() => setTopic(sug)}>{sug}</button>
-                  ))}
-                </div>
-              )}
               <input
                 id="tutor-topic-input"
                 className="tutor-topic-input"
                 value={topic}
-                maxLength={140}
-                placeholder={L("ex. Les dérivées, exercice 12 p.87, le chapitre 3…", "e.g. derivatives, exercise 12 p.87, chapter 3…")}
+                maxLength={80}
+                autoFocus
+                aria-label={L("Quelle matière ?", "Which subject?")}
+                placeholder={L("Quelle matière ? ex. Théorie de la connaissance, Latin…", "Which subject? e.g. Theory of Knowledge, Latin…")}
                 onChange={(e) => setTopic(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && topic.trim()) void startNewSession(); }}
               />
@@ -759,16 +748,12 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
   const leadFr = lastWhen ? `${cap(lastWhen)}, on` : "La dernière fois, on";
   const leadEn = lastWhen ? `${cap(lastWhen)} we` : "Last time we";
-  const pickedTopic = (task.sourceTopic || "").trim();
-  const instantOpener = pickedTopic
-    ? L(`C'est parti : « ${pickedTopic} »${subj ? ` en ${subj}` : ""}. Montre-moi où tu en es — un énoncé, ou ce que tu as déjà essayé.`,
-        `Let's go: "${pickedTopic}"${subj ? ` in ${subj}` : ""}. Show me where you are — the problem, or what you've already tried.`)
-    : lastTopic
-      ? L(`Salut ! ${leadFr} a bossé sur « ${lastTopic} ». Qu'est-ce que tu en retiens ?`,
-          `Hey! ${leadEn} worked on "${lastTopic}". What do you still remember?`)
-      : subj
-        ? L(`Salut ! Montre-moi où tu en es en ${subj} : un énoncé, ou ce que tu as essayé.`, `Hey! Show me where you are in ${subj}: the problem, or what you've tried.`)
-        : L("Salut ! Montre-moi où tu en es : un énoncé, ou ce que tu as essayé.", "Hey! Show me where you are: the problem, or what you've tried.");
+  const instantOpener = lastTopic
+    ? L(`Salut ! ${leadFr} a bossé sur « ${lastTopic} ». Qu'est-ce que tu en retiens ?`,
+        `Hey! ${leadEn} worked on "${lastTopic}". What do you still remember?`)
+    : subj
+      ? L(`Salut ! Montre-moi où tu en es en ${subj} : un énoncé, ou ce que tu as essayé.`, `Hey! Show me where you are in ${subj}: the problem, or what you've tried.`)
+      : L("Salut ! Montre-moi où tu en es : un énoncé, ou ce que tu as essayé.", "Hey! Show me where you are: the problem, or what you've tried.");
   const openerText = instantOpener;
   const starters = [
     { label: L("Je bloque sur un exercice", "I'm stuck — push me"), text: L("Je bloque sur un exercice.", "I'm stuck on a problem.") },
