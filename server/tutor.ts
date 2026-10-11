@@ -11,7 +11,7 @@
 // Everything else — how Socratic to be, how much help, which board tool — is the prompt's job.
 import { randomUUID } from "node:crypto";
 import type { BoardEntry, Profile, TaskObjective, TaskProblem, TutorSolution, TutorTeachingState } from "../shared/types.ts";
-import { solutionBlock } from "./solver.ts";
+import { solutionBlock, solutionValues } from "./solver.ts";
 import { buildInclineScene, type InclineForce } from "../shared/inclineScene.ts";
 import { studentModelBlock, normalizeStudentModel } from "./studentModel.ts";
 import { buildTrigScene } from "../shared/trigScene.ts";
@@ -63,7 +63,7 @@ BE RIGHT — YOU ALWAYS KNOW THE ANSWER
 
 THE BOARD — shared paper, one worksheet per problem
 - It holds what's worth keeping: the givens, a figure, THEIR equations and results (owner "student"), a definition, an outline. Everything on it is about the problem you're working on — nothing else. Teaching itself is spoken.
-- Maths in LaTeX between $…$. Leave the next step as a GAP (kind "gap", line ending "= ?", expectedAnswer set). Never write a step they haven't reached or the answer; never answer your own question on the board.
+- Maths in LaTeX between $…$. When they ask you to write something, write it (their step goes in as owner "student"). Gaps are rare: most next steps are just asked in conversation; use a GAP (kind "gap", line ending "= ?", expectedAnswer set) only when they should fill in one specific line — at most one, never a second while one is open. Never write a step they haven't reached or the answer; never answer your own question on the board.
 - Figures must be accurate, so use the tools that draw to scale: triangles/circles/polygons → GEOMETRY_ON_BOARD; towers, cliffs, angles of elevation → TRIG_SCENE_ON_BOARD; a block on a slope, forces → INCLINE_ON_BOARD; functions → GRAPH_ON_BOARD; processes, causes, essay plans → FLOW_ON_BOARD. SVG_ON_BOARD is only for qualitative pictures (a cell, apparatus, a map) — never for anything with angles or lengths.
 - Point at a line by its margin number ("look at line 4") or with ANNOTATE_BOARD. Never claim a board write you didn't make this turn.
 - Exercises (CREATE_PROBLEM): only when they ask for one; a single short checkable answer, with precision and unit stated. Open questions stay in the conversation. Lists and anything long go on the board; the message points at it.
@@ -90,7 +90,7 @@ const WRITE_TO_BOARD = {
     text: { type: "string", description: "the entry. Several short lines are fine for a worked sequence (one move per line)." },
     kind: { type: "string", enum: ["given", "formula", "definition", "result", "summary", "insight", "instruction", "focus", "outline", "gap"], description: "given = the problem's data; result = something they derived; summary = their reasoning so far; insight = their aha; gap = a line for THEM to finish (ends in '= ?'); outline = headed bullets." },
     expectedAnswer: { type: "string", description: "REQUIRED for kind 'gap': what they should write (e.g. 'h/tan(25°)', '0.25', 'friction'). Never revealed." },
-    gapAction: { type: "string", description: "REQUIRED for kind 'gap': 2-6 words naming the move ('express b with tan 25°'). Never the value." },
+    gapAction: { type: "string", description: "kind 'gap' only: 2-6 words naming the move ('express b with tan 25°'), for your own tracking. Never the value." },
     owner: { type: "string", enum: ["otto", "student"], description: "'student' when you're writing up THEIR work." },
     outline: { type: "array", description: "kind 'outline' only: [{heading, bullets[]}]", items: { type: "object", properties: { heading: { type: "string" }, bullets: { type: "array", items: { type: "string" } } }, required: ["heading", "bullets"] } },
   }, required: ["text"] },
@@ -302,12 +302,19 @@ export function wantsExercise(message: string): boolean {
 /** A board line that sets up a problem nobody gave: a scenario/givens line (2+ quantities with units) carrying a
  *  number that appears nowhere in what the student said or in a problem already posted. That's Otto inventing an
  *  exercise as plain board text — it belongs in CREATE_PROBLEM, with an answer box. Exported for tests. */
-export function inventsProblemOnBoard(text: string, said: string[]): boolean {
+export function inventsProblemOnBoard(text: string, said: string[], known: number[] = []): boolean {
   if (!looksLikeGivensOrScenario(text)) return false;
-  const nums = (String(text).replace(/\\[a-zA-Z]+/g, " ").match(/\d+(?:[.,]\d+)?/g) || []).map((n) => n.replace(",", "."));
-  const heard = new Set((said.join(" ").match(/\d+(?:[.,]\d+)?/g) || []).map((n) => n.replace(",", ".")));
-  return nums.some((n) => !heard.has(n));
+  const toNum = (n: string) => Number(n.replace(",", "."));
+  const nums = (String(text).replace(/\\[a-zA-Z]+/g, " ").replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1").match(/\d+(?:[.,]\d+)?/g) || []).map(toNum);
+  const heard = (said.join(" ").replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1").match(/\d+(?:[.,]\d+)?/g) || []).map(toNum);
+  // Not invented: what they said, what the verified solution reaches, standard constants (g, unit factors), and a
+  // unit conversion of a number they gave ("54 km/h = 15 m/s"). Reported: givens lines with g = 9.8 were refused.
+  const base = [...heard, ...known, ...BOARD_CONSTANTS];
+  const ok = base.flatMap((h) => [h, ...CONVERSIONS.flatMap((k) => [h * k, h / k])]);
+  return nums.some((n) => !ok.some((h) => Math.abs(h - n) <= Math.max(0.051, Math.abs(h) * 0.005)));
 }
+const BOARD_CONSTANTS = [9.8, 9.81, 10, 3.6, 1000, 60, 100, 3600, 2, 1, 0];
+const CONVERSIONS = [3.6, 1000, 60, 100, 3600];
 
 /** The reply asks them to recheck something that is RIGHT: the app already marked their exercise answer right, or
  *  the number they just gave IS the value of the expression the reply tells them to redo ("235,200" vs "multiply
@@ -369,7 +376,7 @@ const STOP = new Set("that this with have from what when where which their there
 /** Is a board line about the problem in focus? It must share a number or a real word with the focus (the solution's
  *  statement, the givens, the problems, what the student said recently) — the board kept getting lines nobody asked
  *  for (reported: "sometimes it just writes random stuff"). Empty focus (session just started) → anything goes. */
-export function relevantToFocus(text: string, focus: string[]): boolean {
+export function relevantToFocus(text: string, focus: string[], values: number[] = []): boolean {
   const toks = (x: string) => {
     const plain = latexToPlainText(String(x || "").replace(/\$/g, " ")).toLowerCase().replace(/(\d),(?=\d{3}(?!\d))/g, "$1");
     return new Set([...(plain.match(/\d+(?:\.\d+)?/g) || []), ...(plain.match(/[a-zà-ÿ]{4,}/g) || []).filter((w) => !STOP.has(w))]);
@@ -378,7 +385,11 @@ export function relevantToFocus(text: string, focus: string[]): boolean {
   if (!f.size) return true;
   const mine = [...toks(text)];
   if (!mine.length) return true; // pure symbols ("$F = ma$" with no numbers/words) can't be judged — let it through
-  return mine.some((w) => f.has(w) || [...f].some((g) => g.length >= 5 && w.length >= 5 && (g.startsWith(w.slice(0, 5)) || w.startsWith(g.slice(0, 5)))));
+  // Numbers match within rounding (214.45 on the board, 214.4 in the solution), and any value the verified solution
+  // reaches counts — a result they derived is about the problem even if nobody typed that exact number yet.
+  const nums = [...f].filter((w) => /^\d/.test(w)).map(Number).concat(values);
+  const near = (w: string) => { const v = Number(w); return v >= 1 && nums.some((g) => Math.abs(g - v) <= Math.max(0.051, Math.abs(g) * 0.01)); };
+  return mine.some((w) => f.has(w) || (/^\d/.test(w) && near(w)) || [...f].some((g) => g.length >= 5 && w.length >= 5 && (g.startsWith(w.slice(0, 5)) || w.startsWith(g.slice(0, 5)))));
 }
 
 /** A wrong arithmetic claim in the reply ("12 × 3 = 38"), as a correction note for the model, or null. */
@@ -442,6 +453,8 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const said = [...history.filter((h) => h.role === "user").map((h) => h.text), message, input.solution?.statement || "", ...(spokenRepair ? [spokenRepair.interpreted, ...(input.spoken?.alternatives || [])] : []), ...problems.map((p) => p.question || ""), ...board.filter((b) => b.kind === "given" || b.owner === "student").map((b) => b.text)];
   const wantsProblem = wantsExercise(message);
   const focus = [input.solution?.statement || "", ...problems.filter((p) => !p.solved).map((p) => p.question), ...board.filter((b) => b.kind === "given" || b.owner === "student").map((b) => b.text), ...history.filter((h) => h.role === "user").slice(-3).map((h) => h.text), message].filter(Boolean);
+  if (spokenRepair?.interpreted) focus.push(spokenRepair.interpreted);
+  const known = [...solutionValues(input.solution), ...(input.solution?.steps || []).flatMap((st) => (String(st.result || "").replace(/(\d),(?=\d{3}(?!\d))/g, "$1").match(/\d+(?:\.\d+)?/g) || []).map(Number))];
   const allBoard = () => [...(result.boardCleared ? [] : board), ...result.board];
   const allProblems = () => [...problems, ...result.problems];
   let corrected = false;
@@ -489,7 +502,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       const invented = inventedNumbers(reply, [...said, ...allBoard().map((b) => b.text), ...allProblems().map((p) => p.question)]);
       if (invented.length) issues.push(`it uses numbers nobody gave (${invented.slice(0, 3).join(", ")}) — only their numbers and the problem's; never compute ahead or bring in a new scenario`);
       if (!doubt && confirmsUnchecked(reply, message, input.stepVerdict ? { studentStep: { status: input.stepVerdict.verdict } } : null)) issues.push("it confirms a value they didn't actually give (or one that's wrong) — react to THEIR number, and if it's off, ask which step they'd recheck");
-      const lines = new Set(allBoard().map((e, i) => e.n ?? i + 1));
+      const lines = boardLineSet(result.boardCleared ? [] : board, result.board);
       const badLine = [...reply.matchAll(/\b(?:line|ligne)\s*#?\s*(\d{1,3})\b|(?<![\w&])#(\d{1,3})\b/gi)].map((m) => Number(m[1] || m[2])).find((n) => !lines.has(n));
       if (badLine) issues.push(`it points at line ${badLine}, which doesn't exist on their board — use the line's real margin number from the board listing, or describe it`);
       if (!doubt && handsOverCalculation(reply, message)) issues.push("it hands them the calculation (which numbers to multiply/add) — ask what THEY would compute next instead");
@@ -502,6 +515,12 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
         messages.push({ role: "assistant", content: text });
         messages.push({ role: "user", content: `(Fix your reply before the student sees it:\n- ${issues.join("\n- ")}\nThen send the corrected reply. Don't mention this note.)` });
         continue;
+      }
+      // They asked for it on the board and nothing landed (every write refused, or none tried): write THEIR line in
+      // code, through the same checks. Reported: "it says it wrote it, nothing on the board".
+      if (asksToWrite(message) && !result.board.length && !result.problems.length) {
+        const line = studentBoardLine([spokenRepair?.interpreted || "", message, ...history.filter((h) => h.role === "user").slice(-2).reverse().map((h) => h.text)]);
+        if (line) applyTool("WRITE_TO_BOARD", { text: line, kind: "result", owner: "student" }, { message, result, allBoard, allProblems, spokenRepair, fr, said, wantsExercise: wantsProblem, focus, known, solution: input.solution });
       }
       if (leaked) { result.guardrailTripped = true; result.reply = socraticFallback(fr); return result; }
       // Still doubting a RIGHT answer after the correction round: never let it through — confirm it in code.
@@ -525,7 +544,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       const name = tc.function?.name;
       const args = parseToolArgs(tc.function?.arguments) || {};
       let content: string;
-      try { content = applyTool(name, args, { message, result, allBoard, allProblems, spokenRepair, fr, said, wantsExercise: wantsProblem, focus }); }
+      try { content = applyTool(name, args, { message, result, allBoard, allProblems, spokenRepair, fr, said, wantsExercise: wantsProblem, focus, known, solution: input.solution }); }
       catch (e: any) { content = `ERROR: ${e?.message || e}`; }
       messages.push({ role: "tool", tool_call_id: tc.id, content });
     }
@@ -547,6 +566,55 @@ interface ToolCtx {
   wantsExercise: boolean;
   /** What the board is about right now: the solution's statement, givens, problems, recent student messages. */
   focus: string[];
+  /** Every value the verified solution reaches — a line with one of them is about the problem, never invented. */
+  known?: number[];
+  /** The verified solution — its final answer never goes on the board before the student reaches it. */
+  solution?: TutorSolution;
+}
+
+/** Does `line` state an open gap's answer? Numbers/maths: anywhere (replyStatesValue). A WORD answer ("friction")
+ *  only when the line assigns it ("= friction", "answer: friction", "it's friction") — merely mentioning friction
+ *  in another line isn't a leak (reported: unrelated lines were refused while such a gap was open). */
+export function statesGapAnswer(line: string, answer: string): boolean {
+  if (/[\d=+*/^√π%:]/.test(answer)) return replyStatesValue(line, answer);
+  const esc = String(answer).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (esc.length < 3) return false;
+  return new RegExp(`(?:=|:|→|\\b(?:is|are|it'?s|est|c'est)\\b)\\s*\\$?\\s*(?:the\\s+|la\\s+|le\\s+)?${esc}(?![\\p{L}\\d])`, "iu").test(latexToPlainText(String(line).replace(/\$/g, " ")));
+}
+
+/** The line is an equation the student just stated (typed or spoken) — their step, not Otto's derivation. */
+export function isTheirStep(line: string, theirWords: string[]): boolean {
+  if (!equationsAhead(line, []).length) return false; // no formula in it — nothing to attribute
+  return !equationsAhead(line, theirWords.filter(Boolean)).length;
+}
+
+/** The maths the student wants written up, from the first of `sources` that has some: the request words ("can you
+ *  write that on the board") dropped, only a line with an equation or a number kept. "" when there's nothing. */
+export function studentBoardLine(sources: string[]): string {
+  for (const src of sources) {
+    const t = String(src || "")
+      .replace(/\b(?:can|could|would) you\b|\bplease\b|\bstp\b|\bpour moi\b/gi, " ")
+      .replace(/\b(?:write|put|add|note|rewrite|show)(?:\s+(?:it|that|this|them|down|up))*\b|\b(?:on|onto|au|sur)\s+(?:the\s+|le\s+)?(?:board|tableau)\b|\bécris(?:[- ]le)?\b|\bnote[- ]le\b/gi, " ")
+      .replace(/\s+/g, " ").replace(/^[\s,.:;!?-]+|[\s,;!?]+$/g, "").trim();
+    if (t && /\d|=/.test(t) && t.length <= 160 && t.split(/\s+/).length <= 25) return t;
+  }
+  return "";
+}
+
+/** The margin numbers the student can see, including lines written THIS turn (numbered after the board's last one,
+ *  the way the client numbers them) — so "line 7" for a line just written isn't flagged as missing. Exported for tests. */
+export function boardLineSet(board: BoardEntry[], fresh: BoardEntry[]): Set<number> {
+  const numbered = (e: BoardEntry) => !["focus", "annotation"].includes(String(e.kind));
+  const nums = board.filter(numbered).map((e, i) => e.n ?? i + 1);
+  let next = Math.max(0, ...nums);
+  return new Set([...nums, ...fresh.filter(numbered).map(() => ++next)]);
+}
+
+/** The board's last numbered line is a gap still waiting for them. */
+function lastLineIsOpenGap(board: BoardEntry[]): boolean {
+  const lines = board.filter((e) => !["focus", "annotation"].includes(String(e.kind)));
+  const last = lines[lines.length - 1];
+  return !!last && last.kind === "gap" && last.status !== "correct";
 }
 const LEAK = "REJECTED: that shows the answer to an open problem or gap — they must find it. Leave that value out (use '?').";
 const ok = (id?: string) => JSON.stringify({ ok: true, ...(id ? { id } : {}) });
@@ -557,7 +625,7 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
   const openProblems = () => c.allProblems().filter((p) => !p.solved);
   const leaks = (s: string) => {
     if (leaksAnyProblemAnswer(s, openProblems())) return true;
-    return c.allBoard().some((g) => g.kind === "gap" && g.expectedAnswer && g.status !== "correct" && replyStatesValue(s, g.expectedAnswer) && !replyStatesValue(c.message, g.expectedAnswer));
+    return c.allBoard().some((g) => g.kind === "gap" && g.expectedAnswer && g.status !== "correct" && !replyStatesValue(c.message, g.expectedAnswer) && statesGapAnswer(s, g.expectedAnswer));
   };
   const push = (e: BoardEntry) => { result.board.push(e); return ok(e.id); };
   const count = (kind: string) => result.board.filter((e) => e.kind === kind).length;
@@ -565,22 +633,28 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
   switch (name) {
     case "WRITE_TO_BOARD": {
       if (typeof input.text === "string") input.text = latexifyBoardLine(repairLatex(input.text), String(input.kind || ""));
-      const text = String(input.text || "");
+      let text = String(input.text || "");
+      // Their own step, written up without owner:"student" (the model often forgets): an equation they just said is
+      // THEIRS — it skips the "about the problem" and "equation ahead" checks and is labelled as their work.
+      if (input.owner !== "student" && input.kind !== "gap" && isTheirStep(text, [c.message, ...(c.spokenRepair ? [c.spokenRepair.interpreted] : [])])) input.owner = "student";
+      if (input.kind === "gap" && result.board.some((e) => e.kind === "gap")) return "LIMIT: one gap a turn — ask the next step in chat instead.";
+      if (input.kind === "gap" && lastLineIsOpenGap(c.allBoard())) return "REJECTED: the board already ends on an open gap they haven't filled — ask in chat instead of adding another '= ?' line.";
       if (result.board.filter((e) => !["svg", "graph", "flow", "widget", "diagram", "annotation"].includes(String(e.kind))).length >= 3) return "LIMIT: three lines a turn is plenty — the board keeps only what's worth keeping.";
-      if (input.owner !== "student" && input.kind !== "focus" && !relevantToFocus(text, [...c.focus, ...c.result.problems.map((p) => p.question)])) return "REJECTED: that line isn't about the problem you're working on — the board only holds what this problem needs (its givens, their steps, the next gap).";
+      if (input.owner !== "student" && input.kind !== "focus" && !relevantToFocus(text, [...c.focus, ...c.allBoard().map((b) => b.text), ...c.result.problems.map((p) => p.question)], c.known || [])) return "REJECTED: that line isn't about the problem you're working on. Write only this problem's givens, a step THEY reached (owner:'student'), or the next step as a gap ending in '= ?'.";
       if (isDuplicateBoardEntry(c.allBoard(), input)) return "DUPLICATE: that's already on the board — point at it instead.";
       if (input.kind !== "gap" && leaks(text)) return LEAK;
+      if (input.owner !== "student" && statesFinalAnswer(text, c.solution) && !reachedSolutionSteps(c.message, c.solution).includes(0)) return LEAK;
       // A gap that already shows its own answer ("Power = 1000×9.8×sin(10°)×15 = 25,526?", reported live) isn't a gap.
       const unsep = (x: string) => x.replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1");
       if (input.kind === "gap" && input.expectedAnswer && replyStatesValue(unsep(text.replace(/=\s*\?\s*\$?\s*$/, "")), unsep(String(input.expectedAnswer)))) return "REJECTED: that gap line already shows its own answer — end it at '= ?', and leave the working for them.";
       // A problem is posted with CREATE_PROBLEM (answer box, checked key) — never as board text plus a "= ?" gap.
       if (input.owner !== "student" && c.wantsExercise && !result.problems.length && (input.kind === "gap" || looksLikeGivensOrScenario(text)))
         return "REJECTED: they asked for an exercise — post it with CREATE_PROBLEM (the full statement, one short answer, a check expression, precision and unit in the hint), not as board text.";
-      if (input.owner !== "student" && inventsProblemOnBoard(text, [...c.said, ...result.problems.map((q) => q.question)]))
-        return "REJECTED: that sets up a problem the student never gave. A new problem goes through CREATE_PROBLEM, and only when they ask for one; the board's givens come from THEIR problem.";
+      if (input.owner !== "student" && inventsProblemOnBoard(text, [...c.said, ...c.allBoard().map((b) => b.text), ...result.problems.map((q) => q.question)], c.known || []))
+        return "REJECTED: that line has numbers that aren't in their problem. Write the givens exactly as THEY stated them (a new problem goes through CREATE_PROBLEM, only when they ask for one).";
       // Never derive an equation or show which formula to use: the student names the relationship first.
       const ahead = input.owner !== "student" && !asksForFormula(c.message) ? equationsAhead(text, c.said) : [];
-      if (ahead.length) return `REJECTED: that writes an equation they haven't stated (${ahead[0]}). Don't derive it or show which formula to use — ask them what relationship they'd use, and write it up once THEY say it.`;
+      if (ahead.length) return `REJECTED: that writes an equation they haven't stated (${ahead[0]}). Don't derive it or show which formula to use — ask them what relationship they'd use, and write it up (owner:'student') once THEY say it. You can still write the givens, or the unknown as '… = ?'.`;
       if (input.kind === "gap") { const k = computedGapKey(text); if (k !== null) input.expectedAnswer = String(k); }
       const heard = boardRepeatsMishearing(text, c.spokenRepair);
       if (heard) return `REJECTED: "${heard}" is a speech-recognition slip — write what the student MEANT, typeset in $…$.`;

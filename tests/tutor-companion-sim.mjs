@@ -3,8 +3,8 @@
 // figures drawn to scale (INCLINE_ON_BOARD). Real loop, scripted model (fetch intercepted for api.deepseek.com).
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
 delete process.env.GEMINI_API_KEY;
-const { runTutorTurn, nextTeachingState, teachingBlock, evidenceKindFor, reachedSolutionSteps, statesFinalAnswer, relevantToFocus, parsePlan, tutorTools } = await import("../server/tutor.ts");
-const { toSolution, solveProblem, solutionBlock, focusKeyOf, isNewProblem } = await import("../server/solver.ts");
+const { runTutorTurn, nextTeachingState, teachingBlock, evidenceKindFor, reachedSolutionSteps, statesFinalAnswer, relevantToFocus, parsePlan, tutorTools, applyTool, inventsProblemOnBoard, statesGapAnswer, isTheirStep, studentBoardLine, boardLineSet } = await import("../server/tutor.ts");
+const { toSolution, solveProblem, solutionBlock, focusKeyOf, isNewProblem, solutionValues } = await import("../server/solver.ts");
 const { buildInclineScene } = await import("../shared/inclineScene.ts");
 
 let script = () => ({ content: "" });
@@ -112,5 +112,31 @@ export async function runTutorCompanionSim(check, section) {
     check(`incline at ${angle}°: slope drawn at ${drawn.toFixed(2)}°, normal ⟂ slope, weight vertical`, Math.abs(drawn - angle) < 0.1 && Math.abs(dot) < 0.01 && !!weight && weight.dy > 0);
   }
   check("the incline refuses a nonsense angle", "error" in buildInclineScene({ angle: 95 }));
+
+  // ── board writes that should land do land (reported: "it doesn't write when it should") ──
+  const ctx = (o = {}) => {
+    const result = { reply: "", board: [], problems: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false };
+    const board = o.board || [];
+    return { message: o.message || "ok", result, allBoard: () => [...board, ...result.board], allProblems: () => o.problems || [], spokenRepair: null, fr: false, said: o.said || [truckQ], wantsExercise: false, focus: [truckQ], known: solutionValues(sol), solution: sol };
+  };
+  const write = (args, o) => { const c = ctx(o); const out = applyTool("WRITE_TO_BOARD", args, c); return { out, entry: c.result.board[0] }; };
+  check("a result the solution reaches lands even though nobody typed that number", !!write({ text: "$F = 2553.8$ N", kind: "result" }).entry);
+  check("givens with g = 9.8 (a constant nobody typed) land", !!write({ text: "m = 900 kg, g = 9.8 m/s², friction = 360 N", kind: "given" }).entry);
+  check("a unit conversion of their number lands (10 m/s = 36 km/h)", !!write({ text: "v = 10 m/s = 36 km/h", kind: "given" }).entry);
+  const theirs = write({ text: "$F = 900 \\times 9.8 \\times \\sin 12^\\circ + 900 \\times 0.4 + 360$", kind: "result" }, { message: "so the force is 900*9.8*sin(12) + 900*0.4 + 360" });
+  check("their own step written without owner is recognised as THEIRS (not refused as an equation ahead)", theirs.entry?.owner === "student");
+  const wordGap = [{ id: "g", kind: "gap", text: "the force opposing the motion = ?", expectedAnswer: "friction", at: "2026-10-11T10:00:00Z" }];
+  check("a word answer only leaks when the line STATES it, not when it mentions it", !!write({ text: "friction acts down the slope at 360 N", kind: "given" }, { board: wordGap }).entry && /answer to an open/.test(write({ text: "the opposing force is friction", kind: "result" }, { board: wordGap }).out) && statesGapAnswer("answer: friction", "friction") && !statesGapAnswer("frictionless surface", "friction"));
+  check("…still refused: off-topic, invented numbers, an equation they never stated, the final answer", /isn't about the problem/.test(write({ text: "Photosynthesis needs sunlight", kind: "insight" }).out) && /aren't in their problem/.test(write({ text: "Truck: 2 kg on the slope at 25 m/s", kind: "given" }).out) && /equation they haven't stated/.test(write({ text: "$P = Fv$", kind: "formula" }).out) && /answer to an open/.test(write({ text: "$P = 25538$ W", kind: "result" }).out));
+  check("inventsProblemOnBoard: constants, conversions and solution values aren't invented", !inventsProblemOnBoard("m = 900 kg, g = 9.81 m/s²", [truckQ]) && !inventsProblemOnBoard("F = 2553.8 N, v = 10 m/s", [truckQ], solutionValues(sol)) && inventsProblemOnBoard("A 3 kg box at 7 m/s", [truckQ]));
+  check("isTheirStep / studentBoardLine", isTheirStep("$P = F v$", ["power is force times velocity"]) && !isTheirStep("$P = F v$", ["no idea"]) && studentBoardLine(["can you write 2553.8 times 10 on the board"]) === "2553.8 times 10" && studentBoardLine(["write it on the board", "F = 2553.8 N"]) === "F = 2553.8 N" && studentBoardLine(["write it down"]) === "");
+  check("one gap a turn, and none while the board ends on an open gap", /one gap a turn/.test((() => { const c = ctx(); applyTool("WRITE_TO_BOARD", { text: "$F = ?$", kind: "gap", expectedAnswer: "2553.8" }, c); return applyTool("WRITE_TO_BOARD", { text: "$P = ?$", kind: "gap", expectedAnswer: "25538" }, c); })()) && /already ends on an open gap/.test(write({ text: "$P = ?$", kind: "gap", expectedAnswer: "25538" }, { board: [{ id: "g1", kind: "gap", text: "$F = ?$", expectedAnswer: "2553.8", at: "z" }] }).out));
+  check("line numbers include this turn's new lines", [...boardLineSet([{ id: "a", kind: "given", text: "x", n: 4 }, { id: "f", kind: "focus", text: "f" }], [{ id: "b", kind: "result", text: "y" }, { id: "c", kind: "annotation", text: "z" }])].join() === "4,5");
+
+  // Asked to write, every model write refused → code writes THEIR line, and the reply's claim stands.
+  script = (b, i) => i < 2 ? { tool_calls: [tc("WRITE_TO_BOARD", { text: "Photosynthesis is cool", kind: "insight" })] } : { content: "Done — it's on the board. What would you do with it next?" };
+  calls = [];
+  r = await runTutorTurn({ history: [{ role: "user", text: truckQ }], message: "write F = 2553.8 N on the board", board: [], problems: [], objectives: [], context: {}, lang: "en", solution: sol });
+  check("'write it on the board' always ends with their line on the board", r.board.length === 1 && r.board[0].owner === "student" && /2553\.8/.test(r.board[0].text) && /on the board/.test(r.reply));
   globalThis.fetch = realFetch;
 }

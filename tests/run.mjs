@@ -2155,7 +2155,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     check("copy is bolder: thinking partner, not an answer machine; tutor voice holds a high bar", /thinking partner, not an answer machine/.test(app) && /You hold a high bar and you are plainly on their side/.test(cl)); }
   check("board is flat: plain lines, no section numbers or boxes", /sm-board-line/.test(boardSrc) && !/sm-board-section-num/.test(boardSrc));
   check("kind:\"summary\" renders as an ordinary line — no trace box, no heading, no category", !/ReasoningTrace|sm-board-trace/.test(boardSrc));
-  check("a deliberately unfinished worked line gets an 'à toi de finir' completion chip (completion effect, visible)", /isCompletionGap/.test(boardSrc) && /sm-board-todo-chip/.test(boardSrc));
+  check("no 'Your turn' / 'à toi' chips under board lines (reported: too many of them) — a gap is just its '= ?' line", !/isCompletionGap/.test(boardSrc) && !/sm-board-todo-chip/.test(boardSrc));
   check("new entries write themselves in (drafted, not swapped)", /sm-board-writein/.test(boardSrc));
   check("the board shows a live 'Otto écrit…' drafting indicator while the tutor composes", /writing\?/.test(boardSrc) && /sm-board-drafting/.test(boardSrc));
   check("TutorSession wires the drafting indicator to the chat's sending state", /writing=\{sending\}/.test(readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8")));
@@ -2574,7 +2574,7 @@ section("Board: a gap poses the question — no small inline answer fields, Tuto
   // like any other message. The old onAnswer/answer-input widget is gone entirely.
   const boardSrc = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
   check("BoardArtifact has no inline answer box any more (no onAnswer, no answer input, no draft state)", !/onAnswer|sm-board-answer-input|answerText/.test(boardSrc));
-  check("the gap chip carries a SPECIFIC next move (gapAction), with the generic line only as fallback", /gapAction/.test(boardSrc) && /Your turn:/.test(boardSrc) && /Your turn to finish/.test(boardSrc));
+  check("no 'Your turn: …' chip under a gap any more (the line and its answer box say it)", !/Your turn:/.test(boardSrc) && !/Your turn to finish/.test(boardSrc));
   check("no kind-\"question\" rendering survives either", !/kind === \"question\"/.test(boardSrc));
 
   // Direct instruction: the board is TUTOR-ONLY — the plain task chat (TaskCard.tsx) and Study Mode's own
@@ -6044,7 +6044,7 @@ await runTutorCompanionSim(check, section);
 {
   const b = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
   const css = readFileSync(new URL("../client/minimal.css", import.meta.url), "utf8");
-  check("board blanks: gaps the tutor moved past lose their '?' and 'Your turn' chip; ink sheets are capped; less top padding", /sm-board-gap-past/.test(b) && /!isPastGap/.test(b) && /Math\.min\(sheetSignal\.height, 240\)/.test(b) && /\.sm-board-gap-past \.sm-board-todo-chip \{ display: none/.test(css));
+  check("board blanks: gaps the tutor moved past lose their '?'; ink sheets are capped; less top padding", /sm-board-gap-past/.test(b) && /isPastGap/.test(b) && /Math\.min\(sheetSignal\.height, 240\)/.test(b) && /\.sm-board-gap-past \.sm-board-gap-text::after \{ content: none/.test(css));
 }
 {
   const { equivalent: eq } = await import("../shared/mathEquiv.ts");

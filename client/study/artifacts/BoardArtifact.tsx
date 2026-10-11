@@ -113,18 +113,6 @@ const KIND_GLYPH: Record<string, string> = {
 
 const LABEL_SIZE: Record<string, number> = { sm: 12, md: 14, lg: 18 };
 
-/** The completion effect made visible: a worked line the tutor deliberately left unfinished ("= ?", a short
- *  line ending in "?") renders with a highlighted "à toi" chip — the gap is an invitation, not an omission
- *  (Sweller's completion effect: doing the last step yourself is where the learning happens; the prompt
- *  already asks Otto to end worked lines this way, the board now SHOWS it). Only a line ENDING in a gap
- *  marker qualifies, and short, so mid-sentence question marks never trigger it. */
-function isCompletionGap(text: string): boolean {
-  const t = text.trimEnd();
-  if (/[=→>:]\s*\?\s*$/.test(t)) return true;
-  const last = t.split("\n").pop() || "";
-  return /\?\s*$/.test(last) && last.trim().length <= 40;
-}
-
 /** Decorative glyphs a model sometimes prefixes a step with ("○ 6. collect → …"). They carry no meaning at
  *  all, and left in place they render as part of the step's own text. */
 const STEP_DECOR = "•·▪‣∙◦∘○●◯◆◇";
@@ -562,8 +550,10 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, 
     for (const p of dedupedProblems) items.push({ key: p.id, at: Date.parse(p.createdAt || "") || Number.MAX_SAFE_INTEGER, problem: p });
     items.sort((a, b) => a.at - b.at);
     return items;
+    // Keyed on the arrays themselves, not their lengths: a gap marked right, or a cleared board with the same count,
+    // must re-render (it used to keep showing the stale lines).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entries.length, problems.length]);
+  }, [entries, problems, problemState, showHint]);
 
   // Sheets: blank room kept for a drawing the student made BELOW the board, so Otto's next writes come after it.
   const [sheets, setSheets] = useState<{ id: number; afterKey: string | null; height: number }[]>([]);
@@ -821,9 +811,6 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, 
               ) : (
                 <>
                   <div className="sm-board-line"><MathText text={autoMathLine(stripStrayMarkdown(e.kind === "result" ? e.text.replace(/^\s*(?:established|établi|found|result|trouvé)\s*:\s*/i, "") : e.text))} /></div>
-                  {((e.kind === "gap" || isCompletionGap(e.text)) && !isPastGap) ? (
-                    <span className="sm-board-todo-chip">{e.gapAction ? (en ? `Your turn: ${e.gapAction}` : `À toi : ${e.gapAction}`) : (en ? "Your turn to finish" : "À toi de finir")}</span>
-                  ) : null}
                   {e.kind === "gap" && e.expectedAnswer && e.status !== "correct" && !flowItems.slice(idx + 1).some((it) => it.entry?.kind === "gap") && onGapCheck ? <GapAnswer entry={e} onCheck={onGapCheck} en={en} /> : null}
                 </>
               )}
