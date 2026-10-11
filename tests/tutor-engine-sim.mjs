@@ -354,4 +354,20 @@ export async function runTutorEngineSim(check, section) {
   check("'Let's wrap this up for now — great work!' counts as an unasked wrap-up", wu("You nailed it. Let's wrap this up for now — great work!", "yes it makes sense"));
   const mp = makeProblem({ question: "A 3 kg box is pulled up a 20° slope by 12 N with 2 N friction over 5 m; find the speed.", answer: "1.0", check: "sqrt(2*(12-2-3*9.8*sin(20*pi/180))*5/3)" }, true);
   check("a problem whose own check can't evaluate (impossible numbers: the pull can't beat gravity + friction) is refused with that reason", "error" in mp && /impossible|does not evaluate/.test(mp.error));
+
+  // The tutor's board edits go through the validated action layer: its own lines can be corrected in place / taken off, the student's can't.
+  const editBoard = [
+    { id: "t1", at: "", kind: "formula", text: "$W_{net} = 5.52 \\times 4 = 22.08$", owner: "otto" },
+    { id: "s1", at: "", kind: "result", text: "$F_{net} = 4.4$", owner: "student" },
+  ];
+  script = (b, i) => i === 0 ? { content: "", tool_calls: [tc("UPDATE_BOARD_LINE", { target: "t1", text: "$W_{net} = 4.4 \\times 4 = 17.6$" }), tc("UPDATE_BOARD_LINE", { target: "s1", text: "$F_{net} = 5$" }), tc("REMOVE_BOARD_LINE", { target: "s1" }), tc("UPDATE_BOARD_LINE", { target: "zzz", text: "x" })] }
+    : { content: "I fixed my own line — the net force is yours, 4.4. What do you get for the work?" };
+  r = await run("why did you write 22.08?", { board: editBoard });
+  const editTools = calls[1]?.messages.filter((m) => m.role === "tool").map((m) => m.content) || [];
+  check("tutor edits go through the board action layer: own line corrected in place (id, no duplicate), student's line refused (FORBIDDEN_STUDENT_WORK) for update AND remove, unknown target = NOT_FOUND",
+    r.boardEdits?.length === 1 && r.boardEdits[0].id === "t1" && /17\.6/.test(r.boardEdits[0].text) && !r.boardRemoved?.length && r.board.length === 0
+    && /"ok":true/.test(editTools[0]) && /FORBIDDEN_STUDENT_WORK/.test(editTools[1]) && /FORBIDDEN_STUDENT_WORK/.test(editTools[2]) && /NOT_FOUND/.test(editTools[3]));
+  script = (b, i) => i === 0 ? { content: "", tool_calls: [tc("REMOVE_BOARD_LINE", { target: "t1" })] } : { content: "Taken off — it was my wrong line." };
+  r = await run("that line is wrong", { board: editBoard });
+  check("a tutor line can be taken off the active board (archived, reversible)", r.boardRemoved?.length === 1 && r.boardRemoved[0] === "t1");
 }

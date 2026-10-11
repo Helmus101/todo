@@ -107,12 +107,12 @@ The tutor may only tell the student a board change happened if the result says `
 | Focus/highlight | `focus` entries, `ANNOTATE_BOARD` |
 | Persistence | the task's `board` array (account row), localChatBoard |
 
-## 4. Not done yet (honest status)
+## 4. Status
 
-`shared/boardState.ts` is the schema + reducer + tests. It is **not yet wired in** as the live store: the running board is still the `BoardEntry[]` list. Implementation order from here:
+**Wired into the live tutor (this branch):**
+- `shared/boardAdapter.ts` loads the stored `BoardEntry[]` into a `BoardState` (otto → tutor, student → student, given → problem; ids preserved) and runs `update` / `remove` through `applyBoardAction`.
+- New tutor tools `UPDATE_BOARD_LINE` and `REMOVE_BOARD_LINE`: the tutor corrects or takes off **its own** lines in place (by `#n`/id); a student's line is refused with `FORBIDDEN_STUDENT_WORK` (the tutor adds a corrected line beside it); unknown targets return `NOT_FOUND`. Results are the structured `{ok, …}` / `{ok:false, error:{code}}` the model reads, and the prompt says it may only claim a change if `ok`.
+- The route applies edits by id (never duplicating), removals archive the entry (`archived: true`, kept, not shown, not listed to the tutor), and the client applies the same edits.
+- Already in place before: board-write claims need a real write, results are recorded for the student, answers are verified (`evalCheckFor`, answer-box tolerance), student lines can't be rewritten, no duplicates.
 
-1. **Adapter**: load a task's `BoardEntry[]` into `BoardState` and back (kind → type, owner → author), so the reducer can run beside the current store.
-2. **Tutor tools → actions**: route `WRITE_TO_BOARD`/`ANNOTATE_BOARD` through `applyBoardAction`, pass `baseRevision`, and have the reply be built from the returned result (no claim without `ok: true`).
-3. **Structured calculations**: have the tutor emit `calculation_step`s with `expr` + `dependsOn`, validated by the engine; render the verification badge (verified / stale).
-4. **Linked widgets and vectors**: sliders that drive `drives` objects with deterministic recalculation.
-5. **Layout engine, student editing, undo/redo UI, conflict handling** on the client.
+**Still to do (not built):** stale-revision checks on live tool calls, structured `calculation_step`s with dependency invalidation in the UI, linked widgets/vectors, layout engine, student-facing undo/redo, per-object revision history persisted with the task.

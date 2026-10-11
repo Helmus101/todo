@@ -6134,5 +6134,14 @@ await runTutorCompanionSim(check, section);
   check("reset needs an explicit scope, keeps the problem, and ARCHIVES student work instead of deleting it", run({ action: "reset" }).error.code === "SCOPE_REQUIRED" && run({ action: "reset", scope: "exercise" }).ok && !!st.objects.prob && st.objects.prob.status === "active" && st.objects.mine.status === "archived");
   check("generated SVG is data, not code: scripts/handlers are rejected; organize only reorders", run({ action: "create", object: { type: "diagram", data: { caption: "x", svg: "<svg><script>alert(1)</script></svg>" } } }).error.code === "INVALID_PAYLOAD" && run({ action: "organize", order: ["nope"] }).error.code === "INVALID_PAYLOAD");
 }
+{
+  const { entriesToState: e2s, applyEntryAction: aea } = await import("../shared/boardAdapter.ts");
+  const ents = [{ id: "a", kind: "formula", text: "x", owner: "otto" }, { id: "b", kind: "result", text: "y", owner: "student" }, { id: "c", kind: "given", text: "z" }];
+  const st2 = e2s(ents);
+  check("adapter: entries load as objects with the right authors (otto→tutor, student, given→problem) in board order", st2.objects.a.author === "tutor" && st2.objects.b.author === "student" && st2.objects.c.author === "problem" && st2.order.join() === "a,b,c");
+  check("adapter: update/remove succeed on tutor lines, are refused on student lines, and unknown ids are NOT_FOUND", aea(ents, { action: "update", targetId: "a", patch: { text: "x2" } }).ok === true && aea(ents, { action: "update", targetId: "b", patch: { text: "q" } }).code === "FORBIDDEN_STUDENT_WORK" && aea(ents, { action: "remove", targetId: "zz" }).code === "NOT_FOUND");
+  const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"), bart = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  check("the route applies edits/removals by id (no duplicates), sends them to the client, hides archived lines from the board and from the tutor's listing", /out\.boardEdits\?\.length \|\| out\.boardRemoved\?\.length/.test(idx) && /boardEdits: out\.boardEdits, boardRemoved: out\.boardRemoved/.test(idx) && /b\.archived !== true/.test(idx) && /filter\(\(e\) => !e\.archived\)/.test(bart));
+}
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

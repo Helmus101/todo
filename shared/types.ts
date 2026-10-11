@@ -1656,6 +1656,8 @@ export interface BoardEntry {
    *  never silently rewritten by Otto. Used to visually distinguish Otto's scaffolding from the student's
    *  own work on the board (see BoardArtifact.tsx). */
   owner?: "otto" | "student";
+  /** Removed from the active board by the tutor (reversible — the entry is kept, just not shown). */
+  archived?: boolean;
   /** Present only when kind === "gap" — the answer the student is expected to fill in. The board renders this
    *  as an interactive blank the student must complete (the completion effect: doing the last step yourself
    *  is where the learning happens). Otto must NEVER reveal this value in chat while the gap is open. */
