@@ -370,4 +370,18 @@ export async function runTutorEngineSim(check, section) {
   script = (b, i) => i === 0 ? { content: "", tool_calls: [tc("REMOVE_BOARD_LINE", { target: "t1" })] } : { content: "Taken off — it was my wrong line." };
   r = await run("that line is wrong", { board: editBoard });
   check("a tutor line can be taken off the active board (archived, reversible)", r.boardRemoved?.length === 1 && r.boardRemoved[0] === "t1");
+
+  const { parsePlan: pp } = await import("../server/tutor.ts");
+  script = () => ({ content: '<plan>{"diagnosis":"none","action":"probe","help_level":1}</path>Imagine a block sliding down a ramp. What is the first thing you would write?' });
+  r = await run("let's do energy");
+  check("a hidden plan closed with the wrong tag (</path>) is stripped, never shown, and still parsed", !/plan|path|diagnosis/.test(r.reply) && /Imagine a block/.test(r.reply) && pp('<plan>{"diagnosis":"none","action":"probe","help_level":1}</path>x')?.action === "probe");
+  script = (b, i) => i === 0 ? { content: "Imagine a block on a ramp. If a 2 kg block drops from a height of 3 m onto a spring with k = 400 N/m, how would you set up the energy conservation?" }
+    : i === 1 ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "$m = 2$ kg, $h = 3$ m, $k = 400$ N/m", kind: "given" })] }
+    : { content: "It's on the board — how would you set up the energy conservation?" };
+  r = await run("give me a spring problem");
+  check("a new scenario posed only in the message (no board write) is sent back to put it on the board", /nothing is on the board/.test(JSON.stringify(calls[1]?.messages || "")));
+  const { solvedGapKey: sgk } = await import("../server/tutor.ts");
+  check("a gap that states an equation for its unknown is SOLVED in code (2·9.8·3 = ½(400)x² ⟹ x = ? → 0.5422), so a correct 0.54 is never 'checked wrong'",
+    Math.abs(sgk("$2 \\cdot 9.8 \\cdot 3 = \\frac{1}{2}(400)x^2 \\Longrightarrow x = ?$") - 0.542218) < 1e-5 && Math.abs(sgk("2·9.8·3 = ½(400)x² ⟹ x = ?") - 0.542218) < 1e-5 && sgk("3x + 1 = 10 ⟹ x = ?") === 3 && sgk("F = 5 ⟹ F = ?") === null
+    && equivalent("0.54", String(sgk("2·9.8·3 = ½(400)x² ⟹ x = ?")), "x") === "correct" && equivalent("0.55", "0.542218", "x") === "incorrect");
 }

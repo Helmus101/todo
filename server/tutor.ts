@@ -21,7 +21,7 @@ import { equationsAhead, asksForFormula } from "../shared/equationsAhead.ts";
 import { findArithmeticClaims } from "./arithmetic.ts";
 import { applyEntryAction } from "../shared/boardAdapter.ts";
 import { boardSurfaceBlock } from "./boardEvents.ts";
-import { replyStatesValue, socraticFallback, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario, inventedNumbers, claimsBoardWrite, stripBoardClaim, reachedResultUnrecorded, confirmsUnchecked, wrapsUpUnasked, blamesWidget, asksToWrite, handsOverCalculation, sendsBackToStatement, statesFormula, misstatesGiven } from "./tutorAdapt.ts";
+import { replyStatesValue, socraticFallback, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario, inventedNumbers, claimsBoardWrite, stripBoardClaim, posesProblemInProse, reachedResultUnrecorded, confirmsUnchecked, wrapsUpUnasked, blamesWidget, asksToWrite, handsOverCalculation, sendsBackToStatement, statesFormula, misstatesGiven } from "./tutorAdapt.ts";
 export { sendsBackToStatement, statesFormula, misstatesGiven } from "./tutorAdapt.ts";
 import { latexToPlainText } from "../shared/mathText.ts";
 import { toExprSource } from "../shared/mathEquiv.ts";
@@ -214,8 +214,16 @@ export interface TutorTurnResult {
 /** The model's hidden per-turn teaching decision. Parsed leniently — a missing or malformed plan never blocks a reply. */
 export interface TutorPlanLite { diagnosis?: string; action?: string; helpLevel?: number }
 const ACTIONS = ["probe", "hint", "visual", "explain", "example", "practice", "confirm"];
+/** How many unit-bearing quantities in the reply ("2 kg", "3 m", "400 N/m", "25°") appear nowhere in the conversation, board or problems. */
+export function newQuantities(reply: string, sources: string[]): number {
+  const hay = sources.join(" ").replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1");
+  const nums = (String(reply).replace(/\$/g, " ").match(/\d+(?:[.,]\d+)?(?=\s?(?:°|\\circ|(?:m|cm|mm|km|kg|g|s|min|h|N|J|V|A|W|mol|L|mL|%|degrees?)\b))/gi) || []).map((n) => n.replace(",", "."));
+  return new Set(nums.filter((n) => !new RegExp(`(?<![\\d.])${n.replace(".", "\\.")}(?![\\d])`).test(hay))).size;
+}
+/** The hidden plan: <plan>{json}</plan> — but models also close it with the wrong tag (</path>, </plan >) or not at all, which used to leak it into the reply. */
+const PLAN_RE = /<plan>\s*(\{[\s\S]*?\})\s*(?:<\/[a-z]*\s*>)?/i;
 export function parsePlan(text: string): TutorPlanLite | undefined {
-  const m = /<plan>([\s\S]*?)<\/plan>/i.exec(String(text || ""));
+  const m = PLAN_RE.exec(String(text || ""));
   if (!m) return undefined;
   try {
     const j = JSON.parse(m[1].trim());
@@ -368,6 +376,36 @@ export function doubtsRightAnswer(reply: string, message: string, sol?: TutorSol
   return null;
 }
 
+/** A gap that states an equation and asks for its unknown ("2·9.8·3 = ½(400)x² ⟹ x = ?"): the key is SOLVED here, not taken from the model.
+ *  Finds the positive root of lhs − rhs numerically (scan + bisection); null unless there is exactly one clear positive root. Exported for tests. */
+export function solvedGapKey(text: string): number | null {
+  const plain = latexToPlainText(String(text || "").replace(/\$/g, " ")).replace(/(\d),(?=\d{3}(?!\d))/g, "$1");
+  const target = /([A-Za-z])\s*=\s*\?\s*$/.exec(plain)?.[1];
+  if (!target) return null;
+  const eq = plain.split(/⟹|⇒|Longrightarrow|Rightarrow|→|->|=>|\\Rightarrow/)[0].replace(/½/g, "(1/2)").replace(/[·⋅×]/g, "*").replace(/²/g, "^2").replace(/³/g, "^3");
+  const sides = eq.split("=");
+  if (sides.length !== 2 || !sides.every((x) => x.trim())) return null;
+  const re = new RegExp(`(?<![A-Za-z])${target}(?![A-Za-z])`);
+  if (!re.test(sides[0] + sides[1])) return null;
+  const l = compileExpr(toExprSource(sides[0].replace(/(?<=\d|\))\s*(?=[A-Za-z(])/g, "*")), [target]);
+  const r = compileExpr(toExprSource(sides[1].replace(/(?<=\d|\))\s*(?=[A-Za-z(])/g, "*")), [target]);
+  if ("error" in l || "error" in r) return null;
+  const f = (x: number) => l.fn({ [target]: x }) - r.fn({ [target]: x });
+  const roots: number[] = [];
+  let prev = 1e-6, fp = f(prev);
+  for (let x = 1e-6, step = 1.05; x < 1e6; x *= step) {
+    const cur = x * step, fc = f(cur);
+    if (Number.isFinite(fp) && Number.isFinite(fc) && fp * fc <= 0 && fp !== fc) {
+      let a = prev, b = cur;
+      for (let i = 0; i < 80; i++) { const m = (a + b) / 2; if (f(a) * f(m) <= 0) b = m; else a = m; }
+      const root = (a + b) / 2;
+      if (!roots.some((q) => Math.abs(q - root) < 1e-6 * Math.max(1, root))) roots.push(root);
+    }
+    prev = cur; fp = fc;
+  }
+  return roots.length === 1 ? Math.round(roots[0] * 1e6) / 1e6 : null;
+}
+
 /** A gap whose line is a pure number calculation ("900×9.8×sin(12°) + 900×0.4 + 360 = ?") has its key computed
  *  HERE, not guessed by the model — a guessed "2553" for 2553.8 marked a right 2554.4 wrong (reported live).
  *  Returns the computed value, or null when the line isn't a closed calculation. Exported for tests. */
@@ -429,7 +467,7 @@ export function wrongArithmetic(reply: string, message = ""): string | null {
 }
 
 function cleanReply(text: string, voice: boolean): string {
-  let t = stripLeakedToolCallSyntax(String(text || "")).replace(/<plan>[\s\S]*?<\/plan>/gi, "").trim();
+  let t = stripLeakedToolCallSyntax(String(text || "")).replace(/<plan>[\s\S]*?<\/plan>/gi, "").replace(new RegExp(PLAN_RE.source, "gi"), "").replace(/<\/?(?:plan|path)\s*>/gi, "").trim();
   t = t.replace(/^\s*(otto|tutor)\s*:\s*/i, "").replace(/\*\*(.+?)\*\*/g, "$1");
   // Read aloud: maths becomes readable text ("1000 × 9.8 × sin(10°) × 15", "1/2 mv^2"). It used to just delete every
   // \command, so \times and \sin vanished and "\frac12" read as "12" — "multiply 10009.8(10°)15" (reported live).
@@ -590,6 +628,10 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       // while they kept answering "12". Corrected with a prompt round; taken over in code below if it persists.
       const reread = sendsBackToStatement(reply, message);
       if (reread) issues.push(`it sends them back to the problem statement ("${reread}") to re-check something they ALREADY gave — don't re-ask it, use the value they said. If they misread it, say what the problem actually gives and why it differs. If the givens as written genuinely can't produce what the problem asks for, say so plainly ONCE (the numbers as given don't work out, and the one-line reason why) and offer to change one of them, instead of asking them to read it again`);
+      // A NEW problem posed only in the message ("If a 2 kg block drops 3 m onto a spring k = 400 N/m, how would you…?") with nothing on the board.
+      const quantitiesNew = posesProblemInProse(reply) && !result.problems.length && !result.board.length
+        ? newQuantities(reply, [...said, ...allBoard().map((b) => b.text), ...allProblems().map((p) => p.question)]) >= 2 : false;
+      if (quantitiesNew) issues.push("you set a new problem in the message only — nothing is on the board. Put it on the board: CREATE_PROBLEM when it is an exercise for them to solve (full statement, one checkable answer with a `check` expression), otherwise WRITE_TO_BOARD the givens and the question; the message then just points at it in one line");
       const claimedBoard = claimsBoardWrite(reply) && !result.board.length && !result.problems.length;
       if (claimedBoard) issues.push("you say you'll put (or have put) something on the board, but nothing was written this turn. Write it now (a new problem goes through CREATE_PROBLEM): ONE short clean line with WRITE_TO_BOARD (the result or step they reached, their numbers, maths in $…$, owner \"student\"; never their sentence), then reply. Only if there is truly nothing worth keeping, drop that sentence instead");
       else if (reachedResultUnrecorded(reply, message, result.board.length + result.problems.length)) issues.push("they just reached a result or step of their own and you confirmed it, but nothing went on the board. Record it: ONE short clean line with WRITE_TO_BOARD (kind result or summary, owner \"student\", their numbers, maths in $…$), then reply as you planned");
@@ -773,7 +815,7 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       // Never derive an equation or show which formula to use: the student names the relationship first.
       const ahead = input.owner !== "student" && !asksForFormula(c.message) ? equationsAhead(text, c.said) : [];
       if (ahead.length) return `REJECTED: that writes an equation they haven't stated (${ahead[0]}). Don't derive it or show which formula to use — ask them what relationship they'd use, and write it up (owner:'student') once THEY say it. You can still write the givens, or the unknown as '… = ?'.`;
-      if (input.kind === "gap") { const k = computedGapKey(text); if (k !== null) input.expectedAnswer = String(k); }
+      if (input.kind === "gap") { const k = computedGapKey(text) ?? solvedGapKey(text); if (k !== null) input.expectedAnswer = String(k); }
       const heard = boardRepeatsMishearing(text, c.spokenRepair);
       if (heard) return `REJECTED: "${heard}" is a speech-recognition slip — write what the student MEANT, typeset in $…$.`;
       const r = makeBoardEntry(input);
