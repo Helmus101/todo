@@ -2663,6 +2663,16 @@ section("fractions always typeset — pseudo-fractions and bare \\tfrac lines ne
     l2.includes("$\\tfrac12(250)(0.12)$") && !l2.replace(/\$[^$]*\$/g, "").includes("\\"));
   check("a bullet dash and a markdown table rule are structure, never wrapped as maths",
     autoMathLine("- add this up") === "- add this up" && autoMathLine("|---|:---:|") === "|---|:---:|");
+  // Reported live (Tutor transcript, physics): the student's board showed "F_{net} = 12 - 2 - 3(9.8)sin(20 ∘ )" —
+  // a model-written line with NO $…$. The subscript read as an ordinary word ("net"), and the \circ inside the
+  // token read as another ("circ"), so the token counted as PROSE: autoMathLine wrapped only the middle
+  // ("F_{net} $= 12 - 2 -$ 3(9.8)sin(20^circ )") and stripBackslashesOutsideMath then ate the command's
+  // backslash. A subscripted variable is maths, and a token carrying a command is maths — one span, no raw text.
+  check("a bare line with a subscripted variable and a \\circ typesets as ONE span, with no raw text around it",
+    autoMathLine("F_{net} = 12 - 2 - 3(9.8)sin(20^\\circ )") === "$F_{net} = 12 - 2 - 3(9.8)\\sin(20^\\circ)$");
+  check("the maths BEFORE a command stays inside the same span (W_{net} = F_{net} \\cdot d = …)",
+    autoMathLine("W_{net} = F_{net} \\cdot d = -0.06 \\times 5 = -0.3 J = ?") === "$W_{net} = F_{net} \\cdot d = -0.06 \\times 5 = -0.3 J =$ ?" &&
+    autoMathLine("F_{down} = 2 + 10.06 = 12.06 N") === "$F_{down} = 2 + 10.06 = 12.06 N$");
   check("multi-line input is processed per line, and fenced code passes through byte-for-byte",
     autoMathLine("x = 1\n```\ny = 2\n```") === "$x = 1$\n```\ny = 2\n```" &&
     autoMathLine("a = 1\nb = 2") === "$a = 1$\n$b = 2$");

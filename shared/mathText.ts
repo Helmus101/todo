@@ -11,8 +11,15 @@ const isMathToken = (t: string): boolean => {
   // a LaTeX command token ("\sin", "\alpha", "\tfrac12") is maths by definition — without this the
   // command's letters read as prose ("tfrackx" is 7 letters) and the line prints with a raw backslash.
   if (/^\\[a-zA-Z]+/.test(bare)) return true;
-  // an ordinary word (3+ letters that isn't a function name) is prose, even with a hyphen in it ("special-angle")
-  for (const w of bare.match(/\p{L}{3,}/gu) || []) if (!FN.has(w.toLowerCase())) return false;
+  // a subscripted variable ("F_{net}", "W_{net}", "v_0") is maths: its subscript letters ("net", "down") read
+  // as an ordinary word below, so the token counted as prose and broke the line into fragments — reported live,
+  // "F_{net} = 12 − 2 − 3(9.8)sin(20^\circ )" printed as "F_{net} $= 12 - 2 -$ 3(9.8)sin(20^circ )".
+  if (/^[A-Za-z]{1,4}(?:_\{?[A-Za-z0-9]{1,6}\}?){1,3}$/.test(bare)) return true;
+  // A LaTeX command ANYWHERE in the token makes its letters commands, not words ("20^\circ", "3\tfrac12"):
+  // strip the command names before the prose scan, or "circ" reads as an ordinary word and the token drops
+  // out of the maths run (which also let stripBackslashesOutsideMath turn "\circ" into "circ").
+  // An ordinary word (3+ letters that isn't a function name) is prose, even with a hyphen ("special-angle").
+  for (const w of bare.replace(/\\[a-zA-Z]+/g, " ").match(/\p{L}{3,}/gu) || []) if (!FN.has(w.toLowerCase())) return false;
   if (FN.has(bare.toLowerCase())) return true; // "sin" / "cos" on their own: "sin A cos B"
   if (/^\p{L}$/u.test(bare)) return true; // a single-letter variable: x, A, θ
   if (/[0-9=+\-−×·÷/^<>≤≥≈≠→⇒√π∞∑∫°⁰-⁹₀-₉]|->|=>/.test(bare)) return true;
@@ -50,7 +57,14 @@ export function plainMathToLatex(run: string): string {
  *  nested "\frac{h}{100 + \frac{h}{\tan 25^\circ}}" was wrapped only up to "\frac{h}" and the rest printed raw
  *  (reported live on the tower problem). */
 const BRACED = (() => { let g = "\\{[^{}]*\\}"; for (let i = 0; i < 3; i++) g = `\\{(?:[^{}]|${g})*\\}`; return g; })();
-const RAW_LATEX_RUN = new RegExp(`\\\\[a-zA-Z]+(?:\\s*${BRACED}|\\s*\\\\[a-zA-Z]+|\\s*[A-Za-z](?![A-Za-z])|[\\d+\\-*/().=^_,:πθμ√∞°\\s])+`, "g");
+// The maths that can PRECEDE a command and still belong to the same run. Only a SUBSCRIPTED variable qualifies
+// ("W_{net} = F_{net} \cdot d = …" wrapped just "\cdot d = …" and left "W_{net} = F_{net}" outside it as raw
+// text with its braces visible — reported live). A plain prefix ("E = \tfrac12…", "k \cdot \tan 50^\circ…")
+// deliberately does NOT pull the command in: those render fine and are pinned by tests. A prose word can never
+// match, because a head must be followed by the command immediately, and wrapRawLatex's own guard below still
+// refuses a run with no operator or digit in it.
+const MATH_HEAD = `[A-Za-z]{1,4}(?:_\\{?[A-Za-z0-9]{1,6}\\}?)\\s*[=+\\-*/^]?\\s*(?:[A-Za-z]{1,4}(?:_\\{?[A-Za-z0-9]{1,6}\\}?)?\\s*[=+\\-*/^]?\\s*)*`;
+const RAW_LATEX_RUN = new RegExp(`(?:${MATH_HEAD})?\\\\[a-zA-Z]+(?:\\s*${BRACED}|\\s*\\\\[a-zA-Z]+|\\s*[A-Za-z](?![A-Za-z])|[\\d+\\-*/().=^_,:πθμ√∞°\\s])+`, "g");
 
 /** A bare LaTeX run the model wrote WITHOUT $…$ (reported live on the board: "x = \tfracπ3, \tfrac5π3"
  *  printed as raw commands, or as jammed plain text). Wrap such a run in $…$ so KaTeX typesets it instead.
@@ -114,6 +128,9 @@ export function autoMathLine(line: string): string {
   let pendingSpace = "";
   for (const t of toks) {
     if (/^\s+$/.test(t)) { if (run.length) pendingSpace = t; else out.push(t); continue; }
+    // A bare closer while a maths run is open belongs TO that run ("… \sin(20^\circ" then ")") — otherwise it
+    // flushes the run early and splits one expression across two $…$ spans with the ")" left in prose.
+    if (run.length && /^[)\]}]+$/.test(t)) { run.push(t); pendingSpace = ""; continue; }
     if (isMathToken(t)) { if (run.length) run.push(pendingSpace); run.push(t); pendingSpace = ""; }
     else { if (run.length) { trail = pendingSpace; flush(); pendingSpace = ""; } out.push(t); }
   }

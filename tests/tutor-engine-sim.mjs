@@ -5,7 +5,7 @@
 // carries the conversation first and the background second.
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
 delete process.env.GEMINI_API_KEY;
-const { runTutorTurn, detectSubject, backgroundBlock, TUTOR_PROMPT, leakedValue, wantsExercise, inventsProblemOnBoard, doubtsRightAnswer, softenOpener, computedGapKey, nextTeachingState } = await import("../server/tutor.ts");
+const { runTutorTurn, detectSubject, backgroundBlock, TUTOR_PROMPT, leakedValue, wantsExercise, inventsProblemOnBoard, doubtsRightAnswer, softenOpener, computedGapKey, nextTeachingState, sendsBackToStatement } = await import("../server/tutor.ts");
 const { equivalent } = await import("../shared/mathEquiv.ts");
 const { equationsAhead } = await import("../shared/equationsAhead.ts");
 const { boardLineNumbers } = await import("../shared/boardLines.ts");
@@ -187,6 +187,31 @@ export async function runTutorEngineSim(check, section) {
   check("voice mode keeps the maths readable (× and sin survive, ½ isn't '12')", /1000 × 9\.8 × sin\(10°\) × 15/.test(r.reply) && /1\/2/.test(r.reply) && !/\\/.test(r.reply));
   check("doubtsRightAnswer leaves a genuinely wrong answer alone", doubtsRightAnswer("Check that again: $1000 \\times 9.8 \\times \\sin(10^\\circ) \\times 15$.", "5,526") === null);
 
+  // Reported live (real transcript): Otto asked the student to go BACK TO THE PROBLEM STATEMENT to re-check a
+  // value they had already given — "let's re-read the problem's pulling force", "Check the problem statement on
+  // the board", "what is the exact pulling force given in the problem text?" — turn after turn, while all the
+  // student could do was repeat "12". Nothing they say can break that loop, so it burns the whole session.
+  const rereadReply = "Ah, look at the numbers given in the problem statement again, Willem. What is the exact pulling force given in the problem text?";
+  check("sendsBackToStatement: the reported phrasings fire only when they've just given a number",
+    sendsBackToStatement("let's re-read the problem's pulling force", "12") === "re-read" &&
+    sendsBackToStatement("Check the problem statement on the board", "I said 12") === "Check the problem" &&
+    sendsBackToStatement("What is the exact pulling force given in the problem text?", "12") === "problem text" &&
+    sendsBackToStatement("Have a look at the original problem on the board.", "12") === "Have a look at the original problem" &&
+    sendsBackToStatement("let's re-read the problem's pulling force", "I don't get it") === null &&
+    sendsBackToStatement("Your net force is 5.2 N", "12") === null &&
+    sendsBackToStatement("Just call it friction", "12") === null);
+  script = (b, i) => i === 0 ? { content: rereadReply } : { content: "Your numbers stand: 12 N pulling up. Which line shall we pin down first?" };
+  r = await run("12", { problems: [{ id: "pC", question: "A 3 kg box is pulled up a 20° incline by 12 N against 2 N of friction. Find its speed after 5 m.", answer: "0", createdAt: "" }] });
+  check("going back to the problem statement to re-check a value they gave is corrected once, and the rewrite ships",
+    calls.length === 2 && /sends them back to the problem statement/.test(lastUser(calls[1])) && r.reply === "Your numbers stand: 12 N pulling up. Which line shall we pin down first?");
+  script = () => ({ content: rereadReply });
+  r = await run("12");
+  check("…and if it keeps doing it, the student never sees the same bounce-back again — code answers instead",
+    !/problem text/i.test(r.reply) && /your numbers stand as they are/.test(r.reply) && /the question's numbers don't work/.test(r.reply));
+  script = () => ({ content: "Have a look at the problem statement — what does it say the angle is?" });
+  r = await run("I'm not sure where to start");
+  check("with no value on the table, pointing back at the statement is legitimate and left alone", calls.length === 1 && /problem statement/.test(r.reply));
+
   // "Make sure": even if the rewrite STILL asks a right student to redo it, the student never sees that.
   script = () => ({ content: "Let's check that multiplication again. Try $800 \\times 9.8 \\times \\sin(15^\\circ) \\times 12$. What does it give you?" });
   r = await run("24,350 approximately");
@@ -266,6 +291,22 @@ export async function runTutorEngineSim(check, section) {
   }
   // A real reply that legitimately has two genuinely different halves (no duplicate) must survive untouched.
   check("a normal, non-duplicated multi-paragraph reply is never truncated", dedupeParagraphs("First part of the explanation.\nSecond, totally different part.") === "First part of the explanation.\nSecond, totally different part.");
+  // Reported live (real transcript): the SAME three-paragraph reply appeared twice in one bubble — but the two
+  // copies were not byte-identical: one wrote "−0.06N" (U+2212, no space) and the other "-0.06 N" (hyphen,
+  // space). The exact-match check therefore saw two different paragraphs and the student re-read the whole thing.
+  {
+    const net = "So the net force is indeed −0.06N down the slope — the box is actually slowing down.";
+    const again = "So the net force is indeed -0.06 N down the slope — the box is actually slowing down.";
+    const given = "Ah, look at that total opposing force: 2 plus 10.06 is 12.06 N pulling down the slope.";
+    check("a reply duplicated with only glyph/space variants (− vs -) collapses to one copy",
+      dedupeParagraphs([given, net, again].join("\n\n")) === [given, net].join("\n\n"));
+    check("…and a whole bubble duplicated that way (three paragraphs, seamed by a single newline) collapses too",
+      dedupeParagraphs([given, net, "Wait, is it 12 N, or something else?", given, again, "Wait, is it 12 N, or something else?"].join("\n\n")) === [given, net, "Wait, is it 12 N, or something else?"].join("\n\n"));
+    check("a non-breaking space is the same text, not a second copy",
+      dedupeParagraphs([given, net, given, net.replace(" ", "\u00a0")].join("\n\n")) === [given, net].join("\n\n"));
+    check("two genuinely different paragraphs are still both kept",
+      dedupeParagraphs([given, net].join("\n\n")) === [given, net].join("\n\n"));
+  }
 
   // They reach a result, Otto confirms it in words, nothing is on the board: one correction round asks for the write.
   script = (b, i) => i === 0 ? { content: "Spot on, Willem! Pi over two. What would you say about arccos(−1)?" }

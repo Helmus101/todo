@@ -741,6 +741,22 @@ export function asksToWrite(message: string): boolean {
   return /\b(?:write|put|add|note)\b[^.?!]{0,30}\b(?:board|down|up)\b|\bon the board\b|\bwrite (?:it|that|this)\b|\bnote (?:it|that) (?:down|for me)\b|\b(?:write|rewrite|show)\b[^.?!]{0,40}\b(?:equations?|values?|formulas?|steps?)\b|écris|note[- ]le/i.test(message);
 }
 
+/** The reply sends the student BACK TO THE PROBLEM STATEMENT to re-check a value they just gave — "let's re-read
+ *  the problem's pulling force", "check the problem statement on the board", "what is the exact force given in the
+ *  problem text?" — the loop the student cannot break, because what they're sent back to is the thing that already
+ *  disagrees. Reported live: four turns of exactly this while they kept answering "12", going nowhere. Returns the
+ *  phrase that did it, or null. Only fires when they HAVE just given a number — otherwise pointing back at the
+ *  statement is legitimate (they may simply have misread it). Pure. */
+export function sendsBackToStatement(reply: string, message: string): string | null {
+  const t = String(reply || "");
+  const REREAD = /\b(?:re-?read|read (?:the|that|it) again|re-?check)\b/i;
+  const LOOK_BACK = /\b(?:look|have a look|check)\b[^.?!]{0,30}\b(?:original |actual )?(?:problem|question|exercise)\b/i;
+  const ASKS_STATEMENT = /\b(?:problem|question|exercise)\s+(?:statement|text|wording)\b|\bwhat (?:does|did) the (?:problem|question|exercise)\s+(?:say|give|state)\b/i;
+  const m = REREAD.exec(t) || LOOK_BACK.exec(t) || (t.includes("?") ? ASKS_STATEMENT.exec(t) : null);
+  if (!m) return null;
+  return /\d/.test(String(message || "")) ? m[0] : null;
+}
+
 /** A "reply" that is just a formula ("distance K = (470)/(tan 40)") — no sentence, so it is an answer dropped on the
  *  student, not a tutor turn. Counts the real words left once maths is removed. */
 export function bareMath(reply: string): boolean {

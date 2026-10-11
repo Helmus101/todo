@@ -20,7 +20,8 @@ import { repairSpokenMath, spokenContextFrom, type SpokenRepair } from "../share
 import { equationsAhead, asksForFormula } from "../shared/equationsAhead.ts";
 import { findArithmeticClaims } from "./arithmetic.ts";
 import { boardSurfaceBlock } from "./boardEvents.ts";
-import { replyStatesValue, socraticFallback, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario, inventedNumbers, claimsBoardWrite, stripBoardClaim, reachedResultUnrecorded, confirmsUnchecked, wrapsUpUnasked, blamesWidget, asksToWrite, handsOverCalculation } from "./tutorAdapt.ts";
+import { replyStatesValue, socraticFallback, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario, inventedNumbers, claimsBoardWrite, stripBoardClaim, reachedResultUnrecorded, confirmsUnchecked, wrapsUpUnasked, blamesWidget, asksToWrite, handsOverCalculation, sendsBackToStatement } from "./tutorAdapt.ts";
+export { sendsBackToStatement } from "./tutorAdapt.ts";
 import { latexToPlainText } from "../shared/mathText.ts";
 import { toExprSource } from "../shared/mathEquiv.ts";
 import { compileExpr } from "../shared/mathExpr.ts";
@@ -419,6 +420,16 @@ function cleanReply(text: string, voice: boolean): string {
   if (voice) t = t.replace(/\$([^$]+)\$/g, (_, x: string) => latexToPlainText(x)).replace(/\\[a-zA-Z]+(?:\s*\{[^{}]*\})*/g, (m) => latexToPlainText(m));
   return dedupeParagraphs(t.trim());
 }
+/** The comparison key for duplicate detection: case, ALL whitespace, and the glyph variants the model
+ *  flip-flops between across two copies of the same sentence (− U+2212 vs hyphen, curly vs straight quotes).
+ *  Whitespace used to be merely COLLAPSED, so one copy reading "−0.06N" and the other "-0.06 N" compared
+ *  unequal on two counts and the student read the same three paragraphs twice in one bubble (reported live).
+ *  The key is only ever compared — the paragraphs themselves are emitted unchanged. */
+const normForDedupe = (s: string): string => String(s)
+  .replace(/[\u2212\u2010-\u2015]/g, "-")
+  .replace(/[\u2018\u2019\u02bc]/g, "'").replace(/[\u201c\u201d]/g, '"')
+  .replace(/\s+/g, "").toLowerCase();
+
 /** A reply that repeats a whole paragraph (the model sometimes emits its message twice) keeps each paragraph once. Exported for tests. */
 export function dedupeParagraphs(rawText: string): string {
   // Reported live: the WHOLE reply (several paragraphs, ending in a question) appeared twice back to back
@@ -429,19 +440,18 @@ export function dedupeParagraphs(rawText: string): string {
   // this whole-text check must run on the RAW text first, before paragraph-level processing reshapes it.
   // If the back half of the text is a normalized duplicate of the front half, it's one message said twice,
   // not two different paragraphs — try the newline nearest the midpoint as the seam (never a mid-sentence
-  // cut) and only act on a substantial, exact (whitespace/case insensitive) match.
-  const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
+  // cut) and only act on a substantial match (see normForDedupe for what "the same" ignores).
   const mid = Math.floor(rawText.length / 2);
   for (const cut of [rawText.lastIndexOf("\n", mid), rawText.indexOf("\n", mid)]) {
     if (cut <= 0 || cut >= rawText.length - 1) continue;
-    const a = norm(rawText.slice(0, cut));
+    const a = normForDedupe(rawText.slice(0, cut));
     if (a.length < 20) continue;
-    if (a === norm(rawText.slice(cut))) { rawText = rawText.slice(0, cut).trim(); break; }
+    if (a === normForDedupe(rawText.slice(cut))) { rawText = rawText.slice(0, cut).trimEnd(); break; }
   }
   const seen = new Set<string>();
   const out: string[] = [];
   for (const para of rawText.split(/\n{2,}/)) {
-    const key = para.replace(/\s+/g, " ").trim().toLowerCase();
+    const key = normForDedupe(para);
     if (key && seen.has(key)) continue;
     seen.add(key);
     out.push(para.trim());
@@ -533,6 +543,11 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       const badLine = [...reply.matchAll(/\b(?:line|ligne)\s*#?\s*(\d{1,3})\b|(?<![\w&])#(\d{1,3})\b/gi)].map((m) => Number(m[1] || m[2])).find((n) => !lines.has(n));
       if (badLine) issues.push(`it points at line ${badLine}, which doesn't exist on their board — use the line's real margin number from the board listing, or describe it`);
       if (!doubt && handsOverCalculation(reply, message)) issues.push("it hands them the calculation (which numbers to multiply/add) — ask what THEY would compute next instead");
+      // Sending them back to the problem statement to re-check a value they just gave is the loop the student
+      // cannot break — reported live, four turns of "what is the exact pulling force given in the problem text?"
+      // while they kept answering "12". Corrected with a prompt round; taken over in code below if it persists.
+      const reread = sendsBackToStatement(reply, message);
+      if (reread) issues.push(`it sends them back to the problem statement ("${reread}") to re-check something they ALREADY gave — don't re-ask it, use the value they said. If they misread it, say what the problem actually gives and why it differs. If the givens as written genuinely can't produce what the problem asks for, say so plainly ONCE (the numbers as given don't work out, and the one-line reason why) and offer to change one of them, instead of asking them to read it again`);
       const claimedBoard = claimsBoardWrite(reply) && !result.board.length && !result.problems.length;
       if (claimedBoard) issues.push("you say you'll put (or have put) something on the board, but nothing was written this turn. Write it now: ONE short clean line with WRITE_TO_BOARD (the result or step they reached, their numbers, maths in $…$, owner \"student\"; never their sentence), then reply. Only if there is truly nothing worth keeping, drop that sentence instead");
       else if (reachedResultUnrecorded(reply, message, result.board.length + result.problems.length)) issues.push("they just reached a result or step of their own and you confirmed it, but nothing went on the board. Record it: ONE short clean line with WRITE_TO_BOARD (kind result or summary, owner \"student\", their numbers, maths in $…$), then reply as you planned");
@@ -567,6 +582,15 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       // Still doubting a RIGHT answer after the correction round: never let it through — confirm it in code.
       if (doubt && doubtsRightAnswer(reply, message, input.solution)) {
         result.reply = fr ? "Oui, c'est juste — bien joué. Qu'est-ce qui t'a dit quels morceaux multiplier ?" : "Yes, that's right — nice work. What told you which pieces to multiply?";
+        return result;
+      }
+      // Still sending them back to the statement after being told once not to: that is the loop that wastes the
+      // session — nothing the student can do breaks it, and the model has just proved it can't get out of it on
+      // its own. Take the turn over in code and deal with it honestly instead of bouncing them back again.
+      if (reread) {
+        result.reply = fr
+          ? "Hmm, on arrête de revenir à l'énoncé — on reprend au calme avec ce que TU m'as donné : ces nombres-là, on les garde tels quels. S'ils ne permettent pas d'arriver à ce que la question demande, alors c'est la question qui ne marche pas : dis-le-moi et je change une valeur pour que ça marche. On commence par quelle ligne ?"
+          : "Let's stop going back to the question and work with what you've given me: your numbers stand as they are. If they can't produce what the question asks for, then the question's numbers don't work — say the word and I'll change one so they do. Which line would you like to pin down first?";
         return result;
       }
       // Claimed a board write but never made one, even after the correction round: remove the false claim.
