@@ -172,8 +172,7 @@ hr { border: 0; border-top: 1px solid var(--line-soft); }
 .topnav-more-menu { position: absolute; right: 0; top: calc(100% + 8px); min-width: 150px; display: flex; flex-direction: column; gap: 2px; padding: 8px; background: var(--card, #fff); border: 1px solid var(--line, #e4e0da); border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.08); z-index: 50; }
 .topnav-more-menu .topnav-link { padding: 8px 10px; border-radius: 8px; }
 
-/* Board without big blanks: a gap the tutor has moved past keeps its line but loses the "?" and the "Your turn" chip, and sits tight. */
+/* Board without big blanks: a gap the tutor has moved past keeps its line but loses the "?" and sits tight. */
 .sm-board-gap-past { margin-top: 0; margin-bottom: 4px; opacity: .75; }
 .sm-board-gap-past .sm-board-gap-text::after { content: none; }
-.sm-board-gap-past .sm-board-todo-chip { display: none; }
 .sm-board-gap-past .sm-board-line { margin-bottom: 2px; }

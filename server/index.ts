@@ -1886,6 +1886,7 @@ async function tutorTurn(
   c: { message: string; history: { role: "user" | "assistant"; text: string }[]; currentBoard: BoardEntry[]; currentObjectives: TaskObjective[]; recentJournal: { date: string; text: string; subjects?: string[] }[]; journalMeta?: { total: number; subjects: Record<string, number> }; profile: Profile },
 ): Promise<void> {
   const { message, history, currentBoard, currentObjectives, profile } = c;
+  const turnStart = new Date().toISOString(); // the student's verified step is stamped here, so it sits ABOVE Otto's new lines
   // The session opens with one open question — no subject picker — so the subject is read from what they say.
   if (!t.sourceSubject) {
     const subject = detectSubject([message, ...history.filter((h) => h.role === "user").map((h) => h.text)].join("\n"));
@@ -1955,7 +1956,7 @@ async function tutorTurn(
   if (stepVerdict && !out.boardCleared) {
     const norm = (x: string) => x.toLowerCase().replace(/[\s$]/g, "");
     if (![...currentBoard, ...out.board].some((e) => norm(e.text) === norm(stepVerdict.given))) {
-      out.board.unshift({ id: randomUUID(), text: stepVerdict.given, kind: "result", owner: "student", status: stepVerdict.verdict, at: new Date().toISOString() } as BoardEntry);
+      out.board.unshift({ id: randomUUID(), text: stepVerdict.given, kind: "result", owner: "student", status: stepVerdict.verdict, at: turnStart } as BoardEntry);
     }
   }
   const now = new Date().toISOString();
