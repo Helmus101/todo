@@ -84,7 +84,8 @@ SAFE AND KIND
 - First turn with nothing said yet: say hello and ask what they're working on — don't quiz.
 
 CONTEXT
-- What's happening in THIS conversation comes first. The background below (journal, past sessions, deadlines, profile) is there if it genuinely helps (a link to what they learned before, an upcoming test): use it lightly, never recite it.`;
+- What's happening in THIS conversation comes first. The background below (journal, past sessions, deadlines, profile) is there if it genuinely helps (a link to what they learned before, an upcoming test): use it lightly, never recite it.
+- Their JOURNAL is your memory of them: entries are dated and labelled by subject. When one bears on what they're doing, bring it up naturally in your own words ("on Tuesday you wrote that…", "you said last week this one tripped you up") — a short link to something they already know, or a struggle they mentioned. If they ask what's in their journal, answer from it. Never invent an entry.`;
 
 const VOICE_BLOCK = `\n\nVOICE MODE: your reply is read aloud. Write it as speech: no symbols, no LaTeX, no markdown in the reply. Every equation goes on the board, and you refer to it ("look at the second line").`;
 
@@ -116,7 +117,8 @@ export function tutorTools(canvasMode: boolean) {
 export interface TutorContext {
   profile?: Profile;
   subject?: string;
-  journal?: { date: string; text: string }[];
+  journal?: { date: string; text: string; subjects?: string[] }[];
+  journalMeta?: { total: number; subjects: Record<string, number> };
   /** Upcoming homework/tests line(s), already formatted (schoolRecordLine). */
   schoolRecord?: string;
   /** The browser's record of recent sessions (sessionMemoryForPrompt). */
@@ -131,7 +133,7 @@ export function backgroundBlock(c: TutorContext): string {
     personalContextLine(p),
     milestoneLine(p, c.subject),
     errorLogLine(p, c.subject),
-    recentJournalLine(c.journal, c.subject),
+    recentJournalLine(c.journal, c.subject, c.journalMeta),
     sessionRecapLine(p?.sessions, c.subject),
     openerMemoryBlock(c.memory),
     c.schoolRecord || "",
@@ -541,8 +543,26 @@ const SUBJECTS: [string, RegExp][] = [
   ["French", /\b(français|french|dissertation|commentaire|poème|roman|conjugaison|grammaire|orthographe)\b/i],
   ["Spanish", /\b(spanish|espagnol|español)\b/i],
   ["German", /\b(german|allemand|deutsch)\b/i],
+  ["Theory of Knowledge", /\b(tok|theory of knowledge|théorie de la connaissance|knowledge claim|ways of knowing|areas of knowledge|shared knowledge|personal knowledge|epistemolog\w*)\b/i],
+  ["Art", /\b(art|arts plastiques|painting|peinture|sculpture|drawing|dessin|artist|artiste)\b/i],
+  ["Music", /\b(music|musique|melody|mélodie|harmony|harmonie|chord|accord|rhythm|rythme|composer|compositeur)\b/i],
   ["Computer Science", /\b(code|coding|programming|programmation|python|javascript|algorithm|algorithme|function\s*\(|loop|boucle|array|tableau en python)\b/i],
 ];
+/** Every subject a text touches (a journal entry often covers two or three), each with its keyword hits, strongest first.
+ *  `known` = the student's own subject names (profile.subjects): a text naming one of them counts for it, whatever the keyword table says. */
+export function subjectsIn(text: string, known: string[] = []): string[] {
+  const s = String(text || "");
+  const hits: [string, number][] = [];
+  for (const [name, re] of SUBJECTS) {
+    const n = new Set((s.match(new RegExp(re.source, "gi")) || []).map((m) => m.toLowerCase())).size;
+    if (n > 0) hits.push([name, n]);
+  }
+  for (const k of known) {
+    const name = String(k || "").trim();
+    if (name.length >= 3 && new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(s) && !hits.some(([h]) => h.toLowerCase() === name.toLowerCase())) hits.push([name, 1]);
+  }
+  return hits.sort((a, b) => b[1] - a[1]).map(([n]) => n).slice(0, 3);
+}
 /** The subject a session is about, from what the student said — or undefined when nothing clearly names one.
  *  Explicit subject words win over incidental signals (an "=" sign in a chemistry question). Exported for tests. */
 export function detectSubject(text: string): string | undefined {

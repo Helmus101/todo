@@ -1,3 +1,4 @@
+import { selectJournal } from "./journal.ts";
 import { randomUUID } from "node:crypto";
 import type { WebTask, Quadrant, TaskLink, Profile, Sendable, AddUsageCategory, TaskStep, BoardEntry } from "../shared/types.ts";
 import { BOARD_EVENT_CAP } from "../shared/agentTypes.ts";
@@ -102,7 +103,7 @@ export function inAppContextFor(list: WebTask[], task: WebTask, profile?: Profil
   return block.slice(0, 2200) + school.slice(0, 2600);
 }
 
-function personalizationFor(list: WebTask[], subject: string | undefined): { subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; recentJournal?: { date: string; text: string }[]; notNeeded?: string[] } {
+function personalizationFor(list: WebTask[], subject: string | undefined): { subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; recentJournal?: { date: string; text: string; subjects?: string[] }[]; journalMeta?: { total: number; subjects: Record<string, number> }; notNeeded?: string[] } {
   let subjectSignal: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" } | undefined;
   try {
     if (subject) {
@@ -110,12 +111,10 @@ function personalizationFor(list: WebTask[], subject: string | undefined): { sub
       if (signal) subjectSignal = { correctRate: signal.correctRate, attempts: signal.attempts, trend: signal.trend };
     }
   } catch { /* best-effort */ }
-  const recentJournal = list
-    .filter((x) => x.source === "studylog" && x.logDate && !x.logDate.startsWith("week:") && !x.logDate.startsWith("month:") && x.logText?.trim())
-    .sort((a, b) => (b.logDate || "").localeCompare(a.logDate || ""))
-    .slice(0, 14)
-    .map((x) => ({ date: x.logDate!, text: x.logText!.trim() }));
-  return { subjectSignal, recentJournal, notNeeded: notNeededFronts(list, subject) };
+  const jc = selectJournal(list, { subject });
+  const recentJournal = jc.entries;
+  const journalMeta = { total: jc.total, subjects: jc.subjects };
+  return { subjectSignal, recentJournal, journalMeta, notNeeded: notNeededFronts(list, subject) };
 }
 
 // Broad-scope verbs that genuinely tend to bundle several sub-actions under one short step text ("Review

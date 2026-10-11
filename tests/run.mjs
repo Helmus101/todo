@@ -11,6 +11,10 @@ import { makeTaskSync } from "../client/taskDelta.ts";
 import { looksLikeGivensOrScenario } from "../server/tutorAdapt.ts";
 import { confirmsUnchecked, wrapsUpUnasked } from "../server/tutorAdapt.ts";
 import { currentFocus, focusBlock } from "../server/tutorAdapt.ts";
+import { selectJournal } from "../server/journal.ts";
+import { recentJournalLine } from "../server/claude.ts";
+import { countJournalEntries } from "../shared/journalCount.ts";
+import { subjectsIn } from "../server/tutor.ts";
 import { blamesWidget } from "../server/tutorAdapt.ts";
 import { inventedNumbers } from "../server/tutorAdapt.ts";
 import { makeProblem as makeProblemP } from "../server/claude.ts";
@@ -4783,7 +4787,7 @@ section("Admin metrics dashboard — gated to one hardcoded email, server AND cl
     /ADMIN_METRICS_PAGE = 1000/.test(storeSrcAdmin) && /\.range\(from, from \+ ADMIN_METRICS_PAGE - 1\)/.test(adminFn) &&
     !/\.limit\(ADMIN_METRICS|ADMIN_METRICS_ACCOUNT_LIMIT/.test(storeSrcAdmin));
   check("the headline tutor-minutes card is exactly the sum of the displayed per-user column",
-    /tutorMinutesTotal \+= roundedMinutes/.test(adminFn) && /tutorMinutesTotal, tasksBySource, byUser/.test(adminFn));
+    /tutorMinutesTotal \+= roundedMinutes/.test(adminFn) && /tutorMinutesTotal, journalCount: journalTotal, tasksBySource, byUser/.test(adminFn));
   // "make sure in admin we can see how many tasks were completed too" — completed means status "done"
   // specifically (not "dismissed", which the student dropped rather than finished), tracked both as an
   // app-wide total and per-account, same shape as every other metric here.
@@ -6007,6 +6011,23 @@ await runTutorEngineSim(check, section);
   const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
   const t = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
   check("Hick's law: four primary nav links, the rest under a 'More' menu that closes on navigation; at most 3 one-tap chips", /className="topnav-more" key=\{route\}/.test(app) && /topnav-more-menu/.test(app) && !/Something else/.test(t));
+}
+{
+  const log = (d, t, extra = {}) => ({ id: d, source: "studylog", logDate: d, logText: t, title: d, ...extra });
+  const list = [
+    log("2026-10-01", "Worked on derivatives and the chain rule in maths, still shaky on composite functions"),
+    log("2026-10-03", "Read about shared knowledge and personal knowledge for TOK, plus some Shakespeare for English"),
+    log("2026-10-05", "Chemistry: balanced redox equations, acids and bases were easy"),
+    { id: "w", source: "studylog", logDate: "week:2026-09-28", logText: "weekly roll-up" },
+    log("2026-10-06", ""),
+  ];
+  const sub = subjectsIn("Read about shared knowledge for TOK, plus some Shakespeare for English");
+  const ctx = selectJournal(list, { subject: "Math", query: "I'm stuck on the chain rule" });
+  const tok = selectJournal(list, { subject: "Theory of Knowledge", query: "" });
+  const line = recentJournalLine(ctx.entries, "Math", { total: ctx.total, subjects: ctx.subjects });
+  check("journal entries are labelled by the subjects they talk about (several per entry)", sub.includes("Theory of Knowledge") && sub.includes("English"));
+  check("the tutor gets the entries about the current subject / what was just said first, with labels, dates and the overall count", ctx.entries[0].date === "2026-10-01" && ctx.total === 3 && /\[Math\]/.test(line) && /3 entries in all/.test(line) && /2026-10-01/.test(line) && tok.entries[0].date === "2026-10-03");
+  check("admin journal count: real daily entries only (no roll-ups, no cleared entries)", countJournalEntries(list) === 3);
 }
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

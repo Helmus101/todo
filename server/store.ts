@@ -7,6 +7,7 @@ import { emptyProfile, normalizeProfile } from "../shared/types.ts";
 import { compactTasksForStorage } from "../shared/taskCompaction.ts";
 import { encryptSecret, decryptSecret } from "./crypto.ts";
 import { reportError } from "./sentry.ts";
+import { countJournalEntries } from "../shared/journalCount.ts";
 import type { BanditState } from "./bandit.ts";
 
 /** A persisted Google connection for an account (incl. the refresh token, so it stays connected). */
@@ -1055,6 +1056,7 @@ export interface AdminUserMetrics {
   completedTaskCount: number;
   tutorSessionCount: number;
   tutorMinutes: number;
+  journalCount: number;
 }
 export interface AdminMetrics {
   userCount: number;
@@ -1062,6 +1064,7 @@ export interface AdminMetrics {
   completedTaskCount: number;
   tutorSessionCount: number;
   tutorMinutesTotal: number;
+  journalCount: number;
   tasksBySource: Record<string, number>;
   /** Per-account breakdown — sorted by taskCount descending (the most active accounts first, the view
    *  this dashboard actually gets used for: "who's using it, how much"). */
@@ -1095,6 +1098,7 @@ export async function getAdminMetrics(): Promise<AdminMetrics | null> {
     // (summing the raw floats and rounding once could differ from the displayed column by a minute or two —
     // small, but exactly the kind of thing that makes a dashboard's own numbers disagree with itself).
     let tutorMinutesTotal = 0;
+    let journalTotal = 0;
     const tasksBySource: Record<string, number> = {};
     const byUser: AdminUserMetrics[] = [];
     for (const row of rows) {
@@ -1130,12 +1134,14 @@ export async function getAdminMetrics(): Promise<AdminMetrics | null> {
           }
         }
       }
+      const userJournal = countJournalEntries(tasks);
+      journalTotal += userJournal;
       const roundedMinutes = Math.round(userTutorMinutes);
       tutorMinutesTotal += roundedMinutes;
-      byUser.push({ email, taskCount: tasks.length, completedTaskCount: userCompletedTasks, tutorSessionCount: userTutorSessions, tutorMinutes: roundedMinutes });
+      byUser.push({ email, taskCount: tasks.length, completedTaskCount: userCompletedTasks, tutorSessionCount: userTutorSessions, tutorMinutes: roundedMinutes, journalCount: userJournal });
     }
     byUser.sort((a, b) => b.taskCount - a.taskCount);
-    const value = { userCount: rows.length, taskCount, completedTaskCount, tutorSessionCount, tutorMinutesTotal, tasksBySource, byUser };
+    const value = { userCount: rows.length, taskCount, completedTaskCount, tutorSessionCount, tutorMinutesTotal, journalCount: journalTotal, tasksBySource, byUser };
     adminMetricsCache = { at: Date.now(), value };
     return value;
   } catch (e) {

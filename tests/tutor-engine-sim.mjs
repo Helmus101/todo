@@ -233,4 +233,7 @@ export async function runTutorEngineSim(check, section) {
   script = () => ({ content: "Nailed the distinction. I've put your point up on the board. What structure would you use?" });
   r = await run("shared knowledge is the culture and language, personal knowledge is lived experience");
   check("if it still claims a board write with nothing written, the false claim is removed in code", !r.board.length && !/board/i.test(r.reply) && /\?$/.test(r.reply));
+
+  const jb = backgroundBlock({ subject: "Math", journal: [{ date: "2026-10-01", text: "Chain rule was shaky", subjects: ["Math"] }], journalMeta: { total: 5, subjects: { Math: 3, Physics: 2 } }, profile: {} });
+  check("the tutor's background carries the journal: dated, labelled by subject, with the overall count — and the prompt tells it to use it", /STUDY JOURNAL/.test(jb) && /2026-10-01 \[Math\]/.test(jb) && /5 entries in all/.test(jb) && /JOURNAL is your memory/.test(TUTOR_PROMPT));
 }

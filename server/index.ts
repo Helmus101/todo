@@ -12,7 +12,8 @@ import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { CourseworkDoc } from "../shared/coursework.ts";
 import { equivalent, gapTarget, verifyStepAgainstGap } from "../shared/mathEquiv.ts";
 import { repairSpokenMath, spokenContextFrom } from "../shared/spokenMath.ts";
-import { runTutorTurn, detectSubject, computedGapKey } from "./tutor.ts";
+import { runTutorTurn, detectSubject, computedGapKey, subjectsIn } from "./tutor.ts";
+import { selectJournal } from "./journal.ts";
 import type { TutorOpenerMemory } from "./claude.ts";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, FocusSession, BoardEntry, TaskObjective, TaskProblem } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY, subjectMastery } from "../shared/types.ts";
@@ -1760,14 +1761,13 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     // tasks), not a separate store, so nothing new to keep in sync. Real daily entries only (a `week:`/
     // `month:` logDate is a rolled-up summary task, not something the student wrote themselves this chat
     // should quote back). Newest first, capped generously since recentJournalLine itself narrows further.
-    const recentJournal = (req.session.tasks || [])
-      .filter((x) => x.source === "studylog" && x.logDate && !x.logDate.startsWith("week:") && !x.logDate.startsWith("month:") && x.logText?.trim())
-      .sort((a, b) => (b.logDate || "").localeCompare(a.logDate || ""))
-      .slice(0, 14)
-      .map((x) => ({ date: x.logDate!, text: x.logText!.trim() }));
+    // Labelled by subject and ranked by relevance to the current subject + what they just said (server/journal.ts).
+    const journalCtx = selectJournal(req.session.tasks || [], { subject: t.sourceSubject, query: `${message} ${t.title || ""}`, known: req.session.profile?.subjects });
+    const recentJournal = journalCtx.entries;
+    const journalMeta = { total: journalCtx.total, subjects: journalCtx.subjects };
     // THE TUTOR (/tutor stage): its own small engine — server/tutor.ts. Nothing below this block runs for it.
     if (req.body?.primer === true) {
-      await tutorTurn(req, res, t, { message, history, currentBoard, currentObjectives, recentJournal, profile });
+      await tutorTurn(req, res, t, { message, history, currentBoard, currentObjectives, recentJournal, journalMeta, profile });
       return;
     }
     const out = await chatAboutTask(
@@ -1776,7 +1776,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
       message,
       profile,
       academic,
-      { schoolRecord: schoolRecordLine(req.session.tasks, req.session.profile, t.sourceSubject), stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, recentJournal, currentBoard, currentProblems, currentObjectives, opening, notNeeded: tasks.notNeededFronts(req.session.tasks || [], t.sourceSubject) },
+      { schoolRecord: schoolRecordLine(req.session.tasks, req.session.profile, t.sourceSubject), stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, recentJournal, journalMeta, currentBoard, currentProblems, currentObjectives, opening, notNeeded: tasks.notNeededFronts(req.session.tasks || [], t.sourceSubject) },
     );
     addUsage(profile, out.tokens, "chat"); // untracked before — a tool-calling turn can now cost like a small run
     bumpActivityHour(profile, new Date(), t.sourceSubject);
@@ -1877,7 +1877,7 @@ function memoryFromBody(raw: unknown): TutorOpenerMemory[] {
  *  from the SERVER's own copy of the board, never from the request. */
 async function tutorTurn(
   req: express.Request, res: express.Response, t: WebTask,
-  c: { message: string; history: { role: "user" | "assistant"; text: string }[]; currentBoard: BoardEntry[]; currentObjectives: TaskObjective[]; recentJournal: { date: string; text: string }[]; profile: Profile },
+  c: { message: string; history: { role: "user" | "assistant"; text: string }[]; currentBoard: BoardEntry[]; currentObjectives: TaskObjective[]; recentJournal: { date: string; text: string; subjects?: string[] }[]; journalMeta?: { total: number; subjects: Record<string, number> }; profile: Profile },
 ): Promise<void> {
   const { message, history, currentBoard, currentObjectives, profile } = c;
   // The session opens with one open question — no subject picker — so the subject is read from what they say.
@@ -1910,7 +1910,7 @@ async function tutorTurn(
   const out = await runTutorTurn({
     message, history, board: currentBoard, problems, objectives: currentObjectives, lang,
     voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, spoken, stepVerdict,
-    context: { profile, subject: t.sourceSubject, journal: c.recentJournal, schoolRecord: schoolRecordLine(req.session.tasks, profile, t.sourceSubject), memory: memoryFromBody(req.body?.memory) },
+    context: { profile, subject: t.sourceSubject, journal: c.recentJournal, journalMeta: c.journalMeta, schoolRecord: schoolRecordLine(req.session.tasks, profile, t.sourceSubject), memory: memoryFromBody(req.body?.memory) },
   });
   addUsage(profile, out.tokens, "chat");
   bumpActivityHour(profile, new Date(), t.sourceSubject);
@@ -2406,6 +2406,7 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
   // (flashcards still empty after a real try) also always retries, same as before.
   const textChanged = t.logText !== text;
   t.logText = text;
+  t.logSubjects = subjectsIn(text, req.session.profile?.subjects);
   if (req.session.profile) { bumpActivityHour(req.session.profile, new Date(), t.sourceSubject); req.session.profile.lastTutorActivityAt = new Date().toISOString(); }
   void recordMetric(req.session.user!, "journal_entry_saved", 1);
   void recordMetric(req.session.user!, "journal_entry_length_chars", text.length);
