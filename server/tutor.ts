@@ -17,7 +17,7 @@ import { repairSpokenMath, spokenContextFrom, type SpokenRepair } from "../share
 import { equationsAhead, asksForFormula } from "../shared/equationsAhead.ts";
 import { findArithmeticClaims } from "./arithmetic.ts";
 import { boardSurfaceBlock } from "./boardEvents.ts";
-import { replyStatesValue, socraticFallback, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario, inventedNumbers, confirmsUnchecked, wrapsUpUnasked, blamesWidget, asksToWrite, handsOverCalculation } from "./tutorAdapt.ts";
+import { replyStatesValue, socraticFallback, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario, inventedNumbers, claimsBoardWrite, stripBoardClaim, confirmsUnchecked, wrapsUpUnasked, blamesWidget, asksToWrite, handsOverCalculation } from "./tutorAdapt.ts";
 import { latexToPlainText } from "../shared/mathText.ts";
 import { toExprSource } from "../shared/mathEquiv.ts";
 import { compileExpr } from "../shared/mathExpr.ts";
@@ -73,6 +73,7 @@ THE BOARD (shared digital paper)
 - Never put their sentences on the board (clean maths and structure only), and never erase: correct by adding the fixed version next to it.
 - Exercises: only when they ask for one (offer, then wait for a yes), and only for a single short checkable answer — state the precision (decimal places) and unit. Open questions (explain, why, compare) stay in the conversation.
 - Board lines are numbered in the margin (the #n in the board listing is the number THEY see). To point at a line, say its number ("look at line 4") or use ANNOTATE_BOARD — never a number that isn't there.
+- Never say you put something on the board unless you called a board tool THIS turn; if you want it there, write it first (a short heading or keyword line), then say so.
 - Use the board when it helps thinking, not every turn for its own sake.
 
 ANY SUBJECT
@@ -350,6 +351,8 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       const badLine = [...reply.matchAll(/\b(?:line|ligne)\s*#?\s*(\d{1,3})\b|(?<![\w&])#(\d{1,3})\b/gi)].map((m) => Number(m[1] || m[2])).find((n) => !lines.has(n));
       if (badLine) issues.push(`it points at line ${badLine}, which doesn't exist on their board — use the line's real margin number from the board listing, or describe it`);
       if (!doubt && handsOverCalculation(reply, message)) issues.push("it hands them the calculation (which numbers to multiply/add) — ask what THEY would compute next instead");
+      const claimedBoard = claimsBoardWrite(reply) && !result.board.length && !result.problems.length;
+      if (claimedBoard) issues.push("you say you put something on the board, but no board tool ran this turn — NOTHING is there. Call WRITE_TO_BOARD now (a short heading or keyword line, maths in $…$, never their sentence), then say so in one line; never claim a board write you did not make");
       if (wrapsUpUnasked(reply, message)) issues.push("it offers to wrap up or move on, which they didn't ask for — stay on the current work");
       if (blamesWidget(reply)) issues.push("it blames the app/widget — if an exercise's key disagrees with a right answer, say plainly the key was wrong");
       if (issues.length && !corrected && !lastRound) {
@@ -362,6 +365,12 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       // Still doubting a RIGHT answer after the correction round: never let it through — confirm it in code.
       if (doubt && doubtsRightAnswer(reply, message)) {
         result.reply = fr ? "Oui, c'est juste — bien joué. Qu'est-ce qui t'a dit quels morceaux multiplier ?" : "Yes, that's right — nice work. What told you which pieces to multiply?";
+        return result;
+      }
+      // Claimed a board write but never made one, even after the correction round: remove the false claim.
+      if (claimsBoardWrite(reply) && !result.board.length && !result.problems.length) {
+        const stripped = stripBoardClaim(reply);
+        result.reply = softenOpener(stripped || (fr ? "Qu'est-ce que tu en dis ?" : "What do you make of that?"), fr);
         return result;
       }
       // Never open harshly ("Careful, Willem —", "No,", "Wrong"): softened in code, no extra round needed.
