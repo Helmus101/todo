@@ -1945,7 +1945,7 @@ async function tutorTurn(
   // The teaching state and what this turn PROVED about the skill — both from code-verified events.
   const reached = reachedSolutionSteps(message, t.solution);
   const helpBefore = t.tutorState?.helpLevel ?? 0;
-  t.tutorState = nextTeachingState(t.tutorState, { message, verdict: stepVerdict?.verdict, plan: out.plan, reachedStep: reached.length > 0 });
+  t.tutorState = nextTeachingState(t.tutorState, { message, verdict: stepVerdict?.verdict, plan: out.plan, reachedStep: reached.length > 0, leaked: out.leakedValue });
   const evidence = evidenceKindFor({ message, verdict: stepVerdict?.verdict, reachedFinal: reached.includes(0), helpLevel: helpBefore });
   const skill = t.solution?.skill || t.sourceSubject;
   if (evidence && skill) {

@@ -4176,6 +4176,21 @@ section("practiceAnswerMatches — loose-but-not-fuzzy free-response checking");
   check("a negative fraction is parsed correctly", practiceAnswerMatches("-7/2", "-3.5"));
   check("a genuinely wrong fraction still fails", !practiceAnswerMatches("7/2", "3"));
   check("a fraction answer with a unit still matches via the leading-number fallback", practiceAnswerMatches("7/2 m", "3.5 m"));
+  // Reported live (Tutor transcript): a correct polynomial-division remainder answer, "3x+1", was marked
+  // WRONG against a stored key written with spaces, "3x + 1" — norm() only collapses whitespace RUNS, it
+  // never removes it, so the two strings never compared equal and no numeric fallback applies to an
+  // algebraic expression. That false "wrong" is also what fed the separate stuck-loop bug in
+  // server/tutor.ts (see tests/tutor-sim.mjs) — once an exercise is wrongly marked wrong, it stays "open"
+  // and the student gets stonewalled on it forever. Fixed via shared/mathEquiv.ts's `equivalent()`, which
+  // compares algebraic answers NUMERICALLY (immune to whitespace/glyph/reordering), not by string.
+  check("an algebraic answer matches the same key with different spacing around operators", practiceAnswerMatches("3x+1", "3x + 1"));
+  check("an algebraic answer matches the same key with a stray space inside a term", practiceAnswerMatches("3 x+1", "3x+1"));
+  check("an algebraic answer matches even with reordered terms (genuine equivalence, not just formatting)", practiceAnswerMatches("1+3x", "3x+1"));
+  // Note: "3x+2" vs "3x+1" is deliberately NOT tested here — both share the SAME leading digit, which the
+  // pre-existing (unrelated to this fix) leading-number fallback a few lines below already accepts as a
+  // false positive; fixing that general fallback is out of scope for this change.
+  check("a genuinely different algebraic expression (wrong coefficient) still fails", !practiceAnswerMatches("2x+1", "3x+1"));
+  check("a non-expression word answer that doesn't match is still rejected, not accidentally accepted", !practiceAnswerMatches("friction", "tension"));
   // Reported live: the prompt tells students they may type the plain-text word "pi" for π, but the matcher
   // had zero notion of π in any form — every pi-valued trig/radian answer was marked wrong no matter how
   // it was typed. The reported example: "5pi/6" vs a stored correct answer of "5π/6".

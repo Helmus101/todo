@@ -7,6 +7,7 @@ import type { WidgetSpec } from "./widgets.ts";
 import type { FlowSpec } from "./flow.ts";
 import type { StudentModelShape, ConceptGraphShape, TutorSessionStateShape, TutorDecisionShape, BoardEventShape } from "./agentTypes.ts";
 import { SESSION_CAP } from "./agentTypes.ts";
+import { equivalent } from "./mathEquiv.ts";
 
 export type Quadrant = "do" | "schedule" | "delegate" | "later";
 
@@ -1238,6 +1239,14 @@ export interface TutorTeachingState {
   lastAction?: string;
   lastDiagnosis?: string;
   turns: number;
+  /** The `leaked` identifier (from server/tutor.ts's leakedValue()) that tripped the "don't give away the
+   *  answer" guard LAST turn, if any — lets the engine tell "still stuck on the same value" (which must not
+   *  repeat the identical non-answer forever) from "a fresh trip on something else" (reported live: Otto
+   *  stuck replaying one canned sentence for four turns straight, regardless of what the student said). */
+  guardrailValue?: string;
+  /** Consecutive turns tripped on that SAME guardrailValue. Resets to 0 the instant a turn doesn't trip the
+   *  guard at all — moving on, or the value actually got resolved. */
+  guardrailStreak?: number;
 }
 
 export interface WebTask {
@@ -1918,6 +1927,14 @@ export function practiceAnswerMatches(given: string, correct: string, value?: nu
   const g = norm(given), c = norm(correct);
   if (!g) return false;
   if (g === c) return true;
+  // An algebraic answer ("3x+1") against a key written with different spacing/glyphs ("3x + 1") fails the
+  // exact-string check above even though it's the same expression — reported live: a correct remainder
+  // marked wrong purely on whitespace. `equivalent` compiles both sides and compares them NUMERICALLY (at
+  // sampled points for any free variable), so it's immune to spacing, ×/* and reordering, not just a
+  // string-cleanup special case. Only tried when a letter is present — a pure-numeric answer already works
+  // via the paths above/below, and `equivalent` safely returns "unknown" (never a false "correct") for
+  // genuine prose like a word answer, since that fails to compile as an expression at all.
+  if ((/[a-z]/i.test(g) || /[a-z]/i.test(c)) && equivalent(given, correct) === "correct") return true;
   const gn = parseNumericOrFraction(g);
   if (Number.isFinite(gn) && Number.isFinite(parseNumericOrFraction(c))) return numbersMatch(gn, c);
   // Leading-number fallback: makePracticeProblem's own prompt (server/claude.ts) tells the STUDENT to

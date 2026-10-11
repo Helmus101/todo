@@ -5,7 +5,7 @@
 // carries the conversation first and the background second.
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
 delete process.env.GEMINI_API_KEY;
-const { runTutorTurn, detectSubject, backgroundBlock, TUTOR_PROMPT, leakedValue, wantsExercise, inventsProblemOnBoard, doubtsRightAnswer, softenOpener, computedGapKey } = await import("../server/tutor.ts");
+const { runTutorTurn, detectSubject, backgroundBlock, TUTOR_PROMPT, leakedValue, wantsExercise, inventsProblemOnBoard, doubtsRightAnswer, softenOpener, computedGapKey, nextTeachingState } = await import("../server/tutor.ts");
 const { equivalent } = await import("../shared/mathEquiv.ts");
 const { equationsAhead } = await import("../shared/equationsAhead.ts");
 const { boardLineNumbers } = await import("../shared/boardLines.ts");
@@ -48,6 +48,23 @@ export async function runTutorEngineSim(check, section) {
   script = () => ({ content: "It's b = h/tan(25°)." });
   r = await run("just tell me", { board: gapBoard });
   check("a reply that keeps leaking is replaced by a question and flagged", r.guardrailTripped && !/tan\(25/.test(r.reply) && /\?$/.test(r.reply));
+  check("the trip records WHICH value leaked, for the streak check below", r.leakedValue === "h/tan(25°)");
+
+  // Reported live (real transcript): once blocked, Otto replayed the IDENTICAL fallback sentence turn
+  // after turn, no matter what the student said — four times in a row. The fix: a SECOND consecutive trip
+  // on the exact same value stops repeating the canned line and ships the model's real, content-aware
+  // reply instead (first trip above is untouched — this only changes what happens on repeat).
+  const streakState = nextTeachingState(undefined, { message: "just tell me", leaked: r.leakedValue });
+  check("nextTeachingState tracks a fresh trip as streak 1", streakState.guardrailStreak === 1 && streakState.guardrailValue === "h/tan(25°)");
+  script = () => ({ content: "It's b = h/tan(25°)." });
+  r = await run("tell me again", { board: gapBoard, opts: { teaching: streakState } });
+  check("a SECOND consecutive trip on the SAME value ships the real reply instead of repeating the fallback",
+    r.guardrailTripped && r.reply === "It's b = h/tan(25°)." && !/what happens if you divide/i.test(r.reply));
+  // A trip on a DIFFERENT value (not the same streak) must still behave like a first trip — the streak is
+  // keyed to the exact value, not just "any guardrail trip happened last turn".
+  script = () => ({ content: "The height is 425." });
+  r = await run("just tell me", { board: [], problems: [{ id: "p9", question: "What's the height?", answer: "425", createdAt: "" }], opts: { teaching: streakState } });
+  check("a trip on a DIFFERENT value is still a first trip (fallback, not the raw reply)", r.guardrailTripped && !/425/.test(r.reply));
 
   script = () => ({ content: "Yes, b = h/tan(25°) — now put it in the second equation." });
   r = await run("b = h/tan(25°)", { board: gapBoard });

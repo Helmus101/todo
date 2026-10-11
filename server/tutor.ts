@@ -186,6 +186,10 @@ export interface TutorTurnResult {
   error?: boolean;
   /** A reply had to be replaced because it gave the answer away. */
   guardrailTripped: boolean;
+  /** The exact `leaked` identifier from leakedValue() that tripped the guard this turn, if it did — fed
+   *  into nextTeachingState so a SECOND consecutive trip on the same value can resolve it instead of
+   *  repeating the identical fallback sentence forever (see guardrailStreak on TutorTeachingState). */
+  leakedValue?: string;
   /** The model's hidden plan for this turn (parsed from <plan>…</plan>, never shown). */
   plan?: TutorPlanLite;
 }
@@ -207,7 +211,7 @@ export function parsePlan(text: string): TutorPlanLite | undefined {
 const STUCK = /\b(?:i (?:don'?t|do not) (?:know|get it|understand)|idk|no idea|i'?m (?:stuck|lost|confused)|not sure|je (?:ne )?sais pas|j'?sais pas|aucune idée|je suis (?:perdu|bloqué)e?|je comprends pas|help me|aide[- ]moi)\b/i;
 /** The teaching state after this turn — updated by CODE from what actually happened (a stuck message, a code-verified
  *  wrong or right step), with the model's own help level only as the record of what it just gave. Pure. */
-export function nextTeachingState(prev: TutorTeachingState | undefined, ev: { message: string; verdict?: "correct" | "incorrect"; plan?: TutorPlanLite; reachedStep?: boolean }): TutorTeachingState {
+export function nextTeachingState(prev: TutorTeachingState | undefined, ev: { message: string; verdict?: "correct" | "incorrect"; plan?: TutorPlanLite; reachedStep?: boolean; leaked?: string }): TutorTeachingState {
   const p = prev || { helpLevel: 0, stuckStreak: 0, turns: 0 };
   const right = ev.verdict === "correct" || ev.reachedStep || /\[(?:Exercise|Exercice)\][^\n]*(?:marked right|checked right|juste)/i.test(ev.message);
   const stuck = !right && (STUCK.test(ev.message) || ev.verdict === "incorrect" || /\[(?:Exercise|Exercice)\][^\n]*(?:marked wrong|checked wrong|faux)/i.test(ev.message));
@@ -218,6 +222,12 @@ export function nextTeachingState(prev: TutorTeachingState | undefined, ev: { me
     helpLevel: right ? Math.max(0, (ev.plan?.helpLevel ?? p.helpLevel) - 2) : (ev.plan?.helpLevel ?? p.helpLevel),
     ...(ev.plan?.action ? { lastAction: ev.plan.action } : p.lastAction ? { lastAction: p.lastAction } : {}),
     ...(ev.plan?.diagnosis ? { lastDiagnosis: ev.plan.diagnosis } : p.lastDiagnosis ? { lastDiagnosis: p.lastDiagnosis } : {}),
+    // Consecutive trips on the SAME blocked value (see leakedValue()'s call site) — resets to 0 the moment
+    // a turn doesn't trip the guard at all, so moving on or genuinely resolving it clears the streak with
+    // no separate reset logic. Reported live: four turns straight replaying one identical fallback sentence
+    // because this never had any memory of having just tripped on the exact same thing.
+    guardrailStreak: ev.leaked && ev.leaked === p.guardrailValue ? (p.guardrailStreak || 0) + 1 : ev.leaked ? 1 : 0,
+    ...(ev.leaked ? { guardrailValue: ev.leaked } : {}),
   };
 }
 
@@ -523,7 +533,20 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
         const line = studentBoardLine([spokenRepair?.interpreted || "", message, ...history.filter((h) => h.role === "user").slice(-2).reverse().map((h) => h.text)]);
         if (line) applyTool("WRITE_TO_BOARD", { text: line, kind: "result", owner: "student" }, { message, result, allBoard, allProblems, spokenRepair, fr, said, wantsExercise: wantsProblem, focus, known, solution: input.solution });
       }
-      if (leaked) { result.guardrailTripped = true; result.reply = socraticFallback(fr); return result; }
+      if (leaked) {
+        result.guardrailTripped = true;
+        result.leakedValue = leaked;
+        // A SECOND consecutive trip on the exact same value: blocking again teaches nothing and just
+        // repeats the identical non-answer forever, no matter what the student actually says — reported
+        // live, four turns straight. The correction round above already told the model once to drop the
+        // value and ask instead; if it still can't avoid stating it, that's a sign Socratic withholding
+        // has genuinely stopped working here (the spec's own "know when to explain directly" / "never
+        // leave a confused student trapped" case) — ship its real, content-aware reply instead of
+        // replacing it with the canned line a second time. First trip still behaves exactly as before.
+        const prevStreak = input.teaching?.guardrailValue === leaked ? (input.teaching.guardrailStreak || 0) : 0;
+        result.reply = prevStreak >= 1 ? softenOpener(reply, fr) : socraticFallback(fr);
+        return result;
+      }
       // Still doubting a RIGHT answer after the correction round: never let it through — confirm it in code.
       if (doubt && doubtsRightAnswer(reply, message, input.solution)) {
         result.reply = fr ? "Oui, c'est juste — bien joué. Qu'est-ce qui t'a dit quels morceaux multiplier ?" : "Yes, that's right — nice work. What told you which pieces to multiply?";
