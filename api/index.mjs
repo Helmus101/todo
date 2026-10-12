@@ -18271,7 +18271,7 @@ app.post("/api/tasks/:id/confirm", requireAuth, rateLimit(60, 6e4), async (req, 
     stampFirstAction(task, req.session.user, req.session.profile);
     task.status = "done";
     task.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
-    await commit(req);
+    await commit(req, { awaitCloud: true });
     void recordEvent(req.session.user, "confirmed", { taskId: id, message: "You marked it done" });
     const deadlineMs = task.sourceDue ? Date.parse(task.sourceDue) : deadlineEpoch(task.when);
     if (Number.isFinite(deadlineMs) && deadlineMs > 0) {
@@ -18314,7 +18314,7 @@ app.post("/api/tasks/:id/dismiss", requireAuth, rateLimit(60, 6e4), async (req, 
     }
     task.status = "dismissed";
     task.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
-    await commit(req);
+    await commit(req, { awaitCloud: true });
     void recordEvent(req.session.user, "dismissed", { taskId: id, message: "You dismissed it \u2014 similar tasks won't come back" });
     void recordMetric(req.session.user, "task_dismissed", 1, task.source || "n/a");
     res.json(tasksPayload(req, req.session.tasks));

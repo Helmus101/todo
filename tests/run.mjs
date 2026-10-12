@@ -4936,6 +4936,21 @@ section("commit()'s awaitCloud sync bypasses the stale-cache merge base (source 
   check("background flushes and the job runner also merge against a validated read, not the TTL cache", /loadState\(email, \{ bypassCache: true \}\)/.test(syncCloudFn) && /await writeAccount\(email, snap\.tasks, snap\.profile as Profile, \{ throwOnError: true \}\)/.test(idxSrc) && /store\.loadState\(email, \{ bypassCache: true \}\)/.test(readFileSync(new URL("../server/jobs.ts", import.meta.url), "utf8")));
 }
 
+section("Confirming/dismissing a task guarantees the cloud write lands (source pin)");
+{
+  // Reported live: "it completes, then comes back" — confirm/dismiss were on commit()'s DEFAULT fire-and-
+  // forget write-behind path (debounced 6-25s), which commit()'s own comment already names as the exact
+  // failure mode on a serverless deploy: the instance can freeze/tear down the instant the response goes
+  // out, before the scheduled write ever runs — a later request (same tab, a different warm Vercel
+  // instance) then reads the OLD cloud status back. Finishing/dismissing a task is rare and high-value per
+  // write, the same reasoning this function already applies to a journal save or flashcard review.
+  const idxSrcConfirm = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const confirmRoute = idxSrcConfirm.slice(idxSrcConfirm.indexOf('app.post("/api/tasks/:id/confirm"'), idxSrcConfirm.indexOf('app.post("/api/tasks/:id/reject"'));
+  const dismissRoute = idxSrcConfirm.slice(idxSrcConfirm.indexOf('app.post("/api/tasks/:id/dismiss"'), idxSrcConfirm.indexOf('app.post("/api/tasks/:id/dismiss"') + 1500);
+  check("confirm awaits the cloud write (awaitCloud: true), not the default debounced write-behind", /await commit\(req, \{ awaitCloud: true \}\);/.test(confirmRoute) && !/await commit\(req\);/.test(confirmRoute));
+  check("dismiss awaits the cloud write too, same reasoning", /await commit\(req, \{ awaitCloud: true \}\);/.test(dismissRoute) && !/await commit\(req\);/.test(dismissRoute));
+}
+
 section("Focus/visibility resync removed — only the Pronote keepalive stays on that heartbeat (source pin)");
 {
   // Removed per direct instruction: 4 requests (tasks/status/budget/sweep) on every tab focus/visibility

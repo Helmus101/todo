@@ -2119,7 +2119,14 @@ app.post("/api/tasks/:id/confirm", requireAuth, rateLimit(60, 60_000), async (re
     stampFirstAction(task, req.session.user, req.session.profile);
     task.status = "done";
     task.updatedAt = new Date().toISOString();
-    await commit(req);
+    // Reported live: "it completes, then comes back" — confirm was on commit()'s default fire-and-forget
+    // write-behind path (debounced 6-25s), which that function's own comment already names as the exact
+    // failure mode for a serverless deploy: the instance can freeze/tear down the instant this response
+    // goes out, before the scheduled cloud write ever actually runs, so a later request (same tab, a
+    // different warm Vercel instance) reads the OLD cloud status back. Finishing a task is rare and
+    // high-value per write, same reasoning this function already applies to a journal save or flashcard
+    // review — worth the slightly slower response to actually guarantee it lands.
+    await commit(req, { awaitCloud: true });
     void recordEvent(req.session.user!, "confirmed", { taskId: id, message: "You marked it done" });
     // Lateness relative to deadline — one of the metrics the personalization ask named directly. sourceDue
     // (Pronote's own ISO date, when present) is more precise than `when`'s free-text estimate; deadlineEpoch
@@ -2154,7 +2161,9 @@ app.post("/api/tasks/:id/dismiss", requireAuth, rateLimit(60, 60_000), async (re
     if (!task) { res.status(404).json({ error: M(req, "Tâche introuvable — elle a peut-être déjà été traitée ailleurs.", "Task not found — it may have already been handled elsewhere.") }); return; }
     task.status = "dismissed";
     task.updatedAt = new Date().toISOString();
-    await commit(req);
+    // Same reasoning as /confirm just above: rare, permanent, high-value-per-write — worth guaranteeing
+    // the cloud write actually lands rather than risking it on commit()'s default debounced write-behind.
+    await commit(req, { awaitCloud: true });
     void recordEvent(req.session.user!, "dismissed", { taskId: id, message: "You dismissed it — similar tasks won't come back" });
     void recordMetric(req.session.user!, "task_dismissed", 1, task.source || "n/a");
     res.json(tasksPayload(req, req.session.tasks));
