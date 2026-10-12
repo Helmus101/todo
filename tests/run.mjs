@@ -6143,5 +6143,69 @@ await runTutorCompanionSim(check, section);
   const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"), bart = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
   check("the route applies edits/removals by id (no duplicates), sends them to the client, hides archived lines from the board and from the tutor's listing", /out\.boardEdits\?\.length \|\| out\.boardRemoved\?\.length/.test(idx) && /boardEdits: out\.boardEdits, boardRemoved: out\.boardRemoved/.test(idx) && /b\.archived !== true/.test(idx) && /filter\(\(e\) => !e\.archived\)/.test(bart));
 }
+{
+  // ── Board spec: figures are addressable element by element; create/inspect go through the validated reducer ──
+  const { buildGeometry } = await import("../shared/geometry.ts");
+  const { buildInclineScene } = await import("../shared/inclineScene.ts");
+  const { applyCreateAction: ac, applyInspectAction: ai } = await import("../shared/boardAdapter.ts");
+  const tri = buildGeometry({ triangle: { names: ["A", "B", "C"], sides: [3, 4, 5] }, angles: [{ at: "C", from: "A", to: "B", right: true }] });
+  const gids = tri.ops.map((o) => o.id);
+  check("figure: every drawn element carries a stable id and no two share one — the tutor can point at ONE line instead of redrawing the figure", !tri.error && gids.length === tri.ops.length && gids.every(Boolean) && new Set(gids).size === gids.length);
+  check("figure: elements are addressable by name (segment_A_B, angle_C, point_A) and an id the app supplies is kept", /^segment_A_B_/.test(tri.elementIds.segment_A_B || "") && !!tri.elementIds.angle_C && !!tri.elementIds.point_A && tri.ops.some((o) => o.id === tri.elementIds.segment_A_B) && buildGeometry({ points: { A: [0, 0], B: [6, 0] }, segments: [{ from: "A", to: "B", id: "force-applied" }] }).ops.some((o) => o.id === "force-applied"));
+
+  let gn = 0; const geng = { now: () => "2026-10-11T12:00:00Z", newId: () => `c${++gn}` };
+  const stmt = "A 2 kg block is pulled 4 m up a smooth 30° slope by a 15 N force.";
+  const made = ac([], { action: "create", author: "system", object: { type: "problem", id: "prob", data: { statement: stmt, givens: [{ name: "m", value: 2, unit: "kg" }, { name: "F", value: 15, unit: "N" }] } } }, geng);
+  check("adapter create: the problem lands on the board as the PROBLEM's line, not the tutor's", made.ok && made.entry.kind === "given" && made.entry.text === stmt);
+  const dupe = ac(made.ok ? [made.entry] : [], { action: "create", author: "system", object: { type: "problem", data: { statement: stmt, givens: [] } } }, geng);
+  check("adapter create: asking for the same problem again focuses it — never a second copy of the exercise", !dupe.ok && dupe.code === "DUPLICATE");
+  const inc = buildInclineScene({ angle: 30, forces: ["weight", "components", "normal", "applied"], motion: "up" });
+  const fig = ac(made.ok ? [made.entry] : [], { action: "create", object: { type: "diagram", id: "fig1", data: { caption: "Inclined plane", svg: inc.svg } } }, geng);
+  check("adapter create: a created figure comes back as the kind the board actually RENDERS, with its svg intact", fig.ok && fig.entry.kind === "svg" && fig.entry.svg === inc.svg && /KaTeX_Main/.test(fig.entry.svg || ""));
+  check("adapter create: generated SVG is data, never code — a script inside a created figure is refused", !ac([], { action: "create", object: { type: "diagram", data: { caption: "x", svg: "<svg><script>alert(1)</script></svg>" } } }, geng).ok);
+  const ins = ai(made.ok && fig.ok ? [made.entry, fig.entry] : [], { action: "inspect", types: ["diagram"] }, geng);
+  check("adapter inspect: reads back only what was asked for (the figure, not the whole board) with a usable summary", ins.ok && ins.snapshot.objects.length === 1 && ins.snapshot.objects[0].id === "fig1" && ins.snapshot.objects[0].type === "diagram" && ins.snapshot.objects[0].summary.length > 0);
+}
+{
+  // ── Board spec: a deterministic calculation layer checks the arithmetic, so a right number is never called wrong ──
+  const { validateCalculationStep, checkArithmeticClaim } = await import("../shared/calculationEngine.ts");
+  check("calc engine: 15×4×cos 0° claimed as 60 verifies; the same step claimed as 61 is rejected with the computed value", validateCalculationStep({ expr: "15*4*cos(0)", result: 60 }).valid && !validateCalculationStep({ expr: "15*4*cos(0)", result: 61 }).valid && validateCalculationStep({ expr: "15*4*cos(0)", result: 61 }).calculated === 60);
+  check("calc engine: a step it cannot evaluate stays UNVERIFIED rather than being passed off as checked", !validateCalculationStep({ expr: "the moon is made of cheese", result: 1 }).valid && validateCalculationStep({ expr: "the moon is made of cheese", result: 1 }).calculated === undefined);
+  check("calc engine: a claim's LEFT side is evaluated as an expression, so a correct product is never called wrong and a wrong one is", checkArithmeticClaim("3 × 47 = 141") === true && checkArithmeticClaim("3 × 47 = 140") === false && checkArithmeticClaim("2 + 2 = 4") === true && checkArithmeticClaim("no arithmetic here") === false);
+}
+{
+  // ── Spec §2/§4: the verdict on the student's step is CODE, not the model's guess, and the teaching state changes strategy on evidence ──
+  const { stepVerdictLine } = await import("../server/claude.ts");
+  const { verifyStepAgainstGap } = await import("../shared/mathEquiv.ts");
+  const { nextTeachingState, teachingBlock } = await import("../server/tutor.ts");
+  const { emptyBoard, applyBoardAction } = await import("../shared/boardState.ts");
+
+  const gapB = [{ id: "g", kind: "gap", text: "$b = ?$", expectedAnswer: "h/tan(25°)" }];
+  const right = verifyStepAgainstGap("so b = h / tan 25°", gapB);
+  const wrong = verifyStepAgainstGap("b = h tan 25°", gapB);
+  check("a RIGHT step against the open gap is confirmed by code, told to the tutor as fact, and never re-derived", right?.verdict === "correct" && /CORRECT for the open gap/.test(stepVerdictLine(right)) && /move to the NEXT step/.test(stepVerdictLine(right)));
+  const wrongTold = stepVerdictLine(wrong);
+  check("a step that is NOT equivalent is never graded 'wrong' by the teller; the prompt makes it ask ONE self-test question", wrong?.verdict === "incorrect" && /never reveal the right expression/.test(wrongTold) && /ask ONE question/.test(wrongTold) && /test their own line/.test(wrongTold));
+  check("a step nothing can verify (unreadable) yields NO verdict line — the tutor reacts normally", stepVerdictLine(verifyStepAgainstGap("I'm lost", gapB)) === "");
+
+  const s1 = nextTeachingState(undefined, { message: "I don't know how to do it" });
+  check("a stuck first message bumps the streak to 1; the advice says one rung up, not a repeat", s1.stuckStreak === 1 && /sharper hint|pointer|figure/.test(teachingBlock(s1)));
+  const s2 = nextTeachingState(s1, { message: "still lost", verdict: "incorrect" });
+  const stuck2 = teachingBlock(s2);
+  check("two stuck turns make the tutor switch strategy: explain directly, then hand the step back", s2.stuckStreak === 2 && /questions aren't working/.test(stuck2) && /Explain the missing idea directly/.test(stuck2) && /hand the next step back/.test(stuck2));
+  const s2b = nextTeachingState(s2, { message: "ok got it now", verdict: "correct" });
+  check("a right step resets the stuck streak and backs the help off toward probing", s2b.stuckStreak === 0);
+
+  // REDUCER: scoped reset clears only the section, and the scope/section guards hold
+  let b = emptyBoard("p1");
+  const mk = (a) => { const r = applyBoardAction(b, a); if (r.result.ok) b = r.state; return r; };
+  mk({ action: "create", object: { type: "problem", id: "p1", data: { statement: "Q", givens: [] } } });
+  mk({ action: "create", object: { type: "section", id: "sec", data: { title: "Working" } } });
+  mk({ action: "create", author: "student", object: { type: "equation", id: "mine", section: "sec", data: { latex: "15-9.8=5.2" } } });
+  mk({ action: "create", object: { type: "equation", id: "loose", data: { latex: "W = F d" } } });
+  const r = mk({ action: "reset", scope: "section", section: "sec" });
+  check("reset(section) clears only the section: the problem and unsectioned tutor lines stay, the student's work is archived (reversible), never destroyed", r.result.ok && b.objects["p1"].status === "active" && b.objects["loose"].status === "active" && b.objects["mine"].status === "archived");
+  check("a scoped reset outside the section rules is refused explicitly (SCOPE_REQUIRED)", applyBoardAction(emptyBoard("x"), { action: "reset", scope: "thing", section: "sec" }).result.error?.code === "SCOPE_REQUIRED" && applyBoardAction(emptyBoard("x"), { action: "reset", scope: "section" }).result.error?.code === "SCOPE_REQUIRED");
+}
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

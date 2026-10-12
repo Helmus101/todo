@@ -4,11 +4,11 @@
 // Pure + dependency-free so the server validates and the tests cover it.
 
 export type WidgetSpec =
-  | { type: "match"; pairs: { left: string; right: string }[] }
-  | { type: "order"; items: string[] }
-  | { type: "sort"; categories: string[]; items: { text: string; category: number }[] }
-  | { type: "unit_circle"; angle: number }
-  | { type: "projectile"; angle: number; speed: number; g: number };
+  | { type: "match"; pairs: { left: string; right: string }[]; dependsOn?: string[]; id?: string }
+  | { type: "order"; items: string[]; dependsOn?: string[]; id?: string }
+  | { type: "sort"; categories: string[]; items: { text: string; category: number }[]; dependsOn?: string[]; id?: string }
+  | { type: "unit_circle"; angle: number; dependsOn?: string[]; id?: string }
+  | { type: "projectile"; angle: number; speed: number; g: number; dependsOn?: string[]; id?: string };
 
 export const WIDGET_TYPES = ["match", "order", "sort", "unit_circle", "projectile"] as const;
 
@@ -20,6 +20,9 @@ const num = (v: unknown, lo: number, hi: number, dflt: number) => {
 
 export function normalizeWidget(input: any): { widget: WidgetSpec } | { error: string } {
   const type = String(input?.type || "");
+  const id = input?.id ? String(input.id).slice(0, 50) : undefined;
+  const dependsOn = Array.isArray(input?.dependsOn) ? input.dependsOn.map(String).slice(0, 10) : undefined;
+  
   if (type === "match") {
     const pairs = (Array.isArray(input?.pairs) ? input.pairs : []).slice(0, 6)
       .map((p: any) => ({ left: str(p?.left, 80), right: str(p?.right, 120) }))
@@ -27,13 +30,13 @@ export function normalizeWidget(input: any): { widget: WidgetSpec } | { error: s
     if (pairs.length < 3) return { error: "ERROR: a match widget needs `pairs`: 3-6 items like {left, right}." };
     if (new Set(pairs.map((p: { left: string }) => p.left.toLowerCase())).size !== pairs.length || new Set(pairs.map((p: { right: string }) => p.right.toLowerCase())).size !== pairs.length)
       return { error: "ERROR: every left and every right in a match must be distinct — otherwise two answers would be correct." };
-    return { widget: { type, pairs } };
+    return { widget: { type, pairs, ...(id ? { id } : {}), ...(dependsOn ? { dependsOn } : {}) } as WidgetSpec };
   }
   if (type === "order") {
     const items = (Array.isArray(input?.items) ? input.items : []).slice(0, 7).map((s: unknown) => str(s, 140)).filter(Boolean);
     if (items.length < 3) return { error: "ERROR: an order widget needs `items`: 3-7 steps/events listed in their CORRECT order (the student sees them shuffled)." };
     if (new Set(items.map((s: string) => s.toLowerCase())).size !== items.length) return { error: "ERROR: order items must be distinct." };
-    return { widget: { type, items } };
+    return { widget: { type, items, ...(id ? { id } : {}), ...(dependsOn ? { dependsOn } : {}) } as WidgetSpec };
   }
   if (type === "sort") {
     const categories = (Array.isArray(input?.categories) ? input.categories : []).slice(0, 4).map((s: unknown) => str(s, 40)).filter(Boolean);
@@ -43,10 +46,10 @@ export function normalizeWidget(input: any): { widget: WidgetSpec } | { error: s
       .filter((i: { text: string; category: number }) => i.text && Number.isInteger(i.category) && i.category >= 0 && i.category < categories.length);
     if (items.length < 4) return { error: "ERROR: a sort widget needs `items`: 4-10 like {text, category} where category is the 0-based index into categories." };
     if (categories.some((_: string, ci: number) => !items.some((i: { category: number }) => i.category === ci))) return { error: "ERROR: every category needs at least one item." };
-    return { widget: { type, categories, items } };
+    return { widget: { type, categories, items, ...(id ? { id } : {}), ...(dependsOn ? { dependsOn } : {}) } as WidgetSpec };
   }
-  if (type === "unit_circle") return { widget: { type, angle: num(input?.angle, 0, 360, 30) } };
-  if (type === "projectile") return { widget: { type, angle: num(input?.angle, 5, 85, 45), speed: num(input?.speed, 5, 60, 20), g: num(input?.g, 1, 25, 9.8) } };
+  if (type === "unit_circle") return { widget: { type, angle: num(input?.angle, 0, 360, 30), ...(id ? { id } : {}), ...(dependsOn ? { dependsOn } : {}) } as WidgetSpec };
+  if (type === "projectile") return { widget: { type, angle: num(input?.angle, 5, 85, 45), speed: num(input?.speed, 5, 60, 20), g: num(input?.g, 1, 25, 9.8), ...(id ? { id } : {}), ...(dependsOn ? { dependsOn } : {}) } as WidgetSpec };
   return { error: `ERROR: unknown widget type "${type}" — use one of: ${WIDGET_TYPES.join(", ")}.` };
 }
 

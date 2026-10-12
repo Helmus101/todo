@@ -8,7 +8,7 @@
 import type { DiagramOp } from "./types.ts";
 
 type Pt = { x: number; y: number };
-export interface GeoSegment { from: string; to: string; label?: string; dashed?: boolean; ticks?: number; arrow?: boolean; color?: string }
+export interface GeoSegment { from: string; to: string; label?: string; dashed?: boolean; ticks?: number; arrow?: boolean; color?: string; id?: string }
 export interface GeoSpec {
   /** Named points in real units, maths orientation (y up): {"A":[0,0],"B":[4,0]} or [{name,x,y}]. */
   points?: Record<string, [number, number]> | { name: string; x: number; y: number }[];
@@ -19,15 +19,17 @@ export interface GeoSpec {
   /** "AB" or {from,to,label,dashed,ticks,arrow,color}. */
   segments?: (string | GeoSegment)[];
   /** Closed shapes, e.g. "ABC" or {points:["A","B","C"], fill:true}. */
-  polygons?: (string | { points: string[]; fill?: boolean; color?: string })[];
+  polygons?: (string | { points: string[]; fill?: boolean; color?: string; id?: string })[];
   /** center + r (real units) or center + through (a point on the circle). */
-  circles?: { center: string; r?: number; through?: string; label?: string; dashed?: boolean; fill?: boolean }[];
+  circles?: { center: string; r?: number; through?: string; label?: string; dashed?: boolean; fill?: boolean; id?: string }[];
   /** Circular arc about a center from `from` to `to` degrees counter-clockwise (maths orientation) — sectors, arcs. */
-  arcs?: { center: string; r: number; from: number; to: number; label?: string; dashed?: boolean }[];
+  arcs?: { center: string; r: number; from: number; to: number; label?: string; dashed?: boolean; id?: string }[];
   /** An angle mark at vertex `at` between rays to `from` and `to`; `right` draws the little square. */
-  angles?: { at: string; from: string; to: string; label?: string; right?: boolean }[];
+  angles?: { at: string; from: string; to: string; label?: string; right?: boolean; id?: string }[];
   /** Points that get a dot + name label (default: every named point). */
   unlabeled?: string[];
+  /** Optional ID for the entire diagram (for targeted updates) */
+  diagramId?: string;
 }
 
 export const GEO_LIMITS = { points: 26, shapes: 40 };
@@ -53,8 +55,19 @@ function parseNames(s: string, known: Set<string>): string[] | null {
   return out;
 }
 
-export function buildGeometry(spec: GeoSpec): { ops: DiagramOp[] } | { error: string } {
+export function buildGeometry(spec: GeoSpec): { ops: DiagramOp[]; elementIds: Record<string, string>; diagramId?: string } | { error: string } {
   const P = new Map<string, Pt>();
+  /** name → stable element id, so the tutor can say "highlight segment_AB" and point at the right one op. */
+  const elementIds: Record<string, string> = {};
+  let elementCounter = 0;
+
+  /** Every drawn element gets an id the caller can target later; `key` is the human-meaningful name (segment_AB, angle_B, point_A…). */
+  const newId = (key: string): string => {
+    const id = `${key}_${elementCounter++}`;
+    elementIds[key] = id;
+    return id;
+  };
+
   const add = (name: string, x: number, y: number) => { P.set(String(name).trim(), { x, y }); };
   if (Array.isArray(spec.points)) {
     for (const p of spec.points) { if (!p || !finite(p.x) || !finite(p.y) || !String(p.name || "").trim()) return { error: "ERROR: every point needs a name and numeric x, y." }; add(p.name, num(p.x), num(p.y)); }
@@ -99,7 +112,7 @@ export function buildGeometry(spec: GeoSpec): { ops: DiagramOp[] } | { error: st
     else if (s && P.has(s.from) && P.has(s.to)) segs.push(s);
     else return { error: `ERROR: segment ${JSON.stringify(s)} uses an undefined point (defined: ${[...known].join(", ")}).` };
   }
-  const polys: { pts: string[]; fill?: boolean; color?: string }[] = [];
+  const polys: { pts: string[]; fill?: boolean; color?: string; id?: string }[] = [];
   // Points given but NOTHING said to join them (the model listed A, B, C and forgot the sides) — a figure of loose
   // dots is never what was meant: join the points the caller listed, in order (a segment for two, a closed shape
   // for three or more).
@@ -111,7 +124,7 @@ export function buildGeometry(spec: GeoSpec): { ops: DiagramOp[] } | { error: st
   for (const g of spec.polygons || []) {
     const names = typeof g === "string" ? parseNames(g.replace(/[\s-]/g, ""), known) : (g?.points || []).every((n) => known.has(n)) ? g.points : null;
     if (!names || names.length < 3) return { error: `ERROR: polygon ${JSON.stringify(g)} needs 3+ defined points.` };
-    polys.push({ pts: names, ...(typeof g === "object" ? { fill: g.fill, color: g.color } : {}) });
+    polys.push({ pts: names, ...(typeof g === "object" ? { fill: g.fill, color: g.color, id: g.id } : {}) });
   }
   if (segs.length + polys.length + (spec.circles?.length || 0) + (spec.arcs?.length || 0) + (spec.angles?.length || 0) > GEO_LIMITS.shapes) return { error: `REJECTED: max ${GEO_LIMITS.shapes} shapes — simplify.` };
 
@@ -144,26 +157,38 @@ export function buildGeometry(spec: GeoSpec): { ops: DiagramOp[] } | { error: st
 
   const ops: DiagramOp[] = [];
   const usedLabels: Pt[] = [];
-  const label = (at: Pt, text: string, size: "sm" | "md" | "lg" = "md") => {
+  const label = (at: Pt, text: string, size: "sm" | "md" | "lg" = "md", id?: string) => {
     let p = { ...at };
     for (let i = 0; i < 6 && usedLabels.some((u) => Math.abs(u.x - p.x) < 26 && Math.abs(u.y - p.y) < 18); i++) p = { x: p.x + 12, y: p.y + 14 };
     usedLabels.push(p);
-    ops.push({ op: "label", x: r1(Math.min(780, Math.max(20, p.x))), y: r1(Math.min(585, Math.max(16, p.y))), text: text.slice(0, 40), size, anchor: "middle" });
+    // Every label is addressable too — "highlight the 30° label" must be able to find it.
+    const labelId = id ?? newId(`labeltext_${text.replace(/[^A-Za-z0-9]/g, "").slice(0, 12)}`);
+    ops.push({ op: "label", x: r1(Math.min(780, Math.max(20, p.x))), y: r1(Math.min(585, Math.max(16, p.y))), text: text.slice(0, 40), size, anchor: "middle", id: labelId });
   };
 
-  for (const g of polys) ops.push({ op: "polygon", points: g.pts.map((n) => S.get(n)!), ...(g.fill ? { fill: true } : {}), ...(g.color ? { color: g.color } : {}) });
+  for (const [gi, g] of polys.entries()) {
+    const polyId = g.id || newId(`polygon_${gi}`);
+    if (g.id) elementIds[g.id] = g.id;
+    ops.push({ op: "polygon", points: g.pts.map((n) => S.get(n)!), ...(g.fill ? { fill: true } : {}), ...(g.color ? { color: g.color } : {}), id: polyId });
+  }
   for (const { c, r, spec: cs } of circles) {
-    const sc = px(c); ops.push({ op: "circle", cx: sc.x, cy: sc.y, r: r1(r * k), ...(cs.fill ? { fill: true } : {}), ...(cs.dashed ? { dashed: true } : {}) });
+    const sc = px(c);
+    const circleId = cs.id || newId(`circle_${cs.center}`);
+    if (cs.id) elementIds[cs.id] = cs.id;
+    ops.push({ op: "circle", cx: sc.x, cy: sc.y, r: r1(r * k), ...(cs.fill ? { fill: true } : {}), ...(cs.dashed ? { dashed: true } : {}), id: circleId });
     if (cs.label) label({ x: sc.x + r * k * 0.72, y: sc.y - r * k * 0.72 - 8 }, cs.label);
   }
   for (const { c, r, from, to, spec: as } of arcs) {
     const sc = px(c);
-    ops.push({ op: "arc", cx: sc.x, cy: sc.y, r: r1(r * k), a0: -from, a1: -to, ...(as.dashed ? { dashed: true } : {}) });
+    const arcId = as.id || newId(`arc_${from}_${to}`);
+    if (as.id) elementIds[as.id] = as.id;
+    ops.push({ op: "arc", cx: sc.x, cy: sc.y, r: r1(r * k), a0: -from, a1: -to, ...(as.dashed ? { dashed: true } : {}), id: arcId });
     if (as.label) { const mid = (-(from + to) / 2 * Math.PI) / 180; label({ x: sc.x + (r * k + 18) * Math.cos(mid), y: sc.y + (r * k + 18) * Math.sin(mid) }, as.label); }
   }
   for (const s of segs) {
     const a = S.get(s.from)!, b = S.get(s.to)!;
-    ops.push({ op: "line", x1: a.x, y1: a.y, x2: b.x, y2: b.y, ...(s.arrow ? { arrow: true } : {}), ...(s.dashed ? { dashed: true } : {}), ...(s.color ? { color: s.color } : {}) });
+    const segId = s.id || newId(`segment_${s.from}_${s.to}`);
+    ops.push({ op: "line", x1: a.x, y1: a.y, x2: b.x, y2: b.y, ...(s.arrow ? { arrow: true } : {}), ...(s.dashed ? { dashed: true } : {}), ...(s.color ? { color: s.color } : {}), id: segId });
     const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, d = unit(sub(b, a)), n = { x: -d.y, y: d.x };
     const out = (n.x * (mid.x - centroid.x) + n.y * (mid.y - centroid.y)) >= 0 ? n : { x: -n.x, y: -n.y };
     for (let t = 0; t < Math.min(3, s.ticks || 0); t++) {
@@ -176,26 +201,29 @@ export function buildGeometry(spec: GeoSpec): { ops: DiagramOp[] } | { error: st
     const v = S.get(an.at), p = S.get(an.from), q = S.get(an.to);
     if (!v || !p || !q) return { error: `ERROR: angle at ${an.at} uses an undefined point (defined: ${[...known].join(", ")}).` };
     const u1 = unit(sub(p, v)), u2 = unit(sub(q, v));
+    const angleId = an.id || newId(`angle_${an.at}`);
     if (an.right) {
-      const s = 16; ops.push({ op: "polyline", points: [{ x: r1(v.x + u1.x * s), y: r1(v.y + u1.y * s) }, { x: r1(v.x + (u1.x + u2.x) * s), y: r1(v.y + (u1.y + u2.y) * s) }, { x: r1(v.x + u2.x * s), y: r1(v.y + u2.y * s) }] });
+      const s = 16; ops.push({ op: "polyline", points: [{ x: r1(v.x + u1.x * s), y: r1(v.y + u1.y * s) }, { x: r1(v.x + (u1.x + u2.x) * s), y: r1(v.y + (u1.y + u2.y) * s) }, { x: r1(v.x + u2.x * s), y: r1(v.y + u2.y * s) }], id: angleId });
       if (an.label) label({ x: v.x + (u1.x + u2.x) * 30, y: v.y + (u1.y + u2.y) * 30 }, an.label, "sm");
     } else {
       const t1 = Math.atan2(u1.y, u1.x), t2 = Math.atan2(u2.y, u2.x);
       let dlt = ((t2 - t1) * 180) / Math.PI; while (dlt > 180) dlt -= 360; while (dlt <= -180) dlt += 360;
       const a0 = (t1 * 180) / Math.PI, R = 30;
-      ops.push({ op: "arc", cx: v.x, cy: v.y, r: R, a0: r1(a0), a1: r1(a0 + dlt) });
+      ops.push({ op: "arc", cx: v.x, cy: v.y, r: R, a0: r1(a0), a1: r1(a0 + dlt), id: angleId });
       if (an.label) { const mid = ((a0 + dlt / 2) * Math.PI) / 180; label({ x: v.x + (R + 20) * Math.cos(mid), y: v.y + (R + 20) * Math.sin(mid) }, an.label, "sm"); }
     }
   }
   const hidden = new Set(spec.unlabeled || []);
   for (const [name, p] of S) {
-    ops.push({ op: "circle", cx: p.x, cy: p.y, r: 3.5, fill: true });
+    const pointId = newId(`point_${name}`);
+    ops.push({ op: "circle", cx: p.x, cy: p.y, r: 3.5, fill: true, id: pointId });
     if (hidden.has(name)) continue;
     const nb = [...segs.filter((s) => s.from === name).map((s) => S.get(s.to)!), ...segs.filter((s) => s.to === name).map((s) => S.get(s.from)!)];
     // away from the lines meeting here; a lone point (a circle's centre) goes below-right
     const dir = nb.length ? unit(nb.reduce((acc, q) => { const u = unit(sub(q, p)); return { x: acc.x - u.x, y: acc.y - u.y }; }, { x: 0, y: 0 })) : awayFrom(p, centroid, { x: 0.6, y: 0.8 });
     const dd = len(dir) < 0.2 ? awayFrom(p, centroid, { x: 0, y: -1 }) : dir;
-    label({ x: p.x + dd.x * 18, y: p.y + dd.y * 18 }, name);
+    const labelId = newId(`label_${name}`);
+    label({ x: p.x + dd.x * 18, y: p.y + dd.y * 18 }, name, "md", labelId);
   }
-  return { ops };
+  return { ops, elementIds, diagramId: spec.diagramId };
 }

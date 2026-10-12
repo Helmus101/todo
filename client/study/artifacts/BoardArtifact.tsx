@@ -308,19 +308,23 @@ function opsViewBox(ops: DiagramOp[]): string {
   return `${Math.round(x0)} ${Math.round(y0)} ${Math.max(120, Math.round(x1 - x0))} ${Math.max(80, Math.round(y1 - y0))}`;
 }
 
-function DiagramOpSVG({ op }: { op: DiagramOp }) {
+/** `partId` scopes the op's stable id to its own figure (shared/geometry.ts gives every element one, so the
+ *  tutor can say "highlight segment_AB" and the app points at that exact element rather than redrawing). */
+function DiagramOpSVG({ op, partId }: { op: DiagramOp; partId?: string }) {
   const stroke = op.op !== "label" && "color" in op && op.color ? op.color : "currentColor";
+  // data-geo-id, not id: ids share a document with <marker id> references, and the scoped value can contain ':'.
+  const gid = op.id && partId ? { "data-geo-id": `${partId}#${op.id}` } : {};
   switch (op.op) {
     case "line":
-      return <line x1={op.x1} y1={op.y1} x2={op.x2} y2={op.y2} stroke={stroke} strokeWidth={2} strokeLinecap="round" strokeDasharray={op.dashed ? "6 5" : undefined} markerEnd={op.arrow ? "url(#sm-diagram-arrow)" : undefined} />;
+      return <line {...gid} x1={op.x1} y1={op.y1} x2={op.x2} y2={op.y2} stroke={stroke} strokeWidth={2} strokeLinecap="round" strokeDasharray={op.dashed ? "6 5" : undefined} markerEnd={op.arrow ? "url(#sm-diagram-arrow)" : undefined} />;
     case "rect":
-      return <rect x={op.x} y={op.y} width={op.w} height={op.h} stroke={stroke} strokeWidth={2} fill={op.fill ? stroke : "none"} fillOpacity={op.fill ? 0.15 : undefined} />;
+      return <rect {...gid} x={op.x} y={op.y} width={op.w} height={op.h} stroke={stroke} strokeWidth={2} fill={op.fill ? stroke : "none"} fillOpacity={op.fill ? 0.15 : undefined} />;
     case "circle":
-      return <circle cx={op.cx} cy={op.cy} r={op.r} stroke={op.r <= 4 && op.fill ? "none" : stroke} strokeWidth={2} strokeDasharray={op.dashed ? "6 5" : undefined} fill={op.fill ? stroke : "none"} fillOpacity={op.fill ? (op.r <= 4 ? 1 : 0.15) : undefined} />;
+      return <circle {...gid} cx={op.cx} cy={op.cy} r={op.r} stroke={op.r <= 4 && op.fill ? "none" : stroke} strokeWidth={2} strokeDasharray={op.dashed ? "6 5" : undefined} fill={op.fill ? stroke : "none"} fillOpacity={op.fill ? (op.r <= 4 ? 1 : 0.15) : undefined} />;
     case "polyline":
-      return <polyline points={op.points.map((p) => `${p.x},${p.y}`).join(" ")} stroke={stroke} strokeWidth={2} strokeDasharray={op.dashed ? "6 5" : undefined} strokeLinejoin="round" fill="none" />;
+      return <polyline {...gid} points={op.points.map((p) => `${p.x},${p.y}`).join(" ")} stroke={stroke} strokeWidth={2} strokeDasharray={op.dashed ? "6 5" : undefined} strokeLinejoin="round" fill="none" />;
     case "polygon":
-      return <polygon points={op.points.map((p) => `${p.x},${p.y}`).join(" ")} stroke={stroke} strokeWidth={2} strokeLinejoin="round" fill={op.fill ? stroke : "none"} fillOpacity={op.fill ? 0.12 : undefined} />;
+      return <polygon {...gid} points={op.points.map((p) => `${p.x},${p.y}`).join(" ")} stroke={stroke} strokeWidth={2} strokeLinejoin="round" fill={op.fill ? stroke : "none"} fillOpacity={op.fill ? 0.12 : undefined} />;
     case "arc": {
       const rad = (d: number) => (d * Math.PI) / 180;
       const sweep = op.a1 > op.a0;
@@ -329,12 +333,12 @@ function DiagramOpSVG({ op }: { op: DiagramOp }) {
       const end = Math.abs(op.a1 - op.a0) >= 359.9 ? op.a0 + (sweep ? 359.9 : -359.9) : op.a1;
       const sx = op.cx + op.r * Math.cos(rad(op.a0)), sy = op.cy + op.r * Math.sin(rad(op.a0));
       const ex = op.cx + op.r * Math.cos(rad(end)), ey = op.cy + op.r * Math.sin(rad(end));
-      return <path d={`M ${sx} ${sy} A ${op.r} ${op.r} 0 ${large} ${sweep ? 1 : 0} ${ex} ${ey}`} stroke={stroke} strokeWidth={2} strokeDasharray={op.dashed ? "6 5" : undefined} fill="none" />;
+      return <path {...gid} d={`M ${sx} ${sy} A ${op.r} ${op.r} 0 ${large} ${sweep ? 1 : 0} ${ex} ${ey}`} stroke={stroke} strokeWidth={2} strokeDasharray={op.dashed ? "6 5" : undefined} fill="none" />;
     }
     case "label": {
       const mid = op.anchor === "middle";
       const t = formatMath(op.text);
-      return <text x={op.x} y={op.y} fontSize={LABEL_SIZE[op.size || "md"]} fill="currentColor" textAnchor={mid ? "middle" : "start"} dominantBaseline={mid ? "central" : undefined} fontStyle={/^[A-Za-z][′'₀-₉0-9]*$/.test(t) ? "italic" : undefined}>{t}</text>;
+      return <text {...gid} x={op.x} y={op.y} fontSize={LABEL_SIZE[op.size || "md"]} fill="currentColor" textAnchor={mid ? "middle" : "start"} dominantBaseline={mid ? "central" : undefined} fontStyle={/^[A-Za-z][′'₀-₉0-9]*$/.test(t) ? "italic" : undefined}>{t}</text>;
     }
     case "axes":
       return (
@@ -761,8 +765,7 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, 
                         <marker id="sm-diagram-arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
                           <path d="M0,0 L8,4 L0,8 z" fill="currentColor" />
                         </marker>
-                      </defs>
-                      {e.diagram.map((op, i) => <DiagramOpSVG key={i} op={op} />)}
+                      </defs>                       {e.diagram.map((op, i) => <DiagramOpSVG key={i} op={op} partId={e.id} />)}
                     </svg>
                   </>
                 )

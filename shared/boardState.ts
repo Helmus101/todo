@@ -122,6 +122,11 @@ export interface BoardSnapshot {
 export interface Engine {
   /** Deterministic evaluation of an expression ("15*4*cos(0)") → number, or null if it can't be computed. */
   evaluate?: (expr: string) => number | null;
+  /** Validate an arithmetic claim (e.g., "3 * 47 = 141") and return whether it's correct */
+  /** left/right are null when the side couldn't be parsed as a number (absent ≠ unparseable). */
+  validateArithmetic?: (claim: string) => { correct: boolean; left?: number | null; right?: number | null; mismatch?: boolean } | null;
+  /** Compile a math expression for evaluation with variables */
+  compileExpression?: (expr: string, vars: string[]) => { fn: (v: Record<string, number>) => number } | { error: string };
   now?: () => string;
   newId?: () => string;
 }
