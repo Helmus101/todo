@@ -367,15 +367,25 @@ const CONVERSIONS = [3.6, 1000, 60, 100, 3600];
  *  the number they just gave IS the value of the expression the reply tells them to redo ("235,200" vs "multiply
  *  1200×9.8×20"; "24350" vs "800×9.8×sin(15°)×12"). Returns the correction note, or null. Exported for tests. */
 export function doubtsRightAnswer(reply: string, message: string, sol?: TutorSolution): string | null {
-  const RECHECK = /\b(?:check (?:that|this|it|your|the)|(?:try|run|re-?run|work|do) (?:it |that |this )?(?:out )?again|re-?check|re-?run|let'?s (?:check|re-?run|redo)|double[- ]check|not quite|was from the previous|look again|try \d)/i;
+  const RECHECK = /\b(?:check (?:that|this|it|your|the)|re-?verify|(?:try|run|re-?run|work|do) (?:it |that |this )?(?:out )?again|re-?check|re-?run|let'?s (?:check|re-?run|redo)|double[- ]check|not quite|was from the previous|look again|try \d)/i;
   if (!RECHECK.test(reply)) return null;
   if (/\[(?:Exercise|Exercice)\][^\n]*(?:marked right|checked right|juste|vérifié juste)/i.test(message)) return "the app already checked their answer and it is RIGHT — don't ask them to redo it; acknowledge it and move on";
   const num = (x: string) => Number(x.replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1").replace(",", "."));
-  const theirs = (message.match(/\d[\d\s,]*(?:\.\d+)?/g) || []).map((x) => num(x.trim())).filter((n) => Number.isFinite(n) && n >= 10);
-  if (!theirs.length) return null;
-  // Their number IS a step of the verified solution: right, whatever the reply's own arithmetic says.
+  const allNums = (message.match(/\d[\d\s,]*(?:\.\d+)?/g) || []).map((x) => num(x.trim())).filter((n) => Number.isFinite(n));
+  if (!allNums.length) return null;
+  // Their number IS a step of the verified solution: right, whatever the reply's own arithmetic says. No
+  // floor here — reachedSolutionSteps already does its own tolerance-based matching against real solution
+  // values, so an ordinary small correct answer ("P = 8", "x = 3") is exactly as reliable a match as a large
+  // one. Was gated behind `n >= 10` on this exact list, which silently excluded any small answer from EVER
+  // reaching this check at all — reported live: a correct P=8 kept getting doubted in a loop because "8"
+  // never passed that floor.
   const reached = reachedSolutionSteps(message, sol);
   if (reached.length) return `their number is ${reached.includes(0) ? "the correct final answer" : `correct (it's step ${reached[0]} of the solution)`} — they were RIGHT; confirm it instead of asking them to redo it`;
+  // The floor matters here, though: matching the reply's own stated arithmetic (not a verified solution) is
+  // a looser heuristic, so keep it restricted to numbers that look like a real exercise answer rather than
+  // an incidental small digit (a step count, a coefficient) that happens to equal some unrelated product.
+  const theirs = allNums.filter((n) => n >= 10);
+  if (!theirs.length) return null;
   const plain = latexToPlainText(reply.replace(/\$/g, " "));
   for (const m of plain.matchAll(/\d[\d.,]*\s*[×x*·]\s*[\d\s.,×x*·()°a-z]*\d[)°]*/gi)) {
     const src = toExprSource(m[0].replace(/(\d),(\d{3})/g, "$1$2"));
@@ -386,6 +396,22 @@ export function doubtsRightAnswer(reply: string, message: string, sol?: TutorSol
     if (hit) return `their ${hit} IS ${m[0].trim()} (= ${Math.round(v * 100) / 100}) — they were RIGHT; confirm it instead of asking them to redo it`;
   }
   return null;
+}
+
+/** The exercise widget itself marked the student's answer wrong, but the independently verified solution
+ *  (server/solver.ts's own re-solve, NOT the exercise's own possibly-wrong stored key) says they were
+ *  right. Unlike doubtsRightAnswer above, this fires regardless of what the model's own draft reply says —
+ *  it doesn't need "recheck" language in the reply, because the thing being corrected here is the GRADE
+ *  itself, not just Otto's tone about it. Reported live: a correct P=8 was marked wrong twice running, and
+ *  across several turns Otto kept doubting the student instead of ever just saying the key was wrong.
+ *  Exported for tests. */
+export function misgradedExercise(message: string, sol?: TutorSolution): string | null {
+  if (!/\[(?:Exercise|Exercice)\][^\n]*(?:marked wrong|checked wrong|faux)/i.test(message)) return null;
+  const reached = reachedSolutionSteps(message, sol);
+  if (!reached.length) return null;
+  return reached.includes(0)
+    ? "Their stated answer actually matches the verified solution — the exercise's own key was wrong, not them."
+    : `Their stated number matches step ${reached[0]} of the verified solution — it's right, even though this particular exercise widget marked it wrong.`;
 }
 
 /** A gap that states an equation and asks for its unknown ("2·9.8·3 = ½(400)x² ⟹ x = ?"): the key is SOLVED here, not taken from the model.
@@ -549,6 +575,17 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const { message, history, board, problems, objectives, context, lang } = input;
   const fr = lang === "fr";
   const result: TutorTurnResult = { reply: "", board: [], problems: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false };
+
+  // The exercise widget marked them wrong, but the independently-verified solution says they were right —
+  // settle it immediately and deterministically, no model call needed (and none of the model's own doubt
+  // to second-guess): see misgradedExercise's own doc comment for the reported live failure this fixes.
+  const misgraded = misgradedExercise(message, input.solution);
+  if (misgraded) {
+    result.reply = fr
+      ? "En fait, tu avais raison — la clé de cet exercice était fausse, pas ta réponse. Bien joué, on continue !"
+      : "Actually, you were right — this exercise's own answer key was wrong, not you. Nice work — let's keep going.";
+    return result;
+  }
 
   const spokenRepair: SpokenRepair | null = input.spoken
     ? repairSpokenMath(message, spokenContextFrom([context.subject || "", ...board.map((b) => b.text || ""), ...problems.map((p) => p.question || "")]))

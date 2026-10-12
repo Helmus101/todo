@@ -13935,14 +13935,16 @@ function inventsProblemOnBoard(text, said, known = []) {
 var BOARD_CONSTANTS = [9.8, 9.81, 10, 3.6, 1e3, 60, 100, 3600, 2, 1, 0];
 var CONVERSIONS = [3.6, 1e3, 60, 100, 3600];
 function doubtsRightAnswer(reply, message, sol) {
-  const RECHECK = /\b(?:check (?:that|this|it|your|the)|(?:try|run|re-?run|work|do) (?:it |that |this )?(?:out )?again|re-?check|re-?run|let'?s (?:check|re-?run|redo)|double[- ]check|not quite|was from the previous|look again|try \d)/i;
+  const RECHECK = /\b(?:check (?:that|this|it|your|the)|re-?verify|(?:try|run|re-?run|work|do) (?:it |that |this )?(?:out )?again|re-?check|re-?run|let'?s (?:check|re-?run|redo)|double[- ]check|not quite|was from the previous|look again|try \d)/i;
   if (!RECHECK.test(reply)) return null;
   if (/\[(?:Exercise|Exercice)\][^\n]*(?:marked right|checked right|juste|vérifié juste)/i.test(message)) return "the app already checked their answer and it is RIGHT \u2014 don't ask them to redo it; acknowledge it and move on";
   const num5 = (x) => Number(x.replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1").replace(",", "."));
-  const theirs = (message.match(/\d[\d\s,]*(?:\.\d+)?/g) || []).map((x) => num5(x.trim())).filter((n) => Number.isFinite(n) && n >= 10);
-  if (!theirs.length) return null;
+  const allNums = (message.match(/\d[\d\s,]*(?:\.\d+)?/g) || []).map((x) => num5(x.trim())).filter((n) => Number.isFinite(n));
+  if (!allNums.length) return null;
   const reached = reachedSolutionSteps(message, sol);
   if (reached.length) return `their number is ${reached.includes(0) ? "the correct final answer" : `correct (it's step ${reached[0]} of the solution)`} \u2014 they were RIGHT; confirm it instead of asking them to redo it`;
+  const theirs = allNums.filter((n) => n >= 10);
+  if (!theirs.length) return null;
   const plain = latexToPlainText(reply.replace(/\$/g, " "));
   for (const m of plain.matchAll(/\d[\d.,]*\s*[×x*·]\s*[\d\s.,×x*·()°a-z]*\d[)°]*/gi)) {
     const src = toExprSource(m[0].replace(/(\d),(\d{3})/g, "$1$2"));
@@ -13953,6 +13955,12 @@ function doubtsRightAnswer(reply, message, sol) {
     if (hit) return `their ${hit} IS ${m[0].trim()} (= ${Math.round(v * 100) / 100}) \u2014 they were RIGHT; confirm it instead of asking them to redo it`;
   }
   return null;
+}
+function misgradedExercise(message, sol) {
+  if (!/\[(?:Exercise|Exercice)\][^\n]*(?:marked wrong|checked wrong|faux)/i.test(message)) return null;
+  const reached = reachedSolutionSteps(message, sol);
+  if (!reached.length) return null;
+  return reached.includes(0) ? "Their stated answer actually matches the verified solution \u2014 the exercise's own key was wrong, not them." : `Their stated number matches step ${reached[0]} of the verified solution \u2014 it's right, even though this particular exercise widget marked it wrong.`;
 }
 function solvedGapKey(text) {
   const plain = latexToPlainText(String(text || "").replace(/\$/g, " ")).replace(/(\d),(?=\d{3}(?!\d))/g, "$1");
@@ -14078,6 +14086,11 @@ async function runTutorTurn(input) {
   const { message, history, board, problems, objectives, context, lang } = input;
   const fr = lang === "fr";
   const result = { reply: "", board: [], problems: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false };
+  const misgraded = misgradedExercise(message, input.solution);
+  if (misgraded) {
+    result.reply = fr ? "En fait, tu avais raison \u2014 la cl\xE9 de cet exercice \xE9tait fausse, pas ta r\xE9ponse. Bien jou\xE9, on continue !" : "Actually, you were right \u2014 this exercise's own answer key was wrong, not you. Nice work \u2014 let's keep going.";
+    return result;
+  }
   const spokenRepair = input.spoken ? repairSpokenMath(message, spokenContextFrom([context.subject || "", ...board.map((b) => b.text || ""), ...problems.map((p) => p.question || "")])) : null;
   const system = TUTOR_PROMPT + (input.voiceMode ? VOICE_BLOCK : "") + nowBlock() + backgroundBlock(context) + objectivesBlock(objectives) + (boardSurfaceBlock(board, problems) || "\n\nTHE BOARD IS EMPTY.") + solutionBlock(input.solution) + solutionMatchLine(message, input.solution) + teachingBlock(input.teaching) + stepVerdictLine(input.stepVerdict) + (input.spoken && spokenRepair ? voiceInputBlock(message, input.spoken.alternatives, spokenRepair) : "");
   const messages = [

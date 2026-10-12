@@ -5,7 +5,7 @@
 // carries the conversation first and the background second.
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
 delete process.env.GEMINI_API_KEY;
-const { runTutorTurn, detectSubject, backgroundBlock, TUTOR_PROMPT, leakedValue, wantsExercise, inventsProblemOnBoard, doubtsRightAnswer, softenOpener, computedGapKey, nextTeachingState, sendsBackToStatement, statesFormula, misstatesGiven, stripPraiseOpener, tutorTools, applyTool } = await import("../server/tutor.ts");
+const { runTutorTurn, detectSubject, backgroundBlock, TUTOR_PROMPT, leakedValue, wantsExercise, inventsProblemOnBoard, doubtsRightAnswer, misgradedExercise, softenOpener, computedGapKey, nextTeachingState, sendsBackToStatement, statesFormula, misstatesGiven, stripPraiseOpener, tutorTools, applyTool } = await import("../server/tutor.ts");
 const { equivalent } = await import("../shared/mathEquiv.ts");
 const { equationsAhead } = await import("../shared/equationsAhead.ts");
 const { boardLineNumbers } = await import("../shared/boardLines.ts");
@@ -186,6 +186,30 @@ export async function runTutorEngineSim(check, section) {
   r = await run("1000 times 9.8 times sine 10 times 15", { opts: { voiceMode: true } });
   check("voice mode keeps the maths readable (× and sin survive, ½ isn't '12')", /1000 × 9\.8 × sin\(10°\) × 15/.test(r.reply) && /1\/2/.test(r.reply) && !/\\/.test(r.reply));
   check("doubtsRightAnswer leaves a genuinely wrong answer alone", doubtsRightAnswer("Check that again: $1000 \\times 9.8 \\times \\sin(10^\\circ) \\times 15$.", "5,526") === null);
+  // Reported live: a correct, SMALL final answer (P=8, an ordinary supply/demand equilibrium price) kept
+  // getting doubted turn after turn — doubtsRightAnswer's own number extraction filtered out anything under
+  // 10 BEFORE it ever reached the reachedSolutionSteps check, so a small correct answer could never be
+  // rescued by this safety net at all, no matter how clearly the reply asked to recheck it.
+  {
+    const econSol = { statement: "Qd=500-20P, Qs=100+30P", steps: [], value: 8 };
+    check("doubtsRightAnswer now catches a correct SMALL final answer (was silently excluded by the old n>=10 floor)",
+      doubtsRightAnswer("Let's re-verify that — what is 400 divided by 50?", "8", econSol) !== null);
+    check("...and still correctly ignores an unrelated small number with no recheck language at all",
+      doubtsRightAnswer("Nice, what's next?", "8", econSol) === null);
+    // misgradedExercise: fires on the exercise widget's own "[Exercise]…marked wrong" message, independent
+    // of whatever the model's own draft reply says — this is what makes the fix robust even when Otto's
+    // reply doesn't happen to use "recheck"-shaped language at all.
+    check("misgradedExercise catches the exact reported case: exercise widget wrong, verified solution agrees",
+      misgradedExercise('[Exercise] I answered "8" — marked wrong (try #1).', econSol) !== null);
+    check("misgradedExercise says nothing when the exercise widget marked it RIGHT (nothing to correct)",
+      misgradedExercise('[Exercise] I answered "8" — marked right (try #1).', econSol) === null);
+    check("misgradedExercise says nothing for a genuinely wrong answer", misgradedExercise('[Exercise] I answered "12" — marked wrong (try #1).', econSol) === null);
+    check("misgradedExercise says nothing without a verified solution to check against", misgradedExercise('[Exercise] I answered "8" — marked wrong (try #1).', undefined) === null);
+    // End-to-end: runTutorTurn short-circuits immediately on a misgraded exercise, no model call at all.
+    script = () => ({ content: "THIS SHOULD NEVER BE SEEN — the misgraded-exercise short-circuit must bypass the model entirely" });
+    r = await run('[Exercise] I answered "8" — marked wrong (try #1).', { opts: { solution: econSol } });
+    check("runTutorTurn settles a misgraded exercise deterministically, with zero model calls", calls.length === 0 && /key was wrong/i.test(r.reply) && !r.error);
+  }
 
   // Reported live (real transcript): Otto asked the student to go BACK TO THE PROBLEM STATEMENT to re-check a
   // value they had already given — "let's re-read the problem's pulling force", "Check the problem statement on
