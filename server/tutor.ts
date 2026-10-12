@@ -17,7 +17,7 @@ import { studentModelBlock, normalizeStudentModel } from "./studentModel.ts";
 import { buildTrigScene } from "../shared/trigScene.ts";
 import { sanitizeSvg, svgText } from "../shared/svgSafe.ts";
 import { repairSpokenMath, spokenContextFrom, type SpokenRepair } from "../shared/spokenMath.ts";
-import { equationsAhead, asksForFormula } from "../shared/equationsAhead.ts";
+import { equationsAhead, asksForFormula, questionAhead } from "../shared/equationsAhead.ts";
 import { findArithmeticClaims } from "./arithmetic.ts";
 import { applyEntryAction } from "../shared/boardAdapter.ts";
 import { boardSurfaceBlock } from "./boardEvents.ts";
@@ -836,6 +836,12 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
     case "CREATE_PROBLEM": {
       if (openProblems().length && !asksToMoveOn(c.message)) return "REJECTED: they haven't answered the problem already on the board — help them with that one first.";
       if (isDuplicateProblem(c.allProblems(), input)) return "DUPLICATE: that problem is already on the board.";
+      // The exercise's own text must not hand them the equation they were going to build: "$KE_f = ½(1200)(25)² = ?" shipped
+      // inside a created question and opened the session with the student's first move already done. The reply and board-write
+      // guards both check equationsAhead; a created problem checks questionAhead (its trailing ask-sentence stripped first),
+      // so the setup has to come from them or the problem's own statement — never pre-built with the exercise.
+      const aheadQuestion = questionAhead(String(input?.question || ""), c.said);
+      if (aheadQuestion.length) return `REJECTED: that exercise hands them the equation they were going to build (${aheadQuestion[0]}). State the situation and what to find in words (or the raw given line) — never the substituted setup. Let THEM write the equation.`;
       // requireCheck: a numeric key must come with an expression the app evaluates itself (never a guessed key).
       const r = makeProblem(input, true);
       if ("error" in r) return r.error;

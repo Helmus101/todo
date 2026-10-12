@@ -28,9 +28,12 @@ function isFormula(side: string): boolean {
   const t = latexToPlainText(side.replace(/\$/g, " ")).replace(/(\d)\s*(?:kg|km|cm|mm|m\/s²?|m\/s\^?2|m|s|n|j|w|kw|kj|g|h|min|v|a|mol|l|ml|%|°)(?![a-z])/gi, "$1");
   const symbols = (t.match(/\b(?:sin|cos|tan|cot|log|ln|sqrt|exp)\b|[a-zA-Zα-ωΑ-Ω]/g) || []);
   if (symbols.length >= 2) return true;
-  // A substituted set-up is a formula too: three or more numbers chained by operators ("900×9.8×sin(12°)+900×0.4+360"
+  // A substituted set-up is a formula too: two or more quantities chained by operators ("900×9.8×sin(12°)+900×0.4+360"
   // — reported live, written on the board before the student had built it). Building it IS the student's work.
-  const operators = (t.replace(/^[-−]/, "").match(/\d[)°]*\s*[+\-−×*·/÷]\s*[(\d.a-z]/gi) || []).length;
+  // A product with parentheses counts without any written operator: "½(1200)(25)²" (the live exercise question
+  // "KE_f = ½(1200)(25)² = ?" dumped the substituted KE with a single ÷ and implicit ×) — so an opening paren or
+  // ^ directly after a quantity is an operator, same as × is.
+  const operators = (t.replace(/^[-−]/, "").match(/\d[)\^°]*\s*(?:[+\-−×*·/÷]|\()\s*[(\d.a-z]/gi) || []).length;
   return operators >= 2;
 }
 
@@ -78,6 +81,30 @@ export function equationsAhead(text: string, said: string[]): string[] {
     if (!reached) out.push(seg.trim().slice(0, 80));
   }
   return out;
+}
+
+/** The solve-ask at the end of a CREATED question ("Find the average net force acting on the brick.", "What power is needed?", "Details: … Find x.") — an instruction to the student, not their equation. Stripped
+ *  before the setup check: in the live transcript exercise, the trailing ask made the math run on that side empty and the dumped substituted setup went through untouched — the exercise opened with the student's first
+ *  equation already built for them. */
+const SOLVE_ASK = /(?:find|calculate|compute|determine|evaluate|express|solve|draw|sketch)\b[^.]*\?\s*$|(?:how\s+(?:long|much|many|far|fast)|what(?:'s|\s+is|\s+will|\s+are)?|which|trouve[rz]?|calcule?z?|détermine[rz]?|combien)\b[^.]*\?\s*$/i;
+export function stripSolveAsk(text: string): string {
+  let s = String(text || "").trim();
+  for (let pass = 0; pass < 2; pass++) {
+    const m = s.match(SOLVE_ASK);
+    if (!m) break;
+    s = s.slice(0, m.index).replace(/[—–.,:;\])\s]+$/, "").trim();
+    if (!s) return "";
+  }
+  return s;
+}
+
+/** The solve-ask at the end of a CREATED question stripped, then the straight setup check. The student's own
+ *  setup can never ship pre-built with the exercise — the transcript bug: CREATE_PROBLEM's own question carried
+ *  "$KE_f = \\frac{1}{2}(1200)(25)^2 = ?$" and never faced the guard every tutor line and reply already has. */
+export function questionAhead(question: string, said: string[]): string[] {
+  const stripped = stripSolveAsk(question);
+  if (!stripped) return [];
+  return equationsAhead(stripped, said.map((s) => stripSolveAsk(s)).filter(Boolean));
 }
 
 /** The student explicitly asked for the formula/equation/definition — then telling them is answering them. */
