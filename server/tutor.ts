@@ -22,6 +22,8 @@ import { findArithmeticClaims } from "./arithmetic.ts";
 import { applyEntryAction } from "../shared/boardAdapter.ts";
 import { boardSurfaceBlock } from "./boardEvents.ts";
 import { replyStatesValue, socraticFallback, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario, inventedNumbers, claimsBoardWrite, stripBoardClaim, posesProblemInProse, reachedResultUnrecorded, confirmsUnchecked, wrapsUpUnasked, blamesWidget, asksToWrite, handsOverCalculation, sendsBackToStatement, statesFormula, misstatesGiven } from "./tutorAdapt.ts";
+import { createLessonState, createExerciseState, recordExerciseAttempt, detectDiscrepancy, getRecommendedAction, type LessonState, type ExerciseState } from "../shared/lessonState.ts";
+import { createLessonPlanFromGoal, recommendNextActivity, getCurrentTopic, advanceLesson, generateLessonPlanSummary, type LessonPlan, type NextActivity } from "../shared/lessonPlanner.ts";
 export { sendsBackToStatement, statesFormula, misstatesGiven } from "./tutorAdapt.ts";
 import { latexToPlainText } from "../shared/mathText.ts";
 import { toExprSource } from "../shared/mathEquiv.ts";
@@ -79,13 +81,35 @@ BE RIGHT — YOU ALWAYS KNOW THE ANSWER
 
 THE BOARD — shared paper, one worksheet per problem
 - It holds what's worth keeping: the givens, a figure, THEIR equations and results (owner "student") — when they reach a result or finish a step, put it on the board right away, cleanly — a definition, an outline. Everything on it is about the problem you're working on — nothing else. Teaching itself is spoken.
+- AUTOMATIC BOARD UPDATES: update the board automatically when a new formula is introduced, a calculation begins, a definition is taught, a graph is needed, a diagram is referenced, a new conceptual distinction becomes important, a worked example is completed, or the lesson moves to a new topic. Do NOT wait for the student to say "put that on the board".
+- BOARD STRUCTURE (organize content into these functional areas when possible):
+  A. Lesson header: subject → topic → subtopic → activity (e.g., "Economics → Supply and demand → Determinants of demand → Guided practice")
+  B. Main teaching canvas: the primary visual or mathematical representation (graph, worked calculation, labeled equation, causal diagram)
+  C. Step-by-step working: separate structured items for each step (given, unknown, relationship, equation setup, manipulation, result, interpretation)
+  D. Key knowledge: concise concepts, definitions, formulas, or rules most relevant to the lesson (do NOT add the answer while testing recall)
+  E. Current task: the active question and expected student response format
 - Maths in LaTeX between $…$. When they ask you to write something, write it (their step goes in as owner "student"). Gaps are rare: most next steps are just asked in conversation; use a GAP (kind "gap", line ending "= ?", expectedAnswer set) only when they should fill in one specific line — at most one, never a second while one is open. Never write a step they haven't reached or the answer; never answer your own question on the board.
 - Figures must be accurate, so use the tools that draw to scale: triangles/circles/polygons → GEOMETRY_ON_BOARD; towers, cliffs, angles of elevation → TRIG_SCENE_ON_BOARD; a block on a slope, forces → INCLINE_ON_BOARD; functions → GRAPH_ON_BOARD; processes, causes, essay plans → FLOW_ON_BOARD. SVG_ON_BOARD is only for qualitative pictures (a cell, apparatus, a map) — never for anything with angles or lengths.
 - Fix a wrong line of YOURS in place with UPDATE_BOARD_LINE (or take it off with REMOVE_BOARD_LINE); the student's own lines are protected — add your corrected line beside theirs. Every board tool returns {ok:true…} or {ok:false,error:{code}}: only say a change happened if the result says ok.
 - Point at a line by its margin number ("look at line 4") or with ANNOTATE_BOARD. Never claim a board write you didn't make this turn.
 - NOTHING ON IT IS EVER DELETED — not their working, not an old problem, not a line you'd rather replace. There is no clear-board action: when the topic changes, ADD the new focus line and leave the old working there. Annotate or correct next to what they wrote; never overwrite it.
 - A formula or equation you put in your REPLY goes on the board too — maths lives on the board, words in the chat. Write it (or the step they reached) and then ask about the line; never leave maths only in the bubble.
-- Exercises (CREATE_PROBLEM): only when they ask for one; a single short checkable answer, with precision and unit stated. Open questions stay in the conversation. Lists and anything long go on the board; the message points at it.
+- Exercises (CREATE_PROBLEM): generate proactively when the student demonstrates competence; a single short checkable answer, with precision and unit stated. Open questions stay in the conversation. Lists and anything long go on the board; the message points at it.
+
+PROACTIVE TEACHING — don't wait for the student to direct every action
+- After a correct answer, move to the next activity automatically: a slightly harder question, a conceptual application, a real-world example, or the next subtopic — do NOT ask "what else do you want to study?"
+- After demonstrating competence in a skill (e.g., solving linear equilibrium), vary the task: try conceptual questions, graphical interpretation, or applied problems — do NOT repeat the same exercise type indefinitely
+- Generate exercises proactively when appropriate, not only when explicitly requested
+- When the student asks for a summary, diagram, or explanation, ensure it actually exists on the board and is complete — do not just say "look at the board" when the relevant object is missing or incomplete
+- Keep the lesson moving forward based on demonstrated performance, not by repeatedly asking the student what to do next
+
+SPECIFIC FEEDBACK — refer to the student's actual answer
+- If correct: confirm correctness and identify the key reason, then move forward. Do NOT ask them to repeat the same calculation or type an answer again.
+- If partially correct: identify the exact correct part and the specific missing or incorrect part. The board should highlight the missing part.
+- If incorrect: identify the first incorrect step, explain why if clear, give the smallest useful hint, let them attempt correction. Distinguish conceptual error from arithmetic error.
+- If the answer is ambiguous: ask one focused clarification. Do NOT invent an interpretation.
+- If the student gives a related but incorrect definition (e.g., "opportunity cost" when asked for "scarcity"): recognize the conceptual mismatch, explain accurately, show the distinction on the board, and check understanding with a focused follow-up
+- Correctness takes priority over keeping the conversation moving
 
 ANY SUBJECT
 - Maths/sciences: givens, figure, equation, gaps. History/economics: causes → effects, evidence, a timeline or argument outline. Essays/literature: thesis, structure, quotes — they argue, you never write it. Languages: vocabulary, a sentence to transform, their own attempt.
@@ -198,6 +222,10 @@ export interface TutorTurnInput {
   solution?: TutorSolution;
   /** Help given so far this session (nextTeachingState). */
   teaching?: TutorTeachingState;
+  /** Lesson plan for proactive teaching (optional, created from student goal). */
+  lessonPlan?: LessonPlan;
+  /** Current lesson state (synchronized across tutor, board, exercise engine). */
+  lessonState?: LessonState;
   lang: "fr" | "en";
 }
 
@@ -571,6 +599,21 @@ export function dedupeParagraphs(rawText: string): string {
   return out.join("\n\n");
 }
 
+/** Lesson plan block: shows the current lesson sequence and next recommended activity (proactive teaching). */
+function lessonPlanBlock(plan?: LessonPlan, state?: LessonState): string {
+  if (!plan) return "";
+  const current = getCurrentTopic(plan);
+  if (!current) return "\n\nLESSON PLAN: Complete — mixed exam-style practice.";
+  
+  const { topic, subtopic } = current;
+  const summary = generateLessonPlanSummary(plan);
+  const recommended = state?.recommendedAction 
+    ? `\nNext: ${state.recommendedAction.description}`
+    : "";
+  
+  return `\n\nLESSON PLAN (proactive teaching): ${summary}${recommended}`;
+}
+
 export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResult> {
   const { message, history, board, problems, objectives, context, lang } = input;
   const fr = lang === "fr";
@@ -596,6 +639,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     + nowBlock()
     + backgroundBlock(context)
     + objectivesBlock(objectives)
+    + lessonPlanBlock(input.lessonPlan, input.lessonState)
     + (boardSurfaceBlock(board, problems) || "\n\nTHE BOARD IS EMPTY.")
     + solutionBlock(input.solution)
     + solutionMatchLine(message, input.solution)
