@@ -326,6 +326,10 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       // objectives is only ever the FULL replacement list (SET_OBJECTIVES' own contract), or undefined
       // when Otto didn't touch it this turn — never overwrite the existing list with an empty one.
       const newObjectives = objectives?.length ? setLocalObjectives(task.id, objectives, userId) : (task.objectives || []);
+      // Otto just set/updated the session's objectives this turn — surface them, don't leave them behind a
+      // chip the student has to notice and click. Report-live: objectives were being set but the student
+      // never actually saw them. Doesn't force it open on every later turn, only right when they change.
+      if (objectives?.length) setObjectivesOpen(true);
       // chat/board/problems are cloud-persisted again now (server/index.ts's chat route) — `updated`
       // already carries the full, authoritative arrays, no local-storage write needed.
       // Only update relevant fields, preserve context/steps/links from before

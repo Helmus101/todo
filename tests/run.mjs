@@ -5106,6 +5106,11 @@ section("Tutor session mastery + objectives summary — surfaced without a fabri
   const tutorSrcMastery = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
   check("the Today's-focus panel only renders mastery when it's an actual number, never a fabricated 0%", /typeof task\.mastery === "number"/.test(tutorSrcMastery));
   check("the Past-sessions list distinguishes 'no objectives were set' from an explicit 0\\/N", /typeof s\.objectivesTotal === "number"/.test(tutorSrcMastery));
+  // Report-live: "user should see objectives too" — SET_OBJECTIVES was firing, but the checklist sat
+  // behind a collapsed ◎ chip in the crumb bar the student had no reason to notice or click, so a fresh
+  // set of objectives could land completely unseen. Auto-open the panel the turn they're (re)set, without
+  // forcing it open on every later turn.
+  check("the objectives panel auto-opens the turn Otto (re)sets them, not just via the manual ◎ chip toggle", /if \(objectives\?\.length\) setObjectivesOpen\(true\);/.test(tutorSrcMastery));
 }
 
 section("hintDensity preference — new axis, distinct from learningStyle, never licenses a direct answer (source pins)");
