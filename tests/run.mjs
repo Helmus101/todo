@@ -66,7 +66,7 @@ import { sessionTopic, relativeWhen, sessionMemoryForPrompt } from "../client/tu
 import { wantsArtifactTools } from "../server/claude.ts";
 import { rankVoices, isMaleVoice, cloudChunks, toSpeakableText, stripLatexForSpeech } from "../client/voice/useSpeechSynthesis.ts";
 import { traceLines, splitMergedSteps, looksLikeRealMath } from "../client/study/artifacts/BoardArtifact.tsx";
-import { pcmToWav, leaksAnswer, scrubAnswerLeak, makeProblem as makeProblemLeak, makePracticeProblem as makePracticeLeak, wordWrapChunks, leaksAnyProblemAnswer, makeInteractiveEntry, stripId3v2, stripId3v1 } from "../server/claude.ts";
+import { pcmToWav, leaksAnswer, scrubAnswerLeak, makeProblem as makeProblemLeak, makePracticeProblem as makePracticeLeak, wordWrapChunks, leaksAnyProblemAnswer, makeInteractiveEntry, stripId3v2, stripId3v1, stripLeakedToolCallSyntax } from "../server/claude.ts";
 import { lastMessageKey } from "../client/voice/replyKey.ts";
 import { subjectMastery } from "../shared/types.ts";
 import { COURSES, findCourse, normText, subjectMatches, matchesUnit, unitMastery, courseProgress, nextUnitToWork, masteryBand, UNIT_MASTERED_AT, orderCoursesForProfile, normalizeEnrolledCourses, unitObjectives } from "../shared/courses.ts";
@@ -2714,6 +2714,16 @@ section("fractions always typeset — pseudo-fractions and bare \\tfrac lines ne
     render("area = \\frac{1}{2}bh").includes("(1)/(2)") && render("KE = ½mv²").includes("²"));
 }
 
+section("stripLeakedToolCallSyntax — the model's own raw tool-call plumbing never reaches the student");
+{
+  check("the original DeepSeek special-token leak is still caught", stripLeakedToolCallSyntax("Here's the plan. <｜tool▁calls▁begin｜>function<｜tool▁sep｜>WRITE_TO_BOARD") === "Here's the plan.");
+  // Reported live: a SET_OBJECTIVES call leaked as literal text — a completely different tool-call
+  // convention ("<call:…>"/"</call:…>") than the DeepSeek marker above, same defensive posture.
+  check("the '<call:default_api:…>' leak is caught too", stripLeakedToolCallSyntax("</call:default_api><call:default_api:SET_OBJECTIVES{objectives:[{done:false,label:Review}]}") === "");
+  check("real content before the '<call:' leak survives, only the leak itself is cut", stripLeakedToolCallSyntax("Let's set today's goals. <call:default_api:SET_OBJECTIVES{objectives:[]}") === "Let's set today's goals.");
+  check("whichever marker appears FIRST wins when (hypothetically) both are present", stripLeakedToolCallSyntax("ok <call:default_api:X <｜tool▁sep｜>") === "ok");
+  check("plain text with no leak at all passes through untouched", stripLeakedToolCallSyntax("Spot on — what's the next step?") === "Spot on — what's the next step?");
+}
 section("loadState survives a missing-column schema-drift error (source pins)");
 {
   const storeSrc = readFileSync(new URL("../server/store.ts", import.meta.url), "utf8");

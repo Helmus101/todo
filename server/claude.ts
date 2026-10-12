@@ -2315,9 +2315,17 @@ export function detectLang(text: string): "en" | "fr" | "unknown" {
 // for the student always comes BEFORE the first such marker — the leak is always a trailing artifact, never
 // interleaved with real prose — so cutting there is safe and loses nothing genuine.
 const TOOL_CALL_LEAK_MARKER = /<｜[^｜<>]{0,60}｜>/;
+// A second, differently-shaped leak reported live: "</call:default_api><call:default_api:SET_OBJECTIVES
+// {objectives:[...]}" showed up verbatim — a completely different tool-call convention (whatever template
+// this backend falls back to under the same kind of malformed-completion quirk), opening/closing with
+// "<call:…>"/"</call:…>" instead of the "<｜…｜>" markers above. Same defensive posture, same cut-at-the-
+// first-marker strategy: real content for the student is always before it.
+const TOOL_CALL_LEAK_MARKER2 = /<\/?call:[a-zA-Z0-9_]*/i;
 export function stripLeakedToolCallSyntax(text: string): string {
-  const m = TOOL_CALL_LEAK_MARKER.exec(text);
-  return m ? text.slice(0, m.index).trimEnd() : text;
+  const hits = [TOOL_CALL_LEAK_MARKER.exec(text), TOOL_CALL_LEAK_MARKER2.exec(text)].filter((m): m is RegExpExecArray => !!m);
+  if (!hits.length) return text;
+  const cut = Math.min(...hits.map((m) => m.index));
+  return text.slice(0, cut).trimEnd();
 }
 
 function truncateCleanly(text: string, maxLen: number): string {
