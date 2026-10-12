@@ -581,6 +581,9 @@ export function normalizeProfile(p: any): Profile {
     tutorDecisions: Array.isArray(p?.tutorDecisions)
       ? p.tutorDecisions.filter((d: any) => d && typeof d.at === "string" && typeof d.action === "string" && typeof d.why === "string").slice(-40)
       : undefined,
+    focusSessions: Array.isArray(p?.focusSessions)
+      ? p.focusSessions.slice(-10)
+      : undefined,
   };
 }
 

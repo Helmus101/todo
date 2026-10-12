@@ -2321,8 +2321,10 @@ const TOOL_CALL_LEAK_MARKER = /<｜[^｜<>]{0,60}｜>/;
 // "<call:…>"/"</call:…>" instead of the "<｜…｜>" markers above. Same defensive posture, same cut-at-the-
 // first-marker strategy: real content for the student is always before it.
 const TOOL_CALL_LEAK_MARKER2 = /<\/?call:[a-zA-Z0-9_]*/i;
+// Third leak format: "<patch><default_api:.../></patch>" - raw tool call XML in the reply text
+const TOOL_CALL_LEAK_MARKER3 = /<patch>/i;
 export function stripLeakedToolCallSyntax(text: string): string {
-  const hits = [TOOL_CALL_LEAK_MARKER.exec(text), TOOL_CALL_LEAK_MARKER2.exec(text)].filter((m): m is RegExpExecArray => !!m);
+  const hits = [TOOL_CALL_LEAK_MARKER.exec(text), TOOL_CALL_LEAK_MARKER2.exec(text), TOOL_CALL_LEAK_MARKER3.exec(text)].filter((m): m is RegExpExecArray => !!m);
   if (!hits.length) return text;
   const cut = Math.min(...hits.map((m) => m.index));
   return text.slice(0, cut).trimEnd();
@@ -3120,6 +3122,12 @@ export function makeProblem(input: any, requireCheck = false): { problem: TaskPr
   // makeQuiz's own `q` field above.
   const question = String(input?.question || "").trim().slice(0, 1500);
   if (!question) return { error: "ERROR: a problem needs a non-empty question." };
+  
+  // Reject symbolic notation format (spec §10.E): exercises must be in clear prose, not "A ⟹ B = ?" format
+  if (/⟹|⇒|→|= \?|=\s*\?$/.test(question)) {
+    return { error: "REJECTED: write the question in clear prose, not symbolic notation (e.g., \"Technology improves ⟹ supply shifts = ?\"). State the situation in words (e.g., \"Technology improves production. What happens to the supply curve?\"). Then specify the expected answer format." };
+  }
+  
   const why = input?.why ? String(input.why).trim().slice(0, 300) : undefined;
   let hint = input?.hint ? String(input.hint).trim().slice(0, 300) : undefined;
   let format = input?.format ? String(input.format).trim().slice(0, 200) : undefined;

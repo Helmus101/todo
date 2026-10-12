@@ -3752,9 +3752,9 @@ app.post("/api/focus/session", requireAuth, async (req, res) => {
     const sessions = (p.focusSessions ||= []);
     sessions.push(session);
     
-    // Keep only last 20 sessions to prevent unbounded growth (reduced from 100 for egress)
-    if (sessions.length > 20) {
-      p.focusSessions = sessions.slice(-20);
+    // Keep only last 10 sessions
+    if (sessions.length > 10) {
+      p.focusSessions = sessions.slice(-10);
     }
     
     // Recalculate aggregated stats
