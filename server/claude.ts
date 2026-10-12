@@ -19,6 +19,7 @@ import { evaluateArithmetic, findArithmeticClaims, hasArithmetic } from "./arith
 import { boardSurfaceBlock, boardTrajectoryBlock, type BoardEvent } from "./boardEvents.ts";
 import { buildTutorDecision } from "./actionSpace.ts";
 import { normalizeWidget, WIDGET_TYPES } from "../shared/widgets.ts";
+import { questionAhead } from "../shared/equationsAhead.ts";
 import { normalizeFlow } from "../shared/flow.ts";
 import { buildTrigScene } from "../shared/trigScene.ts";
 import { buildSolid } from "../shared/solid3d.ts";
@@ -2970,6 +2971,46 @@ export function makeDeck(input: any, maxCards: number = DECK_CARD_CAP): { deck: 
   return { deck: { id: randomUUID(), title, cards, createdAt: new Date().toISOString() } };
 }
 
+// Reported live: an economics MCQ marked "A shift of the demand curve to the LEFT" correct while its own
+// `why` explanation said "...shifting the entire demand curve RIGHTWARD" — the model picked the wrong
+// index among a classic antonym-pair distractor set (direction/sign/comparison words), confidently
+// explaining the opposite of what it marked correct. There's no numeric `check` expression for a
+// qualitative MCQ the way makeProblem has for a computed answer, but THIS class of error is still
+// mechanically catchable: when `why` uses one word of a known antonym pair, and that SAME word appears in
+// a DIFFERENT option's text while the marked-correct option's text uses the OPPOSITE word of the pair,
+// the explanation is arguing for the wrong option. Deliberately narrow (an explicit pair list, whole-word
+// matches only) to avoid false positives on ordinary prose that merely mentions one of these words once.
+// Regex per side (not a plain word) so a variant like "rightward" is recognized as the same concept as
+// "right" — the real reported case used "rightward" in `why` against options written with plain "right"/
+// "left", which a literal word-for-word pairing would have missed entirely.
+// Deliberately narrow to pairs that rarely need BOTH words in one legitimate explanation of a single
+// answer — "increase"/"decrease", "rise"/"fall", "more"/"less" etc. are excluded even though they're
+// classic antonyms: a correct economics/science explanation routinely uses both in the same sentence to
+// contrast two different variables ("as supply increases, price decreases"), which would false-positive
+// as a contradiction when it isn't one. The pairs kept here are purely spatial/binary, where a single
+// coherent explanation needing both sides at once is rare.
+const ANTONYM_PAIRS: [RegExp, RegExp][] = [
+  [/\bright(?:ward)?\b/i, /\bleft(?:ward)?\b/i],
+  [/\bclockwise\b/i, /\bcounter-?clockwise\b/i],
+  [/\bup(?:ward)?\b/i, /\bdown(?:ward)?\b/i],
+  [/\bpositive\b/i, /\bnegative\b/i],
+  [/\binward\b/i, /\boutward\b/i],
+  [/\bforward\b/i, /\bbackward\b/i],
+];
+/** True when `why`'s own directional language contradicts the option it's attached to — see ANTONYM_PAIRS
+ *  above. Exported for tests. */
+export function whyContradictsCorrect(why: string, options: string[], correctIdx: number): boolean {
+  if (!why || !options[correctIdx]) return false;
+  for (const [ra, rb] of ANTONYM_PAIRS) {
+    for (const [re, opp] of [[ra, rb], [rb, ra]] as [RegExp, RegExp][]) {
+      if (!re.test(why)) continue;
+      // The correct option argues for the OPPOSITE word of the pair, while a DIFFERENT option argues for
+      // the word `why` actually used — `why` is explaining a different option than the one marked correct.
+      if (opp.test(options[correctIdx]) && options.some((o, i) => i !== correctIdx && re.test(o))) return true;
+    }
+  }
+  return false;
+}
 export function makeQuiz(input: any): { quiz: TaskQuiz } | { error: string } {
   const title = String(input?.title || "Quiz").trim().slice(0, 120) || "Quiz";
   const raw = Array.isArray(input?.questions) ? input.questions : [];
@@ -3001,6 +3042,11 @@ export function makeQuiz(input: any): { quiz: TaskQuiz } | { error: string } {
       // after the model correctly followed the instruction to write one.
       if (kept.length < 2 || kept.length > 5 || correct < 0) return null;
       const why = item?.why ? String(item.why).trim().slice(0, 300) : undefined;
+      // Reported live: a question marked "shift to the LEFT" correct while its own `why` explained
+      // "...shifting the demand curve RIGHTWARD" — confidently teaching the opposite of the marked
+      // answer. Drop it rather than ship a self-contradictory question (same "worse than no quiz" call
+      // as the index-collision case above).
+      if (why && whyContradictsCorrect(why, kept.map((o) => o.text), correct)) return null;
       return { q, options: kept.map((o) => o.text), correct, ...(why ? { why } : {}) };
     })
     .filter(Boolean)
@@ -3074,6 +3120,9 @@ export function makeProblem(input: any, requireCheck = false): { problem: TaskPr
   const options = rawOptions.map((o: any) => String(o || "").trim().slice(0, 300)).filter(Boolean);
   const correctIdx = Number(input?.correct);
   const hasMCQ = options.length >= 2 && Number.isInteger(correctIdx) && correctIdx >= 0 && correctIdx < options.length;
+  // Same check as makeQuiz's own — a `why` whose directional language argues for a DIFFERENT option than
+  // the one marked correct (reported live, see whyContradictsCorrect's own comment) means the key is wrong.
+  if (hasMCQ && why && whyContradictsCorrect(why, options, correctIdx)) return { error: "REJECTED: your `why` explanation argues for a DIFFERENT option than the one you marked `correct` (opposite direction/sign) — re-check which option is actually right and make `correct` and `why` agree." };
   // Free-response mode: answer string
   let answer = input?.answer ? String(input.answer).trim().slice(0, 200) : undefined;
   // The answer key is verified, not trusted: when the model supplies a `check` expression, the app evaluates it and, if the
@@ -9788,6 +9837,12 @@ export async function chatAboutTask(
           // they explicitly asked to move on / get another.
           else if (opts?.primer && !asksToMoveOn(message) && !asksForProblem(message) && [...(opts?.currentProblems || []).filter((p) => !p.solved), ...result.problems].length > 0) content = "REJECTED: they haven't answered the exercise already on the board — don't pile another on top. Help them with THAT one (a hint, a smaller question). Only create a new exercise once they've answered it or explicitly ask to skip / move on / get another.";
           else if (isDuplicateProblem([...(opts?.currentProblems || []), ...result.problems], input)) content = "DUPLICATE: that exact problem is already on the board — it's already there for them to answer, don't make it again.";
+          // Same setup-ahead rule the reply's guardAheadMath has: the created question must not carry the
+          // substituted equation the student was going to build (live: "$KE_f = ½(1200)(25)² = ?" shipped inside the
+          // question and opened the session with their first move already done). Their reach comes only from what
+          // they've said and the problems/board itself — the same launder-guard ownGivens uses everywhere else.
+          else if (opts?.primer && questionAhead(String(input?.question || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), ...heard, ...(opts?.opening || []).map((m) => m.text), ...(opts?.currentBoard || []).filter((e) => e.owner === "student").map((e) => e.text), ...(opts?.currentProblems || []).map((p) => p.question)]).length)
+            content = "REJECTED: that exercise hands them the equation they were going to build — the substituted setup is inside the question itself. State the situation and what to find in words (or the raw given line, e.g. '$E_k = \\frac{1}{2} m v^2 = ?$' only when THEY have already named that relationship); never pre-build the first equation for them. Let THEM set it up.";
           else { const r = makeProblem(input, !!opts?.primer); if ("error" in r) content = r.error; else { result.problems.push(r.problem); content = JSON.stringify({ ok: true, id: r.problem.id }); logAudit("artifact", fr ? `Problème créé : « ${r.problem.question.slice(0, 60)} »` : `Problem created: "${r.problem.question.slice(0, 60)}"`); } }          } else if (name === "CLEAR_BOARD") {
           // Nothing is ever erased: the student's working stays. Reported live — Otto announced "let's clear the
           // board" and the working was gone. boardCleared stays false so the client keeps every entry.

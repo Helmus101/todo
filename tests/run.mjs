@@ -2,7 +2,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { recencyStamp, dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, homeworkTaskTitle, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor, attachLocationLinks, googleMapsDirectionsUrl, trimOldStudylogArtifacts, ensurePronoteLinks } from "../server/tasks.ts";
 import { sameAssignmentText, dedupePronoteHomework } from "../server/discover.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, shouldNudgeBoardContent, mathInPlay, newMathOffBoard, replyIntroducesNewMath, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem, makeProblem, detectLang, visionReady, describeWhiteboard, academicBlock, sessionRecapLine } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, shouldNudgeBoardContent, mathInPlay, newMathOffBoard, replyIntroducesNewMath, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem, makeProblem, detectLang, visionReady, describeWhiteboard, academicBlock, sessionRecapLine, whyContradictsCorrect } from "../server/claude.ts";
 import { sourcesForTrack, sourceForUrl, cleanProblemSource, excerptAround, findSourceQuestions } from "../server/questionSources.ts";
 import { normalizeWidget, shuffledNotSolved, projectileStats } from "../shared/widgets.ts";
 import { makeSyncScheduler } from "../server/syncScheduler.ts";
@@ -3419,6 +3419,30 @@ check("a question left with only 1 surviving option (after dedupe) is dropped", 
 // correctly wrote doesn't just vanish.
 check("a 5-option AP-style question is KEPT, not silently dropped", "quiz" in makeQuiz({ title: "Q", questions: [{ q: "x?", options: ["a", "b", "c", "d", "e"], correct: 4 }] }) && makeQuiz({ title: "Q", questions: [{ q: "x?", options: ["a", "b", "c", "d", "e"], correct: 4 }] }).quiz.questions[0].options.length === 5);
 check("a 6-option question is still rejected (5 is the real ceiling, not unlimited)", "error" in makeQuiz({ title: "Q", questions: [{ q: "x?", options: ["a", "b", "c", "d", "e", "f"], correct: 0 }] }));
+// Reported live: a question marked "A shift of the demand curve to the LEFT" correct, with `why` reading
+// "...shifting the entire demand curve RIGHTWARD at every price level" — the explanation argued for the
+// OTHER option. whyContradictsCorrect/makeQuiz's own new check.
+{
+  const econOptions = ["A shift of the demand curve to the right", "A movement downward along the demand curve", "A shift of the demand curve to the left", "A movement upward along the demand curve", "No change in the demand curve at all"];
+  check("whyContradictsCorrect catches the exact reported mismatch (why says rightward, correct option says left)",
+    whyContradictsCorrect("For a normal good, higher income increases purchasing power, shifting the entire demand curve rightward at every price level.", econOptions, 2));
+  check("whyContradictsCorrect does NOT flag when why and the correct option actually agree",
+    !whyContradictsCorrect("Higher income shifts the demand curve to the right at every price level.", econOptions, 0));
+  check("whyContradictsCorrect ignores a pair word that doesn't appear in any option at all",
+    !whyContradictsCorrect("This is the textbook definition.", econOptions, 0));
+  // Deliberately NOT in the pair list: a legitimate contrastive explanation using both 'increase' and
+  // 'decrease' about two DIFFERENT variables in one sentence must never be flagged.
+  check("a legitimate 'X increases, Y decreases' explanation about two different variables is never flagged (increase/decrease isn't in the narrow pair list)",
+    !whyContradictsCorrect("As supply increases, the equilibrium price decreases.", ["Price falls", "Price rises"], 0));
+  check("makeQuiz drops a question whose why contradicts its own marked-correct option", "error" in makeQuiz({ title: "Econ", questions: [
+    { q: "An increase in consumer disposable income causes what change in the demand curve for a normal good?", options: econOptions, correct: 2, why: "For a normal good, higher income increases purchasing power, shifting the entire demand curve rightward at every price level." },
+  ] }));
+  check("makeQuiz keeps a question whose why agrees with its correct option", "quiz" in makeQuiz({ title: "Econ", questions: [
+    { q: "...", options: econOptions, correct: 0, why: "Higher income shifts the demand curve to the right at every price level." },
+  ] }));
+  const contradictingProblem = makeProblem({ question: "Which way does the curve shift?", options: econOptions, correct: 2, why: "This shifts the curve rightward." });
+  check("makeProblem rejects an MCQ whose why contradicts its correct option, with a retry message", "error" in contradictingProblem && /why.*argues for a DIFFERENT option/i.test(contradictingProblem.error));
+}
 
 section("makeNote / makeDeck validation");
 check("an empty/whitespace-only note body is rejected (was silently accepted before this pass)", "error" in makeNote({ title: "x", body: "   " }));
