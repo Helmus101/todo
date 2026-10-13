@@ -1317,6 +1317,8 @@ export interface WebTask {
   updatedAt?: string;
   /** Why the last run failed (shown on failed_* cards with the Retry button). */
   lastError?: string;
+  /** When the job system last re-enqueued this task because it was stuck queued with no job (server/jobs.ts). */
+  recoveredAt?: string;
   /** A manual task added while AI was paused/unavailable — raw text, not yet refined. The card offers a
    *  "Refine" action to clean it up once AI is back. */
   unrefined?: boolean;

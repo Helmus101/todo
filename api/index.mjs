@@ -548,7 +548,6 @@ function normalizeProfile(p) {
     // standing fact, so two genuinely different sessions that happen to read similarly (sameFact is fuzzy)
     // must not collapse into one. Capped here instead, newest last so a simple .slice(-N) keeps recency.
     sessions: arr(p?.sessions).slice(-30),
-    unlimited: !!p?.unlimited,
     paused: !!p?.paused,
     pausedAt: typeof p?.pausedAt === "string" ? p.pausedAt : void 0,
     lastSweepAt: typeof p?.lastSweepAt === "string" ? p.lastSweepAt : void 0,
@@ -863,23 +862,6 @@ function monthCostUsd(profile, tz, now = /* @__PURE__ */ new Date()) {
   if (u.monthKey && u.monthKey !== monthKeyOf(tz ?? tzOf(profile), now)) return 0;
   return typeof u.monthCost === "number" ? u.monthCost : usageCostUsd(u.monthIn || 0, u.monthOut || 0);
 }
-function monthlyBudgetUsd() {
-  const raw = typeof process !== "undefined" ? Number(process.env?.MONTHLY_AI_BUDGET_USD) : NaN;
-  return Number.isFinite(raw) && raw >= 0 ? raw : 999999;
-}
-function overMonthlyBudget(profile, now = /* @__PURE__ */ new Date()) {
-  if (profile?.unlimited) return false;
-  return monthCostUsd(profile, tzOf(profile), now) >= monthlyBudgetUsd();
-}
-function overInteractiveBudget(profile, now = /* @__PURE__ */ new Date()) {
-  if (profile?.unlimited) return false;
-  return monthCostUsd(profile, tzOf(profile), now) >= monthlyBudgetUsd() * INTERACTIVE_RESERVE;
-}
-function budgetRenewsOn(profile, now = /* @__PURE__ */ new Date()) {
-  const [y, m] = monthKeyOf(tzOf(profile), now).split("-").map(Number);
-  const ny = m === 12 ? y + 1 : y, nm = m === 12 ? 1 : m + 1;
-  return `${ny}-${String(nm).padStart(2, "0")}-01`;
-}
 function addUsage(profile, tokens2, category = "other") {
   const tin = Number(tokens2?.in) || 0, tout = Number(tokens2?.out) || 0, cached = Number(tokens2?.cachedIn) || 0;
   if (!tin && !tout) return;
@@ -1138,7 +1120,7 @@ function practiceAnswerMatches(given, correct, value, percent) {
   if (Number.isFinite(gfn) && Number.isFinite(cfn)) return numbersMatch(gfn, c.match(/-?\d+\.\d+/)?.[0] ?? cfn);
   return false;
 }
-var canonStatus, isHandled, isInFlight, MASTERY_LEITNER_WEIGHT, MASTERY_MILESTONE_WEIGHT, MASTERY_MILESTONE_DECAY_DAYS, MASTERY_MILESTONES_FOR_FULL_SCORE, ACTIVITY_DECAY_INTERVAL_MS, SUBJECT_ACTIVITY_CAP, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, INTERACTIVE_RESERVE, FACT_STOP, emailsIn, normFact, RANK_MONTHS, RANK_WEEKDAYS, MONTH_ALT, WEEKDAY_ALT, MONTH_DAY_RE, DAY_MONTH_RE, WEEKDAY_RE, DAY_MS, LEITNER_INTERVAL_DAYS, MAX_DUE_SETS_PER_DAY, THEME_COLOR_KEYS, THEME_BORDER_KEYS, THEME_RADIUS_KEYS, THEME_INK_FIXED, THEME_HEX_RE;
+var canonStatus, isHandled, isInFlight, MASTERY_LEITNER_WEIGHT, MASTERY_MILESTONE_WEIGHT, MASTERY_MILESTONE_DECAY_DAYS, MASTERY_MILESTONES_FOR_FULL_SCORE, ACTIVITY_DECAY_INTERVAL_MS, SUBJECT_ACTIVITY_CAP, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, FACT_STOP, emailsIn, normFact, RANK_MONTHS, RANK_WEEKDAYS, MONTH_ALT, WEEKDAY_ALT, MONTH_DAY_RE, DAY_MONTH_RE, WEEKDAY_RE, DAY_MS, LEITNER_INTERVAL_DAYS, MAX_DUE_SETS_PER_DAY, THEME_COLOR_KEYS, THEME_BORDER_KEYS, THEME_RADIUS_KEYS, THEME_INK_FIXED, THEME_HEX_RE;
 var init_types = __esm({
   "shared/types.ts"() {
     "use strict";
@@ -1160,7 +1142,6 @@ var init_types = __esm({
     USD_PER_1M_IN = 0.27;
     USD_PER_1M_CACHED_IN = 0.07;
     USD_PER_1M_OUT = 1.1;
-    INTERACTIVE_RESERVE = 1.1;
     FACT_STOP = /* @__PURE__ */ new Set(["the", "and", "for", "with", "from", "that", "this", "they", "their", "them", "she", "her", "his", "him", "who", "handles", "handled", "leads", "are", "was", "were", "has", "have", "will", "its", "willem", "also", "both"]);
     emailsIn = (s) => s.toLowerCase().match(/[\w.+-]+@[\w.-]+\.\w+/g) || [];
     normFact = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -3971,6 +3952,7 @@ var init_journalCount = __esm({
 // server/store.ts
 import { createClient } from "@supabase/supabase-js";
 import session from "express-session";
+import { createHash as createHash2 } from "node:crypto";
 async function peekSessionCsrfToken(sid) {
   if (!client) return null;
   try {
@@ -3990,8 +3972,9 @@ async function makeSessionStore() {
   }
   const ttlMs = (sess) => sess?.cookie?.maxAge ?? 30 * 24 * 3600 * 1e3;
   const expiry = (sess) => new Date(Date.now() + ttlMs(sess)).toISOString();
-  const GET_CACHE_TTL_MS = 9e5;
+  const GET_CACHE_TTL_MS = 6e4;
   const GET_CACHE_MAX = 500;
+  let hasUserEmailCol = true;
   const getCache = /* @__PURE__ */ new Map();
   const lastWritten = /* @__PURE__ */ new Map();
   const cacheSet = (sid, sess) => {
@@ -4042,8 +4025,18 @@ async function makeSessionStore() {
         if (oldest === void 0) break;
         lastWritten.delete(oldest);
       }
-      c.from(SESSIONS).upsert({ sid, sess: slim, expire: expiry(sess) }, { onConflict: "sid" }).then(
-        ({ error }) => {
+      const row = { sid, sess: slim, expire: expiry(sess), ...hasUserEmailCol && slim.user ? { user_email: slim.user } : {} };
+      const write = async () => {
+        let { error } = await c.from(SESSIONS).upsert(row, { onConflict: "sid" });
+        if (error && "user_email" in row && /user_email/.test(error.message || "")) {
+          hasUserEmailCol = false;
+          const { user_email: _u, ...legacy } = row;
+          ({ error } = await c.from(SESSIONS).upsert(legacy, { onConflict: "sid" }));
+        }
+        return error;
+      };
+      write().then(
+        (error) => {
           if (error) {
             lastWritten.delete(sid);
             reportError("session-store-set", error);
@@ -4069,14 +4062,21 @@ async function makeSessionStore() {
 }
 async function findAuthUserByEmail(email) {
   if (!client) return null;
+  const wanted = email.toLowerCase();
   try {
-    const { data, error } = await client.auth.admin.listUsers({ perPage: 1e3 });
-    if (error) {
-      console.warn("[store] findAuthUserByEmail failed:", error.message);
-      return null;
+    const { data, error } = await client.rpc("otto_auth_user_id", { p_email: wanted });
+    if (!error) return data ? { id: String(data), email: wanted } : null;
+    const perPage = 1e3;
+    for (let page = 1; ; page++) {
+      const { data: list, error: listErr } = await client.auth.admin.listUsers({ page, perPage });
+      if (listErr) {
+        console.warn("[store] findAuthUserByEmail failed:", listErr.message);
+        return null;
+      }
+      const match = list.users.find((u) => u.email?.toLowerCase() === wanted);
+      if (match) return { id: match.id, email: match.email };
+      if (list.users.length < perPage) return null;
     }
-    const match = data.users.find((u) => u.email?.toLowerCase() === email.toLowerCase());
-    return match ? { id: match.id, email: match.email } : null;
   } catch (e) {
     console.warn("[store] findAuthUserByEmail threw:", e?.message || e);
     return null;
@@ -4121,16 +4121,34 @@ async function setAuthPassword(userId, password) {
     return false;
   }
 }
-function setResetToken(email, token, expiresAt) {
-  for (const [t, v] of resetTokens) if (v.email === email) resetTokens.delete(t);
-  resetTokens.set(token, { email, expiresAt: Date.parse(expiresAt) });
+async function setResetToken(email, token, expiresAt) {
+  const tokenHash = hashResetToken(token);
+  if (client) {
+    await client.from(RESET_TOKENS).delete().eq("email", email);
+    const { error } = await client.from(RESET_TOKENS).insert({ token_hash: tokenHash, email, expires_at: expiresAt });
+    if (!error) return;
+    console.warn("[store] reset tokens table unavailable \u2014 run supabase.sql. Falling back to memory:", error.message);
+  }
+  for (const [t, v] of memResetTokens) if (v.email === email) memResetTokens.delete(t);
+  memResetTokens.set(tokenHash, { email, expiresAt: Date.parse(expiresAt) });
 }
-function consumeResetToken(token) {
-  const v = resetTokens.get(token);
+async function consumeResetToken(token) {
+  const tokenHash = hashResetToken(token);
+  if (client) {
+    const { data, error } = await client.from(RESET_TOKENS).delete().eq("token_hash", tokenHash).select("email,expires_at");
+    if (!error && data?.length) return Date.parse(data[0].expires_at) > Date.now() ? { email: data[0].email } : null;
+  }
+  const v = memResetTokens.get(tokenHash);
   if (!v) return null;
-  resetTokens.delete(token);
-  if (v.expiresAt < Date.now()) return null;
-  return { email: v.email };
+  memResetTokens.delete(tokenHash);
+  return v.expiresAt > Date.now() ? { email: v.email } : null;
+}
+async function destroySessionsForUser(email, exceptSid) {
+  if (!client) return;
+  let q = client.from(SESSIONS).delete().eq("user_email", email);
+  if (exceptSid) q = q.neq("sid", exceptSid);
+  const { error } = await q;
+  if (error) console.warn("[store] destroySessionsForUser failed (run supabase.sql to add weave_web_sessions.user_email):", error.message);
 }
 async function deleteAuthUser(email) {
   if (!client) return;
@@ -4199,7 +4217,7 @@ async function loadState(email, opts) {
   }
   const google = d?.google && d.google.tokens ? d.google : void 0;
   const pronote2 = d?.pronote && d.pronote.token ? { ...d.pronote, token: decryptSecret(d.pronote.token), ...d.pronote.password ? { password: decryptSecret(d.pronote.password) } : {} } : void 0;
-  const blackbaud = d?.blackbaud && d.blackbaud.accessToken ? { ...d.blackbaud, accessToken: decryptSecret(d.blackbaud.accessToken) } : void 0;
+  const blackbaud = d?.blackbaud && d.blackbaud.accessToken ? { ...d.blackbaud, accessToken: decryptSecret(d.blackbaud.accessToken), ...d.blackbaud.refreshToken ? { refreshToken: decryptSecret(d.blackbaud.refreshToken) } : {} } : void 0;
   const result = { profile: normalizeProfile(d?.profile), tasks: Array.isArray(d?.tasks) ? d.tasks : [], google, pronote: pronote2, blackbaud, studySessions: d?.studySessions, studyProfile: d?.studyProfile };
   cacheSetState(email, result, typeof d?.updated_at === "string" ? d.updated_at : void 0);
   return result;
@@ -4211,7 +4229,7 @@ function connectionColumnUpdates(state) {
     out.pronote = state.pronote === null ? null : { ...state.pronote, token: encryptSecret(state.pronote.token), ...state.pronote.password ? { password: encryptSecret(state.pronote.password) } : {} };
   }
   if (state.blackbaud !== void 0) {
-    out.blackbaud = state.blackbaud === null ? null : { ...state.blackbaud, accessToken: encryptSecret(state.blackbaud.accessToken) };
+    out.blackbaud = state.blackbaud === null ? null : { ...state.blackbaud, accessToken: encryptSecret(state.blackbaud.accessToken), ...state.blackbaud.refreshToken ? { refreshToken: encryptSecret(state.blackbaud.refreshToken) } : {} };
   }
   if (state.studySessions !== void 0) out.studySessions = state.studySessions;
   if (state.studyProfile !== void 0) out.studyProfile = state.studyProfile;
@@ -4399,10 +4417,7 @@ async function deleteAccount(email) {
       errors.push(`${table}: ${e?.message || e}`);
     }
   }
-  try {
-    await client.from(SESSIONS).delete().ilike("sess", `%${email}%`);
-  } catch {
-  }
+  await destroySessionsForUser(email);
   await deleteAuthUser(email);
   return { ok: errors.length === 0, errors };
 }
@@ -4668,7 +4683,7 @@ async function getAdminMetrics() {
     return null;
   }
 }
-var url, key, TABLE, client, authKey, cloudEnabled, SESSIONS, resetTokens, isTransient, STATE_CACHE_TTL_MS, STATE_CACHE_MAX, egress, stateCache, BANDIT, OUTCOMES, memBandit, memOutcomes, STUDY_METRIC_NAMES, RATELIMITS, ratelimitsTableOk, JOBS, EVENTS, LOCK_MS, HEARTBEAT_MS, retryBackoffUntil, memJobs, jobsTableOk, heartbeatIntervalMs, memEvents, ADMIN_METRICS_PAGE, ADMIN_METRICS_MAX_ROWS, adminMetricsCache, ADMIN_METRICS_TTL_MS;
+var url, key, TABLE, client, authKey, cloudEnabled, SESSIONS, RESET_TOKENS, memResetTokens, hashResetToken, isTransient, STATE_CACHE_TTL_MS, STATE_CACHE_MAX, egress, stateCache, BANDIT, OUTCOMES, memBandit, memOutcomes, STUDY_METRIC_NAMES, RATELIMITS, ratelimitsTableOk, JOBS, EVENTS, LOCK_MS, HEARTBEAT_MS, retryBackoffUntil, memJobs, jobsTableOk, heartbeatIntervalMs, memEvents, ADMIN_METRICS_PAGE, ADMIN_METRICS_MAX_ROWS, adminMetricsCache, ADMIN_METRICS_TTL_MS;
 var init_store = __esm({
   "server/store.ts"() {
     "use strict";
@@ -4692,7 +4707,9 @@ var init_store = __esm({
     }
     cloudEnabled = () => !!client;
     SESSIONS = "weave_web_sessions";
-    resetTokens = /* @__PURE__ */ new Map();
+    RESET_TOKENS = "weave_web_reset_tokens";
+    memResetTokens = /* @__PURE__ */ new Map();
+    hashResetToken = (token) => createHash2("sha256").update(token).digest("hex");
     isTransient = (msg) => /terminated|fetch failed|socket hang up|network|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|UND_ERR|timeout|503|502|429/i.test(msg);
     STATE_CACHE_TTL_MS = 3e5;
     STATE_CACHE_MAX = 500;
@@ -4715,8 +4732,8 @@ var init_store = __esm({
     ratelimitsTableOk = null;
     JOBS = "weave_web_jobs";
     EVENTS = "weave_web_job_events";
-    LOCK_MS = 15 * 6e4;
-    HEARTBEAT_MS = 4 * 6e4;
+    LOCK_MS = 6 * 6e4;
+    HEARTBEAT_MS = 2 * 6e4;
     retryBackoffUntil = (attemptCount) => new Date(Date.now() + Math.min(2 ** attemptCount * 1e3, 3e4)).toISOString();
     memJobs = [];
     jobsTableOk = null;
@@ -13124,7 +13141,8 @@ READ ONLY here \u2014 do NOT create, modify, draft, or send anything during gene
       "font-src data:",
       "connect-src 'none'",
       "form-action 'none'",
-      "base-uri 'none'"
+      "base-uri 'none'",
+      "sandbox allow-scripts"
     ].join("; ");
     ANCHORED_SOURCES = /* @__PURE__ */ new Set(["gmail", "calendar", "googlecalendar"]);
     STUDENT_MODEL_SYS = `You are updating a tutor's private running notes on ONE specific teenage student (IB/Lyc\xE9e, not a young child), based on real data below. Write a 150-300 word third-person summary covering: how they seem to think/reason (not just what subjects they're in), any recurring misconception or pattern of mistake worth watching for, what kind of explanation or approach has actually worked for them before, a genuine interest or project worth drawing a future analogy from, and how they seem to be growing/changing over time (don't just restate today's snapshot). When the data below shows real per-subject signal for two or more subjects (a correct-rate trend, a mistake pattern, a focus-time pattern), structure part of the summary around those subjects individually (e.g. "In Math HL specifically: ...") instead of one undifferentiated paragraph \u2014 but never manufacture a per-subject aside when the data doesn't actually support one. Write it as if for a tutor picking up where the last one left off \u2014 plain, specific, no praise-speak, no clinical/diagnostic labels, nothing invented beyond what the data supports. This text may later be shown directly to the student themselves, so nothing that would feel judgmental or surveillance-like if they read it verbatim. Output plain prose only, no headers, no bullet points.`;
@@ -13234,12 +13252,13 @@ init_sentry();
 init_mathEquiv();
 init_exerciseVerification();
 init_spokenMath();
+import { waitUntil } from "@vercel/functions";
 import express from "express";
 import compression from "compression";
 import session2 from "express-session";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID as randomUUID5, randomBytes as randomBytes2, createHash as createHash2 } from "node:crypto";
+import { randomUUID as randomUUID5, randomBytes as randomBytes2, createHash as createHash3 } from "node:crypto";
 
 // server/tutor.ts
 init_types();
@@ -15726,7 +15745,6 @@ function mergeProfileStates(p1, p2) {
     paused: pausedSide.paused,
     pausedAt: pausedSide.pausedAt,
     // Sticky once granted on EITHER side — a stale copy that predates the claim must never un-grant it.
-    unlimited: !!p1.unlimited || !!p2.unlimited,
     // Keep the MOST RECENT sweep marker across devices/instances (a stale copy must never reset it).
     lastSweepAt: (Date.parse(p2.lastSweepAt || "") || 0) >= (Date.parse(p1.lastSweepAt || "") || 0) ? p2.lastSweepAt ?? p1.lastSweepAt : p1.lastSweepAt ?? p2.lastSweepAt,
     lastForcedAt: (Date.parse(p2.lastForcedAt || "") || 0) >= (Date.parse(p1.lastForcedAt || "") || 0) ? p2.lastForcedAt ?? p1.lastForcedAt : p1.lastForcedAt ?? p2.lastForcedAt,
@@ -16562,7 +16580,6 @@ async function processSweep(job) {
   const email = job.user_email;
   const { profile, list } = await loadUser(email);
   if (profile.paused) return "skipped: AI paused";
-  if (overMonthlyBudget(profile)) return "skipped: monthly AI budget reached";
   const extras = await getAgentTools(email, { primaryAccounts: profile.primaryAccounts });
   if (!extras?.tools?.length && !(await pronoteConnected(email)).connected) return "skipped: nothing connected";
   const before = new Set(list.map((t) => t.id));
@@ -16688,16 +16705,14 @@ async function processExecuteTask(job) {
   const email = job.user_email;
   const taskId = String(job.task_id || "");
   const { profile, list } = await loadUser(email);
-  const interactive = !!(job.input?.manual || job.input?.note);
-  const budgetBlocked = interactive ? overInteractiveBudget(profile) : overMonthlyBudget(profile);
-  if (profile.paused || budgetBlocked) {
+  if (profile.paused) {
     const t2 = list.find((x) => x.id === taskId);
     if (t2 && isInFlight(t2.status)) {
       t2.status = "ready";
       t2.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
       await commitUser(email, profile, list);
     }
-    return profile.paused ? "skipped: AI paused" : "skipped: monthly AI budget reached";
+    return "skipped: AI paused";
   }
   const t = list.find((x) => x.id === taskId);
   if (!t) return "skipped: task not found";
@@ -16804,11 +16819,6 @@ async function processExecuteStep(job) {
     await commitUser(email, profile, list);
     return "skipped: AI paused";
   }
-  if (overInteractiveBudget(profile)) {
-    restStatus();
-    await commitUser(email, profile, list);
-    return "skipped: monthly AI budget reached";
-  }
   if (!Number.isInteger(index)) {
     restStatus();
     await commitUser(email, profile, list);
@@ -16869,7 +16879,7 @@ async function processJob(job) {
       return `skipped: unknown type ${job.type}`;
   }
 }
-async function drain(limit = 3, budgetMs = 24e4, userEmail) {
+async function drain(limit = 3, budgetMs = 12e4, userEmail) {
   const t0 = Date.now();
   let processed = 0, failed = 0;
   for (let i = 0; i < limit; i++) {
@@ -16897,15 +16907,43 @@ async function drain(limit = 3, budgetMs = 24e4, userEmail) {
   }
   return { processed, failed };
 }
-async function recoverOrphanedQueuedTasks(email, limit = 3) {
-  const { list } = await loadUser(email);
+async function recoverOrphanedQueuedTasks(email, limit = 3, now = /* @__PURE__ */ new Date()) {
+  const { profile, list } = await loadUser(email);
   const active = new Set(await activeJobTaskIds(email));
-  const orphaned = list.filter((t) => canonStatus(t.status) === "queued" && !active.has(t.id) && t.source !== "studylog").slice(0, limit);
-  for (const t of orphaned) {
-    await enqueueJob(email, "execute_task", t.id);
-    void recordEvent(email, "queued", { taskId: t.id, message: "Recovered an orphaned task execution" });
+  const plan = planStuckRecovery(list, active, now);
+  for (const id of plan.requeue.slice(0, limit)) {
+    const t = list.find((x) => x.id === id);
+    if (t) t.recoveredAt = now.toISOString();
+    await enqueueJob(email, "execute_task", id);
+    void recordEvent(email, "queued", { taskId: id, message: "Recovered an orphaned task execution" });
   }
-  return orphaned.map((t) => t.id);
+  for (const id of plan.fail) {
+    const t = list.find((x) => x.id === id);
+    if (!t) continue;
+    t.status = "failed_retryable";
+    t.lastError = "Otto stopped before finishing this one \u2014 tap Retry to run it again.";
+    t.updatedAt = now.toISOString();
+    void recordEvent(email, "run_failed", { taskId: id, message: "Stuck in progress with no live job \u2014 released for retry" });
+  }
+  if (plan.requeue.length || plan.fail.length) await commitUser(email, profile, list);
+  return plan.requeue.slice(0, limit);
+}
+function planStuckRecovery(list, activeJobTaskIds2, now) {
+  const requeue = [], fail2 = [];
+  const age = (iso2) => {
+    const n = Date.parse(String(iso2 || ""));
+    return Number.isFinite(n) ? now.getTime() - n : Infinity;
+  };
+  for (const t of list) {
+    if (t.source === "studylog" || activeJobTaskIds2.has(t.id)) continue;
+    const c = canonStatus(t.status);
+    if (c === "queued") {
+      if (age(t.recoveredAt) < 30 * 6e4) {
+        if (age(t.updatedAt || t.createdAt) > 3 * 6e4) fail2.push(t.id);
+      } else requeue.push(t.id);
+    } else if (c === "executing" && age(t.updatedAt || t.createdAt) > 3 * 6e4) fail2.push(t.id);
+  }
+  return { requeue, fail: fail2 };
 }
 async function enqueueAndDrain(email, type, taskId, input, drainInline = true) {
   const job = await enqueueJob(email, type, taskId, input);
@@ -16913,20 +16951,21 @@ async function enqueueAndDrain(email, type, taskId, input, drainInline = true) {
     if (taskId && type !== "sweep" && job.status === "queued") await markTaskStatus(email, taskId, "queued").catch(() => {
     });
     if (drainInline) {
-      await drain(2, void 0, email);
+      await drain(1, void 0, email);
     }
   }
   return await getJob(job.id, email) || job;
 }
 async function cronTick() {
-  const emails = await listAccountEmails(500);
+  const tickStart = Date.now();
+  const emails = shuffle(await listAccountEmails(500));
   let enqueued = 0;
   const now = /* @__PURE__ */ new Date();
   for (const email of emails) {
+    if (Date.now() - tickStart > 1e5) break;
     try {
       const { profile, list } = await loadUser(email);
       if (profile.paused) continue;
-      if (overMonthlyBudget(profile)) continue;
       const last = await getLatestJob(email, "sweep");
       const sweepActive = last && (last.status === "queued" || last.status === "running");
       if (!sweepActive && sweepDue(profile, now)) {
@@ -16952,13 +16991,13 @@ async function cronTick() {
       reportError("cron-tick-skip", e, { email });
     }
   }
-  const t0 = Date.now(), budgetMs = 26e4;
+  const startWindowMs = 15e4;
   let processed = 0, failed = 0;
-  for (let pass = 0; pass < 6 && Date.now() - t0 < budgetMs; pass++) {
+  for (let pass = 0; pass < 6 && Date.now() - tickStart < startWindowMs; pass++) {
     let didWork = false;
     for (const email of emails) {
-      if (Date.now() - t0 >= budgetMs) break;
-      const r = await drain(2, budgetMs - (Date.now() - t0), email);
+      if (Date.now() - tickStart >= startWindowMs) break;
+      const r = await drain(2, startWindowMs - (Date.now() - tickStart), email);
       processed += r.processed;
       failed += r.failed;
       if (r.processed || r.failed) didWork = true;
@@ -16966,6 +17005,14 @@ async function cronTick() {
     if (!didWork) break;
   }
   return { users: emails.length, enqueued, processed, failed };
+}
+function shuffle(items) {
+  const a = [...items];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
 }
 
 // server/workload.ts
@@ -17292,6 +17339,8 @@ initSentry();
 var __dirname = path.dirname(fileURLToPath(import.meta.url));
 var PORT = Number(process.env.PORT) > 0 ? Number(process.env.PORT) : 8788;
 var PROD = process.env.NODE_ENV === "production";
+var ADMIN_EMAILS = new Set((process.env.ADMIN_EMAILS || "").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean));
+var isAdmin = (req) => ADMIN_EMAILS.has((req.session.user || "").toLowerCase());
 if (PROD) {
   if (!process.env.SESSION_SECRET) {
     throw new Error("SESSION_SECRET must be set in production \u2014 it signs the session cookie that gates account access.");
@@ -17470,7 +17519,7 @@ var commit = async (req, opts) => {
   const email = req.session.user;
   const localTasks = req.session.tasks || [];
   const localProfile = req.session.profile || emptyProfile();
-  const currentHash = createHash2("sha1").update(JSON.stringify(localTasks) + JSON.stringify(localProfile)).digest("hex");
+  const currentHash = createHash3("sha1").update(JSON.stringify(localTasks) + JSON.stringify(localProfile)).digest("hex");
   const sessionId = req.sessionID;
   const lastHash = sessionDirtyCache.get(sessionId);
   const isDirty = lastHash !== currentHash;
@@ -17479,7 +17528,11 @@ var commit = async (req, opts) => {
     await writeAccount(email, localTasks, localProfile, { throwOnError: true, bypassCache: true });
     sessionDirtyCache.set(sessionId, currentHash);
   } else if (isDirty) {
-    scheduler.schedule(email, { tasks: localTasks, profile: localProfile });
+    if (process.env.VERCEL) {
+      waitUntil(scheduler.flush(email, { tasks: localTasks, profile: localProfile }));
+    } else {
+      scheduler.schedule(email, { tasks: localTasks, profile: localProfile });
+    }
     sessionDirtyCache.set(sessionId, currentHash);
   }
 };
@@ -17708,11 +17761,11 @@ app.post("/api/auth/forgot-password", rateLimit(5, 60 * 6e4), ah(async (req, res
     if (u) {
       const token = randomBytes2(32).toString("hex");
       const expiresAt = new Date(Date.now() + 30 * 6e4).toISOString();
-      setResetToken(email, token, expiresAt);
+      await setResetToken(email, token, expiresAt);
       const link = `${process.env.PUBLIC_URL || "https://hiotto.vercel.app"}/reset-password?token=${token}`;
       const en = req.body?.lang !== "fr";
       const html = en ? `<p>Someone (hopefully you) asked to reset your Otto password. This link works once and expires in 30 minutes.</p><p><a href="${link}">Reset your password \u2192</a></p><p>If this wasn't you, you can safely ignore this email \u2014 your password hasn't changed.</p>` : `<p>Quelqu'un (toi, on esp\xE8re) a demand\xE9 \xE0 r\xE9initialiser ton mot de passe Otto. Ce lien fonctionne une seule fois et expire dans 30 minutes.</p><p><a href="${link}">R\xE9initialiser ton mot de passe \u2192</a></p><p>Si ce n'\xE9tait pas toi, tu peux ignorer cet e-mail \u2014 ton mot de passe n'a pas chang\xE9.</p>`;
-      void sendTransactionalEmail(email, en ? "Reset your Otto password" : "R\xE9initialise ton mot de passe Otto", html);
+      await sendTransactionalEmail(email, en ? "Reset your Otto password" : "R\xE9initialise ton mot de passe Otto", html);
       void recordEvent(email, "password_reset_requested", {});
     }
   } catch (e) {
@@ -17735,7 +17788,7 @@ app.post("/api/auth/reset-password", rateLimit(10, 60 * 6e4), ah(async (req, res
     res.status(500).json({ error: M(req, "Le stockage des comptes n'est pas configur\xE9 sur le serveur (Supabase).", "Account storage isn't configured on the server (Supabase).") });
     return;
   }
-  const u = consumeResetToken(token);
+  const u = await consumeResetToken(token);
   if (!u) {
     res.status(400).json({ error: M(req, "Ce lien de r\xE9initialisation est invalide ou a expir\xE9 \u2014 refais-en la demande.", "This reset link is invalid or has expired \u2014 request a new one.") });
     return;
@@ -17757,6 +17810,7 @@ app.post("/api/auth/reset-password", rateLimit(10, 60 * 6e4), ah(async (req, res
     req.session.tasks = restored.tasks;
     req.session.csrfToken = randomBytes2(24).toString("hex");
     await saveSession(req);
+    await destroySessionsForUser(u.email, req.sessionID);
     res.json({ ok: true, csrfToken: req.session.csrfToken });
   });
 }));
@@ -17864,7 +17918,8 @@ app.get("/integrations/:app/connect", requireAuth, async (req, res) => {
     void recordMetric(req.session.user, "integration_connected", 1, app2);
     req.session.save(() => res.redirect(redirectUrl));
   } catch (e) {
-    res.status(500).send("Couldn't start the connection: " + (e?.message || e));
+    reportError("integration-connect", e);
+    res.status(500).send("Couldn't start the connection \u2014 please try again.");
   }
 });
 app.get("/integrations/callback", (_req, res) => res.redirect("/settings"));
@@ -17979,7 +18034,8 @@ app.get("/api/integrations/blackbaud/connect", requireAuth, (req, res) => {
     try {
       res.redirect(getAuthUrl(state));
     } catch (e) {
-      res.status(500).send("Couldn't start the connection: " + (e?.message || e));
+      reportError("integration-connect", e);
+      res.status(500).send("Couldn't start the connection \u2014 please try again.");
     }
   });
 });
@@ -18084,11 +18140,10 @@ app.get("/api/status", ah(async (req, res) => {
     highPriorityPeople: req.session.profile?.highPriorityPeople,
     genPerDay: req.session.profile?.genPerDay,
     timezone: req.session.profile?.timezone,
-    overBudget: overMonthlyBudget(req.session.profile),
-    unlimited: !!req.session.profile?.unlimited,
     language: req.session.profile?.language === "en" ? "en" : "fr",
     customTheme: req.session.profile?.customTheme,
     betaFeatures: !!req.session.profile?.betaFeatures,
+    isAdmin: isAdmin(req),
     // "Onboarded" = finished/skipped the basic flow, OR an account that clearly predates it (has a name, a track or
     // tasks) — those are never put through name/track questions they've long answered. Page guides still run.
     onboarded: !!req.session.profile?.onboardedAt || !!req.session.profile?.name || !!req.session.profile?.track || (req.session.tasks || []).length > 0,
@@ -18099,7 +18154,7 @@ app.get("/api/status", ah(async (req, res) => {
     s.csrfToken = req.session.csrfToken;
   }
   const statusJson = JSON.stringify(s);
-  const etag = `"${createHash2("sha1").update(statusJson).digest("hex").slice(0, 16)}"`;
+  const etag = `"${createHash3("sha1").update(statusJson).digest("hex").slice(0, 16)}"`;
   res.setHeader("ETag", etag);
   if (req.headers["if-none-match"] === etag) {
     res.status(304).end();
@@ -18108,25 +18163,6 @@ app.get("/api/status", ah(async (req, res) => {
   res.type("json").send(statusJson);
 }));
 var isPaused = (req) => !!req.session.profile?.paused;
-var overBudget = (req) => overMonthlyBudget(req.session.profile);
-var overInteractive = (req) => overInteractiveBudget(req.session.profile);
-var budgetMsg = (req) => M(
-  req,
-  "Otto a atteint son plafond mensuel d'IA \u2014 \xE7a se renouvelle le 1er du mois.",
-  "Otto's reached its monthly AI budget \u2014 it resets on the 1st."
-);
-app.post("/api/settings/unlimited", requireAuth, async (req, res) => {
-  try {
-    const p = req.session.profile ||= emptyProfile();
-    p.unlimited = true;
-    void recordEvent(req.session.user, "settings_changed", { message: "unlimited enabled" });
-    await commit(req);
-    res.json(stripProfileForResponse(p));
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: M(req, "Impossible d'enregistrer \u2014 r\xE9essaie.", "Couldn't save \u2014 try again.") });
-  }
-});
 app.post("/api/settings/pause", requireAuth, async (req, res) => {
   try {
     const p = req.session.profile ||= emptyProfile();
@@ -18217,7 +18253,7 @@ app.get("/api/tasks", requireAuth, async (req, res) => {
     return { ...t, ...boost ? { score: (t.score || 0) + boost } : {}, nudgeLine: stallNudgeLine(t, req.session.profile) || void 0 };
   });
   const tasksJson = JSON.stringify(tasksPayload(req, req.session.tasks, withNudge));
-  const etag = `"${createHash2("sha1").update(tasksJson).digest("hex").slice(0, 16)}"`;
+  const etag = `"${createHash3("sha1").update(tasksJson).digest("hex").slice(0, 16)}"`;
   res.setHeader("ETag", etag);
   if (req.headers["if-none-match"] === etag) {
     res.status(304).end();
@@ -18271,10 +18307,6 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 6e4), async (req, res
     res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour chercher de nouvelles t\xE2ches.", "AI is paused \u2014 resume it in Settings to sweep for new tasks.") });
     return;
   }
-  if (overBudget(req)) {
-    res.json({ tasks: req.session.tasks || [], note: "skipped: monthly AI budget reached" });
-    return;
-  }
   try {
     const user = req.session.user;
     const force = req.body?.force === true;
@@ -18316,7 +18348,7 @@ app.post("/api/tasks", requireAuth, rateLimit(20, 6e4), async (req, res) => {
     return;
   }
   const explicitWhen = /^\d{4}-\d{2}-\d{2}$/.test(String(req.body?.when || "")) ? String(req.body.when) : void 0;
-  const ready = aiReady() && !isPaused(req) && !overBudget(req);
+  const ready = aiReady() && !isPaused(req);
   const refined = ready ? await refineManualTask(title, req.session.profile, schoolRecordLine(req.session.tasks, req.session.profile)).catch(() => null) : null;
   if (refined) addUsage(req.session.profile ||= emptyProfile(), refined.tokens, "manual_refine");
   try {
@@ -18400,10 +18432,6 @@ app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 6e4), async (req, r
     res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour affiner.", "AI is paused \u2014 resume it in Settings to refine.") });
     return;
   }
-  if (overInteractive(req)) {
-    res.status(402).json({ error: budgetMsg(req) });
-    return;
-  }
   if (!aiReady()) {
     res.status(503).json({ error: M(req, "L'IA n'est pas configur\xE9e.", "AI isn't configured.") });
     return;
@@ -18427,10 +18455,6 @@ app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 6e4), async (req, r
 app.post("/api/tasks/:id/regenerate", requireAuth, rateLimit(5, 6e4), async (req, res) => {
   if (isPaused(req)) {
     res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour r\xE9g\xE9n\xE9rer.", "AI is paused \u2014 resume it in Settings to regenerate.") });
-    return;
-  }
-  if (overInteractive(req)) {
-    res.status(402).json({ error: budgetMsg(req) });
     return;
   }
   if (!aiReady()) {
@@ -18510,10 +18534,6 @@ app.post("/api/tutor/opener", requireAuth, rateLimit(30, 6e4), ah(async (req, re
     res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour discuter.", "AI is paused \u2014 resume it in Settings to chat.") });
     return;
   }
-  if (overInteractive(req)) {
-    res.status(402).json({ error: budgetMsg(req) });
-    return;
-  }
   if (!aiReady()) {
     res.status(503).json({ error: M(req, "L'IA n'est pas configur\xE9e.", "AI isn't configured.") });
     return;
@@ -18542,10 +18562,6 @@ var CHAT_CAP = 60;
 app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 6e4), async (req, res) => {
   if (isPaused(req)) {
     res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour discuter.", "AI is paused \u2014 resume it in Settings to chat.") });
-    return;
-  }
-  if (overInteractive(req)) {
-    res.status(402).json({ error: budgetMsg(req) });
     return;
   }
   if (!aiReady()) {
@@ -18840,10 +18856,6 @@ app.post("/api/tasks/:id/study-help", requireAuth, rateLimit(40, 6e4), ah(async 
     res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour discuter.", "AI is paused \u2014 resume it in Settings to chat.") });
     return;
   }
-  if (overInteractive(req)) {
-    res.status(402).json({ error: budgetMsg(req) });
-    return;
-  }
   if (!aiReady()) {
     res.status(503).json({ error: M(req, "L'IA n'est pas configur\xE9e.", "AI isn't configured.") });
     return;
@@ -18911,8 +18923,8 @@ var runViaJob = async (req, res, type, input) => {
       return;
     }
     const skipNote = typeof job.output?.note === "string" && job.output.note.startsWith("skipped:") ? job.output.note : null;
-    if (skipNote) {
-      res.status(403).json({ error: skipNote.includes("budget") ? budgetMsg(req) : M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour lancer ceci.", "AI is paused \u2014 resume it in Settings to run this.") });
+    if (skipNote?.includes("paused")) {
+      res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour lancer ceci.", "AI is paused \u2014 resume it in Settings to run this.") });
       return;
     }
     res.json(t);
@@ -18928,10 +18940,6 @@ app.post("/api/tasks/:id/run", requireAuth, rateLimit(40, 6e4), async (req, res)
     res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour lancer des t\xE2ches.", "AI is paused \u2014 resume it in Settings to run tasks.") });
     return;
   }
-  if (overInteractive(req)) {
-    res.status(402).json({ error: budgetMsg(req) });
-    return;
-  }
   await runViaJob(req, res, "execute_task", { manual: true, ...req.body?.reset === true ? { reset: true } : {} });
 });
 app.post("/api/tasks/:id/revise", requireAuth, rateLimit(20, 6e4), async (req, res) => {
@@ -18942,10 +18950,6 @@ app.post("/api/tasks/:id/revise", requireAuth, rateLimit(20, 6e4), async (req, r
   }
   if (isPaused(req)) {
     res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour r\xE9viser des t\xE2ches.", "AI is paused \u2014 resume it in Settings to revise tasks.") });
-    return;
-  }
-  if (overInteractive(req)) {
-    res.status(402).json({ error: budgetMsg(req) });
     return;
   }
   if (req.session.user) void recordMetric(req.session.user, "task_revision_requested", 1);
@@ -19018,10 +19022,6 @@ app.post("/api/tasks/:id/dismiss", requireAuth, rateLimit(60, 6e4), async (req, 
 app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 6e4), async (req, res) => {
   if (isPaused(req)) {
     res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour lancer des \xE9tapes.", "AI is paused \u2014 resume it in Settings to run steps.") });
-    return;
-  }
-  if (overInteractive(req)) {
-    res.status(402).json({ error: budgetMsg(req) });
     return;
   }
   const id = String(req.params.id);
@@ -19254,10 +19254,6 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 6e4), ah(async (req, re
     res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour g\xE9n\xE9rer des cartes.", "AI is paused \u2014 resume it in Settings to generate flashcards.") });
     return;
   }
-  if (overInteractive(req)) {
-    res.status(402).json({ error: budgetMsg(req) });
-    return;
-  }
   if (!aiReady()) {
     res.status(503).json({ error: M(req, "L'IA n'est pas configur\xE9e.", "AI isn't configured.") });
     return;
@@ -19400,10 +19396,6 @@ app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 6e4), ah(async
     res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour g\xE9n\xE9rer le r\xE9sum\xE9.", "AI is paused \u2014 resume it in Settings to generate the summary.") });
     return;
   }
-  if (overInteractive(req)) {
-    res.status(402).json({ error: budgetMsg(req) });
-    return;
-  }
   if (!aiReady()) {
     res.status(503).json({ error: M(req, "L'IA n'est pas configur\xE9e.", "AI isn't configured.") });
     return;
@@ -19516,10 +19508,6 @@ app.get("/api/studylog/month", requireAuth, ah(async (req, res) => {
 app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 6e4), ah(async (req, res) => {
   if (isPaused(req)) {
     res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour g\xE9n\xE9rer le r\xE9sum\xE9.", "AI is paused \u2014 resume it in Settings to generate the summary.") });
-    return;
-  }
-  if (overInteractive(req)) {
-    res.status(402).json({ error: budgetMsg(req) });
     return;
   }
   if (!aiReady()) {
@@ -19726,10 +19714,6 @@ app.post("/api/tutor/read-whiteboard", requireAuth, rateLimit(15, 6e4), express.
     res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour continuer.", "AI is paused \u2014 resume it in Settings to continue.") });
     return;
   }
-  if (overInteractive(req)) {
-    res.status(402).json({ error: budgetMsg(req) });
-    return;
-  }
   const image = String(req.body?.image || "");
   if (!image) {
     res.status(400).json({ error: M(req, "Aucun dessin re\xE7u.", "No drawing received.") });
@@ -19750,10 +19734,6 @@ app.post("/api/tutor/read-photo", requireAuth, rateLimit(15, 6e4), express.json(
   }
   if (isPaused(req)) {
     res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour continuer.", "AI is paused \u2014 resume it in Settings to continue.") });
-    return;
-  }
-  if (overInteractive(req)) {
-    res.status(402).json({ error: budgetMsg(req) });
     return;
   }
   const image = String(req.body?.image || "");
@@ -19822,10 +19802,6 @@ app.post("/api/ui/theme-personalize", requireAuth, rateLimit(5, 6e4), ah(async (
   }
   if (isPaused(req)) {
     res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour personnaliser ton th\xE8me.", "AI is paused \u2014 resume it in Settings to personalize your theme.") });
-    return;
-  }
-  if (overInteractive(req)) {
-    res.status(402).json({ error: budgetMsg(req) });
     return;
   }
   if (!aiReady()) {
@@ -19931,10 +19907,6 @@ app.post("/api/tasks/:id/step/:index/expand", requireAuth, rateLimit(20, 6e4), a
     res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour utiliser ceci.", "AI is paused \u2014 resume it in Settings to use this.") });
     return;
   }
-  if (overInteractive(req)) {
-    res.status(402).json({ error: budgetMsg(req) });
-    return;
-  }
   if (!aiReady()) {
     res.status(503).json({ error: M(req, "L'IA n'est pas encore configur\xE9e sur ce serveur.", "AI isn't set up on this server yet.") });
     return;
@@ -19984,10 +19956,6 @@ app.post("/api/tasks/:id/step/:index/substep/:subIndex/done", requireAuth, rateL
 app.post("/api/tasks/:id/step/:index/substep/:subIndex/run", requireAuth, rateLimit(20, 6e4), async (req, res) => {
   if (isPaused(req)) {
     res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour utiliser ceci.", "AI is paused \u2014 resume it in Settings to use this.") });
-    return;
-  }
-  if (overInteractive(req)) {
-    res.status(402).json({ error: budgetMsg(req) });
     return;
   }
   if (!aiReady()) {
@@ -20189,7 +20157,7 @@ app.post("/api/jobs/kick", requireAuth, rateLimit(60, 6e4), async (req, res) => 
     });
     const body = { active, activeTaskIds, tasks: lightTasks };
     const bodyJson = JSON.stringify(body);
-    const etag = `"${createHash2("sha1").update(bodyJson).digest("hex").slice(0, 16)}"`;
+    const etag = `"${createHash3("sha1").update(bodyJson).digest("hex").slice(0, 16)}"`;
     res.setHeader("ETag", etag);
     if (req.headers["if-none-match"] === etag) {
       res.status(304).end();
@@ -20258,11 +20226,7 @@ app.get("/api/usage", requireAuth, async (req, res) => {
       total: (u?.in || 0) + (u?.out || 0),
       runs: u?.runs || 0,
       since: u?.since || null,
-      // Month-to-date spend against the cap (both USD) — what the Settings view + budget banner read.
       monthCostUsd: monthCostUsd(p),
-      budgetUsd: monthlyBudgetUsd(),
-      over: overMonthlyBudget(p),
-      renewsOn: budgetRenewsOn(p),
       // Month-to-date spend BY WHAT SPENT IT (sweep/autorun/chat/manual_refine) — added so "what's actually
       // costing money" is an answerable question instead of one opaque total (see addUsage's own comment).
       byCategory: u?.monthByCategory || {}
@@ -20276,7 +20240,7 @@ var listKey = (c) => c === "preference" ? "preferences" : c === "person" ? "peop
 app.get("/api/profile", requireAuth, (req, res) => {
   try {
     const body = JSON.stringify(stripProfileForResponse(req.session.profile || emptyProfile()));
-    const etag = `"${createHash2("sha1").update(body).digest("hex").slice(0, 16)}"`;
+    const etag = `"${createHash3("sha1").update(body).digest("hex").slice(0, 16)}"`;
     res.setHeader("ETag", etag);
     if (req.headers["if-none-match"] === etag) {
       res.status(304).end();
@@ -20527,7 +20491,7 @@ app.post("/api/coursework", requireAuth, rateLimit(15, 6e4), ah(async (req, res)
   const pages = Math.max(1, Math.min(COURSEWORK_MAX_PAGES, Math.round(Number(req.body?.pages) || 1)));
   const totalPages = Number(req.body?.totalPages) > 0 ? Math.min(9999, Math.round(Number(req.body.totalPages))) : void 0;
   const truncated = req.body?.truncated === true || totalPages != null && totalPages > pages || String(req.body?.text || "").length > COURSEWORK_MAX_CHARS;
-  const ready = aiReady() && !isPaused(req) && !overBudget(req);
+  const ready = aiReady() && !isPaused(req);
   const sum = ready ? await summarizeCoursework(subject, name, text, p).catch(() => null) : null;
   if (sum) addUsage(p, sum.tokens, "other");
   const id = randomUUID5();
@@ -21012,10 +20976,6 @@ app.post("/api/tts", requireAuth, rateLimit(120, 6e4), async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.send(out.audio);
 });
-var ADMIN_EMAIL = "tjong.willem@gmail.com";
-function isAdmin(req) {
-  return (req.session.user || "").toLowerCase() === ADMIN_EMAIL;
-}
 app.get("/api/admin/metrics", requireAuth, async (req, res) => {
   if (!isAdmin(req)) {
     res.status(403).json({ error: M(req, "Acc\xE8s refus\xE9.", "Access denied.") });

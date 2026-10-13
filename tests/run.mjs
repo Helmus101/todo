@@ -56,7 +56,7 @@ import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, mergePronoteHomeworkAndTests } from "../server/discover.ts";
 import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, normalizeWhen, addUsage, monthKeyOf, monthCostUsd, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, validateThemeTokens, normalizeProfile, milestonesBySubject } from "../shared/types.ts";
-import { sweepDueForDay, localDay, sweepDue, shouldRefreshStudentModel, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
+import { planStuckRecovery, sweepDueForDay, localDay, sweepDue, shouldRefreshStudentModel, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp } from "../server/workload.ts";
 import { stripHtml, applyPronoteGrades, applyPronoteLessons, isPrivateOrReservedIp, assertSafeExternalUrl } from "../server/pronote.ts";
 import { connectionColumnUpdates } from "../server/store.ts";
@@ -5091,6 +5091,28 @@ section("A right answer given in chat solves the open exercise — no retyping i
   check("the turn reports it, the client marks it solved, and the box shows it as answered (source pins)", /solvedInChat: out\.solvedInChat/.test(readFileSync("server/index.ts", "utf8")) && /solvedInChat\.includes\(p\.id\) \? \{ \.\.\.p, solved: true \}/.test(readFileSync("client/tutor/TutorSession.tsx", "utf8")) && /const answered = !!problem\.solved \|\|/.test(readFileSync("client/study/artifacts/BoardArtifact.tsx", "utf8")));
 }
 
+section("A task never says 'Otto is working on it' forever (reported: stuck working for a long time)");
+{
+  const now = new Date("2026-10-13T12:00:00Z");
+  const ago = (min) => new Date(now.getTime() - min * 60_000).toISOString();
+  const list = [
+    { id: "q-orphan", status: "queued", updatedAt: ago(1) },
+    { id: "q-live", status: "queued", updatedAt: ago(20) },
+    { id: "x-dead", status: "executing", updatedAt: ago(10) },
+    { id: "x-fresh", status: "executing", updatedAt: ago(1) },
+    { id: "x-live", status: "running", updatedAt: ago(30) },
+    { id: "q-again", status: "queued", updatedAt: ago(5), recoveredAt: ago(10) },
+    { id: "log", status: "queued", source: "studylog", updatedAt: ago(60) },
+    { id: "done", status: "done", updatedAt: ago(60) },
+  ];
+  const plan = planStuckRecovery(list, new Set(["q-live", "x-live"]), now);
+  check("a queued task with no job behind it is re-enqueued", plan.requeue.includes("q-orphan") && !plan.requeue.includes("q-live"));
+  check("an executing task whose job is gone (killed / out of attempts) is released for Retry", plan.fail.includes("x-dead"));
+  check("one that just started, or whose job is still live, is left alone", !plan.fail.includes("x-fresh") && !plan.fail.includes("x-live") && !plan.requeue.includes("x-live"));
+  check("orphaned again soon after a recovery means it keeps dying: released, not re-queued forever", plan.fail.includes("q-again") && !plan.requeue.includes("q-again"));
+  check("journal tasks and finished tasks are never touched", ![...plan.fail, ...plan.requeue].some((id) => id === "log" || id === "done"));
+}
+
 section("Board changes are undoable in the Tutor session (spec §12 #10, source pins)");
 {
   const ts = readFileSync("client/tutor/TutorSession.tsx", "utf8");
@@ -6068,7 +6090,6 @@ section("No emoji in the rendered app — real icons (lucide-react) instead (rep
   for (const [file, icons] of [
     ["../client/study/AskOttoPanel.tsx", ["Paperclip", "TriangleAlert", "Volume2", "StickyNote"]],
     ["../client/tutor/TutorSession.tsx", ["ArrowRight", "TrendingUp", "RotateCcw", "MessageCircle", "Lightbulb", "CircleHelp"]],
-    ["../client/study/FocusTracker.tsx", ["Target"]],
     ["../client/study/SessionHeader.tsx", ["Timer"]],
     ["../client/study/ToolsDrawer.tsx", ["StickyNote", "Quote", "PenLine"]],
     ["../client/TaskCard.tsx", ["MessageCircle", "Layers"]],

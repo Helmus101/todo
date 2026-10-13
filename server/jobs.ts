@@ -565,17 +565,46 @@ export async function drain(limit = 3, budgetMs = 120_000, userEmail?: string): 
  * A successful task write and job enqueue are normally one flow, but a dropped response, stale instance,
  * or a cloud write race can leave the task status committed while the job insert was not. The open-tab kick
  * is the fastest recovery path; cron also calls the same logic through its orphaned-task pass. */
-export async function recoverOrphanedQueuedTasks(email: string, limit = 3): Promise<string[]> {
-  const { list } = await loadUser(email);
+export async function recoverOrphanedQueuedTasks(email: string, limit = 3, now: Date = new Date()): Promise<string[]> {
+  const { profile, list } = await loadUser(email);
   const active = new Set(await store.activeJobTaskIds(email));
-  const orphaned = list
-    .filter((t) => canonStatus(t.status) === "queued" && !active.has(t.id) && t.source !== "studylog")
-    .slice(0, limit);
-  for (const t of orphaned) {
-    await store.enqueueJob(email, "execute_task", t.id);
-    void store.recordEvent(email, "queued", { taskId: t.id, message: "Recovered an orphaned task execution" });
+  const plan = planStuckRecovery(list, active, now);
+  for (const id of plan.requeue.slice(0, limit)) {
+    const t = list.find((x) => x.id === id);
+    if (t) t.recoveredAt = now.toISOString();
+    await store.enqueueJob(email, "execute_task", id);
+    void store.recordEvent(email, "queued", { taskId: id, message: "Recovered an orphaned task execution" });
   }
-  return orphaned.map((t) => t.id);
+  for (const id of plan.fail) {
+    const t = list.find((x) => x.id === id);
+    if (!t) continue;
+    t.status = "failed_retryable";
+    t.lastError = "Otto stopped before finishing this one — tap Retry to run it again.";
+    t.updatedAt = now.toISOString();
+    void store.recordEvent(email, "run_failed", { taskId: id, message: "Stuck in progress with no live job — released for retry" });
+  }
+  if (plan.requeue.length || plan.fail.length) await commitUser(email, profile, list);
+  return plan.requeue.slice(0, limit);
+}
+
+/** Which in-progress tasks have no job behind them, and what to do (reported: "Otto is working on…" for a very long
+ *  time). A task shows "working" while it's queued or executing; if its job was consumed, exhausted its attempts, or
+ *  its worker was killed, nothing ever moves it again.
+ *  - queued, no live job → re-enqueue, once per 30 min (a second orphaning that soon means it keeps dying: release it);
+ *  - executing, no live job, untouched for 3+ min → release it as failed_retryable (the student sees Retry, not a spinner).
+ *  Pure, exported for tests. */
+export function planStuckRecovery(list: { id: string; status: TaskStatus; source?: string; updatedAt?: string; createdAt?: string; recoveredAt?: string }[], activeJobTaskIds: Set<string>, now: Date): { requeue: string[]; fail: string[] } {
+  const requeue: string[] = [], fail: string[] = [];
+  const age = (iso?: string) => { const n = Date.parse(String(iso || "")); return Number.isFinite(n) ? now.getTime() - n : Infinity; };
+  for (const t of list) {
+    if (t.source === "studylog" || activeJobTaskIds.has(t.id)) continue;
+    const c = canonStatus(t.status);
+    if (c === "queued") {
+      if (age(t.recoveredAt) < 30 * 60_000) { if (age(t.updatedAt || t.createdAt) > 3 * 60_000) fail.push(t.id); }
+      else requeue.push(t.id);
+    } else if (c === "executing" && age(t.updatedAt || t.createdAt) > 3 * 60_000) fail.push(t.id);
+  }
+  return { requeue, fail };
 }
 
 export async function enqueueAndDrain(email: string, type: store.JobType, taskId?: string, input?: any, drainInline = true): Promise<store.Job> {
