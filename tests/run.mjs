@@ -15,7 +15,7 @@ import { selectJournal } from "../server/journal.ts";
 import { recentJournalLine } from "../server/claude.ts";
 import { countJournalEntries } from "../shared/journalCount.ts";
 import { reachedResultUnrecorded, setsMathTaskUnboarded } from "../server/tutorAdapt.ts";
-import { mentionsMechanics, stripMechanics, updateMisconceptions, teachesOverError, strategyMissing, parsePlan, teachingBlock, wrongArithmetic, teachesUnboarded, boardStillEmpty, asksDiscussionQuestionUnboarded, isDiscussionSubject, statesClaimUnboarded, DISCUSSION_BLOCK, TUTOR_PROMPT, subjectsIn, reportsCorrectResult, movesOn, pointsAtMissingObject } from "../server/tutor.ts";
+import { affectOf, learningPrefsFrom, mergePrefs, isStudentWriting, rewritesTheirWriting, backgroundBlock as tutorBackgroundBlock, mentionsMechanics, stripMechanics, updateMisconceptions, teachesOverError, strategyMissing, parsePlan, teachingBlock, wrongArithmetic, teachesUnboarded, boardStillEmpty, asksDiscussionQuestionUnboarded, isDiscussionSubject, statesClaimUnboarded, DISCUSSION_BLOCK, TUTOR_PROMPT, subjectsIn, reportsCorrectResult, movesOn, pointsAtMissingObject } from "../server/tutor.ts";
 import { blamesWidget } from "../server/tutorAdapt.ts";
 import { inventedNumbers } from "../server/tutorAdapt.ts";
 import { makeProblem as makeProblemP } from "../server/claude.ts";
@@ -79,6 +79,7 @@ import { canonSubject, sameSubject, normalizeCoursework, courseworkForSubject, C
 import { tightenForChat, countWords as countWordsT } from "../server/claude.ts";
 import { replyStatesValue, studentStatedAnswer } from "../server/tutorAdapt.ts";
 import { typesetLogPhrases, autoMathLine, wrapRawLatex } from "../shared/mathText.ts";
+import { buildSessionRecap } from "../shared/sessionRecap.ts";
 import { diffBoard, recordBoardEvents, objectiveEvents, problemEvents, boardTrajectoryBlock, boardSurfaceBlock, tagStudentAnswer, selfCorrections, boardFingerprint } from "../server/boardEvents.ts";
 import { classifyTurnAction, buildTutorDecision, recordTutorDecision, TUTOR_DECISION_CAP } from "../server/actionSpace.ts";
 import { emptySessionState, loadOrInitSessionState, updateSessionState, persistSessionState, sessionStateBlock } from "../server/sessionState.ts";
@@ -5070,6 +5071,26 @@ section("Otto never tells the student about its internal board rejections (repor
   const src = readFileSync("server/tutor.ts", "utf8");
   check("every refused tool result carries an internal never-tell-the-student note", /Internal note for you only: never tell the student a write was refused/.test(src));
   check("the final reply is cleaned in code even if the correction round didn't fix it", /mentionsMechanics\(reply\) \? \(stripMechanics\(reply\) \|\| reply\) : reply/.test(src));
+}
+
+section("Expert-tutor behaviour: motivation, personal learning prefs, feedback on writing, end-of-session recap");
+{
+  check("frustration is noticed", affectOf("ugh I give up, this is so hard") === "frustrated" && affectOf("je comprends rien") === "frustrated");
+  check("an unsure answer is noticed, a genuine question is not", affectOf("maybe it's 8?") === "unsure" && affectOf("what is a logarithm?") === "neutral");
+  check("confidence is noticed; app messages are neutral", affectOf("easy, it's obviously 3 log x") === "confident" && affectOf('[Exercise] I answered "8" — marked wrong') === "neutral");
+  check("learning preferences come from what they ask for", learningPrefsFrom("can you show me an example and draw it?").length === 2 && learningPrefsFrom("just a hint please")[0] === "wants hints, not answers");
+  check("prefs are kept short, newest last, deduped", mergePrefs(["a", "b", "c", "d", "e", "f"], ["b", "g"]).join() === "a,c,d,e,f,b,g".split(",").slice(-6).join() && mergePrefs(undefined, ["x"]).length === 1);
+  check("prefs reach the tutor as HOW THEY LIKE TO LEARN", /HOW THEY LIKE TO LEARN[^\n]*likes a drawing/.test(tutorBackgroundBlock({ profile: { tutorPrefs: ["likes a drawing or diagram"] } })));
+  const para = "The Treaty of Versailles was the main cause of the Second World War. It humiliated Germany and forced it to pay huge reparations. This created resentment that Hitler used to gain support in the 1930s. Without the treaty, the Nazis would not have risen to power so easily and the war would not have happened.";
+  check("a pasted paragraph is recognised as their writing; a question is not", isStudentWriting(para) && !isStudentWriting("Why did the treaty matter so much for Germany in the end?"));
+  check("a reply that rewrites their paragraph is caught; quoting one sentence for feedback is fine", rewritesTheirWriting("Here's a better version of your paragraph: ...") && !rewritesTheirWriting('Your sentence "It humiliated Germany" is a strong claim — what evidence shows that humiliation turned into votes?'));
+  check("the prompt has the expert-tutor section (frame, pump, INSPIRE, prerequisites, writing feedback)", /HOW EXPERT TUTORS WORK/.test(TUTOR_PROMPT) && /PUMP first/.test(TUTOR_PROMPT) && /trace it to the prerequisite/.test(TUTOR_PROMPT) && /Never rewrite it for them/.test(TUTOR_PROMPT));
+  const r = buildSessionRecap(
+    [{ id: "s", at: "", kind: "strategy", text: "Expand: fraction → product → powers" }, { id: "d", at: "", kind: "definition", text: "a log answers: which power?" }],
+    [{ id: "p1", createdAt: "", question: "Expand log_a(x^3 y)", solved: true }, { id: "p2", createdAt: "", question: "Solve log_2(x+5)+log_2(x-1)=4", solved: false }],
+    [{ id: "o1", label: "Expand with the 3 laws", done: true }, { id: "o2", label: "Solve log equations", done: false }], true);
+  check("the recap separates what they showed, what's developing, their strategies, and a review question", r.showed.length === 2 && r.developing.length === 2 && r.strategies[0].startsWith("Expand") && /without notes/.test(r.reviewQuestion || ""));
+  check("an empty session gives an empty recap (nothing invented)", (() => { const e = buildSessionRecap([], [], [], true); return !e.showed.length && !e.developing.length && !e.strategies.length && e.reviewQuestion === null; })());
 }
 
 section("Board changes are undoable in the Tutor session (spec §12 #10, source pins)");

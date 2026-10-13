@@ -113,6 +113,16 @@ SPECIFIC FEEDBACK — refer to the student's actual answer
 - If the student gives a related but incorrect definition (e.g., "opportunity cost" when asked for "scarcity"): recognize the conceptual mismatch, explain accurately, show the distinction on the board, and check understanding with a focused follow-up
 - Correctness takes priority over keeping the conversation moving
 
+HOW EXPERT TUTORS WORK — what the best human tutors do (Lepper's INSPIRE studies; Graesser's tutoring frame)
+- The frame: you ask → they answer → short feedback → you improve the answer TOGETHER → you check they understood. The fourth step is where tutoring wins: build on their words and add only the missing piece; don't replace their answer with yours.
+- When an answer is incomplete, PUMP first ("good — what else matters here?", "and why?"), then hint, then prompt for one missing word, and only then state it.
+- Watch two things at once: what they know AND how they feel (TEACHING STATE tells you). Encouraging and warm, never gushing: praise effort and strategy, not ability.
+- Indirect feedback beats "wrong": "what happens if you plug 3 back in?", "does that match the sign you expected?". Let errors be productive — they find it, you protect their confidence.
+- A gap that keeps coming back usually sits one level down: trace it to the prerequisite (log laws → exponent laws; essay paragraph → what a claim is), teach that briefly, then return.
+- Personal: use their name sometimes, their interests for examples, what they found hard last time, and HOW THEY LIKE TO LEARN. Pick up where they left off.
+- Reflect at milestones: "what did you learn that you'll use on the test?", "what tripped you up, and how will you spot it next time?".
+- Their writing (History, essays, languages): quote one of their sentences, name one real strength, give the ONE improvement that matters most (claim, evidence, analysis, link to the question), and have them rewrite that sentence. Never rewrite it for them. On the board: the structure of their paragraph as an outline (claim / evidence / analysis / link), the weakest part marked.
+
 HOW PEOPLE LEARN — use the moves the research supports, and pick the one that fits the moment
 - Retrieval first (testing effect): open a topic, and come back to it later, by asking them to recall it before you re-explain. Re-reading feels productive; recalling is what makes it stick.
 - Worked example → faded example → independent problem (worked-example and fading effects): a novice gets one fully worked case on the board with the reasoning for each line; then the same kind with the last step(s) blank for them; then one on their own. Fade faster for a strong student, step back for a struggling one.
@@ -243,6 +253,7 @@ export function backgroundBlock(c: TutorContext): string {
     studentNameLine(p?.name),
     personalContextLine(p),
     milestoneLine(p, c.subject),
+    (p?.tutorPrefs?.length ? `HOW THEY LIKE TO LEARN (from what they've asked for before — honour it unless it would hand over the answer): ${p.tutorPrefs.join("; ")}.` : ""),
     // What they've PROVED (code-verified evidence per skill, server/studentModel.ts) — where to start, what to skip.
     (() => { try { return studentModelBlock(normalizeStudentModel(p?.conceptModel), { subject: c.subject, limit: 6 }); } catch { return ""; } })(),
     errorLogLine(p, c.subject),
@@ -350,6 +361,50 @@ export function stripMechanics(reply: string): string {
   return String(reply || "").split(/(?<=[.!?…])\s+/).filter((s) => !MECHANICS.test(s)).join(" ").replace(/\s{2,}/g, " ").trim();
 }
 
+/** The student's motivational state from what they wrote — expert tutors watch confidence and frustration as closely
+ *  as knowledge (Lepper's INSPIRE studies). Exported for tests. */
+export function affectOf(message: string): "frustrated" | "unsure" | "confident" | "neutral" {
+  const m = String(message || "").trim();
+  if (/^\s*\[/.test(m)) return "neutral";
+  if (/\b(?:i give up|this is (?:so )?(?:hard|impossible|confusing|stupid)|i(?:'m| am) (?:so )?(?:lost|stuck|confused|done|bad at)|i hate|i can'?t do (?:this|it)|no idea|ugh+|argh+|j'abandonne|je comprends rien|j'y arrive pas|c'est (?:trop )?(?:dur|nul)|je suis (?:perdu|nul))\b/i.test(m)) return "frustrated";
+  if (/\b(?:i think|maybe|not sure|i guess|probably|je crois|peut-être|je sais pas trop|je pense)\b|\?\s*$/i.test(m) && !/^\s*(?:what|why|how|which|can|could|quoi|pourquoi|comment)\b/i.test(m)) return "unsure";
+  if (/\b(?:easy|obviously|of course|definitely|for sure|i know|got it|facile|évidemment|c'est sûr)\b/i.test(m)) return "confident";
+  return "neutral";
+}
+/** Explicit learning preferences in what they ask for, as short labels for the profile. Exported for tests. */
+export function learningPrefsFrom(message: string): string[] {
+  const m = String(message || "");
+  const out: string[] = [];
+  if (/\b(?:with|give me|show me) an? (?:example|exemple)|\bexample first\b|\bun exemple\b/i.test(m)) out.push("learns best from a concrete example first");
+  if (/\b(?:draw|sketch|picture|diagram|visual(?:ly)?|dessine|schéma)\b/i.test(m)) out.push("likes a drawing or diagram");
+  if (/\b(?:just|only) (?:a )?hint\b|\bdon'?t (?:tell|give) me the answer\b|\bjuste un indice\b/i.test(m)) out.push("wants hints, not answers");
+  if (/\b(?:slower|slow down|step by step|one step at a time|plus lentement|étape par étape)\b/i.test(m)) out.push("prefers small steps, slowly");
+  if (/\b(?:shorter|too long|less text|keep it short|plus court|trop long)\b/i.test(m)) out.push("prefers short replies");
+  if (/\b(?:explain (?:it )?(?:fully|properly|in detail)|more detail|explique (?:bien|en détail))\b/i.test(m)) out.push("wants a full explanation when stuck");
+  if (/\b(?:quiz me|test me|interroge-moi)\b/i.test(m)) out.push("likes being quizzed");
+  return out;
+}
+/** Add new preference labels, newest last, max 6. Exported for tests. */
+export function mergePrefs(prev: string[] | undefined, found: string[]): string[] {
+  const list = (prev || []).filter((p) => !found.includes(p));
+  return [...list, ...found].slice(-6);
+}
+/** A student's own piece of writing (a History paragraph, an essay intro) pasted for feedback. Exported for tests. */
+export function isStudentWriting(message: string): boolean {
+  const m = String(message || "").trim();
+  if (/^\s*\[/.test(m) || /\?\s*$/.test(m)) return false;
+  const words = m.split(/\s+/).length;
+  const sentences = (m.match(/[.!;](?:\s|$)/g) || []).length;
+  return words >= 45 && sentences >= 2;
+}
+/** The reply rewrites their paragraph for them instead of giving feedback they can act on. Exported for tests. */
+export function rewritesTheirWriting(reply: string): boolean {
+  const r = String(reply || "");
+  if (/\b(?:here(?:'s| is) (?:a |an |your )?(?:better|improved|rewritten|revised|stronger) (?:version|paragraph|intro(?:duction)?)|i(?:'ve| have) rewritten|voici (?:une )?(?:meilleure )?version (?:améliorée|corrigée|réécrite)|je l'ai réécrit)\b/i.test(r)) return true;
+  // A long block of new prose in quotes is a rewrite too.
+  return (r.match(/["“«][^"”»]{220,}["”»]/) || []).length > 0;
+}
+
 /** The reply hands the choice back ("What would you like to start with?", "which topic…?") — the move a tutor that
  *  already owns a plan must not make when the student delegated. Exported for tests. */
 export function asksStudentToChoose(reply: string): boolean {
@@ -446,6 +501,7 @@ export function nextTeachingState(prev: TutorTeachingState | undefined, ev: { me
     guardrailStreak: ev.leaked && ev.leaked === p.guardrailValue ? (p.guardrailStreak || 0) + 1 : ev.leaked ? 1 : 0,
     ...(ev.leaked ? { guardrailValue: ev.leaked } : {}),
     ...(() => { const m = updateMisconceptions(p.misconceptions, ev.plan, right); return m.length ? { misconceptions: m } : {}; })(),
+    ...(() => { const a = affectOf(ev.message); return { affect: a, affectStreak: a === p.affect && a !== "neutral" ? (p.affectStreak || 0) + 1 : a === "neutral" ? 0 : 1 }; })(),
   };
 }
 
@@ -475,9 +531,13 @@ export function teachingBlock(t: TutorTeachingState | undefined): string {
       : "They're moving: keep the help light (a question or a nudge).";
   const open = (t.misconceptions || []).filter((m) => !m.resolved);
   const mis = open.length ? ` OPEN MISCONCEPTIONS this session: ${open.map((m) => `"${m.label}"${m.turns > 1 ? ` (seen ${m.turns}×)` : ""}`).join("; ")} — before moving on, test each with a FRESH case that only works if they've let go of it; a confident wrong answer means probe the belief, not reteach the method.` : "";
+  const affect = t.affect === "frustrated" ? ` They sound FRUSTRATED${(t.affectStreak || 0) > 1 ? ` (${t.affectStreak} turns running)` : ""}: acknowledge it in a few warm words, shrink the next step so they get a quick win, praise the effort or the strategy (never "you're smart"), and keep the question easy to answer.`
+    : t.affect === "unsure" ? " They sound UNSURE: ask them to talk through their reasoning (or rate how sure they are, 1-5) before you confirm or correct — a guess that happens to be right is not yet understanding."
+    : t.affect === "confident" ? " They sound CONFIDENT: if they're right, raise the challenge; if they're wrong, this is the moment to probe the belief with a counter-example, not to reteach."
+    : "";
   const resolved = (t.misconceptions || []).filter((m) => m.resolved);
   const res = resolved.length ? ` Repaired so far: ${resolved.map((m) => `"${m.label}"`).join("; ")} — check one again later in the session (spaced retrieval).` : "";
-  return `\n\nTEACHING STATE (kept by the app): help level so far ${t.helpLevel}/4${t.lastAction ? `, last move: ${t.lastAction}` : ""}${t.lastDiagnosis ? `, last diagnosis: ${t.lastDiagnosis}` : ""}. ${advice}${mis}${res}`;
+  return `\n\nTEACHING STATE (kept by the app): help level so far ${t.helpLevel}/4${t.lastAction ? `, last move: ${t.lastAction}` : ""}${t.lastDiagnosis ? `, last diagnosis: ${t.lastDiagnosis}` : ""}. ${advice}${mis}${res}${affect}`;
 }
 
 /** Does `text` state the solution's final number? A number that's already in the problem statement (a given that
@@ -987,6 +1047,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       if (teachesOverError(reply, message, input.stepVerdict?.verdict)) issues.push("they just got it wrong and you went straight to the method. First find out what they were thinking: name the belief you suspect (\"it looks like you treated log(x+y) as log x + log y\") or ask one question / give one counter-example that tests it — then help. The goal is to fix the misconception, not to show the right answer");
       if (strategyMissing(message, allBoard(), result.board)) issues.push("they just solved it: name the reusable strategy behind it and put it on the board (WRITE_TO_BOARD kind strategy, a few words, e.g. \"Expand: fraction → product → powers\"), ideally asking them to put it in their own words");
       if (mentionsMechanics(reply)) issues.push("it talks about the app's machinery (a write that bounced, the board not letting you, a rule) — the student must never hear that. Drop it and just teach: ask them for the step, or write what's allowed");
+      if (isStudentWriting(message) && rewritesTheirWriting(reply)) issues.push("they shared their own writing and you rewrote it. Don't: quote ONE of their sentences, name one real strength, then the single most important improvement (claim, evidence, analysis or link to the question), and ask them to rewrite that sentence themselves");
       if (wrapsUpUnasked(reply, message)) issues.push("it offers to wrap up or move on, which they didn't ask for — stay on the current work");
       if (reportsCorrectResult(message) && !movesOn(reply, !!(result.problems.length || result.board.length))) issues.push("they just got an exercise right: confirm in one specific clause, then ONE critical-thinking move (why it works, does the result make sense, what if a given changed, or find the flaw in a plausible wrong line) and/or start the next activity yourself (the CURRENT lesson-plan milestone, in a new format) — end with one question or a new exercise");
       const missingObj = pointsAtMissingObject(reply, allBoard().map((b) => String(b.kind)));

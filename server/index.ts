@@ -13,7 +13,7 @@ import type { CourseworkDoc } from "../shared/coursework.ts";
 import { equivalent, gapTarget, verifyStepAgainstGap } from "../shared/mathEquiv.ts";
 import { gradeGapAnswer, gradeExerciseAnswer } from "../shared/exerciseVerification.ts";
 import { repairSpokenMath, spokenContextFrom } from "../shared/spokenMath.ts";
-import { nextTeachingState, evidenceKindFor, reachedSolutionSteps, resolveGapKey, rehydrateProblemKey } from "./tutor.ts";
+import { nextTeachingState, learningPrefsFrom, mergePrefs, evidenceKindFor, reachedSolutionSteps, resolveGapKey, rehydrateProblemKey } from "./tutor.ts";
 import { solveProblem, focusKeyOf, isNewProblem } from "./solver.ts";
 import { studentProblemStatement } from "./tutorAdapt.ts";
 import { recordConceptEvidence, normalizeStudentModel, emptyStudentModel } from "./studentModel.ts";
@@ -1974,6 +1974,7 @@ async function tutorTurn(
   // The teaching state and what this turn PROVED about the skill — both from code-verified events.
   const reached = reachedSolutionSteps(message, t.solution);
   const helpBefore = t.tutorState?.helpLevel ?? 0;
+  { const found = learningPrefsFrom(message); if (found.length) profile.tutorPrefs = mergePrefs(profile.tutorPrefs, found); }
   t.tutorState = nextTeachingState(t.tutorState, { message, verdict: stepVerdict?.verdict, plan: out.plan, reachedStep: reached.length > 0, leaked: out.leakedValue });
   const evidence = evidenceKindFor({ message, verdict: stepVerdict?.verdict, reachedFinal: reached.includes(0), helpLevel: helpBefore });
   const skill = t.solution?.skill || t.sourceSubject;

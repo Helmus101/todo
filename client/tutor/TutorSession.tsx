@@ -6,6 +6,7 @@ import { setLocalObjectives, getLocalThread, setLocalChat, setLocalBoard, setLoc
 import { useLang, LangContext } from "../ui.tsx";
 import { AskOttoPanel } from "../study/AskOttoPanel.tsx";
 import { autoMathLine } from "../../shared/mathText.ts";
+import { buildSessionRecap } from "../../shared/sessionRecap.ts";
 import { BoardArtifact, MathText } from "../study/artifacts/BoardArtifact.tsx";
 import { TutorDesmos } from "./TutorDesmos.tsx";
 import { enterFullscreen, exitFullscreen, inFullscreen } from "./fullscreen.ts";
@@ -967,6 +968,19 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
         <div className="tutor-reflect-overlay" role="dialog" aria-modal="true" aria-label={L("Avant de partir", "Before you go")} onClick={() => setReflectOpen(false)}>
           <div className="tutor-reflect" onClick={(e) => e.stopPropagation()}>
             <h3>{L("Avant de partir", "Before you go")}</h3>
+            {(() => {
+              const en = L("fr", "en") === "en";
+              const r = buildSessionRecap(task.board || [], task.problems || [], task.objectives || [], en);
+              if (!r.showed.length && !r.developing.length && !r.strategies.length && !r.reviewQuestion) return null;
+              return (
+                <div className="tutor-recap">
+                  {r.showed.length > 0 && <section><h4>{L("Tu as montré", "You showed")}</h4><ul>{r.showed.map((x, i) => <li key={i}><MathText text={x} /></li>)}</ul></section>}
+                  {r.developing.length > 0 && <section><h4>{L("À retravailler", "Still developing")}</h4><ul>{r.developing.map((x, i) => <li key={i}><MathText text={x} /></li>)}</ul></section>}
+                  {r.strategies.length > 0 && <section><h4>{L("Tes méthodes", "Your strategies")}</h4><ul>{r.strategies.map((x, i) => <li key={i}><MathText text={x} /></li>)}</ul></section>}
+                  {r.reviewQuestion && <p className="tutor-recap-review"><MathText text={r.reviewQuestion} /></p>}
+                </div>
+              );
+            })()}
             <p>{L("Qu'est-ce qui t'a fait « tilt » aujourd'hui, et qu'est-ce que tu ferais différemment la prochaine fois ?", "What's one thing that clicked today, and what would you do differently next time?")}</p>
             <textarea className="tutor-reflect-input" rows={4} autoFocus value={reflectText} onChange={(e) => setReflectText(e.target.value)} placeholder={L("Écris quelques mots… (facultatif)", "A few words… (optional)")} />
             <div className="tutor-reflect-actions">

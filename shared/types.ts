@@ -39,6 +39,9 @@ export interface TaskLink {
 
 /** A lightweight model of WHO THE USER IS — built up over time, used to ground + personalize tasks. */
 export interface Profile {
+  /** How this student likes to be taught, learned from what they ask the tutor for ("examples first", "draw it",
+   *  "shorter") — short labels only, never conversation text. Max 6, newest last. */
+  tutorPrefs?: string[];
   name?: string;          // what to call the user (asked at onboarding / learned from their mail)
   about: string;          // a short paragraph: role, how they work, what matters
   preferences: string[];  // e.g. "concise emails", "no meetings before 10am"
@@ -1253,6 +1256,9 @@ export interface TutorTeachingState {
   /** Misconceptions Otto diagnosed this session (short labels from its hidden turn plan, never the student's words):
    *  carried across turns so it revisits them instead of forgetting after one reply. Max 5. */
   misconceptions?: { label: string; turns: number; resolved?: boolean }[];
+  /** Their motivational state last turn (expert tutors track it alongside what they know), and for how many turns in a row. */
+  affect?: "frustrated" | "unsure" | "confident" | "neutral";
+  affectStreak?: number;
 }
 
 export interface WebTask {
