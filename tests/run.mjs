@@ -2274,8 +2274,8 @@ section("chatAboutTask's empty-completion fallback — wording matches what actu
   // actually appeared. Pin that the fallback branches on what was actually made (problem vs. diagram vs.
   // a plain board write), not one fixed "exercise" string regardless of kind.
   const src = claudeSource();
-  const start = src.indexOf("const finish = (reply: string): ChatResult => {");
-  const body = src.slice(start, src.indexOf("\n  };", start));
+  const start = src.indexOf("function finishChatReply(");
+  const body = src.slice(start, src.indexOf("\n}\n", start));
   check("branches on madeProblem", /madeProblem/.test(body));
   check("branches on madeDiagram separately from a plain board write", /madeDiagram/.test(body) && /madeBoardOnly/.test(body));
   check("the diagram branch doesn't say 'exercise'", /Here's the diagram/.test(body) && !/madeDiagram[\s\S]{0,80}exercise/i.test(body));
@@ -3307,8 +3307,8 @@ section("Flashcard/artifact-selection prompts carry the retrieval-quality and er
 section("Tutor prompt (chatAboutTask) carries the 'why don't they know' diagnosis + mastery-stop rules (source pins)");
 {
   const src3 = claudeSource();
-  const chatStart = src3.indexOf("export async function chatAboutTask(");
-  const chatBody = src3.slice(chatStart, src3.indexOf("\nexport async function", chatStart + 10));
+  // The chat pipeline: chatAboutTask plus the prompt/guardrail/tool-loop helpers it delegates to.
+  const chatBody = ["chat", "chatPrompt", "chatRounds", "chatTypes"].map((f) => readFileSync(new URL(`../server/ai/${f}.ts`, import.meta.url), "utf8")).join("\n");
   check("tutor prompt distinguishes never-learned/forgot/cant-start/dont-understand-the-question before responding to 'I don't know'", /"I DON'T KNOW" IS NOT ONE THING/.test(chatBody));
   check("tutor prompt repairs a prerequisite gap instead of re-explaining the advanced skill built on it", /that prerequisite gap is the actual problem/.test(chatBody));
   check("tutor prompt has an explicit mastery-stop rule (perform + explain-why + transfer → move on)", /KNOW WHEN TO STOP TEACHING/.test(chatBody));

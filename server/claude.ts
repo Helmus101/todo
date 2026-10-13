@@ -6,7 +6,8 @@
 //   steps       step/link cleanup and contamination guards
 //   tools       tool schemas offered to the model
 //   board       building and validating board entries, notes, decks, quizzes, problems
-//   chat        task chat and the tutor (chatAboutTask, studyHelp, tutorOpener)
+//   chat        task chat and the tutor (chatAboutTask, studyHelp, tutorOpener); its prompt is in
+//               chatPrompt, the tool/guardrail loop in chatRounds, shared types in chatTypes
 //   studyContent journal cards, practice problems, weekly/monthly decks, student model, themes
 //   voice       text-to-speech and image description
 //   coursework, scheduling
@@ -18,6 +19,9 @@ export * from "./ai/steps.ts";
 export * from "./ai/tools.ts";
 export * from "./ai/board.ts";
 export * from "./ai/chat.ts";
+export * from "./ai/chatTypes.ts";
+export * from "./ai/chatPrompt.ts";
+export * from "./ai/chatRounds.ts";
 export * from "./ai/studyContent.ts";
 export * from "./ai/voice.ts";
 export * from "./ai/coursework.ts";
