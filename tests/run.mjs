@@ -1,6 +1,6 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync, readdirSync } from "node:fs";
-import { recencyStamp, dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, homeworkTaskTitle, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor, attachLocationLinks, googleMapsDirectionsUrl, trimOldStudylogArtifacts, ensurePronoteLinks } from "../server/tasks.ts";
+import { crossSourceSame, recencyStamp, dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, homeworkTaskTitle, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor, attachLocationLinks, googleMapsDirectionsUrl, trimOldStudylogArtifacts, ensurePronoteLinks } from "../server/tasks.ts";
 import { sameAssignmentText, dedupePronoteHomework } from "../server/discover.ts";
 import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, shouldNudgeBoardContent, mathInPlay, newMathOffBoard, replyIntroducesNewMath, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem, makeProblem, detectLang, visionReady, describeWhiteboard, academicBlock, sessionRecapLine, whyContradictsCorrect } from "../server/claude.ts";
 import { sourcesForTrack, sourceForUrl, cleanProblemSource, excerptAround, findSourceQuestions } from "../server/questionSources.ts";
@@ -482,6 +482,21 @@ check("the SAME Pronote anchor as a dismissed one IS still suppressed", foldGene
 const doneA = { ...base, id: "a", title: "Book dentist for Thursday", why: "postcard from Dr Wu", source: "gmail", status: "done", anchorKey: "gmail:x1" };
 const freshDup = { ...base, id: "b", title: "Book dentist for Thursday", why: "postcard from Dr Wu", source: "gmail", status: "ready", anchorKey: "GMAIL_X1" };
 check("done beats fresh duplicate", dedupeTasks([doneA, freshDup]).length === 1 && dedupeTasks([doneA, freshDup])[0].status === "done");
+section("Same homework from Pronote and Gmail is ONE task (reported: repeating across sources)");
+{
+  const base = { urgency: 3, importance: 3, quadrant: "do", score: 1, risk: "low", createdAt: "2026-10-10T08:00:00Z" };
+  const pr = { ...base, id: "p1", source: "pronote", title: "Physique-Chimie homework", why: "Exercises from the textbook", sourceSubject: "Physique-Chimie", sourceDetail: "Exercices 12 à 15 page 84 sur la quantité de matière", sourceDue: "2026-10-16", anchorKey: "pronote:hw:991", status: "done" };
+  const gm = { ...base, id: "g1", source: "gmail", title: "Do physics exercises 12-15 p.84", why: "Mme Dupont's email: due Thursday", when: "2026-10-16", anchorKey: "gmail:thread:abc", status: "ready" };
+  const merged = dedupeTasks([pr, gm]);
+  check("a DONE Pronote homework absorbs the Gmail email about it — one task, still done", merged.length === 1 && merged[0].status === "done");
+  check("…and the other way round: an active Gmail card absorbs the Pronote copy", dedupeTasks([{ ...gm }, { ...pr, status: "ready" }]).length === 1);
+  check("a due date one day apart still matches (email says Wednesday night)", crossSourceSame(pr, { ...gm, when: "2026-10-15" }));
+  check("same assignment text without a date matches", crossSourceSame({ ...pr, sourceDue: undefined }, { ...gm, when: undefined, title: "Physique: exercices quantité de matière page 84" }));
+  check("a different subject never matches", !crossSourceSame(pr, { ...gm, title: "History essay on Versailles", why: "due Thursday" }));
+  check("the same subject a week later is a different homework", !crossSourceSame(pr, { ...gm, title: "Physics lab report", why: "new assignment", when: "2026-10-23" }));
+  check("two Pronote homeworks never merge through this rule (same source)", !crossSourceSame(pr, { ...pr, id: "p2", anchorKey: "pronote:hw:992" }));
+  check("a manual task is never absorbed by it", !crossSourceSame(pr, { ...gm, source: "manual" }));
+}
 // A genuinely NEW email (distinct anchor) whose title merely RESEMBLES an old DONE task must NOT be
 // swallowed into it — different anchors = different real-world items. (Regression: "refresh finds nothing"
 // when a fresh inbox thread looked like stale done history.)

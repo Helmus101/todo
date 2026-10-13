@@ -529,6 +529,44 @@ const sameTask = (a: WebTask, b: WebTask): boolean => {
  * merge — two sessions can each mint a FRESH random id for the same real-world item (e.g. two tabs both
  * sweeping the same Gmail thread at once), so an id-only union isn't enough to keep it from duplicating.
  */
+/** Subject names a Pronote homework is filed under, with the words a school email uses for the same class. */
+const SUBJECT_ALIASES: [RegExp, RegExp][] = [
+  [/physique|chimie|physics|chemistry/i, /\b(?:physique|chimie|physics|chemistry|phys|chem|pc)\b/i],
+  [/math/i, /\b(?:maths?|mathématiques|mathematics|calc(?:ulus)?|algebra|algèbre)\b/i],
+  [/histoire|history|géo|geography/i, /\b(?:histoire|history|hist|géo(?:graphie)?|geography|hg)\b/i],
+  [/svt|biolog/i, /\b(?:svt|biology|biologie|bio)\b/i],
+  [/anglais|english/i, /\b(?:anglais|english)\b/i],
+  [/espagnol|spanish/i, /\b(?:espagnol|spanish|español)\b/i],
+  [/allemand|german/i, /\b(?:allemand|german|deutsch)\b/i],
+  [/français|french|lettres/i, /\b(?:français|francais|french|lettres)\b/i],
+  [/philo/i, /\b(?:philo(?:sophie|sophy)?)\b/i],
+  [/ses|économ|econom/i, /\b(?:ses|économie|economics|econ)\b/i],
+];
+function mentionsSubject(subject: string, text: string): boolean {
+  const s = String(subject || "").trim();
+  if (!s) return false;
+  const t = String(text || "");
+  for (const [is, words] of SUBJECT_ALIASES) if (is.test(s)) return words.test(t);
+  return new RegExp(`\\b${s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(t);
+}
+const dayOf = (v?: string): number | null => { const n = Date.parse(String(v || "").slice(0, 10)); return Number.isFinite(n) ? Math.round(n / 86_400_000) : null; };
+/** The SAME homework seen from Pronote AND from another source (a school email about it). Their anchors always
+ *  differ and Pronote titles are generic ("Physique-Chimie homework"), so neither the anchor nor the title match
+ *  caught it — reported: "tasks repeating even though it got it from another source". Same subject AND (due within a
+ *  day OR the assignment text overlaps the other card). Exported for tests. */
+export function crossSourceSame(a: Pick<WebTask, "source" | "title" | "why" | "sourceSubject" | "sourceDetail" | "sourceDue" | "when">, b: typeof a): boolean {
+  if (a.source === b.source) return false;
+  const p = a.source === "pronote" ? a : b.source === "pronote" ? b : null;
+  if (!p) return false;
+  const o = p === a ? b : a;
+  if (o.source === "manual" || o.source === "studylog" || o.source === "freestudy") return false;
+  const otherText = `${o.title || ""} ${o.why || ""} ${o.sourceDetail || ""}`;
+  if (!mentionsSubject(p.sourceSubject || p.title || "", otherText)) return false;
+  const pd = dayOf(p.sourceDue || p.when), od = dayOf(o.sourceDue || o.when);
+  if (pd !== null && od !== null && Math.abs(pd - od) <= 1) return true;
+  return !!p.sourceDetail && looseDup(p.sourceDetail, `${o.title || ""} ${o.why || ""}`);
+}
+
 export function dedupeTasks(list: WebTask[]): WebTask[] {
   const kept: WebTask[] = [];
   const when = (t: WebTask) => Date.parse(t.updatedAt || t.createdAt || "") || 0;
@@ -543,6 +581,8 @@ export function dedupeTasks(list: WebTask[]): WebTask[] {
       // The SAME Pronote homework listed twice with slightly different text: same subject + due day + same distinctive words.
       if (t.source === "pronote" && k.source === "pronote" && !!t.sourceDetail && !!k.sourceDetail && (t.sourceSubject || "").toLowerCase() === (k.sourceSubject || "").toLowerCase()
         && String(t.sourceDue || "").slice(0, 10) === String(k.sourceDue || "").slice(0, 10) && sameAssignmentText(t.sourceDetail, k.sourceDetail)) { matchedByAnchor = true; return true; }
+      // The same homework from Pronote and from a school email: one item, whatever the anchors or statuses.
+      if (crossSourceSame(t, k)) { matchedByAnchor = true; return true; }
       // Two tasks that BOTH carry a REAL anchor and those anchors DIFFER: if either side is already handled
       // (done/dismissed), they are distinct real-world items (e.g. an old done email vs a new fresh email).
       // But two ACTIVE same-title tasks (distinct anchors) still merge so visual duplicates never appear.
@@ -1378,6 +1418,8 @@ export function foldGenerated(existing: WebTask[], genTasks: {
         (g.source === d.source && looseDup(g.why, d.why));
     });
   genTasks = genTasks.filter((g) => !resemblesDismissed(g));
+  // Never create a card for a homework that already exists from ANOTHER source (Pronote ↔ email), active or done.
+  genTasks = genTasks.filter((g) => !existing.some((e) => crossSourceSame(g as unknown as WebTask, e)));
 
   const candidates: WebTask[] = [...existing];
   const freshIds = new Set<string>();

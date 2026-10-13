@@ -15415,6 +15415,41 @@ var sameTask = (a, b) => {
   if (a.source === "manual" || b.source === "manual") return normTitle(a.title) === normTitle(b.title);
   return nearDup(a.title, b.title) || a.source === b.source && nearDup(a.why, b.why);
 };
+var SUBJECT_ALIASES = [
+  [/physique|chimie|physics|chemistry/i, /\b(?:physique|chimie|physics|chemistry|phys|chem|pc)\b/i],
+  [/math/i, /\b(?:maths?|mathématiques|mathematics|calc(?:ulus)?|algebra|algèbre)\b/i],
+  [/histoire|history|géo|geography/i, /\b(?:histoire|history|hist|géo(?:graphie)?|geography|hg)\b/i],
+  [/svt|biolog/i, /\b(?:svt|biology|biologie|bio)\b/i],
+  [/anglais|english/i, /\b(?:anglais|english)\b/i],
+  [/espagnol|spanish/i, /\b(?:espagnol|spanish|español)\b/i],
+  [/allemand|german/i, /\b(?:allemand|german|deutsch)\b/i],
+  [/français|french|lettres/i, /\b(?:français|francais|french|lettres)\b/i],
+  [/philo/i, /\b(?:philo(?:sophie|sophy)?)\b/i],
+  [/ses|économ|econom/i, /\b(?:ses|économie|economics|econ)\b/i]
+];
+function mentionsSubject(subject, text) {
+  const s = String(subject || "").trim();
+  if (!s) return false;
+  const t = String(text || "");
+  for (const [is, words3] of SUBJECT_ALIASES) if (is.test(s)) return words3.test(t);
+  return new RegExp(`\\b${s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(t);
+}
+var dayOf = (v) => {
+  const n = Date.parse(String(v || "").slice(0, 10));
+  return Number.isFinite(n) ? Math.round(n / 864e5) : null;
+};
+function crossSourceSame(a, b) {
+  if (a.source === b.source) return false;
+  const p = a.source === "pronote" ? a : b.source === "pronote" ? b : null;
+  if (!p) return false;
+  const o = p === a ? b : a;
+  if (o.source === "manual" || o.source === "studylog" || o.source === "freestudy") return false;
+  const otherText = `${o.title || ""} ${o.why || ""} ${o.sourceDetail || ""}`;
+  if (!mentionsSubject(p.sourceSubject || p.title || "", otherText)) return false;
+  const pd = dayOf(p.sourceDue || p.when), od = dayOf(o.sourceDue || o.when);
+  if (pd !== null && od !== null && Math.abs(pd - od) <= 1) return true;
+  return !!p.sourceDetail && looseDup(p.sourceDetail, `${o.title || ""} ${o.why || ""}`);
+}
 function dedupeTasks(list) {
   const kept = [];
   const when2 = (t) => Date.parse(t.updatedAt || t.createdAt || "") || 0;
@@ -15433,6 +15468,10 @@ function dedupeTasks(list) {
         return true;
       }
       if (t.source === "pronote" && k.source === "pronote" && !!t.sourceDetail && !!k.sourceDetail && (t.sourceSubject || "").toLowerCase() === (k.sourceSubject || "").toLowerCase() && String(t.sourceDue || "").slice(0, 10) === String(k.sourceDue || "").slice(0, 10) && sameAssignmentText(t.sourceDetail, k.sourceDetail)) {
+        matchedByAnchor = true;
+        return true;
+      }
+      if (crossSourceSame(t, k)) {
         matchedByAnchor = true;
         return true;
       }
@@ -15952,6 +15991,7 @@ function foldGenerated(existing, genTasks, highPriorityPeople = [], now_ = /* @_
     return looseDup(g.title, d.title) || looseDup(g.title, d.why) || looseDup(g.why, d.title) || g.source === d.source && looseDup(g.why, d.why);
   });
   genTasks = genTasks.filter((g) => !resemblesDismissed(g));
+  genTasks = genTasks.filter((g) => !existing.some((e) => crossSourceSame(g, e)));
   const candidates = [...existing];
   const freshIds = /* @__PURE__ */ new Set();
   for (const g of genTasks) {
@@ -16824,15 +16864,15 @@ function computeWorkload(input) {
     byDay.set(k, []);
   }
   const keySet = new Set(keys);
-  const dayOf = (iso2) => localDay2(iso2, tz);
+  const dayOf2 = (iso2) => localDay2(iso2, tz);
   for (const h of input.homework) {
-    const k = dayOf(h.deadline);
+    const k = dayOf2(h.deadline);
     if (!keySet.has(k)) continue;
     const effort = 1 + (h.description.length > 200 ? 0.5 : 0);
     byDay.get(k)?.push({ kind: "homework", subject: h.subject, title: h.description || h.subject, effort });
   }
   for (const t of input.tests) {
-    const k = dayOf(t.deadline);
+    const k = dayOf2(t.deadline);
     if (!keySet.has(k)) continue;
     const mult = low.has(t.subject.toLowerCase()) ? 1.5 : 1;
     byDay.get(k)?.push({ kind: "test", subject: t.subject, title: t.subject, effort: 3 * mult });
@@ -16844,7 +16884,7 @@ function computeWorkload(input) {
     const hasStatedDeadline = !!task.when?.trim();
     const bareKey = task.when && BARE_DATE.test(task.when) ? task.when : "";
     const dueTs = deadlineEpoch(task.when);
-    const parsedKey = bareKey || (Number.isFinite(dueTs) ? dayOf(new Date(dueTs).toISOString()) : "");
+    const parsedKey = bareKey || (Number.isFinite(dueTs) ? dayOf2(new Date(dueTs).toISOString()) : "");
     const key2 = parsedKey && keySet.has(parsedKey) ? parsedKey : todayKey;
     const bucket = byDay.get(key2);
     if (!bucket) continue;
