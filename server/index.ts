@@ -2014,7 +2014,7 @@ async function tutorTurn(
   t.updatedAt = now;
   await commit(req);
   res.json({
-    reply: out.reply, chatDelta: newChat, board: out.board, boardEdits: out.boardEdits, boardRemoved: out.boardRemoved, boardCleared: out.boardCleared, problems: out.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped,
+    reply: out.reply, chatDelta: newChat, board: out.board, boardEdits: out.boardEdits, boardRemoved: out.boardRemoved, boardCleared: out.boardCleared, problems: out.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped, solvedInChat: out.solvedInChat,
     task: { id: t.id, title: t.title, status: t.status, source: t.source, sourceSubject: t.sourceSubject, updatedAt: t.updatedAt, createdAt: t.createdAt },
   });
 }

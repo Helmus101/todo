@@ -15,7 +15,7 @@ import { selectJournal } from "../server/journal.ts";
 import { recentJournalLine } from "../server/claude.ts";
 import { countJournalEntries } from "../shared/journalCount.ts";
 import { reachedResultUnrecorded, setsMathTaskUnboarded } from "../server/tutorAdapt.ts";
-import { affectOf, learningPrefsFrom, mergePrefs, isStudentWriting, rewritesTheirWriting, backgroundBlock as tutorBackgroundBlock, mentionsMechanics, stripMechanics, updateMisconceptions, teachesOverError, strategyMissing, parsePlan, teachingBlock, wrongArithmetic, teachesUnboarded, boardStillEmpty, asksDiscussionQuestionUnboarded, isDiscussionSubject, statesClaimUnboarded, DISCUSSION_BLOCK, TUTOR_PROMPT, subjectsIn, reportsCorrectResult, movesOn, pointsAtMissingObject } from "../server/tutor.ts";
+import { answeredInChat, affectOf, learningPrefsFrom, mergePrefs, isStudentWriting, rewritesTheirWriting, backgroundBlock as tutorBackgroundBlock, mentionsMechanics, stripMechanics, updateMisconceptions, teachesOverError, strategyMissing, parsePlan, teachingBlock, wrongArithmetic, teachesUnboarded, boardStillEmpty, asksDiscussionQuestionUnboarded, isDiscussionSubject, statesClaimUnboarded, DISCUSSION_BLOCK, TUTOR_PROMPT, subjectsIn, reportsCorrectResult, movesOn, pointsAtMissingObject } from "../server/tutor.ts";
 import { blamesWidget } from "../server/tutorAdapt.ts";
 import { inventedNumbers } from "../server/tutorAdapt.ts";
 import { makeProblem as makeProblemP } from "../server/claude.ts";
@@ -5102,6 +5102,17 @@ section("Logarithm answers are graded by their terms, however they're typed (rep
   check("the unexpanded single log is not accepted for an 'expand' key", !practiceAnswerMatches("log_a(x^3 y^(1/2)/z)", key));
   check("a condensed answer matches its LaTeX key", logAnswerEquivalent("log_a(x^2/y)", String.raw`\log_{a}\left(\frac{x^2}{y}\right)`) === "correct" && logAnswerEquivalent("log_a(x²/y)", "log_a(x^2/y)") === "correct");
   check("ln works too; non-log answers are left to the other checks", logAnswerEquivalent("ln(x)+ln(y)", "ln x + ln y") === "correct" && logAnswerEquivalent("3x+1", "3x + 1") === "unknown");
+}
+
+section("A right answer given in chat solves the open exercise — no retyping into the box (reported live)");
+{
+  const p = { id: "p", createdAt: "", question: "Expand log_a(x^3 sqrt(y)/z)", answer: String.raw`3\log_a x + \frac{1}{2}\log_a y - \log_a z` };
+  check("typed in chat with words around it, it counts", answeredInChat("so it's 3log_a x + ½log_a y − log_a z", p));
+  check("a wrong one doesn't", !answeredInChat("so it's 3log_a x + 2log_a y − log_a z", p));
+  const n = { id: "n", createdAt: "", question: "Find P", answer: "8", value: 8 };
+  check("a numeric answer counts when short ('P = 8'), not inside an unrelated sentence or a question", answeredInChat("P = 8", n) && !answeredInChat("I did 8 of the exercises yesterday and then stopped", n) && !answeredInChat("is it 8?", n));
+  check("an app [Exercise] message, a solved problem, an MCQ and a rubric item are left alone", !answeredInChat('[Exercise] I answered "8"', n) && !answeredInChat("8", { ...n, solved: true }) && !answeredInChat("8", { ...n, options: ["8", "9"], correct: 0 }));
+  check("the turn reports it, the client marks it solved, and the box shows it as answered (source pins)", /solvedInChat: out\.solvedInChat/.test(readFileSync("server/index.ts", "utf8")) && /solvedInChat\.includes\(p\.id\) \? \{ \.\.\.p, solved: true \}/.test(readFileSync("client/tutor/TutorSession.tsx", "utf8")) && /const answered = !!problem\.solved \|\|/.test(readFileSync("client/study/artifacts/BoardArtifact.tsx", "utf8")));
 }
 
 section("Board changes are undoable in the Tutor session (spec §12 #10, source pins)");

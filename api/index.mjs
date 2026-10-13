@@ -13242,6 +13242,8 @@ import { fileURLToPath } from "node:url";
 import { randomUUID as randomUUID5, randomBytes as randomBytes2, createHash as createHash2 } from "node:crypto";
 
 // server/tutor.ts
+init_types();
+init_mathEquiv();
 import { randomUUID as randomUUID3 } from "node:crypto";
 
 // server/solver.ts
@@ -14008,6 +14010,7 @@ THE BOARD \u2014 shared paper, one worksheet per problem
 - Every maths line carries a short "why" (what it does and which rule allows it) \u2014 the board is read back later, so it must explain, not just list equations. Maths in LaTeX between $\u2026$. When they ask you to write something, write it (their step goes in as owner "student"). Write proactively, every turn that teaches or asks something: the key idea or definition you just taught, the question you just asked (as the current task), the step they reached, a figure for any relationship. Use a GAP (kind "gap", line ending "= ?", expectedAnswer set) only when they should fill in one specific line \u2014 at most one, never a second while one is open. Never write a step they haven't reached or the answer; never answer your own question on the board.
 - Figures must be accurate, so use the tools that draw to scale: triangles/circles/polygons \u2192 GEOMETRY_ON_BOARD; towers, cliffs, angles of elevation \u2192 TRIG_SCENE_ON_BOARD; a block on a slope, forces \u2192 INCLINE_ON_BOARD; functions \u2192 GRAPH_ON_BOARD; processes, causes, essay plans \u2192 FLOW_ON_BOARD. SVG_ON_BOARD is only for qualitative pictures (a cell, apparatus, a map) \u2014 never for anything with angles or lengths.
 - Fix a wrong line of YOURS in place with UPDATE_BOARD_LINE (or take it off with REMOVE_BOARD_LINE); the student's own lines are protected \u2014 add your corrected line beside theirs. Every board tool returns {ok:true\u2026} or {ok:false,error:{code}}: only say a change happened if the result says ok.
+- An answer they give in chat counts as much as one typed in the box: never make them re-enter a right answer.
 - Never mention the app's machinery to the student: if a board tool returns REJECTED/LIMIT/DUPLICATE, silently adjust (ask them for that step instead, or write something allowed). They never hear that a write "bounced" or that "the board won't let me".
 - Point at a line by its margin number ("look at line 4") or with ANNOTATE_BOARD. Never claim a board write you didn't make this turn.
 - NOTHING ON IT IS EVER DELETED \u2014 not their working, not an old problem, not a line you'd rather replace. There is no clear-board action: when the topic changes, ADD the new focus line and leave the old working there. Annotate or correct next to what they wrote; never overwrite it.
@@ -14271,6 +14274,17 @@ function rewritesTheirWriting(reply) {
   const r = String(reply || "");
   if (/\b(?:here(?:'s| is) (?:a |an |your )?(?:better|improved|rewritten|revised|stronger) (?:version|paragraph|intro(?:duction)?)|i(?:'ve| have) rewritten|voici (?:une )?(?:meilleure )?version (?:améliorée|corrigée|réécrite)|je l'ai réécrit)\b/i.test(r)) return true;
   return (r.match(/["“«][^"”»]{220,}["”»]/) || []).length > 0;
+}
+function answeredInChat(message, p) {
+  const m = String(message || "").trim();
+  if (!p.answer || p.solved || p.options?.length || p.rubric || /^\s*\[/.test(m) || /\?\s*$/.test(m)) return false;
+  const words3 = m.split(/\s+/).length;
+  if (words3 > 40) return false;
+  const numericKey = /^\s*-?\d+(?:[.,]\d+)?\s*[a-zA-Z%°/²³]*\s*$/.test(p.answer);
+  const tail = m.split(/=|\bit'?s\b|\bit is\b|\bis\b|:|\best\b|\bc'est\b|\bso\b|\bdonc\b/i).pop() || m;
+  const candidates = [.../* @__PURE__ */ new Set([m, tail.trim()])].filter(Boolean);
+  if (numericKey) return candidates.some((c) => c.split(/\s+/).length <= 4 && practiceAnswerMatches(c, p.answer, p.value));
+  return candidates.some((c) => logAnswerEquivalent(c, p.answer) === "correct" || logAnswerEquivalent(c, p.answer) === "unknown" && equivalent(c, p.answer) === "correct");
 }
 function asksStudentToChoose(reply) {
   return /\b(?:what|which)\b[^?]{0,60}\b(?:would you like|do you want|should we|shall we|part|topic|area|chapter|start with|focus on|work on|look at)\b[^?]*\?|\bor (?:something else|another topic)\b[^?]*\?|\bpar quoi\b[^?]*\?|\bqu(?:'|e )(?:est-ce que )?(?:tu veux|veux-tu|aimerais-tu)\b[^?]*\?/i.test(String(reply || ""));
@@ -14612,6 +14626,11 @@ async function runTutorTurn(input) {
   const { message, history, board, problems, objectives, context, lang } = input;
   const fr = lang === "fr";
   const result = { reply: "", board: [], problems: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false };
+  const solvedNow = problems.filter((p) => answeredInChat(message, p));
+  if (solvedNow.length) {
+    for (const p of solvedNow) p.solved = true;
+    result.solvedInChat = solvedNow.map((p) => p.id);
+  }
   const misgraded = misgradedExercise(message, input.solution);
   if (misgraded) {
     result.reply = fr ? "En fait, tu avais raison \u2014 la cl\xE9 de cet exercice \xE9tait fausse, pas ta r\xE9ponse. Bien jou\xE9, on continue !" : "Actually, you were right \u2014 this exercise's own answer key was wrong, not you. Nice work \u2014 let's keep going.";
@@ -14624,7 +14643,9 @@ async function runTutorTurn(input) {
     return !!l && proposesPlan(l.text);
   })();
   const discussion = isDiscussionSubject(context.subject, [message, ...history.slice(-4).map((h) => h.text)].join(" "));
-  const system = TUTOR_PROMPT + (input.voiceMode ? VOICE_BLOCK : "") + nowBlock() + backgroundBlock(context) + (discussion ? DISCUSSION_BLOCK : "") + objectivesBlock(objectives) + lessonPlanBlock(input.lessonPlan, input.lessonState) + (boardSurfaceBlock(board, problems) || "\n\nTHE BOARD IS EMPTY.") + solutionBlock(input.solution) + solutionMatchLine(message, input.solution) + teachingBlock(input.teaching) + stepVerdictLine(input.stepVerdict) + (input.spoken && spokenRepair ? voiceInputBlock(message, input.spoken.alternatives, spokenRepair) : "");
+  const system = TUTOR_PROMPT + (input.voiceMode ? VOICE_BLOCK : "") + nowBlock() + backgroundBlock(context) + (discussion ? DISCUSSION_BLOCK : "") + objectivesBlock(objectives) + lessonPlanBlock(input.lessonPlan, input.lessonState) + (boardSurfaceBlock(board, problems) || "\n\nTHE BOARD IS EMPTY.") + solutionBlock(input.solution) + solutionMatchLine(message, input.solution) + teachingBlock(input.teaching) + stepVerdictLine(input.stepVerdict) + (solvedNow.length ? `
+
+THEY JUST ANSWERED THE OPEN EXERCISE IN CHAT, AND IT IS RIGHT (checked by code): "${solvedNow[0].question.slice(0, 160)}". Confirm it and move on \u2014 never ask them to type it into the answer box.` : "") + (input.spoken && spokenRepair ? voiceInputBlock(message, input.spoken.alternatives, spokenRepair) : "");
   const messages = [
     { role: "system", content: system },
     ...history.slice(-MAX_HISTORY).filter((h) => h.text?.trim()).map((h) => ({ role: h.role, content: h.text.slice(0, 4e3) })),
@@ -18801,6 +18822,7 @@ async function tutorTurn(req, res, t, c) {
     problems: out.problems,
     objectives: out.objectives,
     guardrailTripped: out.guardrailTripped,
+    solvedInChat: out.solvedInChat,
     task: { id: t.id, title: t.title, status: t.status, source: t.source, sourceSubject: t.sourceSubject, updatedAt: t.updatedAt, createdAt: t.createdAt }
   });
 }

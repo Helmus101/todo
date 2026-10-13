@@ -11,6 +11,8 @@
 // Everything else — how Socratic to be, how much help, which board tool — is the prompt's job.
 import { randomUUID } from "node:crypto";
 import type { BoardEntry, Profile, TaskObjective, TaskProblem, TutorSolution, TutorTeachingState } from "../shared/types.ts";
+import { practiceAnswerMatches } from "../shared/types.ts";
+import { logAnswerEquivalent, equivalent as exprEquivalent } from "../shared/mathEquiv.ts";
 import { solutionBlock, solutionValues } from "./solver.ts";
 import { buildInclineScene, type InclineForce } from "../shared/inclineScene.ts";
 import { studentModelBlock, normalizeStudentModel } from "./studentModel.ts";
@@ -92,6 +94,7 @@ THE BOARD — shared paper, one worksheet per problem
 - Every maths line carries a short "why" (what it does and which rule allows it) — the board is read back later, so it must explain, not just list equations. Maths in LaTeX between $…$. When they ask you to write something, write it (their step goes in as owner "student"). Write proactively, every turn that teaches or asks something: the key idea or definition you just taught, the question you just asked (as the current task), the step they reached, a figure for any relationship. Use a GAP (kind "gap", line ending "= ?", expectedAnswer set) only when they should fill in one specific line — at most one, never a second while one is open. Never write a step they haven't reached or the answer; never answer your own question on the board.
 - Figures must be accurate, so use the tools that draw to scale: triangles/circles/polygons → GEOMETRY_ON_BOARD; towers, cliffs, angles of elevation → TRIG_SCENE_ON_BOARD; a block on a slope, forces → INCLINE_ON_BOARD; functions → GRAPH_ON_BOARD; processes, causes, essay plans → FLOW_ON_BOARD. SVG_ON_BOARD is only for qualitative pictures (a cell, apparatus, a map) — never for anything with angles or lengths.
 - Fix a wrong line of YOURS in place with UPDATE_BOARD_LINE (or take it off with REMOVE_BOARD_LINE); the student's own lines are protected — add your corrected line beside theirs. Every board tool returns {ok:true…} or {ok:false,error:{code}}: only say a change happened if the result says ok.
+- An answer they give in chat counts as much as one typed in the box: never make them re-enter a right answer.
 - Never mention the app's machinery to the student: if a board tool returns REJECTED/LIMIT/DUPLICATE, silently adjust (ask them for that step instead, or write something allowed). They never hear that a write \"bounced\" or that \"the board won't let me\".
 - Point at a line by its margin number ("look at line 4") or with ANNOTATE_BOARD. Never claim a board write you didn't make this turn.
 - NOTHING ON IT IS EVER DELETED — not their working, not an old problem, not a line you'd rather replace. There is no clear-board action: when the topic changes, ADD the new focus line and leave the old working there. Annotate or correct next to what they wrote; never overwrite it.
@@ -405,6 +408,23 @@ export function rewritesTheirWriting(reply: string): boolean {
   return (r.match(/["“«][^"”»]{220,}["”»]/) || []).length > 0;
 }
 
+/** The student gave the answer to an open free-response problem in the chat ("so it's 3log_a x + ½log_a y − log_a z").
+ *  It counts — reported: Otto kept insisting they retype a right answer into the box. Checks the whole message and the
+ *  part after its last "=", "is" or ":" so a short sentence around the answer still matches; a bare-number key needs a
+ *  short message so "3 of them?" can't match "3". Exported for tests. */
+export function answeredInChat(message: string, p: TaskProblem): boolean {
+  const m = String(message || "").trim();
+  if (!p.answer || p.solved || p.options?.length || p.rubric || /^\s*\[/.test(m) || /\?\s*$/.test(m)) return false;
+  const words = m.split(/\s+/).length;
+  if (words > 40) return false;
+  const numericKey = /^\s*-?\d+(?:[.,]\d+)?\s*[a-zA-Z%°/²³]*\s*$/.test(p.answer);
+  const tail = m.split(/=|\bit'?s\b|\bit is\b|\bis\b|:|\best\b|\bc'est\b|\bso\b|\bdonc\b/i).pop() || m;
+  const candidates = [...new Set([m, tail.trim()])].filter(Boolean);
+  if (numericKey) return candidates.some((c) => c.split(/\s+/).length <= 4 && practiceAnswerMatches(c, p.answer!, p.value));
+  // An expression key: only a real mathematical match counts (never the loose leading-number fallbacks).
+  return candidates.some((c) => logAnswerEquivalent(c, p.answer!) === "correct" || (logAnswerEquivalent(c, p.answer!) === "unknown" && exprEquivalent(c, p.answer!) === "correct"));
+}
+
 /** The reply hands the choice back ("What would you like to start with?", "which topic…?") — the move a tutor that
  *  already owns a plan must not make when the student delegated. Exported for tests. */
 export function asksStudentToChoose(reply: string): boolean {
@@ -449,6 +469,8 @@ export interface TutorTurnResult {
   error?: boolean;
   /** A reply had to be replaced because it gave the answer away. */
   guardrailTripped: boolean;
+  /** Open problems the student answered correctly IN CHAT this turn — the client marks them solved (no retyping into the box). */
+  solvedInChat?: string[];
   /** The exact `leaked` identifier from leakedValue() that tripped the guard this turn, if it did — fed
    *  into nextTeachingState so a SECOND consecutive trip on the same value can resolve it instead of
    *  repeating the identical fallback sentence forever (see guardrailStreak on TutorTeachingState). */
@@ -919,6 +941,9 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const { message, history, board, problems, objectives, context, lang } = input;
   const fr = lang === "fr";
   const result: TutorTurnResult = { reply: "", board: [], problems: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false };
+  // A right answer given in chat to an open problem counts as solving it.
+  const solvedNow = problems.filter((p) => answeredInChat(message, p));
+  if (solvedNow.length) { for (const p of solvedNow) p.solved = true; result.solvedInChat = solvedNow.map((p) => p.id); }
 
   // The exercise widget marked them wrong, but the independently-verified solution says they were right —
   // settle it immediately and deterministically, no model call needed (and none of the model's own doubt
@@ -950,6 +975,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     + solutionMatchLine(message, input.solution)
     + teachingBlock(input.teaching)
     + stepVerdictLine(input.stepVerdict)
+    + (solvedNow.length ? `\n\nTHEY JUST ANSWERED THE OPEN EXERCISE IN CHAT, AND IT IS RIGHT (checked by code): \"${solvedNow[0].question.slice(0, 160)}\". Confirm it and move on — never ask them to type it into the answer box.` : "")
     + (input.spoken && spokenRepair ? voiceInputBlock(message, input.spoken.alternatives, spokenRepair) : "");
 
   const messages: any[] = [

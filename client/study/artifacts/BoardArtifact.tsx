@@ -406,7 +406,7 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
   const [expanded, setExpanded] = useState(false);
   const problemIsMCQ = Array.isArray(problem.options) && problem.options.length >= 2;
   const wrong = state.wrong || [];
-  const answered = problemIsMCQ ? state.picked !== null && state.picked === problem.correct : state.submitted && isCorrect;
+  const answered = !!problem.solved || (problemIsMCQ ? state.picked !== null && state.picked === problem.correct : state.submitted && isCorrect);
   const missed = !answered && (problemIsMCQ ? wrong.length > 0 : state.submitted);
 
   if (answered && !expanded) {

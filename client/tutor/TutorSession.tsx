@@ -349,7 +349,10 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       // fall back on. NEVER let a turn's delta replace what's already on screen outright: its own arrays
       // are capped and can lag behind this device, so taking it wholesale would wipe older board entries.
       const newBoard = boardCleared ? (board || []) : applyBoardEdits(mergeBoardById(task.board || [], board || []), boardEdits, boardRemoved);
-      const newProblems = mergeBoardById(task.problems || [], problems || []);
+      const solvedRaw = (response as unknown as { solvedInChat?: unknown }).solvedInChat;
+      const solvedInChat: string[] = Array.isArray(solvedRaw) ? solvedRaw.filter((x): x is string => typeof x === "string") : [];
+      for (const id of solvedInChat) solvedRef.current.add(id);
+      const newProblems = mergeBoardById(task.problems || [], problems || []).map((p) => (solvedInChat.includes(p.id) ? { ...p, solved: true } : p));
       if ((task.board || []).length && JSON.stringify(task.board) !== JSON.stringify(newBoard)) {
         boardHistoryRef.current = [...boardHistoryRef.current, { taskId: task.id, board: task.board || [] }].slice(-20);
         setUndoCount(boardHistoryRef.current.length);
