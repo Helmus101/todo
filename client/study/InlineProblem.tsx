@@ -3,7 +3,7 @@ import { useState } from "react";
 import type { TaskProblem } from "../../shared/types.ts";
 import { isNumericAnswer, problemIsPercent } from "../../shared/types.ts";
 import { gradeExerciseAnswer } from "../../shared/exerciseVerification.ts";
-import { conceptMissMessage } from "./artifacts/BoardArtifact.tsx";
+import { conceptMissMessage, MathText } from "./artifacts/BoardArtifact.tsx";
 import { stripStrayMarkdown, useLang } from "../ui.tsx";
 
 interface InlineProblemProps {
@@ -40,16 +40,16 @@ export function InlineProblem({ problem }: InlineProblemProps) {
   return (
     <div className="sm-inline-problem">
       <div className="sm-inline-problem-label">{L("Problème d'entraînement", "Practice problem")}</div>
-      <div className="sm-inline-problem-q">{stripStrayMarkdown(problem.question)}</div>
+      <div className="sm-inline-problem-q"><MathText text={stripStrayMarkdown(problem.question)} /></div>
 
       {problem.format && !answered ? (
-        <div className="sm-inline-problem-format">{problem.format}</div>
+        <div className="sm-inline-problem-format"><MathText text={problem.format} /></div>
       ) : null}
 
       {problem.hint && !answered ? (
         <div className="sm-inline-problem-hint-row">
           {showHint ? (
-            <div className="sm-inline-problem-hint">{stripStrayMarkdown(problem.hint)}</div>
+            <div className="sm-inline-problem-hint"><MathText text={stripStrayMarkdown(problem.hint)} /></div>
           ) : (
             <button type="button" className="sm-btn sm-btn-ghost sm-btn-sm" onClick={() => setShowHint(true)}>
               {L("Indice", "Hint")}
@@ -70,7 +70,7 @@ export function InlineProblem({ problem }: InlineProblemProps) {
                 disabled={answered || wrong.includes(oi)}
                 onClick={() => pick(oi)}
               >
-                <span className="quiz-opt-text">{stripStrayMarkdown(opt)}</span>
+                <span className="quiz-opt-text"><MathText text={stripStrayMarkdown(opt)} /></span>
                 {state === "correct" && <span className="quiz-opt-mark" aria-hidden="true">✓</span>}
                 {state === "wrong" && <span className="quiz-opt-mark" aria-hidden="true">✗</span>}
               </button>
@@ -117,7 +117,7 @@ export function InlineProblem({ problem }: InlineProblemProps) {
         </div>
       ) : null}
       {answered && problem.why ? (
-        <div className="sm-inline-problem-why">{stripStrayMarkdown(problem.why)}</div>
+        <div className="sm-inline-problem-why"><MathText text={stripStrayMarkdown(problem.why)} /></div>
       ) : null}
     </div>
   );

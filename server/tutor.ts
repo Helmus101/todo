@@ -425,6 +425,17 @@ export function answeredInChat(message: string, p: TaskProblem): boolean {
   return candidates.some((c) => logAnswerEquivalent(c, p.answer!) === "correct" || (logAnswerEquivalent(c, p.answer!) === "unknown" && exprEquivalent(c, p.answer!) === "correct"));
 }
 
+/** A critical-thinking partner doesn't just agree: in a discussion, a reply that endorses their point ("Great point",
+ *  "Exactly", "I agree") without pushing on it — no objection, no request for evidence, no "what would a critic say" —
+ *  teaches nothing (CAiSEY: "Good point about network effects. Can you think of a case where that logic didn't hold?").
+ *  Exported for tests. */
+export function agreesWithoutChallenge(reply: string, message: string): boolean {
+  const r = String(reply || "").trim();
+  if (!/^\s*(?:great|good|nice|excellent|interesting) (?:point|take|idea|argument)|^\s*(?:exactly|absolutely|i agree|that'?s (?:right|true|a good point)|yes\b|totally|right\b|bien vu|exactement|tout à fait|je suis d'accord|bonne idée)/i.test(r)) return false;
+  if (String(message || "").trim().split(/\s+/).length < 6) return false;
+  return !/\b(?:but|however|yet|though|what (?:would|if|about)|critic|counter|opposite|disagree|evidence|prove|show that|how do you know|why|which (?:matters|mattered)|stronger|weaker|case where|exception|always|assum|mais|cependant|pourtant|et si|preuve|pourquoi|contre-?argument|objection)\b/i.test(r);
+}
+
 /** The reply hands the choice back ("What would you like to start with?", "which topic…?") — the move a tutor that
  *  already owns a plan must not make when the student delegated. Exported for tests. */
 export function asksStudentToChoose(reply: string): boolean {
@@ -1074,6 +1085,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       if (strategyMissing(message, allBoard(), result.board)) issues.push("they just solved it: name the reusable strategy behind it and put it on the board (WRITE_TO_BOARD kind strategy, a few words, e.g. \"Expand: fraction → product → powers\"), ideally asking them to put it in their own words");
       if (mentionsMechanics(reply)) issues.push("it talks about the app's machinery (a write that bounced, the board not letting you, a rule) — the student must never hear that. Drop it and just teach: ask them for the step, or write what's allowed");
       if (isStudentWriting(message) && rewritesTheirWriting(reply)) issues.push("they shared their own writing and you rewrote it. Don't: quote ONE of their sentences, name one real strength, then the single most important improvement (claim, evidence, analysis or link to the question), and ask them to rewrite that sentence themselves");
+      if (discussion && agreesWithoutChallenge(reply, message)) issues.push("you just agreed with their point and stopped. Be a critical-thinking partner: credit what's strong in one clause, then push on it ONCE — the strongest objection a critic would raise, a case where the logic doesn't hold, or the evidence it still needs — and ask them to answer it");
       if (wrapsUpUnasked(reply, message)) issues.push("it offers to wrap up or move on, which they didn't ask for — stay on the current work");
       if (reportsCorrectResult(message) && !movesOn(reply, !!(result.problems.length || result.board.length))) issues.push("they just got an exercise right: confirm in one specific clause, then ONE critical-thinking move (why it works, does the result make sense, what if a given changed, or find the flaw in a plausible wrong line) and/or start the next activity yourself (the CURRENT lesson-plan milestone, in a new format) — end with one question or a new exercise");
       const missingObj = pointsAtMissingObject(reply, allBoard().map((b) => String(b.kind)));
@@ -1450,6 +1462,8 @@ DISCUSSION SUBJECT — you are a critical-thinking partner, not an answer machin
 - Be accurate. Never invent a quote, source, date, page number or historian's position. Say "historians disagree here" when they do, and say when you're unsure. If a fact they state is wrong, correct it plainly and show why it matters to their claim.
 - Don't give the answer to an open question, but don't trap them either: after two stuck turns, lay out the competing considerations yourself and ask which they'd weight more.
 - Board for these subjects (use it, the questions and the thinking belong there): their CLAIM as owner "student" (kind "insight"); evidence and the counter-argument you raised as short Otto lines; the argument map as FLOW_ON_BOARD (claim → evidence → reasoning → objection → reply); a timeline or comparison as an outline; a source's origin/purpose/value/limitation as an outline. Each question you ask them to think about goes on the board as a short line too. Never use "= ?" gaps or numeric answer boxes here; use a CREATE_PROBLEM with a rubric only for a definition or a recall check (e.g. define a term, name two causes).
+- Steelman and switch sides: now and then ask them to argue the OTHER side as strongly as they can, or to name the best argument against their own view — then which survives, and why.
+- Push for precision: "most", "always", "caused" — ask how much, how often, compared to what. Ask what would count as evidence against their claim.
 - Close a thread with them stating, in their own words, what they now think and what would change their mind.`;
 
 // ── Subject detection (the session starts with one open question, no subject picker) ──────────────────

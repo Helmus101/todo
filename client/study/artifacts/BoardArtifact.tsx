@@ -382,6 +382,8 @@ interface ProblemBlockProps {
   onSubmit: () => void;
   en: boolean;
   fresh?: boolean;
+  /** The submitted answer met a stored key that contradicts the verified value (spec §19.1): never shown as wrong. */
+  systemError?: boolean;
 }
 
 // A practice problem NEVER reveals its answer. Reported live ("it gives the answer, this should never
@@ -402,12 +404,12 @@ export function conceptMissMessage(problem: Pick<TaskProblem, "rubric">, given: 
   return null;
 }
 
-function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onShowHint, onPick, onTextAnswer, onSubmit, en, fresh }: ProblemBlockProps) {
+function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, systemError, onShowHint, onPick, onTextAnswer, onSubmit, en, fresh }: ProblemBlockProps) {
   const [expanded, setExpanded] = useState(false);
   const problemIsMCQ = Array.isArray(problem.options) && problem.options.length >= 2;
   const wrong = state.wrong || [];
   const answered = !!problem.solved || (problemIsMCQ ? state.picked !== null && state.picked === problem.correct : state.submitted && isCorrect);
-  const missed = !answered && (problemIsMCQ ? wrong.length > 0 : state.submitted);
+  const missed = !answered && !systemError && (problemIsMCQ ? wrong.length > 0 : state.submitted);
 
   if (answered && !expanded) {
     return (
@@ -508,6 +510,11 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
           {problemIsMCQ
             ? (en ? "Not quite — try another option." : "Pas tout à fait — essaie une autre réponse.")
             : conceptMissMessage(problem, state.textAnswer, en) || (en ? "Not quite — try again." : "Pas tout à fait — réessaie.")}
+        </div>
+      ) : null}
+      {systemError && state.submitted && !answered ? (
+        <div className="sm-inline-problem-result" role="status">
+          {en ? "This exercise's answer key disagrees with the verified value — your answer isn't counted wrong. Otto will sort it out." : "La clé de cet exercice contredit la valeur vérifiée — ta réponse n'est pas comptée fausse. Otto va corriger."}
         </div>
       ) : null}
       {answered && problem.why ? (
@@ -634,6 +641,7 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
 
   // A wrong pick is recorded (struck out) but never "answers" the problem — only the correct one does.
   const attemptsRef = useRef<Record<string, number>>({});
+  const lastGivenRef = useRef<Record<string, string>>({});
   const reportResult = (problem: TaskProblem, given: string, status: GradeStatus) => {
     const attempt = (attemptsRef.current[problem.id] = (attemptsRef.current[problem.id] || 0) + 1);
     onProblemResult?.({ problem, given, correct: status === "correct", attempt, ...(status === "system_error" ? { systemError: true } : {}), ...(status === "partially_correct" ? { partial: true } : {}) });
@@ -654,7 +662,8 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
 
   const submitProblem = (problemId: string) => {
     const pr = problems.find((p) => p.id === problemId);
-    if (pr && pr.answer) { const given = (problemState[problemId]?.textAnswer || "").trim(); if (given) reportResult(pr, given, gradeExerciseAnswer(pr, given, { percent: problemIsPercent(pr) }).status); }
+    // The same answer checked twice in a row is one attempt, not two (reported: identical "[Exercise] … wrong" spam to Otto).
+    if (pr && pr.answer) { const given = (problemState[problemId]?.textAnswer || "").trim(); if (given && lastGivenRef.current[problemId] !== given) { lastGivenRef.current[problemId] = given; reportResult(pr, given, gradeExerciseAnswer(pr, given, { percent: problemIsPercent(pr) }).status); } }
     setProblemState(prev => ({ ...prev, [problemId]: { ...prev[problemId] || { picked: null, textAnswer: "", submitted: false }, submitted: true } }));
   };
 
@@ -670,6 +679,12 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
   // "5pi/6" = "5π/6", "7/2" = "3.5", "84" = "84 m" — wrapped in the shared grader (spec §19), which grades
   // against the independently computed value and reports a stored key that disagrees with it as a SYSTEM
   // ERROR (shown as "Otto will check it", never as wrong). A plain string compare here marked those wrong.
+  const freeResponseStatus = (problemId: string): GradeStatus | null => {
+    const problem = problems.find(p => p.id === problemId);
+    const st = getProblemState(problemId);
+    if (!problem || !problem.answer || !st.submitted) return null;
+    return gradeExerciseAnswer(problem, st.textAnswer, { percent: problemIsPercent(problem) }).status;
+  };
   const checkFreeResponse = (problemId: string): boolean => {
     const problem = problems.find(p => p.id === problemId);
     if (!problem || !problem.answer) return false;
@@ -783,6 +798,7 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
             state={getProblemState(item.problem.id)}
             hintShown={!!showHint[item.problem.id]}
             isCorrect={checkFreeResponse(item.problem.id)}
+            systemError={freeResponseStatus(item.problem.id) === "system_error"}
             onShowHint={() => setShowHint(prev => ({ ...prev, [item.problem!.id]: true }))}
             onPick={(picked) => setProblemPicked(item.problem!, picked)}
             onTextAnswer={(text) => setProblemTextAnswer(item.problem!.id, text)}

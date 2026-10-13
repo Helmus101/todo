@@ -14286,6 +14286,12 @@ function answeredInChat(message, p) {
   if (numericKey) return candidates.some((c) => c.split(/\s+/).length <= 4 && practiceAnswerMatches(c, p.answer, p.value));
   return candidates.some((c) => logAnswerEquivalent(c, p.answer) === "correct" || logAnswerEquivalent(c, p.answer) === "unknown" && equivalent(c, p.answer) === "correct");
 }
+function agreesWithoutChallenge(reply, message) {
+  const r = String(reply || "").trim();
+  if (!/^\s*(?:great|good|nice|excellent|interesting) (?:point|take|idea|argument)|^\s*(?:exactly|absolutely|i agree|that'?s (?:right|true|a good point)|yes\b|totally|right\b|bien vu|exactement|tout à fait|je suis d'accord|bonne idée)/i.test(r)) return false;
+  if (String(message || "").trim().split(/\s+/).length < 6) return false;
+  return !/\b(?:but|however|yet|though|what (?:would|if|about)|critic|counter|opposite|disagree|evidence|prove|show that|how do you know|why|which (?:matters|mattered)|stronger|weaker|case where|exception|always|assum|mais|cependant|pourtant|et si|preuve|pourquoi|contre-?argument|objection)\b/i.test(r);
+}
 function asksStudentToChoose(reply) {
   return /\b(?:what|which)\b[^?]{0,60}\b(?:would you like|do you want|should we|shall we|part|topic|area|chapter|start with|focus on|work on|look at)\b[^?]*\?|\bor (?:something else|another topic)\b[^?]*\?|\bpar quoi\b[^?]*\?|\bqu(?:'|e )(?:est-ce que )?(?:tu veux|veux-tu|aimerais-tu)\b[^?]*\?/i.test(String(reply || ""));
 }
@@ -14736,6 +14742,7 @@ THEY JUST ANSWERED THE OPEN EXERCISE IN CHAT, AND IT IS RIGHT (checked by code):
       if (strategyMissing(message, allBoard(), result.board)) issues.push('they just solved it: name the reusable strategy behind it and put it on the board (WRITE_TO_BOARD kind strategy, a few words, e.g. "Expand: fraction \u2192 product \u2192 powers"), ideally asking them to put it in their own words');
       if (mentionsMechanics(reply)) issues.push("it talks about the app's machinery (a write that bounced, the board not letting you, a rule) \u2014 the student must never hear that. Drop it and just teach: ask them for the step, or write what's allowed");
       if (isStudentWriting(message) && rewritesTheirWriting(reply)) issues.push("they shared their own writing and you rewrote it. Don't: quote ONE of their sentences, name one real strength, then the single most important improvement (claim, evidence, analysis or link to the question), and ask them to rewrite that sentence themselves");
+      if (discussion && agreesWithoutChallenge(reply, message)) issues.push("you just agreed with their point and stopped. Be a critical-thinking partner: credit what's strong in one clause, then push on it ONCE \u2014 the strongest objection a critic would raise, a case where the logic doesn't hold, or the evidence it still needs \u2014 and ask them to answer it");
       if (wrapsUpUnasked(reply, message)) issues.push("it offers to wrap up or move on, which they didn't ask for \u2014 stay on the current work");
       if (reportsCorrectResult(message) && !movesOn(reply, !!(result.problems.length || result.board.length))) issues.push("they just got an exercise right: confirm in one specific clause, then ONE critical-thinking move (why it works, does the result make sense, what if a given changed, or find the flaw in a plausible wrong line) and/or start the next activity yourself (the CURRENT lesson-plan milestone, in a new format) \u2014 end with one question or a new exercise");
       const missingObj = pointsAtMissingObject(reply, allBoard().map((b) => String(b.kind)));
@@ -15033,6 +15040,8 @@ DISCUSSION SUBJECT \u2014 you are a critical-thinking partner, not an answer mac
 - Be accurate. Never invent a quote, source, date, page number or historian's position. Say "historians disagree here" when they do, and say when you're unsure. If a fact they state is wrong, correct it plainly and show why it matters to their claim.
 - Don't give the answer to an open question, but don't trap them either: after two stuck turns, lay out the competing considerations yourself and ask which they'd weight more.
 - Board for these subjects (use it, the questions and the thinking belong there): their CLAIM as owner "student" (kind "insight"); evidence and the counter-argument you raised as short Otto lines; the argument map as FLOW_ON_BOARD (claim \u2192 evidence \u2192 reasoning \u2192 objection \u2192 reply); a timeline or comparison as an outline; a source's origin/purpose/value/limitation as an outline. Each question you ask them to think about goes on the board as a short line too. Never use "= ?" gaps or numeric answer boxes here; use a CREATE_PROBLEM with a rubric only for a definition or a recall check (e.g. define a term, name two causes).
+- Steelman and switch sides: now and then ask them to argue the OTHER side as strongly as they can, or to name the best argument against their own view \u2014 then which survives, and why.
+- Push for precision: "most", "always", "caused" \u2014 ask how much, how often, compared to what. Ask what would count as evidence against their claim.
 - Close a thread with them stating, in their own words, what they now think and what would change their mind.`;
 var SUBJECTS = [
   ["Math", /\b(math|maths|mathématiques|equation|équation|derivative|dérivée|integral|intégrale|fraction|algebra|algèbre|geometry|géométrie|trigo\w*|sin|cos|tan|triangle|polynom\w*|function|fonction|limit|limite|probabilit\w*|vector|vecteur|matrix|matrice|log|exponential|exponentielle|suite|sequence|quadratic|factor\w*|solve|résou\w*|calcul\w*)\b|[0-9]\s*[x²³]|[=+×÷^√∫]/i],

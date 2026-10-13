@@ -5,7 +5,7 @@
 // carries the conversation first and the background second.
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
 delete process.env.GEMINI_API_KEY;
-const { runTutorTurn, detectSubject, backgroundBlock, TUTOR_PROMPT, leakedValue, wantsExercise, inventsProblemOnBoard, doubtsRightAnswer, misgradedExercise, softenOpener, computedGapKey, nextTeachingState, sendsBackToStatement, statesFormula, misstatesGiven, stripPraiseOpener, tutorTools, applyTool, delegatesChoice, statesStudyGoal, proposesPlan, planConsented, asksStudentToChoose, repeatsSolvedCalculation } = await import("../server/tutor.ts");
+const { runTutorTurn, detectSubject, backgroundBlock, TUTOR_PROMPT, leakedValue, wantsExercise, inventsProblemOnBoard, doubtsRightAnswer, misgradedExercise, softenOpener, computedGapKey, nextTeachingState, sendsBackToStatement, statesFormula, misstatesGiven, stripPraiseOpener, tutorTools, applyTool, delegatesChoice, statesStudyGoal, proposesPlan, planConsented, agreesWithoutChallenge, asksStudentToChoose, repeatsSolvedCalculation } = await import("../server/tutor.ts");
 const { equivalent } = await import("../shared/mathEquiv.ts");
 const { equationsAhead } = await import("../shared/equationsAhead.ts");
 const { boardLineNumbers } = await import("../shared/boardLines.ts");
@@ -412,6 +412,17 @@ export async function runTutorEngineSim(check, section) {
     // i.e. the same case bug that stopped EVERY uppercase unknown (P, Q, V, F…) from ever being solved.
     && sgk("F = 5 ⟹ F = ?") === 5
     && equivalent("0.54", String(sgk("2·9.8·3 = ½(400)x² ⟹ x = ?")), "x") === "correct" && equivalent("0.55", "0.542218", "x") === "incorrect");
+
+  section("Critical-thinking partner: agreement is always followed by a challenge");
+  {
+    const claim = "I think the treaty of Versailles caused the war because it humiliated Germany";
+    check("'Great point, the treaty really humiliated Germany.' is caught", agreesWithoutChallenge("Great point, the treaty really humiliated Germany.", claim));
+    check("…agreement plus an objection passes", !agreesWithoutChallenge("Good point — but the Depression hit a decade later. Would the Nazis have won without it?", claim));
+    check("…and a short 'yes' to a short answer isn't a debate turn", !agreesWithoutChallenge("Yes.", "it's 8"));
+    script = (b, i) => i === 0 ? { content: "Great point, the treaty really humiliated Germany." } : { content: "Good point — but the Depression came a decade later. Would the Nazis have won without it?" };
+    const rh = await run(claim, { context: { subject: "History" } });
+    check("in a History session the correction round asks for the challenge", /critical-thinking partner/.test(lastUser(calls[1])) && /Depression/.test(rh.reply));
+  }
 
   section("Spec: proactive lesson plan, one canonical summary, rubric-graded concept answers");
   {

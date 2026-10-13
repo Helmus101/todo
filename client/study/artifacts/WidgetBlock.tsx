@@ -134,7 +134,7 @@ function SortWidget({ id, caption, spec, onResult }: { id: string; caption: stri
       <div className="sm-widget-bins">
         {spec.categories.map((c, ci) => (
           <button key={ci} type="button" className={`sm-widget-bin${wrongFlash === ci ? " is-wrong" : ""}`} disabled={selected == null} onClick={() => drop(ci)}>
-            <span className="sm-widget-bin-title">{c}</span>
+            <span className="sm-widget-bin-title"><MathText text={c} /></span>
             <span className="sm-widget-bin-items">{order.filter((i) => placed[i] === ci).map((i) => <span key={i} className="sm-widget-chip is-done"><MathText text={spec.items[i].text} /></span>)}</span>
           </button>
         ))}
@@ -148,7 +148,8 @@ function SortWidget({ id, caption, spec, onResult }: { id: string; caption: stri
 function UnitCircle({ spec }: { spec: Extract<WidgetSpec, { type: "unit_circle" }> }) {
   const L = useLang();
   const [deg, setDeg] = useState(spec.angle);
-  const [showValues, setShowValues] = useState(true);
+  // Predict first (critical thinking): the values stay hidden until they've had a guess.
+  const [showValues, setShowValues] = useState(false);
   const r = 90, cx = 120, cy = 110, a = (deg * Math.PI) / 180;
   const px = cx + r * Math.cos(a), py = cy - r * Math.sin(a);
   const fix = (v: number) => (Math.abs(v) < 0.0005 ? "0" : v.toFixed(3));
@@ -176,6 +177,7 @@ function Projectile({ spec }: { spec: Extract<WidgetSpec, { type: "projectile" }
   const L = useLang();
   const [angle, setAngle] = useState(spec.angle);
   const [speed, setSpeed] = useState(spec.speed);
+  const [showStats, setShowStats] = useState(false);
   const g = spec.g;
   const st = projectileStats(angle, speed, g);
   const W = 320, H = 170, pad = 24;
@@ -197,7 +199,10 @@ function Projectile({ spec }: { spec: Extract<WidgetSpec, { type: "projectile" }
       </svg>
       <label className="sm-widget-slider"><span>{L("Angle", "Angle")} {angle}°</span><input type="range" min={5} max={85} step={1} value={angle} onChange={(e) => setAngle(Number(e.target.value))} /></label>
       <label className="sm-widget-slider"><span>{L("Vitesse", "Speed")} {speed} m/s</span><input type="range" min={5} max={60} step={1} value={speed} onChange={(e) => setSpeed(Number(e.target.value))} /></label>
-      <div className="sm-widget-readout">{L("Portée", "Range")} {st.range.toFixed(1)} m · {L("Hauteur max", "Max height")} {st.height.toFixed(1)} m · {L("Durée", "Time")} {st.time.toFixed(2)} s · g = {g}</div>
+      <div className="sm-widget-readout">
+        <button type="button" className="sm-widget-link" onClick={() => setShowStats((v) => !v)}>{showStats ? L("Masquer les valeurs", "Hide the values") : L("Prédis la portée, puis affiche les valeurs", "Predict the range, then show the values")}</button>
+        {showStats && <span>{L("Portée", "Range")} {st.range.toFixed(1)} m · {L("Hauteur max", "Max height")} {st.height.toFixed(1)} m · {L("Durée", "Time")} {st.time.toFixed(2)} s · g = {g}</span>}
+      </div>
     </div>
   );
 }
