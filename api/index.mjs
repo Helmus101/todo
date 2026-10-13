@@ -9169,7 +9169,9 @@ ${extra}` : "") }
         // three have to move together or whichever is smallest silently truncates regardless of the others.
         sourceDetail: hasAssignmentText(it.snippet) ? it.snippet.slice(0, 3e3) : void 0,
         sourceSubject: it.subject,
-        sourceDue: it.timestamp,
+        // An email's timestamp is when it was SENT, not a due date (verified live: an essay due Monday became
+        // "Due: today"). Only Pronote and calendar timestamps are real dates for the work.
+        sourceDue: it.sourceApp === "pronote" || it.sourceApp === "calendar" ? it.timestamp : void 0,
         // Stage 1-4 intent/objective enrichment
         taskType,
         goal: r.goal ? String(r.goal).slice(0, 250) : void 0,
@@ -9180,9 +9182,9 @@ ${extra}` : "") }
   try {
     let out = await ask();
     let tasks = parse(out);
-    const strongIdx = items.map((it, i) => ({ it, i })).filter(({ it }) => it.labels.includes("sent") || it.labels.includes("assigned") || it.labels.includes("review-requested")).map(({ i }) => i);
-    for (let attempt = 0; !tasks.length && items.length >= 6 && attempt < 2; attempt++) {
-      const nudge = strongIdx.length ? `You returned no tasks. Look SPECIFICALLY at candidates #${strongIdx.join(", #")} \u2014 each is either a commitment YOU (the user) made that has no later fulfilment visible, or a GitHub item explicitly assigned to/requesting review from them. For EACH one individually, decide: does it still need action? Return a task for every one that does. Only return an empty list if NONE of them do.` : `You returned no tasks from ${items.length} candidates. Re-examine them: direct questions from real people and the user's own SENT commitments are almost always actionable. Return an empty tasks list ONLY if truly nothing needs them.`;
+    const strongIdx = items.map((it, i) => ({ it, i })).filter(({ it }) => it.labels.includes("sent") || it.labels.includes("assigned") || it.labels.includes("review-requested") || it.sourceApp === "gmail" && hasAssignmentText(it.snippet) && /\b(?:due|submit|hand in|deadline|à rendre|pour (?:lundi|mardi|mercredi|jeudi|vendredi|demain)|rendre|devoir|essay|dissertation|exercices?|exercises?|homework)\b/i.test(`${it.title} ${it.snippet}`)).map(({ i }) => i);
+    for (let attempt = 0; !tasks.length && (items.length >= 6 || strongIdx.length > 0) && attempt < 2; attempt++) {
+      const nudge = strongIdx.length ? `You returned no tasks. Look SPECIFICALLY at candidates #${strongIdx.join(", #")} \u2014 each is either a commitment YOU (the user) made that has no later fulfilment visible, a GitHub item explicitly assigned to/requesting review from them, or a teacher's assignment with work to hand in. For EACH one individually, decide: does it still need action? Return a task for every one that does. Only return an empty list if NONE of them do.` : `You returned no tasks from ${items.length} candidates. Re-examine them: direct questions from real people and the user's own SENT commitments are almost always actionable. Return an empty tasks list ONLY if truly nothing needs them.`;
       const retry = await ask(nudge);
       const retried = parse(retry);
       if (retried.length) {
@@ -9268,7 +9270,7 @@ ${list}
       // just as specific an artifact as the normal one.
       sourceDetail: hasAssignmentText(it.snippet) ? it.snippet.slice(0, 3e3) : void 0,
       sourceSubject: it.subject,
-      sourceDue: it.timestamp,
+      sourceDue: it.sourceApp === "pronote" || it.sourceApp === "calendar" ? it.timestamp : void 0,
       // Stage 1-4 intent/objective enrichment
       taskType,
       goal: r.goal ? String(r.goal).slice(0, 250) : void 0,
@@ -10225,11 +10227,11 @@ ${focus.trim().slice(0, 1500)}
       return { parsed, truncated };
     };
     try {
-      const first = await attempt(maxTokens, "");
+      const first = await attempt(Math.max(maxTokens, 8e3), "");
       if (first?.parsed && !first.truncated) return first.parsed;
       if (first?.parsed && first.truncated) return first.parsed;
       console.log(`${(/* @__PURE__ */ new Date()).toISOString()} [ai] ask retrying with a larger budget after truncation/parse failure`);
-      const second = await attempt(Math.max(maxTokens * 2.5, 2e3), "\n\nBe concise \u2014 short phrases, no extra commentary. Fit your ENTIRE answer well within the token budget.");
+      const second = await attempt(Math.max(maxTokens * 2.5, 16e3), "\n\nBe concise \u2014 short phrases, no extra commentary. Fit your ENTIRE answer well within the token budget.");
       if (!second?.parsed) askFailures++;
       return second?.parsed || {};
     } catch (err) {
@@ -17328,12 +17330,6 @@ function getPolicyProfileFromBirthYear(birthYear) {
   return getPolicyProfile(age);
 }
 
-// server/consentService.ts
-function recordConsent(consent) {
-  console.log(`[Consent] Consent recorded for child ${consent.childId}, scope: ${consent.scope.join(", ")}`);
-  return consent;
-}
-
 // server/index.ts
 initSentry();
 var __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -17704,12 +17700,12 @@ app.post("/api/auth/signup", rateLimit(6, 60 * 6e4), ah(async (req, res) => {
       dataRetentionDays: birthYear ? getPolicyProfileFromBirthYear(birthYear).safety.dataRetentionDays : 90
     };
     if (isChildAccount && birthYear) {
-      const consent = recordConsent({
+      const consent = {
         childId: email,
         scope: ["account_access", "data_processing"],
         grantedAt: (/* @__PURE__ */ new Date()).toISOString(),
         method: "clickwrap"
-      });
+      };
       req.session.profile.consentRecords = [consent];
     }
     req.session.tasks = [];

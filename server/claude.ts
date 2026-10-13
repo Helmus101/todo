@@ -4080,7 +4080,6 @@ export async function classifyCandidates(
       ],
     }));
     const u = usageOf(res); tokIn += u.in; tokOut += u.out; tokCached += u.cachedIn;
-    if (process.env.DEBUG_CLASSIFY) console.log("RAW CLASSIFY:", String(res.choices?.[0]?.message?.content || "").slice(0, 3000));
     return firstJson<any>(String(res.choices?.[0]?.message?.content || ""));
   };
   const parse = (out: any) => {
@@ -4116,7 +4115,9 @@ export async function classifyCandidates(
           // three have to move together or whichever is smallest silently truncates regardless of the others.
           sourceDetail: hasAssignmentText(it.snippet) ? it.snippet.slice(0, 3000) : undefined,
           sourceSubject: it.subject,
-          sourceDue: it.timestamp,
+          // An email's timestamp is when it was SENT, not a due date (verified live: an essay due Monday became
+          // "Due: today"). Only Pronote and calendar timestamps are real dates for the work.
+          sourceDue: it.sourceApp === "pronote" || it.sourceApp === "calendar" ? it.timestamp : undefined,
           // Stage 1-4 intent/objective enrichment
           taskType,
           goal: r.goal ? String(r.goal).slice(0, 250) : undefined,
@@ -4139,13 +4140,16 @@ export async function classifyCandidates(
     // call already succeeded.
     const strongIdx = items
       .map((it, i) => ({ it, i }))
-      .filter(({ it }) => it.labels.includes("sent") || it.labels.includes("assigned") || it.labels.includes("review-requested"))
+      .filter(({ it }) => it.labels.includes("sent") || it.labels.includes("assigned") || it.labels.includes("review-requested")
+        // A teacher's assignment email ("submit a 600-word essay… due Monday") — verified live: the classifier
+        // returned NOTHING for exactly this on one of two identical runs.
+        || (it.sourceApp === "gmail" && hasAssignmentText(it.snippet) && /\b(?:due|submit|hand in|deadline|à rendre|pour (?:lundi|mardi|mercredi|jeudi|vendredi|demain)|rendre|devoir|essay|dissertation|exercices?|exercises?|homework)\b/i.test(`${it.title} ${it.snippet}`)))
       .map(({ i }) => i);
-    for (let attempt = 0; !tasks.length && items.length >= 6 && attempt < 2; attempt++) {
+    for (let attempt = 0; !tasks.length && (items.length >= 6 || strongIdx.length > 0) && attempt < 2; attempt++) {
       const nudge = strongIdx.length
         ? `You returned no tasks. Look SPECIFICALLY at candidates #${strongIdx.join(", #")} — each is either a ` +
-          `commitment YOU (the user) made that has no later fulfilment visible, or a GitHub item explicitly ` +
-          `assigned to/requesting review from them. For EACH one individually, decide: does it still need ` +
+          `commitment YOU (the user) made that has no later fulfilment visible, a GitHub item explicitly ` +
+          `assigned to/requesting review from them, or a teacher's assignment with work to hand in. For EACH one individually, decide: does it still need ` +
           `action? Return a task for every one that does. Only return an empty list if NONE of them do.`
         : `You returned no tasks from ${items.length} candidates. Re-examine them: direct questions from real ` +
           `people and the user's own SENT commitments are almost always actionable. Return an empty tasks list ` +
@@ -4231,7 +4235,7 @@ export async function pickOneTask(
       // just as specific an artifact as the normal one.
       sourceDetail: hasAssignmentText(it.snippet) ? it.snippet.slice(0, 3000) : undefined,
       sourceSubject: it.subject,
-      sourceDue: it.timestamp,
+      sourceDue: it.sourceApp === "pronote" || it.sourceApp === "calendar" ? it.timestamp : undefined,
       // Stage 1-4 intent/objective enrichment
       taskType,
       goal: r.goal ? String(r.goal).slice(0, 250) : undefined,
@@ -5880,13 +5884,16 @@ export async function runTask(
       return { parsed, truncated };
     };
     try {
-      const first = await attempt(maxTokens, "");
+      // DeepSeek v4 is a reasoning model: its hidden reasoning counts against max_tokens, so the small per-call budgets
+      // truncated EVERY step on the first try (verified live: all 7 steps of one run retried) — doubling a task's run
+      // time. max_tokens is a ceiling, not a charge, so a real floor on the first attempt costs nothing extra.
+      const first = await attempt(Math.max(maxTokens, 8000), "");
       if (first?.parsed && !first.truncated) return first.parsed;
       if (first?.parsed && first.truncated) return first.parsed; // valid JSON that still fits — use it, no need to retry
       // Either unparseable, or cut off before any JSON closed — retry ONCE with real headroom (2.5x, floor
       // 2000) and an explicit steer toward brevity, so the retry is less likely to hit the SAME ceiling.
       console.log(`${new Date().toISOString()} [ai] ask retrying with a larger budget after truncation/parse failure`);
-      const second = await attempt(Math.max(maxTokens * 2.5, 2000), "\n\nBe concise — short phrases, no extra commentary. Fit your ENTIRE answer well within the token budget.");
+      const second = await attempt(Math.max(maxTokens * 2.5, 16000), "\n\nBe concise — short phrases, no extra commentary. Fit your ENTIRE answer well within the token budget.");
       if (!second?.parsed) askFailures++;
       return second?.parsed || {};
     } catch (err: any) {
