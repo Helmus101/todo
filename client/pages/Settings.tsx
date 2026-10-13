@@ -1,0 +1,759 @@
+import { useEffect, useState, useCallback, useRef } from "react";
+import type { WebTask, ConnectionStatus, Profile } from "../../shared/types.ts";
+import { api, type IntegrationItem, type ConnectedAccount } from "../api.ts";
+import { useLang, useNotify, ErrorNote } from "../ui.tsx";
+import { clearAllLocalAccountData } from "../appShared.tsx";
+
+/** Scroll-reveal: any element with className "reveal" inside this component fades/rises into place the
+ *  first time it enters the viewport (CSS does the actual animation — see `.reveal`/`.reveal.in` in
+ *  styles.css). Originally inline in the marketing Landing page; pulled out so the same premium-feel
+ *  entrance can be reused across the real app (Settings, the dashboard's own sections) without copying the
+ *  IntersectionObserver wiring. Respects prefers-reduced-motion (reveals everything immediately, no motion). */
+function useReveal(deps: readonly unknown[] = []) {
+  useEffect(() => {
+    const reduced = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduced) { document.querySelectorAll(".reveal").forEach((el) => el.classList.add("in")); return; }
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+    }, { threshold: 0.18, rootMargin: "0px 0px -8% 0px" });
+    document.querySelectorAll(".reveal:not(.in)").forEach((el) => io.observe(el));
+    return () => io.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+}
+
+// A "YYYY-MM-DD" (or ISO) date → "Aug 1". Optional `L(fr, en)` (same
+// one every caller already has from useLang()) picks the locale — a French account no longer falls back to
+// whatever locale the BROWSER happens to be set to, which isn't necessarily the same language at all.
+const USAGE_CATEGORY_LABEL: Record<string, [string, string]> = {
+  sweep: ["Recherche de tâches", "Finding tasks"],
+  autorun: ["Préparation automatique", "Auto-prep"],
+  chat: ["Chat et tuteur", "Chat & tutor"],
+  manual_refine: ["Tâches ajoutées", "Added tasks"],
+  studylog: ["Journal", "Journal"],
+  student_model: ["Profil d'apprentissage", "Learning profile"],
+  other: ["Autre", "Other"],
+};
+
+function fmtDay(iso: string, L?: (fr: string, en: string) => string): string {
+  const d = new Date(/T/.test(iso) ? iso : `${iso}T00:00:00`);
+  return isNaN(d.getTime()) ? iso : d.toLocaleDateString(L?.("fr-FR", "en-US"), { month: "short", day: "numeric" });
+}
+
+// Survives a PronoteTile remount (e.g. navigating away from Settings and back) — see its own comment on
+// `optimistic` for why plain component state wasn't enough. sessionStorage (not localStorage): this is a
+// per-tab "trust my own recent action over a possibly-lagging read" signal, not something that should
+// follow the account to a different tab/device where no such action just happened.
+const PRONOTE_OPTIMISTIC_KEY = "otto-pronote-optimistic";
+
+const PRONOTE_OPTIMISTIC_MAX_AGE_MS = 2 * 60_000;
+
+function readPronoteOptimistic(): boolean | null {
+  try {
+    const raw = sessionStorage.getItem(PRONOTE_OPTIMISTIC_KEY);
+    if (!raw) return null;
+    const { value, at } = JSON.parse(raw);
+    if (typeof at !== "number" || Date.now() - at > PRONOTE_OPTIMISTIC_MAX_AGE_MS) { sessionStorage.removeItem(PRONOTE_OPTIMISTIC_KEY); return null; }
+    return typeof value === "boolean" ? value : null;
+  } catch { return null; }
+}
+
+function writePronoteOptimistic(value: boolean | null): void {
+  try {
+    if (value === null) sessionStorage.removeItem(PRONOTE_OPTIMISTIC_KEY);
+    else sessionStorage.setItem(PRONOTE_OPTIMISTIC_KEY, JSON.stringify({ value, at: Date.now() }));
+  } catch { /* private browsing / storage full — falls back to the plain in-memory default */ }
+}
+
+/** Language toggle — shared between Settings and Onboarding so the same question/UI isn't built twice.
+ *  Renders bare rows (no wrapping section) so it drops into either container's own `.set-list`/step
+ *  markup. `onChanged` receives the fresh profile after each save. */
+function PreferencesFields({ profile, onChanged }: { profile: Profile | null; onChanged?: (p: Profile) => void }) {
+  const L = useLang();
+  const notify = useNotify();
+  const [lang, setLang] = useState<"fr" | "en">(profile?.language === "en" ? "en" : "fr");
+  useEffect(() => { setLang(profile?.language === "en" ? "en" : "fr"); }, [profile?.language]);
+  const saveLang = async (v: "fr" | "en") => {
+    const prev = lang;
+    setLang(v); // optimistic — revert below on failure
+    try { onChanged?.(await api.setProfilePreference("language", v)); }
+    catch (e: any) {
+      setLang(prev);
+      notify(e?.message || L("Ta langue n'a pas été enregistrée — réessaie.", "Your language didn't save — give it another try."), "error");
+    }
+  };
+  // Track: onboarding's copy has always claimed this is "changeable any time in Settings" — it wasn't
+  // actually wired up here, so that claim was false for anyone past onboarding. Same optimistic-save
+  // pattern as language above.
+  const [track, setTrackState] = useState<"ib" | "ap" | "bac" | "other" | undefined>(profile?.track);
+  useEffect(() => { setTrackState(profile?.track); }, [profile?.track]);
+  const saveTrack = async (v: "ib" | "ap" | "bac" | "other") => {
+    const prev = track;
+    setTrackState(v);
+    try { onChanged?.(await api.setProfilePreference("track", v)); }
+    catch (e: any) { setTrackState(prev); notify(e?.message || L("Ça n'a pas été enregistré — réessaie.", "That didn't save — give it another try."), "error"); }
+  };
+  // Hint density — a DIFFERENT axis from learningStyle (VARK, presentation-only): this is how much the
+  // tutor walks through vs. just nudges when the student is stuck. Never changes whether the direct
+  // answer is given (that's unconditionally never, server-side) — only how much scaffolding leads there.
+  // A 3-position slider/bar, not two separate toggle buttons — "hints" (0) ↔ "balanced" (1, default) ↔
+  // "steps" (2). "balanced" is an explicit value (not just unset) so the slider always has a definite
+  // position to render, including for a brand-new account that's never touched this preference.
+  const HINT_DENSITY_POSITIONS: ("hints" | "balanced" | "steps")[] = ["hints", "balanced", "steps"];
+  const [hintDensity, setHintDensityState] = useState<"steps" | "hints" | "balanced" | undefined>(profile?.hintDensity);
+  useEffect(() => { setHintDensityState(profile?.hintDensity); }, [profile?.hintDensity]);
+  const saveHintDensity = async (v: "steps" | "hints" | "balanced") => {
+    const prev = hintDensity;
+    setHintDensityState(v);
+    try { onChanged?.(await api.setProfilePreference("hintDensity", v)); }
+    catch (e: any) { setHintDensityState(prev); notify(e?.message || L("Ça n'a pas été enregistré — réessaie.", "That didn't save — give it another try."), "error"); }
+  };
+  // Year/grade level — free text (see Profile.yearLevel's doc comment for why not a dropdown). Local draft
+  // state so typing doesn't round-trip on every keystroke; saved on blur/Enter like other free-text fields.
+  const [yearLevel, setYearLevelState] = useState(profile?.yearLevel || "");
+  useEffect(() => { setYearLevelState(profile?.yearLevel || ""); }, [profile?.yearLevel]);
+  const saveYearLevel = async () => {
+    const v = yearLevel.trim();
+    if (v === (profile?.yearLevel || "")) return;
+    try { onChanged?.(await api.setProfilePreference("yearLevel", v)); }
+    catch (e: any) { notify(e?.message || L("Ça n'a pas été enregistré — réessaie.", "That didn't save — give it another try."), "error"); }
+  };
+  return (
+    <>
+      <div className="set-row">
+        <span className="set-text"><b>{lang === "en" ? "Language" : "Langue"}</b><span className="settings-hint">{lang === "en" ? "Switches the interface and everything Otto writes." : "Change l'interface et tout ce qu'Otto écrit."}</span></span>
+        <div className="lang-toggle">
+          <button type="button" className={`btn xs ${lang === "fr" ? "" : "ghost"}`} aria-pressed={lang === "fr"} onClick={() => void saveLang("fr")}>Français</button>
+          <button type="button" className={`btn xs ${lang === "en" ? "" : "ghost"}`} aria-pressed={lang === "en"} onClick={() => void saveLang("en")}>English</button>
+        </div>
+      </div>
+      <div className="set-row">
+        <span className="set-text"><b>{L("Ton parcours", "Your track")}</b><span className="settings-hint">{L("Vocabulaire, intégrations proposées, et le style des exercices/quiz générés. Pas en Bac, IB ou AP (collège, etc.) ? Choisis « Autre ».", "Vocabulary, integrations offered, and the style of generated exercises/quizzes. Not doing Bac, IB, or AP (middle school, etc.)? Pick \"Other\".")}</span></span>
+        <div className="lang-toggle">
+          <button type="button" className={`btn xs ${track === "bac" ? "" : "ghost"}`} aria-pressed={track === "bac"} onClick={() => void saveTrack("bac")}>{L("Bac", "Bac")}</button>
+          <button type="button" className={`btn xs ${track === "ib" ? "" : "ghost"}`} aria-pressed={track === "ib"} onClick={() => void saveTrack("ib")}>IB</button>
+          <button type="button" className={`btn xs ${track === "ap" ? "" : "ghost"}`} aria-pressed={track === "ap"} onClick={() => void saveTrack("ap")}>AP</button>
+          <button type="button" className={`btn xs ${track === "other" ? "" : "ghost"}`} aria-pressed={track === "other"} onClick={() => void saveTrack("other")}>{L("Autre", "Other")}</button>
+        </div>
+      </div>
+      <div className="set-row">
+        <span className="set-text"><b>{L("Style d'accompagnement", "Learning style")}</b><span className="settings-hint">{L("Quand tu bloques : Otto te donne juste un indice, t'accompagne pas à pas, ou juge lui-même selon la situation. Il ne te donnera jamais directement la réponse, quel que soit ton choix.", "When you're stuck: Otto gives just a hint, walks through it step by step, or judges it case by case. Either way, it never just gives you the direct answer.")}</span></span>
+        <div className="hint-density-slider">
+          <input
+            type="range" min={0} max={2} step={1}
+            value={HINT_DENSITY_POSITIONS.indexOf(hintDensity || "balanced")}
+            onChange={(e) => void saveHintDensity(HINT_DENSITY_POSITIONS[Number(e.target.value)])}
+            aria-label={L("Style d'accompagnement", "Learning style")}
+          />
+          <div className="hint-density-slider-labels">
+            <span className={hintDensity === "hints" ? "active" : ""}>{L("Juste un indice", "Just a hint")}</span>
+            <span className={!hintDensity || hintDensity === "balanced" ? "active" : ""}>{L("Équilibré", "Balanced")}</span>
+            <span className={hintDensity === "steps" ? "active" : ""}>{L("Pas à pas", "All the steps")}</span>
+          </div>
+        </div>
+      </div>
+      <label className="set-row">
+        <span className="set-text"><b>{L("Ta classe / ton année", "Your year/grade")}</b><span className="settings-hint">{L("Aide Otto à caler la difficulté des fiches et exercices sur ton niveau exact.", "Helps Otto match revision sheets and exercises to your exact level.")}</span></span>
+        <input className="addinput" style={{ maxWidth: 160 }} maxLength={40}
+          placeholder={track === "ib" ? L("ex. DP1", "e.g. DP1") : track === "ap" ? L("ex. Junior", "e.g. Junior year") : track === "other" ? L("ex. 5ème", "e.g. Grade 7") : L("ex. Terminale", "e.g. Terminale")}
+          value={yearLevel} onChange={(e) => setYearLevelState(e.target.value)}
+          onBlur={() => void saveYearLevel()} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
+      </label>
+    </>
+  );
+}
+
+/** The landing page (shown logged out at route /) — sharp, crisp positioning as a trusted decision engine. */
+/** The Settings PAGE (route /settings): account, ALL app connections (Composio — incl. Google), the
+ *  person-profile editor, and exactly what Otto will/won't do. */
+/** Settings → "How Otto teaches you": what the tutor's learned policy (a small neural net trained with reinforcement
+ *  learning on how you react to each teaching move) currently favours for you, with a reset. */
+const MOVE_LABEL: Record<string, [string, string]> = {
+  probe: ["te poser une question ouverte", "asking you an open question"],
+  "smaller-step": ["découper en plus petites étapes", "breaking it into smaller steps"],
+  "worked-parallel": ["montrer un exemple parallèle", "showing a parallel worked example"],
+  visual: ["dessiner un schéma", "drawing a picture"],
+  analogy: ["utiliser une analogie", "using an analogy"],
+  "reflect-back": ["reformuler ce que tu dis", "saying back what you said"],
+  "direct-hint": ["te donner un indice précis", "giving one concrete hint"],
+};
+
+const PACE_LABEL: Record<string, [string, string]> = { slow: ["en allant doucement", "going slowly"], steady: ["à rythme normal", "at a steady pace"], stretch: ["en poussant plus loin", "stretching you"] };
+
+function TutorPolicyRow() {
+  const L = useLang();
+  const [info, setInfo] = useState<Awaited<ReturnType<typeof api.tutorPolicy>> | null>(null);
+  const load = useCallback(() => { void api.tutorPolicy().then(setInfo).catch(() => setInfo(null)); }, []);
+  useEffect(load, [load]);
+  const say = (m?: { move: string; pace: string }) => m ? `${L(...(MOVE_LABEL[m.move] || ["", ""]))}, ${L(...(PACE_LABEL[m.pace] || ["", ""]))}` : "";
+  return (
+    <div className="modal-row">
+      <span className="lbl">{L("Comment Otto t'enseigne", "How Otto teaches you")}</span>
+      <span className="val">
+        {info?.learning && info.updates >= 8
+          ? <>{L(`Otto apprend de tes réactions (${info.updates} échanges). Quand ça roule : ${say(info.flow)}. Quand tu bloques : ${say(info.stuck)}. `, `Otto learns from how you react (${info.updates} replies so far). When you're flowing: ${say(info.flow)}. When you're stuck: ${say(info.stuck)}. `)}</>
+          : L("Otto commence à apprendre ce qui marche pour toi — quelques séances et il s'adaptera. ", "Otto is starting to learn what works for you — a few sessions and it will adapt. ")}
+        <button type="button" className="btn xs ghost" onClick={() => { if (window.confirm(L("Réinitialiser ce qu'Otto a appris sur ta façon d'apprendre ?", "Reset what Otto has learned about how you learn?"))) void api.resetTutorPolicy().then(load); }}>{L("Réinitialiser", "Reset")}</button>
+      </span>
+    </div>
+  );
+}
+
+export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onStatusUpdate, onReplayOnboarding }: { status: ConnectionStatus; tasks: WebTask[]; onSignOut: () => void; onChanged: () => void; onTasksChanged: (tasks: WebTask[]) => void; onStatusUpdate?: () => void; onReplayOnboarding?: () => void }) {
+  const L = useLang();
+  const notify = useNotify();
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [usage, setUsage] = useState<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; byCategory: Partial<Record<"sweep" | "autorun" | "chat" | "manual_refine" | "studylog" | "student_model" | "other", number>> } | null>(null);
+  const [showKnows, setShowKnows] = useState(false);
+  const [showStudentModel, setShowStudentModel] = useState(false);
+  const [patterns, setPatterns] = useState<{
+    predictedEngagement: { weekday: number; hour: number; confidence: number } | null; weakSubjects: string[];
+    subjectMastery: { subject: string; correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }[];
+    subjectFocus: { subject: string; peak: { hour: number; confidence: number } }[];
+    bandits: Record<string, { armId: string; confidence: number } | null>;
+    studyMetrics: { totalSessions: number; totalStudySeconds: number; totalBreakSeconds: number; avgIdleRatio: number | null; earlyExitRate: number | null; pomodoroCyclesCompleted: number; windowDays: number; avgFocusScore: number | null; avgGazeOnScreenPct: number | null; focusSessionCount: number } | null;
+  } | null>(null);
+  useEffect(() => { void api.patternsSummary().then(setPatterns).catch(() => {}); }, []);
+  
+  // Optimistic toggles/selects — flip instantly, reconcile with the server after (no round-trip lag).
+  const [paused, setPausedLocal] = useState(status.paused);
+  const [deletingAccount, setDeletingAccount] = useState(false);
+  const [importingData, setImportingData] = useState(false);
+  const [importProgress, setImportProgress] = useState<[number, number] | null>(null);
+  const importFileRef = useRef<HTMLInputElement>(null);
+  // Splits `tasks` into byte-budgeted batches and uploads them as SEPARATE import requests — each one
+  // still goes through POST /api/account/import's existing MERGE logic (mergeTaskLists/mergeProfileStates,
+  // server/index.ts), so sending the same account's data in 5 pieces instead of 1 produces the exact same
+  // end state; the route has no idea it's being fed incrementally. Originally added suspecting a Vercel
+  // platform body-size cap — the REAL cause of the reported 413 (on a file as small as 1.8MB) turned out to
+  // be a global `express.json({limit:"1mb"})` in server/index.ts running before this route's own 20mb
+  // parser ever got a chance to (now fixed — that route is excluded from the global one). Kept anyway as a
+  // defensive measure for a genuinely huge export (tutor sessions are cloud-persisted again now, so a
+  // long-lived, chat-heavy account's export can still grow large) — just no longer the primary fix.
+  const MAX_IMPORT_BATCH_BYTES = 3_500_000;
+  function splitImportBatches(profile: unknown, allTasks: unknown[]): unknown[][] {
+    const encoder = new TextEncoder();
+    const baseSize = encoder.encode(JSON.stringify({ profile, tasks: [] })).length;
+    const batches: unknown[][] = [];
+    let current: unknown[] = [];
+    let currentSize = baseSize;
+    for (const t of allTasks) {
+      const taskSize = encoder.encode(JSON.stringify(t)).length;
+      if (current.length && currentSize + taskSize > MAX_IMPORT_BATCH_BYTES) {
+        batches.push(current);
+        current = [];
+        currentSize = baseSize;
+      }
+      current.push(t);
+      currentSize += taskSize;
+      // One single task bigger than the whole budget (a genuinely huge chat/board history on one task) —
+      // still send it alone rather than looping forever trying to split further; the server's own caps
+      // (CHAT_CAP/BOARD_MERGE_CAP/ARTIFACT_CAP) bound how big one task can realistically get regardless.
+    }
+    if (current.length) batches.push(current);
+    return batches.length ? batches : [[]]; // profile-only import (no tasks at all) still gets one request
+  }
+  const onImportFile = async (file: File) => {
+    setImportingData(true);
+    setImportProgress(null);
+    try {
+      const text = await file.text();
+      let parsed: any;
+      try { parsed = JSON.parse(text); }
+      catch { throw new Error(L("Ce fichier n'est pas un export Otto valide.", "That file isn't a valid Otto export.")); }
+      // jobs/events ride along in a full export for GDPR Art.15 completeness, but POST /api/account/import
+      // only ever reads `profile`/`tasks` (see that route's own body) — pure dead weight here, dropped
+      // before even computing batches below.
+      const allTasks: unknown[] = Array.isArray(parsed.tasks) ? parsed.tasks : [];
+      const batches = splitImportBatches(parsed.profile, allTasks);
+      let result: { ok: boolean; tasksAfter: number; errorLogAfter: number } | undefined;
+      for (let i = 0; i < batches.length; i++) {
+        if (batches.length > 1) setImportProgress([i + 1, batches.length]);
+        result = await api.importData({ profile: parsed.profile, tasks: batches[i] });
+      }
+      notify(L(`Importé — ${result!.tasksAfter} tâches, ${result!.errorLogAfter} erreurs au total.`, `Imported — ${result!.tasksAfter} tasks, ${result!.errorLogAfter} error-log entries in total now.`));
+      loadProfile();
+      onChanged();
+    } catch (e: any) {
+      notify(e?.message || L("Impossible d'importer ce fichier — réessaie.", "Couldn't import that file — try again."), "error");
+    } finally {
+      setImportingData(false);
+      setImportProgress(null);
+      if (importFileRef.current) importFileRef.current.value = "";
+    }
+  };
+  const [profileError, setProfileError] = useState(false);
+  const loadProfile = () => { setProfileError(false); void api.profile().then(setProfile).catch(() => setProfileError(true)); };
+  useEffect(() => { setPausedLocal(status.paused); }, [status.paused]);
+  useEffect(() => { loadProfile(); void api.usage().then(setUsage).catch(() => {}); }, []);
+  useReveal();
+
+  return (
+    <main className="settings-page">
+      {/* The prototype's Settings head: "Set the bar for Otto." + "Your account, your connections, your standards." */}
+      <h1 className="list-head">{L("Fixe le niveau d'exigence d'Otto.", "Set the bar for Otto.")}</h1>
+      <p className="page-sub mt-3 mb-6">{L("Ton compte, tes connexions, tes exigences.", "Your account, your connections, your standards.")}</p>
+      {profileError ? (
+        <ErrorNote onRetry={loadProfile}>{L("Certaines infos du profil n'ont pas pu être chargées.", "Some profile info couldn't load.")}</ErrorNote>
+      ) : null}
+
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.03s" }}>
+        <h3>{L("Compte", "Account")}</h3>
+        <div className="acct-card">
+          <span className="acct-avatar" aria-hidden="true">{(status.user || "?").charAt(0).toUpperCase()}</span>
+          <div className="acct-id">
+            <span className="acct-email">{status.user}</span>
+            <span className={`acct-sync ${status.cloud ? "on" : ""}`}>
+              <span className="acct-sync-dot" aria-hidden="true" />
+              {status.cloud ? L("Synchronisé", "Synced") : L("Hors ligne", "Not synced")}
+            </span>
+          </div>
+          <button className="btn xs ghost" onClick={() => void onSignOut()}>{L("Se déconnecter", "Sign out")}</button>
+        </div>
+        <div className="modal-row"><span className="lbl">{L("Confidentialité", "Privacy")}</span><span className="val">{L("Ton mot de passe Pronote est chiffré et jamais revendu. ", "Your Pronote password is encrypted and never resold. ")}<a href="/privacy">{L("Détails →", "Details →")}</a></span></div>
+        <div className="modal-row"><span className="lbl">{L("Mentions légales", "Legal")}</span><span className="val"><a href="/privacy">{L("Confidentialité", "Privacy")}</a> · <a href="/terms">{L("CGU", "Terms")}</a></span></div>
+        <TutorPolicyRow />
+        <div className="modal-row" data-tour="replay-onboarding">
+          <span className="lbl">{L("Visite guidée", "Welcome tour")}</span>
+          <span className="val"><button type="button" className="btn xs ghost" onClick={() => onReplayOnboarding?.()}>{L("Tester l'onboarding", "Test onboarding")}</button></span>
+        </div>
+        <div className="modal-row">
+          <span className="lbl">{L("Tes données", "Your data")}</span>
+          <span className="val"><a href={api.exportDataUrl()} download>{L("Télécharger mes données", "Download my data")}</a></span>
+        </div>
+        {/* Reported live: "i don't see import place" — the handler/state (onImportFile, importFileRef,
+            importingData) were fully built but nothing in this render ever used them, so the whole feature
+            was invisible. Same pattern as the export row above: a plain link-styled trigger for the actual
+            hidden file input, which does the real work. Typically used right after importing a GET
+            /api/account/export file from a DIFFERENT account/project (see server/index.ts's own comment on
+            that route) — e.g. moving to a freshly created Supabase project. */}
+        <div className="modal-row">
+          <span className="lbl">{L("Importer des données", "Import data")}</span>
+          <span className="val">
+            <input ref={importFileRef} type="file" accept="application/json" style={{ display: "none" }}
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) void onImportFile(f); }} />
+            <button type="button" className="btn xs ghost" disabled={importingData} onClick={() => importFileRef.current?.click()}>
+              {importingData
+                ? (importProgress ? L(`Import en cours… (${importProgress[0]}/${importProgress[1]})`, `Importing… (${importProgress[0]}/${importProgress[1]})`) : L("Import en cours…", "Importing…"))
+                : L("Importer un export Otto", "Import an Otto export")}
+            </button>
+          </span>
+        </div>
+        <div className="danger-zone">
+          <div className="modal-row">
+            <span className="lbl">{L("Supprimer le compte", "Delete account")}<span className="settings-hint m-0">{L("Tâches, profil, connexions — irréversible.", "Tasks, profile, connections — can't be undone.")}</span></span>
+            <button
+              className="btn xs danger"
+              disabled={deletingAccount}
+              onClick={async () => {
+                if (!window.confirm(L("Supprimer ton compte Otto (tâches, profil, connexions) ? Irréversible.", "Delete your Otto account (tasks, profile, connections)? This can't be undone."))) return;
+                setDeletingAccount(true);
+                try { await api.deleteAccount(); clearAllLocalAccountData(status.user || null); window.location.href = "/"; }
+                catch (e: any) { setDeletingAccount(false); notify(e?.message || L("Impossible de supprimer le compte — réessaie.", "Couldn't delete the account — try again."), "error"); }
+              }}
+            >{deletingAccount ? L("Suppression…", "Deleting…") : L("Tout supprimer", "Delete everything")}</button>
+          </div>
+        </div>
+      </section>
+
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.07s" }}>
+        <h3>{L("Sources", "Sources")}</h3>
+        <p className="settings-hint">{L("Otto lit ces sources et prépare le travail — ", "Otto reads these sources and preps the work — ")}<b>{L("il n'envoie et ne rend jamais rien à ta place", "it never sends or hands anything in for you")}</b>.</p>
+        <PronoteTile status={status} onStatusUpdate={onStatusUpdate} />
+        <GoogleTiles onChanged={onChanged} restricted={profile?.track !== "ib" && profile?.track !== "ap" && profile?.track !== "other"} />
+      </section>
+
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.09s" }}>
+        <h3>{L("Préférences", "Preferences")}</h3>
+        <div className="set-list">
+          <label className="set-row">
+            <span className="set-text"><b>{L("Mettre Otto en pause", "Pause Otto")}</b><span className="settings-hint">{L("Arrête toute l'IA. Tes tâches restent en place.", "Stops all AI activity. Your tasks stay as they are.")}</span></span>
+            <span className="switch"><input type="checkbox" checked={paused} onChange={(e) => {
+              const v = e.target.checked;
+              setPausedLocal(v);
+              void api.setPaused(v).then(() => onChanged()).catch((err: any) => {
+                setPausedLocal(!v);
+                notify(err?.message || L("Ce réglage n'a pas été enregistré — réessaie.", "That setting didn't save — give it another try."), "error");
+              });
+            }} /><span className="switch-track" /></span>
+          </label>
+          <PreferencesFields profile={profile} onChanged={(p) => { setProfile(p); onChanged(); }} />
+        </div>
+      </section>
+
+      {usage && (
+        <section className="settings-sec reveal" style={{ ["--d" as any]: "0.11s" }}>
+          <h3>{L("Utilisation de l'IA", "AI usage")}</h3>
+          <div className="set-list">
+            <div className="set-row">
+              <span className="set-text"><b>{L("Coût ce mois-ci", "Cost this month")}</b><span className="settings-hint">{L("Estimation, en dollars US.", "Estimate, in US dollars.")}</span></span>
+              <span className="usage-figure">${usage.monthCostUsd.toFixed(2)}</span>
+            </div>
+            {Object.entries(usage.byCategory).filter(([, v]) => (v || 0) > 0).sort((a, b) => (b[1] || 0) - (a[1] || 0)).map(([k, v]) => (
+              <div className="set-row" key={k}>
+                <span className="set-text">{USAGE_CATEGORY_LABEL[k] ? L(...USAGE_CATEGORY_LABEL[k]) : k}</span>
+                <span className="usage-figure muted">${(v || 0).toFixed(2)}</span>
+              </div>
+            ))}
+            <div className="set-row">
+              <span className="set-text">{L("Jetons utilisés au total", "Total tokens used")}</span>
+              <span className="usage-figure muted">{usage.total.toLocaleString()}</span>
+            </div>
+          </div>
+        </section>
+      )}
+
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.13s" }}>
+        <button className="sec-toggle" aria-expanded={showKnows} onClick={() => setShowKnows((v) => !v)}>
+          <h3>{L("Ce qu'Otto sait sur toi", "What Otto knows about you")}</h3>
+          <span className={`caret ${showKnows ? "open" : ""}`} aria-hidden="true">›</span>
+        </button>
+        {showKnows && <div className="settings-reveal"><p className="settings-hint">{L("Otto remplit ça au fil du temps. Tu peux tout modifier.", "Otto fills this in over time. You can edit anything.")}</p><ProfileEditor /></div>}
+      </section>
+
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.18s" }}>
+        <button className="sec-toggle" aria-expanded={showStudentModel} onClick={() => setShowStudentModel((v) => !v)}>
+          <h3>{L("Comment Otto te voit", "How Otto sees you")}</h3>
+          <span className={`caret ${showStudentModel ? "open" : ""}`} aria-hidden="true">›</span>
+        </button>
+        {showStudentModel && (
+          <div className="settings-reveal">
+            <p className="settings-hint">{L(
+              "Mis à jour au plus une fois par jour à partir de tes sessions de tuteur et ton activité. Jamais partagé, jamais utilisé pour te noter.",
+              "Updated at most once a day from your tutor sessions and activity. Never shared, never used to grade you."
+            )}</p>
+            {profile?.studentModel?.summary ? (
+              <>
+                <p className="student-model-text">{profile.studentModel.summary}</p>
+                <p className="settings-hint">{L(`Mis à jour le ${fmtDay(profile.studentModel.updatedAt, L)}`, `Updated ${fmtDay(profile.studentModel.updatedAt, L)}`)}</p>
+                <button type="button" className="btn xs ghost" onClick={async () => {
+                  try { setProfile(await api.resetStudentModel()); }
+                  catch (e: any) { notify(e?.message || L("Réinitialisation impossible — réessaie.", "Couldn't reset — try again."), "error"); }
+                }}>{L("Réinitialiser", "Reset")}</button>
+              </>
+            ) : <p className="settings-hint">{L("Pas encore assez d'activité pour ça.", "Not enough activity yet.")}</p>}
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}
+
+/** Pronote (French school portal) — no OAuth exists for it, so this is a credential form instead of a
+ *  redirect link. The password is stored encrypted to re-login when the token dies (see server/pronote.ts); only a
+ *  rotating token comes back. Reads homework due dates into the to-do list — nothing is ever written back. */
+
+export function PronoteTile({ status: mainStatus, onStatusUpdate, onChanged }: { status?: ConnectionStatus | null; onStatusUpdate?: () => void; onChanged?: () => void } = {}) {
+  const L = useLang();
+  const notify = useNotify();
+  const [open, setOpen] = useState(false);
+  const [url, setUrl] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [kind, setKind] = useState<"student" | "parent">("student");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [pronoteUsername, setPronoteUsername] = useState<string | undefined>();
+
+  // The server's /api/status read is now always a fresh, uncached Supabase read (see server/pronote.ts —
+  // the in-memory per-instance cache that used to sit in front of it was removed after it kept serving
+  // stale readings from whichever OTHER warm Vercel instance happened to have cached one). Even so, a
+  // status fetch that fires IMMEDIATELY after the connect/disconnect write can still race Supabase's own
+  // connection-pooled read-after-write consistency and briefly see the pre-write value — reported live as
+  // "connect succeeds, but navigate away and back to Settings and it shows Connect again": this tile used
+  // to keep its optimistic override in plain component state, which React destroys the instant it unmounts
+  // (leaving Settings for any other page), so that one lagging background read after a navigation had
+  // nothing left to override it. Persisting the override in sessionStorage instead survives the remount —
+  // capped at 2 minutes so a genuinely wrong override (e.g. the connect actually failed downstream) can't
+  // get stuck forever, but comfortably outlives a page navigation or two.
+  const [optimistic, setOptimisticState] = useState<boolean | null>(() => readPronoteOptimistic());
+  const setOptimistic = useCallback((v: boolean | null) => { writePronoteOptimistic(v); setOptimisticState(v); }, []);
+  useEffect(() => {
+    if (optimistic !== null && mainStatus?.pronoteConnected === optimistic) setOptimistic(null);
+  }, [mainStatus?.pronoteConnected, optimistic, setOptimistic]);
+  const effectivelyConnected = optimistic ?? mainStatus?.pronoteConnected;
+
+  // Load pronote username when connected — skipped while `optimistic` already set it locally (see connect()
+  // below), so this effect doesn't clear it back to undefined for the few seconds mainStatus lags behind.
+  useEffect(() => {
+    if (optimistic !== null) return;
+    if (mainStatus?.pronoteConnected) {
+      api.pronoteStatus().then(s => setPronoteUsername(s.username)).catch(() => {});
+    } else {
+      setPronoteUsername(undefined);
+    }
+  }, [mainStatus?.pronoteConnected, optimistic]);
+
+  const status = effectivelyConnected ? { connected: true, username: pronoteUsername } : { connected: false };
+
+  const connect = async () => {
+    const trimmedUrl = url.trim();
+    const trimmedUsername = username.trim();
+    if (!trimmedUrl || !trimmedUsername || !password) { setErr(L("Renseigne l'URL, l'identifiant et le mot de passe.", "Fill in the URL, username, and password.")); return; }
+    setBusy(true); setErr("");
+    try {
+      const r = await api.connectPronote(trimmedUrl, trimmedUsername, password, kind === "parent" ? 7 : 6);
+      if (!r.ok) { setErr(r.error || L("Connexion impossible.", "Couldn't connect.")); return; }
+      setPassword(""); setOpen(false);
+      setPronoteUsername(trimmedUsername);
+      setOptimistic(true);
+      onStatusUpdate?.();
+      onChanged?.();
+    } catch (e: any) {
+      setErr(e?.message || L("Connexion impossible.", "Couldn't connect."));
+    } finally { setBusy(false); }
+  };
+  const disconnect = async () => {
+    setBusy(true);
+    try {
+      await api.disconnectPronote();
+      setOptimistic(false);
+      onStatusUpdate?.();
+      onChanged?.();
+    }
+    catch (e: any) { notify(e?.message || L("Déconnexion impossible — réessaie.", "Couldn't disconnect — try again."), "error"); }
+    finally { setBusy(false); }
+  };
+
+  // A blank gap while `status` loads reads as "this section is stuck/slow" — a lightweight skeleton in the
+  // exact shape of the real tile makes the wait feel instant instead of leaving Sources looking empty.
+  if (!mainStatus) return <div className="int-group"><div className="int-grid"><div className="int-tile int-tile-skel" /></div></div>;
+  return (
+    <div className="int-group">
+      <div className="int-grid">
+        <div className={`int-tile ${status.connected ? "on" : ""}`}>
+          {/* Index Éducation's official PRONOTE logo, via Wikimedia Commons (CC BY-SA 4.0, credited to
+              Index Éducation) — self-hosted at public/logos/pronote.png, see public/logos/ATTRIBUTION.md. */}
+          <span className="int-logo pronote-logo"><img src="/logos/pronote.png" alt="" loading="lazy" /></span>
+          <div className="int-info">
+            <div className="int-name">Pronote{status.connected && <span className="int-dot" title={L("Connecté", "Connected")} />}</div>
+            <div className="int-blurb">{L(
+              "Devoirs et contrôles à venir. Otto lit ces sources et prépare le travail — il ne renvoie jamais rien à ta place. Connexion non-officielle (Index Éducation n'a pas d'API publique) — ton mot de passe est conservé chiffré (AES-256), uniquement pour te reconnecter automatiquement quand Pronote expire la session, et il est effacé dès que tu déconnectes Pronote.",
+              "Upcoming homework and tests. Otto reads these sources and preps the work — it never sends or hands anything in for you. Unofficial connection (Index Éducation has no public API) — your password is stored encrypted (AES-256), used only to reconnect you automatically when Pronote expires the session, and deleted the moment you disconnect Pronote."
+            )}</div>
+          </div>
+          {status.connected
+            ? <button className="btn xs" disabled={busy} onClick={() => void disconnect()}>{busy ? "…" : L("Déconnecter", "Disconnect")}</button>
+            : <button className="btn xs" disabled={busy} onClick={() => setOpen((v) => !v)}>{open ? L("Annuler", "Cancel") : L("Connecter", "Connect")}</button>}
+        </div>
+      </div>
+      {status.connected && <div className="int-accounts"><div className="int-acct"><span className="int-acct-email">{status.username}</span></div></div>}
+      {open && !status.connected && (
+        <div className="pronote-form">
+          <input className="addinput sm" placeholder={L("URL Pronote de ton établissement (ex : https://0000000a.index-education.net/pronote/eleve.html)", "Your school's Pronote URL (e.g. https://0000000a.index-education.net/pronote/eleve.html)")} aria-label={L("URL Pronote de ton établissement (ex : https://0000000a.index-education.net/pronote/eleve.html)", "Your school's Pronote URL (e.g. https://0000000a.index-education.net/pronote/eleve.html)")}
+            value={url} onChange={(e) => setUrl(e.target.value)} disabled={busy} />
+          <div className="pronote-form-row">
+            <input className="addinput sm" placeholder={L("Identifiant", "Username")} aria-label={L("Identifiant", "Username")} value={username} onChange={(e) => setUsername(e.target.value)} disabled={busy} />
+            <input className="addinput sm" type="password" placeholder={L("Mot de passe", "Password")} aria-label={L("Mot de passe", "Password")} value={password}
+              onChange={(e) => setPassword(e.target.value)} disabled={busy}
+              onKeyDown={(e) => { if (e.key === "Enter") void connect(); }} />
+          </div>
+          <div className="pronote-form-row">
+            <div className="seg" role="group" aria-label={L("Type de compte", "Account type")}>
+              <button type="button" className={`seg-btn ${kind === "student" ? "on" : ""}`} aria-pressed={kind === "student"} onClick={() => setKind("student")}>{L("Élève", "Student")}</button>
+              <button type="button" className={`seg-btn ${kind === "parent" ? "on" : ""}`} aria-pressed={kind === "parent"} onClick={() => setKind("parent")}>{L("Parent", "Parent")}</button>
+            </div>
+            <button className="btn primary xs" disabled={busy} onClick={() => void connect()}>{busy ? L("Connexion…", "Connecting…") : L("Connecter", "Connect")}</button>
+          </div>
+          {err && <div className="autherr">{err}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Connected accounts for one Google app — one row per account with its address + an individual
+ *  Disconnect. Google apps support multiple accounts (perso + a parent's, e.g.). */
+function GoogleAppAccounts({ appKey, onChanged }: { appKey: string; onChanged?: () => void }) {
+  const L = useLang();
+  const notify = useNotify();
+  const [accts, setAccts] = useState<ConnectedAccount[] | null>(null);
+  const [busy, setBusy] = useState("");
+  const load = useCallback(async () => { try { setAccts((await api.integrationAccounts(appKey)).accounts); } catch { setAccts([]); } }, [appKey]);
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { const on = () => { if (!document.hidden) void load(); }; window.addEventListener("focus", on); return () => window.removeEventListener("focus", on); }, [load]);
+  const disc = async (id: string) => {
+    setBusy(id);
+    try { await api.disconnectAccount(appKey, id); await load(); onChanged?.(); }
+    catch (e: any) { notify(e?.message || L("Déconnexion impossible — réessaie.", "Couldn't disconnect — try again."), "error"); }
+    finally { setBusy(""); }
+  };
+  if (!accts?.length) return null;
+  return (
+    <div className="int-accounts">
+      {accts.map((a, i) => (
+        <div key={a.id} className="int-acct">
+          <span className="int-acct-email">{a.email || (accts.length > 1 ? L(`Compte ${i + 1}`, `Account ${i + 1}`) : L("Connecté", "Connected"))}</span>
+          <div className="int-acct-actions">
+            <button className="btn xs ghost" disabled={busy === a.id} onClick={() => void disc(a.id)}>{busy === a.id ? "…" : L("Déconnecter", "Disconnect")}</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Otto Lycée v1 keeps Gmail, Calendar, and Drive — kept alongside Pronote (explicit ask) so teacher/club
+// emails, calendar deadlines, and PDFs teachers drop in Drive can still surface as tasks even when Pronote
+// itself doesn't have them. Everything else in Composio (GitHub/Slack/Linear/…) stays hidden.
+const GOOGLE_LYCEE_APPS = ["gmail", "googlecalendar", "googledrive"];
+
+// For IB/Other tracks: the FULL Composio catalog (GitHub/Slack/Linear/Todoist/…) turned out to be more
+// than actually wanted — the curated set is Google Workspace (all of it, not just the 3-app Lycée subset —
+// Docs/Sheets/Slides matter for building study materials) plus Notion, alongside Pronote which is its own
+// separate tile. Not the whole catalog.
+const GOOGLE_EXPANDED_APPS = ["gmail", "googlecalendar", "googledrive", "googledocs", "googlesheets", "googleslides"];
+
+const GOOGLE_APP_BLURBS: Record<string, string> = {
+  gmail: "Emails de profs, clubs, associations — Otto ne fait qu'y répondre en brouillon, jamais d'envoi automatique.",
+  googlecalendar: "Événements et échéances à venir, pour préparer ce qui arrive.",
+  googledrive: "Documents partagés par tes profs — pour enrichir les fiches de révision.",
+};
+
+const GOOGLE_APP_BLURBS_EN: Record<string, string> = {
+  gmail: "Emails from teachers, clubs, associations — Otto only replies as a draft, never sends automatically.",
+  googlecalendar: "Upcoming events and deadlines, to prep for what's coming.",
+  googledrive: "Documents your teachers shared — to enrich revision guides.",
+};
+
+/** Integrations grid. `restricted` (default true) scopes it to just Gmail/Calendar/Drive (GOOGLE_LYCEE_APPS,
+ *  the French-Bac default); false shows the curated IB/Other set — Google Workspace + Notion
+ *  (GOOGLE_EXPANDED_APPS), not the entire Composio catalog. */
+export function GoogleTiles({ onChanged, restricted = true }: { onChanged?: () => void; restricted?: boolean }) {
+  const [items, setItems] = useState<IntegrationItem[] | null | undefined>(undefined); // undefined = loading, null = unavailable
+  const load = useCallback(async () => {
+    const allow = restricted ? GOOGLE_LYCEE_APPS : GOOGLE_EXPANDED_APPS;
+    try { const r = await api.integrations(); setItems(r.items.filter((i) => allow.includes(i.key))); }
+    catch { setItems(null); }
+  }, [restricted]);
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { const id = setTimeout(() => void load(), 1200); return () => clearTimeout(id); }, [load]);
+  useEffect(() => {
+    const on = () => { if (!document.hidden) void load(); };
+    document.addEventListener("visibilitychange", on);
+    window.addEventListener("focus", on);
+    return () => { document.removeEventListener("visibilitychange", on); window.removeEventListener("focus", on); };
+  }, [load]);
+
+  const L = useLang();
+  // Same reasoning as PronoteTile's skeleton — an empty gap while `items` loads reads as stuck, not loading.
+  if (items === undefined) return <div className="int-group"><div className="int-grid"><div className="int-tile int-tile-skel" /><div className="int-tile int-tile-skel" /></div></div>;
+  if (items === null || !items.length) return <div className="warn">{L("Google n'est pas encore activé sur ce serveur.", "Google isn't set up on this server yet.")}</div>;
+  return (
+    <div className="int-group">
+      {items.map((item) => (
+        <div key={item.key} className="int-tile-block">
+          <div className="int-grid">
+            <div className={`int-tile ${item.connected ? "on" : ""}`}>
+              <img className="int-logo" src={item.logo} alt="" loading="lazy" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+              <div className="int-info">
+                <div className="int-name">{item.name}{item.connected && <span className="int-dot" title={L("Connecté", "Connected")} />}</div>
+                <div className="int-blurb">{L(GOOGLE_APP_BLURBS[item.key] || item.blurb, GOOGLE_APP_BLURBS_EN[item.key] || item.blurb)}</div>
+              </div>
+              <a className="btn xs" href={`/integrations/${item.key}/connect`} target="_blank" rel="noreferrer">{item.connected ? L("Ajouter un compte ↗", "Add an account ↗") : L("Connecter ↗", "Connect ↗")}</a>
+            </div>
+          </div>
+          {/* The connected account(s) for THIS app, right below its own tile — not lumped together
+              after the whole grid, so it's unambiguous which app each account belongs to. */}
+          {item.connected && <GoogleAppAccounts appKey={item.key} onChanged={() => { void load(); onChanged?.(); }} />}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** The person-profile editor (lives in the Settings page): about + preferences + people + projects.
+ *  Otto fills it in as it works; it's injected into how tasks are chosen + done. Always expanded here. */
+function ProfileEditor() {
+  const L = useLang();
+  const notify = useNotify();
+  const [p, setP] = useState<Profile | null>(null);
+  // A load failure used to be indistinguishable from "still loading" — `catch(() => setP(null))` left this
+  // stuck on "Chargement…" forever with no way to tell the user anything went wrong or let them retry.
+  const [loadError, setLoadError] = useState(false);
+  const load = () => { setLoadError(false); void api.profile().then(setP).catch(() => setLoadError(true)); };
+  useEffect(load, []);
+  if (loadError) return <ErrorNote onRetry={load}>{L("Impossible de charger ton profil.", "Couldn't load your profile.")}</ErrorNote>;
+  if (!p) return <p className="muted small">{L("Chargement…", "Loading…")}</p>;
+  const saveErr = () => L("Ça n'a pas été enregistré — réessaie.", "That didn't save — give it another try.");
+  const count = (p.name ? 1 : 0) + (p.about ? 1 : 0) + p.preferences.length + p.people.length + p.projects.length + p.courses.length;
+  const lists = [
+    { key: "preference" as const, label: L("Préférences", "Preferences"), items: p.preferences },
+    { key: "person" as const, label: L("Personnes", "People"), items: p.people },
+    { key: "project" as const, label: L("Projets", "Projects"), items: p.projects },
+    { key: "course" as const, label: L("Cours", "Courses"), items: p.courses },
+  ];
+  return (
+    <div className="memory-body">
+      <NameRow name={p.name || ""} onSave={async (v) => { try { setP(await api.setProfile("name", v)); } catch (e: any) { notify(e?.message || saveErr(), "error"); } }} />
+      <AboutRow about={p.about} onSave={async (v) => { try { setP(await api.setProfile("about", v)); } catch (e: any) { notify(e?.message || saveErr(), "error"); } }} />
+      {lists.map((l) => (
+        <div className="prof-group" key={l.key}>
+          <div className="prof-label">{l.label}</div>
+          <ul className="memory-list">
+            {l.items.map((it, i) => (
+              <li key={i}><span>{it}</span><button className="x" title={L("Supprimer", "Remove")} aria-label={L("Supprimer", "Remove")} onClick={async () => { try { setP(await api.delProfile(l.key, i)); } catch (e: any) { notify(e?.message || saveErr(), "error"); } }}>×</button></li>
+            ))}
+          </ul>
+          <AddRow placeholder={L(`Ajouter : ${l.label.toLowerCase().replace(/s$/, "")}…`, `Add a ${l.label.toLowerCase().replace(/s$/, "")}…`)} onAdd={async (v) => { try { setP(await api.setProfile(l.key, v)); } catch (e: any) { notify(e?.message || saveErr(), "error"); } }} />
+        </div>
+      ))}
+      {count === 0
+        ? <div className="muted small">{L("Vide pour l'instant — Otto le remplit au fil du travail, ou ajoute ton nom, une description, tes préférences, personnes et projets ici.", "Empty for now — Otto fills this in as it works, or add your name, about, preferences, people and projects here.")}</div>
+        : <div className="forget-row">
+            <button
+              className="btn xs forget"
+              onClick={async () => {
+                if (!window.confirm(L("Oublier tout ce qu'Otto a appris sur toi ? Ça efface ta description, préférences, personnes et projets, sans retour en arrière possible.", "Forget everything Otto has learned about you? This clears your About, preferences, people and projects, and can't be undone."))) return;
+                try { setP(await api.clearProfile()); } catch (e: any) { notify(e?.message || saveErr(), "error"); }
+              }}
+            >{L("Tout oublier", "Forget everything")}</button>
+            <span className="muted small">{L("Efface la mémoire d'Otto — il repart de zéro et te réapprend au fil du travail.", "Wipes Otto's memory — it starts from zero and learns you again as it works.")}</span>
+          </div>}
+    </div>
+  );
+}
+
+function NameRow({ name, onSave }: { name: string; onSave: (v: string) => Promise<void> }) {
+  const L = useLang();
+  const [text, setText] = useState(name);
+  useEffect(() => { setText(name); }, [name]);
+  return (
+    <div className="prof-group">
+      <div className="prof-label">{L("Nom", "Name")}</div>
+      <div className="addrow">
+        <input className="addinput sm" placeholder={L("Comment Otto doit-il t'appeler ?", "What should Otto call you?")} aria-label={L("Comment Otto doit-il t'appeler ?", "What should Otto call you?")} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void onSave(text.trim()); }} />
+        <button className="btn" disabled={text.trim() === name.trim()} onClick={() => void onSave(text.trim())}>{L("Enregistrer", "Save")}</button>
+      </div>
+    </div>
+  );
+}
+
+function AboutRow({ about, onSave }: { about: string; onSave: (v: string) => Promise<void> }) {
+  const L = useLang();
+  const [text, setText] = useState(about);
+  useEffect(() => { setText(about); }, [about]);
+  return (
+    <div className="prof-group">
+      <div className="prof-label">{L("À propos de toi", "About you")}</div>
+      <div className="addrow">
+        <input className="addinput sm" placeholder={L("Une ligne : qui tu es / comment tu travailles", "One line: who you are / how you work")} aria-label={L("Une ligne : qui tu es / comment tu travailles", "One line: who you are / how you work")} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void onSave(text.trim()); }} />
+        <button className="btn" disabled={text.trim() === about.trim()} onClick={() => void onSave(text.trim())}>{L("Enregistrer", "Save")}</button>
+      </div>
+    </div>
+  );
+}
+
+function AddRow({ placeholder, onAdd }: { placeholder: string; onAdd: (v: string) => Promise<void> }) {
+  const L = useLang();
+  const [text, setText] = useState("");
+  // onAdd already notifies on failure (see ProfileEditor) and never rejects — but guard anyway so a future
+  // caller that DOES reject can't clear the user's typed text or leave an unhandled rejection here.
+  const go = async () => { const v = text.trim(); if (!v) return; try { await onAdd(v); setText(""); } catch { /* text stays — onAdd already surfaced the error */ } };
+  return (
+    <div className="addrow">
+      <input className="addinput sm" placeholder={placeholder} aria-label={placeholder} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void go(); }} />
+      <button className="btn" disabled={!text.trim()} onClick={() => void go()}>{L("Ajouter", "Add")}</button>
+    </div>
+  );
+}

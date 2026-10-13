@@ -40,7 +40,6 @@ import {
   type EvidenceKind,
   type StudentModelShape,
 } from "../shared/agentTypes.ts";
-import type { DependenceMetric } from "../shared/types.ts";
 
 export type {
   ConceptRecord, ConceptMisconception, ConceptError, ConceptEvidence, EvidenceKind, StudentModelShape,

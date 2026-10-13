@@ -1,5 +1,8 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync, readdirSync } from "node:fs";
+// The app shell was split into client/App.tsx + client/appShared.tsx + client/pages/*.tsx; source checks read them as one.
+const appSource = () => ["../client/App.tsx", "../client/appShared.tsx", ...readdirSync(new URL("../client/pages/", import.meta.url)).map((f) => `../client/pages/${f}`)]
+  .map((f) => readFileSync(new URL(f, import.meta.url), "utf8")).join("\n");
 import { crossSourceSame, recencyStamp, dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, homeworkTaskTitle, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor, attachLocationLinks, googleMapsDirectionsUrl, trimOldStudylogArtifacts, ensurePronoteLinks } from "../server/tasks.ts";
 import { sameAssignmentText, dedupePronoteHomework } from "../server/discover.ts";
 import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, shouldNudgeBoardContent, mathInPlay, newMathOffBoard, replyIntroducesNewMath, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem, makeProblem, detectLang, visionReady, describeWhiteboard, academicBlock, sessionRecapLine, whyContradictsCorrect } from "../server/claude.ts";
@@ -207,7 +210,7 @@ section("Tutor stage — End session always ends; the stage is screen-height wit
   // Report-live ask: the top nav STAYS on the tutor routes (it used to be dropped as a "focused surface").
   // With the header back in flow, a flat 100dvh stage would push the dock 64px below the fold — the stage
   // must be viewport-minus-nav, sized from the same --topnav-h the header wears (56px variant on phone).
-  const appShell = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const appShell = appSource();
   check("the top nav renders on EVERY route including tutor (the tutor-only hiding gate is gone)",
     !/!route\.startsWith\("tutor"\) && \(/.test(appShell) && /className="topnav">/.test(appShell));
   check("tutor stage is fixed to the screen-minus-nav height (it used to grow with the board and push End session away)",
@@ -251,7 +254,7 @@ section("Whiteboard — invited any time, read in board context, infinite blank 
 // URL) ever loaded its session and the review effect sat dead code.
 section("Tutor session routing — deep links resolve, the URL follows the live session (source pins)");
 {
-  const appSrcR = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const appSrcR = appSource();
   const tutSrcR = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
   check("the session deep link reads split index [2] — [3] was always undefined and never loaded a session",
     /sessionId=\{route\.split\("\/"\)\[2\]\}/.test(appSrcR) && !/sessionId=\{route\.split\("\/"\)\[3\]\}/.test(appSrcR));
@@ -346,7 +349,7 @@ section("Coursework — subjects, limits, summaries the tutor/chat can cite (uni
   const page = readFileSync(new URL("../client/CourseworkPage.tsx", import.meta.url), "utf8");
   const pdf = readFileSync(new URL("../client/study/pdfText.ts", import.meta.url), "utf8");
   check("the browser reads only the first pages (limited PDF reader) and the page tells the student the limit", /extractPdfTextLimited\(file, COURSEWORK_MAX_PAGES, COURSEWORK_MAX_CHARS\)/.test(page) && /Math\.min\(doc\.numPages, maxPages\)/.test(pdf));
-  check("Coursework is in the nav and routed", /href="\/coursework"/.test(readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8")) && /route === "coursework"/.test(readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8")));
+  check("Coursework is in the nav and routed", /href="\/coursework"/.test(appSource()) && /route === "coursework"/.test(appSource()));
   check("each uploaded document is collapsible (details/summary), not a flat always-open card", /<details key={d\.id} className="cw-doc"/.test(page) && /<summary>/.test(page));
   check("document cards start COLLAPSED, and what Otto read is collapsible in its own right", !/open={list\.length === 1}/.test(page) && /cw-read/.test(page) && /Ce qu'Otto a lu/.test(page));
 }
@@ -364,7 +367,7 @@ section("Journal — old decks stay readable, and a day's deck is the NEWEST one
   check("past the TTL the stale Leitner state (box/dueAt) is what gets dropped, so nothing old keeps resurfacing", old[0].flashcards[0].cards.every((c) => c.review === undefined));
   check("the retention window is at least the 30 days that were asked for", trimOldStudylogArtifacts([studyDay("2026-09-09", 5)], now)[0].flashcards[0].cards.every((c) => !!c.review));
   check("trimming is idempotent — the hook runs on EVERY commit, so an already-trimmed task is returned as-is", (() => { const once = trimOldStudylogArtifacts([studyDay("2026-08-01", 12)], now); return trimOldStudylogArtifacts(once, now)[0] === once[0]; })());
-  const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const app = appSource();
   check("the journal day/week/month views resolve to the NEWEST deck, never flashcards[0] (the stale-deck bug behind 'only 10 show')",
     /const dayDeck = newestDeck\(dayTask\)/.test(app) && /const summaryDeck = newestDeck\(summary\)/.test(app) && /const monthDeck = newestDeck\(monthSummary\)/.test(app) && !/flashcards\?\.\[0\]/.test(app));
 }
@@ -1712,9 +1715,9 @@ section("PageInfoHint — dashboard orientation caption");
 // of that contract: no flow bloat (step count, dead screens) and no missing coverage (each feature named).
 section("Onboarding — short but complete (source pins)");
 {
-  const src = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const src = appSource();
   const obStart = src.indexOf("function Onboarding(");
-  const ob = src.slice(obStart, src.indexOf("/** Dedicated login", obStart));
+  const ob = readFileSync(new URL("../client/pages/Onboarding.tsx", import.meta.url), "utf8");
   // Was 5 — bumped to 6 fixing a real bug: step 5 (the personalized "you're all set" done screen) existed
   // in the JSX but nothing ever advanced to it, so it was dead/unreachable code and the progress dots
   // undercounted by one. Now step 4's finish button actually advances into it instead of exiting directly.
@@ -1834,7 +1837,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   // The board as a drafted WORKSHEET (research: gradual release + completion effect + ICAP — the visible
   // artifact of a session is the student's own thinking, laid out like a lesson page, written in live).
   check("board has a worksheet header (date + subject)", /sm-board-header/.test(boardSrc) && /sm-board-header-subject/.test(boardSrc));
-  { const ui2 = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8"); const app2 = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  { const ui2 = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8"); const app2 = appSource();
     check("FlashcardDeck remounts per deck (id+size) so a different/shorter deck never indexes past the end", /function FlashcardDeckInner/.test(ui2) && /key=\{`\$\{props\.deck\.id\}:\$\{props\.deck\.cards\.length\}`\}/.test(ui2) && /!deck\.cards\[cardIndex\]/.test(ui2));
     check("tutor/session/<id> route reads the id from segment 2", /sessionId=\{route\.split\("\/"\)\[2\]\}/.test(app2)); }
   { const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
@@ -1979,7 +1982,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
       !mid && over && !other && !m.over("a") && m.used("a") === 0 && /DEFAULT_EGRESS_BUDGET_BYTES = 10 \* 1024 \* 1024/.test(readFileSync(new URL("../server/egress.ts", import.meta.url), "utf8")));
     check("the store enforces it: over budget serves the held copy, saveState writes through the cache so the next read isn't a re-download",
       /held && !opts\?\.bypassCache && egress\.over\(email\) && Date\.now\(\) - held\.at < 900_000/.test(st) && /egress\.note\(email, JSON\.stringify\(d\)\.length\)/.test(st) && /Write-through: we know exactly what we just wrote/.test(st) && /cacheSetState\(email, merged, String\(row\.updated_at\)\)/.test(st)); }
-  { const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8"), ex = readFileSync(new URL("../client/ExercisesPage.tsx", import.meta.url), "utf8"), idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"), tcs = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
+  { const app = appSource(), ex = readFileSync(new URL("../client/ExercisesPage.tsx", import.meta.url), "utf8"), idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"), tcs = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
     const nav = app.slice(app.indexOf('className="topnav'), app.indexOf('className="topnav') + 6000);
     check("/exercises shows questions pulled from the registered sources and is reachable by route only (no navbar link)", /route === "exercises"/.test(app) && /<ExercisesPage \/>/.test(app) && !/href="\/exercises"/.test(app) && !/navigate\("exercises"\)/.test(app) && !/\/exercises/.test(nav) && /exerciseSearch/.test(ex) && /Searched: /.test(ex) && /app\.post\("\/api\/exercises\/search"/.test(idx) && /sourcesForTrack\(track\)/.test(idx) && /findSourceQuestions\(\{ track, subject: subject \|\| undefined, topic, limit: 6 \}\)/.test(idx));
     check("the deadline has an Edit button that opens a date field with Save / Cancel / Clear (not an always-open input)", /deadline-edit-btn/.test(tcs) && /setEditing\(true\)/.test(tcs) && /L\("Enregistrer", "Save"\)/.test(tcs) && /L\("Annuler", "Cancel"\)/.test(tcs)); }
@@ -2147,12 +2150,12 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     check("a failed write keeps the data and retries (nothing is lost on a blip)", w2.length === 1 && w2[0] === 7); }
   { const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
     check("commit() is write-behind (scheduler) except the journal saves; shutdown and tab-hide flush it", /scheduler\.schedule\(email, \{ tasks: localTasks, profile: localProfile \}\)/.test(idx) && /process\.once\(sig/.test(idx) && /\/api\/sync\/flush/.test(idx) && !/review[\s\S]{0,900}awaitCloud: true[\s\S]{0,40}\n\}\)\);\n\/\/ "Not something I need/.test(idx)); }
-  { const css = readFileSync(new URL("../client/minimal.css", import.meta.url), "utf8"); const main = readFileSync(new URL("../client/main.tsx", import.meta.url), "utf8"); const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  { const css = readFileSync(new URL("../client/minimal.css", import.meta.url), "utf8"); const main = readFileSync(new URL("../client/main.tsx", import.meta.url), "utf8"); const app = appSource();
     check("minimal UI layer is loaded last and removes shadows, gradients, radii, uppercase labels, cream and the orange accent", /import "\.\/minimal\.css";\s*$/m.test(main.replace(/\n\s*\n/g, "\n").trim() + "\n") || main.indexOf("minimal.css") > main.indexOf("tour.css"));
     check("minimal layer: one warm ink accent, no shadows/gradients/uppercase", /--accent: #26221f/.test(readFileSync(new URL("../client/styles.css", import.meta.url), "utf8")) && /box-shadow: none !important/.test(css) && /text-transform: none !important/.test(css) && /background-image: none !important/.test(css));
     check("landing is one headline, one sentence, one button — no feature cards, numbering or kickers", /landing-min-main/.test(app) && !/feature-number-framer|sample-task-framer|hero-title-framer/.test(app));
     check("no hard-coded orange accent remains in the stylesheets", !/#ff752b|#f26a22|#e05a18|#d97757/i.test(readFileSync(new URL("../client/styles.css", import.meta.url), "utf8") + readFileSync(new URL("../client/tally.css", import.meta.url), "utf8"))); }
-  { const css = readFileSync(new URL("../client/minimal.css", import.meta.url), "utf8"); const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8"); const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  { const css = readFileSync(new URL("../client/minimal.css", import.meta.url), "utf8"); const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8"); const app = appSource();
     check("task check-offs are clear circles with a visible check; marker swatches stay coloured; the board is ONE font (KaTeX's textbook serif)", /\.card-check, \.step-mark \{[^}]*border: 2px solid var\(--ink\)/.test(css) && /\.card-check\.checked::before/.test(css) && /:where\(button:not\(\.tc-swatch\):not\(\.card-check\)/.test(css) && /\.sm-board-body, \.sm-board-body \*:not\(\.katex\):not\(\.katex \*\) \{ font-family: var\(--font-board\) !important; \}/.test(css));
     check("Otto keeps the original face (no overrides)", !/\.tutor-face::after/.test(css) && /avatar"\]:not\(\.tutor-face\)/.test(css));
     check("copy is bolder: thinking partner, not an answer machine; tutor voice holds a high bar", /thinking partner, not an answer machine/.test(app) && /You hold a high bar and you are plainly on their side/.test(cl)); }
@@ -2792,7 +2795,7 @@ section("App() — the local flashcard/quiz backup save-effect never writes a ST
   // — writing them straight into the new account's localDecks/localQuizzes key. Fixed with a render-time
   // (not effect-time) flag: reordering effects or adding a `loaded` check doesn't work here because a
   // sibling effect's setState can't retroactively un-stale a closure already executing in the same flush.
-  const appSrc = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const appSrc = appSource();
   const start = appSrc.indexOf("export function App(");
   const body = appSrc.slice(start, appSrc.indexOf("\nexport function ", start + 10));
   check("userJustChanged is computed inline during render (a ref comparison), not inside a useEffect", /const prevUserRef = useRef\(status\?\.user \?\? null\);\s*const userJustChanged = prevUserRef\.current !== \(status\?\.user \?\? null\);\s*prevUserRef\.current = status\?\.user \?\? null;/.test(body));
@@ -2810,7 +2813,7 @@ section("FlashcardsLibraryPage — local deck/quiz cache refreshes immediately o
   // never actually re-read local storage until the next incidental focus event (which a same-tab account
   // switch never naturally triggers). Fixed by calling refresh() directly in the effect body, so it re-runs
   // the instant `userId` itself changes, not only later on focus.
-  const appSrc = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const appSrc = appSource();
   const start = appSrc.indexOf("function FlashcardsLibraryPage(");
   const body = appSrc.slice(start, appSrc.indexOf("\nfunction ", start + 10));
   check("refresh() is called immediately in the effect body (not just registered for later)", /const refresh = \(\) => \{[^}]*\};\s*refresh\(\);\s*window\.addEventListener\("focus", refresh\)/.test(body));
@@ -2822,7 +2825,7 @@ section("DueReviews (Journal tab) — capped at 3 decks/day (source pin)");
   // Reported live: a student with accumulated review debt saw every single overdue deck stacked at the top
   // of the Journal tab (7+ chips), crowding out the actual journal entry below. Capped to the top 3 by
   // review count (most cards due first — the review that's gone stalest, not just whichever deck sorts first).
-  const appSrc = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const appSrc = appSource();
   const start = appSrc.indexOf("function DueReviews(");
   const body = appSrc.slice(start, appSrc.indexOf("\nfunction ", start + 10));
   check("DueReviews caps the shown decks at 3", /\.slice\(0, 3\)/.test(body));
@@ -2839,7 +2842,7 @@ section("Locale-aware date formatting — fmtDate/relTime/fmtWhen/fmtDay take th
   check("fmtDate takes an optional L and never calls toLocaleDateString(undefined, ...)", /export const fmtDate = \(iso: string, L\?/.test(ui) && !/toLocaleDateString\(undefined/.test(ui));
   check("relTime takes an optional L and localizes the relative-time WORDS too, not just the date fallback", /export const relTime = \(iso: string, L\?/.test(ui) && /à l'instant/.test(ui) && /il y a \$\{m\}min/.test(ui));
   check("fmtWhen takes an optional L", /export function fmtWhen\(when: string, L\?/.test(ui));
-  const appSrc = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const appSrc = appSource();
   check("fmtDay takes an optional L and never calls toLocaleDateString(undefined, ...)", /function fmtDay\(iso: string, L\?/.test(appSrc) && !/toLocaleDateString\(undefined/.test(appSrc));
 }
 
@@ -2863,7 +2866,7 @@ section("/api/study/free — resumes an active freestudy session by default, onl
   // (fresh?: boolean — optional, so a passive call sends no fresh flag; the route later grew a subject
   // param alongside it, which this pin deliberately doesn't pin so it stays signature-shape-agnostic.)
   check("client's studyFreeSession defaults to resume (no fresh flag sent) unless explicitly asked", /studyFreeSession: \(fresh\?: boolean/.test(apiSrc));
-  const appSrc = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const appSrc = appSource();
   check("StandaloneStudyEntry's explicit 'Enter study mode' click still requests a fresh session", /api\.studyFreeSession\(true\)/.test(appSrc));
   // Product decision: Study Mode has NO in-app entry point — no sidebar tab, no per-task buttons; the
   // ONLY way in is the /study URL. Pin both halves so neither can regress silently: a cleanup must not
@@ -4841,7 +4844,7 @@ section("GEOMETRY_ON_BOARD — triangle.sides can't express an unknown, so it mu
 section("Admin metrics dashboard — gated to one hardcoded email, server AND client (source pins)");
 {
   const serverSrcAdmin = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
-  const appSrcAdmin = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const appSrcAdmin = appSource();
   check("the server route requires auth before the admin check (no route ever does real work pre-auth)", /app\.get\("\/api\/admin\/metrics", requireAuth,/.test(serverSrcAdmin));
   check("the admin check is an exact, case-insensitive match against the ADMIN_EMAILS env allowlist — not a role flag on the profile", /ADMIN_EMAILS\.has\(\(req\.session\.user \|\| ""\)\.toLowerCase\(\)\)/.test(serverSrcAdmin));
   check("non-admins get a clean 403, not a crash or a silent empty response", /if \(!isAdmin\(req\)\) \{ res\.status\(403\)/.test(serverSrcAdmin));
@@ -4878,7 +4881,7 @@ section("Admin metrics dashboard — gated to one hardcoded email, server AND cl
 
 section("Kick loop egress/CPU fix — hidden-tab guard, trimmed payload, ETag (source pins)");
 {
-  const appSrcKick = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const appSrcKick = appSource();
   const kickEffect = appSrcKick.slice(appSrcKick.indexOf("const hasActiveWork = (list: WebTask[])"), appSrcKick.indexOf("Manual ↻ Refresh"));
   check("kick's tick bails while the tab is hidden, same as the other polling timers in this file", /kicking\.current \|\| signedOutRef\.current \|\| document\.hidden\) return;/.test(kickEffect));
   check("kick catches up immediately on regaining visibility instead of waiting for the next 10s tick", /visibilitychange.*onVisible|onVisible.*visibilitychange/s.test(kickEffect) && /if \(!document\.hidden\) void tick\(\);/.test(kickEffect));
@@ -4900,7 +4903,7 @@ section("Flashcard/quiz/journal local caches are account-scoped (source pins —
   // localStorage keys were keyed only by date/deck-id/quiz-id, NOT by userId — a GLOBAL key any account
   // signed into the same browser reads/writes. Same bug class localDecks.ts/localChatBoard.ts/
   // localQuizzes.ts already fixed for their own stores; this closes the remaining gaps.
-  const appSrcLeak = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const appSrcLeak = appSource();
   const uiSrcLeak = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8");
   check("studylog week cache key includes userId, not just the date", /function studylogWeekKey\(userId: string \| null, monday: string\): string \{ return `\$\{STUDYLOG_CACHE_PREFIX\}\$\{userId \|\| "anon"\}:\$\{monday\}`; \}/.test(appSrcLeak));
   check("studylog month cache key includes userId, not just the month", /function studylogMonthKey\(userId: string \| null, month: string\): string \{ return `\$\{STUDYLOG_MONTH_CACHE_PREFIX\}\$\{userId \|\| "anon"\}:\$\{month\}`; \}/.test(appSrcLeak));
@@ -5148,7 +5151,7 @@ section("Focus/visibility resync removed — only the Pronote keepalive stays on
 {
   // Removed per direct instruction: 4 requests (tasks/status/budget/sweep) on every tab focus/visibility
   // event was real, avoidable egress for something a manual reload already covers.
-  const appSrcFocus = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const appSrcFocus = appSource();
   const onFn = appSrcFocus.slice(appSrcFocus.indexOf("const on = () => {"), appSrcFocus.indexOf("document.addEventListener(\"visibilitychange\", on);"));
   check("the focus/visibility handler no longer re-syncs tasks/status/budget/sweep", !/void syncTasks\(\); void loadStatus\(\); void loadBudget\(\); void sweepIfDue\(\);/.test(onFn));
   check("the focus/visibility handler still touches Pronote's session to keep a connected token alive", /if \(status\?\.pronoteConnected\) void api\.pronoteTouch\(\);/.test(onFn));
@@ -5160,7 +5163,7 @@ section("'Pulling up your day' no longer spins forever for a skip-connect accoun
   // the loading skeleton forever. Root cause: `loaded` was only ever flipped true inside syncTasks/
   // sweepIfDue/generate, and the ONLY effect that auto-calls those is gated on `connected` — which is
   // permanently false for a skip-connect account, so `loaded` never had a chance to become true.
-  const appSrcLoaded = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const appSrcLoaded = appSource();
   const loadedEffect = appSrcLoaded.slice(appSrcLoaded.indexOf("useEffect(() => {\n    // A student who skipped connecting"), appSrcLoaded.indexOf("}, [connected, status?.aiReady, syncTasks, sweepIfDue]);") + 1);
   check("the connected-gated sync effect flips `loaded` directly when the account never connected anything, instead of leaving it permanently false", /if \(!connected\) \{ setLoaded\(true\); return; \}/.test(loadedEffect));
 }
@@ -5172,7 +5175,7 @@ section("Pronote is one option, not the premise — no-integration accounts get 
   // hardcode "Otto is watching your Pronote" and offer only a "Check now" button — for a student who skipped
   // the connect card that button could only ever return a "nothing connected" skip, so the page claimed
   // Otto was watching a portal nobody had linked and gave no way forward.
-  const appSrcPronote = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const appSrcPronote = appSource();
   check("the dashboard empty state no longer hardcodes 'Otto is watching your Pronote'", !/Otto is watching your Pronote/.test(appSrcPronote));
   check("the empty state names whichever source is actually connected (Pronote vs inbox)", /const watching = status\.pronoteConnected\s*\n\s*\? \(en \? "your Pronote" : "ton Pronote"\)\s*\n\s*: status\.googleConnected/.test(appSrcPronote));
   const firstRun = appSrcPronote.slice(appSrcPronote.indexOf("const watching = status.pronoteConnected"), appSrcPronote.indexOf("<div className={`list-focus-wrap"));
@@ -5201,7 +5204,7 @@ section("Terms/Privacy links open in a new tab from the signup form (source pin 
   // typed field (email/password/consent/child-account fields) with no way back except restarting. The
   // SPA router (usePathRoute) explicitly lets target="_blank" links fall through to normal browser nav,
   // so opening in a new tab keeps the in-progress form alive in this tab.
-  const appSrcLegal = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const appSrcLegal = appSource();
   const legalLine = appSrcLegal.slice(appSrcLegal.indexOf('<div className="login-legal">'), appSrcLegal.indexOf('<div className="login-legal">') + 400);
   check("the Terms link opens in a new tab instead of unmounting the signup form", /<a href="\/terms" target="_blank" rel="noopener">/.test(legalLine));
   check("the Privacy link opens in a new tab instead of unmounting the signup form", /<a href="\/privacy" target="_blank" rel="noopener">/.test(legalLine));
@@ -5339,7 +5342,7 @@ section("hintDensity preference — new axis, distinct from learningStyle, never
   check("hintDensityLine explicitly says the direct answer is still never given, under either setting", /Still never the direct answer/.test(hintFn) || /still never the\s*direct answer/.test(hintFn));
   check("chatAboutTask's dynamicContext includes hintDensityLine", /learningStyleLine\(profile\) \+ hintDensityLine\(profile\)/.test(claudeSrcHint));
 
-  const appSrcHint = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const appSrcHint = appSource();
   check("Settings has a hint-density 3-position slider, distinct from the learningStyle VARK field", /hint-density-slider/.test(appSrcHint) && /type="range" min=\{0\} max=\{2\} step=\{1\}/.test(appSrcHint));
   check("the slider's 3 stops map to hints/balanced/steps in that order", /const HINT_DENSITY_POSITIONS: \("hints" \| "balanced" \| "steps"\)\[\] = \["hints", "balanced", "steps"\];/.test(appSrcHint));
 }
@@ -5648,7 +5651,7 @@ section("Phone restriction — flashcard review + READ-ONLY tasks, no chat; iPad
   check("useIsPhone uses the 767px breakpoint (keeps iPad, min width 768px, OUT of 'phone')", /max-width:\s*767px/.test(hook));
   check("useIsPhone is reactive (matchMedia change listener), not a one-time read", /addEventListener\("change"/.test(hook));
 
-  const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const app = appSource();
   check("App.tsx imports the shared useIsPhone hook", /import \{ useIsPhone \} from "\.\/useIsPhone\.ts"/.test(app));
   check("tasks + flashcards + settings are reachable on phone; anything else redirects to the task list", /PHONE_ALLOWED_ROUTES\s*=\s*\["", "tasks", "log", "settings", "tutor", "exercises"\]/.test(app) && /r\.startsWith\("task\/"\)/.test(app) && /!phoneRouteAllowed\(route\)\) navigate\("tasks"\)/.test(app));
   check("Tutor/Study/Error log/Admin stay hidden on phone, but Tasks does NOT", /\{!isPhone && <a[\s\S]{0,200}href="\/errorlog"/.test(app) && !/\{!isPhone && <a[\s\S]{0,200}href="\/tasks"/.test(app));
@@ -5807,8 +5810,8 @@ section("Landing page redesign — prototype copy, real features only, no fabric
   // Later restyled to the Otto Framer prototype: the long feature/integrations grids were replaced by the
   // prototype's two-column "01/PROACTIVE TASKS · 02/PERSONAL TUTOR" section with honest sample cards —
   // still real, still nothing fabricated; the prototype's copy is the marketing now.
-  const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
-  const landing = app.slice(app.indexOf("export function Landing("), app.indexOf("// ── Legal pages"));
+  const app = appSource();
+  const landing = readFileSync(new URL("../client/pages/Landing.tsx", import.meta.url), "utf8");
   check("no fabricated testimonial content (no quote attributed to a named 'customer')", !/testimonial/i.test(landing));
   check("no certifications this app doesn't hold (SOC 2 / ISO 27001 / SAML)", !/SOC\s*2/i.test(landing) && !/ISO\s*27001/i.test(landing) && !/SAML/i.test(landing));
   check("the footer keeps Privacy/Terms (+ Research, not Unlimited) and the Research page stays reachable", landing.includes('href="/terms"') && landing.includes('href="/research"') && !landing.includes('href="/unlimited"'));
@@ -5936,7 +5939,7 @@ section("Bilingual copy — French and English never bleed into each other (sour
   //      regardless of the toggle (a whole Study Mode setup screen, the camera consent panel, the citation
   //      hint, the tutor's guardrail tag, the crash fallback...).
   const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
-  const appSrc = read("../client/App.tsx");
+  const appSrc = appSource();
 
   check("the language toggle's aria-label follows the language, not the reverse", /aria-label=\{en \? "Switch language" : "Changer de langue"\}/.test(appSrc) && !/en \? "Changer de langue"/.test(appSrc));
   check("the landing page's login link is French-first (it rendered \"Log in\" in French)", /\{L\("Se connecter", "Log in"\)\}/.test(appSrc));
@@ -6310,7 +6313,7 @@ await runTutorEngineSim(check, section);
 const { runTutorCompanionSim } = await import("./tutor-companion-sim.mjs");
 await runTutorCompanionSim(check, section);
 {
-  const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const app = appSource();
   const t = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
   check("Hick's law: four primary nav links, the rest under a 'More' menu that closes on navigation; at most 3 one-tap chips", /className="topnav-more" key=\{route\}/.test(app) && /topnav-more-menu/.test(app) && !/Something else/.test(t));
 }
@@ -6612,7 +6615,7 @@ section("Tutor sessions are fully local — the server stores no chat/board/prob
     overlaid.chat.length === 2 && overlaid.chat[0].text === "local" && overlaid.board.length === 1);
   check("a field local storage has nothing for keeps what the server sent — how a pre-local conversation survives the switch",
     JSON.stringify(overlayLocalThread(cloudTask, { chat: [], board: [], problems: [], objectives: [] })) === JSON.stringify(cloudTask));
-  check("the overlay is applied on every fresh list (initial load, polling, sync)", /hydrateLocalThreads\(incoming, status\?\.user \|\| null\)/.test(readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8")));
+  check("the overlay is applied on every fresh list (initial load, polling, sync)", /hydrateLocalThreads\(incoming, status\?\.user \|\| null\)/.test(appSource()));
   check("the local store is written by the merged thread, not by appending a delta onto whatever happens to be on disk",
     /export function setLocalChat\(/.test(localSrc) && !/appendLocalChat\(/.test(tutorSrcL));
   // Direct request: tell the student their sessions live only in this browser and clearing cookies/site data erases them.

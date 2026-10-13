@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 // Timer icon instead of the 🍅 emoji (explicit request: no emoji in the app).
 import { Timer } from "lucide-react";
-import type { WebTask } from "../../shared/types.ts";
 import { useLang } from "../ui.tsx";
 
 // Fullscreen hides the OS clock/menu bar — genuinely full-screen (see StudyMode's requestFullscreen) means

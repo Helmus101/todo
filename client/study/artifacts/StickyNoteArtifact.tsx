@@ -1,4 +1,4 @@
-import { useState } from "react";
+
 import type { ArtifactState } from "../StudyTypes.ts";
 import { useLang } from "../../ui.tsx";
 

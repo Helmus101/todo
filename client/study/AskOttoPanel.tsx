@@ -10,7 +10,6 @@ import { useVoiceModePref } from "../voice/useVoiceModePref.ts";
 import { VoiceControls } from "../voice/VoiceControls.tsx";
 import { createEchoFilter } from "../voice/echoGuard.ts";
 import { findArithmeticClaims } from "../../server/arithmetic.ts";
-import { InlineProblem } from "./InlineProblem.tsx";
 import { extractPdfText } from "./pdfText.ts";
 import { api } from "../api.ts";
 import { OttoAvatar } from "../tutor/OttoAvatar.tsx";

@@ -12,10 +12,8 @@ import { studentProblemStatement, cleanToPost, posesProblemInProse, echoesStuden
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { hasAssignmentText } from "./discover.ts";
-import { getPolicyProfile } from "./policyProfiles.ts";
 import { evaluateArithmetic, findArithmeticClaims } from "./arithmetic.ts";
 import { boardSurfaceBlock, boardTrajectoryBlock, type BoardEvent } from "./boardEvents.ts";
-import { buildTutorDecision } from "./actionSpace.ts";
 import { normalizeWidget, WIDGET_TYPES } from "../shared/widgets.ts";
 import { questionAhead } from "../shared/equationsAhead.ts";
 import { normalizeFlow } from "../shared/flow.ts";
