@@ -4950,6 +4950,14 @@ check("…and passes when the graph exists", pointsAtMissingObject("Have a look 
 check("French summary reference is caught", pointsAtMissingObject("Regarde le résumé ci-dessus.", []) === "summary");
 check("plain prose is untouched", pointsAtMissingObject("What happens to price?", []) === null);
 
+section("Board changes are undoable in the Tutor session (spec §12 #10, source pins)");
+{
+  const ts = readFileSync("client/tutor/TutorSession.tsx", "utf8");
+  check("each board-changing turn snapshots the previous board", /boardHistoryRef\.current = \[\.\.\.boardHistoryRef\.current, \{ taskId: task\.id, board: task\.board/.test(ts));
+  check("undo restores it locally and on screen", /undoBoard = useCallback[\s\S]{0,400}setLocalBoard\(task\.id, prev\.board/.test(ts));
+  check("the Undo button is keyboard-focusable with a visible focus ring", /className="ts-board-undo"/.test(ts) && /\.ts-board-undo:focus-visible/.test(readFileSync("client/styles.css", "utf8")));
+}
+
 section("Tutor content never reaches the account row: no worked solution, no quoted student words (source pins)");
 {
   const idxLocal = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");

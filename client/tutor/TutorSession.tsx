@@ -339,6 +339,10 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       // are capped and can lag behind this device, so taking it wholesale would wipe older board entries.
       const newBoard = boardCleared ? (board || []) : applyBoardEdits(mergeBoardById(task.board || [], board || []), boardEdits, boardRemoved);
       const newProblems = mergeBoardById(task.problems || [], problems || []);
+      if ((task.board || []).length && JSON.stringify(task.board) !== JSON.stringify(newBoard)) {
+        boardHistoryRef.current = [...boardHistoryRef.current, { taskId: task.id, board: task.board || [] }].slice(-20);
+        setUndoCount(boardHistoryRef.current.length);
+      }
       setLocalBoard(task.id, newBoard, userId);
       setLocalProblems(task.id, newProblems, userId);
       // The MERGED thread (what's on screen + this turn's delta), not just the delta: the local store is the
@@ -398,6 +402,16 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   const [resultTick, setResultTick] = useState(0);
   // Problems the student has answered correctly — sent with every turn so the tutor never piles a new exercise on an unanswered one.
   const solvedRef = useRef<Set<string>>(new Set());
+  // Spec §12 #10 / test 31: board edits stay recoverable — the board as it stood before each turn that changed it.
+  const boardHistoryRef = useRef<{ taskId: string; board: NonNullable<WebTask["board"]> }[]>([]);
+  const [undoCount, setUndoCount] = useState(0);
+  const undoBoard = useCallback(() => {
+    const prev = boardHistoryRef.current.pop();
+    if (!prev || !task || prev.taskId !== task.id) { setUndoCount(boardHistoryRef.current.length); return; }
+    setLocalBoard(task.id, prev.board, userId);
+    setTask((t) => (t && t.id === prev.taskId ? { ...t, board: prev.board } : t));
+    setUndoCount(boardHistoryRef.current.length);
+  }, [task, userId]);
   const sendRef = useRef(send);
   sendRef.current = send;
   const onProblemResult = useCallback((r: { problem: TaskProblem; given: string; correct: boolean; attempt: number; systemError?: boolean; partial?: boolean }) => {
@@ -868,6 +882,11 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
         </div>
       )}
       <section className="ts-canvas" aria-label={L("Tableau", "Board")}>
+        {undoCount > 0 && (
+          <button type="button" className="ts-board-undo" onClick={undoBoard} title={L("Annuler la dernière modification du tableau", "Undo the last board change")}>
+            ↶ {L("Annuler", "Undo")}
+          </button>
+        )}
         <div className="tutor-board-body ts-board-body" ref={setSurfaceEl} style={{ display: desmosOpen ? "none" : undefined }}>
           <BoardArtifact task={task} writing={sending} onProblemResult={onProblemResult} onWidgetResult={onWidgetResult} sheetSignal={sheetSignal} onGapCheck={onGapCheck} />
         </div>
