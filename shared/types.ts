@@ -7,7 +7,7 @@ import type { WidgetSpec } from "./widgets.ts";
 import type { FlowSpec } from "./flow.ts";
 import type { StudentModelShape, ConceptGraphShape, TutorSessionStateShape, TutorDecisionShape, BoardEventShape } from "./agentTypes.ts";
 import { SESSION_CAP } from "./agentTypes.ts";
-import { equivalent } from "./mathEquiv.ts";
+import { equivalent, logAnswerEquivalent } from "./mathEquiv.ts";
 
 export type Quadrant = "do" | "schedule" | "delegate" | "later";
 
@@ -1966,6 +1966,12 @@ export function practiceAnswerMatches(given: string, correct: string, value?: nu
   // via the paths above/below, and `equivalent` safely returns "unknown" (never a false "correct") for
   // genuine prose like a word answer, since that fails to compile as an expression at all.
   if ((/[a-z]/i.test(g) || /[a-z]/i.test(c)) && equivalent(given, correct) === "correct") return true;
+  // Logarithm answers (log laws exercises): compared term by term, see logAnswerEquivalent.
+  // Decisive either way: the number-fallbacks below would otherwise match "3log_a x + 2log_a y" to a key starting
+  // "3\\log_a x…" on its leading 3 alone.
+  const logVerdict = logAnswerEquivalent(given, correct);
+  if (logVerdict === "correct") return true;
+  if (logVerdict === "incorrect") return false;
   const gn = parseNumericOrFraction(g);
   if (Number.isFinite(gn) && Number.isFinite(parseNumericOrFraction(c))) return numbersMatch(gn, c);
   // Leading-number fallback: makePracticeProblem's own prompt (server/claude.ts) tells the STUDENT to

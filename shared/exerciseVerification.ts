@@ -9,7 +9,7 @@
 // Deterministic and shared: the server (routes that grade) and the client (widgets that grade in place) run
 // the SAME comparison, so a verdict can never depend on which side evaluated it.
 import { compileExpr } from "./mathExpr.ts";
-import { equivalent } from "./mathEquiv.ts";
+import { equivalent, logAnswerEquivalent } from "./mathEquiv.ts";
 import { practiceAnswerMatches } from "./types.ts";
 
 /** What is known about an item's answer key. `conflict` is the release-critical one: it means the stored key
@@ -216,7 +216,9 @@ export function gradeExerciseAnswer(ex: ExerciseKey, given: string, opts: { perc
 export function gradeGapAnswer(storedKey: string | undefined, recomputed: number | null, target: string | undefined, given: string): { verdict: "correct" | "incorrect" | "unknown" | "system_error"; keyConflict: boolean; verification: VerificationStatus } {
   const key = recomputed != null ? String(recomputed) : String(storedKey || "");
   if (!key) return { verdict: "unknown", keyConflict: false, verification: "not_checked" };
-  const verdict = equivalent(given, key, target);
+  // A log-laws gap ("log_a(x^3) = ?") is compared term by term; anything else as a compiled expression.
+  const logV = logAnswerEquivalent(given, key);
+  const verdict = logV !== "unknown" ? logV : equivalent(given, key, target);
   const keyConflict = recomputed != null && !!storedKey && !keysAgree(storedKey, recomputed);
   // "verified" here means THE VERDICT IS TRUSTWORTHY: comparing two compiled expressions is itself a real
   // mathematical test, so a definite correct/incorrect against a checkable key is verified even when the key

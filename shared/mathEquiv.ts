@@ -150,3 +150,40 @@ export function verifyStepAgainstGap(message: string, board: { kind?: string; te
   }
   return undefined;
 }
+
+/** Logarithm answers ("3log_a x + ½log_a y − log_a z", "\\log_{a}\\left(\\frac{x^2}{y}\\right)") don't compile as
+ *  plain expressions, so a right answer typed differently from the key was marked wrong. Each log term becomes an
+ *  opaque symbol keyed by (base, normalised argument) — the same term in both answers gets the same symbol — and the
+ *  rest is compared with `equivalent` as usual. Only an exact match of the log terms themselves counts (the laws
+ *  are what's being tested, so log_a(xy) is NOT accepted for log_a x + log_a y). Exported for tests. */
+export function logAnswerEquivalent(given: string, expected: string): Verdict {
+  const hasLog = (s: string) => /(?:log|ln)(?![a-z])/i.test(s);
+  if (!hasLog(given) || !hasLog(expected)) return "unknown";
+  const sup: Record<string, string> = { "²": "^2", "³": "^3", "¹": "^1", "⁴": "^4", "½": "(1/2)" };
+  const tidy = (s: string) => String(s)
+    .replace(/\$/g, "").replace(/\\left|\\right/g, "").replace(/\\cdot|×|\*/g, "·").replace(/−/g, "-")
+    .replace(/\\frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, "($1)/($2)").replace(/\\sqrt\s*\{([^{}]*)\}/g, "sqrt($1)")
+    .replace(/[²³¹⁴½]/g, (c) => sup[c]).replace(/\\(log|ln)/gi, "$1");
+  const symbols = new Map<string, string>();
+  const pool = "ABCDEFGHJKMNPQRSTUVW".split("");
+  const used = new Set((given + expected).match(/[A-Z]/g) || []);
+  const free = pool.filter((c) => !used.has(c));
+  const normArg = (a: string) => a.replace(/[\s{}·()]/g, "").toLowerCase();
+  const symFor = (base: string, arg: string) => {
+    const key = `${base.toLowerCase()}|${normArg(arg)}`;
+    if (!symbols.has(key)) { const c = free.shift(); if (!c) return null; symbols.set(key, c); }
+    return symbols.get(key)!;
+  };
+  let failed = false;
+  const rewrite = (s: string) => tidy(s).replace(
+    /(?<![A-Za-z])(log|ln)(?:\s*_\s*\{?([A-Za-z0-9]+)\}?|\s+base\s+([A-Za-z0-9]+))?\s*(?:of\s+)?(\([^()]*(?:\([^()]*\)[^()]*)*\)|[A-Za-z0-9]+(?:\^[A-Za-z0-9()./]+)?)/gi,
+    (_m, fn: string, b1?: string, b2?: string, arg = "") => {
+      const base = fn.toLowerCase() === "ln" ? "e" : (b1 || b2 || "10");
+      const sym = symFor(base, arg);
+      if (!sym) { failed = true; return "0"; }
+      return `(${sym})`;
+    }).replace(/·/g, "*");
+  const g = rewrite(given), e = rewrite(expected);
+  if (failed || /log|ln/i.test(g + e)) return "unknown";
+  return equivalent(g, e);
+}

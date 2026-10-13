@@ -5093,6 +5093,17 @@ section("Expert-tutor behaviour: motivation, personal learning prefs, feedback o
   check("an empty session gives an empty recap (nothing invented)", (() => { const e = buildSessionRecap([], [], [], true); return !e.showed.length && !e.developing.length && !e.strategies.length && e.reviewQuestion === null; })());
 }
 
+section("Logarithm answers are graded by their terms, however they're typed (reported: right log answers marked wrong)");
+{
+  const { logAnswerEquivalent } = await import("../shared/mathEquiv.ts");
+  const key = String.raw`3\log_a x + \frac{1}{2}\log_a y - \log_a z`;
+  check("plain typing, ½, brackets, 0.5 and reordered terms are all accepted", ["3log_a x + ½log_a y − log_a z", "3 log_a(x) + 0.5 log_a(y) - log_a(z)", "3log_a(x)+(1/2)log_a(y)-log_a(z)", "-log_a z + 3 log_a x + 1/2 log_a y"].every((g) => practiceAnswerMatches(g, key)));
+  check("a wrong coefficient is rejected (no more leading-number false positive)", !practiceAnswerMatches("3log_a x + 2log_a y - log_a z", key));
+  check("the unexpanded single log is not accepted for an 'expand' key", !practiceAnswerMatches("log_a(x^3 y^(1/2)/z)", key));
+  check("a condensed answer matches its LaTeX key", logAnswerEquivalent("log_a(x^2/y)", String.raw`\log_{a}\left(\frac{x^2}{y}\right)`) === "correct" && logAnswerEquivalent("log_a(x²/y)", "log_a(x^2/y)") === "correct");
+  check("ln works too; non-log answers are left to the other checks", logAnswerEquivalent("ln(x)+ln(y)", "ln x + ln y") === "correct" && logAnswerEquivalent("3x+1", "3x + 1") === "unknown");
+}
+
 section("Board changes are undoable in the Tutor session (spec §12 #10, source pins)");
 {
   const ts = readFileSync("client/tutor/TutorSession.tsx", "utf8");

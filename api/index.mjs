@@ -397,6 +397,42 @@ function verifyStepAgainstGap(message, board) {
   }
   return void 0;
 }
+function logAnswerEquivalent(given, expected) {
+  const hasLog = (s) => /(?:log|ln)(?![a-z])/i.test(s);
+  if (!hasLog(given) || !hasLog(expected)) return "unknown";
+  const sup = { "\xB2": "^2", "\xB3": "^3", "\xB9": "^1", "\u2074": "^4", "\xBD": "(1/2)" };
+  const tidy = (s) => String(s).replace(/\$/g, "").replace(/\\left|\\right/g, "").replace(/\\cdot|×|\*/g, "\xB7").replace(/−/g, "-").replace(/\\frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, "($1)/($2)").replace(/\\sqrt\s*\{([^{}]*)\}/g, "sqrt($1)").replace(/[²³¹⁴½]/g, (c) => sup[c]).replace(/\\(log|ln)/gi, "$1");
+  const symbols = /* @__PURE__ */ new Map();
+  const pool = "ABCDEFGHJKMNPQRSTUVW".split("");
+  const used = new Set((given + expected).match(/[A-Z]/g) || []);
+  const free = pool.filter((c) => !used.has(c));
+  const normArg = (a) => a.replace(/[\s{}·()]/g, "").toLowerCase();
+  const symFor = (base, arg) => {
+    const key2 = `${base.toLowerCase()}|${normArg(arg)}`;
+    if (!symbols.has(key2)) {
+      const c = free.shift();
+      if (!c) return null;
+      symbols.set(key2, c);
+    }
+    return symbols.get(key2);
+  };
+  let failed = false;
+  const rewrite = (s) => tidy(s).replace(
+    /(?<![A-Za-z])(log|ln)(?:\s*_\s*\{?([A-Za-z0-9]+)\}?|\s+base\s+([A-Za-z0-9]+))?\s*(?:of\s+)?(\([^()]*(?:\([^()]*\)[^()]*)*\)|[A-Za-z0-9]+(?:\^[A-Za-z0-9()./]+)?)/gi,
+    (_m, fn, b1, b2, arg = "") => {
+      const base = fn.toLowerCase() === "ln" ? "e" : b1 || b2 || "10";
+      const sym = symFor(base, arg);
+      if (!sym) {
+        failed = true;
+        return "0";
+      }
+      return `(${sym})`;
+    }
+  ).replace(/·/g, "*");
+  const g = rewrite(given), e = rewrite(expected);
+  if (failed || /log|ln/i.test(g + e)) return "unknown";
+  return equivalent(g, e);
+}
 var FN, ARC, INVERSE_TRIG;
 var init_mathEquiv = __esm({
   "shared/mathEquiv.ts"() {
@@ -1085,6 +1121,9 @@ function practiceAnswerMatches(given, correct, value, percent) {
   if (!g) return false;
   if (g === c) return true;
   if ((/[a-z]/i.test(g) || /[a-z]/i.test(c)) && equivalent(given, correct) === "correct") return true;
+  const logVerdict = logAnswerEquivalent(given, correct);
+  if (logVerdict === "correct") return true;
+  if (logVerdict === "incorrect") return false;
   const gn = parseNumericOrFraction(g);
   if (Number.isFinite(gn) && Number.isFinite(parseNumericOrFraction(c))) return numbersMatch(gn, c);
   const leadingNum = (s) => {
@@ -1318,7 +1357,8 @@ function gradeExerciseAnswer(ex, given, opts = {}) {
 function gradeGapAnswer(storedKey, recomputed, target, given) {
   const key2 = recomputed != null ? String(recomputed) : String(storedKey || "");
   if (!key2) return { verdict: "unknown", keyConflict: false, verification: "not_checked" };
-  const verdict = equivalent(given, key2, target);
+  const logV = logAnswerEquivalent(given, key2);
+  const verdict = logV !== "unknown" ? logV : equivalent(given, key2, target);
   const keyConflict = recomputed != null && !!storedKey && !keysAgree(storedKey, recomputed);
   const trust = keyConflict ? "conflict" : verdict === "unknown" ? "uncertain" : "verified";
   if (verdict === "correct") return { verdict: "correct", keyConflict, verification: trust };
