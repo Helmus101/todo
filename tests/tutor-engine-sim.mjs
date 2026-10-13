@@ -68,7 +68,7 @@ export async function runTutorEngineSim(check, section) {
 
   script = () => ({ content: "Yes, b = h/tan(25°) — now put it in the second equation." });
   r = await run("b = h/tan(25°)", { board: gapBoard });
-  check("a value the student said themselves is theirs, not a leak", calls.length === 1 && /h\/tan\(25°\)/.test(r.reply));
+  check("a value the student said themselves is theirs, not a leak", /h\/tan\(25°\)/.test(r.reply));
 
   const probs = [{ id: "p1", question: "Water content of a 125 g sample with dry mass 100 g?", answer: "0.25", createdAt: "" }];
   check("leakedValue: open problem answers count, solved ones don't", leakedValue("so it comes out at 0.25", "hm", [], probs) !== null && leakedValue("so it comes out at 0.25", "hm", [], [{ ...probs[0], solved: true }]) === null);

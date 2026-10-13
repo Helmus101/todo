@@ -1068,6 +1068,10 @@ export function reachedResultUnrecorded(reply: string, message: string, boardWri
   const m = message.replace(/\[[^\]]*\]/g, "").trim();
   if (!m || /\?\s*$/.test(m) || m.split(/\s+/).length > 40) return false;
   const statesMath = /=|\d|\bpi\b|π|√|sqrt|\broot\b|\bover\b|\bsquared\b|\btimes\b|\bplus\b|\bminus\b/i.test(m);
-  const confirms = /^\s*(?:spot on|exactly|correct|that'?s (?:right|it|correct)|perfect|well done|you(?:'ve| have) got it|juste|exact)/i.test(reply) || /\b(?:spot on|that'?s right|that'?s it)\b/i.test(reply.slice(0, 80));
+  // Any confirming opener counts ("That's the right structure", "Right — quotient law", "Good", "Yes"): a step the
+  // student took belongs on the board whether or not Otto used the stock phrase (reported: multi-step working was
+  // confirmed in chat but never appeared on the board).
+  const head = reply.slice(0, 90);
+  const confirms = /^\s*(?:spot on|exactly|correct|that'?s (?:right|it|correct|the right)|perfect|well done|you(?:'ve| have) got it|juste|exact|right\b|yes\b|oui\b)/i.test(reply) || /\b(?:spot on|that'?s (?:right|it|the right)|you(?:'ve| have) (?:turned|split|got|applied)|right structure|bonne structure)\b/i.test(head);
   return statesMath && confirms;
 }

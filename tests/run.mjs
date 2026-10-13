@@ -14,6 +14,7 @@ import { currentFocus, focusBlock } from "../server/tutorAdapt.ts";
 import { selectJournal } from "../server/journal.ts";
 import { recentJournalLine } from "../server/claude.ts";
 import { countJournalEntries } from "../shared/journalCount.ts";
+import { reachedResultUnrecorded } from "../server/tutorAdapt.ts";
 import { subjectsIn, reportsCorrectResult, movesOn, pointsAtMissingObject } from "../server/tutor.ts";
 import { blamesWidget } from "../server/tutorAdapt.ts";
 import { inventedNumbers } from "../server/tutorAdapt.ts";
@@ -4949,6 +4950,15 @@ check("'look at the graph' with no graph is caught", pointsAtMissingObject("Have
 check("…and passes when the graph exists", pointsAtMissingObject("Have a look at the graph to see why.", ["graph"]) === null);
 check("French summary reference is caught", pointsAtMissingObject("Regarde le résumé ci-dessus.", []) === "summary");
 check("plain prose is untouched", pointsAtMissingObject("What happens to price?", []) === null);
+
+section("A step the student took is recorded on the board even when Otto confirms it in other words (reported live)");
+{
+  const step = "log base a of x to the power of 3 plus log base a of y to the power of 1 over 2 minus log of z";
+  check("'That's the right structure' counts as a confirmation", reachedResultUnrecorded("That's the right structure — you split the fraction first.", step, 0));
+  check("'Right — quotient law' counts", reachedResultUnrecorded("Right — quotient law, top minus bottom.", "it's minus 3", 0));
+  check("a correction does not count", !reachedResultUnrecorded("Not quite — check the sign.", step, 0));
+  check("nothing to record when a write already happened", !reachedResultUnrecorded("Right — quotient law.", step, 1));
+}
 
 section("Board changes are undoable in the Tutor session (spec §12 #10, source pins)");
 {

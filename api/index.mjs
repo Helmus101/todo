@@ -2681,7 +2681,8 @@ function reachedResultUnrecorded(reply, message, boardWrites) {
   const m = message.replace(/\[[^\]]*\]/g, "").trim();
   if (!m || /\?\s*$/.test(m) || m.split(/\s+/).length > 40) return false;
   const statesMath = /=|\d|\bpi\b|π|√|sqrt|\broot\b|\bover\b|\bsquared\b|\btimes\b|\bplus\b|\bminus\b/i.test(m);
-  const confirms = /^\s*(?:spot on|exactly|correct|that'?s (?:right|it|correct)|perfect|well done|you(?:'ve| have) got it|juste|exact)/i.test(reply) || /\b(?:spot on|that'?s right|that'?s it)\b/i.test(reply.slice(0, 80));
+  const head = reply.slice(0, 90);
+  const confirms = /^\s*(?:spot on|exactly|correct|that'?s (?:right|it|correct|the right)|perfect|well done|you(?:'ve| have) got it|juste|exact|right\b|yes\b|oui\b)/i.test(reply) || /\b(?:spot on|that'?s (?:right|it|the right)|you(?:'ve| have) (?:turned|split|got|applied)|right structure|bonne structure)\b/i.test(head);
   return statesMath && confirms;
 }
 var FRUSTRATED, POSITIVE, STOP, HARSH_OPENERS, SPOKEN, STUCK, isStuckMsg, PROBES, GENERIC_CLOSER, NUM_WORDS, POSE_WORD, CASE_TRAPS, WRAP_UP, MOVE_ON, DRAWING_MARKER, DRAWING_TURN_BLOCK, REPEATED_CLAIM_BLOCK, ATTRIBUTES_PROBLEM, PRAISE_OPEN, SUCCESS_EVIDENCE, PRAISE_START, CONFIRM_ANY, numVal, GROUND_STOP, METHOD_WORDS, Q_STOP, CLARIFY_BLOCK, CONFUSED_BLOCK, INSIGHT_BLOCK, WHY_BLOCK, GLOSS, NO_UNPROMPTED_EXERCISE, BOARD_CLAIM;
@@ -14157,7 +14158,7 @@ function reachedSolutionSteps(message, sol) {
   return hits;
 }
 var MAX_TOOL_ROUNDS = 5;
-var MAX_HISTORY = 30;
+var MAX_HISTORY = 14;
 function leakedValue(reply, message, board, problems, sol) {
   if (sol && statesFinalAnswer(reply, sol) && !statesFinalAnswer(message, sol)) return "the problem's answer";
   for (const g of board) {

@@ -408,7 +408,7 @@ export function reachedSolutionSteps(message: string, sol: TutorSolution | undef
 }
 
 const MAX_TOOL_ROUNDS = 5;
-const MAX_HISTORY = 30;
+const MAX_HISTORY = 14;
 
 /** The answer keys a reply must not state: open gaps (board + this turn) and unsolved problems. A value the
  *  student already said themselves is theirs, not a leak. Exported for tests. */
