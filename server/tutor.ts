@@ -230,6 +230,18 @@ function objectivesBlock(objectives: TaskObjective[]): string {
       : `\nAll milestones are done: give a short recap of what they showed, then one mixed exam-style question.`);
 }
 
+/** A new exercise that would be the THIRD numeric calculation in a row after two the student already solved — the
+ *  repetitive drill the spec forbids once the procedure is shown (§20.3). Not when they asked for "another like it".
+ *  Exported for tests. */
+export function repeatsSolvedCalculation(problems: TaskProblem[], input: any, message: string): boolean {
+  const isCalc = (p: { options?: unknown; answer?: unknown; value?: unknown; check?: unknown; rubric?: unknown }) =>
+    !(Array.isArray(p.options) && p.options.length) && !p.rubric && (typeof p.value === "number" || !!p.check || /^\s*[-−]?\d[\d\s.,]*\s*$/.test(String(p.answer ?? "")));
+  if (!isCalc(input || {})) return false;
+  if (/\b(?:like (?:it|that|this)|similar|same (?:kind|type)|another (?:one )?of (?:those|these)|pareil|comme (?:celui|ça)|du même type)\b/i.test(String(message || ""))) return false;
+  const last = problems.slice(-2);
+  return last.length === 2 && last.every((p) => p.solved && isCalc(p));
+}
+
 /** The student hands the choice of what to do to Otto ("whatever you want", "you choose", "continue", "what next").
  *  Exported for tests. */
 export function delegatesChoice(message: string): boolean {
@@ -1026,6 +1038,10 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
     case "CREATE_PROBLEM": {
       if (openProblems().length && !asksToMoveOn(c.message)) return "REJECTED: they haven't answered the problem already on the board — help them with that one first.";
       if (isDuplicateProblem(c.allProblems(), input)) return "DUPLICATE: that problem is already on the board.";
+      // Spec §20.3 / test 17: after two SOLVED calculations in a row, the next exercise changes format (graph, concept,
+      // application) — the reported session kept issuing the same equilibrium drill to a student who'd already shown it.
+      // Unless they explicitly asked for another one of the same kind.
+      if (repeatsSolvedCalculation(c.allProblems(), input, c.message)) return "REJECTED: they've already solved two calculations like this in a row — change the format now: a graph/diagram question, a concept check (with a rubric), or an application to a new situation. Only repeat the same kind if they ask for one like it.";
       // The exercise's own text must not hand them the equation they were going to build: "$KE_f = ½(1200)(25)² = ?" shipped
       // inside a created question and opened the session with the student's first move already done. The reply and board-write
       // guards both check equationsAhead; a created problem checks questionAhead (its trailing ask-sentence stripped first),

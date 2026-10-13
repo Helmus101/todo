@@ -14058,6 +14058,13 @@ ${objectives.map((o) => `- [${o.done ? "x" : " "}] ${o.label}${o === current ? "
 You drive the lesson: work on the CURRENT milestone. When they show it (a verified right answer plus a brief why), tick it with SET_OBJECTIVES and START the next milestone in the same reply \u2014 don't ask them what to do next. Vary the task type as they succeed (calculation \u2192 graph \u2192 explanation \u2192 application), never the same drill three times. They can always redirect you.` : `
 All milestones are done: give a short recap of what they showed, then one mixed exam-style question.`);
 }
+function repeatsSolvedCalculation(problems, input, message) {
+  const isCalc = (p) => !(Array.isArray(p.options) && p.options.length) && !p.rubric && (typeof p.value === "number" || !!p.check || /^\s*[-−]?\d[\d\s.,]*\s*$/.test(String(p.answer ?? "")));
+  if (!isCalc(input || {})) return false;
+  if (/\b(?:like (?:it|that|this)|similar|same (?:kind|type)|another (?:one )?of (?:those|these)|pareil|comme (?:celui|ça)|du même type)\b/i.test(String(message || ""))) return false;
+  const last = problems.slice(-2);
+  return last.length === 2 && last.every((p) => p.solved && isCalc(p));
+}
 function delegatesChoice(message) {
   return /\b(?:whatever (?:you|u) (?:want|think|like)|(?:you|u) (?:choose|pick|decide)|up to (?:you|u)|your call|what(?:'s| is)? next|(?:let'?s )?(?:continue|keep going)|next one|n'importe|comme tu veux|à toi de (?:voir|choisir)|tu choisis|on continue|la suite|et maintenant)\b/i.test(String(message || "").trim());
 }
@@ -14593,6 +14600,7 @@ function applyTool(name, input, c) {
     case "CREATE_PROBLEM": {
       if (openProblems().length && !asksToMoveOn(c.message)) return "REJECTED: they haven't answered the problem already on the board \u2014 help them with that one first.";
       if (isDuplicateProblem(c.allProblems(), input)) return "DUPLICATE: that problem is already on the board.";
+      if (repeatsSolvedCalculation(c.allProblems(), input, c.message)) return "REJECTED: they've already solved two calculations like this in a row \u2014 change the format now: a graph/diagram question, a concept check (with a rubric), or an application to a new situation. Only repeat the same kind if they ask for one like it.";
       const aheadQuestion = questionAhead(String(input?.question || ""), c.said);
       if (aheadQuestion.length) return `REJECTED: that exercise hands them the equation they were going to build (${aheadQuestion[0]}). State the situation and what to find in words (or the raw given line) \u2014 never the substituted setup. Let THEM write the equation.`;
       const r = makeProblem(input, true);

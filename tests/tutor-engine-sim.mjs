@@ -5,7 +5,7 @@
 // carries the conversation first and the background second.
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
 delete process.env.GEMINI_API_KEY;
-const { runTutorTurn, detectSubject, backgroundBlock, TUTOR_PROMPT, leakedValue, wantsExercise, inventsProblemOnBoard, doubtsRightAnswer, misgradedExercise, softenOpener, computedGapKey, nextTeachingState, sendsBackToStatement, statesFormula, misstatesGiven, stripPraiseOpener, tutorTools, applyTool, delegatesChoice, statesStudyGoal, asksStudentToChoose } = await import("../server/tutor.ts");
+const { runTutorTurn, detectSubject, backgroundBlock, TUTOR_PROMPT, leakedValue, wantsExercise, inventsProblemOnBoard, doubtsRightAnswer, misgradedExercise, softenOpener, computedGapKey, nextTeachingState, sendsBackToStatement, statesFormula, misstatesGiven, stripPraiseOpener, tutorTools, applyTool, delegatesChoice, statesStudyGoal, asksStudentToChoose, repeatsSolvedCalculation } = await import("../server/tutor.ts");
 const { equivalent } = await import("../shared/mathEquiv.ts");
 const { equationsAhead } = await import("../shared/equationsAhead.ts");
 const { boardLineNumbers } = await import("../shared/boardLines.ts");
@@ -433,6 +433,13 @@ export async function runTutorEngineSim(check, section) {
     rp = await run("ok", { objectives: [{ id: "o1", label: "Explain shifts", done: true }, { id: "o2", label: "Solve equilibrium", done: false }] });
     check("the lesson plan block names the CURRENT milestone and tells Otto to drive the lesson", /Solve equilibrium\s+← CURRENT/.test(systemOf(calls[0])) && /You drive the lesson/.test(systemOf(calls[0])));
 
+    // §20.3 / test 17: two solved equilibrium calculations in a row → the third exercise must change format.
+    const solvedCalcs = [{ id: "a", question: "Qd=500-20P, Qs=100+30P. P?", answer: "8", value: 8, solved: true, createdAt: "" }, { id: "b", question: "Qd=200-10P, Qs=20+26P. P?", answer: "5", value: 5, solved: true, createdAt: "" }];
+    const third = { question: "Qd=300-15P, Qs=50+10P. Find P.", answer: "10", check: "250/25" };
+    check("a third same-kind calculation after two solved ones is refused — change the format (spec test 17)",
+      repeatsSolvedCalculation(solvedCalcs, third, "another problem") && !repeatsSolvedCalculation(solvedCalcs, third, "Another one like it, please.")
+      && !repeatsSolvedCalculation(solvedCalcs, { question: "Which way does supply shift?", options: ["left", "right"], correct: 0 }, "another problem")
+      && !repeatsSolvedCalculation([solvedCalcs[0], { ...solvedCalcs[1], solved: false }], third, "another problem"));
     // §13.6 / test 26: one canonical summary, updated in place.
     const sumBoard = [{ id: "s1", at: "", kind: "summary", text: "Demand ↑ ⟹ price ↑, quantity ↑" }];
     const res = { reply: "", board: [], problems: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false };
