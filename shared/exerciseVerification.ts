@@ -18,7 +18,34 @@ export type VerificationStatus = "verified" | "conflict" | "uncertain" | "not_ch
 
 /** The outcome of grading one response. `system_error` means "not graded due to a system error" — the item's
  *  own fault, never the student's (spec §19.1). */
-export type GradeStatus = "correct" | "incorrect" | "system_error";
+export type GradeStatus = "correct" | "partially_correct" | "incorrect" | "system_error";
+
+/** A worded answer's rubric (spec §18.2): each `required` entry is one idea, as alternative phrasings. */
+export interface ConceptRubric { required: string[][]; misconceptions?: string[] }
+
+const norm = (s: string) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9\s]/g, " ");
+const words = (s: string) => norm(s).split(/\s+/).filter((w) => w.length >= 3);
+// Word match by a shared 5-letter stem, so "resources"/"resource", "limited"/"limit", "wants"/"want" all count.
+const stemHit = (ans: string[], w: string) => ans.some((a) => a === w || (a.length >= 5 && w.length >= 5 && a.slice(0, 5) === w.slice(0, 5)) || (w.length < 5 && a === w));
+/** Does `answer` express `phrase`? Every content word of the phrase must appear (by stem) in the answer. */
+export function expressesPhrase(answer: string, phrase: string): boolean {
+  const need = words(phrase);
+  if (!need.length) return false;
+  const ans = words(answer);
+  return need.every((w) => stemHit(ans, w));
+}
+
+/** Grade a worded answer by MEANING against its rubric — never by a single shared keyword (spec §2.1 Failure F:
+ *  "opportunity cost" was accepted as the definition of scarcity). All required ideas → correct; some → partially
+ *  correct (says which part is missing); none → incorrect, and a known related-but-wrong idea is named as such. */
+export function gradeConceptAnswer(rubric: ConceptRubric, given: string): { status: "correct" | "partially_correct" | "incorrect"; met: number; total: number; misconception?: string; feedback: string } {
+  const total = rubric.required.length;
+  const met = rubric.required.filter((group) => group.some((p) => expressesPhrase(given, p))).length;
+  const misconception = (rubric.misconceptions || []).find((m) => expressesPhrase(given, m));
+  if (total > 0 && met === total) return { status: "correct", met, total, feedback: "Correct." };
+  if (met > 0) return { status: "partially_correct", met, total, ...(misconception ? { misconception } : {}), feedback: `Partly right — you have ${met} of the ${total} key ideas; one is still missing.` };
+  return { status: "incorrect", met, total, ...(misconception ? { misconception } : {}), feedback: misconception ? `"${misconception}" is a related idea, but it isn't what's being asked here.` : "Not quite — try again." };
+}
 
 /** One exercise, in the shape both the server and the widgets already hold it. */
 export interface ExerciseKey {
@@ -33,6 +60,8 @@ export interface ExerciseKey {
   /** MCQ mode. */
   options?: string[];
   correct?: number;
+  /** A worded answer's rubric — when present, the answer is graded by meaning (gradeConceptAnswer). */
+  rubric?: ConceptRubric;
 }
 
 export interface KeyCheck {
@@ -158,6 +187,11 @@ export function gradeExerciseAnswer(ex: ExerciseKey, given: string, opts: { perc
       keyConflict: false,
       feedback: correct ? "Correct." : "Not quite — try another option.",
     };
+  }
+  // A worded answer with a rubric is graded by meaning, not string match (spec §18.2).
+  if (ex.rubric?.required?.length) {
+    const g = gradeConceptAnswer(ex.rubric, given);
+    return { status: g.status, verification: "verified", expected: ex.answer, keyConflict: false, feedback: g.feedback };
   }
   const computed = check.computed;
   const expected = computed != null ? String(computed) : ex.answer;

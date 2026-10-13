@@ -400,15 +400,17 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   const solvedRef = useRef<Set<string>>(new Set());
   const sendRef = useRef(send);
   sendRef.current = send;
-  const onProblemResult = useCallback((r: { problem: TaskProblem; given: string; correct: boolean; attempt: number; systemError?: boolean }) => {
+  const onProblemResult = useCallback((r: { problem: TaskProblem; given: string; correct: boolean; attempt: number; systemError?: boolean; partial?: boolean }) => {
     if (r.correct) solvedRef.current.add(r.problem.id);
     // A system-error result (the item's stored key disagreed with the independently computed value, spec §19.1)
     // is reported AS that, not as a miss: Otto must never treat it as evidence against the student.
     resultsRef.current.push(L(
-      `[Exercice] J'ai répondu « ${r.given.slice(0, 120)} » — ${r.systemError ? "non noté : la clé du problème contredit la valeur vérifiée par le calcul" : r.correct ? "juste" : "faux"} (essai n°${r.attempt}).`,
+      `[Exercice] J'ai répondu « ${r.given.slice(0, 120)} » — ${r.systemError ? "non noté : la clé du problème contredit la valeur vérifiée par le calcul" : r.correct ? "juste" : r.partial ? "en partie juste (une idée clé manque)" : "faux"} (essai n°${r.attempt}).`,
       r.systemError
         ? `[Exercise] I answered "${r.given.slice(0, 120)}" — NOT graded: this problem's stored answer key contradicts the independently computed value (try #${r.attempt}).`
-        : `[Exercise] I answered "${r.given.slice(0, 120)}" — marked ${r.correct ? "right" : "wrong"} (try #${r.attempt}).`));
+        : r.partial
+          ? `[Exercise] I answered "${r.given.slice(0, 120)}" — PARTLY right: some of the key ideas, one still missing (try #${r.attempt}). Credit what's right, then ask for the missing piece.`
+          : `[Exercise] I answered "${r.given.slice(0, 120)}" — marked ${r.correct ? "right" : "wrong"} (try #${r.attempt}).`));
     setResultTick((n) => n + 1);
   }, [L]);
   // A board gap answered in place: graded by the server, then reported to Otto like an exercise result (the

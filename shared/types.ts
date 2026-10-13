@@ -1591,6 +1591,10 @@ export interface TaskProblem {
   format?: string;
   /** The exact computed value of a numeric answer (from the problem's verified `check` expression) — the widget accepts anything within rounding of it. */
   value?: number;
+  /** A conceptual (worded) answer's rubric, graded by code in shared/exerciseVerification.ts (spec §18.2): every
+   *  `required` entry is one idea, given as alternative phrasings (any one counts); `misconceptions` are related
+   *  ideas that must NOT pass on their own ("opportunity cost" for "define scarcity"). */
+  rubric?: { required: string[][]; misconceptions?: string[] };
   /** Where the question comes from when it was adapted from a registered source (IB Documents, Revision Village,
    *  AP Central…) — shown as a link under the question. Absent for generated questions. */
   source?: { name: string; url: string };

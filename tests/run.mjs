@@ -6269,6 +6269,23 @@ await runTutorCompanionSim(check, section);
   check("reset(section) clears only the section: the problem and unsectioned tutor lines stay, the student's work is archived (reversible), never destroyed", r.result.ok && b.objects["p1"].status === "active" && b.objects["loose"].status === "active" && b.objects["mine"].status === "archived");
   check("a scoped reset outside the section rules is refused explicitly (SCOPE_REQUIRED)", applyBoardAction(emptyBoard("x"), { action: "reset", scope: "thing", section: "sec" }).result.error?.code === "SCOPE_REQUIRED" && applyBoardAction(emptyBoard("x"), { action: "reset", scope: "section" }).result.error?.code === "SCOPE_REQUIRED");
 }
+// ── Spec §18.2 / §2.1 Failure F: a worded answer is graded by MEANING against a rubric, by code ──────────
+section("Concept answers are rubric-graded — 'opportunity cost' is not the definition of scarcity (spec §18.2)");
+{
+  const { gradeConceptAnswer, gradeExerciseAnswer: gea } = await import("../shared/exerciseVerification.ts");
+  const { conceptMissMessage } = await import("../client/study/artifacts/BoardArtifact.tsx");
+  const scarcity = { required: [["limited resources", "finite resources", "scarce resources"], ["unlimited wants", "infinite wants", "wants exceed"]], misconceptions: ["opportunity cost"] };
+  check("'opportunity cost' alone is NOT accepted, and is named as a related-but-wrong idea", gradeConceptAnswer(scarcity, "opportunity cost").status === "incorrect" && gradeConceptAnswer(scarcity, "opportunity cost").misconception === "opportunity cost");
+  check("a semantically right definition in the student's own words is accepted (stems: resource/resources, want/wants)", gradeConceptAnswer(scarcity, "basically limited ressources and unlimited wants".replace("ressources", "resources")).status === "correct" && gradeConceptAnswer(scarcity, "Resources are finite but human wants are infinite").status === "correct");
+  check("one of two key ideas → partially correct, not a flat wrong", gradeConceptAnswer(scarcity, "resources are limited").status === "partially_correct");
+  check("the shared grader routes a rubric item through meaning-based grading", gea({ question: "Define scarcity.", answer: "Limited resources relative to unlimited wants", rubric: scarcity }, "limited resources but unlimited wants").status === "correct" && gea({ question: "Define scarcity.", answer: "Limited resources relative to unlimited wants", rubric: scarcity }, "opportunity cost").status === "incorrect");
+  check("the widget's miss message is specific (partial / related idea) in both languages, never the model answer",
+    /1 of the 2 key ideas/.test(conceptMissMessage({ rubric: scarcity }, "resources are limited", true)) && /idée liée/.test(conceptMissMessage({ rubric: scarcity }, "opportunity cost", false)) && conceptMissMessage({}, "x", true) === null);
+  const withRubric = makeProblem({ question: "Define scarcity.", answer: "Limited resources relative to unlimited wants", rubric: scarcity }, true);
+  check("makeProblem accepts a worded answer WHEN it carries a rubric, and keeps the rubric on the problem", "problem" in withRubric && withRubric.problem.rubric?.required.length === 2 && withRubric.problem.rubric?.misconceptions?.[0] === "opportunity cost");
+  check("...and still rejects a prose answer with no rubric (it couldn't be checked)", "error" in makeProblem({ question: "Define scarcity.", answer: "Limited resources relative to unlimited wants" }, true));
+}
+
 // ── Spec §18–§19: the answer key is verified by CODE, and a broken key is never a student error ──────────
 // The supplied Economics session is the acceptance fixture: both items are marked wrong in the target state,
 // and both must grade a mathematically correct answer correct.

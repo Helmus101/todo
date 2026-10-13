@@ -865,8 +865,8 @@ function addUsage(profile, tokens2, category = "other") {
   };
 }
 function factTokens(s) {
-  const words2 = normFact(s).split(" ").filter((w) => w.length > 2 && !FACT_STOP.has(w));
-  return /* @__PURE__ */ new Set([...emailsIn(s), ...words2]);
+  const words3 = normFact(s).split(" ").filter((w) => w.length > 2 && !FACT_STOP.has(w));
+  return /* @__PURE__ */ new Set([...emailsIn(s), ...words3]);
 }
 function sameFact(a, b) {
   const ea = emailsIn(a), eb = emailsIn(b);
@@ -1080,8 +1080,8 @@ function practiceAnswerMatches(given, correct, value, percent) {
     const gv = firstNumber(given);
     if (Number.isFinite(gv) && Math.abs(gv - value) <= Math.max(Math.abs(value) * 6e-3, 0.05)) return true;
   }
-  const norm4 = (s) => s.trim().toLowerCase().replace(/\s+/g, " ").replace(/^[a-z]\s*=\s*/, "").replace(/\.$/, "");
-  const g = norm4(given), c = norm4(correct);
+  const norm5 = (s) => s.trim().toLowerCase().replace(/\s+/g, " ").replace(/^[a-z]\s*=\s*/, "").replace(/\.$/, "");
+  const g = norm5(given), c = norm5(correct);
   if (!g) return false;
   if (g === c) return true;
   if ((/[a-z]/i.test(g) || /[a-z]/i.test(c)) && equivalent(given, correct) === "correct") return true;
@@ -1209,6 +1209,20 @@ var init_types = __esm({
 });
 
 // shared/exerciseVerification.ts
+function expressesPhrase(answer, phrase) {
+  const need = words(phrase);
+  if (!need.length) return false;
+  const ans = words(answer);
+  return need.every((w) => stemHit(ans, w));
+}
+function gradeConceptAnswer(rubric, given) {
+  const total = rubric.required.length;
+  const met = rubric.required.filter((group2) => group2.some((p) => expressesPhrase(given, p))).length;
+  const misconception = (rubric.misconceptions || []).find((m) => expressesPhrase(given, m));
+  if (total > 0 && met === total) return { status: "correct", met, total, feedback: "Correct." };
+  if (met > 0) return { status: "partially_correct", met, total, ...misconception ? { misconception } : {}, feedback: `Partly right \u2014 you have ${met} of the ${total} key ideas; one is still missing.` };
+  return { status: "incorrect", met, total, ...misconception ? { misconception } : {}, feedback: misconception ? `"${misconception}" is a related idea, but it isn't what's being asked here.` : "Not quite \u2014 try again." };
+}
 function toEvaluableCheck(check, problemText = "") {
   const degrees = /°|\^\s*\{?\\circ|\bdeg(?:ree)?s?\b|\bdegrés?\b/i.test(problemText) && !/\bpi\b|π|\brad(?:ians?)?\b/i.test(`${problemText} ${check}`);
   const s = String(check || "").replace(/×/g, "*").replace(/÷/g, "/").replace(/−/g, "-").replace(/π/g, "pi");
@@ -1285,6 +1299,10 @@ function gradeExerciseAnswer(ex, given, opts = {}) {
       feedback: correct ? "Correct." : "Not quite \u2014 try another option."
     };
   }
+  if (ex.rubric?.required?.length) {
+    const g = gradeConceptAnswer(ex.rubric, given);
+    return { status: g.status, verification: "verified", expected: ex.answer, keyConflict: false, feedback: g.feedback };
+  }
   const computed = check.computed;
   const expected = computed != null ? String(computed) : ex.answer;
   const broken = check.status === "conflict";
@@ -1308,12 +1326,16 @@ function gradeGapAnswer(storedKey, recomputed, target, given) {
   if (verdict === "unknown") return { verdict: "unknown", keyConflict, verification: trust };
   return { verdict: "incorrect", keyConflict, verification: trust };
 }
+var norm2, words, stemHit;
 var init_exerciseVerification = __esm({
   "shared/exerciseVerification.ts"() {
     "use strict";
     init_mathExpr();
     init_mathEquiv();
     init_types();
+    norm2 = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9\s]/g, " ");
+    words = (s) => norm2(s).split(/\s+/).filter((w) => w.length >= 3);
+    stemHit = (ans, w) => ans.some((a) => a === w || a.length >= 5 && w.length >= 5 && a.slice(0, 5) === w.slice(0, 5) || w.length < 5 && a === w);
   }
 });
 
@@ -2139,8 +2161,8 @@ function studentStatedAnswer(message, _history = []) {
   if (!last || /\?/.test(last)) return false;
   if (/\b(?:the (?:correct |final )?answer is|la (?:bonne )?réponse est|c['’]est donc l['’]option|option [a-d])\b/i.test(last)) return true;
   if (/^\s*(?:option\s*)?[a-d][.)]?\s*$/i.test(last)) return true;
-  const words2 = last.split(/\s+/).length;
-  if (words2 < 2 || words2 > 14) return false;
+  const words3 = last.split(/\s+/).length;
+  if (words3 < 2 || words3 > 14) return false;
   if (/\b(?:why|how|don['’]?t|understand|explain|je ne|comment|pourquoi|explique)\b/i.test(last)) return false;
   return /[0-9=+\-*/^√π]/.test(last);
 }
@@ -2217,18 +2239,18 @@ function handsOverCalculation(reply, lastUser) {
   const plain = reply.replace(/\\circ|\\degree|\^\s*\{?\\?circ\}?|\\[a-z]+/gi, " ").replace(/[$]/g, " ");
   const exprs = [...plain.matchAll(/(\d+(?:\.\d+)?)\s*°?\s*([-−–+×x*/÷])\s*(\d+(?:\.\d+)?)/g)];
   if (!exprs.length) return false;
-  const norm4 = (s) => s.replace(/\s+/g, "").replace(/[−–]/g, "-").replace(/[×x]/g, "*").replace(/÷/g, "/").replace(/°/g, "");
-  const user = norm4(lastUser);
-  return exprs.some((m) => !user.includes(norm4(m[0])) && !user.includes(`${m[1]}${norm4(m[2])}${m[3]}`));
+  const norm5 = (s) => s.replace(/\s+/g, "").replace(/[−–]/g, "-").replace(/[×x]/g, "*").replace(/÷/g, "/").replace(/°/g, "");
+  const user = norm5(lastUser);
+  return exprs.some((m) => !user.includes(norm5(m[0])) && !user.includes(`${m[1]}${norm5(m[2])}${m[3]}`));
 }
 function equationAhead(text, studentTexts, givens) {
-  const norm4 = (s) => s.toLowerCase().replace(/\\(?:circ|degree|left|right|cdot|times)|\^\s*\{?\\?circ\}?|degrees?|[°$\s{}\\*·×]/g, "").replace(/[−–]/g, "-");
-  const body = norm4(text);
+  const norm5 = (s) => s.toLowerCase().replace(/\\(?:circ|degree|left|right|cdot|times)|\^\s*\{?\\?circ\}?|degrees?|[°$\s{}\\*·×]/g, "").replace(/[−–]/g, "-");
+  const body = norm5(text);
   const pieces = /* @__PURE__ */ new Set();
   for (const m of body.matchAll(/(?:sin|cos|tan)\(?\d+(?:\.\d+)?\)?/g)) pieces.add(m[0].replace(/[()]/g, ""));
   for (const m of body.matchAll(/\(?[a-z]\+\d+(?:\.\d+)?\)?|\(?\d+(?:\.\d+)?\+[a-z]\)?/g)) pieces.add(m[0].replace(/[()]/g, ""));
   if (!pieces.size) return [];
-  const said = norm4([...studentTexts, ...givens].join(" \n ")).replace(/[()]/g, "");
+  const said = norm5([...studentTexts, ...givens].join(" \n ")).replace(/[()]/g, "");
   return [...pieces].filter((p) => !said.includes(p));
 }
 function isDrawingTurn(message) {
@@ -2274,9 +2296,9 @@ Every reply and every board line serves THAT: its givens, its numbers, its next 
 `;
 }
 function inventedNumbers(reply, sources) {
-  const norm4 = (t) => t.replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1").replace(/(\d),(\d)/g, "$1.$2");
-  const hay = norm4(sources.join(" \n "));
-  const plain = norm4(reply.replace(/\\[a-z]+/gi, " ").replace(/\$/g, " "));
+  const norm5 = (t) => t.replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1").replace(/(\d),(\d)/g, "$1.$2");
+  const hay = norm5(sources.join(" \n "));
+  const plain = norm5(reply.replace(/\\[a-z]+/gi, " ").replace(/\$/g, " "));
   const out = [];
   for (const m of plain.matchAll(/(?<![\d.])\d+(?:\.\d+)?(?![\d])/g)) {
     const n = m[0];
@@ -2345,10 +2367,10 @@ function misattributes(reply, studentTexts, studentBoard = []) {
   const said = new Set(studentTexts.concat(studentBoard).join(" ").toLowerCase().match(/[a-zà-ÿ0-9°]+/g) || []);
   const re = /\b(?:you(?:'ve| have)?\s+(?:just\s+)?(?:said|mentioned|noticed|found|got|identified|written|wrote|drawn|drew|set up|lined up|worked out|figured out|spotted|used)|as you (?:said|noted|mentioned)|like you said|your (?:last|previous) (?:step|answer|idea))\b([^.?!\n]{0,90})/gi;
   for (const m of reply.matchAll(re)) {
-    const words2 = (m[1].toLowerCase().match(/[a-zà-ÿ0-9°]{4,}/g) || []).filter((w) => !GROUND_STOP.has(w));
-    if (words2.length < 2) continue;
-    const present = words2.filter((w) => said.has(w) || [...said].some((s) => s.length >= 4 && (s.startsWith(w.slice(0, 5)) || w.startsWith(s.slice(0, 5))))).length;
-    if (present / words2.length < 0.5) return m[0].trim();
+    const words3 = (m[1].toLowerCase().match(/[a-zà-ÿ0-9°]{4,}/g) || []).filter((w) => !GROUND_STOP.has(w));
+    if (words3.length < 2) continue;
+    const present = words3.filter((w) => said.has(w) || [...said].some((s) => s.length >= 4 && (s.startsWith(w.slice(0, 5)) || w.startsWith(s.slice(0, 5))))).length;
+    if (present / words3.length < 0.5) return m[0].trim();
   }
   return null;
 }
@@ -2377,9 +2399,9 @@ function clarificationTerm(message) {
 function ignoresQuestion(reply, message) {
   const term = clarificationTerm(message);
   if (!term) return false;
-  const norm4 = (s) => s.toLowerCase().replace(/[₀-₉]/g, (c) => String("\u2080\u2081\u2082\u2083\u2084\u2085\u2086\u2087\u2088\u2089".indexOf(c))).replace(/[_$\\{}\s]/g, "");
-  const r = norm4(reply);
-  if (term.length >= 2) return !r.includes(norm4(term));
+  const norm5 = (s) => s.toLowerCase().replace(/[₀-₉]/g, (c) => String("\u2080\u2081\u2082\u2083\u2084\u2085\u2086\u2087\u2088\u2089".indexOf(c))).replace(/[_$\\{}\s]/g, "");
+  const r = norm5(reply);
+  if (term.length >= 2) return !r.includes(norm5(term));
   return !new RegExp(`(?<![a-z0-9])${term}(?![a-z]|\\d)`, "i").test(reply.replace(/[_$\\{}]/g, "").replace(/[₀-₉]/g, (c) => String("\u2080\u2081\u2082\u2083\u2084\u2085\u2086\u2087\u2088\u2089".indexOf(c))));
 }
 function ignoresWork(reply, message) {
@@ -2387,9 +2409,9 @@ function ignoresWork(reply, message) {
   if (!m || /\?/.test(m) || clarificationTerm(m) || /^\[/.test(message.trim())) return false;
   const nums = m.match(/\d+(?:[.,]\d+)?/g) || [];
   if (!nums.length) return false;
-  const words2 = (m.toLowerCase().match(/[a-zà-ÿ]{5,}/g) || []).filter((w) => !GROUND_STOP.has(w));
+  const words3 = (m.toLowerCase().match(/[a-zà-ÿ]{5,}/g) || []).filter((w) => !GROUND_STOP.has(w));
   const r = reply.toLowerCase();
-  return !nums.some((n) => new RegExp(`(?<![\\d.])${n.replace(/[.,]/, "[.,]")}(?![\\d])`).test(r)) && !words2.some((w) => r.includes(w.slice(0, Math.max(5, w.length - 2))));
+  return !nums.some((n) => new RegExp(`(?<![\\d.])${n.replace(/[.,]/, "[.,]")}(?![\\d])`).test(r)) && !words3.some((w) => r.includes(w.slice(0, Math.max(5, w.length - 2))));
 }
 function asksToWrite(message) {
   return /\b(?:write|put|add|note)\b[^.?!]{0,30}\b(?:board|down|up)\b|\bon the board\b|\bwrite (?:it|that|this)\b|\bnote (?:it|that) (?:down|for me)\b|\b(?:write|rewrite|show)\b[^.?!]{0,40}\b(?:equations?|values?|formulas?|steps?)\b|écris|note[- ]le/i.test(message);
@@ -2406,8 +2428,8 @@ function sendsBackToStatement(reply, message) {
 function bareMath(reply) {
   const t = String(reply || "").replace(/\$[^$]*\$/g, " ").replace(/\\[a-zA-Z]+/g, " ");
   if (!/[=+\-*/^]|\d/.test(t)) return false;
-  const words2 = t.replace(/\b(?:sin|cos|tan|log|ln|sqrt|distance|height)\b/gi, " ").match(/[A-Za-zÀ-ÿ]{3,}/g) || [];
-  return words2.length < 4;
+  const words3 = t.replace(/\b(?:sin|cos|tan|log|ln|sqrt|distance|height)\b/gi, " ").match(/[A-Za-zÀ-ÿ]{3,}/g) || [];
+  return words3.length < 4;
 }
 function socraticFallback(fr) {
   return fr ? "Explique-moi ce que tu viens d'\xE9crire : que repr\xE9sente chaque morceau, et d'o\xF9 vient-il ?" : "Walk me through what you just wrote: what does each part stand for, and where does it come from?";
@@ -2422,8 +2444,8 @@ function latexifyBoardLine(text, kind) {
     const bullet = /^([-*]\s+)/.exec(raw)?.[1] || "";
     const body = raw.slice(bullet.length);
     if (!/[=\\^]/.test(body)) return line;
-    const words2 = body.replace(/\\[a-zA-Z]+/g, " ").match(/[A-Za-zÀ-ÿ]{3,}/g) || [];
-    if (words2.length > 2) return line;
+    const words3 = body.replace(/\\[a-zA-Z]+/g, " ").match(/[A-Za-zÀ-ÿ]{3,}/g) || [];
+    if (words3.length > 2) return line;
     return bullet + autoMathLine(body.replace(/°/g, "\xB0"));
   });
   return lines.join("\n");
@@ -2442,11 +2464,11 @@ function namesExactStep(reply) {
   return new RegExp(`\\b${lead}\\s*${OP}\\b[^.?!]{0,70}\\b(?:both sides|each side|the (?:equation|expression|bracket|brackets|denominator|numerator|terms?|left|right)|that (?:equation|expression)|into|from|by|out)\\b`, "i").test(t) || new RegExp(`^\\s*${OP}\\b[^.?!]{0,70}\\b(?:both sides|each side|the (?:equation|expression|bracket|denominator)|into|by)\\b`, "i").test(t) || /\b(?:multiplier|multiplie[rz]|divise[rz]|substitue[rz]|factorise[rz]|isole[rz])\b[^.?!]{0,60}\b(?:des deux côtés|chaque côté|par|dans)\b/i.test(t);
 }
 function bubbleDoesMath(reply, studentTexts) {
-  const norm4 = (x) => x.toLowerCase().replace(/\\(?:circ|degree|cdot|left|right|displaystyle)/g, "").replace(/[^a-z0-9]/g, "");
-  const corpus = norm4(studentTexts.join(" "));
+  const norm5 = (x) => x.toLowerCase().replace(/\\(?:circ|degree|cdot|left|right|displaystyle)/g, "").replace(/[^a-z0-9]/g, "");
+  const corpus = norm5(studentTexts.join(" "));
   const text = String(reply || "").replace(/\$([^$]+)\$/g, " $1 ");
   for (const m of text.matchAll(/(\S+)\s*=\s*((?:\S+\s*){1,3})/g)) {
-    const left = norm4(m[1]), right = norm4(m[2].split(/[.?!]/)[0]);
+    const left = norm5(m[1]), right = norm5(m[2].split(/[.?!]/)[0]);
     if (left.length >= 1 && right.length >= 2 && !(corpus.includes(left) && corpus.includes(right))) return true;
   }
   return false;
@@ -2559,8 +2581,8 @@ function posesProblemInProse(draft) {
   return quantities.length >= 2 && t.length >= 50;
 }
 function echoesStudentWords(boardText, studentMessage) {
-  const words2 = (x) => String(x || "").toLowerCase().replace(/\$[^$]*\$/g, " ").replace(/[^a-zà-ÿ\s']/g, " ").split(/\s+/).filter((w) => w.length >= 2);
-  const b = words2(boardText), m = words2(studentMessage).join(" ");
+  const words3 = (x) => String(x || "").toLowerCase().replace(/\$[^$]*\$/g, " ").replace(/[^a-zà-ÿ\s']/g, " ").split(/\s+/).filter((w) => w.length >= 2);
+  const b = words3(boardText), m = words3(studentMessage).join(" ");
   if (b.length < 4) return false;
   for (let i = 0; i + 4 <= b.length; i++) if (m.includes(b.slice(i, i + 4).join(" "))) return true;
   return false;
@@ -2600,8 +2622,8 @@ function ignoresWhy(draft) {
 function isBoardContent(reply) {
   const t = String(reply || "");
   const items = (t.match(/(?:^|\n|\s)(?:\d{1,2}[.)]|[-•*])\s+\S/g) || []).length;
-  const words2 = t.replace(/\$[^$]*\$/g, " x ").split(/\s+/).filter(Boolean).length;
-  return items >= 3 || words2 >= 70;
+  const words3 = t.replace(/\$[^$]*\$/g, " x ").split(/\s+/).filter(Boolean).length;
+  return items >= 3 || words3 >= 70;
 }
 function splitBoardContent(reply) {
   const t = String(reply || "").replace(/\r/g, "").trim();
@@ -2974,7 +2996,7 @@ async function resolveAuthConfigId(toolkit) {
   const p = (async () => {
     const s = sdk();
     const list = await s.authConfigs.list({ toolkit: key2 });
-    const configs = (list?.items ?? (Array.isArray(list) ? list : [])).filter((c) => norm2(c?.toolkit?.slug ?? c?.toolkit?.name ?? c?.toolkit ?? "") === norm2(toolkit));
+    const configs = (list?.items ?? (Array.isArray(list) ? list : [])).filter((c) => norm3(c?.toolkit?.slug ?? c?.toolkit?.name ?? c?.toolkit ?? "") === norm3(toolkit));
     if (configs.length) {
       const id2 = String(configs[0].id ?? configs[0].authConfigId ?? "").trim();
       if (id2 && id2 !== "undefined") return id2;
@@ -3009,7 +3031,7 @@ async function getAllConnectionStatuses(userId, apps, connIdByApp = {}) {
     const toolkits = new Set(items.map(acctToolkit));
     const ids = new Set(items.map(acctId));
     const out = {};
-    for (const app2 of apps) out[app2] = toolkits.has(norm2(TOOLKIT_OF(app2))) || !!connIdByApp[app2] && ids.has(connIdByApp[app2]);
+    for (const app2 of apps) out[app2] = toolkits.has(norm3(TOOLKIT_OF(app2))) || !!connIdByApp[app2] && ids.has(connIdByApp[app2]);
     return out;
   } catch (e) {
     console.warn("[integrations] getAllConnectionStatuses error:", e?.message ?? e);
@@ -3040,7 +3062,7 @@ async function rawConnectedAccounts(userId) {
 async function getConnectedAccounts(userId, app2, resolveEmails = false) {
   try {
     const items = await rawConnectedAccounts(userId);
-    const targetToolkit = norm2(TOOLKIT_OF(app2));
+    const targetToolkit = norm3(TOOLKIT_OF(app2));
     const accounts = items.filter((i) => acctToolkit(i) === targetToolkit).map((i) => ({
       id: acctId(i),
       email: i?.email || i?.accountEmail || i?.metadata?.email || i?.data?.email,
@@ -3062,7 +3084,7 @@ async function disconnect(app2, userId) {
   try {
     const list = await sdk().connectedAccounts.list({ userIds: [userId], limit: 200 });
     const items = list?.items ?? (Array.isArray(list) ? list : []);
-    const accounts = items.filter((i) => isActive(i) && acctToolkit(i) === norm2(TOOLKIT_OF(app2)));
+    const accounts = items.filter((i) => isActive(i) && acctToolkit(i) === norm3(TOOLKIT_OF(app2)));
     for (const account of accounts) {
       const id = acctId(account);
       if (id) await sdk().connectedAccounts.delete(id);
@@ -3463,7 +3485,7 @@ async function verifyTaskArtifacts(userId, t) {
 }
 async function getAgentTools(userId, opts) {
   if (!integrationsReady() || !userId) return EMPTY;
-  const routeToolkit = opts?.accountId && opts.accountApp ? SOURCE_TOOLKIT[opts.accountApp] || norm2(TOOLKIT_OF(opts.accountApp)) : "";
+  const routeToolkit = opts?.accountId && opts.accountApp ? SOURCE_TOOLKIT[opts.accountApp] || norm3(TOOLKIT_OF(opts.accountApp)) : "";
   const routeAccountId = routeToolkit ? opts?.accountId : void 0;
   const cacheKey = routeAccountId ? `${userId}::${routeToolkit}:${routeAccountId}` : userId;
   const hit = cache.get(cacheKey);
@@ -3477,7 +3499,7 @@ async function getAgentTools(userId, opts) {
   const implicitAccountId = /* @__PURE__ */ new Map();
   for (const app2 of connected) {
     if (!MULTI_ACCOUNT_APPS.includes(app2)) continue;
-    const toolkit = norm2(TOOLKIT_OF(app2));
+    const toolkit = norm3(TOOLKIT_OF(app2));
     if (routeToolkit && toolkit === routeToolkit) continue;
     try {
       const accts = await getConnectedAccounts(userId, app2, false);
@@ -3600,7 +3622,7 @@ async function getAgentToolsWithPermission(userId, opts) {
   if (!base.tools.length || !base._permCall) return base;
   return { tools: base.tools, call: base._permCall, connected: base.connected };
 }
-var CATALOG, TOOLKIT_OF, norm2, MULTI_APPS, SOURCE_TOOLKIT, MULTI_ACCOUNT_APPS, logoFor, ACTION_POLICIES, _client, COMPOSIO_TIMEOUT_MS, isActive, acctToolkit, acctId, authConfigInFlight, DRIVE_ABOUT, EMAIL_PROBE, acctListCache, EMPTY, cache, CACHE_MS, sanitize, MUST_INCLUDE_ACTIONS, CANON_VERBS, isRead, TOOLKIT_HINTS, CORE_TOOLKITS, firstId, NOT_FOUND, DOC_LINK, statusCache;
+var CATALOG, TOOLKIT_OF, norm3, MULTI_APPS, SOURCE_TOOLKIT, MULTI_ACCOUNT_APPS, logoFor, ACTION_POLICIES, _client, COMPOSIO_TIMEOUT_MS, isActive, acctToolkit, acctId, authConfigInFlight, DRIVE_ABOUT, EMAIL_PROBE, acctListCache, EMPTY, cache, CACHE_MS, sanitize, MUST_INCLUDE_ACTIONS, CANON_VERBS, isRead, TOOLKIT_HINTS, CORE_TOOLKITS, firstId, NOT_FOUND, DOC_LINK, statusCache;
 var init_integrations = __esm({
   "server/integrations.ts"() {
     "use strict";
@@ -3616,7 +3638,7 @@ var init_integrations = __esm({
       { key: "notion", name: "Notion", toolkit: "NOTION", category: "Knowledge", blurb: "Pages & databases." }
     ];
     TOOLKIT_OF = (app2) => CATALOG.find((c) => c.key === app2.toLowerCase())?.toolkit ?? app2.toUpperCase();
-    norm2 = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    norm3 = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
     MULTI_APPS = /* @__PURE__ */ new Set(["gmail", "googlecalendar", "googledocs", "googleslides", "googledrive", "googlesheets"]);
     SOURCE_TOOLKIT = { gmail: "GMAIL", calendar: "GOOGLECALENDAR", drive: "GOOGLEDRIVE" };
     MULTI_ACCOUNT_APPS = ["gmail", "googlecalendar", "googledocs", "googleslides", "googledrive", "googlesheets"];
@@ -3678,7 +3700,7 @@ var init_integrations = __esm({
     _client = null;
     COMPOSIO_TIMEOUT_MS = 25e3;
     isActive = (i) => ["ACTIVE", "CONNECTED", "ENABLED"].includes(String(i?.status ?? i?.connectionStatus ?? i?.state ?? "").toUpperCase());
-    acctToolkit = (i) => norm2(i?.toolkit?.slug ?? i?.toolkit?.name ?? i?.toolkit ?? i?.appName ?? i?.app?.name ?? i?.app ?? i?.appUniqueId ?? i?.toolkitSlug ?? "");
+    acctToolkit = (i) => norm3(i?.toolkit?.slug ?? i?.toolkit?.name ?? i?.toolkit ?? i?.appName ?? i?.app?.name ?? i?.app ?? i?.appUniqueId ?? i?.toolkitSlug ?? "");
     acctId = (i) => String(i?.id ?? i?.connectedAccountId ?? i?.nanoId ?? "");
     authConfigInFlight = /* @__PURE__ */ new Map();
     DRIVE_ABOUT = { action: "GOOGLEDRIVE_GET_ABOUT", args: { fields: "user" }, pick: (r) => r?.user?.emailAddress };
@@ -5718,7 +5740,7 @@ var init_widgets = __esm({
 });
 
 // shared/equationsAhead.ts
-function norm3(s, spoken = false) {
+function norm4(s, spoken = false) {
   let t = latexToPlainText(String(s || "").replace(/\$/g, " "));
   if (spoken) for (const [re, rep] of SPOKEN2) t = t.replace(re, rep);
   return t.toLowerCase().replace(/°|\bdeg(?:rees?)?\b|degrés?/g, "").replace(/[\s*·×()[\]{}]/g, "").replace(/−/g, "-");
@@ -5748,7 +5770,7 @@ function mathRun(side, fromEnd) {
 }
 function equationsAhead(text, said) {
   const plain = latexToPlainText(String(text || "").replace(/\$/g, " ")).replace(/(\d),(?=\d{3}(?!\d))/g, "$1");
-  const heard = said.map((x) => norm3(x, true)).join(" | ");
+  const heard = said.map((x) => norm4(x, true)).join(" | ");
   const saidSides = said.flatMap((x) => latexToPlainText(x.replace(/\$/g, " ")).split(/[=\n,;]/)).map((x) => x.trim()).filter((x) => x && x.length < 80);
   const out = [];
   for (const seg of plain.split(/[\n;,]|(?<=[.!?])\s+/)) {
@@ -5758,7 +5780,7 @@ function equationsAhead(text, said) {
     const formulaSides = sides.filter(isFormula);
     if (!formulaSides.length) continue;
     const reached = formulaSides.every((f4) => {
-      const n = norm3(f4);
+      const n = norm4(f4);
       if (n.length >= 2 && (heard.includes(n) || heard.replace(/\bis\b|est/g, "").includes(n))) return true;
       if (saidSides.some((s) => equivalent(f4, s) === "correct")) return true;
       const nums = f4.match(/\d+(?:\.\d+)?/g) || [];
@@ -6215,9 +6237,9 @@ function rankResults(results, domains) {
   for (const r of results) {
     if (!r?.url || !r.title) continue;
     if (domains.length && !inDomains(r.url, domains)) continue;
-    const norm4 = r.url.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/[#?].*$/, "").replace(/\/$/, "");
-    if (seen.has(norm4)) continue;
-    seen.add(norm4);
+    const norm5 = r.url.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/[#?].*$/, "").replace(/\/$/, "");
+    if (seen.has(norm5)) continue;
+    seen.add(norm5);
     out.push(r);
   }
   return out;
@@ -6466,22 +6488,22 @@ function htmlToText(html) {
   return html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>|<noscript[\s\S]*?<\/noscript>/gi, " ").replace(/<\/(p|div|li|tr|h[1-6]|br)>/gi, "\n").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/[ \t]+/g, " ").replace(/\n\s*\n+/g, "\n").trim();
 }
 function excerptAround(text, topic, max = 1400) {
-  const words2 = [...new Set(topic.toLowerCase().split(/[^a-zà-ÿ0-9]+/).filter((w) => w.length > 2))];
-  if (!words2.length || !text) return "";
+  const words3 = [...new Set(topic.toLowerCase().split(/[^a-zà-ÿ0-9]+/).filter((w) => w.length > 2))];
+  if (!words3.length || !text) return "";
   const lower = text.toLowerCase();
   let best = -1, bestScore = 0;
   const step = 200;
   for (let i = 0; i < lower.length; i += step) {
     const win = lower.slice(i, i + max);
     let score = 0;
-    for (const w of words2) if (win.includes(w)) score++;
+    for (const w of words3) if (win.includes(w)) score++;
     if (/\?|\b(find|calculate|determine|show that|solve|evaluate|expand|differentiate|integrate|prove|state)\b/.test(win)) score += 0.5;
     if (score > bestScore) {
       bestScore = score;
       best = i;
     }
   }
-  if (best < 0 || bestScore < Math.max(1, Math.ceil(words2.length / 2))) return "";
+  if (best < 0 || bestScore < Math.max(1, Math.ceil(words3.length / 2))) return "";
   return clamp(text.slice(best, best + max).trim(), max);
 }
 async function realFetchPage(url2) {
@@ -7762,11 +7784,11 @@ function extractEntities(text) {
   const out = [];
   const matches = text.match(/\b[A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+){0,2}\b/g) || [];
   for (const m of matches) {
-    const words2 = m.split(/\s+/);
-    let start = 0, end = words2.length;
-    while (start < end && ENTITY_STOPWORDS.has(words2[start].toLowerCase())) start++;
-    while (end > start && ENTITY_STOPWORDS.has(words2[end - 1].toLowerCase())) end--;
-    const trimmed = words2.slice(start, end);
+    const words3 = m.split(/\s+/);
+    let start = 0, end = words3.length;
+    while (start < end && ENTITY_STOPWORDS.has(words3[start].toLowerCase())) start++;
+    while (end > start && ENTITY_STOPWORDS.has(words3[end - 1].toLowerCase())) end--;
+    const trimmed = words3.slice(start, end);
     if (trimmed.length) out.push(trimmed.join(" "));
   }
   const dateMatches = text.match(/(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept|Oct|Nov|Dec)\s+\d{1,2}|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)/gi) || [];
@@ -7791,17 +7813,17 @@ function dropForeignEntityLinks(taskTitle, definitionOfDone, steps, links) {
 function stepBleedKeywords(text) {
   return text.toLowerCase().replace(/[^a-z0-9\s]/g, "").split(/\s+/).filter((w) => w.length >= 4 && !STOPWORDS.has(w));
 }
-function keywordOverlap(words2, allow) {
+function keywordOverlap(words3, allow) {
   const allowWords = new Set(stepBleedKeywords(allow));
-  return words2.filter((w) => allowWords.has(w)).length;
+  return words3.filter((w) => allowWords.has(w)).length;
 }
 function bleedsToSibling(text, task, siblingTasks) {
-  const words2 = stepBleedKeywords(text);
-  if (!words2.length) return false;
-  const ownScore = keywordOverlap(words2, `${task.title} ${task.why} ${task.sourceDetail || ""}`);
+  const words3 = stepBleedKeywords(text);
+  if (!words3.length) return false;
+  const ownScore = keywordOverlap(words3, `${task.title} ${task.why} ${task.sourceDetail || ""}`);
   let bestSibling = 0;
   for (const sib of siblingTasks) {
-    const score = keywordOverlap(words2, `${sib.title} ${sib.why || ""}`);
+    const score = keywordOverlap(words3, `${sib.title} ${sib.why || ""}`);
     if (score > bestSibling) bestSibling = score;
   }
   return ownScore === 0 && bestSibling >= 1 || bestSibling >= ownScore + 1;
@@ -7987,10 +8009,10 @@ async function synthesizeSpeech(text, lang) {
   return { audio: Buffer.concat(parts), mime: "audio/mpeg" };
 }
 function wordWrapChunks(text, max) {
-  const words2 = text.split(/\s+/).filter(Boolean);
+  const words3 = text.split(/\s+/).filter(Boolean);
   const out = [];
   let cur = "";
-  for (const w of words2) {
+  for (const w of words3) {
     const piece = w.length > max ? w.slice(0, max) : w;
     if (cur && `${cur} ${piece}`.length > max) {
       out.push(cur);
@@ -8226,13 +8248,13 @@ function tightenForChat(text, maxWords = 70) {
   const last = sentences[sentences.length - 1];
   const tail = /[?？]\s*$/.test(last) ? last : "";
   const keep = [];
-  let words2 = tail ? countWords(tail) : 0;
+  let words3 = tail ? countWords(tail) : 0;
   for (const sn of sentences.slice(0, tail ? -1 : void 0)) {
     const n = countWords(sn);
     const isList = /\b\d+[.)]\s/.test(sn);
-    if (keep.length && !isList && words2 + n > maxWords) break;
+    if (keep.length && !isList && words3 + n > maxWords) break;
     keep.push(sn);
-    words2 += n;
+    words3 += n;
   }
   return [...keep, ...tail ? [tail] : []].join(" ");
 }
@@ -8470,7 +8492,15 @@ function makeProblem(input, requireCheck = false) {
       if (!/\bunit|\bin\b|\ben\b|\bavec\b/i.test(String(format || ""))) format = `${format ? format + " \u2014 " : ""}answer as a number, in ${unit2}`;
     }
   }
-  if (!hasMCQ && answer) {
+  const rubric = (() => {
+    const req = Array.isArray(input?.rubric?.required) ? input.rubric.required : [];
+    const required = req.map((g) => (Array.isArray(g) ? g : [g]).map((p) => String(p || "").trim().slice(0, 80)).filter(Boolean).slice(0, 6)).filter((g) => g.length).slice(0, 5);
+    if (!required.length) return void 0;
+    const misconceptions = (Array.isArray(input?.rubric?.misconceptions) ? input.rubric.misconceptions : []).map((m) => String(m || "").trim().slice(0, 80)).filter(Boolean).slice(0, 6);
+    return { required, ...misconceptions.length ? { misconceptions } : {} };
+  })();
+  if (!hasMCQ && answer && rubric && /\(\s*a\s*\)[\s\S]*\(\s*b\s*\)/i.test(question)) return { error: "REJECTED: multi-part prompts can't be auto-checked \u2014 create ONE problem per part, each with a single answer." };
+  if (!hasMCQ && answer && !rubric) {
     const proseWords = (answer.match(/[A-Za-zÀ-ÿ]{3,}/g) || []).length;
     if (answer.length > 40 || proseWords > 3 || /[.;]\s+\S/.test(answer) || /\b(because|since|donc|parce que|therefore)\b/i.test(answer)) return { error: `REJECTED: a type-in exercise needs ONE short checkable answer (a number, an expression, a single word/term \u2014 e.g. "7", "x = 2", "sec\xB2x \u2212 1"). Prose answers can't be auto-checked. Ask this in the conversation instead, or rewrite it so the answer is a single value.` };
     if (/\b(explain|describe|discuss|justify|prove|show that|demonstrate|compare|outline|comment on|in your own words|what do you think|why|how (?<verb>would|could|might|do you)|explique|décris|décrivez|discute|justifie|démontre|montre que|compare|pourquoi|à ton avis)\b/i.test(question)) return { error: 'REJECTED: that question is open-ended (explain / why / prove / compare\u2026) \u2014 it has no single checkable answer, so it is NOT an exercise. Ask it in the conversation, or reword it so it has exactly one correct short answer ("what is \u2026?", "find \u2026", "simplify \u2026 to a single value").' };
@@ -8496,6 +8526,7 @@ function makeProblem(input, requireCheck = false) {
       ...hint ? { hint } : {},
       ...format ? { format } : {},
       ...exactValue != null && !hasMCQ ? { value: exactValue } : {},
+      ...rubric && !hasMCQ ? { rubric } : {},
       ...cleanProblemSource(input?.sourceUrl) ? { source: cleanProblemSource(input?.sourceUrl) } : {},
       createdAt: (/* @__PURE__ */ new Date()).toISOString()
     }
@@ -8545,13 +8576,13 @@ function makeObjectives(input) {
   return { objectives };
 }
 function isDuplicateBoardEntry(existing, incoming) {
-  const norm4 = (s) => s.toLowerCase().replace(/```[a-z]*|[`*]{1,3}|^\s*[-•]\s+/gm, "").replace(/\s+/g, " ").trim();
+  const norm5 = (s) => s.toLowerCase().replace(/```[a-z]*|[`*]{1,3}|^\s*[-•]\s+/gm, "").replace(/\s+/g, " ").trim();
   const kindOf = (k) => typeof k === "string" && BOARD_KINDS.has(k) ? k : "note";
   const raw = typeof incoming?.text === "string" ? incoming.text : "";
-  if (!norm4(raw)) return false;
+  if (!norm5(raw)) return false;
   const inKind = typeof incoming?.kind === "string" && BOARD_KINDS.has(incoming.kind) ? incoming.kind : void 0;
-  const inText = norm4(raw);
-  return existing.some((e) => (inKind === void 0 || kindOf(e.kind) === inKind) && (norm4(e.text) === inText || similarity(norm4(e.text), inText) >= 0.85));
+  const inText = norm5(raw);
+  return existing.some((e) => (inKind === void 0 || kindOf(e.kind) === inKind) && (norm5(e.text) === inText || similarity(norm5(e.text), inText) >= 0.85));
 }
 function isDuplicateDiagram(existing, incoming) {
   const sig = (e) => JSON.stringify((e.diagram || []).map((o) => o.op === "equation" ? { l: String(o.latex || "").replace(/\s+/g, "") } : o));
@@ -8561,11 +8592,11 @@ function isDuplicateDiagram(existing, incoming) {
   return existing.some((e) => e.kind === "diagram" && e.diagram?.length && (sig(e) === sig(incoming) || allEq(e) && allEq(incoming) && eqs(e) === eqs(incoming)));
 }
 function isDuplicateProblem(existing, incoming) {
-  const norm4 = (s) => s.toLowerCase().replace(/```[a-z]*|[`*]{1,3}|^\s*[-•]\s+/gm, "").replace(/\s+/g, " ").trim();
+  const norm5 = (s) => s.toLowerCase().replace(/```[a-z]*|[`*]{1,3}|^\s*[-•]\s+/gm, "").replace(/\s+/g, " ").trim();
   const raw = typeof incoming?.question === "string" ? incoming.question : "";
-  if (!norm4(raw)) return false;
-  const inText = norm4(raw);
-  return existing.some((p) => norm4(p.question) === inText || similarity(norm4(p.question), inText) >= 0.7);
+  if (!norm5(raw)) return false;
+  const inText = norm5(raw);
+  return existing.some((p) => norm5(p.question) === inText || similarity(norm5(p.question), inText) >= 0.7);
 }
 function mathInPlay(text) {
   return /=/.test(text) || /[\^√πθ²³±×÷≤≥]/.test(text) || /\b(sin|cos|tan|log|ln|exp|lim|deriv\w*|dériv\w*|factor\w*|simplif\w*|cancel\w*)\b/i.test(text) || /\b(formula|formule|equation|équation|square|carré)\b/i.test(text);
@@ -8638,13 +8669,13 @@ ${kept.join("\n")}`;
 function isSubstantiveStep(message) {
   const raw = String(message || "").replace(/\[(?:Exercise|Exercice)\][^\n]*/g, " ").replace(/\[(?:What I wrote\/drew on the board|Ce que j'ai écrit\/dessiné sur le tableau)[\s\S]*?\]/g, " ").replace(/(?:Here's what I drew|Voici ce que j'ai dessiné)\s*:[\s\S]*$/i, " ").replace(/\s+/g, " ").trim();
   if (raw.length < 6) return false;
-  const words2 = raw.split(/\s+/).length;
+  const words3 = raw.split(/\s+/).length;
   const mathy = /[=^√π²³±×÷≤≥<>]|\d/.test(raw);
   if (/^\s*(ok(ay)?|oui|non|yes|no|yeah|merci|thanks?|thank you|d'accord|compris|got it|i see|je vois|hi|hello|salut|bonjour|hey)\b[\s.!]*$/i.test(raw)) return false;
   if (/(can i have a small hint|i'm lost|got it! give me another|i'm stuck on a problem|i'd like to understand a topic|quiz me|un petit indice|je suis perdu|donne-m'en un autre|je bloque sur un exercice|interroge-moi|comprendre un chapitre)/i.test(raw)) return false;
-  if (/\b(i don'?t know|idk|je ne sais pas|je sais pas|no idea|aucune id[ée]e)\b/i.test(raw) && words2 < 8) return false;
+  if (/\b(i don'?t know|idk|je ne sais pas|je sais pas|no idea|aucune id[ée]e)\b/i.test(raw) && words3 < 8) return false;
   if (/\?\s*$/.test(raw) && !/=/.test(raw)) return false;
-  return mathy || words2 >= 6;
+  return mathy || words3 >= 6;
 }
 function validateDiagramOp(raw) {
   const color = typeof raw?.color === "string" && raw.color.trim() ? raw.color.trim().slice(0, 20) : void 0;
@@ -11155,8 +11186,8 @@ function clamp014(n) {
 function wantsArtifactTools(message, history) {
   const recent = `${history.slice(-2).map((h) => h.text).join(" ")} ${message}`;
   if (ARTIFACT_KEYWORDS.test(recent)) return true;
-  const words2 = message.trim().split(/\s+/).filter(Boolean);
-  return !(words2.length > 0 && words2.length <= 6 && !message.includes("?"));
+  const words3 = message.trim().split(/\s+/).filter(Boolean);
+  return !(words3.length > 0 && words3.length <= 6 && !message.includes("?"));
 }
 function stepVerdictLine(v) {
   if (!v) return "";
@@ -13958,7 +13989,24 @@ var WRITE_TO_BOARD = {
     outline: { type: "array", description: "kind 'outline' only: [{heading, bullets[]}]", items: { type: "object", properties: { heading: { type: "string" }, bullets: { type: "array", items: { type: "string" } } }, required: ["heading", "bullets"] } }
   }, required: ["text"] }
 };
-var PROBLEM = { ...CREATE_PROBLEM_TOOL, description: "Put ONE practice problem on the board with an answer box (only when there is exactly one short, checkable answer). Only one unanswered problem at a time. Give `check` (an expression computing the answer) for any numeric answer." };
+var PROBLEM = {
+  ...CREATE_PROBLEM_TOOL,
+  description: 'Put ONE practice problem on the board with an answer box. Only one unanswered problem at a time. Give `check` (an expression computing the answer) for any numeric answer. A DEFINITION or concept check ("define scarcity", "what is opportunity cost") is allowed too, but ONLY with a `rubric` \u2014 it is then graded by meaning in code, so a related-but-wrong idea can\'t pass. Vary the format as they succeed: after two right calculations of the same kind, ask a graph, concept or application question instead of another of the same.',
+  input_schema: {
+    ...CREATE_PROBLEM_TOOL.input_schema,
+    properties: {
+      ...CREATE_PROBLEM_TOOL.input_schema.properties,
+      rubric: {
+        type: "object",
+        description: 'For a worded answer only: `required` = the key ideas, each as a list of alternative short phrasings (any one counts), e.g. [["limited resources","finite resources","scarce resources"],["unlimited wants","infinite wants","wants exceed"]]; `misconceptions` = related ideas that must NOT pass on their own, e.g. ["opportunity cost"]. Put a model answer in `answer`.',
+        properties: {
+          required: { type: "array", items: { type: "array", items: { type: "string" } } },
+          misconceptions: { type: "array", items: { type: "string" } }
+        }
+      }
+    }
+  }
+};
 var INCLINE_ON_BOARD = {
   name: "INCLINE_ON_BOARD",
   description: "Draw a block on an inclined plane, TO SCALE: the slope at exactly the given angle, the weight straight down, the normal perpendicular to the surface, components along/into the slope, friction against the motion. Use it for any slope / ramp / hill / force problem instead of drawing it yourself. Label only GIVEN values; put '?' for what they must find.",
@@ -14002,10 +14050,22 @@ ${parts.join("\n")}`;
 }
 function objectivesBlock(objectives) {
   if (!objectives.length) return "";
+  const current = objectives.find((o) => !o.done);
   return `
 
-SESSION OBJECTIVES:
-${objectives.map((o) => `- [${o.done ? "x" : " "}] ${o.label}`).join("\n")}`;
+LESSON PLAN (the session objectives, in order \u2014 the student sees this checklist):
+${objectives.map((o) => `- [${o.done ? "x" : " "}] ${o.label}${o === current ? "   \u2190 CURRENT" : ""}`).join("\n")}` + (current ? `
+You drive the lesson: work on the CURRENT milestone. When they show it (a verified right answer plus a brief why), tick it with SET_OBJECTIVES and START the next milestone in the same reply \u2014 don't ask them what to do next. Vary the task type as they succeed (calculation \u2192 graph \u2192 explanation \u2192 application), never the same drill three times. They can always redirect you.` : `
+All milestones are done: give a short recap of what they showed, then one mixed exam-style question.`);
+}
+function delegatesChoice(message) {
+  return /\b(?:whatever (?:you|u) (?:want|think|like)|(?:you|u) (?:choose|pick|decide)|up to (?:you|u)|your call|what(?:'s| is)? next|(?:let'?s )?(?:continue|keep going)|next one|n'importe|comme tu veux|à toi de (?:voir|choisir)|tu choisis|on continue|la suite|et maintenant)\b/i.test(String(message || "").trim());
+}
+function statesStudyGoal(message) {
+  return /\b(?:revis(?:e|ing|ion)|r[ée]vis(?:er|ion)|exam|test|quiz|contr[ôo]le|dst|bac|prepare|pr[ée]parer|study|learn|apprendre|understand|comprendre|go over|catch up)\b/i.test(String(message || ""));
+}
+function asksStudentToChoose(reply) {
+  return /\b(?:what|which)\b[^?]{0,60}\b(?:would you like|do you want|should we|shall we|part|topic|area|chapter|start with|focus on|work on|look at)\b[^?]*\?|\bor (?:something else|another topic)\b[^?]*\?|\bpar quoi\b[^?]*\?|\bqu(?:'|e )(?:est-ce que )?(?:tu veux|veux-tu|aimerais-tu)\b[^?]*\?/i.test(String(reply || ""));
 }
 var ACTIONS = ["probe", "hint", "visual", "explain", "example", "practice", "confirm"];
 function newQuantities(reply, sources) {
@@ -14363,6 +14423,8 @@ async function runTutorTurn(input) {
       if (leaked) issues.push(`it gives away ${leaked === "the problem's answer" ? "the answer to the open problem" : `the value of the open gap (${leaked})`} \u2014 they must find it; keep the idea, drop the value, end with one question that gets them there`);
       if (wantsProblem && !result.problems.length) issues.push("they asked for an exercise: create it now with CREATE_PROBLEM (full statement, one short answer, a check expression for a numeric answer, precision and unit in the hint), then one line pointing them to it");
       if (asksToWrite(message) && !result.board.length) issues.push("they asked you to write it on the board: do it now (WRITE_TO_BOARD, clean maths in $\u2026$, their numbers), then one short line");
+      if (!objectives.length && !result.objectives && statesStudyGoal(message)) issues.push("they've given you a study goal: set the lesson plan NOW with SET_OBJECTIVES \u2014 4-8 concrete milestones for THIS subject/goal, in teaching order \u2014 then START the first one in this same reply (one short line on the plan, then its first question or exercise). Don't ask them which topic to start with");
+      if (delegatesChoice(message) && asksStudentToChoose(reply)) issues.push("they left the choice to you \u2014 don't ask them to choose. Pick the next useful activity yourself (the CURRENT milestone of the lesson plan, or a sensible one for this subject if there's no plan yet) and start it now: one short line on what we're doing, then its first question or exercise");
       const doubt = doubtsRightAnswer(reply, message, input.solution);
       if (doubt) issues.push(doubt);
       const badMath = wrongArithmetic(reply, message);
@@ -14490,6 +14552,20 @@ function applyTool(name, input, c) {
       if (typeof input.text === "string") input.text = latexifyBoardLine(repairLatex(input.text), String(input.kind || ""));
       let text = String(input.text || "");
       if (input.owner !== "student" && input.kind !== "gap" && isTheirStep(text, [c.message, ...c.spokenRepair ? [c.spokenRepair.interpreted] : []])) input.owner = "student";
+      if (input.kind === "summary" && input.owner !== "student") {
+        const existing = [...c.allBoard()].reverse().find((e) => e.kind === "summary" && e.owner !== "student" && !e.archived);
+        if (existing && text.trim()) {
+          if (leaks(text)) return LEAK;
+          if (!asksForFormula(c.message) && equationsAhead(text, c.said).length) return "REJECTED: that summary states an equation they haven't reached \u2014 summarize only what they've actually shown.";
+          const r2 = applyEntryAction(c.allBoard(), { action: "update", targetId: existing.id, patch: { text }, author: "tutor" });
+          if (r2.ok) {
+            const mine = result.board.find((e) => e.id === existing.id);
+            if (mine) mine.text = text;
+            else result.boardEdits = [...(result.boardEdits || []).filter((x) => x.id !== existing.id), { id: existing.id, text }];
+            return JSON.stringify({ ok: true, id: existing.id, note: "updated the existing summary in place (one summary per session)" });
+          }
+        }
+      }
       if (input.kind === "gap" && result.board.some((e) => e.kind === "gap")) return "LIMIT: one gap a turn \u2014 ask the next step in chat instead.";
       if (input.kind === "gap" && lastLineIsOpenGap(c.allBoard())) return "REJECTED: the board already ends on an open gap they haven't filled \u2014 ask in chat instead of adding another '= ?' line.";
       if (result.board.filter((e) => !["svg", "graph", "flow", "widget", "diagram", "annotation"].includes(String(e.kind))).length >= 3) return "LIMIT: three lines a turn is plenty \u2014 the board keeps only what's worth keeping.";
@@ -14691,7 +14767,7 @@ function journalTasks(list) {
   return list.filter((x) => x.source === "studylog" && x.logDate && !x.logDate.startsWith("week:") && !x.logDate.startsWith("month:") && x.logText?.trim());
 }
 var STOP3 = new Set("the and for that this with have from what when where which their there about would could should these those them they then than just also into your yours been were will shall cannot dont doesnt isnt arent les des une est pas que qui dans pour avec sur mais".split(" "));
-var words = (t) => new Set((t.toLowerCase().match(/[a-zà-ÿ]{4,}/g) || []).filter((w) => !STOP3.has(w)));
+var words2 = (t) => new Set((t.toLowerCase().match(/[a-zà-ÿ]{4,}/g) || []).filter((w) => !STOP3.has(w)));
 function selectJournal(list, opts) {
   const limit = opts.limit ?? 6;
   const all = journalTasks(list).map((t) => ({
@@ -14702,12 +14778,12 @@ function selectJournal(list, opts) {
   const subjects = {};
   for (const e of all) for (const s of e.subjects) subjects[s] = (subjects[s] || 0) + 1;
   const subj = (opts.subject || "").toLowerCase();
-  const q = words(opts.query || "");
+  const q = words2(opts.query || "");
   const scored = all.slice(0, 80).map((e, i) => {
     let score = 0;
     if (subj && (e.subjects.some((s) => s.toLowerCase() === subj) || e.text.toLowerCase().includes(subj))) score += 5;
     if (q.size) {
-      const w = words(e.text);
+      const w = words2(e.text);
       let hit = 0;
       for (const x of q) if (w.has(x)) hit++;
       score += Math.min(6, hit * 2);
@@ -15024,8 +15100,8 @@ var GENERIC_WORDS = /* @__PURE__ */ new Set([
 ]);
 function distinctiveTokens(s) {
   const allWords = normTitle(s).split(" ").filter(Boolean);
-  const words2 = allWords.filter((w) => w.length > 2);
-  const pool = words2.length ? words2 : allWords;
+  const words3 = allWords.filter((w) => w.length > 2);
+  const pool = words3.length ? words3 : allWords;
   const distinctive = pool.filter((w) => !GENERIC_WORDS.has(w));
   return new Set(distinctive.length ? distinctive : pool);
 }
@@ -18349,8 +18425,8 @@ async function tutorTurn(req, res, t, c) {
     }
   }
   if (stepVerdict?.verdict === "correct" && !out.boardCleared) {
-    const norm4 = (x) => x.toLowerCase().replace(/[\s$]/g, "");
-    if (![...currentBoard, ...out.board].some((e) => norm4(e.text) === norm4(stepVerdict.given))) {
+    const norm5 = (x) => x.toLowerCase().replace(/[\s$]/g, "");
+    if (![...currentBoard, ...out.board].some((e) => norm5(e.text) === norm5(stepVerdict.given))) {
       out.board.unshift({ id: randomUUID5(), text: stepVerdict.given, kind: "result", owner: "student", status: stepVerdict.verdict, at: turnStart });
     }
   }

@@ -3177,7 +3177,18 @@ export function makeProblem(input: any, requireCheck = false): { problem: TaskPr
   // An EXERCISE the student types an answer into must have exactly ONE correct, short, checkable answer — a number,
   // an expression, a single term. Open-ended asks (explain/describe/justify/prove/compare…), multi-part prompts and
   // prose "answers" can't be auto-checked and would mark a right idea wrong; those belong in the conversation.
-  if (!hasMCQ && answer) {
+  // A worded concept answer ("define scarcity") CAN be an exercise once it carries a rubric: it's then graded by
+  // meaning in code (shared/exerciseVerification.ts gradeConceptAnswer), not by string match — spec §18.2.
+  const rubric = (() => {
+    const req = Array.isArray(input?.rubric?.required) ? input.rubric.required : [];
+    const required = req.map((g: any) => (Array.isArray(g) ? g : [g]).map((p: any) => String(p || "").trim().slice(0, 80)).filter(Boolean).slice(0, 6))
+      .filter((g: string[]) => g.length).slice(0, 5);
+    if (!required.length) return undefined;
+    const misconceptions = (Array.isArray(input?.rubric?.misconceptions) ? input.rubric.misconceptions : []).map((m: any) => String(m || "").trim().slice(0, 80)).filter(Boolean).slice(0, 6);
+    return { required, ...(misconceptions.length ? { misconceptions } : {}) };
+  })();
+  if (!hasMCQ && answer && rubric && /\(\s*a\s*\)[\s\S]*\(\s*b\s*\)/i.test(question)) return { error: "REJECTED: multi-part prompts can't be auto-checked — create ONE problem per part, each with a single answer." };
+  if (!hasMCQ && answer && !rubric) {
     const proseWords = (answer.match(/[A-Za-zÀ-ÿ]{3,}/g) || []).length;
     if (answer.length > 40 || proseWords > 3 || /[.;]\s+\S/.test(answer) || /\b(because|since|donc|parce que|therefore)\b/i.test(answer)) return { error: "REJECTED: a type-in exercise needs ONE short checkable answer (a number, an expression, a single word/term — e.g. \"7\", \"x = 2\", \"sec²x − 1\"). Prose answers can't be auto-checked. Ask this in the conversation instead, or rewrite it so the answer is a single value." };
     if (/\b(explain|describe|discuss|justify|prove|show that|demonstrate|compare|outline|comment on|in your own words|what do you think|why|how (?<verb>would|could|might|do you)|explique|décris|décrivez|discute|justifie|démontre|montre que|compare|pourquoi|à ton avis)\b/i.test(question)) return { error: "REJECTED: that question is open-ended (explain / why / prove / compare…) — it has no single checkable answer, so it is NOT an exercise. Ask it in the conversation, or reword it so it has exactly one correct short answer (\"what is …?\", \"find …\", \"simplify … to a single value\")." };
@@ -3208,6 +3219,7 @@ export function makeProblem(input: any, requireCheck = false): { problem: TaskPr
       ...(hint ? { hint } : {}),
       ...(format ? { format } : {}),
       ...(exactValue != null && !hasMCQ ? { value: exactValue } : {}),
+      ...(rubric && !hasMCQ ? { rubric } : {}),
       ...(cleanProblemSource(input?.sourceUrl) ? { source: cleanProblemSource(input?.sourceUrl) } : {}),
       createdAt: new Date().toISOString(),
     },

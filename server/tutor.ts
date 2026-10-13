@@ -149,7 +149,24 @@ const WRITE_TO_BOARD = {
     outline: { type: "array", description: "kind 'outline' only: [{heading, bullets[]}]", items: { type: "object", properties: { heading: { type: "string" }, bullets: { type: "array", items: { type: "string" } } }, required: ["heading", "bullets"] } },
   }, required: ["text"] },
 };
-const PROBLEM = { ...CREATE_PROBLEM_TOOL, description: "Put ONE practice problem on the board with an answer box (only when there is exactly one short, checkable answer). Only one unanswered problem at a time. Give `check` (an expression computing the answer) for any numeric answer." };
+const PROBLEM = {
+  ...CREATE_PROBLEM_TOOL,
+  description: "Put ONE practice problem on the board with an answer box. Only one unanswered problem at a time. Give `check` (an expression computing the answer) for any numeric answer. A DEFINITION or concept check (\"define scarcity\", \"what is opportunity cost\") is allowed too, but ONLY with a `rubric` — it is then graded by meaning in code, so a related-but-wrong idea can't pass. Vary the format as they succeed: after two right calculations of the same kind, ask a graph, concept or application question instead of another of the same.",
+  input_schema: {
+    ...CREATE_PROBLEM_TOOL.input_schema,
+    properties: {
+      ...CREATE_PROBLEM_TOOL.input_schema.properties,
+      rubric: {
+        type: "object",
+        description: "For a worded answer only: `required` = the key ideas, each as a list of alternative short phrasings (any one counts), e.g. [[\"limited resources\",\"finite resources\",\"scarce resources\"],[\"unlimited wants\",\"infinite wants\",\"wants exceed\"]]; `misconceptions` = related ideas that must NOT pass on their own, e.g. [\"opportunity cost\"]. Put a model answer in `answer`.",
+        properties: {
+          required: { type: "array", items: { type: "array", items: { type: "string" } } },
+          misconceptions: { type: "array", items: { type: "string" } },
+        },
+      },
+    },
+  },
+};
 
 const INCLINE_ON_BOARD = {
   name: "INCLINE_ON_BOARD",
@@ -201,9 +218,34 @@ export function backgroundBlock(c: TutorContext): string {
   return `\n\nBACKGROUND (secondary: use only when it helps with what's happening now)\n${parts.join("\n")}`;
 }
 
+/** The session's objectives ARE its lesson plan (spec §6/§7): an ordered list of milestones the student can see and
+ *  that gets ticked off. The first unfinished one is the CURRENT milestone — named explicitly so the tutor drives the
+ *  lesson forward itself instead of asking the student what to study next (spec §2.1 Failure D/G). */
 function objectivesBlock(objectives: TaskObjective[]): string {
   if (!objectives.length) return "";
-  return `\n\nSESSION OBJECTIVES:\n${objectives.map((o) => `- [${o.done ? "x" : " "}] ${o.label}`).join("\n")}`;
+  const current = objectives.find((o) => !o.done);
+  return `\n\nLESSON PLAN (the session objectives, in order — the student sees this checklist):\n${objectives.map((o) => `- [${o.done ? "x" : " "}] ${o.label}${o === current ? "   ← CURRENT" : ""}`).join("\n")}`
+    + (current
+      ? `\nYou drive the lesson: work on the CURRENT milestone. When they show it (a verified right answer plus a brief why), tick it with SET_OBJECTIVES and START the next milestone in the same reply — don't ask them what to do next. Vary the task type as they succeed (calculation → graph → explanation → application), never the same drill three times. They can always redirect you.`
+      : `\nAll milestones are done: give a short recap of what they showed, then one mixed exam-style question.`);
+}
+
+/** The student hands the choice of what to do to Otto ("whatever you want", "you choose", "continue", "what next").
+ *  Exported for tests. */
+export function delegatesChoice(message: string): boolean {
+  return /\b(?:whatever (?:you|u) (?:want|think|like)|(?:you|u) (?:choose|pick|decide)|up to (?:you|u)|your call|what(?:'s| is)? next|(?:let'?s )?(?:continue|keep going)|next one|n'importe|comme tu veux|à toi de (?:voir|choisir)|tu choisis|on continue|la suite|et maintenant)\b/i.test(String(message || "").trim());
+}
+
+/** The student states a study goal that deserves a lesson plan ("help me revise for my econ test", "prepare for the
+ *  exam", "learn supply and demand"). Exported for tests. */
+export function statesStudyGoal(message: string): boolean {
+  return /\b(?:revis(?:e|ing|ion)|r[ée]vis(?:er|ion)|exam|test|quiz|contr[ôo]le|dst|bac|prepare|pr[ée]parer|study|learn|apprendre|understand|comprendre|go over|catch up)\b/i.test(String(message || ""));
+}
+
+/** The reply hands the choice back ("What would you like to start with?", "which topic…?") — the move a tutor that
+ *  already owns a plan must not make when the student delegated. Exported for tests. */
+export function asksStudentToChoose(reply: string): boolean {
+  return /\b(?:what|which)\b[^?]{0,60}\b(?:would you like|do you want|should we|shall we|part|topic|area|chapter|start with|focus on|work on|look at)\b[^?]*\?|\bor (?:something else|another topic)\b[^?]*\?|\bpar quoi\b[^?]*\?|\bqu(?:'|e )(?:est-ce que )?(?:tu veux|veux-tu|aimerais-tu)\b[^?]*\?/i.test(String(reply || ""));
 }
 
 // ── One turn ──────────────────────────────────────────────────────────────────────────────────────────
@@ -745,6 +787,10 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       if (leaked) issues.push(`it gives away ${leaked === "the problem's answer" ? "the answer to the open problem" : `the value of the open gap (${leaked})`} — they must find it; keep the idea, drop the value, end with one question that gets them there`);
       if (wantsProblem && !result.problems.length) issues.push("they asked for an exercise: create it now with CREATE_PROBLEM (full statement, one short answer, a check expression for a numeric answer, precision and unit in the hint), then one line pointing them to it");
       if (asksToWrite(message) && !result.board.length) issues.push("they asked you to write it on the board: do it now (WRITE_TO_BOARD, clean maths in $…$, their numbers), then one short line");
+      // Spec §6: a study goal gets a visible, editable lesson plan up front — not a question back about what to study.
+      if (!objectives.length && !result.objectives && statesStudyGoal(message)) issues.push("they've given you a study goal: set the lesson plan NOW with SET_OBJECTIVES — 4-8 concrete milestones for THIS subject/goal, in teaching order — then START the first one in this same reply (one short line on the plan, then its first question or exercise). Don't ask them which topic to start with");
+      // Spec §2.1 Failure D/G: when they hand you the choice, you choose — never bounce it back.
+      if (delegatesChoice(message) && asksStudentToChoose(reply)) issues.push("they left the choice to you — don't ask them to choose. Pick the next useful activity yourself (the CURRENT milestone of the lesson plan, or a sensible one for this subject if there's no plan yet) and start it now: one short line on what we're doing, then its first question or exercise");
       const doubt = doubtsRightAnswer(reply, message, input.solution);
       if (doubt) issues.push(doubt);
       const badMath = wrongArithmetic(reply, message);
@@ -938,6 +984,21 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       // Their own step, written up without owner:"student" (the model often forgets): an equation they just said is
       // THEIRS — it skips the "about the problem" and "equation ahead" checks and is labelled as their work.
       if (input.owner !== "student" && input.kind !== "gap" && isTheirStep(text, [c.message, ...(c.spokenRepair ? [c.spokenRepair.interpreted] : [])])) input.owner = "student";
+      // Spec §13.6 / test 26: ONE canonical summary per session, updated in place — a second "summary" write
+      // replaces Otto's existing summary line instead of stacking another near-identical block under it.
+      if (input.kind === "summary" && input.owner !== "student") {
+        const existing = [...c.allBoard()].reverse().find((e) => e.kind === "summary" && e.owner !== "student" && !(e as any).archived);
+        if (existing && text.trim()) {
+          if (leaks(text)) return LEAK;
+          if (!asksForFormula(c.message) && equationsAhead(text, c.said).length) return "REJECTED: that summary states an equation they haven't reached — summarize only what they've actually shown.";
+          const r = applyEntryAction(c.allBoard(), { action: "update", targetId: existing.id, patch: { text }, author: "tutor" });
+          if (r.ok) {
+            const mine = result.board.find((e) => e.id === existing.id);
+            if (mine) mine.text = text; else result.boardEdits = [...(result.boardEdits || []).filter((x) => x.id !== existing.id), { id: existing.id, text }];
+            return JSON.stringify({ ok: true, id: existing.id, note: "updated the existing summary in place (one summary per session)" });
+          }
+        }
+      }
       if (input.kind === "gap" && result.board.some((e) => e.kind === "gap")) return "LIMIT: one gap a turn — ask the next step in chat instead.";
       if (input.kind === "gap" && lastLineIsOpenGap(c.allBoard())) return "REJECTED: the board already ends on an open gap they haven't filled — ask in chat instead of adding another '= ?' line.";
       if (result.board.filter((e) => !["svg", "graph", "flow", "widget", "diagram", "annotation"].includes(String(e.kind))).length >= 3) return "LIMIT: three lines a turn is plenty — the board keeps only what's worth keeping.";

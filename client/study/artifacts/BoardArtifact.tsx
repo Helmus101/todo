@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import katex from "katex";
 import type { WebTask, BoardEntry, TaskProblem, DiagramOp } from "../../../shared/types.ts";
 import { isNumericAnswer, problemIsPercent } from "../../../shared/types.ts";
-import { gradeExerciseAnswer, type GradeStatus } from "../../../shared/exerciseVerification.ts";
+import { gradeExerciseAnswer, gradeConceptAnswer, type GradeStatus } from "../../../shared/exerciseVerification.ts";
 import { autoMathLine, repairLatex, latexToPlainText } from "../../../shared/mathText.ts";
 import { GraphBlock } from "./GraphBlock.tsx";
 import { FlowDiagram } from "./FlowDiagram.tsx";
@@ -30,7 +30,7 @@ interface BoardArtifactProps {
   /** Tutor only — fired on every answer attempt (right or wrong) so Otto can react to it like a person would
    *  ("what made you pick B?") instead of the board silently marking it. `attempt` counts tries on this
    *  problem including this one. Never carries the correct answer — only what the student gave. */
-  onProblemResult?: (r: { problem: TaskProblem; given: string; correct: boolean; attempt: number; /** the item's own key and the independently computed value disagreed — nobody's mistake (spec §19.1). */ systemError?: boolean }) => void;
+  onProblemResult?: (r: { problem: TaskProblem; given: string; correct: boolean; attempt: number; /** the item's own key and the independently computed value disagreed — nobody's mistake (spec §19.1). */ systemError?: boolean; /** a worded answer had some, not all, of the rubric's key ideas (spec §8.3). */ partial?: boolean }) => void;
   /** Tutor only — a match / order / sort activity was finished (how many slips), so Otto can react to it. */
   onWidgetResult?: (r: WidgetResult) => void;
   /** Tutor only — each bump reserves `height` px of blank space right after the board's CURRENT last item: the
@@ -387,6 +387,17 @@ interface ProblemBlockProps {
 // student gets it right themselves.
 type ProblemState = { picked: number | null; textAnswer: string; submitted: boolean; wrong?: number[] };
 
+/** A rubric-graded (worded) answer's specific miss message (spec §8.3/§8.6): "partly right — an idea is missing",
+ *  or "related idea, not what's asked" — instead of a bare "Not quite". null for anything without a rubric. Never
+ *  reveals the model answer. Exported for tests. */
+export function conceptMissMessage(problem: Pick<TaskProblem, "rubric">, given: string, en: boolean): string | null {
+  if (!problem.rubric?.required?.length || !String(given || "").trim()) return null;
+  const g = gradeConceptAnswer(problem.rubric, given);
+  if (g.status === "partially_correct") return en ? `Partly right — you have ${g.met} of the ${g.total} key ideas. What's still missing?` : `En partie juste — tu as ${g.met} des ${g.total} idées clés. Qu'est-ce qui manque encore ?`;
+  if (g.misconception) return en ? `"${g.misconception}" is a related idea, but it isn't what's being asked here. Try again.` : `« ${g.misconception} » est une idée liée, mais ce n'est pas ce qui est demandé ici. Réessaie.`;
+  return null;
+}
+
 function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onShowHint, onPick, onTextAnswer, onSubmit, en, fresh }: ProblemBlockProps) {
   const [expanded, setExpanded] = useState(false);
   const problemIsMCQ = Array.isArray(problem.options) && problem.options.length >= 2;
@@ -491,7 +502,7 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
         <div className="sm-inline-problem-result wrong" role="status">
           {problemIsMCQ
             ? (en ? "Not quite — try another option." : "Pas tout à fait — essaie une autre réponse.")
-            : (en ? "Not quite — try again." : "Pas tout à fait — réessaie.")}
+            : conceptMissMessage(problem, state.textAnswer, en) || (en ? "Not quite — try again." : "Pas tout à fait — réessaie.")}
         </div>
       ) : null}
       {answered && problem.why ? (
@@ -609,7 +620,7 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, 
   const attemptsRef = useRef<Record<string, number>>({});
   const reportResult = (problem: TaskProblem, given: string, status: GradeStatus) => {
     const attempt = (attemptsRef.current[problem.id] = (attemptsRef.current[problem.id] || 0) + 1);
-    onProblemResult?.({ problem, given, correct: status === "correct", attempt, ...(status === "system_error" ? { systemError: true } : {}) });
+    onProblemResult?.({ problem, given, correct: status === "correct", attempt, ...(status === "system_error" ? { systemError: true } : {}), ...(status === "partially_correct" ? { partial: true } : {}) });
   };
   const setProblemPicked = (problem: TaskProblem, picked: number) => {
     reportResult(problem, problem.options?.[picked] ?? String(picked), gradeExerciseAnswer(problem, String(picked)).status);

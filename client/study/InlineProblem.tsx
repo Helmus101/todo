@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { TaskProblem } from "../../shared/types.ts";
 import { isNumericAnswer, problemIsPercent } from "../../shared/types.ts";
 import { gradeExerciseAnswer } from "../../shared/exerciseVerification.ts";
+import { conceptMissMessage } from "./artifacts/BoardArtifact.tsx";
 import { stripStrayMarkdown, useLang } from "../ui.tsx";
 
 interface InlineProblemProps {
@@ -105,7 +106,7 @@ export function InlineProblem({ problem }: InlineProblemProps) {
 
       {missed ? (
         <div className="sm-inline-problem-result wrong" role="status">
-          {isMCQ ? L("Pas tout à fait — essaie une autre réponse.", "Not quite — try another option.") : L("Pas tout à fait — réessaie.", "Not quite — try again.")}
+          {isMCQ ? L("Pas tout à fait — essaie une autre réponse.", "Not quite — try another option.") : conceptMissMessage(problem, textAnswer, L("fr", "en") === "en") || L("Pas tout à fait — réessaie.", "Not quite — try again.")}
         </div>
       ) : null}
       {systemError ? (
