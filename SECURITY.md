@@ -21,6 +21,18 @@ Most relevant to Otto's threat model:
 - **Auth / session** — anything that lets one account read or act on another's data.
 - **Secret exposure** — refresh tokens, password hashes, or API keys reachable by a non-service principal. Note the server **refuses to boot in production without `SUPABASE_SERVICE_KEY`** and ships RLS deny-by-default (see [`supabase.sql`](supabase.sql)).
 
+## Account and session model
+
+- All per-user data is keyed by the session's account email (`req.session.user`), never by a request parameter.
+  Sessions live in Supabase (`weave_web_sessions`, with a `user_email` owner column); per-instance caches are 60 s.
+- Password reset tokens: 32 random bytes, single use, 30-minute expiry, stored only as a SHA-256 hash
+  (`weave_web_reset_tokens`). A reset signs out every other session; account deletion signs out all of them.
+- Admin access (`/admin`) is limited to the emails in `ADMIN_EMAILS`.
+- There is no per-account AI spending cap; per-route rate limits are the only throttle. Watch spend in the
+  provider dashboards.
+- Pronote credentials (username, password, session token) are stored AES-256-GCM encrypted so Otto can log back
+  in when the token expires; Pronote refuses to connect without `CREDENTIAL_ENCRYPTION_KEY`.
+
 ## Handling secrets when you self-host
 
 - Keep `SUPABASE_SERVICE_KEY` server-side only; it bypasses RLS.
