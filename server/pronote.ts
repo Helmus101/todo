@@ -171,8 +171,9 @@ export async function assertSafeExternalUrl(rawUrl: string): Promise<void> {
   if (!addresses.length || addresses.some((a) => isPrivateOrReservedIp(a.address))) throw new Error("Cette adresse n'est pas autorisée.");
 }
 
-/** Connect a Pronote account: log in ONCE with the real credentials (never stored past this call), then
- *  persist only the rotating token pawnote issues in their place. */
+/** Connect a Pronote account: log in with the real credentials and persist the rotating token pawnote issues,
+ *  plus the password (both AES-256-GCM encrypted) so a dead token can be replaced by an automatic re-login.
+ *  Disconnecting or deleting the account clears both. */
 export async function connectPronote(email: string, opts: { url: string; username: string; password: string; kind?: number }): Promise<{ ok: boolean; error?: string; connected?: boolean; username?: string }> {
   // Mandatory HERE specifically, unlike the rest of the app: a Pronote token is the replacement for a
   // student's REAL school password, a materially bigger liability than a revocable Google OAuth token if

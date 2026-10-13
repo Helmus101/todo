@@ -9,7 +9,7 @@ document is worse than none.
 
 | Data | Source | Stored | Sent to a third-party LLM |
 |---|---|---|---|
-| Pronote login token (replaces the real password after first login) | `server/pronote.ts` | Supabase, AES-256-GCM encrypted at rest (`server/crypto.ts`) | Never |
+| Pronote session token **and password** (the password is kept to re-login automatically when the token expires; cleared on disconnect or account deletion) | `server/pronote.ts` | Supabase, AES-256-GCM encrypted at rest (`server/crypto.ts`) | Never |
 | Homework/test text, subject, grades | Pronote via `pawnote` | Supabase (plaintext row, RLS-protected) | **Yes** — sent to DeepSeek as prompt context on every run/chat turn (`server/claude.ts`: `academicBlock`, `assignmentBlock`) |
 | Profile facts (about, preferences, people, projects, working hours) | User-entered | Supabase | **Yes** — `profileBlock` |
 | Real name | User-entered | Supabase | **No** — deliberately excluded from `profileBlock` (see comment there); the model has no task-relevant need for it |
@@ -54,7 +54,8 @@ gate, not a code change.
 
 Separately from the LLM question: `server/pronote.ts` uses `pawnote`, an unofficial, reverse-engineered
 client (not affiliated with or endorsed by Index-Éducation). Connecting requires the student's real
-Pronote password once; the resulting token is encrypted at rest and never logged, but the *mechanism* —
+Pronote password, which is stored (AES-256-GCM encrypted, never logged) together with the session token so a
+dead token can be replaced by an automatic re-login; but the *mechanism* —
 a third-party app receiving a school-issued credential outside any ENT-sanctioned integration — is not
 something a code change can make "authorized." Any move toward schools needs either a real
 Index-Éducation/ENT partnership or dropping password-based Pronote login in favor of a channel that
