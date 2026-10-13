@@ -1075,3 +1075,15 @@ export function reachedResultUnrecorded(reply: string, message: string, boardWri
   const confirms = /^\s*(?:spot on|exactly|correct|that'?s (?:right|it|correct|the right)|perfect|well done|you(?:'ve| have) got it|juste|exact|right\b|yes\b|oui\b)/i.test(reply) || /\b(?:spot on|that'?s (?:right|it|the right)|you(?:'ve| have) (?:turned|split|got|applied)|right structure|bonne structure)\b/i.test(head);
   return statesMath && confirms;
 }
+
+/** The reply ends by setting the student a concrete maths task ("write 2 log_a x − log_a y as a single logarithm",
+ *  "what single logarithm is …?", "simplify …") but nothing went on the board this turn: the question belongs on the
+ *  board too, as a line ending "= ?". Reported live: the log questions only ever existed in chat. Exported for tests. */
+export function setsMathTaskUnboarded(reply: string, boardWrites: number): boolean {
+  if (boardWrites > 0) return false;
+  const sentences = String(reply || "").replace(/\s+/g, " ").trim().split(/(?<=[.!?])\s+/);
+  const last = sentences.slice(-2).join(" ");
+  const asks = /\b(?:write|express|simplify|condense|expand|combine|factor|solve|evaluate|find|compute|calculate|what (?:single|does|is|do|happens)|what\b[^.?]{0,30}\b(?:become|equal|collapse)s?|[ée]cris|simplifie|exprime|calcule|quel(?:le)? est)\b/i.test(last);
+  const hasMath = /\b(?:log|ln|sin|cos|tan|sqrt)(?:_|\s+base|\s*\()|[a-z]\s*[=+\-−×^]\s*[a-z0-9(]|\d\s*(?:log|ln|[a-z]\b)|[=²³√π]/i.test(last);
+  return asks && hasMath;
+}

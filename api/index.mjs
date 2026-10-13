@@ -2700,6 +2700,14 @@ function reachedResultUnrecorded(reply, message, boardWrites) {
   const confirms = /^\s*(?:spot on|exactly|correct|that'?s (?:right|it|correct|the right)|perfect|well done|you(?:'ve| have) got it|juste|exact|right\b|yes\b|oui\b)/i.test(reply) || /\b(?:spot on|that'?s (?:right|it|the right)|you(?:'ve| have) (?:turned|split|got|applied)|right structure|bonne structure)\b/i.test(head);
   return statesMath && confirms;
 }
+function setsMathTaskUnboarded(reply, boardWrites) {
+  if (boardWrites > 0) return false;
+  const sentences = String(reply || "").replace(/\s+/g, " ").trim().split(/(?<=[.!?])\s+/);
+  const last = sentences.slice(-2).join(" ");
+  const asks = /\b(?:write|express|simplify|condense|expand|combine|factor|solve|evaluate|find|compute|calculate|what (?:single|does|is|do|happens)|what\b[^.?]{0,30}\b(?:become|equal|collapse)s?|[ée]cris|simplifie|exprime|calcule|quel(?:le)? est)\b/i.test(last);
+  const hasMath = /\b(?:log|ln|sin|cos|tan|sqrt)(?:_|\s+base|\s*\()|[a-z]\s*[=+\-−×^]\s*[a-z0-9(]|\d\s*(?:log|ln|[a-z]\b)|[=²³√π]/i.test(last);
+  return asks && hasMath;
+}
 var FRUSTRATED, POSITIVE, STOP, HARSH_OPENERS, SPOKEN, STUCK, isStuckMsg, PROBES, GENERIC_CLOSER, NUM_WORDS, POSE_WORD, CASE_TRAPS, WRAP_UP, MOVE_ON, DRAWING_MARKER, DRAWING_TURN_BLOCK, REPEATED_CLAIM_BLOCK, ATTRIBUTES_PROBLEM, PRAISE_OPEN, SUCCESS_EVIDENCE, PRAISE_START, CONFIRM_ANY, numVal, GROUND_STOP, METHOD_WORDS, Q_STOP, CLARIFY_BLOCK, CONFUSED_BLOCK, INSIGHT_BLOCK, WHY_BLOCK, GLOSS, NO_UNPROMPTED_EXERCISE, BOARD_CLAIM;
 var init_tutorAdapt = __esm({
   "server/tutorAdapt.ts"() {
@@ -14484,6 +14492,7 @@ async function runTutorTurn(input) {
       const claimedBoard = claimsBoardWrite(reply) && !result.board.length && !result.problems.length;
       if (claimedBoard) issues.push(`you say you'll put (or have put) something on the board, but nothing was written this turn. Write it now (a new problem goes through CREATE_PROBLEM): ONE short clean line with WRITE_TO_BOARD (the result or step they reached, their numbers, maths in $\u2026$, owner "student"; never their sentence), then reply. Only if there is truly nothing worth keeping, drop that sentence instead`);
       else if (reachedResultUnrecorded(reply, message, result.board.length + result.problems.length)) issues.push('they just reached a result or step of their own and you confirmed it, but nothing went on the board. Record it: ONE short clean line with WRITE_TO_BOARD (kind result or summary, owner "student", their numbers, maths in $\u2026$), then reply as you planned');
+      if (!result.problems.length && setsMathTaskUnboarded(reply, result.board.length)) issues.push("you set them a maths task in chat but it isn't on the board. Put the question itself on the board as ONE short line ending '= ?' (WRITE_TO_BOARD, kind gap, with the expected answer), then keep your message to a line that points at it. The board should show every question you ask, not just the chat");
       if (wrapsUpUnasked(reply, message)) issues.push("it offers to wrap up or move on, which they didn't ask for \u2014 stay on the current work");
       if (reportsCorrectResult(message) && !movesOn(reply, !!(result.problems.length || result.board.length))) issues.push("they just got an exercise right: confirm in one specific clause, then start the next activity yourself (the CURRENT lesson-plan milestone, in a new format) \u2014 end with one question or a new exercise");
       const missingObj = pointsAtMissingObject(reply, allBoard().map((b) => String(b.kind)));

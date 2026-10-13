@@ -14,7 +14,7 @@ import { currentFocus, focusBlock } from "../server/tutorAdapt.ts";
 import { selectJournal } from "../server/journal.ts";
 import { recentJournalLine } from "../server/claude.ts";
 import { countJournalEntries } from "../shared/journalCount.ts";
-import { reachedResultUnrecorded } from "../server/tutorAdapt.ts";
+import { reachedResultUnrecorded, setsMathTaskUnboarded } from "../server/tutorAdapt.ts";
 import { subjectsIn, reportsCorrectResult, movesOn, pointsAtMissingObject } from "../server/tutor.ts";
 import { blamesWidget } from "../server/tutorAdapt.ts";
 import { inventedNumbers } from "../server/tutorAdapt.ts";
@@ -4969,6 +4969,12 @@ section("Prose logarithms are typeset as math in chat (reported live)");
   check("existing $…$ spans are untouched", typesetLogPhrases("$\\log_a x$ and log_a of y") === "$\\log_a x$ and $\\log_{a} y$");
   check("autoMathLine applies it", /\\log_\{a\} x/.test(autoMathLine("then log_a of x is 3")));
 }
+
+section("Every maths question Otto asks also goes on the board (reported live)");
+check("'write 2 log_a x − log_a y as a single logarithm' with no board write is caught", setsMathTaskUnboarded("Nearly. So now the harder one: write 2 log_a of x minus log_a of y as a single logarithm.", 0));
+check("…and not when something was written", !setsMathTaskUnboarded("So now write 2 log_a of x minus log_a of y as a single logarithm.", 1));
+check("a conceptual question is not a board task", !setsMathTaskUnboarded("Why does a square root become a half in front?", 0));
+check("'what is x + y?' style tasks are caught", setsMathTaskUnboarded("What is 3x + 2x when x = 4?", 0));
 
 section("Board changes are undoable in the Tutor session (spec §12 #10, source pins)");
 {
