@@ -4991,6 +4991,17 @@ check("the base prompt has a critical-thinking section with the five habits", /C
 check("it can't become an interrogation or replace help when stuck", /No interrogation|no interrogation/.test(TUTOR_PROMPT) && /genuinely stuck/.test(TUTOR_PROMPT));
 check("objectives are agreed with the student, never imposed", /SESSION OBJECTIVES ARE AGREED, NEVER IMPOSED/.test(TUTOR_PROMPT));
 
+section("Answer box keys follow the answer; typed maths previews live; chat shows the student's answer typeset (source pins)");
+{
+  const mi = readFileSync("client/study/MathAnswerInput.tsx", "utf8");
+  const ts = readFileSync("client/tutor/TutorSession.tsx", "utf8");
+  check("keys are chosen from the expected answer + question (log, trig, subscript, power, inequality)", /export function keysFor\(context: string\)/.test(mi) && /K\.log, K\.ln/.test(mi) && /K\.sin, K\.cos, K\.tan/.test(mi) && /K\.sub/.test(mi) && /K\.pow/.test(mi) && /K\.le, K\.ge/.test(mi));
+  check("a power key says 'to the power of'", /to the power of/.test(mi));
+  check("typed maths gets a live typeset preview", /sm-math-preview/.test(mi) && /<MathText text=\{props\.value\}/.test(mi));
+  check("all three answer inputs pass the answer context", (readFileSync("client/study/InlineProblem.tsx", "utf8").match(/context=\{/g) || []).length === 1 && (readFileSync("client/study/artifacts/BoardArtifact.tsx", "utf8").match(/context=\{/g) || []).length === 2);
+  check("the app's '[Exercise] I answered …' message is shown as 'My answer: …' with the maths typeset, in both chat views", /export function friendlyExerciseText/.test(ts) && (ts.match(/friendlyExerciseText\(msg\.text/g) || []).length === 2);
+}
+
 section("Board changes are undoable in the Tutor session (spec §12 #10, source pins)");
 {
   const ts = readFileSync("client/tutor/TutorSession.tsx", "utf8");

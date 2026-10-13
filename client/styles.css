@@ -7557,3 +7557,4 @@ mark.otto-mark { background: linear-gradient(transparent 12%, color-mix(in srgb,
 .sm-math-key{font:inherit;font-size:12px;min-width:34px;padding:3px 8px;border-radius:8px;border:1px solid var(--line,#d0d5dd);background:var(--surface,#fff);color:inherit;cursor:pointer}
 .sm-math-key:hover{border-color:currentColor}
 .sm-math-key:focus-visible{outline:2px solid currentColor;outline-offset:2px}
+.sm-math-preview{font-size:15px;padding:6px 10px;border-left:3px solid var(--line,#d0d5dd);overflow-x:auto}

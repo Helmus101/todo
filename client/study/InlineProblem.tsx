@@ -86,6 +86,7 @@ export function InlineProblem({ problem }: InlineProblemProps) {
               <MathAnswerInput
                 en={L("fr", "en") === "en"}
                 showKeys={!isNumericAnswer(problem.answer)}
+                context={`${problem.answer || ""} ${problem.question || ""}`}
                 placeholder={isNumericAnswer(problem.answer) ? L("Ta réponse (un nombre, sans unité)…", "Your answer (a number, no units)…") : L("Ta réponse…", "Your answer…")}
                 value={textAnswer}
                 onChange={(v) => { setTextAnswer(v); setSubmitted(false); }}

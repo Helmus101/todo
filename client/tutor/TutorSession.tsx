@@ -5,6 +5,7 @@ import { api } from "../api.ts";
 import { setLocalObjectives, getLocalThread, setLocalChat, setLocalBoard, setLocalProblems } from "../localChatBoard.ts";
 import { useLang, LangContext } from "../ui.tsx";
 import { AskOttoPanel } from "../study/AskOttoPanel.tsx";
+import { autoMathLine } from "../../shared/mathText.ts";
 import { BoardArtifact, MathText } from "../study/artifacts/BoardArtifact.tsx";
 import { TutorDesmos } from "./TutorDesmos.tsx";
 import { enterFullscreen, exitFullscreen, inFullscreen } from "./fullscreen.ts";
@@ -65,6 +66,15 @@ export function mergeBoardById<T extends { id: string; at?: string; createdAt?: 
   if (!fresh.length) return existing;
   const when = (x: T) => Date.parse(x.at || x.createdAt || "") || Number.MAX_SAFE_INTEGER;
   return [...existing, ...fresh].map((x, i) => ({ x, i })).sort((a, b) => when(a.x) - when(b.x) || a.i - b.i).map((o) => o.x);
+}
+
+/** The "[Exercise] I answered "…" — marked right (try #1)." line the app sends to Otto, shown to the student as their
+ *  own answer with the maths typeset ("My answer: $…$ — ✓ right") instead of the raw bracketed message. */
+export function friendlyExerciseText(text: string, en: boolean): string {
+  const m = /^\s*\[(?:Exercise|Exercice)\]\s*(?:I answered|J'ai répondu)\s*["«]\s*([\s\S]*?)\s*["»]\s*—\s*([^\n(]*)/i.exec(text);
+  if (!m) return text;
+  const verdict = /NOT graded|non not/i.test(m[2]) ? (en ? "not graded (the key was off)" : "non noté (la clé était fausse)") : /PARTLY|en partie/i.test(m[2]) ? (en ? "partly right" : "en partie juste") : /\bright\b|juste/i.test(m[2]) && !/wrong|faux/i.test(m[2]) ? (en ? "✓ right" : "✓ juste") : (en ? "✗ not yet" : "✗ pas encore");
+  return `${en ? "My answer" : "Ma réponse"} : ${autoMathLine(m[1])} — ${verdict}`;
 }
 
 export function TutorSession({ userId, onExit, visionReady, sessionId, reviewView }: { userId: string | null; onExit: () => void; visionReady: boolean; sessionId?: string; reviewView?: string }) {
@@ -617,7 +627,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
               {reviewSession.chat!.map((msg, i) => (
                 <div key={i} className={`tutor-chat-message ${msg.role}`}>
                   <div className="tutor-chat-role">{msg.role === "user" ? L("Toi", "You") : L("Otto", "Otto")}</div>
-                  <div className="tutor-chat-text"><MathText text={msg.text} /></div>
+                  <div className="tutor-chat-text"><MathText text={friendlyExerciseText(msg.text, L("fr", "en") === "en")} /></div>
                 </div>
               ))}
             </div>
@@ -931,7 +941,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
               {task.chat?.map((msg, i) => (
                 <div key={i} className={`tutor-chat-message ${msg.role}`}>
                   <div className="tutor-chat-role">{msg.role === "user" ? L("Toi", "You") : "Otto"}</div>
-                  <div className="tutor-chat-text"><MathText text={msg.text} /></div>
+                  <div className="tutor-chat-text"><MathText text={friendlyExerciseText(msg.text, L("fr", "en") === "en")} /></div>
                 </div>
               ))}
               <div ref={chatEndRef} />
