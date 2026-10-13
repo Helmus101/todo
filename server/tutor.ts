@@ -757,10 +757,12 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     ? repairSpokenMath(message, spokenContextFrom([context.subject || "", ...board.map((b) => b.text || ""), ...problems.map((p) => p.question || "")]))
     : null;
 
+  const discussion = isDiscussionSubject(context.subject, [message, ...history.slice(-4).map((h) => h.text)].join(" "));
   const system = TUTOR_PROMPT
     + (input.voiceMode ? VOICE_BLOCK : "")
     + nowBlock()
     + backgroundBlock(context)
+    + (discussion ? DISCUSSION_BLOCK : "")
     + objectivesBlock(objectives)
     + lessonPlanBlock(input.lessonPlan, input.lessonState)
     + (boardSurfaceBlock(board, problems) || "\n\nTHE BOARD IS EMPTY.")
@@ -830,7 +832,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       if (badMath) issues.push(`it contains a wrong calculation: ${badMath}`);
       const ahead = asksForFormula(message) ? [] : equationsAhead(reply, said);
       if (ahead.length) issues.push(`it hands them an equation they haven't stated (${ahead.join("; ")}) — don't derive it or name the formula; ask what relationship they'd use`);
-      const invented = inventedNumbers(reply, [...said, ...allBoard().map((b) => b.text), ...allProblems().map((p) => p.question)]);
+      const invented = discussion ? [] : inventedNumbers(reply, [...said, ...allBoard().map((b) => b.text), ...allProblems().map((p) => p.question)]);
       if (invented.length) issues.push(`it uses numbers nobody gave (${invented.slice(0, 3).join(", ")}) — only their numbers and the problem's; never compute ahead or bring in a new scenario`);
       if (!doubt && confirmsUnchecked(reply, message, input.stepVerdict ? { studentStep: { status: input.stepVerdict.verdict } } : null)) issues.push("it confirms a value they didn't actually give (or one that's wrong) — react to THEIR number, and if it's off, ask which step they'd recheck");
       const lines = boardLineSet(result.boardCleared ? [] : board, result.board);
@@ -841,7 +843,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       if (PRAISE_OPENER.test(reply)) issues.push("it opens with canned praise (\"Spot on…\") — never open with praise: the first clause names what SPECIFICALLY was right about their reasoning, or go straight to the next step");
       // Otto restates a GIVEN with a number that isn't in it — reported live: "the problem on the board: a 3 kg box
       // is pulled up by a force of 15 N (let's use 15 N instead so it actually moves!)" when the exercise says 12 N.
-      const wrongGiven = misstatesGiven(reply, [...said, ...allBoard().map((b) => b.text)]);
+      const wrongGiven = discussion ? null : misstatesGiven(reply, [...said, ...allBoard().map((b) => b.text)]);
       if (wrongGiven) issues.push(`it says the problem gives ${wrongGiven}, which is not in it — NEVER change or invent a given: quote their numbers exactly as written, and if they don't work out, say so plainly instead of swapping one`);
       // Sending them back to the problem statement to re-check a value they just gave is the loop the student
       // cannot break — reported live, four turns of "what is the exact pulling force given in the problem text?"
@@ -856,6 +858,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       if (claimedBoard) issues.push("you say you'll put (or have put) something on the board, but nothing was written this turn. Write it now (a new problem goes through CREATE_PROBLEM): ONE short clean line with WRITE_TO_BOARD (the result or step they reached, their numbers, maths in $…$, owner \"student\"; never their sentence), then reply. Only if there is truly nothing worth keeping, drop that sentence instead");
       else if (reachedResultUnrecorded(reply, message, result.board.length + result.problems.length)) issues.push("they just reached a result or step of their own and you confirmed it, but nothing went on the board. Record it: ONE short clean line with WRITE_TO_BOARD (kind result or summary, owner \"student\", their numbers, maths in $…$), then reply as you planned");
       if (!result.problems.length && setsMathTaskUnboarded(reply, result.board.length)) issues.push("you set them a maths task in chat but it isn't on the board. Put the question itself on the board as ONE short line ending '= ?' (WRITE_TO_BOARD, kind gap, with the expected answer), then keep your message to a line that points at it. The board should show every question you ask, not just the chat");
+      if (discussion && statesClaimUnboarded(message, result.board.length)) issues.push("they argued a position and none of it is on the board. Write their claim (and the evidence they gave) as ONE short line with WRITE_TO_BOARD (kind insight, owner \"student\", their words condensed), then raise ONE objection or ask for the missing evidence — and put that question on the board too as a short Otto line");
       if (wrapsUpUnasked(reply, message)) issues.push("it offers to wrap up or move on, which they didn't ask for — stay on the current work");
       if (reportsCorrectResult(message) && !movesOn(reply, !!(result.problems.length || result.board.length))) issues.push("they just got an exercise right: confirm in one specific clause, then start the next activity yourself (the CURRENT lesson-plan milestone, in a new format) — end with one question or a new exercise");
       const missingObj = pointsAtMissingObject(reply, allBoard().map((b) => String(b.kind)));
@@ -925,7 +928,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       const name = tc.function?.name;
       const args = parseToolArgs(tc.function?.arguments) || {};
       let content: string;
-      try { content = applyTool(name, args, { message, result, allBoard, allProblems, spokenRepair, fr, said, wantsExercise: wantsProblem, focus, known, solution: input.solution }); }
+      try { content = applyTool(name, args, { message, result, allBoard, allProblems, spokenRepair, fr, said, wantsExercise: wantsProblem, focus, known, solution: input.solution, discussion }); }
       catch (e: any) { content = `ERROR: ${e?.message || e}`; }
       messages.push({ role: "tool", tool_call_id: tc.id, content });
     }
@@ -954,6 +957,8 @@ interface ToolCtx {
   /** This write is made by CODE from the tutor's own reply (not proposed by the model), so the "is it about the
    *  problem in focus" check is skipped — it is on-topic by construction. Every other guard still applies. */
   codeWrite?: boolean;
+  /** A humanities/discussion session: counter-arguments and evidence lines are on-topic by nature, so the maths-style relevance filter is off. */
+  discussion?: boolean;
 }
 
 /** Does `line` state an open gap's answer? Numbers/maths: anywhere (replyStatesValue). A WORD answer ("friction")
@@ -1039,7 +1044,7 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       if (input.kind === "gap" && result.board.some((e) => e.kind === "gap")) return "LIMIT: one gap a turn — ask the next step in chat instead.";
       if (input.kind === "gap" && lastLineIsOpenGap(c.allBoard())) return "REJECTED: the board already ends on an open gap they haven't filled — ask in chat instead of adding another '= ?' line.";
       if (result.board.filter((e) => !["svg", "graph", "flow", "widget", "diagram", "annotation"].includes(String(e.kind))).length >= 3) return "LIMIT: three lines a turn is plenty — the board keeps only what's worth keeping.";
-      if (input.owner !== "student" && input.kind !== "focus" && !c.codeWrite && !relevantToFocus(text, [...c.focus, ...c.allBoard().map((b) => b.text), ...c.result.problems.map((p) => p.question)], c.known || [])) return "REJECTED: that line isn't about the problem you're working on. Write only this problem's givens, a step THEY reached (owner:'student'), or the next step as a gap ending in '= ?'.";
+      if (input.owner !== "student" && input.kind !== "focus" && !c.codeWrite && !c.discussion && !relevantToFocus(text, [...c.focus, ...c.allBoard().map((b) => b.text), ...c.result.problems.map((p) => p.question)], c.known || [])) return "REJECTED: that line isn't about the problem you're working on. Write only this problem's givens, a step THEY reached (owner:'student'), or the next step as a gap ending in '= ?'.";
       if (isDuplicateBoardEntry(c.allBoard(), input)) return "DUPLICATE: that's already on the board — point at it instead.";
       if (input.kind !== "gap" && leaks(text)) return LEAK;
       if (input.owner !== "student" && statesFinalAnswer(text, c.solution) && !reachedSolutionSteps(c.message, c.solution).includes(0)) return LEAK;
@@ -1187,6 +1192,40 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       return `ERROR: unknown tool ${name}.`;
   }
 }
+
+
+// ── Humanities / discussion subjects ──────────────────────────────────────────────────────────────────
+// History, literature, philosophy, geography, TOK, languages: there is rarely one right answer to compute, so the
+// tutor works as a discussion partner that builds critical thinking — it asks for a claim and the evidence behind
+// it, raises the strongest counter-argument, and makes the student defend or revise — never writing the argument.
+const DISCUSSION_SUBJECTS = new Set(["history", "geography", "philosophy", "english", "french", "spanish", "german", "theory of knowledge", "tok", "art", "music", "literature", "politics", "global politics", "psychology", "sociology", "religion", "classics", "latin"]);
+/** Is this session a discussion/argument subject (vs a calculation one)? The session's own subject wins; otherwise the
+ *  recent text decides, but only when it names a humanities subject outright. Exported for tests. */
+export function isDiscussionSubject(subject: string | undefined, recentText = ""): boolean {
+  const named = String(subject || "").trim().toLowerCase();
+  if (named && named !== "other") return DISCUSSION_SUBJECTS.has(named) || [...DISCUSSION_SUBJECTS].some((d) => named.includes(d));
+  const d = detectSubject(recentText);
+  return !!d && DISCUSSION_SUBJECTS.has(d.toLowerCase());
+}
+/** The student argued a position ("I think X because Y") but nothing of it went on the board this turn. Exported for tests. */
+export function statesClaimUnboarded(message: string, boardWrites: number): boolean {
+  const m = String(message || "").trim();
+  if (boardWrites > 0 || !m || /^\[/.test(m) || /\?\s*$/.test(m)) return false;
+  if (m.split(/\s+/).length < 10) return false;
+  return /\b(?:because|since|therefore|so that|which shows|i think|i believe|i would argue|in my view|my claim|je pense|je crois|parce que|car|donc|selon moi|à mon avis)\b/i.test(m);
+}
+export const DISCUSSION_BLOCK = `
+
+DISCUSSION SUBJECT — you are a critical-thinking partner, not an answer machine. This is History / literature / philosophy / languages / a TOK-style topic: there is usually no single number to find, so the learning is in the REASONING.
+- Get a position first. Before explaining, ask what THEY think and why ("what's your claim, and what's it resting on?"). If they have no view yet, give two competing readings (not a verdict) and ask which they find stronger.
+- Claim → evidence → reasoning. Every position needs a specific piece of evidence (a date, a source, a quote, an example) and the link from that evidence to the claim. If one is missing, ask for exactly that piece. Never accept "because it's obvious".
+- Challenge, then let them respond. Raise the strongest objection a thoughtful critic would make ("what would someone who disagrees say?", "can you think of a case where that logic didn't hold?", "what if the source was written by the winner?"), ONE objection per turn, and make them answer it or revise. Challenge a correct-sounding claim too: agreeing every time teaches nothing. Be warm about it — you're testing the argument, not the person.
+- Separate fact, interpretation and opinion. If they state a fact, check it; if an interpretation, ask what supports it and who might read it differently; if a value judgement, ask for the criteria. Weigh causes (which mattered most, and why?), judge sources (origin, purpose, value, limitation), compare perspectives, note change and continuity.
+- Never write their argument. No ready-made thesis, paragraph or essay plan: offer a question, a frame (e.g. a PEEL or claim-counterclaim-rebuttal skeleton) or a contrasting reading, and let them fill it. If they ask for a model, give a short one on a DIFFERENT example.
+- Be accurate. Never invent a quote, source, date, page number or historian's position. Say "historians disagree here" when they do, and say when you're unsure. If a fact they state is wrong, correct it plainly and show why it matters to their claim.
+- Don't give the answer to an open question, but don't trap them either: after two stuck turns, lay out the competing considerations yourself and ask which they'd weight more.
+- Board for these subjects (use it, the questions and the thinking belong there): their CLAIM as owner "student" (kind "insight"); evidence and the counter-argument you raised as short Otto lines; the argument map as FLOW_ON_BOARD (claim → evidence → reasoning → objection → reply); a timeline or comparison as an outline; a source's origin/purpose/value/limitation as an outline. Each question you ask them to think about goes on the board as a short line too. Never use "= ?" gaps or numeric answer boxes here; use a CREATE_PROBLEM with a rubric only for a definition or a recall check (e.g. define a term, name two causes).
+- Close a thread with them stating, in their own words, what they now think and what would change their mind.`;
 
 // ── Subject detection (the session starts with one open question, no subject picker) ──────────────────
 const SUBJECTS: [string, RegExp][] = [

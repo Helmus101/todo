@@ -15,7 +15,7 @@ import { selectJournal } from "../server/journal.ts";
 import { recentJournalLine } from "../server/claude.ts";
 import { countJournalEntries } from "../shared/journalCount.ts";
 import { reachedResultUnrecorded, setsMathTaskUnboarded } from "../server/tutorAdapt.ts";
-import { subjectsIn, reportsCorrectResult, movesOn, pointsAtMissingObject } from "../server/tutor.ts";
+import { isDiscussionSubject, statesClaimUnboarded, DISCUSSION_BLOCK, TUTOR_PROMPT, subjectsIn, reportsCorrectResult, movesOn, pointsAtMissingObject } from "../server/tutor.ts";
 import { blamesWidget } from "../server/tutorAdapt.ts";
 import { inventedNumbers } from "../server/tutorAdapt.ts";
 import { makeProblem as makeProblemP } from "../server/claude.ts";
@@ -4975,6 +4975,16 @@ check("'write 2 log_a x − log_a y as a single logarithm' with no board write i
 check("…and not when something was written", !setsMathTaskUnboarded("So now write 2 log_a of x minus log_a of y as a single logarithm.", 1));
 check("a conceptual question is not a board task", !setsMathTaskUnboarded("Why does a square root become a half in front?", 0));
 check("'what is x + y?' style tasks are caught", setsMathTaskUnboarded("What is 3x + 2x when x = 4?", 0));
+
+section("Humanities sessions run as a critical-thinking discussion (claim, evidence, objection), not a calculation");
+check("History / TOK / Philosophy sessions are discussion subjects", isDiscussionSubject("History") && isDiscussionSubject("Theory of Knowledge") && isDiscussionSubject("philosophy"));
+check("Math / Physics / Economics are not", !isDiscussionSubject("Math") && !isDiscussionSubject("Physics") && !isDiscussionSubject("Economics"));
+check("an unnamed subject falls back to what's being discussed", isDiscussionSubject(undefined, "why did the Treaty of Versailles lead to war in the century after") && !isDiscussionSubject("Other", "solve this equation"));
+check("the discussion block demands a position, evidence, one objection, and no invented sources", /claim/i.test(DISCUSSION_BLOCK) && /ONE objection/.test(DISCUSSION_BLOCK) && /Never invent a quote/.test(DISCUSSION_BLOCK) && /Never write their argument/.test(DISCUSSION_BLOCK));
+check("it puts the student's claim and Otto's questions on the board, without numeric gaps", /kind "insight"/.test(DISCUSSION_BLOCK) && /Never use "= \?" gaps/.test(DISCUSSION_BLOCK));
+check("an argued position that isn't on the board is caught", statesClaimUnboarded("I think the treaty caused the war because it humiliated Germany and wrecked its economy", 0));
+check("…not a question, a short reply, or a turn that already wrote", !statesClaimUnboarded("Why did the treaty matter so much for Germany?", 0) && !statesClaimUnboarded("yes I think so", 0) && !statesClaimUnboarded("I think the treaty caused the war because it humiliated Germany", 1));
+check("the discussion block is only added for discussion subjects (source pin)", /\(discussion \? DISCUSSION_BLOCK : ""\)/.test(readFileSync("server/tutor.ts", "utf8")) && /discussion \? \[\] : inventedNumbers/.test(readFileSync("server/tutor.ts", "utf8")));
 
 section("Board changes are undoable in the Tutor session (spec §12 #10, source pins)");
 {
