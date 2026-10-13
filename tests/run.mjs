@@ -1,6 +1,9 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync, readdirSync } from "node:fs";
 // The app shell was split into client/App.tsx + client/appShared.tsx + client/pages/*.tsx; source checks read them as one.
+// The API was split into server/index.ts + server/http.ts + server/routes/*.ts; source checks read them as one.
+const serverSource = () => ["../server/index.ts", "../server/http.ts", ...readdirSync(new URL("../server/routes/", import.meta.url)).map((f) => `../server/routes/${f}`)]
+  .map((f) => readFileSync(new URL(f, import.meta.url), "utf8")).join("\n");
 const appSource = () => ["../client/App.tsx", "../client/appShared.tsx", ...readdirSync(new URL("../client/pages/", import.meta.url)).map((f) => `../client/pages/${f}`)]
   .map((f) => readFileSync(new URL(f, import.meta.url), "utf8")).join("\n");
 import { crossSourceSame, recencyStamp, dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, homeworkTaskTitle, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor, attachLocationLinks, googleMapsDirectionsUrl, trimOldStudylogArtifacts, ensurePronoteLinks } from "../server/tasks.ts";
@@ -158,7 +161,7 @@ section("Tutor opener — Otto's first line is REAL memory, never a template or 
   check("a board caption is named as a caption, not as something the student studied", src.includes("never a board caption or a placeholder label") && src.includes("is a heading on the board, NOT something the student studied"));
   check("the line is asked to make them RECALL the work rather than be told what it was", src.includes("make it a retrieval ") && src.includes("get THEM to recall it"));
 
-  const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const idx = serverSource();
   check("the opener route is authenticated, rate-limited and budget-gated like every other AI call, and counts its usage", /app\.post\("\/api\/tutor\/opener", requireAuth, rateLimit\(/.test(idx) && /await tutorOpener\(\{ subject[\s\S]{0,160}addUsage\(profile, out\.tokens, "chat"\)/.test(idx));
   check("client-controlled memory is capped before it can reach the prompt", idx.includes("rawMemory.slice(0, 3)") && idx.includes("slice(0, 6).map((x: string) => x.trim().slice(0, 200))") && idx.includes("slice(0, 3).map((x: string) => x.trim().slice(0, 200))"));
   check("a failed opener is a quiet 502 the client ignores, never an error the student sees", idx.includes("[tutor] opener failed") && /opener failed[\s\S]{0,200}res\.status\(502\)/.test(idx));
@@ -279,7 +282,7 @@ section("Tutor memory — earlier turns are condensed, not forgotten");
   check("nothing older gives an empty digest", earlierDigest([]) === "");
   const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
   check("primer turns get a 24-message window plus the digest (non-primer stays 10)", /const histWindow = opts\?\.primer \? 24 : 10;/.test(src) && /earlierDigest\(history\.slice\(0, -histWindow\), 2600\)/.test(src));
-  check("the server keeps up to 60 messages of thread", /const CHAT_CAP = 60;/.test(readFileSync(new URL("../server/index.ts", import.meta.url), "utf8")));
+  check("the server keeps up to 60 messages of thread", /const CHAT_CAP = 60;/.test(serverSource()));
 }
 section("TutorSession — no hook after an early return (React #310 crash)");
 {
@@ -341,7 +344,7 @@ section("Coursework — subjects, limits, summaries the tutor/chat can cite (uni
     return wins.length === 3 && wins.every((w) => w.length <= 12000) && wins.join("").length === COURSEWORK_MAX_CHARS && chunkCourseworkText("short text").length === 1 && chunkCourseworkText("").length === 0;
   })());
   check("fallback summary (no AI) is the first sentences, bounded", fallbackCourseworkSummary("First sentence here. Second one follows. " + "More text. ".repeat(100)).length <= 430 && fallbackCourseworkSummary("") === "");
-  const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const idx = serverSource();
   const cwRoute = idx.slice(idx.indexOf('app.post("/api/coursework"'), idx.indexOf('app.post("/api/coursework"') + 4200);
   check("the route is authenticated + rate-limited, re-enforces the char limit, and needs readable text", /app\.post\("\/api\/coursework", requireAuth, rateLimit\(/.test(idx) && /slice\(0, COURSEWORK_MAX_CHARS\)/.test(cwRoute) && /text\.length < 40/.test(cwRoute));
   check("tasks are created only from what the summarizer proposes, tagged with the subject, idempotent per document", /sum\?\.tasks/.test(cwRoute) && /cw:\$\{id\}:\$\{i\}/.test(cwRoute) && /sourceSubject = subject/.test(cwRoute));
@@ -380,7 +383,7 @@ section("RL personalization — one learner, board-driving moves, richer reward,
   const pol = readFileSync(new URL("../server/tutorPolicy.ts", import.meta.url), "utf8");
   check("the policy is v2 with the three added context features (mastery, objective progress, board richness)",
     /v: 2/.test(pol) && /p\.v !== 2/.test(pol) && /mastery\?: number/.test(pol) && /objectiveProgress\?: number/.test(pol) && /boardRich\?: number/.test(pol));
-  const idx2 = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const idx2 = serverSource();
   check("the tutor turn no longer runs the learned policy (simplified engine, server/tutor.ts)", !/planTurn\(|lastTurnBoardWrite/.test(idx2) && /runTutorTurn\(/.test(idx2));
 }
 section("Tutor graphs — safe expression compiler + GRAPH_ON_BOARD validation");
@@ -1743,7 +1746,7 @@ section("Onboarding — short but complete (source pins)");
 
 section("betaFeatures gates all 7 bandit call sites + the AI theme route (source-order pins)");
 {
-  const indexSrc = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const indexSrc = serverSource();
   const jobsSrc = readFileSync(new URL("../server/jobs.ts", import.meta.url), "utf8");
   check("pomodoro-suggestion route checks betaFeatures before chooseArm", /req\.session\.profile\?\.betaFeatures[\s\S]{0,400}chooseArm\(POMODORO_ARMS/.test(indexSrc));
   check("audio-suggestion route checks betaFeatures before chooseArm", /req\.session\.profile\?\.betaFeatures[\s\S]{0,400}chooseArm\(AUDIO_ARMS/.test(indexSrc));
@@ -1840,7 +1843,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   { const ui2 = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8"); const app2 = appSource();
     check("FlashcardDeck remounts per deck (id+size) so a different/shorter deck never indexes past the end", /function FlashcardDeckInner/.test(ui2) && /key=\{`\$\{props\.deck\.id\}:\$\{props\.deck\.cards\.length\}`\}/.test(ui2) && /!deck\.cards\[cardIndex\]/.test(ui2));
     check("tutor/session/<id> route reads the id from segment 2", /sessionId=\{route\.split\("\/"\)\[2\]\}/.test(app2)); }
-  { const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  { const idx = serverSource();
     check("task-list responses slim finished tutor sessions; x-powered-by off; URL fetch refuses redirects", /function outgoingTasks/.test(idx) && !/res\.json\(req\.session\.tasks/.test(idx.replace(/\/\/.*$/gm, "")) && /app\.disable\("x-powered-by"\)/.test(idx) && /redirect: "error"/.test(idx)); }
   // ── Registered question sources (IB / AP) ──
   check("only IB and AP get registered sources; other programs generate", sourcesForTrack("ib").length >= 5 && sourcesForTrack("ap").length >= 4 && sourcesForTrack("bac").length === 0 && sourcesForTrack(undefined).length === 0);
@@ -1938,7 +1941,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     const prof = { grades: [{ id: "g", subject: "Maths", grade: 14, scale: 20, updatedAt: "x", source: "pronote" }], coursework: [{ id: "c", name: "Trig worksheet", subject: "Maths", summary: "Sine and cosine rule exercises", addedAt: "2026-10-01" }] };
     const sr = schoolRecordLine(L, prof, "Maths");
     check("school record: Pronote open work + averages, journal entries (not roll-ups) and coursework all reach the model", /Exercices 4-6/.test(sr) && /DS fonctions/.test(sr) && !/done one/.test(sr) && /Maths 14\/20/.test(sr) && /sine rule and the ambiguous case/.test(sr) && !/weekly rollup/.test(sr) && /Trig worksheet/.test(sr) && schoolRecordLine([], {}, "Maths") === "");
-    const srcs = ["claude.ts", "index.ts", "tasks.ts", "jobs.ts"].map((f) => readFileSync(new URL("../server/" + f, import.meta.url), "utf8")).join("\n");
+    const srcs = [serverSource(), ...["claude.ts", "tasks.ts", "jobs.ts"].map((f) => readFileSync(new URL("../server/" + f, import.meta.url), "utf8"))].join("\n");
     check("school record is wired into chat, the tutor opener, task generation, manual-task parsing and task planning", (srcs.match(/schoolRecordLine\(/g) || []).length >= 8); }
   { const U = "https://0001.index-education.net/pronote/eleve.html";
     const r = ensurePronoteLinks([{ source: "pronote" }, { source: "pronote", links: [{ label: "Open attachment", url: "https://x.net/f.pdf" }] }, { source: "gmail" }, { source: "pronote", links: [{ label: "Open in Pronote", url: U }] }], U);
@@ -1961,7 +1964,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     const rec = schoolRecordLine([], pf, "Maths");
     check("Pronote lesson content and teacher resources are stored (deduped by id, 60-day window) and reach the model's context",
       pf.pronoteLessons.length === 1 && pf.pronoteLessons[0].text.startsWith("Loi des sinus") && /LESSON CONTENT AND TEACHER RESOURCES/.test(rec) && /Loi des sinus et cas ambigu/.test(rec) && /fiche-sinus\.pdf/.test(rec) && !/ancien/.test(rec)); }
-  { const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"), tc = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8"), ap = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
+  { const idx = serverSource(), tc = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8"), ap = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
     check("any live task's deadline can be changed or cleared: route validates the date, refuses handled tasks, re-derives urgency; the task view has a date field wired to it",
       /app\.post\("\/api\/tasks\/:id\/deadline"/.test(idx) && /a valid date is required/.test(idx) && /already done or dismissed/.test(idx) && /applyDeadlineUrgency\(\[task\]\)/.test(idx.slice(idx.indexOf("/deadline"))) && /setDeadline:/.test(ap) && /<DeadlineEdit task=\{task\}/.test(tc) && /type="date"/.test(tc)); }
   { const mc = readFileSync(new URL("../client/minimal.css", import.meta.url), "utf8");
@@ -1982,7 +1985,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
       !mid && over && !other && !m.over("a") && m.used("a") === 0 && /DEFAULT_EGRESS_BUDGET_BYTES = 10 \* 1024 \* 1024/.test(readFileSync(new URL("../server/egress.ts", import.meta.url), "utf8")));
     check("the store enforces it: over budget serves the held copy, saveState writes through the cache so the next read isn't a re-download",
       /held && !opts\?\.bypassCache && egress\.over\(email\) && Date\.now\(\) - held\.at < 900_000/.test(st) && /egress\.note\(email, JSON\.stringify\(d\)\.length\)/.test(st) && /Write-through: we know exactly what we just wrote/.test(st) && /cacheSetState\(email, merged, String\(row\.updated_at\)\)/.test(st)); }
-  { const app = appSource(), ex = readFileSync(new URL("../client/ExercisesPage.tsx", import.meta.url), "utf8"), idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"), tcs = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
+  { const app = appSource(), ex = readFileSync(new URL("../client/ExercisesPage.tsx", import.meta.url), "utf8"), idx = serverSource(), tcs = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
     const nav = app.slice(app.indexOf('className="topnav'), app.indexOf('className="topnav') + 6000);
     check("/exercises shows questions pulled from the registered sources and is reachable by route only (no navbar link)", /route === "exercises"/.test(app) && /<ExercisesPage \/>/.test(app) && !/href="\/exercises"/.test(app) && !/navigate\("exercises"\)/.test(app) && !/\/exercises/.test(nav) && /exerciseSearch/.test(ex) && /Searched: /.test(ex) && /app\.post\("\/api\/exercises\/search"/.test(idx) && /sourcesForTrack\(track\)/.test(idx) && /findSourceQuestions\(\{ track, subject: subject \|\| undefined, topic, limit: 6 \}\)/.test(idx));
     check("the deadline has an Edit button that opens a date field with Save / Cancel / Clear (not an always-open input)", /deadline-edit-btn/.test(tcs) && /setEditing\(true\)/.test(tcs) && /L\("Enregistrer", "Save"\)/.test(tcs) && /L\("Annuler", "Cancel"\)/.test(tcs)); }
@@ -2043,7 +2046,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
       listenCue("oh no I don't know") === "confused" && listenCue("I have no idea kelvin's maybe") === "confused" && listenCue("I'm lost") === "confused" && listenCue("wait so what's up but then we find out that power oh so power is basically for a work over time") === "insight" && listenCue("300") === null && listenCue("the Jules per second right") === null && listenCue('[Exercise] I answered "112" — marked wrong (try #1).') === null);
     check("the tutor prompt is a short, OPEN core (who you are + a judgement frame for every turn) plus a short list of hard lines the app enforces, instead of the old 37 KB pile of if-rules, and the plan carries ask / ask_answer",
       /THE CORE — WHO YOU ARE AND HOW YOU TEACH/.test(cl) && ["WHO YOU ARE.", "HOW YOU THINK, EVERY TURN.", "1. HEAR THEM.", "2. KNOW YOUR GROUND.", "3. PICK THE SMALLEST MOVE THAT HELPS.", "4. SOUND HUMAN.", "5. THE BOARD IS THEIR PAPER.", "THE LINES YOU NEVER CROSS."].every((h) => cl.includes(h)) && /a frame for your judgement, not a checklist/.test(cl) && /The app checks these every turn/.test(cl) && /a fact nobody could reason out/.test(cl) && /"ask_answer":"its correct answer/.test(tb) && /KNOW THE ANSWER BEFORE YOU ASK: fill "ask" and "ask_answer"/.test(tb) && /const guardOwnAnswer = /.test(cl)); }
-  { const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  { const idx = serverSource();
     check("GET /api/tasks reconciles against a validated cloud read, so tasks the daily sweep added show on the next load", /const cloud = await loadState\(req\.session\.user, \{ bypassCache: true \}\);\s*\n\s*const merged = mergeTasks\(cloud\.tasks \|\| \[\], sessionTasks\);/.test(idx)); }
   { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
     check("a WHY / purpose / connection question is recognised (typed or spoken, with or without a question mark); a work step is not",
@@ -2103,7 +2106,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   check("crediting the student with something they never said is caught; quoting them is not", !!misattributes("You've got the two sides lined up with their opposite angles.", ["to do"]) && misattributes("You said the slopes are five and one third.", ["so one slope is five the other is one over three"]) === null);
   check("naming the method before the student reached for it is caught, unless they used it or asked for help", methodAhead("tan(θ) = slope! How do you find the angle between two lines?", ["find the acute angle between y=5x-2 and y=1/3x-1", "so one slope is five the other is one third"]).includes("tan") && methodAhead("What does tan(θ) = slope give you?", ["I think tan theta is the slope"]).length === 0 && wantsHelp("can I get a hint") && !wantsHelp("one slope is five"));
   check("chatter is not student work: 'Gary left avocado on the ground' is off-topic, maths and on-topic words are not", !onTopic("Gary left avocado on the ground", ["find the acute angle between y = 5x - 2 and y = x/3 - 1", "What do you notice about their two slopes?"]) && onTopic("intersect and I found the point of intersection is when x equals 3 over 14", ["lines"]) && onTopic("the lines cross", ["The two lines on the board", "intersect"]) && onTopic("one slope is five", []));
-  { const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"); const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  { const idx = serverSource(); const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
     check("off-topic chatter never becomes board work: only a code-verified, CORRECT step is written up as the student's line", /stepVerdict\?\.verdict === "correct" && !out\.boardCleared/.test(idx) && !/out\.plan\.studentStep/.test(idx)); }
   // ── Listen first (reported live: "what does m show" / "what's M1" answered with arctan and a calculator) ──
   check("clarification questions are recognised with the term they ask about", clarificationTerm("what does m show") === "m" && clarificationTerm("what's M1") === "m1" && clarificationTerm("what is a slope?") === "slope" && clarificationTerm("I found x = 3/14") === null && clarificationTerm("[Exercise] I answered 4") === null);
@@ -2128,7 +2131,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     check("a header that matches nothing (another account / stale client) gets every task", buildTasksPayload(list, "zzzzzzzz000000").changed.length === 60);
     let threw = false; try { makeTaskSync().expand({ __delta: true, order: ["nope:abc123"], changed: [] }); } catch { threw = true; }
     check("an unresolvable delta throws (never silently renders a wrong list)", threw && parseHave("short") === null && parseHave(have)?.size === 60); }
-  { const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"); const api = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
+  { const idx = serverSource(); const api = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
     check("every task-list route answers through tasksPayload; the client sends x-have and expands deltas; chat echoes a lean task", !/res\.json\(outgoingTasks\(/.test(idx) && /tasksPayload\(req, req\.session\.tasks, withNudge\)/.test(idx) && /"x-have"/.test(api) && /taskSync\.expand\(await r\.json\(\)\)/.test(api) && /task: \{ id: t\.id, title: t\.title, status: t\.status/.test(idx)); }
   // ── Write-behind: many mutations → one Supabase write ──
   { let now = 0; const timers = []; const writes = [];
@@ -2148,7 +2151,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     let fail = true; const w2 = []; const sch2 = makeSyncScheduler(async (k, sn) => { if (fail) throw new Error("db down"); w2.push(sn.tasks); }, { debounceMs: 1000, maxWaitMs: 5000, ...fake });
     sch2.schedule("e@x", { tasks: 7, profile: {} }); await advance(1000); fail = false; await advance(2500);
     check("a failed write keeps the data and retries (nothing is lost on a blip)", w2.length === 1 && w2[0] === 7); }
-  { const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  { const idx = serverSource();
     check("commit() is write-behind (scheduler) except the journal saves; shutdown and tab-hide flush it", /scheduler\.schedule\(email, \{ tasks: localTasks, profile: localProfile \}\)/.test(idx) && /process\.once\(sig/.test(idx) && /\/api\/sync\/flush/.test(idx) && !/review[\s\S]{0,900}awaitCloud: true[\s\S]{0,40}\n\}\)\);\n\/\/ "Not something I need/.test(idx)); }
   { const css = readFileSync(new URL("../client/minimal.css", import.meta.url), "utf8"); const main = readFileSync(new URL("../client/main.tsx", import.meta.url), "utf8"); const app = appSource();
     check("minimal UI layer is loaded last and removes shadows, gradients, radii, uppercase labels, cream and the orange accent", /import "\.\/minimal\.css";\s*$/m.test(main.replace(/\n\s*\n/g, "\n").trim() + "\n") || main.indexOf("minimal.css") > main.indexOf("tour.css"));
@@ -2441,7 +2444,7 @@ section("isLikelyEcho — textual echo discrimination for real barge-in (client/
   // Translate's translate_tts (its only voice is FEMALE, which is precisely what was forbidden). What
   // remains is ONE free, keyless endpoint (ttsmp3.com's public form) driven by a pool of real Polly MALE
   // voice names. A failed voice retries the NEXT male voice; there is no female tier to fall to at all.
-  const serverSrc = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const serverSrc = serverSource();
   const ttsBody = serverSrc.slice(serverSrc.indexOf('app.post("/api/tts"'), serverSrc.indexOf('app.post("/api/tts"') + 2600);
   const claudeSrc = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
   const ttsFn = claudeSrc.slice(claudeSrc.indexOf("export async function synthesizeSpeech"), claudeSrc.indexOf("export function wordWrapChunks"));
@@ -2750,7 +2753,7 @@ section("server/index.ts error responses — French/English aware, no leaked ope
   // is the fix; this pins that the highest-traffic clusters (auth flow, the AI-paused/budget/not-configured
   // checks hit by every AI-calling route, and generic 404s) were actually converted, not just that the
   // helper exists unused somewhere.
-  const src = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const src = serverSource();
   check("reqLang/M bilingual-error helper exists", /function reqLang\(req: express\.Request\)/.test(src) && /function M\(req: express\.Request, fr: string, en: string\)/.test(src));
   check("signup's validation errors are bilingual, not hardcoded English", /M\(req, "Entre un email valide et un mot de passe/.test(src));
   check("login's wrong-password error is bilingual", /M\(req, "Email ou mot de passe incorrect\."/.test(src));
@@ -2855,7 +2858,7 @@ section("/api/study/free — resumes an active freestudy session by default, onl
   // of a live 404: a stale client closure sending a chat message to a task id that had just been silently
   // dismissed out from under it. Fixed to find-or-resume by default; `fresh: true` (StandaloneStudyEntry's
   // explicit "Enter study mode" click, which SHOULD always start clean) keeps the old unconditional behavior.
-  const src = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const src = serverSource();
   const start = src.indexOf('app.post("/api/study/free"');
   const body = src.slice(start, src.indexOf("}));", start) + 4);
   // Grew a mastery-stamp side effect on `active` (not a structural change to "resume" itself) when the
@@ -2910,7 +2913,7 @@ section("Task UX: breakdowns don't vanish, Help opens the chat, popup is bigger,
   // rebuilt the task WITHOUT the substeps and committed it with a newer updatedAt, legitimately
   // overwriting the client. CLIENT: expand/runSubstep applied the response via wholesale setTasks
   // (onChange), the file's own documented anti-pattern, with no localMutations race stamp.
-  const serverSrc2 = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const serverSrc2 = serverSource();
   const expandStart = serverSrc2.indexOf('app.post("/api/tasks/:id/step/:index/expand"');
   const expandBody = serverSrc2.slice(expandStart, expandStart + 2200);
   check("expand route commits through the write-behind scheduler (flushed on a quiet period, tab hide and shutdown)", /await commit\(req\)/.test(expandBody));
@@ -3092,9 +3095,9 @@ section("/api/study/extract-text — reuses the same SSRF guard, not a second un
   // already had the guard. It used to only check the URL started with http(s):// and nothing else, meaning
   // an authenticated student could point it at an internal address and get the response handed back as
   // "extracted text." Pin that the guard call is actually there, before the real fetch, not just in a comment.
-  const src = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const src = serverSource();
   const start = src.indexOf('app.post("/api/study/extract-text"');
-  const body = src.slice(start, src.indexOf("\n}));", start) + 5);
+  const body = src.slice(start, src.indexOf("}));", start) + 4);
   const guardIdx = body.indexOf("assertSafeExternalUrl(url)");
   const fetchIdx = body.indexOf("await fetch(url,");
   check("the route calls the SSRF guard on the submitted url", guardIdx > 0);
@@ -4843,7 +4846,7 @@ section("GEOMETRY_ON_BOARD — triangle.sides can't express an unknown, so it mu
 
 section("Admin metrics dashboard — gated to one hardcoded email, server AND client (source pins)");
 {
-  const serverSrcAdmin = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const serverSrcAdmin = serverSource();
   const appSrcAdmin = appSource();
   check("the server route requires auth before the admin check (no route ever does real work pre-auth)", /app\.get\("\/api\/admin\/metrics", requireAuth,/.test(serverSrcAdmin));
   check("the admin check is an exact, case-insensitive match against the ADMIN_EMAILS env allowlist — not a role flag on the profile", /ADMIN_EMAILS\.has\(\(req\.session\.user \|\| ""\)\.toLowerCase\(\)\)/.test(serverSrcAdmin));
@@ -4886,7 +4889,7 @@ section("Kick loop egress/CPU fix — hidden-tab guard, trimmed payload, ETag (s
   check("kick's tick bails while the tab is hidden, same as the other polling timers in this file", /kicking\.current \|\| signedOutRef\.current \|\| document\.hidden\) return;/.test(kickEffect));
   check("kick catches up immediately on regaining visibility instead of waiting for the next 10s tick", /visibilitychange.*onVisible|onVisible.*visibilitychange/s.test(kickEffect) && /if \(!document\.hidden\) void tick\(\);/.test(kickEffect));
 
-  const serverSrcKick = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const serverSrcKick = serverSource();
   const kickStart = serverSrcKick.indexOf('app.post("/api/jobs/kick"');
   const kickRoute = serverSrcKick.slice(kickStart, serverSrcKick.indexOf('app.get("/api/cron/drain"', kickStart));
   check("kick strips chat/board/problems/objectives before sending — this fires every 10s for the lifetime of any active job", /const \{ chat, board, problems, objectives, (?:solution, tutorState, )?\.\.\.rest \} = t;/.test(kickRoute));
@@ -4934,7 +4937,7 @@ section("commit()'s awaitCloud sync bypasses the stale-cache merge base (source 
   // own per-instance cache, store.ts) and write that stale-based merge back — a classic lost-update risk,
   // worst exactly on the awaitCloud path (journal saves, flashcard reviews) this app explicitly calls its
   // highest-value, must-actually-persist writes.
-  const idxSrc = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const idxSrc = serverSource();
   const syncCloudFn = idxSrc.slice(idxSrc.indexOf("async function writeAccount"), idxSrc.indexOf("const scheduler = makeSyncScheduler"));
   check("every write-bound merge reads a VALIDATED row (bypassCache: true = a ~60-byte version check, full row only when changed) so it never merges into a stale cache and clobbers tasks another process added", /loadState\(email, \{ bypassCache: true \}\)/.test(syncCloudFn));
   check("background flushes and the job runner also merge against a validated read, not the TTL cache", /loadState\(email, \{ bypassCache: true \}\)/.test(syncCloudFn) && /await writeAccount\(email, snap\.tasks, snap\.profile as Profile, \{ throwOnError: true \}\)/.test(idxSrc) && /store\.loadState\(email, \{ bypassCache: true \}\)/.test(readFileSync(new URL("../server/jobs.ts", import.meta.url), "utf8")));
@@ -5091,7 +5094,7 @@ section("A right answer given in chat solves the open exercise — no retyping i
   const n = { id: "n", createdAt: "", question: "Find P", answer: "8", value: 8 };
   check("a numeric answer counts when short ('P = 8'), not inside an unrelated sentence or a question", answeredInChat("P = 8", n) && !answeredInChat("I did 8 of the exercises yesterday and then stopped", n) && !answeredInChat("is it 8?", n));
   check("an app [Exercise] message, a solved problem, an MCQ and a rubric item are left alone", !answeredInChat('[Exercise] I answered "8"', n) && !answeredInChat("8", { ...n, solved: true }) && !answeredInChat("8", { ...n, options: ["8", "9"], correct: 0 }));
-  check("the turn reports it, the client marks it solved, and the box shows it as answered (source pins)", /solvedInChat: out\.solvedInChat/.test(readFileSync("server/index.ts", "utf8")) && /solvedInChat\.includes\(p\.id\) \? \{ \.\.\.p, solved: true \}/.test(readFileSync("client/tutor/TutorSession.tsx", "utf8")) && /const answered = !!problem\.solved \|\|/.test(readFileSync("client/study/artifacts/BoardArtifact.tsx", "utf8")));
+  check("the turn reports it, the client marks it solved, and the box shows it as answered (source pins)", /solvedInChat: out\.solvedInChat/.test(serverSource()) && /solvedInChat\.includes\(p\.id\) \? \{ \.\.\.p, solved: true \}/.test(readFileSync("client/tutor/TutorSession.tsx", "utf8")) && /const answered = !!problem\.solved \|\|/.test(readFileSync("client/study/artifacts/BoardArtifact.tsx", "utf8")));
 }
 
 section("A task never says 'Otto is working on it' forever (reported: stuck working for a long time)");
@@ -5127,7 +5130,7 @@ section("Board changes are undoable in the Tutor session (spec §12 #10, source 
 
 section("Tutor content never reaches the account row: no worked solution, no quoted student words (source pins)");
 {
-  const idxLocal = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const idxLocal = serverSource();
   check("a tutor session's worked solution is stripped from what writeAccount sends to the cloud (both write paths)", /const forCloud = \(t: WebTask\): WebTask => \(t\.source === "freestudy" && t\.solution \? \{ \.\.\.t, solution: undefined \} : t\)/.test(idxLocal) && /tasks: mergedTasks\.map\(forCloud\)/.test(idxLocal) && /tasks: localTasks\.map\(forCloud\)/.test(idxLocal));
   check("concept-model evidence is a label, not the student's message text", /evidence: "tutor session" \}/.test(idxLocal) && !/evidence: message\.slice/.test(idxLocal));
 }
@@ -5140,7 +5143,7 @@ section("Confirming/dismissing a task guarantees the cloud write lands (source p
   // out, before the scheduled write ever runs — a later request (same tab, a different warm Vercel
   // instance) then reads the OLD cloud status back. Finishing/dismissing a task is rare and high-value per
   // write, the same reasoning this function already applies to a journal save or flashcard review.
-  const idxSrcConfirm = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const idxSrcConfirm = serverSource();
   const confirmRoute = idxSrcConfirm.slice(idxSrcConfirm.indexOf('app.post("/api/tasks/:id/confirm"'), idxSrcConfirm.indexOf('app.post("/api/tasks/:id/reject"'));
   const dismissRoute = idxSrcConfirm.slice(idxSrcConfirm.indexOf('app.post("/api/tasks/:id/dismiss"'), idxSrcConfirm.indexOf('app.post("/api/tasks/:id/dismiss"') + 1500);
   check("confirm awaits the cloud write (awaitCloud: true), not the default debounced write-behind", /await commit\(req, \{ awaitCloud: true \}\);/.test(confirmRoute) && !/await commit\(req\);/.test(confirmRoute));
@@ -5310,7 +5313,7 @@ section("TOK-inspired Socratic additions — extend existing rules, never contra
 
 section("Tutor session mastery + objectives summary — surfaced without a fabricated 0% (source pins)");
 {
-  const serverSrcMastery = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const serverSrcMastery = serverSource();
   const freeRoute = serverSrcMastery.slice(serverSrcMastery.indexOf('app.post("/api/study/free"'), serverSrcMastery.indexOf('app.post("/api/study/free"') + 2500);
   check("mastery is computed only on session start/resume (/api/study/free), not on a hot polled route", /subjectMastery\(list, req\.session\.profile\?\.milestones, /.test(freeRoute));
 
@@ -5326,7 +5329,7 @@ section("Tutor session mastery + objectives summary — surfaced without a fabri
 
 section("hintDensity preference — new axis, distinct from learningStyle, never licenses a direct answer (source pins)");
 {
-  const serverSrcHint = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const serverSrcHint = serverSource();
   check("the /api/profile/preference route accepts hintDensity with the right allow-list, including the slider's explicit 'balanced' middle position", /key === "hintDensity" && \["steps", "hints", "balanced"\]\.includes\(value\)/.test(serverSrcHint));
   // Real pre-existing bug, fixed alongside this feature: the UI (Settings AND onboarding) has always
   // offered an "AP" track button, but this route's allow-list omitted "ap" — clicking it silently never
@@ -5594,7 +5597,7 @@ section("TTS never falls straight to the browser voice — the free cloud voice 
   check("the provider validates it actually got audio back, not an error page with a 200", /if \(!url\) return \{ error/.test(claude) && /if \(!res\.ok\) return \{ error/.test(claude) && /if \(!audio\.ok\)/.test(claude) && /if \(!mp3\.length\)/.test(claude));
   check("the provider's own rejection wording is reported, so a log line names the real cause", /rejected: \$\{String\(json\?\.Error/.test(claude));
 
-  const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const idx = serverSource();
   const ttsRoute = idx.slice(idx.indexOf('app.post("/api/tts"'), idx.indexOf('app.post("/api/tts"') + 2600);
   const ttsRegion = claude.slice(claude.indexOf("const TTS_MALE_VOICES"), claude.indexOf("export function wordWrapChunks"));
   check("one consistent voice: ONE provider, one pool, no hedging/racing between voice tiers", !/TTS_HEDGE_MS|Promise\.race|geminiDownUntil/.test(ttsRegion));
@@ -5785,7 +5788,7 @@ section("CREATE_INTERACTIVE — sandboxed, scoped to Study Mode, capped (source 
   // were both silently blocked. The scene is served from its own same-origin route instead, which carries
   // its own policy. These pins exist so nobody "simplifies" it back to srcdoc.
   check("the frame navigates to the /api/interactive route — never srcdoc (which inherits the app's CSP)", /src=\{`\/api\/interactive\//.test(board) && !/srcDoc/.test(board));
-  const idxSrc = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const idxSrc = serverSource();
   check("the route serves the scene with its OWN csp and a relaxed X-Frame-Options", /app\.get\("\/api\/interactive\/:taskId\/:entryId"/.test(idxSrc) && /INTERACTIVE_SCENE_CSP/.test(idxSrc) && /"X-Frame-Options", "SAMEORIGIN"/.test(idxSrc));
   check("the route 404s anything that isn't an interactive board entry on a task you own", /entry\.kind !== "interactive"/.test(idxSrc) && /req\.session\.tasks \|\| \[\]\)\.find/.test(idxSrc));
   check("that scene CSP allows inline script + the two allowlisted CDNs, and nothing else out (connect-src 'none')", /script-src 'unsafe-inline' https:\/\/cdn\.jsdelivr\.net https:\/\/cdnjs\.cloudflare\.com/.test(claude) && /connect-src 'none'/.test(claude));
@@ -6010,7 +6013,7 @@ section("Production readiness — the two CSP copies agree, and the Docker build
   // They had silently drifted — style-src was missing https://fonts.googleapis.com in the Express copy
   // while vercel.json already had it, so on the Docker path every page silently fell back to a system font.
   // A directive-by-directive comparison is what actually catches that class of bug.
-  const serverSrc = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const serverSrc = serverSource();
   const vercelRaw = readFileSync(new URL("../vercel.json", import.meta.url), "utf8");
   const cspOf = (block) => Object.fromEntries(block.split(";").map((d) => d.trim()).filter(Boolean).map((d) => {
     const i = d.indexOf(" ");
@@ -6139,7 +6142,7 @@ section("actionSpace.ts — deterministic teaching-action classification + decis
   const decision = buildTutorDecision({ ...base, newProblems: [{ id: "p", question: "Q", createdAt: "x" }], now, taskId: "t1", subject: "Physics" });
   check("buildTutorDecision fills taskId/subject/at/action/why", decision.taskId === "t1" && decision.subject === "Physics" && decision.action === "CREATE_PROBLEM" && decision.at === now.toISOString() && decision.why.length > 0);
   check("recordTutorDecision appends and caps", recordTutorDecision(Array.from({ length: TUTOR_DECISION_CAP - 1 }, () => decision), decision).length === TUTOR_DECISION_CAP);
-  const idxSrc2 = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const idxSrc2 = serverSource();
 }
 
 section("sessionState.ts — app-owned per-task session state (source + unit)");
@@ -6174,7 +6177,7 @@ section("sessionState.ts — app-owned per-task session state (source + unit)");
 
 section("server/index.ts chat route — the client-sent board survives the round trip (source pins)");
 {
-  const idxSrc4 = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const idxSrc4 = serverSource();
   check("the client-sent board sanitizer now preserves owner/status/concept, not just text/kind/diagram/outline", /\.\.\.\(b\.owner === "student" \|\| b\.owner === "otto" \? \{ owner: b\.owner \} : \{\}\)/.test(idxSrc4) && /\.\.\.\(b\.status === "correct" \|\| b\.status === "incorrect" \? \{ status: b\.status \} : \{\}\)/.test(idxSrc4));
 }
 
@@ -6215,7 +6218,7 @@ section("tutor + board: LaTeX renders, steps are checked by code, speech slips a
 
 section("a live tutor session never 404s on chat (cross-instance race) and a page load never dead-ends");
 {
-  const idxSrcR = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const idxSrcR = serverSource();
   const freeRoute = idxSrcR.slice(idxSrcR.indexOf('app.post("/api/study/free"'), idxSrcR.indexOf("}));", idxSrcR.indexOf('app.post("/api/study/free"')));
   check("a new tutor session is written to the account row before responding (awaitCloud)", /commit\(req, \{ awaitCloud: true \}\)/.test(freeRoute));
   const chatRoute = idxSrcR.slice(idxSrcR.indexOf('app.post("/api/tasks/:id/chat"'), idxSrcR.indexOf('app.post("/api/tasks/:id/chat"') + 4000);
@@ -6251,7 +6254,7 @@ section("egress: finished work is compacted on every write (the account row is r
 
 section("the tutor's hidden worked solution and teaching state never reach the browser");
 {
-  const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const idx = serverSource();
   const comp = readFileSync(new URL("../shared/taskCompaction.ts", import.meta.url), "utf8");
   check("outgoingTasks, the job kick and the chat echo all strip solution/tutorState; finished tasks drop them",
     /const \{ solution: _sol, tutorState: _ts, \.\.\.t \} = t0 as WebTask;/.test(idx) && /const \{ chat, board, problems, objectives, solution, tutorState, \.\.\.rest \} = t;/.test(idx) &&
@@ -6391,7 +6394,7 @@ await runTutorCompanionSim(check, section);
   const st2 = e2s(ents);
   check("adapter: entries load as objects with the right authors (otto→tutor, student, given→problem) in board order", st2.objects.a.author === "tutor" && st2.objects.b.author === "student" && st2.objects.c.author === "problem" && st2.order.join() === "a,b,c");
   check("adapter: update/remove succeed on tutor lines, are refused on student lines, and unknown ids are NOT_FOUND", aea(ents, { action: "update", targetId: "a", patch: { text: "x2" } }).ok === true && aea(ents, { action: "update", targetId: "b", patch: { text: "q" } }).code === "FORBIDDEN_STUDENT_WORK" && aea(ents, { action: "remove", targetId: "zz" }).code === "NOT_FOUND");
-  const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"), bart = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8"), tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  const idx = serverSource(), bart = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8"), tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
   // Edits/removals are still applied BY ID — where has moved: the tutor turn is stateless for the board now,
   // so the CLIENT applies them to its own merged copy (and the route keeps returning them for it to do so).
   check("edits/removals are applied by id (no duplicates, never a second copy), returned to the client, and archived lines stay hidden from the board and the tutor's listing", /boardEdits: out\.boardEdits, boardRemoved: out\.boardRemoved/.test(idx) && /applyBoardEdits\(mergeBoardById\(task\.board \|\| \[\], board \|\| \[\]\), boardEdits, boardRemoved\)/.test(tutorSrc) && /b\.archived !== true/.test(idx) && /filter\(\(e\) => !e\.archived\)/.test(bart));
@@ -6550,7 +6553,7 @@ section("Answer keys are verified independently — a correct answer is never ma
   check("a practice problem with no check stays unverified rather than pretending to be checked", "problem" in makePracticeProblem({ problem: "Name the force opposing motion", answer: "friction" }) && makePracticeProblem({ problem: "Name the force opposing motion", answer: "friction" }).problem.value === undefined);
 
   // The routes must USE the shared grader — not just import it.
-  const idxV = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const idxV = serverSource();
   check("the board gap route grades through gradeGapAnswer and reports the verification status + conflict flag", /gradeGapAnswer\(storedKey, recomputed, target, answer\)/.test(idxV) && /res\.json\(\{ verdict, verification: graded\.verification, keyConflict: graded\.keyConflict \}\)/.test(idxV));
   check("the practice-problem route grades through gradeExerciseAnswer, records a system error, and counts nothing for or against the student", /gradeExerciseAnswer\(\{ question: problem\.problem/.test(idxV) && /systemError: true/.test(idxV) && /if \(grade\.status !== "system_error"\) void recordMetric\(req\.session\.user!, "practice_problem_correct"/.test(idxV));
   check("a key conflict is observable (its own metric on both paths), not swallowed", /recordMetric\(req\.session\.user!, "gap_key_conflict", 1\)/.test(idxV) && /practice_problem_key_conflict/.test(idxV));
@@ -6569,10 +6572,10 @@ section("Answer keys are verified independently — a correct answer is never ma
 // against leaking answers — so it takes them from the request and stores none of them.
 section("Tutor sessions are fully local — the server stores no chat/board/problems (source pins + contracts)");
 {
-  const idxL = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const idxL = serverSource();
   const tutorSrcL = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
   const localSrc = readFileSync(new URL("../client/localChatBoard.ts", import.meta.url), "utf8");
-  const turn = idxL.slice(idxL.indexOf("async function tutorTurn("), idxL.indexOf("// A tiny nudge-me sidebar"));
+  const turn = idxL.slice(idxL.indexOf("async function tutorTurn("), idxL.indexOf("\n}\n", idxL.indexOf("async function tutorTurn(")) + 2);
 
   check("the tutor turn persists NONE of the session content, and clears anything an older account still has on the row",
     /t\.chat = undefined; t\.board = undefined; t\.problems = undefined; t\.objectives = undefined;/.test(turn)
@@ -6661,7 +6664,7 @@ section("Tutor sessions are fully local — the server stores no chat/board/prob
 section("Production readiness — multi-user security + serverless reliability (source pins)");
 {
   const store = readFileSync(new URL("../server/store.ts", import.meta.url), "utf8");
-  const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const idx = serverSource();
   const jobsSrc = readFileSync(new URL("../server/jobs.ts", import.meta.url), "utf8");
   const sql = readFileSync(new URL("../supabase.sql", import.meta.url), "utf8");
   const { hashResetToken } = await import("../server/store.ts");

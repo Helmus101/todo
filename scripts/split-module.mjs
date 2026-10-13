@@ -45,7 +45,8 @@ const byName = new Map();
 for (const u of units) for (const n of u.names) byName.set(n, u);
 
 const identsIn = (node) => { const out = new Set(); const v = (n) => { if (ts.isIdentifier(n)) out.add(n.text); ts.forEachChild(n, v); }; v(node); return out; };
-const refs = new Map(units.map((u) => [u, new Set([...identsIn(u.st)].filter((n) => byName.has(n) && !u.names.includes(n)).map((n) => byName.get(n)))]));
+// Inside a route unit, `app` is the register function's parameter, not a reference back to src's `app`.
+const refs = new Map(units.map((u) => [u, new Set([...identsIn(u.st)].filter((n) => byName.has(n) && !u.names.includes(n) && !(u.route && n === "app")).map((n) => byName.get(n)))]));
 
 // Assign units to files.
 const home = new Map(); // unit -> file path (relative), absent = stays in src
@@ -115,9 +116,10 @@ for (const [p, rec] of files) {
   const routeUnits = rec.units.filter((u) => u.route);
   const declUnits = rec.units.filter((u) => !u.route);
   const fn = (plan.routes || {})[p]?.fn;
-  let body = declUnits.map(unitText).join("\n\n");
+  const rebaseDynamic = (t) => t.replace(/import\("(\.[^"]+)"\)/g, (_, spec) => `import("${rebase(spec, plan.src, p)}")`);
+  let body = declUnits.map(unitText).map(rebaseDynamic).join("\n\n");
   if (routeUnits.length) {
-    const inner = routeUnits.map((u) => unitText(u).split("\n").map((l) => (l ? "  " + l : l)).join("\n")).join("\n\n");
+    const inner = routeUnits.map((u) => rebaseDynamic(unitText(u)).split("\n").map((l) => (l ? "  " + l : l)).join("\n")).join("\n\n");
     body += `${body ? "\n\n" : ""}export function ${fn}(app: express.Express): void {\n${inner}\n}`;
   }
   out.set(p, `${importHeader(p)}\n${importLines(p, rec)}\n\n${body}\n`);
