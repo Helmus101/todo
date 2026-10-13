@@ -14,7 +14,7 @@ import { currentFocus, focusBlock } from "../server/tutorAdapt.ts";
 import { selectJournal } from "../server/journal.ts";
 import { recentJournalLine } from "../server/claude.ts";
 import { countJournalEntries } from "../shared/journalCount.ts";
-import { subjectsIn } from "../server/tutor.ts";
+import { subjectsIn, reportsCorrectResult, movesOn, pointsAtMissingObject } from "../server/tutor.ts";
 import { blamesWidget } from "../server/tutorAdapt.ts";
 import { inventedNumbers } from "../server/tutorAdapt.ts";
 import { makeProblem as makeProblemP } from "../server/claude.ts";
@@ -4938,6 +4938,17 @@ section("commit()'s awaitCloud sync bypasses the stale-cache merge base (source 
   check("every write-bound merge reads a VALIDATED row (bypassCache: true = a ~60-byte version check, full row only when changed) so it never merges into a stale cache and clobbers tasks another process added", /loadState\(email, \{ bypassCache: true \}\)/.test(syncCloudFn));
   check("background flushes and the job runner also merge against a validated read, not the TTL cache", /loadState\(email, \{ bypassCache: true \}\)/.test(syncCloudFn) && /await writeAccount\(email, snap\.tasks, snap\.profile as Profile, \{ throwOnError: true \}\)/.test(idxSrc) && /store\.loadState\(email, \{ bypassCache: true \}\)/.test(readFileSync(new URL("../server/jobs.ts", import.meta.url), "utf8")));
 }
+
+section("Tutor moves on after a correct result and never points at a missing board object (spec §8.2, §12 #6)");
+check("a correct [Exercise] result is recognised", reportsCorrectResult('[Exercise] I answered "8" — marked right (try #1).'));
+check("a wrong / system-error / partial result is not", !reportsCorrectResult('[Exercise] I answered "8" — marked wrong (try #2).') && !reportsCorrectResult('[Exercise] I answered "8" — NOT graded: key contradicts (try #1).') && !reportsCorrectResult('[Exercise] I answered "x" — PARTLY right: marked right? (try #1).'));
+check("French correct result is recognised", reportsCorrectResult("[Exercice] J'ai répondu « 8 » — juste (essai n°1)."));
+check("a bare 'well done' does not move on", !movesOn("Well done, that's right.", false));
+check("a closing question or a created item does", movesOn("Right. Now, which curve shifts if costs rise?", false) && movesOn("Right.", true));
+check("'look at the graph' with no graph is caught", pointsAtMissingObject("Have a look at the graph to see why.", ["given"]) === "graph");
+check("…and passes when the graph exists", pointsAtMissingObject("Have a look at the graph to see why.", ["graph"]) === null);
+check("French summary reference is caught", pointsAtMissingObject("Regarde le résumé ci-dessus.", []) === "summary");
+check("plain prose is untouched", pointsAtMissingObject("What happens to price?", []) === null);
 
 section("Tutor content never reaches the account row: no worked solution, no quoted student words (source pins)");
 {

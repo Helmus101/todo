@@ -14168,6 +14168,19 @@ function leakedValue(reply, message, board, problems, sol) {
   if (open.length && leaksAnyProblemAnswer(reply, open) && !leaksAnyProblemAnswer(message, open)) return "the problem's answer";
   return null;
 }
+function reportsCorrectResult(message) {
+  return /^\s*\[(?:Exercise|Exercice)\][^\n]*\b(?:marked right|checked right|juste)\b/i.test(String(message || "")) && !/\b(?:wrong|faux|NOT graded|non not[ée]|PARTLY|en partie)\b/i.test(String(message || ""));
+}
+function movesOn(reply, createdSomething) {
+  return createdSomething || /\?\s*["»”)]*\s*$/.test(String(reply || "").trim());
+}
+function pointsAtMissingObject(reply, boardKinds) {
+  const m = String(reply || "").match(/\b(?:look at|see|check|regarde[zr]?|voi[st]|observe[zr]?|take a look at)\b[^.?!\n]{0,24}\b(?:the|this|that|le|la|ce|cette)\s+(graph|graphique|diagram|diagramme|figure|table|tableau|summary|r[ée]sum[ée])(?![a-zà-ÿ])/i);
+  if (!m) return null;
+  const w = m[1].toLowerCase();
+  const want = /^(graph)/.test(w) ? ["graph"] : /^(diagram|figure)/.test(w) ? ["diagram", "svg"] : /^(table)/.test(w) ? ["table", "widget"] : ["summary"];
+  return want.some((k) => boardKinds.includes(k)) ? null : want[0];
+}
 function wantsExercise(message) {
   return asksForProblem(message) || /\b(?:one|a|the)\s+(?:last|final|other)\s+(?:problem|exercise|question|one)\b|\bcan you (?:do|make|give|create)\b[^.?!]{0,20}\b(?:problem|exercise|question)\b|\b(?:quiz|test) me\b|\binterroge[- ]moi\b|\b(?:un|des|un autre|nouvel?)\s+(?:exo|exercice|probl[èe]me)s?\b|\bpractice (?:problem|question)s?\b/i.test(String(message || ""));
 }
@@ -14456,6 +14469,9 @@ async function runTutorTurn(input) {
       if (claimedBoard) issues.push(`you say you'll put (or have put) something on the board, but nothing was written this turn. Write it now (a new problem goes through CREATE_PROBLEM): ONE short clean line with WRITE_TO_BOARD (the result or step they reached, their numbers, maths in $\u2026$, owner "student"; never their sentence), then reply. Only if there is truly nothing worth keeping, drop that sentence instead`);
       else if (reachedResultUnrecorded(reply, message, result.board.length + result.problems.length)) issues.push('they just reached a result or step of their own and you confirmed it, but nothing went on the board. Record it: ONE short clean line with WRITE_TO_BOARD (kind result or summary, owner "student", their numbers, maths in $\u2026$), then reply as you planned');
       if (wrapsUpUnasked(reply, message)) issues.push("it offers to wrap up or move on, which they didn't ask for \u2014 stay on the current work");
+      if (reportsCorrectResult(message) && !movesOn(reply, !!(result.problems.length || result.board.length))) issues.push("they just got an exercise right: confirm in one specific clause, then start the next activity yourself (the CURRENT lesson-plan milestone, in a new format) \u2014 end with one question or a new exercise");
+      const missingObj = pointsAtMissingObject(reply, allBoard().map((b) => String(b.kind)));
+      if (missingObj) issues.push(`you point at "the ${missingObj}" but none is on the board \u2014 draw/write it now with the matching board tool, or reword so you don't refer to it`);
       if (blamesWidget(reply)) issues.push("it blames the app/widget \u2014 if an exercise's key disagrees with a right answer, say plainly the key was wrong");
       if (issues.length && !corrected && !lastRound) {
         corrected = true;
