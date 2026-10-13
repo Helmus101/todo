@@ -112,6 +112,19 @@ SPECIFIC FEEDBACK — refer to the student's actual answer
 - If the student gives a related but incorrect definition (e.g., "opportunity cost" when asked for "scarcity"): recognize the conceptual mismatch, explain accurately, show the distinction on the board, and check understanding with a focused follow-up
 - Correctness takes priority over keeping the conversation moving
 
+CRITICAL THINKING — in every subject, build the habit, not just the answer
+- Predict before reveal: before a result, a graph or a worked step, ask what they expect to happen and why. Compare the prediction with what happens.
+- Justify: a right answer earns one "why does that work?" or "how do you know?" — their reasoning matters more than the value. A vague "because it's the rule" gets "what makes it true here?".
+- Test the claim: ask "does that make sense?" (size, units, sign, limiting case), "what if a given changed?", "is there a case where this fails?", "what would the opposite look like?".
+- Spot the flaw: now and then show a short worked line or argument that contains ONE plausible mistake (yours, labelled as someone else's) and ask them to find and fix it. Never present a flaw as correct.
+- Compare routes: ask for a second method or reading and which they'd trust, and why.
+- Make them evaluate, not just recall: reliability of a source, strength of an argument, assumptions behind a model, what evidence would change their mind.
+- Ask them to rate how sure they are (1-5) on a hard step, and treat a confident wrong answer as the most valuable moment to probe.
+- One such move per turn, and keep it proportionate: no interrogation after every trivial step. Never answer your own question, and never replace the content with questions when they're genuinely stuck (see HOW MUCH HELP).
+
+SESSION OBJECTIVES ARE AGREED, NEVER IMPOSED
+- With no lesson plan yet, find out what they want from this session (a test? homework? understanding one idea?) before teaching. Then PROPOSE 3-6 objectives as a short numbered list and ask whether to change, add or remove any. Only after they answer, call SET_OBJECTIVES with the agreed list. They can edit it any time (\"add X\", \"drop Y\") — update it with SET_OBJECTIVES and say what changed.
+
 ANY SUBJECT
 - Maths/sciences: givens, figure, equation, gaps. History/economics: causes → effects, evidence, a timeline or argument outline. Essays/literature: thesis, structure, quotes — they argue, you never write it. Languages: vocabulary, a sentence to transform, their own attempt.
 
@@ -252,6 +265,20 @@ export function delegatesChoice(message: string): boolean {
  *  exam", "learn supply and demand"). Exported for tests. */
 export function statesStudyGoal(message: string): boolean {
   return /\b(?:revis(?:e|ing|ion)|r[ée]vis(?:er|ion)|exam|test|quiz|contr[ôo]le|dst|bac|prepare|pr[ée]parer|study|learn|apprendre|understand|comprendre|go over|catch up)\b/i.test(String(message || ""));
+}
+
+/** The reply lays out a plan for the student to approve: a list of 3+ items and a question about it. Exported for tests. */
+export function proposesPlan(text: string): boolean {
+  const items = String(text || "").split("\n").filter((l) => /^\s*(?:\d+[.)]|[-•*])\s+\S/.test(l)).length;
+  return items >= 3 && /\?/.test(String(text || ""));
+}
+/** Session objectives are AGREED, not imposed: the plan is only set once a proposal Otto made has been answered (or the
+ *  student explicitly asks for one). Exported for tests. */
+export function planConsented(history: { role: string; text: string }[], message: string, hasObjectives: boolean): boolean {
+  if (hasObjectives) return true;
+  if (/\b(?:set|make|create|build|write)\b[^.?!]{0,20}\b(?:objectives?|plan|goals?|objectifs?)\b|\bmets? (?:les )?objectifs\b/i.test(String(message || ""))) return true;
+  const lastOtto = [...history].reverse().find((h) => h.role === "assistant");
+  return !!lastOtto && proposesPlan(lastOtto.text);
 }
 
 /** The reply hands the choice back ("What would you like to start with?", "which topic…?") — the move a tutor that
@@ -757,6 +784,8 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     ? repairSpokenMath(message, spokenContextFrom([context.subject || "", ...board.map((b) => b.text || ""), ...problems.map((p) => p.question || "")]))
     : null;
 
+  const planConsent = planConsented(history, message, objectives.length > 0);
+  const planPending = !objectives.length && history.length > 0 && (() => { const l = [...history].reverse().find((h) => h.role === "assistant"); return !!l && proposesPlan(l.text); })();
   const discussion = isDiscussionSubject(context.subject, [message, ...history.slice(-4).map((h) => h.text)].join(" "));
   const system = TUTOR_PROMPT
     + (input.voiceMode ? VOICE_BLOCK : "")
@@ -823,7 +852,8 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       if (wantsProblem && !result.problems.length) issues.push("they asked for an exercise: create it now with CREATE_PROBLEM (full statement, one short answer, a check expression for a numeric answer, precision and unit in the hint), then one line pointing them to it");
       if (asksToWrite(message) && !result.board.length) issues.push("they asked you to write it on the board: do it now (WRITE_TO_BOARD, clean maths in $…$, their numbers), then one short line");
       // Spec §6: a study goal gets a visible, editable lesson plan up front — not a question back about what to study.
-      if (!objectives.length && !result.objectives && statesStudyGoal(message)) issues.push("they've given you a study goal: set the lesson plan NOW with SET_OBJECTIVES — 4-8 concrete milestones for THIS subject/goal, in teaching order — then START the first one in this same reply (one short line on the plan, then its first question or exercise). Don't ask them which topic to start with");
+      if (!objectives.length && !result.objectives && !planPending && statesStudyGoal(message) && !proposesPlan(reply)) issues.push("they've given you a study goal. Session objectives are agreed WITH them, not imposed: propose 3-6 concrete objectives for THIS subject/goal, in teaching order, as a short numbered list in your reply, and ask if they want to change, add or remove anything. DO NOT call SET_OBJECTIVES yet — wait for their answer");
+      if (planPending && !result.objectives && !/\?\s*$/.test(message.trim())) issues.push("they've answered the plan you proposed: now call SET_OBJECTIVES with the list as agreed (apply every change they asked for), then START the first objective in this same reply — one short line, then its first question. Don't ask them which topic to start with");
       // Spec §2.1 Failure D/G: when they hand you the choice, you choose — never bounce it back.
       if (delegatesChoice(message) && asksStudentToChoose(reply)) issues.push("they left the choice to you — don't ask them to choose. Pick the next useful activity yourself (the CURRENT milestone of the lesson plan, or a sensible one for this subject if there's no plan yet) and start it now: one short line on what we're doing, then its first question or exercise");
       const doubt = doubtsRightAnswer(reply, message, input.solution);
@@ -860,7 +890,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       if (!result.problems.length && setsMathTaskUnboarded(reply, result.board.length)) issues.push("you set them a maths task in chat but it isn't on the board. Put the question itself on the board as ONE short line ending '= ?' (WRITE_TO_BOARD, kind gap, with the expected answer), then keep your message to a line that points at it. The board should show every question you ask, not just the chat");
       if (discussion && statesClaimUnboarded(message, result.board.length)) issues.push("they argued a position and none of it is on the board. Write their claim (and the evidence they gave) as ONE short line with WRITE_TO_BOARD (kind insight, owner \"student\", their words condensed), then raise ONE objection or ask for the missing evidence — and put that question on the board too as a short Otto line");
       if (wrapsUpUnasked(reply, message)) issues.push("it offers to wrap up or move on, which they didn't ask for — stay on the current work");
-      if (reportsCorrectResult(message) && !movesOn(reply, !!(result.problems.length || result.board.length))) issues.push("they just got an exercise right: confirm in one specific clause, then start the next activity yourself (the CURRENT lesson-plan milestone, in a new format) — end with one question or a new exercise");
+      if (reportsCorrectResult(message) && !movesOn(reply, !!(result.problems.length || result.board.length))) issues.push("they just got an exercise right: confirm in one specific clause, then ONE critical-thinking move (why it works, does the result make sense, what if a given changed, or find the flaw in a plausible wrong line) and/or start the next activity yourself (the CURRENT lesson-plan milestone, in a new format) — end with one question or a new exercise");
       const missingObj = pointsAtMissingObject(reply, allBoard().map((b) => String(b.kind)));
       if (missingObj) issues.push(`you point at "the ${missingObj}" but none is on the board — draw/write it now with the matching board tool, or reword so you don't refer to it`);
       if (blamesWidget(reply)) issues.push("it blames the app/widget — if an exercise's key disagrees with a right answer, say plainly the key was wrong");
@@ -928,7 +958,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       const name = tc.function?.name;
       const args = parseToolArgs(tc.function?.arguments) || {};
       let content: string;
-      try { content = applyTool(name, args, { message, result, allBoard, allProblems, spokenRepair, fr, said, wantsExercise: wantsProblem, focus, known, solution: input.solution, discussion }); }
+      try { content = applyTool(name, args, { message, result, allBoard, allProblems, spokenRepair, fr, said, wantsExercise: wantsProblem, focus, known, solution: input.solution, discussion, planConsent }); }
       catch (e: any) { content = `ERROR: ${e?.message || e}`; }
       messages.push({ role: "tool", tool_call_id: tc.id, content });
     }
@@ -959,6 +989,8 @@ interface ToolCtx {
   codeWrite?: boolean;
   /** A humanities/discussion session: counter-arguments and evidence lines are on-topic by nature, so the maths-style relevance filter is off. */
   discussion?: boolean;
+  /** Session objectives may only be created once the student has agreed to a proposed plan (or asked for one). */
+  planConsent?: boolean;
 }
 
 /** Does `line` state an open gap's answer? Numbers/maths: anywhere (replyStatesValue). A WORD answer ("friction")
@@ -1177,6 +1209,7 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       return "error" in r ? r.error : push(r.entry);
     }
     case "SET_OBJECTIVES": {
+      if (c.planConsent === false) return "REJECTED: the student hasn't agreed to a plan yet. Propose 3-6 objectives in your reply as a numbered list, ask if they want to change, add or remove anything, and only call SET_OBJECTIVES after they answer.";
       const r = makeObjectives(input);
       if ("error" in r) return r.error;
       result.objectives = r.objectives;

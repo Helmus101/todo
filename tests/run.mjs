@@ -4986,6 +4986,11 @@ check("an argued position that isn't on the board is caught", statesClaimUnboard
 check("…not a question, a short reply, or a turn that already wrote", !statesClaimUnboarded("Why did the treaty matter so much for Germany?", 0) && !statesClaimUnboarded("yes I think so", 0) && !statesClaimUnboarded("I think the treaty caused the war because it humiliated Germany", 1));
 check("the discussion block is only added for discussion subjects (source pin)", /\(discussion \? DISCUSSION_BLOCK : ""\)/.test(readFileSync("server/tutor.ts", "utf8")) && /discussion \? \[\] : inventedNumbers/.test(readFileSync("server/tutor.ts", "utf8")));
 
+section("The tutor fosters critical thinking in every subject (predict, justify, test, spot the flaw)");
+check("the base prompt has a critical-thinking section with the five habits", /CRITICAL THINKING/.test(TUTOR_PROMPT) && /Predict before reveal/.test(TUTOR_PROMPT) && /Spot the flaw/.test(TUTOR_PROMPT) && /Compare routes/.test(TUTOR_PROMPT) && /Test the claim/.test(TUTOR_PROMPT) && /how sure/.test(TUTOR_PROMPT));
+check("it can't become an interrogation or replace help when stuck", /No interrogation|no interrogation/.test(TUTOR_PROMPT) && /genuinely stuck/.test(TUTOR_PROMPT));
+check("objectives are agreed with the student, never imposed", /SESSION OBJECTIVES ARE AGREED, NEVER IMPOSED/.test(TUTOR_PROMPT));
+
 section("Board changes are undoable in the Tutor session (spec §12 #10, source pins)");
 {
   const ts = readFileSync("client/tutor/TutorSession.tsx", "utf8");

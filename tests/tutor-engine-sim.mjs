@@ -5,7 +5,7 @@
 // carries the conversation first and the background second.
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
 delete process.env.GEMINI_API_KEY;
-const { runTutorTurn, detectSubject, backgroundBlock, TUTOR_PROMPT, leakedValue, wantsExercise, inventsProblemOnBoard, doubtsRightAnswer, misgradedExercise, softenOpener, computedGapKey, nextTeachingState, sendsBackToStatement, statesFormula, misstatesGiven, stripPraiseOpener, tutorTools, applyTool, delegatesChoice, statesStudyGoal, asksStudentToChoose, repeatsSolvedCalculation } = await import("../server/tutor.ts");
+const { runTutorTurn, detectSubject, backgroundBlock, TUTOR_PROMPT, leakedValue, wantsExercise, inventsProblemOnBoard, doubtsRightAnswer, misgradedExercise, softenOpener, computedGapKey, nextTeachingState, sendsBackToStatement, statesFormula, misstatesGiven, stripPraiseOpener, tutorTools, applyTool, delegatesChoice, statesStudyGoal, proposesPlan, planConsented, asksStudentToChoose, repeatsSolvedCalculation } = await import("../server/tutor.ts");
 const { equivalent } = await import("../shared/mathEquiv.ts");
 const { equationsAhead } = await import("../shared/equationsAhead.ts");
 const { boardLineNumbers } = await import("../shared/boardLines.ts");
@@ -420,12 +420,20 @@ export async function runTutorEngineSim(check, section) {
       statesStudyGoal("help me revise for econ test") && statesStudyGoal("je dois réviser pour mon contrôle") && !statesStudyGoal("cost of production factors")
       && delegatesChoice("whatever u want") && delegatesChoice("i dont know whatever you want") && delegatesChoice("comme tu veux") && !delegatesChoice("lets do supply and demand")
       && asksStudentToChoose("What part of the chapter would you like to start with — scarcity or demand?") && !asksStudentToChoose("Let's start with shifts: what happens to price if demand rises?"));
+    const PROPOSAL = "Here's a plan for today:\n1. Demand and supply shifts\n2. Equilibrium equations\n3. Price ceilings and shortages\nWant to change, add or drop anything?";
     script = (b, i) => i === 0 ? { content: "Let's do it! What part of the chapter would you like to start with?" }
-      : i === 1 ? { tool_calls: [tc("SET_OBJECTIVES", { objectives: [{ label: "Explain demand and supply shifts", done: false }, { label: "Solve equilibrium equations", done: false }, { label: "Explain a price ceiling and shortage", done: false }] })] }
-      : { content: "Plan's up. First: if demand rises and supply stays put, what happens to price and quantity?" };
+      : i === 1 ? { tool_calls: [tc("SET_OBJECTIVES", { objectives: [{ label: "x", done: false }, { label: "y", done: false }, { label: "z", done: false }] })] }
+      : { content: PROPOSAL };
     let rp = await run("help me revise for my econ test");
-    check("a study goal with no plan yet gets a correction round that asks for SET_OBJECTIVES and to start, not to ask which topic",
-      /SET_OBJECTIVES/.test(lastUser(calls[1])) && /Don't ask them which topic/.test(lastUser(calls[1])) && rp.objectives?.length === 3 && !/would you like/.test(rp.reply));
+    check("a study goal gets a PROPOSED plan to approve — objectives are not set without consent",
+      /DO NOT call SET_OBJECTIVES/.test(lastUser(calls[1])) && !rp.objectives && proposesPlan(rp.reply));
+    script = (b, i) => i === 0 ? { content: "Great. Which topic first?" }
+      : i === 1 ? { tool_calls: [tc("SET_OBJECTIVES", { objectives: [{ label: "Demand and supply shifts", done: false }, { label: "Equilibrium equations", done: false }, { label: "Drop ceilings, add elasticity", done: false }] })] }
+      : { content: "Plan's up. First: if demand rises and supply stays put, what happens to price and quantity?" };
+    rp = await run("yes but drop ceilings and add elasticity", { history: [{ role: "user", text: "help me revise for my econ test" }, { role: "assistant", text: PROPOSAL }] });
+    check("after the student answers the proposal, the agreed plan is set and the first objective starts",
+      /answered the plan you proposed/.test(lastUser(calls[1])) && rp.objectives?.length === 3 && !/Which topic/.test(rp.reply));
+    check("planConsented: needs a proposal, an explicit ask, or an existing plan", planConsented([{ role: "assistant", text: PROPOSAL }], "ok", false) && planConsented([], "make a plan for me", false) && planConsented([], "ok", true) && !planConsented([{ role: "assistant", text: "What are you working on?" }], "ok", false));
     script = (b, i) => i === 0 ? { content: "Sure! Which topic do you want to work on?" } : { content: "Then we'll do the current milestone: shifts. If supply falls, what happens to price?" };
     rp = await run("whatever you want", { objectives: [{ id: "o1", label: "Explain shifts", done: false }] });
     check("'whatever you want' answered with 'which topic?' goes back once — Otto picks and starts", /left the choice to you/.test(lastUser(calls[1])) && !/Which topic/.test(rp.reply));
