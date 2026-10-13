@@ -285,7 +285,10 @@ section("TutorSession — no hook after an early return (React #310 crash)");
 section("Board — nothing already on it is ever dropped by a server reply");
 {
   const src = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
-  check("a chat reply merges its board/problems/chat into what's on screen instead of replacing it", /mergeBoardById\(task\.board \|\| \[\], updated\?\.board \|\| \[\]\)/.test(src) && /chat: \[\.\.\.\(task\.chat \|\| \[\]\), \.\.\.\(response\.chatDelta \|\| \[\]\)\]/.test(src));
+  // Local-only tutor sessions (client/localChatBoard.ts): the turn's response carries just a DELTA, and this
+  // browser is the one copy of record — so what's already on screen must be merged in and PERSISTED, never
+  // replaced by the delta. Reported-bug class: a resumed session's chat shrank to the newest message.
+  check("a chat reply merges its board/problems/chat into what's on screen instead of replacing it, and persists the merged result locally", /mergeBoardById\(task\.board \|\| \[\], board \|\| \[\]\)/.test(src) && /setLocalBoard\(task\.id, newBoard/.test(src) && /setLocalProblems\(task\.id, newProblems/.test(src) && /setLocalChat\(task\.id, \[\.\.\.\(task\.chat \|\| \[\]\), \.\.\.\(response\.chatDelta \|\| \[\]\)\]/.test(src));
   const m = src.match(/export function mergeBoardById[\s\S]*?\n}\n/)[0].replace("export function", "function").replace(/<T[^>]*>/, "").replace(/\(existing: T\[\], incoming: T\[\]\): T\[\]/, "(existing, incoming)").replace(/\(x: T\)/g, "(x)").replace(/\(x\) => x\.id/g, "(x) => x.id");
   const mergeBoardById = new Function(m.replace(/: T/g, "") + "; return mergeBoardById;")();
   const a = [{ id: "1", at: "2026-01-01T00:00:01Z" }, { id: "2", at: "2026-01-01T00:00:03Z" }];
@@ -425,7 +428,7 @@ section("Primer chat — thinking toggle with safe fallback, persona leads with 
   const tut = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
   check("tutor dock offers one-tap starters + follow-ups and a recall opener from the last session", /quickReplies=\{fresh \? starters : justFinishedExercise \? nextChips : followUps\}/.test(tut) && /What do you still remember/.test(tut));
   const board = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
-  check("board reports every exercise attempt to the tutor (never the correct answer)", /onProblemResult\?\.\(\{ problem, given, correct, attempt \}\)/.test(board) && /\[Exercise\] I answered/.test(tut));
+  check("board reports every exercise attempt to the tutor (never the correct answer)", /onProblemResult\?\.\(\{ problem, given, correct:.{0,40}attempt,/.test(board) && /\[Exercise\] I answered/.test(tut));
   check("finishing an exercise offers 'another / harder / go over the idea / something else' and the tutor asks instead of auto-creating the next problem", /justFinishedExercise \? nextChips/.test(tut) && /ASK what they want to do now/.test(readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8")) && /let THEM choose/.test(readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8")));
   check("automatic exercise results wait for the reply to settle and go out batched (never replacing the answer being read)", /resultsRef\.current\.splice\(0\)\.join/.test(tut) && /if \(sending \|\| voiceState\.speaking\) return;/.test(tut));
   check("new whiteboard ink rides along with the next message (no separate send step)", /readUnseenInk\(wantsLook\)/.test(tut) && /What I wrote\/drew on the board/.test(tut));
@@ -5363,7 +5366,10 @@ section("Answers are NEVER revealed — chat prompt and every practice-problem s
     const src = readFileSync(new URL(file, import.meta.url), "utf8");
     check(`${label}: MCQ only counts as answered when the CORRECT option is picked (a wrong pick just strikes it out)`, /picked !== null && (state\.)?picked === problem\.correct/.test(src) && /wrong\.includes\(oi\)/.test(src));
     check(`${label}: the ✓ and explanation only show once answered correctly; a miss says "try again"`, /answered && oi === problem\.correct \? "correct"/.test(src) && /Not quite — try (another option|again)\./.test(src));
-    check(`${label}: typed answers use the shared lenient matcher (pi, fractions, units)`, /practiceAnswerMatches\(/.test(src));
+    // Typed answers still go through the same shared lenient matcher (pi, fractions, units) — now wrapped in
+    // the shared grader (shared/exerciseVerification.ts, spec §19), which grades against the independently
+    // computed value and reports a key that disagrees with it as a system error instead of a miss.
+    check(`${label}: typed answers use the shared lenient matcher (pi, fractions, units), through the verified grader`, /gradeExerciseAnswer\(/.test(src) && /practiceAnswerMatches\(/.test(readFileSync(new URL("../shared/exerciseVerification.ts", import.meta.url), "utf8")));
   }
 }
 
@@ -6194,8 +6200,10 @@ await runTutorCompanionSim(check, section);
   const st2 = e2s(ents);
   check("adapter: entries load as objects with the right authors (otto→tutor, student, given→problem) in board order", st2.objects.a.author === "tutor" && st2.objects.b.author === "student" && st2.objects.c.author === "problem" && st2.order.join() === "a,b,c");
   check("adapter: update/remove succeed on tutor lines, are refused on student lines, and unknown ids are NOT_FOUND", aea(ents, { action: "update", targetId: "a", patch: { text: "x2" } }).ok === true && aea(ents, { action: "update", targetId: "b", patch: { text: "q" } }).code === "FORBIDDEN_STUDENT_WORK" && aea(ents, { action: "remove", targetId: "zz" }).code === "NOT_FOUND");
-  const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"), bart = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
-  check("the route applies edits/removals by id (no duplicates), sends them to the client, hides archived lines from the board and from the tutor's listing", /out\.boardEdits\?\.length \|\| out\.boardRemoved\?\.length/.test(idx) && /boardEdits: out\.boardEdits, boardRemoved: out\.boardRemoved/.test(idx) && /b\.archived !== true/.test(idx) && /filter\(\(e\) => !e\.archived\)/.test(bart));
+  const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"), bart = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8"), tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  // Edits/removals are still applied BY ID — where has moved: the tutor turn is stateless for the board now,
+  // so the CLIENT applies them to its own merged copy (and the route keeps returning them for it to do so).
+  check("edits/removals are applied by id (no duplicates, never a second copy), returned to the client, and archived lines stay hidden from the board and the tutor's listing", /boardEdits: out\.boardEdits, boardRemoved: out\.boardRemoved/.test(idx) && /applyBoardEdits\(mergeBoardById\(task\.board \|\| \[\], board \|\| \[\]\), boardEdits, boardRemoved\)/.test(tutorSrc) && /b\.archived !== true/.test(idx) && /filter\(\(e\) => !e\.archived\)/.test(bart));
 }
 {
   // ── Board spec: figures are addressable element by element; create/inspect go through the validated reducer ──
@@ -6261,5 +6269,185 @@ await runTutorCompanionSim(check, section);
   check("reset(section) clears only the section: the problem and unsectioned tutor lines stay, the student's work is archived (reversible), never destroyed", r.result.ok && b.objects["p1"].status === "active" && b.objects["loose"].status === "active" && b.objects["mine"].status === "archived");
   check("a scoped reset outside the section rules is refused explicitly (SCOPE_REQUIRED)", applyBoardAction(emptyBoard("x"), { action: "reset", scope: "thing", section: "sec" }).result.error?.code === "SCOPE_REQUIRED" && applyBoardAction(emptyBoard("x"), { action: "reset", scope: "section" }).result.error?.code === "SCOPE_REQUIRED");
 }
+// ── Spec §18–§19: the answer key is verified by CODE, and a broken key is never a student error ──────────
+// The supplied Economics session is the acceptance fixture: both items are marked wrong in the target state,
+// and both must grade a mathematically correct answer correct.
+section("Answer keys are verified independently — a correct answer is never marked wrong (spec §19)");
+{
+  const { gradeExerciseAnswer, verifyExerciseKey, gradeGapAnswer, computeCheck, statedKeyNumber, keysAgree } = await import("../shared/exerciseVerification.ts");
+  const { solvedGapKey: sgk2, nextTeachingState: nts, evidenceKindFor: ek } = await import("../server/tutor.ts");
+  const { latexToPlainText: ltp } = await import("../shared/mathText.ts");
+  const { equivalent: equiv2 } = await import("../shared/mathEquiv.ts");
+  const tutorSrc = readFileSync(new URL("../server/tutor.ts", import.meta.url), "utf8");
+
+  // §43.1.1/§43.1.2 — the two reported items, solved by code.
+  const qa = "In a market, Qd = 500 − 20P and Qs = 100 + 30P. Find the equilibrium price to the nearest whole number.";
+  const qb = "In a market, Qd = 200 − 10P and Qs = 20 + 26P. Find the equilibrium price to the nearest whole number.";
+  check("§43.1.1 Qd = 500 − 20P, Qs = 100 + 30P → the check computes 8", computeCheck("(500-100)/(20+30)", qa) === 8);
+  check("§43.1.2 Qd = 200 − 10P, Qs = 20 + 26P → the check computes 5", computeCheck("(200-20)/(10+26)", qb) === 5);
+  check("a bare number is accepted for a nearest-whole-number prompt", gradeExerciseAnswer({ question: qa, answer: "8", check: "(500-100)/(20+30)" }, "8").status === "correct");
+  check("§43.1.3 a genuinely wrong value is still rejected with specific feedback", gradeExerciseAnswer({ question: qa, answer: "8", check: "(500-100)/(20+30)" }, "12").status === "incorrect");
+  // §19.1: the reported state is key conflict + NOT graded, never an ordinary "incorrect".
+  const wrongKey = gradeExerciseAnswer({ question: qa, answer: "5", check: "(500-100)/(20+30)" }, "12");
+  check("§43.1.7 a stored key that disagrees with its own check produces system_error, never a false incorrect", wrongKey.status === "system_error" && wrongKey.verification === "conflict" && wrongKey.keyConflict === true);
+  check("and the student's CORRECT answer to that broken item still grades correct (the computed value wins)",
+    gradeExerciseAnswer({ question: qa, answer: "5", check: "(500-100)/(20+30)" }, "8").status === "correct");
+  check("verifyExerciseKey reports the conflict, the stated key and the computed value for diagnostics",
+    verifyExerciseKey({ question: qa, answer: "5", check: "(500-100)/(20+30)" }).status === "conflict" && verifyExerciseKey({ question: qa, answer: "8", check: "(500-100)/(20+30)" }).computed === 8);
+  check("§43.1.8 an item with no computable check is graded UNCERTAIN — never silently 'verified'",
+    verifyExerciseKey({ question: "give the value", answer: "12" }).status === "uncertain" && gradeExerciseAnswer({ question: "give the value", answer: "12" }, "12").status === "correct");
+  check("§43.1.10 a degree-stated problem's check reads sin/cos/tan as degrees", Math.abs(computeCheck("sin(30)", "A 2 kg block on a 30° slope") - 0.5) < 1e-9 && Math.abs(computeCheck("sin(30)", "in radians") - 0.5) > 0.4);
+  check("keysAgree: the same number within 1 %, a thousands-separated key, and no key at all", keysAgree("8", 8) && keysAgree("25,538", 25538) && !keysAgree("5", 8) && keysAgree(undefined, 8));
+  check("keysAgree only ever compares two NUMBERS — an expression/word key is never reported as a disagreement", keysAgree("h/tan(25°)", 8) && keysAgree("friction", 8) && keysAgree("7/2", 3.5) && keysAgree("84 m/s", 84));
+  check("statedKeyNumber parses the shapes a key really takes", statedKeyNumber("≈ 112 m") === 112 && statedKeyNumber("111,99") === 111.99 && statedKeyNumber("25,538 W") === 25538 && statedKeyNumber("30°") === 30);
+  check("…and refuses the ones that aren't plain numbers ('h/tan 25°' is an expression, '7/2' a fraction, 'friction' a word)",
+    !Number.isFinite(statedKeyNumber("h/tan 25°")) && !Number.isFinite(statedKeyNumber("7/2")) && !Number.isFinite(statedKeyNumber("friction")) && !Number.isFinite(statedKeyNumber("84 m/s")));
+
+  // The two bugs that made the independent solve silently give up on the ordinary gap shape.
+  check("§19.3 \\implies keeps its MEANING in plain text (it used to degrade to the word 'implies')", ltp("500 - 20P = 100 + 30P \\implies P = ?") === "500 - 20P = 100 + 30P ⇒ P = ?");
+  check("the standard '$… \\implies P = ?$' gap is SOLVED, so the key can't be the model's unverified guess (P = 8)", sgk2("$500 - 20P = 100 + 30P \\implies P = ?$") === 8);
+  check("…and the second reported item too (Qd = 200 − 10P, Qs = 20 + 26P → P = 5)", sgk2("$200 - 10P = 20 + 26P \\implies P = ?$") === 5);
+  check("a plain-text 'implies' line solves as well (a board line need not be LaTeX)", sgk2("500 - 20P = 100 + 30P implies P = ?") === 8);
+  check("an upper-case unknown is compared as a real variable, not silently dropped as 'unknown'", equiv2("2P", "2P", "P") === "correct" && equiv2("P", "2P", "P") === "incorrect" && equiv2("Q", "2Q", "Q") === "incorrect");
+
+  // The board gap route's grader: conflict → system_error, everything else as before.
+  check("a gap whose stored key contradicts the key recomputed from the line is a system_error, not a miss", gradeGapAnswer("5", 8, "P", "7").verdict === "system_error" && gradeGapAnswer("5", 8, "P", "7").keyConflict === true);
+  check("…while the student's correct answer to that same line is still confirmed correct", gradeGapAnswer("5", 8, "P", "8").verdict === "correct" && gradeGapAnswer("5", 8, "P", "8").keyConflict === true);
+  check("a gap with no recomputable key keeps grading against its stored key (unchanged behaviour)", gradeGapAnswer("8", null, "P", "8").verdict === "correct" && gradeGapAnswer("8", null, "P", "7").verdict === "incorrect");
+  check("a definite verdict against a checkable key is reported VERIFIED; only a key nothing could be checked against is 'uncertain'",
+    gradeGapAnswer("h/tan(25°)", null, "b", "h*tan(25°)").verification === "verified" && gradeGapAnswer("8", null, "P", "7").verification === "verified");
+  check("a gap key the checker can't read is 'unknown' — never 'incorrect'", gradeGapAnswer("cot(θ)", null, undefined, "I'm not sure").verdict !== "system_error");
+  // The route's OWN decision, with exactly the inputs it computes — the reported session end to end, minus HTTP.
+  const { computedGapKey: cgk2 } = await import("../server/tutor.ts");
+  const gapLine = "$500 - 20P = 100 + 30P \\implies P = ?$";
+  const lineKey = cgk2(gapLine) ?? sgk2(gapLine);
+  check("the board line the student was working on is keyed by CODE (P = 8), not by the model's stored guess", lineKey === 8);
+  check("with a wrong stored key on that line, the student's correct 8 is CONFIRMED (and the key is flagged for repair)",
+    gradeGapAnswer("3", lineKey, "P", "8").verdict === "correct" && gradeGapAnswer("3", lineKey, "P", "8").keyConflict === true);
+  check("…and a miss on that same broken item returns system_error, so the app never tells them 'checked wrong'",
+    gradeGapAnswer("3", lineKey, "P", "6").verdict === "system_error" && gradeGapAnswer("3", lineKey, "P", "6").verification === "conflict");
+  check("a healthy line (stored key agrees) still grades a miss as a miss",
+    gradeGapAnswer("8", lineKey, "P", "6").verdict === "incorrect" && gradeGapAnswer("8", lineKey, "P", "6").keyConflict === false);
+
+  // §19.1's required reaction: a NOT-graded result must not be treated as a miss or as evidence.
+  const notGraded = '[Exercise] I answered "8" — NOT graded: this problem\'s stored answer key contradicts the independently computed value (try #1).';
+  check("a NOT-graded result is never counted as stuck and never counts as a mistake", nts(undefined, { message: notGraded }).stuckStreak === 0 && ek({ message: notGraded, helpLevel: 1 }) === null);
+  check("…and the tutor prompt tells Otto to say the KEY was wrong, never the student", /NOT GRADED because the item's key contradicts/.test(tutorSrc));
+
+  // §43.1.9: a wrong written key is corrected at creation, so it can never reach a student.
+  const practice = makePracticeProblem({ problem: "Qd = 500 − 20P, Qs = 100 + 30P. Find the equilibrium price.", answer: "5", check: "(500-100)/(20+30)" });
+  check("§43.1.9 a daily practice problem's wrong key is replaced by the computed value at creation", "problem" in practice && practice.problem.answer === "8" && practice.problem.value === 8);
+  const okPractice = makePracticeProblem({ problem: "2 + 2", answer: "4", check: "2+2" });
+  check("a correct key is left exactly as written (only disagreements are overridden)", "problem" in okPractice && okPractice.problem.answer === "4" && okPractice.problem.value === 4);
+  check("a practice problem with no check stays unverified rather than pretending to be checked", "problem" in makePracticeProblem({ problem: "Name the force opposing motion", answer: "friction" }) && makePracticeProblem({ problem: "Name the force opposing motion", answer: "friction" }).problem.value === undefined);
+
+  // The routes must USE the shared grader — not just import it.
+  const idxV = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  check("the board gap route grades through gradeGapAnswer and reports the verification status + conflict flag", /gradeGapAnswer\(storedKey, recomputed, target, answer\)/.test(idxV) && /res\.json\(\{ verdict, verification: graded\.verification, keyConflict: graded\.keyConflict \}\)/.test(idxV));
+  check("the practice-problem route grades through gradeExerciseAnswer, records a system error, and counts nothing for or against the student", /gradeExerciseAnswer\(\{ question: problem\.problem/.test(idxV) && /systemError: true/.test(idxV) && /if \(grade\.status !== "system_error"\) void recordMetric\(req\.session\.user!, "practice_problem_correct"/.test(idxV));
+  check("a key conflict is observable (its own metric on both paths), not swallowed", /recordMetric\(req\.session\.user!, "gap_key_conflict", 1\)/.test(idxV) && /practice_problem_key_conflict/.test(idxV));
+  const inlineSrc = readFileSync(new URL("../client/study/InlineProblem.tsx", import.meta.url), "utf8");
+  const boardSrc = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  const gapSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  check("the widgets grade through the SAME shared grader, so a verdict can't depend on which side evaluated it",
+    /gradeExerciseAnswer\(problem, /.test(inlineSrc) && /gradeExerciseAnswer\(pr, given/.test(boardSrc) && /gradeExerciseAnswer\(problem, getProblemState/.test(boardSrc));
+  check("§43.6.47 a system-error verdict is shown honestly (key unreliable / not counted wrong), never as a plain miss",
+    /systemError \?/.test(inlineSrc) && /verdict === "system_error"/.test(boardSrc) && /NOT graded/.test(gapSrc));
+}
+
+// ── The tutor is LOCAL-ONLY: no session content reaches the account row ─────────────────────────────────
+// Direct request: chat, board, problems and objectives live in this browser (client/localChatBoard.ts). The
+// server still runs the AI call (it holds the API key) and still needs the board to grade and to guard
+// against leaking answers — so it takes them from the request and stores none of them.
+section("Tutor sessions are fully local — the server stores no chat/board/problems (source pins + contracts)");
+{
+  const idxL = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const tutorSrcL = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  const localSrc = readFileSync(new URL("../client/localChatBoard.ts", import.meta.url), "utf8");
+  const turn = idxL.slice(idxL.indexOf("async function tutorTurn("), idxL.indexOf("// A tiny nudge-me sidebar"));
+
+  check("the tutor turn persists NONE of the session content, and clears anything an older account still has on the row",
+    /t\.chat = undefined; t\.board = undefined; t\.problems = undefined; t\.objectives = undefined;/.test(turn)
+    && !/t\.(?:chat|board|problems) = \[/.test(turn) && !/t\.objectives = (?!undefined)/.test(turn));
+  check("…while the non-tutor chat route keeps persisting its own task fields (only the tutor went local, nothing else changed)",
+    /if \(newChat\.length\) t\.chat = \[\.\.\.\(t\.chat \|\| \[\]\), \.\.\.newChat\]/.test(idxL));
+  check("the turn hands back only this turn's delta (chatDelta/board/problems/objectives), never a task carrying content",
+    /res\.json\(\{\n\s*reply: out\.reply, chatDelta: newChat, board: out\.board, boardEdits: out\.boardEdits/.test(turn) && /task: \{ id: t\.id, title: t\.title, status: t\.status, source: t\.source, sourceSubject: t\.sourceSubject, updatedAt: t\.updatedAt, createdAt: t\.createdAt \}/.test(turn));
+
+  // Grading and the leak guard still work WITHOUT a server-held board: the line rides up, and the key is
+  // recomputed from that line first — so the independent verification is unchanged.
+  const { resolveGapKey, rehydrateProblemKey } = await import("../server/tutor.ts");
+  check("a gap's key is recomputed from the LINE itself first, even when a different key is sent along with it",
+    resolveGapKey("$500 - 20P = 100 + 30P \\implies P = ?$", "3", "3") === "8");
+  check("…with the server's stored key as the second choice and the browser's own key last (the only sources left)",
+    resolveGapKey("$b = ?$", "h cot 25°", "h/tan(25°)") === "h cot 25°" && resolveGapKey("$b = ?$", undefined, "h/tan(25°)") === "h/tan(25°)");
+  check("a gap with no key from any source resolves to nothing (never a fabricated one)", resolveGapKey("$b = ?$") === undefined);
+  const sentProblem = { id: "p1", question: "Find the equilibrium price.", answer: "8", value: 8 };
+  check("an exercise's answer key is carried back from the browser when the server holds no copy of it",
+    rehydrateProblemKey(sentProblem, undefined).answer === "8" && rehydrateProblemKey(sentProblem, undefined).value === 8 && rehydrateProblemKey(sentProblem, undefined).solved === false);
+  check("the server's OWN stored copy still wins when it has one — including its verified exact value",
+    rehydrateProblemKey({ question: "q", answer: "999", value: 999, solved: true }, { id: "p", createdAt: "", question: "q", answer: "8", value: 8 }).answer === "8" && rehydrateProblemKey({ question: "q", answer: "999" }, { id: "p", createdAt: "", question: "q", answer: "8" }).solved === false);
+  check("an exercise sent back with no key stays keyless (the leak guard never invents one)", rehydrateProblemKey({ question: "q" }, undefined).answer === undefined);
+
+  check("the chat route rehydrates gap keys and exercise keys from the request through those resolvers",
+    /resolveGapKey\(String\(b\.text\), stored\?\.expectedAnswer/.test(idxL) && /rehydrateProblemKey\(p, known\)/.test(idxL));
+  check("the gap-check route grades from the line it is sent, so a local-only board no longer 404s every gap answer",
+    /const line = entry\?\.text \?\? sentText;/.test(idxL) && /resolveGapKey\(line, entry\?\.expectedAnswer, sentKey\)/.test(idxL) && /req\.body\?\.text/.test(idxL));
+  check("the client sends the line and its key with a gap answer (the server has no stored copy to look up)",
+    /api\.checkGap\(task\.id, entry\.id, given, \{ text: entry\.text, expectedAnswer: entry\.expectedAnswer \}\)/.test(tutorSrcL));
+
+  // Resume must read the LOCAL copy: the server row this browser just fetched carries none of it.
+  check("resuming a session reads local storage first and only falls back to the task row",
+    /const chat = local\.chat\.length \? local\.chat : \(pendingActiveSession\.chat \|\| \[\]\)/.test(tutorSrcL)
+    && /const board = local\.board\.length \? local\.board : \(pendingActiveSession\.board \|\| \[\]\)/.test(tutorSrcL));
+  const { overlayLocalThread } = await import("../client/localChatBoard.ts");
+  const cloudTask = { id: "t1", chat: [{ role: "user", text: "cloud" }], board: [], problems: [] };
+  const overlaid = overlayLocalThread(cloudTask, { chat: [{ role: "user", text: "local" }, { role: "assistant", text: "re" }], board: [{ id: "b1", text: "x = 2", kind: "result" }], problems: [], objectives: [] });
+  check("the browser's copy WINS over the server's for a field both have (the regression that emptied a resumed session)",
+    overlaid.chat.length === 2 && overlaid.chat[0].text === "local" && overlaid.board.length === 1);
+  check("a field local storage has nothing for keeps what the server sent — how a pre-local conversation survives the switch",
+    JSON.stringify(overlayLocalThread(cloudTask, { chat: [], board: [], problems: [], objectives: [] })) === JSON.stringify(cloudTask));
+  check("the overlay is applied on every fresh list (initial load, polling, sync)", /hydrateLocalThreads\(incoming, status\?\.user \|\| null\)/.test(readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8")));
+  check("the local store is written by the merged thread, not by appending a delta onto whatever happens to be on disk",
+    /export function setLocalChat\(/.test(localSrc) && !/appendLocalChat\(/.test(tutorSrcL));
+  // Direct request: tell the student their sessions live only in this browser and clearing cookies/site data erases them.
+  check("the Tutor landing tells the student sessions are browser-only and not to clear cookies/site data (both languages)",
+    /className="tutor-local-note"/.test(tutorSrcL) && /Don't clear cookies or this site's data/.test(tutorSrcL) && /Ne supprime pas les cookies/.test(tutorSrcL));
+
+  // The clear must SURVIVE the cross-device merge: every commit and every /api/tasks poll reads the
+  // account row first, and the union used to pull the row's legacy content straight back in — so a
+  // "cleared" session never actually left the server.
+  const tutorRow = (id, over = {}) => ({
+    id, title: "Physics session", source: "freestudy", status: "needs_review",
+    createdAt: "2026-10-01T00:00:00.000Z", updatedAt: "2026-10-01T00:00:00.000Z", ...over,
+  });
+  const legacyRow = tutorRow("t1", {
+    chat: [{ role: "user", text: "legacy", at: "2026-10-01T00:00:00.000Z" }],
+    board: [{ id: "b1", text: "500 - 20P = 100 + 30P", kind: "result", at: "2026-10-01T00:00:00.000Z" }],
+    problems: [{ id: "p1", createdAt: "2026-10-01T00:00:00.000Z", question: "Find P." }],
+    objectives: [{ id: "o1", label: "Equilibrium", done: false }],
+    boardEvents: [{ at: "2026-10-01T00:00:00.000Z", kind: "otto-wrote", detail: "500 - 20P = 100 + 30P" }],
+  });
+  const clearedLocal = tutorRow("t1", { updatedAt: "2026-10-02T00:00:00.000Z" }); // what tutorTurn commits
+  const afterClear = mergeTaskLists([legacyRow], [clearedLocal]);
+  check("a cleared tutor session's content does NOT come back from the account row on the next merge",
+    afterClear.length === 1 && !afterClear[0].chat && !afterClear[0].board && !afterClear[0].problems
+    && !afterClear[0].objectives && !afterClear[0].boardEvents && afterClear[0].title === "Physics session");
+  check("…and the fast path can't skip that strip just because the updatedAt happened to match",
+    mergeTaskLists([{ ...legacyRow, updatedAt: "2026-10-02T00:00:00.000Z" }], [clearedLocal])[0].chat === undefined);
+  const migratingLocal = tutorRow("t1", {
+    updatedAt: "2026-10-02T00:00:00.000Z",
+    chat: [{ role: "user", text: "hydrated", at: "2026-10-01T00:00:00.000Z" }],
+  });
+  const migrated = mergeTaskLists([legacyRow], [migratingLocal])[0];
+  check("a session the browser hasn't hydrated yet keeps its server copy — the one-time migration path",
+    (migrated.chat || []).length === 2 && (migrated.board || []).length === 1 && (migrated.problems || []).length === 1);
+  const plain = { id: "t2", title: "Email Mmachi", source: "gmail", status: "ready",
+    createdAt: "2026-10-01T00:00:00.000Z", updatedAt: "2026-10-01T00:00:00.000Z" };
+  const plainRow = { ...plain, chat: [{ role: "assistant", text: "on the row", at: "2026-10-01T00:00:00.000Z" }] };
+  check("a NON-tutor task's chat still syncs from the row when the local copy has none (only the tutor went local)",
+    (mergeTaskLists([plainRow], [{ ...plain, updatedAt: "2026-10-02T00:00:00.000Z" }])[0].chat || []).length === 1);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

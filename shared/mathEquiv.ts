@@ -50,7 +50,9 @@ function unfracs(s: string): string {
 export function toExprSource(input: string, target?: string): string {
   let s = String(input || "").trim().replace(/^\$+|\$+$/g, "").replace(/^\\\(|\\\)$/g, "");
   s = s.replace(/(\d)[,\s](?=\d{3}(?!\d))/g, "$1"); // "2,554.4" / "25 526" → plain numbers
-  if (target) s = s.replace(new RegExp(`^\\s*${target}\\s*=`), "");
+  // Case-insensitive: the gap asks for "P" while a student may write "p =". compileExpr lowercases every
+  // identifier, so the target letter must be read the same way everywhere (see varsIn below).
+  if (target) s = s.replace(new RegExp(`^\\s*${target}\\s*=`, "i"), "");
   else s = s.replace(/^\s*[A-Za-z]\s*=(?!=)/, "");
   s = s.replace(/\\(?:left|right|displaystyle|textstyle|,|;|!|:|\s)/g, " ");
   s = s.replace(/\^\s*\{\s*\\circ\s*\}|\^\s*\\circ|\\circ|°/g, "°");
@@ -70,7 +72,10 @@ function varsIn(src: string): string[] {
   const ids = src.match(/[A-Za-z_][A-Za-z_0-9]*/g) || [];
   const known = new Set([...FN.split("|"), "pi", "e", "asin", "acos", "atan", "abs", "floor", "ceil", "round", "sign", "log10"]);
   // Only single letters are variables: a multi-letter word ("the angle") then fails to compile → "unknown".
-  return [...new Set(ids.filter((v) => v.length === 1 && !known.has(v.toLowerCase())))];
+  // LOWERCASED, because that is what compileExpr does to every identifier it tokenizes (mathExpr.ts): a "P"
+  // read as a variable but evaluated as "P" was always NaN, so every step containing an uppercase unknown
+  // (P, Q, V, F, N, A — most physics/economics letters) compared as NaN and silently degraded to "unknown".
+  return [...new Set(ids.filter((v) => v.length === 1 && !known.has(v.toLowerCase())).map((v) => v.toLowerCase()))];
 }
 
 /** Are `given` and `expected` the same expression? Compared at 6 random points in each free variable (both

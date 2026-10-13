@@ -14,6 +14,9 @@ export interface LessonTopic {
   estimatedTime: number;
   /** Prerequisite topics */
   prerequisites?: string[];
+  /** Whether this topic is optional: plan generation marks some topics optional and
+   *  advanceLesson() skips them when time is short or the student wants to focus. */
+  optional?: boolean;
 }
 
 /** A subtopic with specific skills to practice */

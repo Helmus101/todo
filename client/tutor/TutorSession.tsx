@@ -2,7 +2,7 @@ import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { ArrowRight, TrendingUp, RotateCcw, MessageCircle, Lightbulb, CircleHelp, ChevronRight, ChevronDown, Maximize2, Minimize2 } from "lucide-react";
 import type { WebTask, TaskProblem, BoardEntry } from "../../shared/types.ts";
 import { api } from "../api.ts";
-import { setLocalObjectives, getLocalThread } from "../localChatBoard.ts";
+import { setLocalObjectives, getLocalThread, setLocalChat, setLocalBoard, setLocalProblems } from "../localChatBoard.ts";
 import { useLang, LangContext } from "../ui.tsx";
 import { AskOttoPanel } from "../study/AskOttoPanel.tsx";
 import { BoardArtifact, MathText } from "../study/artifacts/BoardArtifact.tsx";
@@ -322,7 +322,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       // CREATE_PROBLEM (individual, inline, answerable right on the board) instead — the only artifact this
       // screen actually knows how to show.
       const response = await api.chat(task.id, message, task.chat || [], task.board || [], (task.problems || []).map((p) => ({ ...p, solved: solvedRef.current.has(p.id) })), undefined, undefined, voiceMode, true, true, task.objectives || [], spoken, { id: task.id, source: task.source, sourceSubject: task.sourceSubject, createdAt: task.createdAt }, sessionMemoryForPrompt(pastSessions, task.sourceSubject, Date.now(), openerLang));
-      const { task: updated, objectives, boardCleared, boardEdits, boardRemoved } = response as typeof response & { boardCleared?: boolean; boardEdits?: { id: string; text: string }[]; boardRemoved?: string[] };
+      const { task: updated, objectives, boardCleared, boardEdits, boardRemoved, board, problems } = response as typeof response & { boardCleared?: boolean; boardEdits?: { id: string; text: string }[]; boardRemoved?: string[]; board?: typeof task.board; problems?: typeof task.problems };
       // objectives is only ever the FULL replacement list (SET_OBJECTIVES' own contract), or undefined
       // when Otto didn't touch it this turn — never overwrite the existing list with an empty one.
       const newObjectives = objectives?.length ? setLocalObjectives(task.id, objectives, userId) : (task.objectives || []);
@@ -330,18 +330,28 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       // chip the student has to notice and click. Report-live: objectives were being set but the student
       // never actually saw them. Doesn't force it open on every later turn, only right when they change.
       if (objectives?.length) setObjectivesOpen(true);
-      // chat/board/problems are cloud-persisted again now (server/index.ts's chat route) — `updated`
-      // already carries the full, authoritative arrays, no local-storage write needed.
-      // Only update relevant fields, preserve context/steps/links from before
-      // NEVER let the server's copy replace what's already on screen: its stored board/chat are capped and can lag
-      // behind this device, so taking `updated` wholesale made new writes wipe older board entries (and long
-      // chats). Keep everything we have, add what's new by id, order by time.
+      // Direct request: Tutor session content is LOCAL ONLY now, not cloud-persisted — the server is
+      // stateless for this turn's chat/board/problems (`updated` no longer carries them at all; the
+      // top-level `board`/`problems`/`chatDelta` are just THIS turn's delta). Merge them onto what's
+      // already on screen exactly as before, then persist the merged result to this browser's own
+      // storage (client/localChatBoard.ts) — that's the one copy of record now, there's no cloud copy to
+      // fall back on. NEVER let a turn's delta replace what's already on screen outright: its own arrays
+      // are capped and can lag behind this device, so taking it wholesale would wipe older board entries.
+      const newBoard = boardCleared ? (board || []) : applyBoardEdits(mergeBoardById(task.board || [], board || []), boardEdits, boardRemoved);
+      const newProblems = mergeBoardById(task.problems || [], problems || []);
+      setLocalBoard(task.id, newBoard, userId);
+      setLocalProblems(task.id, newProblems, userId);
+      // The MERGED thread (what's on screen + this turn's delta), not just the delta: the local store is the
+      // only copy now, and for a session this browser has no local history for yet (one resumed from the
+      // cloud era) appending the delta alone would return the delta by itself — visibly cutting the
+      // conversation down to the newest message the moment the student replies.
+      const newChat = setLocalChat(task.id, [...(task.chat || []), ...(response.chatDelta || [])], userId);
       setTask({
         ...task,
         ...updated,
-        board: boardCleared ? updated?.board || [] : applyBoardEdits(mergeBoardById(task.board || [], updated?.board || []), boardEdits, boardRemoved),
-        problems: mergeBoardById(task.problems || [], updated?.problems || []),
-        chat: [...(task.chat || []), ...(response.chatDelta || [])],
+        board: newBoard,
+        problems: newProblems,
+        chat: newChat,
         objectives: newObjectives,
         // Don't overwrite context/steps/links with irrelevant data
         context: task.context || "",
@@ -390,23 +400,32 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   const solvedRef = useRef<Set<string>>(new Set());
   const sendRef = useRef(send);
   sendRef.current = send;
-  const onProblemResult = useCallback((r: { problem: TaskProblem; given: string; correct: boolean; attempt: number }) => {
+  const onProblemResult = useCallback((r: { problem: TaskProblem; given: string; correct: boolean; attempt: number; systemError?: boolean }) => {
     if (r.correct) solvedRef.current.add(r.problem.id);
+    // A system-error result (the item's stored key disagreed with the independently computed value, spec §19.1)
+    // is reported AS that, not as a miss: Otto must never treat it as evidence against the student.
     resultsRef.current.push(L(
-      `[Exercice] J'ai répondu « ${r.given.slice(0, 120)} » — ${r.correct ? "juste" : "faux"} (essai n°${r.attempt}).`,
-      `[Exercise] I answered "${r.given.slice(0, 120)}" — marked ${r.correct ? "right" : "wrong"} (try #${r.attempt}).`));
+      `[Exercice] J'ai répondu « ${r.given.slice(0, 120)} » — ${r.systemError ? "non noté : la clé du problème contredit la valeur vérifiée par le calcul" : r.correct ? "juste" : "faux"} (essai n°${r.attempt}).`,
+      r.systemError
+        ? `[Exercise] I answered "${r.given.slice(0, 120)}" — NOT graded: this problem's stored answer key contradicts the independently computed value (try #${r.attempt}).`
+        : `[Exercise] I answered "${r.given.slice(0, 120)}" — marked ${r.correct ? "right" : "wrong"} (try #${r.attempt}).`));
     setResultTick((n) => n + 1);
   }, [L]);
   // A board gap answered in place: graded by the server, then reported to Otto like an exercise result (the
   // verdict rides along; Otto reacts to it like a person would, never reveals the key on a miss).
   const onGapCheck = useCallback(async (entry: BoardEntry, given: string) => {
     if (!task) return "unknown" as const;
-    const { verdict } = await api.checkGap(task.id, entry.id, given);
+    // The board lives in this browser now, so the line (and the key written with it) ride along: the server
+    // has no stored copy to look the gap up in for a tutor session. It still recomputes the key from the line
+    // itself first, and only falls back to what it's sent.
+    const { verdict } = await api.checkGap(task.id, entry.id, given, { text: entry.text, expectedAnswer: entry.expectedAnswer });
     if (verdict === "correct") setTask((cur) => cur ? { ...cur, board: (cur.board || []).map((b) => b.id === entry.id ? { ...b, status: "correct" as const } : b) } : cur);
     const line = entry.text.replace(/\s+/g, " ").slice(0, 100);
     resultsRef.current.push(L(
-      `[Exercice] Au tableau, pour « ${line} », j'ai écrit « ${given.slice(0, 120)} » — ${verdict === "correct" ? "vérifié juste" : verdict === "incorrect" ? "vérifié faux" : "non vérifiable automatiquement"}.`,
-      `[Exercise] On the board line "${line}" I wrote "${given.slice(0, 120)}" — ${verdict === "correct" ? "checked right" : verdict === "incorrect" ? "checked wrong" : "couldn't be auto-checked"}.`));
+      `[Exercice] Au tableau, pour « ${line} », j'ai écrit « ${given.slice(0, 120)} » — ${verdict === "correct" ? "vérifié juste" : verdict === "system_error" ? "non noté : la clé écrite pour cette ligne contredit la clé recalculée par le code" : verdict === "incorrect" ? "vérifié faux" : "non vérifiable automatiquement"}.`,
+      verdict === "system_error"
+        ? `[Exercise] On the board line "${line}" I wrote "${given.slice(0, 120)}" — NOT graded: the key stored for this line contradicts the key computed from the line itself. Say plainly that the app's key was wrong, not me, and continue.`
+        : `[Exercise] On the board line "${line}" I wrote "${given.slice(0, 120)}" — ${verdict === "correct" ? "checked right" : verdict === "incorrect" ? "checked wrong" : "couldn't be auto-checked"}.`));
     setResultTick((n) => n + 1);
     return verdict;
   }, [task, L]);
@@ -454,14 +473,16 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   const resumeActiveSession = useCallback(() => {
     if (!pendingActiveSession) return;
     enterFullscreen(); // tutor mode is full screen (this click is the user gesture the browser requires)
-    // chat/board/problems are cloud-persisted again now, so the task object itself is authoritative —
-    // localStorage (getLocalThread) is only consulted as a fallback for whichever field is still empty in
-    // the cloud copy (a session from the local-only era that never made it to the server).
+    // This browser is the record of truth for the session's content: the server no longer writes chat/board/
+    // problems/objectives at all, so `pendingActiveSession` (a list-route row, which carries none of them)
+    // comes back EMPTY for a session that is already underway — reading it first is what makes "Reprendre"
+    // open a blank thread. getLocalThread is the real copy; the task's own fields are the fallback, for a
+    // conversation that predates the local switch and hasn't been carried into storage yet.
     const local = getLocalThread(pendingActiveSession.id, userId);
-    const chat = pendingActiveSession.chat?.length ? pendingActiveSession.chat : local.chat;
-    const board = pendingActiveSession.board?.length ? pendingActiveSession.board : local.board;
-    const problems = pendingActiveSession.problems?.length ? pendingActiveSession.problems : local.problems;
-    const objectives = pendingActiveSession.objectives?.length ? pendingActiveSession.objectives : local.objectives;
+    const chat = local.chat.length ? local.chat : (pendingActiveSession.chat || []);
+    const board = local.board.length ? local.board : (pendingActiveSession.board || []);
+    const problems = local.problems.length ? local.problems : (pendingActiveSession.problems || []);
+    const objectives = local.objectives.length ? local.objectives : (pendingActiveSession.objectives || []);
     // Only load relevant fields from the task, ignore irrelevant ones
     setTask({
       ...pendingActiveSession,
@@ -676,6 +697,13 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
               />
             </div>
           )}
+
+          {/* Direct request: sessions are stored only in this browser now (client/localChatBoard.ts +
+              tutorSessions.ts), so say so plainly — clearing site data is the one way to lose them. */}
+          <p className="tutor-local-note" role="note">
+            {L("Tes séances sont enregistrées uniquement dans ce navigateur, pas dans le cloud. Ne supprime pas les cookies ni les données de ce site (et évite la navigation privée), sinon elles seront effacées. Elles ne te suivent pas sur un autre appareil.",
+              "Your sessions are saved only in this browser, not in the cloud. Don't clear cookies or this site's data (and avoid private browsing), or they'll be erased. They won't follow you to another device.")}
+          </p>
 
           {pastSessions.length > 0 && (
             <div className="tutor-past-sessions">

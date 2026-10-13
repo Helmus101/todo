@@ -75,6 +75,7 @@ BE RIGHT — YOU ALWAYS KNOW THE ANSWER
 - The WORKED SOLUTION block (when present) is the verified solution of the problem in focus: steer by it, check their numbers against its steps, watch for its common mistakes. Never reveal it.
 - Without one, work the problem out yourself before reacting. "Spot on" only for a value that matches THEIR number. Never confirm a wrong step, never call a right one wrong; if something's off, ask the question that lets them spot it.
 - A line starting "VERIFIED BY CODE" is the truth about their step. An answer box's "checked wrong" is not gospel: recompute first; if they're right, say so at once.
+- A result reported as NOT GRADED because the item's key contradicts the value computed by code is a system error, not a miss: say plainly that the app's key was wrong, not them, keep their working, and continue with the same idea (never make them redo the answer or re-enter it, and never treat it as evidence they were stuck). Fix the item if you can; otherwise move to a verified task.
 - A message that makes no sense for the subject (a stray sentence about something else, a name, "history") is almost always a mis-heard voice: say once, briefly, that you didn't catch it and ask what they meant. Never treat it as a request — don't clear the board, drop the problem or switch topic because of it. Say "here's a new problem on the board" only after CREATE_PROBLEM has succeeded.
 - If they ask why a line is on the board, tell the truth about it (e.g. "I wrote your 5.52 × 4 from what you said — and 5.52 isn't the net force, so that line is wrong") — never invent an explanation ("a stray note from an earlier run"). A wrong line gets fixed by adding the corrected one beside it.
 - Never invent facts, never blame the app, and NEVER change a given: the problem's numbers are exactly as written, even if they don't work out. If they can't produce what the question asks, say so plainly once and offer to change one — never swap a value to make it work. If unsure what they meant, ask, offering your best reading.
@@ -448,15 +449,22 @@ export function solvedGapKey(text: string): number | null {
   const plain = latexToPlainText(String(text || "").replace(/\$/g, " ")).replace(/(\d),(?=\d{3}(?!\d))/g, "$1");
   const target = /([A-Za-z])\s*=\s*\?\s*$/.exec(plain)?.[1];
   if (!target) return null;
-  const eq = plain.split(/⟹|⇒|Longrightarrow|Rightarrow|→|->|=>|\\Rightarrow/)[0].replace(/½/g, "(1/2)").replace(/[·⋅×]/g, "*").replace(/²/g, "^2").replace(/³/g, "^3");
+  // The connective split must accept the PLAIN-WORD forms too: latexToPlainText renders \implies as "implies"
+  // (and a board line may carry the word directly), and when that wasn't split the "… = ?" tail became a
+  // third "=" side, the function bailed out with null, and grading fell back to the model's unverified key —
+  // the reported live failure where P = 8 and P = 5 were marked wrong off a wrong stored key.
+  const eq = plain.split(/⟹|⟸|⇒|⇐|⟺|→|->|=>|\\Rightarrow|\\Longrightarrow|\b(?:implies|implique|imply|donc|thus|therefore|then|so)\b/i)[0].replace(/½/g, "(1/2)").replace(/[·⋅×]/g, "*").replace(/²/g, "^2").replace(/³/g, "^3");
   const sides = eq.split("=");
   if (sides.length !== 2 || !sides.every((x) => x.trim())) return null;
-  const re = new RegExp(`(?<![A-Za-z])${target}(?![A-Za-z])`);
+  const re = new RegExp(`(?<![A-Za-z])${target}(?![A-Za-z])`, "i");
   if (!re.test(sides[0] + sides[1])) return null;
-  const l = compileExpr(toExprSource(sides[0].replace(/(?<=\d|\))\s*(?=[A-Za-z(])/g, "*")), [target]);
-  const r = compileExpr(toExprSource(sides[1].replace(/(?<=\d|\))\s*(?=[A-Za-z(])/g, "*")), [target]);
+  // compileExpr lowercases every identifier, so the value map must be keyed the same way — with the raw
+  // target ("P") the function was NaN at every point and no root was ever found (upper-case unknowns only).
+  const targetKey = target.toLowerCase();
+  const l = compileExpr(toExprSource(sides[0].replace(/(?<=\d|\))\s*(?=[A-Za-z(])/g, "*"), targetKey), [targetKey]);
+  const r = compileExpr(toExprSource(sides[1].replace(/(?<=\d|\))\s*(?=[A-Za-z(])/g, "*"), targetKey), [targetKey]);
   if ("error" in l || "error" in r) return null;
-  const f = (x: number) => l.fn({ [target]: x }) - r.fn({ [target]: x });
+  const f = (x: number) => l.fn({ [targetKey]: x }) - r.fn({ [targetKey]: x });
   const roots: number[] = [];
   let prev = 1e-6, fp = f(prev);
   for (let x = 1e-6, step = 1.05; x < 1e6; x *= step) {
@@ -470,6 +478,46 @@ export function solvedGapKey(text: string): number | null {
     prev = cur; fp = fc;
   }
   return roots.length === 1 ? Math.round(roots[0] * 1e6) / 1e6 : null;
+}
+
+/** A gap's answer key, resolved WITHOUT a server-side board — the tutor's board now lives in the browser
+ *  (client/localChatBoard.ts), so the server no longer holds the gap it is being asked to grade.
+ *
+ *  Priority, deliberately: (1) a key recomputed from THE LINE ITSELF by code — the independent verification
+ *  spec §19 asks for, which is what makes the grade trustworthy; (2) the key this server still holds from a
+ *  turn served before the board moved local (or from an account that predates it); (3) the key the browser
+ *  sent along with the line, which the server generated in the first place — the only remaining source now,
+ *  and the one that lets a miss be a miss at all. A key the browser could lie about only ever affects the
+ *  student's own self-check, never anyone else's grade. Pure; exported for tests. */
+export function resolveGapKey(lineText: string, storedKey?: string, sentKey?: string): string | undefined {
+  const computed = computedGapKey(String(lineText || "")) ?? solvedGapKey(String(lineText || ""));
+  if (computed != null) return String(computed);
+  const stored = typeof storedKey === "string" && storedKey.trim() ? storedKey.trim() : undefined;
+  if (stored) return stored.slice(0, 200);
+  return typeof sentKey === "string" && sentKey.trim() ? sentKey.trim().slice(0, 200) : undefined;
+}
+
+/** One exercise the browser sent back this turn, WITH its answer key when the server no longer stores a copy
+ *  of it (tutor problems are local-only now, like the board). The server's own stored problem always wins
+ *  when it has one — including its code-verified `value` — so the leak guard and answer-box grading never
+ *  depend on what the browser claims; only when there is no stored copy does the sent one stand in, which is
+ *  the same key the server handed that browser when the problem was created. Pure; exported for tests. */
+export function rehydrateProblemKey(sent: any, stored?: TaskProblem): TaskProblem {
+  const base: TaskProblem = stored
+    ? { ...stored, solved: sent?.solved === true }
+    : { id: typeof sent?.id === "string" ? sent.id.slice(0, 64) : "", createdAt: "", question: String(sent?.question || "").slice(0, 600), solved: sent?.solved === true };
+  if (stored?.answer || stored?.value != null) return base;
+  const answer = typeof sent?.answer === "string" && sent.answer.trim() ? sent.answer.trim().slice(0, 200) : undefined;
+  const value = typeof sent?.value === "number" && Number.isFinite(sent.value) ? sent.value : undefined;
+  const options = Array.isArray(sent?.options) ? sent.options.map((o: any) => String(o).slice(0, 300)).filter(Boolean).slice(0, 6) : undefined;
+  const correct = Number.isInteger(sent?.correct) ? Number(sent.correct) : undefined;
+  return {
+    ...base,
+    ...(answer ? { answer } : {}),
+    ...(value != null ? { value } : {}),
+    ...(options?.length && !base.options ? { options } : {}),
+    ...(correct != null && base.correct == null && options?.length ? { correct } : {}),
+  };
 }
 
 /** A gap whose line is a pure number calculation ("900×9.8×sin(12°) + 900×0.4 + 360 = ?") has its key computed

@@ -628,10 +628,10 @@ export function App() {
     // function) — which, from the outside, looked exactly like "my task got deleted" when the error
     // boundary reset the tree. Treat anything non-array as "no update," never crash the app over it.
     if (!Array.isArray(incoming)) return prev;
-    // Chat/board/problems are cloud-persisted again (server/index.ts's chat route) — this only overlays
-    // this browser's local copy for whichever field the cloud copy is still missing (see
-    // hydrateLocalThreads' own comment), the one choke point every "fresh list from the server" path
-    // (initial load, polling, sync) already runs through.
+    // A tutor session's chat/board/problems/objectives live in THIS browser (server/index.ts's tutor turn
+    // writes none of them), so this overlay is what makes them survive a reload — local storage wins, and the
+    // server's copy only fills a field local storage has nothing for (a pre-local-switch conversation). It is
+    // the one choke point every "fresh list from the server" path (initial load, polling, sync) runs through.
     incoming = hydrateLocalThreads(incoming, status?.user || null);
     const now = Date.now();
     // Prune opportunistically so this Map can't grow unbounded over a long session — every entry is either

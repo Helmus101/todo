@@ -7223,6 +7223,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 
 /* Past-session reference shown on a fresh session start */
 .tutor-past-ref { font-size: 0.9rem; color: var(--ink-2); font-style: italic; }
+.tutor-local-note { margin: var(--space-3) 0 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; font-size: 0.85rem; line-height: 1.5; color: var(--ink-2); }
 
 /* Past sessions history (collapsible) */
 .tutor-past-sessions { width: 100%; text-align: left; margin-top: 40px; }

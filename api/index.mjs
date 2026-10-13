@@ -328,7 +328,7 @@ function unfracs(s) {
 function toExprSource(input, target) {
   let s = String(input || "").trim().replace(/^\$+|\$+$/g, "").replace(/^\\\(|\\\)$/g, "");
   s = s.replace(/(\d)[,\s](?=\d{3}(?!\d))/g, "$1");
-  if (target) s = s.replace(new RegExp(`^\\s*${target}\\s*=`), "");
+  if (target) s = s.replace(new RegExp(`^\\s*${target}\\s*=`, "i"), "");
   else s = s.replace(/^\s*[A-Za-z]\s*=(?!=)/, "");
   s = s.replace(/\\(?:left|right|displaystyle|textstyle|,|;|!|:|\s)/g, " ");
   s = s.replace(/\^\s*\{\s*\\circ\s*\}|\^\s*\\circ|\\circ|°/g, "\xB0");
@@ -344,7 +344,7 @@ function toExprSource(input, target) {
 function varsIn(src) {
   const ids = src.match(/[A-Za-z_][A-Za-z_0-9]*/g) || [];
   const known = /* @__PURE__ */ new Set([...FN.split("|"), "pi", "e", "asin", "acos", "atan", "abs", "floor", "ceil", "round", "sign", "log10"]);
-  return [...new Set(ids.filter((v) => v.length === 1 && !known.has(v.toLowerCase())))];
+  return [...new Set(ids.filter((v) => v.length === 1 && !known.has(v.toLowerCase())).map((v) => v.toLowerCase()))];
 }
 function equivalent(given, expected, target) {
   const a = toExprSource(given, target);
@@ -405,85 +405,6 @@ var init_mathEquiv = __esm({
     FN = "arcsin|arccos|arctan|sinh|cosh|tanh|sin|cos|tan|cot|sec|csc|ln|log|exp|sqrt";
     ARC = { arcsin: "asin", arccos: "acos", arctan: "atan" };
     INVERSE_TRIG = /arc(?:sin|cos|tan)|\b(?:asin|acos|atan)\b|\\(?:sin|cos|tan)\^\{-1\}|(?:sin|cos|tan)\^\{?-1\}?/i;
-  }
-});
-
-// shared/spokenMath.ts
-function spokenContextFrom(texts) {
-  const all = texts.join("\n");
-  const angles = /* @__PURE__ */ new Set();
-  for (const m of all.matchAll(/(\d{1,3}(?:\.\d+)?)\s*(?:°|\^\s*\{?\\circ\}?|\\circ|\s?deg(?:rees?)?\b|\s?degrés?\b)/gi)) angles.add(Number(m[1]));
-  const fns = TRIG.filter((f4) => new RegExp(`(?:\\\\|\\b)${f4}\\b`, "i").test(all));
-  const vars = /* @__PURE__ */ new Set();
-  for (const m of all.replace(/\\[a-zA-Z]+/g, " ").matchAll(/(?<![A-Za-z])([a-zA-Z])(?![A-Za-z])/g)) vars.add(m[1]);
-  return { angles: [...angles], fns, vars: [...vars] };
-}
-function repairSpokenMath(transcript, ctx) {
-  const changes = [];
-  let low = false;
-  let s = String(transcript || "");
-  const trigInPlay = ctx.fns.length > 0 || /\b(?:tan|sin|cos|opposite|adjacent|hypotenuse|angle|elevation|depression)\b/i.test(s);
-  const knownAngle = (n) => ctx.angles.includes(Number(n));
-  for (const [re, to, why] of WORD_SOUNDALIKES) {
-    s = s.replace(re, (m) => {
-      if (m.toLowerCase() === to) return m;
-      changes.push({ from: m, to, why });
-      return to;
-    });
-  }
-  if (ctx.angles.length && /\b10\d{2}\b\s*(?:=|over|\/)/i.test(s)) {
-    s = s.replace(/\b10(\d{1,2})\b/g, (m, a) => {
-      if (!knownAngle(a)) return m;
-      changes.push({ from: m, to: `tan ${a}\xB0`, why: `"tan" heard as "ten" and merged with the ${a}\xB0 angle on the board` });
-      if (!trigInPlay) low = true;
-      return `tan ${a}\xB0`;
-    });
-  }
-  if (trigInPlay && ctx.angles.length) {
-    s = s.replace(/(^|.{0,12}?)\b([A-Za-z]+|10)\s+(?:of\s+)?(\d{1,3})(?!\d)(\s*°)?(?=(.{0,12}))/g, (m, before, w, a, deg, after) => {
-      if (!knownAngle(a)) return m;
-      const hit = FN_SOUNDALIKES.find(([, re]) => re.test(w));
-      if (!hit) return m;
-      const mathsNear = /[=+\-*/×÷()]|\b(?:over|times|equals?|plus|minus|is)\b/i;
-      if (EVERYDAY.test(w) && !mathsNear.test(before) && !mathsNear.test(after)) return m;
-      m = m.slice(before.length);
-      const to = `${hit[0]} ${a}\xB0`;
-      if (w.toLowerCase() === hit[0] && deg) return m;
-      if (w.toLowerCase() !== hit[0]) {
-        changes.push({ from: m.trim(), to, why: `"${w}" right before the ${a}\xB0 angle is most likely "${hit[0]}"` });
-        if (!ctx.fns.includes(hit[0])) low = true;
-      }
-      return before + to;
-    });
-  }
-  const LETTERS = [["h", /^(?:8|age|each|aitch|edge)$/i], ["b", /^(?:be|bee)$/i], ["x", /^(?:ex|eggs)$/i], ["y", /^(?:why)$/i], ["c", /^(?:see|sea)$/i]];
-  s = s.replace(/(^|[=+\-*/×÷(]\s*|\bover\s+|\btimes\s+)([A-Za-z]+|8)(?=\s*(?:$|[=+\-*/×÷)]|\bover\b|\btimes\b))/gi, (m, pre, w) => {
-    const hit = LETTERS.find(([v, re]) => ctx.vars.includes(v) && re.test(w));
-    if (!hit) return m;
-    changes.push({ from: w, to: hit[0], why: `"${w}" in a maths position, and ${hit[0]} is a variable in this problem` });
-    low = true;
-    return `${pre}${hit[0]}`;
-  });
-  return { interpreted: s.replace(/\s{2,}/g, " ").trim(), changes, confidence: low ? "low" : "high" };
-}
-var TRIG, EVERYDAY, FN_SOUNDALIKES, WORD_SOUNDALIKES;
-var init_spokenMath = __esm({
-  "shared/spokenMath.ts"() {
-    "use strict";
-    TRIG = ["sin", "cos", "tan", "cot", "sec", "csc"];
-    EVERYDAY = /^(?:can|count|ten|tin|ton|town|turn|sign|seen|sing|scene|cause|because|cost|course|cut|caught|court)$/i;
-    FN_SOUNDALIKES = [
-      ["tan", /^(?:tan|tans|tam|tang|ten|tin|ton|town|turn|count|can|10)$/i],
-      ["sin", /^(?:sin|sign|sine|sane|seen|sing|scene)$/i],
-      ["cos", /^(?:cos|coast|cause|cosign|kos|cost|course|coz|because)$/i],
-      ["cot", /^(?:cot|cut|caught|court)$/i]
-    ];
-    WORD_SOUNDALIKES = [
-      [/\b(?:json|jason|jayson|a\s?jason|a\s?json|ajay\s?sent|adjacents)\b/gi, "adjacent", 'sounds like "adjacent"'],
-      [/\b(?:hypothenuse|hippopotamus|high\s?pot(?:en|in)use|hypotenus)\b/gi, "hypotenuse", 'sounds like "hypotenuse"'],
-      [/\bcortex\b/gi, "cot x", 'sounds like "cot x"'],
-      [/\b(?:opposites?|a\s?posit)\b/gi, "opposite", 'sounds like "opposite"']
-    ];
   }
 });
 
@@ -709,7 +630,8 @@ function normalizeProfile(p) {
     conceptGraph: p?.conceptGraph && typeof p.conceptGraph === "object" && p.conceptGraph.nodes && typeof p.conceptGraph.nodes === "object" ? p.conceptGraph : void 0,
     // Validated more concretely — these two are actively read/written every Tutor turn as of this change.
     tutorSessions: Array.isArray(p?.tutorSessions) ? p.tutorSessions.filter((s) => s && typeof s.taskId === "string" && typeof s.updatedAt === "string").slice(-SESSION_CAP) : void 0,
-    tutorDecisions: Array.isArray(p?.tutorDecisions) ? p.tutorDecisions.filter((d) => d && typeof d.at === "string" && typeof d.action === "string" && typeof d.why === "string").slice(-40) : void 0
+    tutorDecisions: Array.isArray(p?.tutorDecisions) ? p.tutorDecisions.filter((d) => d && typeof d.at === "string" && typeof d.action === "string" && typeof d.why === "string").slice(-40) : void 0,
+    focusSessions: Array.isArray(p?.focusSessions) ? p.focusSessions.slice(-10) : void 0
   };
 }
 function isLowGrade(grade, scale) {
@@ -1286,6 +1208,194 @@ var init_types = __esm({
   }
 });
 
+// shared/exerciseVerification.ts
+function toEvaluableCheck(check, problemText = "") {
+  const degrees = /°|\^\s*\{?\\circ|\bdeg(?:ree)?s?\b|\bdegrés?\b/i.test(problemText) && !/\bpi\b|π|\brad(?:ians?)?\b/i.test(`${problemText} ${check}`);
+  const s = String(check || "").replace(/×/g, "*").replace(/÷/g, "/").replace(/−/g, "-").replace(/π/g, "pi");
+  const needConversion = (fn) => fn.endsWith("d") || degrees;
+  let out = "";
+  for (let i = 0; i < s.length; ) {
+    const m = /^(sin|cos|tan|sind|cosd|tand)/i.exec(s.slice(i));
+    const after = m ? String(s.slice(i + m[0].length)).match(/^\s*\(/) : null;
+    if (!m || !after || !needConversion(m[0].toLowerCase())) {
+      out += s[i++];
+      continue;
+    }
+    const open = i + m[0].length + after[0].length - 1;
+    let depth = 0, j = open;
+    for (; j < s.length; j++) {
+      if (s[j] === "(") depth++;
+      else if (s[j] === ")" && --depth === 0) break;
+    }
+    if (j >= s.length) {
+      out += s[i++];
+      continue;
+    }
+    const inner = toEvaluableCheck(s.slice(open + 1, j), problemText);
+    const fn = m[0].toLowerCase().replace(/d$/, "");
+    out += `${fn}((${inner})*pi/180)`;
+    i = j + 1;
+  }
+  return out;
+}
+function computeCheck(check, problemText = "") {
+  const src = String(check || "").trim();
+  if (!src) return null;
+  const compiled = compileExpr(toEvaluableCheck(src, problemText), []);
+  if ("error" in compiled) return null;
+  const v = compiled.fn({});
+  return Number.isFinite(v) ? Math.round(v * 1e6) / 1e6 : null;
+}
+function statedKeyNumber(answer) {
+  const t = String(answer || "").trim();
+  if (!/^[≈~=]*\s*[-−–]?\d+(?:[ \u00a0,]\d{3})*(?:[.,]\d+)?(?:e[+-]?\d+)?\s*[A-Za-zµΩ°%\s]*$/.test(t)) return NaN;
+  const n = Number(t.replace(/^[≈~=]*\s*/, "").replace(/[−–]/g, "-").replace(/(\d)[ \u00a0,](?=\d{3}(?!\d))/g, "$1").replace(/,/g, ".").replace(/[^0-9.eE+-].*$/, ""));
+  return Number.isFinite(n) ? n : NaN;
+}
+function keysAgree(stored, computed) {
+  if (stored == null || !String(stored).trim()) return true;
+  const stated = statedKeyNumber(stored);
+  if (!Number.isFinite(stated)) return true;
+  return Math.abs(stated - computed) <= Math.max(0.01, Math.abs(computed) * 0.01);
+}
+function verifyExerciseKey(ex) {
+  if (Array.isArray(ex.options) && ex.options.length >= 2 && Number.isInteger(ex.correct) && ex.correct >= 0 && ex.correct < ex.options.length) {
+    return { status: "verified", note: "MCQ: the key is the option index the generator marked correct." };
+  }
+  const computed = ex.value != null && Number.isFinite(ex.value) ? ex.value : computeCheck(String(ex.check || ""), String(ex.question || ""));
+  const stated = statedKeyNumber(ex.answer);
+  if (computed != null && Number.isFinite(stated)) {
+    return keysAgree(ex.answer, computed) ? { status: "verified", computed, stated, note: "the stored key matches the independently computed value." } : { status: "conflict", computed, stated, note: `the stored key (${stated}) disagrees with the independently computed value (${computed}).` };
+  }
+  if (computed != null) return { status: "verified", computed, note: "the key was computed independently of the stored answer text." };
+  if (Number.isFinite(stated)) return { status: "uncertain", stated, note: "no independent computation is available for this item \u2014 the stored key is unverified." };
+  return { status: "not_checked", note: "this item has no numeric key and no computable check." };
+}
+function gradeExerciseAnswer(ex, given, opts = {}) {
+  const check = verifyExerciseKey(ex);
+  const hasMCQ = Array.isArray(ex.options) && ex.options.length >= 2 && Number.isInteger(ex.correct);
+  if (hasMCQ) {
+    const picked = Number(String(given).trim());
+    const correct = Number.isInteger(picked) && picked === ex.correct;
+    return {
+      status: correct ? "correct" : "incorrect",
+      verification: "verified",
+      expected: ex.options?.[ex.correct],
+      keyConflict: false,
+      feedback: correct ? "Correct." : "Not quite \u2014 try another option."
+    };
+  }
+  const computed = check.computed;
+  const expected = computed != null ? String(computed) : ex.answer;
+  const broken = check.status === "conflict";
+  const matchesComputed = computed != null && practiceAnswerMatches(given, String(computed), computed, opts.percent);
+  const matchesStored = !!ex.answer && practiceAnswerMatches(given, ex.answer, computed, opts.percent);
+  if (matchesComputed) return { status: "correct", verification: check.status, expected, keyConflict: broken, feedback: "Correct." };
+  if (check.status === "conflict") {
+    return { status: "system_error", verification: "conflict", expected, keyConflict: true, feedback: `This item's answer key disagrees with the independently computed value (${computed}), so your answer wasn't graded as wrong. Otto will fix it.` };
+  }
+  if (matchesStored) return { status: "correct", verification: check.status, expected, keyConflict: broken, feedback: "Correct." };
+  return { status: "incorrect", verification: check.status, expected, keyConflict: broken, feedback: "Not quite \u2014 try again." };
+}
+function gradeGapAnswer(storedKey, recomputed, target, given) {
+  const key2 = recomputed != null ? String(recomputed) : String(storedKey || "");
+  if (!key2) return { verdict: "unknown", keyConflict: false, verification: "not_checked" };
+  const verdict = equivalent(given, key2, target);
+  const keyConflict = recomputed != null && !!storedKey && !keysAgree(storedKey, recomputed);
+  const trust = keyConflict ? "conflict" : verdict === "unknown" ? "uncertain" : "verified";
+  if (verdict === "correct") return { verdict: "correct", keyConflict, verification: trust };
+  if (verdict === "incorrect" && keyConflict) return { verdict: "system_error", keyConflict: true, verification: "conflict" };
+  if (verdict === "unknown") return { verdict: "unknown", keyConflict, verification: trust };
+  return { verdict: "incorrect", keyConflict, verification: trust };
+}
+var init_exerciseVerification = __esm({
+  "shared/exerciseVerification.ts"() {
+    "use strict";
+    init_mathExpr();
+    init_mathEquiv();
+    init_types();
+  }
+});
+
+// shared/spokenMath.ts
+function spokenContextFrom(texts) {
+  const all = texts.join("\n");
+  const angles = /* @__PURE__ */ new Set();
+  for (const m of all.matchAll(/(\d{1,3}(?:\.\d+)?)\s*(?:°|\^\s*\{?\\circ\}?|\\circ|\s?deg(?:rees?)?\b|\s?degrés?\b)/gi)) angles.add(Number(m[1]));
+  const fns = TRIG.filter((f4) => new RegExp(`(?:\\\\|\\b)${f4}\\b`, "i").test(all));
+  const vars = /* @__PURE__ */ new Set();
+  for (const m of all.replace(/\\[a-zA-Z]+/g, " ").matchAll(/(?<![A-Za-z])([a-zA-Z])(?![A-Za-z])/g)) vars.add(m[1]);
+  return { angles: [...angles], fns, vars: [...vars] };
+}
+function repairSpokenMath(transcript, ctx) {
+  const changes = [];
+  let low = false;
+  let s = String(transcript || "");
+  const trigInPlay = ctx.fns.length > 0 || /\b(?:tan|sin|cos|opposite|adjacent|hypotenuse|angle|elevation|depression)\b/i.test(s);
+  const knownAngle = (n) => ctx.angles.includes(Number(n));
+  for (const [re, to, why] of WORD_SOUNDALIKES) {
+    s = s.replace(re, (m) => {
+      if (m.toLowerCase() === to) return m;
+      changes.push({ from: m, to, why });
+      return to;
+    });
+  }
+  if (ctx.angles.length && /\b10\d{2}\b\s*(?:=|over|\/)/i.test(s)) {
+    s = s.replace(/\b10(\d{1,2})\b/g, (m, a) => {
+      if (!knownAngle(a)) return m;
+      changes.push({ from: m, to: `tan ${a}\xB0`, why: `"tan" heard as "ten" and merged with the ${a}\xB0 angle on the board` });
+      if (!trigInPlay) low = true;
+      return `tan ${a}\xB0`;
+    });
+  }
+  if (trigInPlay && ctx.angles.length) {
+    s = s.replace(/(^|.{0,12}?)\b([A-Za-z]+|10)\s+(?:of\s+)?(\d{1,3})(?!\d)(\s*°)?(?=(.{0,12}))/g, (m, before, w, a, deg, after) => {
+      if (!knownAngle(a)) return m;
+      const hit = FN_SOUNDALIKES.find(([, re]) => re.test(w));
+      if (!hit) return m;
+      const mathsNear = /[=+\-*/×÷()]|\b(?:over|times|equals?|plus|minus|is)\b/i;
+      if (EVERYDAY.test(w) && !mathsNear.test(before) && !mathsNear.test(after)) return m;
+      m = m.slice(before.length);
+      const to = `${hit[0]} ${a}\xB0`;
+      if (w.toLowerCase() === hit[0] && deg) return m;
+      if (w.toLowerCase() !== hit[0]) {
+        changes.push({ from: m.trim(), to, why: `"${w}" right before the ${a}\xB0 angle is most likely "${hit[0]}"` });
+        if (!ctx.fns.includes(hit[0])) low = true;
+      }
+      return before + to;
+    });
+  }
+  const LETTERS = [["h", /^(?:8|age|each|aitch|edge)$/i], ["b", /^(?:be|bee)$/i], ["x", /^(?:ex|eggs)$/i], ["y", /^(?:why)$/i], ["c", /^(?:see|sea)$/i]];
+  s = s.replace(/(^|[=+\-*/×÷(]\s*|\bover\s+|\btimes\s+)([A-Za-z]+|8)(?=\s*(?:$|[=+\-*/×÷)]|\bover\b|\btimes\b))/gi, (m, pre, w) => {
+    const hit = LETTERS.find(([v, re]) => ctx.vars.includes(v) && re.test(w));
+    if (!hit) return m;
+    changes.push({ from: w, to: hit[0], why: `"${w}" in a maths position, and ${hit[0]} is a variable in this problem` });
+    low = true;
+    return `${pre}${hit[0]}`;
+  });
+  return { interpreted: s.replace(/\s{2,}/g, " ").trim(), changes, confidence: low ? "low" : "high" };
+}
+var TRIG, EVERYDAY, FN_SOUNDALIKES, WORD_SOUNDALIKES;
+var init_spokenMath = __esm({
+  "shared/spokenMath.ts"() {
+    "use strict";
+    TRIG = ["sin", "cos", "tan", "cot", "sec", "csc"];
+    EVERYDAY = /^(?:can|count|ten|tin|ton|town|turn|sign|seen|sing|scene|cause|because|cost|course|cut|caught|court)$/i;
+    FN_SOUNDALIKES = [
+      ["tan", /^(?:tan|tans|tam|tang|ten|tin|ton|town|turn|count|can|10)$/i],
+      ["sin", /^(?:sin|sign|sine|sane|seen|sing|scene)$/i],
+      ["cos", /^(?:cos|coast|cause|cosign|kos|cost|course|coz|because)$/i],
+      ["cot", /^(?:cot|cut|caught|court)$/i]
+    ];
+    WORD_SOUNDALIKES = [
+      [/\b(?:json|jason|jayson|a\s?jason|a\s?json|ajay\s?sent|adjacents)\b/gi, "adjacent", 'sounds like "adjacent"'],
+      [/\b(?:hypothenuse|hippopotamus|high\s?pot(?:en|in)use|hypotenus)\b/gi, "hypotenuse", 'sounds like "hypotenuse"'],
+      [/\bcortex\b/gi, "cot x", 'sounds like "cot x"'],
+      [/\b(?:opposites?|a\s?posit)\b/gi, "opposite", 'sounds like "opposite"']
+    ];
+  }
+});
+
 // server/patterns.ts
 function predictNextEngagement(profile, minTotal = 20) {
   const grid = profile?.activityWeekdayHours;
@@ -1828,7 +1938,7 @@ function latexToPlainText(latex) {
       return `${wrap(a)}/${wrap(b)}`;
     }).replace(/\\[dtc]?frac\s*(\d)(\d)/g, "$1/$2");
   }
-  const SYM = { cdot: "\xB7", times: "\xD7", div: "\xF7", pi: "\u03C0", theta: "\u03B8", alpha: "\u03B1", beta: "\u03B2", infty: "\u221E", approx: "\u2248", neq: "\u2260", ne: "\u2260", leq: "\u2264", le: "\u2264", geq: "\u2265", ge: "\u2265", pm: "\xB1", Rightarrow: "\u21D2", to: "\u2192", rightarrow: "\u2192" };
+  const SYM = { cdot: "\xB7", times: "\xD7", div: "\xF7", pi: "\u03C0", theta: "\u03B8", alpha: "\u03B1", beta: "\u03B2", infty: "\u221E", approx: "\u2248", neq: "\u2260", ne: "\u2260", leq: "\u2264", le: "\u2264", geq: "\u2265", ge: "\u2265", pm: "\xB1", Rightarrow: "\u21D2", implies: "\u21D2", Longrightarrow: "\u27F9", longrightarrow: "\u27F6", Longleftarrow: "\u27F8", Leftrightarrow: "\u27FA", leftrightarrow: "\u27FA", iff: "\u27FA", gets: "\u2190", leftarrow: "\u2190", mapsto: "\u21A6", to: "\u2192", rightarrow: "\u2192" };
   s = s.replace(/\\([a-zA-Z]+)/g, (_, c) => SYM[c] ?? c).replace(/[{}]/g, "");
   return s.replace(/\s{2,}/g, " ").trim();
 }
@@ -8138,7 +8248,7 @@ function detectLang(text) {
   return "unknown";
 }
 function stripLeakedToolCallSyntax(text) {
-  const hits = [TOOL_CALL_LEAK_MARKER.exec(text), TOOL_CALL_LEAK_MARKER2.exec(text)].filter((m) => !!m);
+  const hits = [TOOL_CALL_LEAK_MARKER.exec(text), TOOL_CALL_LEAK_MARKER2.exec(text), TOOL_CALL_LEAK_MARKER3.exec(text)].filter((m) => !!m);
   if (!hits.length) return text;
   const cut = Math.min(...hits.map((m) => m.index));
   return text.slice(0, cut).trimEnd();
@@ -8323,6 +8433,9 @@ function leaksAnyProblemAnswer(text, problems) {
 function makeProblem(input, requireCheck = false) {
   const question = String(input?.question || "").trim().slice(0, 1500);
   if (!question) return { error: "ERROR: a problem needs a non-empty question." };
+  if (/⟹|⇒|→|= \?|=\s*\?$/.test(question)) {
+    return { error: 'REJECTED: write the question in clear prose, not symbolic notation (e.g., "Technology improves \u27F9 supply shifts = ?"). State the situation in words (e.g., "Technology improves production. What happens to the supply curve?"). Then specify the expected answer format.' };
+  }
   const why = input?.why ? String(input.why).trim().slice(0, 300) : void 0;
   let hint = input?.hint ? String(input.hint).trim().slice(0, 300) : void 0;
   let format = input?.format ? String(input.format).trim().slice(0, 200) : void 0;
@@ -8683,10 +8796,19 @@ function makeInteractiveEntry(input) {
 }
 function makePracticeProblem(input) {
   const problem = String(input?.problem || "").trim().slice(0, 600);
-  const answer = String(input?.answer || "").trim().slice(0, 200);
+  let answer = String(input?.answer || "").trim().slice(0, 200);
   if (!problem || !answer) return { error: "ERROR: a practice problem needs both a non-empty problem and answer." };
   const format = scrubAnswerLeak(input?.format ? String(input.format).trim().slice(0, 200) : void 0, answer);
-  return { problem: { id: randomUUID2(), problem, answer, ...format ? { format } : {}, createdAt: (/* @__PURE__ */ new Date()).toISOString() } };
+  const check = input?.check ? String(input.check).trim().slice(0, 200) : void 0;
+  const value = check ? computeCheck(check, problem) : null;
+  if (value != null) {
+    const stated = statedKeyNumber(answer);
+    if (!Number.isFinite(stated) || Math.abs(stated - value) > Math.max(0.01, Math.abs(value) * 0.01)) {
+      console.warn(`[practice] answer key disagreed with its own check \u2014 using the computed value ${value}`);
+      answer = String(value);
+    }
+  }
+  return { problem: { id: randomUUID2(), problem, answer, ...check ? { check } : {}, ...value != null ? { value } : {}, ...format ? { format } : {}, createdAt: (/* @__PURE__ */ new Date()).toISOString() } };
 }
 function parseGenerated(arr) {
   if (!Array.isArray(arr)) return [];
@@ -9588,9 +9710,9 @@ async function generateDailyPracticeProblem(logText, profile) {
       temperature: 0.3,
       response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: languageLine(profile) + trackLine(profile) + `The student's log entry below MAY cover math/physics/science. If it genuinely does, write ONE real practice problem (a calculation, an equation to solve, a short applied problem) on THOSE actual themes, calibrated to their year/grade level above. This is FREE-RESPONSE, not multiple choice \u2014 the student will type their own answer, so: "answer" must be JUST THE BARE NUMBER in its simplest normal form (e.g. "84", "3.5", "-2") \u2014 NO unit attached to it (not "84 m", not "3.5 s"), same convention as an SAT/digital-exam grid-in answer: the number alone is what's graded, a unit is never required or expected. If the quantity genuinely can't be reduced to one bare number (a short expression, a word/phrase answer), that's fine \u2014 just never pad a numeric answer with its unit. Not a worked solution, not a sentence explaining it, just the answer itself, since it's checked by comparison. "format" is a short note on what the typed answer should look like \u2014 decimal places, simplification, and explicitly REMIND the student they don't need to type the unit \u2014 IMPORTANT: use GENERIC examples that don't reveal the actual answer (e.g. "round to one decimal place" instead of "e.g. 14.7", "as a simplified fraction" instead of "e.g. 3/4") \u2014 AND which plain-text symbols to use for anything not on a normal keyboard (e.g. "^" for an exponent, "sqrt(x)" for a square root, "pi", "x_1" for a subscript, "->" for a reaction arrow), so the student knows how to actually type it. If the entry has NO real math/physics/science content, or you cannot write a genuine problem from it, output {"problem": null}.
+        { role: "system", content: languageLine(profile) + trackLine(profile) + `The student's log entry below MAY cover math/physics/science. If it genuinely does, write ONE real practice problem (a calculation, an equation to solve, a short applied problem) on THOSE actual themes, calibrated to their year/grade level above. This is FREE-RESPONSE, not multiple choice \u2014 the student will type their own answer, so: "answer" must be JUST THE BARE NUMBER in its simplest normal form (e.g. "84", "3.5", "-2") \u2014 NO unit attached to it (not "84 m", not "3.5 s"), same convention as an SAT/digital-exam grid-in answer: the number alone is what's graded, a unit is never required or expected. If the quantity genuinely can't be reduced to one bare number (a short expression, a word/phrase answer), that's fine \u2014 just never pad a numeric answer with its unit. Not a worked solution, not a sentence explaining it, just the answer itself, since it's checked by comparison. "format" is a short note on what the typed answer should look like \u2014 decimal places, simplification, and explicitly REMIND the student they don't need to type the unit \u2014 IMPORTANT: use GENERIC examples that don't reveal the actual answer (e.g. "round to one decimal place" instead of "e.g. 14.7", "as a simplified fraction" instead of "e.g. 3/4") \u2014 AND which plain-text symbols to use for anything not on a normal keyboard (e.g. "^" for an exponent, "sqrt(x)" for a square root, "pi", "x_1" for a subscript, "->" for a reaction arrow), so the student knows how to actually type it. "check" is an arithmetic expression that COMPUTES "answer" from the problem's own numbers, using + - * / ^ ( ) sqrt sin cos tan (plain sin/cos/tan mean DEGREES when the problem is in degrees) and pi \u2014 e.g. "(500-100)/(20+30)" for an equilibrium price. The app evaluates it and the computed value wins if it disagrees with "answer", so a wrong key can never mark a right answer wrong; write it even when the answer is short. Omit it only when "answer" genuinely isn't numeric. If the entry has NO real math/physics/science content, or you cannot write a genuine problem from it, output {"problem": null}.
 
-Return ONLY this JSON: {"problem": {"problem": "...", "answer": "...", "format": "..."} | null}.` },
+Return ONLY this JSON: {"problem": {"problem": "...", "answer": "...", "check": "...", "format": "..."} | null}.` },
         { role: "user", content: `TODAY'S LOG ENTRY:
 """
 ${raw.slice(0, 4e3)}
@@ -12302,12 +12424,13 @@ function fallbackCourseworkSummary(text) {
   }
   return (out || clean.slice(0, 420)).trim();
 }
-var EXECUTION_ENABLED, SEARCH_INSTRUCTION, BARE_NAVIGATION, TRIVIAL_EXEMPT, isTrivialStep, ARTIFACT_STEP_VERB, ARTIFACT_STEP_NOUNS, ARTIFACT_USE_RE, NO_MARKDOWN_LINE, CHAT_LANGUAGE_OVERRIDE, BIG_PROJECT_RE, MISSION, PLAN_ONLY_OVERRIDE, MATERIAL_CHARS_PER_ITEM, MATERIAL_CHARS_TOTAL, STOPWORDS, FOLDER_HOUSEKEEPING_STEP, COORDINATION_OUTCOME_DOD, MEMORIZABLE_CONTENT_DOD, DOABLE_STEP, JUDGMENT_STEP, PROCESS_COMPLAINT_STEP, APP_PREP_STEP, CONNECTION_HEALTH_STEP, ADMIN_COMM_STEP, OTTO_INTERNAL_STEP, THIRD_PERSON_STUDENT_STEP, STUDY_TASK_TYPES, ENTITY_STOPWORDS, LEGACY_DEEPSEEK_MODEL_MAP, AI_PROVIDER, USING_NVIDIA, DEEPSEEK_MODEL, OUT, GEMINI_MODEL, TTS_MALE_VOICES, TTS_CHUNK_MAX, TTS_MAX_TEXT, BROWSER_UA, TTS_API_URL, TTS_TIMEOUT_MS, EDGE_MALE_VOICES, xmlEscape, EN_ONLY, GEMINI_OPENAI_BASE_URL, GEMINI_TUTOR_MODEL, thinkingToggleRejected, FR_SIGNAL, EN_SIGNAL, TOOL_CALL_LEAK_MARKER, TOOL_CALL_LEAK_MARKER2, TRIM_KEEP, TRIM_TO, GEN_SYSTEM, SUBMIT_TASKS_TOOL, WEB_SEARCH_TOOL, READ_PAGE_TOOL, CREATE_CALC_TOOL, BRIEF_STYLE, CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL, CREATE_PROBLEM_TOOL, WIDGET_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, SOLID_ON_BOARD_TOOL, SVG_ON_BOARD_TOOL, FLOW_ON_BOARD_TOOL, FIND_SOURCE_QUESTION_TOOL, WRITE_TO_BOARD_TOOL, CREATE_INTERACTIVE_TOOL, SET_OBJECTIVES_TOOL, MIN_NOTE_BODY, BRIEF_COMPRESS_WORDS, DECK_CARD_CAP, MONTHLY_DECK_CARD_CAP, DAILY_DECK_CARD_CAP, ANTONYM_PAIRS, BOARD_KINDS, MAX_OUTLINE_SECTIONS, MAX_OUTLINE_BULLETS, MAX_DIAGRAM_OPS, clampCoord, clampX, clampY, clampR, DIAGRAM_SIZES, GEOMETRY_ON_BOARD_TOOL, ANNOTATE_BOARD_TOOL, GRAPH_COLORS, GRAPH_ON_BOARD_TOOL, MAX_INTERACTIVE_HTML_CHARS, INTERACTIVE_SCRIPT_ALLOWLIST, INTERACTIVE_SCENE_CSP, ANCHORED_SOURCES, STUDENT_MODEL_SYS, CARD_STYLE_RULE, QUIZ_STYLE_RULE, FLASHCARD_STYLE_TEXT, STEM_HINT_RE, REMEMBER_TOOL, LEARNING_SCIENCE_RULES, STUDY_HELP_HISTORY_CAP, DRAFT_CLAIM, DOES_STUDENT_WORK, CHAT_DOES_WORK, CHAT_STATES_ANSWER, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, CHAT_ASSERTS_FACT, CHAT_MAX_ROUNDS, CHAT_MAX_ARTIFACTS, PRIMER_MAX_ROUNDS, PRIMER_BUDGET_MS, CHAT_TOKEN_CEILING, PRIMER_PERSONA, PRIMER_CLOSING_REMINDER, ARTIFACT_KEYWORDS, COURSEWORK_WINDOW_CHARS;
+var EXECUTION_ENABLED, SEARCH_INSTRUCTION, BARE_NAVIGATION, TRIVIAL_EXEMPT, isTrivialStep, ARTIFACT_STEP_VERB, ARTIFACT_STEP_NOUNS, ARTIFACT_USE_RE, NO_MARKDOWN_LINE, CHAT_LANGUAGE_OVERRIDE, BIG_PROJECT_RE, MISSION, PLAN_ONLY_OVERRIDE, MATERIAL_CHARS_PER_ITEM, MATERIAL_CHARS_TOTAL, STOPWORDS, FOLDER_HOUSEKEEPING_STEP, COORDINATION_OUTCOME_DOD, MEMORIZABLE_CONTENT_DOD, DOABLE_STEP, JUDGMENT_STEP, PROCESS_COMPLAINT_STEP, APP_PREP_STEP, CONNECTION_HEALTH_STEP, ADMIN_COMM_STEP, OTTO_INTERNAL_STEP, THIRD_PERSON_STUDENT_STEP, STUDY_TASK_TYPES, ENTITY_STOPWORDS, LEGACY_DEEPSEEK_MODEL_MAP, AI_PROVIDER, USING_NVIDIA, DEEPSEEK_MODEL, OUT, GEMINI_MODEL, TTS_MALE_VOICES, TTS_CHUNK_MAX, TTS_MAX_TEXT, BROWSER_UA, TTS_API_URL, TTS_TIMEOUT_MS, EDGE_MALE_VOICES, xmlEscape, EN_ONLY, GEMINI_OPENAI_BASE_URL, GEMINI_TUTOR_MODEL, thinkingToggleRejected, FR_SIGNAL, EN_SIGNAL, TOOL_CALL_LEAK_MARKER, TOOL_CALL_LEAK_MARKER2, TOOL_CALL_LEAK_MARKER3, TRIM_KEEP, TRIM_TO, GEN_SYSTEM, SUBMIT_TASKS_TOOL, WEB_SEARCH_TOOL, READ_PAGE_TOOL, CREATE_CALC_TOOL, BRIEF_STYLE, CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL, CREATE_PROBLEM_TOOL, WIDGET_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, SOLID_ON_BOARD_TOOL, SVG_ON_BOARD_TOOL, FLOW_ON_BOARD_TOOL, FIND_SOURCE_QUESTION_TOOL, WRITE_TO_BOARD_TOOL, CREATE_INTERACTIVE_TOOL, SET_OBJECTIVES_TOOL, MIN_NOTE_BODY, BRIEF_COMPRESS_WORDS, DECK_CARD_CAP, MONTHLY_DECK_CARD_CAP, DAILY_DECK_CARD_CAP, ANTONYM_PAIRS, BOARD_KINDS, MAX_OUTLINE_SECTIONS, MAX_OUTLINE_BULLETS, MAX_DIAGRAM_OPS, clampCoord, clampX, clampY, clampR, DIAGRAM_SIZES, GEOMETRY_ON_BOARD_TOOL, ANNOTATE_BOARD_TOOL, GRAPH_COLORS, GRAPH_ON_BOARD_TOOL, MAX_INTERACTIVE_HTML_CHARS, INTERACTIVE_SCRIPT_ALLOWLIST, INTERACTIVE_SCENE_CSP, ANCHORED_SOURCES, STUDENT_MODEL_SYS, CARD_STYLE_RULE, QUIZ_STYLE_RULE, FLASHCARD_STYLE_TEXT, STEM_HINT_RE, REMEMBER_TOOL, LEARNING_SCIENCE_RULES, STUDY_HELP_HISTORY_CAP, DRAFT_CLAIM, DOES_STUDENT_WORK, CHAT_DOES_WORK, CHAT_STATES_ANSWER, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, CHAT_ASSERTS_FACT, CHAT_MAX_ROUNDS, CHAT_MAX_ARTIFACTS, PRIMER_MAX_ROUNDS, PRIMER_BUDGET_MS, CHAT_TOKEN_CEILING, PRIMER_PERSONA, PRIMER_CLOSING_REMINDER, ARTIFACT_KEYWORDS, COURSEWORK_WINDOW_CHARS;
 var init_claude = __esm({
   "server/claude.ts"() {
     "use strict";
     init_types();
     init_mathExpr();
+    init_exerciseVerification();
     init_coursework();
     init_types();
     init_patterns();
@@ -12555,6 +12678,7 @@ INCLUDE LINKS \u2014 when you recommend specific resources or reference specific
     EN_SIGNAL = /\b(the|is|are|what|why|how|you|your|you're|i'm|dont|don't|doesn't|didn't|isn't|understand|help|explain|this|that|with|because|which|and|not|just|like|get|got|lost|simple|simply|please|thanks|yeah|okay|now|next)\b/gi;
     TOOL_CALL_LEAK_MARKER = /<｜[^｜<>]{0,60}｜>/;
     TOOL_CALL_LEAK_MARKER2 = /<\/?call:[a-zA-Z0-9_]*/i;
+    TOOL_CALL_LEAK_MARKER3 = /<patch>/i;
     TRIM_KEEP = 6;
     TRIM_TO = 1e3;
     GEN_SYSTEM = MISSION + `
@@ -13002,6 +13126,7 @@ dotenv.config();
 // server/index.ts
 init_sentry();
 init_mathEquiv();
+init_exerciseVerification();
 init_spokenMath();
 import express from "express";
 import compression from "compression";
@@ -13686,6 +13811,39 @@ function applyEntryAction(entries, action, engine = {}) {
 // server/tutor.ts
 init_boardEvents();
 init_tutorAdapt();
+
+// shared/lessonPlanner.ts
+function getCurrentTopic(plan) {
+  if (plan.currentTopicIndex >= plan.topics.length) return null;
+  const topic = plan.topics[plan.currentTopicIndex];
+  if (plan.currentSubtopicIndex >= topic.subtopics.length) return null;
+  const subtopic = topic.subtopics[plan.currentSubtopicIndex];
+  return { topic, subtopic };
+}
+function getLessonProgress(plan) {
+  let totalSubtopics = 0;
+  let completedSubtopics = 0;
+  for (let i = 0; i < plan.topics.length; i++) {
+    const topic = plan.topics[i];
+    for (let j = 0; j < topic.subtopics.length; j++) {
+      totalSubtopics++;
+      if (i < plan.currentTopicIndex || i === plan.currentTopicIndex && j < plan.currentSubtopicIndex) {
+        completedSubtopics++;
+      }
+    }
+  }
+  return totalSubtopics > 0 ? Math.round(completedSubtopics / totalSubtopics * 100) : 0;
+}
+function generateLessonPlanSummary(plan) {
+  const current = getCurrentTopic(plan);
+  if (!current) return "Lesson complete";
+  const { topic, subtopic } = current;
+  const progress = getLessonProgress(plan);
+  return `${plan.subject} \u2192 ${topic.name} \u2192 ${subtopic.name}
+Progress: ${progress}%`;
+}
+
+// server/tutor.ts
 init_tutorAdapt();
 init_mathText();
 init_mathEquiv();
@@ -13727,19 +13885,42 @@ BE RIGHT \u2014 YOU ALWAYS KNOW THE ANSWER
 - The WORKED SOLUTION block (when present) is the verified solution of the problem in focus: steer by it, check their numbers against its steps, watch for its common mistakes. Never reveal it.
 - Without one, work the problem out yourself before reacting. "Spot on" only for a value that matches THEIR number. Never confirm a wrong step, never call a right one wrong; if something's off, ask the question that lets them spot it.
 - A line starting "VERIFIED BY CODE" is the truth about their step. An answer box's "checked wrong" is not gospel: recompute first; if they're right, say so at once.
+- A result reported as NOT GRADED because the item's key contradicts the value computed by code is a system error, not a miss: say plainly that the app's key was wrong, not them, keep their working, and continue with the same idea (never make them redo the answer or re-enter it, and never treat it as evidence they were stuck). Fix the item if you can; otherwise move to a verified task.
 - A message that makes no sense for the subject (a stray sentence about something else, a name, "history") is almost always a mis-heard voice: say once, briefly, that you didn't catch it and ask what they meant. Never treat it as a request \u2014 don't clear the board, drop the problem or switch topic because of it. Say "here's a new problem on the board" only after CREATE_PROBLEM has succeeded.
 - If they ask why a line is on the board, tell the truth about it (e.g. "I wrote your 5.52 \xD7 4 from what you said \u2014 and 5.52 isn't the net force, so that line is wrong") \u2014 never invent an explanation ("a stray note from an earlier run"). A wrong line gets fixed by adding the corrected one beside it.
 - Never invent facts, never blame the app, and NEVER change a given: the problem's numbers are exactly as written, even if they don't work out. If they can't produce what the question asks, say so plainly once and offer to change one \u2014 never swap a value to make it work. If unsure what they meant, ask, offering your best reading.
 
 THE BOARD \u2014 shared paper, one worksheet per problem
 - It holds what's worth keeping: the givens, a figure, THEIR equations and results (owner "student") \u2014 when they reach a result or finish a step, put it on the board right away, cleanly \u2014 a definition, an outline. Everything on it is about the problem you're working on \u2014 nothing else. Teaching itself is spoken.
+- AUTOMATIC BOARD UPDATES: update the board automatically when a new formula is introduced, a calculation begins, a definition is taught, a graph is needed, a diagram is referenced, a new conceptual distinction becomes important, a worked example is completed, or the lesson moves to a new topic. Do NOT wait for the student to say "put that on the board".
+- BOARD STRUCTURE (organize content into these functional areas when possible):
+  A. Lesson header: subject \u2192 topic \u2192 subtopic \u2192 activity (e.g., "Economics \u2192 Supply and demand \u2192 Determinants of demand \u2192 Guided practice")
+  B. Main teaching canvas: the primary visual or mathematical representation (graph, worked calculation, labeled equation, causal diagram)
+  C. Step-by-step working: separate structured items for each step (given, unknown, relationship, equation setup, manipulation, result, interpretation)
+  D. Key knowledge: concise concepts, definitions, formulas, or rules most relevant to the lesson (do NOT add the answer while testing recall)
+  E. Current task: the active question and expected student response format
 - Maths in LaTeX between $\u2026$. When they ask you to write something, write it (their step goes in as owner "student"). Gaps are rare: most next steps are just asked in conversation; use a GAP (kind "gap", line ending "= ?", expectedAnswer set) only when they should fill in one specific line \u2014 at most one, never a second while one is open. Never write a step they haven't reached or the answer; never answer your own question on the board.
 - Figures must be accurate, so use the tools that draw to scale: triangles/circles/polygons \u2192 GEOMETRY_ON_BOARD; towers, cliffs, angles of elevation \u2192 TRIG_SCENE_ON_BOARD; a block on a slope, forces \u2192 INCLINE_ON_BOARD; functions \u2192 GRAPH_ON_BOARD; processes, causes, essay plans \u2192 FLOW_ON_BOARD. SVG_ON_BOARD is only for qualitative pictures (a cell, apparatus, a map) \u2014 never for anything with angles or lengths.
 - Fix a wrong line of YOURS in place with UPDATE_BOARD_LINE (or take it off with REMOVE_BOARD_LINE); the student's own lines are protected \u2014 add your corrected line beside theirs. Every board tool returns {ok:true\u2026} or {ok:false,error:{code}}: only say a change happened if the result says ok.
 - Point at a line by its margin number ("look at line 4") or with ANNOTATE_BOARD. Never claim a board write you didn't make this turn.
 - NOTHING ON IT IS EVER DELETED \u2014 not their working, not an old problem, not a line you'd rather replace. There is no clear-board action: when the topic changes, ADD the new focus line and leave the old working there. Annotate or correct next to what they wrote; never overwrite it.
 - A formula or equation you put in your REPLY goes on the board too \u2014 maths lives on the board, words in the chat. Write it (or the step they reached) and then ask about the line; never leave maths only in the bubble.
-- Exercises (CREATE_PROBLEM): only when they ask for one; a single short checkable answer, with precision and unit stated. Open questions stay in the conversation. Lists and anything long go on the board; the message points at it.
+- Exercises (CREATE_PROBLEM): generate proactively when the student demonstrates competence; a single short checkable answer, with precision and unit stated. Open questions stay in the conversation. Lists and anything long go on the board; the message points at it.
+
+PROACTIVE TEACHING \u2014 don't wait for the student to direct every action
+- After a correct answer, move to the next activity automatically: a slightly harder question, a conceptual application, a real-world example, or the next subtopic \u2014 do NOT ask "what else do you want to study?"
+- After demonstrating competence in a skill (e.g., solving linear equilibrium), vary the task: try conceptual questions, graphical interpretation, or applied problems \u2014 do NOT repeat the same exercise type indefinitely
+- Generate exercises proactively when appropriate, not only when explicitly requested
+- When the student asks for a summary, diagram, or explanation, ensure it actually exists on the board and is complete \u2014 do not just say "look at the board" when the relevant object is missing or incomplete
+- Keep the lesson moving forward based on demonstrated performance, not by repeatedly asking the student what to do next
+
+SPECIFIC FEEDBACK \u2014 refer to the student's actual answer
+- If correct: confirm correctness and identify the key reason, then move forward. Do NOT ask them to repeat the same calculation or type an answer again.
+- If partially correct: identify the exact correct part and the specific missing or incorrect part. The board should highlight the missing part.
+- If incorrect: identify the first incorrect step, explain why if clear, give the smallest useful hint, let them attempt correction. Distinguish conceptual error from arithmetic error.
+- If the answer is ambiguous: ask one focused clarification. Do NOT invent an interpretation.
+- If the student gives a related but incorrect definition (e.g., "opportunity cost" when asked for "scarcity"): recognize the conceptual mismatch, explain accurately, show the distinction on the board, and check understanding with a focused follow-up
+- Correctness takes priority over keeping the conversation moving
 
 ANY SUBJECT
 - Maths/sciences: givens, figure, equation, gaps. History/economics: causes \u2192 effects, evidence, a timeline or argument outline. Essays/literature: thesis, structure, quotes \u2014 they argue, you never write it. Languages: vocabulary, a sentence to transform, their own attempt.
@@ -13966,15 +14147,16 @@ function solvedGapKey(text) {
   const plain = latexToPlainText(String(text || "").replace(/\$/g, " ")).replace(/(\d),(?=\d{3}(?!\d))/g, "$1");
   const target = /([A-Za-z])\s*=\s*\?\s*$/.exec(plain)?.[1];
   if (!target) return null;
-  const eq = plain.split(/⟹|⇒|Longrightarrow|Rightarrow|→|->|=>|\\Rightarrow/)[0].replace(/½/g, "(1/2)").replace(/[·⋅×]/g, "*").replace(/²/g, "^2").replace(/³/g, "^3");
+  const eq = plain.split(/⟹|⟸|⇒|⇐|⟺|→|->|=>|\\Rightarrow|\\Longrightarrow|\b(?:implies|implique|imply|donc|thus|therefore|then|so)\b/i)[0].replace(/½/g, "(1/2)").replace(/[·⋅×]/g, "*").replace(/²/g, "^2").replace(/³/g, "^3");
   const sides = eq.split("=");
   if (sides.length !== 2 || !sides.every((x) => x.trim())) return null;
-  const re = new RegExp(`(?<![A-Za-z])${target}(?![A-Za-z])`);
+  const re = new RegExp(`(?<![A-Za-z])${target}(?![A-Za-z])`, "i");
   if (!re.test(sides[0] + sides[1])) return null;
-  const l = compileExpr(toExprSource(sides[0].replace(/(?<=\d|\))\s*(?=[A-Za-z(])/g, "*")), [target]);
-  const r = compileExpr(toExprSource(sides[1].replace(/(?<=\d|\))\s*(?=[A-Za-z(])/g, "*")), [target]);
+  const targetKey = target.toLowerCase();
+  const l = compileExpr(toExprSource(sides[0].replace(/(?<=\d|\))\s*(?=[A-Za-z(])/g, "*"), targetKey), [targetKey]);
+  const r = compileExpr(toExprSource(sides[1].replace(/(?<=\d|\))\s*(?=[A-Za-z(])/g, "*"), targetKey), [targetKey]);
   if ("error" in l || "error" in r) return null;
-  const f4 = (x) => l.fn({ [target]: x }) - r.fn({ [target]: x });
+  const f4 = (x) => l.fn({ [targetKey]: x }) - r.fn({ [targetKey]: x });
   const roots = [];
   let prev = 1e-6, fp = f4(prev);
   for (let x = 1e-6, step = 1.05; x < 1e6; x *= step) {
@@ -13993,6 +14175,28 @@ function solvedGapKey(text) {
     fp = fc;
   }
   return roots.length === 1 ? Math.round(roots[0] * 1e6) / 1e6 : null;
+}
+function resolveGapKey(lineText, storedKey, sentKey) {
+  const computed = computedGapKey(String(lineText || "")) ?? solvedGapKey(String(lineText || ""));
+  if (computed != null) return String(computed);
+  const stored = typeof storedKey === "string" && storedKey.trim() ? storedKey.trim() : void 0;
+  if (stored) return stored.slice(0, 200);
+  return typeof sentKey === "string" && sentKey.trim() ? sentKey.trim().slice(0, 200) : void 0;
+}
+function rehydrateProblemKey(sent, stored) {
+  const base = stored ? { ...stored, solved: sent?.solved === true } : { id: typeof sent?.id === "string" ? sent.id.slice(0, 64) : "", createdAt: "", question: String(sent?.question || "").slice(0, 600), solved: sent?.solved === true };
+  if (stored?.answer || stored?.value != null) return base;
+  const answer = typeof sent?.answer === "string" && sent.answer.trim() ? sent.answer.trim().slice(0, 200) : void 0;
+  const value = typeof sent?.value === "number" && Number.isFinite(sent.value) ? sent.value : void 0;
+  const options = Array.isArray(sent?.options) ? sent.options.map((o) => String(o).slice(0, 300)).filter(Boolean).slice(0, 6) : void 0;
+  const correct = Number.isInteger(sent?.correct) ? Number(sent.correct) : void 0;
+  return {
+    ...base,
+    ...answer ? { answer } : {},
+    ...value != null ? { value } : {},
+    ...options?.length && !base.options ? { options } : {},
+    ...correct != null && base.correct == null && options?.length ? { correct } : {}
+  };
 }
 function computedGapKey(text) {
   const plain = latexToPlainText(String(text || "").replace(/\$/g, " ")).replace(/(\d),(?=\d{3}(?!\d))/g, "$1");
@@ -14082,6 +14286,18 @@ function dedupeParagraphs(rawText) {
   }
   return out.join("\n\n");
 }
+function lessonPlanBlock(plan, state) {
+  if (!plan) return "";
+  const current = getCurrentTopic(plan);
+  if (!current) return "\n\nLESSON PLAN: Complete \u2014 mixed exam-style practice.";
+  const { topic, subtopic } = current;
+  const summary = generateLessonPlanSummary(plan);
+  const recommended = state?.recommendedAction ? `
+Next: ${state.recommendedAction.description}` : "";
+  return `
+
+LESSON PLAN (proactive teaching): ${summary}${recommended}`;
+}
 async function runTutorTurn(input) {
   const { message, history, board, problems, objectives, context, lang } = input;
   const fr = lang === "fr";
@@ -14092,7 +14308,7 @@ async function runTutorTurn(input) {
     return result;
   }
   const spokenRepair = input.spoken ? repairSpokenMath(message, spokenContextFrom([context.subject || "", ...board.map((b) => b.text || ""), ...problems.map((p) => p.question || "")])) : null;
-  const system = TUTOR_PROMPT + (input.voiceMode ? VOICE_BLOCK : "") + nowBlock() + backgroundBlock(context) + objectivesBlock(objectives) + (boardSurfaceBlock(board, problems) || "\n\nTHE BOARD IS EMPTY.") + solutionBlock(input.solution) + solutionMatchLine(message, input.solution) + teachingBlock(input.teaching) + stepVerdictLine(input.stepVerdict) + (input.spoken && spokenRepair ? voiceInputBlock(message, input.spoken.alternatives, spokenRepair) : "");
+  const system = TUTOR_PROMPT + (input.voiceMode ? VOICE_BLOCK : "") + nowBlock() + backgroundBlock(context) + objectivesBlock(objectives) + lessonPlanBlock(input.lessonPlan, input.lessonState) + (boardSurfaceBlock(board, problems) || "\n\nTHE BOARD IS EMPTY.") + solutionBlock(input.solution) + solutionMatchLine(message, input.solution) + teachingBlock(input.teaching) + stepVerdictLine(input.stepVerdict) + (input.spoken && spokenRepair ? voiceInputBlock(message, input.spoken.alternatives, spokenRepair) : "");
   const messages = [
     { role: "system", content: system },
     ...history.slice(-MAX_HISTORY).filter((h) => h.text?.trim()).map((h) => ({ role: h.role, content: h.text.slice(0, 4e3) })),
@@ -14955,13 +15171,22 @@ function dedupeTasks(list) {
   }
   return kept;
 }
+var TUTOR_CONTENT_KEYS = ["chat", "board", "problems", "objectives"];
+function carriesTutorContent(t) {
+  return TUTOR_CONTENT_KEYS.some((k) => Array.isArray(t[k]) && t[k].length > 0);
+}
+function withoutTutorContent(t) {
+  const { chat: _c, board: _b, problems: _p, objectives: _o, boardEvents: _be, ...rest } = t;
+  return rest;
+}
 function mergeTaskLists(existing, incoming) {
   if (existing.length === incoming.length) {
     const incomingById = new Map(incoming.map((t) => [t.id, t]));
     let identical = true;
     for (const a of existing) {
       const b = incomingById.get(a.id);
-      if (!b || a.updatedAt !== b.updatedAt || a.status !== b.status) {
+      const tutorDiffers = !!b && (a.source === "freestudy" || b.source === "freestudy") && carriesTutorContent(a) !== carriesTutorContent(b);
+      if (!b || a.updatedAt !== b.updatedAt || a.status !== b.status || tutorDiffers) {
         identical = false;
         break;
       }
@@ -14980,16 +15205,17 @@ function mergeTaskLists(existing, incoming) {
     }
     const winner = rank(t.status) > rank(ext.status) ? t : rank(t.status) < rank(ext.status) ? ext : when2(t) >= when2(ext) ? t : ext;
     const loser = winner === t ? ext : t;
+    const tutorCleared = t.source === "freestudy" && !carriesTutorContent(t);
     const steps = winner.steps?.map((s) => {
       if (s.done) return s;
       const other = loser.steps?.find((o) => o.text === s.text);
       return other?.done ? { ...s, done: true, doneAt: other.doneAt, result: s.result ?? other.result } : s;
     });
     const chatB = loser.chat || [];
-    const chat = chatB.length ? unionChat(winner.chat || [], chatB, 60) : void 0;
-    const artifacts = unionStudyArtifacts(winner, loser);
+    const chat = tutorCleared ? void 0 : chatB.length ? unionChat(winner.chat || [], chatB, 60) : void 0;
+    const artifacts = tutorCleared ? null : unionStudyArtifacts(winner, loser);
     map.set(t.id, carrySource(
-      steps || chat || artifacts ? { ...winner, ...steps ? { steps } : {}, ...chat ? { chat } : {}, ...artifacts } : winner,
+      tutorCleared ? withoutTutorContent(winner) : steps || chat || artifacts ? { ...winner, ...steps ? { steps } : {}, ...chat ? { chat } : {}, ...artifacts } : winner,
       winner,
       loser
     ));
@@ -17675,7 +17901,14 @@ app.post("/api/tasks", requireAuth, rateLimit(20, 6e4), async (req, res) => {
 app.post("/api/tasks/:id/board/:entryId/check", requireAuth, rateLimit(120, 6e4), ah(async (req, res) => {
   const t = await findTaskOrReload(req, String(req.params.id));
   const entry = (t?.board || []).find((e) => e.id === String(req.params.entryId));
-  if (!t || !entry || entry.kind !== "gap" || !entry.expectedAnswer) {
+  const sentText = typeof req.body?.text === "string" ? req.body.text.slice(0, 600) : "";
+  const sentKey = typeof req.body?.expectedAnswer === "string" ? req.body.expectedAnswer.slice(0, 200) : void 0;
+  const line = entry?.text ?? sentText;
+  if (entry && entry.kind !== "gap") {
+    res.status(404).json({ error: M(req, "Introuvable.", "Not found.") });
+    return;
+  }
+  if (!line.trim()) {
     res.status(404).json({ error: M(req, "Introuvable.", "Not found.") });
     return;
   }
@@ -17684,11 +17917,19 @@ app.post("/api/tasks/:id/board/:entryId/check", requireAuth, rateLimit(120, 6e4)
     res.status(400).json({ error: M(req, "\xC9cris une r\xE9ponse d'abord.", "Write an answer first.") });
     return;
   }
-  const target = gapTarget(entry.text);
-  const key2 = computedGapKey(entry.text)?.toString() ?? solvedGapKey(entry.text)?.toString() ?? entry.expectedAnswer;
-  let verdict = equivalent(answer, key2, target);
+  const target = gapTarget(line);
+  const recomputed = computedGapKey(line) ?? solvedGapKey(line);
+  const storedKey = entry?.expectedAnswer ?? sentKey;
+  const key2 = resolveGapKey(line, entry?.expectedAnswer, sentKey) ?? storedKey;
+  if (!key2) {
+    res.status(404).json({ error: M(req, "Introuvable.", "Not found.") });
+    return;
+  }
+  const graded = gradeGapAnswer(storedKey, recomputed, target, answer);
+  let verdict = graded.verdict;
   if (verdict === "unknown" && practiceAnswerMatches(answer, key2)) verdict = "correct";
-  res.json({ verdict });
+  if (graded.keyConflict) void recordMetric(req.session.user, "gap_key_conflict", 1);
+  res.json({ verdict, verification: graded.verification, keyConflict: graded.keyConflict });
 }));
 app.get("/api/interactive/:taskId/:entryId", requireAuth, rateLimit(120, 6e4), (req, res) => {
   const t = (req.session.tasks || []).find((x) => x.id === String(req.params.taskId));
@@ -17904,12 +18145,13 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 6e4), async (req, res
     // The gap's "what to do next" chip (BoardArtifact) — dropped here with owner/status before, which
     // silently reverted every gap to the generic "Your turn to finish" after one round trip.
     ...typeof b.gapAction === "string" && b.gapAction.trim() ? { gapAction: b.gapAction.trim().slice(0, 60) } : {},
-    // A gap's answer key comes from the SERVER's own copy of the board, never from the request body (the
-    // client could otherwise "set" the answer it is graded against). Without it the open-gap leak guard and
-    // the step verdict below only ever saw gaps written in this same turn.
+    // A gap's answer key: recomputed from the line by code first, then the server's own stored copy, then
+    // the key the browser sent with the line (see resolveGapKey — the tutor board is local-only now, so
+    // the request body is the ONLY source for a session this server never stored a board for). Without a
+    // key the open-gap leak guard and the step verdict below would only ever see gaps written this turn.
     ...b.kind === "gap" && typeof b.id === "string" ? (() => {
       const stored = (t.board || []).find((e) => e.id === b.id);
-      const k = stored ? computedGapKey(stored.text)?.toString() ?? stored.expectedAnswer : void 0;
+      const k = resolveGapKey(String(b.text), stored?.expectedAnswer, typeof b.expectedAnswer === "string" ? b.expectedAnswer : void 0);
       return k ? { expectedAnswer: k } : {};
     })() : {}
   }));
@@ -18047,7 +18289,7 @@ async function tutorTurn(req, res, t, c) {
   const sent = Array.isArray(req.body?.problems) ? req.body.problems : [];
   const problems = sent.filter((p) => p && typeof p.question === "string" && p.question.trim()).slice(-12).map((p) => {
     const known = (t.problems || []).find((x) => x.question === p.question);
-    return { ...known || { id: "", createdAt: "", question: String(p.question).slice(0, 600) }, solved: p.solved === true };
+    return rehydrateProblemKey(p, known);
   });
   const spoken = spokenFromBody(req.body?.spoken);
   const stepVerdict = (() => {
@@ -18117,18 +18359,10 @@ async function tutorTurn(req, res, t, c) {
     { role: "user", text: message, at: now },
     { role: "assistant", text: out.reply, at: now, ...out.problems.length ? { artifacts: out.problems.map((p) => ({ kind: "problem", id: p.id, title: p.question.slice(0, 60) })) } : {}, ...out.guardrailTripped ? { guardrail: true } : {} }
   ];
-  t.chat = [...t.chat || [], ...newChat].slice(-CHAT_CAP);
-  if (out.boardEdits?.length || out.boardRemoved?.length) {
-    t.board = (t.board || []).map((e) => {
-      const ed = out.boardEdits?.find((x) => x.id === e.id);
-      if (ed) return { ...e, text: ed.text };
-      return out.boardRemoved?.includes(e.id) ? { ...e, archived: true } : e;
-    });
-  }
-  if (out.boardCleared) t.board = out.board;
-  else if (out.board.length) t.board = [...t.board || [], ...out.board].slice(-BOARD_MERGE_CAP);
-  if (out.problems.length) t.problems = [...t.problems || [], ...out.problems].slice(-ARTIFACT_CAP);
-  if (out.objectives) t.objectives = out.objectives;
+  t.chat = void 0;
+  t.board = void 0;
+  t.problems = void 0;
+  t.objectives = void 0;
   t.updatedAt = now;
   await commit(req);
   res.json({
@@ -18141,7 +18375,7 @@ async function tutorTurn(req, res, t, c) {
     problems: out.problems,
     objectives: out.objectives,
     guardrailTripped: out.guardrailTripped,
-    task: { id: t.id, title: t.title, status: t.status, source: t.source, sourceSubject: t.sourceSubject, updatedAt: t.updatedAt, createdAt: t.createdAt, objectives: t.objectives, board: out.boardCleared ? t.board : out.board, problems: out.problems }
+    task: { id: t.id, title: t.title, status: t.status, source: t.source, sourceSubject: t.sourceSubject, updatedAt: t.updatedAt, createdAt: t.createdAt }
   });
 }
 app.post("/api/tasks/:id/study-help", requireAuth, rateLimit(40, 6e4), ah(async (req, res) => {
@@ -18488,15 +18722,17 @@ app.post("/api/tasks/:id/practice-problem/attempt", requireAuth, rateLimit(200, 
     res.status(404).json({ error: M(req, "Probl\xE8me d'entra\xEEnement introuvable \u2014 il a peut-\xEAtre d\xE9j\xE0 chang\xE9 ailleurs.", "Practice problem not found \u2014 it may have already changed elsewhere.") });
     return;
   }
-  const correct = practiceAnswerMatches(answer, problem.answer);
-  problem.attempt = { answer, correct, at: (/* @__PURE__ */ new Date()).toISOString() };
+  const grade = gradeExerciseAnswer({ question: problem.problem, answer: problem.answer, check: problem.check, value: problem.value }, answer);
+  const correct = grade.status === "correct";
+  problem.attempt = { answer, correct, at: (/* @__PURE__ */ new Date()).toISOString(), ...grade.status === "system_error" ? { systemError: true } : {} };
   task.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
   if (req.session.profile) {
     bumpActivityHour(req.session.profile, /* @__PURE__ */ new Date(), task.sourceSubject);
     req.session.profile.lastTutorActivityAt = (/* @__PURE__ */ new Date()).toISOString();
   }
   void recordMetric(req.session.user, "practice_problem_attempted", 1);
-  void recordMetric(req.session.user, "practice_problem_correct", correct ? 1 : 0);
+  if (grade.status !== "system_error") void recordMetric(req.session.user, "practice_problem_correct", correct ? 1 : 0);
+  else void recordMetric(req.session.user, "practice_problem_key_conflict", 1);
   await commit(req);
   res.json(tasksPayload(req, req.session.tasks));
 }));
@@ -19909,8 +20145,8 @@ app.post("/api/focus/session", requireAuth, async (req, res) => {
     }
     const sessions = p.focusSessions ||= [];
     sessions.push(session3);
-    if (sessions.length > 20) {
-      p.focusSessions = sessions.slice(-20);
+    if (sessions.length > 10) {
+      p.focusSessions = sessions.slice(-10);
     }
     recalculateFocusStats(p);
     await commit(req);

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards, TaskQuiz, TaskProblem, BoardEntry, DiagramOp, GraphSpec, DailyPracticeProblem, ThemeTokens, WebTask, TaskType, InfoRequirement, TaskArtifact, SeparateTask, TaskObjective } from "../shared/types.ts";
 import { validateThemeTokens, isNumericAnswer as isNumericAnswerValue } from "../shared/types.ts";
 import { compileExpr } from "../shared/mathExpr.ts";
+import { computeCheck, statedKeyNumber } from "../shared/exerciseVerification.ts";
 import { COURSEWORK_MAX_CHARS, courseworkForSubject, sameSubject } from "../shared/coursework.ts";
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
@@ -3831,10 +3832,23 @@ export function makeInteractiveEntry(input: any): { entry: BoardEntry } | { erro
  *  with no problem is meaningless), `format` is optional guidance text. */
 export function makePracticeProblem(input: any): { problem: DailyPracticeProblem } | { error: string } {
   const problem = String(input?.problem || "").trim().slice(0, 600);
-  const answer = String(input?.answer || "").trim().slice(0, 200);
+  let answer = String(input?.answer || "").trim().slice(0, 200);
   if (!problem || !answer) return { error: "ERROR: a practice problem needs both a non-empty problem and answer." };
   const format = scrubAnswerLeak(input?.format ? String(input.format).trim().slice(0, 200) : undefined, answer);
-  return { problem: { id: randomUUID(), problem, answer, ...(format ? { format } : {}), createdAt: new Date().toISOString() } };
+  // Spec §19: the key is verified by CODE, not by the generator's confidence. When the model supplies a
+  // `check` expression, it is evaluated here and the COMPUTED value wins if the written key disagrees — the
+  // same rule makeProblem already applies to chat exercises. No check means the key stays unverified, which
+  // the grader reports as "uncertain" (and which can therefore never be turned into a false "wrong").
+  const check = input?.check ? String(input.check).trim().slice(0, 200) : undefined;
+  const value = check ? computeCheck(check, problem) : null;
+  if (value != null) {
+    const stated = statedKeyNumber(answer);
+    if (!Number.isFinite(stated) || Math.abs(stated - value) > Math.max(0.01, Math.abs(value) * 0.01)) {
+      console.warn(`[practice] answer key disagreed with its own check — using the computed value ${value}`);
+      answer = String(value);
+    }
+  }
+  return { problem: { id: randomUUID(), problem, answer, ...(check ? { check } : {}), ...(value != null ? { value } : {}), ...(format ? { format } : {}), createdAt: new Date().toISOString() } };
 }
 
 // Sources where every item HAS a stable id/link the tools return — a task claiming to come from one of
@@ -5280,13 +5294,18 @@ export async function generateDailyPracticeProblem(logText: string, profile?: Pr
           `that don't reveal the actual answer (e.g. "round to one decimal place" instead of "e.g. 14.7", "as a ` +
           `simplified fraction" instead of "e.g. 3/4") — AND which plain-text symbols to use for anything not on a ` +
           `normal keyboard (e.g. "^" for an exponent, "sqrt(x)" for a square root, "pi", "x_1" for a subscript, ` +
-          `"->" for a reaction arrow), so the student knows how to actually type it. If the entry has NO real ` +
+          `"->" for a reaction arrow), so the student knows how to actually type it. "check" is an arithmetic ` +
+          `expression that COMPUTES "answer" from the problem's own numbers, using + - * / ^ ( ) sqrt sin cos tan ` +
+          `(plain sin/cos/tan mean DEGREES when the problem is in degrees) and pi — e.g. "(500-100)/(20+30)" for ` +
+          `an equilibrium price. The app evaluates it and the computed value wins if it disagrees with "answer", ` +
+          `so a wrong key can never mark a right answer wrong; write it even when the answer is short. Omit it ` +
+          `only when "answer" genuinely isn't numeric. If the entry has NO real ` +
           `math/physics/science content, or you cannot write a genuine problem from it, output {"problem": null}.\n\n` +
-          `Return ONLY this JSON: {"problem": {"problem": "...", "answer": "...", "format": "..."} | null}.` },
+          `Return ONLY this JSON: {"problem": {"problem": "...", "answer": "...", "check": "...", "format": "..."} | null}.` },
         { role: "user", content: `TODAY'S LOG ENTRY:\n"""\n${raw.slice(0, 4000)}\n"""` },
       ],
     }));
-    const out = firstJson<{ problem?: { problem?: string; answer?: string; format?: string } | null }>(res.choices[0]?.message?.content || "");
+    const out = firstJson<{ problem?: { problem?: string; answer?: string; check?: string; format?: string } | null }>(res.choices[0]?.message?.content || "");
     if (!out?.problem) return null;
     const result = makePracticeProblem(out.problem);
     if (!("problem" in result)) return null;

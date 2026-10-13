@@ -10,7 +10,8 @@ import { useEffect, useState, useCallback, useRef, useContext, createContext, ty
 import { createPortal } from "react-dom";
 import { motion, useReducedMotion } from "motion/react";
 import type { WebTask, TaskFlashcards, TaskQuiz, DailyPracticeProblem } from "../shared/types.ts";
-import { canonStatus, practiceAnswerMatches, LEITNER_BOX_LABEL } from "../shared/types.ts";
+import { canonStatus, LEITNER_BOX_LABEL } from "../shared/types.ts";
+import { gradeExerciseAnswer } from "../shared/exerciseVerification.ts";
 import { api } from "./api.ts";
 import { savePracticeLocally } from "./localPractice.ts";
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
@@ -1257,7 +1258,7 @@ export function QuizPlayer({ quiz, taskId, subject, userId }: { quiz: TaskQuiz; 
 export function PracticeProblemCard({ problem, taskId, onAnswered }: { problem: DailyPracticeProblem; taskId?: string; onAnswered?: (correct: boolean) => void }) {
   const L = useLang();
   const [answer, setAnswer] = useState(problem.attempt?.answer || "");
-  const [result, setResult] = useState<{ correct: boolean } | null>(problem.attempt ? { correct: problem.attempt.correct } : null);
+  const [result, setResult] = useState<{ correct: boolean; systemError?: boolean } | null>(problem.attempt ? { correct: problem.attempt.correct, systemError: problem.attempt.systemError } : null);
   const [checking, setChecking] = useState(false);
   const cleanProblem = stripStrayMarkdown(problem.problem).trim();
   const problemTitle = /^(practice problem|problème d'application)\s*[:\-]?\s*/i.test(cleanProblem)
@@ -1269,23 +1270,22 @@ export function PracticeProblemCard({ problem, taskId, onAnswered }: { problem: 
     if (!answer.trim() || checking) return;
     setChecking(true);
     try {
+      // The shared grader (shared/exerciseVerification.ts, spec §19) decides in every path — server and local
+      // alike — so the same answer can never get two different verdicts, and a key that disagrees with the
+      // independently computed value is a system error rather than a mistake.
+      const local = gradeExerciseAnswer({ question: problem.problem, answer: problem.answer, check: problem.check, value: problem.value }, answer.trim());
+      let correct = local.status === "correct";
+      let systemError = local.status === "system_error";
       if (taskId) {
         const list = await api.submitPracticeAnswer(taskId, answer.trim());
-        const fresh = list.find((t) => t.id === taskId);
-        const correct = fresh?.practiceProblem?.attempt?.correct ?? practiceAnswerMatches(answer, problem.answer);
-        const saved = { ...problem, attempt: { answer: answer.trim(), correct, at: new Date().toISOString() } };
-        setResult({ correct });
-        if (taskId) savePracticeLocally(taskId, saved);
-        onAnswered?.(correct);
-      } else {
-        // No live owner (e.g. reviewing from the Flashcards tab's local backup) — check locally with the
-        // exact same matching rule the server uses, so the verdict is identical either way, just unsynced.
-        const correct = practiceAnswerMatches(answer, problem.answer);
-        const saved = { ...problem, attempt: { answer: answer.trim(), correct, at: new Date().toISOString() } };
-        setResult({ correct });
-        if (taskId) savePracticeLocally(taskId, saved);
-        onAnswered?.(correct);
+        const attempt = list.find((t) => t.id === taskId)?.practiceProblem?.attempt;
+        if (attempt) { correct = attempt.correct; systemError = !!attempt.systemError; }
       }
+      const saved = { ...problem, attempt: { answer: answer.trim(), correct, at: new Date().toISOString(), ...(systemError ? { systemError: true } : {}) } };
+      setResult({ correct, systemError });
+      if (taskId) savePracticeLocally(taskId, saved);
+      // An ungradeable attempt (the ITEM is broken, not the answer) never moves the session's tally (spec §19).
+      if (!systemError) onAnswered?.(correct);
     } catch { /* best-effort — the student can just retry the check */ }
     finally { setChecking(false); }
   };
@@ -1312,9 +1312,11 @@ export function PracticeProblemCard({ problem, taskId, onAnswered }: { problem: 
       </div>
       {result ? (
         <p className={`practice-problem-verdict ${result.correct ? "correct" : "wrong"}`} role="status" aria-live="polite">
-          {result.correct
-            ? L("✓ Correct.", "✓ Correct.")
-            : L("✗ Pas tout à fait — réessaie (l'indice d'Otto juste en dessous peut t'aider).", "✗ Not quite — try again (Otto's hint just below can help).")}
+          {result.systemError
+            ? L("ⓘ La clé de ce problème ne correspond pas à la valeur vérifiée — ta réponse n'est pas comptée comme fausse.", "ⓘ This problem's answer key disagrees with the verified value — your answer isn't counted as wrong.")
+            : result.correct
+              ? L("✓ Correct.", "✓ Correct.")
+              : L("✗ Pas tout à fait — réessaie (l'indice d'Otto juste en dessous peut t'aider).", "✗ Not quite — try again (Otto's hint just below can help).")}
         </p>
       ) : null}
       {taskId ? (

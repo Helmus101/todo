@@ -171,7 +171,12 @@ export function latexToPlainText(latex: string): string {
       return `${wrap(a)}/${wrap(b)}`;
     }).replace(/\\[dtc]?frac\s*(\d)(\d)/g, "$1/$2");
   }
-  const SYM: Record<string, string> = { cdot: "·", times: "×", div: "÷", pi: "π", theta: "θ", alpha: "α", beta: "β", infty: "∞", approx: "≈", neq: "≠", ne: "≠", leq: "≤", le: "≤", geq: "≥", ge: "≥", pm: "±", Rightarrow: "⇒", to: "→", rightarrow: "→" };
+  // A LaTeX arrow command must become its ARROW, not its own letters: `\implies` fell through to the command's
+  // name, so a gap line read "500 − 20P = 100 + 30P implies P = ?" in plain text. Everything downstream that
+  // splits a line on its connective (solvedGapKey's independent solve of the key — server/tutor.ts) then saw
+  // THREE sides of an "=" and silently gave up, falling back to the model's unverified `expectedAnswer`. That
+  // is the reported live failure where a correct equilibrium price (P = 8, P = 5) was marked wrong.
+  const SYM: Record<string, string> = { cdot: "·", times: "×", div: "÷", pi: "π", theta: "θ", alpha: "α", beta: "β", infty: "∞", approx: "≈", neq: "≠", ne: "≠", leq: "≤", le: "≤", geq: "≥", ge: "≥", pm: "±", Rightarrow: "⇒", implies: "⇒", Longrightarrow: "⟹", longrightarrow: "⟶", Longleftarrow: "⟸", Leftrightarrow: "⟺", leftrightarrow: "⟺", iff: "⟺", gets: "←", leftarrow: "←", mapsto: "↦", to: "→", rightarrow: "→" };
   s = s.replace(/\\([a-zA-Z]+)/g, (_, c: string) => SYM[c] ?? c).replace(/[{}]/g, "");
   return s.replace(/\s{2,}/g, " ").trim();
 }

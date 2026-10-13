@@ -608,6 +608,23 @@ export function dedupeTasks(list: WebTask[]): WebTask[] {
   return kept;
 }
 
+// ── The tutor is LOCAL-ONLY: chat/board/problems/objectives live in the browser (client/localChatBoard.ts).
+// tutorTurn (server/index.ts) clears all four on the task and commits — but every merge below reads the
+// account row FIRST, and the union logic always re-adds the LOSER's chat/board/problems, so a "cleared"
+// session got its content written straight back on the very next poll or commit and the row never actually
+// went clean. These helpers give the merge the one signal it needs: an incoming freestudy copy carrying
+// NONE of the four means "cleared by the tutor turn", not "not loaded yet".
+const TUTOR_CONTENT_KEYS = ["chat", "board", "problems", "objectives"] as const;
+function carriesTutorContent(t: WebTask): boolean {
+  return TUTOR_CONTENT_KEYS.some((k) => Array.isArray(t[k]) && (t[k] as unknown[]).length > 0);
+}
+/** Drop the tutor session's local-only content (plus the derived board-event transcript) — used when the
+ *  incoming side has already expressed the clear. Freestudy-only by construction: callers gate on source. */
+function withoutTutorContent<T extends WebTask>(t: T): T {
+  const { chat: _c, board: _b, problems: _p, objectives: _o, boardEvents: _be, ...rest } = t as any;
+  return rest as T;
+}
+
 /** Cross-device/instance task merge (used by session commits AND the session-free job runner). The
  *  more-PROGRESSED copy wins (done never regresses); equal progress → most recently UPDATED wins; step
  *  done-state is unioned. Then entity-dedupe, since two sessions can mint different ids for one item. */
@@ -626,7 +643,11 @@ export function mergeTaskLists(existing: WebTask[], incoming: WebTask[]): WebTas
     let identical = true;
     for (const a of existing) {
       const b = incomingById.get(a.id);
-      if (!b || a.updatedAt !== b.updatedAt || a.status !== b.status) { identical = false; break; }
+      // Tutor content presence participates in "identical": two copies with the same updatedAt but
+      // different content-carrying state must reach the real merge, where the clear either strips the
+      // row's legacy copy or (migration window) unions it back toward the client.
+      const tutorDiffers = !!b && (a.source === "freestudy" || b.source === "freestudy") && carriesTutorContent(a) !== carriesTutorContent(b);
+      if (!b || a.updatedAt !== b.updatedAt || a.status !== b.status || tutorDiffers) { identical = false; break; }
     }
     if (identical) return existing;
   }
@@ -641,6 +662,13 @@ export function mergeTaskLists(existing: WebTask[], incoming: WebTask[]): WebTas
       : rank(t.status) < rank(ext.status) ? ext
       : when(t) >= when(ext) ? t : ext;
     const loser = winner === t ? ext : t;
+    // A freestudy (tutor) copy that carries NONE of chat/board/problems/objectives is the tutor turn's
+    // deliberate clear — drop the account row's legacy copy instead of unioning it back in (which is what
+    // used to happen on every merge, making tutorTurn's clear non-durable). An incoming copy that DOES
+    // carry content is the migration window: a pre-local-only conversation the browser hasn't hydrated
+    // yet, so the normal unions run unchanged and it can still reach the client. Every other task's
+    // chat/board keeps syncing across devices exactly as before.
+    const tutorCleared = t.source === "freestudy" && !carriesTutorContent(t);
     const steps = winner.steps?.map((s) => {
       if (s.done) return s;
       const other = loser.steps?.find((o) => o.text === s.text);
@@ -653,19 +681,20 @@ export function mergeTaskLists(existing: WebTask[], incoming: WebTask[]): WebTas
     // device, since only `steps` was unioned). Union both sides by (role, at, text) instead, so no device's
     // conversation is ever silently discarded; capped to mirror CHAT_CAP in index.ts.
     const chatB = loser.chat || [];
-    const chat = chatB.length ? unionChat(winner.chat || [], chatB, 60) : undefined;
+    const chat = tutorCleared ? undefined : chatB.length ? unionChat(winner.chat || [], chatB, 60) : undefined;
     // In-app study artifacts (fiches, decks, quizzes) are append-only per device, exactly like chat — and
     // now that the TUTOR CHAT can create them, two devices genuinely diverge (device A asks Otto for a
     // deck; device B ticks a step a second later and wins the whole-object race). Without a union, A's
     // deck vanishes while the chat message that announced it survives — a chip pointing at nothing.
     // Union by id, newest last, same cap as the run path.
-    const artifacts = unionStudyArtifacts(winner, loser);
+    const artifacts = tutorCleared ? null : unionStudyArtifacts(winner, loser);
     // carrySource here too, NOT just in dedupeTasks: by the time dedupeTasks runs at the bottom, these two
     // copies have already collapsed into one map entry (same id), so it never sees the loser to carry from.
     map.set(t.id, carrySource(
-      steps || chat || artifacts
-        ? { ...winner, ...(steps ? { steps } : {}), ...(chat ? { chat } : {}), ...artifacts }
-        : winner,
+      tutorCleared ? withoutTutorContent(winner)
+        : steps || chat || artifacts
+          ? { ...winner, ...(steps ? { steps } : {}), ...(chat ? { chat } : {}), ...artifacts }
+          : winner,
       winner, loser));
   }
   return dedupeTasks(Array.from(map.values()));

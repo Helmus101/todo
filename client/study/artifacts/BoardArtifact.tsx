@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import katex from "katex";
 import type { WebTask, BoardEntry, TaskProblem, DiagramOp } from "../../../shared/types.ts";
-import { practiceAnswerMatches, isNumericAnswer, problemIsPercent } from "../../../shared/types.ts";
+import { isNumericAnswer, problemIsPercent } from "../../../shared/types.ts";
+import { gradeExerciseAnswer, type GradeStatus } from "../../../shared/exerciseVerification.ts";
 import { autoMathLine, repairLatex, latexToPlainText } from "../../../shared/mathText.ts";
 import { GraphBlock } from "./GraphBlock.tsx";
 import { FlowDiagram } from "./FlowDiagram.tsx";
@@ -29,7 +30,7 @@ interface BoardArtifactProps {
   /** Tutor only — fired on every answer attempt (right or wrong) so Otto can react to it like a person would
    *  ("what made you pick B?") instead of the board silently marking it. `attempt` counts tries on this
    *  problem including this one. Never carries the correct answer — only what the student gave. */
-  onProblemResult?: (r: { problem: TaskProblem; given: string; correct: boolean; attempt: number }) => void;
+  onProblemResult?: (r: { problem: TaskProblem; given: string; correct: boolean; attempt: number; /** the item's own key and the independently computed value disagreed — nobody's mistake (spec §19.1). */ systemError?: boolean }) => void;
   /** Tutor only — a match / order / sort activity was finished (how many slips), so Otto can react to it. */
   onWidgetResult?: (r: WidgetResult) => void;
   /** Tutor only — each bump reserves `height` px of blank space right after the board's CURRENT last item: the
@@ -37,15 +38,16 @@ interface BoardArtifactProps {
   sheetSignal?: { n: number; height: number };
   /** Tutor only — a gap with an answer key ("b = ?") gets an answer box; the attempt is graded by the SERVER
    *  (numeric equivalence, shared/mathEquiv.ts) and the result reaches Otto like an exercise result does. */
-  onGapCheck?: (entry: BoardEntry, given: string) => Promise<"correct" | "incorrect" | "unknown">;
+  onGapCheck?: (entry: BoardEntry, given: string) => Promise<"correct" | "incorrect" | "unknown" | "system_error">;
 }
 
 /** The answer box under an open gap. "unknown" (an answer the checker couldn't read) is never shown as
- *  wrong — it says Otto will look at it, and the attempt still goes to the tutor. */
+ *  wrong, and neither is "system_error" (the stored key disagreed with the value the app computed itself,
+ *  spec §19.4) — both say Otto will look at it, and the attempt still goes to the tutor. */
 function GapAnswer({ entry, onCheck, en }: { entry: BoardEntry; onCheck: NonNullable<BoardArtifactProps["onGapCheck"]>; en: boolean }) {
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
-  const [verdict, setVerdict] = useState<"correct" | "incorrect" | "unknown" | null>(null);
+  const [verdict, setVerdict] = useState<"correct" | "incorrect" | "unknown" | "system_error" | null>(null);
   const submit = async () => {
     const given = value.trim();
     if (!given || busy) return;
@@ -71,6 +73,7 @@ function GapAnswer({ entry, onCheck, en }: { entry: BoardEntry; onCheck: NonNull
       </div>
       {verdict === "incorrect" ? <div className="sm-inline-problem-result wrong" role="status">{en ? "Not quite — Otto will help you check it." : "Pas tout à fait — Otto va t'aider à vérifier."}</div> : null}
       {verdict === "unknown" ? <div className="sm-inline-problem-result" role="status">{en ? "Sent to Otto to look at." : "Envoyé à Otto pour qu'il regarde."}</div> : null}
+      {verdict === "system_error" ? <div className="sm-inline-problem-result" role="status">{en ? "Otto can't trust this line's answer key — he'll check it with you." : "La clé de cette ligne n'est pas fiable — Otto va la vérifier avec toi."}</div> : null}
     </div>
   );
 }
@@ -604,12 +607,12 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, 
 
   // A wrong pick is recorded (struck out) but never "answers" the problem — only the correct one does.
   const attemptsRef = useRef<Record<string, number>>({});
-  const reportResult = (problem: TaskProblem, given: string, correct: boolean) => {
+  const reportResult = (problem: TaskProblem, given: string, status: GradeStatus) => {
     const attempt = (attemptsRef.current[problem.id] = (attemptsRef.current[problem.id] || 0) + 1);
-    onProblemResult?.({ problem, given, correct, attempt });
+    onProblemResult?.({ problem, given, correct: status === "correct", attempt, ...(status === "system_error" ? { systemError: true } : {}) });
   };
   const setProblemPicked = (problem: TaskProblem, picked: number) => {
-    reportResult(problem, problem.options?.[picked] ?? String(picked), picked === problem.correct);
+    reportResult(problem, problem.options?.[picked] ?? String(picked), gradeExerciseAnswer(problem, String(picked)).status);
     setProblemState(prev => {
       const cur = prev[problem.id] || { picked: null, textAnswer: "", submitted: false };
       return picked === problem.correct
@@ -624,7 +627,7 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, 
 
   const submitProblem = (problemId: string) => {
     const pr = problems.find((p) => p.id === problemId);
-    if (pr && pr.answer) { const given = (problemState[problemId]?.textAnswer || "").trim(); if (given) reportResult(pr, given, practiceAnswerMatches(given, pr.answer, (pr as any).value, problemIsPercent(pr as any))); }
+    if (pr && pr.answer) { const given = (problemState[problemId]?.textAnswer || "").trim(); if (given) reportResult(pr, given, gradeExerciseAnswer(pr, given, { percent: problemIsPercent(pr) }).status); }
     setProblemState(prev => ({ ...prev, [problemId]: { ...prev[problemId] || { picked: null, textAnswer: "", submitted: false }, submitted: true } }));
   };
 
@@ -637,11 +640,13 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, 
   // order for no real benefit. Reverted.
 
   // Free-response check: the same lenient matcher as the journal's practice problem (shared/types.ts) —
-  // "5pi/6" = "5π/6", "7/2" = "3.5", "84" = "84 m". A plain string compare here marked those wrong.
+  // "5pi/6" = "5π/6", "7/2" = "3.5", "84" = "84 m" — wrapped in the shared grader (spec §19), which grades
+  // against the independently computed value and reports a stored key that disagrees with it as a SYSTEM
+  // ERROR (shown as "Otto will check it", never as wrong). A plain string compare here marked those wrong.
   const checkFreeResponse = (problemId: string): boolean => {
     const problem = problems.find(p => p.id === problemId);
     if (!problem || !problem.answer) return false;
-    return practiceAnswerMatches(getProblemState(problemId).textAnswer, problem.answer, (problem as any).value, problemIsPercent(problem as any));
+    return gradeExerciseAnswer(problem, getProblemState(problemId).textAnswer, { percent: problemIsPercent(problem) }).status === "correct";
   };
 
   const hint = (

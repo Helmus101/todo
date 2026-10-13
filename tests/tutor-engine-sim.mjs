@@ -406,6 +406,10 @@ export async function runTutorEngineSim(check, section) {
   check("a new scenario posed only in the message (no board write) is sent back to put it on the board", /nothing is on the board/.test(JSON.stringify(calls[1]?.messages || "")));
   const { solvedGapKey: sgk } = await import("../server/tutor.ts");
   check("a gap that states an equation for its unknown is SOLVED in code (2·9.8·3 = ½(400)x² ⟹ x = ? → 0.5422), so a correct 0.54 is never 'checked wrong'",
-    Math.abs(sgk("$2 \\cdot 9.8 \\cdot 3 = \\frac{1}{2}(400)x^2 \\Longrightarrow x = ?$") - 0.542218) < 1e-5 && Math.abs(sgk("2·9.8·3 = ½(400)x² ⟹ x = ?") - 0.542218) < 1e-5 && sgk("3x + 1 = 10 ⟹ x = ?") === 3 && sgk("F = 5 ⟹ F = ?") === null
+    Math.abs(sgk("$2 \\cdot 9.8 \\cdot 3 = \\frac{1}{2}(400)x^2 \\Longrightarrow x = ?$") - 0.542218) < 1e-5 && Math.abs(sgk("2·9.8·3 = ½(400)x² ⟹ x = ?") - 0.542218) < 1e-5 && sgk("3x + 1 = 10 ⟹ x = ?") === 3
+    // "F = 5 ⟹ F = ?" states its own value, so the line solves to 5. It returned null only because the
+    // solve keyed its value map by the RAW target ("F") while the compiler lowercases every identifier —
+    // i.e. the same case bug that stopped EVERY uppercase unknown (P, Q, V, F…) from ever being solved.
+    && sgk("F = 5 ⟹ F = ?") === 5
     && equivalent("0.54", String(sgk("2·9.8·3 = ½(400)x² ⟹ x = ?")), "x") === "correct" && equivalent("0.55", "0.542218", "x") === "incorrect");
 }

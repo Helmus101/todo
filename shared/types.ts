@@ -1548,10 +1548,19 @@ export interface DailyPracticeProblem {
   /** Guidance on expected format/units/notation AND which plain-text symbols to use for anything not on a
    *  standard keyboard — shown to the student BEFORE they answer, not part of grading itself. */
   format?: string;
+  /** An expression that COMPUTES the numeric answer from the problem's own numbers (server/claude.ts's
+   *  makePracticeProblem evaluates it and stores `value`) — the independent verification spec §19 requires
+   *  before an item is graded. Absent on older entries, which are graded on the stored key alone. */
+  check?: string;
+  /** The exact computed value of a numeric answer (from `check`) — anything within rounding of it is right,
+   *  and a stored key that disagrees with it becomes a system error instead of a student mistake. */
+  value?: number;
   createdAt: string;
   /** Set once the student checks their answer — persisted so re-opening the day shows the outcome instead
-   *  of re-asking, same spirit as a flashcard's review state. */
-  attempt?: { answer: string; correct: boolean; at: string };
+   *  of re-asking, same spirit as a flashcard's review state. `systemError` records an attempt that could
+   *  NOT be graded because the item's key disagreed with the independently computed value (spec §19.1):
+   *  the attempt is preserved, but it is never counted as a mistake. */
+  attempt?: { answer: string; correct: boolean; at: string; systemError?: boolean };
 }
 
 /** A single standalone practice problem created by the tutor mid-conversation — rendered INLINE in the

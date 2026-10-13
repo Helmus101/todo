@@ -464,8 +464,14 @@ export const api = {
   // Otto asking the student to describe its own board back to it.
   // Grade an answer to a board gap ("b = ?") on the server — the answer key never has to be trusted to the
   // browser, and "h/tan(25°)" / "h cot 25°" / "\frac{h}{\tan 25^\circ}" are all graded alike (mathEquiv.ts).
-  checkGap: (id: string, entryId: string, answer: string): Promise<{ verdict: "correct" | "incorrect" | "unknown" }> =>
-    post(`/api/tasks/${encodeURIComponent(id)}/board/${encodeURIComponent(entryId)}/check`, { answer }),
+  // A "system_error" verdict means the gap's stored key disagreed with the key the server recomputed from the
+  // line itself (shared/exerciseVerification.ts, spec §19.4): the attempt is preserved and never called wrong.
+  // `gap` carries the line and the key written with it: the tutor board lives in this browser only
+  // (client/localChatBoard.ts), so the server has no stored copy to look the gap up in. It recomputes the key
+  // from `text` itself first — the independent verification — and uses the sent key only when the line has no
+  // solvable equation of its own.
+  checkGap: (id: string, entryId: string, answer: string, gap?: { text: string; expectedAnswer?: string }): Promise<{ verdict: "correct" | "incorrect" | "unknown" | "system_error"; verification?: "verified" | "conflict" | "uncertain" | "not_checked"; keyConflict?: boolean }> =>
+    post(`/api/tasks/${encodeURIComponent(id)}/board/${encodeURIComponent(entryId)}/check`, { answer, ...(gap ? { text: gap.text, expectedAnswer: gap.expectedAnswer } : {}) }),
   chat: (id: string, message: string, history: NonNullable<WebTask["chat"]>, board: BoardEntry[], problems: TaskProblem[], stepIndex?: number, materials?: { label: string; text: string }[], voiceMode?: boolean, canvasMode?: boolean, primer?: boolean, objectives?: TaskObjective[], spoken?: { alternatives: string[] }, session?: { id: string; source?: string; sourceSubject?: string; createdAt?: string }, memory?: { when: string; subject?: string; lines: string[]; asked: string[] }[]): Promise<{ reply: string; chatDelta: NonNullable<WebTask["chat"]>; board: BoardEntry[]; problems: TaskProblem[]; objectives?: TaskObjective[]; guardrailTripped: boolean; task: WebTask; sessionCapReached?: boolean; subject?: string; sessionEnded?: boolean; error?: string }> =>
     post(`/api/tasks/${id}/chat`, {
       // The on-device thread can be long: send how the session began (first 3) + the recent tail, not all of it

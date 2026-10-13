@@ -11,8 +11,9 @@ import { fileURLToPath } from "node:url";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { CourseworkDoc } from "../shared/coursework.ts";
 import { equivalent, gapTarget, verifyStepAgainstGap } from "../shared/mathEquiv.ts";
+import { gradeGapAnswer, gradeExerciseAnswer } from "../shared/exerciseVerification.ts";
 import { repairSpokenMath, spokenContextFrom } from "../shared/spokenMath.ts";
-import { nextTeachingState, evidenceKindFor, reachedSolutionSteps } from "./tutor.ts";
+import { nextTeachingState, evidenceKindFor, reachedSolutionSteps, resolveGapKey, rehydrateProblemKey } from "./tutor.ts";
 import { solveProblem, focusKeyOf, isNewProblem } from "./solver.ts";
 import { studentProblemStatement } from "./tutorAdapt.ts";
 import { recordConceptEvidence, normalizeStudentModel, emptyStudentModel } from "./studentModel.ts";
@@ -1483,15 +1484,32 @@ app.post("/api/tasks", requireAuth, rateLimit(20, 60_000), async (req, res) => {
 app.post("/api/tasks/:id/board/:entryId/check", requireAuth, rateLimit(120, 60_000), ah(async (req, res) => {
   const t = await findTaskOrReload(req, String(req.params.id));
   const entry = (t?.board || []).find((e) => e.id === String(req.params.entryId));
-  if (!t || !entry || entry.kind !== "gap" || !entry.expectedAnswer) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
+  // The tutor's board is LOCAL-ONLY now (client/localChatBoard.ts) — the server no longer keeps a copy of the
+  // gap it is being asked to grade, so the line (and the key written with it) ride up with the answer. The
+  // line is still what decides the key wherever it can be solved (see resolveGapKey), so a stored copy being
+  // absent changes where the key comes from, never how trustworthy the grade is. A task that no longer exists
+  // is no longer a 404 either: nothing here needs it.
+  const sentText = typeof req.body?.text === "string" ? req.body.text.slice(0, 600) : "";
+  const sentKey = typeof req.body?.expectedAnswer === "string" ? req.body.expectedAnswer.slice(0, 200) : undefined;
+  const line = entry?.text ?? sentText;
+  if (entry && entry.kind !== "gap") { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
+  if (!line.trim()) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
   const answer = typeof req.body?.answer === "string" ? req.body.answer.slice(0, 300) : "";
   if (!answer.trim()) { res.status(400).json({ error: M(req, "Écris une réponse d'abord.", "Write an answer first.") }); return; }
-  const target = gapTarget(entry.text);
+  const target = gapTarget(line);
   // A closed calculation's key is recomputed here, so a gap written with a guessed key still grades right.
-  const key = computedGapKey(entry.text)?.toString() ?? solvedGapKey(entry.text)?.toString() ?? entry.expectedAnswer;
-  let verdict = equivalent(answer, key, target);
+  const recomputed = computedGapKey(line) ?? solvedGapKey(line);
+  const storedKey = entry?.expectedAnswer ?? sentKey;
+  const key = resolveGapKey(line, entry?.expectedAnswer, sentKey) ?? storedKey;
+  if (!key) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
+  // Spec §19.4: the stored key and the key recomputed by code must AGREE. When they don't, the key — not the
+  // student — is what's broken, so the item enters a system-error state instead of grading them wrong
+  // (reported live: a correct equilibrium price P = 8 was "checked wrong" against a model-written key).
+  const graded = gradeGapAnswer(storedKey, recomputed, target, answer);
+  let verdict: "correct" | "incorrect" | "unknown" | "system_error" = graded.verdict;
   if (verdict === "unknown" && practiceAnswerMatches(answer, key)) verdict = "correct";
-  res.json({ verdict });
+  if (graded.keyConflict) void recordMetric(req.session.user!, "gap_key_conflict", 1);
+  res.json({ verdict, verification: graded.verification, keyConflict: graded.keyConflict });
 }));
 
 app.get("/api/interactive/:taskId/:entryId", requireAuth, rateLimit(120, 60_000), (req, res) => {
@@ -1702,10 +1720,11 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
       // The gap's "what to do next" chip (BoardArtifact) — dropped here with owner/status before, which
       // silently reverted every gap to the generic "Your turn to finish" after one round trip.
       ...(typeof b.gapAction === "string" && b.gapAction.trim() ? { gapAction: b.gapAction.trim().slice(0, 60) } : {}),
-      // A gap's answer key comes from the SERVER's own copy of the board, never from the request body (the
-      // client could otherwise "set" the answer it is graded against). Without it the open-gap leak guard and
-      // the step verdict below only ever saw gaps written in this same turn.
-      ...(b.kind === "gap" && typeof b.id === "string" ? (() => { const stored = (t.board || []).find((e) => e.id === b.id); const k = stored ? (computedGapKey(stored.text)?.toString() ?? stored.expectedAnswer) : undefined; return k ? { expectedAnswer: k } : {}; })() : {}) }));
+      // A gap's answer key: recomputed from the line by code first, then the server's own stored copy, then
+      // the key the browser sent with the line (see resolveGapKey — the tutor board is local-only now, so
+      // the request body is the ONLY source for a session this server never stored a board for). Without a
+      // key the open-gap leak guard and the step verdict below would only ever see gaps written this turn.
+      ...(b.kind === "gap" && typeof b.id === "string" ? (() => { const stored = (t.board || []).find((e) => e.id === b.id); const k = resolveGapKey(String(b.text), stored?.expectedAnswer, typeof b.expectedAnswer === "string" ? b.expectedAnswer : undefined); return k ? { expectedAnswer: k } : {}; })() : {}) }));
   const currentProblemsRaw = Array.isArray(req.body?.problems) ? req.body.problems : [];
   const currentProblems = currentProblemsRaw
     .filter((p: any) => p && typeof p.question === "string" && p.question.trim())
@@ -1847,12 +1866,14 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
         ...(t.evidence?.length ? { sources: t.evidence.slice(0, 8).map((source) => ({ label: source.label, url: source.url })) } : {}),
         ...(out.guardrailTripped ? { guardrail: true } : {}) },
     ];
-    // Chat, board entries, and practice problems used to be LOCAL-ONLY (never written onto `t`, by an
-    // earlier direct request) — reversed by a later direct request: tutor sessions (and every other chat)
-    // must survive in the cloud like everything else, not just in this one browser's localStorage. Same
-    // CAP/merge conventions the rest of this route already uses (ARTIFACT_CAP for problems, CHAT_CAP/
-    // BOARD_MERGE_CAP mirroring tasks.ts's own cross-device merge caps so a single-device append here
-    // never exceeds what a later multi-device MERGE would also cap it to).
+    // Only NON-TUTOR chat persists: everything below sits after the primer branch above, which returns
+    // out of tutorTurn — the tutor's own chat/board/problems/objectives are LOCAL-ONLY
+    // (client/localChatBoard.ts; tutorTurn clears them on the task and commits, and mergeTaskLists now
+    // honours that clear instead of unioning the account row's legacy copy back in). The regular "Ask
+    // Otto" task chat keeps surviving in the cloud exactly as before. Same CAP/merge conventions the rest
+    // of this route already uses (ARTIFACT_CAP for problems, CHAT_CAP/BOARD_MERGE_CAP mirroring tasks.ts's
+    // own cross-device merge caps so a single-device append here never exceeds what a later multi-device
+    // MERGE would also cap it to).
     if (newChat.length) t.chat = [...(t.chat || []), ...newChat].slice(-CHAT_CAP);
     if (out.boardCleared) t.board = out.board;
     else if (out.board.length) t.board = [...(t.board || []), ...out.board].slice(-tasks.BOARD_MERGE_CAP);
@@ -1898,8 +1919,12 @@ async function tutorTurn(
     .filter((p: any) => p && typeof p.question === "string" && p.question.trim())
     .slice(-12)
     .map((p: any) => {
+      // Answer keys for the exercises in play: the server's own stored copy when it still has one, else the
+      // key the browser sent back (see rehydrateProblemKey — tutor problems are local-only now). Without this
+      // the leak guard couldn't tell whether a reply gave an answer away, and a mis-graded answer box had
+      // nothing to be checked against.
       const known = (t.problems || []).find((x) => x.question === p.question);
-      return { ...(known || { id: "", createdAt: "", question: String(p.question).slice(0, 600) }), solved: p.solved === true };
+      return rehydrateProblemKey(p, known);
     });
   const spoken = spokenFromBody(req.body?.spoken);
   // Is the student's step right? Code decides, against the newest open gap; for speech, a correct hearing wins.
@@ -1973,20 +1998,19 @@ async function tutorTurn(
     { role: "user" as const, text: message, at: now },
     { role: "assistant" as const, text: out.reply, at: now, ...(out.problems.length ? { artifacts: out.problems.map((p) => ({ kind: "problem" as const, id: p.id, title: p.question.slice(0, 60) })) } : {}), ...(out.guardrailTripped ? { guardrail: true } : {}) },
   ];
-  t.chat = [...(t.chat || []), ...newChat].slice(-CHAT_CAP);
-  // In-place corrections / removals of the tutor's own lines (validated by shared/boardAdapter.ts): applied by id, never duplicated.
-  if (out.boardEdits?.length || out.boardRemoved?.length) {
-    t.board = (t.board || []).map((e) => { const ed = out.boardEdits?.find((x) => x.id === e.id); if (ed) return { ...e, text: ed.text }; return out.boardRemoved?.includes(e.id) ? { ...e, archived: true } : e; });
-  }
-  if (out.boardCleared) t.board = out.board;
-  else if (out.board.length) t.board = [...(t.board || []), ...out.board].slice(-tasks.BOARD_MERGE_CAP);
-  if (out.problems.length) t.problems = [...(t.problems || []), ...out.problems].slice(-tasks.ARTIFACT_CAP);
-  if (out.objectives) t.objectives = out.objectives;
+  // Direct request: Tutor session content stays LOCAL, not in the cloud account row — this function only
+  // ever runs for primer (Tutor) turns (see its one call site above), so nothing here needs a conditional.
+  // The server is stateless for chat/board/problems/objectives: `history`/`currentBoard`/`currentObjectives`
+  // above already came FROM the request body (this browser's own client/localChatBoard.ts copy), and the
+  // response below hands back only this turn's delta for the client to append locally — t.chat/t.board/
+  // t.problems/t.objectives are never written here, and are explicitly cleared if an older account still
+  // has them from before this reversal, so nothing lingers in Supabase after the next Tutor turn touches it.
+  t.chat = undefined; t.board = undefined; t.problems = undefined; t.objectives = undefined;
   t.updatedAt = now;
   await commit(req);
   res.json({
     reply: out.reply, chatDelta: newChat, board: out.board, boardEdits: out.boardEdits, boardRemoved: out.boardRemoved, boardCleared: out.boardCleared, problems: out.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped,
-    task: { id: t.id, title: t.title, status: t.status, source: t.source, sourceSubject: t.sourceSubject, updatedAt: t.updatedAt, createdAt: t.createdAt, objectives: t.objectives, board: out.boardCleared ? t.board : out.board, problems: out.problems },
+    task: { id: t.id, title: t.title, status: t.status, source: t.source, sourceSubject: t.sourceSubject, updatedAt: t.updatedAt, createdAt: t.createdAt },
   });
 }
 
@@ -2331,12 +2355,18 @@ app.post("/api/tasks/:id/practice-problem/attempt", requireAuth, rateLimit(200, 
   const task = await findTaskOrReload(req, id);
   const problem = task?.practiceProblem;
   if (!task || !problem) { res.status(404).json({ error: M(req, "Problème d'entraînement introuvable — il a peut-être déjà changé ailleurs.", "Practice problem not found — it may have already changed elsewhere.") }); return; }
-  const correct = practiceAnswerMatches(answer, problem.answer);
-  problem.attempt = { answer, correct, at: new Date().toISOString() };
+  // The stored key is only used to grade once the independently computed value agrees with it (spec §19): a
+  // key that disagrees routes the attempt to a system-error state, which is never recorded as a mistake.
+  const grade = gradeExerciseAnswer({ question: problem.problem, answer: problem.answer, check: problem.check, value: problem.value }, answer);
+  const correct = grade.status === "correct";
+  problem.attempt = { answer, correct, at: new Date().toISOString(), ...(grade.status === "system_error" ? { systemError: true } : {}) };
   task.updatedAt = new Date().toISOString();
   if (req.session.profile) { bumpActivityHour(req.session.profile, new Date(), task.sourceSubject); req.session.profile.lastTutorActivityAt = new Date().toISOString(); }
   void recordMetric(req.session.user!, "practice_problem_attempted", 1);
-  void recordMetric(req.session.user!, "practice_problem_correct", correct ? 1 : 0);
+  // Nothing is counted for or against the student when the item itself is broken — only a trustworthy
+  // verdict moves the skill estimate (spec §19/§20.2).
+  if (grade.status !== "system_error") void recordMetric(req.session.user!, "practice_problem_correct", correct ? 1 : 0);
+  else void recordMetric(req.session.user!, "practice_problem_key_conflict", 1);
   await commit(req);
   res.json(tasksPayload(req, req.session.tasks));
 }));

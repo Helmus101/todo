@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { TaskProblem } from "../../shared/types.ts";
-import { practiceAnswerMatches, isNumericAnswer, problemIsPercent } from "../../shared/types.ts";
+import { isNumericAnswer, problemIsPercent } from "../../shared/types.ts";
+import { gradeExerciseAnswer } from "../../shared/exerciseVerification.ts";
 import { stripStrayMarkdown, useLang } from "../ui.tsx";
 
 interface InlineProblemProps {
@@ -21,13 +22,17 @@ export function InlineProblem({ problem }: InlineProblemProps) {
   const [submitted, setSubmitted] = useState(false);
   const [showHint, setShowHint] = useState(false);
 
-  // Same lenient matcher as everywhere else ("5pi/6" = "5π/6", "7/2" = "3.5").
-  const checkFreeResponse = (): boolean => !!problem.answer && practiceAnswerMatches(textAnswer, problem.answer, problem.value, problemIsPercent(problem));
+  // Same lenient matcher as everywhere else ("5pi/6" = "5π/6", "7/2" = "3.5"), wrapped in the shared
+  // grader (spec §19): the independently computed value decides, and a stored key that disagrees with it is
+  // a system error — shown as "Otto will sort it out", never as the student's mistake.
+  const graded = submitted || (isMCQ && picked !== null);
+  const grade = graded ? gradeExerciseAnswer(problem, isMCQ ? String(picked ?? -1) : textAnswer, { percent: problemIsPercent(problem) }) : null;
+  const systemError = grade?.status === "system_error";
 
   // NEVER reveals the answer (same rule as the Board): a miss says "try again"; the ✓ and the explanation
   // only appear once the student gets it right themselves.
-  const answered = isMCQ ? picked !== null && picked === problem.correct : submitted && checkFreeResponse();
-  const missed = !answered && (isMCQ ? wrong.length > 0 : submitted);
+  const answered = isMCQ ? picked !== null && picked === problem.correct : grade?.status === "correct";
+  const missed = !answered && !systemError && (isMCQ ? wrong.length > 0 : submitted);
   const pick = (oi: number) => { if (oi === problem.correct) setPicked(oi); else setWrong((w) => [...w.filter((x) => x !== oi), oi]); };
 
   return (
@@ -101,6 +106,11 @@ export function InlineProblem({ problem }: InlineProblemProps) {
       {missed ? (
         <div className="sm-inline-problem-result wrong" role="status">
           {isMCQ ? L("Pas tout à fait — essaie une autre réponse.", "Not quite — try another option.") : L("Pas tout à fait — réessaie.", "Not quite — try again.")}
+        </div>
+      ) : null}
+      {systemError ? (
+        <div className="sm-inline-problem-result" role="status">
+          {L("La clé de ce problème ne correspond pas à la valeur vérifiée — ta réponse n'est pas comptée comme fausse, Otto va corriger.", "This problem's answer key disagrees with the verified value — your answer isn't counted wrong, Otto will sort it out.")}
         </div>
       ) : null}
       {answered && problem.why ? (
