@@ -35,24 +35,32 @@ Open source (MIT), self-hostable.
 ## Architecture
 
 ```
-client/            React + Vite app
-  App.tsx          Shell, routing, dashboard, settings, journal, onboarding
-  TaskCard.tsx     Task detail view and task chat
-  ui.tsx           Shared components (Spinner, ErrorNote, flashcards, quizzes, …)
-  study/           Study Mode desk and its artifacts
-  tutor/           Full-screen tutor
-  styles.css       Design tokens (the ONE :root block) + base styles; tally/lab/minimal.css layer on top
-server/            Express API (one serverless function on Vercel)
-  index.ts         App setup, auth, middleware, routes
-  claude.ts        AI: task generation/execution, tutor chat, tools, guardrails
-  jobs.ts          Durable job queue (sweeps, task runs) + cron tick
-  store.ts         Supabase persistence: accounts, sessions, jobs, reset tokens
-  pronote.ts       Pronote client (unofficial, via pawnote)
-  integrations.ts  Gmail / Calendar / Drive via Composio, with a deny-by-default action gate
-shared/            Types and pure functions used by both sides
-tests/             run.mjs (pure-function + source checks), smoke.mjs (HTTP), tutor simulations
-supabase.sql       Schema, RLS, migrations (idempotent — safe to re-run)
-api/index.mjs      Generated server bundle for Vercel (rebuilt on every deploy; keep it committed)
+client/                 React + Vite app
+  App.tsx               Shell: routing, task sync, the Today dashboard
+  appShared.tsx         Helpers several pages use (navigate, Logo, account cleanup)
+  pages/                One file per page: Settings, Journal, MistakeLog, Flashcards, Onboarding, Login,
+                        Landing, Legal, Admin, StudyEntry, Dashboard widgets
+  TaskCard.tsx          Task row, task detail and task chat
+  ui.tsx                Shared components (Spinner, ErrorNote, flashcards, quizzes, …)
+  study/, tutor/        Study Mode desk and the full-screen tutor
+  styles.css            Design tokens (the ONE :root block) + base styles; tally/lab/minimal.css layer on top
+server/                 Express API (one serverless function on Vercel)
+  index.ts              App setup, security headers, sessions, route registration
+  http.ts               Shared middleware: requireAuth, CSRF, rateLimit, commit (account sync), i18n errors
+  routes/               auth, tasks, integrations, profile, study, tutor
+  claude.ts             Facade for the AI layer in ai/:
+  ai/                   client (providers), context (prompt blocks), generate, run (task execution),
+                        steps (cleanup guards), tools, board, chat + chatPrompt + chatRounds (tutor turn),
+                        studyContent, voice, coursework, scheduling
+  jobs.ts               Durable job queue (sweeps, task runs) + cron tick
+  store.ts              Supabase persistence: accounts, sessions, jobs, reset tokens
+  pronote.ts            Pronote client (unofficial, via pawnote)
+  integrations.ts       Google / Notion via Composio, with a deny-by-default action gate
+shared/                 Types and pure functions used by both sides
+scripts/                Build + maintenance (split-module.mjs / extract-local.mjs: AST-based refactor tools)
+tests/                  run.mjs (pure functions + source checks), smoke.mjs (HTTP), tutor simulations
+supabase.sql            Schema, RLS, migrations (idempotent — safe to re-run)
+api/index.mjs           Generated server bundle for Vercel (rebuilt on every deploy; keep it committed)
 ```
 
 **AI providers:** DeepSeek for generation and task execution; Gemini for the tutor chat (DeepSeek fallback)

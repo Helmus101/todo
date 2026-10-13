@@ -89,6 +89,35 @@ export function applyRememberFact(profile: Profile, category: string, fact: stri
   (profile as any)[key] = dedupeFacts([...rest, fact160]);
 }
 
+/** Extra pacing guidance for step creation, from the student's measured focus (Study Mode camera stats). */
+function focusAdaptiveInstructions(profile: Profile | undefined, task: { sourceSubject?: string }): string {
+  const focusStats = profile?.focusStats;
+  const subjFocus = (task.sourceSubject && focusStats?.subjectFocus) ? focusStats.subjectFocus[task.sourceSubject] : undefined;
+  const focusLevel = subjFocus ?? focusStats?.avgConcentration ?? 100;
+  const isLowFocus = focusLevel < 50;
+  const isUnstableFocus = focusStats?.focusStability === "unstable" || focusStats?.focusStability === "highly_variable";
+  const peakHour = focusStats?.peakFocusHour;
+  const currentHour = new Date().getHours();
+  const isPeakTime = peakHour !== undefined && Math.abs(currentHour - peakHour) <= 1;
+  const subjectRestless = (task.sourceSubject && focusStats?.subjectFocus) ? 
+    (focusStats.subjectFocus[task.sourceSubject] < 50) : false;
+
+  let adaptiveInstructions = "";
+  if (isLowFocus) {
+    adaptiveInstructions += `\nADAPTIVE PACING (Low Focus Baseline ${Math.round(focusLevel)}%): Keep steps very short (5-15 mins max per step), low initial difficulty, with explicit checkpoint criteria to sustain momentum.\n`;
+  }
+  if (isUnstableFocus) {
+    adaptiveInstructions += `FOCUS STABILITY: Focus fluctuates frequently - include more frequent checkpoints and break steps into smaller chunks to maintain momentum.\n`;
+  }
+  if (!isPeakTime && peakHour !== undefined) {
+    adaptiveInstructions += `TIMING: Current time (${currentHour}:00) is not peak focus hour (${peakHour}:00) - consider scheduling this task for ${peakHour}:00 for best results.\n`;
+  }
+  if (subjectRestless) {
+    adaptiveInstructions += `SUBJECT PATTERN: This subject typically shows lower focus - include more engaging, interactive steps and consider shorter duration.\n`;
+  }
+  return adaptiveInstructions;
+}
+
 /**
  * Run a task as a bounded tool-using agent over the user's CONNECTED apps (Composio): it gathers facts and
  * does the reversible work (drafts, docs, tasks, updates) itself, then submits a context + synthesis + the
@@ -356,21 +385,21 @@ export async function runTask(
         }
       }
       // Keep research links scarce and task-specific; the card should not become a bibliography.
-  // Relevance gate, same reasoning as finalize()'s link check below: a web_search's results are only
-  // candidates. Reported live: a "download your Ledger OP3N ticket" task carrying a Mailchimp marketing
-  // page and a "Sell tickets with Luma" pricing page — the search engine's loose keyword match surfaced
-  // them and they sailed onto the card. A link that shares no real word (4+ chars) with the task's own
-  // title/why/definition of done is noise, however real the URL. Only applied when there IS a usable
-  // word set (a very short title would over-filter); worst case = old behavior.
-  const linkAllowWords = new Set(`${task.title} ${task.why} ${definitionOfDone}`.toLowerCase().match(/[a-zà-ÿ0-9]{4,}/g) || []);
-  links = links
-  .filter((link, index, all) => all.findIndex((other) => canonicalUrl(other.url) === canonicalUrl(link.url)) === index)
-  .filter((link) => {
-    if (linkAllowWords.size < 2) return true;
-    const linkWords = `${link.label} ${link.url}`.toLowerCase().match(/[a-zà-ÿ0-9]{4,}/g) || [];
-    return linkWords.some((w) => linkAllowWords.has(w));
-  })
-  .slice(0, 3);
+    // Relevance gate, same reasoning as finalize()'s link check below: a web_search's results are only
+    // candidates. Reported live: a "download your Ledger OP3N ticket" task carrying a Mailchimp marketing
+    // page and a "Sell tickets with Luma" pricing page — the search engine's loose keyword match surfaced
+    // them and they sailed onto the card. A link that shares no real word (4+ chars) with the task's own
+    // title/why/definition of done is noise, however real the URL. Only applied when there IS a usable
+    // word set (a very short title would over-filter); worst case = old behavior.
+    const linkAllowWords = new Set(`${task.title} ${task.why} ${definitionOfDone}`.toLowerCase().match(/[a-zà-ÿ0-9]{4,}/g) || []);
+    links = links
+      .filter((link, index, all) => all.findIndex((other) => canonicalUrl(other.url) === canonicalUrl(link.url)) === index)
+      .filter((link) => {
+        if (linkAllowWords.size < 2) return true;
+        const linkWords = `${link.label} ${link.url}`.toLowerCase().match(/[a-zà-ÿ0-9]{4,}/g) || [];
+        return linkWords.some((w) => linkAllowWords.has(w));
+      })
+      .slice(0, 3);
     }
     // Distinguish "no search needed" from "search attempted and totally failed" — without this, context
     // stays the exact same "(no external context)" string step 4 sees either way, so its grounding rule
@@ -404,30 +433,7 @@ export async function runTask(
 
     // ── STEP 4: Create small, minimal, actionable steps ─────────────────────
     console.log(`${new Date().toISOString()} [ai] step 4: creating steps`);
-    const focusStats = profile?.focusStats;
-    const subjFocus = (task.sourceSubject && focusStats?.subjectFocus) ? focusStats.subjectFocus[task.sourceSubject] : undefined;
-    const focusLevel = subjFocus ?? focusStats?.avgConcentration ?? 100;
-    const isLowFocus = focusLevel < 50;
-    const isUnstableFocus = focusStats?.focusStability === "unstable" || focusStats?.focusStability === "highly_variable";
-    const peakHour = focusStats?.peakFocusHour;
-    const currentHour = new Date().getHours();
-    const isPeakTime = peakHour !== undefined && Math.abs(currentHour - peakHour) <= 1;
-    const subjectRestless = (task.sourceSubject && focusStats?.subjectFocus) ? 
-      (focusStats.subjectFocus[task.sourceSubject] < 50) : false;
-
-    let adaptiveInstructions = "";
-    if (isLowFocus) {
-      adaptiveInstructions += `\nADAPTIVE PACING (Low Focus Baseline ${Math.round(focusLevel)}%): Keep steps very short (5-15 mins max per step), low initial difficulty, with explicit checkpoint criteria to sustain momentum.\n`;
-    }
-    if (isUnstableFocus) {
-      adaptiveInstructions += `FOCUS STABILITY: Focus fluctuates frequently - include more frequent checkpoints and break steps into smaller chunks to maintain momentum.\n`;
-    }
-    if (!isPeakTime && peakHour !== undefined) {
-      adaptiveInstructions += `TIMING: Current time (${currentHour}:00) is not peak focus hour (${peakHour}:00) - consider scheduling this task for ${peakHour}:00 for best results.\n`;
-    }
-    if (subjectRestless) {
-      adaptiveInstructions += `SUBJECT PATTERN: This subject typically shows lower focus - include more engaging, interactive steps and consider shorter duration.\n`;
-    }
+    const adaptiveInstructions = focusAdaptiveInstructions(profile, task);
 
     const stepsOut = await ask(
       `There is this task: "${task.title}".\n` +
