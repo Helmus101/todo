@@ -13946,7 +13946,7 @@ BE RIGHT \u2014 YOU ALWAYS KNOW THE ANSWER
 - Never invent facts, never blame the app, and NEVER change a given: the problem's numbers are exactly as written, even if they don't work out. If they can't produce what the question asks, say so plainly once and offer to change one \u2014 never swap a value to make it work. If unsure what they meant, ask, offering your best reading.
 
 THE BOARD \u2014 shared paper, one worksheet per problem
-- It holds what's worth keeping: the givens, a figure, THEIR equations and results (owner "student") \u2014 when they reach a result or finish a step, put it on the board right away, cleanly \u2014 a definition, an outline. Everything on it is about the problem you're working on \u2014 nothing else. Teaching itself is spoken.
+- It holds what's worth keeping: the givens, a figure, THEIR equations and results (owner "student") \u2014 when they reach a result or finish a step, put it on the board right away, cleanly \u2014 a definition, an outline. Everything on it is about the problem you're working on \u2014 nothing else. Chat is for the conversation; the board is the student's notes \u2014 anything they should still be able to see in five minutes goes there (dual coding: every key idea in words in chat AND written or drawn on the board).
 - AUTOMATIC BOARD UPDATES: update the board automatically when a new formula is introduced, a calculation begins, a definition is taught, a graph is needed, a diagram is referenced, a new conceptual distinction becomes important, a worked example is completed, or the lesson moves to a new topic. Do NOT wait for the student to say "put that on the board".
 - BOARD STRUCTURE (organize content into these functional areas when possible):
   A. Lesson header: subject \u2192 topic \u2192 subtopic \u2192 activity (e.g., "Economics \u2192 Supply and demand \u2192 Determinants of demand \u2192 Guided practice")
@@ -13954,7 +13954,7 @@ THE BOARD \u2014 shared paper, one worksheet per problem
   C. Step-by-step working: separate structured items for each step (given, unknown, relationship, equation setup, manipulation, result, interpretation)
   D. Key knowledge: concise concepts, definitions, formulas, or rules most relevant to the lesson (do NOT add the answer while testing recall)
   E. Current task: the active question and expected student response format
-- Maths in LaTeX between $\u2026$. When they ask you to write something, write it (their step goes in as owner "student"). Gaps are rare: most next steps are just asked in conversation; use a GAP (kind "gap", line ending "= ?", expectedAnswer set) only when they should fill in one specific line \u2014 at most one, never a second while one is open. Never write a step they haven't reached or the answer; never answer your own question on the board.
+- Maths in LaTeX between $\u2026$. When they ask you to write something, write it (their step goes in as owner "student"). Write proactively, every turn that teaches or asks something: the key idea or definition you just taught, the question you just asked (as the current task), the step they reached, a figure for any relationship. Use a GAP (kind "gap", line ending "= ?", expectedAnswer set) only when they should fill in one specific line \u2014 at most one, never a second while one is open. Never write a step they haven't reached or the answer; never answer your own question on the board.
 - Figures must be accurate, so use the tools that draw to scale: triangles/circles/polygons \u2192 GEOMETRY_ON_BOARD; towers, cliffs, angles of elevation \u2192 TRIG_SCENE_ON_BOARD; a block on a slope, forces \u2192 INCLINE_ON_BOARD; functions \u2192 GRAPH_ON_BOARD; processes, causes, essay plans \u2192 FLOW_ON_BOARD. SVG_ON_BOARD is only for qualitative pictures (a cell, apparatus, a map) \u2014 never for anything with angles or lengths.
 - Fix a wrong line of YOURS in place with UPDATE_BOARD_LINE (or take it off with REMOVE_BOARD_LINE); the student's own lines are protected \u2014 add your corrected line beside theirs. Every board tool returns {ok:true\u2026} or {ok:false,error:{code}}: only say a change happened if the result says ok.
 - Point at a line by its margin number ("look at line 4") or with ANNOTATE_BOARD. Never claim a board write you didn't make this turn.
@@ -13976,6 +13976,17 @@ SPECIFIC FEEDBACK \u2014 refer to the student's actual answer
 - If the answer is ambiguous: ask one focused clarification. Do NOT invent an interpretation.
 - If the student gives a related but incorrect definition (e.g., "opportunity cost" when asked for "scarcity"): recognize the conceptual mismatch, explain accurately, show the distinction on the board, and check understanding with a focused follow-up
 - Correctness takes priority over keeping the conversation moving
+
+HOW PEOPLE LEARN \u2014 use the moves the research supports, and pick the one that fits the moment
+- Retrieval first (testing effect): open a topic, and come back to it later, by asking them to recall it before you re-explain. Re-reading feels productive; recalling is what makes it stick.
+- Worked example \u2192 faded example \u2192 independent problem (worked-example and fading effects): a novice gets one fully worked case on the board with the reasoning for each line; then the same kind with the last step(s) blank for them; then one on their own. Fade faster for a strong student, step back for a struggling one.
+- Self-explanation: after a worked line or their own step, ask "why is this step allowed?" \u2014 explaining the step to themselves is what turns an example into understanding.
+- Elaboration and concrete examples: connect a new idea to something they already know and to one concrete case ("where would you see this in real life?").
+- Dual coding: pair the words with a picture \u2014 a figure, graph, table or flow on the board \u2014 whenever there is a relationship, a process or a comparison.
+- Interleaving and spacing: once a method works, mix in a different kind of question and return to an earlier idea later in the session instead of drilling the same one.
+- Feedback that moves them forward: name exactly what was right and the first thing that's off, then give them the chance to use the feedback straight away.
+- Metacognition: at milestones ask them to plan ("what's your first move?"), monitor ("does that look right?") and evaluate ("what would you do differently on the test?").
+- Productive struggle has a limit: a short struggle helps, a long one doesn't \u2014 after two stuck turns teach the missing idea directly.
 
 CRITICAL THINKING \u2014 in every subject, build the habit, not just the answer
 - Predict before reveal: before a result, a graph or a worked step, ask what they expect to happen and why. Compare the prediction with what happens.
@@ -14117,6 +14128,20 @@ function planConsented(history, message, hasObjectives) {
   if (/\b(?:set|make|create|build|write)\b[^.?!]{0,20}\b(?:objectives?|plan|goals?|objectifs?)\b|\bmets? (?:les )?objectifs\b/i.test(String(message || ""))) return true;
   const lastOtto = [...history].reverse().find((h) => h.role === "assistant");
   return !!lastOtto && proposesPlan(lastOtto.text);
+}
+function teachesUnboarded(reply, boardWrites) {
+  if (boardWrites > 0) return false;
+  const r = String(reply || "").replace(/\s+/g, " ").trim();
+  if (r.split(" ").length < 22) return false;
+  return /\b(?:means|is defined as|is when|is the (?:idea|rule|law|reason)|the (?:key|main|big) idea|the rule is|the law|the formula|in other words|which is why|that's why|this works because|the reason is|signifie|c'est-à-dire|la règle|la formule|on appelle|se définit)\b/i.test(r);
+}
+function boardStillEmpty(boardCount, writes, history, reply = "") {
+  return boardCount === 0 && writes === 0 && history.filter((h) => h.role === "user").length >= 1 && String(reply).trim().split(/\s+/).length >= 18;
+}
+function asksDiscussionQuestionUnboarded(reply, boardWrites) {
+  if (boardWrites > 0) return false;
+  const q = (String(reply || "").match(/[^.?!]*\?/g) || []).pop() || "";
+  return q.trim().split(/\s+/).length >= 7;
 }
 function asksStudentToChoose(reply) {
   return /\b(?:what|which)\b[^?]{0,60}\b(?:would you like|do you want|should we|shall we|part|topic|area|chapter|start with|focus on|work on|look at)\b[^?]*\?|\bor (?:something else|another topic)\b[^?]*\?|\bpar quoi\b[^?]*\?|\bqu(?:'|e )(?:est-ce que )?(?:tu veux|veux-tu|aimerais-tu)\b[^?]*\?/i.test(String(reply || ""));
@@ -14524,6 +14549,10 @@ async function runTutorTurn(input) {
       else if (reachedResultUnrecorded(reply, message, result.board.length + result.problems.length)) issues.push('they just reached a result or step of their own and you confirmed it, but nothing went on the board. Record it: ONE short clean line with WRITE_TO_BOARD (kind result or summary, owner "student", their numbers, maths in $\u2026$), then reply as you planned');
       if (!result.problems.length && setsMathTaskUnboarded(reply, result.board.length)) issues.push("you set them a maths task in chat but it isn't on the board. Put the question itself on the board as ONE short line ending '= ?' (WRITE_TO_BOARD, kind gap, with the expected answer), then keep your message to a line that points at it. The board should show every question you ask, not just the chat");
       if (discussion && statesClaimUnboarded(message, result.board.length)) issues.push('they argued a position and none of it is on the board. Write their claim (and the evidence they gave) as ONE short line with WRITE_TO_BOARD (kind insight, owner "student", their words condensed), then raise ONE objection or ask for the missing evidence \u2014 and put that question on the board too as a short Otto line');
+      const writes = result.board.length + result.problems.length;
+      if (boardStillEmpty(board.length, writes, history, reply) && !result.boardCleared) issues.push("the board is still empty. Open it now: a header line (WRITE_TO_BOARD kind focus: subject \u2192 topic \u2192 what we're doing) and the starting point (the question you're asking, the key definition, or the givens). The board must show what you're working on from the first turn");
+      else if (teachesUnboarded(reply, writes)) issues.push("you taught an idea in chat but the board doesn't show it. Write the key idea in one short line (kind definition, formula or insight; maths in $\u2026$) \u2014 or draw it if it's a relationship \u2014 then keep the message as it is");
+      if (discussion && asksDiscussionQuestionUnboarded(reply, writes)) issues.push("put the question you're asking them to think about on the board as one short line (kind focus), so the discussion is visible");
       if (wrapsUpUnasked(reply, message)) issues.push("it offers to wrap up or move on, which they didn't ask for \u2014 stay on the current work");
       if (reportsCorrectResult(message) && !movesOn(reply, !!(result.problems.length || result.board.length))) issues.push("they just got an exercise right: confirm in one specific clause, then ONE critical-thinking move (why it works, does the result make sense, what if a given changed, or find the flaw in a plausible wrong line) and/or start the next activity yourself (the CURRENT lesson-plan milestone, in a new format) \u2014 end with one question or a new exercise");
       const missingObj = pointsAtMissingObject(reply, allBoard().map((b) => String(b.kind)));
@@ -14647,7 +14676,7 @@ function applyTool(name, input, c) {
       }
       if (input.kind === "gap" && result.board.some((e) => e.kind === "gap")) return "LIMIT: one gap a turn \u2014 ask the next step in chat instead.";
       if (input.kind === "gap" && lastLineIsOpenGap(c.allBoard())) return "REJECTED: the board already ends on an open gap they haven't filled \u2014 ask in chat instead of adding another '= ?' line.";
-      if (result.board.filter((e) => !["svg", "graph", "flow", "widget", "diagram", "annotation"].includes(String(e.kind))).length >= 3) return "LIMIT: three lines a turn is plenty \u2014 the board keeps only what's worth keeping.";
+      if (result.board.filter((e) => !["svg", "graph", "flow", "widget", "diagram", "annotation"].includes(String(e.kind))).length >= 4) return "LIMIT: four lines a turn is plenty \u2014 the board keeps only what's worth keeping.";
       if (input.owner !== "student" && input.kind !== "focus" && !c.codeWrite && !c.discussion && !relevantToFocus(text, [...c.focus, ...c.allBoard().map((b) => b.text), ...c.result.problems.map((p) => p.question)], c.known || [])) return "REJECTED: that line isn't about the problem you're working on. Write only this problem's givens, a step THEY reached (owner:'student'), or the next step as a gap ending in '= ?'.";
       if (isDuplicateBoardEntry(c.allBoard(), input)) return "DUPLICATE: that's already on the board \u2014 point at it instead.";
       if (input.kind !== "gap" && leaks(text)) return LEAK;

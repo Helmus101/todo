@@ -15,7 +15,7 @@ import { selectJournal } from "../server/journal.ts";
 import { recentJournalLine } from "../server/claude.ts";
 import { countJournalEntries } from "../shared/journalCount.ts";
 import { reachedResultUnrecorded, setsMathTaskUnboarded } from "../server/tutorAdapt.ts";
-import { isDiscussionSubject, statesClaimUnboarded, DISCUSSION_BLOCK, TUTOR_PROMPT, subjectsIn, reportsCorrectResult, movesOn, pointsAtMissingObject } from "../server/tutor.ts";
+import { teachesUnboarded, boardStillEmpty, asksDiscussionQuestionUnboarded, isDiscussionSubject, statesClaimUnboarded, DISCUSSION_BLOCK, TUTOR_PROMPT, subjectsIn, reportsCorrectResult, movesOn, pointsAtMissingObject } from "../server/tutor.ts";
 import { blamesWidget } from "../server/tutorAdapt.ts";
 import { inventedNumbers } from "../server/tutorAdapt.ts";
 import { makeProblem as makeProblemP } from "../server/claude.ts";
@@ -5001,6 +5001,15 @@ section("Answer box keys follow the answer; typed maths previews live; chat show
   check("all three answer inputs pass the answer context", (readFileSync("client/study/InlineProblem.tsx", "utf8").match(/context=\{/g) || []).length === 1 && (readFileSync("client/study/artifacts/BoardArtifact.tsx", "utf8").match(/context=\{/g) || []).length === 2);
   check("the app's '[Exercise] I answered …' message is shown as 'My answer: …' with the maths typeset, in both chat views", /export function friendlyExerciseText/.test(ts) && (ts.match(/friendlyExerciseText\(msg\.text/g) || []).length === 2);
 }
+
+section("Research-backed teaching moves and a proactive board");
+check("the prompt carries the research playbook (retrieval, fading, self-explanation, dual coding, interleaving, feedback, metacognition)", /HOW PEOPLE LEARN/.test(TUTOR_PROMPT) && /Retrieval first/.test(TUTOR_PROMPT) && /faded example/.test(TUTOR_PROMPT) && /Self-explanation/.test(TUTOR_PROMPT) && /Dual coding/.test(TUTOR_PROMPT) && /Interleaving/.test(TUTOR_PROMPT) && /Metacognition/.test(TUTOR_PROMPT));
+check("the board is written proactively, not only on request", /Write proactively, every turn that teaches or asks something/.test(TUTOR_PROMPT) && !/Teaching itself is spoken/.test(TUTOR_PROMPT));
+check("an explanation taught only in chat is caught", teachesUnboarded("The power law means that an exponent inside the log can come out front as a multiplier, which is why log of x cubed becomes three log x. Try the next one?", 0));
+check("…but not a short reaction or a turn that wrote", !teachesUnboarded("Right, that's it. What's next?", 0) && !teachesUnboarded("The power law means that an exponent inside the log can come out front as a multiplier, which is why it works here today.", 1));
+const longReply = "Let us start with the definition of a logarithm, because every law we use later comes from it, so tell me what question a log answers.";
+check("an empty board on a real teaching turn is caught", boardStillEmpty(0, 0, [{ role: "user" }], longReply) && !boardStillEmpty(2, 0, [{ role: "user" }], longReply) && !boardStillEmpty(0, 1, [{ role: "user" }], longReply) && !boardStillEmpty(0, 0, [], longReply) && !boardStillEmpty(0, 0, [{ role: "user" }], "Hey! What are we on?"));
+check("a humanities discussion question gets put on the board", asksDiscussionQuestionUnboarded("Good. What would a historian who blames Wilson rather than Versailles say about that?", 0) && !asksDiscussionQuestionUnboarded("Why?", 0));
 
 section("Board changes are undoable in the Tutor session (spec §12 #10, source pins)");
 {
