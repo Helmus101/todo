@@ -62,7 +62,7 @@ WHEN THEY'RE WRONG — fix the FIRST thing that's off, not the last number
 GRADUATED HELP — the app tracks it and TEACHING STATE reminds you ("help level n/4")
 0 = ask them for the next step · 1 = point at the relevant formula, quantity or relationship · 2 = name the principle · 3 = give the setup (formula and variables, or the first line) · 4 = explain the missing idea fully, then hand the step back. Climb only as far as the obstacle needs, and drop back the moment they're moving.
 
-Start your reply with a hidden plan, exactly: <plan>{"diagnosis":"conceptual|procedural|computational|interpretive|prerequisite|none","action":"probe|hint|visual|explain|example|practice|confirm","help_level":0-4}</plan> — the app strips it; the student never sees it.
+Start your reply with a hidden plan, exactly: <plan>{"diagnosis":"conceptual|procedural|computational|interpretive|prerequisite|none","misconception":"<the belief behind their error, ≤8 words, e.g. \"thinks log(M+N)=logM+logN\" — omit if none>","action":"probe|hint|visual|explain|example|practice|confirm","help_level":0-4}</plan> — the app strips it; the student never sees it.
 
 HOW MUCH HELP
 - Least help that unlocks them. Never trap a confused student in endless questions: if they're stuck twice (see TEACHING STATE), explain the missing idea directly, then give the step back. If they ask for an explanation, respect it.
@@ -133,6 +133,17 @@ CRITICAL THINKING — in every subject, build the habit, not just the answer
 - Ask them to rate how sure they are (1-5) on a hard step, and treat a confident wrong answer as the most valuable moment to probe.
 - One such move per turn, and keep it proportionate: no interrogation after every trivial step. Never answer your own question, and never replace the content with questions when they're genuinely stuck (see HOW MUCH HELP).
 
+STRATEGIES — teach them how to approach problems, not just this one
+- After they solve something, or once they're unstuck, name the reusable strategy in a few words ("Expand: fraction → product → powers"; "Equilibrium: set Qd = Qs, solve, substitute back"; "Source: origin, purpose, value, limitation") and ask them to say it in their own words. Put it on the board (kind strategy).
+- Before a new problem, ask "which strategy fits, and why?" before they compute. When they're stuck, point at a strategy on the board instead of the answer.
+- Teach checking as a strategy: substitute back, estimate the size, check units and sign, ask if it answers the question asked.
+
+ACCURACY — never guess
+- Work out every number, rule and fact before you say or write it. If you're not sure of a fact (a date, a quote, a definition), say so plainly or leave it out; never state it as certain. The board is what they revise from: it must be right.
+
+MISCONCEPTIONS — find the belief behind the error
+- A wrong answer usually comes from a sensible-looking wrong belief. Name it in your hidden plan ("misconception"), test it with one question or a counter-example that only fails under that belief, and let them see the conflict themselves before you give the right idea. The app keeps a list of open misconceptions in TEACHING STATE: come back to them with a fresh case.
+
 SESSION OBJECTIVES ARE AGREED, NEVER IMPOSED
 - With no lesson plan yet, find out what they want from this session (a test? homework? understanding one idea?) before teaching. Then PROPOSE 3-6 objectives as a short numbered list and ask whether to change, add or remove any. Only after they answer, call SET_OBJECTIVES with the agreed list. They can edit it any time (\"add X\", \"drop Y\") — update it with SET_OBJECTIVES and say what changed.
 
@@ -166,7 +177,7 @@ const WRITE_TO_BOARD = {
   description: "Write one short entry on the board: keywords and structure, not prose (≤ 25 words). Maths in LaTeX between $…$. Never use it to set an exercise: a problem for them to solve always goes through CREATE_PROBLEM (it gets an answer box).",
   input_schema: { type: "object", properties: {
     text: { type: "string", description: "the entry. Several short lines are fine for a worked sequence (one move per line)." },
-    kind: { type: "string", enum: ["given", "formula", "definition", "result", "summary", "insight", "instruction", "focus", "outline", "gap"], description: "given = the problem's data; result = something they derived; summary = their reasoning so far; insight = their aha; gap = a line for THEM to finish (ends in '= ?'); outline = headed bullets." },
+    kind: { type: "string", enum: ["given", "formula", "definition", "result", "summary", "insight", "instruction", "focus", "outline", "gap", "strategy"], description: "given = the problem's data; result = something they derived; summary = their reasoning so far; insight = their aha; strategy = a reusable method in a few words, ideally in THEIR words ('Expand: fraction → product → powers'); gap = a line for THEM to finish (ends in '= ?'); outline = headed bullets." },
     expectedAnswer: { type: "string", description: "REQUIRED for kind 'gap': what they should write (e.g. 'h/tan(25°)', '0.25', 'friction'). Never revealed." },
     gapAction: { type: "string", description: "kind 'gap' only: 2-6 words naming the move ('express b with tan 25°'), for your own tracking. Never the value." },
     owner: { type: "string", enum: ["otto", "student"], description: "'student' when you're writing up THEIR work." },
@@ -312,6 +323,21 @@ export function asksDiscussionQuestionUnboarded(reply: string, boardWrites: numb
   return q.trim().split(/\s+/).length >= 7;
 }
 
+/** The student just got something wrong, and the reply teaches the method without first finding out what they were
+ *  thinking — no question, no named belief. A human tutor diagnoses the misconception before reteaching. Exported for tests. */
+export function teachesOverError(reply: string, message: string, verdict?: string): boolean {
+  const wrong = verdict === "incorrect" || /^\s*\[(?:Exercise|Exercice)\][^\n]*\b(?:marked wrong|checked wrong|faux)\b/i.test(String(message || ""));
+  if (!wrong) return false;
+  const r = String(reply || "");
+  if (/\?/.test(r)) return false;
+  return !/\b(?:you (?:might|may) (?:have|be)|it looks like you|i think you|maybe you|did you (?:think|assume)|on dirait que tu|tu as peut-être|tu penses)\b/i.test(r);
+}
+/** A problem was just solved and no strategy line exists yet: name the reusable method so it transfers. Exported for tests. */
+export function strategyMissing(message: string, board: { kind?: string }[], writes: { kind?: string }[]): boolean {
+  if (!reportsCorrectResult(message)) return false;
+  return ![...board, ...writes].some((e) => e.kind === "strategy");
+}
+
 /** The reply hands the choice back ("What would you like to start with?", "which topic…?") — the move a tutor that
  *  already owns a plan must not make when the student delegated. Exported for tests. */
 export function asksStudentToChoose(reply: string): boolean {
@@ -365,7 +391,7 @@ export interface TutorTurnResult {
 }
 
 /** The model's hidden per-turn teaching decision. Parsed leniently — a missing or malformed plan never blocks a reply. */
-export interface TutorPlanLite { diagnosis?: string; action?: string; helpLevel?: number }
+export interface TutorPlanLite { diagnosis?: string; action?: string; helpLevel?: number; misconception?: string }
 const ACTIONS = ["probe", "hint", "visual", "explain", "example", "practice", "confirm"];
 /** How many unit-bearing quantities in the reply ("2 kg", "3 m", "400 N/m", "25°") appear nowhere in the conversation, board or problems. */
 export function newQuantities(reply: string, sources: string[]): number {
@@ -382,7 +408,8 @@ export function parsePlan(text: string): TutorPlanLite | undefined {
     const j = JSON.parse(m[1].trim());
     const action = ACTIONS.includes(String(j.action)) ? String(j.action) : undefined;
     const helpLevel = Number.isFinite(Number(j.help_level)) ? Math.max(0, Math.min(4, Math.round(Number(j.help_level)))) : undefined;
-    return { ...(j.diagnosis ? { diagnosis: String(j.diagnosis).slice(0, 40) } : {}), ...(action ? { action } : {}), ...(helpLevel != null ? { helpLevel } : {}) };
+    const mis = typeof j.misconception === "string" ? j.misconception.replace(/\s+/g, " ").trim().split(" ").slice(0, 10).join(" ").slice(0, 70) : "";
+    return { ...(mis ? { misconception: mis } : {}), ...(j.diagnosis ? { diagnosis: String(j.diagnosis).slice(0, 40) } : {}), ...(action ? { action } : {}), ...(helpLevel != null ? { helpLevel } : {}) };
   } catch { return undefined; }
 }
 
@@ -406,7 +433,24 @@ export function nextTeachingState(prev: TutorTeachingState | undefined, ev: { me
     // because this never had any memory of having just tripped on the exact same thing.
     guardrailStreak: ev.leaked && ev.leaked === p.guardrailValue ? (p.guardrailStreak || 0) + 1 : ev.leaked ? 1 : 0,
     ...(ev.leaked ? { guardrailValue: ev.leaked } : {}),
+    ...(() => { const m = updateMisconceptions(p.misconceptions, ev.plan, right); return m.length ? { misconceptions: m } : {}; })(),
   };
+}
+
+/** Carry the session's misconceptions forward: a newly diagnosed one is added (or its count bumped), and the open
+ *  ones are marked resolved once a turn shows a verified right step with no misconception diagnosed. Exported for tests. */
+export function updateMisconceptions(prev: TutorTeachingState["misconceptions"], plan: TutorPlanLite | undefined, right: boolean): NonNullable<TutorTeachingState["misconceptions"]> {
+  const list = [...(prev || [])].map((m) => ({ ...m }));
+  const label = plan?.misconception?.trim();
+  if (label) {
+    const same = list.find((m) => m.label.toLowerCase() === label.toLowerCase());
+    if (same) { same.turns += 1; same.resolved = false; } else list.push({ label, turns: 1 });
+  } else if (right) {
+    // The most recent open misconception is the one this right step most plausibly repairs.
+    const open = [...list].reverse().find((m) => !m.resolved);
+    if (open) open.resolved = true;
+  }
+  return list.slice(-5);
 }
 
 /** The teaching state as a prompt block — what help has been given and what the next move should be. */
@@ -417,7 +461,11 @@ export function teachingBlock(t: TutorTeachingState | undefined): string {
     : t.stuckStreak === 1
       ? "They were stuck last turn: go one rung up (a sharper hint, a pointer on the board, or a figure), not the same question again."
       : "They're moving: keep the help light (a question or a nudge).";
-  return `\n\nTEACHING STATE (kept by the app): help level so far ${t.helpLevel}/4${t.lastAction ? `, last move: ${t.lastAction}` : ""}${t.lastDiagnosis ? `, last diagnosis: ${t.lastDiagnosis}` : ""}. ${advice}`;
+  const open = (t.misconceptions || []).filter((m) => !m.resolved);
+  const mis = open.length ? ` OPEN MISCONCEPTIONS this session: ${open.map((m) => `"${m.label}"${m.turns > 1 ? ` (seen ${m.turns}×)` : ""}`).join("; ")} — before moving on, test each with a FRESH case that only works if they've let go of it; a confident wrong answer means probe the belief, not reteach the method.` : "";
+  const resolved = (t.misconceptions || []).filter((m) => m.resolved);
+  const res = resolved.length ? ` Repaired so far: ${resolved.map((m) => `"${m.label}"`).join("; ")} — check one again later in the session (spaced retrieval).` : "";
+  return `\n\nTEACHING STATE (kept by the app): help level so far ${t.helpLevel}/4${t.lastAction ? `, last move: ${t.lastAction}` : ""}${t.lastDiagnosis ? `, last diagnosis: ${t.lastDiagnosis}` : ""}. ${advice}${mis}${res}`;
 }
 
 /** Does `text` state the solution's final number? A number that's already in the problem statement (a given that
@@ -924,6 +972,8 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       if (boardStillEmpty(board.length, writes, history, reply) && !result.boardCleared) issues.push("the board is still empty. Open it now: a header line (WRITE_TO_BOARD kind focus: subject → topic → what we're doing) and the starting point (the question you're asking, the key definition, or the givens). The board must show what you're working on from the first turn");
       else if (teachesUnboarded(reply, writes)) issues.push("you taught an idea in chat but the board doesn't show it. Write the key idea in one short line (kind definition, formula or insight; maths in $…$) — or draw it if it's a relationship — then keep the message as it is");
       if (discussion && asksDiscussionQuestionUnboarded(reply, writes)) issues.push("put the question you're asking them to think about on the board as one short line (kind focus), so the discussion is visible");
+      if (teachesOverError(reply, message, input.stepVerdict?.verdict)) issues.push("they just got it wrong and you went straight to the method. First find out what they were thinking: name the belief you suspect (\"it looks like you treated log(x+y) as log x + log y\") or ask one question / give one counter-example that tests it — then help. The goal is to fix the misconception, not to show the right answer");
+      if (strategyMissing(message, allBoard(), result.board)) issues.push("they just solved it: name the reusable strategy behind it and put it on the board (WRITE_TO_BOARD kind strategy, a few words, e.g. \"Expand: fraction → product → powers\"), ideally asking them to put it in their own words");
       if (wrapsUpUnasked(reply, message)) issues.push("it offers to wrap up or move on, which they didn't ask for — stay on the current work");
       if (reportsCorrectResult(message) && !movesOn(reply, !!(result.problems.length || result.board.length))) issues.push("they just got an exercise right: confirm in one specific clause, then ONE critical-thinking move (why it works, does the result make sense, what if a given changed, or find the flaw in a plausible wrong line) and/or start the next activity yourself (the CURRENT lesson-plan milestone, in a new format) — end with one question or a new exercise");
       const missingObj = pointsAtMissingObject(reply, allBoard().map((b) => String(b.kind)));
@@ -1113,6 +1163,8 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       if (result.board.filter((e) => !["svg", "graph", "flow", "widget", "diagram", "annotation"].includes(String(e.kind))).length >= 4) return "LIMIT: four lines a turn is plenty — the board keeps only what's worth keeping.";
       if (input.owner !== "student" && input.kind !== "focus" && !c.codeWrite && !c.discussion && !relevantToFocus(text, [...c.focus, ...c.allBoard().map((b) => b.text), ...c.result.problems.map((p) => p.question)], c.known || [])) return "REJECTED: that line isn't about the problem you're working on. Write only this problem's givens, a step THEY reached (owner:'student'), or the next step as a gap ending in '= ?'.";
       if (isDuplicateBoardEntry(c.allBoard(), input)) return "DUPLICATE: that's already on the board — point at it instead.";
+      // Accuracy (spec §19): a line OTTO writes must not state false arithmetic — the board is what they'll revise from.
+      if (input.owner !== "student") { const bad = wrongArithmetic(text, c.message); if (bad) return `REJECTED: that line has a wrong calculation (${bad}). Recompute it before writing.`; }
       if (input.kind !== "gap" && leaks(text)) return LEAK;
       if (input.owner !== "student" && statesFinalAnswer(text, c.solution) && !reachedSolutionSteps(c.message, c.solution).includes(0)) return LEAK;
       // A gap that already shows its own answer ("Power = 1000×9.8×sin(10°)×15 = 25,526?", reported live) isn't a gap.

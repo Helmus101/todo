@@ -15,7 +15,7 @@ import { selectJournal } from "../server/journal.ts";
 import { recentJournalLine } from "../server/claude.ts";
 import { countJournalEntries } from "../shared/journalCount.ts";
 import { reachedResultUnrecorded, setsMathTaskUnboarded } from "../server/tutorAdapt.ts";
-import { teachesUnboarded, boardStillEmpty, asksDiscussionQuestionUnboarded, isDiscussionSubject, statesClaimUnboarded, DISCUSSION_BLOCK, TUTOR_PROMPT, subjectsIn, reportsCorrectResult, movesOn, pointsAtMissingObject } from "../server/tutor.ts";
+import { updateMisconceptions, teachesOverError, strategyMissing, parsePlan, teachingBlock, wrongArithmetic, teachesUnboarded, boardStillEmpty, asksDiscussionQuestionUnboarded, isDiscussionSubject, statesClaimUnboarded, DISCUSSION_BLOCK, TUTOR_PROMPT, subjectsIn, reportsCorrectResult, movesOn, pointsAtMissingObject } from "../server/tutor.ts";
 import { blamesWidget } from "../server/tutorAdapt.ts";
 import { inventedNumbers } from "../server/tutorAdapt.ts";
 import { makeProblem as makeProblemP } from "../server/claude.ts";
@@ -3504,7 +3504,12 @@ check("a well-formed objectives list is accepted", (() => {
 })());
 check("an empty list is rejected", "error" in makeObjectives({ objectives: [] }));
 check("entries with no label are dropped, not stored as garbage", makeObjectives({ objectives: [{ label: "", done: false }, { label: "Real one", done: false }] }).objectives.length === 1);
-check("list is capped at 6 objectives", makeObjectives({ objectives: Array.from({ length: 10 }, (_, i) => ({ label: `Obj ${i}`, done: false })) }).objectives.length === 6);
+check("list is capped at 5 objectives (condensed checklist)", makeObjectives({ objectives: Array.from({ length: 10 }, (_, i) => ({ label: `Obj ${i}`, done: false })) }).objectives.length === 5);
+check("a long objective is condensed: its trailing explanation dropped, cut on a word boundary", (() => {
+  const a = makeObjectives({ objectives: [{ label: "Expand logarithms using the three laws — product, quotient and power, on exam-style expressions", done: false }] }).objectives[0].label;
+  const b = makeObjectives({ objectives: [{ label: "Understand and confidently apply the change of base formula to evaluate tricky logarithms quickly", done: false }] }).objectives[0].label;
+  return a === "Expand logarithms using the three laws" && b.length <= 49 && b.endsWith("…") && !/\s…$/.test(b);
+})());
 check("each objective gets a fresh id even if the model didn't send one", (() => {
   const r = makeObjectives({ objectives: [{ label: "x", done: false }] });
   return "objectives" in r && typeof r.objectives[0].id === "string" && r.objectives[0].id.length > 0;
@@ -5010,6 +5015,25 @@ check("…but not a short reaction or a turn that wrote", !teachesUnboarded("Rig
 const longReply = "Let us start with the definition of a logarithm, because every law we use later comes from it, so tell me what question a log answers.";
 check("an empty board on a real teaching turn is caught", boardStillEmpty(0, 0, [{ role: "user" }], longReply) && !boardStillEmpty(2, 0, [{ role: "user" }], longReply) && !boardStillEmpty(0, 1, [{ role: "user" }], longReply) && !boardStillEmpty(0, 0, [], longReply) && !boardStillEmpty(0, 0, [{ role: "user" }], "Hey! What are we on?"));
 check("a humanities discussion question gets put on the board", asksDiscussionQuestionUnboarded("Good. What would a historian who blames Wilson rather than Versailles say about that?", 0) && !asksDiscussionQuestionUnboarded("Why?", 0));
+
+section("Tutor diagnoses misconceptions, coaches strategies, stays accurate");
+{
+  const p = parsePlan('<plan>{"diagnosis":"conceptual","misconception":"thinks log(M+N) = log M + log N","action":"probe","help_level":1}</plan> hi');
+  check("the hidden plan carries a misconception label", p?.misconception === "thinks log(M+N) = log M + log N");
+  let m = updateMisconceptions(undefined, p, false);
+  m = updateMisconceptions(m, p, false);
+  check("the same misconception seen twice is counted, not duplicated", m.length === 1 && m[0].turns === 2 && !m[0].resolved);
+  m = updateMisconceptions(m, { diagnosis: "none" }, true);
+  check("a verified right step with no new misconception marks it repaired", m[0].resolved === true);
+  check("at most 5 are kept", updateMisconceptions(Array.from({ length: 7 }, (_, i) => ({ label: `m${i}`, turns: 1 })), undefined, false).length === 5);
+  const tb = teachingBlock({ helpLevel: 1, stuckStreak: 0, turns: 3, misconceptions: [{ label: "adds exponents", turns: 2 }, { label: "sign of the quotient", turns: 1, resolved: true }] });
+  check("TEACHING STATE lists open misconceptions to revisit and repaired ones to re-check later", /OPEN MISCONCEPTIONS[^\n]*adds exponents[^\n]*seen 2/.test(tb) && /Repaired so far[^\n]*sign of the quotient/.test(tb));
+  check("after a wrong answer, teaching the method with no question / named belief is caught", teachesOverError("The power law says you bring the exponent to the front, so it becomes 3 log x.", '[Exercise] I answered "x^3" — marked wrong (try #1).'));
+  check("…a diagnostic question or a named belief passes, and a right answer never triggers it", !teachesOverError("It looks like you treated the power as a product. What does log(x³) mean?", '[Exercise] I answered "x^3" — marked wrong (try #1).') && !teachesOverError("Good.", '[Exercise] I answered "8" — marked right (try #1).'));
+  check("a solve with no strategy on the board asks for one; an existing strategy line satisfies it", strategyMissing('[Exercise] I answered "8" — marked right (try #1).', [], []) && !strategyMissing('[Exercise] I answered "8" — marked right (try #1).', [{ kind: "strategy" }], []) && !strategyMissing("hello", [], []));
+  check("the prompt has strategy, accuracy and misconception sections", /STRATEGIES — teach them how/.test(TUTOR_PROMPT) && /ACCURACY — never guess/.test(TUTOR_PROMPT) && /MISCONCEPTIONS — find the belief/.test(TUTOR_PROMPT));
+  check("an Otto board line with false arithmetic is rejected (source pin + detector)", !!wrongArithmetic("$400/50 = 9$") && /REJECTED: that line has a wrong calculation/.test(readFileSync("server/tutor.ts", "utf8")));
+}
 
 section("Board changes are undoable in the Tutor session (spec §12 #10, source pins)");
 {

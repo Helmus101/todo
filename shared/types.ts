@@ -1250,6 +1250,9 @@ export interface TutorTeachingState {
   /** Consecutive turns tripped on that SAME guardrailValue. Resets to 0 the instant a turn doesn't trip the
    *  guard at all — moving on, or the value actually got resolved. */
   guardrailStreak?: number;
+  /** Misconceptions Otto diagnosed this session (short labels from its hidden turn plan, never the student's words):
+   *  carried across turns so it revisits them instead of forgetting after one reply. Max 5. */
+  misconceptions?: { label: string; turns: number; resolved?: boolean }[];
 }
 
 export interface WebTask {
@@ -1668,7 +1671,7 @@ export interface BoardEntry {
    *  (see `outline`) — for essay-based/humanities content (history causes, source analysis, an essay plan)
    *  where a flat sentence or a spatial diagram both fit poorly; math/science still reach for
    *  formula/diagram first. */
-  kind?: "note" | "instruction" | "given" | "result" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "interactive" | "graph" | "widget" | "flow" | "svg" | "gap" | "annotation";
+  kind?: "note" | "instruction" | "given" | "result" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "interactive" | "graph" | "widget" | "flow" | "svg" | "gap" | "annotation" | "strategy";
   /** Who authored this entry — "otto" (default for backward compat) or "student". Student-owned entries are
    *  never silently rewritten by Otto. Used to visually distinguish Otto's scaffolding from the student's
    *  own work on the board (see BoardArtifact.tsx). */

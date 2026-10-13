@@ -2921,7 +2921,7 @@ export const SET_OBJECTIVES_TOOL = {
   input_schema: { type: "object", properties: {
     objectives: {
       type: "array",
-      description: "the FULL current list (not a delta) — 1-6 items.",
+      description: "the FULL current list (not a delta) — 3-5 items, each a condensed checklist label of at most 6 words (e.g. 'Expand logs with the 3 laws').",
       items: { type: "object", properties: {
         label: { type: "string", description: "the objective itself, exam-skill-phrased ('Evaluating X', 'Comparing Y and Z', 'Explaining why...')" },
         done: { type: "boolean", description: "true once the student has actually demonstrated this, false otherwise" },
@@ -3226,7 +3226,7 @@ export function makeProblem(input: any, requireCheck = false): { problem: TaskPr
   };
 }
 
-const BOARD_KINDS = new Set(["note", "instruction", "given", "result", "formula", "summary", "focus", "insight", "definition", "outline", "gap"]);
+const BOARD_KINDS = new Set(["note", "instruction", "given", "result", "formula", "summary", "focus", "insight", "definition", "outline", "gap", "strategy"]);
 /** Resolve an ANNOTATE_BOARD target ("#3" or an id) against the board as the model saw it (the last 40 entries, annotations excluded). */
 export function resolveBoardTarget(target: string, board: BoardEntry[]): BoardEntry | null {
   const visible = board.slice(-40);
@@ -3273,6 +3273,18 @@ export function makeBoardEntry(input: any): { entry: BoardEntry } | { error: str
   return { entry: { id: randomUUID(), text, ...(kind ? { kind } : {}), ...(owner === "student" ? { owner } : {}), ...(expectedAnswer ? { expectedAnswer } : {}), ...(gapAction ? { gapAction } : {}), at: new Date().toISOString() } };
 }
 
+/** Session objectives are a condensed checklist (reported: long sentences made the panel unreadable): drop a trailing
+ *  explanation after a dash/colon/parenthesis, then cut to 48 characters on a word boundary. Exported for tests. */
+export function condenseObjective(label: string): string {
+  let l = String(label || "").replace(/\s+/g, " ").trim().replace(/[.;]+$/, "");
+  const head = l.split(/\s+[—–-]\s+|:\s+|\s+\(/)[0].trim();
+  if (head.length >= 8) l = head;
+  if (l.length <= 48) return l;
+  const cut = l.slice(0, 48);
+  const sp = cut.lastIndexOf(" ");
+  return (sp > 20 ? cut.slice(0, sp) : cut).replace(/[,;:—–-]+$/, "").trim() + "…";
+}
+
 /** Full-replace validator for SET_OBJECTIVES — mirrors the tool's own contract (the model always sends the
  *  WHOLE current list, never a delta), so there's nothing to merge against prior state here. */
 export function makeObjectives(input: any): { objectives: TaskObjective[] } | { error: string } {
@@ -3280,11 +3292,11 @@ export function makeObjectives(input: any): { objectives: TaskObjective[] } | { 
   const objectives = raw
     .map((o: any) => ({
       id: randomUUID(),
-      label: stripLeakedToolCallSyntax(String(o?.label || "").trim()).slice(0, 160),
+      label: condenseObjective(stripLeakedToolCallSyntax(String(o?.label || "").trim())),
       done: Boolean(o?.done),
     }))
     .filter((o: TaskObjective) => o.label)
-    .slice(0, 6);
+    .slice(0, 5);
   if (!objectives.length) return { error: "ERROR: SET_OBJECTIVES needs at least one objective with a non-empty label." };
   return { objectives };
 }

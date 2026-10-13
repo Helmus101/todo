@@ -7144,6 +7144,7 @@ __export(claude_exports, {
   cleanupArtifactCreationSteps: () => cleanupArtifactCreationSteps,
   computePersonalizationSignals: () => computePersonalizationSignals,
   computeTaskOutcome: () => computeTaskOutcome,
+  condenseObjective: () => condenseObjective,
   countWords: () => countWords,
   courseworkLine: () => courseworkLine,
   createTutorChat: () => createTutorChat,
@@ -8589,13 +8590,22 @@ function makeBoardEntry(input) {
   const gapAction = kind === "gap" && input?.gapAction ? String(input.gapAction).trim().replace(/\s+/g, " ").slice(0, 60) : void 0;
   return { entry: { id: randomUUID2(), text, ...kind ? { kind } : {}, ...owner === "student" ? { owner } : {}, ...expectedAnswer ? { expectedAnswer } : {}, ...gapAction ? { gapAction } : {}, at: (/* @__PURE__ */ new Date()).toISOString() } };
 }
+function condenseObjective(label) {
+  let l = String(label || "").replace(/\s+/g, " ").trim().replace(/[.;]+$/, "");
+  const head = l.split(/\s+[—–-]\s+|:\s+|\s+\(/)[0].trim();
+  if (head.length >= 8) l = head;
+  if (l.length <= 48) return l;
+  const cut = l.slice(0, 48);
+  const sp = cut.lastIndexOf(" ");
+  return (sp > 20 ? cut.slice(0, sp) : cut).replace(/[,;:—–-]+$/, "").trim() + "\u2026";
+}
 function makeObjectives(input) {
   const raw = Array.isArray(input?.objectives) ? input.objectives : [];
   const objectives = raw.map((o) => ({
     id: randomUUID2(),
-    label: stripLeakedToolCallSyntax(String(o?.label || "").trim()).slice(0, 160),
+    label: condenseObjective(stripLeakedToolCallSyntax(String(o?.label || "").trim())),
     done: Boolean(o?.done)
-  })).filter((o) => o.label).slice(0, 6);
+  })).filter((o) => o.label).slice(0, 5);
   if (!objectives.length) return { error: "ERROR: SET_OBJECTIVES needs at least one objective with a non-empty label." };
   return { objectives };
 }
@@ -12972,7 +12982,7 @@ READ ONLY here \u2014 do NOT create, modify, draft, or send anything during gene
       input_schema: { type: "object", properties: {
         objectives: {
           type: "array",
-          description: "the FULL current list (not a delta) \u2014 1-6 items.",
+          description: "the FULL current list (not a delta) \u2014 3-5 items, each a condensed checklist label of at most 6 words (e.g. 'Expand logs with the 3 laws').",
           items: { type: "object", properties: {
             label: { type: "string", description: "the objective itself, exam-skill-phrased ('Evaluating X', 'Comparing Y and Z', 'Explaining why...')" },
             done: { type: "boolean", description: "true once the student has actually demonstrated this, false otherwise" }
@@ -12993,7 +13003,7 @@ READ ONLY here \u2014 do NOT create, modify, draft, or send anything during gene
       [/\binward\b/i, /\boutward\b/i],
       [/\bforward\b/i, /\bbackward\b/i]
     ];
-    BOARD_KINDS = /* @__PURE__ */ new Set(["note", "instruction", "given", "result", "formula", "summary", "focus", "insight", "definition", "outline", "gap"]);
+    BOARD_KINDS = /* @__PURE__ */ new Set(["note", "instruction", "given", "result", "formula", "summary", "focus", "insight", "definition", "outline", "gap", "strategy"]);
     MAX_OUTLINE_SECTIONS = 6;
     MAX_OUTLINE_BULLETS = 8;
     MAX_DIAGRAM_OPS = 15;
@@ -13927,7 +13937,7 @@ WHEN THEY'RE WRONG \u2014 fix the FIRST thing that's off, not the last number
 GRADUATED HELP \u2014 the app tracks it and TEACHING STATE reminds you ("help level n/4")
 0 = ask them for the next step \xB7 1 = point at the relevant formula, quantity or relationship \xB7 2 = name the principle \xB7 3 = give the setup (formula and variables, or the first line) \xB7 4 = explain the missing idea fully, then hand the step back. Climb only as far as the obstacle needs, and drop back the moment they're moving.
 
-Start your reply with a hidden plan, exactly: <plan>{"diagnosis":"conceptual|procedural|computational|interpretive|prerequisite|none","action":"probe|hint|visual|explain|example|practice|confirm","help_level":0-4}</plan> \u2014 the app strips it; the student never sees it.
+Start your reply with a hidden plan, exactly: <plan>{"diagnosis":"conceptual|procedural|computational|interpretive|prerequisite|none","misconception":"<the belief behind their error, \u22648 words, e.g. "thinks log(M+N)=logM+logN" \u2014 omit if none>","action":"probe|hint|visual|explain|example|practice|confirm","help_level":0-4}</plan> \u2014 the app strips it; the student never sees it.
 
 HOW MUCH HELP
 - Least help that unlocks them. Never trap a confused student in endless questions: if they're stuck twice (see TEACHING STATE), explain the missing idea directly, then give the step back. If they ask for an explanation, respect it.
@@ -13998,6 +14008,17 @@ CRITICAL THINKING \u2014 in every subject, build the habit, not just the answer
 - Ask them to rate how sure they are (1-5) on a hard step, and treat a confident wrong answer as the most valuable moment to probe.
 - One such move per turn, and keep it proportionate: no interrogation after every trivial step. Never answer your own question, and never replace the content with questions when they're genuinely stuck (see HOW MUCH HELP).
 
+STRATEGIES \u2014 teach them how to approach problems, not just this one
+- After they solve something, or once they're unstuck, name the reusable strategy in a few words ("Expand: fraction \u2192 product \u2192 powers"; "Equilibrium: set Qd = Qs, solve, substitute back"; "Source: origin, purpose, value, limitation") and ask them to say it in their own words. Put it on the board (kind strategy).
+- Before a new problem, ask "which strategy fits, and why?" before they compute. When they're stuck, point at a strategy on the board instead of the answer.
+- Teach checking as a strategy: substitute back, estimate the size, check units and sign, ask if it answers the question asked.
+
+ACCURACY \u2014 never guess
+- Work out every number, rule and fact before you say or write it. If you're not sure of a fact (a date, a quote, a definition), say so plainly or leave it out; never state it as certain. The board is what they revise from: it must be right.
+
+MISCONCEPTIONS \u2014 find the belief behind the error
+- A wrong answer usually comes from a sensible-looking wrong belief. Name it in your hidden plan ("misconception"), test it with one question or a counter-example that only fails under that belief, and let them see the conflict themselves before you give the right idea. The app keeps a list of open misconceptions in TEACHING STATE: come back to them with a fresh case.
+
 SESSION OBJECTIVES ARE AGREED, NEVER IMPOSED
 - With no lesson plan yet, find out what they want from this session (a test? homework? understanding one idea?) before teaching. Then PROPOSE 3-6 objectives as a short numbered list and ask whether to change, add or remove any. Only after they answer, call SET_OBJECTIVES with the agreed list. They can edit it any time ("add X", "drop Y") \u2014 update it with SET_OBJECTIVES and say what changed.
 
@@ -14030,7 +14051,7 @@ var WRITE_TO_BOARD = {
   description: "Write one short entry on the board: keywords and structure, not prose (\u2264 25 words). Maths in LaTeX between $\u2026$. Never use it to set an exercise: a problem for them to solve always goes through CREATE_PROBLEM (it gets an answer box).",
   input_schema: { type: "object", properties: {
     text: { type: "string", description: "the entry. Several short lines are fine for a worked sequence (one move per line)." },
-    kind: { type: "string", enum: ["given", "formula", "definition", "result", "summary", "insight", "instruction", "focus", "outline", "gap"], description: "given = the problem's data; result = something they derived; summary = their reasoning so far; insight = their aha; gap = a line for THEM to finish (ends in '= ?'); outline = headed bullets." },
+    kind: { type: "string", enum: ["given", "formula", "definition", "result", "summary", "insight", "instruction", "focus", "outline", "gap", "strategy"], description: "given = the problem's data; result = something they derived; summary = their reasoning so far; insight = their aha; strategy = a reusable method in a few words, ideally in THEIR words ('Expand: fraction \u2192 product \u2192 powers'); gap = a line for THEM to finish (ends in '= ?'); outline = headed bullets." },
     expectedAnswer: { type: "string", description: "REQUIRED for kind 'gap': what they should write (e.g. 'h/tan(25\xB0)', '0.25', 'friction'). Never revealed." },
     gapAction: { type: "string", description: "kind 'gap' only: 2-6 words naming the move ('express b with tan 25\xB0'), for your own tracking. Never the value." },
     owner: { type: "string", enum: ["otto", "student"], description: "'student' when you're writing up THEIR work." },
@@ -14143,6 +14164,17 @@ function asksDiscussionQuestionUnboarded(reply, boardWrites) {
   const q = (String(reply || "").match(/[^.?!]*\?/g) || []).pop() || "";
   return q.trim().split(/\s+/).length >= 7;
 }
+function teachesOverError(reply, message, verdict) {
+  const wrong = verdict === "incorrect" || /^\s*\[(?:Exercise|Exercice)\][^\n]*\b(?:marked wrong|checked wrong|faux)\b/i.test(String(message || ""));
+  if (!wrong) return false;
+  const r = String(reply || "");
+  if (/\?/.test(r)) return false;
+  return !/\b(?:you (?:might|may) (?:have|be)|it looks like you|i think you|maybe you|did you (?:think|assume)|on dirait que tu|tu as peut-être|tu penses)\b/i.test(r);
+}
+function strategyMissing(message, board, writes) {
+  if (!reportsCorrectResult(message)) return false;
+  return ![...board, ...writes].some((e) => e.kind === "strategy");
+}
 function asksStudentToChoose(reply) {
   return /\b(?:what|which)\b[^?]{0,60}\b(?:would you like|do you want|should we|shall we|part|topic|area|chapter|start with|focus on|work on|look at)\b[^?]*\?|\bor (?:something else|another topic)\b[^?]*\?|\bpar quoi\b[^?]*\?|\bqu(?:'|e )(?:est-ce que )?(?:tu veux|veux-tu|aimerais-tu)\b[^?]*\?/i.test(String(reply || ""));
 }
@@ -14160,7 +14192,8 @@ function parsePlan(text) {
     const j = JSON.parse(m[1].trim());
     const action = ACTIONS.includes(String(j.action)) ? String(j.action) : void 0;
     const helpLevel = Number.isFinite(Number(j.help_level)) ? Math.max(0, Math.min(4, Math.round(Number(j.help_level)))) : void 0;
-    return { ...j.diagnosis ? { diagnosis: String(j.diagnosis).slice(0, 40) } : {}, ...action ? { action } : {}, ...helpLevel != null ? { helpLevel } : {} };
+    const mis = typeof j.misconception === "string" ? j.misconception.replace(/\s+/g, " ").trim().split(" ").slice(0, 10).join(" ").slice(0, 70) : "";
+    return { ...mis ? { misconception: mis } : {}, ...j.diagnosis ? { diagnosis: String(j.diagnosis).slice(0, 40) } : {}, ...action ? { action } : {}, ...helpLevel != null ? { helpLevel } : {} };
   } catch {
     return void 0;
   }
@@ -14182,15 +14215,38 @@ function nextTeachingState(prev, ev) {
     // no separate reset logic. Reported live: four turns straight replaying one identical fallback sentence
     // because this never had any memory of having just tripped on the exact same thing.
     guardrailStreak: ev.leaked && ev.leaked === p.guardrailValue ? (p.guardrailStreak || 0) + 1 : ev.leaked ? 1 : 0,
-    ...ev.leaked ? { guardrailValue: ev.leaked } : {}
+    ...ev.leaked ? { guardrailValue: ev.leaked } : {},
+    ...(() => {
+      const m = updateMisconceptions(p.misconceptions, ev.plan, right);
+      return m.length ? { misconceptions: m } : {};
+    })()
   };
+}
+function updateMisconceptions(prev, plan, right) {
+  const list = [...prev || []].map((m) => ({ ...m }));
+  const label = plan?.misconception?.trim();
+  if (label) {
+    const same2 = list.find((m) => m.label.toLowerCase() === label.toLowerCase());
+    if (same2) {
+      same2.turns += 1;
+      same2.resolved = false;
+    } else list.push({ label, turns: 1 });
+  } else if (right) {
+    const open = [...list].reverse().find((m) => !m.resolved);
+    if (open) open.resolved = true;
+  }
+  return list.slice(-5);
 }
 function teachingBlock(t) {
   if (!t || !t.turns) return "";
   const advice = t.stuckStreak >= 2 ? "They've been stuck " + t.stuckStreak + " turns in a row: questions aren't working. Explain the missing idea directly and briefly (or show a worked example with different numbers), then hand the next step back to them." : t.stuckStreak === 1 ? "They were stuck last turn: go one rung up (a sharper hint, a pointer on the board, or a figure), not the same question again." : "They're moving: keep the help light (a question or a nudge).";
+  const open = (t.misconceptions || []).filter((m) => !m.resolved);
+  const mis = open.length ? ` OPEN MISCONCEPTIONS this session: ${open.map((m) => `"${m.label}"${m.turns > 1 ? ` (seen ${m.turns}\xD7)` : ""}`).join("; ")} \u2014 before moving on, test each with a FRESH case that only works if they've let go of it; a confident wrong answer means probe the belief, not reteach the method.` : "";
+  const resolved = (t.misconceptions || []).filter((m) => m.resolved);
+  const res = resolved.length ? ` Repaired so far: ${resolved.map((m) => `"${m.label}"`).join("; ")} \u2014 check one again later in the session (spaced retrieval).` : "";
   return `
 
-TEACHING STATE (kept by the app): help level so far ${t.helpLevel}/4${t.lastAction ? `, last move: ${t.lastAction}` : ""}${t.lastDiagnosis ? `, last diagnosis: ${t.lastDiagnosis}` : ""}. ${advice}`;
+TEACHING STATE (kept by the app): help level so far ${t.helpLevel}/4${t.lastAction ? `, last move: ${t.lastAction}` : ""}${t.lastDiagnosis ? `, last diagnosis: ${t.lastDiagnosis}` : ""}. ${advice}${mis}${res}`;
 }
 function statesFinalAnswer(text, sol) {
   if (!sol || sol.value == null) return false;
@@ -14553,6 +14609,8 @@ async function runTutorTurn(input) {
       if (boardStillEmpty(board.length, writes, history, reply) && !result.boardCleared) issues.push("the board is still empty. Open it now: a header line (WRITE_TO_BOARD kind focus: subject \u2192 topic \u2192 what we're doing) and the starting point (the question you're asking, the key definition, or the givens). The board must show what you're working on from the first turn");
       else if (teachesUnboarded(reply, writes)) issues.push("you taught an idea in chat but the board doesn't show it. Write the key idea in one short line (kind definition, formula or insight; maths in $\u2026$) \u2014 or draw it if it's a relationship \u2014 then keep the message as it is");
       if (discussion && asksDiscussionQuestionUnboarded(reply, writes)) issues.push("put the question you're asking them to think about on the board as one short line (kind focus), so the discussion is visible");
+      if (teachesOverError(reply, message, input.stepVerdict?.verdict)) issues.push('they just got it wrong and you went straight to the method. First find out what they were thinking: name the belief you suspect ("it looks like you treated log(x+y) as log x + log y") or ask one question / give one counter-example that tests it \u2014 then help. The goal is to fix the misconception, not to show the right answer');
+      if (strategyMissing(message, allBoard(), result.board)) issues.push('they just solved it: name the reusable strategy behind it and put it on the board (WRITE_TO_BOARD kind strategy, a few words, e.g. "Expand: fraction \u2192 product \u2192 powers"), ideally asking them to put it in their own words');
       if (wrapsUpUnasked(reply, message)) issues.push("it offers to wrap up or move on, which they didn't ask for \u2014 stay on the current work");
       if (reportsCorrectResult(message) && !movesOn(reply, !!(result.problems.length || result.board.length))) issues.push("they just got an exercise right: confirm in one specific clause, then ONE critical-thinking move (why it works, does the result make sense, what if a given changed, or find the flaw in a plausible wrong line) and/or start the next activity yourself (the CURRENT lesson-plan milestone, in a new format) \u2014 end with one question or a new exercise");
       const missingObj = pointsAtMissingObject(reply, allBoard().map((b) => String(b.kind)));
@@ -14679,6 +14737,10 @@ function applyTool(name, input, c) {
       if (result.board.filter((e) => !["svg", "graph", "flow", "widget", "diagram", "annotation"].includes(String(e.kind))).length >= 4) return "LIMIT: four lines a turn is plenty \u2014 the board keeps only what's worth keeping.";
       if (input.owner !== "student" && input.kind !== "focus" && !c.codeWrite && !c.discussion && !relevantToFocus(text, [...c.focus, ...c.allBoard().map((b) => b.text), ...c.result.problems.map((p) => p.question)], c.known || [])) return "REJECTED: that line isn't about the problem you're working on. Write only this problem's givens, a step THEY reached (owner:'student'), or the next step as a gap ending in '= ?'.";
       if (isDuplicateBoardEntry(c.allBoard(), input)) return "DUPLICATE: that's already on the board \u2014 point at it instead.";
+      if (input.owner !== "student") {
+        const bad = wrongArithmetic(text, c.message);
+        if (bad) return `REJECTED: that line has a wrong calculation (${bad}). Recompute it before writing.`;
+      }
       if (input.kind !== "gap" && leaks(text)) return LEAK;
       if (input.owner !== "student" && statesFinalAnswer(text, c.solution) && !reachedSolutionSteps(c.message, c.solution).includes(0)) return LEAK;
       const unsep = (x) => x.replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1");
