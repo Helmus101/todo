@@ -282,6 +282,10 @@ const sessionDirtyCache = new Map<string, string>();
 // connections live in Composio, keyed by the same account email, so there's nothing extra to store.)
 // Merge this instance's view into the account row and write it. `throwOnError` is for the awaited journal-save path, which also
 // bypasses the read cache (the one place a stale base could lose a concurrent write); background flushes use the cached read.
+/** What of a task may reach the cloud account row: a tutor (freestudy) session's worked solution carries the
+ *  problem's statement and every step, which is session CONTENT — it stays in this server session and the
+ *  browser, never the account row. Everything else is untouched. */
+const forCloud = (t: WebTask): WebTask => (t.source === "freestudy" && t.solution ? { ...t, solution: undefined } : t);
 async function writeAccount(email: string, localTasks: WebTask[], localProfile: Profile, o: { throwOnError?: boolean; bypassCache?: boolean } = {}): Promise<void> {
   const throwOnError = !!o.throwOnError;
   try {
@@ -291,11 +295,11 @@ async function writeAccount(email: string, localTasks: WebTask[], localProfile: 
     const current = await loadState(email, { bypassCache: true });
     const mergedTasks = mergeTasks(current.tasks || [], localTasks);
     const mergedProfile = mergeProfiles(current.profile || emptyProfile(), localProfile);
-    await saveState(email, { profile: mergedProfile, tasks: mergedTasks }, { throwOnError });
+    await saveState(email, { profile: mergedProfile, tasks: mergedTasks.map(forCloud) }, { throwOnError });
   } catch (e) {
     reportError("commit-sync-cloud-merge", e);
     // Fallback write on merge failure — same throwOnError contract, so an awaiting caller still finds out if this ALSO fails.
-    await saveState(email, { profile: localProfile, tasks: localTasks }, { throwOnError });
+    await saveState(email, { profile: localProfile, tasks: localTasks.map(forCloud) }, { throwOnError });
   }
 }
 const scheduler = makeSyncScheduler<WebTask[]>(
@@ -1974,7 +1978,7 @@ async function tutorTurn(
   const evidence = evidenceKindFor({ message, verdict: stepVerdict?.verdict, reachedFinal: reached.includes(0), helpLevel: helpBefore });
   const skill = t.solution?.skill || t.sourceSubject;
   if (evidence && skill) {
-    try { profile.conceptModel = recordConceptEvidence(normalizeStudentModel(profile.conceptModel) || emptyStudentModel(), { label: skill, subject: t.sourceSubject, kind: evidence, evidence: message.slice(0, 80) }, new Date()); }
+    try { profile.conceptModel = recordConceptEvidence(normalizeStudentModel(profile.conceptModel) || emptyStudentModel(), { label: skill, subject: t.sourceSubject, kind: evidence, evidence: "tutor session" }, new Date()); }  // a label, never the student's own words — those stay in this browser
     catch { /* best-effort — never blocks the reply */ }
   }
   // The student's VERIFIED-CORRECT step goes on the board as their line — unless it's already there.

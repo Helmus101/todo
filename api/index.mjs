@@ -17071,16 +17071,17 @@ var saveSession = (req) => new Promise((r) => req.session.save((err) => {
 var mergeTasks = mergeTaskLists;
 var mergeProfiles = mergeProfileStates;
 var sessionDirtyCache = /* @__PURE__ */ new Map();
+var forCloud = (t) => t.source === "freestudy" && t.solution ? { ...t, solution: void 0 } : t;
 async function writeAccount(email, localTasks, localProfile, o = {}) {
   const throwOnError = !!o.throwOnError;
   try {
     const current = await loadState(email, { bypassCache: true });
     const mergedTasks = mergeTasks(current.tasks || [], localTasks);
     const mergedProfile = mergeProfiles(current.profile || emptyProfile(), localProfile);
-    await saveState(email, { profile: mergedProfile, tasks: mergedTasks }, { throwOnError });
+    await saveState(email, { profile: mergedProfile, tasks: mergedTasks.map(forCloud) }, { throwOnError });
   } catch (e) {
     reportError("commit-sync-cloud-merge", e);
-    await saveState(email, { profile: localProfile, tasks: localTasks }, { throwOnError });
+    await saveState(email, { profile: localProfile, tasks: localTasks.map(forCloud) }, { throwOnError });
   }
 }
 var scheduler = makeSyncScheduler(
@@ -18428,7 +18429,7 @@ async function tutorTurn(req, res, t, c) {
   const skill = t.solution?.skill || t.sourceSubject;
   if (evidence && skill) {
     try {
-      profile.conceptModel = recordConceptEvidence(normalizeStudentModel(profile.conceptModel) || emptyStudentModel(), { label: skill, subject: t.sourceSubject, kind: evidence, evidence: message.slice(0, 80) }, /* @__PURE__ */ new Date());
+      profile.conceptModel = recordConceptEvidence(normalizeStudentModel(profile.conceptModel) || emptyStudentModel(), { label: skill, subject: t.sourceSubject, kind: evidence, evidence: "tutor session" }, /* @__PURE__ */ new Date());
     } catch {
     }
   }

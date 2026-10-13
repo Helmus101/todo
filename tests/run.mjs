@@ -4939,6 +4939,13 @@ section("commit()'s awaitCloud sync bypasses the stale-cache merge base (source 
   check("background flushes and the job runner also merge against a validated read, not the TTL cache", /loadState\(email, \{ bypassCache: true \}\)/.test(syncCloudFn) && /await writeAccount\(email, snap\.tasks, snap\.profile as Profile, \{ throwOnError: true \}\)/.test(idxSrc) && /store\.loadState\(email, \{ bypassCache: true \}\)/.test(readFileSync(new URL("../server/jobs.ts", import.meta.url), "utf8")));
 }
 
+section("Tutor content never reaches the account row: no worked solution, no quoted student words (source pins)");
+{
+  const idxLocal = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  check("a tutor session's worked solution is stripped from what writeAccount sends to the cloud (both write paths)", /const forCloud = \(t: WebTask\): WebTask => \(t\.source === "freestudy" && t\.solution \? \{ \.\.\.t, solution: undefined \} : t\)/.test(idxLocal) && /tasks: mergedTasks\.map\(forCloud\)/.test(idxLocal) && /tasks: localTasks\.map\(forCloud\)/.test(idxLocal));
+  check("concept-model evidence is a label, not the student's message text", /evidence: "tutor session" \}/.test(idxLocal) && !/evidence: message\.slice/.test(idxLocal));
+}
+
 section("Confirming/dismissing a task guarantees the cloud write lands (source pin)");
 {
   // Reported live: "it completes, then comes back" — confirm/dismiss were on commit()'s DEFAULT fire-and-
