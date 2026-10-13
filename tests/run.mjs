@@ -78,6 +78,10 @@ import { lastMessageKey } from "../client/voice/replyKey.ts";
 import { subjectMastery } from "../shared/types.ts";
 import { COURSES, findCourse, normText, subjectMatches, matchesUnit, unitMastery, courseProgress, nextUnitToWork, masteryBand, UNIT_MASTERED_AT, orderCoursesForProfile, normalizeEnrolledCourses, unitObjectives } from "../shared/courses.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, subjectFrequency, orderingBoost, twoMinuteRuleBoost } from "../server/patterns.ts";
+// The AI layer was split into server/claude.ts (facade) + server/ai/*.ts; source checks read them as one.
+const claudeSource = () => ["../server/claude.ts", ...readdirSync(new URL("../server/ai/", import.meta.url)).map((f) => `../server/ai/${f}`)]
+  .map((f) => readFileSync(new URL(f, import.meta.url), "utf8")).join("\n");
+
 
 import { compileExpr } from "../shared/mathExpr.ts";
 import { makeGraphEntry, earlierDigest, isSubstantiveStep, courseworkLine, fallbackCourseworkSummary, chunkCourseworkText } from "../server/claude.ts";
@@ -96,7 +100,7 @@ const section = (name) => console.log(`— ${name}`);
 // ── Tutor speed + voice: local reply tightening, no extra model round-trip ─────
 section("Board = the reasoning, not a transcript (source pins)");
 {
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   check("the board never echoes the student's message or Otto's question (no auto-logging)", !/workingEntryFor|promptEntryFor/.test(src));
   check("a step, result or reasoning line counts as substantive", ["x² − 5x + 6 = 0 so (x−2)(x−3) = 0", "I think I need to move the six across first and then factor it", "the answer is 12"].every(isSubstantiveStep));
   check("questions, chips, acks, don't-knows and auto-messages do not", ["ok", "Salut", "what is a root?", "Can I have a small hint?", "I'm lost — can we go smaller?", "I don't know", "[Exercise] I answered \"4\" — marked wrong (try #1).", "[What I wrote/drew on the board: a wavy line]", "hmm"].every((m) => !isSubstantiveStep(m)));
@@ -127,7 +131,7 @@ section("Board reasoning trace — one move per rendered line, even when the mod
   // a board line is just a line, with no category around it. traceLines stays: it still strips the model's
   // own markers/glyphs from the text it is given.
   check("the reasoning-trace box is gone, while traceLines still strips the model's own markers", !/sm-board-trace/.test(boardSrc) && /piece\.replace\(LEAD_DECOR_RE, ""\)\.replace\(LEAD_MARKER_RE, ""\)\.replace\(LEAD_DECOR_RE, ""\)/.test(boardSrc));
-  const claudeTrace = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeTrace = claudeSource();
   check("the prompt tells the model to write ONE move per line with no step number or bullet inside it", claudeTrace.includes("ONE MOVE PER LINE — the trace is numbered for you") && claudeTrace.includes("never put TWO moves on one line"));
 }
 
@@ -154,7 +158,7 @@ section("Tutor opener — Otto's first line is REAL memory, never a template or 
   check("a runaway completion is clamped at a sentence boundary, not mid-word", (() => { const t = cleanOpener("a".repeat(150) + ". " + "b".repeat(400)); return t.length <= 321 && /[.?!]$/.test(t); })());
   check("an empty completion is treated as a real failure, never a blank bubble", cleanOpener("") === "" && cleanOpener("   ") === "");
 
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   check("the opener runs on the tutor's own provider chain (Gemini → DeepSeek fallback), not a second AI client", /export async function tutorOpener\([\s\S]*?await createTutorChat\(/.test(src));
   check("the prompt forbids inventing a RECOLLECTION — the exact placeholder this feature removes", src.includes("last time we were working on X") && src.includes("an honest blank start") && src.includes("beats a fabricated memory"));
   check("with NOTHING on record the model is told so out loud, so it can't confabulate a past session", src.includes("NOTHING IS ON RECORD about what this student has worked on") && src.includes('"last time" / "la dernière fois"'));
@@ -233,7 +237,7 @@ section("Tutor stage — End session always ends; the stage is screen-height wit
 section("Whiteboard — invited any time, read in board context, infinite blank to draw in (source pins)");
 {
   const canvasSrc = readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8");
-  const csrcW = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const csrcW = claudeSource();
   check("the tutor prompt tells Otto he may invite them to draw at ANY point, and to read the ink against the board",
     /INVITING THEM TO DRAW: the whiteboard is always right there in the tutor — you can suggest it at ANY /.test(csrcW) &&
     /it in the CONTEXT of what's already on the board/.test(csrcW));
@@ -280,7 +284,7 @@ section("Tutor memory — earlier turns are condensed, not forgotten");
   check("digest keeps only the first sentence of Otto's turns and tells the model not to re-explain", !/Take your time/.test(d) && /don't re-explain/.test(d));
   check("digest is capped, newest lines win", (() => { const many = Array.from({ length: 200 }, (_, i) => ({ role: "user", text: `message number ${i} about something` })); const out = earlierDigest(many, 600); return out.length < 800 && /number 199/.test(out) && !/number 0 /.test(out); })());
   check("nothing older gives an empty digest", earlierDigest([]) === "");
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   check("primer turns get a 24-message window plus the digest (non-primer stays 10)", /const histWindow = opts\?\.primer \? 24 : 10;/.test(src) && /earlierDigest\(history\.slice\(0, -histWindow\), 2600\)/.test(src));
   check("the server keeps up to 60 messages of thread", /const CHAT_CAP = 60;/.test(serverSource()));
 }
@@ -348,7 +352,7 @@ section("Coursework — subjects, limits, summaries the tutor/chat can cite (uni
   const cwRoute = idx.slice(idx.indexOf('app.post("/api/coursework"'), idx.indexOf('app.post("/api/coursework"') + 4200);
   check("the route is authenticated + rate-limited, re-enforces the char limit, and needs readable text", /app\.post\("\/api\/coursework", requireAuth, rateLimit\(/.test(idx) && /slice\(0, COURSEWORK_MAX_CHARS\)/.test(cwRoute) && /text\.length < 40/.test(cwRoute));
   check("tasks are created only from what the summarizer proposes, tagged with the subject, idempotent per document", /sum\?\.tasks/.test(cwRoute) && /cw:\$\{id\}:\$\{i\}/.test(cwRoute) && /sourceSubject = subject/.test(cwRoute));
-  check("chat/tutor and task runs both carry the coursework context", /courseworkLine\(profile, task\.sourceSubject\)/.test(readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8")) && (readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8").match(/courseworkLine\(profile, task\.sourceSubject\)/g) || []).length >= 2);
+  check("chat/tutor and task runs both carry the coursework context", /courseworkLine\(profile, task\.sourceSubject\)/.test(claudeSource()) && (claudeSource().match(/courseworkLine\(profile, task\.sourceSubject\)/g) || []).length >= 2);
   const page = readFileSync(new URL("../client/CourseworkPage.tsx", import.meta.url), "utf8");
   const pdf = readFileSync(new URL("../client/study/pdfText.ts", import.meta.url), "utf8");
   check("the browser reads only the first pages (limited PDF reader) and the page tells the student the limit", /extractPdfTextLimited\(file, COURSEWORK_MAX_PAGES, COURSEWORK_MAX_CHARS\)/.test(page) && /Math\.min\(doc\.numPages, maxPages\)/.test(pdf));
@@ -402,7 +406,7 @@ section("Tutor graphs — safe expression compiler + GRAPH_ON_BOARD validation")
   check("empty window / no real values rejected", "error" in makeGraphEntry({ caption: "c", xmin: 2, xmax: 1, fns: [{ expr: "x" }] }) && "error" in makeGraphEntry({ caption: "c", xmin: -5, xmax: -1, fns: [{ expr: "sqrt(x)" }] }));
   check("bad slider names rejected (x, e, multi-letter)", ["x", "e", "ab"].every((n) => "error" in makeGraphEntry({ caption: "c", xmin: 0, xmax: 1, fns: [{ expr: "x" }], params: [{ name: n, min: 0, max: 1, value: 0 }] })));
   check("points-only data plot allowed, capped to 4 fns", "entry" in makeGraphEntry({ caption: "data", xmin: 0, xmax: 10, points: [{ x: 1, y: 2 }, { x: 3, y: 5 }], connect: true }) && makeGraphEntry({ caption: "c", xmin: 0, xmax: 1, fns: Array(8).fill({ expr: "x" }) }).entry.graph.fns.length === 4);
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   const ui = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8");
   const board = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
   const bars = makeGraphEntry({ caption: "Scores", kind: "bars", bars: [{ label: "A", value: 3 }, { label: "B", value: 7 }] });
@@ -426,7 +430,7 @@ section("Primer replies — tightenForChat keeps it short and keeps the closing 
 }
 section("Primer chat — thinking toggle with safe fallback, persona leads with human/short rules (source pins)");
 {
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   check("fast chat helper retries without `thinking` on a rejecting provider", /thinkingToggleRejected = true/.test(src) && /type: "disabled"/.test(src));
   check("primer persona opens with the sound-like-a-person block", /THE CORE — WHO YOU ARE AND HOW YOU TEACH\. THIS BLOCK WINS OVER EVERYTHING BELOW/.test(src) && /LISTEN FIRST/.test(src) && /KNOW THE ANSWER BEFORE YOU ASK/.test(src));
   check("persona pushes small interactive scenes (show, don't tell)", /SHOW, DON'T TELL/.test(src));
@@ -437,14 +441,14 @@ section("Primer chat — thinking toggle with safe fallback, persona leads with 
   check("tutor dock offers one-tap starters + follow-ups and a recall opener from the last session", /quickReplies=\{fresh \? starters : justFinishedExercise \? nextChips : followUps\}/.test(tut) && /What do you still remember/.test(tut));
   const board = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
   check("board reports every exercise attempt to the tutor (never the correct answer)", /onProblemResult\?\.\(\{ problem, given, correct:.{0,40}attempt,/.test(board) && /\[Exercise\] I answered/.test(tut));
-  check("finishing an exercise offers 'another / harder / go over the idea / something else' and the tutor asks instead of auto-creating the next problem", /justFinishedExercise \? nextChips/.test(tut) && /ASK what they want to do now/.test(readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8")) && /let THEM choose/.test(readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8")));
+  check("finishing an exercise offers 'another / harder / go over the idea / something else' and the tutor asks instead of auto-creating the next problem", /justFinishedExercise \? nextChips/.test(tut) && /ASK what they want to do now/.test(claudeSource()) && /let THEM choose/.test(claudeSource()));
   check("automatic exercise results wait for the reply to settle and go out batched (never replacing the answer being read)", /resultsRef\.current\.splice\(0\)\.join/.test(tut) && /if \(sending \|\| voiceState\.speaking\) return;/.test(tut));
   check("new whiteboard ink rides along with the next message (no separate send step)", /readUnseenInk\(wantsLook\)/.test(tut) && /What I wrote\/drew on the board/.test(tut));
 }
 
 section("runTask execution speed — no pointless tool-pick call, artifacts built concurrently (source pins)");
 {
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   check("tool-selection call is skipped when web_search is the only tool", /const toolsOut = allTools\.length > 1 \? await ask\(/.test(src) && /: \{ usefulTools: \["web_search"\] \};/.test(src));
   check("deck/quiz/note generation runs concurrently", /await Promise\.all\(requestedArtifacts\.map\(async \(artReq\) => \{/.test(src));
 }
@@ -1381,7 +1385,7 @@ check("ordinary homework mentioning neither essay nor acronym is still NOT a big
 // network-calling function to unit test directly, and this file is deliberately network-free): a
 // big-project task must NOT be short-circuited by an empty context.
 {
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   check("writeStepsFromContext does not bail on empty context for a big project", /if \(!context\.trim\(\)[^)]*!keywordHit\)/.test(src));
 }
 
@@ -1780,7 +1784,7 @@ section("betaFeatures gates all 7 bandit call sites + the AI theme route (source
 section("Study Mode: chat always present on the desk (source pins)");
 {
   const studyModeSrc = readFileSync(new URL("../client/study/StudyMode.tsx", import.meta.url), "utf8");
-  const claudeSrc2 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrc2 = claudeSource();
   // Direct instruction: chat must be on the desk from the FIRST moment of every session, on every workspace
   // template — not opt-in behind a click.
   check("defaultChatArtifacts exists and is used by buildInitialArtifacts", /function defaultChatArtifacts/.test(studyModeSrc) && /const chatArtifacts = defaultChatArtifacts/.test(studyModeSrc));
@@ -1855,7 +1859,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     const r = await findSourceQuestions({ track: "ib", subject: "Math", topic: "integration by parts", limit: 2 }, deps);
     check("findSourceQuestions returns on-topic excerpts from registered hosts only", r.length === 1 && r[0].sourceName === "IB Documents" && /integration by parts/.test(r[0].excerpt));
     check("findSourceQuestions returns nothing for a non-IB/AP student and survives a failing source", (await findSourceQuestions({ track: "bac", topic: "x" }, deps)).length === 0 && (await findSourceQuestions({ track: "ap", topic: "limits unique-topic-1" }, { search: async () => { throw new Error("down"); }, fetchPage: async () => "" })).length === 0); }
-  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  { const cl = claudeSource();
     check("FIND_SOURCE_QUESTION is offered only for IB/AP, with a generate-as-usual fallback", /sourcesForTrack\(profile\?\.track\)\.length \? \[FIND_SOURCE_QUESTION_TOOL\]/.test(cl) && /write the exercise yourself, without a sourceUrl/.test(cl)); }
   // ── Tutor activity widgets ──
   check("match widget needs 3+ distinct pairs", !!normalizeWidget({ type: "match", pairs: [{ left: "a", right: "1" }, { left: "b", right: "2" }, { left: "c", right: "3" }] }).widget && !!normalizeWidget({ type: "match", pairs: [{ left: "a", right: "1" }, { left: "b", right: "2" }] }).error && !!normalizeWidget({ type: "match", pairs: [{ left: "a", right: "1" }, { left: "b", right: "1" }, { left: "c", right: "3" }] }).error);
@@ -1863,7 +1867,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   check("sort widget validates categories and item indexes", !!normalizeWidget({ type: "sort", categories: ["A", "B"], items: [{ text: "1", category: 0 }, { text: "2", category: 1 }, { text: "3", category: 0 }, { text: "4", category: 1 }] }).widget && !!normalizeWidget({ type: "sort", categories: ["A", "B"], items: [{ text: "1", category: 0 }, { text: "2", category: 0 }, { text: "3", category: 0 }, { text: "4", category: 5 }] }).error);
   check("explore widgets clamp their numbers; unknown types are refused", normalizeWidget({ type: "projectile", angle: 200, speed: 1, g: -3 }).widget.angle === 85 && normalizeWidget({ type: "unit_circle", angle: "abc" }).widget.angle === 30 && !!normalizeWidget({ type: "nope" }).error);
   check("projectile stats match the physics (45°, 20 m/s, g=9.8 → range ≈ 40.8 m)", Math.abs(projectileStats(45, 20, 9.8).range - 40.82) < 0.05);
-  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8"); const bd = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  { const cl = claudeSource(); const bd = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
     check("WIDGET_ON_BOARD is wired: tool, handler, board render, tutor feedback", /WIDGET_ON_BOARD_TOOL, FLOW_ON_BOARD_TOOL/.test(cl) && /name === "WIDGET_ON_BOARD"/.test(cl) && /WidgetBlock/.test(bd) && /onWidgetResult/.test(readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8"))); }
   // ── Web search ──
   check("rankResults dedupes pages and enforces the domain restriction", rankResults([{ title: "a", url: "https://www.x.com/p?utm=1", snippet: "" }, { title: "a2", url: "https://x.com/p/", snippet: "" }, { title: "b", url: "https://evil.com/p", snippet: "" }], ["x.com"]).length === 1);
@@ -1874,7 +1878,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
       const r2 = await webSearch("cache-test integration", { domains: ["ibdocuments.com"] });
       check("web search passes includeDomains to Exa, filters off-domain hits, and caches repeats", exaCalls === 1 && body.includeDomains?.[0] === "ibdocuments.com" && r1.length === 1 && r2.length === 1 && r1[0].url.includes("ibdocuments"));
     } finally { globalThis.fetch = realFetch; delete process.env.EXA_API_KEY; } }
-  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  { const cl = claudeSource();
     check("the tutor can read a result page (read_page) and restrict search by domain", /name: "read_page"/.test(cl) && /name === "read_page"/.test(cl) && /domains: \{ type: "array"/.test(cl)); }
   // ── Reported live: ambiguous case never raised; calculation handed over; setup equation built for the student; posed problem not on the board ──
   { const ssa = "all right so first I will do find all unknown angles inside the triangle ABC where a equals 35 centimeters B equals 50 centimeters angle a equals 30 degrees";
@@ -1900,14 +1904,14 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     const c = layoutFlow(normalizeFlow({ type: "cycle", nodes: ["A", "B", "C", "D", "E"].map((x) => ({ id: x, label: "Stage " + x })) }).flow);
     check("cycle joins the stages in a ring automatically; timeline needs no edges", c.edges.length === 5 && layoutFlow(normalizeFlow({ type: "timeline", nodes: [{ id: "1", label: "1914" }, { id: "2", label: "1917" }, { id: "3", label: "1921" }] }).flow).nodes.length === 3);
     check("bad diagrams are refused: <2 nodes, flow with no arrows, arrows to nowhere are dropped", !!normalizeFlow({ type: "flow", nodes: [{ id: "a", label: "x" }] }).error && !!normalizeFlow({ type: "flow", nodes: [{ id: "a", label: "x" }, { id: "b", label: "y" }] }).error && normalizeFlow({ type: "flow", nodes: [{ id: "a", label: "x" }, { id: "b", label: "y" }], edges: [{ from: "a", to: "b" }, { from: "a", to: "zzz" }] }).flow.edges.length === 1); }
-  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8"); const bd = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  { const cl = claudeSource(); const bd = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
     check("FLOW_ON_BOARD is wired (tool, handler, render) and diagram equations are no longer KaTeX", /FLOW_ON_BOARD_TOOL, \.\.\.\(opts\?\.canvasMode/.test(cl) && /name === "FLOW_ON_BOARD"/.test(cl) && /<FlowDiagram spec=\{e\.flow\}/.test(bd) && !/foreignObject x=\{x\} y=\{Math\.max\(0, op\.y - 36\)\}/.test(bd)); }
   // ── Model-written SVG figures (SVG_ON_BOARD) ──
   { const bad = '<svg width="100" onload="alert(1)" viewBox="0 0 10 10"><script>alert(1)</script><foreignObject><div>hi</div></foreignObject><image href="http://x/y.png"/><a href="javascript:alert(1)"><text>x</text></a><rect x="1" fill="url(http://evil)" stroke="url(#g)" onclick="x()"/><use href="http://evil/x.svg#a"/><style>*{}</style></svg>';
     const o = sanitizeSvg(bad);
     check("SVG sanitiser strips scripts, handlers, foreignObject, images, external refs and style", /^<svg /.test(o) && !/script|onload|onclick|foreignObject|<image|javascript|evil|<style|<a\b/i.test(o) && /<rect/.test(o) && /url\(#g\)/.test(o) && !/ width=/.test(o));
     check("SVG sanitiser keeps a real figure intact and refuses non-SVG", (() => { const good = '<svg viewBox="0 0 800 500"><defs><marker id="a" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs><line x1="10" y1="10" x2="200" y2="10" stroke="currentColor" marker-end="url(#a)"/><text x="5" y="30" font-size="18">35 cm &amp; 30°</text></svg>'; const g = sanitizeSvg(good); return /marker-end="url\(#a\)"/.test(g) && /<marker /.test(g) && svgText(g) === "35 cm &amp; 30°" && sanitizeSvg("<div>hi</div>") === "" && sanitizeSvg("") === ""; })()); }
-  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8"); const bd = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  { const cl = claudeSource(); const bd = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
     check("SVG_ON_BOARD replaces DRAW_ON_BOARD for the tutor and is sanitised on write and on render", /SVG_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, SOLID_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL/.test(cl) && !/DRAW_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL/.test(cl) && /sanitizeSvg\(e\.svg\)/.test(bd) && /NEVER LaTeX or KaTeX/.test(cl)); }
   { const ts = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8"); const bd = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8"); const tc3 = readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8");
     check("a drawing made on the blank page reserves room, so Otto's next lines come AFTER it", /freezeSheet/.test(tc3) && /canvasRef\.current\?\.freezeSheet\(\)/.test(ts) && /sheetSignal/.test(bd) && /sm-board-sheet/.test(bd) && /afterKey/.test(bd));
@@ -1941,7 +1945,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     const prof = { grades: [{ id: "g", subject: "Maths", grade: 14, scale: 20, updatedAt: "x", source: "pronote" }], coursework: [{ id: "c", name: "Trig worksheet", subject: "Maths", summary: "Sine and cosine rule exercises", addedAt: "2026-10-01" }] };
     const sr = schoolRecordLine(L, prof, "Maths");
     check("school record: Pronote open work + averages, journal entries (not roll-ups) and coursework all reach the model", /Exercices 4-6/.test(sr) && /DS fonctions/.test(sr) && !/done one/.test(sr) && /Maths 14\/20/.test(sr) && /sine rule and the ambiguous case/.test(sr) && !/weekly rollup/.test(sr) && /Trig worksheet/.test(sr) && schoolRecordLine([], {}, "Maths") === "");
-    const srcs = [serverSource(), ...["claude.ts", "tasks.ts", "jobs.ts"].map((f) => readFileSync(new URL("../server/" + f, import.meta.url), "utf8"))].join("\n");
+    const srcs = [serverSource(), claudeSource(), ...["tasks.ts", "jobs.ts"].map((f) => readFileSync(new URL("../server/" + f, import.meta.url), "utf8"))].join("\n");
     check("school record is wired into chat, the tutor opener, task generation, manual-task parsing and task planning", (srcs.match(/schoolRecordLine\(/g) || []).length >= 8); }
   { const U = "https://0001.index-education.net/pronote/eleve.html";
     const r = ensurePronoteLinks([{ source: "pronote" }, { source: "pronote", links: [{ label: "Open attachment", url: "https://x.net/f.pdf" }] }, { source: "gmail" }, { source: "pronote", links: [{ label: "Open in Pronote", url: U }] }], U);
@@ -1970,12 +1974,12 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   { const mc = readFileSync(new URL("../client/minimal.css", import.meta.url), "utf8");
     check("minimal layer keeps the task chat usable: the student's own bubble has a solid background and the send button stays a solid circle",
       /\.chat-user \{[^}]*background-color: #3b3530 !important/.test(mc) && /\.chat-send \{[^}]*background-color: #26221f !important/.test(mc) && /:not\(\.chat-send\)/.test(mc)); }
-  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8"); const net = cl.slice(cl.indexOf("Safety net AFTER every corrective round"), cl.indexOf("const cleaned = truncateCleanly(reply.trim(), 2400)"));
+  { const cl = claudeSource(); const net = cl.slice(cl.indexOf("Safety net AFTER every corrective round"), cl.indexOf("const cleaned = truncateCleanly(reply.trim(), 2400)"));
     check("the formula-only safety net fires on bare maths only (never on a student's own equations written another way) and its question stays on what they wrote",
       /&& bareMath\(reply\)\s*\)/.test(net) && !/equationAhead/.test(net) && /what you just wrote/.test(readFileSync(new URL("../server/tutorAdapt.ts", import.meta.url), "utf8")) && !/go back to your thinking/.test(readFileSync(new URL("../server/tutorAdapt.ts", import.meta.url), "utf8"))); }
   { const mc = readFileSync(new URL("../client/minimal.css", import.meta.url), "utf8");
     check("briefs (note popups and the study-mode brief) read as a spacious column: generous leading, block spacing and padding, phone-safe", /\.note-popup, \.sm-brief-body \{[^}]*line-height: 1\.75/.test(mc) && /\.note-popup-body p, \.sm-brief-body p \{[^}]*margin: 0 0 var\(--space-4\)/.test(mc) && /\.note-list li[^{]*\{[^}]*margin: 0 0 var\(--space-3\)/.test(mc) && /@media \(max-width: 640px\)[^}]*\.note-popup/.test(mc)); }
-  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8"), st = readFileSync(new URL("../server/store.ts", import.meta.url), "utf8");
+  { const cl = claudeSource(), st = readFileSync(new URL("../server/store.ts", import.meta.url), "utf8");
     check("every brief is written direct and critical with no filler (BRIEF_STYLE rides on the CREATE_NOTE tool)", /BRIEF_STYLE = "STYLE: direct and critical, zero filler/.test(cl) && /traps and common errors/.test(cl) && /leave the app\. " \+ BRIEF_STYLE/.test(cl));
     check("loadState validates a stale/bypassed cached row with a tiny updated_at read instead of re-downloading the whole profile+tasks blob", /select\("updated_at"\)/.test(st) && /held\.ver/.test(st) && /updated_at === held\.ver/.test(st) && /studyProfile,updated_at/.test(st)); }
   { let day = "2026-10-10"; const m = makeEgressMeter(1000, () => day);
@@ -1989,23 +1993,23 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     const nav = app.slice(app.indexOf('className="topnav'), app.indexOf('className="topnav') + 6000);
     check("/exercises shows questions pulled from the registered sources and is reachable by route only (no navbar link)", /route === "exercises"/.test(app) && /<ExercisesPage \/>/.test(app) && !/href="\/exercises"/.test(app) && !/navigate\("exercises"\)/.test(app) && !/\/exercises/.test(nav) && /exerciseSearch/.test(ex) && /Searched: /.test(ex) && /app\.post\("\/api\/exercises\/search"/.test(idx) && /sourcesForTrack\(track\)/.test(idx) && /findSourceQuestions\(\{ track, subject: subject \|\| undefined, topic, limit: 6 \}\)/.test(idx));
     check("the deadline has an Edit button that opens a date field with Save / Cancel / Clear (not an always-open input)", /deadline-edit-btn/.test(tcs) && /setEditing\(true\)/.test(tcs) && /L\("Enregistrer", "Save"\)/.test(tcs) && /L\("Annuler", "Cancel"\)/.test(tcs)); }
-  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  { const cl = claudeSource();
     check("LaTeX whose backslash was eaten is repaired (cdot, ^circ, tab/form-feed tan/frac) and clean LaTeX is untouched",
       repairLatex(String.raw`k cdot \tan 50^circ = (100+k) cdot \tan 30^circ`) === String.raw`k \cdot \tan 50^\circ = (100+k) \cdot \tan 30^\circ` && repairLatex("\x09an 30 = \x0crac{h}{k}") === String.raw`\tan 30 = \frac{h}{k}` && repairLatex(String.raw`\tan 30^\circ = \frac{h}{100+k}`) === String.raw`\tan 30^\circ = \frac{h}{100+k}` && repairLatex("plain words with cdot in prose") === "plain words with cdot in prose");
     check("when the student asks Otto to write their equations up, the 'ahead of the student' trace guard does not refuse them; the persona says to write all of them, stay on their goal and keep the method efficient",
       /!asksToWrite\(message\) && \["summary", "result"\]/.test(cl) && /write what they ask you to write/.test(cl) && /quickest route/.test(cl) && /reply = repairLatex\(reply\)/.test(cl)); }
-  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  { const cl = claudeSource();
     check("board math is always typeset with the page's own plain→LaTeX conversion: tan(25°) = (h)/(b) becomes $\\tan(25^\\circ) = \\frac{h}{b}$, prose and already-delimited lines are left alone, other kinds untouched",
       latexifyBoardLine("tan(25°) = (h)/(b), tan(15°) = (h)/(100+b)", "result").replace(/\s+/g, "") === String.raw`$\tan(25^\circ)=\frac{h}{b}$,$\tan(15^\circ)=\frac{h}{100+b}$` && latexifyBoardLine(String.raw`\tan 30^\circ = \frac{h}{100+k}`, "formula") === String.raw`$\tan 30^\circ = \frac{h}{100+k}$` && /^\$\\tan 30\^\\circ = \\frac\{h\}\{100\+k\}\$$/.test(latexifyBoardLine("tan 30° = h/(100+k)", "result")) && latexifyBoardLine("- both lines of sight start at the top", "summary") === "- both lines of sight start at the top" && latexifyBoardLine("Use $x = 3°$ here", "summary") === "Use $x = 3^\\circ$ here" && latexifyBoardLine("x = 3", "note") === "x = 3");    check("the tutor is told to write ALL maths in LaTeX (board and chat bubble) and the board write path applies it", /All maths, on the board and in the bubble, is LaTeX/.test(cl) && !/no raw LaTeX in the bubble/.test(cl) && /latexifyBoardLine\(\(input as any\)\.text/.test(cl));
     check("the tutor is told to write ALL maths in LaTeX (board and chat bubble) and the board write path applies it", /All maths, on the board and in the bubble, is LaTeX/.test(cl) && !/no raw LaTeX in the bubble/.test(cl) && /latexifyBoardLine\(\(input as any\)\.text/.test(cl)); }
-  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  { const cl = claudeSource();
     check("bare LaTeX with ^\\circ / \\cdot chains typesets as ONE span (it used to split into '$\\tan 30^$$\\circ =$' and print raw)",
       autoMathLine(String.raw`\tan 30^\circ = \frac{h}{100+k}`) === String.raw`$\tan 30^\circ = \frac{h}{100+k}$` && /\$\\cdot \\tan 50\^\\circ = \(100\+k\) \\cdot \\tan 30\^\\circ\$/.test(autoMathLine(String.raw`k \cdot \tan 50^\circ = (100+k) \cdot \tan 30^\circ`)));
     check("asking to 'write the equations' counts as a board request; a spoken or written step of their own is recognised as work to record",
       asksToWrite2("can you write the equation they're not rendering properly") && asksToWrite2("write the values of tan 30 and tan 50 please") && statesOwnMath("tan 30 equals h over 100 plus k") && statesOwnMath("k = h/tan30 - 100") && !statesOwnMath("ok sure") && !statesOwnMath("why does that work?"));
     check("the board is used without being asked: one corrective round writes a requested or student-stated step (their words, LaTeX), and the persona says to record their work unprompted",
       /const guardBoardUse = /.test(cl) && (cl.match(/guardBoardUse\(textContent, round, lastRound\)/g) || []).length === 2 && /Put the givens \(kind \\"given\\"\), THEIR steps/.test(cl) && /nudgeReasoning/.test(cl) && /statesOwnMath\(message\) && !asksToDraw/.test(cl)); }
-  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8"), tb = readFileSync(new URL("../server/tutorBrain.ts", import.meta.url), "utf8");
+  { const cl = claudeSource(), tb = readFileSync(new URL("../server/tutorBrain.ts", import.meta.url), "utf8");
     check("the tutor never names the operation: 'multiply both sides by…', 'substitute that into…', 'factor out h' are caught; goal/idea questions are not",
       namesExactStep("Can you multiply both sides by the denominator to get all the h terms on one side?") && namesExactStep("Now substitute that expression for h into your first equation — what does it look like?") && namesExactStep("How do you isolate k from that factored equation?") && namesExactStep("Now that you've factored out h, how do you finish?") === false && !namesExactStep("What are you trying to get on one side of the equation?") && !namesExactStep("What do those two triangles have in common?") && !namesExactStep("Which relationship links the height to the distance?"));
     check("the bubble never does their maths: an equation they never wrote is caught; quoting their own is fine",
@@ -2014,7 +2018,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
       /"route":\["the 3-6 key moves of the QUICKEST sound solution/.test(tb) && /PLAN THE QUICKEST ROUTE FIRST/.test(tb) && /YOUR PLANNED QUICKEST ROUTE/.test(tb) && /\(s as any\)\.route = plan\.route/.test(tb) && /THEY LEFT THE ROUTE/.test(tb) && /NEVER GIVE THE ANSWER AND NEVER DO THE WORK/.test(cl) && (cl.match(/guardNoDoing\(textContent, round, lastRound\)/g) || []).length === 2); }
   { const ts = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
     check("a live tutor session never flips into the read-only board/chat review page (its auto-saved summary shares the task id)", /const reviewSession = !task && sessionId && userId \? getTutorSessions\(userId\)/.test(ts)); }
-  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8"), tb = readFileSync(new URL("../server/tutorBrain.ts", import.meta.url), "utf8");
+  { const cl = claudeSource(), tb = readFileSync(new URL("../server/tutorBrain.ts", import.meta.url), "utf8");
     const v = evalMathExpr("100/(1/tand(30) - 1/tand(50))");
     check("the safe evaluator computes degree trig and refuses anything else", Math.abs(v - 111.988) < 0.01 && evalMathExpr("2^3 + sqrt(16)") === 12 && evalMathExpr("process.exit(1)") === null && evalMathExpr("alert(1)") === null && evalMathExpr("1/0") === null && evalMathExpr("") === null);
     const base = { question: "A tower of height $h$ … find $h$ to one decimal place.", format: "one decimal place", why: "w" };
@@ -2025,7 +2029,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
       wrongKey.problem?.answer === "112.0" && rightKey.problem?.answer === "112.0" && noCheck.problem?.answer === "38.9");
     check("the tutor is adaptive (fluent streak → big chunk, slip → shrink) and never blames the app for a wrong key",
       /THEY ARE FLUENT/.test(tb) && /THEY JUST SLIPPED/.test(tb) && /stepStreak/.test(tb) && /never blame the app/.test(cl) && /Pace to them: right steps in a row/.test(cl)); }
-  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  { const cl = claudeSource();
     const cu = buildSolid({ shape: "cuboid", width: 8, height: 5, depth: 6, dims: { width: "8 cm", height: "5 cm", depth: "6 cm" }, highlight: [{ from: "A", to: "G", label: "d" }] });
     const py = buildSolid({ shape: "pyramid", width: 6, height: 7, depth: 6, dims: { width: "6 cm", height: "h" } });
     const cy = buildSolid({ shape: "cylinder", radius: 2, height: 5, dims: { radius: "r", height: "h" } });
@@ -2035,11 +2039,11 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     check("SOLID_ON_BOARD is a tutor tool: offered with the board tools, handled into a sanitized svg entry with the geometry facts, and named in the persona and the draw-request round", /const SOLID_ON_BOARD_TOOL = /.test(cl) && /SVG_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, SOLID_ON_BOARD_TOOL/.test(cl) && /name === "SOLID_ON_BOARD"/.test(cl) && /3D SOLIDS \(cuboid/.test(cl) && /SOLID_ON_BOARD for 3D solids/.test(cl));
     check("a problem posed in PROSE (angles/lengths, a question, no '=') counts as a posed problem and must go on the board; ordinary questions don't",
       posesProblemInProse("Here's one: a tower stands on level ground. From point A the angle of elevation to the top is $15^\\circ$, and from point B, 100 m closer, it's 25°. What's the first thing you'd set up?") && posesProblemInProse("Try this one: a sample weighs 12 g wet and 9 g dry. What is the moisture content in %?") && !posesProblemInProse("What have you tried so far?") && !posesProblemInProse("Good — what does the 25° tell you about the triangle?") && /const prose = posesProblemInProse\(draft\)/.test(cl)); }
-  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  { const cl = claudeSource();
     const said = "What are we trying to find the height so basic so now we can do opposite over adjacent so tan 25 equals height over let's say b and tan 15 equals height over 100 plus b";
     check("the board never copies the student's own words: a line with 4+ consecutive words from their message is refused; clean maths and short tidy lines are not",
       echoesStudentWords("What are we trying to find the height so basic", said) && echoesStudentWords("so now we can do opposite over adjacent", said) && !echoesStudentWords("$\\tan(25^\\circ) = \\frac{h}{b}$", said) && !echoesStudentWords("Height $h$ is the unknown", said) && /that line copies the student's own words/.test(cl) && /never their sentence, never the answer/.test(cl)); }
-  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8"), tb = readFileSync(new URL("../server/tutorBrain.ts", import.meta.url), "utf8");
+  { const cl = claudeSource(), tb = readFileSync(new URL("../server/tutorBrain.ts", import.meta.url), "utf8");
     check("the tutor catches itself quizzing the student on what it just said: a unit or value stated in the reply that is the answer to its own question is flagged; the student's own words are not",
       statesOwnAnswer("750 J — exactly. What are the units on that?", "J", ["4 x distance so 1,500 times 0.5 which is 750"]) && statesOwnAnswer("That's 300 W. What is that quantity called?", "watt", ["300"]) === false && statesOwnAnswer("Power is 300 W, so what is the unit called?", "W", ["300"]) && statesOwnAnswer("Power is the rate. What is the unit?", "watt", ["i think watt"]) === false && statesOwnAnswer("Divide 750 by 2.5 — what do you get?", "300", ["750"]) === false && statesOwnAnswer("so the answer is 300, right? what is it called", "300", ["300"]) === false);
     check("the student's real state is read: 'I don't know' / 'no idea' / 'I'm lost' → confused; 'wait so power is basically work over time' → an idea in their own words; ordinary answers and exercise results → neither",
@@ -2048,7 +2052,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
       /THE CORE — WHO YOU ARE AND HOW YOU TEACH/.test(cl) && ["WHO YOU ARE.", "HOW YOU THINK, EVERY TURN.", "1. HEAR THEM.", "2. KNOW YOUR GROUND.", "3. PICK THE SMALLEST MOVE THAT HELPS.", "4. SOUND HUMAN.", "5. THE BOARD IS THEIR PAPER.", "THE LINES YOU NEVER CROSS."].every((h) => cl.includes(h)) && /a frame for your judgement, not a checklist/.test(cl) && /The app checks these every turn/.test(cl) && /a fact nobody could reason out/.test(cl) && /"ask_answer":"its correct answer/.test(tb) && /KNOW THE ANSWER BEFORE YOU ASK: fill "ask" and "ask_answer"/.test(tb) && /const guardOwnAnswer = /.test(cl)); }
   { const idx = serverSource();
     check("GET /api/tasks reconciles against a validated cloud read, so tasks the daily sweep added show on the next load", /const cloud = await loadState\(req\.session\.user, \{ bypassCache: true \}\);\s*\n\s*const merged = mergeTasks\(cloud\.tasks \|\| \[\], sessionTasks\);/.test(idx)); }
-  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  { const cl = claudeSource();
     check("a WHY / purpose / connection question is recognised (typed or spoken, with or without a question mark); a work step is not",
       asksWhy("yeah ok understand but why do I need equate a potential energy to kinetic energy that's what I'm not understanding") && asksWhy("why are we doing 750 J over 5") && asksWhy("what's the point of this") && asksWhy("how is power related to work") && asksWhy("I don't understand why we use that") && asksWhy("what's the difference between speed and velocity") && !asksWhy("300") && !asksWhy("so then v squared is 392") && !asksWhy('[Exercise] I answered "19.8" — marked right (try #1).'));
     check("a reply that restates the why-question or answers with a question explains nothing; a real explanation does not trip it",
@@ -2058,7 +2062,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     const sp = splitBoardContent(sheet);
     check("a cheat sheet / list / long block is board content, not bubble content; a short nudge is not",
       isBoardContent(sheet) && isBoardContent("1. force 2. distance 3. work") && !isBoardContent("Mm, close — which quantity is that asking for?") && sp.items.length === 5 && /^Kinetic energy/.test(sp.items[0]) && /^Efficiency/.test(sp.items[4]) && /feeling good about them\?$/.test(sp.question) && !sp.items.some((x) => /cheat sheet/i.test(x))); }
-  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8"), ty = readFileSync(new URL("../shared/types.ts", import.meta.url), "utf8");
+  { const cl = claudeSource(), ty = readFileSync(new URL("../shared/types.ts", import.meta.url), "utf8");
     check("shorthand is read as the quantity and said by name: 'ep' / E_p / PE → potential energy, 'ek' / KE → kinetic energy; ordinary words (step, deep, keep) don't trigger it",
       /potential energy/.test(notationGloss("so ep is mgh right")) && /potential energy/.test(notationGloss("E_p = 392")) && /kinetic energy/.test(notationGloss("and then ke equals half mv squared")) && /say the NAME|always say the NAME/.test(notationGloss("ep")) && notationGloss("the next step is to keep going deeper") === "" && /notationGloss\(message, history\)/.test(cl));
     check("exercise widgets take a bare number: the checker finds the number in '≈ 112 m' / 'h = 111,99 metres' / '1 500 J', accepts anything within rounding of the verified exact value, and treats a large integer key as rounded; a wrong number is still wrong",
@@ -2071,20 +2075,20 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
       mp2.problem?.answer === "750" && /in J/.test(mp2.problem?.format || "") && mp3.problem?.answer === "30" && /degrees/.test(mp3.problem?.format || "") && mp4.problem?.answer === "3 pi" && mp("112 m", "").problem?.answer === "112 m".replace(" m", "") + "" === false || true);
     check("bare-number keys and exact values: '112 m' key → 112 + unit hint; value stored from the check; isNumericAnswer tells numbers from words", mp("112 m", "").problem?.answer === "112.0" || mp("112 m", "").problem?.answer === "112", typeof mp("112", "").problem?.value === "number" && Math.abs(mp("112", "").problem.value - 111.988) < 0.01 && isNumericAnswerT("112") && isNumericAnswerT(" 1,500 ") && !isNumericAnswerT("112 m") && !isNumericAnswerT("watt"));
     check("exercise formats are mixed: ~1 in 3 multiple choice is asked for in the tool description and the persona, and numeric widgets say 'a number, no units'", /MIX THE FORMATS: roughly one exercise in three should be MULTIPLE CHOICE/.test(cl) && /MIX EXERCISE FORMATS/.test(cl) && /ALWAYS a bare number/.test(cl)); }
-  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  { const cl = claudeSource();
     const pct = (g, c) => practiceAnswerMatchesT(g, c, undefined, true);
     check("a percentage exercise accepts 0.75, 3/4, 75 and 75% for a 75 key (the efficiency widget that marked all of them wrong); a non-percentage 0.75 vs 75 is still wrong; a wrong percentage is wrong",
       pct("0.75", "75") && pct("3/4", "75") && pct("75", "75") && pct("75%", "75") && pct("0.75%", "75") === false && !pct("0.8", "75") && !pct("60", "75") && !practiceAnswerMatchesT("0.75", "75") && problemIsPercentT({ question: "Calculate the efficiency of the motor as a percentage." }) && !problemIsPercentT({ question: "Find the work done." }));
     check("asking for a problem is recognised ('another exercise', 'put the problem on the board', 'new problem physics HL', 'give me a question'), and so is 'which problem?'; work and why-questions are not",
       asksForProblem("no I mean can you do another exercise on like work power efficiency whatever") && asksForProblem("can you put the problem on the board") && asksForProblem("no let's do a new problem physics higher level") && asksForProblem("give me a question on energy") && asksWhichProblem("where I don't see which question you're talking about") && asksWhichProblem("which problem I'm not sure what you're talking about") && !asksForProblem("300") && !asksForProblem("why do I need to equate those") && !asksWhichProblem("so v squared is 392"));
     check("a requested (or lost) problem becomes a real exercise: persona rule + a CREATE_PROBLEM corrective round (guardProblemAsWidget), never plain board text", /set it as a real exercise \(CREATE_PROBLEM\)/.test(cl) && /const guardProblemAsWidget = /.test(cl) && (cl.match(/guardProblemAsWidget\(textContent, round, lastRound\)/g) || []).length === 2); }
-  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  { const cl = claudeSource();
     const board = ["A car of mass 1200 kg rolls down a hill of height 45 m. Starting E_p = 1200 × 9.8 × 45 = ?", "E_k = 529,200 J"];
     check("a brand-new scenario with new numbers is detected as an unprompted problem; a restatement, a table of values or an equation is not",
       startsNewProblem("A 1200 kg car rolls down the same 45 m hill, but friction does 176,400 J of work against it. What is the new kinetic energy?", board) && !startsNewProblem("A car of mass 1200 kg rolls down a hill of height 45 m. Starting E_p = 1200 × 9.8 × 45 = ?", board) && !startsNewProblem("90°: (0, 1)\n180°: (-1, 0)\n270°: ?", []) && !startsNewProblem("E_k = 529,200 J, so v = ?", board));
     check("Otto never sets an exercise they didn't ask for: CREATE_PROBLEM and new-scenario board lines are refused unless they asked for one (or it is the first turn / they posed it); persona says to OFFER, not set",
       /content = NO_UNPROMPTED_EXERCISE/.test(cl) && (cl.match(/NO_UNPROMPTED_EXERCISE/g) || []).length >= 3 && /NEVER SET A PROBLEM THEY DIDN'T ASK FOR/.test(cl)); }
-  { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  { const cl = claudeSource();
     const a = makeProblemP({ question: "A motor does 1200 J of useful work from 1600 J. Find the efficiency as a percentage.", answer: "75" });
     const b = makeProblemP({ question: "Find the height of the tower.", answer: "112.0", format: "answer as a number, in metres" });
     const c = makeProblemP({ question: "Find v.", answer: "19.8", format: "to 1 decimal place, in m/s" });
@@ -2106,7 +2110,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   check("crediting the student with something they never said is caught; quoting them is not", !!misattributes("You've got the two sides lined up with their opposite angles.", ["to do"]) && misattributes("You said the slopes are five and one third.", ["so one slope is five the other is one over three"]) === null);
   check("naming the method before the student reached for it is caught, unless they used it or asked for help", methodAhead("tan(θ) = slope! How do you find the angle between two lines?", ["find the acute angle between y=5x-2 and y=1/3x-1", "so one slope is five the other is one third"]).includes("tan") && methodAhead("What does tan(θ) = slope give you?", ["I think tan theta is the slope"]).length === 0 && wantsHelp("can I get a hint") && !wantsHelp("one slope is five"));
   check("chatter is not student work: 'Gary left avocado on the ground' is off-topic, maths and on-topic words are not", !onTopic("Gary left avocado on the ground", ["find the acute angle between y = 5x - 2 and y = x/3 - 1", "What do you notice about their two slopes?"]) && onTopic("intersect and I found the point of intersection is when x equals 3 over 14", ["lines"]) && onTopic("the lines cross", ["The two lines on the board", "intersect"]) && onTopic("one slope is five", []));
-  { const idx = serverSource(); const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  { const idx = serverSource(); const cl = claudeSource();
     check("off-topic chatter never becomes board work: only a code-verified, CORRECT step is written up as the student's line", /stepVerdict\?\.verdict === "correct" && !out\.boardCleared/.test(idx) && !/out\.plan\.studentStep/.test(idx)); }
   // ── Listen first (reported live: "what does m show" / "what's M1" answered with arctan and a calculator) ──
   check("clarification questions are recognised with the term they ask about", clarificationTerm("what does m show") === "m" && clarificationTerm("what's M1") === "m1" && clarificationTerm("what is a slope?") === "slope" && clarificationTerm("I found x = 3/14") === null && clarificationTerm("[Exercise] I answered 4") === null);
@@ -2158,7 +2162,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     check("minimal layer: one warm ink accent, no shadows/gradients/uppercase", /--accent: #26221f/.test(readFileSync(new URL("../client/styles.css", import.meta.url), "utf8")) && /box-shadow: none !important/.test(css) && /text-transform: none !important/.test(css) && /background-image: none !important/.test(css));
     check("landing is one headline, one sentence, one button — no feature cards, numbering or kickers", /landing-min-main/.test(app) && !/feature-number-framer|sample-task-framer|hero-title-framer/.test(app));
     check("no hard-coded orange accent remains in the stylesheets", !/#ff752b|#f26a22|#e05a18|#d97757/i.test(readFileSync(new URL("../client/styles.css", import.meta.url), "utf8") + readFileSync(new URL("../client/tally.css", import.meta.url), "utf8"))); }
-  { const css = readFileSync(new URL("../client/minimal.css", import.meta.url), "utf8"); const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8"); const app = appSource();
+  { const css = readFileSync(new URL("../client/minimal.css", import.meta.url), "utf8"); const cl = claudeSource(); const app = appSource();
     check("task check-offs are clear circles with a visible check; marker swatches stay coloured; the board is ONE font (KaTeX's textbook serif)", /\.card-check, \.step-mark \{[^}]*border: 2px solid var\(--ink\)/.test(css) && /\.card-check\.checked::before/.test(css) && /:where\(button:not\(\.tc-swatch\):not\(\.card-check\)/.test(css) && /\.sm-board-body, \.sm-board-body \*:not\(\.katex\):not\(\.katex \*\) \{ font-family: var\(--font-board\) !important; \}/.test(css));
     check("Otto keeps the original face (no overrides)", !/\.tutor-face::after/.test(css) && /avatar"\]:not\(\.tutor-face\)/.test(css));
     check("copy is bolder: thinking partner, not an answer machine; tutor voice holds a high bar", /thinking partner, not an answer machine/.test(app) && /You hold a high bar and you are plainly on their side/.test(cl)); }
@@ -2190,7 +2194,7 @@ section("MathText — a mis-wrapped $...$ prose phrase falls back to plain text 
   check("the non-math fallback renders the UNWRAPPED content (no stray $ delimiters left in the text)", /boldify\(formatMath\(latex \?\? p\)\)/.test(boardSrc2));
   // Prevention, not just graceful degradation: the WRITE_TO_BOARD prompt itself now warns against wrapping
   // a whole phrase/sentence in $…$.
-  const claudeSrcMath = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrcMath = claudeSource();
   check("WRITE_TO_BOARD_TOOL warns against wrapping a whole phrase/sentence in $…$, only the actual numbers/symbols", /wrap ONLY the actual numbers\/symbols/.test(claudeSrcMath) && /KaTeX renders real words as garbled/.test(claudeSrcMath));
 }
 
@@ -2225,7 +2229,7 @@ section("isDuplicateProblem — content-level duplicate prevention for CREATE_PR
   check("an empty question never counts as a duplicate", !isDuplicateProblem(existing, { question: "   " }));
   check("an empty existing list never flags a duplicate", !isDuplicateProblem([], { question: existing[0].question }));
 
-  const claudeSrc3 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrc3 = claudeSource();
   // Exactly 2 call-syntax occurrences: the export signature + the single call site in WRITE_TO_BOARD's
   // branch. DRAW_ON_BOARD is deliberately NOT gated — redrawing a whole figure with additions is the
   // tool's documented contract. (A third site, or zero, means someone moved or duplicated the gate.)
@@ -2269,7 +2273,7 @@ section("chatAboutTask's empty-completion fallback — wording matches what actu
   // "Here's an exercise — check the board" — talking about a DIFFERENT artifact kind than the one that
   // actually appeared. Pin that the fallback branches on what was actually made (problem vs. diagram vs.
   // a plain board write), not one fixed "exercise" string regardless of kind.
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   const start = src.indexOf("const finish = (reply: string): ChatResult => {");
   const body = src.slice(start, src.indexOf("\n  };", start));
   check("branches on madeProblem", /madeProblem/.test(body));
@@ -2297,7 +2301,7 @@ section("shouldNudgeBoardWrite — a confirmed student math step must land on th
     shouldNudgeBoardWrite("You got it right — x = 4.", "is x = 4?", false) &&
     shouldNudgeBoardWrite("Absolutely — v = 20 m/s.", "so v = d/t = 20?", false));
 
-  const claudeSrc5 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrc5 = claudeSource();
   // Enforcement in code, not just the prompt — same posture as the empty-board-claim fix: one corrective
   // round, latched, feeding the model back its own reply so the write actually happens mid-turn.
   check("the nudge is a ONE-SHOT corrective round inside the tool loop", /boardNudgeDone = false;/.test(claudeSrc5) && /!boardNudgeDone && !lastRound && shouldNudgeBoardWrite\(textContent, message, result\.board\.length > 0\)/.test(claudeSrc5) && /boardNudgeDone = true;/.test(claudeSrc5));
@@ -2325,7 +2329,7 @@ section("Board usage — the 'use the board' guidance is UNCONDITIONAL (it used 
   // Reported live: "the tutor is not using the board enough". One structural cause: the whole BOARD
   // INTEGRATION block was gated on the board already having something on it, so a FRESH session — the exact
   // moment the board should start filling up — received no instruction to use it at all.
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   const block = src.slice(src.indexOf("const boardIntegrationBlock"), src.indexOf("const contextAwarenessBlock"));
   check("BOARD INTEGRATION is built unconditionally, not behind (boardEntries.length || currentProblems.length)", !/^\s*const boardIntegrationBlock = \(boardEntries\.length \|\| currentProblems\.length\)/m.test(src) && block.includes("BOARD INTEGRATION — the board is the shared workspace"));
   check("the empty-board case is called out explicitly, with what to put up first", block.includes("NOTHING IS ON THE BOARD YET") && block.includes('kind:"focus"'));
@@ -2382,12 +2386,12 @@ section("Arithmetic ground truth — evaluator, claim extractor, CREATE_CALC (se
   check("CREATE_CALC supports FR decimals and parens", JSON.parse(runCalcTool({ expression: "2,5 + 1" })).result === 3.5 && JSON.parse(runCalcTool({ expression: "(12+8)/4" })).result === 5);
   check("CREATE_CALC refuses out-of-subset input with guidance, never a guess", /^ERROR:/.test(runCalcTool({ expression: "2x + 1" })) && /^ERROR: no expression/.test(runCalcTool({})));
   // Wiring pins — the tool must actually be reachable from BOTH tutor tool arrays and dispatched by name.
-  const claudeSrcCalc = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrcCalc = claudeSource();
   const arithSrc = readFileSync(new URL("../server/arithmetic.ts", import.meta.url), "utf8");
-  const calcCount = (claudeSrcCalc.match(/CREATE_CALC_TOOL/g) || []).length; // const + 2 array entries
-  check("CREATE_CALC is in BOTH tutor tool arrays (normal + canvas mode)", calcCount === 3);
+  const toolArrays = claudeSrcCalc.split("\n").filter((l) => /^\s*[?:] \[/.test(l) && /WEB_SEARCH_TOOL/.test(l));
+  check("CREATE_CALC is in BOTH tutor tool arrays (normal + canvas mode)", toolArrays.length === 2 && toolArrays.every((l) => l.includes("CREATE_CALC_TOOL")));
   check("CREATE_CALC has a dispatch branch in the tool loop", /name === "CREATE_CALC"/.test(claudeSrcCalc) && /runCalcTool\(input\)/.test(claudeSrcCalc));
-  check("claude.ts imports the shared arithmetic oracle", /import \{ evaluateArithmetic, findArithmeticClaims \} from "\.\/arithmetic\.ts"/.test(claudeSrcCalc));
+  check("the AI layer imports the shared arithmetic oracle", /import \{ evaluateArithmetic \} from "\.\.\/arithmetic\.ts"/.test(claudeSrcCalc) && /import \{ findArithmeticClaims \} from "\.\.\/arithmetic\.ts"/.test(claudeSrcCalc));
   check("the arithmetic module is pure (no imports, no eval — client-importable)", !/^\s*import /m.test(arithSrc) && !/[^.a-zA-Z]eval\(/.test(arithSrc));
 }
 
@@ -2446,7 +2450,7 @@ section("isLikelyEcho — textual echo discrimination for real barge-in (client/
   // voice names. A failed voice retries the NEXT male voice; there is no female tier to fall to at all.
   const serverSrc = serverSource();
   const ttsBody = serverSrc.slice(serverSrc.indexOf('app.post("/api/tts"'), serverSrc.indexOf('app.post("/api/tts"') + 2600);
-  const claudeSrc = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrc = claudeSource();
   const ttsFn = claudeSrc.slice(claudeSrc.indexOf("export async function synthesizeSpeech"), claudeSrc.indexOf("export function wordWrapChunks"));
   check("TTS route is authenticated and rate-limited", /app\.post\("\/api\/tts", requireAuth, rateLimit\(/.test(serverSrc));
   check("TTS route calls synthesizeSpeech (the male-only pool) with the request-size bound, not the old race", /synthesizeSpeech\(text\.slice\(0, TTS_MAX_TEXT\), lang\)/.test(ttsBody));
@@ -2568,7 +2572,7 @@ section("Voice-mode board rules — gesture research, not dictation (prompt pins
   // Yeo/Alibali 2017: pointing at SYMBOLIC notation while talking hurt learning; figures didn't. The old
   // rule demanded a formula write for EVERY spoken intermediate line — symbolic dictation, the exact
   // anti-pattern. The rewrite keeps the real requirement (speech can't show notation) but writes once.
-  const claudeSrc4 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrc4 = claudeSource();
   check("voice mode: the working expression is written ONCE as the canonical reference", /write the expression the student is actively working with ONCE/.test(claudeSrc4));
   check("voice mode: no transcribing every intermediate spoken line", /do NOT transcribe every intermediate spoken line/.test(claudeSrc4));
   check("voice mode: diagrams/arrows/structure preferred over bare symbol strings", /eyes-on-figure \(not eyes-on-equation\)/.test(claudeSrc4));
@@ -2627,7 +2631,7 @@ section("Fully Socratic tutor — policy every turn, never the gap's value, one 
   // 5. The enforcement itself — every corrective round is on the live reply path, twice (plain-text and
   //    after-tool-calls branches), which is what makes the tutor's Socratic posture binding rather than a
   //    prompt suggestion.
-  const csrc = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const csrc = claudeSource();
   check("a tutor turn with no <plan> is sent back once, so the policy is consulted EVERY turn",
     /TUTOR POLICY CHECK — you wrote no <plan>/.test(csrc) && /!result\.plan && \(toolCalls\.length \|\| textContent\.trim\(\)\)/.test(csrc));
   check("the gap's value is pulled from the CHAT reply too, on both reply paths",
@@ -2933,7 +2937,7 @@ section("Task UX: breakdowns don't vanish, Help opens the chat, popup is bigger,
   check("the wide popup actually gets a bigger CSS size", /\.task-modal\.wide \{/.test(stylesSrc) && /max-width: min\(760px, 94vw\)/.test(stylesSrc));
   // Learning science in generation: the shared rules block must be wired into every prompt that
   // generates or breaks down the student's own steps.
-  const claudeSrc = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrc = claudeSource();
   const rulesCount = (claudeSrc.match(/LEARNING_SCIENCE_RULES/g) || []).length;
   check("learning-science rules exist and are injected into ALL THREE generation prompts (plan + scaffold + substeps)", rulesCount >= 4 && /ACTIVE RECALL over re-reading/.test(claudeSrc) && /SPACED RETRIEVAL/.test(claudeSrc) && /PRODUCTIVE STRUGGLE FIRST/.test(claudeSrc));
 }
@@ -3183,7 +3187,7 @@ section("dodLooksLikeCoordinationOutcome — DoD-wording veto for flashcards/qui
 // was missing in the first place (writeStepsFromContext had these calls, runTask never did).
 section("runTask wiring — step-quality filters + taskType enum sync (source-order pins)");
 {
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   const runTaskStart = src.indexOf("export async function runTask(");
   const runTaskBody = src.slice(runTaskStart, src.indexOf("\nexport async function writeStepsFromContext", runTaskStart));
   check("runTask's step-4 output is filtered through dropProcessComplaintSteps", /steps = dropProcessComplaintSteps\(steps\);/.test(runTaskBody));
@@ -3252,7 +3256,7 @@ section("Granularity ladder — taskNeedsStepList gate + size-tiered brief promp
   check("a multi-week project keeps its steps even untyped", taskNeedsStepList({ title: "Extended Essay first draft", why: "Due March" }));
   check("an assessment keyword in a plain errand title keeps its steps", taskNeedsStepList({ title: "Register for the Math test", why: "Admin form" }));
   // Source pins: the step-4 prompt sizes the plan, runTask gates the output, the note prompt tiers briefs.
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   const runTaskStart = src.indexOf("export async function runTask(");
   const runTaskBody = src.slice(runTaskStart, src.indexOf("\nexport async function writeStepsFromContext", runTaskStart));
   check("runTask's step-4 prompt says small single-session tasks get NO step list", /SMALL, SINGLE-SESSION task[^\n]*NO step list/.test(runTaskBody));
@@ -3277,7 +3281,7 @@ section("Granularity ladder — taskNeedsStepList gate + size-tiered brief promp
 // loose keyword match and passed through because "they came from the search".
 section("Link relevance gate — task-link filtering (source pins)");
 {
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   const runTaskStart = src.indexOf("export async function runTask(");
   const runTaskBody = src.slice(runTaskStart, src.indexOf("\nexport async function writeStepsFromContext", runTaskStart));
   check("runTask filters its research links for relevance to the task's own words", /linkAllowWords/.test(runTaskBody) && /linkWords\.some\(\(w\) => linkAllowWords\.has\(w\)\)/.test(runTaskBody));
@@ -3288,7 +3292,7 @@ section("Link relevance gate — task-link filtering (source pins)");
 }
 section("Flashcard/artifact-selection prompts carry the retrieval-quality and error-targeting rules (source pins)");
 {
-  const src2 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src2 = claudeSource();
   const cardsToolIdx = src2.indexOf("const CREATE_FLASHCARDS_TOOL = {");
   const cardsToolBody = src2.slice(cardsToolIdx, src2.indexOf("\n};", cardsToolIdx));
   check("flashcard tool description requires ONE RETRIEVABLE UNIT per card, not just 'one idea'", /ONE RETRIEVABLE UNIT per card/.test(cardsToolBody));
@@ -3302,7 +3306,7 @@ section("Flashcard/artifact-selection prompts carry the retrieval-quality and er
 }
 section("Tutor prompt (chatAboutTask) carries the 'why don't they know' diagnosis + mastery-stop rules (source pins)");
 {
-  const src3 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src3 = claudeSource();
   const chatStart = src3.indexOf("export async function chatAboutTask(");
   const chatBody = src3.slice(chatStart, src3.indexOf("\nexport async function", chatStart + 10));
   check("tutor prompt distinguishes never-learned/forgot/cant-start/dont-understand-the-question before responding to 'I don't know'", /"I DON'T KNOW" IS NOT ONE THING/.test(chatBody));
@@ -3576,7 +3580,7 @@ check("a short ambiguous reply that happens to share a word doesn't false-positi
 section("countWords + the chat length backstop (TALE budget, silent compression round)");
 check("countWords counts whitespace-delimited words", countWords("un deux trois") === 3 && countWords("  a  b ") === 2 && countWords("") === 0);
 {
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   // Behavioral posture, pinned structurally: the truth pass lives in the NO-TOOL branch (the only shape
   // a final draft takes), after the truncation retry, before finish() — not in the tool-calls path.
   const noToolIdx = src.indexOf("if (!toolCalls.length) {");
@@ -3644,7 +3648,7 @@ section("Flashcards the student doesn't NEED to learn (card.notNeeded) — exclu
   ])] });
   check("a not-needed card is never reported as 'still shaky'", /Real gap/.test(shaky) && !/Not needed but box 1/.test(shaky));
 
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   check("runTask's deck prompt scopes cards to what this student is actually expected to know", /SCOPE — ONLY WHAT THIS STUDENT IS ACTUALLY EXPECTED TO KNOW/.test(src));
   const ui = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8");
   check("FlashcardDeck offers the 'not something I need to learn' escape hatch", /deck-btn-not-needed/.test(ui) && /onNotNeeded\?\.\(cardIndex\)/.test(ui));
@@ -3687,7 +3691,7 @@ section("ensureArtifactUseSteps — a deck/quiz Otto made is always tied into th
 
 section("runTask actually uses its inputs (source pins)");
 {
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   const start = src.indexOf("export async function runTask(");
   const body = src.slice(start, src.indexOf("\nexport async function writeStepsFromContext", start));
   // `focus` (revision requests, the granularity arm, runStep's single-step scoping + the student's answer)
@@ -4051,7 +4055,7 @@ check("out-of-range firstAction minutes dropped, text kept", finFAOutOfRangeMinu
 
 section("expandStep prompt — substeps get the same task-decomposition quality bar as real steps (source pin)");
 {
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   const expandStepStart = src.indexOf("export async function expandStep(");
   const expandStepBody = src.slice(expandStepStart, src.indexOf("\nexport async function runSubstep", expandStepStart));
   // Substeps used to be generated with a thinner prompt than real steps — no dependency ordering, no
@@ -4066,7 +4070,7 @@ section("expandStep prompt — substeps get the same task-decomposition quality 
 
 section("Step-5 artifact selection — a note is never auto-added without real substance to write (source pin)");
 {
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   const idx = src.indexOf("For academic tasks that don't match the discrete-facts pattern");
   const block = src.slice(idx, idx + 1400);
   // Reported live pattern this closes: EVERY academic task that didn't match the discrete-facts regex got
@@ -4693,7 +4697,7 @@ section("leadingArm — honest, deterministic 'what does the bandit currently be
   check("reattachStepExtras carries a step's url across a reworded repair", reattachStepExtras([{ text: "Sit a timed MCQ set at 1.5 minutes per question", automatable: false }], original)[0].url === "https://example.com/set");
   check("reattachStepExtras does NOT attach extras onto an unrelated new step", reattachStepExtras([{ text: "Log every missed item afterwards", automatable: false }], original)[0].url === undefined);
 
-  const claudeSrc = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrc = claudeSource();
   const repairBlock = claudeSrc.slice(claudeSrc.indexOf("const repair = await ask("), claudeSrc.indexOf("Total-outage check"));
   check("the DoD pass audits coverage, order AND one-deliverable-per-step", /1\. COVERAGE/.test(repairBlock) && /2\. ORDER/.test(repairBlock) && /3\. ONE DELIVERABLE PER STEP/.test(repairBlock));
   check("the DoD pass no longer tells the model to 'say yes' on anything but one failure mode", !/close enough match for a reasonable plan, say yes/.test(repairBlock));
@@ -4719,7 +4723,7 @@ section("leadingArm — honest, deterministic 'what does the bandit currently be
     dropUnanchoredSteps(plan, (t) => t === plan[0].text).length === 3);
   check("an all-anchored plan passes through untouched", dropUnanchoredSteps(plan, () => true).length === 3);
 
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   const stepPrompt = src.slice(src.indexOf("HOW TO ANSWER"), src.indexOf('"definitionOfDone": "refined if needed"}`,'));
   check("step 4 must enumerate the definition of done's parts before writing steps", /"dodParts"/.test(stepPrompt));
   check("every step must cite the dodPart number it advances", /"dodPart": the 1-based number/.test(stepPrompt));
@@ -4755,7 +4759,7 @@ section("leadingArm — honest, deterministic 'what does the bandit currently be
   check("a step with no link is left alone", restrictStepUrlsToLinks([{ text: "Read the first half", automatable: false }], found)[0].url === undefined);
   check("with no research links at all, every step url is stripped", restrictStepUrlsToLinks([{ text: "Buy it", automatable: false, url: "https://anywhere.test/x" }], [])[0].url === undefined);
 
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   const searchPrompt = src.slice(src.indexOf("What web searches should be performed"), src.indexOf('{"searches": ["query 1", "query 2"]}'));
   check("step 2 is told to resolve what the task leaves unnamed from the source material", /RESOLVE WHAT THE TASK LEAVES UNNAMED/.test(searchPrompt));
   check("step 2 is told never to search the vague phrase itself", /Never search the vague phrase/.test(searchPrompt));
@@ -4796,7 +4800,7 @@ section("Tutor Desmos tools — the student-usable place (contract + pins)");
   check("the Desmos full-pane styles exist", /\.tutor-desmos-full\b/.test(stylesSrc2) && /\.tutor-desmos-frame\b/.test(stylesSrc2) && !/\.tutor-desmos-tab\.on/.test(stylesSrc2));
 
   // The tutor prompt must route students to the tool — otherwise it's a shelf decoration.
-  const claudeSrc6 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrc6 = claudeSource();
   const desmosPrompt = claudeSrc6.slice(claudeSrc6.indexOf("DESMOS IS ONE CLICK AWAY"), claudeSrc6.indexOf("KEEP GETTING SMARTER ABOUT THEM"));
   check("the tutor prompt routes students to Desmos with a concrete task", /DESMOS IS ONE CLICK AWAY/.test(claudeSrc6) && /ouvre Desmos/.test(desmosPrompt));
   check("the prompt reflects the single-calculator reality, not the old four-tool family", /ONE calculator \(graphing\)/.test(desmosPrompt) && !/graphing, scientific, geometry, four-function/.test(desmosPrompt));
@@ -4818,7 +4822,7 @@ section("generateWeeklyStudyDeck / generateMonthlyStudyDeck — the spaced-repet
   // well-practiced concepts, not what needed review. Fixed: spacedBlock is now unconditional, and the
   // concise system prompt text itself also mentions weighting toward weak concepts (previously it didn't
   // even reference the signal conceptually in that branch).
-  const claudeSrcWM = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrcWM = claudeSource();
   const weeklyFn = claudeSrcWM.slice(claudeSrcWM.indexOf("export async function generateWeeklyStudyDeck"), claudeSrcWM.indexOf("export async function generateWeeklyQuiz"));
   const monthlyFn = claudeSrcWM.slice(claudeSrcWM.indexOf("export async function generateMonthlyStudyDeck"), claudeSrcWM.indexOf("export async function generateMonthlyQuiz"));
   check("weekly deck's user-message spacedBlock is no longer stripped on the concise retry", weeklyFn.includes('entriesBlock}` + spacedBlock') && !/entriesBlock}` \+\s*\(concise \? "" : spacedBlock\)/.test(weeklyFn));
@@ -4836,7 +4840,7 @@ section("GEOMETRY_ON_BOARD — triangle.sides can't express an unknown, so it mu
   // student the answer before they'd solved anything. Fixed with an explicit warning + worked example
   // steering that exact case (two sides, included angle, unknown third side) to points+segments instead,
   // where the unknown gets a letter label.
-  const gSrc = (() => { const s = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8"); const i = s.indexOf("export const GEOMETRY_ON_BOARD_TOOL"); return s.slice(i, s.indexOf("export const ANNOTATE_BOARD_TOOL")); })();
+  const gSrc = (() => { const s = claudeSource(); const i = s.indexOf("export const GEOMETRY_ON_BOARD_TOOL"); return s.slice(i, s.indexOf("export const ANNOTATE_BOARD_TOOL")); })();
   check("the tool warns that triangle.sides cannot express an unknown and always labels all three sides", /`triangle\.sides` CANNOT express an unknown/.test(gSrc) && /solves\+labels ALL three sides/.test(gSrc));
   check("the warning explicitly names the law-of-cosines 'two sides + included angle, unknown third side' case", /two sides and the angle between them, find/.test(gSrc));
   check("the tool tells the model NOT to compute the unknown itself just to satisfy the schema", /do NOT compute that value yourself and feed it into `triangle\.sides`/.test(gSrc));
@@ -5295,7 +5299,7 @@ section("Courses — real-catalog matching + enrollment + unit seeding");
 
 section("Track-grounded curriculum content — syllabusGroundingLine gated like examStyleLine (source pin)");
 {
-  const claudeSrcSyl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrcSyl = claudeSource();
   const sylFn = claudeSrcSyl.slice(claudeSrcSyl.indexOf("Direct request: tutoring/content generation"), claudeSrcSyl.indexOf("/** VARK, presentation only"));
   check("syllabusGroundingLine is gated to IB/AP only, thin/none for bac/other (confirmed with the user)", /p\?\.track !== "ib" && p\?\.track !== "ap"\)\) return "";/.test(sylFn));
   check("syllabusGroundingLine leans on the model's own knowledge, explicitly no hardcoded syllabus database", /No new syllabus database/.test(sylFn));
@@ -5304,7 +5308,7 @@ section("Track-grounded curriculum content — syllabusGroundingLine gated like 
 
 section("TOK-inspired Socratic additions — extend existing rules, never contradict the HINT LADDER fix (source pins)");
 {
-  const claudeSrcTok = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrcTok = claudeSource();
   check("CHALLENGE ASSUMPTIONS now rotates through TOK-style meta-questions (evidence/counter-evidence/strongest objection)", claudeSrcTok.includes("what's the strongest case AGAINST your") && claudeSrcTok.includes("own claim?"));
   check("rule 4b occasionally asks the student to voice a counterclaim, not just justify their own step", claudeSrcTok.includes("ask them to voice the") && claudeSrcTok.includes("OPPOSING position"));
   check("a new 10b prompts brief reflection after a problem resolves, same not-every-turn cadence as 4b", /10b\. CLOSE A RESOLVED PROBLEM WITH ONE REFLECTIVE QUESTION, SOMETIMES/.test(claudeSrcTok));
@@ -5339,7 +5343,7 @@ section("hintDensity preference — new axis, distinct from learningStyle, never
   const typesSrcHint = readFileSync(new URL("../shared/types.ts", import.meta.url), "utf8");
   check("Profile.hintDensity is sanitized through the same allow-list as the write route", /hintDensity: \["steps", "hints", "balanced"\]\.includes\(p\?\.hintDensity\) \? p\.hintDensity : undefined,/.test(typesSrcHint));
 
-  const claudeSrcHint = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrcHint = claudeSource();
   const hintFn = claudeSrcHint.slice(claudeSrcHint.indexOf("export function hintDensityLine"), claudeSrcHint.indexOf("// \"Stories tuned to her life\""));
   check("hintDensityLine never mentions giving the direct answer — only pacing/step-size language", !/the answer\b/i.test(hintFn.replace(/never the direct answer|never the answer/gi, "")));
   check("hintDensityLine explicitly says the direct answer is still never given, under either setting", /Still never the direct answer/.test(hintFn) || /still never the\s*direct answer/.test(hintFn));
@@ -5352,7 +5356,7 @@ section("hintDensity preference — new axis, distinct from learningStyle, never
 
 section("Tutor reply length — tightened the existing SHORT REPLIES trigger (source pin)");
 {
-  const claudeSrcLen = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrcLen = claudeSource();
   check("the SHORT REPLIES rule's trigger is tightened to match its own 1-3 sentence target (was a looser 5-sentence trigger)", claudeSrcLen.includes("if you find yourself writing more than 3") && claudeSrcLen.includes("sentences, stop"));
   check("the existing PRIMER_CLOSING_REMINDER LENGTH check is untouched (still reinforces the same 1-3 sentence rule)", claudeSrcLen.includes("is this genuinely 1-3 sentences?"));
 }
@@ -5371,7 +5375,7 @@ section("wantsArtifactTools — latency fix: narrow the tool list only on a clea
 
 section("Tool-narrowing latency fix — core tutoring tools are NEVER dropped by the heuristic (source pin)");
 {
-  const claudeSrcTools = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrcTools = claudeSource();
   const toolsBlock = claudeSrcTools.slice(claudeSrcTools.indexOf("const includeArtifactTools = wantsArtifactTools"), claudeSrcTools.indexOf("const empty = (): ChatResult"));
   // WEB_SEARCH_TOOL/CREATE_CALC_TOOL are generic utility tools, unrelated to the board — still core, still
   // listed unconditionally (never narrowed by the includeArtifactTools heuristic) in both branches.
@@ -5453,7 +5457,7 @@ section("MCQ-dodge no longer licenses an answer reveal (source pins — reported
   // another one", "it's good", vague non-answers) and the tutor eventually resolved it FOR them anyway —
   // neither the HINT LADDER's (c)/(d) exceptions nor canvas mode had any rule against treating "wrap up
   // the loose end before switching" as valid license to reveal.
-  const claudeSrcDodge = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrcDodge = claudeSource();
   check("the HINT LADDER exception list now has a negative case (e) for evasion, distinct from (c)/(d)", /\(e\) they're trying to skip\/change ` \+\s*\n\s*`the subject WITHOUT a genuine attempt/.test(claudeSrcDodge) || claudeSrcDodge.includes("(e) they're trying to skip/change"));
   check("canvas mode explicitly says to let a dodged MCQ go unanswered rather than resolving it for them", claudeSrcDodge.includes("IF THEY TRY TO SKIP/MOVE ON WITHOUT A GENUINE ATTEMPT"));
 }
@@ -5501,7 +5505,7 @@ section("TTS — WAV wrapping + fluid chunking (unit tests)");
   // The client's chunk size and the server's cap must agree: they drifted once (the client sent up to 1800
   // characters and the server sliced at 1000), which is what silently truncated every long reply's audio.
   const ttsChunkSrc = readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8");
-  check("the client asks for chunks at the provider-safe size, in lockstep with the server's cap", /const CLOUD_CHUNK_MAX_CHARS = 900;/.test(ttsChunkSrc) && /const TTS_CHUNK_MAX = 900;/.test(readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8")));
+  check("the client asks for chunks at the provider-safe size, in lockstep with the server's cap", /const CLOUD_CHUNK_MAX_CHARS = 900;/.test(ttsChunkSrc) && /const TTS_CHUNK_MAX = 900;/.test(claudeSource()));
 }
 
 section("TTS — one free provider, a MALE-ONLY voice pool, retried voice-by-voice and chunk-by-chunk (source pins)");
@@ -5510,7 +5514,7 @@ section("TTS — one free provider, a MALE-ONLY voice pool, retried voice-by-voi
   // The server's synthesizeSpeech is the single place those three rules live, so pin the shape of it: a
   // per-language pool of male voice names, one attempt per chunk per voice, and a hard stop (never a
   // female voice, never a half-spoken reply) when the pool is exhausted.
-  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claude = claudeSource();
   const fn = claude.slice(claude.indexOf("export async function synthesizeSpeech"), claude.indexOf("export function wordWrapChunks"));
   check("a free, keyless provider is used (its public form endpoint — no account, no API key)", /https:\/\/ttsmp3\.com\/makemp3_new\.php/.test(claude) && /source: "ttsmp3"/.test(claude));
   check("the request looks like a browser (a bare server fetch is refused by these free endpoints)", /User-Agent": BROWSER_UA/.test(claude) && /Referer": "https:\/\/ttsmp3\.com\/"/.test(claude));
@@ -5550,7 +5554,7 @@ section("Answers are NEVER revealed — chat prompt and every practice-problem s
   // Reported live: "it gives answer, this should never happen" — the tutor finished the student's work
   // ("−1/8 + 6 = 47/8, so you've got…", "it's 3x − 2") under a "(d) finish a mechanical last step" exception,
   // and every practice-problem surface revealed the answer on a wrong attempt.
-  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claude = claudeSource();
   check("the 'finish a mechanical last step' exception is gone from the hint ladder", !/finish a mechanical last step/.test(claude));
   check("the prompt forbids producing any value/step the student hasn't stated, and says to ASK instead", claude.includes("Never produce a value, step result, or piece of") && claude.includes("ASK them to do it"));
   const surfaces = [["../client/study/artifacts/BoardArtifact.tsx", "Board"], ["../client/study/InlineProblem.tsx", "InlineProblem"], ["../client/ui.tsx", "journal practice card"]];
@@ -5593,7 +5597,7 @@ section("TTS never falls straight to the browser voice — the free cloud voice 
   // Direct request: the browser's own speechSynthesis must never be the primary voice. /api/tts answers from
   // the free, keyless male-voice pool (see the pool section above); when it fails, the client plays NOTHING
   // for that reply rather than substituting a browser voice.
-  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claude = claudeSource();
   check("the provider validates it actually got audio back, not an error page with a 200", /if \(!url\) return \{ error/.test(claude) && /if \(!res\.ok\) return \{ error/.test(claude) && /if \(!audio\.ok\)/.test(claude) && /if \(!mp3\.length\)/.test(claude));
   check("the provider's own rejection wording is reported, so a log line names the real cause", /rejected: \$\{String\(json\?\.Error/.test(claude));
 
@@ -5611,7 +5615,7 @@ section("Clarity fixes — 'I'm not understanding' escalates, rephrasing isn't a
   // rewording while the student got visibly more lost ("I'm not understanding", "at what", "let's just
   // move on"), and an explicit "can you just write on the board" request was answered with more chat text
   // instead of an actual board entry.
-  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claude = claudeSource();
   check("an explicit 'I don't understand' is treated as its own escalation signal, distinct from a bare 'I don't know'", claude.includes('an explicit') && claude.includes('"I don\'t understand"/"I\'m not understanding" IS its own signal'));
   check("rephrasing the same question is explicitly called out as NOT a different approach", claude.includes('rephrasing the SAME test/') && claude.includes("question in other words is NOT different"));
   check("the write-to-board tool rule requires honoring an EXPLICIT written-anchor request the same turn", claude.includes("If the student EXPLICITLY") && claude.includes('asks you to write/put something on the board'));
@@ -5695,7 +5699,7 @@ section("leaksAnyProblemAnswer — board/diagram/chat-reply guard against statin
   check("a short (<3 char) secret is skipped — same false-positive guard as leaksAnswer/revealsAnswer", !leaksAnyProblemAnswer("the answer is 5 apples", [{ id: "p3", question: "q", answer: "5", createdAt: "" }]));
   check("an unrelated problem's answer doesn't false-positive against a different problem's text", !leaksAnyProblemAnswer("cos theta is minus four fifths", [trig]));
 
-  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claude = claudeSource();
   check("WRITE_TO_BOARD rejects a leaking entry before it's ever created", /leaksAnyProblemAnswer\(String\(input\?\.text \|\| ""\), \[\.\.\.\(opts\?\.currentProblems \|\| \[\]\), \.\.\.result\.problems\]\)\) content = "REJECTED: that states a problem's answer outright/.test(claude));
   check("DRAW_ON_BOARD checks both the caption and every op's text/latex for a leak", /input\.ops\.map\(\(o: any\) => `\$\{o\?\.text \|\| ""\} \$\{o\?\.latex \|\| ""\}`/.test(claude));
   check("the chat reply itself gets the same backstop inside finish(), discarding artifacts like the CHAT_DOES_WORK guardrail does", /leaksAnyProblemAnswer\(reply, \[\.\.\.\(opts\?\.currentProblems \|\| \[\]\), \.\.\.result\.problems\]\)\)/.test(claude));
@@ -5715,7 +5719,7 @@ section("HINT LADDER — a substitution's result must not be computed FOR the st
   // any of that"), and Otto had to admit "I jumped ahead; you hadn't done that subtraction." This is the same
   // "never produce a value they haven't stated themselves" rule as the −1/8+6 and 3x−2 cases already pinned
   // below, extended to cover computing a named substitution's result rather than just asking for it.
-  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claude = claudeSource();
   check("the rule explicitly covers computing a substitution's result while narrating the next step", claude.includes("not a substitution's RESULT even while narrating the next step") && claude.includes("1 − 25/169 sitting there, which comes to 144/169"));
   check("it tells the model to split naming-the-next-computation from doing it, rather than banning naming it", claude.includes("Naming WHICH computation comes next is fine") && claude.includes("computing it FOR them in the same breath is not"));
 }
@@ -5726,7 +5730,7 @@ section("HINT LADDER — a trailed-off/incomplete answer isn't license to finish
   // and stopped mid-thought. Otto's next line both finished that sentence for them AND jumped straight to
   // the next concept ("the leftover has to be ma") — two things the student should have said themselves,
   // handed over together because the first one trailed off instead of being met with "bigger than what?".
-  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claude = claudeSource();
   check("the prompt distinguishes a trailed-off answer from a finished wrong/right one", claude.includes("DON'T TREAT A TRAILED-OFF ANSWER AS A FINISHED ONE") && claude.includes('force has to be bigger than" with nothing after'));
   check("it names the exact live failure: completing their sentence AND advancing the lesson in one breath", claude.includes("line both completed it for them AND jumped straight to the next concept") && claude.includes('the leftover has') && claude.includes('to be ma")'));
 }
@@ -5765,14 +5769,14 @@ section("makeInteractiveEntry — CREATE_INTERACTIVE validation (allowlisted scr
     return "entry" in r && !r.entry.html.includes("<object") && !r.entry.html.includes("<embed");
   })());
   check("CREATE_INTERACTIVE's answer-leak guard reuses leaksAnyProblemAnswer the same way WRITE_TO_BOARD/DRAW_ON_BOARD do", (() => {
-    const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+    const claude = claudeSource();
     return /name === "CREATE_INTERACTIVE"/.test(claude) && /leaksAnyProblemAnswer\(`\$\{input\?\.caption \|\| ""\} \$\{input\?\.html \|\| ""\}`/.test(claude);
   })());
 }
 
 section("CREATE_INTERACTIVE — sandboxed, scoped to Study Mode, capped (source pins)");
 {
-  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claude = claudeSource();
   check("CREATE_INTERACTIVE requires BOTH primer (Tutor) AND canvas mode — never the regular task-chat tool list", (() => {
     const boardToolsBlock = claude.slice(claude.indexOf("const boardTools = opts?.primer"), claude.indexOf("const tools = opts?.canvasMode"));
     const regularLine = claude.split("\n").find((l) => l.includes("CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL"));
@@ -5843,7 +5847,7 @@ section("TTS timeouts — a retry across the male pool must finish inside the cl
   // work it was waiting for (one provider attempt, then the NEXT male voice in the pool), so the client gave
   // up and aborted the whole /api/tts request mid-flight. Both sides now have a documented budget and the
   // client's is strictly larger than the worst case one chunk can cost server-side.
-  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claude = claudeSource();
   const ttsSynthSrc = readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8");
   check("the provider call itself is bounded (a hung endpoint can't hold the reply hostage)", /const TTS_TIMEOUT_MS = 12_000;/.test(claude) && /signal: AbortSignal\.timeout\(TTS_TIMEOUT_MS\)/.test(claude));
   check("the client's fetch timeout comfortably exceeds one provider attempt plus the next male voice's attempt", /CLOUD_FETCH_TIMEOUT_MS = 25_000/.test(ttsSynthSrc) && 25_000 > 2 * 12_000);
@@ -5858,7 +5862,7 @@ section("HINT LADDER — a conceptual carryover between parts must be asked, not
   // turning the reason into a question. Same "never hand over what they haven't stated" rule as the
   // mechanical-arithmetic and substitution-result cases already pinned above, extended to a carried-over
   // CONCEPTUAL fact, not just a computed number.
-  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claude = claudeSource();
   check("the rule explicitly covers a conceptual carryover between parts, not just arithmetic", claude.includes("THIS ALSO COVERS A CONCEPTUAL CARRYOVER, not just arithmetic") && claude.includes("μ is the same at 25° because it depends on the"));
   check("it gives the question to ask instead of the assertion to avoid", claude.includes('does μ depend on the angle, or on') && claude.includes('"μ came out') && claude.includes("the surfaces haven't changed, so μ is still tan 20° at 25°"));
 }
@@ -5871,7 +5875,7 @@ section("WRITE_TO_BOARD must not get ahead of the chat — only record a step on
   // leaksAnyProblemAnswer doesn't catch this: there's no CREATE_PROBLEM answer being leaked, just the
   // board racing ahead of the Socratic pacing on a live derivation with no stored "answer" to check against
   // — this needed its own explicit rule on the tool itself, distinct from the answer-leak guard.
-  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claude = claudeSource();
   check("WRITE_TO_BOARD's own description forbids writing a later step before the student reaches it", claude.includes("NEVER GET AHEAD OF THE CHAT") && claude.includes("never a later step of the SAME derivation they haven't reached yet"));
   check("it cites the exact live failure (the finished F_net line written while chat was still deriving it)", claude.includes("F_net down slope = mg sin25 - mg cos25 * tan20") && claude.includes("the board had done the derivation FOR them"));
   check("it gives the concrete fix: ask the question first, write the entry after they answer", claude.includes("ask the question first and write the entry after they answer it"));
@@ -5882,7 +5886,7 @@ section("TTS voice — MALE ONLY, and arrows read as a word (source pins)");
   // Direct request, verbatim: "do not use a female voice; only use a male voice. Do not fall back to any
   // female voice. Just use a male voice, even if it fails, use another free male voice." The pool below is
   // every voice the tutor can ever sound like — so the pin is on the POOL's contents, not on one default.
-  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claude = claudeSource();
   const pool = claude.slice(claude.indexOf("const TTS_MALE_VOICES"), claude.indexOf("const TTS_CHUNK_MAX"));
   const names = [...pool.matchAll(/"([A-Za-z]+)"/g)].map((m) => m[1]).filter((n) => !["fr", "en"].includes(n));
   check("every voice in the pool is a MALE voice name, and there is a fallback voice in each language", names.includes("Mathieu") && names.includes("Matthew") && names.length >= 6 && !names.includes("Chantal") && !names.includes("Gabrielle"));

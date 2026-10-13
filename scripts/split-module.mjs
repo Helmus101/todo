@@ -55,6 +55,12 @@ for (const [dest, names] of Object.entries(plan.dests || {})) for (const n of na
   if (!u) throw new Error(`${n} not found in ${plan.src}`);
   home.set(u, dest);
 }
+// "ranges": { dest: [["firstName", "lastName"], ...] } — every top-level unit from first to last (inclusive).
+for (const [dest, spans] of Object.entries(plan.ranges || {})) for (const [a, b] of spans) {
+  const ua = byName.get(a), ub = byName.get(b);
+  if (!ua || !ub) throw new Error(`range ${a}..${b} not found`);
+  for (const u of units) if (u.i >= ua.i && u.i <= ub.i && !ts.isImportDeclaration(u.st) && !home.has(u)) home.set(u, dest); // explicit "dests" win
+}
 const routeFiles = Object.entries(plan.routes || {});
 for (const u of units) if (u.route) for (const [dest, r] of routeFiles) if (new RegExp(r.match).test(u.route)) { home.set(u, dest); break; }
 
@@ -147,5 +153,12 @@ for (const [p, t] of out) {
   console.log(`${p}: ${t.split("\n").length} lines`);
   if (write) { mkdirSync(dirname(resolve(root, p)), { recursive: true }); writeFileSync(resolve(root, p), t); }
 }
+// Report import cycles between the generated files (a cycle can break module initialisation at runtime).
+const graph = new Map([...files].map(([p, rec]) => [p, [...rec.needs.keys()]]));
+const cycles = new Set();
+const visit = (p, stack) => { for (const q of graph.get(p) || []) { if (stack.includes(q)) cycles.add([...stack.slice(stack.indexOf(q)), q].join(" -> ")); else if (stack.length < 8) visit(q, [...stack, q]); } };
+for (const p of graph.keys()) visit(p, [p]);
+if (cycles.size) console.log("IMPORT CYCLES:\n  " + [...cycles].slice(0, 20).join("\n  "));
+if (cycles.size && process.env.SHOW_NEEDS) for (const [p, rec] of files) for (const [dp, names] of rec.needs) console.log(`  ${p} needs from ${dp}: ${[...names].join(", ")}`);
 const moved = [...home].filter(([u, p]) => p === plan.shared).map(([u]) => u.names.join(","));
 if (moved.length) console.log(`shared (${plan.shared}): ${moved.join(", ")}`);

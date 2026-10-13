@@ -1,4 +1,8 @@
 import { readFileSync, readdirSync } from "node:fs";
+// The AI layer was split into server/claude.ts (facade) + server/ai/*.ts; source checks read them as one.
+const claudeSource = () => ["../server/claude.ts", ...readdirSync(new URL("../server/ai/", import.meta.url)).map((f) => `../server/ai/${f}`)]
+  .map((f) => readFileSync(new URL(f, import.meta.url), "utf8")).join("\n");
+
 // Tutor pipeline simulation — runs the REAL chatAboutTask (tool loop, guards, nudges, board writes) against a
 // scripted fake model endpoint (globalThis.fetch is intercepted for api.deepseek.com). It cannot judge how a
 // live model WRITES, but it proves the machinery around it does what the tutor promises: never lets a stated
@@ -304,7 +308,7 @@ export async function runTutorSim(check, section) {
   await run("keep going", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
   check("an interactive tutor turn makes at most 4 model rounds even if the model keeps calling tools (was 7)", calls.length <= 4);
   const idx = ["../server/index.ts", "../server/http.ts", ...readdirSync(new URL("../server/routes/", import.meta.url)).map((f) => `../server/routes/${f}`)].map((f) => readFileSync(new URL(f, import.meta.url), "utf8")).join("\n");
-  const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const cl = claudeSource();
   check("Primer turns skip the Pronote + connected-app network lookups, and provider attempts have timeouts (Gemini 9s, DeepSeek 24s) so a stalled one fails over fast", /req\.body\?\.primer !== true && \(await pronoteSvc\.pronoteConnected/.test(idx) && /req\.body\?\.primer === true \? undefined : await toolsFor\(req\)/.test(idx) && /9_000 : 24_000/.test(cl) && /CHAT_DEADLINE_MS = opts\?\.primer \? 45_000 : 120_000/.test(cl));
 
   // "Done — 50 cards" with no deck behind it (reported live)
