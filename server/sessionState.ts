@@ -49,7 +49,7 @@ export function loadOrInitSessionState(profile: Profile | undefined, taskId: str
   return existing || emptySessionState(taskId, now);
 }
 
-export interface SessionTurnSignals {
+interface SessionTurnSignals {
   action: TutorAction;
   /** From tutorAdapt.ts's Reaction, already computed live for the RL policy — just not persisted
    *  anywhere structured until now. */

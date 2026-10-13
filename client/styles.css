@@ -211,7 +211,7 @@ body {
 }
 /* Kills the ~300ms tap delay + accidental double-tap-zoom on every interactive control — the single
    biggest "this feels like a website, not an app" tell on a touch device. */
-button, a, input, textarea, .card-main, .week-day, [role="button"] { touch-action: manipulation; }
+button, a, input, textarea, .card-main, [role="button"] { touch-action: manipulation; }
 /* Same reasoning as .btn's own -webkit-touch-callout above, for every button that isn't a .btn (.card-main,
    .card-check, .step-mark, .card-x, …) — a long press on any of them shouldn't pop iOS's copy/lookup menu. */
 button { -webkit-touch-callout: none; }
@@ -272,10 +272,7 @@ input:focus, textarea:focus {
     transition-duration: 0.01ms !important;
   }
   /* Surfaces that slide/scale get a graceful opacity crossfade instead */
-  .task-modal, .task-modal-overlay,
-  .sm-header, .sm-bottombar,
-  .sm-modal, .sm-drawer,
-  .week-fab-wrap {
+  .task-modal, .task-modal-overlay, .sm-header, .sm-bottombar, .sm-modal, .sm-drawer {
     transition: opacity 200ms ease !important;
     transform: none !important;
     animation: none !important;
@@ -507,28 +504,10 @@ input:focus, textarea:focus {
    hunting through the task list for it. Opens the SAME TaskModal popup used everywhere else in the
    app (see WeekRailFab) rather than a bespoke popover — a hand-rolled outside-click/Escape popover
    here was unreliable ("loads but doesn't open"). */
-.week-fab-wrap {
-  position: fixed; right: var(--space-4, 16px); bottom: calc(20px + env(safe-area-inset-bottom)); z-index: 30;
-  /* Apple Design §4 — momentum bounce for entrance animation */
-  animation: fabIn var(--duration-spring) var(--ease-bounce) both;
-}
 @keyframes fabIn {
   from { opacity: 0; transform: scale(0.7) translateY(8px); }
   to   { opacity: 1; transform: scale(1) translateY(0); }
 }
-.week-fab {
-  display: flex; align-items: center; gap: var(--space-1); padding: var(--space-3) var(--space-5);
-  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-pill, 999px);
-  box-shadow: var(--shadow-card); font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--ink);
-  /* Apple Design §1 — instant feedback on interaction */
-  transition: background var(--duration-instant) var(--ease-spring), transform var(--duration-instant) var(--ease-spring);
-}
-@media (hover: hover) {
-  .week-fab:hover { background: var(--hover-wash); }
-}
-.week-fab:active { transform: scale(0.97); }
-.week-fab-popover-body { display: flex; flex-direction: column; gap: var(--space-5); }
-.week-fab-popover-body > * + * { padding-top: var(--space-5); border-top: 1px solid var(--line-soft); }
 .due-reviews { margin: 0; }
 /* Now a <button> (opens the deck's review player directly, see DueReviews' own comment) rather than an
    <a href="/task/..."> — reset the button chrome .exam-chip's other, non-interactive usages don't need. */
@@ -573,13 +552,10 @@ input:focus, textarea:focus {
 .milestone-chip { border-left-color: var(--accent); flex-wrap: wrap; row-gap: 2px; cursor: default; }
 .milestone-chip .exam-subject { flex: none; color: var(--ink-3); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.03em; white-space: nowrap; }
 .milestone-topic { font-size: 13px; font-weight: var(--weight-medium); color: var(--ink); }
-.milestone-more { flex: none; align-self: center; white-space: nowrap; }
 
 /* ─── IB milestone widget — dashboard-level surface for the big-project breakdown (Extended Essay/
    TOK/CAS/IA), previously only visible as a small badge once a task was already open. Same chip
    language as the exam strip so it reads as part of the same "ambient context" family. */
-.milestone-wrap { margin: 0 0 var(--space-6); }
-.milestone-list { display: flex; gap: var(--space-2); overflow-x: auto; padding-bottom: var(--space-1); scrollbar-width: thin; }
 .milestone-chip {
   flex: none; display: flex; flex-direction: column; gap: var(--space-0); padding: var(--space-2) var(--space-4);
   border-left: 3px solid var(--accent); border-radius: var(--radius-xs, var(--radius-xs)); min-width: 160px; max-width: 220px;
@@ -592,75 +568,27 @@ input:focus, textarea:focus {
 .milestone-chip:active {
   transform: scale(0.98);
 }
-.milestone-date { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; font-weight: 700; color: var(--accent); }
 /* Overdue: emphasis via weight/ink, not a new color — the app stays black/white/grey + one accent (see
    .chip-bad); a red flag here would be the one place that rule breaks. */
 .milestone-chip.late { border-left-color: var(--ink); background: var(--bg-2); }
-.milestone-chip.late .milestone-date { color: var(--ink); font-weight: 800; }
-.milestone-text { font-size: 13px; font-weight: var(--weight-medium); color: var(--ink); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.milestone-task { font-size: var(--text-xs); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ─── This-week workload strip — deterministic, no AI; one row per day ──────────────────────────────
    A horizontal 7-across strip needed either cramming (7 squares in ~340px) or a swipe to see every day —
    on a phone that meant half the week was scrolled off-screen by default, easy to miss. A vertical list
    (day name, count, tap to expand) shows all 7 days at once at any width — the bar chart's own visual
    comparison only worked side-by-side anyway, so the count alone carries the "how much" signal here. */
-.week-load-wrap { margin: 0; }
 /* NOTE: this used to be `display: none` below 640px, back when the strip rendered INLINE in the dashboard
    and ate space that's scarcer on a phone. It now only ever renders inside the "This week" popup/modal
    (WeekRailFab) — that old rule was hiding its entire content on every mobile screen, so the popup opened
    but showed nothing, which is exactly what got reported as "doesn't work on mobile". No width restriction
    needed any more; the modal already scrolls its own content. */
-.week-load-strip { display: flex; flex-direction: column; }
-.week-day {
-  flex: none; display: flex; flex-direction: row; align-items: center; justify-content: space-between;
-  gap: var(--space-2); width: 100%; padding: var(--space-2) var(--space-2);
-  border: none; border-radius: var(--radius-xs, var(--radius-xs)); background: transparent;
-  /* Apple Design §1 — instant feedback on interaction */
-  transition: background var(--duration-instant) var(--ease-spring);
-}
-.week-day + .week-day { margin-top: 1px; }
-@media (hover: hover) {
-  .week-day:hover { background: var(--hover-wash); }
-}
-.week-day:active {
-  transform: scale(0.98);
-}
 /* Border-color state cues replaced with background tints — "today"/"open" get a quiet neutral wash,
    "heavy" (a real pile-up warning) keeps the accent tint since that tint IS the signal. */
-.week-day.is-today { background: var(--bg-2); }
-.week-day.heavy { background: var(--accent-soft); }
-.week-day.open { background: var(--accent-soft); }
-.week-day-dow { font-size: 13px; font-weight: 600; letter-spacing: 0.01em; color: var(--ink); }
-.week-day.heavy .week-day-dow { color: var(--accent); }
-.week-day-bar-track { display: none; }
-.week-day-count { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; color: var(--ink-3); min-height: 14px; }
-.week-day-detail {
-  margin-top: var(--space-2);
-  padding: var(--space-3) var(--space-3);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  /* Apple Design §4 — use spring for expand/collapse */
-  animation: fadeIn var(--duration-spring) var(--ease-spring);
-}
-.week-day-detail-head { display: flex; align-items: center; gap: var(--space-2); font-size: 13px; font-weight: 600; margin-bottom: var(--space-2); text-transform: capitalize; }
-.week-day-items { list-style: none; display: flex; flex-direction: column; gap: var(--space-2); }
-.week-day-item { display: flex; align-items: center; flex-wrap: wrap; row-gap: var(--space-2); gap: var(--space-3); font-size: 13px; }
-.week-day-item .btn { margin-left: auto; flex: none; }
 /* The move-to-lighter-day label is long in French ("Déplacer sur un jour plus léger") — on a narrow phone
    it was squeezing the item title down to a sliver instead of wrapping, the exact "everything's crowded"
    failure mode. Once it wraps, give it the full row instead of a short leftover sliver next to nothing. */
-@media (max-width: 420px) { .week-day-item .btn { flex-basis: 100%; margin-left: 0; } }
-.week-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Day picker — one small button per remaining day of the displayed week, so moving a task is "pick the
    actual day", not just an auto-pick of whichever day is lightest (still marked with ✦ as a hint). */
-.week-day-picker { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-left: auto; }
-@media (max-width: 420px) { .week-day-picker { flex-basis: 100%; margin-left: 0; } }
-.week-item-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; }
-.week-item-test { background: var(--accent); }
-.week-item-homework { background: var(--ink-3); }
-.week-item-task { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
 /* The prototype's "Your day, under control." — a big sentence-style heading, weight 650, tight tracking. */
 .list-head {
   font-family: var(--display);
@@ -864,14 +792,6 @@ input:focus, textarea:focus {
   display: flex; flex-direction: column; align-items: center; gap: var(--space-3);
   animation: appleRise 0.4s var(--ease-spring);
 }
-.empty-mark {
-  width: 64px; height: 64px; margin-bottom: var(--space-2); border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  background: var(--accent-soft); color: var(--accent);
-  animation: appleRise 0.5s var(--ease-bounce) backwards 0.1s;
-}
-.empty-mark.done { background: var(--bg-2); }
-.empty-check { font-size: var(--text-2xl); font-weight: 700; color: var(--ink-3); }
 .empty-state h3 { font-family: var(--display); font-size: var(--text-lg); font-weight: var(--weight-bold); letter-spacing: var(--tracking-tight); color: var(--ink); margin: 0; }
 .empty-state p { font-size: var(--text-base); color: var(--ink-2); line-height: 1.6; max-width: 360px; margin: var(--space-1) 0 var(--space-3); }
 
@@ -1614,9 +1534,6 @@ input:focus, textarea:focus {
    commitment: "what fits right now", not "when this is due". */
 .step-minutes { font-size: 11px; color: var(--ink-3); }
 .step-target + .step-minutes, .step-minutes + .step-target { margin-left: var(--space-2); }
-.step-timer-start { background: none; border: none; padding: 0; font-family: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
-.step-timer { font-family: var(--mono, ui-monospace, monospace); font-weight: 600; color: var(--ink-2); }
-.step-timer.over { color: var(--accent); }
 .step-act { flex: none; }
 .step .btn { margin-left: auto; flex: none; }
 .step-input-label { display: block; font-size: 12px; font-weight: var(--weight-semibold); color: var(--ink-2); margin-top: var(--space-2); }
@@ -3372,39 +3289,6 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .first-time-hint-close:hover { opacity: 1; }
 /* The pinned problem "canvas" — a fixed, non-scrolling card above .sm-ai-chat so the question stays in
    view for the whole time the student works through it, instead of scrolling away like a normal message. */
-.sm-canvas-problem {
-  flex: none;
-  margin: var(--space-3) var(--space-3) 0;
-  padding: var(--space-4);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
-}
-.sm-canvas-problem-label {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--accent);
-  margin-bottom: var(--space-2);
-}
-.sm-canvas-problem-q { font-size: var(--text-base); font-weight: 600; color: var(--ink); line-height: 1.4; }
-.sm-canvas-problem-format { margin-top: var(--space-2); font-size: var(--text-sm); color: var(--ink-3); }
-.sm-canvas-problem-opts { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-3); }
-.sm-canvas-problem-opt {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  background: var(--bg-2);
-  border-radius: var(--radius-xs);
-  font-size: var(--text-sm);
-  color: var(--ink);
-}
-.sm-canvas-problem-opt-letter { font-weight: 700; color: var(--ink-3); }
-.sm-canvas-problem-hint-row { margin-top: var(--space-3); }
-.sm-canvas-problem-hint { font-size: var(--text-sm); color: var(--ink-3); font-style: italic; }
 
 /* The persistent tutor Board artifact (BoardArtifact.tsx) — a running log Otto writes to at its own
    discretion, styled distinctly per entry kind so a formula reads differently from an instruction or a
@@ -3525,15 +3409,11 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 /* The "equation" DiagramOp (DRAW_ON_BOARD, real KaTeX typesetting — actual stacked fractions/exponents, not
    the plain-text approximation formatMath does for chat). foreignObject can't auto-size to fit its HTML, so
    the box is sized generously and this just centers whatever KaTeX actually produces inside it. */
-.sm-board-eq { color: currentColor; font-size: 15px; }
-.sm-board-eq .katex { color: inherit; }
 /* Equation-only diagram entries (no spatial shapes) skip the fixed 800x600 SVG box entirely — see
    BoardArtifact's diagram-rendering branch — and render straight in normal document flow instead, sized to
    their own content. overflow-x:auto on each equation (not the whole list) so one long expression scrolls
    horizontally on narrow screens without widening or clipping the rest of the board. */
 .sm-board-eq-list { display: flex; flex-direction: column; gap: var(--space-3); }
-.sm-board-eq-list .sm-board-eq { display: block; max-width: 100%; overflow-x: auto; }
-.sm-board-eq-fallback { font-family: var(--mono, monospace); font-size: 13px; color: var(--ink-2); white-space: pre-wrap; }
 
 /* Problem display in board (merged canvas functionality) — a practice problem is the one board entry the
    student actually has to DO something with, not just read, so it gets more visual weight than a plain
@@ -4241,18 +4121,6 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 
 /* Study Mode Whiteboard — paper-like freehand canvas (see WhiteboardArtifact.tsx). Ruled lines overlay
    matches the tutor whiteboard's notebook-paper feel. */
-.sm-whiteboard-body { height: 100%; display: flex; flex-direction: column; }
-.sm-whiteboard-toolbar { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-.sm-whiteboard-canvas-wrap { position: relative; flex: 1; min-height: 0; }
-.sm-whiteboard-canvas-wrap::after {
-  content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: var(--radius-sm);
-  background: repeating-linear-gradient(to bottom, transparent 0, transparent 31px, rgba(0, 0, 0, 0.06) 31px, rgba(0, 0, 0, 0.06) 32px);
-}
-.sm-whiteboard-canvas { width: 100%; height: 100%; touch-action: none; cursor: crosshair; border-radius: var(--radius-sm); border: 1px solid var(--line); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06); }
-.sm-wb-btn { border: 1px solid var(--line); background: var(--bg-2); color: var(--ink); border-radius: var(--radius-xs); padding: var(--space-1) var(--space-3); font-size: 13px; cursor: pointer; }
-.sm-wb-btn:hover { background: var(--bg-3); }
-.sm-wb-btn.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
-.sm-wb-select { border: 1px solid var(--line); background: var(--bg-2); color: var(--ink); border-radius: var(--radius-xs); padding: var(--space-1) var(--space-2); font-size: 13px; cursor: pointer; }
 
 @media (max-width: 960px) {
   .sm-header-top,
@@ -4456,7 +4324,6 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 /* Paper ruled lines — a visual guide overlay on top of the canvas (pointer-events: none so it never
    blocks drawing). Not baked into the canvas pixels, so it doesn't appear in the PNG sent to the vision
    model. Subtle horizontal rules like notebook paper, plus a faint margin line on the left. */
-.tutor-whiteboard-paper { position: relative; }
 /* Positioned at the click point in DISPLAY pixels (see PendingText's own comment), offset by the canvas's
    own inset padding above so it lands on the exact spot clicked, not shifted by the wrapper's margin.
    transform shifts it up so the typed baseline lines up with where the click landed, same spot fillText

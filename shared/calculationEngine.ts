@@ -123,14 +123,7 @@ export function createCalculationEngine(): Engine {
 }
 
 /** Default engine instance */
-export const defaultEngine = createCalculationEngine();
-
-/** Evaluate an expression with the given variable values */
-export function evaluateWithVars(expr: string, vars: Record<string, number>): number | null {
-  const compiled = compileExpr(expr, Object.keys(vars));
-  if ("error" in compiled) return null;
-  return compiled.fn(vars);
-}
+const defaultEngine = createCalculationEngine();
 
 /** Check if an arithmetic claim is correct */
 export function checkArithmeticClaim(claim: string): boolean {
@@ -138,95 +131,8 @@ export function checkArithmeticClaim(claim: string): boolean {
   return result ? result.correct : false;
 }
 
-/** Extract the numeric value from a calculation step */
-export function extractCalculationValue(step: {
-  formula?: string;
-  substituted?: string;
-  expr?: string;
-  result?: number | string;
-}): number | null {
-  // If result is already a number, return it
-  if (typeof step.result === "number") return step.result;
-  
-  // Try to parse result as a number
-  if (typeof step.result === "string") {
-    const parsed = parseNumber(step.result);
-    if (parsed !== null) return parsed;
-  }
-  
-  // Try to evaluate the expression
-  if (step.expr) {
-    const evaluated = defaultEngine.evaluate?.(step.expr);
-    if (evaluated !== null && typeof evaluated === "number") return evaluated;
-  }
-  
-  return null;
-}
-
-/** Build a dependency graph from calculation steps */
-export interface CalculationDependency {
-  id: string;
-  dependsOn: string[];
-  value?: number | null;
-  stale: boolean;
-}
-
-export function buildDependencyGraph(steps: Array<{ id: string; dependsOn?: string[]; expr?: string }>): Map<string, CalculationDependency> {
-  const graph = new Map<string, CalculationDependency>();
-  
-  for (const step of steps) {
-    graph.set(step.id, {
-      id: step.id,
-      dependsOn: step.dependsOn || [],
-      value: step.expr ? defaultEngine.evaluate?.(step.expr) : undefined,
-      stale: false,
-    });
-  }
-  
-  return graph;
-}
-
-/** Mark dependents as stale when a dependency changes */
-export function markDependentsStale(
-  graph: Map<string, CalculationDependency>,
-  changedId: string
-): string[] {
-  const stale: string[] = [];
-  
-  for (const [id, dep] of graph) {
-    if (dep.dependsOn.includes(changedId)) {
-      dep.stale = true;
-      stale.push(id);
-    }
-  }
-  
-  return stale;
-}
-
-/** Recalculate all stale nodes in the dependency graph */
-export function recalculateStale(
-  graph: Map<string, CalculationDependency>,
-  stepExpressions: Map<string, string>
-): Map<string, number | null> {
-  const results = new Map<string, number | null>();
-  
-  for (const [id, dep] of graph) {
-    if (dep.stale) {
-      const expr = stepExpressions.get(id);
-      if (expr) {
-        const value = defaultEngine.evaluate?.(expr) ?? null;
-        results.set(id, value);
-        dep.value = value;
-        dep.stale = false;
-      }
-    }
-  }
-  
-  return results;
-}
-
 /** Validate a calculation step against the engine */
-export interface ValidationResult {
+interface ValidationResult {
   valid: boolean;
   calculated?: number;
   claimed?: number;
@@ -269,26 +175,4 @@ export function validateCalculationStep(
     difference,
     toleranceMet,
   };
-}
-
-/** Check if a calculation step uses units correctly */
-export function validateUnits(
-  step: { result?: number | string; unit?: string },
-  expectedUnit?: string
-): boolean {
-  if (!expectedUnit) return true; // No unit constraint
-  if (!step.unit) return false; // Missing required unit
-  return step.unit === expectedUnit;
-}
-
-/** Format a number with appropriate precision */
-export function formatNumber(value: number, precision: number = 2): string {
-  if (!Number.isFinite(value)) return String(value);
-  return value.toFixed(precision);
-}
-
-/** Format a calculation result with unit */
-export function formatResult(value: number, unit?: string, precision: number = 2): string {
-  const formatted = formatNumber(value, precision);
-  return unit ? `${formatted} ${unit}` : formatted;
 }

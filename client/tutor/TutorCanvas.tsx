@@ -1,6 +1,6 @@
 import { createPortal } from "react-dom";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { Pencil, Highlighter, Eraser, Type, Undo2, Redo2, Trash2, Hand, Send } from "lucide-react";
+import { Pencil, Highlighter, Eraser, Type, Undo2, Redo2, Trash2, Hand } from "lucide-react";
 import { api } from "../api.ts";
 import { useLang } from "../ui.tsx";
 

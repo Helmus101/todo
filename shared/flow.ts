@@ -5,7 +5,7 @@
 //   timeline events in order along a line, alternating above/below
 // Pure and dependency-free: the server validates with normalizeFlow, the client renders the result of layoutFlow.
 
-export type FlowShape = "box" | "round" | "diamond" | "circle";
+type FlowShape = "box" | "round" | "diamond" | "circle";
 export interface FlowNode { id: string; label: string; note?: string; shape?: FlowShape }
 export interface FlowEdge { from: string; to: string; label?: string }
 export interface FlowSpec { type: "flow" | "cycle" | "timeline"; direction: "TD" | "LR"; nodes: FlowNode[]; edges: FlowEdge[] }
@@ -43,11 +43,11 @@ export function normalizeFlow(input: any): { flow: FlowSpec } | { error: string 
 // ── layout ───────────────────────────────────────────────────────────────────────────────────────────────────────
 const CHAR_W = 8.2, LINE_H = 18, PAD_X = 14, PAD_Y = 9;
 
-export interface PlacedNode { id: string; x: number; y: number; w: number; h: number; lines: string[]; noteLines: string[]; shape: FlowShape }
-export interface PlacedEdge { from: string; to: string; d: string; label?: string; lx: number; ly: number }
-export interface FlowLayout { width: number; height: number; nodes: PlacedNode[]; edges: PlacedEdge[] }
+interface PlacedNode { id: string; x: number; y: number; w: number; h: number; lines: string[]; noteLines: string[]; shape: FlowShape }
+interface PlacedEdge { from: string; to: string; d: string; label?: string; lx: number; ly: number }
+interface FlowLayout { width: number; height: number; nodes: PlacedNode[]; edges: PlacedEdge[] }
 
-export function wrapLabel(text: string, maxChars: number): string[] {
+function wrapLabel(text: string, maxChars: number): string[] {
   const words = text.split(" ");
   const lines: string[] = [];
   let cur = "";

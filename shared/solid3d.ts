@@ -4,9 +4,9 @@
 // dashed, names the vertices, labels only the GIVEN dimensions, and can mark extra lines (a space diagonal, a height).
 // Pure — the server calls it, tests cover it. The result is plain SVG that goes through the same sanitizer as every figure.
 
-export type SolidShape = "cuboid" | "cube" | "pyramid" | "prism" | "cylinder" | "cone" | "sphere";
+type SolidShape = "cuboid" | "cube" | "pyramid" | "prism" | "cylinder" | "cone" | "sphere";
 
-export interface SolidIn {
+interface SolidIn {
   shape: SolidShape;
   width?: number; height?: number; depth?: number; radius?: number; // proportions only (any unit) — placed to scale
   dims?: { width?: string; height?: string; depth?: string; radius?: string }; // labels to print (given values or letters)

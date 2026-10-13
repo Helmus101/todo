@@ -1,6 +1,6 @@
 import type { BoardEntry, TaskObjective, TaskProblem } from "./types.ts";
 
-export interface SessionRecap {
+interface SessionRecap {
   /** What they actually showed: objectives ticked and exercises they got right. */
   showed: string[];
   /** Still developing: objectives not reached and exercises left open. */

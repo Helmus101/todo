@@ -88,7 +88,7 @@ export function emptyStudentModel(): StudentModelShape {
 
 /** A brand-new concept record: no data at all, which is NOT "mastery 0" — `confidence` is 0 and mastery starts
  *  neutral at 0.5, so an untouched concept never renders as a failure. */
-export function blankConcept(key: string, label: string, subject: string | undefined, now: Date): ConceptRecord {
+function blankConcept(key: string, label: string, subject: string | undefined, now: Date): ConceptRecord {
   return {
     key,
     label: cleanLabel(label) || key,
@@ -108,18 +108,18 @@ export function blankConcept(key: string, label: string, subject: string | undef
 export function independentSuccess(rec: ConceptRecord): number {
   return rec.attempts > 0 ? rec.unaided / rec.attempts : 0;
 }
-export function hintDependence(rec: ConceptRecord): number {
+function hintDependence(rec: ConceptRecord): number {
   return rec.attempts > 0 ? (rec.hinted + rec.partial + rec.explained) / rec.attempts : 0;
 }
-export function transferSuccess(rec: ConceptRecord): number {
+function transferSuccess(rec: ConceptRecord): number {
   return rec.transferAttempts > 0 ? rec.transferWins / rec.transferAttempts : 0;
 }
-export function recallStrength(rec: ConceptRecord): number {
+function recallStrength(rec: ConceptRecord): number {
   return rec.recalls > 0 ? rec.recallWins / rec.recalls : 0;
 }
 
 /** Recency-decayed confidence of one misconception (see MISCONCEPTION_HALF_LIFE_DAYS). */
-export function decayedMisconceptionConfidence(m: ConceptMisconception, now: Date): number {
+function decayedMisconceptionConfidence(m: ConceptMisconception, now: Date): number {
   if (m.retiredAt) return 0;
   const d = daysBetween(m.lastSeen, now);
   if (!Number.isFinite(d)) return clamp01(m.confidence);
@@ -141,7 +141,7 @@ export function liveMisconceptions(rec: ConceptRecord, now: Date): { text: strin
 
 /** One observation to fold into the model. `label` is whatever the caller called the concept — the key is
  *  derived here, so no caller has to normalise. */
-export interface ConceptEvidenceInput {
+interface ConceptEvidenceInput {
   label: string;
   subject?: string;
   kind: EvidenceKind;
@@ -157,7 +157,7 @@ export interface ConceptEvidenceInput {
  *  Mastery moves by EWMA toward the evidence kind's weight. Setbacks (a mistake, a failed transfer) pull it
  *  DOWN toward their low weight; wins pull it UP toward theirs. This asymmetry is what keeps one careless
  *  slip from reading as competence and one lucky guess from reading as mastery. */
-export function applyEvidence(rec: ConceptRecord, ev: ConceptEvidenceInput, now: Date): ConceptRecord {
+function applyEvidence(rec: ConceptRecord, ev: ConceptEvidenceInput, now: Date): ConceptRecord {
   const weight = EVIDENCE_WEIGHT[ev.kind] ?? 0.5;
   const next: ConceptRecord = {
     ...rec,
@@ -256,18 +256,10 @@ export function recordConceptEvidence(model: StudentModelShape, ev: ConceptEvide
   return capConcepts({ concepts: { ...model.concepts, [key]: updated }, updatedAt: iso(now) });
 }
 
-/** Record the same observation against several concepts — used when one demonstration genuinely covers two
- *  (an objective that names a concept, a problem whose working exercises a prerequisite as well). */
-export function recordConceptEvidenceMany(model: StudentModelShape, labels: string[], ev: ConceptEvidenceInput, now: Date): StudentModelShape {
-  let next = model;
-  for (const label of [...new Set(labels.map((l) => cleanLabel(l)).filter(Boolean))]) next = recordConceptEvidence(next, { ...ev, label }, now);
-  return next;
-}
-
 /** Enforce CONCEPT_CAP by evicting the LEAST RECENTLY DEMONSTRATED concept (falling back to `updatedAt`).
  *  Never evicts by lowest mastery — dropping the concept the student is weakest at is exactly the wrong thing
  *  to forget. */
-export function capConcepts(model: StudentModelShape): StudentModelShape {
+function capConcepts(model: StudentModelShape): StudentModelShape {
   const keys = Object.keys(model.concepts);
   if (keys.length <= CONCEPT_CAP) return model;
   const ranked = keys.sort((a, b) => {
@@ -278,26 +270,6 @@ export function capConcepts(model: StudentModelShape): StudentModelShape {
   const kept: Record<string, ConceptRecord> = {};
   for (const k of ranked.slice(0, CONCEPT_CAP)) kept[k] = model.concepts[k];
   return { ...model, concepts: kept };
-}
-
-/** Retire misconceptions whose decayed confidence has fallen below the threshold even with no contradicting
- *  observation — run by the daily sweep so old hypotheses clear for a student who stopped working on that
- *  concept entirely. Returns the same object when nothing changed (a cheap no-op for callers). */
-export function pruneStaleMisconceptions(model: StudentModelShape, now: Date): StudentModelShape {
-  let changed = false;
-  const concepts: Record<string, ConceptRecord> = {};
-  for (const [k, rec] of Object.entries(model.concepts)) {
-    if (!rec.misconceptions.some((m) => !m.retiredAt && decayedMisconceptionConfidence(m, now) < MISCONCEPTION_LIVE_THRESHOLD)) {
-      concepts[k] = rec;
-      continue;
-    }
-    changed = true;
-    concepts[k] = {
-      ...rec,
-      misconceptions: rec.misconceptions.map((m) => (!m.retiredAt && decayedMisconceptionConfidence(m, now) < MISCONCEPTION_LIVE_THRESHOLD ? { ...m, retiredAt: iso(now) } : m)),
-    };
-  }
-  return changed ? { ...model, concepts, updatedAt: iso(now) } : model;
 }
 
 /* ── validation (the load-time boundary — same posture as normalizeProfile) ─────────────────────────── */
@@ -408,7 +380,7 @@ export function findConcept(model: StudentModelShape | undefined, labelOrKey: st
  *  with the student's History misconceptions), then by weakness — a weak concept is the one most likely to be
  *  the REAL problem behind what they're asking about (§4/§5). Only concepts with actual evidence are returned:
  *  a record created by a stray mention must never be presented as a belief. */
-export function relevantConcepts(model: StudentModelShape, opts: { subject?: string; limit?: number; now?: Date } = {}): ConceptRecord[] {
+function relevantConcepts(model: StudentModelShape, opts: { subject?: string; limit?: number; now?: Date } = {}): ConceptRecord[] {
   const now = opts.now || new Date();
   const subject = (opts.subject || "").toLowerCase();
   const all = Object.values(model.concepts).filter((c) => c.confidence > 0 || c.evidence.length > 0);
@@ -460,47 +432,4 @@ export function studentModelBlock(model: StudentModelShape | undefined, opts: { 
     `evidence is thin, say so honestly ("I'm not sure that's the issue — let's test it") rather than ` +
     `confidently teaching the wrong thing.\n`
   );
-}
-
-/** A compact snapshot for the UI/API (the transparency panel, §30) — bands and counts, never a raw dump of
- *  every evidence string. */
-export function studentModelSummary(model: StudentModelShape | undefined, now: Date = new Date()) {
-  const concepts = model ? Object.values(model.concepts) : [];
-  const misconceptions = concepts
-    .flatMap((c) => liveMisconceptions(c, now).map((m) => ({ concept: c.label, conceptKey: c.key, ...m })))
-    .sort((a, b) => b.confidence - a.confidence)
-    .slice(0, 10);
-  return {
-    conceptCount: concepts.length,
-    taught: concepts.filter((c) => c.mastery >= 0.62 && c.confidence >= 0.35).length,
-    shaky: concepts.filter((c) => c.mastery < 0.45 && c.confidence >= 0.35).length,
-    misconceptions,
-    concepts: concepts
-      .sort((a, b) => a.mastery - b.mastery)
-      .slice(0, 24)
-      .map((c) => ({
-        key: c.key,
-        label: c.label,
-        subject: c.subject,
-        mastery: c.mastery,
-        confidence: c.confidence,
-        band: c.mastery >= 0.8 ? "solid" : c.mastery >= 0.62 ? "working" : c.mastery >= 0.45 ? "shaky" : "very-shaky",
-        attempts: c.attempts,
-        unaided: c.unaided,
-        liveMisconceptions: liveMisconceptions(c, now).length,
-        lastDemonstrated: c.lastDemonstrated,
-        evidence: c.evidence.slice(-3),
-      })),
-    updatedAt: model?.updatedAt,
-  };
-}
-
-/** Fold an observed dependence series into a single hint-dependence read, so the model, the transparency panel
- *  and the anti-dependence gates share ONE number instead of three drifting ones. Returns null (never a
- *  fabricated 0) when there's no history. */
-export function hintDependenceFromHistory(history: DependenceMetric[] | undefined): number | null {
-  const recent = (history || []).slice(-3);
-  if (!recent.length) return null;
-  const help = recent.reduce((s, m) => s + (Number.isFinite(m.helpRatio) ? m.helpRatio : 0), 0) / recent.length;
-  return round3(clamp01(help));
 }

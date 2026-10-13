@@ -5,7 +5,7 @@
 // student they're wrong. Pure; shared by server (grading, prompt verdicts) and tests.
 import { compileExpr } from "./mathExpr.ts";
 
-export type Verdict = "correct" | "incorrect" | "unknown";
+type Verdict = "correct" | "incorrect" | "unknown";
 
 const FN = "arcsin|arccos|arctan|sinh|cosh|tanh|sin|cos|tan|cot|sec|csc|ln|log|exp|sqrt";
 const ARC: Record<string, string> = { arcsin: "asin", arccos: "acos", arctan: "atan" };

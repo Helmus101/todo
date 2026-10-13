@@ -20,7 +20,7 @@ export interface LessonTopic {
 }
 
 /** A subtopic with specific skills to practice */
-export interface LessonSubtopic {
+interface LessonSubtopic {
   /** Subtopic identifier */
   id: string;
   /** Subtopic name */
@@ -65,7 +65,7 @@ export interface NextActivity {
 }
 
 /** Create a lesson plan for economics (example from spec) */
-export function createEconomicsLessonPlan(goal: string): LessonPlan {
+function createEconomicsLessonPlan(goal: string): LessonPlan {
   const topics: LessonTopic[] = [
     {
       id: "demand_supply_fundamentals",
@@ -399,13 +399,8 @@ function detectSubject(goal: string): string {
   return "General";
 }
 
-/** Check if a lesson plan is complete */
-export function isLessonComplete(plan: LessonPlan): boolean {
-  return plan.currentTopicIndex >= plan.topics.length;
-}
-
 /** Get lesson progress percentage (for display only, not for decisions) */
-export function getLessonProgress(plan: LessonPlan): number {
+function getLessonProgress(plan: LessonPlan): number {
   let totalSubtopics = 0;
   let completedSubtopics = 0;
   

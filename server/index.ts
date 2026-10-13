@@ -11,7 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { CourseworkDoc } from "../shared/coursework.ts";
-import { equivalent, gapTarget, verifyStepAgainstGap } from "../shared/mathEquiv.ts";
+import { gapTarget, verifyStepAgainstGap } from "../shared/mathEquiv.ts";
 import { gradeGapAnswer, gradeExerciseAnswer } from "../shared/exerciseVerification.ts";
 import { repairSpokenMath, spokenContextFrom } from "../shared/spokenMath.ts";
 import { nextTeachingState, learningPrefsFrom, mergePrefs, evidenceKindFor, reachedSolutionSteps, resolveGapKey, rehydrateProblemKey } from "./tutor.ts";
@@ -22,14 +22,14 @@ import { runTutorTurn, detectSubject, computedGapKey, solvedGapKey, subjectsIn }
 import { selectJournal } from "./journal.ts";
 import type { TutorOpenerMemory } from "./claude.ts";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, FocusSession, BoardEntry, TaskObjective, TaskProblem } from "../shared/types.ts";
-import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY, subjectMastery } from "../shared/types.ts";
+import { emptyProfile, normalizeProfile, isHandled, isValidTz, monthCostUsd, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY, subjectMastery } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
 import { buildTasksPayload } from "./taskDelta.ts";
 import { makeSyncScheduler } from "./syncScheduler.ts";
-import { parsePolicy, summarize as summarizePolicy, initPolicy } from "./tutorPolicy.ts";
+import { parsePolicy, summarize as summarizePolicy } from "./tutorPolicy.ts";
 import { findSourceQuestions, sourcesForTrack } from "./questionSources.ts";
 import { schoolRecordLine } from "./schoolRecord.ts";
-import { summarizeCoursework, fallbackCourseworkSummary, aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto, ttsReady, synthesizeSpeech, TTS_MAX_TEXT, tutorOpener, interactiveSceneDocument, INTERACTIVE_SCENE_CSP } from "./claude.ts";
+import { summarizeCoursework, fallbackCourseworkSummary, aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, computeTaskOutcome, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto, synthesizeSpeech, TTS_MAX_TEXT, tutorOpener, interactiveSceneDocument, INTERACTIVE_SCENE_CSP } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, destroySessionsForUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken, getAdminMetrics } from "./store.ts";
 import { sendTransactionalEmail } from "./mailer.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
@@ -40,8 +40,6 @@ import * as integrations from "./integrations.ts";
 import * as pronoteSvc from "./pronote.ts";
 import * as blackbaudSvc from "./blackbaud.ts";
 import { getAgeBand, getPolicyProfileFromBirthYear } from "./policyProfiles.ts";
-import { recordConsent } from "./consentService.ts";
-import { isDependenceWarning, shouldFadeScaffolding } from "./dependenceMetrics.ts";
 
 declare module "express-session" {
   interface SessionData {
@@ -596,12 +594,12 @@ app.post("/api/auth/signup", rateLimit(6, 60 * 60_000), ah(async (req, res) => {
     
     // Record consent if this is a child account
     if (isChildAccount && birthYear) {
-      const consent = recordConsent({
+      const consent = {
         childId: email,
         scope: ["account_access", "data_processing"],
         grantedAt: new Date().toISOString(),
-        method: "clickwrap",
-      });
+        method: "clickwrap" as const,
+      };
       req.session.profile.consentRecords = [consent];
     }
     

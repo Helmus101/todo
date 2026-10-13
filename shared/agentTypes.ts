@@ -281,5 +281,3 @@ export interface TutorDecisionShape {
   correctedFrom?: TutorAction;
   correctReason?: string;
 }
-
-export const DECISION_CAP = 40;

@@ -9,10 +9,6 @@
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const MAIL_FROM = process.env.MAIL_FROM || "Otto <onboarding@resend.dev>";
 
-export function mailerConfigured(): boolean {
-  return !!RESEND_API_KEY;
-}
-
 export async function sendTransactionalEmail(to: string, subject: string, html: string): Promise<boolean> {
   if (!RESEND_API_KEY) { console.warn("[mailer] RESEND_API_KEY not set — email not sent:", subject); return false; }
   try {

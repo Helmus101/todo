@@ -8,8 +8,8 @@
 import type { DiagramOp } from "./types.ts";
 
 type Pt = { x: number; y: number };
-export interface GeoSegment { from: string; to: string; label?: string; dashed?: boolean; ticks?: number; arrow?: boolean; color?: string; id?: string }
-export interface GeoSpec {
+interface GeoSegment { from: string; to: string; label?: string; dashed?: boolean; ticks?: number; arrow?: boolean; color?: string; id?: string }
+interface GeoSpec {
   /** Named points in real units, maths orientation (y up): {"A":[0,0],"B":[4,0]} or [{name,x,y}]. */
   points?: Record<string, [number, number]> | { name: string; x: number; y: number }[];
   /** Solve a triangle from its three side lengths: names [A,B,C], sides [a=BC, b=CA, c=AB]. Adds the three points + the three sides. */
@@ -32,7 +32,7 @@ export interface GeoSpec {
   diagramId?: string;
 }
 
-export const GEO_LIMITS = { points: 26, shapes: 40 };
+const GEO_LIMITS = { points: 26, shapes: 40 };
 const W = 800, H = 600, MARGIN_X = 96, MARGIN_Y = 72;
 
 const num = (v: unknown): number => (typeof v === "number" ? v : Number(v));

@@ -13,11 +13,11 @@
 import { webSearch } from "./websearch.ts";
 import { assertSafeExternalUrl } from "./pronote.ts";
 
-export type QuestionTrack = "ib" | "ap";
-export interface QuestionSource { name: string; host: string; tracks: QuestionTrack[] }
-export interface SourceQuestion { sourceName: string; url: string; title: string; excerpt: string }
+type QuestionTrack = "ib" | "ap";
+interface QuestionSource { name: string; host: string; tracks: QuestionTrack[] }
+interface SourceQuestion { sourceName: string; url: string; title: string; excerpt: string }
 
-export const QUESTION_SOURCES: QuestionSource[] = [
+const QUESTION_SOURCES: QuestionSource[] = [
   // IB — question banks, mark-scheme sites and teacher-run resource sites (IB's own past papers aren't public).
   { name: "IB Documents", host: "ibdocuments.com", tracks: ["ib"] },
   { name: "Revision Village", host: "revisionvillage.com", tracks: ["ib"] },
@@ -89,7 +89,7 @@ export function excerptAround(text: string, topic: string, max = 1400): string {
   return clamp(text.slice(best, best + max).trim(), max);
 }
 
-export interface SourceDeps {
+interface SourceDeps {
   search: (q: string, domains: string[]) => Promise<{ title: string; url: string; snippet: string }[]>;
   fetchPage: (url: string) => Promise<string>;
 }
@@ -101,7 +101,7 @@ async function realFetchPage(url: string): Promise<string> {
   if (!r.ok || !/text\/html|text\/plain/i.test(ct)) return "";
   return htmlToText((await r.text()).slice(0, 1_500_000));
 }
-export const realSourceDeps: SourceDeps = { search: (q, domains) => webSearch(q, { domains }), fetchPage: realFetchPage };
+const realSourceDeps: SourceDeps = { search: (q, domains) => webSearch(q, { domains }), fetchPage: realFetchPage };
 
 const cache = new Map<string, { at: number; value: SourceQuestion[] }>();
 const CACHE_TTL_MS = 24 * 3600_000;

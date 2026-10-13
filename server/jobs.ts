@@ -9,7 +9,7 @@
  */
 import { schoolRecordLine } from "./schoolRecord.ts";
 import type { WebTask, Profile, TaskStatus } from "../shared/types.ts";
-import { emptyProfile, canonStatus, isHandled, isInFlight, tzOf, addUsage, learnedProductiveHour, bumpActivityHour } from "../shared/types.ts";
+import { emptyProfile, canonStatus, isHandled, isInFlight, tzOf, addUsage, learnedProductiveHour } from "../shared/types.ts";
 import * as store from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as integrations from "./integrations.ts";

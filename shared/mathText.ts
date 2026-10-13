@@ -31,7 +31,7 @@ const isMathToken = (t: string): boolean => {
 const GREEK: [RegExp, string][] = [[/π/g, "\\pi "], [/θ/g, "\\theta "], [/α/g, "\\alpha "], [/β/g, "\\beta "], [/γ/g, "\\gamma "], [/λ/g, "\\lambda "], [/μ/g, "\\mu "], [/φ/g, "\\varphi "], [/ω/g, "\\omega "], [/Δ/g, "\\Delta "]];
 
 /** Convert one plain-text math run to LaTeX. Exported for tests. */
-export function plainMathToLatex(run: string): string {
+function plainMathToLatex(run: string): string {
   let s = run.trim();
   // "\ " control space (model writes "1.8\ J") — a lone backslash in math mode prints raw otherwise.
   s = s.replace(/\\\s+/g, " ");

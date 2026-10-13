@@ -9,7 +9,7 @@
  * ui.tsx — progress bar, one big thing, one primary button — because that's a pattern the student has
  * already met inside this app, so there's nothing new to learn.
  */
-import { useEffect, useState, useRef, useContext, useCallback, type ReactNode, type Dispatch, type SetStateAction, type MutableRefObject } from "react";
+import { useEffect, useState, useRef, useContext, type ReactNode, type Dispatch, type SetStateAction, type MutableRefObject } from "react";
 import type { WebTask, TaskStep, Profile } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight, deadlineEpoch } from "../shared/types.ts";
 import { api } from "./api.ts";
@@ -157,32 +157,6 @@ function Disclosure({ label, count, open, onToggle, children }: { label: string;
         {count != null ? <span className="disclosure-count">{count}</span> : null}
       </button>
       {open ? <div className="disclosure-body">{children}</div> : null}
-    </div>
-  );
-}
-
-function TaskPlanningPanel({ task }: { task: WebTask }) {
-  const L = useLang();
-  const plan = task.taskContext;
-  if (!plan) return null;
-  const groups = [
-    { label: L("Requis", "Required"), items: plan.requirements.filter((r) => r.importance === "required").map((r) => r.text) },
-    { label: L("Utile", "Useful"), items: plan.requirements.filter((r) => r.importance !== "required").map((r) => r.text) },
-    { label: L("Ce qu'Otto peut faire", "Otto can do"), items: plan.ottoCanDo },
-    { label: L("Ce qui reste à faire", "You must do"), items: plan.userMustDo },
-  ].filter((g) => g.items.length);
-  return (
-    <div className="task-plan-panel">
-      <p className="task-plan-objective"><strong>{L("Résultat attendu", "Expected outcome")}:</strong> {plan.objective}</p>
-      <p className="task-plan-done"><strong>{L("Terminé quand", "Done when")}:</strong> {plan.definitionOfDone}</p>
-      {groups.map((group) => (
-        <div className="task-plan-group" key={group.label}>
-          <strong>{group.label}</strong>
-          <ul>{group.items.map((item) => <li key={item}>{item}</li>)}</ul>
-        </div>
-      ))}
-      {plan.unknowns.length ? <div className="task-plan-group"><strong>{L("À préciser", "Still unknown")}</strong><ul>{plan.unknowns.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
-      {plan.outputs.length ? <div className="task-plan-group"><strong>{L("Livrables", "Outputs")}</strong><ul>{plan.outputs.map((output) => <li key={output.id}>{output.title}{output.owner === "otto" ? ` — ${L("Otto", "Otto")}` : output.owner === "user" ? ` — ${L("toi", "you")}` : ""}</li>)}</ul></div> : null}
     </div>
   );
 }
@@ -889,40 +863,6 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
       <ArtifactPopups task={task} onTask={onTask} openNote={openNote} openDeck={openDeck} openQuiz={openQuiz}
         setOpenNote={setOpenNote} setOpenDeck={setOpenDeck} setOpenQuiz={setOpenQuiz} userId={userId ?? null} />
     </div>
-  );
-}
-
-/* ─────────────────────────────── the hero ─────────────────────────────── */
-
-/** Exactly one shape, by precedence. Ticking the current step advances it in place — that's what makes
- *  "one thing at a time" self-evident without a word of instruction. */
-/** A step's `minutes` estimate used to just sit there as a static "~15 min" label — real raw material
- *  (a model-provided time estimate) for a focus timer that never actually existed anywhere in the app.
- *  Plain countdown, started on tap; at zero it becomes a gentle "still going?" nudge, never a forced
- *  cutoff or a notification — this is a focus AID, not a hard limit. Client-side only (a local interval),
- *  since a timer has no reason to survive a reload; resets automatically per-step via the `key` the caller
- *  passes (StepHero remounts it on `currentIdx`). */
-function SessionTimer({ minutes }: { minutes: number }) {
-  const L = useLang();
-  const [secsLeft, setSecsLeft] = useState<number | null>(null); // null = not started yet
-  useEffect(() => {
-    if (secsLeft === null) return;
-    const id = setInterval(() => setSecsLeft((s) => (s === null ? s : s - 1)), 1000);
-    return () => clearInterval(id);
-  }, [secsLeft === null]);
-  const fmt = (s: number) => `${Math.floor(Math.abs(s) / 60)}:${String(Math.abs(s) % 60).padStart(2, "0")}`;
-  if (secsLeft === null) {
-    return (
-      <button type="button" className="step-minutes step-timer-start" onClick={() => setSecsLeft(minutes * 60)}>
-        ~{minutes} {L("min", "min")} · {L("Démarrer", "Start timer")}
-      </button>
-    );
-  }
-  const over = secsLeft <= 0;
-  return (
-    <span className={`step-minutes step-timer ${over ? "over" : ""}`}>
-      {over ? L(`Temps écoulé — ${fmt(secsLeft)} de plus, tu continues ?`, `Time's up — still going? +${fmt(secsLeft)}`) : fmt(secsLeft)}
-    </span>
   );
 }
 

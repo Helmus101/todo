@@ -87,7 +87,7 @@ export function equationsAhead(text: string, said: string[]): string[] {
  *  before the setup check: in the live transcript exercise, the trailing ask made the math run on that side empty and the dumped substituted setup went through untouched — the exercise opened with the student's first
  *  equation already built for them. */
 const SOLVE_ASK = /(?:find|calculate|compute|determine|evaluate|express|solve|draw|sketch)\b[^.]*\?\s*$|(?:how\s+(?:long|much|many|far|fast)|what(?:'s|\s+is|\s+will|\s+are)?|which|trouve[rz]?|calcule?z?|détermine[rz]?|combien)\b[^.]*\?\s*$/i;
-export function stripSolveAsk(text: string): string {
+function stripSolveAsk(text: string): string {
   let s = String(text || "").trim();
   for (let pass = 0; pass < 2; pass++) {
     const m = s.match(SOLVE_ASK);

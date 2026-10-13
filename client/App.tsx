@@ -1,9 +1,9 @@
 import { useEffect, useState, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
-import type { WebTask, ConnectionStatus, Profile, TaskFlashcards, FocusSession } from "../shared/types.ts";
+import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight, sortWithinQuadrant, errorLogBySubject, milestonesBySubject } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
 import { saveDeckLocally, getAllLocalDecks, clearLocalDecks } from "./localDecks.ts";
-import { saveQuizLocally, getAllLocalQuizzes, clearLocalQuizzes, getLocalQuiz } from "./localQuizzes.ts";
+import { saveQuizLocally, getAllLocalQuizzes, clearLocalQuizzes } from "./localQuizzes.ts";
 // Deliberately NOT cleared on sign-out like localDecks/localQuizzes below — those are backup CACHES of data
 // the cloud still owns, safe to drop; chat/board are the ONLY copy (local-only, by direct request), so
 // clearing them on sign-out would permanently destroy conversation history the moment someone logs out.
@@ -23,11 +23,6 @@ import { TOURS } from "./tours.ts";
 import { COMMON_SUBJECTS } from "../shared/coursework.ts";
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
 import { 
-  GraduationCap,
-  Lock,
-  Zap,
-  ShieldCheck,
-  Compass,
   Mic,
   MicOff
 } from "lucide-react";
@@ -130,12 +125,6 @@ function fmtDay(iso: string, L?: (fr: string, en: string) => string): string {
   const d = new Date(/T/.test(iso) ? iso : `${iso}T00:00:00`);
   return isNaN(d.getTime()) ? iso : d.toLocaleDateString(L?.("fr-FR", "en-US"), { month: "short", day: "numeric" });
 }
-
-// Open a URL in a new tab. Tabs open via window.open (see client/ui.tsx's openTab).
-// Temporary: Otto still generates, ranks, and breaks tasks into steps, but does not auto-run or offer
-// one-click execution of them — the card shows the plan as a checklist for the user to work through
-// themselves. Flip back to true to restore auto-do/Approve & Run/Send. Nothing execution-related is deleted.
-const EXECUTION_ENABLED = false;
 
 /** Study Mode's in-app entry points — the sidebar "Réviser"/"Study" item and the per-task Study Mode
  *  buttons — are OFF by design: the /study URL is its ONE entry point (product call: "bring it back,
@@ -1398,88 +1387,6 @@ export function App() {
   );
 }
 
-/** Modal shell for the task detail — backdrop-click, ✕, and Esc all close; locks body scroll while open.
- *  `nested`: this is a popup opened FROM WITHIN an already-open TaskModal (a brief/flashcard deck opened
- *  from the task detail) — it renders as a smaller centered card over the primary modal instead of also
- *  going full-bleed, and always via a PORTAL to `document.body`. The portal isn't cosmetic: the primary
- *  modal's own open/close animation (`modalPop`/`modalOut`) animates `transform`, and per the CSS spec any
- *  animated `transform` makes that element the containing block for `position: fixed` descendants — so
- *  without a portal, a nested modal's `inset: 0` was resolving against the OUTER modal's box, not the real
- *  viewport (it rendered pinned to the top of the outer card instead of centered on screen). Portaling both
- *  modals to `<body>` sidesteps that entirely, for every popup, not just nested ones. */
-
-/** LEGACY SUPPORT ONLY: the IB "big project" milestone breakdown (Extended Essay/TOK/CAS/IA) this surfaced
- *  was removed by direct request — server/claude.ts's writeStepsFromContext no longer ever creates a new
- *  `targetDate` step, for IB or anything else. Kept so a task that already has `targetDate` steps from
- *  before that change still renders correctly; entirely client-derived from tasks already in state (no
- *  fetch, no server endpoint), so it's a permanent no-op for every task going forward. */
-function Milestones({ tasks }: { tasks: WebTask[] }) {
-  const L = useLang();
-  const [showAll, setShowAll] = useState(false);
-  const all = tasks
-    .flatMap((t) => (t.steps || [])
-      .filter((s) => !s.done && s.targetDate)
-      .map((s) => ({ taskId: t.id, taskTitle: t.title, text: s.text, targetDate: s.targetDate! })))
-    .sort((a, b) => a.targetDate.localeCompare(b.targetDate));
-  const items = showAll ? all : all.slice(0, 3);
-  useReveal([items.length]);
-  if (!all.length) return null;
-  return (
-    <div className="milestone-wrap reveal">
-      <div className="exam-strip-label">{L("Prochains jalons", "Upcoming milestones")}</div>
-      <div className="milestone-list">
-        {items.map((it, i) => {
-          const late = it.targetDate < todayIso();
-          return (
-            <div key={i} className={`milestone-chip ${late ? "late" : ""}`}>
-              <span className="milestone-date">{late ? L("en retard", "overdue") : fmtDate(it.targetDate, L)}</span>
-              <span className="milestone-text">{it.text}</span>
-              <span className="milestone-task">{it.taskTitle}</span>
-            </div>
-          );
-        })}
-        {!showAll && all.length > 3 && (
-          <button type="button" className="btn xs ghost milestone-more" onClick={() => setShowAll(true)}>
-            {L(`+${all.length - 3} de plus`, `+${all.length - 3} more`)}
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** Always-on-screen entry point for the exam/week ambient context. Used to render inline in the task
- *  list (splitting it in two), then as a full-screen modal (too heavy for what's basically a glance-and-
- *  close panel) — this is a small floating button, fixed to the same spot at every scroll position, that
- *  opens a compact anchored popover instead of taking over the whole screen. */
-function WeekRailFab({ lang, onTask, tasks }: { lang?: "fr" | "en"; onTask: (t: WebTask) => void; tasks: WebTask[] }) {
-  const en = lang === "en";
-  const [open, setOpen] = useState(false);
-
-  return (
-    <div className="week-fab-wrap">
-      <button type="button" className="week-fab" onClick={() => setOpen(true)}>
-        <span>{en ? "This week" : "Cette semaine"}</span>
-      </button>
-      {/* A hand-rolled outside-click/Escape popover here turned out unreliable (reported as "loads but
-          doesn't open") — TaskModal is the SAME popup mechanism already proven to open/close correctly
-          everywhere else in the app (task detail, settings), so reuse it instead of a second bespoke
-          implementation. `nested` keeps it from re-locking body scroll if it's ever opened from inside
-          another modal. */}
-      {open && (
-        <TaskModal onClose={() => setOpen(false)} title={en ? "This week" : "Cette semaine"}>
-          <div className="week-fab-popover-body">
-            {/* Temporarily hidden — rarely has anything to show outside a detected big IB project
-                (Extended Essay/TOK/CAS/IA), so it was mostly just empty space on the rail. */}
-            <DueReviews lang={lang} tasks={tasks} />
-            <WeekLoad lang={lang} onTask={onTask} />
-          </div>
-        </TaskModal>
-      )}
-    </div>
-  );
-}
-
 /** Cards due for spaced-repetition review, across EVERY task — the one genuinely new cross-task view the
  *  spaced-repetition work needed (see nextLeitnerReview in shared/types.ts): a deck's own player only ever
  *  shows what's due for THAT task's deck, but the whole point of spacing is seeing everything due at a
@@ -1573,139 +1480,6 @@ function MilestonesStrip({ lang }: { lang?: "fr" | "en" }) {
           </span>
         )))}
       </div>
-    </div>
-  );
-}
-
-type WorkloadDay = { date: string; items: { kind: "homework" | "test" | "task"; subject?: string; title: string; effort: number; taskId?: string; movable?: boolean }[]; totalEffort: number };
-
-/** Deterministic "this week" strip — no AI call, just real Pronote homework/tests + open tasks bucketed
- *  by day. Answers the 4 workload gaps in one glance: what's on each day, how heavy it actually is (bar
- *  height, relative to the week — never presented as minutes), which day is a pile-up (accent chip, same
- *  visual language for a heavy day), and — once expanded — a way to nudge a movable task off an
- *  overloaded day onto the lightest one, without any AI round-trip. */
-function WeekLoad({ lang, onTask }: { lang?: "fr" | "en"; onTask: (t: WebTask) => void }) {
-  const en = lang === "en";
-  const notify = useNotify();
-  const [days, setDays] = useState<WorkloadDay[] | null>(null);
-  const [openDay, setOpenDay] = useState<string | null>(null);
-  const [moving, setMoving] = useState<string | null>(null);
-  // Which item's day-picker is open — was a single "move to the lightest day" auto-pick; now the student
-  // chooses WHICH later day, since "lighter" and "when I actually want to do it" aren't always the same
-  // day (a lighter Thursday doesn't help if there's a match Thursday evening).
-  const [pickingFor, setPickingFor] = useState<string | null>(null);
-  // A failed load also fell into `setDays([])`, same as a genuinely empty week — "Nothing due this week"
-  // is reassuring when it's actually a load failure, exactly the misleading case this pass targets.
-  const [error, setError] = useState(false);
-  const load = useCallback(() => { setError(false); void api.workload().then((r) => setDays(r.days)).catch(() => { setDays([]); setError(true); }); }, []);
-  useEffect(() => { load(); }, [load]);
-  // This used to return null and rely on the OLD dash-rail card collapsing itself via `.dash-rail:empty` —
-  // now it renders standalone inside the "This week" popover (WeekRailFab), so a silent null here just
-  // reads as "the popup doesn't work": you click the button and nothing shows up, loading or genuinely
-  // empty look identical (blank). Say which one it actually is instead.
-  if (!days) return <p className="muted small">{en ? "Finding time for everything…" : "Recherche du temps pour tout…"}</p>;
-  if (error) return <ErrorNote small onRetry={load}>{en ? "Couldn't load this week." : "Impossible de charger la semaine."}</ErrorNote>;
-  if (days.every((d) => d.items.length === 0)) return <p className="muted small">{en ? "Your week is still open." : "Ta semaine est encore libre."}</p>;
-
-  const max = Math.max(1, ...days.map((d) => d.totalEffort));
-  // Baselined against days that actually have something due (not the whole week) — see server/workload.ts's
-  // isPileUp for why a whole-week median would sit at ~0 and never trigger.
-  const busy = [...days.map((d) => d.totalEffort)].filter((e) => e > 0).sort((a, b) => a - b);
-  const busyMedian = busy[Math.floor(busy.length / 2)];
-  const pileUp = (d: WorkloadDay) => d.totalEffort > 0 && (busy.length < 2 ? d.totalEffort >= 3 : d.totalEffort >= busyMedian * 1.6);
-  const lightestOtherDate = (excludeDate: string) => {
-    const others = days.filter((d) => d.date !== excludeDate);
-    if (!others.length) return undefined;
-    return others.reduce((a, b) => (b.totalEffort < a.totalEffort ? b : a)).date;
-  };
-  const dow = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(en ? "en-US" : "fr-FR", { weekday: "short" });
-  const dm = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(en ? "en-US" : "fr-FR", { day: "numeric", month: "short" });
-  const todayKey = days[0]?.date;
-
-  const moveTask = async (taskId: string, to: string) => {
-    const prevDays = days;
-    setPickingFor(null);
-    setMoving(taskId);
-    const from = days.find((d) => d.items.some((it) => it.taskId === taskId));
-    const item = from?.items.find((it) => it.taskId === taskId);
-    if (from && item) {
-      setDays(days.map((d) => {
-        if (d.date === from.date) return { ...d, items: d.items.filter((it) => it.taskId !== taskId), totalEffort: d.totalEffort - item.effort };
-        if (d.date === to) return { ...d, items: [...d.items, item], totalEffort: d.totalEffort + item.effort };
-        return d;
-      }));
-    }
-    try {
-      const list = await api.rescheduleTask(taskId, to);
-      const updated = list.find((t) => t.id === taskId);
-      if (updated) onTask(updated);
-      load();
-    } catch (e: any) {
-      setDays(prevDays);
-      notify(e?.message || (en ? "Couldn't move that task — try again." : "Impossible de déplacer cette tâche — réessaie."), "error");
-    }
-    setMoving(null);
-  };
-
-  return (
-    <div className="week-load-wrap">
-      <div className="exam-strip-label">{en ? "This week" : "Cette semaine"}</div>
-      <div className="week-load-strip">
-        {days.map((d) => {
-          const isToday = d.date === todayKey;
-          const heavy = pileUp(d);
-          const open = openDay === d.date;
-          return (
-            <button
-              type="button"
-              key={d.date}
-              className={`week-day ${heavy ? "heavy" : ""} ${isToday ? "is-today" : ""} ${open ? "open" : ""}`}
-              onClick={() => setOpenDay(open ? null : d.date)}
-            >
-              <span className="week-day-dow">{isToday ? (en ? "Today" : "Aujourd'hui") : dow(d.date)}</span>
-              <span className="week-day-bar-track"><span className="week-day-bar" style={{ height: `${Math.max(6, (d.totalEffort / max) * 100)}%` }} /></span>
-              <span className="week-day-count">{d.items.length || ""}</span>
-            </button>
-          );
-        })}
-      </div>
-      {openDay && (() => {
-        const d = days.find((x) => x.date === openDay);
-        if (!d) return null;
-        return (
-          <div className="week-day-detail">
-            <div className="week-day-detail-head">{dow(d.date)} {dm(d.date)}{pileUp(d) ? <span className="chip chip-attention">{en ? "Heavy day" : "Journée chargée"}</span> : null}</div>
-            {d.items.length === 0 ? (
-              <p className="muted small">{en ? "Nothing due." : "Rien de prévu."}</p>
-            ) : (
-              <ul className="week-day-items">
-                {[...d.items].sort((a, b) => b.effort - a.effort).map((it, i) => (
-                  <li key={i} className="week-day-item">
-                    <span className={`week-item-dot week-item-${it.kind}`} />
-                    <span className="week-item-title">{it.subject ? <b>{it.subject}: </b> : null}{it.title}</span>
-                    {it.movable && it.taskId && (
-                      pickingFor === it.taskId ? (
-                        <div className="week-day-picker">
-                          {days.filter((x) => x.date !== d.date).map((x) => (
-                            <button key={x.date} type="button" className="btn xs ghost" disabled={moving === it.taskId} onClick={() => void moveTask(it.taskId!, x.date)}>
-                              {dow(x.date)}{x.date === lightestOtherDate(d.date) ? " ✦" : ""}
-                            </button>
-                          ))}
-                          <button type="button" className="x" title={en ? "Cancel" : "Annuler"} aria-label={en ? "Cancel" : "Annuler"} onClick={() => setPickingFor(null)}>×</button>
-                        </div>
-                      ) : (
-                        <button type="button" className="btn xs ghost" disabled={moving === it.taskId} onClick={() => setPickingFor(it.taskId!)}>
-                          {moving === it.taskId ? "…" : (en ? "Move to another day" : "Déplacer à un autre jour")}
-                        </button>
-                      )
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        );
-      })()}
     </div>
   );
 }
@@ -3188,71 +2962,6 @@ function PronoteTile({ status: mainStatus, onStatusUpdate, onChanged }: { status
           {err && <div className="autherr">{err}</div>}
         </div>
       )}
-    </div>
-  );
-}
-
-/** Blackbaud (school Education Management — assignments/grades) — MOCK ONLY right now, see
- *  server/blackbaud.ts's own comment: unlike Pronote, a student can't just type their own credentials —
- *  it needs a registered SKY API subscription key AND the school's own admin enabling API access, neither
- *  of which exists yet. No credential form here at all (there's nothing to fill in); just a demo-connect
- *  button when the server has BLACKBAUD_MOCK=1 set, and an honest explanation otherwise. */
-function BlackbaudTile({ onChanged }: { onChanged?: () => void } = {}) {
-  const L = useLang();
-  const notify = useNotify();
-  const [status, setStatus] = useState<{ connected: boolean; schoolName?: string; configured: boolean; realAuthAvailable: boolean } | null>(null);
-  const [busy, setBusy] = useState(false);
-  const load = useCallback(async () => { try { setStatus(await api.blackbaudStatus()); } catch { setStatus({ connected: false, configured: false, realAuthAvailable: false }); } }, []);
-  useEffect(() => { void load(); }, [load]);
-
-  const connect = async () => {
-    setBusy(true);
-    try {
-      const r = await api.blackbaudConnectMock();
-      if (!r.ok) { notify(r.error || L("Connexion impossible.", "Couldn't connect."), "error"); return; }
-      await load(); onChanged?.();
-    } finally { setBusy(false); }
-  };
-  const disconnect = async () => {
-    setBusy(true);
-    try { await api.blackbaudDisconnect(); await load(); onChanged?.(); }
-    catch (e: any) { notify(e?.message || L("Déconnexion impossible — réessaie.", "Couldn't disconnect — try again."), "error"); }
-    finally { setBusy(false); }
-  };
-
-  if (!status) return <div className="int-group"><div className="int-grid"><div className="int-tile int-tile-skel" /></div></div>;
-  return (
-    <div className="int-group">
-      <div className="int-grid">
-        <div className={`int-tile ${status.connected ? "on" : ""}`}>
-          <span className="int-logo" aria-hidden="true" style={{ display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 11 }}>BB</span>
-          <div className="int-info">
-            <div className="int-name">Blackbaud{status.connected && <span className="int-dot" title={L("Connecté", "Connected")} />}</div>
-            <div className="int-blurb">
-              {status.realAuthAvailable
-                ? L(
-                    "Devoirs et notes depuis le portail Blackbaud de ton établissement.",
-                    "Assignments and grades from your school's Blackbaud portal.",
-                  )
-                : status.configured
-                ? L(
-                    "Devoirs et notes depuis le portail Blackbaud de ton établissement. Mode démo — données factices, aucune vraie connexion à une école pour l'instant.",
-                    "Assignments and grades from your school's Blackbaud portal. Demo mode — fake data, no real school connection yet.",
-                  )
-                : L(
-                    "Pas encore disponible : nécessite une clé d'API Blackbaud (SKY API) et que ton établissement active l'accès — aucun des deux n'existe pour l'instant.",
-                    "Not available yet — needs a Blackbaud SKY API subscription key and your school enabling access, neither of which exists yet.",
-                  )}
-            </div>
-          </div>
-          {status.connected
-            ? <button className="btn xs" disabled={busy} onClick={() => void disconnect()}>{busy ? "…" : L("Déconnecter", "Disconnect")}</button>
-            : status.realAuthAvailable
-            ? <a className="btn xs" href="/api/integrations/blackbaud/connect">{L("Connecter", "Connect")}</a>
-            : <button className="btn xs" disabled={busy || !status.configured} title={!status.configured ? L("Pas encore configuré sur ce serveur", "Not configured on this server yet") : undefined} onClick={() => void connect()}>{busy ? "…" : L("Essayer en démo", "Try demo mode")}</button>}
-        </div>
-      </div>
-      {status.connected && status.schoolName && <div className="int-accounts"><div className="int-acct"><span className="int-acct-email">{status.schoolName}</span></div></div>}
     </div>
   );
 }

@@ -8,7 +8,7 @@
 // angles, which trig functions, which letters). It only proposes: every change is listed so the tutor can
 // judge, confirm briefly when the change matters, and never repeat the garbled words back. Pure.
 
-export interface SpokenContext {
+interface SpokenContext {
   /** Angles (in degrees) that appear on the board / in the problem: 15, 25, … */
   angles: number[];
   /** Trig functions in play: "sin" | "cos" | "tan" | … */

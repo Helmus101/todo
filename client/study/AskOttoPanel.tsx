@@ -2,7 +2,7 @@ import { useRef, useEffect, useState, useContext, useCallback } from "react";
 import type { ReactNode } from "react";
 import { Paperclip, TriangleAlert, Volume2, Square, StickyNote, Layers, CircleCheck } from "lucide-react";
 import type { WebTask } from "../../shared/types.ts";
-import { renderChatText, useThinkingWord, useLang, LangContext, CondensedUserMessage, FirstTimeHint, useNotify } from "../ui.tsx";
+import { renderChatText, useThinkingWord, useLang, LangContext, CondensedUserMessage, useNotify } from "../ui.tsx";
 import { useSpeechRecognition } from "../voice/useSpeechRecognition.ts";
 import { useSpeechSynthesis } from "../voice/useSpeechSynthesis.ts";
 import { lastMessageKey } from "../voice/replyKey.ts";

@@ -16,8 +16,8 @@
  * that happily returns a tangentially-related article (an unrelated person/place/topic that merely
  * shares a word with the query) — see wikipediaSearch's own relevance filter below.
  */
-export type SearchResult = { title: string; url: string; snippet: string };
-export interface SearchOpts {
+type SearchResult = { title: string; url: string; snippet: string };
+interface SearchOpts {
   /** Restrict results to these hosts (e.g. ["ibdocuments.com"]). Passed to the API providers natively, and as
    *  site: terms + a post-filter for the keyless ones — a stray off-domain hit never gets through. */
   domains?: string[];

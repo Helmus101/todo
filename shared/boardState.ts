@@ -17,7 +17,7 @@ export type ObjectType =
   | "interactive_widget" | "annotation" | "highlight" | "result" | "hint" | "section";
 
 export interface Given { name: string; value: number | string; unit?: string }
-export interface WidgetParam { name: string; value: number; min: number; max: number; unit?: string; fixed?: boolean }
+interface WidgetParam { name: string; value: number; min: number; max: number; unit?: string; fixed?: boolean }
 
 /** The type-specific payload of each object kind. */
 export interface ObjectData {
@@ -38,7 +38,7 @@ export interface ObjectData {
   hint: { text: string; level: number };
   section: { title: string };
 }
-export type DataOf<T extends ObjectType> = ObjectData[T];
+type DataOf<T extends ObjectType> = ObjectData[T];
 
 export interface BoardObject<T extends ObjectType = ObjectType> {
   id: string;
@@ -140,7 +140,7 @@ let idCounter = 0;
 const defaultId = () => `obj_${Date.now().toString(36)}_${(idCounter++).toString(36)}`;
 const fail = (s: BoardState, code: ErrorCode, message: string, targetId?: string): ActionResult => ({ ok: false, error: { code, message, targetId, currentRevision: s.revision } });
 /** Generated SVG is data, never code: no scripts, event handlers, foreignObject or javascript: links. */
-export function svgIsSafe(svg: string): boolean {
+function svgIsSafe(svg: string): boolean {
   return !/<\s*script|<\s*foreignObject|\son[a-z]+\s*=|javascript:|<\s*iframe|<\s*object|<\s*embed/i.test(svg);
 }
 export function summarize(o: BoardObject): string {

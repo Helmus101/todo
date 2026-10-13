@@ -144,7 +144,7 @@ export async function disconnectBlackbaud(email: string): Promise<void> {
   await saveState(email, { ...state, blackbaud: null }); // explicit null = clear it (undefined now means "leave alone")
 }
 
-export interface BlackbaudAssignment {
+interface BlackbaudAssignment {
   id: string;
   title: string;
   subject?: string;

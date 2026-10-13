@@ -6,14 +6,14 @@
 // unknowns) are written. Pure — the server calls it, tests check the geometry.
 
 export type InclineForce = "weight" | "components" | "normal" | "friction" | "applied";
-export interface InclineSceneIn {
+interface InclineSceneIn {
   angle: number;                              // slope angle in degrees (0 < angle < 80)
   forces?: InclineForce[];                    // which arrows to draw (default: weight, normal)
   motion?: "up" | "down" | "none";            // which way the block moves along the slope (sets friction's direction)
   labels?: Partial<Record<InclineForce | "angle" | "block", string>>; // e.g. { weight: "mg", applied: "F = ?", angle: "12°" }
 }
 
-export const BOARD_FONT = "KaTeX_Main, 'Times New Roman', serif";
+const BOARD_FONT = "KaTeX_Main, 'Times New Roman', serif";
 const rad = (d: number) => (d * Math.PI) / 180;
 const f = (n: number) => Math.round(n * 10) / 10;
 const esc = (s: string) => String(s || "").replace(/[<>&"]/g, "").slice(0, 24);

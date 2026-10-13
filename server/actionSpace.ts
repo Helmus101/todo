@@ -12,7 +12,7 @@
 import type { BoardEntry, TaskProblem, TaskObjective } from "../shared/types.ts";
 import type { TutorAction, TutorDecisionShape } from "../shared/agentTypes.ts";
 
-export interface TurnActionInputs {
+interface TurnActionInputs {
   reply: string;
   /** Entries/problems/objectives CREATED OR CHANGED this turn only — ChatResult's own arrays, never the
    *  full current board (that would make every turn look like it touched everything). */

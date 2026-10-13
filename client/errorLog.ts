@@ -3,7 +3,7 @@
 // catches all of them without touching every call site. Purely client-side (localStorage), per-browser —
 // this is a "what just happened on THIS device" log for the student/parent to glance at, not a server-side
 // error-tracking system (Sentry already covers that for the team, see server/sentry.ts).
-export interface LoggedError {
+interface LoggedError {
   message: string;
   at: string; // ISO
 }
@@ -20,15 +20,11 @@ export function pushError(message: string): void {
   } catch { /* best-effort — a full/blocked localStorage must never break the toast itself */ }
 }
 
-export function getErrors(): LoggedError[] {
+function getErrors(): LoggedError[] {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed.filter((e) => e && typeof e.message === "string" && typeof e.at === "string") : [];
   } catch { return []; }
-}
-
-export function clearErrors(): void {
-  try { localStorage.removeItem(KEY); } catch { /* best-effort */ }
 }

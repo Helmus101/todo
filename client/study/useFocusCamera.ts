@@ -15,7 +15,7 @@ export interface FocusCamera {
   stopCamera: () => void;
 }
 
-export interface UseFocusCameraOptions {
+interface UseFocusCameraOptions {
   taskId?: string;
   taskTitle?: string;
   subject?: string;

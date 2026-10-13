@@ -1,4 +1,4 @@
-export type OttoMood = "idle" | "thinking" | "speaking" | "listening";
+type OttoMood = "idle" | "thinking" | "speaking" | "listening";
 
 /** Otto's face — the app's cream circle with two dots (the shared .tutor-face illustration) — as the whole
  *  tutor presence in the Tutor stage. State is carried by the ring around it, not by text: blinking when

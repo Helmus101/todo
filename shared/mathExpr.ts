@@ -41,7 +41,7 @@ function tokenize(src: string): Tok[] | string {
   return out;
 }
 
-export function parseExpr(src: string, vars: string[]): { ast: Node } | { error: string } {
+function parseExpr(src: string, vars: string[]): { ast: Node } | { error: string } {
   if (!src.trim()) return { error: "empty expression" };
   if (src.length > 200) return { error: "expression too long" };
   const tk = tokenize(src);

@@ -8,9 +8,7 @@ import type {
   WorkspaceTemplate,
   SessionLog,
   ArtifactState,
-  ArtifactType,
   SessionStatus,
-  FocusSessionMetrics,
 } from "./StudyTypes.ts";
 import { getEnvironmentByTask, saveEnvironment, saveSession, saveFile, getFile, deleteFile } from "./StudyDB.ts";
 import { useIsPhone } from "../useIsPhone.ts";

@@ -2,8 +2,8 @@
 // "high-value" ones, read it back first). A student ticking steps or reviewing 40 flashcards in a minute caused 40 full writes.
 // This coalesces them: the latest snapshot per account is held in memory and written ONCE after a quiet period (or at the latest
 // after `maxWaitMs`), `flush` writes it immediately (journal saves, tab hidden, shutdown). Pure of any I/O — the writer is injected.
-export interface SyncSnapshot<T = unknown> { tasks: T; profile: unknown }
-export interface Scheduler<T = unknown> {
+interface SyncSnapshot<T = unknown> { tasks: T; profile: unknown }
+interface Scheduler<T = unknown> {
   schedule(key: string, snap: SyncSnapshot<T>): void;
   /** Write the pending snapshot for `key` now (optionally with a fresher one); resolves when written. */
   flush(key: string, snap?: SyncSnapshot<T>): Promise<void>;

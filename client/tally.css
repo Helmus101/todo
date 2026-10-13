@@ -392,7 +392,7 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
 .task-modal-x:hover { background: var(--bg-2); color: var(--ink); }
 
 /* Focus view panels */
-.step-hero, .task-chat, .crash-card, .task-plan-panel {
+.step-hero, .task-chat, .crash-card {
   background: #FFFFFF;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -867,19 +867,6 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
   line-height: 1.55;
   margin-bottom: var(--space-5);
 }
-.empty-mark {
-  width: 56px;
-  height: 56px;
-  margin: 0 auto var(--space-5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.empty-mark.done { background: var(--bg-2); color: var(--ink); }
-.empty-check { font-size: 24px; font-weight: 700; }
 
 /* ─── Page info hint ────────────────────────────────────────────────────── */
 .page-info-hint {
@@ -1004,7 +991,7 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
   align-items: center;
   justify-content: center;
 }
-.step-hero, .task-chat, .task-plan-panel {
+.step-hero, .task-chat {
   border-radius: var(--radius);
   padding: var(--space-5) var(--space-5);
 }
@@ -1036,13 +1023,6 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
 .errorlog-entry-head { font-size: 13px; font-weight: 600; }
 
 /* ─── Week FAB ──────────────────────────────────────────────────────────── */
-.week-fab {
-  padding: var(--space-3) var(--space-4);
-  font-size: 13px;
-  font-weight: 500;
-  border-radius: var(--radius-pill);
-  box-shadow: var(--shadow-card);
-}
 
 /* ─── Study Mode ────────────────────────────────────────────────────────── */
 .sm-drawer {

@@ -2381,7 +2381,7 @@ section("Arithmetic ground truth — evaluator, claim extractor, CREATE_CALC (se
   const calcCount = (claudeSrcCalc.match(/CREATE_CALC_TOOL/g) || []).length; // const + 2 array entries
   check("CREATE_CALC is in BOTH tutor tool arrays (normal + canvas mode)", calcCount === 3);
   check("CREATE_CALC has a dispatch branch in the tool loop", /name === "CREATE_CALC"/.test(claudeSrcCalc) && /runCalcTool\(input\)/.test(claudeSrcCalc));
-  check("claude.ts imports the shared arithmetic oracle", /import \{ evaluateArithmetic, findArithmeticClaims, hasArithmetic \} from "\.\/arithmetic\.ts"/.test(claudeSrcCalc));
+  check("claude.ts imports the shared arithmetic oracle", /import \{ evaluateArithmetic, findArithmeticClaims \} from "\.\/arithmetic\.ts"/.test(claudeSrcCalc));
   check("the arithmetic module is pure (no imports, no eval — client-importable)", !/^\s*import /m.test(arithSrc) && !/[^.a-zA-Z]eval\(/.test(arithSrc));
 }
 
@@ -5776,7 +5776,6 @@ section("CREATE_INTERACTIVE — sandboxed, scoped to Study Mode, capped (source 
 
   const board = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
   check("the iframe's sandbox attribute is exactly \"allow-scripts\" (no allow-same-origin/allow-top-navigation/allow-popups)", /sandbox="allow-scripts"/.test(board));
-  check("KIND_LABEL/KIND_GLYPH both have an 'interactive' entry", /interactive: \["Interactif", "Interactive"\]/.test(board) && /interactive: "◈"/.test(board));
 
   // THE bug that would have made every scene blank in production: a `srcdoc` iframe INHERITS the embedding
   // page's CSP, and this app's script-src has no 'unsafe-inline' — so the model's script AND our own guard
@@ -6089,7 +6088,7 @@ section("No emoji in the rendered app — real icons (lucide-react) instead (rep
   // now import from lucide-react (the project's established icon library).
   for (const [file, icons] of [
     ["../client/study/AskOttoPanel.tsx", ["Paperclip", "TriangleAlert", "Volume2", "StickyNote"]],
-    ["../client/tutor/TutorSession.tsx", ["ArrowRight", "TrendingUp", "RotateCcw", "MessageCircle", "Lightbulb", "CircleHelp"]],
+    ["../client/tutor/TutorSession.tsx", ["ChevronRight", "ChevronDown"]],
     ["../client/study/SessionHeader.tsx", ["Timer"]],
     ["../client/study/ToolsDrawer.tsx", ["StickyNote", "Quote", "PenLine"]],
     ["../client/TaskCard.tsx", ["MessageCircle", "Layers"]],
@@ -6191,7 +6190,7 @@ section("tutor + board: LaTeX renders, steps are checked by code, speech slips a
   check("KaTeX renders HTML only (no hidden MathML copy to double the text)", !/katex-mathml/.test(katex.renderToString("\\frac{1}{4}", { output: "html" })));
   const boardSrcK = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
   const mainSrcK = readFileSync(new URL("../client/main.tsx", import.meta.url), "utf8");
-  check("both board renderers pass output:'html' and the stylesheet is imported statically", (boardSrcK.match(/output: "html"/g) || []).length >= 3 && /import "katex\/dist\/katex\.min\.css";/.test(mainSrcK));
+  check("every KaTeX render on the board passes output:'html' and the stylesheet is imported statically", (boardSrcK.match(/output: "html"/g) || []).length >= 1 && (boardSrcK.match(/output: "html"/g) || []).length === (boardSrcK.match(/katex\.(renderToString|render)\(/g) || []).length && /import "katex\/dist\/katex\.min\.css";/.test(mainSrcK));
   check("a failed equation falls back to readable text, never raw \\commands", latexToPlainText(nested) === "h/(100 + h/tan(25°)) = tan(15°)");
   check("the server refuses an unbalanced \\frac and passes a good one", !!unrenderableMath("$\\frac{h}{100 + \\tan(25^\\circ)$") && unrenderableMath(`$${nested}$`) === null);
   // Deterministic equivalence: the verdict on a step is code, not the model's guess.

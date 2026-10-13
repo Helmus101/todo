@@ -16,7 +16,7 @@ import { LangContext } from "./ui.tsx";
 // Add a language here (pure data) once real translations exist for every key below — see the file doc
 // comment. Nothing else in this module needs to change; callers that read SUPPORTED_LANGS (a future
 // language picker in Settings) pick it up automatically.
-export const SUPPORTED_LANGS = ["fr", "en"] as const;
+const SUPPORTED_LANGS = ["fr", "en"] as const;
 export type Lang = typeof SUPPORTED_LANGS[number];
 
 type CatalogEntry = Partial<Record<Lang, string>>;

@@ -82,7 +82,7 @@ hr { border: 0; border-top: 1px solid var(--line-soft); }
 .card::before, .card::after, [class*="accent-bar"] { display: none !important; }
 .add-task-row, .add-task { border: 1px solid var(--line) !important; border-radius: var(--radius) !important; background: #fff !important; padding: 2px var(--space-2); }
 .add-task-row input { border: 0 !important; background: transparent !important; }
-.empty-mark, .empty-state svg { display: none !important; }
+.empty-state svg { display: none !important; }
 
 .tutor-landing-inner { align-items: center; text-align: center; }
 [class*="see-more"], button[class*="more"] { background: transparent !important; border: 0 !important; }
@@ -167,8 +167,7 @@ hr { border: 0; border-top: 1px solid var(--line-soft); }
 .usage-figure { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
 .usage-figure.muted { font-weight: 400; color: var(--ink-3); }
 
-/* Layout utilities — spacing always comes from the --space-* scale */
-.mt-0 { margin-top: 0 !important; } .mt-2 { margin-top: var(--space-2) !important; } .mt-3 { margin-top: var(--space-3) !important; }
+/* Layout utilities — spacing always comes from the --space-* scale */ .mt-2 { margin-top: var(--space-2) !important; } .mt-3 { margin-top: var(--space-3) !important; }
 .mt-4 { margin-top: var(--space-4) !important; } .mt-5 { margin-top: var(--space-5) !important; }
 .mb-0 { margin-bottom: 0 !important; } .mb-3 { margin-bottom: var(--space-3) !important; } .mb-6 { margin-bottom: var(--space-6) !important; }
 .m-0 { margin: 0 !important; } .my-2 { margin-top: var(--space-2) !important; margin-bottom: var(--space-2) !important; }

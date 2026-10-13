@@ -115,13 +115,8 @@ function buildSpine(): Record<string, ConceptNode> {
 }
 
 /** The immutable seed. Exported as a function so callers can't mutate the shared graph. */
-export function seedGraph(): ConceptGraph {
+function seedGraph(): ConceptGraph {
   return { nodes: buildSpine(), updatedAt: new Date(0).toISOString() };
-}
-
-/** A graph for a profile that has never had one — spine only. */
-export function emptyConceptGraph(): ConceptGraph {
-  return seedGraph();
 }
 
 /* ── queries ────────────────────────────────────────────────────────────────────────────────────────── */
@@ -205,46 +200,6 @@ export function matchSpine(graph: ConceptGraph, text: string, opts: { subject?: 
   return out.slice(0, opts.limit ?? 12);
 }
 
-/* ── discovery from documents and courses (spec §24) ───────────────────────────────────────────────── */
-
-/** Concepts named by a document's own structure: markdown/plain headings, then numbered or lettered section
- *  titles. Deliberately structure-first — a heading is the document author's own statement of what this
- *  section is about, which is far more reliable than guessing from frequency. */
-export function headingConcepts(text: string, limit = 24): string[] {
-  const out: string[] = [];
-  for (const raw of String(text || "").split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line || line.length > 120) continue;
-    const md = /^#{1,4}\s+(.+)$/.exec(line);
-    const numbered = /^(?:\(?(?:[0-9]{1,2}|[a-hA-H])\)?[.)]|[-•*])\s+(.{3,120})$/.exec(line);
-    const titleCase = /^(?:[A-ZÀ-Þ][\w'À-ÿ-]*(?:\s+(?:of|the|and|in|to|a|an|for|on|with|vs)\s+)?){1,8}[A-ZÀ-Þ]?[\w'À-ÿ-]*$/.exec(line);
-    const candidate = md?.[1] || numbered?.[1] || (titleCase && line.split(/\s+/).length <= 7 && !/[.:;]$/.test(line) ? line : "");
-    const cleaned = candidate.trim().replace(/[*_`#]/g, "").replace(/\s+/g, " ").trim();
-    // A heading that's really a sentence heading a paragraph ("In this section we will look at…") is not a
-    // concept name; the length and word-count bounds plus a sentence-punctuation check filter most of those.
-    if (cleaned.length >= 4 && cleaned.length <= 70 && cleaned.split(/\s+/).length <= 8 && !/[.!?]$/.test(cleaned)) out.push(cleaned);
-  }
-  return [...new Set(out)].slice(0, limit);
-}
-
-/** Build discovered nodes from a document + an optional course/subject label. Concepts that already exist
- *  in the spine are NOT duplicated — they're returned separately as `matched` so the caller can attach the
- *  document as evidence to the real node instead of creating a look-alike. */
-export function discoverConcepts(graph: ConceptGraph, text: string, opts: { subject?: string; source?: string; limit?: number } = {}): { nodes: ConceptNode[]; matched: ConceptNode[] } {
-  const matched = matchSpine(graph, text, { limit: 16 });
-  const matchedLabels = new Set(matched.map((m) => conceptKey(m.label)));
-  const subject = opts.subject || "General";
-  const nodes: ConceptNode[] = [];
-  for (const label of headingConcepts(text, opts.limit ?? 24)) {
-    const id = `disc.${conceptKey(label).replace(/ /g, "-").slice(0, 48)}`;
-    if (!id || id === "disc.") continue;
-    if (graph.nodes[id] || matchedLabels.has(conceptKey(label))) continue;
-    if (nodes.some((n) => n.id === id)) continue;
-    nodes.push({ id, label, subject, prereqs: [], kind: "discovered", ...(opts.source ? { source: opts.source.slice(0, 80) } : {}) });
-  }
-  return { nodes, matched };
-}
-
 /** Merge discovered nodes into the graph. Existing nodes (spine or already-discovered) are never replaced —
  *  the spine is authoritative for its own ids, and a re-upload of the same document is idempotent. */
 export function mergeDiscovered(graph: ConceptGraph, nodes: ConceptNode[], now: Date = new Date()): ConceptGraph {
@@ -264,7 +219,7 @@ export function mergeDiscovered(graph: ConceptGraph, nodes: ConceptNode[], now: 
 
 /** Re-validate a persisted graph on load. An unknown prerequisite is DROPPED rather than kept: a dangling
  *  edge would make the step-back walk point at a node with no label, which is worse than having no edge. */
-export function normalizeConceptGraph(raw: unknown): ConceptGraph | undefined {
+function normalizeConceptGraph(raw: unknown): ConceptGraph | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const r = raw as any;
   if (!r.nodes || typeof r.nodes !== "object") return undefined;

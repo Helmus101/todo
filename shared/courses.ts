@@ -17,7 +17,7 @@
 import type { Profile, WebTask } from "./types.ts";
 import { MASTERY_LEITNER_WEIGHT, MASTERY_MILESTONE_WEIGHT } from "./types.ts";
 
-export interface CourseUnit {
+interface CourseUnit {
   id: string;
   /** Bilingual display title — the app is French-first with full EN support (see Profile.language). */
   title: { fr: string; en: string };
@@ -29,7 +29,7 @@ export interface CourseUnit {
   keywords: string[];
 }
 
-export interface Course {
+interface Course {
   id: string;
   /** Canonical subject key used for grouping/sorting ("Math", "Physics", …) — the same vocabulary
    *  TutorSession's subject picker stamps onto sessions. */
@@ -64,7 +64,6 @@ const PH = ["philosophie", "philo", "philosophy"];
 const AN = ["anglais", "english", "anglais lv1", "anglais lv2"];
 const SES = ["ses", "sciences économiques et sociales", "économie", "economie", "economics"];
 const NSI = ["nsi", "informatique", "computer science", "numérique et sciences informatiques"];
-const ESP = ["espagnol", "spanish"];
 
 /** The built-in catalog. Order here is the default display order within a track. */
 export const COURSES: Course[] = [
@@ -431,7 +430,7 @@ export function matchesUnit(text: string | undefined, unit: CourseUnit): boolean
 const UNIT_MILESTONE_DECAY_DAYS = 90;
 const UNIT_MILESTONES_FOR_FULL_SCORE = 3;
 
-export interface UnitProgress {
+interface UnitProgress {
   unit: CourseUnit;
   /** 0-1, or null when NO signal exists for this unit yet ("not started" — never a fabricated 0%). */
   mastery: number | null;
@@ -482,7 +481,7 @@ export function unitMastery(
   return { unit, mastery, signal: { cards, known, milestones: milestoneCount } };
 }
 
-export interface CourseProgress {
+interface CourseProgress {
   course: Course;
   units: UnitProgress[];
   /** Mean of the units that HAVE data, 0-1 — null when no unit has any signal yet. */
@@ -501,7 +500,7 @@ export function courseProgress(tasks: WebTask[], milestones: Profile["milestones
 /** A unit reads as "mastered" at/above this — the same 0.8 bar the mastery UI already implies, exported so
  *  the client's state labels and this function can't drift apart. */
 export const UNIT_MASTERED_AT = 0.8;
-export type UnitBand = "new" | "learning" | "mastered";
+type UnitBand = "new" | "learning" | "mastered";
 export function masteryBand(mastery: number | null): UnitBand {
   if (mastery === null) return "new";
   return mastery >= UNIT_MASTERED_AT ? "mastered" : "learning";

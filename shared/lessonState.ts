@@ -153,43 +153,6 @@ export function createExerciseState(
   };
 }
 
-/** Update skill state based on performance */
-export function updateSkillState(
-  skills: Map<string, SkillState>,
-  skill: string,
-  correct: boolean
-): SkillState {
-  const current = skills.get(skill) || {
-    skill,
-    level: "needs_review",
-    correctCount: 0,
-    attemptCount: 0,
-  };
-  
-  current.attemptCount++;
-  if (correct) current.correctCount++;
-  current.lastPracticed = new Date().toISOString();
-  
-  // Update level based on performance
-  if (current.attemptCount >= 3 && current.correctCount / current.attemptCount >= 0.8) {
-    if (current.level === "needs_review" || current.level === "practising") {
-      current.level = "demonstrated";
-      current.lastLevelChange = new Date().toISOString();
-    } else if (current.level === "demonstrated" && current.attemptCount >= 5) {
-      current.level = "mastered";
-      current.lastLevelChange = new Date().toISOString();
-    }
-  } else if (current.correctCount / current.attemptCount < 0.5 && current.attemptCount >= 2) {
-    if (current.level === "demonstrated" || current.level === "mastered") {
-      current.level = "practising";
-      current.lastLevelChange = new Date().toISOString();
-    }
-  }
-  
-  skills.set(skill, current);
-  return current;
-}
-
 /** Record an exercise attempt with verification */
 export function recordExerciseAttempt(
   exercise: ExerciseState,
@@ -236,43 +199,6 @@ export function detectDiscrepancy(exercise: ExerciseState): { hasDiscrepancy: bo
   }
   
   return { hasDiscrepancy: false };
-}
-
-/** Update lesson state timestamp */
-export function touchLessonState(state: LessonState): LessonState {
-  state.updatedAt = new Date().toISOString();
-  return state;
-}
-
-/** Advance to next activity stage */
-export function advanceActivityStage(objective: LearningObjective): LearningObjective {
-  if (objective.currentStage < objective.progress.length - 1) {
-    objective.currentStage++;
-  }
-  return objective;
-}
-
-/** Set current activity type */
-export function setActivityType(objective: LearningObjective, activity: LearningObjective["activity"]): LearningObjective {
-  objective.activity = activity;
-  return objective;
-}
-
-/** Check if a formula is currently disclosed */
-export function isFormulaDisclosed(state: LessonState, formulaId: string): boolean {
-  return state.formulaDisclosure.has(formulaId);
-}
-
-/** Disclose a formula */
-export function discloseFormula(state: LessonState, formulaId: string): LessonState {
-  state.formulaDisclosure.add(formulaId);
-  return touchLessonState(state);
-}
-
-/** Hide a formula (for recall practice) */
-export function hideFormula(state: LessonState, formulaId: string): LessonState {
-  state.formulaDisclosure.delete(formulaId);
-  return touchLessonState(state);
 }
 
 /** Get recommended next action based on current state */

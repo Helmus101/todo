@@ -106,13 +106,8 @@ function objectTypeToKind(type: ObjectType): NonNullable<BoardEntry["kind"]> {
   return map[type] || "note";
 }
 
-/** Apply an action with the calculation engine for validation */
-export function applyActionWithEngine(entries: BoardEntry[], action: BoardAction): { state: BoardState; result: ActionResult } {
-  return applyBoardAction(entriesToState(entries), action, calcEngine);
-}
-
-export interface EntryEdit { id: string; text?: string; archived?: boolean }
-export type EntryActionResult = { ok: true; edits: EntryEdit[]; result: ActionResult } | { ok: false; code: string; message: string; result: ActionResult };
+interface EntryEdit { id: string; text?: string; archived?: boolean }
+type EntryActionResult = { ok: true; edits: EntryEdit[]; result: ActionResult } | { ok: false; code: string; message: string; result: ActionResult };
 
 /** Applies an `update` (new text) or `remove` (archive) to one entry through the reducer. The tutor is the author, so student-owned entries are refused. */
 export function applyEntryAction(entries: BoardEntry[], action: Extract<BoardAction, { action: "update" | "remove" }>, engine: Engine = {}): EntryActionResult {

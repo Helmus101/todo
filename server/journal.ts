@@ -3,11 +3,11 @@
 import type { WebTask } from "../shared/types.ts";
 import { subjectsIn } from "./tutor.ts";
 
-export interface JournalEntry { date: string; text: string; subjects: string[] }
-export interface JournalContext { entries: JournalEntry[]; total: number; subjects: Record<string, number> }
+interface JournalEntry { date: string; text: string; subjects: string[] }
+interface JournalContext { entries: JournalEntry[]; total: number; subjects: Record<string, number> }
 
 /** Real daily entries only (a `week:` / `month:` logDate is a rolled-up summary, not something they wrote). */
-export function journalTasks(list: WebTask[]): WebTask[] {
+function journalTasks(list: WebTask[]): WebTask[] {
   return list.filter((x) => x.source === "studylog" && x.logDate && !x.logDate.startsWith("week:") && !x.logDate.startsWith("month:") && x.logText?.trim());
 }
 export { countJournalEntries } from "../shared/journalCount.ts";

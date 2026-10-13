@@ -82,42 +82,6 @@ function GapAnswer({ entry, onCheck, en }: { entry: BoardEntry; onCheck: NonNull
   );
 }
 
-const KIND_LABEL: Record<string, [string, string]> = {
-  focus: ["Objectif du jour", "Today's focus"],
-  instruction: ["Consigne", "Instruction"],
-  given: ["Donnée", "Given"],
-  result: ["Établi", "Established"],
-  formula: ["Formule", "Formula"],
-  summary: ["Ton raisonnement", "Your reasoning"],
-  problem: ["Problème", "Problem"],
-  insight: ["Déclic", "Insight"],
-  definition: ["Définition", "Definition"],
-  diagram: ["Figure", "Figure"],
-  outline: ["Plan", "Outline"],
-  gap: ["À toi de jouer", "Your turn"],
-  interactive: ["Interactif", "Interactive"],
-  graph: ["Graphique", "Graph"],
-  widget: ["Activité", "Activity"],
-};
-
-// Quiet margin glyph per kind — a worksheet's annotations, not badges. Typographic on purpose (no icon
-// dependency here), muted, identical across languages.
-const KIND_GLYPH: Record<string, string> = {
-  focus: "◎",
-  instruction: "→",
-  given: "▤",
-  result: "✓",
-  formula: "∑",
-  summary: "⌇",
-  insight: "✦",
-  definition: "≡",
-  diagram: "◫",
-  outline: "▤",
-  gap: "?",
-  interactive: "◈",
-  graph: "◠",
-};
-
 const LABEL_SIZE: Record<string, number> = { sm: 12, md: 14, lg: 18 };
 
 /** Decorative glyphs a model sometimes prefixes a step with ("○ 6. collect → …"). They carry no meaning at
@@ -241,26 +205,6 @@ function PlainSteps({ text }: { text: string }) {
   const lines = traceLines(text);
   if (!lines.length) return null;
   return <>{lines.map((l, i) => <div key={i} className="sm-board-line"><MathText text={autoMathLine(l)} /></div>)}</>;
-}
-
-/** Real typeset math (stacked fractions, exponents, roots) instead of formatMath's plain-text approximation
- *  (client/ui.tsx) — this is what makes "2/(x-1) + 3/(x+2)" actually show as a fraction, not a slash. KaTeX
- *  throws on malformed LaTeX (a model slip, an unbalanced brace); caught here so ONE bad equation renders as
- *  its raw source instead of blanking the whole board entry or crashing the canvas. `strict: false` because
- *  a tutoring model's LaTeX is rarely publication-clean (stray spacing, a non-standard macro) and KaTeX's
- *  default strict mode throws console warnings-as-errors for things that still render fine visually.
- *  `trust: false` is KaTeX's own default (not set here for any OTHER value), made explicit rather than
- *  implied — this output goes straight into dangerouslySetInnerHTML below, and `trust: false` is what
- *  disables KaTeX's own url/\href-style macros that would otherwise let an equation smuggle in an
- *  attacker-controlled link or resource; `latex` here is model-generated text the student doesn't control
- *  directly, but there's no reason to ever opt into trusting it. */
-function Equation({ latex }: { latex: string }) {
-  const html = useMemo(() => {
-    try { return katex.renderToString(latex, { throwOnError: true, strict: false, trust: false, displayMode: true, output: "html" }); }
-    catch { try { return katex.renderToString(latex, { throwOnError: false, strict: false, trust: false, displayMode: true, output: "html" }); } catch { return null; } }
-  }, [latex]);
-  if (html === null) return <span className="sm-board-eq-fallback">{latexToPlain(latex)}</span>;
-  return <span className="sm-board-eq" role="math" aria-label={latexToPlain(latex)} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 /** An AI-authored interactive scene (CREATE_INTERACTIVE, server/claude.ts) — rendered in a sandboxed

@@ -8,15 +8,12 @@ import { COURSEWORK_MAX_CHARS, courseworkForSubject, sameSubject } from "../shar
 import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject, tzOf } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { buildGeometry } from "../shared/geometry.ts";
-import { studentProblemStatement, cleanToPost, posesProblemInProse, echoesStudentWords, repairLatex, latexifyBoardLine, statesOwnMath, startsNewProblem, looksLikeGivensOrScenario, NO_UNPROMPTED_EXERCISE, asksForProblem, asksWhichProblem, notationGloss, isBoardContent, splitBoardContent, asksWhy, ignoresWhy, WHY_BLOCK, statesOwnAnswer, listenCue, CONFUSED_BLOCK, INSIGHT_BLOCK, evalMathExpr, namesExactStep, bubbleDoesMath, bareMath, socraticFallback, evalCheckFor, voiceInputBlock, boardRepeatsMishearing, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, confirmsUnchecked, wrapsUpUnasked, blamesWidget, misattributes, methodAhead, wantsHelp, clarificationTerm, CLARIFY_BLOCK, ignoresQuestion, ignoresWork, asksToWrite, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, inventedNumbers, currentFocus, focusBlock, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
+import { studentProblemStatement, cleanToPost, posesProblemInProse, echoesStudentWords, repairLatex, latexifyBoardLine, statesOwnMath, startsNewProblem, looksLikeGivensOrScenario, NO_UNPROMPTED_EXERCISE, asksForProblem, asksWhichProblem, notationGloss, isBoardContent, splitBoardContent, asksWhy, ignoresWhy, WHY_BLOCK, statesOwnAnswer, listenCue, CONFUSED_BLOCK, INSIGHT_BLOCK, namesExactStep, bubbleDoesMath, bareMath, socraticFallback, evalCheckFor, voiceInputBlock, boardRepeatsMishearing, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, confirmsUnchecked, wrapsUpUnasked, blamesWidget, misattributes, methodAhead, wantsHelp, clarificationTerm, CLARIFY_BLOCK, ignoresQuestion, ignoresWork, asksToWrite, repeatedClaim, REPEATED_CLAIM_BLOCK, arithmeticAhead, equationAhead, inventedNumbers, currentFocus, focusBlock, isDrawingTurn, drawingLooksSpatial, DRAWING_TURN_BLOCK, pendingCaseTraps, caseTrapBlock, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, spokenMathHint, boardStatesAskedValue, scaffoldLine, probeLine, cheerLine, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion, similarity } from "./tutorAdapt.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
-import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
 import { hasAssignmentText } from "./discover.ts";
 import { getPolicyProfile } from "./policyProfiles.ts";
-import { getAgeAppropriateMoves, getNextThinkingMove, getThinkingMovePrompt, shouldUseThinkingMove } from "./thinkingMoves.ts";
-import { getMaxHintLevel, isGraduationMoment } from "./dependenceMetrics.ts";
-import { evaluateArithmetic, findArithmeticClaims, hasArithmetic } from "./arithmetic.ts";
+import { evaluateArithmetic, findArithmeticClaims } from "./arithmetic.ts";
 import { boardSurfaceBlock, boardTrajectoryBlock, type BoardEvent } from "./boardEvents.ts";
 import { buildTutorDecision } from "./actionSpace.ts";
 import { normalizeWidget, WIDGET_TYPES } from "../shared/widgets.ts";
@@ -30,7 +27,7 @@ import { sanitizeSvg, svgText, MAX_SVG_CHARS } from "../shared/svgSafe.ts";
 import { findSourceQuestions, cleanProblemSource, sourcesForTrack } from "./questionSources.ts";
 import { extractPlan, validatePlan, policyBlock as tutorPolicyBlock, PLAN_PROTOCOL, type TutorPlan, type TutorPolicy } from "./tutorBrain.ts";
 import { sessionStateBlock } from "./sessionState.ts";
-import type { TutorSessionStateShape, TutorDecisionShape } from "../shared/agentTypes.ts";
+import type { TutorSessionStateShape } from "../shared/agentTypes.ts";
 
 // Temporary: Otto does the reversible PREP work (research, outline steps, create a resource doc, draft an
 // email) but never does anything irreversible (send, post, delete, calendar-write) — every action that
@@ -1194,34 +1191,6 @@ export function nowBlock(): string {
   const time = d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
   let tz = ""; try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { /* ignore */ }
   return `CURRENT DATE & TIME: ${date}, ${time}${tz ? ` (${tz})` : ""}. Reason about "today", "tomorrow", deadlines, scheduling and date conflicts relative to THIS. If you need a date/fact you're unsure of (a public deadline, a format, current info), use web_search rather than guess.\n`;
-}
-
-function deadlineBlock(text: string): string {
-  const raw = String(text || "").replace(/\s+/g, " ").trim();
-  const match = raw.match(/\b(before|by|until|due)\b\s*[:\-]?\s*([^\n]+)/i);
-  if (!match) return "";
-  // Don't emit a deadline hint for a date that is clearly in the past — the agent would
-  // think it missed the window, stall, or produce unhelpful "deadline passed" steps.
-  const snippet = match[0];
-  const yearMatch = snippet.match(/\b(20\d{2})\b/);
-  const monthDayMatch = snippet.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{1,2})/i);
-  if (monthDayMatch) {
-    const months: Record<string,number> = { jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11 };
-    const mo = months[monthDayMatch[1].slice(0,3).toLowerCase()];
-    const dy = Number(monthDayMatch[2]);
-    if (mo !== undefined) {
-      const now = new Date();
-      // No explicit year stated: assume the CURRENT year first, but if that lands in the past, a phrase
-      // like "due Jan 15" said in November almost certainly means next January, not one that already
-      // passed 10 months ago — try next year before giving up on the hint entirely (was silently
-      // suppressing the deadline for any month/day near a year boundary).
-      const year = yearMatch ? Number(yearMatch[1]) : now.getFullYear();
-      let deadline = new Date(year, mo, dy);
-      if (!yearMatch && deadline < now) deadline = new Date(year + 1, mo, dy);
-      if (deadline < now) return ""; // still past even after that — genuinely stale, suppress the hint
-    }
-  }
-  return `EXPLICIT DEADLINE PHRASE FROM THE TASK: "${snippet}". Treat that deadline/date as exact and preserve it unless the source data clearly contradicts it.\n`;
 }
 
 const STOPWORDS = new Set(["the", "a", "an", "and", "or", "to", "for", "of", "in", "on", "with", "your", "you",
@@ -2814,66 +2783,6 @@ const WRITE_TO_BOARD_TOOL = {
   }, required: ["text"] },
 };
 
-const CLEAR_BOARD_TOOL = {
-  name: "CLEAR_BOARD",
-  // DEAD: the board is never cleared (reported live — a student's working was wiped mid-lesson). Kept only so a
-  // stray call is answered with an explanation instead of deleting anything.
-  description: "Not available: the board is never cleared. Keep the existing entries and add what's worth keeping.",
-  input_schema: {
-    type: "object",
-    properties: {
-      reason: { type: "string", description: "Why the board is being cleared (e.g. 'Starting fresh topic on derivatives', 'Clearing intermediate working for new problem')" },
-      keepFocus: { type: "boolean", description: "Whether to preserve the pinned session focus/goal line (default true)" }
-    }
-  }
-};
-
-// A real drawn figure, distinct from WRITE_TO_BOARD's ASCII-in-a-fence fallback — see the DiagramOp type
-// (shared/types.ts) for the shape vocabulary. Each figure is SELF-CONTAINED: if Otto needs to add to a
-// shape drawn earlier (e.g. the altitude on a triangle from three turns ago), it redraws the WHOLE scene
-// including the new part, rather than trying to append to op history it has no reliable way to recall or
-// see rendered — LLMs are far more reliable regenerating a short complete scene than patching state blind.
-const DRAW_ON_BOARD_TOOL = {
-  name: "DRAW_ON_BOARD",
-  description: "Draw ONE small labeled figure onto the student's board — a real diagram (shapes, arrows, " +
-    "a labeled triangle, a number line, a simple graph) or plain-text equation labels (an 'equation' op is shown as readable text, NOT typeset — put real equations in WRITE_TO_BOARD instead), not ASCII art. Use this " +
-    "instead of an ASCII/text diagram ANY time the content is genuinely spatial or geometric, AND any time " +
-    "you say a real expression/equation/formula out loud or in chat — the student can't see a fraction bar " +
-    "in spoken or plain text, so a formula worth keeping visible belongs here, not just described in words. " +
-    "Keep ASCII/markdown tables in WRITE_TO_BOARD for sequences, timelines, and comparisons — those aren't " +
-    "spatial or mathematical. Each call is ONE complete, self-contained figure: " +
-    "if you need to add to something you drew earlier (e.g. add the altitude to a triangle already on the " +
-    "board), redraw the WHOLE figure again including the new part — never assume you can add to a past " +
-    "call's shapes. Coordinate space is 0-800 wide, 0-600 tall; keep the figure roughly centered and leave " +
-    "margin, it will be scaled to fit the board. Max 15 ops per figure — plan the layout before calling, " +
-    "don't sprawl. One label per meaningful point/line, positioned just off the shape it names, never " +
-    "overlapping another label. FOR GEOMETRY (triangles, circles, sectors, angles, altitudes, polygons) DO NOT " +
-    "use this — use GEOMETRY_ON_BOARD, which does the coordinates for you and draws far more accurately.",
-  input_schema: { type: "object", properties: {
-    caption: { type: "string", description: "one short line describing the figure, shown as its title on the board" },
-    ops: {
-      type: "array",
-      description: "the figure's shapes, in any order. See each op's own fields.",
-      items: { type: "object", properties: {
-        op: { type: "string", enum: ["line", "rect", "circle", "polyline", "polygon", "arc", "label", "axes", "equation"] },
-        dashed: { type: "boolean", description: "line/circle/polyline/arc: dashed stroke (auxiliary lines, hidden edges)" },
-        a0: { type: "number", description: "arc only: start angle in degrees, SCREEN orientation (0 = right, 90 = down); sweeps to a1" }, a1: { type: "number", description: "arc only: end angle in degrees (a1 < a0 sweeps counter-clockwise on screen)" },
-        x1: { type: "number" }, y1: { type: "number" }, x2: { type: "number" }, y2: { type: "number" },
-        arrow: { type: "boolean", description: "line only: draw an arrowhead at (x2,y2)" },
-        x: { type: "number" }, y: { type: "number" }, w: { type: "number" }, h: { type: "number" },
-        fill: { type: "boolean", description: "rect/circle only: filled instead of outlined" },
-        cx: { type: "number" }, cy: { type: "number" }, r: { type: "number" },
-        points: { type: "array", description: "polyline only: 2+ points forming a curve/freeform shape", items: { type: "object", properties: { x: { type: "number" }, y: { type: "number" } }, required: ["x", "y"] } },
-        text: { type: "string", description: "label only: the text itself, kept short (a variable, a value, a name)" },
-        size: { type: "string", enum: ["sm", "md", "lg"] },
-        xLabel: { type: "string" }, yLabel: { type: "string" },
-        latex: { type: "string", description: "equation only: raw LaTeX, NO surrounding $ or \\( \\) delimiters — e.g. \\frac{2}{x-1} + \\frac{3}{x+2} = \\frac{5x+1}{(x-1)(x+2)}. Rendered by KaTeX as real typeset math (stacked fractions, exponents, roots), not text. Takes real vertical room around its (x,y) — a fraction, exponent, or stacked expression is TALLER than a plain label, so leave clear space above and below it (roughly 40px above, 60px below the point you give) rather than placing a line/shape right where its box will render." },
-        color: { type: "string", description: "optional hex color; defaults to the board's ink color if omitted" },
-      }, required: ["op"] },
-    },
-  }, required: ["caption", "ops"] },
-};
-
 // A GENUINELY interactive scene (drag/rotate/slide something to understand it), distinct from
 // DRAW_ON_BOARD's static SVG figures above. Scoped to Study Mode (canvas mode) only — the regular task
 // chat's popup modal is too narrow for a real embedded scene. Rendered in a sandboxed iframe with no
@@ -4171,6 +4080,7 @@ export async function classifyCandidates(
       ],
     }));
     const u = usageOf(res); tokIn += u.in; tokOut += u.out; tokCached += u.cachedIn;
+    if (process.env.DEBUG_CLASSIFY) console.log("RAW CLASSIFY:", String(res.choices?.[0]?.message?.content || "").slice(0, 3000));
     return firstJson<any>(String(res.choices?.[0]?.message?.content || ""));
   };
   const parse = (out: any) => {

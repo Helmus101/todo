@@ -4,8 +4,8 @@
 // the top AND its equal elevation at the ground), and returns an SVG. Only GIVEN values are labelled; unknowns stay as
 // letters, and the (hidden) solution is used purely to place things to scale. Pure — the server calls it, tests cover it.
 
-export interface ObserverIn { name?: string; angle: number }
-export interface TrigSceneIn {
+interface ObserverIn { name?: string; angle: number }
+interface TrigSceneIn {
   mode?: "depression" | "elevation";
   observers: ObserverIn[];            // 1 or 2 points on the ground, in a line with the base of the tower
   separation?: number;                // distance between the two observers (when 2)

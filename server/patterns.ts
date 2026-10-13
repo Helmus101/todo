@@ -45,7 +45,7 @@ function confidenceFromEvidence(winnerCount: number, total: number): number {
  *  rank which subjects most need reinforcement. Only flags a subject once it has enough attempts to be a
  *  real pattern, not one unlucky card (minAttempts) — and only when the rate is genuinely weak, not just
  *  imperfect (threshold), so this stays a rare, meaningful signal rather than nagging about every subject. */
-export interface SubjectSignal {
+interface SubjectSignal {
   subject: string; correctRate: number; attempts: number;
   /** Recent-vs-prior direction, when there's enough quiz-attempt HISTORY to tell (attempts carry real
    *  timestamps; flashcard review counts are cumulative and can't tell recent from old on their own) —

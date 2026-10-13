@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
-import { ArrowRight, TrendingUp, RotateCcw, MessageCircle, Lightbulb, CircleHelp, ChevronRight, ChevronDown, Maximize2, Minimize2 } from "lucide-react";
+import { ChevronRight, ChevronDown, Maximize2, Minimize2 } from "lucide-react";
 import type { WebTask, TaskProblem, BoardEntry } from "../../shared/types.ts";
 import { api } from "../api.ts";
 import { setLocalObjectives, getLocalThread, setLocalChat, setLocalBoard, setLocalProblems } from "../localChatBoard.ts";

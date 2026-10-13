@@ -13,7 +13,7 @@ import { readAction, getConnectedAccounts } from "./integrations.ts";
 import { pronoteConnected, pronoteHomework, pronoteTests } from "./pronote.ts";
 import { blackbaudConnected, blackbaudAssignments } from "./blackbaud.ts";
 
-export interface SourceItem {
+interface SourceItem {
   sourceApp: "gmail" | "calendar" | "drive" | "pronote" | "blackbaud";
   externalId: string;
   anchorKey: string;      // "gmail:<threadId>" / "calendar:<eventId>" / "drive:<fileId>" — the dedupe identity
@@ -209,7 +209,7 @@ export function pronoteTestsToItems(items: { id: string; subject: string; deadli
  *  running it through the same classify/quality-bar path as Gmail/Calendar is the more conservative choice
  *  until it's had real production mileage. That also means this needs no special wiring in tasks.ts at
  *  all — it flows through exactly the same `candidates` pool every other classified source does. */
-export function blackbaudToItems(items: { id: string; title: string; subject?: string; dueDate?: string; description?: string }[]): SourceItem[] {
+function blackbaudToItems(items: { id: string; title: string; subject?: string; dueDate?: string; description?: string }[]): SourceItem[] {
   return items.map((a): SourceItem => ({
     sourceApp: "blackbaud",
     externalId: a.id,
