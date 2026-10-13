@@ -1,9 +1,16 @@
 # Otto
 
-A study assistant for French lycée and IB/AP students. Otto reads Pronote, Gmail, Calendar and Drive, turns
-what it finds into a short list of things to do, prepares the reversible work (revision notes, checklists,
-email drafts), and tutors Socratically. It never sends anything without your tap and never does graded work
-for you.
+An AI study assistant for students. Otto turns everything you have to do into a short, ranked list,
+prepares the reversible work (revision notes, step checklists, flashcards, email drafts), and tutors you
+Socratically: it asks questions instead of handing over answers. It never sends anything without your tap and
+never does graded work for you.
+
+Otto works on its own: add tasks by hand and use the tutor, journal and study desk. Connecting apps lets it
+find the work for you:
+
+- **Google** (Gmail, Calendar, Drive) and **Notion** through Composio
+- **School portals**: Pronote today; Blackbaud is in progress
+- Curriculum-aware tutoring for national programmes, IB and AP; the interface is in English and French
 
 Open source (MIT), self-hostable.
 
@@ -79,7 +86,7 @@ For a throwaway local Supabase project, see the DEV-ONLY block at the bottom of 
 | Variable | Without it |
 |---|---|
 | `CRON_SECRET` | `/api/cron/drain` returns 503, so no background sweeps when the browser is closed |
-| `CREDENTIAL_ENCRYPTION_KEY` | Pronote refuses to connect (credentials are never stored unencrypted). `openssl rand -hex 32` |
+| `CREDENTIAL_ENCRYPTION_KEY` | Password-based school portals (Pronote) refuse to connect — credentials are never stored unencrypted. `openssl rand -hex 32` |
 | `RESEND_API_KEY` | Password-reset emails are not sent (`MAIL_FROM` sets the sender) |
 | `GEMINI_API_KEY` | Tutor uses DeepSeek only; "send whiteboard photo to Otto" is hidden |
 | `ADMIN_EMAILS` | Nobody can open `/admin` (comma-separated emails) |
@@ -116,8 +123,8 @@ Other Node hosts work too: `npm run build && npm start` (a `Dockerfile` is inclu
 - Supabase RLS is on with no public policies; only the server's service key can read or write.
 - Password reset tokens are single-use, expire after 30 minutes and are stored hashed. A reset, and account
   deletion, sign the account out on every device.
-- Pronote has no OAuth: the username, password and session token are stored **encrypted (AES-256-GCM)** so
-  Otto can log back in when the token expires. They're deleted on disconnect or account deletion.
+- Portals without OAuth (currently Pronote): the username, password and session token are stored
+  **encrypted (AES-256-GCM)** so Otto can log back in when the token expires. They're deleted on disconnect or account deletion.
 - Data export (`/api/account/export`, never includes tokens or passwords) and instant account deletion in Settings.
 
 Details: [`SECURITY.md`](SECURITY.md) (reporting, threat model) and [`DATA_PROTECTION.md`](DATA_PROTECTION.md)
@@ -132,7 +139,7 @@ Vercel runs many short-lived instances, each with its own memory:
 - A function dies at 300 s. `drain()` starts no new job after 120 s; a job killed mid-run is retried once its
   6-minute lock expires. Account saves use `waitUntil` so they finish after the response.
 
-Known limitations: the Pronote per-account lock and the tutor's turn-to-turn adaptation state are per
+Known limitations: the school-portal per-account lock and the tutor's turn-to-turn adaptation state are per
 instance; outbound URL checks don't pin DNS (rebinding).
 
 ## Development
