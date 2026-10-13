@@ -2339,8 +2339,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
    generous hit areas and stacked actions are correct everywhere, and treating them as a phone-only
    patch is exactly what let new components ship desktop-only and get fixed after the fact. Only the
    things that genuinely differ on a big screen are overridden in `min-width: 641px` below. */
-/* Grouped lists go edge-to-edge, iOS style. */
-.list, .empty { border-radius: 0; border-left: none; border-right: none; margin-left: -16px; margin-right: -16px; }
+.list, .empty { border-radius: 0; border-left: none; border-right: none; }
 /* Any two-sided row (label + control) can overflow on a narrow phone instead of shrinking — let it drop
    to its own line rather than squeezing or clipping. Harmless at any width: it only wraps if it must. */
 .set-row, .modal-row, .int-tile, .int-acct { flex-wrap: wrap; row-gap: var(--space-2); }

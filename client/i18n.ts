@@ -45,7 +45,8 @@ const MESSAGES: Catalog = {
   "dashboard.doneForToday": { fr: "La journée est réglée. Demain, commence par ce que tu préférerais éviter.", en: "Today's handled. Tomorrow, start with the thing you'd rather skip." },
   // {count}/{plural} are computed by the caller (a plain "" or "s"), not by this module — see t()'s own
   // doc comment on why this stays plain string interpolation instead of a full ICU plural engine.
-  "dashboard.thingsLeft": { fr: "{count} chose{plural} à faire aujourd'hui — commence par celle que tu évites", en: "{count} thing{plural} left today — start with the one you're avoiding" },
+  "dashboard.thingsLeft": { fr: "{count} chose{plural} à faire — commence par celle que tu évites", en: "{count} thing{plural} to do — start with the one you're avoiding" },
+  "dashboard.focusThree": { fr: "Commence par ces trois. Les {rest} autres peuvent attendre", en: "Start with these three. The other {rest} can wait" },
   "dashboard.alreadyDone": { fr: " — {count} déjà derrière toi", en: " — {count} already behind you" },
   "dashboard.nextUp": { fr: " Ensuite : {title}.", en: " Next up: {title}." },
   "dashboard.momentum": {

@@ -177,3 +177,40 @@ hr { border: 0; border-top: 1px solid var(--line-soft); }
 .screen-center p { color: var(--ink-2); line-height: 1.6; max-width: 300px; }
 .screen-center .btn { margin-top: var(--space-5); }
 .muted-11 { opacity: .6; font-size: 11px; }
+
+/* Task detail: one centred reading column with a single vertical rhythm (gaps, not per-element margins). */
+.task-modal:focus, .task-modal:focus-visible { outline: none !important; }
+.task-modal .task-focus { max-width: 680px; margin: 0 auto; padding: var(--space-6) 0 var(--space-7); gap: var(--space-5); }
+.task-modal .task-focus > * { margin-top: 0 !important; margin-bottom: 0 !important; }
+.tf-head { display: flex; flex-direction: column; gap: var(--space-2); }
+.tf-head > * { margin: 0 !important; }
+.tf-title { padding-right: var(--space-7); line-height: 1.3 !important; }
+.tf-why { color: var(--ink-2); }
+.tf-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin-top: var(--space-1) !important; }
+.tf-meta > * { margin: 0 !important; }
+.when-soon { color: var(--ink) !important; font-weight: 600; }
+.deadline-edit-btn { border: 0 !important; padding: 0 !important; color: var(--ink-3) !important; font-size: 13px; }
+.deadline-edit-btn:hover { color: var(--ink) !important; background: transparent !important; }
+.tf-ask-otto { width: auto !important; align-self: flex-start; padding: var(--space-2) var(--space-4) !important; min-height: 40px; }
+.tf-prepared-inline { display: flex; flex-direction: column; gap: var(--space-2); }
+.tf-prepared-inline > * { margin: 0 !important; }
+.prepared-chips { display: flex; flex-direction: column; gap: var(--space-1); }
+.tf-panels { display: flex; flex-direction: column; gap: var(--space-2); }
+@media (max-width: 640px) { .task-modal .task-focus { padding: var(--space-4) 0 var(--space-6); gap: var(--space-4); } }
+.tf-meta, .tf-meta .when { font-size: 14px !important; }
+.btn.primary.tf-ask-otto { background: var(--accent) !important; color: #fff !important; border-radius: var(--radius) !important; }
+.btn.primary.tf-ask-otto:hover { background: var(--accent-hover) !important; }
+.task-readonly { display: flex; flex-direction: column; gap: var(--space-3); padding-top: var(--space-4); }
+.task-readonly > * { margin-top: 0 !important; margin-bottom: 0 !important; }
+.task-readonly-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); font-size: 14px; }
+.task-readonly-meta > * { margin: 0 !important; }
+.task-readonly-head { margin-top: var(--space-3) !important; }
+
+/* Dashboard: beyond the top three, the rest is quieter — grouped, compact, single-line rows. */
+.later-groups { display: flex; flex-direction: column; gap: var(--space-5); margin-top: var(--space-2); }
+.later-group-head { font-size: 13px !important; font-weight: 600 !important; color: var(--ink-3); margin: 0 0 var(--space-1); }
+.list.compact .card { padding-top: var(--space-2) !important; padding-bottom: var(--space-2) !important; min-height: 0; }
+.list.compact .card-title, .list.compact .card h3 { font-size: 15px !important; font-weight: 500 !important; }
+.list.compact .card-check { width: 20px !important; height: 20px !important; min-width: 20px; }
+.list .card { border-bottom: 0 !important; }
+.list { display: flex; flex-direction: column; gap: var(--space-1); }

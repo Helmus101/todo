@@ -1011,7 +1011,7 @@ export function App() {
             <p className="dash-line">
               {live.length === 0
                 ? (doneToday > 0 ? T("dashboard.doneForToday") : T("dashboard.allCaughtUp"))
-                : (T("dashboard.thingsLeft", { count: live.length, plural: live.length > 1 ? "s" : "" }) +
+                : ((live.length > 3 ? T("dashboard.focusThree", { rest: live.length - 3 }) : T("dashboard.thingsLeft", { count: live.length, plural: live.length > 1 ? "s" : "" })) +
                    (doneToday > 0 ? T("dashboard.alreadyDone", { count: doneToday, plural: doneToday > 1 ? "s" : "" }) : "") + ".")}
               {/* One status signal at a time, in priority order — overdue outranks in-progress work,
                   which outranks a routine scan — instead of stacking every pill that happens to apply. */}
@@ -1127,21 +1127,31 @@ export function App() {
                           : `${live.length - 3} de plus qui attendent`}
                       </button>
                     ) : (
-                      <div className="list">
-                        {live.slice(3).map((t, i) => (
+                      <div className="later-groups">
+                        {[
+                          { key: "week", label: en ? "This week" : "Cette semaine", items: live.slice(3).filter((t) => t.quadrant === "do" || t.quadrant === "schedule") },
+                          { key: "later", label: en ? "Later" : "Plus tard", items: live.slice(3).filter((t) => t.quadrant !== "do" && t.quadrant !== "schedule") },
+                        ].filter((g) => g.items.length).map((g) => (
+                          <section key={g.key} className="later-group">
+                            <h3 className="later-group-head">{g.label}</h3>
+                            <div className="list compact">
+                              {g.items.map((t, i) => (
                           <TaskCardRow
-                            key={t.id}
-                            task={t}
-                            index={i + 3}
-                            retrying={retryingIds.includes(t.id)}
-                            isNew={!seenTasks.has(t.id) && !isHandled(t.status) && !isInFlight(t.status)}
-                            onOpen={() => navigate(`task/${t.id}`)}
-                            onChange={setTasks}
-                            onTask={patchTask}
-                            onConfirmed={flagJustDone}
-                            onEnterStudyMode={STUDY_MODE_ENABLED && !isPhone ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
-                            readOnly={isPhone}
-                          />
+                                  key={t.id}
+                                  task={t}
+                                  index={3 + i}
+                                  retrying={retryingIds.includes(t.id)}
+                                  isNew={!seenTasks.has(t.id) && !isHandled(t.status) && !isInFlight(t.status)}
+                                  onOpen={() => navigate(`task/${t.id}`)}
+                                  onChange={setTasks}
+                                  onTask={patchTask}
+                                  onConfirmed={flagJustDone}
+                                  onEnterStudyMode={STUDY_MODE_ENABLED && !isPhone ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
+                                  readOnly={isPhone}
+                                />
+                              ))}
+                            </div>
+                          </section>
                         ))}
                       </div>
                     )}

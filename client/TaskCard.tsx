@@ -408,6 +408,7 @@ export function TaskReadOnly({ task, onTask, userId }: { task: WebTask; onTask: 
   };
   return (
     <div className="task-readonly">
+      <h2 className="tf-title">{task.title}</h2>
       {(task.sourceSubject || w) ? (
         <div className="task-readonly-meta">
           {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
@@ -460,7 +461,7 @@ export function TaskReadOnly({ task, onTask, userId }: { task: WebTask; onTask: 
                 {task.flashcards?.map((f) => (
                   <button key={f.id} type="button" className="note-chip" onClick={() => setOpenDeck(f.id)}>
                     <span className="note-chip-icon" aria-hidden="true"><Layers size={13} /></span>
-                    <span className="note-chip-text"><span className="note-chip-title">{f.title}</span><span className="note-chip-meta">{L(`${f.cards.length} cartes · Ouvrir`, `${f.cards.length} cards · Open`)}</span></span>
+                    <span className="note-chip-text"><span className="note-chip-title">{f.title}</span><span className="note-chip-meta">{L(`${f.cards.length} carte${f.cards.length === 1 ? "" : "s"} · Ouvrir`, `${f.cards.length} card${f.cards.length === 1 ? "" : "s"} · Open`)}</span></span>
                   </button>
                 ))}
                 {task.quizzes?.map((qz) => (
@@ -1295,7 +1296,7 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
             ) : c.kind === "deck" ? (
               <button key={c.item.id} type="button" className="note-chip" onClick={() => onOpenDeck(c.item.id)}>
                 <span className="note-chip-icon" aria-hidden="true"><Layers size={13} /></span>
-                <span className="note-chip-text"><span className="note-chip-title">{c.item.title}</span><span className="note-chip-meta">{L(`${c.item.cards.length} cartes`, `${c.item.cards.length} cards`)}</span></span>
+                <span className="note-chip-text"><span className="note-chip-title">{c.item.title}</span><span className="note-chip-meta">{L(`${c.item.cards.length} carte${c.item.cards.length === 1 ? "" : "s"}`, `${c.item.cards.length} card${c.item.cards.length === 1 ? "" : "s"}`)}</span></span>
               </button>
             ) : (
               <button key={c.item.id} type="button" className="note-chip" onClick={() => onOpenQuiz(c.item.id)}>

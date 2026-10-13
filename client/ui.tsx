@@ -1418,8 +1418,9 @@ export function TaskModal({ onClose, children, nested, title, wide }: { onClose:
     const focusables = () => Array.from(
       panelRef.current?.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])') || [],
     ).filter((el) => el.offsetParent !== null); // skip anything hidden (a closed disclosure, etc.)
-    const first = focusables()[0];
-    (first || panelRef.current)?.focus();
+    // Focus the dialog itself (not its first button), so opening a task doesn't light up a focus ring on
+    // whichever control happens to come first; Tab moves into the controls from here.
+    panelRef.current?.focus({ preventScroll: true });
     const onTrapTab = (e: KeyboardEvent) => {
       if (e.key !== "Tab") return;
       const els = focusables();
