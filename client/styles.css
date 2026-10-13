@@ -7593,3 +7593,7 @@ mark.otto-mark { background: linear-gradient(transparent 12%, color-mix(in srgb,
 .ts-objstrip-list .ts-obj-mark { flex: none; width: 14px; font-size: 11px; color: var(--accent); }
 /* Math keys + preview: wrap cleanly on a phone. */
 @media (max-width: 480px) { .sm-math-key { min-width: 30px; padding: 3px 6px; } .sm-inline-problem-input-row { flex-wrap: wrap; } .sm-inline-problem-input-row > .sm-btn { width: 100%; } }
+
+/* The line's explanation — so the board reads back as notes, not a bare column of equations. */
+.sm-board-why { margin-top: 2px; font-size: 13px; line-height: 1.45; color: var(--ink-2, var(--ink)); font-style: italic; }
+.sm-board-why::before { content: "↳ "; font-style: normal; color: var(--ink-3, var(--ink-2)); }

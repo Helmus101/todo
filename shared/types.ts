@@ -1686,6 +1686,9 @@ export interface BoardEntry {
    *  Otto: "expand the bracket"). Shown as the chip under the line ("Your turn: expand the bracket") so a gap
    *  names what to DO instead of a generic "finish this". Never carries the value itself. */
   gapAction?: string;
+  /** A short plain-language explanation shown under the line ("power law: the exponent comes out front") — so the
+   *  board can be re-read later and still make sense, not just a column of equations. */
+  why?: string;
   /** How a STUDENT-authored entry turned out — set by the app (never by the model), the moment the student
    *  answers on the board (see server/boardEvents.ts's tagStudentAnswer). Purely presentational: it lets the
    *  page keep a wrong attempt visible and struck through instead of either silently deleting it or letting

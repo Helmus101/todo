@@ -81,7 +81,7 @@ export async function runTutorEngineSim(check, section) {
   check("…but quoting the STUDENT's own slip back to them is the point, not an error", calls.length === 1);
 
   script = (b, i) => i === 0
-    ? { tool_calls: [tc("WRITE_TO_BOARD", { text: "$\\frac{h}{100 + \\tan(25^\\circ)$", kind: "formula" }), tc("WRITE_TO_BOARD", { text: "$\\tan(15^\\circ) = \\frac{h}{100+b}$", kind: "formula" })] }
+    ? { tool_calls: [tc("WRITE_TO_BOARD", { text: "$\\frac{h}{100 + \\tan(25^\\circ)$", kind: "formula" }), tc("WRITE_TO_BOARD", { text: "$\\tan(15^\\circ) = \\frac{h}{100+b}$", kind: "formula", why: "Their tangent ratio for the far triangle: opposite over adjacent." })] }
     : { content: "Look at the board — what links the two triangles?" };
   r = await run("so tan 15 = h over 100 plus b", { board: gapBoard.slice(0, 1) });
   const toolMsgs = calls[1].messages.filter((m) => m.role === "tool").map((m) => m.content);

@@ -3244,8 +3244,9 @@ export function resolveBoardTarget(target: string, board: BoardEntry[]): BoardEn
 const MAX_OUTLINE_SECTIONS = 6;
 const MAX_OUTLINE_BULLETS = 8;
 export function makeBoardEntry(input: any): { entry: BoardEntry } | { error: string } {
-  const text = stripLeakedToolCallSyntax(String(input?.text || "").trim()).replace(/<br\s*\/?>/gi, "\n").replace(/<\/?[a-z][^>]*>/gi, "").slice(0, 600);
+  const text = stripLeakedToolCallSyntax(String(input?.text || "").trim()).replace(/<br\s*\/?>/gi, "\n").replace(/<\/?[a-z][^>]*>/gi, "").replace(/&nbsp;|&#160;/gi, " ").slice(0, 600);
   if (!text) return { error: "ERROR: a board entry needs non-empty text." };
+  const why = stripLeakedToolCallSyntax(String(input?.why || "")).replace(/<\/?[a-z][^>]*>/gi, "").replace(/&nbsp;|&#160;/gi, " ").replace(/\s+/g, " ").trim().slice(0, 160);
   const kindRaw = String(input?.kind || "").trim();
   const kind = BOARD_KINDS.has(kindRaw) ? (kindRaw as BoardEntry["kind"]) : undefined;
   if (kind === "outline") {
@@ -3270,7 +3271,7 @@ export function makeBoardEntry(input: any): { entry: BoardEntry } | { error: str
   const owner: BoardEntry["owner"] = input?.owner === "student" ? "student" : "otto";
   const expectedAnswer = kind === "gap" && input?.expectedAnswer ? String(input.expectedAnswer).trim().slice(0, 200) : undefined;
   const gapAction = kind === "gap" && input?.gapAction ? String(input.gapAction).trim().replace(/\s+/g, " ").slice(0, 60) : undefined;
-  return { entry: { id: randomUUID(), text, ...(kind ? { kind } : {}), ...(owner === "student" ? { owner } : {}), ...(expectedAnswer ? { expectedAnswer } : {}), ...(gapAction ? { gapAction } : {}), at: new Date().toISOString() } };
+  return { entry: { id: randomUUID(), text, ...(kind ? { kind } : {}), ...(owner === "student" ? { owner } : {}), ...(expectedAnswer ? { expectedAnswer } : {}), ...(gapAction ? { gapAction } : {}), ...(why ? { why } : {}), at: new Date().toISOString() } };
 }
 
 /** Session objectives are a condensed checklist (reported: long sentences made the panel unreadable): drop a trailing

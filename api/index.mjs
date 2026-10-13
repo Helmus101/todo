@@ -8570,8 +8570,9 @@ function resolveBoardTarget(target, board) {
   return id ? visible.find((e) => e.id === id && e.kind !== "annotation") || null : null;
 }
 function makeBoardEntry(input) {
-  const text = stripLeakedToolCallSyntax(String(input?.text || "").trim()).replace(/<br\s*\/?>/gi, "\n").replace(/<\/?[a-z][^>]*>/gi, "").slice(0, 600);
+  const text = stripLeakedToolCallSyntax(String(input?.text || "").trim()).replace(/<br\s*\/?>/gi, "\n").replace(/<\/?[a-z][^>]*>/gi, "").replace(/&nbsp;|&#160;/gi, " ").slice(0, 600);
   if (!text) return { error: "ERROR: a board entry needs non-empty text." };
+  const why = stripLeakedToolCallSyntax(String(input?.why || "")).replace(/<\/?[a-z][^>]*>/gi, "").replace(/&nbsp;|&#160;/gi, " ").replace(/\s+/g, " ").trim().slice(0, 160);
   const kindRaw = String(input?.kind || "").trim();
   const kind = BOARD_KINDS.has(kindRaw) ? kindRaw : void 0;
   if (kind === "outline") {
@@ -8588,7 +8589,7 @@ function makeBoardEntry(input) {
   const owner = input?.owner === "student" ? "student" : "otto";
   const expectedAnswer = kind === "gap" && input?.expectedAnswer ? String(input.expectedAnswer).trim().slice(0, 200) : void 0;
   const gapAction = kind === "gap" && input?.gapAction ? String(input.gapAction).trim().replace(/\s+/g, " ").slice(0, 60) : void 0;
-  return { entry: { id: randomUUID2(), text, ...kind ? { kind } : {}, ...owner === "student" ? { owner } : {}, ...expectedAnswer ? { expectedAnswer } : {}, ...gapAction ? { gapAction } : {}, at: (/* @__PURE__ */ new Date()).toISOString() } };
+  return { entry: { id: randomUUID2(), text, ...kind ? { kind } : {}, ...owner === "student" ? { owner } : {}, ...expectedAnswer ? { expectedAnswer } : {}, ...gapAction ? { gapAction } : {}, ...why ? { why } : {}, at: (/* @__PURE__ */ new Date()).toISOString() } };
 }
 function condenseObjective(label) {
   let l = String(label || "").replace(/\s+/g, " ").trim().replace(/[.;]+$/, "");
@@ -13964,9 +13965,10 @@ THE BOARD \u2014 shared paper, one worksheet per problem
   C. Step-by-step working: separate structured items for each step (given, unknown, relationship, equation setup, manipulation, result, interpretation)
   D. Key knowledge: concise concepts, definitions, formulas, or rules most relevant to the lesson (do NOT add the answer while testing recall)
   E. Current task: the active question and expected student response format
-- Maths in LaTeX between $\u2026$. When they ask you to write something, write it (their step goes in as owner "student"). Write proactively, every turn that teaches or asks something: the key idea or definition you just taught, the question you just asked (as the current task), the step they reached, a figure for any relationship. Use a GAP (kind "gap", line ending "= ?", expectedAnswer set) only when they should fill in one specific line \u2014 at most one, never a second while one is open. Never write a step they haven't reached or the answer; never answer your own question on the board.
+- Every maths line carries a short "why" (what it does and which rule allows it) \u2014 the board is read back later, so it must explain, not just list equations. Maths in LaTeX between $\u2026$. When they ask you to write something, write it (their step goes in as owner "student"). Write proactively, every turn that teaches or asks something: the key idea or definition you just taught, the question you just asked (as the current task), the step they reached, a figure for any relationship. Use a GAP (kind "gap", line ending "= ?", expectedAnswer set) only when they should fill in one specific line \u2014 at most one, never a second while one is open. Never write a step they haven't reached or the answer; never answer your own question on the board.
 - Figures must be accurate, so use the tools that draw to scale: triangles/circles/polygons \u2192 GEOMETRY_ON_BOARD; towers, cliffs, angles of elevation \u2192 TRIG_SCENE_ON_BOARD; a block on a slope, forces \u2192 INCLINE_ON_BOARD; functions \u2192 GRAPH_ON_BOARD; processes, causes, essay plans \u2192 FLOW_ON_BOARD. SVG_ON_BOARD is only for qualitative pictures (a cell, apparatus, a map) \u2014 never for anything with angles or lengths.
 - Fix a wrong line of YOURS in place with UPDATE_BOARD_LINE (or take it off with REMOVE_BOARD_LINE); the student's own lines are protected \u2014 add your corrected line beside theirs. Every board tool returns {ok:true\u2026} or {ok:false,error:{code}}: only say a change happened if the result says ok.
+- Never mention the app's machinery to the student: if a board tool returns REJECTED/LIMIT/DUPLICATE, silently adjust (ask them for that step instead, or write something allowed). They never hear that a write "bounced" or that "the board won't let me".
 - Point at a line by its margin number ("look at line 4") or with ANNOTATE_BOARD. Never claim a board write you didn't make this turn.
 - NOTHING ON IT IS EVER DELETED \u2014 not their working, not an old problem, not a line you'd rather replace. There is no clear-board action: when the topic changes, ADD the new focus line and leave the old working there. Annotate or correct next to what they wrote; never overwrite it.
 - A formula or equation you put in your REPLY goes on the board too \u2014 maths lives on the board, words in the chat. Write it (or the step they reached) and then ask about the line; never leave maths only in the bubble.
@@ -14055,6 +14057,7 @@ var WRITE_TO_BOARD = {
     expectedAnswer: { type: "string", description: "REQUIRED for kind 'gap': what they should write (e.g. 'h/tan(25\xB0)', '0.25', 'friction'). Never revealed." },
     gapAction: { type: "string", description: "kind 'gap' only: 2-6 words naming the move ('express b with tan 25\xB0'), for your own tracking. Never the value." },
     owner: { type: "string", enum: ["otto", "student"], description: "'student' when you're writing up THEIR work." },
+    why: { type: "string", description: "REQUIRED for any line with maths in it (except a gap or the problem's givens): one short plain-language sentence saying what this line does and why it's allowed (e.g. 'Power law: the exponent inside the log comes out front.'), so the board still makes sense when they read it back later. Never the answer to an open gap or problem." },
     outline: { type: "array", description: "kind 'outline' only: [{heading, bullets[]}]", items: { type: "object", properties: { heading: { type: "string" }, bullets: { type: "array", items: { type: "string" } } }, required: ["heading", "bullets"] } }
   }, required: ["text"] }
 };
@@ -14174,6 +14177,13 @@ function teachesOverError(reply, message, verdict) {
 function strategyMissing(message, board, writes) {
   if (!reportsCorrectResult(message)) return false;
   return ![...board, ...writes].some((e) => e.kind === "strategy");
+}
+var MECHANICS = /\b(?:(?:write|line|entry|update) (?:just )?bounced|got rejected|was rejected|(?:it|that) (?:was )?refused|the board (?:won'?t|wouldn'?t|didn'?t) let me|won'?t let me (?:put|write)|(?:the|my|that) (?:first |board )?write (?:failed|bounced|didn'?t (?:go through|work))|(?:the|a) tool (?:call|failed|error|refused)|the app (?:won'?t|wouldn'?t|blocked|refused)|the system (?:won'?t|blocked|refused)|guardrail|le tableau (?:ne )?(?:m'a pas laissé|refuse|a refusé)|l'outil a refusé)\b/i;
+function mentionsMechanics(reply) {
+  return MECHANICS.test(String(reply || ""));
+}
+function stripMechanics(reply) {
+  return String(reply || "").split(/(?<=[.!?…])\s+/).filter((s) => !MECHANICS.test(s)).join(" ").replace(/\s{2,}/g, " ").trim();
 }
 function asksStudentToChoose(reply) {
   return /\b(?:what|which)\b[^?]{0,60}\b(?:would you like|do you want|should we|shall we|part|topic|area|chapter|start with|focus on|work on|look at)\b[^?]*\?|\bor (?:something else|another topic)\b[^?]*\?|\bpar quoi\b[^?]*\?|\bqu(?:'|e )(?:est-ce que )?(?:tu veux|veux-tu|aimerais-tu)\b[^?]*\?/i.test(String(reply || ""));
@@ -14611,6 +14621,7 @@ async function runTutorTurn(input) {
       if (discussion && asksDiscussionQuestionUnboarded(reply, writes)) issues.push("put the question you're asking them to think about on the board as one short line (kind focus), so the discussion is visible");
       if (teachesOverError(reply, message, input.stepVerdict?.verdict)) issues.push('they just got it wrong and you went straight to the method. First find out what they were thinking: name the belief you suspect ("it looks like you treated log(x+y) as log x + log y") or ask one question / give one counter-example that tests it \u2014 then help. The goal is to fix the misconception, not to show the right answer');
       if (strategyMissing(message, allBoard(), result.board)) issues.push('they just solved it: name the reusable strategy behind it and put it on the board (WRITE_TO_BOARD kind strategy, a few words, e.g. "Expand: fraction \u2192 product \u2192 powers"), ideally asking them to put it in their own words');
+      if (mentionsMechanics(reply)) issues.push("it talks about the app's machinery (a write that bounced, the board not letting you, a rule) \u2014 the student must never hear that. Drop it and just teach: ask them for the step, or write what's allowed");
       if (wrapsUpUnasked(reply, message)) issues.push("it offers to wrap up or move on, which they didn't ask for \u2014 stay on the current work");
       if (reportsCorrectResult(message) && !movesOn(reply, !!(result.problems.length || result.board.length))) issues.push("they just got an exercise right: confirm in one specific clause, then ONE critical-thinking move (why it works, does the result make sense, what if a given changed, or find the flaw in a plausible wrong line) and/or start the next activity yourself (the CURRENT lesson-plan milestone, in a new format) \u2014 end with one question or a new exercise");
       const missingObj = pointsAtMissingObject(reply, allBoard().map((b) => String(b.kind)));
@@ -14652,7 +14663,7 @@ Then send the corrected reply. Don't mention this note.)` });
         result.reply = softenOpener2(stripped || (fr ? "Qu'est-ce que tu en dis ?" : "What do you make of that?"), fr);
         return result;
       }
-      result.reply = softenOpener2(stripPraiseOpener(reply), fr);
+      result.reply = softenOpener2(stripPraiseOpener(mentionsMechanics(reply) ? stripMechanics(reply) || reply : reply), fr);
       return result;
     }
     messages.push({ role: "assistant", content: text, tool_calls: toolCalls });
@@ -14665,6 +14676,7 @@ Then send the corrected reply. Don't mention this note.)` });
       } catch (e) {
         content = `ERROR: ${e?.message || e}`;
       }
+      if (/^(?:REJECTED|LIMIT|DUPLICATE|ERROR|LEAK)/.test(content)) content += " (Internal note for you only: never tell the student a write was refused, bounced or blocked, and never mention the board's or app's rules \u2014 just carry on teaching naturally.)";
       messages.push({ role: "tool", tool_call_id: tc.id, content });
     }
   }
@@ -14741,6 +14753,7 @@ function applyTool(name, input, c) {
         const bad = wrongArithmetic(text, c.message);
         if (bad) return `REJECTED: that line has a wrong calculation (${bad}). Recompute it before writing.`;
       }
+      if (input.why && leaks(String(input.why))) return LEAK;
       if (input.kind !== "gap" && leaks(text)) return LEAK;
       if (input.owner !== "student" && statesFinalAnswer(text, c.solution) && !reachedSolutionSteps(c.message, c.solution).includes(0)) return LEAK;
       const unsep = (x) => x.replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1");
@@ -14758,7 +14771,9 @@ function applyTool(name, input, c) {
       const heard = boardRepeatsMishearing(text, c.spokenRepair);
       if (heard) return `REJECTED: "${heard}" is a speech-recognition slip \u2014 write what the student MEANT, typeset in $\u2026$.`;
       const r = makeBoardEntry(input);
-      return "error" in r ? r.error : push(r.entry);
+      if ("error" in r) return r.error;
+      if (input.owner !== "student" && !c.codeWrite && !["gap", "given", "focus", "outline", "summary", "result"].includes(String(input.kind || "")) && /\$|=|⟹|⇒/.test(text) && !String(input.why || "").trim()) return "REJECTED: add a `why` \u2014 one short plain sentence under this line saying what it does and why it's allowed (e.g. 'Power law: the exponent comes out front'), so they can read the board back later. Then write it again.";
+      return push(r.entry);
     }
     case "CREATE_PROBLEM": {
       if (openProblems().length && !asksToMoveOn(c.message)) return "REJECTED: they haven't answered the problem already on the board \u2014 help them with that one first.";

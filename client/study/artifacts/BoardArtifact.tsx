@@ -560,8 +560,12 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
   // KEY IDEAS — the definitions, rules, strategies and the summary, gathered into one compact strip at the top so the
   // board doubles as the student's revision sheet (spec §10.4 knowledge panel). Rendered as a COPY: each entry also
   // keeps its place in the flow, so line numbers, undo and pointers are untouched.
-  const keyIdeas = entries.filter((e, i, arr) => arr.findIndex((x) => x.id === e.id) === i && (e.kind === "definition" || e.kind === "formula" || e.kind === "strategy")).slice(-8);
-  const latestSummary = [...entries].reverse().find((e) => e.kind === "summary" && e.owner !== "student");
+  // Only once the board is long enough to scroll, and never repeating what is already in the first few lines
+  // (reported: the definition and the laws appeared twice in a row at the top).
+  const topIds = new Set(entries.filter((e) => e.kind !== "focus" && e.kind !== "annotation").slice(0, 4).map((e) => e.id));
+  const boardIsLong = entries.length + (task.problems?.length || 0) >= 7;
+  const keyIdeas = boardIsLong ? entries.filter((e, i, arr) => arr.findIndex((x) => x.id === e.id) === i && !topIds.has(e.id) && (e.kind === "definition" || e.kind === "formula" || e.kind === "strategy")).slice(-8) : [];
+  const latestSummary = boardIsLong ? [...entries].reverse().find((e) => e.kind === "summary" && e.owner !== "student" && !topIds.has(e.id)) : undefined;
   const [ideasOpen, setIdeasOpen] = useState<boolean>(() => { try { return localStorage.getItem("otto.board.ideasOpen") !== "0"; } catch { return true; } });
   const toggleIdeas = () => setIdeasOpen((o) => { try { localStorage.setItem("otto.board.ideasOpen", o ? "0" : "1"); } catch { /* storage blocked: still toggles */ } return !o; });
   const flowEntries = entries
@@ -872,7 +876,8 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
                 </>
               ) : (
                 <>
-                  <div className="sm-board-line"><MathText text={autoMathLine(stripStrayMarkdown(e.kind === "result" ? e.text.replace(/^\s*(?:established|établi|found|result|trouvé)\s*:\s*/i, "") : e.text))} /></div>
+                  <div className="sm-board-line"><MathText text={autoMathLine(stripStrayMarkdown((e.kind === "result" ? e.text.replace(/^\s*(?:established|établi|found|result|trouvé)\s*:\s*/i, "") : e.text).replace(/&nbsp;|&#160;/gi, " ")))} /></div>
+                  {e.why ? <div className="sm-board-why"><MathText text={autoMathLine(stripStrayMarkdown(e.why))} /></div> : null}
                   {e.kind === "gap" && e.expectedAnswer && e.status !== "correct" && !flowItems.slice(idx + 1).some((it) => it.entry?.kind === "gap") && onGapCheck ? <GapAnswer entry={e} onCheck={onGapCheck} en={en} /> : null}
                 </>
               )}

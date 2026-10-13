@@ -89,9 +89,10 @@ THE BOARD — shared paper, one worksheet per problem
   C. Step-by-step working: separate structured items for each step (given, unknown, relationship, equation setup, manipulation, result, interpretation)
   D. Key knowledge: concise concepts, definitions, formulas, or rules most relevant to the lesson (do NOT add the answer while testing recall)
   E. Current task: the active question and expected student response format
-- Maths in LaTeX between $…$. When they ask you to write something, write it (their step goes in as owner "student"). Write proactively, every turn that teaches or asks something: the key idea or definition you just taught, the question you just asked (as the current task), the step they reached, a figure for any relationship. Use a GAP (kind "gap", line ending "= ?", expectedAnswer set) only when they should fill in one specific line — at most one, never a second while one is open. Never write a step they haven't reached or the answer; never answer your own question on the board.
+- Every maths line carries a short "why" (what it does and which rule allows it) — the board is read back later, so it must explain, not just list equations. Maths in LaTeX between $…$. When they ask you to write something, write it (their step goes in as owner "student"). Write proactively, every turn that teaches or asks something: the key idea or definition you just taught, the question you just asked (as the current task), the step they reached, a figure for any relationship. Use a GAP (kind "gap", line ending "= ?", expectedAnswer set) only when they should fill in one specific line — at most one, never a second while one is open. Never write a step they haven't reached or the answer; never answer your own question on the board.
 - Figures must be accurate, so use the tools that draw to scale: triangles/circles/polygons → GEOMETRY_ON_BOARD; towers, cliffs, angles of elevation → TRIG_SCENE_ON_BOARD; a block on a slope, forces → INCLINE_ON_BOARD; functions → GRAPH_ON_BOARD; processes, causes, essay plans → FLOW_ON_BOARD. SVG_ON_BOARD is only for qualitative pictures (a cell, apparatus, a map) — never for anything with angles or lengths.
 - Fix a wrong line of YOURS in place with UPDATE_BOARD_LINE (or take it off with REMOVE_BOARD_LINE); the student's own lines are protected — add your corrected line beside theirs. Every board tool returns {ok:true…} or {ok:false,error:{code}}: only say a change happened if the result says ok.
+- Never mention the app's machinery to the student: if a board tool returns REJECTED/LIMIT/DUPLICATE, silently adjust (ask them for that step instead, or write something allowed). They never hear that a write \"bounced\" or that \"the board won't let me\".
 - Point at a line by its margin number ("look at line 4") or with ANNOTATE_BOARD. Never claim a board write you didn't make this turn.
 - NOTHING ON IT IS EVER DELETED — not their working, not an old problem, not a line you'd rather replace. There is no clear-board action: when the topic changes, ADD the new focus line and leave the old working there. Annotate or correct next to what they wrote; never overwrite it.
 - A formula or equation you put in your REPLY goes on the board too — maths lives on the board, words in the chat. Write it (or the step they reached) and then ask about the line; never leave maths only in the bubble.
@@ -181,6 +182,7 @@ const WRITE_TO_BOARD = {
     expectedAnswer: { type: "string", description: "REQUIRED for kind 'gap': what they should write (e.g. 'h/tan(25°)', '0.25', 'friction'). Never revealed." },
     gapAction: { type: "string", description: "kind 'gap' only: 2-6 words naming the move ('express b with tan 25°'), for your own tracking. Never the value." },
     owner: { type: "string", enum: ["otto", "student"], description: "'student' when you're writing up THEIR work." },
+    why: { type: "string", description: "REQUIRED for any line with maths in it (except a gap or the problem's givens): one short plain-language sentence saying what this line does and why it's allowed (e.g. 'Power law: the exponent inside the log comes out front.'), so the board still makes sense when they read it back later. Never the answer to an open gap or problem." },
     outline: { type: "array", description: "kind 'outline' only: [{heading, bullets[]}]", items: { type: "object", properties: { heading: { type: "string" }, bullets: { type: "array", items: { type: "string" } } }, required: ["heading", "bullets"] } },
   }, required: ["text"] },
 };
@@ -336,6 +338,16 @@ export function teachesOverError(reply: string, message: string, verdict?: strin
 export function strategyMissing(message: string, board: { kind?: string }[], writes: { kind?: string }[]): boolean {
   if (!reportsCorrectResult(message)) return false;
   return ![...board, ...writes].some((e) => e.kind === "strategy");
+}
+
+/** Talk about the app's own machinery — a board write that "bounced", a tool that refused, "the board won't let me" —
+ *  which the student must never hear (reported live: "That first write bounced — the board won't let me put the equation
+ *  up before you've stated it"). Exported for tests. */
+const MECHANICS = /\b(?:(?:write|line|entry|update) (?:just )?bounced|got rejected|was rejected|(?:it|that) (?:was )?refused|the board (?:won'?t|wouldn'?t|didn'?t) let me|won'?t let me (?:put|write)|(?:the|my|that) (?:first |board )?write (?:failed|bounced|didn'?t (?:go through|work))|(?:the|a) tool (?:call|failed|error|refused)|the app (?:won'?t|wouldn'?t|blocked|refused)|the system (?:won'?t|blocked|refused)|guardrail|le tableau (?:ne )?(?:m'a pas laissé|refuse|a refusé)|l'outil a refusé)\b/i;
+export function mentionsMechanics(reply: string): boolean { return MECHANICS.test(String(reply || "")); }
+/** Last-resort cleanup: drop every sentence that talks about the machinery. Exported for tests. */
+export function stripMechanics(reply: string): string {
+  return String(reply || "").split(/(?<=[.!?…])\s+/).filter((s) => !MECHANICS.test(s)).join(" ").replace(/\s{2,}/g, " ").trim();
 }
 
 /** The reply hands the choice back ("What would you like to start with?", "which topic…?") — the move a tutor that
@@ -974,6 +986,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       if (discussion && asksDiscussionQuestionUnboarded(reply, writes)) issues.push("put the question you're asking them to think about on the board as one short line (kind focus), so the discussion is visible");
       if (teachesOverError(reply, message, input.stepVerdict?.verdict)) issues.push("they just got it wrong and you went straight to the method. First find out what they were thinking: name the belief you suspect (\"it looks like you treated log(x+y) as log x + log y\") or ask one question / give one counter-example that tests it — then help. The goal is to fix the misconception, not to show the right answer");
       if (strategyMissing(message, allBoard(), result.board)) issues.push("they just solved it: name the reusable strategy behind it and put it on the board (WRITE_TO_BOARD kind strategy, a few words, e.g. \"Expand: fraction → product → powers\"), ideally asking them to put it in their own words");
+      if (mentionsMechanics(reply)) issues.push("it talks about the app's machinery (a write that bounced, the board not letting you, a rule) — the student must never hear that. Drop it and just teach: ask them for the step, or write what's allowed");
       if (wrapsUpUnasked(reply, message)) issues.push("it offers to wrap up or move on, which they didn't ask for — stay on the current work");
       if (reportsCorrectResult(message) && !movesOn(reply, !!(result.problems.length || result.board.length))) issues.push("they just got an exercise right: confirm in one specific clause, then ONE critical-thinking move (why it works, does the result make sense, what if a given changed, or find the flaw in a plausible wrong line) and/or start the next activity yourself (the CURRENT lesson-plan milestone, in a new format) — end with one question or a new exercise");
       const missingObj = pointsAtMissingObject(reply, allBoard().map((b) => String(b.kind)));
@@ -1034,7 +1047,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       }
       // Never open harshly ("Careful, Willem —", "No,", "Wrong") and never with canned praise: both softened in
       // code, no extra round needed — the opener is the first thing the student reads.
-      result.reply = softenOpener(stripPraiseOpener(reply), fr);
+      result.reply = softenOpener(stripPraiseOpener(mentionsMechanics(reply) ? (stripMechanics(reply) || reply) : reply), fr);
       return result;
     }
 
@@ -1045,6 +1058,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       let content: string;
       try { content = applyTool(name, args, { message, result, allBoard, allProblems, spokenRepair, fr, said, wantsExercise: wantsProblem, focus, known, solution: input.solution, discussion, planConsent }); }
       catch (e: any) { content = `ERROR: ${e?.message || e}`; }
+      if (/^(?:REJECTED|LIMIT|DUPLICATE|ERROR|LEAK)/.test(content)) content += " (Internal note for you only: never tell the student a write was refused, bounced or blocked, and never mention the board's or app's rules — just carry on teaching naturally.)";
       messages.push({ role: "tool", tool_call_id: tc.id, content });
     }
   }
@@ -1165,6 +1179,7 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       if (isDuplicateBoardEntry(c.allBoard(), input)) return "DUPLICATE: that's already on the board — point at it instead.";
       // Accuracy (spec §19): a line OTTO writes must not state false arithmetic — the board is what they'll revise from.
       if (input.owner !== "student") { const bad = wrongArithmetic(text, c.message); if (bad) return `REJECTED: that line has a wrong calculation (${bad}). Recompute it before writing.`; }
+      if (input.why && leaks(String(input.why))) return LEAK;
       if (input.kind !== "gap" && leaks(text)) return LEAK;
       if (input.owner !== "student" && statesFinalAnswer(text, c.solution) && !reachedSolutionSteps(c.message, c.solution).includes(0)) return LEAK;
       // A gap that already shows its own answer ("Power = 1000×9.8×sin(10°)×15 = 25,526?", reported live) isn't a gap.
@@ -1182,7 +1197,10 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       const heard = boardRepeatsMishearing(text, c.spokenRepair);
       if (heard) return `REJECTED: "${heard}" is a speech-recognition slip — write what the student MEANT, typeset in $…$.`;
       const r = makeBoardEntry(input);
-      return "error" in r ? r.error : push(r.entry);
+      if ("error" in r) return r.error;
+      // The board must be readable later (reported: "explain a bit, not just equations"): a maths line needs its why.
+      if (input.owner !== "student" && !c.codeWrite && !["gap", "given", "focus", "outline", "summary", "result"].includes(String(input.kind || "")) && /\$|=|⟹|⇒/.test(text) && !String(input.why || "").trim()) return "REJECTED: add a `why` — one short plain sentence under this line saying what it does and why it's allowed (e.g. 'Power law: the exponent comes out front'), so they can read the board back later. Then write it again.";
+      return push(r.entry);
     }
     case "CREATE_PROBLEM": {
       if (openProblems().length && !asksToMoveOn(c.message)) return "REJECTED: they haven't answered the problem already on the board — help them with that one first.";

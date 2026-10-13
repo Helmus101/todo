@@ -15,7 +15,7 @@ import { selectJournal } from "../server/journal.ts";
 import { recentJournalLine } from "../server/claude.ts";
 import { countJournalEntries } from "../shared/journalCount.ts";
 import { reachedResultUnrecorded, setsMathTaskUnboarded } from "../server/tutorAdapt.ts";
-import { updateMisconceptions, teachesOverError, strategyMissing, parsePlan, teachingBlock, wrongArithmetic, teachesUnboarded, boardStillEmpty, asksDiscussionQuestionUnboarded, isDiscussionSubject, statesClaimUnboarded, DISCUSSION_BLOCK, TUTOR_PROMPT, subjectsIn, reportsCorrectResult, movesOn, pointsAtMissingObject } from "../server/tutor.ts";
+import { mentionsMechanics, stripMechanics, updateMisconceptions, teachesOverError, strategyMissing, parsePlan, teachingBlock, wrongArithmetic, teachesUnboarded, boardStillEmpty, asksDiscussionQuestionUnboarded, isDiscussionSubject, statesClaimUnboarded, DISCUSSION_BLOCK, TUTOR_PROMPT, subjectsIn, reportsCorrectResult, movesOn, pointsAtMissingObject } from "../server/tutor.ts";
 import { blamesWidget } from "../server/tutorAdapt.ts";
 import { inventedNumbers } from "../server/tutorAdapt.ts";
 import { makeProblem as makeProblemP } from "../server/claude.ts";
@@ -5044,6 +5044,17 @@ section("Board as paper: key-ideas strip, left-to-right ink, condensed objective
   check("a fresh line is written in left to right", /sm-board-reveal-ink \{ from \{ clip-path: inset\(0 100% 0 0\)/.test(css));
   check("strategy lines are highlighted on the board", /\.sm-board-entry-strategy \.sm-board-entry-text/.test(css));
   check("objectives show as one condensed line with progress dots, expandable", /className=\{`ts-objstrip/.test(ts) && /ts-objstrip-dots/.test(ts) && !/className="ts-objectives"/.test(ts));
+}
+
+section("Otto never tells the student about its internal board rejections (reported live)");
+{
+  const live = "That first write bounced — the board won't let me put the equation up before you've stated it. Fair enough: it's your problem, so write it in your own words. So, what does x to the two fifths become in terms of u?";
+  check("the reported reply is caught", mentionsMechanics(live));
+  check("…and the cleanup keeps the teaching and the question", !mentionsMechanics(stripMechanics(live)) && /what does x to the two fifths become/.test(stripMechanics(live)));
+  check("ordinary teaching is untouched (incl. a physics ball that bounced)", !mentionsMechanics("Write the substitution on your own: what is x in terms of u?") && !mentionsMechanics("The ball bounced twice before stopping — how far did it travel?"));
+  const src = readFileSync("server/tutor.ts", "utf8");
+  check("every refused tool result carries an internal never-tell-the-student note", /Internal note for you only: never tell the student a write was refused/.test(src));
+  check("the final reply is cleaned in code even if the correction round didn't fix it", /mentionsMechanics\(reply\) \? \(stripMechanics\(reply\) \|\| reply\) : reply/.test(src));
 }
 
 section("Board changes are undoable in the Tutor session (spec §12 #10, source pins)");
