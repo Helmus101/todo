@@ -5035,12 +5035,24 @@ section("Tutor diagnoses misconceptions, coaches strategies, stays accurate");
   check("an Otto board line with false arithmetic is rejected (source pin + detector)", !!wrongArithmetic("$400/50 = 9$") && /REJECTED: that line has a wrong calculation/.test(readFileSync("server/tutor.ts", "utf8")));
 }
 
+section("Board as paper: key-ideas strip, left-to-right ink, condensed objectives strip (source pins)");
+{
+  const ba = readFileSync("client/study/artifacts/BoardArtifact.tsx", "utf8");
+  const css = readFileSync("client/styles.css", "utf8");
+  const ts = readFileSync("client/tutor/TutorSession.tsx", "utf8");
+  check("definitions, formulas, strategies and the summary are gathered in a collapsible Key ideas strip", /className=\{`sm-board-ideas/.test(ba) && /e\.kind === "definition" \|\| e\.kind === "formula" \|\| e\.kind === "strategy"/.test(ba) && /otto\.board\.ideasOpen/.test(ba));
+  check("a fresh line is written in left to right", /sm-board-reveal-ink \{ from \{ clip-path: inset\(0 100% 0 0\)/.test(css));
+  check("strategy lines are highlighted on the board", /\.sm-board-entry-strategy \.sm-board-entry-text/.test(css));
+  check("objectives show as one condensed line with progress dots, expandable", /className=\{`ts-objstrip/.test(ts) && /ts-objstrip-dots/.test(ts) && !/className="ts-objectives"/.test(ts));
+}
+
 section("Board changes are undoable in the Tutor session (spec §12 #10, source pins)");
 {
   const ts = readFileSync("client/tutor/TutorSession.tsx", "utf8");
+  check("the Undo button lives in the board header, not floating over content", /onUndo=\{undoCount > 0 \? undoBoard : undefined\}/.test(ts) && /className="sm-board-undo"/.test(readFileSync("client/study/artifacts/BoardArtifact.tsx", "utf8")));
   check("each board-changing turn snapshots the previous board", /boardHistoryRef\.current = \[\.\.\.boardHistoryRef\.current, \{ taskId: task\.id, board: task\.board/.test(ts));
   check("undo restores it locally and on screen", /undoBoard = useCallback[\s\S]{0,400}setLocalBoard\(task\.id, prev\.board/.test(ts));
-  check("the Undo button is keyboard-focusable with a visible focus ring", /className="ts-board-undo"/.test(ts) && /\.ts-board-undo:focus-visible/.test(readFileSync("client/styles.css", "utf8")));
+  check("the Undo button is keyboard-focusable with a visible focus ring", /\.sm-board-undo:focus-visible/.test(readFileSync("client/styles.css", "utf8")));
 }
 
 section("Tutor content never reaches the account row: no worked solution, no quoted student words (source pins)");
@@ -5239,7 +5251,7 @@ section("Tutor session mastery + objectives summary — surfaced without a fabri
   // behind a collapsed ◎ chip in the crumb bar the student had no reason to notice or click, so a fresh
   // set of objectives could land completely unseen. Auto-open the panel the turn they're (re)set, without
   // forcing it open on every later turn.
-  check("the objectives panel auto-opens the turn Otto (re)sets them, not just via the manual ◎ chip toggle", /if \(objectives\?\.length\) setObjectivesOpen\(true\);/.test(tutorSrcMastery));
+  check("the objectives panel auto-opens (then collapses to its one line) the turn Otto (re)sets them, not just via the manual ◎ chip toggle", /if \(objectives\?\.length\) \{ setObjectivesOpen\(true\); window\.setTimeout\(\(\) => setObjectivesOpen\(false\)/.test(tutorSrcMastery));
 }
 
 section("hintDensity preference — new axis, distinct from learningStyle, never licenses a direct answer (source pins)");

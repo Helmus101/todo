@@ -24,6 +24,8 @@ if (typeof window !== "undefined") { void import("katex/dist/katex.min.css"); }
 
 interface BoardArtifactProps {
   task: WebTask;
+  /** Undo the last board change (Tutor session) — rendered in the board's own header row, not floating over content. */
+  onUndo?: () => void;
   /** True while the tutor's reply is being generated — the board shows a live "Otto écrit…" indicator so
    *  the document feels like it's being drafted in real time next to the conversation, not refreshed after
    *  the fact (reported: board work should feel "smooth, mechanical" — the writing hand is always visible). */
@@ -521,7 +523,7 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
  *  and practice problems. ONE DOCUMENT, ONE FLOW: entries and problems interleave in the order the session
  *  actually produced them (a problem sits between the formula it exercises and the insight answering it —
  *  the lesson's story, not a problem section pinned on top). kind:"focus" stays pinned above as the heading. */
-export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, sheetSignal, onGapCheck }: BoardArtifactProps) {
+export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidgetResult, sheetSignal, onGapCheck }: BoardArtifactProps) {
   const L = useLang();
   const endRef = useRef<HTMLDivElement>(null);
   const entries = (task.board || []).filter((e) => !e.archived);
@@ -555,6 +557,13 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, 
       return (withState || dupes[0]).id === p.id;
     });
   const latestFocus = [...entries].reverse().find((e) => e.kind === "focus");
+  // KEY IDEAS — the definitions, rules, strategies and the summary, gathered into one compact strip at the top so the
+  // board doubles as the student's revision sheet (spec §10.4 knowledge panel). Rendered as a COPY: each entry also
+  // keeps its place in the flow, so line numbers, undo and pointers are untouched.
+  const keyIdeas = entries.filter((e, i, arr) => arr.findIndex((x) => x.id === e.id) === i && (e.kind === "definition" || e.kind === "formula" || e.kind === "strategy")).slice(-8);
+  const latestSummary = [...entries].reverse().find((e) => e.kind === "summary" && e.owner !== "student");
+  const [ideasOpen, setIdeasOpen] = useState<boolean>(() => { try { return localStorage.getItem("otto.board.ideasOpen") !== "0"; } catch { return true; } });
+  const toggleIdeas = () => setIdeasOpen((o) => { try { localStorage.setItem("otto.board.ideasOpen", o ? "0" : "1"); } catch { /* storage blocked: still toggles */ } return !o; });
   const flowEntries = entries
     .filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i)
     .filter(e => e.kind !== "focus" && (e.kind as string) !== "problem" && e.kind !== "annotation");
@@ -717,12 +726,43 @@ export function BoardArtifact({ task, writing, onProblemResult, onWidgetResult, 
           {new Date().toLocaleDateString(en ? "en-US" : "fr-FR", { weekday: "long", day: "numeric", month: "long" })}
         </span>
         {task.sourceSubject ? <span className="sm-board-header-subject">{task.sourceSubject}</span> : null}
+        {onUndo ? (
+          <button type="button" className="sm-board-undo" onClick={onUndo} title={en ? "Undo the last board change" : "Annuler la dernière modification du tableau"}>
+            ↶ {en ? "Undo" : "Annuler"}
+          </button>
+        ) : null}
       </div>
 
       {/* The pinned session goal (kind:"focus") — always the FIRST thing on the board, like the heading of
           a lesson page: the day's arc stays visible no matter how long the flow below grows. The latest
           focus wins if a session ever writes a second one. */}
       {latestFocus ? <div className="sm-board-line sm-board-focus-line"><MathText text={autoMathLine(stripStrayMarkdown(latestFocus.text))} /></div> : null}
+
+      {keyIdeas.length || latestSummary ? (
+        <section className={`sm-board-ideas${ideasOpen ? "" : " is-collapsed"}`} aria-label={en ? "Key ideas" : "À retenir"}>
+          <button type="button" className="sm-board-ideas-head" aria-expanded={ideasOpen} onClick={toggleIdeas}>
+            <span>{en ? "Key ideas" : "À retenir"}</span>
+            <span className="sm-board-ideas-count">{keyIdeas.length + (latestSummary ? 1 : 0)}</span>
+            <span className="sm-board-ideas-chev" aria-hidden="true">{ideasOpen ? "▾" : "▸"}</span>
+          </button>
+          {ideasOpen ? (
+            <ul className="sm-board-ideas-list">
+              {keyIdeas.map((e) => (
+                <li key={`idea-${e.id}`} className={`sm-board-idea sm-board-idea-${e.kind}`}>
+                  {e.kind === "strategy" ? <span className="sm-board-idea-tag">{en ? "Strategy" : "Méthode"}</span> : null}
+                  <MathText text={autoMathLine(stripStrayMarkdown(e.text))} />
+                </li>
+              ))}
+              {latestSummary ? (
+                <li className="sm-board-idea sm-board-idea-summary">
+                  <span className="sm-board-idea-tag">{en ? "Summary" : "Bilan"}</span>
+                  <MathText text={autoMathLine(stripStrayMarkdown(latestSummary.text))} />
+                </li>
+              ) : null}
+            </ul>
+          ) : null}
+        </section>
+      ) : null}
 
       {/* ONE FLOW — entries and problems interleaved by timestamp, in the order the session produced them.
           Every step stays visible: an earlier version collapsed everything but the last four behind a

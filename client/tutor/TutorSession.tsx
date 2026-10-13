@@ -339,7 +339,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       // Otto just set/updated the session's objectives this turn — surface them, don't leave them behind a
       // chip the student has to notice and click. Report-live: objectives were being set but the student
       // never actually saw them. Doesn't force it open on every later turn, only right when they change.
-      if (objectives?.length) setObjectivesOpen(true);
+      if (objectives?.length) { setObjectivesOpen(true); window.setTimeout(() => setObjectivesOpen(false), 3500); }
       // Direct request: Tutor session content is LOCAL ONLY now, not cloud-persisted — the server is
       // stateless for this turn's chat/board/problems (`updated` no longer carries them at all; the
       // top-level `board`/`problems`/`chatDelta` are just THIS turn's delta). Merge them onto what's
@@ -874,31 +874,35 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           {endingSession ? L("Fin…", "Ending…") : L("Terminer la séance", "End session")}
         </button>
       </header>
-      {objectivesOpen && !!task.objectives?.length && (
-        <div className="ts-objectives" id="ts-objectives" role="region" aria-label={L("Objectifs de la séance", "Session objectives")}>
-          <h3>{L("Objectifs de la séance", "This session's objectives")}</h3>
-          <ul>
-            {task.objectives.map((o, i) => (
-              <li key={o.id || `${i}:${o.label}`} className={o.done ? "done" : undefined}>
-                <span className="ts-obj-mark" aria-hidden="true">{o.done ? "✓" : "○"}</span>
-                <span className="ts-obj-label"><MathText text={o.label} /></span>
-              </li>
-            ))}
-          </ul>
-          <p className="ts-obj-hint">
-            {L(`${objDone}/${task.objectives.length} validés — Otto coche quand tu lui montres que c'est compris.`,
-              `${objDone}/${task.objectives.length} done — Otto ticks one off when you show him you've got it.`)}
-          </p>
-        </div>
-      )}
+      {!!task.objectives?.length && (() => {
+        // Condensed objectives: ONE line under the header — the current objective and progress dots; click to
+        // see the short checklist. Reported: the old panel was a wall of long sentences.
+        const current = task.objectives.find((o) => !o.done);
+        return (
+          <div className={`ts-objstrip${objectivesOpen ? " is-open" : ""}`} id="ts-objectives" role="region" aria-label={L("Objectifs de la séance", "Session objectives")}>
+            <button type="button" className="ts-objstrip-line" aria-expanded={objectivesOpen} onClick={() => setObjectivesOpen((o) => !o)}>
+              <span className="ts-objstrip-now">{current ? L("Maintenant", "Now") : L("Terminé", "Done")}</span>
+              <span className="ts-objstrip-label">{current ? <MathText text={current.label} /> : L("Tous les objectifs sont validés", "Every objective is done")}</span>
+              <span className="ts-objstrip-dots" aria-label={`${objDone}/${task.objectives.length}`}>
+                {task.objectives.map((o, i) => <i key={o.id || i} className={o.done ? "done" : o === current ? "current" : undefined} />)}
+              </span>
+            </button>
+            {objectivesOpen && (
+              <ol className="ts-objstrip-list">
+                {task.objectives.map((o, i) => (
+                  <li key={o.id || `${i}:${o.label}`} className={o.done ? "done" : o === current ? "current" : undefined}>
+                    <span className="ts-obj-mark" aria-hidden="true">{o.done ? "✓" : o === current ? "●" : "○"}</span>
+                    <span className="ts-obj-label"><MathText text={o.label} /></span>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+        );
+      })()}
       <section className="ts-canvas" aria-label={L("Tableau", "Board")}>
-        {undoCount > 0 && (
-          <button type="button" className="ts-board-undo" onClick={undoBoard} title={L("Annuler la dernière modification du tableau", "Undo the last board change")}>
-            ↶ {L("Annuler", "Undo")}
-          </button>
-        )}
         <div className="tutor-board-body ts-board-body" ref={setSurfaceEl} style={{ display: desmosOpen ? "none" : undefined }}>
-          <BoardArtifact task={task} writing={sending} onProblemResult={onProblemResult} onWidgetResult={onWidgetResult} sheetSignal={sheetSignal} onGapCheck={onGapCheck} />
+          <BoardArtifact task={task} onUndo={undoCount > 0 ? undoBoard : undefined} writing={sending} onProblemResult={onProblemResult} onWidgetResult={onWidgetResult} sheetSignal={sheetSignal} onGapCheck={onGapCheck} />
         </div>
         {/* Desmos stays mounted once opened (an iframe that's removed reloads blank, losing the student's graph). */}
         {desmosOpen || desmosEverOpenedRef.current ? (
