@@ -1888,6 +1888,20 @@ function stripBackslashesOutsideMath(line) {
   const parts = line.split(/(\$[^$\n]*\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\])/g);
   return parts.map((seg) => !seg ? "" : /^\$|^\\\(|^\\\[/.test(seg) ? seg : seg.replace(/\\\s+/g, " ").replace(/\\([a-zA-Z]+)/g, "$1").replace(/\\/g, "")).join("");
 }
+function typesetLogPhrases(line) {
+  const STOP4 = /^(?:the|a|an|is|it|of|this|that|each|both|and|or|to|in|as)$/i;
+  const one = (seg) => seg.replace(
+    /\b(log|ln)(?:\s*_\s*\{?([A-Za-z0-9]{1,3})\}?|\s+base\s+([A-Za-z0-9]{1,3})|\s+([A-Za-z0-9])(?=\s+of\b))(?:\s+of)?\s*(?:\(([^()$]{1,40})\)|([A-Za-z0-9]{1,4})(?![A-Za-z0-9]))/gi,
+    (m, fn, b1, b2, b3, grp, tok) => {
+      const base = b1 || b2 || b3;
+      if (!base || fn.toLowerCase() === "ln") return m;
+      if (tok && STOP4.test(tok)) return m;
+      if (tok && !/\bof\b/i.test(m) && !/^(?:[A-Za-z]|\d+)$/.test(tok)) return m;
+      return grp ? `$\\log_{${base}}\\left(${grp.replace(/\*/g, "\\cdot ").replace(/\^(\d+|[A-Za-z])/g, "^{$1}")}\\right)$` : `$\\log_{${base}} ${tok}$`;
+    }
+  );
+  return line.split(/(\$[^$\n]+\$)/).map((seg, i) => i % 2 ? seg : one(seg)).join("");
+}
 function autoMathLine(line) {
   if (line.includes("\n")) {
     let fence = false;
@@ -1899,6 +1913,7 @@ function autoMathLine(line) {
       return fence ? l : autoMathLine(l);
     }).join("\n");
   }
+  line = typesetLogPhrases(line);
   line = wrapRawLatex(line);
   if (/\$|\\\(|\\\[|\\[a-zA-Z]+\{/.test(line)) return stripBackslashesOutsideMath(line);
   const toks = line.split(/(\s+)/).flatMap((t) => {

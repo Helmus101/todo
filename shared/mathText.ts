@@ -96,6 +96,22 @@ function stripBackslashesOutsideMath(line: string): string {
     : seg.replace(/\\\s+/g, " ").replace(/\\([a-zA-Z]+)/g, "$1").replace(/\\/g, ""))).join("");
 }
 
+/** Prose logarithms ("log_a of x", "log base a of xy", "log_a(x)", "log_2 8") → typeset math. Only segments OUTSIDE
+ *  $…$ are touched. Reported live: a tutor reply said "log_a of x plus log_a of y" and the chat printed it raw. Exported for tests. */
+export function typesetLogPhrases(line: string): string {
+  const STOP = /^(?:the|a|an|is|it|of|this|that|each|both|and|or|to|in|as)$/i;
+  const one = (seg: string) => seg.replace(
+    /\b(log|ln)(?:\s*_\s*\{?([A-Za-z0-9]{1,3})\}?|\s+base\s+([A-Za-z0-9]{1,3})|\s+([A-Za-z0-9])(?=\s+of\b))(?:\s+of)?\s*(?:\(([^()$]{1,40})\)|([A-Za-z0-9]{1,4})(?![A-Za-z0-9]))/gi,
+    (m, fn, b1, b2, b3, grp, tok) => {
+      const base = b1 || b2 || b3;
+      if (!base || fn.toLowerCase() === "ln") return m;
+      if (tok && STOP.test(tok)) return m;
+      if (tok && !/\bof\b/i.test(m) && !/^(?:[A-Za-z]|\d+)$/.test(tok)) return m;
+      return grp ? `$\\log_{${base}}\\left(${grp.replace(/\*/g, "\\cdot ").replace(/\^(\d+|[A-Za-z])/g, "^{$1}")}\\right)$` : `$\\log_{${base}} ${tok}$`;
+    });
+  return line.split(/(\$[^$\n]+\$)/).map((seg, i) => (i % 2 ? seg : one(seg))).join("");
+}
+
 /** Wrap each math run of a plain line in $…$ (leaves prose alone). */
 export function autoMathLine(line: string): string {
   // Multi-line text (a board summary, a chat reply): process line-by-line so a $…$ span never crosses a
@@ -108,6 +124,7 @@ export function autoMathLine(line: string): string {
   }
   // Bare LaTeX first: without this the line trips the early return below and the commands are printed
   // literally (or read as prose) instead of typesetting.
+  line = typesetLogPhrases(line);
   line = wrapRawLatex(line);
   if (/\$|\\\(|\\\[|\\[a-zA-Z]+\{/.test(line)) return stripBackslashesOutsideMath(line);
   // peel trailing sentence punctuation off a maths token ("5π/12?" → "5π/12" + "?") so it stays outside the $…$

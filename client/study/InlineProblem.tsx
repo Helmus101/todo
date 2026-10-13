@@ -1,3 +1,4 @@
+import { MathAnswerInput } from "./MathAnswerInput.tsx";
 import { useState } from "react";
 import type { TaskProblem } from "../../shared/types.ts";
 import { isNumericAnswer, problemIsPercent } from "../../shared/types.ts";
@@ -82,13 +83,13 @@ export function InlineProblem({ problem }: InlineProblemProps) {
             <div className="sm-inline-problem-result correct">{L("Correct !", "Correct!")}</div>
           ) : (
             <div className="sm-inline-problem-input-row">
-              <input
-                type="text"
-                className="sm-inline-problem-input"
+              <MathAnswerInput
+                en={L("fr", "en") === "en"}
+                showKeys={!isNumericAnswer(problem.answer)}
                 placeholder={isNumericAnswer(problem.answer) ? L("Ta réponse (un nombre, sans unité)…", "Your answer (a number, no units)…") : L("Ta réponse…", "Your answer…")}
                 value={textAnswer}
-                onChange={e => { setTextAnswer(e.target.value); setSubmitted(false); }}
-                onKeyDown={e => { if (e.key === "Enter" && textAnswer.trim()) setSubmitted(true); }}
+                onChange={(v) => { setTextAnswer(v); setSubmitted(false); }}
+                onEnter={() => { if (textAnswer.trim()) setSubmitted(true); }}
                 autoFocus
               />
               <button

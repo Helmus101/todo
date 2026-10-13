@@ -78,7 +78,7 @@ import { makeGraphEntry, earlierDigest, isSubstantiveStep, courseworkLine, fallb
 import { canonSubject, sameSubject, normalizeCoursework, courseworkForSubject, COMMON_SUBJECTS, COURSEWORK_MAX_PAGES, COURSEWORK_MAX_CHARS } from "../shared/coursework.ts";
 import { tightenForChat, countWords as countWordsT } from "../server/claude.ts";
 import { replyStatesValue, studentStatedAnswer } from "../server/tutorAdapt.ts";
-import { autoMathLine, wrapRawLatex } from "../shared/mathText.ts";
+import { typesetLogPhrases, autoMathLine, wrapRawLatex } from "../shared/mathText.ts";
 import { diffBoard, recordBoardEvents, objectiveEvents, problemEvents, boardTrajectoryBlock, boardSurfaceBlock, tagStudentAnswer, selfCorrections, boardFingerprint } from "../server/boardEvents.ts";
 import { classifyTurnAction, buildTutorDecision, recordTutorDecision, TUTOR_DECISION_CAP } from "../server/actionSpace.ts";
 import { emptySessionState, loadOrInitSessionState, updateSessionState, persistSessionState, sessionStateBlock } from "../server/sessionState.ts";
@@ -4958,6 +4958,16 @@ section("A step the student took is recorded on the board even when Otto confirm
   check("'Right — quotient law' counts", reachedResultUnrecorded("Right — quotient law, top minus bottom.", "it's minus 3", 0));
   check("a correction does not count", !reachedResultUnrecorded("Not quite — check the sign.", step, 0));
   check("nothing to record when a write already happened", !reachedResultUnrecorded("Right — quotient law.", step, 1));
+}
+
+section("Prose logarithms are typeset as math in chat (reported live)");
+{
+  check("log_a of x", typesetLogPhrases("what is log_a of x plus log_a of y?") === "what is $\\log_{a} x$ plus $\\log_{a} y$?");
+  check("log base a of xy", typesetLogPhrases("write log base a of xy") === "write $\\log_{a} xy$");
+  check("log_a(x) with a group", typesetLogPhrases("so log_a(x^3) is") === "so $\\log_{a}\\left(x^{3}\\right)$ is");
+  check("prose that merely says log is left alone", typesetLogPhrases("the log is useful, log_a is the notation") === "the log is useful, log_a is the notation");
+  check("existing $…$ spans are untouched", typesetLogPhrases("$\\log_a x$ and log_a of y") === "$\\log_a x$ and $\\log_{a} y$");
+  check("autoMathLine applies it", /\\log_\{a\} x/.test(autoMathLine("then log_a of x is 3")));
 }
 
 section("Board changes are undoable in the Tutor session (spec §12 #10, source pins)");

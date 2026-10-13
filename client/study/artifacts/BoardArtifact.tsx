@@ -1,3 +1,4 @@
+import { MathAnswerInput } from "../MathAnswerInput.tsx";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import katex from "katex";
 import type { WebTask, BoardEntry, TaskProblem, DiagramOp } from "../../../shared/types.ts";
@@ -58,14 +59,14 @@ function GapAnswer({ entry, onCheck, en }: { entry: BoardEntry; onCheck: NonNull
   return (
     <div className="sm-board-problem-free sm-board-gap-answer">
       <div className="sm-inline-problem-input-row">
-        <input
-          type="text"
-          className="sm-inline-problem-input"
+        <MathAnswerInput
+          en={en}
+          showKeys={!isNumericAnswer(entry.expectedAnswer || "")}
           placeholder={en ? "Your answer…" : "Ta réponse…"}
           value={value}
-          onChange={(e) => { setValue(e.target.value); if (verdict) setVerdict(null); }}
-          onKeyDown={(e) => { if (e.key === "Enter") void submit(); }}
-          aria-label={en ? "Your answer for this line" : "Ta réponse pour cette ligne"}
+          onChange={(v) => { setValue(v); if (verdict) setVerdict(null); }}
+          onEnter={() => void submit()}
+          ariaLabel={en ? "Your answer for this line" : "Ta réponse pour cette ligne"}
         />
         <button type="button" className="sm-btn sm-btn-primary sm-btn-sm" disabled={!value.trim() || busy} onClick={() => void submit()}>
           {en ? "Check" : "Vérifier"}
@@ -477,13 +478,13 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
             <div className="sm-inline-problem-result correct">{en ? "Correct!" : "Correct !"}</div>
           ) : (
             <div className="sm-inline-problem-input-row">
-              <input
-                type="text"
-                className="sm-inline-problem-input"
+              <MathAnswerInput
+                en={en}
+                showKeys={!isNumericAnswer(problem.answer)}
                 placeholder={isNumericAnswer(problem.answer) ? (en ? "Your answer (a number, no units)…" : "Ta réponse (un nombre, sans unité)…") : (en ? "Your answer…" : "Ta réponse…")}
                 value={state.textAnswer}
-                onChange={e => onTextAnswer(e.target.value)}
-                onKeyDown={e => { if (e.key === "Enter" && state.textAnswer.trim()) onSubmit(); }}
+                onChange={onTextAnswer}
+                onEnter={() => { if (state.textAnswer.trim()) onSubmit(); }}
                 disabled={answered}
               />
               <button

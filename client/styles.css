@@ -7551,3 +7551,9 @@ mark.otto-mark { background: linear-gradient(transparent 12%, color-mix(in srgb,
 .ts-board-undo{position:absolute;top:8px;right:8px;z-index:3;font:inherit;font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid var(--line,#d0d5dd);background:var(--surface,#fff);color:inherit;cursor:pointer}
 .ts-board-undo:hover{border-color:currentColor}
 .ts-board-undo:focus-visible{outline:2px solid currentColor;outline-offset:2px}
+
+.sm-math-input{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+.sm-math-keys{display:flex;flex-wrap:wrap;gap:4px}
+.sm-math-key{font:inherit;font-size:12px;min-width:34px;padding:3px 8px;border-radius:8px;border:1px solid var(--line,#d0d5dd);background:var(--surface,#fff);color:inherit;cursor:pointer}
+.sm-math-key:hover{border-color:currentColor}
+.sm-math-key:focus-visible{outline:2px solid currentColor;outline-offset:2px}
