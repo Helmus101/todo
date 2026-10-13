@@ -11,7 +11,7 @@ import { saveQuizLocally, getAllLocalQuizzes, clearLocalQuizzes, getLocalQuiz } 
 import { hydrateLocalThreads, clearLocalChatBoard } from "./localChatBoard.ts";
 import { pushError } from "./errorLog.ts";
 import { useIsPhone } from "./useIsPhone.ts";
-import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard, PageInfoHint } from "./ui.tsx";
+import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard, PageInfoHint, Spinner, ErrorNote } from "./ui.tsx";
 import { t } from "./i18n.ts";
 import { TaskCardRow, TaskFocus, TaskReadOnly } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
@@ -966,7 +966,7 @@ export function App() {
         </div>
       );
     }
-    return <div className="screen"><div className="brand boot"><Logo size={26} /> Otto</div><div className="spinner" /></div>;
+    return <div className="screen"><div className="brand boot"><Logo size={26} /> Otto</div><Spinner /></div>;
   }
   if (!status.loggedIn) {
     // Carry the visitor's pre-account language choice into their new account — otherwise every signup
@@ -1048,7 +1048,7 @@ export function App() {
           </div>
         </main>
       )
-      : <div className="screen"><div className="brand boot"><Logo size={26} /> Otto</div><div className="spinner" /></div>;
+      : <div className="screen"><div className="brand boot"><Logo size={26} /> Otto</div><Spinner /></div>;
   }
 
   // Eisenhower ranking with deadline/VIP/freshness tie-breaks — same bands/cards, just a better order.
@@ -1191,7 +1191,7 @@ export function App() {
                 can wait.") instead of a separate uppercase date label above the title. */}
             {/* Warm, plain, human: a greeting by first name, then the date — no tagline, no progress widgets. */}
             <h1 className="list-head">{(status?.name || "").trim().split(/\s+/)[0] ? (en ? `Hi ${(status?.name || "").trim().split(/\s+/)[0]}.` : `Salut ${(status?.name || "").trim().split(/\s+/)[0]}.`) : todayLong(status?.language)}</h1>
-            {(status?.name || "").trim() ? <p className="page-sub" style={{ marginTop: 6 }}>{todayLong(status?.language)}</p> : null}
+            {(status?.name || "").trim() ? <p className="page-sub mt-2">{todayLong(status?.language)}</p> : null}
             {/* One plain sentence instead of the old "3 active · 1 processing · 5 done" mono readout —
                 that read like debug output, not like something written for a stressed 17-year-old. A second
                 sentence names what's actually next (the hero task) rather than just a count, so the line
@@ -1258,14 +1258,12 @@ export function App() {
                 return handled === 0 ? (
                   connected ? (
                     <div className="empty-state">
-                      <div className="empty-mark"><Logo size={28} /></div>
                       <h3>{en ? `I'm watching ${watching}${who ? `, ${who}` : ""}` : `Je surveille ${watching}${who ? `, ${who}` : ""}`}</h3>
                       <p>{en ? "Homework and tests land here the second I spot them. Until then — this quiet is yours, not empty time." : "Devoirs et contrôles arrivent ici dès que je les repère. D'ici là — ce calme est à toi, pas du temps mort."}</p>
                       <button className="btn primary" disabled={busy} onClick={() => void generate()}>{busy ? (en ? "Looking…" : "Je regarde…") : (en ? "Look again" : "Regarde encore")}</button>
                     </div>
                   ) : (
                     <div className="empty-state">
-                      <div className="empty-mark"><Logo size={28} /></div>
                       <h3>{en ? `Nothing on your list${who ? `, ${who}` : ""} — suspicious` : `Rien sur ta liste${who ? `, ${who}` : ""} — suspect`}</h3>
                       <p>{en
                         ? "Add what you've been putting off — you already know what it is. Or connect an app in Settings and I'll find the deadlines before you do."
@@ -1275,7 +1273,6 @@ export function App() {
                   )
                 ) : (
                   <div className="empty-state">
-                    <div className="empty-mark done"><span className="empty-check">✓</span></div>
                     <h3>{en ? `Clear${who ? `, ${who}` : ""}` : `C'est dégagé${who ? `, ${who}` : ""}`}</h3>
                     <p>{connected
                       ? (en ? `Nothing outstanding. I'm still watching ${watching} — so go get ahead on something that's actually hard.` : `Rien en retard. Je surveille toujours ${watching} — alors prends de l'avance sur quelque chose de vraiment dur.`)
@@ -1503,7 +1500,7 @@ function DueReviews({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] }) {
   useEffect(() => {
     if (openDeck && due && !due.some((d) => d.deckId === openDeck.deckId)) setOpenDeck(null);
   }, [due, openDeck]);
-  if (error) return <p className="rewrite-error small">{en ? "Couldn't load reviews due." : "Impossible de charger les révisions dues."}</p>;
+  if (error) return <ErrorNote small>{en ? "Couldn't load reviews due." : "Impossible de charger les révisions dues."}</ErrorNote>;
   if (!due?.length) return null;
   // Group by DECK (not task) — a task with two decks should show two chips, not one merged count.
   const byDeck = new Map<string, { taskId: string; deckTitle: string; count: number }>();
@@ -1607,7 +1604,7 @@ function WeekLoad({ lang, onTask }: { lang?: "fr" | "en"; onTask: (t: WebTask) =
   // reads as "the popup doesn't work": you click the button and nothing shows up, loading or genuinely
   // empty look identical (blank). Say which one it actually is instead.
   if (!days) return <p className="muted small">{en ? "Finding time for everything…" : "Recherche du temps pour tout…"}</p>;
-  if (error) return <p className="rewrite-error small">{en ? "Couldn't load this week." : "Impossible de charger la semaine."} <button type="button" className="btn xs ghost" onClick={load}>{en ? "Retry" : "Réessayer"}</button></p>;
+  if (error) return <ErrorNote small onRetry={load}>{en ? "Couldn't load this week." : "Impossible de charger la semaine."}</ErrorNote>;
   if (days.every((d) => d.items.length === 0)) return <p className="muted small">{en ? "Your week is still open." : "Ta semaine est encore libre."}</p>;
 
   const max = Math.max(1, ...days.map((d) => d.totalEffort));
@@ -1721,7 +1718,7 @@ function TaskSkeleton() {
   return (
     <div className="loading-screen" aria-busy="true" aria-live="polite">
       <div className="loading-head">
-        <span className="spinner sm" />
+        <Spinner size="sm" />
         <span className="loading-msg">{L("Récupération de ta journée…", "Pulling up your day…")}</span>
       </div>
       <div className="list" aria-hidden="true">
@@ -1964,7 +1961,7 @@ function FlashcardsLibraryPage({ lang, tasks, embedded, userId }: { lang?: "fr" 
         </div>
       )}
       {quizzes.length > 0 ? (
-        <div className="dash-head" style={{ marginTop: "var(--space-4)" }}>
+        <div className="dash-head mt-4">
           <h2>{L("Tes quiz", "Your quizzes")}</h2>
         </div>
       ) : null}
@@ -1986,7 +1983,7 @@ function FlashcardsLibraryPage({ lang, tasks, embedded, userId }: { lang?: "fr" 
       {open ? (
         <TaskModal onClose={() => setOpenId(null)} title={open.deck.title}>
           {!liveOwner ? (
-            <p className="settings-hint" style={{ marginBottom: "var(--space-3)" }}>
+            <p className="settings-hint mb-3">
               {L("Cette source a changé côté serveur — tu peux toujours réviser, mais ta progression ne sera pas synchronisée.", "This deck's source has changed on the server — you can still review it, but progress won't sync.")}
             </p>
           ) : null}
@@ -2003,7 +2000,7 @@ function FlashcardsLibraryPage({ lang, tasks, embedded, userId }: { lang?: "fr" 
       {openQuiz ? (
         <TaskModal onClose={() => setOpenQuizId(null)} title={openQuiz.quiz.title}>
           {!liveQuizOwner ? (
-            <p className="settings-hint" style={{ marginBottom: "var(--space-3)" }}>
+            <p className="settings-hint mb-3">
               {L("Cette source a changé côté serveur — tu peux toujours réviser, mais ta progression ne sera pas synchronisée.", "This quiz's source has changed on the server — you can still review it, but progress won't sync.")}
             </p>
           ) : null}
@@ -2050,7 +2047,7 @@ function AdminPage() {
     <main className="list-wrap">
       <h1 className="list-head">{L("Admin", "Admin")}</h1>
       {error ? (
-        <p className="rewrite-error">{error} <button type="button" className="btn xs ghost" onClick={load}>{L("Réessayer", "Retry")}</button></p>
+        <ErrorNote onRetry={load}>{error}</ErrorNote>
       ) : !metrics ? (
         <p className="settings-hint">{L("Chargement…", "Loading…")}</p>
       ) : (
@@ -2063,7 +2060,7 @@ function AdminPage() {
               </div>
             ))}
           </div>
-          <section className="settings-sec" style={{ marginTop: "var(--space-5)" }}>
+          <section className="settings-sec mt-5">
             <h3>{L("Tâches par source", "Tasks by source")}</h3>
             <div className="set-list">
               {Object.entries(metrics.tasksBySource).sort((a, b) => b[1] - a[1]).map(([src, n]) => (
@@ -2071,7 +2068,7 @@ function AdminPage() {
               ))}
             </div>
           </section>
-          <section className="settings-sec" style={{ marginTop: "var(--space-5)" }}>
+          <section className="settings-sec mt-5">
             <h3>{L("Par utilisateur", "By user")}</h3>
             <div className="admin-table-wrap">
               <table className="admin-table">
@@ -2183,13 +2180,13 @@ function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
   return (
     <main className="list-wrap">
       <div className="dash-head">
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--space-3)" }}>
+        <div className="row-between">
           <h1 className="list-head">{L("Les erreurs que tu ne referas plus.", "The mistakes you won't make twice.")}</h1>
           <button className="btn primary" onClick={() => setShowAddForm(!showAddForm)}>
             {showAddForm ? L("Fermer", "Close") : L("+ Ajouter", "+ Add")}
           </button>
         </div>
-        <p className="page-sub" style={{ marginTop: 10 }}>
+        <p className="page-sub mt-3">
           {totalMistakes > 0 ? (
             <>{totalMistakes} {totalMistakes === 1 ? L("erreur notée", "mistake logged") : L("erreurs notées", "mistakes logged")} · {groups.length} {groups.length === 1 ? L("matière", "subject") : L("matières", "subjects")}</>
           ) : (
@@ -2199,19 +2196,18 @@ function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
       </div>
 
       {profileError ? (
-        <p className="rewrite-error">{L("Certaines infos n'ont pas pu être chargées.", "Some info couldn't load.")} <button type="button" className="btn xs ghost" onClick={loadProfile}>{L("Réessayer", "Retry")}</button></p>
+        <ErrorNote onRetry={loadProfile}>{L("Certaines infos n'ont pas pu être chargées.", "Some info couldn't load.")}</ErrorNote>
       ) : null}
 
       {groups.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)", marginTop: "var(--space-4)" }}>
+        <div className="stack-3 mt-4">
           <input
-            className="addinput"
-            placeholder={L("Filtrer par matière...", "Filter by subject...")}
+            className="addinput mb-0"
+            placeholder={L("Filtrer par matière...", "Filter by subject...")} aria-label={L("Filtrer par matière...", "Filter by subject...")}
             value={filterSubject}
             onChange={(e) => setFilterSubject(e.target.value)}
-            style={{ marginBottom: 0 }}
           />
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--space-3)" }}>
+          <div className="row-between">
             <p className="muted small">
               {filteredGroups.length} {filteredGroups.length === 1 ? L("résultat", "result") : L("résultats", "results")}
             </p>
@@ -2225,11 +2221,11 @@ function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
       {showAddForm && (
         <div className="errorlog-addform">
           <div className="addrow">
-            <input className="addinput sm" placeholder={L("ex : Physique", "e.g. Physics")} value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={60} />
+            <input className="addinput sm" placeholder={L("ex : Physique", "e.g. Physics")} aria-label={L("ex : Physique", "e.g. Physics")} value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={60} />
           </div>
-          <textarea className="errorlog-textarea" rows={1} placeholder={L("La question ?", "What was the question?")} value={question} onChange={(e) => setQuestion(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
-          <textarea className="errorlog-textarea" rows={1} placeholder={L("Ce qui a mal tourné ?", "What went wrong?")} value={mistake} onChange={(e) => setMistake(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
-          <textarea className="errorlog-textarea" rows={1} placeholder={L("Ce que tu essaieras la prochaine fois ?", "What will you try next time?")} value={fix} onChange={(e) => setFix(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
+          <textarea className="errorlog-textarea" rows={1} placeholder={L("La question ?", "What was the question?")} aria-label={L("La question ?", "What was the question?")} value={question} onChange={(e) => setQuestion(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
+          <textarea className="errorlog-textarea" rows={1} placeholder={L("Ce qui a mal tourné ?", "What went wrong?")} aria-label={L("Ce qui a mal tourné ?", "What went wrong?")} value={mistake} onChange={(e) => setMistake(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
+          <textarea className="errorlog-textarea" rows={1} placeholder={L("Ce que tu essaieras la prochaine fois ?", "What will you try next time?")} aria-label={L("Ce que tu essaieras la prochaine fois ?", "What will you try next time?")} value={fix} onChange={(e) => setFix(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
           <button type="button" className="btn primary" disabled={saving || !subject.trim() || !question.trim()} onClick={() => void add()}>
             {saving ? L("Enregistrement…", "Saving…") : L("Ajouter au journal", "Add to log")}
           </button>
@@ -2240,7 +2236,6 @@ function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
         <p className="muted small">{L("Récupération de ton journal…", "Pulling up your log…")}</p>
       ) : groups.length === 0 ? (
         <div className="empty-state">
-          <div className="empty-mark"><span className="empty-check">✓</span></div>
           <h3>{L("Aucune erreur notée. Soit tu maîtrises, soit tu évites.", "No mistakes logged. Either you've mastered it or you're avoiding it.")}</h3>
           <p>{L("Note ta première erreur. C'est là que tu progresses vraiment.", "Log your first mistake. That's where you actually improve.")}</p>
           <button className="btn primary" onClick={() => setShowAddForm(true)}>{L("Ajouter une erreur", "Add a mistake")}</button>
@@ -2259,7 +2254,7 @@ function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
                     <li key={e.id} className="errorlog-entry">
                       <div className="errorlog-entry-head">
                         <span className="muted">{new Date(e.createdAt).toLocaleDateString(en ? "en-GB" : "fr-FR", { day: "numeric", month: "short", year: "numeric" })}</span>
-                        <button className="x" title={L("Supprimer", "Remove")} onClick={() => void remove(e.id)}>×</button>
+                        <button className="x" title={L("Supprimer", "Remove")} aria-label={L("Supprimer", "Remove")} onClick={() => void remove(e.id)}>×</button>
                       </div>
                       <p><strong>{L("Question : ", "Question: ")}</strong>{e.question}</p>
                       {e.mistake ? <p><strong>{L("Erreur : ", "Mistake: ")}</strong>{e.mistake}</p> : null}
@@ -2308,7 +2303,6 @@ function StandaloneStudyEntry({ tasks, setTasks, status, notify, navigate }: {
     return (
       <main className="list-wrap">
         <div className="empty-state">
-          <div className="empty-mark"><GraduationCap /></div>
           <h3>{en ? "Study whenever you want" : "Révise quand tu veux"}</h3>
           <p>{en ? "Not tied to a task — a free workspace with notes, materials, and Otto's help." : "Sans tâche associée — un espace libre avec notes, ressources, et l'aide d'Otto."}</p>
           <button className="btn primary" disabled={starting} onClick={start}>{starting ? (en ? "Starting…" : "Démarrage…") : (en ? "Enter study mode" : "Entrer en mode étude")}</button>
@@ -2640,7 +2634,7 @@ function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" | "en"; 
   return (
     <main className="list-wrap studylog-page">
       <h1 className="list-head">{phoneOnly ? L("Tes cartes", "Your flashcards") : L("Journal", "Journal")}</h1>
-      <p className="page-sub" style={{ marginTop: 10 }}>{phoneOnly
+      <p className="page-sub mt-3">{phoneOnly
         ? L("Révise tes cartes ici — le reste d'Otto marche mieux sur un plus grand écran.", "Review your flashcards here — the rest of Otto works better on a bigger screen.")
         : L("Garde ce que tu as appris. Reviens à ce qui compte.", "Keep what you learned. Come back to what matters.")}</p>
 
@@ -2734,7 +2728,7 @@ function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" | "en"; 
                 </div>
               ) : null}
               <textarea className="studylog-textarea" rows={14}
-                placeholder={L("Qu'as-tu appris aujourd'hui ?", "What did you learn today?")}
+                placeholder={L("Qu'as-tu appris aujourd'hui ?", "What did you learn today?")} aria-label={L("Qu'as-tu appris aujourd'hui ?", "What did you learn today?")}
                 value={text} onChange={(e) => setText(e.target.value)} maxLength={4000} />
               <div className="studylog-actions">
                 <button type="button" className="btn primary" disabled={saving || !text.trim()} onClick={() => void save()}>
@@ -2927,9 +2921,9 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
     <main className="settings-page">
       {/* The prototype's Settings head: "Set the bar for Otto." + "Your account, your connections, your standards." */}
       <h1 className="list-head">{L("Fixe le niveau d'exigence d'Otto.", "Set the bar for Otto.")}</h1>
-      <p className="page-sub" style={{ marginTop: 10, marginBottom: "var(--space-6)" }}>{L("Ton compte, tes connexions, tes exigences.", "Your account, your connections, your standards.")}</p>
+      <p className="page-sub mt-3 mb-6">{L("Ton compte, tes connexions, tes exigences.", "Your account, your connections, your standards.")}</p>
       {profileError ? (
-        <p className="rewrite-error">{L("Certaines infos du profil n'ont pas pu être chargées.", "Some profile info couldn't load.")} <button type="button" className="btn xs ghost" onClick={loadProfile}>{L("Réessayer", "Retry")}</button></p>
+        <ErrorNote onRetry={loadProfile}>{L("Certaines infos du profil n'ont pas pu être chargées.", "Some profile info couldn't load.")}</ErrorNote>
       ) : null}
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.03s" }}>
@@ -2976,7 +2970,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
         </div>
         <div className="danger-zone">
           <div className="modal-row">
-            <span className="lbl">{L("Supprimer le compte", "Delete account")}<span className="settings-hint" style={{ margin: 0 }}>{L("Tâches, profil, connexions — irréversible.", "Tasks, profile, connections — can't be undone.")}</span></span>
+            <span className="lbl">{L("Supprimer le compte", "Delete account")}<span className="settings-hint m-0">{L("Tâches, profil, connexions — irréversible.", "Tasks, profile, connections — can't be undone.")}</span></span>
             <button
               className="btn xs danger"
               disabled={deletingAccount}
@@ -3176,11 +3170,11 @@ function PronoteTile({ status: mainStatus, onStatusUpdate, onChanged }: { status
       {status.connected && <div className="int-accounts"><div className="int-acct"><span className="int-acct-email">{status.username}</span></div></div>}
       {open && !status.connected && (
         <div className="pronote-form">
-          <input className="addinput sm" placeholder={L("URL Pronote de ton établissement (ex : https://0000000a.index-education.net/pronote/eleve.html)", "Your school's Pronote URL (e.g. https://0000000a.index-education.net/pronote/eleve.html)")}
+          <input className="addinput sm" placeholder={L("URL Pronote de ton établissement (ex : https://0000000a.index-education.net/pronote/eleve.html)", "Your school's Pronote URL (e.g. https://0000000a.index-education.net/pronote/eleve.html)")} aria-label={L("URL Pronote de ton établissement (ex : https://0000000a.index-education.net/pronote/eleve.html)", "Your school's Pronote URL (e.g. https://0000000a.index-education.net/pronote/eleve.html)")}
             value={url} onChange={(e) => setUrl(e.target.value)} disabled={busy} />
           <div className="pronote-form-row">
-            <input className="addinput sm" placeholder={L("Identifiant", "Username")} value={username} onChange={(e) => setUsername(e.target.value)} disabled={busy} />
-            <input className="addinput sm" type="password" placeholder={L("Mot de passe", "Password")} value={password}
+            <input className="addinput sm" placeholder={L("Identifiant", "Username")} aria-label={L("Identifiant", "Username")} value={username} onChange={(e) => setUsername(e.target.value)} disabled={busy} />
+            <input className="addinput sm" type="password" placeholder={L("Mot de passe", "Password")} aria-label={L("Mot de passe", "Password")} value={password}
               onChange={(e) => setPassword(e.target.value)} disabled={busy}
               onKeyDown={(e) => { if (e.key === "Enter") void connect(); }} />
           </div>
@@ -3516,7 +3510,7 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
               <button type="button" className={`btn xs ob-track-btn ${track === "ap" ? "" : "ghost"}`} onClick={() => void saveTrack("ap")}>AP</button>
               <button type="button" className={`btn xs ob-track-btn ${track === "other" ? "" : "ghost"}`} onClick={() => void saveTrack("other")}>{L("Autre (collège, etc.)", "Other (middle school, etc.)")}</button>
             </div>
-            <p className="onboard-lead" style={{ marginTop: 20 }}>{L("Ta langue", "Your language")}</p>
+            <p className="onboard-lead mt-5">{L("Ta langue", "Your language")}</p>
             {/* Two buttons, not the full PreferencesFields block: track was ALREADY picked above on this
                 same step, and PreferencesFields would render its own (duplicate, unset-looking) track
                 picker plus fields onboarding never needed. Language saves server-side immediately — the
@@ -3537,13 +3531,13 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
           <div className="onboard-step">
             <h2>{L("Ta classe", "Your classes")}</h2>
             <p className="onboard-lead">{L("Otto règle son niveau et classe tes cours par matière.", "Otto pitches his level to you and files your coursework by subject.")}</p>
-            <p className="onboard-lead" style={{ marginTop: 12 }}>{L("Ton année", "Your year")}</p>
+            <p className="onboard-lead mt-3">{L("Ton année", "Your year")}</p>
             <div className="onboard-chips">
               {["Seconde", "Première", "Terminale", "IB DP1", "IB DP2", "Grade 9", "Grade 10", "Grade 11", "Grade 12"].map((y) => (
                 <button key={y} type="button" className={`btn xs ${year === y ? "" : "ghost"}`} onClick={() => setYear(y)} aria-pressed={year === y}>{y}</button>
               ))}
             </div>
-            <p className="onboard-lead" style={{ marginTop: 18 }}>{L("Tes matières", "Your subjects")}</p>
+            <p className="onboard-lead mt-4">{L("Tes matières", "Your subjects")}</p>
             <div className="onboard-chips">
               {COMMON_SUBJECTS.filter((x) => x !== "Other").map((x) => (
                 <button key={x} type="button" className={`btn xs ${subs.includes(x) ? "" : "ghost"}`} onClick={() => setSubs((cur) => (cur.includes(x) ? cur.filter((c) => c !== x) : [...cur, x]))} aria-pressed={subs.includes(x)}>{x}</button>
@@ -4044,7 +4038,7 @@ function ProfileEditor() {
   const [loadError, setLoadError] = useState(false);
   const load = () => { setLoadError(false); void api.profile().then(setP).catch(() => setLoadError(true)); };
   useEffect(load, []);
-  if (loadError) return <p className="rewrite-error">{L("Impossible de charger ton profil.", "Couldn't load your profile.")} <button type="button" className="btn xs ghost" onClick={load}>{L("Réessayer", "Retry")}</button></p>;
+  if (loadError) return <ErrorNote onRetry={load}>{L("Impossible de charger ton profil.", "Couldn't load your profile.")}</ErrorNote>;
   if (!p) return <p className="muted small">{L("Chargement…", "Loading…")}</p>;
   const saveErr = () => L("Ça n'a pas été enregistré — réessaie.", "That didn't save — give it another try.");
   const count = (p.name ? 1 : 0) + (p.about ? 1 : 0) + p.preferences.length + p.people.length + p.projects.length + p.courses.length;
@@ -4093,7 +4087,7 @@ function NameRow({ name, onSave }: { name: string; onSave: (v: string) => Promis
     <div className="prof-group">
       <div className="prof-label">{L("Nom", "Name")}</div>
       <div className="addrow">
-        <input className="addinput sm" placeholder={L("Comment Otto doit-il t'appeler ?", "What should Otto call you?")} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void onSave(text.trim()); }} />
+        <input className="addinput sm" placeholder={L("Comment Otto doit-il t'appeler ?", "What should Otto call you?")} aria-label={L("Comment Otto doit-il t'appeler ?", "What should Otto call you?")} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void onSave(text.trim()); }} />
         <button className="btn" disabled={text.trim() === name.trim()} onClick={() => void onSave(text.trim())}>{L("Enregistrer", "Save")}</button>
       </div>
     </div>
@@ -4108,7 +4102,7 @@ function AboutRow({ about, onSave }: { about: string; onSave: (v: string) => Pro
     <div className="prof-group">
       <div className="prof-label">{L("À propos de toi", "About you")}</div>
       <div className="addrow">
-        <input className="addinput sm" placeholder={L("Une ligne : qui tu es / comment tu travailles", "One line: who you are / how you work")} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void onSave(text.trim()); }} />
+        <input className="addinput sm" placeholder={L("Une ligne : qui tu es / comment tu travailles", "One line: who you are / how you work")} aria-label={L("Une ligne : qui tu es / comment tu travailles", "One line: who you are / how you work")} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void onSave(text.trim()); }} />
         <button className="btn" disabled={text.trim() === about.trim()} onClick={() => void onSave(text.trim())}>{L("Enregistrer", "Save")}</button>
       </div>
     </div>
@@ -4123,7 +4117,7 @@ function AddRow({ placeholder, onAdd }: { placeholder: string; onAdd: (v: string
   const go = async () => { const v = text.trim(); if (!v) return; try { await onAdd(v); setText(""); } catch { /* text stays — onAdd already surfaced the error */ } };
   return (
     <div className="addrow">
-      <input className="addinput sm" placeholder={placeholder} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void go(); }} />
+      <input className="addinput sm" placeholder={placeholder} aria-label={placeholder} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void go(); }} />
       <button className="btn" disabled={!text.trim()} onClick={() => void go()}>{L("Ajouter", "Add")}</button>
     </div>
   );
@@ -4177,7 +4171,7 @@ function AddTask({ onAdded }: { onAdded: Dispatch<SetStateAction<WebTask[]>> }) 
       <span className="add-plus" aria-hidden="true">+</span>
       <input
         className="add-task-input"
-        placeholder={L("Qu'est-ce que tu te dois de faire ensuite ?", "What do you owe yourself next?")}
+        placeholder={L("Qu'est-ce que tu te dois de faire ensuite ?", "What do you owe yourself next?")} aria-label={L("Qu'est-ce que tu te dois de faire ensuite ?", "What do you owe yourself next?")}
         value={text}
         disabled={busy}
         onChange={(e) => setText(e.target.value)}

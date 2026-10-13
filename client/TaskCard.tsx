@@ -17,7 +17,7 @@ import { BookOpen, MessageCircle, Layers, CircleHelp, Rows3 } from "lucide-react
 import {
   LangContext, useLang, todayIso, fmtDate, relTime, statusChip, subtitle, quadrantLabel, sourceAttributionLine,
   fmtWhen, TAB_GROUP, openTab, openTabs, autoOpenTaskDocs,
-  withInlineLinks, stripStrayMarkdown, renderNoteBody, renderChatText, CondensedUserMessage, FlashcardDeck, QuizPlayer, TaskModal, useNotify, useThinkingWord,
+  withInlineLinks, stripStrayMarkdown, renderNoteBody, renderChatText, CondensedUserMessage, FlashcardDeck, QuizPlayer, TaskModal, useNotify, useThinkingWord, Spinner,
 } from "./ui.tsx";
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
 import { createEchoFilter } from "./voice/echoGuard.ts";
@@ -1238,7 +1238,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                     ) : null}
                     <input
                       className="step-input"
-                      placeholder={s.options?.length ? L("Ou écris ta propre réponse…", "Or type your own answer…") : L("Écris ta réponse…", "Type your answer…")}
+                      placeholder={s.options?.length ? L("Ou écris ta propre réponse…", "Or type your own answer…") : L("Écris ta réponse…", "Type your answer…")} aria-label={s.options?.length ? L("Ou écris ta propre réponse…", "Or type your own answer…") : L("Écris ta réponse…", "Type your answer…")}
                       value={decided[i] || ""}
                       disabled={answering === i}
                       onChange={(e) => setDecided((d) => ({ ...d, [i]: e.target.value }))}
@@ -1282,7 +1282,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                             instead of the student going to find it themselves. */}
                         {sub.automatable && !sub.done ? (
                           <button type="button" className="btn xs ghost substep-run" disabled={subRunning} onClick={() => void runSubstep(i, si)}>
-                            {subRunning ? <span className="spinner xs" aria-hidden="true" /> : null}
+                            {subRunning ? <Spinner size="xs" /> : null}
                             {subRunning ? L("Otto cherche…", "Otto's looking…") : L("Laisser Otto répondre", "Let Otto answer")}
                           </button>
                         ) : null}
@@ -1295,7 +1295,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                   // Otto can still feel like too much in the moment, so the option to split it further is
                   // always one tap away instead of being reserved for a detected big project.
                   <button type="button" className="btn xs ghost substep-expand" disabled={expanding === i} onClick={() => void expandStep(i)}>
-                    {expanding === i ? <span className="spinner xs" aria-hidden="true" /> : null}
+                    {expanding === i ? <Spinner size="xs" /> : null}
                     {expanding === i ? L("Découpage…", "Breaking down…") : L("Détailler cette étape", "Break this step down")}
                   </button>
                 ) : null}

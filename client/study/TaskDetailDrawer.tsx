@@ -38,7 +38,7 @@ export function TaskDetailDrawer({ task, onClose, onToggleStep, onToggleSubstep,
     <SmSurface variant="drawer" closing={closing} className="sm-drawer sm-drawer-task">
       <div className="sm-drawer-header">
         <span>{L("TÂCHE", "TASK")}</span>
-        <button className="sm-drawer-close" onClick={doClose}>×</button>
+        <button className="sm-drawer-close" aria-label={L("Fermer", "Close")} onClick={doClose}>×</button>
       </div>
       <div className="sm-drawer-body">
         <h3 className="sm-task-detail-title">{stripStrayMarkdown(task.title)}</h3>

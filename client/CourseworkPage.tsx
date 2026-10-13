@@ -93,7 +93,7 @@ export function Coursework({ onTasksChanged }: { onTasksChanged?: () => void }) 
             <button key={s} type="button" role="radio" aria-checked={subject === s} className={`cw-chip${subject === s ? " on" : ""}`} onClick={() => setSubject(s)}>{s === "Other" ? L("Autre…", "Other…") : s}</button>
           ))}
         </div>
-        {subject === "Other" && <input className="cw-custom" value={custom} maxLength={60} placeholder={L("Nom de la matière", "Subject name")} onChange={(e) => setCustom(e.target.value)} autoFocus />}
+        {subject === "Other" && <input className="cw-custom" value={custom} maxLength={60} placeholder={L("Nom de la matière", "Subject name")} aria-label={L("Nom de la matière", "Subject name")} onChange={(e) => setCustom(e.target.value)} autoFocus />}
 
         <div className="cw-step"><span className="cw-num">2</span>{L("Document", "Document")}</div>
         <div

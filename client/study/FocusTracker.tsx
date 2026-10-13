@@ -252,7 +252,7 @@ export function FocusTracker({ enabled, onMetrics, onSessionEnd }: FocusTrackerP
             {liveScore >= 70 ? <Target size={16} aria-hidden="true" /> : liveScore >= 40 ? "◐" : "○"}
           </span>
           <span>{liveScore}</span>
-          <span style={{ opacity: 0.6, fontSize: "10px" }}>focus</span>
+          <span className="muted-11">focus</span>
         </>
       )}
     </div>

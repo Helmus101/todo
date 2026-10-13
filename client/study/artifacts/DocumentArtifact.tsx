@@ -90,7 +90,7 @@ export function DocumentArtifact({ url, title }: DocumentArtifactProps) {
         </>
       ) : (
         <div className="sm-document-editor">
-          <textarea placeholder={L("Commence à écrire ici.", "Start writing here.")} />
+          <textarea placeholder={L("Commence à écrire ici.", "Start writing here.")} aria-label={L("Commence à écrire ici.", "Start writing here.")} />
         </div>
       )}
     </div>

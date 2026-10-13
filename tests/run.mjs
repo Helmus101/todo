@@ -1968,7 +1968,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     check("the formula-only safety net fires on bare maths only (never on a student's own equations written another way) and its question stays on what they wrote",
       /&& bareMath\(reply\)\s*\)/.test(net) && !/equationAhead/.test(net) && /what you just wrote/.test(readFileSync(new URL("../server/tutorAdapt.ts", import.meta.url), "utf8")) && !/go back to your thinking/.test(readFileSync(new URL("../server/tutorAdapt.ts", import.meta.url), "utf8"))); }
   { const mc = readFileSync(new URL("../client/minimal.css", import.meta.url), "utf8");
-    check("briefs (note popups and the study-mode brief) read as a spacious column: generous leading, block spacing and padding, phone-safe", /\.note-popup, \.sm-brief-body \{[^}]*line-height: 1\.75/.test(mc) && /\.note-popup-body p, \.sm-brief-body p \{[^}]*margin: 0 0 16px/.test(mc) && /\.note-list li[^{]*\{[^}]*margin: 0 0 10px/.test(mc) && /@media \(max-width: 640px\)[^}]*\.note-popup/.test(mc)); }
+    check("briefs (note popups and the study-mode brief) read as a spacious column: generous leading, block spacing and padding, phone-safe", /\.note-popup, \.sm-brief-body \{[^}]*line-height: 1\.75/.test(mc) && /\.note-popup-body p, \.sm-brief-body p \{[^}]*margin: 0 0 var\(--space-4\)/.test(mc) && /\.note-list li[^{]*\{[^}]*margin: 0 0 var\(--space-3\)/.test(mc) && /@media \(max-width: 640px\)[^}]*\.note-popup/.test(mc)); }
   { const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8"), st = readFileSync(new URL("../server/store.ts", import.meta.url), "utf8");
     check("every brief is written direct and critical with no filler (BRIEF_STYLE rides on the CREATE_NOTE tool)", /BRIEF_STYLE = "STYLE: direct and critical, zero filler/.test(cl) && /traps and common errors/.test(cl) && /leave the app\. " \+ BRIEF_STYLE/.test(cl));
     check("loadState validates a stale/bypassed cached row with a tiny updated_at read instead of re-downloading the whole profile+tasks blob", /select\("updated_at"\)/.test(st) && /held\.ver/.test(st) && /updated_at === held\.ver/.test(st) && /studyProfile,updated_at/.test(st)); }
@@ -2149,7 +2149,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     check("commit() is write-behind (scheduler) except the journal saves; shutdown and tab-hide flush it", /scheduler\.schedule\(email, \{ tasks: localTasks, profile: localProfile \}\)/.test(idx) && /process\.once\(sig/.test(idx) && /\/api\/sync\/flush/.test(idx) && !/review[\s\S]{0,900}awaitCloud: true[\s\S]{0,40}\n\}\)\);\n\/\/ "Not something I need/.test(idx)); }
   { const css = readFileSync(new URL("../client/minimal.css", import.meta.url), "utf8"); const main = readFileSync(new URL("../client/main.tsx", import.meta.url), "utf8"); const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
     check("minimal UI layer is loaded last and removes shadows, gradients, radii, uppercase labels, cream and the orange accent", /import "\.\/minimal\.css";\s*$/m.test(main.replace(/\n\s*\n/g, "\n").trim() + "\n") || main.indexOf("minimal.css") > main.indexOf("tour.css"));
-    check("minimal layer: one warm ink accent, no shadows/gradients/uppercase", /--accent: #26221f/.test(css) && /box-shadow: none !important/.test(css) && /text-transform: none !important/.test(css) && /background-image: none !important/.test(css));
+    check("minimal layer: one warm ink accent, no shadows/gradients/uppercase", /--accent: #26221f/.test(readFileSync(new URL("../client/styles.css", import.meta.url), "utf8")) && /box-shadow: none !important/.test(css) && /text-transform: none !important/.test(css) && /background-image: none !important/.test(css));
     check("landing is one headline, one sentence, one button — no feature cards, numbering or kickers", /landing-min-main/.test(app) && !/feature-number-framer|sample-task-framer|hero-title-framer/.test(app));
     check("no hard-coded orange accent remains in the stylesheets", !/#ff752b|#f26a22|#e05a18|#d97757/i.test(readFileSync(new URL("../client/styles.css", import.meta.url), "utf8") + readFileSync(new URL("../client/tally.css", import.meta.url), "utf8"))); }
   { const css = readFileSync(new URL("../client/minimal.css", import.meta.url), "utf8"); const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8"); const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
@@ -3612,7 +3612,7 @@ section("Client double-check affordance — the same oracle, rendered as a learn
     return !/api\./.test(body) && !/onSend/.test(body);
   })());
   const cssSrc = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
-  check("the notice's styles exist (quiet amber, not an alarm-red banner)", /\.sm-ai-calc-check \{/.test(cssSrc) && /#d97706/.test(cssSrc));
+  check("the notice's styles exist (quiet grey, not an alarm-red banner)", /\.sm-ai-calc-check \{[^}]*var\(--ink-2\)/.test(cssSrc));
 }
 
 section("Flashcards the student doesn't NEED to learn (card.notNeeded) — excluded, fed back, scoped");

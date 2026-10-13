@@ -67,7 +67,7 @@ if (typeof window !== "undefined") {
     if (SENTRY_DSN) Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { scope: label } });
     if (!import.meta.env.DEV) return;
     const box = document.createElement("div");
-    box.style.cssText = "position:fixed;inset:auto 8px 8px 8px;z-index:99999;background:#c6462f;color:#fff;padding:10px 12px;border-radius:8px;font:12px monospace;max-height:40vh;overflow:auto;white-space:pre-wrap;";
+    box.style.cssText = "position:fixed;inset:auto 8px 8px 8px;z-index:99999;background:#c40000;color:#fff;padding:10px 12px;border-radius:8px;font:12px monospace;max-height:40vh;overflow:auto;white-space:pre-wrap;";
     box.textContent = `${label}: ${err instanceof Error ? (err.message + "\n" + (err.stack || "")) : String(err)}`;
     document.body.appendChild(box);
   };

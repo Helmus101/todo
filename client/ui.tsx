@@ -30,6 +30,22 @@ export function useLang(): (fr: string, en: string) => string {
   return (fr: string, en: string) => (lang === "en" ? en : fr);
 }
 
+/** The app's one loading indicator. */
+export function Spinner({ size }: { size?: "xs" | "sm" }) {
+  return <span className={`spinner${size ? ` ${size}` : ""}`} aria-hidden="true" />;
+}
+
+/** The app's one inline error line, with an optional Retry. */
+export function ErrorNote({ children, onRetry, small }: { children: ReactNode; onRetry?: () => void; small?: boolean }) {
+  const L = useLang();
+  return (
+    <p className={`rewrite-error${small ? " small" : ""}`} role="alert">
+      {children}
+      {onRetry && <> <button type="button" className="btn xs ghost" onClick={onRetry}>{L("Réessayer", "Retry")}</button></>}
+    </p>
+  );
+}
+
 /** A small dismissible callout shown the FIRST time a student encounters a specific feature — Study Mode's
  *  desk, the tutor Board, canvas mode, a flashcard review, Journal, etc. Distinct from the one-time signup
  *  Onboarding() flow (App.tsx): that's a deliberately SHORT linear tour (name, track/language, one-screen
@@ -660,7 +676,7 @@ export function renderChatText(text: string): ReactNode {
           rows.push(splitRow(lines[j].trim())); j++;
         }
         blocks.push(
-          <div key={bk++} className="note-table-wrap" style={{ margin: "6px 0" }}>
+          <div key={bk++} className="note-table-wrap my-2">
             <table className="note-table">
               <thead><tr>{header.map((c, ci) => <th key={ci}>{boldify(c)}</th>)}</tr></thead>
               <tbody>{rows.map((r, ri) => <tr key={ri}>{r.map((c, ci) => <td key={ci}>{boldify(c)}</td>)}</tr>)}</tbody>
@@ -826,7 +842,7 @@ function StudyHelpPanel({ taskId, card }: { taskId?: string; card: StudyHelpCard
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) send(); }}
-              placeholder={L("Demande un indice…", "Ask for a hint…")}
+              placeholder={L("Demande un indice…", "Ask for a hint…")} aria-label={L("Demande un indice…", "Ask for a hint…")}
               disabled={busy}
             />
             <VoiceControls
@@ -1297,7 +1313,7 @@ export function PracticeProblemCard({ problem, taskId, onAnswered }: { problem: 
   <div className="practice-problem-row">
   <input
   type="text" className="practice-problem-input" value={answer}
-  placeholder={L("Ta réponse…", "Your answer…")}
+  placeholder={L("Ta réponse…", "Your answer…")} aria-label={L("Ta réponse…", "Your answer…")}
   disabled={result !== null}
   onChange={(e) => { setAnswer(e.target.value); setResult(null); }}
   onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) void check(); }}

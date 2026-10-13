@@ -38,7 +38,7 @@ export function AudioPanel({ audioType, volume, playing, customAudioName, spotif
     <SmSurface variant="drawer" closing={closing} className="sm-drawer sm-drawer-audio">
       <div className="sm-drawer-header">
         <span>AUDIO</span>
-        <button className="sm-drawer-close" onClick={doClose}>×</button>
+        <button className="sm-drawer-close" aria-label={L("Fermer", "Close")} onClick={doClose}>×</button>
       </div>
       <div className="sm-drawer-body">
         <div className="sm-audio-tracks">
@@ -92,7 +92,7 @@ export function AudioPanel({ audioType, volume, playing, customAudioName, spotif
               value={spotifyInput}
               onChange={(e) => setSpotifyInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && submitSpotify()}
-              placeholder="https://open.spotify.com/playlist/…"
+              placeholder="https://open.spotify.com/playlist/…" aria-label="https://open.spotify.com/playlist/…"
             />
             <button className="sm-btn sm-btn-primary sm-btn-sm" onClick={submitSpotify} disabled={!spotifyInput.trim()}>{L("Ajouter", "Add")}</button>
           </div>
@@ -100,11 +100,11 @@ export function AudioPanel({ audioType, volume, playing, customAudioName, spotif
           {/* Spotify's own official embed widget — it has its own play/pause/volume, so ours don't apply here. */}
           {audioType === "spotify" && spotifyEmbedUrl && (
             <iframe
-              className="sm-spotify-embed"
+              className="sm-spotify-embed mt-2"
               src={spotifyEmbedUrl}
               width="100%"
               height="152"
-              style={{ border: 0, borderRadius: "12px", marginTop: "8px" }}
+              style={{ border: 0, borderRadius: "var(--radius)" }}
               allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
               loading="lazy"
               title="Spotify player"
@@ -130,9 +130,8 @@ export function AudioPanel({ audioType, volume, playing, customAudioName, spotif
 
         {audioType !== "silence" && audioType !== "spotify" && (
           <button
-            className="sm-btn sm-btn-ghost"
+            className="sm-btn sm-btn-ghost mt-2"
             onClick={() => onChange(audioType, volume, !playing)}
-            style={{ marginTop: "8px" }}
           >
             {playing ? L("Pause", "Pause") : L("Lecture", "Play")}
           </button>

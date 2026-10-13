@@ -985,7 +985,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
               );
             })()}
             <p>{L("Qu'est-ce qui t'a fait « tilt » aujourd'hui, et qu'est-ce que tu ferais différemment la prochaine fois ?", "What's one thing that clicked today, and what would you do differently next time?")}</p>
-            <textarea className="tutor-reflect-input" rows={4} autoFocus value={reflectText} onChange={(e) => setReflectText(e.target.value)} placeholder={L("Écris quelques mots… (facultatif)", "A few words… (optional)")} />
+            <textarea className="tutor-reflect-input" rows={4} autoFocus value={reflectText} onChange={(e) => setReflectText(e.target.value)} placeholder={L("Écris quelques mots… (facultatif)", "A few words… (optional)")} aria-label={L("Écris quelques mots… (facultatif)", "A few words… (optional)")} />
             <div className="tutor-reflect-actions">
               <button type="button" className="btn ghost" onClick={() => { setReflectOpen(false); void endSession(""); }}>{L("Passer", "Skip")}</button>
               <button type="button" className="btn primary" onClick={() => { setReflectOpen(false); void endSession(reflectText); }}>{L("Enregistrer et terminer", "Save & end")}</button>

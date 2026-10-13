@@ -313,7 +313,7 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
           {typing && !hidden && (
             <input
               ref={textRef} className="tc-text" style={{ left: typing.x, top: typing.y, color }} value={typing.value}
-              placeholder={L("Écris ici…", "Type here…")}
+              placeholder={L("Écris ici…", "Type here…")} aria-label={L("Écris ici…", "Type here…")}
               onChange={(e) => setTyping({ ...typing, value: e.target.value })}
               onKeyDown={(e) => { if (e.key === "Enter") commitText(); if (e.key === "Escape") setTyping(null); }}
               onBlur={commitText}

@@ -1139,12 +1139,12 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
   // ── Phone block ───────────────────────────────────────────────────────────
   if (isPhone) {
     return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh", padding: "32px", textAlign: "center", backgroundColor: "var(--bg)", color: "var(--ink)" }}>
-        <h2 style={{ marginBottom: "12px", fontWeight: 600, fontFamily: "var(--display)", letterSpacing: "var(--tracking-tight)" }}>{language === "en" ? "Study Mode requires a larger screen" : "Le mode révision demande un écran plus grand"}</h2>
-        <p style={{ color: "var(--ink-2)", lineHeight: 1.6, maxWidth: "300px" }}>{language === "en"
+      <div className="screen-center">
+        <h2 className="mb-3">{language === "en" ? "Study Mode requires a larger screen" : "Le mode révision demande un écran plus grand"}</h2>
+        <p>{language === "en"
           ? "Study Mode is designed for laptop and iPad. Continue using Otto on this device, and switch to a larger screen to start a study session."
           : "Le mode révision est conçu pour l'ordinateur et l'iPad. Continue d'utiliser Otto sur cet appareil, et passe à un écran plus grand pour lancer une session."}</p>
-        <button onClick={onExit} style={{ marginTop: "24px", padding: "12px 24px", borderRadius: "var(--radius-sm)", border: "1px solid var(--line)", background: "none", color: "var(--ink)", cursor: "pointer" }}>{language === "en" ? "← Back to tasks" : "← Retour aux tâches"}</button>
+        <button className="btn" onClick={onExit}>{language === "en" ? "← Back to tasks" : "← Retour aux tâches"}</button>
       </div>
     );
   }
@@ -1236,7 +1236,7 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
               {focusCamera.tracking.concentration >= 70 ? <Target size={16} aria-hidden="true" /> : focusCamera.tracking.concentration >= 40 ? "◐" : "○"}
             </span>
             <span>{focusCamera.tracking.concentration}</span>
-            <span style={{ opacity: 0.6, fontSize: 10 }}>
+            <span className="muted-11">
               {(() => { const g = GAZE_LABELS[focusCamera.tracking.gazeStatus] || [focusCamera.tracking.gazeStatus, focusCamera.tracking.gazeStatus]; return language === "en" ? g[1] : g[0]; })()}
             </span>
           </div>
