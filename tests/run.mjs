@@ -55,7 +55,7 @@ import { speechErrorMessage } from "../client/voice/speechErrors.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, mergePronoteHomeworkAndTests } from "../server/discover.ts";
-import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, normalizeWhen, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, validateThemeTokens, normalizeProfile, milestonesBySubject } from "../shared/types.ts";
+import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, normalizeWhen, addUsage, monthKeyOf, monthCostUsd, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, validateThemeTokens, normalizeProfile, milestonesBySubject } from "../shared/types.ts";
 import { sweepDueForDay, localDay, sweepDue, shouldRefreshStudentModel, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp } from "../server/workload.ts";
 import { stripHtml, applyPronoteGrades, applyPronoteLessons, isPrivateOrReservedIp, assertSafeExternalUrl } from "../server/pronote.ts";
@@ -681,7 +681,7 @@ check("same-id Pronote row still collapses to the newer sync, not duplicated", p
   const full = {
     ...emptyProfile(),
     name: "Test Student", about: "about-value", preferences: ["pref-value"], people: ["person-value"],
-    projects: ["project-value"], courses: ["course-value"], unlimited: true, paused: true, pausedAt: newer,
+    projects: ["project-value"], courses: ["course-value"], paused: true, pausedAt: newer,
     lastSweepAt: newer, lastForcedAt: newer, genPerDay: 2, responseStyle: "concise",
     autoApprove: ["schedule_meetings_under_30min"], highPriorityPeople: ["vip@x.com"],
     autoArchivePatterns: ["newsletter"], timezone: "Europe/Paris",
@@ -1154,14 +1154,6 @@ check("addUsage accumulates within the month", upA.usage.monthIn === 1500 && upA
 // A stale monthKey → this month reads as $0 (rollover), even though cumulative persists.
 const stale = { ...emptyProfile(), usage: { in: 9e9, out: 9e9, runs: 5, since: "2020-01-01", monthKey: "2020-01", monthIn: 9e9, monthOut: 9e9 } };
 check("monthCostUsd is 0 after a month rollover", monthCostUsd(stale, "UTC") === 0);
-// overMonthlyBudget honors MONTHLY_AI_BUDGET_USD.
-const heavy = { ...emptyProfile(), usage: { in: 5e8, out: 5e8, runs: 1, since: "x", monthKey: monthKeyOf("UTC"), monthIn: 5e8, monthOut: 5e8 } }; // ≈ $685 this month
-const prevBudget = process.env.MONTHLY_AI_BUDGET_USD;
-process.env.MONTHLY_AI_BUDGET_USD = "3";
-check("overMonthlyBudget true when way over", overMonthlyBudget(heavy) === true);
-check("overMonthlyBudget false for a fresh profile", overMonthlyBudget(emptyProfile()) === false);
-process.env.MONTHLY_AI_BUDGET_USD = "0";
-check("budget of 0 blocks any usage", overMonthlyBudget(upA) === true);
 
 // callCostUsd: cache-hit input priced separately from miss, ×2 during peak. (at = off-peak noon UTC.)
 const noon = new Date("2026-07-20T12:00:00Z"), peak = new Date("2026-07-20T02:00:00Z");
@@ -1176,15 +1168,6 @@ addUsage(costP, { in: 1e6, out: 0, cachedIn: 1e6 }, noon); // a fully-cached cal
 // (addUsage uses now() for peak; the assertion just checks the cheap-cache path landed in monthCost)
 check("addUsage records a metered monthCost", typeof costP.usage.monthCost === "number" && costP.usage.monthCost > 0 && costP.usage.monthCost < USD_PER_1M_IN);
 check("monthCostUsd prefers the metered cost", Math.abs(monthCostUsd(costP, "UTC") - costP.usage.monthCost) < 1e-12);
-
-// Interactive reserve: a user-present action is allowed a small band above the cap that background work isn't.
-process.env.MONTHLY_AI_BUDGET_USD = "3";
-const atCap = { ...emptyProfile(), usage: { in: 0, out: 0, runs: 1, since: "x", monthKey: monthKeyOf("UTC"), monthCost: 3.05 } }; // just over $3, under $3.30
-check("background blocked at the cap", overMonthlyBudget(atCap) === true);
-check("interactive still allowed within the reserve", overInteractiveBudget(atCap) === false);
-const wayOver = { ...emptyProfile(), usage: { in: 0, out: 0, runs: 1, since: "x", monthKey: monthKeyOf("UTC"), monthCost: 3.5 } };
-check("interactive blocked past the reserve", overInteractiveBudget(wayOver) === true);
-if (prevBudget === undefined) delete process.env.MONTHLY_AI_BUDGET_USD; else process.env.MONTHLY_AI_BUDGET_USD = prevBudget;
 
 // ── Eisenhower ranking (WS2) ──────────────────────────────────────────────────
 section("sortWithinQuadrant");
@@ -2771,14 +2754,7 @@ section("server/index.ts error responses — French/English aware, no leaked ope
   check("every AI-paused 403 now goes through M(), not a hardcoded English string", !/error: "AI is paused/.test(src));
   check("every generic 404 now goes through M(), not a hardcoded \"not found\"", !/error: "not found"/.test(src));
   check("every 'AI isn't configured' 503 now goes through M()", !/error: "AI isn't configured\."/.test(src) && !/error: "AI isn't set up on this server yet\."/.test(src));
-  // The budget message used to be a single hardcoded English string that leaked an OPERATOR-ONLY instruction
-  // ("Raise MONTHLY_AI_BUDGET_USD to lift it") straight into a student's toast — meaningless to them, and
-  // never translated even though the rest of the app is French-first. Now a real bilingual, student-facing
-  // message via budgetMsg(req), with no internal env-var detail.
-  const budgetMsgIdx = src.indexOf("const budgetMsg = (req: express.Request)");
-  const budgetMsgBody = src.slice(budgetMsgIdx, src.indexOf(";", budgetMsgIdx) + 1);
-  check("budgetMsg() is bilingual and never mentions the internal env var to a student", budgetMsgIdx > 0 && !/MONTHLY_AI_BUDGET_USD/.test(budgetMsgBody));
-  check("every over-budget 402 call site uses budgetMsg(req), not a raw hardcoded constant", !/error: BUDGET_MSG/.test(src));
+  check("the monthly cost cap is gone: no budget gate, no unlimited route", !/overMonthlyBudget|overInteractiveBudget|budgetMsg|\/api\/settings\/unlimited/.test(src));
   // Completeness pass (this round): every remaining error response in the file — the ~130 one-off catch-
   // block fallbacks this section didn't individually pin above — must go through M()/e?.message, never a
   // bare hardcoded string or template literal, for BOTH capitalized ("Couldn't save...") and lowercase
@@ -4867,10 +4843,10 @@ section("Admin metrics dashboard — gated to one hardcoded email, server AND cl
   const serverSrcAdmin = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
   const appSrcAdmin = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
   check("the server route requires auth before the admin check (no route ever does real work pre-auth)", /app\.get\("\/api\/admin\/metrics", requireAuth,/.test(serverSrcAdmin));
-  check("the admin check is an exact, case-insensitive email match — not a role flag on the profile", /const ADMIN_EMAIL = "tjong\.willem@gmail\.com";/.test(serverSrcAdmin) && /\(req\.session\.user \|\| ""\)\.toLowerCase\(\) === ADMIN_EMAIL/.test(serverSrcAdmin));
+  check("the admin check is an exact, case-insensitive match against the ADMIN_EMAILS env allowlist — not a role flag on the profile", /ADMIN_EMAILS\.has\(\(req\.session\.user \|\| ""\)\.toLowerCase\(\)\)/.test(serverSrcAdmin));
   check("non-admins get a clean 403, not a crash or a silent empty response", /if \(!isAdmin\(req\)\) \{ res\.status\(403\)/.test(serverSrcAdmin));
-  check("the client nav link only renders for the admin email (defense in depth — the server is the real gate)", /isAdminUser\(status\?\.user\)/.test(appSrcAdmin) && /const ADMIN_EMAIL = "tjong\.willem@gmail\.com";/.test(appSrcAdmin));
-  check("the /admin route itself is also gated client-side, not just the nav link", /route === "admin" && isAdminUser\(status\?\.user\)/.test(appSrcAdmin));
+  check("the client nav link only renders for an admin (server-computed status.isAdmin; the server is the real gate)", /!isPhone && !!status\?\.isAdmin/.test(appSrcAdmin) && !/tjong\.willem@gmail\.com";\nfunction isAdminUser/.test(appSrcAdmin));
+  check("the /admin route itself is also gated client-side, not just the nav link", /route === "admin" && !!status\?\.isAdmin/.test(appSrcAdmin));
   // Reported live: "should say 28 sessions but it says 91" — tutorSessionCount was counting every raw
   // freestudy-source TASK, including ones opened and immediately abandoned (no message ever sent). The
   // client's own history (TutorSession.tsx's saveAndClose) never even shows those — they fail its own
@@ -5163,7 +5139,7 @@ section("'Pulling up your day' no longer spins forever for a skip-connect accoun
   // sweepIfDue/generate, and the ONLY effect that auto-calls those is gated on `connected` — which is
   // permanently false for a skip-connect account, so `loaded` never had a chance to become true.
   const appSrcLoaded = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
-  const loadedEffect = appSrcLoaded.slice(appSrcLoaded.indexOf("useEffect(() => {\n    // A student who skipped connecting"), appSrcLoaded.indexOf("}, [connected, status?.aiReady, syncTasks, sweepIfDue, loadBudget]);") + 1);
+  const loadedEffect = appSrcLoaded.slice(appSrcLoaded.indexOf("useEffect(() => {\n    // A student who skipped connecting"), appSrcLoaded.indexOf("}, [connected, status?.aiReady, syncTasks, sweepIfDue]);") + 1);
   check("the connected-gated sync effect flips `loaded` directly when the account never connected anything, instead of leaving it permanently false", /if \(!connected\) \{ setLoaded\(true\); return; \}/.test(loadedEffect));
 }
 
@@ -6656,6 +6632,28 @@ section("Tutor sessions are fully local — the server stores no chat/board/prob
   const plainRow = { ...plain, chat: [{ role: "assistant", text: "on the row", at: "2026-10-01T00:00:00.000Z" }] };
   check("a NON-tutor task's chat still syncs from the row when the local copy has none (only the tutor went local)",
     (mergeTaskLists([plainRow], [{ ...plain, updatedAt: "2026-10-02T00:00:00.000Z" }])[0].chat || []).length === 1);
+}
+
+
+section("Production readiness — multi-user security + serverless reliability (source pins)");
+{
+  const store = readFileSync(new URL("../server/store.ts", import.meta.url), "utf8");
+  const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const jobsSrc = readFileSync(new URL("../server/jobs.ts", import.meta.url), "utf8");
+  const sql = readFileSync(new URL("../supabase.sql", import.meta.url), "utf8");
+  const { hashResetToken } = await import("../server/store.ts");
+  check("reset tokens are stored hashed (sha-256 hex), never raw", hashResetToken("abc") === "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+  check("reset tokens live in a table, not only process memory", /create table if not exists weave_web_reset_tokens/.test(sql) && /from\(RESET_TOKENS\)\.delete\(\)\.eq\("token_hash"/.test(store));
+  check("the reset email is awaited (a frozen lambda can't drop it)", /await sendTransactionalEmail\(email, en \? "Reset your Otto password"/.test(idx));
+  check("user lookup isn't capped at the first 1,000 accounts", /rpc\("otto_auth_user_id"/.test(store) && !/listUsers\(\{ perPage: 1000 \}/.test(store) && /function otto_auth_user_id/.test(sql));
+  check("sessions record their owner and can be destroyed per user", /user_email: slim\.user/.test(store) && /add column if not exists user_email/.test(sql) && !/ilike\("sess"/.test(store));
+  check("a password reset signs out every other session", /destroySessionsForUser\(u\.email, req\.sessionID\)/.test(idx));
+  check("session read cache is short (logout/deletion propagates across instances)", /GET_CACHE_TTL_MS = 60_000/.test(store));
+  check("admin access comes from ADMIN_EMAILS, not a hardcoded address", /process\.env\.ADMIN_EMAILS/.test(idx) && !/const ADMIN_EMAIL = "/.test(idx));
+  check("integration errors no longer echo raw exception text to the user", !/Couldn't start the connection: " \+ \(e\?\.message/.test(idx));
+  check("background account saves use waitUntil on Vercel", /waitUntil\(scheduler\.flush\(email/.test(idx));
+  check("an interactive request drains only its own single job", /await drain\(1, undefined, email\);/.test(jobsSrc));
+  check("the cron tick keeps one clock and stops starting work well before the 300 s limit", /tickStart/.test(jobsSrc) && /startWindowMs = 150_000/.test(jobsSrc));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -65,8 +65,29 @@ create table if not exists weave_web_sessions (
   sess jsonb not null,
   expire timestamptz not null
 );
+-- Owner of each session, so an account can be signed out everywhere (deletion, password reset).
+alter table weave_web_sessions add column if not exists user_email text;
+create index if not exists weave_web_sessions_user on weave_web_sessions (user_email);
 alter table weave_web_sessions enable row level security;
 drop policy if exists "weave_web_sessions server access" on weave_web_sessions;
+
+-- One-time password-reset tokens (only the SHA-256 is stored). A table, not memory: on serverless the
+-- "forgot" and "reset" requests usually hit different instances.
+create table if not exists weave_web_reset_tokens (
+  token_hash text primary key,
+  email text not null,
+  expires_at timestamptz not null
+);
+create index if not exists weave_web_reset_tokens_email on weave_web_reset_tokens (email);
+alter table weave_web_reset_tokens enable row level security;
+
+-- Indexed lookup of a Supabase Auth user id by email (instead of paging through every user).
+-- Only the server's service role may call it.
+create or replace function otto_auth_user_id(p_email text) returns uuid
+  language sql security definer set search_path = auth, public stable
+  as $$ select id from auth.users where lower(email) = lower(p_email) limit 1 $$;
+revoke all on function otto_auth_user_id(text) from public, anon, authenticated;
+grant execute on function otto_auth_user_id(text) to service_role;
 
 -- ── Durable job queue ─────────────────────────────────────────────────────────
 -- Server-side execution (sweeps + task runs) is queued here and drained by GET /api/cron/drain

@@ -1,6 +1,7 @@
 import { makeEgressMeter, DEFAULT_EGRESS_BUDGET_BYTES } from "./egress.ts";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import session from "express-session";
+import { createHash } from "node:crypto";
 import type { Credentials } from "google-auth-library";
 import type { WebTask, Profile, StudySession, StudyProfile } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile } from "../shared/types.ts";
@@ -134,35 +135,11 @@ export async function makeSessionStore(): Promise<session.Store | undefined> {
   if (probe) { console.warn(`[store] persistent sessions OFF — run web/supabase.sql to create '${SESSIONS}' (${probe.message}). Using in-memory sessions (lost on restart).`); return undefined; }
   const ttlMs = (sess: any) => (sess?.cookie?.maxAge ?? 30 * 24 * 3600 * 1000);
   const expiry = (sess: any) => new Date(Date.now() + ttlMs(sess)).toISOString();
-  // express-session's middleware calls store.get() on EVERY authenticated request to hydrate req.session —
-  // each one was a fresh `select("sess,expire")` pulling the ENTIRE session blob (profile + all tasks,
-  // notes, flashcards, quizzes, chat history, audit trail — see shared/types.ts) straight from Supabase.
-  // That's the single biggest egress driver in this app: a page load alone fires several API calls close
-  // together (status, tasks, reviews/due, ...), each separately re-fetching the identical blob, and the
-  // client's own 45s poll (client/App.tsx) repeats that every cycle for every open tab. A short in-memory
-  // cache (per warm process — helps a long-running server fully, and helps a serverless deployment for
-  // requests landing on the same warm instance within the window) collapses that burst into one real read.
-  // Was 4s, then 60s. Raised further to 3min (direct egress reduction, requested after a real Supabase
-  // egress-cap outage) — same reasoning as before, just a bigger window: same-instance writes still update
-  // the cache immediately (see set() below), so this only affects CROSS-instance/cross-device staleness,
-  // which now takes up to 3min to self-heal instead of 1min. Acceptable for a single-student account where
-  // near-simultaneous multi-device edits are rare; if that tradeoff ever bites, lower this back down rather
-  // than reverting to the old 60s/4s — the egress savings compound with every open tab/poll tick.
-  const GET_CACHE_TTL_MS = 900_000; // 15min — was 3min. Every get() past TTL re-reads the FULL session blob
-  // (profile + every task + chat history) from Supabase and JSON.parses it: CPU + Supabase egress paid by
-  // the very first request on any warm-but-stale instance. The client's real poll cadence is 10 minutes
-  // (App.tsx's syncTick) plus occasional clicks, so a 3min TTL meant virtually every poll landed past
-  // expiry and paid the full re-hydration anyway. 15min means a warm instance almost always serves the
-  // session from memory; every WRITE still refreshes the cache immediately (set() below), and cross-tab/
-  // cross-device task freshness flows through /api/tasks's cloud merge (loadState), not through re-reading
-  // this blob — so the staleness window only ever affects unmodified reads. If a tradeoff ever bites,
-  // lower this rather than reverting to 3min: the savings compound with every open tab/poll tick.
-  // Bounded so this can't grow forever on a long-running server (a serverless deployment recycles the
-  // process anyway) — every distinct sid that's ever hit get()/set() would otherwise sit in memory until
-  // process restart, and a session blob can be sizeable (see comment above). A Map preserves insertion
-  // order, so deleting from the front evicts the OLDEST entries first — a crude but correct LRU-ish bound
-  // given entries are re-inserted (moved conceptually to "recently used") via delete+set in `touch()` below.
+  // Per-instance read cache for sessions (rows are slim now — see set()). Kept short: a logout, password
+  // reset or account deletion on another instance must take effect here within this window.
+  const GET_CACHE_TTL_MS = 60_000;
   const GET_CACHE_MAX = 500;
+  let hasUserEmailCol = true;
   const getCache = new Map<string, { at: number; sess: any }>();
   const lastWritten = new Map<string, string>();
   const cacheSet = (sid: string, sess: any) => {
@@ -201,8 +178,19 @@ export async function makeSessionStore(): Promise<session.Store | undefined> {
       if (lastWritten.get(sid) === payload) { cb?.(); return; }
       lastWritten.set(sid, payload);
       while (lastWritten.size > GET_CACHE_MAX) { const oldest = lastWritten.keys().next().value; if (oldest === undefined) break; lastWritten.delete(oldest); }
-      c.from(SESSIONS).upsert({ sid, sess: slim, expire: expiry(sess) }, { onConflict: "sid" }).then(
-        ({ error }) => { if (error) { lastWritten.delete(sid); reportError("session-store-set", error); } cb?.(error || undefined); },
+      const row = { sid, sess: slim, expire: expiry(sess), ...(hasUserEmailCol && slim.user ? { user_email: slim.user } : {}) };
+      const write = async () => {
+        let { error } = await c.from(SESSIONS).upsert(row, { onConflict: "sid" });
+        // Older database without the user_email column: keep logins working, just without per-user sign-out.
+        if (error && "user_email" in row && /user_email/.test(error.message || "")) {
+          hasUserEmailCol = false;
+          const { user_email: _u, ...legacy } = row as any;
+          ({ error } = await c.from(SESSIONS).upsert(legacy, { onConflict: "sid" }));
+        }
+        return error;
+      };
+      write().then(
+        (error) => { if (error) { lastWritten.delete(sid); reportError("session-store-set", error); } cb?.(error || undefined); },
         (e) => { lastWritten.delete(sid); reportError("session-store-set", e); cb?.(e); },
       );
     }
@@ -224,18 +212,23 @@ export async function makeSessionStore(): Promise<session.Store | undefined> {
 // so accounts were merely visible in the dashboard's Auth tab — never actually read back. That
 // table is gone now; Supabase Auth's own admin API is the real, only credential store.
 
-/** Find an account's Supabase Auth user by email. Single shared lookup — signup's duplicate-check,
- *  the password-reset flow, and account deletion all go through this ONE function.
- *  SCALING NOTE: listUsers() paginates (default ~50/page); perPage:1000 raises that ceiling cheaply
- *  without needing real pagination. Fine for this app's current/expected account volume — revisit
- *  with a proper paginated/filtered lookup if that ever stops being true. */
+/** Find an account's Supabase Auth user by email (signup duplicate-check, password reset, deletion).
+ *  Uses the `otto_auth_user_id` SQL function (supabase.sql) for an indexed lookup; falls back to paging
+ *  through every user when that function hasn't been created yet. */
 export async function findAuthUserByEmail(email: string): Promise<{ id: string; email: string } | null> {
   if (!client) return null;
+  const wanted = email.toLowerCase();
   try {
-    const { data, error } = await client.auth.admin.listUsers({ perPage: 1000 } as any);
-    if (error) { console.warn("[store] findAuthUserByEmail failed:", error.message); return null; }
-    const match = data.users.find((u) => u.email?.toLowerCase() === email.toLowerCase());
-    return match ? { id: match.id, email: match.email! } : null;
+    const { data, error } = await client.rpc("otto_auth_user_id", { p_email: wanted });
+    if (!error) return data ? { id: String(data), email: wanted } : null;
+    const perPage = 1000;
+    for (let page = 1; ; page++) {
+      const { data: list, error: listErr } = await client.auth.admin.listUsers({ page, perPage });
+      if (listErr) { console.warn("[store] findAuthUserByEmail failed:", listErr.message); return null; }
+      const match = list.users.find((u) => u.email?.toLowerCase() === wanted);
+      if (match) return { id: match.id, email: match.email! };
+      if (list.users.length < perPage) return null;
+    }
   } catch (e) { console.warn("[store] findAuthUserByEmail threw:", (e as any)?.message || e); return null; }
 }
 
@@ -280,28 +273,45 @@ export async function setAuthPassword(userId: string, password: string): Promise
   } catch (e) { console.warn("[store] setAuthPassword threw:", (e as any)?.message || e); return false; }
 }
 
-/** One-time password-reset tokens — in-memory, not a table: a token lives 30 minutes (see
- *  /api/auth/forgot-password), so losing the Map on a server restart just means "request a new
- *  link," never real data loss. Mirrors this same file's existing in-memory-fallback posture for
- *  the job queue (see further down) rather than adding a table for a 30-minute-lived value. */
-const resetTokens = new Map<string, { email: string; expiresAt: number }>();
+// One-time password-reset tokens. Stored in Supabase (only the SHA-256 of the token) because on serverless
+// the "forgot" and "reset" requests usually land on different instances. The Map is the no-cloud dev fallback.
+const RESET_TOKENS = "weave_web_reset_tokens";
+const memResetTokens = new Map<string, { email: string; expiresAt: number }>();
+export const hashResetToken = (token: string) => createHash("sha256").update(token).digest("hex");
 
-/** Stamp a one-time password-reset token, replacing any prior one for this email — only the latest
- *  link a student requested should ever work. */
-export function setResetToken(email: string, token: string, expiresAt: string): void {
-  for (const [t, v] of resetTokens) if (v.email === email) resetTokens.delete(t);
-  resetTokens.set(token, { email, expiresAt: Date.parse(expiresAt) });
+/** Store a reset token, replacing any earlier one for this email — only the latest link works. */
+export async function setResetToken(email: string, token: string, expiresAt: string): Promise<void> {
+  const tokenHash = hashResetToken(token);
+  if (client) {
+    await client.from(RESET_TOKENS).delete().eq("email", email);
+    const { error } = await client.from(RESET_TOKENS).insert({ token_hash: tokenHash, email, expires_at: expiresAt });
+    if (!error) return;
+    console.warn("[store] reset tokens table unavailable — run supabase.sql. Falling back to memory:", error.message);
+  }
+  for (const [t, v] of memResetTokens) if (v.email === email) memResetTokens.delete(t);
+  memResetTokens.set(tokenHash, { email, expiresAt: Date.parse(expiresAt) });
 }
 
-/** Look up the account a still-valid (not expired) reset token belongs to, and consume it (a used
- *  token must never work a second time — same one-shot guarantee the old DB column's clear-on-use
- *  gave). */
-export function consumeResetToken(token: string): { email: string } | null {
-  const v = resetTokens.get(token);
+/** Consume a reset token: returns its email if it exists and hasn't expired. Single use — deleted either way. */
+export async function consumeResetToken(token: string): Promise<{ email: string } | null> {
+  const tokenHash = hashResetToken(token);
+  if (client) {
+    const { data, error } = await client.from(RESET_TOKENS).delete().eq("token_hash", tokenHash).select("email,expires_at");
+    if (!error && data?.length) return Date.parse(data[0].expires_at) > Date.now() ? { email: data[0].email } : null;
+  }
+  const v = memResetTokens.get(tokenHash);
   if (!v) return null;
-  resetTokens.delete(token);
-  if (v.expiresAt < Date.now()) return null;
-  return { email: v.email };
+  memResetTokens.delete(tokenHash);
+  return v.expiresAt > Date.now() ? { email: v.email } : null;
+}
+
+/** Sign an account out everywhere (account deletion, password reset), optionally keeping one session. */
+export async function destroySessionsForUser(email: string, exceptSid?: string): Promise<void> {
+  if (!client) return;
+  let q = client.from(SESSIONS).delete().eq("user_email", email);
+  if (exceptSid) q = q.neq("sid", exceptSid);
+  const { error } = await q;
+  if (error) console.warn("[store] destroySessionsForUser failed (run supabase.sql to add weave_web_sessions.user_email):", error.message);
 }
 
 /** Remove the Supabase Auth user on account deletion — the real erasure now, not a mirror cleanup. */
@@ -419,7 +429,7 @@ export async function loadState(email?: string, opts?: { bypassCache?: boolean }
     ? { ...(d.pronote as StoredPronote), token: decryptSecret(d.pronote.token), ...(d.pronote.password ? { password: decryptSecret(d.pronote.password) } : {}) }
     : undefined;
   const blackbaud = d?.blackbaud && d.blackbaud.accessToken
-    ? { ...(d.blackbaud as StoredBlackbaud), accessToken: decryptSecret(d.blackbaud.accessToken) }
+    ? { ...(d.blackbaud as StoredBlackbaud), accessToken: decryptSecret(d.blackbaud.accessToken), ...(d.blackbaud.refreshToken ? { refreshToken: decryptSecret(d.blackbaud.refreshToken) } : {}) }
     : undefined;
   const result = { profile: normalizeProfile(d?.profile), tasks: Array.isArray(d?.tasks) ? d.tasks : [], google, pronote, blackbaud, studySessions: d?.studySessions, studyProfile: d?.studyProfile };
   cacheSetState(email, result, typeof d?.updated_at === "string" ? d.updated_at : undefined);
@@ -450,7 +460,7 @@ export function connectionColumnUpdates(state: AccountState): Record<string, unk
       : { ...state.pronote, token: encryptSecret(state.pronote.token), ...(state.pronote.password ? { password: encryptSecret(state.pronote.password) } : {}) };
   }
   if (state.blackbaud !== undefined) {
-    out.blackbaud = state.blackbaud === null ? null : { ...state.blackbaud, accessToken: encryptSecret(state.blackbaud.accessToken) };
+    out.blackbaud = state.blackbaud === null ? null : { ...state.blackbaud, accessToken: encryptSecret(state.blackbaud.accessToken), ...(state.blackbaud.refreshToken ? { refreshToken: encryptSecret(state.blackbaud.refreshToken) } : {}) };
   }
   if (state.studySessions !== undefined) out.studySessions = state.studySessions;
   if (state.studyProfile !== undefined) out.studyProfile = state.studyProfile;
@@ -735,11 +745,7 @@ export async function deleteAccount(email: string): Promise<{ ok: boolean; error
       if (error) errors.push(`${table}: ${error.message}`);
     } catch (e: any) { errors.push(`${table}: ${e?.message || e}`); }
   }
-  // Sessions aren't keyed by email (sid is the primary key, email lives inside the serialized `sess` jsonb) —
-  // best-effort text match rather than a full table scan/parse; a stray orphaned session row here is inert
-  // (it can't authenticate as anyone once deleteAuthUser below has removed the real Supabase Auth account)
-  // but worth attempting.
-  try { await client.from(SESSIONS).delete().ilike("sess", `%${email}%`); } catch { /* best-effort, non-fatal */ }
+  await destroySessionsForUser(email);
   await deleteAuthUser(email); // the actual credential erasure now, not a mirror cleanup — best-effort, never blocks the rest
   return { ok: errors.length === 0, errors };
 }
@@ -773,14 +779,11 @@ export interface Job {
 
 const JOBS = "weave_web_jobs";
 const EVENTS = "weave_web_job_events";
-// A claim's lease. This MUST exceed the longest realistic single-job wall time, or a still-running job's
-// lock expires and a second worker claims + RE-RUNS it — duplicate drafts/docs, double spend, the worst
-// possible bug for a "never behind your back" product. A task run is up to 8 rounds × (90s request × 3
-// retries) plus Composio latency, which can pass 12 min. So the lease is generous AND a heartbeat
-// (renewLock, called from the drain while a job runs) extends it in-flight, so only a genuinely dead
-// worker ever loses its lock.
-const LOCK_MS = 15 * 60_000;
-const HEARTBEAT_MS = 4 * 60_000; // re-extend the lease this often while a job runs
+// A claim's lease. A heartbeat (renewLock, called by drain() every HEARTBEAT_MS while a job runs) keeps a
+// live job's lock fresh, so only a dead worker loses it. The lease is kept short because on Vercel a killed
+// function (300 s limit) leaves its job "running" until the lock expires — 6 min means it's retried soon.
+const LOCK_MS = 6 * 60_000;
+const HEARTBEAT_MS = 2 * 60_000;
 // Exponential backoff before a retried (non-terminal) job becomes claimable again — 2s, 4s, 8s, capped at
 // 30s. `attemptCount` is the count AFTER the failed attempt (i.e. how many tries have happened so far).
 const retryBackoffUntil = (attemptCount: number): string => new Date(Date.now() + Math.min(2 ** attemptCount * 1000, 30_000)).toISOString();

@@ -61,9 +61,6 @@ function translateServerError(msg: string): string {
   if (/AI is paused|otto is paused/i.test(msg)) return en
     ? "Otto is paused — resume it in Settings to continue."
     : "Otto est en pause — réactive-le dans les Réglages pour continuer.";
-  if (/monthly AI budget/i.test(msg)) return en
-    ? "Otto's reached its monthly AI budget — it resets on the 1st."
-    : "Otto a atteint son plafond mensuel d'IA — ça se renouvelle le 1er.";
   return msg;
 }
 
@@ -414,10 +411,8 @@ export const api = {
   dismiss: (id: string): Promise<WebTask[]> => post(`/api/tasks/${id}/dismiss`),
   // 100s: an execute_step run now drains INLINE through runViaJob (server/index.ts) — a deliberate click
   // actually does the work and waits for the real result, rather than just enqueueing and hoping the
-  // background kick loop picks it up. runTask itself is bounded to ~90s by its own time-budget circuit
-  // breaker (see claude.ts's checkTimeBudget); this must stay safely ABOVE that so a legitimately-slower-
-  // but-still-bounded run doesn't get aborted client-side right as the server is about to finish it (the
-  // old 25s value predates that circuit breaker and would now abort even a normal, in-budget run).
+  // background kick loop picks it up. If this times out, the job keeps running server-side
+  // and the background kick loop picks up the result.
   runStep: (id: string, index: number, answer?: string): Promise<WebTask> => postTimed(`/api/tasks/${id}/step/${index}/run`, 100_000, answer ? { answer } : undefined),
   stepDone: (id: string, index: number, done = true, result?: string): Promise<WebTask[]> => post(`/api/tasks/${id}/step/${index}/done`, { done, result }),
   expandStep: (id: string, index: number): Promise<WebTask[]> => post(`/api/tasks/${id}/step/${index}/expand`),
@@ -447,10 +442,9 @@ export const api = {
   // typically a different one) and merges it into the currently signed-in account.
   importData: (data: unknown): Promise<{ ok: boolean; tasksAfter: number; errorLogAfter: number }> => post("/api/account/import", data),
   setPaused: (paused: boolean): Promise<Profile> => post("/api/settings/pause", { paused }).then(normalizeProfile),
-  goUnlimited: (): Promise<Profile> => post("/api/settings/unlimited").then(normalizeProfile),
   smokeTest: (): Promise<{ app: string; step: string; ok: boolean; detail?: string }[]> => post("/api/settings/smoke"),
   cronStatus: (): Promise<{ lastSweepAt: string | null; lastSweepDay: string | null; today: string; sweptToday: boolean; queued: number; cronConfigured: boolean }> => req("/api/cron/status").then(j),
-  usage: (): Promise<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string; byCategory: Partial<Record<"sweep" | "autorun" | "chat" | "manual_refine" | "other", number>> }> => req("/api/usage").then(j),
+  usage: (): Promise<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; byCategory: Partial<Record<"sweep" | "autorun" | "chat" | "manual_refine" | "other", number>> }> => req("/api/usage").then(j),
   taskEvents: (id: string): Promise<{ kind: string; message?: string; at: string }[]> => req(`/api/tasks/${id}/events`).then(j),
   // stepIndex: set by the per-step "Aide" button (see F) — the server validates the range itself.
   // `history` is THIS BROWSER's own local chat thread (client/localChatBoard.ts) — chat/board/problems are

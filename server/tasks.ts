@@ -816,7 +816,6 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     paused: pausedSide.paused,
     pausedAt: pausedSide.pausedAt,
     // Sticky once granted on EITHER side — a stale copy that predates the claim must never un-grant it.
-    unlimited: !!p1.unlimited || !!p2.unlimited,
     // Keep the MOST RECENT sweep marker across devices/instances (a stale copy must never reset it).
     lastSweepAt: (Date.parse(p2.lastSweepAt || "") || 0) >= (Date.parse(p1.lastSweepAt || "") || 0) ? (p2.lastSweepAt ?? p1.lastSweepAt) : (p1.lastSweepAt ?? p2.lastSweepAt),
     lastForcedAt: (Date.parse(p2.lastForcedAt || "") || 0) >= (Date.parse(p1.lastForcedAt || "") || 0) ? (p2.lastForcedAt ?? p1.lastForcedAt) : (p1.lastForcedAt ?? p2.lastForcedAt),
@@ -1164,7 +1163,7 @@ export function supplementarySweepDue(profile: Profile, now: Date = new Date()):
 // instruction ("remove daily check limit auto run everything"). This has flip-flopped before (3/day → briefly
 // removed → 7/day → removed again here) — if a real ceiling is ever wanted again, autoRunDay/autoRunCount
 // below are still tracked and ready to gate against; only the CAP itself (this function's return value) was
-// dropped. The monthly $ budget (overMonthlyBudget) remains the real backstop against runaway spend.
+// dropped. There is no monthly cost cap either (removed by decision); spend is visible in Settings.
 export function autoRunBudgetLeft(_profile: Profile, _now: Date = new Date()): number {
   return Infinity;
 }

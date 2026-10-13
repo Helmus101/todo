@@ -102,9 +102,6 @@ function sweepSkipMessage(note: string, en?: boolean): string {
   if (/nothing connected/i.test(note)) return en
     ? "No apps are connected for this account — connect one in Settings (Pronote, Gmail…) so Otto has something to read, or add tasks yourself."
     : "Aucune app n'est connectée sur ce compte — connecte ton Pronote/Gmail dans les Réglages pour qu'Otto ait de quoi lire.";
-  if (/budget reached/i.test(note)) return en
-    ? "Otto's reached its monthly AI budget — it resets on the 1st."
-    : "Otto a atteint son plafond mensuel d'IA — ça se renouvelle le 1er.";
   if (/paused/i.test(note)) return en
     ? "AI is paused — resume it in Settings to sweep for new tasks."
     : "L'IA est en pause — réactive-la dans les Réglages pour chercher de nouvelles tâches.";
@@ -116,9 +113,19 @@ function todayLong(lang?: string): string {
   return new Date().toLocaleDateString(lang === "en" ? "en-US" : "fr-FR", { weekday: "long", month: "long", day: "numeric" });
 }
 
-// A "YYYY-MM-DD" (or ISO) date → "Aug 1". Used for the AI-budget renewal date. Optional `L(fr, en)` (same
+// A "YYYY-MM-DD" (or ISO) date → "Aug 1". Optional `L(fr, en)` (same
 // one every caller already has from useLang()) picks the locale — a French account no longer falls back to
 // whatever locale the BROWSER happens to be set to, which isn't necessarily the same language at all.
+const USAGE_CATEGORY_LABEL: Record<string, [string, string]> = {
+  sweep: ["Recherche de tâches", "Finding tasks"],
+  autorun: ["Préparation automatique", "Auto-prep"],
+  chat: ["Chat et tuteur", "Chat & tutor"],
+  manual_refine: ["Tâches ajoutées", "Added tasks"],
+  studylog: ["Journal", "Journal"],
+  student_model: ["Profil d'apprentissage", "Learning profile"],
+  other: ["Autre", "Other"],
+};
+
 function fmtDay(iso: string, L?: (fr: string, en: string) => string): string {
   const d = new Date(/T/.test(iso) ? iso : `${iso}T00:00:00`);
   return isNaN(d.getTime()) ? iso : d.toLocaleDateString(L?.("fr-FR", "en-US"), { month: "short", day: "numeric" });
@@ -506,10 +513,6 @@ export function App() {
     const server = status?.toursSeen;
     if (server?.length) setToursSeen((prev) => { const n = new Set([...prev, ...server]); return n.size === prev.size ? prev : n; });
   }, [status?.toursSeen]);
-  // AI budget (from the CLOUD-authoritative /api/usage) — drives the "budget reached" banner + renewal date,
-  // so it reflects usage racked up by background jobs, not just this session.
-  const [budget, setBudget] = useState<{ over: boolean; renewsOn: string } | null>(null);
-  const loadBudget = useCallback(async () => { try { const u = await api.usage(); setBudget({ over: u.over, renewsOn: u.renewsOn }); } catch { /* keep last */ } }, []);
   // First-run onboarding is the ONE place Otto is explained — set on signup, cleared when the flow finishes.
   const startOnboard = () => { try { localStorage.setItem("otto-onboard", "1"); } catch { /* ignore */ } setOnboard(true); };
   const finishOnboard = () => {
@@ -683,7 +686,7 @@ export function App() {
   const SWEEP_HOUR = 16;
   const sweeping = useRef(false);
   const sweepIfDue = useCallback(async () => {
-    if (signedOutRef.current || !connected || status?.paused || status?.overBudget || sweeping.current) return;
+    if (signedOutRef.current || !connected || status?.paused || sweeping.current) return;
     if (new Date().getHours() < SWEEP_HOUR) return;
     let last = 0;
     try { last = Number(localStorage.getItem("otto-lastgen") || 0); } catch { /* sweep anyway */ }
@@ -701,16 +704,13 @@ export function App() {
       // retries again shortly instead of believing today's sweep already happened.
       if (/^sweep running:/.test(serverNote)) return;
       // A skipped sweep must say WHY (e.g. "nothing connected") — never look like a quiet all-clear.
-      if (/^(skipped:|sweep )/.test(serverNote)) notify(sweepSkipMessage(serverNote, status?.language === "en"), /budget|paused|connected/i.test(serverNote) ? "error" : "info");
+      if (/^(skipped:|sweep )/.test(serverNote)) notify(sweepSkipMessage(serverNote, status?.language === "en"), /paused|connected/i.test(serverNote) ? "error" : "info");
       try { localStorage.setItem("otto-lastgen", String(Date.now())); } catch { /* ignore */ }
     } catch { /* marker stays unset — next focus/interval tick retries */ }
     finally { sweeping.current = false; setScanning(false); }
   }, [connected, status?.paused]);
 
-  // Once Google is connected: load tasks + budget, trigger the daily sweep (silent, in background).
-  // These three are INDEPENDENT requests — `await syncTasks()` before starting the other two used to
-  // serialize budget/sweep behind the task-list fetch for no reason, adding its full round-trip to time-
-  // to-first-paint of unrelated UI (the budget banner, the sweep indicator). Fire all three at once.
+  // Once Google is connected: load tasks and trigger the daily sweep (silent, in background), in parallel.
   useEffect(() => {
     // A student who skipped connecting Google/Pronote (skippedConnect, see the ConnectCard gate below)
     // stays permanently `!connected` by design — Otto still works for them via manually-added tasks and
@@ -721,8 +721,8 @@ export function App() {
     // request ever in flight to resolve it. Reported live as "stuck on pulling up your day with no tasks."
     // There's nothing to sync from the server for a never-connected account, so just flip loaded directly.
     if (!connected) { setLoaded(true); return; }
-    void syncTasks(); void loadBudget(); void sweepIfDue();
-  }, [connected, status?.aiReady, syncTasks, sweepIfDue, loadBudget]);
+    void syncTasks(); void sweepIfDue();
+  }, [connected, status?.aiReady, syncTasks, sweepIfDue]);
 
   // Returning to the tab re-syncs the list (tasks finished elsewhere appear WITHOUT a manual reload) and
   // sweeps again if the watch interval has passed — so Otto keeps watching throughout the day, and the
@@ -818,9 +818,8 @@ export function App() {
     };
     void tick();
     // Was 10s — halved the request RATE (not just the per-request cost) per direct instruction to cut
-    // egress further. 20s still surfaces a finished/failed task well within one "is it done yet" glance,
-    // and runTask's own time-budget breaker (claude.ts) bounds a single job to ~90s anyway, so this isn't
-    // trading away meaningfully faster feedback — just fewer identical "still running" round-trips.
+    // egress further. 20s still surfaces a finished/failed task well within one "is it done yet" glance — just fewer identical
+    // "still running" round-trips.
     const id = setInterval(tick, 20000);
     // Catch up immediately when the tab regains focus, instead of waiting up to 10s for the next tick —
     // the guard above means a backgrounded tab may have missed several ticks entirely.
@@ -852,7 +851,7 @@ export function App() {
       // gently rather than "Sweep didn't finish", which reads as an error when nothing's actually wrong.
       const sweepEn = status?.language === "en";
       if (stillRunning) notify(sweepEn ? "Still checking — hang on a moment." : "Vérification en cours — patiente un instant.");
-      else if (/^(skipped:|sweep )/.test(serverNote)) notify(sweepSkipMessage(serverNote, sweepEn), /budget|paused|connected/i.test(serverNote) ? "error" : "info");
+      else if (/^(skipped:|sweep )/.test(serverNote)) notify(sweepSkipMessage(serverNote, sweepEn), /paused|connected/i.test(serverNote) ? "error" : "info");
       // Name whatever source is actually connected instead of assuming Pronote — a Google-only (or manual)
       // student was being told about a school portal they never linked.
       else if (!t.length) notify(sweepEn
@@ -864,7 +863,6 @@ export function App() {
       else notify(sweepEn
         ? `Found ${fresh.length} new task${fresh.length === 1 ? "" : "s"}${queuedN ? `, ${queuedN} getting ready` : ""}${needsYou ? `, ${needsYou} need${needsYou === 1 ? "s" : ""} you` : ""}.`
         : `${fresh.length} nouvelle${fresh.length === 1 ? "" : "s"} tâche${fresh.length === 1 ? "" : "s"} trouvée${fresh.length === 1 ? "" : "s"}${queuedN ? `, ${queuedN} en préparation` : ""}${needsYou ? `, ${needsYou} ${needsYou === 1 ? "a besoin" : "ont besoin"} de toi` : ""}.`);
-      void loadBudget();
     }
     catch (e: any) {
       // A long sweep that outran the client timeout is NOT a failure — it's still running server-side and
@@ -990,15 +988,12 @@ export function App() {
               if (isNew) { clearAllLocalAccountData(null); await onNewAccount(); startOnboard(); }
               await loadStatus(); navigate("tasks");
             }} initialMode={route === "signup" ? "signup" : route === "reset-password" ? "reset" : "login"} />
-          : route === "unlimited"
-          ? <LoginPage status={status} lang={preLoginLang} onLangChange={setLandingLang} onDone={async () => { signedOutRef.current = false; await loadStatus(); navigate("unlimited"); }} initialMode="login" />
           : route === "" || route === "/"
           ? <Landing lang={preLoginLang} onLangChange={setLandingLang} />
           : <LoginPage status={status} lang={preLoginLang} onLangChange={setLandingLang} onDone={async () => { signedOutRef.current = false; await loadStatus(); navigate(route); }} initialMode="login" />}
       </LangContext.Provider>
     );
   }
-  if (route === "unlimited") return <UnlimitedPage status={status} onDone={loadStatus} />;
 
   if (route.startsWith("study/")) {
     const taskId = route.split("/")[1];
@@ -1132,7 +1127,7 @@ export function App() {
             <div className="topnav-more-menu">
               {!isPhone && <a className={`topnav-link ${route === "errorlog" ? "active" : ""}`} href="/errorlog">{en ? "Mistakes" : "Erreurs"}</a>}
               <a className={`topnav-link ${route === "settings" ? "active" : ""}`} href="/settings">{en ? "Settings" : "Réglages"}</a>
-              {!isPhone && isAdminUser(status?.user) && <a className={`topnav-link ${route === "admin" ? "active" : ""}`} href="/admin">Admin</a>}
+              {!isPhone && !!status?.isAdmin && <a className={`topnav-link ${route === "admin" ? "active" : ""}`} href="/admin">Admin</a>}
             </div>
           </details>
         </nav>
@@ -1180,7 +1175,7 @@ export function App() {
         <MistakeLogPage lang={status?.language} />
       ) : route === "exercises" ? (
         <ExercisesPage />
-      ) : route === "admin" && isAdminUser(status?.user) ? (
+      ) : route === "admin" && !!status?.isAdmin ? (
         <AdminPage />
       ) : !status.googleConnected && !status.pronoteConnected && !skippedConnect ? (
         <main className="list-wrap"><ConnectCard status={status} onSkip={() => {
@@ -1232,17 +1227,6 @@ export function App() {
               <div className="intro-body">
                 <div className="intro-title">{en ? "Otto is paused" : "Otto est en pause"}</div>
                 <p>{en ? "Turn it back on in Settings whenever you're ready — nothing's been lost." : "Réactive-le dans les Réglages quand tu veux — rien n'a été perdu."}</p>
-              </div>
-              <button className="btn xs ghost" onClick={() => navigate("settings")}>{en ? "Settings" : "Réglages"}</button>
-            </div>
-          )}
-          {!status.paused && (budget?.over ?? status.overBudget) && (
-            <div className="intro paused-banner">
-              <div className="intro-body">
-                <div className="intro-title">{en ? "Monthly cap reached" : "Plafond mensuel atteint"}</div>
-                <p>{en
-                  ? `Otto's paused new work for the month — it picks back up ${budget?.renewsOn ? fmtDay(budget.renewsOn, (fr, enS) => en ? enS : fr) : "on the 1st"}. Everything you've already got stays exactly as it is.`
-                  : `Otto a mis le nouveau travail en pause pour le mois — ça repart ${budget?.renewsOn ? fmtDay(budget.renewsOn, (fr, enS) => en ? enS : fr) : "le 1er"}. Tout ce que tu as déjà reste en place.`}</p>
               </div>
               <button className="btn xs ghost" onClick={() => navigate("settings")}>{en ? "Settings" : "Réglages"}</button>
             </div>
@@ -2036,13 +2020,7 @@ function FlashcardsLibraryPage({ lang, tasks, embedded, userId }: { lang?: "fr" 
  *  subject (errorLogBySubject, shared/types.ts — subjects with the most entries surface first, since that's
  *  where mistakes are piling up). Fetches its own profile copy rather than threading one down from
  *  Settings — this tab needs to work as a standalone destination, not only reachable via Settings. */
-/** Admin-only usage dashboard — access is enforced SERVER-SIDE (server/index.ts's isAdmin, one hardcoded
- *  email), this component only decides whether to render the nav link/route at all; a non-admin hitting
- *  /admin directly would just get a 403 from the API and see the error state below, never real data. */
-const ADMIN_EMAIL = "tjong.willem@gmail.com";
-function isAdminUser(email?: string | null): boolean {
-  return (email || "").toLowerCase() === ADMIN_EMAIL;
-}
+/** Admin-only usage dashboard. Access is enforced server-side (ADMIN_EMAILS); the client only hides the link. */
 type AdminUserRow = { email: string; taskCount: number; completedTaskCount: number; tutorSessionCount: number; tutorMinutes: number; journalCount: number };
 type AdminSortKey = "email" | "taskCount" | "completedTaskCount" | "tutorSessionCount" | "tutorMinutes" | "journalCount";
 function AdminPage() {
@@ -2860,7 +2838,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
   const L = useLang();
   const notify = useNotify();
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [usage, setUsage] = useState<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string; byCategory: Partial<Record<"sweep" | "autorun" | "chat" | "manual_refine" | "studylog" | "student_model" | "other", number>> } | null>(null);
+  const [usage, setUsage] = useState<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; byCategory: Partial<Record<"sweep" | "autorun" | "chat" | "manual_refine" | "studylog" | "student_model" | "other", number>> } | null>(null);
   const [showKnows, setShowKnows] = useState(false);
   const [showStudentModel, setShowStudentModel] = useState(false);
   const [patterns, setPatterns] = useState<{
@@ -3037,6 +3015,28 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
           <PreferencesFields profile={profile} onChanged={(p) => { setProfile(p); onChanged(); }} />
         </div>
       </section>
+
+      {usage && (
+        <section className="settings-sec reveal" style={{ ["--d" as any]: "0.11s" }}>
+          <h3>{L("Utilisation de l'IA", "AI usage")}</h3>
+          <div className="set-list">
+            <div className="set-row">
+              <span className="set-text"><b>{L("Coût ce mois-ci", "Cost this month")}</b><span className="settings-hint">{L("Estimation, en dollars US.", "Estimate, in US dollars.")}</span></span>
+              <span className="usage-figure">${usage.monthCostUsd.toFixed(2)}</span>
+            </div>
+            {Object.entries(usage.byCategory).filter(([, v]) => (v || 0) > 0).sort((a, b) => (b[1] || 0) - (a[1] || 0)).map(([k, v]) => (
+              <div className="set-row" key={k}>
+                <span className="set-text">{USAGE_CATEGORY_LABEL[k] ? L(...USAGE_CATEGORY_LABEL[k]) : k}</span>
+                <span className="usage-figure muted">${(v || 0).toFixed(2)}</span>
+              </div>
+            ))}
+            <div className="set-row">
+              <span className="set-text">{L("Jetons utilisés au total", "Total tokens used")}</span>
+              <span className="usage-figure muted">{usage.total.toLocaleString()}</span>
+            </div>
+          </div>
+        </section>
+      )}
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.13s" }}>
         <button className="sec-toggle" aria-expanded={showKnows} onClick={() => setShowKnows((v) => !v)}>
@@ -3805,43 +3805,6 @@ const LEGAL_ENTITY = "Willem Tjong";
 const LEGAL_EMAIL = "tjong.willem@gmail.com";
 const LEGAL_JURISDICTION = "France";
 const LEGAL_UPDATED = "July 30, 2026";
-
-function UnlimitedPage({ status, onDone }: { status: ConnectionStatus; onDone: () => Promise<void> }) {
-  const en = status.language === "en";
-  const [busy, setBusy] = useState(false);
-  const already = !!status.unlimited;
-  const claim = async () => {
-    setBusy(true);
-    try { await api.goUnlimited(); await onDone(); } finally { setBusy(false); }
-  };
-  return (
-    <div className="landing legal-page">
-      <header className="landing-nav glass-nav">
-        <a className="brand" href="/"><Logo size={22} /> Otto</a>
-      </header>
-      <main className="legal unlimited-page">
-        <h1>{en ? "Unlimited credits" : "Crédits illimités"}</h1>
-        {already ? (
-          <>
-            <p>{en ? "Your account already has no monthly AI budget cap." : "Ton compte n'a déjà plus de plafond d'utilisation IA mensuel."}</p>
-            <a className="btn primary big" href="/tasks">{en ? "Back to tasks" : "Retour aux tâches"}</a>
-          </>
-        ) : (
-          <>
-            <p>{en ? "Remove the monthly AI spend cap on this account." : "Retire le plafond mensuel de dépense IA de ce compte."}</p>
-            <button className="btn primary big" disabled={busy} onClick={() => void claim()}>
-              {busy ? (en ? "Applying…" : "Application…") : (en ? "Get unlimited credits" : "Obtenir des crédits illimités")}
-            </button>
-          </>
-        )}
-        <a className="legal-back" href="/">← {en ? "Back to Otto" : "Retour à Otto"}</a>
-      </main>
-      <footer className="legal-foot">
-        <span className="foot-mit">© 2026 Otto</span>
-      </footer>
-    </div>
-  );
-}
 
 function LegalPage({ kind, lang }: { kind: "privacy" | "terms"; lang?: string }) {
   return (

@@ -176,3 +176,7 @@ hr { border: 0; border-top: 1px solid var(--line-soft); }
 .sm-board-gap-past { margin-top: 0; margin-bottom: 4px; opacity: .75; }
 .sm-board-gap-past .sm-board-gap-text::after { content: none; }
 .sm-board-gap-past .sm-board-line { margin-bottom: 2px; }
+
+/* Settings → AI usage figures */
+.usage-figure { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+.usage-figure.muted { font-weight: 400; color: var(--ink-3); }

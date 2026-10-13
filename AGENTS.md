@@ -26,8 +26,10 @@
 
 ## Task execution architecture (non-blocking)
 
-- **Kick loop** (`/api/jobs/kick`): fires `drain()` in the background and returns immediately — the client's 4s poll loop is never blocked by a long AI call. `claimJob` is atomic, so the next kick finds the job already claimed and returns instantly.
-- **`enqueueAndDrain`** (jobs.ts): accepts `drainInline` param. Task creation and `runViaJob` pass `false` → the HTTP response returns immediately with the task in "queued" status, and the kick loop processes the job within seconds. No timeout/limit on the work itself.
+- **Kick loop** (`/api/jobs/kick`): awaits `drain(1)` for the caller's own jobs only. On Vercel, work detached from a request can be frozen, so it must run inside the request. `claimJob` is atomic, so a concurrent kick finds the job already claimed and returns.
+- **`enqueueAndDrain`** (jobs.ts): manual actions (`runViaJob`: run, revise, run step) and the sweep drain ONE job inline (`drainInline = true`). Task creation and post-sweep auto-runs pass `false` and leave the work to the kick loop.
+- **Time limits**: Vercel functions die at 300 s. `drain()` won't start a new job after 120 s, the cron tick stops enqueueing at 100 s and starting jobs at 150 s, and a job killed mid-run is retried once its 6-minute lock (`LOCK_MS`, kept fresh by a heartbeat while alive) expires.
+- **Background saves**: on Vercel, `commit()` writes the account row immediately and holds the function open with `waitUntil`; locally it debounces (syncScheduler.ts).
 - **Chat** (`/api/tasks/:id/chat`): when the AI fails but `chatAboutTask` provides a fallback reply, the route returns 200 with the reply and saves artifacts — chat always returns a response, never a hard 500.
 
 ## Local dev

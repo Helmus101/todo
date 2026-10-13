@@ -121,8 +121,6 @@ export interface Profile {
   // course's facts don't scroll off the list behind unrelated ongoing projects, and so the UI/prompts can
   // treat "this is about a specific class" as a distinct, groupable kind of fact.
   courses: string[];
-  unlimited?: boolean;    // account has no monthly AI spend cap (set by visiting /unlimited) — overMonthlyBudget/
-                          // overInteractiveBudget always read false for it, regardless of monthCostUsd
   // Opt-in gate for anything experimental: the 7 bandit-personalization suggestions (Pomodoro/audio/
   // density/chat-style/flashcard-verbosity/granularity/ordering), the Study Mode focus camera, and the
   // AI-personalized theme generator. Off (undefined) by default for every account — each gated feature
@@ -447,7 +445,6 @@ export function normalizeProfile(p: any): Profile {
     // standing fact, so two genuinely different sessions that happen to read similarly (sameFact is fuzzy)
     // must not collapse into one. Capped here instead, newest last so a simple .slice(-N) keeps recency.
     sessions: arr(p?.sessions).slice(-30),
-    unlimited: !!p?.unlimited,
     paused: !!p?.paused,
     pausedAt: typeof p?.pausedAt === "string" ? p.pausedAt : undefined,
     lastSweepAt: typeof p?.lastSweepAt === "string" ? p.lastSweepAt : undefined,
@@ -863,34 +860,8 @@ export function monthCostUsd(profile?: Profile | null, tz?: string, now: Date = 
   // pre-upgrade rows that never accumulated it.
   return typeof u.monthCost === "number" ? u.monthCost : usageCostUsd(u.monthIn || 0, u.monthOut || 0);
 }
-/** The monthly AI budget (USD). Override with MONTHLY_AI_BUDGET_USD (server-side); default effectively unlimited. */
-export function monthlyBudgetUsd(): number {
-  const raw = typeof process !== "undefined" ? Number(process.env?.MONTHLY_AI_BUDGET_USD) : NaN;
-  return Number.isFinite(raw) && raw >= 0 ? raw : 999999;
-}
-/** Has this account crossed its monthly AI budget? Gates BACKGROUND generation + execution when true. */
-export function overMonthlyBudget(profile?: Profile | null, now: Date = new Date()): boolean {
-  if (profile?.unlimited) return false;
-  return monthCostUsd(profile, tzOf(profile), now) >= monthlyBudgetUsd();
-}
-/** A small reserve above the cap kept for INTERACTIVE, user-present actions — the Approve & Run click, a
- *  manual run, a revision. The whole point of the product is that a human is the last step, so the last step
- *  must not be the thing the cap kills; it can spill slightly past the cap to let the user finish. Background
- *  work (sweeps, offline auto-run) still stops hard at the cap via overMonthlyBudget. */
-export const INTERACTIVE_RESERVE = 1.1;
-export function overInteractiveBudget(profile?: Profile | null, now: Date = new Date()): boolean {
-  if (profile?.unlimited) return false;
-  return monthCostUsd(profile, tzOf(profile), now) >= monthlyBudgetUsd() * INTERACTIVE_RESERVE;
-}
-/** When the budget resets — the 1st of next month in the user's timezone, as an ISO date ("YYYY-MM-DD"). */
-export function budgetRenewsOn(profile?: Profile | null, now: Date = new Date()): string {
-  const [y, m] = monthKeyOf(tzOf(profile), now).split("-").map(Number);
-  const ny = m === 12 ? y + 1 : y, nm = m === 12 ? 1 : m + 1;
-  return `${ny}-${String(nm).padStart(2, "0")}-01`;
-}
-
-/** Add one AI call's token cost to a profile's usage counters (mutates in place) — cumulative for the
- *  Settings view, plus month-to-date (with calendar-month rollover) for the spend cap. Best-effort. */
+/** Add one AI call's token cost to a profile's usage counters (mutates in place) — cumulative plus
+ *  month-to-date (with calendar-month rollover), both shown in Settings. Best-effort. */
 // What kind of AI call spent the money — lets Settings answer "what's actually costing money" instead of
 // just a single opaque total. Deliberately a small, fixed set (not a free-text label) so it stays a real
 // breakdown a person can scan, not a growing pile of one-off strings.
@@ -2015,8 +1986,7 @@ export interface ConnectionStatus {
   onboarded?: boolean;  // the basic onboarding has been finished/skipped (or the account clearly predates it)
   toursSeen?: string[]; // page guides already shown on this account (Profile.toursSeen)
   betaFeatures?: boolean;     // opt-in gate for bandit personalization / focus camera / AI theme — see Profile's own doc comment
-  overBudget?: boolean;       // month-to-date AI spend has crossed the cap — gen/exec paused until it resets
-  unlimited?: boolean;        // account has no monthly AI spend cap (set via the /unlimited page)
+  isAdmin?: boolean;          // this account is listed in the server's ADMIN_EMAILS
   language?: "fr" | "en";     // the account's UI + AI-content language (Settings toggle) — defaults "fr"
   csrfToken?: string;         // synchronizer-token CSRF defense (server/index.ts's requireAuth) — only present when loggedIn
 }

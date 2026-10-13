@@ -1,6 +1,7 @@
 import { COURSEWORK_MAX_CHARS, COURSEWORK_MAX_DOCS, COURSEWORK_MAX_PAGES } from "../shared/coursework.ts";
 import "./env.ts"; // load web/.env + the repo-root .env (COMPOSIO_API_KEY etc.) — MUST be first
 import { initSentry, reportError } from "./sentry.ts";
+import { waitUntil } from "@vercel/functions";
 initSentry(); // before anything else can throw — no-op if SENTRY_DSN isn't set
 import express from "express";
 import type { RequestHandler } from "express";
@@ -21,7 +22,7 @@ import { runTutorTurn, detectSubject, computedGapKey, solvedGapKey, subjectsIn }
 import { selectJournal } from "./journal.ts";
 import type { TutorOpenerMemory } from "./claude.ts";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, FocusSession, BoardEntry, TaskObjective, TaskProblem } from "../shared/types.ts";
-import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY, subjectMastery } from "../shared/types.ts";
+import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY, subjectMastery } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
 import { buildTasksPayload } from "./taskDelta.ts";
 import { makeSyncScheduler } from "./syncScheduler.ts";
@@ -29,7 +30,7 @@ import { parsePolicy, summarize as summarizePolicy, initPolicy } from "./tutorPo
 import { findSourceQuestions, sourcesForTrack } from "./questionSources.ts";
 import { schoolRecordLine } from "./schoolRecord.ts";
 import { summarizeCoursework, fallbackCourseworkSummary, aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType, visionReady, describeWhiteboard, describeUploadedPhoto, ttsReady, synthesizeSpeech, TTS_MAX_TEXT, tutorOpener, interactiveSceneDocument, INTERACTIVE_SCENE_CSP } from "./claude.ts";
-import { loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken, getAdminMetrics } from "./store.ts";
+import { loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, destroySessionsForUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken, getAdminMetrics } from "./store.ts";
 import { sendTransactionalEmail } from "./mailer.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, subjectFrequency, orderingBoost, weakSubjectBoost, twoMinuteRuleBoost, stallNudgeLine } from "./patterns.ts";
@@ -72,6 +73,9 @@ const PORT = Number(process.env.PORT) > 0 ? Number(process.env.PORT) : 8788;
 // timed out, the preview proxy had no target). A 0/NaN/negative PORT is always a misconfiguration here,
 // never intentional — this app has no caller that wants an OS-assigned port.
 const PROD = process.env.NODE_ENV === "production";
+// Admin dashboard access: comma-separated emails in ADMIN_EMAILS. Unset = nobody is admin.
+const ADMIN_EMAILS = new Set((process.env.ADMIN_EMAILS || "").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean));
+const isAdmin = (req: express.Request): boolean => ADMIN_EMAILS.has((req.session.user || "").toLowerCase());
 
 // Fail closed: required environment variables in production
 if (PROD) {
@@ -311,31 +315,8 @@ for (const sig of ["SIGTERM", "SIGINT"] as const) process.once(sig, () => { void
 process.once("beforeExit", () => { void scheduler.flushAll(); });
 
 const commit = async (req: express.Request, opts?: { awaitCloud?: boolean }) => {
-  // Only the session-store write is awaited BY DEFAULT: it's what a same-device follow-up request depends
-  // on (sessions are cloud-backed too — makeSessionStore() — so this is the account's cross-request
-  // truth, and it's a single round trip). The cross-device cloud sync below (read this account's cloud
-  // row, merge, write it back) used to run — and be retried up to 3x on a blip — IN LINE before the
-  // response, turning every confirm/dismiss/step-done tap into 2 sequential Supabase round trips
-  // minimum. Every one of this function's ~20 call sites responds with the LOCAL req.session state
-  // (never the merged result) immediately after commit() resolves, so nothing depends on the merge
-  // finishing first — detach it as best-effort background work instead, matching saveState's own "never
-  // throws into the request path" contract and the `void recordEvent(...)` fire-and-forget pattern
-  // already used right after several of these call sites.
-  //
-  // BUT: on a serverless deploy (Vercel), the function invocation can freeze/tear down the instant the
-  // HTTP response finishes — a detached `void (async () => ...)()` isn't guaranteed to run to completion
-  // after that point, unlike a long-lived server where the process just keeps going. This was reported
-  // live as journal entries and flashcard reviews not reliably surviving in the cloud — exactly the
-  // "response went out, but the write behind it never actually finished" shape. `opts.awaitCloud` opts a
-  // call site into waiting for the real cloud write before responding — used for the lower-frequency,
-  // higher-value-per-write paths (a day's journal save, a flashcard review) where a slightly slower
-  // response is worth actually guaranteeing the data lands, while high-frequency routes (step-done,
-  // confirm) keep the fire-and-forget default so they stay snappy.
-  // Trim heavy studylog artifacts (old flashcard decks/quizzes — see trimOldStudylogArtifacts's own
-  // comment) on EVERY commit, not just the journal-save route — this is the single choke point every write
-  // path passes through, so the very next action on an account (any account, not just ones actively
-  // journaling today) cleans up its existing backlog immediately instead of waiting on a future journal
-  // save. Cheap (a plain array map, no I/O) and a no-op for accounts with nothing old enough to trim.
+  // Saves the session, then syncs the account row to the cloud. `awaitCloud` waits for that cloud write before
+  // responding (journal saves, flashcard reviews); otherwise it runs in the background (see the branches below).
   if (req.session.tasks) req.session.tasks = tasks.trimOldStudylogArtifacts(req.session.tasks);
   await saveSession(req);
   if (!req.session.user) return;
@@ -356,9 +337,14 @@ const commit = async (req: express.Request, opts?: { awaitCloud?: boolean }) => 
     await writeAccount(email, localTasks, localProfile, { throwOnError: true, bypassCache: true });
     sessionDirtyCache.set(sessionId, currentHash);
   } else if (isDirty) {
-    // Everything else is WRITE-BEHIND: the latest snapshot is held in memory and written ONCE after a quiet period (see
-    // syncScheduler.ts) — a burst of step ticks / flashcard reviews / chat turns is one Supabase write, not dozens.
-    scheduler.schedule(email, { tasks: localTasks, profile: localProfile });
+    if (process.env.VERCEL) {
+      // Serverless: a timer set after the response may never fire (the instance freezes). Write now and let
+      // waitUntil keep the function alive until it lands, without delaying the response.
+      waitUntil(scheduler.flush(email, { tasks: localTasks, profile: localProfile }));
+    } else {
+      // Long-running server: write-behind — a burst of step ticks / reviews / chat turns is one write (syncScheduler.ts).
+      scheduler.schedule(email, { tasks: localTasks, profile: localProfile });
+    }
     sessionDirtyCache.set(sessionId, currentHash);
   }
 };
@@ -682,30 +668,29 @@ app.post("/api/auth/forgot-password", rateLimit(5, 60 * 60_000), ah(async (req, 
     if (u) {
       const token = randomBytes(32).toString("hex");
       const expiresAt = new Date(Date.now() + 30 * 60_000).toISOString(); // 30 min — short-lived, a fresh request is one click away
-      setResetToken(email, token, expiresAt);
+      await setResetToken(email, token, expiresAt);
       const link = `${process.env.PUBLIC_URL || "https://hiotto.vercel.app"}/reset-password?token=${token}`;
       const en = req.body?.lang !== "fr";
       const html = en
         ? `<p>Someone (hopefully you) asked to reset your Otto password. This link works once and expires in 30 minutes.</p><p><a href="${link}">Reset your password →</a></p><p>If this wasn't you, you can safely ignore this email — your password hasn't changed.</p>`
         : `<p>Quelqu'un (toi, on espère) a demandé à réinitialiser ton mot de passe Otto. Ce lien fonctionne une seule fois et expire dans 30 minutes.</p><p><a href="${link}">Réinitialiser ton mot de passe →</a></p><p>Si ce n'était pas toi, tu peux ignorer cet e-mail — ton mot de passe n'a pas changé.</p>`;
-      void sendTransactionalEmail(email, en ? "Reset your Otto password" : "Réinitialise ton mot de passe Otto", html);
+      // Awaited: a serverless function can be frozen right after the response, dropping an unsent email.
+      await sendTransactionalEmail(email, en ? "Reset your Otto password" : "Réinitialise ton mot de passe Otto", html);
       void recordEvent(email, "password_reset_requested", {});
     }
   } catch (e: any) { reportError("auth-forgot-password", e, { email }); /* still respond ok:true below — never leak account existence via a failure path either */ }
   res.json({ ok: true });
 }));
 
-// Password reset — confirm step. The token itself (unguessable, 32 random bytes, single-use, 30-min expiry
-// — see setResetToken/consumeResetToken in store.ts, an in-memory Map now, not a table) IS the
-// authentication for this request; no session required, matching how the emailed link is meant to be
-// opened straight from a signed-out state.
+// Password reset — confirm step. The token (32 random bytes, single-use, 30-min expiry, stored hashed —
+// see setResetToken/consumeResetToken in store.ts) IS the authentication; no session required.
 app.post("/api/auth/reset-password", rateLimit(10, 60 * 60_000), ah(async (req, res) => {
   const token = String(req.body?.token || "");
   const password = String(req.body?.password || "");
   if (!token) { res.status(400).json({ error: M(req, "Lien de réinitialisation manquant ou invalide.", "Missing or invalid reset link.") }); return; }
   if (password.length < 8 || password.length > 200) { res.status(400).json({ error: M(req, "Le mot de passe doit contenir entre 8 et 200 caractères.", "Password must be between 8 and 200 characters.") }); return; }
   if (!cloudEnabled()) { res.status(500).json({ error: M(req, "Le stockage des comptes n'est pas configuré sur le serveur (Supabase).", "Account storage isn't configured on the server (Supabase).") }); return; }
-  const u = consumeResetToken(token);
+  const u = await consumeResetToken(token);
   if (!u) { res.status(400).json({ error: M(req, "Ce lien de réinitialisation est invalide ou a expiré — refais-en la demande.", "This reset link is invalid or has expired — request a new one.") }); return; }
   const authUser = await findAuthUserByEmail(u.email);
   if (!authUser || !(await setAuthPassword(authUser.id, password))) { res.status(500).json({ error: M(req, "Impossible de réinitialiser le mot de passe — réessaie.", "Couldn't reset the password — try again.") }); return; }
@@ -720,6 +705,8 @@ app.post("/api/auth/reset-password", rateLimit(10, 60 * 60_000), ah(async (req, 
     req.session.tasks = restored.tasks;
     req.session.csrfToken = randomBytes(24).toString("hex");
     await saveSession(req);
+    // A reset means the old password may be compromised — sign out every other device.
+    await destroySessionsForUser(u.email, req.sessionID);
     res.json({ ok: true, csrfToken: req.session.csrfToken });
   });
 }));
@@ -877,7 +864,7 @@ app.get("/integrations/:app/connect", requireAuth, async (req, res) => {
     integrations.invalidateTools(req.session.user!);
     void recordMetric(req.session.user!, "integration_connected", 1, app2);
     req.session.save(() => res.redirect(redirectUrl));
-  } catch (e: any) { res.status(500).send("Couldn't start the connection: " + (e?.message || e)); }
+  } catch (e: any) { reportError("integration-connect", e); res.status(500).send("Couldn't start the connection — please try again."); }
 });
 
 // Composio sends the user back here after OAuth — bounce to Settings, where status re-checks live.
@@ -994,7 +981,7 @@ app.get("/api/integrations/blackbaud/connect", requireAuth, (req, res) => {
   req.session.blackbaudOAuthState = state;
   req.session.save(() => {
     try { res.redirect(blackbaudSvc.getAuthUrl(state)); }
-    catch (e: any) { res.status(500).send("Couldn't start the connection: " + (e?.message || e)); }
+    catch (e: any) { reportError("integration-connect", e); res.status(500).send("Couldn't start the connection — please try again."); }
   });
 });
 app.get("/api/integrations/blackbaud/callback", requireAuth, ah(async (req, res) => {
@@ -1101,11 +1088,10 @@ app.get("/api/status", ah(async (req, res) => {
     highPriorityPeople: req.session.profile?.highPriorityPeople,
     genPerDay: req.session.profile?.genPerDay,
     timezone: req.session.profile?.timezone,
-    overBudget: overMonthlyBudget(req.session.profile),
-    unlimited: !!req.session.profile?.unlimited,
     language: req.session.profile?.language === "en" ? "en" : "fr",
     customTheme: req.session.profile?.customTheme,
     betaFeatures: !!req.session.profile?.betaFeatures,
+    isAdmin: isAdmin(req),
     // "Onboarded" = finished/skipped the basic flow, OR an account that clearly predates it (has a name, a track or
     // tasks) — those are never put through name/track questions they've long answered. Page guides still run.
     onboarded: !!req.session.profile?.onboardedAt || !!req.session.profile?.name || !!req.session.profile?.track || (req.session.tasks || []).length > 0,
@@ -1130,29 +1116,6 @@ app.get("/api/status", ah(async (req, res) => {
 // "Pause all AI usage" — the ONE toggle that stops generation and task runs. Enforced server-side
 // (isPaused, used below) so it holds even if a stale client tab tries to call one of those routes anyway.
 const isPaused = (req: express.Request): boolean => !!req.session.profile?.paused;
-// Monthly AI spend cap — the honest 402 an interactive route returns when the account is over budget.
-const overBudget = (req: express.Request): boolean => overMonthlyBudget(req.session.profile);
-// A user-present action (Approve & Run, manual run, revise) is allowed a small reserve above the cap so the
-// human's own last step isn't the thing the budget kills — background work still stops hard at the cap.
-const overInteractive = (req: express.Request): boolean => overInteractiveBudget(req.session.profile);
-// Student-facing budget message — this used to be a single hardcoded English string containing an
-// operator-only instruction ("Raise MONTHLY_AI_BUDGET_USD to lift it"), shown VERBATIM to the student in
-// their own toast (a config env-var name means nothing to them, and it was never translated even though the
-// rest of the app is French-first). Now a real bilingual, student-facing message with no internal detail.
-const budgetMsg = (req: express.Request): string => M(req,
-  "Otto a atteint son plafond mensuel d'IA — ça se renouvelle le 1er du mois.",
-  "Otto's reached its monthly AI budget — it resets on the 1st.");
-// Visiting /unlimited (client-side route, see App.tsx) removes this account's monthly AI spend cap.
-app.post("/api/settings/unlimited", requireAuth, async (req, res) => {
-  try {
-    const p = (req.session.profile ||= emptyProfile());
-    p.unlimited = true;
-    void recordEvent(req.session.user!, "settings_changed", { message: "unlimited enabled" });
-    await commit(req);
-    res.json(tasks.stripProfileForResponse(p));
-  } catch (e: any) { console.error(e);
-    res.status(500).json({ error: M(req, "Impossible d'enregistrer — réessaie.", "Couldn't save — try again.") }); }
-});
 
 app.post("/api/settings/pause", requireAuth, async (req, res) => {
   try {
@@ -1361,7 +1324,6 @@ app.get("/api/patterns/summary", requireAuth, ah(async (req, res) => {
 const CONTINUOUS_MONITOR_INTERVAL_MS = 30 * 60 * 1000; // min gap between background sweeps
 app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour chercher de nouvelles tâches.", "AI is paused — resume it in Settings to sweep for new tasks.") }); return; }
-  if (overBudget(req)) { res.json({ tasks: req.session.tasks || [], note: "skipped: monthly AI budget reached" }); return; }
   try {
     const user = req.session.user!;
     const force = req.body?.force === true; // the manual Refresh button — always run a REAL sweep
@@ -1424,7 +1386,7 @@ app.post("/api/tasks", requireAuth, rateLimit(20, 60_000), async (req, res) => {
   // side effect, but that isn't reliable (the run can defer, fail, or not return a title), so a vague raw
   // title stuck around on the card. The execution run can still further sharpen it. When AI is
   // unavailable/paused/over budget, it goes in unrefined and the background sweep's auto-refine cleans it up.
-  const ready = aiReady() && !isPaused(req) && !overBudget(req);
+  const ready = aiReady() && !isPaused(req);
   const refined = ready ? await refineManualTask(title, req.session.profile, schoolRecordLine(req.session.tasks, req.session.profile)).catch(() => null) : null;
   if (refined) addUsage(req.session.profile ||= emptyProfile(), refined.tokens, "manual_refine");
   try {
@@ -1529,7 +1491,6 @@ app.get("/api/interactive/:taskId/:entryId", requireAuth, rateLimit(120, 60_000)
 // Refine an UNREFINED manual task (one added while AI was paused/unavailable) now that AI is back.
 app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour affiner.", "AI is paused — resume it in Settings to refine.") }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
   if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
   const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
   if (!t) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
@@ -1546,7 +1507,6 @@ app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 60_000), async (req
 // Regenerate steps for an existing task using the new architecture
 app.post("/api/tasks/:id/regenerate", requireAuth, rateLimit(5, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour régénérer.", "AI is paused — resume it in Settings to regenerate.") }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
   if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
   const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
   if (!t) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
@@ -1626,7 +1586,6 @@ app.post("/api/tasks/cleanup-artifact-steps", requireAuth, rateLimit(2, 60_000),
 // ignores rather than an error the student sees.
 app.post("/api/tutor/opener", requireAuth, rateLimit(30, 60_000), ah(async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour discuter.", "AI is paused — resume it in Settings to chat.") }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
   if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
   const subject = typeof req.body?.subject === "string" ? req.body.subject.trim().slice(0, 80) : "";
   // Client-controlled input, so every field is capped here (the prompt builder does no capping of its own).
@@ -1663,7 +1622,6 @@ app.post("/api/tutor/opener", requireAuth, rateLimit(30, 60_000), ah(async (req,
 const CHAT_CAP = 60;
 app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour discuter.", "AI is paused — resume it in Settings to chat.") }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
   if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
   
   const message = String(req.body?.message || "").trim().slice(0, 2000);
@@ -2025,7 +1983,6 @@ async function tutorTurn(
 // several hints per card while drilling a deck.
 app.post("/api/tasks/:id/study-help", requireAuth, rateLimit(40, 60_000), ah(async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour discuter.", "AI is paused — resume it in Settings to chat.") }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
   if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
   const message = String(req.body?.message || "").trim().slice(0, 1000);
   if (!message) { res.status(400).json({ error: M(req, "Écris quelque chose d'abord.", "Say something first.") }); return; }
@@ -2068,10 +2025,8 @@ const runViaJob = async (req: express.Request, res: express.Response, type: "exe
     // now, Revise, Run this step — which must actually DO the work and hand back the real result, not just
     // enqueue and hope the separate background kick loop (client's 4s poll, see App.tsx) picks it up in
     // time. A prior "false" override here left a manual click silently doing nothing but flip the task to
-    // "queued" — reported live as "Run now doesn't work". Safe to await inline now: runTask itself is
-    // bounded to ~90s by its own time-budget circuit breaker (see claude.ts's checkTimeBudget), so this
-    // request blocks for a real, bounded amount of time doing real work — not the unbounded, potentially-
-    // minutes-long hang that originally motivated making jobs non-blocking elsewhere.
+    // "queued" — reported live as "Run now doesn't work". Inline drains take ONE job (jobs.ts),
+    // and a run killed by the 300 s function limit is retried once its 6-minute job lock expires.
     const job = await jobs.enqueueAndDrain(user, type, id, input);
     // enqueueJob is idempotent PER TASK, not per job type — if a job of a DIFFERENT kind is already active
     // for this task (e.g. an auto-queued execute_task still running when the user asks to revise), it
@@ -2095,14 +2050,10 @@ const runViaJob = async (req: express.Request, res: express.Response, type: "exe
     if (!t) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
     // Only a TERMINAL job failure is an error response — the user needs the message + Retry.
     if (job.status === "failed_terminal") { res.status(500).json({ error: job.last_error || t.lastError || "run failed" }); return; }
-    // A job the processor SKIPPED (paused / over budget — see processExecuteStep/processExecuteTask) still
-    // reports "succeeded" with a "skipped: ..." note, since it's not a failure the retry logic should act
-    // on. But silently returning the unchanged task here looked EXACTLY like "I clicked and nothing
-    // happened" — the route-level isPaused/overInteractive checks above only catch a stale SESSION profile;
-    // the job re-checks against a freshly loaded CLOUD profile and can disagree (another device just paused
-    // it, or budget ticked over between the click and the drain). Surface it as the same honest error.
+    // The job re-checks "paused" against the fresh cloud profile (another device may have paused it) and
+    // reports a "skipped: AI paused" success — surface that instead of silently returning an unchanged task.
     const skipNote = typeof job.output?.note === "string" && job.output.note.startsWith("skipped:") ? job.output.note : null;
-    if (skipNote) { res.status(403).json({ error: skipNote.includes("budget") ? budgetMsg(req) : M(req, "L'IA est en pause — réactive-la dans les Réglages pour lancer ceci.", "AI is paused — resume it in Settings to run this.") }); return; }
+    if (skipNote?.includes("paused")) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour lancer ceci.", "AI is paused — resume it in Settings to run this.") }); return; }
     res.json(t);
   } catch (e: any) {
     console.error(`[tasks] ${type} error for task`, id, ":", e);
@@ -2119,7 +2070,6 @@ const runViaJob = async (req: express.Request, res: express.Response, type: "exe
 // `manual: true` marks a deliberate user click, which is allowed to retry a terminally-failed task.
 app.post("/api/tasks/:id/run", requireAuth, rateLimit(40, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour lancer des tâches.", "AI is paused — resume it in Settings to run tasks.") }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
   // Hard reset ("Réexécuter depuis le début"): the actual wipe happens INSIDE processExecuteTask (jobs.ts),
   // on the same load→mutate→commit cycle as the run itself — doing it here first and committing separately
   // got silently undone by commit()'s cross-device merge (see jobs.ts's comment on this). Just pass the
@@ -2133,7 +2083,6 @@ app.post("/api/tasks/:id/revise", requireAuth, rateLimit(20, 60_000), async (req
   const note = String(req.body?.note || "").trim();
   if (!note) { res.status(400).json({ error: M(req, "note requise", "note required") }); return; }
   if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour réviser des tâches.", "AI is paused — resume it in Settings to revise tasks.") }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
   if (req.session.user) void recordMetric(req.session.user, "task_revision_requested", 1);
   await runViaJob(req, res, "revise", { note });
 });
@@ -2207,7 +2156,6 @@ app.post("/api/tasks/:id/dismiss", requireAuth, rateLimit(60, 60_000), async (re
 // tab's kick loop (client/App.tsx) drains queued/executing work within seconds; cron covers it offline.
 app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour lancer des étapes.", "AI is paused — resume it in Settings to run steps.") }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
   const id = String(req.params.id);
   const index = Number(req.params.index);
   const answer = typeof req.body?.answer === "string" ? req.body.answer.slice(0, 500) : undefined;
@@ -2459,7 +2407,6 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
     return;
   }
   if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour générer des cartes.", "AI is paused — resume it in Settings to generate flashcards.") }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
   if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
   const now = new Date().toISOString();
   if (!t) {
@@ -2622,7 +2569,6 @@ app.get("/api/studylog/week", requireAuth, ah(async (req, res) => {
 }));
 app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 60_000), ah(async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour générer le résumé.", "AI is paused — resume it in Settings to generate the summary.") }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
   if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
   const weekStart = String(req.body?.weekStart || "");
   if (!DATE_RE.test(weekStart)) { res.status(400).json({ error: M(req, "Date invalide.", "Invalid date.") }); return; }
@@ -2732,7 +2678,6 @@ app.get("/api/studylog/month", requireAuth, ah(async (req, res) => {
 }));
 app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 60_000), ah(async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour générer le résumé.", "AI is paused — resume it in Settings to generate the summary.") }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
   if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
   const monthStart = String(req.body?.monthStart || "");
   if (!MONTH_RE.test(monthStart) && !DATE_RE.test(monthStart)) { res.status(400).json({ error: M(req, "Date invalide.", "Invalid date.") }); return; }
@@ -2939,7 +2884,6 @@ app.post("/api/study/extract-text", requireAuth, rateLimit(30, 60_000), ah(async
 app.post("/api/tutor/read-whiteboard", requireAuth, rateLimit(15, 60_000), express.json({ limit: "8mb" }), ah(async (req, res) => {
   if (!visionReady()) { res.status(503).json({ error: M(req, "La lecture du tableau blanc n'est pas configurée sur ce serveur.", "Whiteboard reading isn't configured on this server.") }); return; }
   if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour continuer.", "AI is paused — resume it in Settings to continue.") }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
   const image = String(req.body?.image || "");
   if (!image) { res.status(400).json({ error: M(req, "Aucun dessin reçu.", "No drawing received.") }); return; }
   // The vision helper composes its own (diagnostic, sometimes upstream-detail-bearing) message, so it
@@ -2958,7 +2902,6 @@ app.post("/api/tutor/read-whiteboard", requireAuth, rateLimit(15, 60_000), expre
 app.post("/api/tutor/read-photo", requireAuth, rateLimit(15, 60_000), express.json({ limit: "8mb" }), ah(async (req, res) => {
   if (!visionReady()) { res.status(503).json({ error: M(req, "La lecture d'image n'est pas configurée sur ce serveur.", "Image reading isn't configured on this server.") }); return; }
   if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour continuer.", "AI is paused — resume it in Settings to continue.") }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
   const image = String(req.body?.image || "");
   if (!image) { res.status(400).json({ error: M(req, "Aucune image reçue.", "No image received.") }); return; }
   const r = await describeUploadedPhoto(image, (fr, en) => M(req, fr, en));
@@ -3023,7 +2966,6 @@ app.post("/api/ui/theme-personalize", requireAuth, rateLimit(5, 60_000), ah(asyn
   // must not trust that alone). See Profile.betaFeatures' own doc comment.
   if (!req.session.profile?.betaFeatures) { res.status(403).json({ error: M(req, "Les fonctionnalités bêta sont désactivées — active-les dans les Réglages pour essayer ça.", "Beta features are off — turn them on in Settings to try this.") }); return; }
   if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour personnaliser ton thème.", "AI is paused — resume it in Settings to personalize your theme.") }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
   if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
   try {
     const profile = req.session.profile ||= emptyProfile();
@@ -3124,7 +3066,6 @@ app.post("/api/metrics", requireAuth, rateLimit(60, 60_000), ah(async (req, res)
 // Costs one AI call, so it's gated the same as any other interactive AI action (paused/budget).
 app.post("/api/tasks/:id/step/:index/expand", requireAuth, rateLimit(20, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour utiliser ceci.", "AI is paused — resume it in Settings to use this.") }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
   if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas encore configurée sur ce serveur.", "AI isn't set up on this server yet.") }); return; }
   const id = String(req.params.id);
   const index = Number(req.params.index);
@@ -3176,7 +3117,6 @@ app.post("/api/tasks/:id/step/:index/substep/:subIndex/done", requireAuth, rateL
 // tools needed, so it runs inline here rather than through the job queue.
 app.post("/api/tasks/:id/step/:index/substep/:subIndex/run", requireAuth, rateLimit(20, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour utiliser ceci.", "AI is paused — resume it in Settings to use this.") }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
   if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas encore configurée sur ce serveur.", "AI isn't set up on this server yet.") }); return; }
   const id = String(req.params.id);
   const index = Number(req.params.index);
@@ -3342,14 +3282,12 @@ app.post("/api/jobs/kick", requireAuth, rateLimit(60, 60_000), async (req, res) 
     // reasoning that draining could take minutes and shouldn't freeze the client's 4s poll loop. That traded
     // one bug for a WORSE one on Vercel serverless: the function invocation can freeze/be torn down the
     // instant the HTTP response is sent, with no `waitUntil` anywhere in this codebase to keep it alive —
-    // so a job could get CLAIMED (status "running", a 15min lock — see store.ts's LOCK_MS) and then simply
+    // so a job could get CLAIMED (status "running", a job lock — see store.ts's LOCK_MS) and then simply
     // never finish, because the code that was supposed to run it got killed the moment `res.json` below
     // fired. No later kick could reclaim it until that 15min lock expired. Reported live as a manually-
     // created task stuck at "Queued" / "Otto is getting this ready…" indefinitely — the exact shape this
-    // produces. The original worry (minutes-long blocking) is now much smaller than it was: runTask itself
-    // is bounded to ~90s by its own time-budget circuit breaker (see claude.ts's checkTimeBudget), so a
-    // single kick now blocks for, at most, roughly that long — a real, honest wait for real work, not an
-    // indefinite stall. `kicking.current` client-side already serializes kicks, so this doesn't double up.
+    // produces. A kick drains at most one job; a job killed by the 300 s function limit is
+    // retried once its 6-minute lock expires. `kicking.current` client-side already serializes kicks, so this doesn't double up.
     const out = await jobs.drain(1, undefined, email).catch((e: any) => { console.error("[kick] drain failed:", e?.message || e); return { processed: 0, failed: 0 }; });
     // READ-ONLY with respect to the session store: build the response from a fresh cloud-merged view, but
     // do NOT call saveSession() here. This route fires every 4s for the entire duration any job is active —
@@ -3458,8 +3396,7 @@ app.get("/api/usage", requireAuth, async (req, res) => {
     const u = p?.usage;
     res.json({
       in: u?.in || 0, out: u?.out || 0, total: (u?.in || 0) + (u?.out || 0), runs: u?.runs || 0, since: u?.since || null,
-      // Month-to-date spend against the cap (both USD) — what the Settings view + budget banner read.
-      monthCostUsd: monthCostUsd(p), budgetUsd: monthlyBudgetUsd(), over: overMonthlyBudget(p), renewsOn: budgetRenewsOn(p),
+      monthCostUsd: monthCostUsd(p),
       // Month-to-date spend BY WHAT SPENT IT (sweep/autorun/chat/manual_refine) — added so "what's actually
       // costing money" is an answerable question instead of one opaque total (see addUsage's own comment).
       byCategory: u?.monthByCategory || {},
@@ -3720,7 +3657,7 @@ app.post("/api/coursework", requireAuth, rateLimit(15, 60_000), ah(async (req, r
   const pages = Math.max(1, Math.min(COURSEWORK_MAX_PAGES, Math.round(Number(req.body?.pages) || 1)));
   const totalPages = Number(req.body?.totalPages) > 0 ? Math.min(9999, Math.round(Number(req.body.totalPages))) : undefined;
   const truncated = req.body?.truncated === true || (totalPages != null && totalPages > pages) || String(req.body?.text || "").length > COURSEWORK_MAX_CHARS;
-  const ready = aiReady() && !isPaused(req) && !overBudget(req);
+  const ready = aiReady() && !isPaused(req);
   const sum = ready ? await summarizeCoursework(subject, name, text, p).catch(() => null) : null;
   if (sum) addUsage(p, sum.tokens, "other");
   const id = randomUUID();
@@ -4241,15 +4178,6 @@ app.post("/api/tts", requireAuth, rateLimit(120, 60_000), async (req, res) => {
   res.send(out.audio);
 });
 
-// Admin metrics dashboard — gated to a single hardcoded account, not a role/permission system (there is
-// exactly one admin, this is a class project, not a product with a team of operators). Deliberately an
-// EXACT, case-insensitive email match rather than any kind of role flag on the profile/session — a role
-// flag would be one more piece of state that could drift or get copied into another account's row; a
-// literal constant here can't leak or be granted to anyone by accident.
-const ADMIN_EMAIL = "tjong.willem@gmail.com";
-function isAdmin(req: express.Request): boolean {
-  return (req.session.user || "").toLowerCase() === ADMIN_EMAIL;
-}
 app.get("/api/admin/metrics", requireAuth, async (req, res) => {
   if (!isAdmin(req)) { res.status(403).json({ error: M(req, "Accès refusé.", "Access denied.") }); return; }
   if (!cloudEnabled()) { res.status(500).json({ error: M(req, "Supabase n'est pas configuré.", "Supabase isn't configured.") }); return; }

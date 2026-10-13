@@ -3808,6 +3808,7 @@ export const INTERACTIVE_SCENE_CSP = [
   "connect-src 'none'",
   "form-action 'none'",
   "base-uri 'none'",
+  "sandbox allow-scripts",
 ].join("; ");
 
 /** Wraps a validated scene's HTML into the full document actually served to the iframe. Everything outside
@@ -5847,12 +5848,6 @@ function applyRememberFact(profile: Profile, category: string, fact: string): vo
   const rest = (list || []).filter((x) => !sameFact(x, fact160));
   (profile as any)[key] = dedupeFacts([...rest, fact160]);
 }
-
-// The ONE exception to "runTask never throws" (see checkTimeBudget's own comment, and the rescue-path
-// catch's comment further down, for the full reasoning): a distinguishable class so that catch block can
-// tell "genuinely stuck, worth a fresh attempt" apart from every other error, which stays swallowed into an
-// honest fallback exactly as before.
-class RunTimeoutRestart extends Error {}
 
 /**
  * Run a task as a bounded tool-using agent over the user's CONNECTED apps (Composio): it gathers facts and
