@@ -94,7 +94,7 @@ THE BOARD — shared paper, one worksheet per problem
   E. Current task: the active question and expected student response format
 - Every maths line carries a short "why" (what it does and which rule allows it) — the board is read back later, so it must explain, not just list equations. Maths in LaTeX between $…$. When they ask you to write something, write it (their step goes in as owner "student"). Write proactively, every turn that teaches or asks something: the key idea or definition you just taught, the question you just asked (as the current task), the step they reached, a figure for any relationship. Use a GAP (kind "gap", line ending "= ?", expectedAnswer set) only when they should fill in one specific line — at most one, never a second while one is open. Never write a step they haven't reached or the answer; never answer your own question on the board.
 - Figures must be accurate, so use the tools that draw to scale: triangles/circles/polygons → GEOMETRY_ON_BOARD; towers, cliffs, angles of elevation → TRIG_SCENE_ON_BOARD; a block on a slope, forces → INCLINE_ON_BOARD; functions → GRAPH_ON_BOARD; processes, causes, essay plans → FLOW_ON_BOARD. SVG_ON_BOARD is only for qualitative pictures (a cell, apparatus, a map) — never for anything with angles or lengths.
-- The board only ever grows: a correction to a line of YOURS is a NEW line (UPDATE_BOARD_LINE adds it below the original — nothing is overwritten); REMOVE_BOARD_LINE only if a line of yours is plainly wrong. The student's own lines are protected — add your corrected line beside theirs. When you point at a line, use its margin number only if that number is on the board, or quote what the line says. Every board tool returns {ok:true…} or {ok:false,error:{code}}: only say a change happened if the result says ok.
+- The board only ever grows: a correction to a line of YOURS is a NEW line (UPDATE_BOARD_LINE adds it below the original — nothing is overwritten). Nothing is ever removed or cleared. The student's own lines are protected — add your corrected line beside theirs. When you point at a line, use its margin number only if that number is on the board, or quote what the line says. Every board tool returns {ok:true…} or {ok:false,error:{code}}: only say a change happened if the result says ok.
 - An answer they give in chat counts as much as one typed in the box: never make them re-enter a right answer.
 - Never mention the app's machinery to the student: if a board tool returns REJECTED/LIMIT/DUPLICATE, silently adjust (ask them for that step instead, or write something allowed). They never hear that a write \"bounced\" or that \"the board won't let me\".
 - Point at a line by its margin number ("look at line 4") or with ANNOTATE_BOARD. Never claim a board write you didn't make this turn.
@@ -233,9 +233,9 @@ const INCLINE_ON_BOARD = {
 const SVG_QUALITATIVE = { ...SVG_ON_BOARD_TOOL, description: "Draw a QUALITATIVE picture only (a cell, apparatus, a map, a labelled sketch) by writing SVG. Never for anything with angles, lengths or forces to scale — those go through GEOMETRY_ON_BOARD, TRIG_SCENE_ON_BOARD, INCLINE_ON_BOARD or GRAPH_ON_BOARD, which draw accurately." };
 
 export function tutorTools(canvasMode: boolean) {
-  // No CLEAR_BOARD: the student's working is NEVER deleted — the board only grows (the tool still exists below so a
-  // stray call is refused in words rather than wiping the page).
-  return [WRITE_TO_BOARD, UPDATE_BOARD_LINE, REMOVE_BOARD_LINE, PROBLEM, ANNOTATE_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, INCLINE_ON_BOARD, GRAPH_ON_BOARD_TOOL, SVG_QUALITATIVE, FLOW_ON_BOARD_TOOL, WIDGET_ON_BOARD_TOOL, SET_OBJECTIVES_TOOL, ...(canvasMode ? [CREATE_INTERACTIVE_TOOL] : [])];
+  // No CLEAR_BOARD / REMOVE_BOARD_LINE: nothing on the board is ever deleted — it only grows (their cases below refuse
+  // a stray call in words rather than wiping anything).
+  return [WRITE_TO_BOARD, UPDATE_BOARD_LINE, PROBLEM, ANNOTATE_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, INCLINE_ON_BOARD, GRAPH_ON_BOARD_TOOL, SVG_QUALITATIVE, FLOW_ON_BOARD_TOOL, WIDGET_ON_BOARD_TOOL, SET_OBJECTIVES_TOOL, ...(canvasMode ? [CREATE_INTERACTIVE_TOOL] : [])];
 }
 
 // ── Context ───────────────────────────────────────────────────────────────────────────────────────────
@@ -470,10 +470,7 @@ export interface TutorTurnInput {
 export interface TutorTurnResult {
   reply: string;
   board: BoardEntry[];
-  boardCleared?: boolean;
   /** In-place corrections to the tutor's OWN existing lines (id → new text) and lines taken off the active board (archived, never destroyed). */
-  boardEdits?: { id: string; text: string }[];
-  boardRemoved?: string[];
   problems: TaskProblem[];
   objectives?: TaskObjective[];
   tokens: { in: number; out: number; cachedIn: number };
@@ -1002,7 +999,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const focus = [input.solution?.statement || "", ...problems.filter((p) => !p.solved).map((p) => p.question), ...board.filter((b) => b.kind === "given" || b.owner === "student").map((b) => b.text), ...history.filter((h) => h.role === "user").slice(-3).map((h) => h.text), message].filter(Boolean);
   if (spokenRepair?.interpreted) focus.push(spokenRepair.interpreted);
   const known = [...solutionValues(input.solution), ...(input.solution?.steps || []).flatMap((st) => (String(st.result || "").replace(/(\d),(?=\d{3}(?!\d))/g, "$1").match(/\d+(?:\.\d+)?/g) || []).map(Number))];
-  const allBoard = () => [...(result.boardCleared ? [] : board), ...result.board];
+  const allBoard = () => [...board, ...result.board];
   const allProblems = () => [...problems, ...result.problems];
   let corrected = false;
 
@@ -1054,7 +1051,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       const invented = discussion ? [] : inventedNumbers(reply, [...said, ...allBoard().map((b) => b.text), ...allProblems().map((p) => p.question)]);
       if (invented.length) issues.push(`it uses numbers nobody gave (${invented.slice(0, 3).join(", ")}) — only their numbers and the problem's; never compute ahead or bring in a new scenario`);
       if (!doubt && confirmsUnchecked(reply, message, input.stepVerdict ? { studentStep: { status: input.stepVerdict.verdict } } : null)) issues.push("it confirms a value they didn't actually give (or one that's wrong) — react to THEIR number, and if it's off, ask which step they'd recheck");
-      const lines = boardLineSet(result.boardCleared ? [] : board, result.board);
+      const lines = boardLineSet(board, result.board);
       const badLine = [...reply.matchAll(/\b(?:line|ligne)\s*#?\s*(\d{1,3})\b|(?<![\w&])#(\d{1,3})\b/gi)].map((m) => Number(m[1] || m[2])).find((n) => !lines.has(n));
       if (badLine) issues.push(`it points at line ${badLine}, which doesn't exist on their board — use the line's real margin number from the board listing, or describe it`);
       if (!doubt && handsOverCalculation(reply, message)) issues.push("it hands them the calculation (which numbers to multiply/add) — ask what THEY would compute next instead");
@@ -1081,7 +1078,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       if (!result.problems.length && setsMathTaskUnboarded(reply, result.board.length)) issues.push("you set them a maths task in chat but it isn't on the board. Put the question itself on the board as ONE short line ending '= ?' (WRITE_TO_BOARD, kind gap, with the expected answer), then keep your message to a line that points at it. The board should show every question you ask, not just the chat");
       if (discussion && statesClaimUnboarded(message, result.board.length)) issues.push("they argued a position and none of it is on the board. Write their claim (and the evidence they gave) as ONE short line with WRITE_TO_BOARD (kind insight, owner \"student\", their words condensed), then raise ONE objection or ask for the missing evidence — and put that question on the board too as a short Otto line");
       const writes = result.board.length + result.problems.length;
-      if (boardStillEmpty(board.length, writes, history, reply) && !result.boardCleared) issues.push("the board is still empty. Open it now: a header line (WRITE_TO_BOARD kind focus: subject → topic → what we're doing) and the starting point (the question you're asking, the key definition, or the givens). The board must show what you're working on from the first turn");
+      if (boardStillEmpty(board.length, writes, history, reply)) issues.push("the board is still empty. Open it now: a header line (WRITE_TO_BOARD kind focus: subject → topic → what we're doing) and the starting point (the question you're asking, the key definition, or the givens). The board must show what you're working on from the first turn");
       else if (teachesUnboarded(reply, writes)) issues.push("you taught an idea in chat but the board doesn't show it. Write the key idea in one short line (kind definition, formula or insight; maths in $…$) — or draw it if it's a relationship — then keep the message as it is");
       if (discussion && asksDiscussionQuestionUnboarded(reply, writes)) issues.push("put the question you're asking them to think about on the board as one short line (kind focus), so the discussion is visible");
       if (teachesOverError(reply, message, input.stepVerdict?.verdict)) issues.push("they just got it wrong and you went straight to the method. First find out what they were thinking: name the belief you suspect (\"it looks like you treated log(x+y) as log x + log y\") or ask one question / give one counter-example that tests it — then help. The goal is to fix the misconception, not to show the right answer");
@@ -1320,12 +1317,7 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       return push({ id: randomUUID(), text, kind: hit.kind === "gap" ? "result" : hit.kind, owner: "otto", at: new Date().toISOString() } as BoardEntry);
     }
     case "REMOVE_BOARD_LINE": {
-      const hit = resolveBoardTarget(String(input.target || ""), c.allBoard());
-      if (!hit?.id) return JSON.stringify({ ok: false, error: { code: "NOT_FOUND", message: "no such board line — use a #n from the board listing" } });
-      const r = applyEntryAction(c.allBoard(), { action: "remove", targetId: hit.id, author: "tutor" });
-      if (!r.ok) return JSON.stringify({ ok: false, error: { code: r.code, message: r.code === "FORBIDDEN_STUDENT_WORK" ? "that line is the student's — it stays" : r.message } });
-      if (result.board.some((e) => e.id === hit.id)) result.board = result.board.filter((e) => e.id !== hit.id); else result.boardRemoved = [...(result.boardRemoved || []), hit.id];
-      return JSON.stringify({ ok: true, id: hit.id });
+      return "REJECTED: nothing on the board is ever removed — if a line of yours is wrong, add the corrected line below it with UPDATE_BOARD_LINE.";
     }
     case "ANNOTATE_BOARD": {
       const hit = resolveBoardTarget(String(input.target || ""), c.allBoard());

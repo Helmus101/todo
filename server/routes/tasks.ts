@@ -239,7 +239,7 @@ async function tutorTurn(
   // teaching value, three bare unlabeled numbers in a row. A genuinely wrong attempt at the CURRENT gap
   // still reaches the student through the normal chat reply/correction path, which has real context;
   // losing the bare, unexplained board entry for the incorrect case only drops noise, not information.
-  if (stepVerdict?.verdict === "correct" && !out.boardCleared) {
+  if (stepVerdict?.verdict === "correct") {
     const norm = (x: string) => x.toLowerCase().replace(/[\s$]/g, "");
     if (![...currentBoard, ...out.board].some((e) => norm(e.text) === norm(stepVerdict.given))) {
       out.board.unshift({ id: randomUUID(), text: stepVerdict.given, kind: "result", owner: "student", status: stepVerdict.verdict, at: turnStart } as BoardEntry);
@@ -261,7 +261,7 @@ async function tutorTurn(
   t.updatedAt = now;
   await commit(req);
   res.json({
-    reply: out.reply, chatDelta: newChat, board: out.board, boardEdits: out.boardEdits, boardRemoved: out.boardRemoved, boardCleared: out.boardCleared, problems: out.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped, solvedInChat: out.solvedInChat,
+    reply: out.reply, chatDelta: newChat, board: out.board, problems: out.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped, solvedInChat: out.solvedInChat,
     task: { id: t.id, title: t.title, status: t.status, source: t.source, sourceSubject: t.sourceSubject, updatedAt: t.updatedAt, createdAt: t.createdAt },
   });
 }
@@ -975,15 +975,14 @@ export function registerTaskRoutes(app: express.Express): void {
       // own cross-device merge caps so a single-device append here never exceeds what a later multi-device
       // MERGE would also cap it to).
       if (newChat.length) t.chat = [...(t.chat || []), ...newChat].slice(-CHAT_CAP);
-      if (out.boardCleared) t.board = out.board;
-      else if (out.board.length) t.board = [...(t.board || []), ...out.board].slice(-tasks.BOARD_MERGE_CAP);
+      if (out.board.length) t.board = [...(t.board || []), ...out.board].slice(-tasks.BOARD_MERGE_CAP);
       if (out.problems.length) t.problems = [...(t.problems || []), ...out.problems].slice(-tasks.ARTIFACT_CAP);
       t.updatedAt = now;
       await commit(req);
       // The tutor screen merges by id from `board`/`problems`/`chatDelta` and keeps its own chat — so it doesn't need the WHOLE task (its full
       // chat + board history) shipped back every turn. That echo grew with the session and was the biggest per-turn payload.
       const { solution: _hiddenSolution, tutorState: _hiddenState, ...leanTask } = t;
-      res.json({ reply: out.reply, chatDelta: newChat, board: out.board, boardCleared: out.boardCleared, problems: out.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped, task: leanTask });
+      res.json({ reply: out.reply, chatDelta: newChat, board: out.board, problems: out.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped, task: leanTask });
     } catch (e: any) {
       console.error(e);
       res.status(500).json({ error: M(req, "échec de la discussion", "chat failed") });

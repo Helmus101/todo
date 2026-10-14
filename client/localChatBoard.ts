@@ -29,8 +29,10 @@ const BASE_KEY = "otto-local-chat-board";
 // Kept long on purpose: this is the student's own on-device transcript (the Chat drawer shows ALL of it); the
 // server only ever receives the last 60 messages of it per turn.
 const CHAT_CAP = 400;
-const BOARD_CAP = 60;
-const PROBLEMS_CAP = 12;
+// The board is the student's paper: it only grows. Caps are a far-off safety net, not a working limit
+// (60 used to silently drop the oldest lines of a long session).
+const BOARD_CAP = 500;
+const PROBLEMS_CAP = 100;
 
 function getKey(userId: string | null): string {
   return userId ? `${BASE_KEY}:${userId}` : BASE_KEY;
@@ -53,10 +55,24 @@ function readAll(userId: string | null): Record<string, LocalTaskThread> {
   return memory.get(key) || {};
 }
 
-function writeAll(map: Record<string, LocalTaskThread>, userId: string | null): void {
+function lastActivity(t: LocalTaskThread): number {
+  const stamps = [...(t.chat || []), ...(t.board || [])].map((x) => Date.parse((x as { at?: string }).at || "") || 0);
+  return stamps.length ? Math.max(...stamps) : 0;
+}
+
+/** Persist. When storage is full, make room by dropping the least-recently-used OTHER tasks' threads —
+ *  never the thread being written — so the current board is never the thing that gets lost. */
+function writeAll(map: Record<string, LocalTaskThread>, userId: string | null, keepTaskId?: string): void {
   const key = getKey(userId);
   memory.set(key, map); // always succeeds — the durable fallback when disk fails
-  try { localStorage.setItem(key, JSON.stringify(map)); } catch { /* storage full/unavailable — memory mirror above still has it for this tab */ }
+  const evictable = Object.keys(map).filter((id) => id !== keepTaskId).sort((a, b) => lastActivity(map[a]) - lastActivity(map[b]));
+  for (let attempt = 0; ; attempt++) {
+    try { localStorage.setItem(key, JSON.stringify(map)); return; } catch {
+      const victim = evictable.shift();
+      if (!victim) return; // nothing else to drop — the memory mirror still has it for this tab
+      delete map[victim];
+    }
+  }
 }
 
 /** One task's locally-stored thread — empty arrays (never undefined) so callers can spread straight onto
@@ -108,7 +124,7 @@ export function appendLocalChat(taskId: string, newMessages: ChatMessage[], user
   const existing = map[taskId]?.chat || [];
   const chat = [...existing, ...newMessages].slice(-CHAT_CAP);
   map[taskId] = { chat, board: map[taskId]?.board || [], problems: map[taskId]?.problems || [], objectives: map[taskId]?.objectives || [] };
-  writeAll(map, userId);
+  writeAll(map, userId, taskId);
   return chat;
 }
 
@@ -118,7 +134,7 @@ export function appendLocalBoard(taskId: string, newEntries: BoardEntry[], userI
   const existing = map[taskId]?.board || [];
   const board = [...existing, ...newEntries].slice(-BOARD_CAP);
   map[taskId] = { chat: map[taskId]?.chat || [], board, problems: map[taskId]?.problems || [], objectives: map[taskId]?.objectives || [] };
-  writeAll(map, userId);
+  writeAll(map, userId, taskId);
   return board;
 }
 
@@ -128,7 +144,7 @@ export function appendLocalProblems(taskId: string, newProblems: TaskProblem[], 
   const existing = map[taskId]?.problems || [];
   const problems = [...existing, ...newProblems].slice(-PROBLEMS_CAP);
   map[taskId] = { chat: map[taskId]?.chat || [], board: map[taskId]?.board || [], problems, objectives: map[taskId]?.objectives || [] };
-  writeAll(map, userId);
+  writeAll(map, userId, taskId);
   return problems;
 }
 
@@ -137,7 +153,7 @@ export function appendLocalProblems(taskId: string, newProblems: TaskProblem[], 
 export function setLocalObjectives(taskId: string, objectives: TaskObjective[], userId: string | null = null): TaskObjective[] {
   const map = readAll(userId);
   map[taskId] = { chat: map[taskId]?.chat || [], board: map[taskId]?.board || [], problems: map[taskId]?.problems || [], objectives };
-  writeAll(map, userId);
+  writeAll(map, userId, taskId);
   return objectives;
 }
 
@@ -149,7 +165,7 @@ export function setLocalBoard(taskId: string, board: BoardEntry[], userId: strin
   const capped = board.slice(-BOARD_CAP);
   const map = readAll(userId);
   map[taskId] = { chat: map[taskId]?.chat || [], board: capped, problems: map[taskId]?.problems || [], objectives: map[taskId]?.objectives || [] };
-  writeAll(map, userId);
+  writeAll(map, userId, taskId);
   return capped;
 }
 /** Replaces the WHOLE chat array with an already-merged result — the same contract as setLocalBoard/
@@ -162,7 +178,7 @@ export function setLocalChat(taskId: string, chat: ChatMessage[], userId: string
   const capped = chat.slice(-CHAT_CAP);
   const map = readAll(userId);
   map[taskId] = { chat: capped, board: map[taskId]?.board || [], problems: map[taskId]?.problems || [], objectives: map[taskId]?.objectives || [] };
-  writeAll(map, userId);
+  writeAll(map, userId, taskId);
   return capped;
 }
 
@@ -170,7 +186,7 @@ export function setLocalProblems(taskId: string, problems: TaskProblem[], userId
   const capped = problems.slice(-PROBLEMS_CAP);
   const map = readAll(userId);
   map[taskId] = { chat: map[taskId]?.chat || [], board: map[taskId]?.board || [], problems: capped, objectives: map[taskId]?.objectives || [] };
-  writeAll(map, userId);
+  writeAll(map, userId, taskId);
   return capped;
 }
 

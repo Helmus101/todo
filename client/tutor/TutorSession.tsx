@@ -56,11 +56,6 @@ async function dismissWithRetry(taskId: string): Promise<boolean> {
  *  (see tutorSessions.ts), saves it locally, and dismisses the task so the next start creates a fresh one.
  *  Past session summaries are shown in a collapsible strip. */
 /** Union by id, keeping every existing item (never drops one), ordered by time. Pure. */
-/** The tutor's in-place corrections (by id) and removals (archived, kept) on its own lines — the only ways an existing line ever changes. */
-export function applyBoardEdits<T extends { id: string; text?: string; archived?: boolean }>(board: T[], edits?: { id: string; text: string }[], removed?: string[]): T[] {
-  if (!edits?.length && !removed?.length) return board;
-  return board.map((e) => { const ed = edits?.find((x) => x.id === e.id); if (ed) return { ...e, text: ed.text }; return removed?.includes(e.id) ? { ...e, archived: true } : e; });
-}
 export function mergeBoardById<T extends { id: string; at?: string; createdAt?: string }>(existing: T[], incoming: T[]): T[] {
   const seen = new Set(existing.map((x) => x.id));
   const fresh = incoming.filter((x) => x && !seen.has(x.id));
@@ -333,7 +328,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       // CREATE_PROBLEM (individual, inline, answerable right on the board) instead — the only artifact this
       // screen actually knows how to show.
       const response = await api.chat(task.id, message, task.chat || [], task.board || [], (task.problems || []).map((p) => ({ ...p, solved: solvedRef.current.has(p.id) })), undefined, undefined, voiceMode, true, true, task.objectives || [], spoken, { id: task.id, source: task.source, sourceSubject: task.sourceSubject, createdAt: task.createdAt }, sessionMemoryForPrompt(pastSessions, task.sourceSubject, Date.now(), openerLang));
-      const { task: updated, objectives, boardCleared, boardEdits, boardRemoved, board, problems } = response as typeof response & { boardCleared?: boolean; boardEdits?: { id: string; text: string }[]; boardRemoved?: string[]; board?: typeof task.board; problems?: typeof task.problems };
+      const { task: updated, objectives, board, problems } = response as typeof response & { board?: typeof task.board; problems?: typeof task.problems };
       // objectives is only ever the FULL replacement list (SET_OBJECTIVES' own contract), or undefined
       // when Otto didn't touch it this turn — never overwrite the existing list with an empty one.
       const newObjectives = objectives?.length ? setLocalObjectives(task.id, objectives, userId) : (task.objectives || []);
@@ -348,7 +343,8 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       // storage (client/localChatBoard.ts) — that's the one copy of record now, there's no cloud copy to
       // fall back on. NEVER let a turn's delta replace what's already on screen outright: its own arrays
       // are capped and can lag behind this device, so taking it wholesale would wipe older board entries.
-      const newBoard = boardCleared ? (board || []) : applyBoardEdits(mergeBoardById(task.board || [], board || []), boardEdits, boardRemoved);
+      // The board only grows: this turn's entries are added to what's on screen — never cleared, removed or overwritten.
+      const newBoard = mergeBoardById(task.board || [], board || []);
       const solvedRaw = (response as unknown as { solvedInChat?: unknown }).solvedInChat;
       const solvedInChat: string[] = Array.isArray(solvedRaw) ? solvedRaw.filter((x): x is string => typeof x === "string") : [];
       for (const id of solvedInChat) solvedRef.current.add(id);

@@ -998,7 +998,7 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
             content = "REJECTED: that exercise hands them the equation they were going to build — the substituted setup is inside the question itself. State the situation and what to find in words (or the raw given line, e.g. '$E_k = \\frac{1}{2} m v^2 = ?$' only when THEY have already named that relationship); never pre-build the first equation for them. Let THEM set it up.";
           else { const r = makeProblem(input, !!opts?.primer); if ("error" in r) content = r.error; else { result.problems.push(r.problem); content = JSON.stringify({ ok: true, id: r.problem.id }); logAudit("artifact", fr ? `Problème créé : « ${r.problem.question.slice(0, 60)} »` : `Problem created: "${r.problem.question.slice(0, 60)}"`); } }          } else if (name === "CLEAR_BOARD") {
           // Nothing is ever erased: the student's working stays. Reported live — Otto announced "let's clear the
-          // board" and the working was gone. boardCleared stays false so the client keeps every entry.
+          // board" and the working was gone. The board only grows.
           content = "REJECTED: the board is never cleared — their working stays. Keep every existing entry, and add the new focus line for the new topic.";
         } else if (name === "WRITE_TO_BOARD") {
           if (input && typeof (input as any).text === "string") (input as any).text = repairLatex((input as any).text); // typeset only AFTER the leak / ahead-of-student checks below (they read the plain text)

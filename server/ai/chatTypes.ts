@@ -60,7 +60,6 @@ export interface ChatResult {
   quizzes: TaskQuiz[];
   problems: TaskProblem[];
   board: BoardEntry[];
-  boardCleared?: boolean;
   /** Set ONLY when SET_OBJECTIVES was called this turn — the FULL replacement list, not a delta (see the
    *  tool's own contract). Undefined (not an empty array) when Otto didn't touch objectives this turn, so
    *  the route/client can tell "no change" apart from "cleared the list", which never happens in practice. */

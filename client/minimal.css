@@ -214,3 +214,5 @@ hr { border: 0; border-top: 1px solid var(--line-soft); }
 .list.compact .card-check { width: 20px !important; height: 20px !important; min-width: 20px; }
 .list .card { border-bottom: 0 !important; }
 .list { display: flex; flex-direction: column; gap: var(--space-1); }
+/* An earlier topic header kept in the flow (only the newest is pinned on top). */
+.sm-board-entry-focus { font-weight: 600; margin-top: var(--space-4); }

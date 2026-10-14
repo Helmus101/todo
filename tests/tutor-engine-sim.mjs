@@ -389,12 +389,12 @@ export async function runTutorEngineSim(check, section) {
   r = await run("why did you write 22.08?", { board: editBoard });
   const editTools = calls[1]?.messages.filter((m) => m.role === "tool").map((m) => m.content) || [];
   // The board only grows (reported live: lines were overwritten under the student): a correction is a NEW line.
-  check("tutor corrections add a new line (original kept, nothing overwritten), student's line refused (FORBIDDEN_STUDENT_WORK) for update AND remove, unknown target = NOT_FOUND",
-    !r.boardEdits?.length && !r.boardRemoved?.length && r.board.length === 1 && /17\.6/.test(r.board[0].text) && r.board[0].id !== "t1"
-    && /"ok":true/.test(editTools[0]) && /FORBIDDEN_STUDENT_WORK/.test(editTools[1]) && /FORBIDDEN_STUDENT_WORK/.test(editTools[2]) && /NOT_FOUND/.test(editTools[3]));
+  check("tutor corrections add a new line (original kept, nothing overwritten), student's line refused (FORBIDDEN_STUDENT_WORK), removal refused, unknown target = NOT_FOUND",
+    r.board.length === 1 && /17\.6/.test(r.board[0].text) && r.board[0].id !== "t1"
+    && /"ok":true/.test(editTools[0]) && /FORBIDDEN_STUDENT_WORK/.test(editTools[1]) && /ever removed/.test(editTools[2]) && /NOT_FOUND/.test(editTools[3]));
   script = (b, i) => i === 0 ? { content: "", tool_calls: [tc("REMOVE_BOARD_LINE", { target: "t1" })] } : { content: "Taken off — it was my wrong line." };
   r = await run("that line is wrong", { board: editBoard });
-  check("a tutor line can be taken off the active board (archived, reversible)", r.boardRemoved?.length === 1 && r.boardRemoved[0] === "t1");
+  check("nothing is ever taken off the board — a removal request is refused and the line stays", !r.board.length && /ever removed/.test(JSON.stringify(calls.at(-1)?.messages || "")));
 
   const { parsePlan: pp } = await import("../server/tutor.ts");
   script = () => ({ content: '<plan>{"diagnosis":"none","action":"probe","help_level":1}</path>Imagine a block sliding down a ramp. What is the first thing you would write?' });

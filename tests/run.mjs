@@ -2111,7 +2111,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   check("naming the method before the student reached for it is caught, unless they used it or asked for help", methodAhead("tan(θ) = slope! How do you find the angle between two lines?", ["find the acute angle between y=5x-2 and y=1/3x-1", "so one slope is five the other is one third"]).includes("tan") && methodAhead("What does tan(θ) = slope give you?", ["I think tan theta is the slope"]).length === 0 && wantsHelp("can I get a hint") && !wantsHelp("one slope is five"));
   check("chatter is not student work: 'Gary left avocado on the ground' is off-topic, maths and on-topic words are not", !onTopic("Gary left avocado on the ground", ["find the acute angle between y = 5x - 2 and y = x/3 - 1", "What do you notice about their two slopes?"]) && onTopic("intersect and I found the point of intersection is when x equals 3 over 14", ["lines"]) && onTopic("the lines cross", ["The two lines on the board", "intersect"]) && onTopic("one slope is five", []));
   { const idx = serverSource(); const cl = claudeSource();
-    check("off-topic chatter never becomes board work: only a code-verified, CORRECT step is written up as the student's line", /stepVerdict\?\.verdict === "correct" && !out\.boardCleared/.test(idx) && !/out\.plan\.studentStep/.test(idx)); }
+    check("off-topic chatter never becomes board work: only a code-verified, CORRECT step is written up as the student's line", /stepVerdict\?\.verdict === "correct"\) \{/.test(idx) && !/out\.plan\.studentStep/.test(idx)); }
   // ── Listen first (reported live: "what does m show" / "what's M1" answered with arctan and a calculator) ──
   check("clarification questions are recognised with the term they ask about", clarificationTerm("what does m show") === "m" && clarificationTerm("what's M1") === "m1" && clarificationTerm("what is a slope?") === "slope" && clarificationTerm("I found x = 3/14") === null && clarificationTerm("[Exercise] I answered 4") === null);
   check("a reply that carries on with its own plan instead of answering the question is caught", ignoresQuestion("Punch it into the calculator — what angle does arctan(1/3) give you in degrees?", "what's M1") && !ignoresQuestion("m₁ is just the name for the slope of the first line — which line has slope 5?", "what's M1") && ignoresQuestion("arctan(5) gives that angle with the x-axis. Do the same for the other slope.", "what does m show"));
@@ -6399,9 +6399,8 @@ await runTutorCompanionSim(check, section);
   check("adapter: entries load as objects with the right authors (otto→tutor, student, given→problem) in board order", st2.objects.a.author === "tutor" && st2.objects.b.author === "student" && st2.objects.c.author === "problem" && st2.order.join() === "a,b,c");
   check("adapter: update/remove succeed on tutor lines, are refused on student lines, and unknown ids are NOT_FOUND", aea(ents, { action: "update", targetId: "a", patch: { text: "x2" } }).ok === true && aea(ents, { action: "update", targetId: "b", patch: { text: "q" } }).code === "FORBIDDEN_STUDENT_WORK" && aea(ents, { action: "remove", targetId: "zz" }).code === "NOT_FOUND");
   const idx = serverSource(), bart = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8"), tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
-  // Edits/removals are still applied BY ID — where has moved: the tutor turn is stateless for the board now,
-  // so the CLIENT applies them to its own merged copy (and the route keeps returning them for it to do so).
-  check("edits/removals are applied by id (no duplicates, never a second copy), returned to the client, and archived lines stay hidden from the board and the tutor's listing", /boardEdits: out\.boardEdits, boardRemoved: out\.boardRemoved/.test(idx) && /applyBoardEdits\(mergeBoardById\(task\.board \|\| \[\], board \|\| \[\]\), boardEdits, boardRemoved\)/.test(tutorSrc) && /b\.archived !== true/.test(idx) && /filter\(\(e\) => !e\.archived\)/.test(bart));
+  check("the board only grows: the turn returns new entries only (no edits/removals/clear fields), and the client merges them onto what's on screen",
+    !/boardEdits|boardRemoved|boardCleared/.test(idx) && /const newBoard = mergeBoardById\(task\.board \|\| \[\], board \|\| \[\]\);/.test(tutorSrc));
 }
 {
   // ── Board spec: figures are addressable element by element; create/inspect go through the validated reducer ──
@@ -6587,7 +6586,7 @@ section("Tutor sessions are fully local — the server stores no chat/board/prob
   check("…while the non-tutor chat route keeps persisting its own task fields (only the tutor went local, nothing else changed)",
     /if \(newChat\.length\) t\.chat = \[\.\.\.\(t\.chat \|\| \[\]\), \.\.\.newChat\]/.test(idxL));
   check("the turn hands back only this turn's delta (chatDelta/board/problems/objectives), never a task carrying content",
-    /res\.json\(\{\n\s*reply: out\.reply, chatDelta: newChat, board: out\.board, boardEdits: out\.boardEdits/.test(turn) && /task: \{ id: t\.id, title: t\.title, status: t\.status, source: t\.source, sourceSubject: t\.sourceSubject, updatedAt: t\.updatedAt, createdAt: t\.createdAt \}/.test(turn));
+    /res\.json\(\{\n\s*reply: out\.reply, chatDelta: newChat, board: out\.board, problems:/.test(turn) && /task: \{ id: t\.id, title: t\.title, status: t\.status, source: t\.source, sourceSubject: t\.sourceSubject, updatedAt: t\.updatedAt, createdAt: t\.createdAt \}/.test(turn));
 
   // Grading and the leak guard still work WITHOUT a server-held board: the line rides up, and the key is
   // recomputed from that line first — so the independent verification is unchanged.

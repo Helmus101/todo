@@ -521,7 +521,8 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
   const toggleIdeas = () => setIdeasOpen((o) => { try { localStorage.setItem("otto.board.ideasOpen", o ? "0" : "1"); } catch { /* storage blocked: still toggles */ } return !o; });
   const flowEntries = entries
     .filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i)
-    .filter(e => e.kind !== "focus" && (e.kind as string) !== "problem" && e.kind !== "annotation");
+    // Earlier topic headers stay in the flow where they were written; only the newest one is pinned on top.
+    .filter(e => (e.kind !== "focus" || e.id !== latestFocus?.id) && (e.kind as string) !== "problem" && e.kind !== "annotation");
 
   // The margin line numbers — the SAME numbering the tutor reads (#n), so "look at line 4" is findable.
   const lineNo = useMemo(() => boardLineNumbers(entries), [entries]);
