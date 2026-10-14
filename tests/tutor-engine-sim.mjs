@@ -357,7 +357,8 @@ export async function runTutorEngineSim(check, section) {
     stripPraiseOpener("Spot on!") === "Spot on!");
   script = (b, i) => i === 0 ? { content: "Spot on, Willem! What does that give you for v?" } : { content: "That's 4.9 m/s — what made you take the square root?" };
   r = await run("v squared is 24.5");
-  check("opening with canned praise is corrected, and the reply that ships never opens with it", /canned praise/.test(lastUser(calls[1])) && !/^\s*Spot on/i.test(r.reply));
+  check("canned praise is taken off the opener in code (no correction round for it), and the reply that ships never opens with it", !calls.some((c) => /canned praise/.test(lastUser(c))) && !/^\s*Spot on/i.test(r.reply));
+  check("stripPraiseOpener runs on the reply that ships", stripPraiseOpener("Spot on, Willem! What does that give you for v?") === "What does that give you for v?");
 
   check("statesFormula / misstatesGiven: a formula counts; a restated GIVEN that isn't in the problem is caught",
     statesFormula("Initial potential energy mgh turns into kinetic energy ½mv², so you get gh = ½v².") &&
@@ -437,14 +438,14 @@ export async function runTutorEngineSim(check, section) {
       : i === 1 ? { tool_calls: [tc("SET_OBJECTIVES", { objectives: [{ label: "x", done: false }, { label: "y", done: false }, { label: "z", done: false }] })] }
       : { content: PROPOSAL };
     let rp = await run("help me revise for my econ test");
-    check("a study goal gets a PROPOSED plan to approve — objectives are not set without consent",
-      /DO NOT call SET_OBJECTIVES/.test(lastUser(calls[1])) && !rp.objectives && proposesPlan(rp.reply));
+    check("a study goal gets the plan SET at once and teaching starts (no approval round)",
+      /set the plan NOW/.test(lastUser(calls[1])) && rp.objectives?.length === 3);
     script = (b, i) => i === 0 ? { content: "Great. Which topic first?" }
       : i === 1 ? { tool_calls: [tc("SET_OBJECTIVES", { objectives: [{ label: "Demand and supply shifts", done: false }, { label: "Equilibrium equations", done: false }, { label: "Drop ceilings, add elasticity", done: false }] })] }
       : { content: "Plan's up. First: if demand rises and supply stays put, what happens to price and quantity?" };
     rp = await run("yes but drop ceilings and add elasticity", { history: [{ role: "user", text: "help me revise for my econ test" }, { role: "assistant", text: PROPOSAL }] });
     check("after the student answers the proposal, the agreed plan is set and the first objective starts",
-      /answered the plan you proposed/.test(lastUser(calls[1])) && rp.objectives?.length === 3 && !/Which topic/.test(rp.reply));
+      /set the plan NOW/.test(lastUser(calls[1])) && rp.objectives?.length === 3 && !/Which topic/.test(rp.reply));
     check("planConsented: needs a proposal, an explicit ask, or an existing plan", planConsented([{ role: "assistant", text: PROPOSAL }], "ok", false) && planConsented([], "make a plan for me", false) && planConsented([], "ok", true) && !planConsented([{ role: "assistant", text: "What are you working on?" }], "ok", false));
     script = (b, i) => i === 0 ? { content: "Sure! Which topic do you want to work on?" } : { content: "Then we'll do the current milestone: shifts. If supply falls, what happens to price?" };
     rp = await run("whatever you want", { objectives: [{ id: "o1", label: "Explain shifts", done: false }] });

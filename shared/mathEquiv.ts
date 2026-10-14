@@ -135,6 +135,18 @@ export function gapTarget(text: string): string | undefined {
     ?? /(?:^|[\s$(])([A-Za-z])\s*=\s*\?/.exec(String(text || ""))?.[1];
 }
 
+/** The maths at the END of a sentence: "i get −3" → "−3", "substitute x so f(2) = −3" → "f(2) = −3", "so it's 2√3" → "2√3".
+ *  The longest run of trailing words that are all maths (numbers, operators, brackets, single letters, function names).
+ *  "" when the sentence doesn't end in maths. Exported for tests. */
+export function mathTail(message: string): string {
+  const tokens = String(message || "").trim().replace(/[.!?]+$/, "").split(/\s+/);
+  const mathy = (t: string) => /^(?:[-−+*/×÷^=().,√π\d]|\b(?:sin|cos|tan|log|ln|sqrt|pi|e)\b|(?<![a-z])[a-z](?![a-z]))+$/i.test(t.replace(/(?:sin|cos|tan|log|ln|sqrt|pi)/gi, "1"));
+  let k = tokens.length;
+  while (k > 0 && mathy(tokens[k - 1])) k--;
+  const tail = tokens.slice(k).join(" ");
+  return /\d/.test(tail) ? tail : "";
+}
+
 /** The deterministic verdict on a student's chat step against the newest OPEN gap ("b = ?" with an answer
  *  key): the message's last "… = expr" (or the whole message when it's a bare expression) is compared by
  *  numeric equivalence. Undefined when there's no open gap, or the step can't be read as maths. */
@@ -143,7 +155,7 @@ export function verifyStepAgainstGap(message: string, board: { kind?: string; te
   if (!gap?.expectedAnswer) return undefined;
   const target = gapTarget(gap.text);
   const m = String(message || "").replace(/\$/g, "").trim();
-  const candidates = [m, ...(m.match(/[^,;.\n]*=[^,;\n]+/g) || []).map((x) => x.trim()), m.split("=").pop()?.trim() || ""].filter(Boolean);
+  const candidates = [m, ...(m.match(/[^,;.\n]*=[^,;\n]+/g) || []).map((x) => x.trim()), m.split("=").pop()?.trim() || "", mathTail(m)].filter(Boolean);
   for (const c of candidates) {
     const v = equivalent(c, gap.expectedAnswer, target);
     if (v !== "unknown") return { gap: gap.text.slice(0, 160), given: c.slice(0, 160), verdict: v };

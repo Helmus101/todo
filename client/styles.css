@@ -4749,12 +4749,10 @@ mark.otto-mark { background: linear-gradient(transparent 12%, color-mix(in srgb,
 @media (max-width: 420px) { .sm-math-key { min-width: 30px; padding: var(--space-1) var(--space-2); } .sm-inline-problem-input-row { flex-wrap: wrap; } .sm-inline-problem-input-row > .sm-btn { width: 100%; } }
 
 /* The line's explanation — so the board reads back as notes, not a bare column of equations. */
-.sm-board-why { display: flex; gap: 6px; align-items: baseline; margin-top: 4px; font-size: 13px; line-height: 1.45; color: var(--ink-2, var(--ink)); font-style: italic; }
-.sm-board-why::before { content: "↳"; flex: none; font-style: normal; color: var(--ink-3, var(--ink-2)); }
-/* THE WHITEBOARD — Aristotle-style: one open sheet, generous space, two pens. No rule under every line; a topic header
-   starts a new section; the student's own work is in their pen (blue), Otto's in black; each line's "why" sits beside
-   it as a margin note on a wide screen, under it on a phone. */
-.sm-board-body { --student-ink: #1d4ed8; }
+.sm-board-why { display: block; margin-top: 4px; font-size: 13px; line-height: 1.5; color: var(--ink-2, var(--ink)); font-style: italic; }
+.sm-board-why::before { content: "↳ "; font-style: normal; color: var(--ink-3, var(--ink-2)); }
+/* THE WHITEBOARD — Aristotle-style: one open sheet, generous space, all text in black ink. No rule under every line; a topic
+   header starts a new section; each line's "why" sits beside it as a margin note on a wide screen, under it on a phone. */
 .sm-board-body .sm-board-entry { border-bottom: none; padding-top: var(--space-4); padding-bottom: var(--space-4); }
 .sm-board-body .sm-board-entry + .sm-board-entry { margin-top: var(--space-1); }
 .sm-board-body .sm-board-line { font-size: 1.08rem; line-height: 1.6; }
@@ -4765,8 +4763,6 @@ mark.otto-mark { background: linear-gradient(transparent 12%, color-mix(in srgb,
 .sm-board-body .sm-board-problem { margin: var(--space-5) 0; }
 .sm-board-body .sm-board-outline { gap: var(--space-4); }
 .sm-board-body .sm-board-outline-bullets { gap: var(--space-1); }
-.sm-board-body .sm-board-entry-student .sm-board-line,
-.sm-board-body .sm-board-entry-student .sm-board-line .katex { color: var(--student-ink); }
 @media (min-width: 960px) {
   .sm-board-body .sm-board-entry-main:has(> .sm-board-why) { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, 34%); column-gap: var(--space-6); align-items: baseline; }
   .sm-board-body .sm-board-entry-main:has(> .sm-board-why) > * { grid-column: 1; }
@@ -4804,3 +4800,15 @@ mark.otto-mark { background: linear-gradient(transparent 12%, color-mix(in srgb,
 @media (max-width: 640px) {
   .hint-density-slider { min-width: 0; width: 100%; }
 }
+
+/* One session bar: subject · current objective (+dots, click for the plan) · full screen · End. */
+.tutor-crumbbar .ts-bar-plan { flex: 1; width: auto; max-width: 560px; padding: var(--space-1) var(--space-3); border-radius: 999px; }
+.tutor-crumbbar .ts-bar-plan:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+.tutor-crumbbar .tutor-fs-btn { margin-left: auto; }
+.tutor-crumbbar .tutor-fs-btn + .tutor-end-btn { margin-left: 0; }
+.ts-plan-list { padding-top: var(--space-2); border-bottom: 1px solid var(--line); background: var(--surface); }
+@media (max-width: 640px) { .tutor-crumbbar .ts-bar-plan { order: 3; flex-basis: 100%; max-width: none; } }
+/* Drawing tools folded into one small "Draw" button in the corner until they're wanted. */
+.tc-toolbar.tc-toolbar-folded { left: auto; right: var(--space-3); transform: none; padding: var(--space-1); box-shadow: none; }
+.tc-draw-open { width: auto !important; gap: 6px; padding: 0 var(--space-3) !important; font: inherit; font-size: 13px; display: inline-flex; align-items: center; }
+.tutor-crumbbar .ts-bar-mastery { flex: none; font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }

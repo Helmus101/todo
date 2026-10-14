@@ -10,7 +10,7 @@ type Item =
   | { kind: "stroke"; tool: "pen" | "highlighter" | "eraser"; color: string; width: number; pts: Pt[] }
   | { kind: "text"; color: string; size: number; x: number; y: number; value: string };
 
-const COLORS = ["#18181B", "#2563EB", "#DC2626", "#16A34A", "#F59E0B", "#9333EA"];
+const COLORS = ["#18181B", "#2563EB", "#DC2626"];
 const WIDTH: Record<"pen" | "highlighter" | "eraser", number> = { pen: 3, highlighter: 18, eraser: 26 };
 
 function paint(ctx: CanvasRenderingContext2D, items: Item[], w: number, h: number) {
@@ -72,7 +72,9 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
   // Starts in "pan" (select/hand) — the board underneath must be usable (scrolling, clicking a step,
   // following a link) the moment the tutor opens, without the ink layer eating every pointer event first.
   const [tool, setTool] = useState<Tool>("pan");
-  const [color, setColor] = useState(COLORS[1]);
+  // The tools stay folded into one "Draw" button until wanted: a full toolbar over the board was too much chrome.
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [color, setColor] = useState(COLORS[0]);
   const [version, setVersion] = useState(0); // bumps on every committed change → toolbar enable/disable
   const [typing, setTyping] = useState<{ x: number; y: number; value: string } | null>(null);
   const [sending, setSending] = useState(false);
@@ -323,6 +325,12 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
       <div className="tc-layer" style={{ pointerEvents: "none" }}>
         {/* The toolbar is part of the screen chrome, not of the page: same place and same tools whether the
             board, a long scrolled lesson or Desmos is showing (drawing tools just dim while Desmos is up). */}
+        {!toolsOpen ? (
+          <div className="tc-toolbar tc-toolbar-folded" style={{ pointerEvents: "auto" }}>
+            <button type="button" className="tc-btn tc-draw-open" onClick={() => { setToolsOpen(true); setTool("pen"); }} aria-label={L("Dessiner sur le tableau", "Draw on the board")} title={L("Dessiner", "Draw")}><Pencil size={16} /><span>{L("Dessiner", "Draw")}</span></button>
+            <button type="button" className={`tc-btn tc-fn${hidden ? " on" : ""}`} onClick={onDesmos} title={hidden ? L("Retour au tableau", "Back to the board") : "Desmos"} aria-label="Desmos" aria-pressed={hidden}>ƒ</button>
+          </div>
+        ) : (
         <div className={`tc-toolbar${hidden ? " dim" : ""}`} role="toolbar" aria-label={L("Outils du tableau", "Whiteboard tools")} style={{ pointerEvents: "auto" }}>
           {btn("pen", <Pencil size={18} />, L("Stylo", "Pen"))}
           {btn("highlighter", <Highlighter size={18} />, L("Surligneur", "Highlighter"), "tc-highlighter")}
@@ -339,7 +347,10 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
           <button type="button" className="tc-btn" onClick={clear} disabled={!items.current.length} title={L("Tout effacer", "Clear all")} aria-label={L("Tout effacer", "Clear all")}><Trash2 size={18} /></button>
           <span className="tc-sep" aria-hidden />
           <button type="button" className={`tc-btn tc-fn${hidden ? " on" : ""}`} onClick={onDesmos} title={hidden ? L("Retour au tableau", "Back to the board") : "Desmos"} aria-label="Desmos" aria-pressed={hidden}>ƒ</button>
+          <span className="tc-sep" aria-hidden />
+          <button type="button" className="tc-btn" onClick={() => { if (typing) commitText(); setTool("pan"); setToolsOpen(false); }} title={L("Fermer les outils", "Close the tools")} aria-label={L("Fermer les outils", "Close the tools")}>✕</button>
         </div>
+        )}
         {error && <div className="tc-error" role="alert" style={{ pointerEvents: "auto" }}>{error}</div>}
       </div>
     </>

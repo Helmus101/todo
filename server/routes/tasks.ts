@@ -240,7 +240,9 @@ async function tutorTurn(
   // teaching value, three bare unlabeled numbers in a row. A genuinely wrong attempt at the CURRENT gap
   // still reaches the student through the normal chat reply/correction path, which has real context;
   // losing the bare, unexplained board entry for the incorrect case only drops noise, not information.
-  if (stepVerdict?.verdict === "correct") {
+  // A gap answered right in chat is filled in where it stands ("f(2) = 2(4) − 16 + 5 = −3") — no separate bare line.
+  const closedGaps = stepVerdict?.verdict === "correct" ? currentBoard.filter((e) => e.kind === "gap" && e.id && e.text.slice(0, 160) === stepVerdict.gap).map((e) => ({ id: e.id, given: stepVerdict.given })) : [];
+  if (stepVerdict?.verdict === "correct" && !closedGaps.length) {
     const norm = (x: string) => x.toLowerCase().replace(/[\s$]/g, "");
     if (![...currentBoard, ...out.board].some((e) => norm(e.text) === norm(stepVerdict.given))) {
       out.board.unshift({ id: randomUUID(), text: stepVerdict.given, kind: "result", owner: "student", status: stepVerdict.verdict, at: turnStart } as BoardEntry);
@@ -263,6 +265,8 @@ async function tutorTurn(
   await commit(req);
   res.json({
     reply: out.reply, chatDelta: newChat, board: out.board, problems: out.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped, solvedInChat: out.solvedInChat,
+    // A gap they answered right in CHAT is closed on the board too, so its answer box doesn't sit there asking again.
+    gapsClosed: closedGaps,
     task: { id: t.id, title: t.title, status: t.status, source: t.source, sourceSubject: t.sourceSubject, updatedAt: t.updatedAt, createdAt: t.createdAt },
   });
 }

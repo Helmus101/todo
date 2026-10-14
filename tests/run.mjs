@@ -2111,7 +2111,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   check("naming the method before the student reached for it is caught, unless they used it or asked for help", methodAhead("tan(θ) = slope! How do you find the angle between two lines?", ["find the acute angle between y=5x-2 and y=1/3x-1", "so one slope is five the other is one third"]).includes("tan") && methodAhead("What does tan(θ) = slope give you?", ["I think tan theta is the slope"]).length === 0 && wantsHelp("can I get a hint") && !wantsHelp("one slope is five"));
   check("chatter is not student work: 'Gary left avocado on the ground' is off-topic, maths and on-topic words are not", !onTopic("Gary left avocado on the ground", ["find the acute angle between y = 5x - 2 and y = x/3 - 1", "What do you notice about their two slopes?"]) && onTopic("intersect and I found the point of intersection is when x equals 3 over 14", ["lines"]) && onTopic("the lines cross", ["The two lines on the board", "intersect"]) && onTopic("one slope is five", []));
   { const idx = serverSource(); const cl = claudeSource();
-    check("off-topic chatter never becomes board work: only a code-verified, CORRECT step is written up as the student's line", /stepVerdict\?\.verdict === "correct"\) \{/.test(idx) && !/out\.plan\.studentStep/.test(idx)); }
+    check("off-topic chatter never becomes board work: only a code-verified, CORRECT step is written up as the student's line", /stepVerdict\?\.verdict === "correct" && !closedGaps\.length\) \{/.test(idx) && !/out\.plan\.studentStep/.test(idx)); }
   // ── Listen first (reported live: "what does m show" / "what's M1" answered with arctan and a calculator) ──
   check("clarification questions are recognised with the term they ask about", clarificationTerm("what does m show") === "m" && clarificationTerm("what's M1") === "m1" && clarificationTerm("what is a slope?") === "slope" && clarificationTerm("I found x = 3/14") === null && clarificationTerm("[Exercise] I answered 4") === null);
   check("a reply that carries on with its own plan instead of answering the question is caught", ignoresQuestion("Punch it into the calculator — what angle does arctan(1/3) give you in degrees?", "what's M1") && !ignoresQuestion("m₁ is just the name for the slope of the first line — which line has slope 5?", "what's M1") && ignoresQuestion("arctan(5) gives that angle with the x-axis. Do the same for the other slope.", "what does m show"));
@@ -4996,7 +4996,7 @@ check("the discussion block is only added for discussion subjects (source pin)",
 section("The tutor fosters critical thinking in every subject (predict, justify, test, spot the flaw)");
 check("the base prompt has a critical-thinking section with the five habits", /CRITICAL THINKING/.test(TUTOR_PROMPT) && /Predict before reveal/.test(TUTOR_PROMPT) && /Spot the flaw/.test(TUTOR_PROMPT) && /Compare routes/.test(TUTOR_PROMPT) && /Test the claim/.test(TUTOR_PROMPT) && /how sure/.test(TUTOR_PROMPT));
 check("it can't become an interrogation or replace help when stuck", /No interrogation|no interrogation/.test(TUTOR_PROMPT) && /genuinely stuck/.test(TUTOR_PROMPT));
-check("objectives are agreed with the student, never imposed", /SESSION OBJECTIVES ARE AGREED, NEVER IMPOSED/.test(TUTOR_PROMPT));
+check("the plan is set and started at once (no approval round), and the student can change it any time", /THE PLAN — SET IT AND START/.test(TUTOR_PROMPT) && /Don.t ask them to approve it/.test(TUTOR_PROMPT));
 
 section("Answer box keys follow the answer; typed maths previews live; chat shows the student's answer typeset (source pins)");
 {
@@ -5053,7 +5053,7 @@ section("Board as paper: key-ideas strip, left-to-right ink, condensed objective
   check("definitions, formulas, strategies and the summary are gathered in a collapsible Key ideas strip", /className=\{`sm-board-ideas/.test(ba) && /e\.kind === "definition" \|\| e\.kind === "formula" \|\| e\.kind === "strategy"/.test(ba) && /otto\.board\.ideasOpen/.test(ba));
   check("a fresh line is written in left to right", /sm-board-reveal-ink \{ from \{ clip-path: inset\(0 100% 0 0\)/.test(css));
   check("strategy lines are highlighted on the board", /\.sm-board-entry-strategy \.sm-board-entry-text/.test(css));
-  check("objectives show as one condensed line with progress dots, expandable", /className=\{`ts-objstrip/.test(ts) && /ts-objstrip-dots/.test(ts) && !/className="ts-objectives"/.test(ts));
+  check("the plan shows inside the ONE session bar as the current objective with progress dots, expandable to the checklist", /ts-bar-plan/.test(ts) && /ts-objstrip-dots/.test(ts) && /ts-plan-list/.test(ts) && !/className="ts-objectives"/.test(ts));
 }
 
 section("Otto never tells the student about its internal board rejections (reported live)");
@@ -6408,7 +6408,7 @@ await runTutorCompanionSim(check, section);
   check("adapter: update/remove succeed on tutor lines, are refused on student lines, and unknown ids are NOT_FOUND", aea(ents, { action: "update", targetId: "a", patch: { text: "x2" } }).ok === true && aea(ents, { action: "update", targetId: "b", patch: { text: "q" } }).code === "FORBIDDEN_STUDENT_WORK" && aea(ents, { action: "remove", targetId: "zz" }).code === "NOT_FOUND");
   const idx = serverSource(), bart = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8"), tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
   check("the board only grows: the turn returns new entries only (no edits/removals/clear fields), and the client merges them onto what's on screen",
-    !/boardEdits|boardRemoved|boardCleared/.test(idx) && /const newBoard = mergeBoardById\(task\.board \|\| \[\], board \|\| \[\]\);/.test(tutorSrc));
+    !/boardEdits|boardRemoved|boardCleared/.test(idx) && /const newBoard = mergeBoardById\(task\.board \|\| \[\], board \|\| \[\]\)/.test(tutorSrc) && /gapsClosed\.has\(b\.id\) \? fillGap/.test(tutorSrc));
 }
 {
   // ── Board spec: figures are addressable element by element; create/inspect go through the validated reducer ──
@@ -6771,6 +6771,45 @@ section("Tutor reply hygiene — invented wrapper tags, board line numbers (repo
   check("pointing at a line about the current topic is fine, and an unknown line number is left to the missing-line guard", pointsAtOffTopicLine("Look at line 2 — what shape is that area?", board, ctx) === null && pointsAtOffTopicLine("Look at line 9.", board, ctx) === null);
   const sol = readFileSync(new URL("../server/solver.ts", import.meta.url), "utf8");
   check("the worked-solution block says it applies only while the student works on that problem", /ONLY while the student is working on this problem/.test(sol));
+}
+
+{
+  console.log("\n# Turn director — the board action each turn needs, decided in code");
+  const { turnActions } = await import("../server/tutorDirector.ts");
+  const base = { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "hey" }], board: [{ kind: "focus", text: "Trig" }], problems: [], objectives: [] };
+  const a1 = turnActions({ ...base, message: "help me prep for my test, everything except logs" });
+  check("a study goal with no plan: set the plan AND start teaching in the same reply", /START TEACHING NOW/.test(a1.join()) && /SET_OBJECTIVES/.test(a1.join()) && /Don't ask them to approve/.test(a1.join()));
+  const obj = [{ id: "o1", label: "Vertex form", done: false }, { id: "o2", label: "Transformations", done: false }];
+  const a2 = turnActions({ ...base, objectives: obj, message: '[Exercise] On the board line "x = ?" I wrote "2" — checked right.' });
+  check("a right answer: their result goes up and the NEXT problem is put on the board without being asked (reported: 'move to the next milestone' with nothing on the board)", /CREATE_PROBLEM/.test(a2.join()) && /Vertex form/.test(a2.join()));
+  const a3 = turnActions({ ...base, message: "explain consumer surplus", problems: [{ question: "Divide 2x^3-5x^2 by (x-2)", solved: false }] });
+  check("a concept asked for: visual first, and a topic change gets its own header (the old problem is left alone)", /Visual first/.test(a3.join()) && /NEW topic/.test(a3.join()));
+  const a4 = turnActions({ ...base, message: "so x\n\n[What I wrote/drew on the board: a parabola with its vertex circled]" });
+  check("they drew on the board: Otto marks up their work", /ANNOTATE_BOARD/.test(a4.join()));
+  const a5 = turnActions({ ...base, message: "f(2) = 8 - 16 + 5 = -3" });
+  check("their own step said in chat goes on the board as their line", /THEIR line/.test(a5.join()));
+  const a6 = turnActions({ ...base, message: "can we recap" });
+  check("a recap request gives ONE summary entry plus a retrieval question", /Recap on the board/.test(a6.join()));
+  check("at most three actions, and nothing forced on a plain chat turn", turnActions({ ...base, message: "ok thanks" }).length === 0 && turnActions({ ...base, objectives: obj, stuckStreak: 2, message: 'explain why [Exercise] x checked wrong' }).length <= 3);
+  const { mathTail } = await import("../shared/mathEquiv.ts");
+  const { verifyStepAgainstGap } = await import("../shared/mathEquiv.ts");
+  const gapB = [{ kind: "gap", text: "f(2)=2(4)−16+5=?", expectedAnswer: "-3" }];
+  check("an answer at the end of a sentence is checked against the open gap (reported: 'i get −3' twice, never recognised)", verifyStepAgainstGap("i get −3", gapB)?.verdict === "correct" && verifyStepAgainstGap("substitue x in the equation so −3", gapB)?.verdict === "correct" && mathTail("not sure") === "");
+  const { numbersAreTheirs } = await import("../server/tutor.ts");
+  check("a line is only credited to the student when its numbers are theirs (reported: Otto's 'x = 2, now find y' in the student's ink)", !numbersAreTheirs("Vertex x-coordinate x = 2, now find the y-coordinate", ["how do I find the vertex"]) && numbersAreTheirs("$\\arccos(0) = \\frac{\\pi}{2}$", ["arccos of 0 is pi over 2"]));
+}
+
+{
+  const { asksToWrite } = await import("../server/tutorAdapt.ts");
+  const { turnActions } = await import("../server/tutorDirector.ts");
+  const report = '[Exercise] On the board line "Remainder theorem check: P(2)=2(2)^3−5(2)^2+2−3= ?" I wrote "−5" — checked right.';
+  check("the app's own [Exercise] report is never a request to write it on the board (reported: the report was copied onto the board)", !asksToWrite(report) && asksToWrite("can you put that on the board"));
+  check("…and the director never treats it as the student's own step", !turnActions({ message: report, history: [], board: [{ kind: "focus", text: "x" }], problems: [], objectives: [] }).some((a) => /THEIR line \(owner student, maths/.test(a)));
+}
+
+{
+  const { asksForSeveralValues } = await import("../server/tutor.ts");
+  check("a one-box problem asking for several values is refused (reported: roots 3 and 4 keyed to 3 only); one named value is fine", asksForSeveralValues("A quadratic has the form x^2 - 7x + 12. Find the values of x where it equals zero.") && asksForSeveralValues("Find the roots of x^2 - 5x + 6 = 0") && !asksForSeveralValues("Find the larger root of x^2 - 5x + 6 = 0") && !asksForSeveralValues("Find the equilibrium price P."));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -56,6 +56,12 @@ async function dismissWithRetry(taskId: string): Promise<boolean> {
  *  (see tutorSessions.ts), saves it locally, and dismisses the task so the next start creates a fresh one.
  *  Past session summaries are shown in a collapsible strip. */
 /** Union by id, keeping every existing item (never drops one), ordered by time. Pure. */
+/** A gap answered right: the line is completed in place with their answer ("… = ?" → "… = −3") and marked done. */
+export function fillGap<T extends { text: string; status?: string }>(b: T, given: string): T {
+  const v = (String(given || "").split("=").pop() || "").trim();
+  return { ...b, status: "correct", ...(v ? { text: b.text.replace(/=\s*\?\s*(\$?)\s*$/, `= ${v}$1`) } : {}) };
+}
+
 export function mergeBoardById<T extends { id: string; at?: string; createdAt?: string }>(existing: T[], incoming: T[]): T[] {
   const seen = new Set(existing.map((x) => x.id));
   const fresh = incoming.filter((x) => x && !seen.has(x.id));
@@ -344,7 +350,9 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       // fall back on. NEVER let a turn's delta replace what's already on screen outright: its own arrays
       // are capped and can lag behind this device, so taking it wholesale would wipe older board entries.
       // The board only grows: this turn's entries are added to what's on screen — never cleared, removed or overwritten.
-      const newBoard = mergeBoardById(task.board || [], board || []);
+      const closedRaw = (response as unknown as { gapsClosed?: unknown }).gapsClosed;
+      const gapsClosed = new Map((Array.isArray(closedRaw) ? closedRaw : []).filter((x: any) => x && typeof x.id === "string").map((x: any) => [x.id as string, String(x.given || "")]));
+      const newBoard = mergeBoardById(task.board || [], board || []).map((b) => (gapsClosed.has(b.id) ? fillGap(b, gapsClosed.get(b.id)!) : b));
       const solvedRaw = (response as unknown as { solvedInChat?: unknown }).solvedInChat;
       const solvedInChat: string[] = Array.isArray(solvedRaw) ? solvedRaw.filter((x): x is string => typeof x === "string") : [];
       for (const id of solvedInChat) solvedRef.current.add(id);
@@ -446,7 +454,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     // has no stored copy to look the gap up in for a tutor session. It still recomputes the key from the line
     // itself first, and only falls back to what it's sent.
     const { verdict } = await api.checkGap(task.id, entry.id, given, { text: entry.text, expectedAnswer: entry.expectedAnswer });
-    if (verdict === "correct") setTask((cur) => cur ? { ...cur, board: (cur.board || []).map((b) => b.id === entry.id ? { ...b, status: "correct" as const } : b) } : cur);
+    if (verdict === "correct") setTask((cur) => cur ? { ...cur, board: (cur.board || []).map((b) => b.id === entry.id ? fillGap(b, given) : b) } : cur);
     const line = entry.text.replace(/\s+/g, " ").slice(0, 100);
     // The same answer to the same line is reported once (a second click, or the line re-rendered with different
     // spacing, used to send Otto the identical result twice — and get two identical replies back).
@@ -856,54 +864,43 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       <PageTour id="tutor-session" steps={TOURS["tutor-session"]} />
       {/* Same breadcrumb chrome as the rest of the Tutor, minus "All sessions" — report-live: an active
           session shouldn't offer a way back to the list, just the subject chip and End session. */}
-      <header className="ts-bar tutor-crumbbar">
-        {task.sourceSubject ? <span className="tutor-crumb-subject">{task.sourceSubject}</span> : null}
-        <button type="button" className="tutor-fs-btn" onClick={() => (fs ? exitFullscreen() : enterFullscreen())} aria-pressed={fs} aria-label={fs ? L("Quitter le plein écran", "Exit full screen") : L("Plein écran", "Full screen")} title={fs ? L("Quitter le plein écran", "Exit full screen") : L("Plein écran", "Full screen")}>
-          {fs ? <Minimize2 size={14} aria-hidden="true" /> : <Maximize2 size={14} aria-hidden="true" />}
-        </button>
-        {!!task.objectives?.length && (
-          // A real control now, not a hover-only tooltip: the objectives were only ever readable by hovering
-          // the chip, which meant the one thing the session is aiming at was effectively invisible. Report-live
-          // ask: show them. Toggles the checklist panel right under the bar.
-          <button
-            type="button"
-            className="ts-chip ts-chip-btn"
-            aria-expanded={objectivesOpen}
-            aria-controls="ts-objectives"
-            title={objectivesOpen ? L("Masquer les objectifs", "Hide the objectives") : L("Voir les objectifs de la séance", "See this session's objectives")}
-            onClick={() => setObjectivesOpen((o) => !o)}
-          >
-            ◎ {objDone}/{task.objectives.length}{typeof task.mastery === "number" ? ` · ${Math.round(task.mastery * 100)}%` : ""}
-          </button>
-        )}
-        <button className="btn ghost tutor-end-btn" disabled={endingSession} onClick={() => { const real = (task.chat || []).filter((m) => m.role === "user").length >= 3; if (real) setReflectOpen(true); else void endSession(); }}>
-          {endingSession ? L("Fin…", "Ending…") : L("Terminer la séance", "End session")}
-        </button>
-      </header>
-      {!!task.objectives?.length && (() => {
-        // Condensed objectives: ONE line under the header — the current objective and progress dots; click to
-        // see the short checklist. Reported: the old panel was a wall of long sentences.
-        const current = task.objectives.find((o) => !o.done);
+      {/* ONE bar: subject, where we are in the plan (click for the checklist), full screen, end. Reported: two stacked
+          bars plus a chip was too much chrome above the board. */}
+      {(() => {
+        const objs = task.objectives || [];
+        const current = objs.find((o) => !o.done);
         return (
-          <div className={`ts-objstrip${objectivesOpen ? " is-open" : ""}`} id="ts-objectives" role="region" aria-label={L("Objectifs de la séance", "Session objectives")}>
-            <button type="button" className="ts-objstrip-line" aria-expanded={objectivesOpen} onClick={() => setObjectivesOpen((o) => !o)}>
-              <span className="ts-objstrip-now">{current ? L("Maintenant", "Now") : L("Terminé", "Done")}</span>
-              <span className="ts-objstrip-label">{current ? <MathText text={current.label} /> : L("Tous les objectifs sont validés", "Every objective is done")}</span>
-              <span className="ts-objstrip-dots" aria-label={`${objDone}/${task.objectives.length}`}>
-                {task.objectives.map((o, i) => <i key={o.id || i} className={o.done ? "done" : o === current ? "current" : undefined} />)}
-              </span>
-            </button>
-            {objectivesOpen && (
-              <ol className="ts-objstrip-list">
-                {task.objectives.map((o, i) => (
+          <>
+            <header className="ts-bar tutor-crumbbar">
+              {task.sourceSubject ? <span className="tutor-crumb-subject">{task.sourceSubject}</span> : null}
+              {objs.length ? (
+                <button type="button" className="ts-objstrip-line ts-bar-plan" aria-expanded={objectivesOpen} aria-controls="ts-objectives" onClick={() => setObjectivesOpen((o) => !o)}
+                  title={objectivesOpen ? L("Masquer le plan", "Hide the plan") : L("Voir le plan de la séance", "See this session's plan")}>
+                  <span className="ts-objstrip-label">{current ? <MathText text={current.label} /> : L("Plan terminé", "Plan done")}</span>
+                  <span className="ts-objstrip-dots" aria-label={`${objDone}/${objs.length}`}>
+                    {objs.map((o, i) => <i key={o.id || i} className={o.done ? "done" : o === current ? "current" : undefined} />)}
+                  </span>
+                  {typeof task.mastery === "number" ? <span className="ts-bar-mastery">{Math.round(task.mastery * 100)}%</span> : null}
+                </button>
+              ) : null}
+              <button type="button" className="tutor-fs-btn" onClick={() => (fs ? exitFullscreen() : enterFullscreen())} aria-pressed={fs} aria-label={fs ? L("Quitter le plein écran", "Exit full screen") : L("Plein écran", "Full screen")} title={fs ? L("Quitter le plein écran", "Exit full screen") : L("Plein écran", "Full screen")}>
+                {fs ? <Minimize2 size={14} aria-hidden="true" /> : <Maximize2 size={14} aria-hidden="true" />}
+              </button>
+              <button className="btn ghost tutor-end-btn" disabled={endingSession} onClick={() => { const real = (task.chat || []).filter((m) => m.role === "user").length >= 3; if (real) setReflectOpen(true); else void endSession(); }}>
+                {endingSession ? L("Fin…", "Ending…") : L("Terminer", "End")}
+              </button>
+            </header>
+            {objs.length && objectivesOpen ? (
+              <ol className="ts-objstrip-list ts-plan-list" id="ts-objectives" aria-label={L("Plan de la séance", "Session plan")}>
+                {objs.map((o, i) => (
                   <li key={o.id || `${i}:${o.label}`} className={o.done ? "done" : o === current ? "current" : undefined}>
                     <span className="ts-obj-mark" aria-hidden="true">{o.done ? "✓" : o === current ? "●" : "○"}</span>
                     <span className="ts-obj-label"><MathText text={o.label} /></span>
                   </li>
                 ))}
               </ol>
-            )}
-          </div>
+            ) : null}
+          </>
         );
       })()}
       <section className="ts-canvas" aria-label={L("Tableau", "Board")}>
