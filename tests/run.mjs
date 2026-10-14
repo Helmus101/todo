@@ -6750,5 +6750,13 @@ section("Tutor reply hygiene — invented wrapper tags, board line numbers (repo
   check("the tutor engine has no canned student-facing sentences left (replies are the model's or a model rewrite)", !/Let's stop going back to the question|Yes, that's right — nice work|Actually, you were right — this exercise|What do you make of that\?/.test(tutorSrc));
 }
 
+{
+  console.log("\n# Tool calls leaked into the reply as text");
+  const { stripLeakedToolCallSyntax } = await import("../server/ai/client.ts");
+  const leaked = '{\n  "operation": "WRITE_TO_BOARD",\n  "kind": "gap",\n  "why": "Sets up {the} comparison."\n}\n[ANNOTATE_BOARD target="10" tone="focus" note="Look here."]That gap is at its biggest.\n\nWhy is that top point not the whole surplus?';
+  check("a JSON tool call and a bracket tool call written as text are removed, and the real reply AFTER them is kept (reported live)", stripLeakedToolCallSyntax(leaked) === "That gap is at its biggest.\n\nWhy is that top point not the whole surplus?");
+  check("ordinary braces, brackets and fenced non-tool JSON are left alone", stripLeakedToolCallSyntax("Set {1,2} and see [the board].") === "Set {1,2} and see [the board]." && stripLeakedToolCallSyntax("Fine.\n```json\n{\"name\": \"CREATE_PROBLEM\"}\n```\nNext?") === "Fine.\n\nNext?");
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

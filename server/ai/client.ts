@@ -337,7 +337,35 @@ const TOOL_CALL_LEAK_MARKER2 = /<\/?call:[a-zA-Z0-9_]*/i;
 // Third leak format: "<patch><default_api:.../></patch>" - raw tool call XML in the reply text
 const TOOL_CALL_LEAK_MARKER3 = /<patch>/i;
 
-export function stripLeakedToolCallSyntax(text: string): string {
+const TOOL_NAME = "[A-Z]{2,}(?:_[A-Z]{2,})+";
+/** Tool calls written out as TEXT: a JSON object naming a tool ({"operation": "WRITE_TO_BOARD", …}) or a bracket call
+ *  ([ANNOTATE_BOARD target="10" …]). Only those blocks are removed — the reply around them is the student's. */
+function removeTextToolCalls(text: string): string {
+  let out = text.replace(new RegExp(`\\[${TOOL_NAME}\\b(?:[^\\]"]|"[^"]*")*\\]`, "g"), "");
+  const named = new RegExp(`"(?:operation|tool|tool_name|name|function)"\\s*:\\s*"${TOOL_NAME}"`);
+  for (let from = 0; ;) {
+    const open = out.indexOf("{", from);
+    if (open < 0) break;
+    let depth = 0, inStr = false, end = -1;
+    for (let i = open; i < out.length; i++) {
+      const c = out[i];
+      if (inStr) { if (c === "\\") i++; else if (c === '"') inStr = false; }
+      else if (c === '"') inStr = true;
+      else if (c === "{") depth++;
+      else if (c === "}" && --depth === 0) { end = i; break; }
+    }
+    if (end < 0) break;
+    if (named.test(out.slice(open, end + 1))) {
+      const before = out.slice(0, open).replace(/```(?:json)?\s*$/i, "");
+      out = before + out.slice(end + 1).replace(/^\s*```/, "");
+      from = before.length;
+    } else from = open + 1;
+  }
+  return out.replace(/\n{3,}/g, "\n\n").trim();
+}
+
+export function stripLeakedToolCallSyntax(input: string): string {
+  const text = removeTextToolCalls(input);
   const hits = [TOOL_CALL_LEAK_MARKER.exec(text), TOOL_CALL_LEAK_MARKER2.exec(text), TOOL_CALL_LEAK_MARKER3.exec(text)].filter((m): m is RegExpExecArray => !!m);
   if (!hits.length) return text;
   const cut = Math.min(...hits.map((m) => m.index));
