@@ -9,7 +9,7 @@
 // Deterministic and shared: the server (routes that grade) and the client (widgets that grade in place) run
 // the SAME comparison, so a verdict can never depend on which side evaluated it.
 import { compileExpr } from "./mathExpr.ts";
-import { equivalent, logAnswerEquivalent } from "./mathEquiv.ts";
+import { equivalent, logAnswerEquivalent, toExprSource } from "./mathEquiv.ts";
 import { practiceAnswerMatches } from "./types.ts";
 
 /** What is known about an item's answer key. `conflict` is the release-critical one: it means the stored key
@@ -208,7 +208,38 @@ export function gradeExerciseAnswer(ex: ExerciseKey, given: string, opts: { perc
     return { status: "system_error", verification: "conflict", expected, keyConflict: true, feedback: `This item's answer key disagrees with the independently computed value (${computed}), so your answer wasn't graded as wrong. Otto will fix it.` };
   }
   if (matchesStored) return { status: "correct", verification: check.status, expected, keyConflict: broken, feedback: "Correct." };
+  const division = ex.question ? verifyPolynomialDivision(ex.question, given) : null;
+  if (division) return { status: division, verification: "verified", expected, keyConflict: false, feedback: division === "correct" ? "Correct." : "Not quite — try again." };
   return { status: "incorrect", verification: check.status, expected, keyConflict: broken, feedback: "Not quite — try again." };
+}
+
+/** Polynomial division checked by code: "Divide P(x) = 2x³ − 5x² + x − 3 by (x − 2)" with an answer giving the quotient
+ *  and remainder ("quotient = 2x² − x − 1, remainder = −5") or the whole result ("2x² − x − 1 − 5/(x − 2)"). Right
+ *  when P(x) = D(x)·Q(x) + R(x) at several points and R has lower degree than D (constant, for a linear divisor).
+ *  null when the line isn't a division or the answer can't be read. */
+export function verifyPolynomialDivision(line: string, given: string): "correct" | "incorrect" | null {
+  const plain = (x: string) => toExprSource(String(x || "").replace(/\$/g, " ").replace(/[²³⁴]/g, (c) => "^" + ({ "²": 2, "³": 3, "⁴": 4 } as Record<string, number>)[c]));
+  const m = /divid(?:e|ing)\s+(?:[A-Za-z]\s*\(\s*x\s*\)\s*=\s*)?(.+?)\s+by\s+(.+?)(?:\s*[=:]\s*\?.*)?\s*$/i.exec(String(line || "").replace(/\$/g, " ").replace(/\s+/g, " ").trim());
+  if (!m) return null;
+  const compile = (src: string) => { const c = compileExpr(plain(src).replace(/[.,;]+$/, ""), ["x"]); return "error" in c ? null : c.fn; };
+  const P = compile(m[1]), D = compile(m[2]);
+  if (!P || !D) return null;
+  const g = String(given || "");
+  const q = /(?:quotient|q(?:\s*\(\s*x\s*\))?)\s*[=:]\s*(.+?)(?=[,;]|\s+(?:and\s+)?(?:remainder|r\b)|$)/i.exec(g);
+  const r = /(?:remainder|r(?:\s*\(\s*x\s*\))?)\s*[=:]\s*(.+?)\s*$/i.exec(g);
+  const xs = [0.7, 1.3, 3.1, -2.4, 5.5];
+  const close = (a: number, b: number) => Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(a), Math.abs(b));
+  if (q) {
+    const Q = compile(q[1]), R = r ? compile(r[1]) : (() => 0);
+    if (!Q || !R) return null;
+    // A linear divisor leaves a constant remainder.
+    const linear = xs.every((x, i) => i === 0 || close((D({ x }) - D({ x: xs[0] })) / (x - xs[0]), (D({ x: xs[1] }) - D({ x: xs[0] })) / (xs[1] - xs[0])));
+    if (linear && !xs.every((x) => close(R({ x }), R({ x: xs[0] })))) return "incorrect";
+    return xs.every((x) => close(P({ x }), D({ x }) * Q({ x }) + R({ x }))) ? "correct" : "incorrect";
+  }
+  const whole = compile(g.replace(/^[^=]*=/, ""));
+  if (!whole) return null;
+  return xs.every((x) => close(P({ x }) / D({ x }), whole({ x }))) ? "correct" : "incorrect";
 }
 
 /** The board-gap equivalent: the key recomputed by code (computedGapKey/solvedGapKey) against the key the

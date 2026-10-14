@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Profile, BoardEntry } from "../../shared/types.ts";
-import { studentProblemStatement, cleanToPost, posesProblemInProse, echoesStudentWords, repairLatex, latexifyBoardLine, statesOwnMath, startsNewProblem, looksLikeGivensOrScenario, NO_UNPROMPTED_EXERCISE, asksForProblem, asksWhichProblem, isBoardContent, splitBoardContent, asksWhy, ignoresWhy, statesOwnAnswer, namesExactStep, bubbleDoesMath, bareMath, socraticFallback, boardRepeatsMishearing, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, confirmsUnchecked, wrapsUpUnasked, blamesWidget, misattributes, methodAhead, wantsHelp, clarificationTerm, ignoresQuestion, ignoresWork, asksToWrite, arithmeticAhead, equationAhead, inventedNumbers, isDrawingTurn, drawingLooksSpatial, pendingCaseTraps, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, softenOpener, boardStatesAskedValue, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion } from "../tutorAdapt.ts";
+import { studentProblemStatement, cleanToPost, posesProblemInProse, echoesStudentWords, repairLatex, latexifyBoardLine, statesOwnMath, startsNewProblem, looksLikeGivensOrScenario, NO_UNPROMPTED_EXERCISE, asksForProblem, asksWhichProblem, isBoardContent, splitBoardContent, asksWhy, ignoresWhy, statesOwnAnswer, namesExactStep, bubbleDoesMath, bareMath, boardRepeatsMishearing, boardCoversStatement, asksToDraw, praisesNothing, praiseUngrounded, confirmsUnchecked, wrapsUpUnasked, blamesWidget, misattributes, methodAhead, wantsHelp, clarificationTerm, ignoresQuestion, ignoresWork, asksToWrite, arithmeticAhead, equationAhead, inventedNumbers, isDrawingTurn, drawingLooksSpatial, pendingCaseTraps, closesWithMissedCase, handsOverCalculation, repeatsRecentReply, harshOpener, boardStatesAskedValue, needsQuestion, replyStatesValue, studentStatedAnswer, traceAheadOfStudent, stuckStreak, asksToMoveOn, repeatsRecentQuestion } from "../tutorAdapt.ts";
 import type { AgentTools } from "../integrations.ts";
 import { findArithmeticClaims } from "../arithmetic.ts";
 import { questionAhead } from "../../shared/equationsAhead.ts";
@@ -11,9 +11,9 @@ import { sanitizeSvg, svgText } from "../../shared/svgSafe.ts";
 import { findSourceQuestions } from "../questionSources.ts";
 import { extractPlan, validatePlan } from "../tutorBrain.ts";
 import { citesMissingBoardLine } from "../../shared/boardLines.ts";
-import { OUT, countWords, createTutorChat, detectLang, parseToolArgs, retryRequest, stripLeakedToolCallSyntax, stripWrapperTags, tightenForChat, truncateCleanly, untrustedToolResult, usageOf } from "./client.ts";
+import { OUT, countWords, createTutorChat, rewriteReply, detectLang, parseToolArgs, retryRequest, stripLeakedToolCallSyntax, stripWrapperTags, tightenForChat, truncateCleanly, untrustedToolResult, usageOf } from "./client.ts";
 import { isDuplicateBoardEntry, isDuplicateDiagram, isDuplicateProblem, isSubstantiveStep, leaksAnyProblemAnswer, makeBoardEntry, makeDeck, makeDiagramEntry, makeGeometryEntry, makeGraphEntry, makeInteractiveEntry, makeNote, makeObjectives, makeProblem, makeQuiz, resolveBoardTarget, shouldNudgeBoardContent, shouldNudgeBoardWrite } from "./board.ts";
-import { CREATE_FLASHCARDS_TOOL, CREATE_NOTE_TOOL, CREATE_QUIZ_TOOL, makeFlowEntry, makeSvgEntry, makeWidgetEntry, runCalcTool, runReadPage, runWebSearch } from "./tools.ts";
+import { CREATE_FLASHCARDS_TOOL, CREATE_NOTE_TOOL, CREATE_QUIZ_TOOL, makeFlowEntry, makeTableEntry, makeSourceEntry, makeSvgEntry, makeWidgetEntry, runCalcTool, runReadPage, runWebSearch } from "./tools.ts";
 import { applyRememberFact } from "./run.ts";
 import { ChatHistory, ChatOptions, ChatResult, ChatTask } from "./chatTypes.ts";
 
@@ -123,7 +123,7 @@ interface FinishChatReplyContext {
   result: ChatResult;
 }
 
-export function finishChatReply(ctx: FinishChatReplyContext, reply: string): ChatResult {
+export async function finishChatReply(ctx: FinishChatReplyContext, reply: string): Promise<ChatResult> {
   const { fr, history, logAudit, message, opts, result } = ctx;
     reply = stripWrapperTags(stripLeakedToolCallSyntax(extractPlan(reply).reply));
     // The redirect line replaces a violating REPLY, but if that same turn also produced artifacts, they were
@@ -140,9 +140,8 @@ export function finishChatReply(ctx: FinishChatReplyContext, reply: string): Cha
       logAudit("guardrail", fr
         ? "Tu as demandé quelque chose qui ressemblait à faire le travail à ta place — Otto a dit non et a fait un guide à la place."
         : "That looked like asking Otto to do the graded work for you — it said no and made a guide instead.");
-      reply = fr
-        ? "Je peux t'aider à débloquer ça, mais je ne vais pas le rédiger à ta place — cette partie est la tienne. On cherche un point de départ ensemble ?"
-        : "I can help you get unstuck on this, but I won't write it for you — that part's yours. Want help finding a starting point instead?";
+      reply = await rewriteReply(reply, "it does the student's graded work for them (writes the essay/answers). Don't produce that work: say briefly that this part is theirs, then help them find a starting point with one question about their own ideas.", message, result.tokens);
+      if (CHAT_DOES_WORK.test(reply)) reply = ""; // still doing the work → an honest error, never a canned line
     }
     // Same leak, different surface: the WRITE_TO_BOARD/DRAW_ON_BOARD tool calls are guarded against stating
     // a problem's answer at creation time (see leaksAnyProblemAnswer), but the chat REPLY itself — plain
@@ -154,9 +153,8 @@ export function finishChatReply(ctx: FinishChatReplyContext, reply: string): Cha
       logAudit("guardrail", fr
         ? "La réponse donnait la solution d'un problème en cours — Otto a dit non et a reposé une question à la place."
         : "The reply stated a problem's answer outright — Otto caught it and asked a question instead.");
-      reply = fr
-        ? "Je ne vais pas te donner cette valeur directement — qu'est-ce que tu obtiens si tu continues à partir de là où tu en es ?"
-        : "I won't hand you that value directly — what do you get if you carry on from where you are?";
+      reply = await rewriteReply(reply, "it states the answer to a problem the student is still working on. Remove that value and anything that gives it away; keep the idea, and end with one question that helps them get there themselves.", message, result.tokens);
+      if (leaksAnyProblemAnswer(reply, [...(opts?.currentProblems || [])])) reply = "";
     }
     // A problem the STUDENT poses goes on the board the moment it's posed, whether or not the model remembered to put
     // it there (reported live: they stated a full triangle problem and the board stayed empty).
@@ -183,7 +181,7 @@ export function finishChatReply(ctx: FinishChatReplyContext, reply: string): Cha
           const r = makeBoardEntry({ text: latexifyBoardLine(repairLatex(it), "definition").slice(0, 590), kind: "definition" });
           if ("entry" in r) result.board.push(r.entry);
         }
-        reply = (fr ? "Je l'ai mis au tableau." : "I put it on the board.") + (question ? ` ${question}` : (fr ? " Lequel veux-tu creuser ?" : " Which one do you want to dig into?"));
+        reply = (await rewriteReply(reply, `this long content has now been written on the board as ${items.length} lines. Replace the reply with one short sentence pointing them at it${question ? ` and keep this question: "${question}"` : ", then one question about it"}.`, message, result.tokens)) || reply;
         console.log(`${new Date().toISOString()} [chat] fallback: moved a list/long block from the bubble to the board (${items.length} items)`);
       }
     }
@@ -193,7 +191,7 @@ export function finishChatReply(ctx: FinishChatReplyContext, reply: string): Cha
     if (opts?.primer && history.length >= 1 && !result.guardrailTripped
       && bareMath(reply)) {
       console.log(`${new Date().toISOString()} [chat] safety net: reply was only a formula — replacing with a question about what the student just wrote`);
-      reply = socraticFallback(fr);
+      reply = await rewriteReply(reply, "it's only a formula dropped on the student, possibly doing a step they haven't reached. Don't state the maths; instead ask them one question about what they just wrote or what they'd do next.", message, result.tokens);
       result.board = result.board.filter((e) => !["result", "formula"].includes(String(e.kind)) || e.owner === "student");
     }
     reply = repairLatex(reply);
@@ -216,13 +214,10 @@ export function finishChatReply(ctx: FinishChatReplyContext, reply: string): Cha
       const madeProblem = result.problems.length > 0;
       const madeDiagram = result.board.some((e) => e.kind === "diagram");
       const madeBoardOnly = !madeProblem && result.board.length > 0;
-      result.reply = madeProblem
-        ? (fr ? "Voilà un exercice — regarde le tableau." : "Here's an exercise — check the board.")
-        : madeDiagram
-          ? (fr ? "Voilà le schéma — regarde le tableau." : "Here's the diagram — check the board.")
-          : madeBoardOnly
-            ? (fr ? "C'est noté au tableau — regarde par là." : "Noted it on the board — take a look.")
-            : (fr ? "Otto n'a pas pu répondre tout de suite — réessaie dans un instant." : "Otto couldn't reply just now — try again in a moment.");
+      const landed = madeProblem ? `a new exercise: "${result.problems[0].question.slice(0, 200)}"` : madeDiagram ? "a diagram" : madeBoardOnly ? `a board line: "${String(result.board[0].text || "").slice(0, 200)}"` : "";
+      const said = landed ? await rewriteReply("", `the reply is missing. You just put ${landed} on the board; write the short reply that goes with it (point them at it, one question).`, message, result.tokens) : "";
+      result.reply = said || (fr ? "Otto n'a pas pu répondre tout de suite — réessaie dans un instant." : "Otto couldn't reply just now — try again in a moment.");
+      if (said) result.error = false;
     } else {
       result.reply = cleaned;
     }
@@ -230,7 +225,7 @@ export function finishChatReply(ctx: FinishChatReplyContext, reply: string): Cha
   }
 
 interface RunChatRoundsContext {
-  finish: (reply: string) => ChatResult;
+  finish: (reply: string) => Promise<ChatResult>;
   fr: boolean;
   heard: string[];
   history: ChatHistory;
@@ -869,7 +864,7 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
         // (4) LENGTH BACKSTOP (TALE): the 45-word budget is prompt-side; this catches the draft that
         // ignored it entirely. Silent compression, once, non-voice only (voice mode has its own stricter
         // TTS ceiling and its own retry paths above).
-        if (opts?.primer) textContent = softenOpener(textContent);
+        if (opts?.primer && harshOpener(textContent)) textContent = (await rewriteReply(textContent, `it opens harshly ("${harshOpener(textContent)}"). Start instead with what's worth keeping in their thinking, or go straight to the question.`, message, result.tokens)) || textContent;
         if (opts?.primer && countWords(textContent) > 45) textContent = tightenForChat(textContent, 45);
         // Never say the same thing twice: a draft that is a near-copy of one of Otto's recent replies gets ONE
         // corrective round (the student already saw that and it did not land — repeating it is the loop).
@@ -1125,6 +1120,13 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
           if (result.board.filter((e) => e.kind === "flow").length >= 2) content = "LIMIT: that's enough diagrams for one turn.";
           else if (leaksAnyProblemAnswer(JSON.stringify(input || {}), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that diagram states a problem's answer outright — label the boxes without the value.";
           else { const r = makeFlowEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Schéma : « ${r.entry.text.slice(0, 60)} »` : `Diagram: "${r.entry.text.slice(0, 60)}"`); } }
+        } else if (name === "TABLE_ON_BOARD") {
+          if (result.board.filter((e) => e.kind === "table").length >= 2) content = "LIMIT: enough tables for one turn.";
+          else if (leaksAnyProblemAnswer(JSON.stringify(input || {}), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that table states a problem's answer outright — leave that cell out.";
+          else { const r = makeTableEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); } }
+        } else if (name === "SOURCE_ON_BOARD") {
+          if (result.board.filter((e) => e.kind === "source").length >= 1) content = "LIMIT: one source per turn.";
+          else { const r = makeSourceEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); } }
         } else if (name === "WIDGET_ON_BOARD") {
           if (result.board.filter((e) => e.kind === "widget").length >= 1) content = "LIMIT: one activity per turn — let them do this one first.";
           else if (leaksAnyProblemAnswer(JSON.stringify(input || {}), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that activity states a problem's answer outright — build it around different content.";

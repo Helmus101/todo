@@ -121,18 +121,13 @@ export function repairLine(message: string, history: { role: string; text: strin
 // see the comment above MOVE_TEXT. tutorPolicy.ts's own `pendingExp` map is the one that scores the previous
 // turn's action against the student's reaction.)
 
-const HARSH_OPENERS: [RegExp, string][] = [
-  [/^(?:careful|watch out|attention)\s*[—–:,-]\s*/i, "Hm, let's check that — "],
-  [/^(?:no|nope|wrong|incorrect|not quite|non|faux)[,.!:—–-]\s*/i, "Almost — let's look closer. "],
-  [/^that(?:'|’)?s (?:not right|wrong|incorrect|not correct|false)[,.!:—–-]?\s*/i, "Let's check that together. "],
-  [/^actually[,:]?\s+/i, "Hm, one thing to check — "],
-];
-/** A reply must never OPEN harshly. Rewrites a leading "Careful —" / "No," / "Wrong." into a gentler lead-in
- *  (the persona forbids them; this is the backstop for a draft that did it anyway). */
-export function softenOpener(text: string): string {
-  const t = text.trimStart();
-  for (const [re, rep] of HARSH_OPENERS) if (re.test(t)) return t.replace(re, rep);
-  return text;
+/** A harsh lead-in ("Careful, Willem —", "No,", "Wrong.", "That's not right"), or null. Both engines send it back to
+ *  the model to rephrase — it is never rewritten into a fixed phrase. */
+export function harshOpener(reply: string): string | null {
+  const t = String(reply || "").trimStart();
+  const m = /^(?:careful|watch out|attention|hold on|no|nope|wrong|incorrect|non|faux)(?:,?\s*[A-ZÀ-Ý][\p{L}-]+)?\s*[—–:,!.-]+/iu.exec(t)
+    || /^that(?:'|’)?s (?:not right|wrong|incorrect|not correct|false)\b/i.exec(t);
+  return m ? m[0].trim() : null;
 }
 
 const SPOKEN: [RegExp, string][] = [
@@ -796,12 +791,6 @@ export function bareMath(reply: string): boolean {
   return words.length < 4;
 }
 
-/** Last-resort Socratic reply when a turn still ends up as bare maths. It stays on what the student just said (never "let's go back"). */
-export function socraticFallback(fr: boolean): string {
-  return fr
-    ? "Explique-moi ce que tu viens d'écrire : que représente chaque morceau, et d'où vient-il ?"
-    : "Walk me through what you just wrote: what does each part stand for, and where does it come from?";
-}
 
 import { autoMathLine } from "../shared/mathText.ts";
 export { repairLatex } from "../shared/mathText.ts";

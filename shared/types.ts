@@ -1,4 +1,5 @@
 // Shared task model — imported by both the Express backend and the React client.
+import type { TableSpec, SourceSpec } from "./boardTable.ts";
 import { normalizeCoursework, type CourseworkDoc } from "./coursework.ts";
 // The adaptive-agent layer's shapes (the persistent student model, the concept graph, the app-owned session
 // state, the board event stream and the action space). They live in their own shared module so the client can
@@ -1650,7 +1651,7 @@ export interface BoardEntry {
    *  (see `outline`) — for essay-based/humanities content (history causes, source analysis, an essay plan)
    *  where a flat sentence or a spatial diagram both fit poorly; math/science still reach for
    *  formula/diagram first. */
-  kind?: "note" | "instruction" | "given" | "result" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "interactive" | "graph" | "widget" | "flow" | "svg" | "gap" | "annotation" | "strategy";
+  kind?: "note" | "instruction" | "given" | "result" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "interactive" | "graph" | "widget" | "flow" | "svg" | "gap" | "annotation" | "strategy" | "table" | "source";
   /** Who authored this entry — "otto" (default for backward compat) or "student". Student-owned entries are
    *  never silently rewritten by Otto. Used to visually distinguish Otto's scaffolding from the student's
    *  own work on the board (see BoardArtifact.tsx). */
@@ -1692,6 +1693,10 @@ export interface BoardEntry {
   widget?: WidgetSpec;
   /** Present only when kind === "flow" (FLOW_ON_BOARD) — an auto-laid-out flowchart / cycle / timeline. */
   flow?: FlowSpec;
+  /** Present only when kind === "table" (TABLE_ON_BOARD) — shared/boardTable.ts. */
+  table?: TableSpec;
+  /** Present only when kind === "source" (SOURCE_ON_BOARD) — an excerpt with annotated highlights. */
+  source?: SourceSpec;
   /** Present only when kind === "svg" (SVG_ON_BOARD) — a sanitised model-authored SVG diagram (shared/svgSafe.ts). */
   svg?: string;
   /** Plain-language geometry of a computed figure (TRIG_SCENE_ON_BOARD) — fed to the tutor so it reads the figure correctly; never shown. */

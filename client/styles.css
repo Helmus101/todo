@@ -4353,8 +4353,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 @keyframes sm-board-reveal-ink { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
 .sm-board-reveal { animation-name: sm-board-writein, sm-board-reveal-ink; animation-timing-function: var(--ease-out, ease-out), linear; animation-fill-mode: both, both; }
 @media (prefers-reduced-motion: reduce) { .sm-board-reveal { animation: none !important; clip-path: none !important; } }
-.sm-board-entry-student { border-left: 3px solid var(--accent); margin-left: -4px; padding-left: var(--space-3); }
-.sm-board-entry-student .sm-board-entry-text { font-style: italic; }
+
 /* The "how you got there" reasoning-trace box was removed by direct instruction: a board line is a board
    line — no heading, no numbering, no category, just the work written out. */
 .sm-inline-eq .katex { font-size: 1.08em; }
@@ -4752,6 +4751,42 @@ mark.otto-mark { background: linear-gradient(transparent 12%, color-mix(in srgb,
 /* The line's explanation — so the board reads back as notes, not a bare column of equations. */
 .sm-board-why { display: flex; gap: 6px; align-items: baseline; margin-top: 4px; font-size: 13px; line-height: 1.45; color: var(--ink-2, var(--ink)); font-style: italic; }
 .sm-board-why::before { content: "↳"; flex: none; font-style: normal; color: var(--ink-3, var(--ink-2)); }
+/* THE WHITEBOARD — Aristotle-style: one open sheet, generous space, two pens. No rule under every line; a topic header
+   starts a new section; the student's own work is in their pen (blue), Otto's in black; each line's "why" sits beside
+   it as a margin note on a wide screen, under it on a phone. */
+.sm-board-body { --student-ink: #1d4ed8; }
+.sm-board-body .sm-board-entry { border-bottom: none; padding-top: var(--space-4); padding-bottom: var(--space-4); }
+.sm-board-body .sm-board-entry + .sm-board-entry { margin-top: var(--space-1); }
+.sm-board-body .sm-board-line { font-size: 1.08rem; line-height: 1.6; }
+.sm-board-body .sm-board-entry-focus { margin-top: var(--space-6); padding-top: var(--space-5); padding-bottom: var(--space-2); border-top: 1px solid var(--line); }
+.sm-board-body .sm-board-header + .sm-board-entry-focus, .sm-board-body .sm-board-ideas + .sm-board-entry-focus { margin-top: 0; border-top: 0; padding-top: var(--space-2); }
+.sm-board-body .sm-board-entry-focus .sm-board-line { font-size: 1.15rem; font-weight: 600; }
+.sm-board-body .sm-board-focus-line { font-size: 1.2rem; font-weight: 600; margin: var(--space-3) 0 var(--space-5); }
+.sm-board-body .sm-board-problem { margin: var(--space-5) 0; }
+.sm-board-body .sm-board-outline { gap: var(--space-4); }
+.sm-board-body .sm-board-outline-bullets { gap: var(--space-1); }
+.sm-board-body .sm-board-entry-student .sm-board-line,
+.sm-board-body .sm-board-entry-student .sm-board-line .katex { color: var(--student-ink); }
+@media (min-width: 960px) {
+  .sm-board-body .sm-board-entry-main:has(> .sm-board-why) { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, 34%); column-gap: var(--space-6); align-items: baseline; }
+  .sm-board-body .sm-board-entry-main:has(> .sm-board-why) > * { grid-column: 1; }
+  .sm-board-body .sm-board-entry-main:has(> .sm-board-why) > .sm-board-why { grid-column: 2; grid-row: 1; margin-top: 0; padding-left: var(--space-3); border-left: 1px solid var(--line); }
+  .sm-board-body .sm-board-entry-main:has(> .sm-board-why) > .sm-board-why::before { content: none; }
+}
+/* Tables and sources: the two objects that carry non-maths subjects as well as maths ones. */
+.sm-board-table-wrap { overflow-x: auto; margin: var(--space-3) 0; }
+.sm-board-table { border-collapse: collapse; width: 100%; font-size: 1rem; }
+.sm-board-table th { text-align: left; font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-2); padding: var(--space-2) var(--space-3); border-bottom: 2px solid var(--ink); }
+.sm-board-table td { padding: var(--space-3); border-bottom: 1px solid var(--line); vertical-align: top; line-height: 1.5; }
+.sm-board-table-reveal { font: inherit; font-size: 13px; padding: var(--space-1) var(--space-3); border: 1px dashed var(--ink-3); border-radius: 999px; background: none; color: var(--ink-2); cursor: pointer; }
+.sm-board-table-reveal:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sm-board-source { margin: var(--space-3) 0; }
+.sm-board-source-text { margin: 0; padding: var(--space-3) var(--space-4); border-left: 3px solid var(--ink); font-size: 1.1rem; line-height: 1.75; white-space: pre-wrap; }
+.sm-board-source-mark { background: color-mix(in srgb, var(--accent) 16%, transparent); color: inherit; padding: 0 2px; border-radius: 3px; }
+.sm-board-source-mark sup { font-size: 10px; font-weight: 700; margin-right: 2px; color: var(--ink-2); }
+.sm-board-source-by { margin: var(--space-2) 0 0 var(--space-4); font-size: 13px; color: var(--ink-2); }
+.sm-board-source-notes { margin: var(--space-3) 0 0; padding-left: var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); font-size: .95rem; line-height: 1.5; color: var(--ink-2); }
+.sm-board-source-notes em { color: var(--ink); font-style: italic; }
 /* Clearer board: the open problem's label reads as a call to act, the problem's data is set apart from the
    working, and a definition or rule stands out as something to keep. */
 .sm-board-body .sm-board-problem:not(.sm-board-problem-solved) .sm-board-problem-label { font-family: inherit; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink); }

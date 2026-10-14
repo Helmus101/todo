@@ -58,10 +58,10 @@ export async function runTutorCompanionSim(check, section) {
   calls = [];
   let r = await runTutorTurn({ history: [{ role: "user", text: truckQ }, { role: "assistant", text: "What's your plan?" }], message: "I'd find the force first", board: [], problems: [], objectives: [], context: {}, lang: "en", solution: sol });
   check("the worked solution is in the prompt, the reply never states its final answer", /WORKED SOLUTION/.test(sys(calls[0])) && /gives away the answer/.test(lastUser(calls[1])) && !/25,?538/.test(r.reply) && r.plan?.action === "probe");
-  script = () => ({ content: "Let's check that multiplication again — try 900 × 9.8 × sin(12°) + 360 + 360." });
+  script = (b) => /Problem to fix/.test(lastUser(b)) ? { content: "Yes, that's right — 2553.8 N. What does the engine have to supply on top of it?" } : { content: "Let's check that multiplication again — try 900 × 9.8 × sin(12°) + 360 + 360." };
   calls = [];
   r = await runTutorTurn({ history: [], message: "so F = 2553.8 N", board: [], problems: [], objectives: [], context: {}, lang: "en", solution: sol });
-  check("a student number that IS a solution step is confirmed by code, never sent back for a redo", /VERIFIED BY CODE: the number they just gave matches step 3/.test(sys(calls[0])) && /that's right/i.test(r.reply));
+  check("a student number that IS a solution step is confirmed (the model is told by code, and a final model rewrite replaces any redo request)", /VERIFIED BY CODE: the number they just gave matches step 3/.test(sys(calls[0])) && /that's right/i.test(r.reply));
 
   // ── teaching state ──
   check("parsePlan reads the hidden plan leniently", parsePlan('<plan>{"diagnosis":"conceptual","action":"explain","help_level":7}</plan>x')?.helpLevel === 4 && parsePlan("<plan>nope</plan>") === undefined);

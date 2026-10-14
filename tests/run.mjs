@@ -1838,9 +1838,9 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   // problem" is a single-question-mode concept: gated to that mode now.
   // (The old single-question-mode pin retired with the mode itself: problems are flow items now, and the
   // 'current problem' duplicate-render trap the pin guarded against no longer exists in the file.)
-  // Dual coding / document structure: kind:"focus" is the lesson's heading — pinned at the top as a
-  // header strip, excluded from the flowing entries, latest wins if a session ever writes a second one.
-  check("kind:\"focus\" renders as a pinned header, not inline in the flow", /sm-board-focus-line/.test(boardSrc) && /e\.kind !== "focus"/.test(boardSrc));
+  // Whiteboard structure: kind:"focus" starts a section where it was written (the session bar shows the current
+  // topic), and a header that repeats the one before it is shown once.
+  check("kind:\"focus\" headers stay in the flow as section starts, repeats shown once", !/sm-board-focus-line/.test(boardSrc) && /nearSameHeading\(x\.text, e\.text\)/.test(boardSrc));
   // The board as a drafted WORKSHEET (research: gradual release + completion effect + ICAP — the visible
   // artifact of a session is the student's own thinking, laid out like a lesson page, written in live).
   check("board has a worksheet header (date + subject)", /sm-board-header/.test(boardSrc) && /sm-board-header-subject/.test(boardSrc));
@@ -1905,7 +1905,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     check("cycle joins the stages in a ring automatically; timeline needs no edges", c.edges.length === 5 && layoutFlow(normalizeFlow({ type: "timeline", nodes: [{ id: "1", label: "1914" }, { id: "2", label: "1917" }, { id: "3", label: "1921" }] }).flow).nodes.length === 3);
     check("bad diagrams are refused: <2 nodes, flow with no arrows, arrows to nowhere are dropped", !!normalizeFlow({ type: "flow", nodes: [{ id: "a", label: "x" }] }).error && !!normalizeFlow({ type: "flow", nodes: [{ id: "a", label: "x" }, { id: "b", label: "y" }] }).error && normalizeFlow({ type: "flow", nodes: [{ id: "a", label: "x" }, { id: "b", label: "y" }], edges: [{ from: "a", to: "b" }, { from: "a", to: "zzz" }] }).flow.edges.length === 1); }
   { const cl = claudeSource(); const bd = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
-    check("FLOW_ON_BOARD is wired (tool, handler, render) and diagram equations are no longer KaTeX", /FLOW_ON_BOARD_TOOL, \.\.\.\(opts\?\.canvasMode/.test(cl) && /name === "FLOW_ON_BOARD"/.test(cl) && /<FlowDiagram spec=\{e\.flow\}/.test(bd) && !/foreignObject x=\{x\} y=\{Math\.max\(0, op\.y - 36\)\}/.test(bd)); }
+    check("FLOW_ON_BOARD is wired (tool, handler, render) and diagram equations are no longer KaTeX", /FLOW_ON_BOARD_TOOL, TABLE_ON_BOARD_TOOL, SOURCE_ON_BOARD_TOOL, \.\.\.\(opts\?\.canvasMode/.test(cl) && /name === "FLOW_ON_BOARD"/.test(cl) && /<FlowDiagram spec=\{e\.flow\}/.test(bd) && !/foreignObject x=\{x\} y=\{Math\.max\(0, op\.y - 36\)\}/.test(bd)); }
   // ── Model-written SVG figures (SVG_ON_BOARD) ──
   { const bad = '<svg width="100" onload="alert(1)" viewBox="0 0 10 10"><script>alert(1)</script><foreignObject><div>hi</div></foreignObject><image href="http://x/y.png"/><a href="javascript:alert(1)"><text>x</text></a><rect x="1" fill="url(http://evil)" stroke="url(#g)" onclick="x()"/><use href="http://evil/x.svg#a"/><style>*{}</style></svg>';
     const o = sanitizeSvg(bad);
@@ -1976,7 +1976,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
       /\.chat-user \{[^}]*background-color: #3b3530 !important/.test(mc) && /\.chat-send \{[^}]*background-color: #26221f !important/.test(mc) && /:not\(\.chat-send\)/.test(mc)); }
   { const cl = claudeSource(); const net = cl.slice(cl.indexOf("Safety net AFTER every corrective round"), cl.indexOf("const cleaned = truncateCleanly(reply.trim(), 2400)"));
     check("the formula-only safety net fires on bare maths only (never on a student's own equations written another way) and its question stays on what they wrote",
-      /&& bareMath\(reply\)\s*\)/.test(net) && !/equationAhead/.test(net) && /what you just wrote/.test(readFileSync(new URL("../server/tutorAdapt.ts", import.meta.url), "utf8")) && !/go back to your thinking/.test(readFileSync(new URL("../server/tutorAdapt.ts", import.meta.url), "utf8"))); }
+      /&& bareMath\(reply\)\s*\)/.test(net) && !/equationAhead/.test(net) && /question about what they just wrote or what they'd do next/.test(net) && !/socraticFallback/.test(net)); }
   { const mc = readFileSync(new URL("../client/minimal.css", import.meta.url), "utf8");
     check("briefs (note popups and the study-mode brief) read as a spacious column: generous leading, block spacing and padding, phone-safe", /\.note-popup, \.sm-brief-body \{[^}]*line-height: 1\.75/.test(mc) && /\.note-popup-body p, \.sm-brief-body p \{[^}]*margin: 0 0 var\(--space-4\)/.test(mc) && /\.note-list li[^{]*\{[^}]*margin: 0 0 var\(--space-3\)/.test(mc) && /@media \(max-width: 640px\)[^}]*\.note-popup/.test(mc)); }
   { const cl = claudeSource(), st = readFileSync(new URL("../server/store.ts", import.meta.url), "utf8");
@@ -2172,7 +2172,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   check("new entries write themselves in (drafted, not swapped)", /sm-board-writein/.test(boardSrc));
   check("the board shows a live 'Otto écrit…' drafting indicator while the tutor composes", /writing\?/.test(boardSrc) && /sm-board-drafting/.test(boardSrc));
   check("TutorSession wires the drafting indicator to the chat's sending state", /writing=\{sending\}/.test(readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8")));
-  check("the latest focus wins when more than one exists", /latestFocus/.test(boardSrc));
+  check("a heading that repeats an earlier one is shown once", /nearSameHeading/.test(boardSrc));
   // Direct request: problems should sit IN the board's flow (between the entries around them), not pinned
   // at the top — the board is one document telling the lesson's story in the order it happened.
   check("problems are flow items, not a pinned section (no 'Current problem' block, no mode toggle)", !/Problème actuel/.test(boardSrc) && !/singleQuestionMode/.test(boardSrc) && /createdAt \|\| ""\) \|\| Number\.MAX_SAFE_INTEGER/.test(boardSrc));
@@ -2278,7 +2278,7 @@ section("chatAboutTask's empty-completion fallback — wording matches what actu
   const body = src.slice(start, src.indexOf("\n}\n", start));
   check("branches on madeProblem", /madeProblem/.test(body));
   check("branches on madeDiagram separately from a plain board write", /madeDiagram/.test(body) && /madeBoardOnly/.test(body));
-  check("the diagram branch doesn't say 'exercise'", /Here's the diagram/.test(body) && !/madeDiagram[\s\S]{0,80}exercise/i.test(body));
+  check("the empty-reply recovery is written by the model about what actually landed (diagram vs exercise vs board line), never a fixed sentence", /landed = madeProblem/.test(body) && /"a diagram"/.test(body) && /rewriteReply\(/.test(body) && !/Here's the diagram/.test(body));
 }
 section("shouldNudgeBoardWrite — a confirmed student math step must land on the board (server/claude.ts)");
 {
@@ -6728,6 +6728,26 @@ section("Tutor reply hygiene — invented wrapper tags, board line numbers (repo
   check("trace state and parameters survive a save/load round trip", JSON.stringify(SM.normalizeStudentModel(JSON.parse(JSON.stringify(m))).ktParams) === JSON.stringify(m.ktParams) && SM.normalizeStudentModel(JSON.parse(JSON.stringify(m))).concepts["linear equilibrium"]?.kt?.streak === 2);
   check("a right answer after a full explanation barely moves P(known)", (() => { const a = KT.traceObservation(undefined, KT.DEFAULT_KT_PARAMS, { correct: true, weight: 0.15 }, t).kt.p, b = KT.traceObservation(undefined, KT.DEFAULT_KT_PARAMS, { correct: true, weight: 1 }, t).kt.p; return a < 0.4 && b > 0.6; })());
   check("the tutor prompt carries the model's read and next activity", /demonstrated \(model: \d+% likely/.test(SM.studentModelBlock(m, { subject: "Economics", now: t })));
+}
+
+{
+  console.log("\n# Polynomial division, excluded topics, tables and sources, repeated headings");
+  const { verifyPolynomialDivision: vpd } = await import("../shared/exerciseVerification.ts");
+  const { normalizeTable, normalizeSource, sourceRuns } = await import("../shared/boardTable.ts");
+  const { excludedTopics, includesExcluded } = await import("../server/tutor.ts");
+  const { nearSameHeading } = await import("../client/study/artifacts/BoardArtifact.tsx");
+  const line = "Divide $P(x)=2x^3-5x^2+x-3$ by $(x-2)$ = ?";
+  check("polynomial division is verified by code (reported: a right quotient and remainder was 'couldn't be auto-checked')", vpd(line, "quotient = 2x^2-x-1 remainder =-5") === "correct" && vpd(line, "quotient =2x²−x−1 remainder =−5") === "correct" && vpd(line, "2x^2-x-1-5/(x-2)") === "correct");
+  check("a wrong remainder or quotient is caught; a non-division line is left alone", vpd(line, "quotient = 2x^2-x-1, remainder = 5") === "incorrect" && vpd(line, "quotient = x^2, remainder = 0") === "incorrect" && vpd("Find x if 2x = 4", "2") === null);
+  const ex = excludedTopics("help me prep for test everythign ive done except logs and exponentioal");
+  check("'everything except logs and exponentials' is read as an exclusion, and a plan that brings them back is caught", includesExcluded(["1. Master exponent and logarithm definitions"], ex) !== null && includesExcluded(["1. Cosine rule", "2. Function transformations", "3. Polynomial division"], ex) === null);
+  check("an ordinary 'not sure' is not an exclusion", excludedTopics("I'm not sure, can you help with trig").length === 0);
+  check("a table needs 2+ headers and rows; cells are trimmed to the headers; hideColumn is kept only when valid", "error" in normalizeTable({ headers: ["a"], rows: [["x"]] }) && "error" in normalizeTable({ headers: ["a", "b"], rows: [] }) && normalizeTable({ headers: ["Determinant", "Effect"], rows: [["Income up", "Shifts right", "extra"]], hideColumn: 1 }).table.rows[0].length === 2 && normalizeTable({ headers: ["a", "b"], rows: [["x", "y"]], hideColumn: 5 }).table.hideColumn === undefined);
+  const src = normalizeSource({ text: "The history of all hitherto existing society is the history of class struggles.", attribution: "Marx & Engels", highlights: [{ phrase: "class struggles", note: "what does this claim?" }, { phrase: "invented phrase", note: "x" }] }).source;
+  check("a source keeps only highlights that are verbatim in its text, and splits into plain/marked runs in order", src.highlights.length === 1 && sourceRuns(src).length === 3 && sourceRuns(src)[1].mark === 0 && sourceRuns(src)[1].text === "class struggles");
+  check("a repeated topic header is detected, a different one is not", nearSameHeading("Test-2 prep: Exponents & Logarithms", "Math HL Test-2 Prep: Exponents & Logarithms") && !nearSameHeading("Market equilibrium", "Test-2 Prep: Functions, Trig & Division"));
+  const tutorSrc = readFileSync(new URL("../server/tutor.ts", import.meta.url), "utf8");
+  check("the tutor engine has no canned student-facing sentences left (replies are the model's or a model rewrite)", !/Let's stop going back to the question|Yes, that's right — nice work|Actually, you were right — this exercise|What do you make of that\?/.test(tutorSrc));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

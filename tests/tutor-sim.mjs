@@ -41,9 +41,9 @@ export async function runTutorSim(check, section) {
   section("Tutor simulation — Socratic, never gives the answer, board as a companion (real pipeline, scripted model)");
 
   // 1. A model that blurts the answer is caught and replaced by a question.
-  script = () => ({ content: "The answer is x = 2 or x = 3. You just factor it." });
+  script = (b) => /Problem to fix/.test(lastUserText(b)) ? { content: "What two numbers multiply to 6 and add to −5?" } : { content: "The answer is x = 2 or x = 3. You just factor it." };
   let r = await run("what's the answer?", { problems: [problem], history: [{ role: "user", text: "hi" }, { role: "assistant", text: "Hey! What are you on?" }] });
-  check("a reply stating the problem's answer is blocked and replaced by a question", r.guardrailTripped && !/x = 2/.test(r.reply) && /\?\s*$/.test(r.reply));
+  check("a reply stating the problem's answer is rewritten BY THE MODEL into a question (no canned line)", r.guardrailTripped && !/x = 2/.test(r.reply) && /\?\s*$/.test(r.reply) && calls.some((c) => /Problem to fix/.test(lastUserText(c))));
 
   // 2. A Socratic reply passes through untouched.
   script = () => ({ content: "Mm, close. What two numbers multiply to 6 and add to −5?" });
@@ -176,16 +176,16 @@ export async function runTutorSim(check, section) {
   check("GEOMETRY_ON_BOARD is offered to the tutor and its figure lands on the board", calls[0].tools.some((x) => x.function?.name === "GEOMETRY_ON_BOARD") && r.board.length === 1 && r.board[0].kind === "diagram" && r.board[0].diagram.length > 8);
 
   // Human tutor pass: gentle openers, dictated-maths hint, the session's start survives a long thread.
-  check("a harsh opener is softened (Careful —, No,, Wrong.)", /^Hm, let's check that/.test(adA.softenOpener("Careful — 1/cos x is sec x. What now?")) && !/^Wrong/i.test(adA.softenOpener("Wrong. Try again?")) && adA.softenOpener("Nice — what next?") === "Nice — what next?");
+  check("a harsh opener is detected (and sent back to the model — never rewritten into a fixed phrase)", !!adA.harshOpener("Careful — 1/cos x is sec x. What now?") && !!adA.harshOpener("Wrong. Try again?") && adA.harshOpener("Nice — what next?") === null && adA.softenOpener === undefined);
   const sp = adA.spokenMathHint("three times one over cotan squared minus 3 over cosine equals 8 sec plus 25");
   check("dictated maths gets a literal transcription plus a grouping warning; plain text gets none", /cot ²/.test(sp) && /GROUPING/.test(sp) && adA.spokenMathHint("what is the derivative of x squared") === "");
   const longHist = []; for (let n = 0; n < 40; n++) longHist.push({ role: n % 2 ? "assistant" : "user", text: n % 2 ? "ok, go on" : "step " + n });
   script = () => ({ content: "Which factor first?" });
   await run("next?", { history: longHist, opts: { opening: [{ role: "user", text: "Solve 3(1/cot^2 x - 3/cos x) = 8 sec x + 25 for the form (a sec x + b)(sec x + c)" }] } });
   check("the session's opening statement is pinned verbatim in the prompt even when the thread is long", JSON.stringify(calls[0].messages).includes("HOW THIS SESSION BEGAN") && JSON.stringify(calls[0].messages).includes("8 sec x + 25"));
-  script = () => ({ content: "Careful — that isn't it. What is 1/cos x?" });
+  script = (b) => /Problem to fix/.test(lastUserText(b)) ? { content: "Hm, what is 1/cos x?" } : { content: "Careful — that isn't it. What is 1/cos x?" };
   r = await run("is it 3 sec x", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
-  check("end to end: a harsh draft reaches the student softened", /^Hm, let's check that/.test(r.reply));
+  check("end to end: a harsh draft is rewritten by the model before the student sees it", /^Hm, what is/.test(r.reply) && calls.some((b) => /opens harshly/.test(lastUserText(b))));
 
   script = () => ({ content: "Mm. What happens to the −3 when you distribute it?" });
   await run("so it is 3 sec x", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
@@ -306,7 +306,7 @@ export async function runTutorSim(check, section) {
   let nWrites = 0;
   script = (b, i) => i < 6 ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "Note number " + (nWrites++) + " about the unit circle and radians", kind: "note" })] } : { content: "Which angle first?" };
   await run("keep going", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
-  check("an interactive tutor turn makes at most 4 model rounds even if the model keeps calling tools (was 7)", calls.length <= 4);
+  check("an interactive tutor turn makes at most 4 model rounds even if the model keeps calling tools (was 7); the recovery rewrite is not a round", calls.filter((c) => !/Problem to fix/.test(lastUserText(c))).length <= 4);
   const idx = ["../server/index.ts", "../server/http.ts", ...readdirSync(new URL("../server/routes/", import.meta.url)).map((f) => `../server/routes/${f}`)].map((f) => readFileSync(new URL(f, import.meta.url), "utf8")).join("\n");
   const cl = claudeSource();
   check("Primer turns skip the Pronote + connected-app network lookups, and provider attempts have timeouts (Gemini 9s, DeepSeek 24s) so a stalled one fails over fast", /req\.body\?\.primer !== true && \(await pronoteSvc\.pronoteConnected/.test(idx) && /req\.body\?\.primer === true \? undefined : await toolsFor\(req\)/.test(idx) && /9_000 : 24_000/.test(cl) && /CHAT_DEADLINE_MS = opts\?\.primer \? 45_000 : 120_000/.test(cl));
@@ -461,7 +461,7 @@ export async function runTutorSim(check, section) {
   check("end to end: a reply that already states the answer to the question it asks ('750 J — what are the units?') is corrected once", !/what are the units/i.test(r.reply) && /2\.5 s/.test(r.reply) && calls.some((b) => /already states "J"/.test(lastUserText(b))));
   // BOARD CONTENT: a cheat sheet pasted in the bubble goes on the board (corrective round, then the app's own fallback), bubble = one short line.
   const SHEET = "Here is the quick cheat sheet: 1. Kinetic energy (E_k): the energy an object has because it is moving. 2. Gravitational potential energy (E_p): the energy stored because of height. 3. Work (W): energy transferred when a force moves something over a distance. 4. Power (P): the rate of energy transfer, in watts. 5. Efficiency: useful energy out over total energy in. Do any of those need an example?";
-  script = () => ({ content: SHEET });
+  script = (b) => /Problem to fix/.test(lastUserText(b)) ? { content: "I put it on the board. Do any of those need an example?" } : { content: SHEET };
   r = await run("can you give me a cheat sheet of the five energy words", { history: [{ role: "user", text: "energy question" }, { role: "assistant", text: "ok" }] });
   check("end to end: a cheat sheet in the bubble ends up on the board with a one-line bubble", r.board.filter((e) => e.kind === "definition").length === 5 && /put it on the board|mis au tableau/i.test(r.reply) && !/1\. Kinetic/.test(r.reply) && /Do any of those need an example\?/.test(r.reply) && r.reply.length < 120);
   // PROBLEM AS WIDGET: asked for another exercise and answered with a chat question only → sent back to make a real exercise.

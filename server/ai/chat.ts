@@ -11,7 +11,7 @@ import { AcademicContext, AuditEvent, CHAT_LANGUAGE_OVERRIDE, dueLine, errorLogL
 import { DEEPSEEK_MODEL, OUT, createTutorChat, deepseekClient, retryRequest, stripWrapperTags, usageOf } from "./client.ts";
 import { courseworkLine } from "./coursework.ts";
 import { GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, earlierDigest } from "./board.ts";
-import { CREATE_CALC_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_INTERACTIVE_TOOL, CREATE_NOTE_TOOL, CREATE_PROBLEM_TOOL, CREATE_QUIZ_TOOL, FIND_SOURCE_QUESTION_TOOL, FLOW_ON_BOARD_TOOL, READ_PAGE_TOOL, SET_OBJECTIVES_TOOL, SOLID_ON_BOARD_TOOL, SVG_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, WEB_SEARCH_TOOL, WIDGET_ON_BOARD_TOOL, WRITE_TO_BOARD_TOOL } from "./tools.ts";
+import { CREATE_CALC_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_INTERACTIVE_TOOL, CREATE_NOTE_TOOL, CREATE_PROBLEM_TOOL, CREATE_QUIZ_TOOL, FIND_SOURCE_QUESTION_TOOL, FLOW_ON_BOARD_TOOL, TABLE_ON_BOARD_TOOL, SOURCE_ON_BOARD_TOOL, READ_PAGE_TOOL, SET_OBJECTIVES_TOOL, SOLID_ON_BOARD_TOOL, SVG_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, WEB_SEARCH_TOOL, WIDGET_ON_BOARD_TOOL, WRITE_TO_BOARD_TOOL } from "./tools.ts";
 import { REMEMBER_TOOL } from "./run.ts";
 import { ChatHistory, ChatOptions, ChatResult, ChatTask } from "./chatTypes.ts";
 import { buildChatSystemPrompt } from "./chatPrompt.ts";
@@ -535,7 +535,7 @@ export async function chatAboutTask(
   // which no longer renders a board anywhere except the Tutor (TutorSession.tsx).
   const includeArtifactTools = wantsArtifactTools(message, history);
   const boardTools = opts?.primer
-    ? [CREATE_PROBLEM_TOOL, ...(sourcesForTrack(profile?.track).length ? [FIND_SOURCE_QUESTION_TOOL] : []), WRITE_TO_BOARD_TOOL, SVG_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, SOLID_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, WIDGET_ON_BOARD_TOOL, FLOW_ON_BOARD_TOOL, ...(opts?.canvasMode ? [CREATE_INTERACTIVE_TOOL] : []), SET_OBJECTIVES_TOOL]
+    ? [CREATE_PROBLEM_TOOL, ...(sourcesForTrack(profile?.track).length ? [FIND_SOURCE_QUESTION_TOOL] : []), WRITE_TO_BOARD_TOOL, SVG_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, SOLID_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, WIDGET_ON_BOARD_TOOL, FLOW_ON_BOARD_TOOL, TABLE_ON_BOARD_TOOL, SOURCE_ON_BOARD_TOOL, ...(opts?.canvasMode ? [CREATE_INTERACTIVE_TOOL] : []), SET_OBJECTIVES_TOOL]
     : [];
   const tools = opts?.canvasMode
     ? [...boardTools, WEB_SEARCH_TOOL, READ_PAGE_TOOL, CREATE_CALC_TOOL, ...(includeArtifactTools ? [REMEMBER_TOOL] : []), ...(readOnlyExtras?.tools || [])]
@@ -543,7 +543,7 @@ export async function chatAboutTask(
   const empty = (): ChatResult => ({ reply: "", notes: [], flashcards: [], quizzes: [], problems: [], board: [], audit: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false });
   const result = empty();
   const logAudit = (kind: AuditEvent["kind"], label: string) => result.audit.push({ at: new Date().toISOString(), kind, label });
-  const finish = (reply: string): ChatResult => finishChatReply({ fr, history, logAudit, message, opts, result }, reply);
+  const finish = (reply: string): Promise<ChatResult> => finishChatReply({ fr, history, logAudit, message, opts, result }, reply);
 
   const turnStartedAt = Date.now();
   const runRounds = (): Promise<ChatResult> => runChatRounds({ finish, fr, heard, history, includeArtifactTools, logAudit, message, messages, opts, profile, readOnlyExtras, result, spokenRepair, task, tools, turnStartedAt });

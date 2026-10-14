@@ -241,6 +241,26 @@ async function createChatFast(client: OpenAI, params: any, fast: boolean, timeou
 /** Local, zero-latency version of the compression round for the Primer: a draft that ran long is cut back to
  *  its first sentences plus the closing question, at sentence boundaries — never mid-thought, and the one
  *  question that hands the thinking back to the student always survives. A short draft is returned as is. */
+/** Rewrite a tutor draft that failed a check, in the tutor's own words: one short model call, no tools. Used instead
+ *  of substituting a fixed sentence, so a reply always fits the conversation. Returns "" when the call fails. */
+export async function rewriteReply(draft: string, fix: string, studentMessage: string, usage?: { in: number; out: number; cachedIn?: number }): Promise<string> {
+  try {
+    const res = await createTutorChat({
+      max_tokens: OUT.chat, temperature: 0.6,
+      messages: [
+        { role: "system", content: "You are Otto, a warm, Socratic tutor talking with one student. You will get the student's last message and your draft reply, which has a problem. Rewrite the draft so it fixes that problem and still answers what the student actually said: same language, natural, 1-3 short sentences, at most one question. Output only the new reply." },
+        { role: "user", content: `Student said: ${String(studentMessage || "").slice(0, 1500)}\n\nYour draft: ${String(draft || "").slice(0, 3000)}\n\nProblem to fix: ${fix}` },
+      ],
+    }, true);
+    const u = usageOf(res);
+    if (usage) { usage.in += u.in; usage.out += u.out; usage.cachedIn = (usage.cachedIn || 0) + u.cachedIn; }
+    return stripWrapperTags(String(res?.choices?.[0]?.message?.content || "")).trim();
+  } catch (e: any) {
+    console.error(`[chat] rewrite failed: ${e?.message || e}`);
+    return "";
+  }
+}
+
 export function tightenForChat(text: string, maxWords = 70): string {
   const t = text.trim();
   if (countWords(t) <= maxWords) return t;

@@ -4,6 +4,7 @@ import type { BoardEntry } from "../../shared/types.ts";
 import { evaluateArithmetic } from "../arithmetic.ts";
 import { normalizeWidget, WIDGET_TYPES } from "../../shared/widgets.ts";
 import { normalizeFlow } from "../../shared/flow.ts";
+import { normalizeTable, normalizeSource } from "../../shared/boardTable.ts";
 import { sanitizeSvg, MAX_SVG_CHARS } from "../../shared/svgSafe.ts";
 import { webSearch, readPage } from "../websearch";
 
@@ -266,6 +267,43 @@ export function makeFlowEntry(input: any): { entry: BoardEntry } | { error: stri
   const r = normalizeFlow(input);
   if ("error" in r) return r;
   return { entry: { id: randomUUID(), text: caption, kind: "flow", flow: r.flow, at: new Date().toISOString() } };
+}
+
+export const TABLE_ON_BOARD_TOOL = {
+  name: "TABLE_ON_BOARD",
+  description: "Put a TABLE on the board — the clearest way to compare or organise: determinants and their effect (economics), causes / effects / evidence (history), two methods or two theories side by side, properties of functions or elements, a vocabulary list (word / meaning / example), a truth table. " +
+    "2-5 columns, up to 12 rows, short cells (maths in $…$). For RECALL practice set `hideColumn` to the column they must remember: those cells stay hidden until they reveal them — never show the answers you're testing. Never put the answer to an open problem in a cell.",
+  input_schema: { type: "object", properties: {
+    caption: { type: "string", description: "one short title line" },
+    headers: { type: "array", items: { type: "string" }, description: "2-5 column headings" },
+    rows: { type: "array", items: { type: "array", items: { type: "string" } }, description: "one array per row, one cell per header" },
+    hideColumn: { type: "integer", description: "optional: index of the column to hide for recall practice" },
+  }, required: ["caption", "headers", "rows"] },
+};
+
+export const SOURCE_ON_BOARD_TOOL = {
+  name: "SOURCE_ON_BOARD",
+  description: "Put a SOURCE on the board for close reading: a quote, a short passage of a poem/novel/speech, a primary-source extract, a philosophical claim. Highlight the 1-5 phrases that matter, each with a short note (a question to think about, a technique, what it reveals). Quote EXACTLY — never invent or alter a quote; if you don't know the exact wording, don't use this tool. Highlights must be copied verbatim from `text`.",
+  input_schema: { type: "object", properties: {
+    caption: { type: "string", description: "one short title line" },
+    text: { type: "string", description: "the excerpt, verbatim (≤ 900 characters)" },
+    attribution: { type: "string", description: "who / what / when, e.g. 'Lenin, April Theses (1917)'" },
+    highlights: { type: "array", items: { type: "object", properties: { phrase: { type: "string" }, note: { type: "string" } }, required: ["phrase"] }, description: "phrases from the text to mark, each with a short note" },
+  }, required: ["text"] },
+};
+
+export function makeTableEntry(input: any): { entry: BoardEntry } | { error: string } {
+  const r = normalizeTable(input);
+  if ("error" in r) return r;
+  const caption = String(input?.caption || "").trim().slice(0, 200) || r.table.headers.join(" · ");
+  return { entry: { id: randomUUID(), text: caption, kind: "table", table: r.table, at: new Date().toISOString() } };
+}
+
+export function makeSourceEntry(input: any): { entry: BoardEntry } | { error: string } {
+  const r = normalizeSource(input);
+  if ("error" in r) return r;
+  const caption = String(input?.caption || "").trim().slice(0, 200) || r.source.attribution || "Source";
+  return { entry: { id: randomUUID(), text: caption, kind: "source", source: r.source, at: new Date().toISOString() } };
 }
 
 // IB / AP students practise on registered sources (IB Documents, Revision Village, College Board AP Central).

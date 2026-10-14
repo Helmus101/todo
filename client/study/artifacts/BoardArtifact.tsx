@@ -2,6 +2,7 @@ import { MathAnswerInput } from "../MathAnswerInput.tsx";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import katex from "katex";
 import type { WebTask, BoardEntry, TaskProblem, DiagramOp } from "../../../shared/types.ts";
+import { sourceRuns, type TableSpec, type SourceSpec } from "../../../shared/boardTable.ts";
 import { isNumericAnswer, problemIsPercent } from "../../../shared/types.ts";
 import { gradeExerciseAnswer, gradeConceptAnswer, type GradeStatus } from "../../../shared/exerciseVerification.ts";
 import { autoMathLine, repairLatex, latexToPlainText } from "../../../shared/mathText.ts";
@@ -476,6 +477,57 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, sys
  *  and practice problems. ONE DOCUMENT, ONE FLOW: entries and problems interleave in the order the session
  *  actually produced them (a problem sits between the formula it exercises and the insight answering it —
  *  the lesson's story, not a problem section pinned on top). kind:"focus" stays pinned above as the heading. */
+/** Two headings that say the same thing ("Test-2 prep: Exponents & Logarithms" / "Math HL Test-2 Prep: Exponents &
+ *  Logarithms"): most of the shorter one's words appear in the other. Exported for tests. */
+export function nearSameHeading(a: string, b: string): boolean {
+  const words = (x: string) => new Set(String(x || "").toLowerCase().replace(/\$[^$]*\$/g, " ").split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 3));
+  const A = words(a), B = words(b);
+  if (!A.size || !B.size) return false;
+  const [small, big] = A.size <= B.size ? [A, B] : [B, A];
+  return [...small].filter((w) => big.has(w)).length / small.size >= 0.8;
+}
+
+/** A table on the board. With `hideColumn` set (recall practice) those cells stay hidden until the student reveals them. */
+function BoardTable({ spec, en }: { spec: TableSpec; en: boolean }) {
+  const [shown, setShown] = useState<Set<number>>(new Set());
+  const hide = spec.hideColumn;
+  const reveal = (i: number) => setShown((prev) => new Set(prev).add(i));
+  return (
+    <div className="sm-board-table-wrap">
+      <table className="sm-board-table">
+        <thead><tr>{spec.headers.map((h, i) => <th key={i} scope="col"><MathText text={h} /></th>)}</tr></thead>
+        <tbody>
+          {spec.rows.map((r, ri) => (
+            <tr key={ri}>
+              {r.map((c, ci) => ci === hide && !shown.has(ri)
+                ? <td key={ci}><button type="button" className="sm-board-table-reveal" onClick={() => reveal(ri)}>{en ? "Recall, then reveal" : "Rappelle-toi, puis révèle"}</button></td>
+                : <td key={ci}><MathText text={c} /></td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** A source excerpt with its highlighted phrases and the notes beside them (close reading). */
+function SourceBlock({ spec, en }: { spec: SourceSpec; en: boolean }) {
+  const runs = sourceRuns(spec);
+  return (
+    <figure className="sm-board-source">
+      <blockquote className="sm-board-source-text">
+        {runs.map((r, i) => r.mark == null ? <span key={i}>{r.text}</span> : <mark key={i} className="sm-board-source-mark"><sup>{r.mark + 1}</sup>{r.text}</mark>)}
+      </blockquote>
+      {spec.attribution ? <figcaption className="sm-board-source-by">— {spec.attribution}</figcaption> : null}
+      {spec.highlights.some((h) => h.note) ? (
+        <ol className="sm-board-source-notes" aria-label={en ? "Notes on the source" : "Notes sur la source"}>
+          {spec.highlights.map((h, i) => h.note ? <li key={i} value={i + 1}><em>{h.phrase}</em> — {h.note}</li> : null)}
+        </ol>
+      ) : null}
+    </figure>
+  );
+}
+
 export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidgetResult, sheetSignal, onGapCheck }: BoardArtifactProps) {
   const L = useLang();
   const endRef = useRef<HTMLDivElement>(null);
@@ -509,7 +561,6 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
       const withState = dupes.find(x => hasState(x.id));
       return (withState || dupes[0]).id === p.id;
     });
-  const latestFocus = [...entries].reverse().find((e) => e.kind === "focus");
   // KEY IDEAS — the definitions, rules, strategies and the summary, gathered into one compact strip at the top so the
   // board doubles as the student's revision sheet (spec §10.4 knowledge panel). Rendered as a COPY: each entry also
   // keeps its place in the flow, so line numbers, undo and pointers are untouched.
@@ -521,10 +572,16 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
   const latestSummary = boardIsLong ? [...entries].reverse().find((e) => e.kind === "summary" && e.owner !== "student" && !topIds.has(e.id)) : undefined;
   const [ideasOpen, setIdeasOpen] = useState<boolean>(() => { try { return localStorage.getItem("otto.board.ideasOpen") !== "0"; } catch { return true; } });
   const toggleIdeas = () => setIdeasOpen((o) => { try { localStorage.setItem("otto.board.ideasOpen", o ? "0" : "1"); } catch { /* storage blocked: still toggles */ } return !o; });
+  // A heading that only repeats a topic header ("Math HL Test-2 Prep: Exponents & Logarithms" under "Test-2 prep:
+  // Exponents & Logarithms") is shown once: the repeat's title is hidden, the content stays.
+  const focusTexts = entries.filter((e) => e.kind === "focus").map((e) => e.text);
+  const repeatsHeading = (text: string, except?: string) => focusTexts.some((f) => f !== except && nearSameHeading(f, text));
   const flowEntries = entries
     .filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i)
-    // Earlier topic headers stay in the flow where they were written; only the newest one is pinned on top.
-    .filter(e => (e.kind !== "focus" || e.id !== latestFocus?.id) && (e.kind as string) !== "problem" && e.kind !== "annotation");
+    // Topic headers stay in the flow where they were written, each starting a section (the session bar shows the
+    // current one); a header that repeats the one just before it is shown once.
+    .filter((e, i, arr) => e.kind !== "focus" || !arr.slice(0, i).reverse().find((x) => x.kind === "focus" && nearSameHeading(x.text, e.text)))
+    .filter(e => (e.kind as string) !== "problem" && e.kind !== "annotation");
 
   // The margin line numbers — the SAME numbering the tutor reads (#n), so "look at line 4" is findable.
   const lineNo = useMemo(() => boardLineNumbers(entries), [entries]);
@@ -699,10 +756,6 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
         ) : null}
       </div>
 
-      {/* The pinned session goal (kind:"focus") — always the FIRST thing on the board, like the heading of
-          a lesson page: the day's arc stays visible no matter how long the flow below grows. The latest
-          focus wins if a session ever writes a second one. */}
-      {latestFocus ? <div className="sm-board-line sm-board-focus-line"><MathText text={autoMathLine(stripStrayMarkdown(latestFocus.text))} /></div> : null}
 
       {keyIdeas.length || latestSummary ? (
         <section className={`sm-board-ideas${ideasOpen ? "" : " is-collapsed"}`} aria-label={en ? "Key ideas" : "À retenir"}>
@@ -759,7 +812,7 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
           return (
             <div
               key={item.key}
-              className={`sm-board-entry sm-board-entry-${e.kind || "note"} sm-board-writein${fresh ? " sm-board-reveal" : ""}${isPastGap || (e.kind === "gap" && e.status === "correct") ? " sm-board-gap-past" : ""}`}
+              className={`sm-board-entry sm-board-entry-${e.kind || "note"}${e.owner === "student" ? " sm-board-entry-student" : ""} sm-board-writein${fresh ? " sm-board-reveal" : ""}${isPastGap || (e.kind === "gap" && e.status === "correct") ? " sm-board-gap-past" : ""}`}
               style={fresh ? { animationDuration: `.35s, ${revealDuration(e.text)}s` } : undefined}
             >
               {lineNo.get(e.id) ? <span className="sm-board-lineno" aria-label={en ? `line ${lineNo.get(e.id)}` : `ligne ${lineNo.get(e.id)}`}>{lineNo.get(e.id)}</span> : null}
@@ -799,7 +852,7 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
                 <PlainSteps text={e.text} />
               ) : e.kind === "outline" && e.outline?.length ? (
                 <>
-                  {stripStrayMarkdown(e.text) ? <div className="sm-board-entry-text sm-board-outline-title">{stripStrayMarkdown(e.text)}</div> : null}
+                  {stripStrayMarkdown(e.text) && !repeatsHeading(e.text) ? <div className="sm-board-entry-text sm-board-outline-title">{stripStrayMarkdown(e.text)}</div> : null}
                   <div className="sm-board-outline">
                     {e.outline.map((section, i) => (
                       <div key={i} className="sm-board-outline-section">
@@ -821,6 +874,16 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
                   <div className="sm-board-entry-text sm-board-diagram-caption"><MathText text={stripStrayMarkdown(e.text)} /></div>
                   {/* sanitised again on render (defence in depth): stored entries can come back from the cloud/local cache */}
                   <div className="sm-svgfig" role="img" aria-label={latexToPlain(e.text)} dangerouslySetInnerHTML={{ __html: sanitizeSvg(e.svg) }} />
+                </>
+              ) : e.kind === "table" && e.table ? (
+                <>
+                  <div className="sm-board-entry-text sm-board-diagram-caption"><MathText text={stripStrayMarkdown(e.text)} /></div>
+                  <BoardTable spec={e.table} en={en} />
+                </>
+              ) : e.kind === "source" && e.source ? (
+                <>
+                  <div className="sm-board-entry-text sm-board-diagram-caption"><MathText text={stripStrayMarkdown(e.text)} /></div>
+                  <SourceBlock spec={e.source} en={en} />
                 </>
               ) : e.kind === "flow" && e.flow ? (
                 <>

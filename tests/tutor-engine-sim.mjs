@@ -5,7 +5,7 @@
 // carries the conversation first and the background second.
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
 delete process.env.GEMINI_API_KEY;
-const { runTutorTurn, detectSubject, backgroundBlock, TUTOR_PROMPT, leakedValue, wantsExercise, inventsProblemOnBoard, doubtsRightAnswer, misgradedExercise, softenOpener, computedGapKey, nextTeachingState, sendsBackToStatement, statesFormula, misstatesGiven, stripPraiseOpener, tutorTools, applyTool, delegatesChoice, statesStudyGoal, proposesPlan, planConsented, agreesWithoutChallenge, asksStudentToChoose, repeatsSolvedCalculation } = await import("../server/tutor.ts");
+const { runTutorTurn, detectSubject, backgroundBlock, TUTOR_PROMPT, leakedValue, wantsExercise, inventsProblemOnBoard, doubtsRightAnswer, misgradedExercise, harshOpener, computedGapKey, nextTeachingState, sendsBackToStatement, statesFormula, misstatesGiven, stripPraiseOpener, tutorTools, applyTool, delegatesChoice, statesStudyGoal, proposesPlan, planConsented, agreesWithoutChallenge, asksStudentToChoose, repeatsSolvedCalculation } = await import("../server/tutor.ts");
 const { equivalent } = await import("../shared/mathEquiv.ts");
 const { equationsAhead } = await import("../shared/equationsAhead.ts");
 const { boardLineNumbers } = await import("../shared/boardLines.ts");
@@ -45,9 +45,9 @@ export async function runTutorEngineSim(check, section) {
   r = await run("I don't know how to get b", { board: gapBoard });
   check("a reply stating an open gap's value is rewritten once, and the rewrite is used", r.reply === "What happens if you divide both sides by tan 25°?" && calls.length === 2 && /gives away/.test(lastUser(calls[1])));
 
-  script = () => ({ content: "It's b = h/tan(25°)." });
+  script = (b) => /Problem to fix/.test(lastUser(b)) ? { content: "What do you get if you divide both sides by tan 25°?" } : { content: "It's b = h/tan(25°)." };
   r = await run("just tell me", { board: gapBoard });
-  check("a reply that keeps leaking is replaced by a question and flagged", r.guardrailTripped && !/tan\(25/.test(r.reply) && /\?$/.test(r.reply));
+  check("a reply that keeps leaking gets a final MODEL-written rewrite (a question), and is flagged", r.guardrailTripped && !/tan\(25/.test(r.reply) && /\?$/.test(r.reply));
   check("the trip records WHICH value leaked, for the streak check below", r.leakedValue === "h/tan(25°)");
 
   // Reported live (real transcript): once blocked, Otto replayed the IDENTICAL fallback sentence turn
@@ -62,9 +62,9 @@ export async function runTutorEngineSim(check, section) {
     r.guardrailTripped && r.reply === "It's b = h/tan(25°)." && !/what happens if you divide/i.test(r.reply));
   // A trip on a DIFFERENT value (not the same streak) must still behave like a first trip — the streak is
   // keyed to the exact value, not just "any guardrail trip happened last turn".
-  script = () => ({ content: "The height is 425." });
+  script = (b) => /Problem to fix/.test(lastUser(b)) ? { content: "What's the height if you carry on from your last line?" } : { content: "The height is 425." };
   r = await run("just tell me", { board: [], problems: [{ id: "p9", question: "What's the height?", answer: "425", createdAt: "" }], opts: { teaching: streakState } });
-  check("a trip on a DIFFERENT value is still a first trip (fallback, not the raw reply)", r.guardrailTripped && !/425/.test(r.reply));
+  check("a trip on a DIFFERENT value is still handled by a model rewrite, not the raw reply", r.guardrailTripped && !/425/.test(r.reply));
 
   script = () => ({ content: "Yes, b = h/tan(25°) — now put it in the second equation." });
   r = await run("b = h/tan(25°)", { board: gapBoard });
@@ -206,9 +206,9 @@ export async function runTutorEngineSim(check, section) {
     check("misgradedExercise says nothing for a genuinely wrong answer", misgradedExercise('[Exercise] I answered "12" — marked wrong (try #1).', econSol) === null);
     check("misgradedExercise says nothing without a verified solution to check against", misgradedExercise('[Exercise] I answered "8" — marked wrong (try #1).', undefined) === null);
     // End-to-end: runTutorTurn short-circuits immediately on a misgraded exercise, no model call at all.
-    script = () => ({ content: "THIS SHOULD NEVER BE SEEN — the misgraded-exercise short-circuit must bypass the model entirely" });
+    script = () => ({ content: "You had it — your 8 matches the checked solution. Why did you set demand equal to supply?" });
     r = await run('[Exercise] I answered "8" — marked wrong (try #1).', { opts: { solution: econSol } });
-    check("runTutorTurn settles a misgraded exercise deterministically, with zero model calls", calls.length === 0 && /key was wrong/i.test(r.reply) && !r.error);
+        check("a misgraded exercise reaches the model as a binding fact (no canned reply): it answers in its own words", calls.length >= 1 && /THEY WERE RIGHT/.test(calls[0].messages[0].content) && /You had it/.test(r.reply) && !r.error);
   }
 
   // Reported live (real transcript): Otto asked the student to go BACK TO THE PROBLEM STATEMENT to re-check a
@@ -228,36 +228,36 @@ export async function runTutorEngineSim(check, section) {
   r = await run("12", { problems: [{ id: "pC", question: "A 3 kg box is pulled up a 20° incline by 12 N against 2 N of friction. Find its speed after 5 m.", answer: "0", createdAt: "" }] });
   check("going back to the problem statement to re-check a value they gave is corrected once, and the rewrite ships",
     calls.length === 2 && /sends them back to the problem statement/.test(lastUser(calls[1])) && r.reply === "Your numbers stand: 12 N pulling up. Which line shall we pin down first?");
-  script = () => ({ content: rereadReply });
+  script = (b) => /Problem to fix/.test(lastUser(b)) ? { content: "Got it — 12 N it is. What does that 12 N push against, along the slope?" } : { content: rereadReply };
   r = await run("12");
-  check("…and if it keeps doing it, the student never sees the same bounce-back again — code answers instead",
-    !/problem text/i.test(r.reply) && /your numbers stand as they are/.test(r.reply) && /the question's numbers don't work/.test(r.reply));
+  check("…and if it keeps doing it, a final model-written rewrite answers — the student never sees the bounce-back, and never a canned paragraph",
+    !/problem text/i.test(r.reply) && /12 N it is/.test(r.reply));
   script = () => ({ content: "Have a look at the problem statement — what does it say the angle is?" });
   r = await run("I'm not sure where to start");
   check("with no value on the table, pointing back at the statement is legitimate and left alone", calls.length === 1 && /problem statement/.test(r.reply));
 
   // "Make sure": even if the rewrite STILL asks a right student to redo it, the student never sees that.
-  script = () => ({ content: "Let's check that multiplication again. Try $800 \\times 9.8 \\times \\sin(15^\\circ) \\times 12$. What does it give you?" });
+  script = (b) => /Problem to fix/.test(lastUser(b)) ? { content: "Yes, 24,350 is right. What made the sine of 15° the piece that matters?" } : { content: "Let's check that multiplication again. Try $800 \\times 9.8 \\times \\sin(15^\\circ) \\times 12$. What does it give you?" };
   r = await run("24,350 approximately");
-  check("a right answer is confirmed even when the model keeps doubting it (code fallback)", /that's right/.test(r.reply) && !/again/.test(r.reply));
-  script = () => ({ content: "Ah, let's re-run that one: $800 \\times 9.8 \\times \\sin(15^\\circ) \\times 12$. What do you get when you multiply those out?" });
+  check("a right answer is confirmed even when the model keeps doubting it (final model rewrite)", /is right/.test(r.reply) && !/again/.test(r.reply));
+  script = (b) => /Problem to fix/.test(lastUser(b)) ? { content: "Yes, 24,350 is right. What made the sine of 15° the piece that matters?" } : { content: "Ah, let's re-run that one: $800 \\times 9.8 \\times \\sin(15^\\circ) \\times 12. What do you get when you multiply those out?" };
   r = await run('[Exercise] I answered "24350" — marked right (try #1).');
-  check("…and after the app marked it right, never a re-run", /that's right/.test(r.reply) && !/re-run/.test(r.reply));
+  check("…and after the app marked it right, never a re-run", /is right/.test(r.reply) && !/re-run/.test(r.reply));
 
   // Reported live: the student said "the force along the slope plus accelerating force minus 360" and Otto put the
   // whole substituted set-up on the board for them: "Total force = 900×9.8×sin(12°) + 900×0.4 + 360 = ?".
   const truck = [{ id: "pT", question: "A 900 kg truck accelerates at 0.4 m/s² up a 12° slope against 360 N of friction. Find the engine's force.", answer: "2553", createdAt: "" }];
   script = (b, i) => i === 0
     ? { tool_calls: [tc("WRITE_TO_BOARD", { text: "Total force $= 900 \\times 9.8 \\times \\sin(12^\\circ) + 900 \\times 0.4 + 360 = ?$", kind: "gap", expectedAnswer: "2553", gapAction: "add the three forces" })] }
-    : { content: "Careful, Willem — the friction isn't something you subtract here. Does it help the engine or fight it?" };
+    : /opens with/.test(lastUser(b)) ? { content: "Hm, the friction isn't something you subtract here. Does it help the engine or fight it?" } : { content: "Careful, Willem — the friction isn't something you subtract here. Does it help the engine or fight it?" };
   r = await run("the total force is basically the force along the slope plus accelerating force minus 360 newtons right", { problems: truck });
   const tool2 = calls[1].messages.filter((m) => m.role === "tool").map((m) => m.content).join(" ");
   check("a substituted set-up the student hasn't built never goes on the board", r.board.length === 0 && /haven't stated/.test(tool2));
-  check("…and the reply doesn't open harshly ('Careful, Willem —' is softened)", /^Hm, let's look at that — the friction/.test(r.reply));
+  check("…and the reply doesn't open harshly ('Careful, Willem —' goes back to the model, which rephrases)", /^Hm, the friction/.test(r.reply));
   script = (b, i) => i === 0 ? { tool_calls: [tc("WRITE_TO_BOARD", { text: "$F = 900 \\times 9.8 \\times \\sin(12^\\circ) + 900 \\times 0.4 + 360$", kind: "summary", owner: "student" })] } : { content: "That's your line on the board — what does it come to?" };
   r = await run("so 900 times 9.8 times sine 12 plus 900 times 0.4 plus 360", { problems: truck });
   check("…but once THEY say it, it's written up as theirs", r.board.length === 1);
-  check("softenOpener works in French too", softenOpener("Attention, Willem : le frottement s'oppose au mouvement.", true) === "Hmm, regardons ça — le frottement s'oppose au mouvement.");
+  check("harshOpener catches French openers too", !!harshOpener("Attention, Willem : le frottement s'oppose au mouvement.") && harshOpener("Regardons le frottement.") === null);
 
   // Reported live: "It's already on the board, Willem — line 40. … what's 900 × 9.8 × sin(12°), what's 900 × 0.4,
   // and then add the 360?" — the board showed NO line numbers (and had no line 40), and the reply handed over the

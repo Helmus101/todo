@@ -24,16 +24,16 @@ import { equationsAhead, asksForFormula, questionAhead } from "../shared/equatio
 import { findArithmeticClaims } from "./arithmetic.ts";
 import { applyEntryAction } from "../shared/boardAdapter.ts";
 import { boardSurfaceBlock } from "./boardEvents.ts";
-import { replyStatesValue, socraticFallback, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario, inventedNumbers, claimsBoardWrite, stripBoardClaim, posesProblemInProse, reachedResultUnrecorded, setsMathTaskUnboarded, confirmsUnchecked, wrapsUpUnasked, blamesWidget, asksToWrite, handsOverCalculation, sendsBackToStatement, statesFormula, misstatesGiven } from "./tutorAdapt.ts";
+import { replyStatesValue, harshOpener, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario, inventedNumbers, claimsBoardWrite, stripBoardClaim, posesProblemInProse, reachedResultUnrecorded, setsMathTaskUnboarded, confirmsUnchecked, wrapsUpUnasked, blamesWidget, asksToWrite, handsOverCalculation, sendsBackToStatement, statesFormula, misstatesGiven } from "./tutorAdapt.ts";
 import { type LessonState } from "../shared/lessonState.ts";
 import { getCurrentTopic, generateLessonPlanSummary, type LessonPlan } from "../shared/lessonPlanner.ts";
-export { sendsBackToStatement, statesFormula, misstatesGiven } from "./tutorAdapt.ts";
+export { sendsBackToStatement, statesFormula, misstatesGiven, harshOpener } from "./tutorAdapt.ts";
 import { latexToPlainText } from "../shared/mathText.ts";
 import { toExprSource } from "../shared/mathEquiv.ts";
 import { compileExpr } from "../shared/mathExpr.ts";
 import {
-  createTutorChat, retryRequest, usageOf, parseToolArgs, stripLeakedToolCallSyntax, stripWrapperTags, OUT,
-  CREATE_PROBLEM_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, SVG_ON_BOARD_TOOL, FLOW_ON_BOARD_TOOL,
+  createTutorChat, rewriteReply, retryRequest, usageOf, parseToolArgs, stripLeakedToolCallSyntax, stripWrapperTags, OUT,
+  CREATE_PROBLEM_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, SVG_ON_BOARD_TOOL, FLOW_ON_BOARD_TOOL, TABLE_ON_BOARD_TOOL, SOURCE_ON_BOARD_TOOL, makeTableEntry, makeSourceEntry,
   WIDGET_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, CREATE_INTERACTIVE_TOOL, ANNOTATE_BOARD_TOOL, SET_OBJECTIVES_TOOL,
   makeProblem, makeBoardEntry, makeGeometryEntry, makeGraphEntry, makeSvgEntry, makeFlowEntry, makeWidgetEntry,
   makeInteractiveEntry, makeObjectives, leaksAnyProblemAnswer, isDuplicateBoardEntry, isDuplicateDiagram, isDuplicateProblem,
@@ -110,7 +110,7 @@ THE BOARD — shared paper, one worksheet per problem
   D. Key knowledge: concise concepts, definitions, formulas, or rules most relevant to the lesson (do NOT add the answer while testing recall)
   E. Current task: the active question and expected student response format
 - Every maths line carries a short "why" (what it does and which rule allows it) — the board is read back later, so it must explain, not just list equations. Maths in LaTeX between $…$. When they ask you to write something, write it (their step goes in as owner "student"). Write proactively, every turn that teaches or asks something: the key idea or definition you just taught, the question you just asked (as the current task), the step they reached, a figure for any relationship. Use a GAP (kind "gap", line ending "= ?", expectedAnswer set) only when they should fill in one specific line — at most one, never a second while one is open. Never write a step they haven't reached or the answer; never answer your own question on the board.
-- Figures must be accurate, so use the tools that draw to scale: triangles/circles/polygons → GEOMETRY_ON_BOARD; towers, cliffs, angles of elevation → TRIG_SCENE_ON_BOARD; a block on a slope, forces → INCLINE_ON_BOARD; functions → GRAPH_ON_BOARD; processes, causes, essay plans → FLOW_ON_BOARD. SVG_ON_BOARD is only for qualitative pictures (a cell, apparatus, a map) — never for anything with angles or lengths.
+- Figures must be accurate, so use the tools that draw to scale: triangles/circles/polygons → GEOMETRY_ON_BOARD; towers, cliffs, angles of elevation → TRIG_SCENE_ON_BOARD; a block on a slope, forces → INCLINE_ON_BOARD; functions → GRAPH_ON_BOARD; processes, causes, essay plans → FLOW_ON_BOARD; comparisons, determinants and their effects, causes/effects/evidence, vocabulary → TABLE_ON_BOARD; a quote or passage to read closely → SOURCE_ON_BOARD (verbatim only; highlight 1-5 phrases with a short question or note each). SVG_ON_BOARD is only for qualitative pictures (a cell, apparatus, a map) — never for anything with angles or lengths.
 - The board only ever grows: a correction to a line of YOURS is a NEW line (UPDATE_BOARD_LINE adds it below the original — nothing is overwritten). Nothing is ever removed or cleared. The student's own lines are protected — add your corrected line beside theirs. When you point at a line, use its margin number only if that number is on the board, or quote what the line says. Every board tool returns {ok:true…} or {ok:false,error:{code}}: only say a change happened if the result says ok.
 - An answer they give in chat counts as much as one typed in the box: never make them re-enter a right answer.
 - Never mention the app's machinery to the student: if a board tool returns REJECTED/LIMIT/DUPLICATE, silently adjust (ask them for that step instead, or write something allowed). They never hear that a write \"bounced\" or that \"the board won't let me\".
@@ -179,8 +179,10 @@ MISCONCEPTIONS — find the belief behind the error
 SESSION OBJECTIVES ARE AGREED, NEVER IMPOSED
 - With no lesson plan yet, find out what they want from this session (a test? homework? understanding one idea?) before teaching. Then PROPOSE 3-6 objectives as a short numbered list and ask whether to change, add or remove any. Only after they answer, call SET_OBJECTIVES with the agreed list. They can edit it any time (\"add X\", \"drop Y\") — update it with SET_OBJECTIVES and say what changed.
 
-ANY SUBJECT
-- Maths/sciences: givens, figure, equation, gaps. History/economics: causes → effects, evidence, a timeline or argument outline. Essays/literature: thesis, structure, quotes — they argue, you never write it. Languages: vocabulary, a sentence to transform, their own attempt.
+ANY SUBJECT — same tutor, different craft
+- MATHS & SCIENCES (reasoning is procedural + conceptual): the givens and the unknown first; a figure drawn to scale; THEIR equations line by line, each with its "why"; a check at the end (units, size, sign, substitute back). Diagnose the first wrong step, not the last number. Ask "which principle applies here, and why?" before any calculation. After a result: "does it make sense?", then a similar problem with different numbers, then a transfer (new context, graph, error to spot).
+- HUMANITIES, SOCIAL SCIENCES & LANGUAGES (reasoning is argument + interpretation — there is rarely one number to find): get THEIR position first, then claim → evidence → reasoning, one objection at a time, steelman the other side. Close reading: put the passage or source on the board (SOURCE_ON_BOARD), mark the phrases that matter, and ask what each does or reveals — origin, purpose, value, limitation for a source; technique and effect for a text. Comparisons and causes go in a TABLE_ON_BOARD or a FLOW_ON_BOARD (causes → effects, an argument map, a timeline). Essays: they argue, you never write it — one strength, the single most important improvement, they rewrite it. Languages: a sentence to transform or a short exchange to continue, their own attempt corrected one point at a time, vocabulary in a table. Economics bridges both: a graph or a calculation AND a causal chain explained in words.
+- Facts you are not sure of (a date, a quote, a page, a historian's view) are never stated as certain: say you're unsure or leave them out. Never invent a source.
 
 HOW YOU SOUND
 - Like a person: warm, precise, a little demanding, on their side. React to what they actually said ("ah, nice", "hm, where did the 3 go?"). Specific feedback, no filler praise — never OPEN a reply with canned praise ("Spot on", "Exactly", "Perfect", or those words with your name after): the first clause names what specifically was right about their reasoning, or goes straight to the next step. Never harsh. Answer in their language; use their name now and then.
@@ -252,7 +254,7 @@ const SVG_QUALITATIVE = { ...SVG_ON_BOARD_TOOL, description: "Draw a QUALITATIVE
 export function tutorTools(canvasMode: boolean) {
   // No CLEAR_BOARD / REMOVE_BOARD_LINE: nothing on the board is ever deleted — it only grows (their cases below refuse
   // a stray call in words rather than wiping anything).
-  return [WRITE_TO_BOARD, UPDATE_BOARD_LINE, PROBLEM, ANNOTATE_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, INCLINE_ON_BOARD, GRAPH_ON_BOARD_TOOL, SVG_QUALITATIVE, FLOW_ON_BOARD_TOOL, WIDGET_ON_BOARD_TOOL, SET_OBJECTIVES_TOOL, ...(canvasMode ? [CREATE_INTERACTIVE_TOOL] : [])];
+  return [WRITE_TO_BOARD, UPDATE_BOARD_LINE, PROBLEM, ANNOTATE_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, INCLINE_ON_BOARD, GRAPH_ON_BOARD_TOOL, SVG_QUALITATIVE, FLOW_ON_BOARD_TOOL, TABLE_ON_BOARD_TOOL, SOURCE_ON_BOARD_TOOL, WIDGET_ON_BOARD_TOOL, SET_OBJECTIVES_TOOL, ...(canvasMode ? [CREATE_INTERACTIVE_TOOL] : [])];
 }
 
 // ── Context ───────────────────────────────────────────────────────────────────────────────────────────
@@ -323,6 +325,27 @@ export function statesStudyGoal(message: string): boolean {
   return /\b(?:revis(?:e|ing|ion)|r[ée]vis(?:er|ion)|exam|test|quiz|contr[ôo]le|dst|bac|prepare|pr[ée]parer|study|learn|apprendre|understand|comprendre|go over|catch up)\b/i.test(String(message || ""));
 }
 
+/** Topics the student ruled out ("everything except logs and exponentials", "not trig", "sauf les suites"), as stems.
+ *  Exported for tests. */
+export function excludedTopics(text: string): string[] {
+  const out: string[] = [];
+  for (const m of String(text || "").matchAll(/\b(?:except(?: for)?|apart from|other than|but not|besides|skip(?:ping)?|sauf|à part|hors)\s+(?:the |les? |la |des )?([^.;!?\n]{2,60})/gi)) {
+    const phrase = m[1].split(/\b(?:so|because|since|done|which|that|i've|ive|donc|car)\b/i)[0];
+    for (const w of phrase.split(/,|&|\band\b|\bor\b|\bet\b|\bou\b|\s+/i).map((x) => x.trim().toLowerCase()).filter((x) => x.length >= 3 && !/^(?:the|any|all|anything|everything|this|that|those|these|stuff|things?|topics?|too|yet|sure|really|much|can|you|help|with|for|and|les|des|but|now|just|maybe)$/.test(x))) {
+      out.push(w.slice(0, Math.max(3, Math.min(5, w.length - 1))));
+    }
+  }
+  return [...new Set(out)];
+}
+/** A plan line or board line the turn wrote that covers a topic the student excluded. Exported for tests. */
+export function includesExcluded(texts: string[], stems: string[]): string | null {
+  if (!stems.length) return null;
+  for (const t of texts) for (const w of String(t || "").toLowerCase().split(/[^\p{L}]+/u)) {
+    const hit = stems.find((s) => w.startsWith(s));
+    if (hit) return w;
+  }
+  return null;
+}
 /** The reply lays out a plan for the student to approve: a list of 3+ items and a question about it. Exported for tests. */
 export function proposesPlan(text: string): boolean {
   const items = String(text || "").split("\n").filter((l) => /^\s*(?:\d+[.)]|[-•*])\s+\S/.test(l)).length;
@@ -834,24 +857,6 @@ export function computedGapKey(text: string): number | null {
   return Number.isFinite(v) ? Math.round(v * 1e4) / 1e4 : null;
 }
 
-/** A reply never OPENS harshly ("Careful, Willem —", "No,", "Wrong.", "Attention, …"): the lead-in (and a name right
- *  after it) becomes a gentle one in the reply's language. Exported for tests. */
-export function softenOpener(reply: string, fr: boolean): string {
-  const t = reply.trimStart();
-  const name = "(?:,?\\s*[A-ZÀ-Ý][\\p{L}-]+)?";
-  const rules: [RegExp, string, string][] = [
-    [new RegExp(`^(?:careful|watch out|attention|hold on)${name}\\s*[—–:,!.-]+\\s*`, "iu"), "Hm, let's look at that — ", "Hmm, regardons ça — "],
-    [new RegExp(`^(?:no|nope|wrong|incorrect|not quite|non|faux|pas tout à fait)${name}\\s*[—–:,!.-]+\\s*`, "iu"), "Almost — ", "Presque — "],
-    [/^that(?:'|’)?s (?:not right|wrong|incorrect|not correct|false)[,.!:—–-]?\s*/i, "Let's check that together — ", "Vérifions ensemble — "],
-    [/^actually[,:]?\s+/i, "Hm, one thing — ", "Hmm, une chose — "],
-  ];
-  for (const [re, en, frRep] of rules) if (re.test(t)) {
-    const rest = t.replace(re, "");
-    return (fr ? frRep : en) + rest.charAt(0).toLowerCase() + rest.slice(1);
-  }
-  return reply;
-}
-
 const STOP = new Set("that this with have from what when where which their there about would could should these those them they then than just also into your yours been were will what the and for are but not you can how why does each other step line board".split(" "));
 /** Is a board line about the problem in focus? It must share a number or a real word with the focus (the solution's
  *  statement, the givens, the problems, what the student said recently) — the board kept getting lines nobody asked
@@ -971,16 +976,9 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const solvedNow = problems.filter((p) => answeredInChat(message, p));
   if (solvedNow.length) { for (const p of solvedNow) p.solved = true; result.solvedInChat = solvedNow.map((p) => p.id); }
 
-  // The exercise widget marked them wrong, but the independently-verified solution says they were right —
-  // settle it immediately and deterministically, no model call needed (and none of the model's own doubt
-  // to second-guess): see misgradedExercise's own doc comment for the reported live failure this fixes.
+  // The exercise widget marked them wrong, but the independently-verified solution says they were right: the
+  // model is told as a binding fact and answers in its own words (no canned reply — it has to feel natural).
   const misgraded = misgradedExercise(message, input.solution);
-  if (misgraded) {
-    result.reply = fr
-      ? "En fait, tu avais raison — la clé de cet exercice était fausse, pas ta réponse. Bien joué, on continue !"
-      : "Actually, you were right — this exercise's own answer key was wrong, not you. Nice work — let's keep going.";
-    return result;
-  }
 
   const spokenRepair: SpokenRepair | null = input.spoken
     ? repairSpokenMath(message, spokenContextFrom([context.subject || "", ...board.map((b) => b.text || ""), ...problems.map((p) => p.question || "")]))
@@ -999,6 +997,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     + (boardSurfaceBlock(board, problems) || "\n\nTHE BOARD IS EMPTY.")
     + solutionBlock(input.solution)
     + solutionMatchLine(message, input.solution)
+    + (misgraded ? `\n\nCHECKED BY CODE — THEY WERE RIGHT: ${misgraded} Say so plainly in your own words (the exercise's key was wrong, not them), keep their working, and move on — never ask them to redo or re-enter it.` : "")
     + teachingBlock(input.teaching)
     + stepVerdictLine(input.stepVerdict)
     + (solvedNow.length ? `\n\nTHEY JUST ANSWERED THE OPEN EXERCISE IN CHAT, AND IT IS RIGHT (checked by code): \"${solvedNow[0].question.slice(0, 160)}\". Confirm it and move on — never ask them to type it into the answer box.` : "")
@@ -1018,7 +1017,9 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const known = [...solutionValues(input.solution), ...(input.solution?.steps || []).flatMap((st) => (String(st.result || "").replace(/(\d),(?=\d{3}(?!\d))/g, "$1").match(/\d+(?:\.\d+)?/g) || []).map(Number))];
   const allBoard = () => [...board, ...result.board];
   const allProblems = () => [...problems, ...result.problems];
-  let corrected = false;
+  // Failed checks go back to the model (at most twice); whatever reaches the student is always its own words.
+  let corrections = 0;
+  const MAX_CORRECTIONS = 2;
 
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
     const lastRound = round === MAX_TOOL_ROUNDS;
@@ -1042,9 +1043,9 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     const plan = parsePlan(text);
     if (plan) result.plan = plan;
     if (!toolCalls.length || lastRound) {
-      const reply = cleanReply(text, !!input.voiceMode);
+      let reply = cleanReply(text, !!input.voiceMode);
       if (!reply) {
-        if (!corrected && !lastRound) { corrected = true; messages.push({ role: "user", content: "(Now reply to the student — a short message ending with one question.)" }); continue; }
+        if (corrections < MAX_CORRECTIONS && !lastRound) { corrections++; messages.push({ role: "user", content: "(Now reply to the student — a short message ending with one question.)" }); continue; }
         result.error = true;
         return result;
       }
@@ -1057,6 +1058,11 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       // Spec §6: a study goal gets a visible, editable lesson plan up front — not a question back about what to study.
       if (!objectives.length && !result.objectives && !planPending && statesStudyGoal(message) && !proposesPlan(reply)) issues.push("they've given you a study goal. Session objectives are agreed WITH them, not imposed: propose 3-6 concrete objectives for THIS subject/goal, in teaching order, as a short numbered list in your reply, and ask if they want to change, add or remove anything. DO NOT call SET_OBJECTIVES yet — wait for their answer");
       if (planPending && !result.objectives && !/\?\s*$/.test(message.trim())) issues.push("they've answered the plan you proposed: now call SET_OBJECTIVES with the list as agreed (apply every change they asked for), then START the first objective in this same reply — one short line, then its first question. Don't ask them which topic to start with");
+      // They ruled topics out ("everything except logs and exponentials"): the plan and the board must not bring them back.
+      const excluded = excludedTopics([message, ...history.filter((h) => h.role === "user").slice(-2).map((h) => h.text)].join("\n"));
+      const planLines = reply.split("\n").filter((l) => /^\s*(?:\d+[.)]|[-•*])\s+\S/.test(l));
+      const brought = includesExcluded([...planLines, ...result.board.map((b) => b.text), ...(result.objectives || []).map((o) => o.label), ...result.problems.map((p) => p.question)], excluded);
+      if (brought) issues.push(`they explicitly EXCLUDED this topic ("${brought}") — re-read what they said: work only on what they asked for, and leave the excluded topics out of the plan, the board and the problems`);
       // Spec §2.1 Failure D/G: when they hand you the choice, you choose — never bounce it back.
       if (delegatesChoice(message) && asksStudentToChoose(reply)) issues.push("they left the choice to you — don't ask them to choose. Pick the next useful activity yourself (the CURRENT milestone of the lesson plan, or a sensible one for this subject if there's no plan yet) and start it now: one short line on what we're doing, then its first question or exercise");
       const doubt = doubtsRightAnswer(reply, message, input.solution);
@@ -1108,8 +1114,12 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       const missingObj = pointsAtMissingObject(reply, allBoard().map((b) => String(b.kind)));
       if (missingObj) issues.push(`you point at "the ${missingObj}" but none is on the board — draw/write it now with the matching board tool, or reword so you don't refer to it`);
       if (blamesWidget(reply)) issues.push("it blames the app/widget — if an exercise's key disagrees with a right answer, say plainly the key was wrong");
-      if (issues.length && !corrected && !lastRound) {
-        corrected = true;
+      const opener = harshOpener(reply);
+      if (opener) issues.push(`it opens with "${opener}" — never open harshly; start with what's worth keeping in their thinking, or go straight to the question`);
+      // A leak, a doubted right answer or a "go re-read the problem" loop gets a second chance; the rest one.
+      const hard = !!(leaked || doubt || reread);
+      if (issues.length && corrections < (hard ? MAX_CORRECTIONS : 1) && !lastRound) {
+        corrections++;
         messages.push({ role: "assistant", content: text });
         messages.push({ role: "user", content: `(Fix your reply before the student sees it:\n- ${issues.join("\n- ")}\nThen send the corrected reply. Don't mention this note.)` });
         continue;
@@ -1119,6 +1129,11 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       if (asksToWrite(message) && !result.board.length && !result.problems.length) {
         const line = studentBoardLine([spokenRepair?.interpreted || "", message, ...history.filter((h) => h.role === "user").slice(-2).reverse().map((h) => h.text)]);
         if (line) applyTool("WRITE_TO_BOARD", { text: line, kind: "result", owner: "student" }, { message, result, allBoard, allProblems, spokenRepair, fr, said, wantsExercise: wantsProblem, focus, known, solution: input.solution });
+      }
+      // Still failing a hard check after the corrections: ONE last model-written rewrite of that reply, never a fixed line.
+      if (hard) {
+        const fixed = await rewriteReply(reply, issues.join("; "), message, result.tokens);
+        if (fixed) reply = fixed;
       }
       if (leaked) {
         result.guardrailTripped = true;
@@ -1130,22 +1145,9 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
         // has genuinely stopped working here (the spec's own "know when to explain directly" / "never
         // leave a confused student trapped" case) — ship its real, content-aware reply instead of
         // replacing it with the canned line a second time. First trip still behaves exactly as before.
-        const prevStreak = input.teaching?.guardrailValue === leaked ? (input.teaching.guardrailStreak || 0) : 0;
-        result.reply = prevStreak >= 1 ? softenOpener(reply, fr) : socraticFallback(fr);
-        return result;
-      }
-      // Still doubting a RIGHT answer after the correction round: never let it through — confirm it in code.
-      if (doubt && doubtsRightAnswer(reply, message, input.solution)) {
-        result.reply = fr ? "Oui, c'est juste — bien joué. Qu'est-ce qui t'a dit quels morceaux multiplier ?" : "Yes, that's right — nice work. What told you which pieces to multiply?";
-        return result;
-      }
-      // Still sending them back to the statement after being told once not to: that is the loop that wastes the
-      // session — nothing the student can do breaks it, and the model has just proved it can't get out of it on
-      // its own. Take the turn over in code and deal with it honestly instead of bouncing them back again.
-      if (reread) {
-        result.reply = fr
-          ? "Hmm, on arrête de revenir à l'énoncé — on reprend au calme avec ce que TU m'as donné : ces nombres-là, on les garde tels quels. S'ils ne permettent pas d'arriver à ce que la question demande, alors c'est la question qui ne marche pas : dis-le-moi et je change une valeur pour que ça marche. On commence par quelle ligne ?"
-          : "Let's stop going back to the question and work with what you've given me: your numbers stand as they are. If they can't produce what the question asks for, then the question's numbers don't work — say the word and I'll change one so they do. Which line would you like to pin down first?";
+        // Two corrections didn't keep the value out: ship its reply anyway — after repeated attempts, a direct
+        // explanation is what the student needs (spec: never trap a confused student), and a canned line isn't.
+        result.reply = mentionsMechanics(reply) ? (stripMechanics(reply) || reply) : reply;
         return result;
       }
       // A formula in the reply and the board got nothing this turn: put the line up ourselves — the chat carries
@@ -1157,13 +1159,11 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       }
       // Claimed a board write but never made one, even after the correction round: remove the false claim.
       if (claimsBoardWrite(reply) && !result.board.length && !result.problems.length) {
-        const stripped = stripBoardClaim(reply);
-        result.reply = softenOpener(stripped || (fr ? "Qu'est-ce que tu en dis ?" : "What do you make of that?"), fr);
+        result.reply = stripBoardClaim(reply) || reply;
         return result;
       }
-      // Never open harshly ("Careful, Willem —", "No,", "Wrong") and never with canned praise: both softened in
-      // code, no extra round needed — the opener is the first thing the student reads.
-      result.reply = softenOpener(stripPraiseOpener(mentionsMechanics(reply) ? (stripMechanics(reply) || reply) : reply), fr);
+      // Harsh or canned-praise openers went back to the model above; nothing is rewritten into fixed phrases here.
+      result.reply = mentionsMechanics(reply) ? (stripMechanics(reply) || reply) : reply;
       return result;
     }
 
@@ -1394,6 +1394,17 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       if (count("flow") >= 2) return "LIMIT: enough diagrams for one turn.";
       if (leaks(JSON.stringify(input))) return LEAK;
       const r = makeFlowEntry(input);
+      return "error" in r ? r.error : push(r.entry);
+    }
+    case "TABLE_ON_BOARD": {
+      if (count("table") >= 2) return "LIMIT: enough tables for one turn.";
+      if (leaks(JSON.stringify(input))) return LEAK;
+      const r = makeTableEntry(input);
+      return "error" in r ? r.error : push(r.entry);
+    }
+    case "SOURCE_ON_BOARD": {
+      if (count("source") >= 1) return "LIMIT: one source per turn.";
+      const r = makeSourceEntry(input);
       return "error" in r ? r.error : push(r.entry);
     }
     case "WIDGET_ON_BOARD": {

@@ -439,6 +439,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   }, [L]);
   // A board gap answered in place: graded by the server, then reported to Otto like an exercise result (the
   // verdict rides along; Otto reacts to it like a person would, never reveals the key on a miss).
+  const reportedGapsRef = useRef(new Set<string>());
   const onGapCheck = useCallback(async (entry: BoardEntry, given: string) => {
     if (!task) return "unknown" as const;
     // The board lives in this browser now, so the line (and the key written with it) ride along: the server
@@ -447,6 +448,11 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     const { verdict } = await api.checkGap(task.id, entry.id, given, { text: entry.text, expectedAnswer: entry.expectedAnswer });
     if (verdict === "correct") setTask((cur) => cur ? { ...cur, board: (cur.board || []).map((b) => b.id === entry.id ? { ...b, status: "correct" as const } : b) } : cur);
     const line = entry.text.replace(/\s+/g, " ").slice(0, 100);
+    // The same answer to the same line is reported once (a second click, or the line re-rendered with different
+    // spacing, used to send Otto the identical result twice — and get two identical replies back).
+    const key = `${entry.text}|${given}`.replace(/\s+/g, "").toLowerCase();
+    if (reportedGapsRef.current.has(key)) return verdict;
+    reportedGapsRef.current.add(key);
     resultsRef.current.push(L(
       `[Exercice] Au tableau, pour « ${line} », j'ai écrit « ${given.slice(0, 120)} » — ${verdict === "correct" ? "vérifié juste" : verdict === "system_error" ? "non noté : la clé écrite pour cette ligne contredit la clé recalculée par le code" : verdict === "incorrect" ? "vérifié faux" : "non vérifiable automatiquement"}.`,
       verdict === "system_error"

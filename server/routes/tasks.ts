@@ -4,7 +4,8 @@ import { reportError } from "../sentry.ts";
 import express from "express";
 import { randomUUID, createHash } from "node:crypto";
 import { gapTarget, verifyStepAgainstGap } from "../../shared/mathEquiv.ts";
-import { gradeGapAnswer, gradeExerciseAnswer } from "../../shared/exerciseVerification.ts";
+import { normalizeTable, normalizeSource } from "../../shared/boardTable.ts";
+import { gradeGapAnswer, gradeExerciseAnswer, verifyPolynomialDivision } from "../../shared/exerciseVerification.ts";
 import { repairSpokenMath, spokenContextFrom } from "../../shared/spokenMath.ts";
 import { nextTeachingState, learningPrefsFrom, mergePrefs, evidenceKindFor, reachedSolutionSteps, resolveGapKey, rehydrateProblemKey } from "../tutor.ts";
 import { solveProblem, focusKeyOf, isNewProblem } from "../solver.ts";
@@ -654,6 +655,7 @@ export function registerTaskRoutes(app: express.Express): void {
     // (reported live: a correct equilibrium price P = 8 was "checked wrong" against a model-written key).
     const graded = gradeGapAnswer(storedKey, recomputed, target, answer);
     let verdict: "correct" | "incorrect" | "unknown" | "system_error" = graded.verdict;
+    if (verdict === "unknown") verdict = verifyPolynomialDivision(line, answer) ?? verdict;
     if (verdict === "unknown" && practiceAnswerMatches(answer, key)) verdict = "correct";
     if (graded.keyConflict) void recordMetric(req.session.user!, "gap_key_conflict", 1);
     res.json({ verdict, verification: graded.verification, keyConflict: graded.keyConflict });
@@ -810,7 +812,7 @@ export function registerTaskRoutes(app: express.Express): void {
     const currentBoard = currentBoardRaw
       .filter((b: any) => b && typeof b.text === "string" && b.text.trim() && b.archived !== true)
       .slice(-60)
-      .map((b: any) => ({ id: typeof b.id === "string" ? b.id.slice(0, 64) : "", at: "", text: String(b.text).slice(0, 600), ...(Number.isInteger(b.n) && b.n > 0 && b.n < 10000 ? { n: b.n } : {}), ...(typeof b.targetId === "string" ? { targetId: b.targetId.slice(0, 64) } : {}), ...(typeof b.kind === "string" ? { kind: b.kind } : {}), ...(Array.isArray(b.diagram) ? { diagram: b.diagram.slice(0, 40).filter((o: any) => o && typeof o.op === "string") } : {}), ...(b.kind === "outline" && Array.isArray(b.outline) ? { outline: b.outline.slice(0, 6).map((s: any) => ({ heading: String(s?.heading || "").slice(0, 120), bullets: (Array.isArray(s?.bullets) ? s.bullets : []).map((x: any) => String(x).slice(0, 200)).slice(0, 8) })) } : {}),
+      .map((b: any) => ({ id: typeof b.id === "string" ? b.id.slice(0, 64) : "", at: "", text: String(b.text).slice(0, 600), ...(Number.isInteger(b.n) && b.n > 0 && b.n < 10000 ? { n: b.n } : {}), ...(typeof b.targetId === "string" ? { targetId: b.targetId.slice(0, 64) } : {}), ...(typeof b.kind === "string" ? { kind: b.kind } : {}), ...(Array.isArray(b.diagram) ? { diagram: b.diagram.slice(0, 40).filter((o: any) => o && typeof o.op === "string") } : {}), ...(b.kind === "table" && b.table ? (() => { const r = normalizeTable(b.table); return "table" in r ? { table: r.table } : {}; })() : {}), ...(b.kind === "source" && b.source ? (() => { const r = normalizeSource(b.source); return "source" in r ? { source: r.source } : {}; })() : {}), ...(b.kind === "outline" && Array.isArray(b.outline) ? { outline: b.outline.slice(0, 6).map((s: any) => ({ heading: String(s?.heading || "").slice(0, 120), bullets: (Array.isArray(s?.bullets) ? s.bullets : []).map((x: any) => String(x).slice(0, 200)).slice(0, 8) })) } : {}),
         // Ownership/status/concept — dropped here before (only text/kind/diagram/outline survived the
         // client round-trip), which silently defeated boardSurfaceBlock's "STUDENT'S WORK"/"marked WRONG"
         // tags and tagStudentAnswer's own target-finding downstream: both need these to actually be present.
