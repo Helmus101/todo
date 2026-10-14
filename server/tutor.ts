@@ -33,7 +33,7 @@ import { latexToPlainText } from "../shared/mathText.ts";
 import { toExprSource, gapTarget, mathTail } from "../shared/mathEquiv.ts";
 import { compileExpr } from "../shared/mathExpr.ts";
 import {
-  createTutorChat, rewriteReply, retryRequest, usageOf, parseToolArgs, stripLeakedToolCallSyntax, stripWrapperTags, bracketObjectCalls, OUT,
+  createTutorChat, rewriteReply, retryRequest, usageOf, parseToolArgs, stripLeakedToolCallSyntax, stripWrapperTags, textToolCalls, OUT,
   CREATE_PROBLEM_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, SVG_ON_BOARD_TOOL, FLOW_ON_BOARD_TOOL, TABLE_ON_BOARD_TOOL, SOURCE_ON_BOARD_TOOL, makeTableEntry, makeSourceEntry,
   WIDGET_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, CREATE_INTERACTIVE_TOOL, ANNOTATE_BOARD_TOOL, SET_OBJECTIVES_TOOL,
   makeProblem, makeBoardEntry, makeGeometryEntry, makeGraphEntry, makeSvgEntry, makeFlowEntry, makeWidgetEntry,
@@ -488,7 +488,11 @@ export function answeredInChat(message: string, p: TaskProblem): boolean {
  *  and "Mg sinθ − T = ?" right under the finished "Mg sinθ − T = Ma" (asking for what's already there). */
 export function badGap(text: string, board: string[]): string | null {
   const t = String(text || "");
-  const plain = t.replace(/\$/g, "");
+  const plain = t.replace(/\$/g, "").replace(/\\?;\s*\?/g, "?");
+  // "a = (g(M sinθ − m))/(M + m) = ?" (reported live): the blank asks for what the line already shows. A chain
+  // "X = E = ?" is only a real question when E still has numbers to work out ("f''(1) = 12(1) − 18 = ?").
+  { const parts = plain.replace(/[≤≥≠]|<=|>=/g, "~").split("=");
+    if (parts.length >= 3 && /^\s*\?/.test(parts[parts.length - 1])) { const e = parts[parts.length - 2]; if (/\p{L}/u.test(e) && !/\d/.test(e) && e.trim().length > 3) return "that gap already shows its own answer — leave the result as the blank ('a = ?') and let them find it."; } }
   // One "?" and it is the blank near the end ("… = ?", "V = ? cm³ (3 s.f.)") — anything else is two blanks or a question.
   if ((plain.match(/\?/g) || []).length !== 1 || !/=\s*(?:\\;)?\s*\?[^?=]{0,24}$/.test(plain.trim()))
     return "a gap has exactly ONE blank, at the end ('… = ?'). Ask a question in chat, and put one blank on the board.";
@@ -1111,7 +1115,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     // the reply anyway, and dropping it would lose the board write the reply is about (reported live).
     if (!toolCalls.length) {
       const offered = new Set(tutorTools(false).map((t) => t.name));
-      bracketObjectCalls(text).filter((c) => offered.has(c.name)).forEach((c, i) => toolCalls.push({ id: `text_call_${round}_${i}`, type: "function", function: { name: c.name, arguments: JSON.stringify(c.args) } }));
+      textToolCalls(text).filter((c) => offered.has(c.name)).forEach((c, i) => toolCalls.push({ id: `text_call_${round}_${i}`, type: "function", function: { name: c.name, arguments: JSON.stringify(c.args) } }));
     }
 
     const plan = parsePlan(text);

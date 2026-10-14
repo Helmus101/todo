@@ -439,8 +439,62 @@ function removeXmlToolCalls(text: string): string {
   return out.replace(/\n{3,}/g, "\n\n").trim();
 }
 
+// THE NET (reported live, again: "WRITE_TO_BOARD(gap, a = … = ?)"). New leak shapes keep appearing, so beyond the
+// specific formats above, ANY tool name left in a reply goes — with the bracketed argument group right after it, of
+// whatever kind — so no shape of call can reach the student. Tool names are ALL-CAPS_SNAKE; the lower-case spellings
+// are the app's own tools only (prose never says "write_to_board").
+const TOOL_NAMES = String.raw`(?:[a-z]+_)+(?:board|board_line)|create_(?:problem|calc|flashcards|interactive|note|quiz)|set_objectives|find_source_question`;
+const ANY_TOOL_NAME = new RegExp(String.raw`[#%@!&*~^]*\b(?:${TOOL_NAMES})\b`, "gi");
+const OPEN_TO_CLOSE: Record<string, string> = { "(": ")", "[": "]", "{": "}" };
+/** The end (exclusive) of the balanced bracket group starting at `at`, or the text's end when it never closes. */
+function groupEnd(text: string, at: number): number {
+  const stack: string[] = [];
+  for (let i = at; i < text.length; i++) {
+    const ch = text[i];
+    if (OPEN_TO_CLOSE[ch]) stack.push(OPEN_TO_CLOSE[ch]);
+    else if (stack.length && ch === stack[stack.length - 1]) { stack.pop(); if (!stack.length) return i + 1; }
+  }
+  return text.length;
+}
+function removeAnyToolCall(text: string): string {
+  let out = text;
+  for (let guard = 0; guard < 30; guard++) {
+    ANY_TOOL_NAME.lastIndex = 0;
+    const m = ANY_TOOL_NAME.exec(out);
+    if (!m) break;
+    let end = m.index + m[0].length;
+    const after = /^\s*[:=]?\s*/.exec(out.slice(end))![0];
+    if (OPEN_TO_CLOSE[out[end + after.length]]) end = groupEnd(out, end + after.length);
+    const before = out.slice(0, m.index), rest = out.slice(end);
+    const had = /\s$/.test(before) || /^\s/.test(rest);
+    out = before.replace(/[ \t]+$/, "") + (before.trim() && rest.trim() && had ? " " : "") + rest.replace(/^[ \t]+/, "");
+  }
+  return out.replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/** Calls written as `NAME(…)` / `NAME{…}` / `[name]{…}`, recovered so the write still happens. Arguments are either
+ *  `key: value` / `key=value` pairs (values may hold commas: a field only starts at `,key:`), or — for a board write —
+ *  positional `(kind, text)`. */
+export function textToolCalls(text: string): { name: string; args: Record<string, string> }[] {
+  const out: { name: string; args: Record<string, string> }[] = [...bracketObjectCalls(text)];
+  const KINDS = /^(?:gap|line|formula|definition|given|result|insight|strategy|summary|focus|note|instruction)$/i;
+  for (const m of String(text || "").matchAll(new RegExp(String.raw`\b(${TOOL_NAMES})\s*\(`, "gi"))) {
+    const start = m.index! + m[0].length - 1;
+    const body = text.slice(start + 1, groupEnd(text, start) - 1);
+    const args: Record<string, string> = {};
+    const i = body.indexOf(",");
+    const first = i > 0 ? body.slice(0, i).trim() : "";
+    if (KINDS.test(first)) { args.kind = first.toLowerCase(); args.text = body.slice(i + 1).trim(); }
+    else if (/^\s*[A-Za-z_]\w*\s*[:=](?!=)/.test(body)) {
+      for (const part of body.split(/,(?=\s*[A-Za-z_]\w*\s*[:=](?!=))/)) { const j = part.search(/[:=]/); if (j > 0) args[part.slice(0, j).trim()] = part.slice(j + 1).trim().replace(/^["']|["']$/g, ""); }
+    } else if (body.trim()) args.text = body.trim();
+    if (Object.keys(args).length) out.push({ name: m[1].toUpperCase(), args });
+  }
+  return out;
+}
+
 export function stripLeakedToolCallSyntax(input: string): string {
-  const text = removeXmlToolCalls(removeTextToolCalls(input));
+  const text = removeAnyToolCall(removeXmlToolCalls(removeTextToolCalls(input)));
   const hits = [TOOL_CALL_LEAK_MARKER.exec(text), TOOL_CALL_LEAK_MARKER2.exec(text), TOOL_CALL_LEAK_MARKER3.exec(text)].filter((m): m is RegExpExecArray => !!m);
   if (!hits.length) return text;
   const cut = Math.min(...hits.map((m) => m.index));
