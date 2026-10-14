@@ -8,6 +8,9 @@ const FN = new Set(["sin", "cos", "tan", "cot", "sec", "csc", "log", "ln", "exp"
 const isMathToken = (t: string): boolean => {
   const bare = t.replace(/^[(\[{]+|[)\]},.;:]+$/g, "");
   if (!bare) return /[=+\-−×·÷/^<>≤≥≈≠→⇒]/.test(t);
+  // Year ranges like "1916-17" / "1916–17" are common in history/humanities content and should NOT be
+  // treated as subtraction (reported: "winter 1916-17" rendered as "1916 − 17" via autoMathLine).
+  if (/^\d{4}[-–]\d{1,2}$/.test(bare)) return false;
   // an ordinary word (3+ letters that isn't a function name) is prose, even with a hyphen in it ("special-angle")
   for (const w of bare.match(/\p{L}{3,}/gu) || []) if (!FN.has(w.toLowerCase())) return false;
   if (FN.has(bare.toLowerCase())) return true; // "sin" / "cos" on their own: "sin A cos B"

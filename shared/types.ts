@@ -1706,7 +1706,14 @@ function parsePi(s: string): number {
   return NaN;
 }
 function parseNumericOrFraction(s: string): number {
-  const cleaned = normalizeMinus(s).replace(/,/g, "");
+  // French decimal comma: "1,5" should parse as 1.5, not 15. The blanket .replace(/,/g, "") below
+  // turned "1,5" into "15", silently marking a correct French decimal answer wrong (reported live).
+  // A comma followed by exactly 3 digits + a non-digit boundary is EN grouping ("1,234") — strip it.
+  // Any remaining comma between digits is a French decimal ("1,5", "3,14") — replace with a dot.
+  // Order matters: strip EN grouping FIRST, then convert FR decimals.
+  const cleaned = normalizeMinus(s)
+    .replace(/(\d),(?=\d{3}(?:\D|$))/g, "$1")  // EN grouping: 1,234 → 1234
+    .replace(/(\d),(\d)/g, "$1.$2");            // FR decimal: 1,5 → 1.5
   const direct = Number(cleaned);
   if (Number.isFinite(direct)) return direct;
   const pi = parsePi(cleaned);

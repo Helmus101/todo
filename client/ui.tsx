@@ -337,6 +337,11 @@ export function stripHtml(text: string): string {
 
 export function stripStrayMarkdown(text: string): string {
   return text
+    // Numeric HTML entities like &#160; (non-breaking space) — the model sometimes emits these raw instead
+    // of a space; without decoding they'd render as literal "&#160;" or get misread by downstream parsers
+    // (reported: "&#160;" misread as "line 160"). Decode before anything else so later passes see clean text.
+    .replace(/&#(\d+);/g, (_, dec) => { const cp = parseInt(dec, 10); return cp === 160 ? " " : String.fromCodePoint(cp); })
+    .replace(/&nbsp;/g, " ")
     .replace(/\*\*([^*]+)\*\*/g, "$1")
     .replace(/(?<![\w*])\*([^*\n]+)\*(?![\w*])/g, "$1")
     .replace(/^#{1,6}\s+/gm, "")

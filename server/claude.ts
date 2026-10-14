@@ -2257,7 +2257,17 @@ export function detectLang(text: string): "en" | "fr" | "unknown" {
 // strips it defensively rather than trying to stop the model from ever doing it. Whatever's actually meant
 // for the student always comes BEFORE the first such marker — the leak is always a trailing artifact, never
 // interleaved with real prose — so cutting there is safe and loses nothing genuine.
-const TOOL_CALL_LEAK_MARKER = /<｜[^｜<>]{0,60}｜>/;
+// Reproduced live: a chat reply that mid-sentence starts showing the model's own raw tool-call plumbing —
+// either DeepSeek special-token markers like "<｜tool▁calls▁begin｜>" / "<｜tool▁call▁begin｜>function<｜tool▁sep｜>WRITE_TO_BOARD"
+// (followed by raw argument text and a stray closing fence) OR an XML-style format like
+// "<tool_calls>", "<function_calls>", "<｜tool▁calls▁begin｜>", or Anthropic-style "<function_calls>"
+// / "antml:function_calls" — both instead of the call landing in the structured `tool_calls` field
+// the way it's supposed to. A DeepSeek/Anthropic backend quirk (most likely triggered when a call comes
+// late in a long completion), not something a prompt instruction can reliably prevent, so this strips
+// it defensively rather than trying to stop the model from ever doing it. Whatever's actually meant
+// for the student always comes BEFORE the first such marker — the leak is always a trailing artifact,
+// never interleaved with real prose — so cutting there is safe and loses nothing genuine.
+const TOOL_CALL_LEAK_MARKER = /<｜[^｜<>]{0,60}｜>|<tool_calls>|<function_calls>|<antml:[a-z_]+>|<\/?(?:antml:)?(?:tool_call|function_call|tool|function)\b[^>]*>/i;
 function stripLeakedToolCallSyntax(text: string): string {
   const m = TOOL_CALL_LEAK_MARKER.exec(text);
   return m ? text.slice(0, m.index).trimEnd() : text;

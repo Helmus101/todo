@@ -1807,7 +1807,16 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     // BOARD_MERGE_CAP mirroring tasks.ts's own cross-device merge caps so a single-device append here
     // never exceeds what a later multi-device MERGE would also cap it to).
     if (newChat.length) t.chat = [...(t.chat || []), ...newChat].slice(-CHAT_CAP);
-    if (out.board.length) t.board = [...(t.board || []), ...out.board].slice(-tasks.BOARD_MERGE_CAP);
+    if (out.board.length) {
+      const all = [...(t.board || []), ...out.board];
+      const capped = all.slice(-tasks.BOARD_MERGE_CAP);
+      // Interactive scenes are loaded by id from the server (the /api/interactive route reads t.board),
+      // so dropping one during the board cap makes its iframe show "Not found". They're rare and expensive
+      // to recreate — preserve any that fell outside the cap by re-appending them after the cap slice.
+      const cappedIds = new Set(capped.map((e) => e.id));
+      const lostInteractive = all.filter((e) => e.kind === "interactive" && e.html && !cappedIds.has(e.id));
+      t.board = lostInteractive.length ? [...capped, ...lostInteractive] : capped;
+    }
     if (out.problems.length) t.problems = [...(t.problems || []), ...out.problems].slice(-tasks.ARTIFACT_CAP);
     // Record what THIS turn produced, for the next turn's RL scoring (see lastTurnBoardWrite's own comment).
     // `out.objectives` is SET_OBJECTIVES' full replacement list when it ran, and is never written onto `t`
