@@ -1,3 +1,4 @@
+import { plainLabel } from "../../../shared/svgSafe.ts";
 import { useId, useMemo } from "react";
 import type { FlowSpec } from "../../../shared/flow.ts";
 import { layoutFlow } from "../../../shared/flow.ts";
@@ -43,7 +44,7 @@ export function FlowDiagram({ spec }: { spec: FlowSpec }) {
         return (
           <g key={`el${i}`}>
             <rect x={e.lx - w / 2} y={e.ly - 10} width={w} height={20} rx={5} fill="var(--bg, #fff)" opacity={0.92} />
-            <text x={e.lx} y={e.ly + 4} textAnchor="middle" fontSize={12} fill="currentColor" fontFamily="KaTeX_Main, 'Times New Roman', serif">{e.label}</text>
+            <text x={e.lx} y={e.ly + 4} textAnchor="middle" fontSize={12} fill="currentColor" fontFamily="KaTeX_Main, 'Times New Roman', serif">{plainLabel(e.label || "")}</text>
           </g>
         );
       })}

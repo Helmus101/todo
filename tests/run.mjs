@@ -6868,6 +6868,16 @@ section("Tutor reply hygiene — invented wrapper tags, board line numbers (repo
     check("a gap's own '… = ?' clause is the question, not an equation handed over (reported live: 'd/dx(3x^4) = ?' was refused)", /^\{"ok":true/.test(applyTool("WRITE_TO_BOARD", { kind: "gap", text: "First term: $\\frac{d}{dx}(3x^4) = ?$" }, mk())));
     check("…but a gap that states the formula before its '= ?' is still refused", /^REJECTED/.test(applyTool("WRITE_TO_BOARD", { kind: "gap", text: "Power rule: $\\frac{d}{dx}x^n = nx^{n-1}$, so $\\frac{d}{dx}(3x^4) = ?$" }, mk())));
   }
+  {
+    const { stripLeakedToolCallSyntax, bracketObjectCalls } = await import("../server/ai/client.ts");
+    const leak = "#%%w[write_to_board]{expectedAnswer:a = (M sin(theta) - m) g / (M + m),gapAction:express acceleration in terms of M, m, theta, and g,kind:gap,owner:student,text:a = ?}Willem, adding the two equations eliminates T. What do you get for a?";
+    check("a lower-case [tool]{loose object} call with junk in front is removed, the reply after it kept (reported live)", stripLeakedToolCallSyntax(leak) === "Willem, adding the two equations eliminates T. What do you get for a?" && stripLeakedToolCallSyntax("Good. [create_problem]{question:x} Next?") === "Good. Next?");
+    check("…and recovered as a real call, commas inside values intact", (() => { const c = bracketObjectCalls(leak)[0]; return c?.name === "WRITE_TO_BOARD" && c.args.kind === "gap" && c.args.text === "a = ?" && c.args.gapAction === "express acceleration in terms of M, m, theta, and g"; })());
+    check("…while ordinary brackets and sets are left alone", stripLeakedToolCallSyntax("the set [a_b] {1,2} and [see the board]") === "the set [a_b] {1,2} and [see the board]");
+    const { plainLabel, sanitizeSvg } = await import("../shared/svgSafe.ts");
+    check("figure labels never show raw LaTeX (reported live: a graph showed $\\theta$ and $Mg$)", plainLabel("$\\theta$") === "θ" && plainLabel("$Mg$") === "Mg" && plainLabel("$mg\\sin\\theta$") === "mg sin θ" && plainLabel("$v_0$") === "v₀" && plainLabel("$30^\\circ$") === "30°" && plainLabel("price ($)") === "price ($)");
+    check("…including text inside a model-drawn SVG", sanitizeSvg('<svg viewBox="0 0 10 10"><text x="1" y="1">$\\theta$</text></svg>').includes(">θ</text>"));
+  }
   const e = makeBoardEntry({ text: "Recap:\\n- slope\\n- $a \\neq 0$", kind: "summary", why: "word ".repeat(60) }).entry;
   check("a literal \\n in a board line is a line break, LaTeX \\neq is kept, and a long 'why' is cut on a word with …", e.text.includes("\n- slope") && e.text.includes("\\neq") && /word…$/.test(e.why) && e.why.length <= 160);
 }

@@ -3,6 +3,7 @@
 // places the tower and observers to scale from the real numbers, marks the angles in the right places (the depression at
 // the top AND its equal elevation at the ground), and returns an SVG. Only GIVEN values are labelled; unknowns stay as
 // letters, and the (hidden) solution is used purely to place things to scale. Pure — the server calls it, tests cover it.
+import { plainLabel } from "./svgSafe.ts";
 
 interface ObserverIn { name?: string; angle: number }
 interface TrigSceneIn {
@@ -17,7 +18,7 @@ interface TrigSceneIn {
 
 const rad = (d: number) => (d * Math.PI) / 180;
 const f = (n: number) => Math.round(n * 10) / 10;
-const esc = (s: string) => s.replace(/[<>&"]/g, "");
+const esc = (s: string) => plainLabel(s).replace(/[<>&"]/g, "");
 
 export function buildTrigScene(input: TrigSceneIn): { svg: string; facts: string } | { error: string } {
   const mode = input.mode === "elevation" ? "elevation" : "depression";

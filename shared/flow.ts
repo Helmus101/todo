@@ -4,6 +4,7 @@
 //   cycle    a loop of stages (water cycle, Krebs cycle, business cycle) laid out on a circle
 //   timeline events in order along a line, alternating above/below
 // Pure and dependency-free: the server validates with normalizeFlow, the client renders the result of layoutFlow.
+import { plainLabel } from "./svgSafe.ts";
 
 type FlowShape = "box" | "round" | "diamond" | "circle";
 export interface FlowNode { id: string; label: string; note?: string; shape?: FlowShape }
@@ -59,8 +60,8 @@ function wrapLabel(text: string, maxChars: number): string[] {
 }
 
 function size(n: FlowNode, maxChars: number): { w: number; h: number; lines: string[]; noteLines: string[] } {
-  const lines = wrapLabel(n.label, maxChars);
-  const noteLines = n.note ? wrapLabel(n.note, maxChars + 4) : [];
+  const lines = wrapLabel(plainLabel(n.label), maxChars);
+  const noteLines = n.note ? wrapLabel(plainLabel(n.note), maxChars + 4) : [];
   const textW = Math.max(...lines.map((l) => l.length), ...noteLines.map((l) => Math.round(l.length * 0.85))) * CHAR_W;
   let w = Math.max(72, textW + PAD_X * 2), h = Math.max(38, lines.length * LINE_H + noteLines.length * 15 + PAD_Y * 2);
   if (n.shape === "diamond") { w = w * 1.45; h = h * 1.5; }

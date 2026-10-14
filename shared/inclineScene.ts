@@ -4,6 +4,7 @@
 // is drawn at exactly that angle, the weight straight down, the normal perpendicular to the surface, components along
 // and into the slope, friction against the motion. Only the labels the tutor passes (the GIVEN values, "?" for
 // unknowns) are written. Pure — the server calls it, tests check the geometry.
+import { plainLabel } from "./svgSafe.ts";
 
 export type InclineForce = "weight" | "components" | "normal" | "friction" | "applied";
 interface InclineSceneIn {
@@ -16,7 +17,7 @@ interface InclineSceneIn {
 const BOARD_FONT = "KaTeX_Main, 'Times New Roman', serif";
 const rad = (d: number) => (d * Math.PI) / 180;
 const f = (n: number) => Math.round(n * 10) / 10;
-const esc = (s: string) => String(s || "").replace(/[<>&"]/g, "").slice(0, 24);
+const esc = (s: string) => plainLabel(String(s || "")).replace(/[<>&"]/g, "").slice(0, 24);
 const COLORS: Record<InclineForce, string> = { weight: "#DC2626", components: "#DC2626", normal: "#2563EB", friction: "#B45309", applied: "#16A34A" };
 
 export function buildInclineScene(input: InclineSceneIn): { svg: string; facts: string } | { error: string } {

@@ -340,8 +340,48 @@ const TOOL_CALL_LEAK_MARKER3 = /<patch>/i;
 const TOOL_NAME = "[A-Z]{2,}(?:_[A-Z]{2,})+";
 /** Tool calls written out as TEXT: a JSON object naming a tool ({"operation": "WRITE_TO_BOARD", …}) or a bracket call
  *  ([ANNOTATE_BOARD target="10" …]). Only those blocks are removed — the reply around them is the student's. */
+// Fifth leak format (reported live): a lower-case bracket name followed by a loose, unquoted object, with junk glued
+// in front — `#%%w[write_to_board]{expectedAnswer:a = ?,kind:gap,text:a = ?}Willem, adding…`. A snake_case name in
+// brackets directly followed by `{` is a call, never prose; the junk, the bracket and the balanced object all go.
+function removeBracketObjectCalls(text: string): string {
+  let out = text;
+  const re = /[#%@!&*~^\w]*\[\s*([A-Za-z]{2,}(?:_[A-Za-z]{2,})+)\s*\]\s*\{/g;
+  for (let guard = 0; guard < 20; guard++) {
+    re.lastIndex = 0;
+    const m = re.exec(out);
+    if (!m) break;
+    let depth = 0, end = -1;
+    for (let i = m.index + m[0].length - 1; i < out.length; i++) {
+      if (out[i] === "{") depth++;
+      else if (out[i] === "}" && --depth === 0) { end = i; break; }
+    }
+    // Unclosed: the rest is the call's argument text.
+    if (end < 0) { out = out.slice(0, m.index); break; }
+    const before = out.slice(0, m.index), after = out.slice(end + 1);
+    const had = /\s$/.test(before) || /^\s/.test(after);
+    out = before.replace(/[ \t]+$/, "") + (before.trim() && after.trim() && had ? " " : "") + after.replace(/^[ \t]+/, "");
+  }
+  return out;
+}
+
+/** The calls in that loose format, recovered so the board write still happens: `[write_to_board]{kind:gap,text:a = ?}`
+ *  → { name: "WRITE_TO_BOARD", args: { kind: "gap", text: "a = ?" } }. Values may hold commas ("M, m, and g"): a
+ *  field only starts at `,key:`. */
+export function bracketObjectCalls(text: string): { name: string; args: Record<string, string> }[] {
+  const out: { name: string; args: Record<string, string> }[] = [];
+  for (const m of String(text || "").matchAll(/\[\s*([A-Za-z]{2,}(?:_[A-Za-z]{2,})+)\s*\]\s*\{([^{}]*)\}/g)) {
+    const args: Record<string, string> = {};
+    for (const part of m[2].split(/,(?=\s*[A-Za-z_]\w*\s*:)/)) {
+      const i = part.indexOf(":");
+      if (i > 0) args[part.slice(0, i).trim()] = part.slice(i + 1).trim();
+    }
+    if (Object.keys(args).length) out.push({ name: m[1].toUpperCase(), args });
+  }
+  return out;
+}
+
 function removeTextToolCalls(text: string): string {
-  let out = text.replace(new RegExp(`\\[${TOOL_NAME}\\b(?:[^\\]"]|"[^"]*")*\\]`, "g"), "");
+  let out = removeBracketObjectCalls(text).replace(new RegExp(`\\[${TOOL_NAME}\\b(?:[^\\]"]|"[^"]*")*\\]`, "g"), "");
   const named = new RegExp(`"(?:operation|tool|tool_name|name|function)"\\s*:\\s*"${TOOL_NAME}"`);
   for (let from = 0; ;) {
     const open = out.indexOf("{", from);

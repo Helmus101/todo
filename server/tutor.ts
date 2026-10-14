@@ -33,7 +33,7 @@ import { latexToPlainText } from "../shared/mathText.ts";
 import { toExprSource, gapTarget, mathTail } from "../shared/mathEquiv.ts";
 import { compileExpr } from "../shared/mathExpr.ts";
 import {
-  createTutorChat, rewriteReply, retryRequest, usageOf, parseToolArgs, stripLeakedToolCallSyntax, stripWrapperTags, OUT,
+  createTutorChat, rewriteReply, retryRequest, usageOf, parseToolArgs, stripLeakedToolCallSyntax, stripWrapperTags, bracketObjectCalls, OUT,
   CREATE_PROBLEM_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, SVG_ON_BOARD_TOOL, FLOW_ON_BOARD_TOOL, TABLE_ON_BOARD_TOOL, SOURCE_ON_BOARD_TOOL, makeTableEntry, makeSourceEntry,
   WIDGET_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, CREATE_INTERACTIVE_TOOL, ANNOTATE_BOARD_TOOL, SET_OBJECTIVES_TOOL,
   makeProblem, makeBoardEntry, makeGeometryEntry, makeGraphEntry, makeSvgEntry, makeFlowEntry, makeWidgetEntry,
@@ -1074,6 +1074,12 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     const msg = res?.choices?.[0]?.message || {};
     const toolCalls: any[] = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
     const text = String(msg.content || "");
+    // A call the model wrote out as text ("[write_to_board]{kind:gap,text:a = ?}") still happens: it's stripped from
+    // the reply anyway, and dropping it would lose the board write the reply is about (reported live).
+    if (!toolCalls.length) {
+      const offered = new Set(tutorTools(false).map((t) => t.name));
+      bracketObjectCalls(text).filter((c) => offered.has(c.name)).forEach((c, i) => toolCalls.push({ id: `text_call_${round}_${i}`, type: "function", function: { name: c.name, arguments: JSON.stringify(c.args) } }));
+    }
 
     const plan = parsePlan(text);
     if (plan) result.plan = plan;

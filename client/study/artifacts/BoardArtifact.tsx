@@ -8,7 +8,7 @@ import { gradeExerciseAnswer, gradeConceptAnswer, type GradeStatus } from "../..
 import { autoMathLine, repairLatex, latexToPlainText } from "../../../shared/mathText.ts";
 import { GraphBlock } from "./GraphBlock.tsx";
 import { FlowDiagram } from "./FlowDiagram.tsx";
-import { sanitizeSvg } from "../../../shared/svgSafe.ts";
+import { sanitizeSvg, plainLabel } from "../../../shared/svgSafe.ts";
 import { boardLineNumbers } from "../../../shared/boardLines.ts";
 import { WidgetBlock, type WidgetResult } from "./WidgetBlock.tsx";
 import { renderChatText, useLang, FirstTimeHint, stripStrayMarkdown, formatMath, boldify } from "../../ui.tsx";
@@ -290,7 +290,7 @@ function DiagramOpSVG({ op, partId }: { op: DiagramOp; partId?: string }) {
     }
     case "label": {
       const mid = op.anchor === "middle";
-      const t = formatMath(op.text);
+      const t = formatMath(/\$/.test(op.text) ? plainLabel(op.text) : op.text);
       return <text {...gid} x={op.x} y={op.y} fontSize={LABEL_SIZE[op.size || "md"]} fill="currentColor" textAnchor={mid ? "middle" : "start"} dominantBaseline={mid ? "central" : undefined} fontStyle={/^[A-Za-z][′'₀-₉0-9]*$/.test(t) ? "italic" : undefined}>{t}</text>;
     }
     case "axes":
@@ -298,8 +298,8 @@ function DiagramOpSVG({ op, partId }: { op: DiagramOp; partId?: string }) {
         <g stroke="currentColor" strokeWidth={1.5} fill="currentColor">
           <line x1={op.x} y1={op.y + op.h} x2={op.x + op.w} y2={op.y + op.h} markerEnd="url(#sm-diagram-arrow)" />
           <line x1={op.x} y1={op.y + op.h} x2={op.x} y2={op.y} markerEnd="url(#sm-diagram-arrow)" />
-          {op.xLabel ? <text x={op.x + op.w - 4} y={op.y + op.h + 16} fontSize={12} stroke="none" textAnchor="end">{op.xLabel}</text> : null}
-          {op.yLabel ? <text x={op.x + 4} y={op.y + 10} fontSize={12} stroke="none">{op.yLabel}</text> : null}
+          {op.xLabel ? <text x={op.x + op.w - 4} y={op.y + op.h + 16} fontSize={12} stroke="none" textAnchor="end">{plainLabel(op.xLabel)}</text> : null}
+          {op.yLabel ? <text x={op.x + 4} y={op.y + 10} fontSize={12} stroke="none">{plainLabel(op.yLabel)}</text> : null}
         </g>
       );
     case "equation": {

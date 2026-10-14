@@ -1,3 +1,4 @@
+import { plainLabel } from "../../../shared/svgSafe.ts";
 import { useMemo, useRef, useState } from "react";
 import type { GraphSpec } from "../../../shared/types.ts";
 import { compileExpr } from "../../../shared/mathExpr.ts";
@@ -83,16 +84,16 @@ function FunctionGraph({ spec }: { spec: GraphSpec }) {
           {spec.connect && spec.points && spec.points.length > 1 && <polyline points={spec.points.map((p) => `${sx(p.x)},${sy(p.y)}`).join(" ")} fill="none" stroke="var(--ink-2)" strokeWidth={1.6} />}
           {hoverX !== null && <line x1={sx(hoverX)} x2={sx(hoverX)} y1={PAD.t} y2={H - PAD.b} className="sm-graph-hover" />}
         </g>
-        {(spec.points || []).map((p, i) => <g key={i}><circle cx={sx(p.x)} cy={sy(p.y)} r={4.5} className="sm-graph-pt" />{p.label && <text x={sx(p.x) + 8} y={sy(p.y) - 8} className="sm-graph-ptlabel">{p.label}</text>}</g>)}
-        {spec.xLabel && <text x={W - PAD.r} y={H - 4} className="sm-graph-axislabel" textAnchor="end">{spec.xLabel}</text>}
-        {spec.yLabel && <text x={PAD.l + 6} y={PAD.t + 10} className="sm-graph-axislabel">{spec.yLabel}</text>}
+        {(spec.points || []).map((p, i) => <g key={i}><circle cx={sx(p.x)} cy={sy(p.y)} r={4.5} className="sm-graph-pt" />{p.label && <text x={sx(p.x) + 8} y={sy(p.y) - 8} className="sm-graph-ptlabel">{plainLabel(p.label)}</text>}</g>)}
+        {spec.xLabel && <text x={W - PAD.r} y={H - 4} className="sm-graph-axislabel" textAnchor="end">{plainLabel(spec.xLabel)}</text>}
+        {spec.yLabel && <text x={PAD.l + 6} y={PAD.t + 10} className="sm-graph-axislabel">{plainLabel(spec.yLabel)}</text>}
       </svg>
       <div className="sm-graph-legend">
         {spec.fns.map((f, i) => {
           const fn = compiled[i];
           const y = hoverX !== null && fn ? fn({ ...vals, x: hoverX }) : null;
           return (
-            <span key={i} className="sm-graph-leg"><i style={{ background: COLOR[f.color || "blue"] }} />{f.label || `y = ${f.expr}`}
+            <span key={i} className="sm-graph-leg"><i style={{ background: COLOR[f.color || "blue"] }} />{plainLabel(f.label || `y = ${f.expr}`)}
               {hoverX !== null && <em> · x={fmt(hoverX)}, y={y !== null && Number.isFinite(y) ? fmt(y) : "—"}</em>}</span>
           );
         })}
@@ -124,8 +125,8 @@ function Bars({ items, xLabel, yLabel, tickLabels }: { items: { label: string; v
         );
       })}
       <line x1={PAD.l} x2={W - PAD.r} y1={sy(0)} y2={sy(0)} className="sm-graph-axis" />
-      {xLabel && <text x={W - PAD.r} y={H - 2} className="sm-graph-axislabel" textAnchor="end">{xLabel}</text>}
-      {yLabel && <text x={PAD.l + 6} y={PAD.t + 10} className="sm-graph-axislabel">{yLabel}</text>}
+      {xLabel && <text x={W - PAD.r} y={H - 2} className="sm-graph-axislabel" textAnchor="end">{plainLabel(xLabel)}</text>}
+      {yLabel && <text x={PAD.l + 6} y={PAD.t + 10} className="sm-graph-axislabel">{plainLabel(yLabel)}</text>}
     </svg>
   );
 }
@@ -217,7 +218,7 @@ function Sliders({ params, vals, setVals }: { params?: GraphSpec["params"]; vals
         const v = vals[p.name] ?? p.value;
         return (
           <label key={p.name} className="sm-graph-slider">
-            <span>{p.label || p.name} = <b>{fmt(v)}</b></span>
+            <span>{plainLabel(p.label || p.name)} = <b>{fmt(v)}</b></span>
             <input type="range" min={p.min} max={p.max} step={p.step || (p.max - p.min) / 40} value={v}
               style={{ ["--pct" as string]: `${((v - p.min) / (p.max - p.min)) * 100}%` }}
               onChange={(e) => setVals((o) => ({ ...o, [p.name]: Number(e.target.value) }))} />

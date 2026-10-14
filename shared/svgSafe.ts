@@ -18,6 +18,30 @@ const cleanValue = (name: string, v: string): string | null => {
   return val.slice(0, 600);
 };
 
+const GREEK: Record<string, string> = { alpha: "α", beta: "β", gamma: "γ", delta: "δ", epsilon: "ε", varepsilon: "ε", zeta: "ζ", eta: "η", theta: "θ", vartheta: "θ", iota: "ι", kappa: "κ", lambda: "λ", mu: "μ", nu: "ν", xi: "ξ", pi: "π", rho: "ρ", sigma: "σ", tau: "τ", phi: "φ", varphi: "φ", chi: "χ", psi: "ψ", omega: "ω", Gamma: "Γ", Delta: "Δ", Theta: "Θ", Lambda: "Λ", Pi: "Π", Sigma: "Σ", Phi: "Φ", Omega: "Ω",
+  cdot: "·", times: "×", div: "÷", pm: "±", circ: "°", degree: "°", infty: "∞", approx: "≈", neq: "≠", ne: "≠", leq: "≤", le: "≤", geq: "≥", ge: "≥", to: "→", rightarrow: "→", Rightarrow: "⇒", parallel: "∥", perp: "⊥", angle: "∠", triangle: "△", sqrt: "√", ldots: "…", dots: "…" };
+const SUB: Record<string, string> = { 0: "₀", 1: "₁", 2: "₂", 3: "₃", 4: "₄", 5: "₅", 6: "₆", 7: "₇", 8: "₈", 9: "₉", a: "ₐ", e: "ₑ", h: "ₕ", i: "ᵢ", k: "ₖ", l: "ₗ", m: "ₘ", n: "ₙ", o: "ₒ", p: "ₚ", r: "ᵣ", s: "ₛ", t: "ₜ", x: "ₓ" };
+const SUP: Record<string, string> = { 0: "⁰", 1: "¹", 2: "²", 3: "³", 4: "⁴", 5: "⁵", 6: "⁶", 7: "⁷", 8: "⁸", 9: "⁹", "-": "⁻", n: "ⁿ" };
+/** A figure label is plain SVG text, where KaTeX can't run: "$\theta$" / "$Mg$" / "$F_N$" / "$mg\sin\theta$" must read
+ *  θ / Mg / F_N / "mg sin θ", never the raw LaTeX (reported live: a graph showed "$\theta$"). */
+export function plainLabel(input: string): string {
+  const s0 = String(input ?? "");
+  if (!/[$\\^_]/.test(s0)) return s0;
+  let s = s0.replace(/\$([^$]*)\$/g, "$1")
+    .replace(/\\(?:text|mathrm|mathbf|mathit|operatorname|vec|overrightarrow|hat|bar)\s*\{([^{}]*)\}/g, "$1")
+    .replace(/\\[dt]?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, "($1/$2)")
+    .replace(/\\sqrt\s*\{([^{}]*)\}/g, "√($1)")
+    .replace(/\^\s*\{?\\circ\}?/g, "°")
+    .replace(/\\(sin|cos|tan|ln|log|exp)\b\s*/g, " $1 ")
+    .replace(/\\(?:left|right|displaystyle|,|;|!|quad|qquad)/g, " ")
+    .replace(/\\([a-zA-Z]+)/g, (_, c: string) => GREEK[c] ?? c);
+  const map = (t: string, m: Record<string, string>) => [...t].every((ch) => m[ch]) ? [...t].map((ch) => m[ch]).join("") : null;
+  s = s.replace(/_\{([^{}]{1,6})\}|_([A-Za-z0-9])/g, (all, a, b) => map(a ?? b, SUB) ?? `_${a ?? b}`)
+    .replace(/\^\{([^{}]{1,4})\}|\^([A-Za-z0-9-])/g, (all, a, b) => map(a ?? b, SUP) ?? `^${a ?? b}`)
+    .replace(/[{}]/g, "");
+  return s.replace(/\s{2,}/g, " ").trim();
+}
+
 /** Returns a clean `<svg …>…</svg>` string, or "" when the input has no usable svg root. */
 export function sanitizeSvg(input: string): string {
   let src = String(input || "").slice(0, MAX_SVG_CHARS * 2);
@@ -35,7 +59,7 @@ export function sanitizeSvg(input: string): string {
     if (m[4] !== undefined) {
       if (skipDepth) continue;
       // text content: keep, escaped
-      out.push(m[4].replace(/&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-f]+);)/gi, "&amp;"));
+      out.push(plainLabel(m[4]).replace(/&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-f]+);)/gi, "&amp;"));
       continue;
     }
     const raw = m[0], name = m[1].toLowerCase(), isClose = raw.startsWith("</"), selfClose = m[3] === "/" || /\/\s*>$/.test(raw);
