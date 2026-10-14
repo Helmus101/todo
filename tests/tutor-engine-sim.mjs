@@ -388,8 +388,9 @@ export async function runTutorEngineSim(check, section) {
     : { content: "I fixed my own line — the net force is yours, 4.4. What do you get for the work?" };
   r = await run("why did you write 22.08?", { board: editBoard });
   const editTools = calls[1]?.messages.filter((m) => m.role === "tool").map((m) => m.content) || [];
-  check("tutor edits go through the board action layer: own line corrected in place (id, no duplicate), student's line refused (FORBIDDEN_STUDENT_WORK) for update AND remove, unknown target = NOT_FOUND",
-    r.boardEdits?.length === 1 && r.boardEdits[0].id === "t1" && /17\.6/.test(r.boardEdits[0].text) && !r.boardRemoved?.length && r.board.length === 0
+  // The board only grows (reported live: lines were overwritten under the student): a correction is a NEW line.
+  check("tutor corrections add a new line (original kept, nothing overwritten), student's line refused (FORBIDDEN_STUDENT_WORK) for update AND remove, unknown target = NOT_FOUND",
+    !r.boardEdits?.length && !r.boardRemoved?.length && r.board.length === 1 && /17\.6/.test(r.board[0].text) && r.board[0].id !== "t1"
     && /"ok":true/.test(editTools[0]) && /FORBIDDEN_STUDENT_WORK/.test(editTools[1]) && /FORBIDDEN_STUDENT_WORK/.test(editTools[2]) && /NOT_FOUND/.test(editTools[3]));
   script = (b, i) => i === 0 ? { content: "", tool_calls: [tc("REMOVE_BOARD_LINE", { target: "t1" })] } : { content: "Taken off — it was my wrong line." };
   r = await run("that line is wrong", { board: editBoard });
@@ -459,10 +460,10 @@ export async function runTutorEngineSim(check, section) {
       repeatsSolvedCalculation(solvedCalcs, third, "another problem") && !repeatsSolvedCalculation(solvedCalcs, third, "Another one like it, please.")
       && !repeatsSolvedCalculation(solvedCalcs, { question: "Which way does supply shift?", options: ["left", "right"], correct: 0 }, "another problem")
       && !repeatsSolvedCalculation([solvedCalcs[0], { ...solvedCalcs[1], solved: false }], third, "another problem"));
-    // §13.6 / test 26: one canonical summary, updated in place.
+    // A second summary is a new line — the board never rewrites what's already on it.
     const sumBoard = [{ id: "s1", at: "", kind: "summary", text: "Demand ↑ ⟹ price ↑, quantity ↑" }];
     const res = { reply: "", board: [], problems: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false };
     const out = applyTool("WRITE_TO_BOARD", { kind: "summary", text: "Demand ↑ ⟹ price ↑, quantity ↑; supply ↓ ⟹ price ↑, quantity ↓" }, { message: "summarize", result: res, allBoard: () => [...sumBoard, ...res.board], allProblems: () => [], spokenRepair: null, fr: false, said: [], wantsExercise: false, focus: ["supply demand"], known: [], solution: undefined });
-    check("a second summary updates the existing one in place — no duplicate entry", /"ok":true/.test(out) && res.board.length === 0 && res.boardEdits?.[0]?.id === "s1" && /supply ↓/.test(res.boardEdits[0].text));
+    check("a second summary is added as a new line — the first one is never overwritten", /"ok":true/.test(out) && res.board.length === 1 && !res.boardEdits?.length && /supply ↓/.test(res.board[0].text));
   }
 }

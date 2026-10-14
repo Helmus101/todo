@@ -8,7 +8,7 @@ import { sourcesForTrack } from "../questionSources.ts";
 import { sessionStateBlock } from "../sessionState.ts";
 import { webSearch } from "../websearch";
 import { AcademicContext, AuditEvent, CHAT_LANGUAGE_OVERRIDE, dueLine, errorLogLine, hintDensityLine, languageLine, learningStyleLine, milestoneLine, notNeededLine, nowBlock, personalContextLine, recentJournalLine, sessionRecapLine, studentModelLine, studentNameLine, syllabusGroundingLine, trackLine, weakCardLine } from "./context.ts";
-import { DEEPSEEK_MODEL, OUT, createTutorChat, deepseekClient, retryRequest, usageOf } from "./client.ts";
+import { DEEPSEEK_MODEL, OUT, createTutorChat, deepseekClient, retryRequest, stripWrapperTags, usageOf } from "./client.ts";
 import { courseworkLine } from "./coursework.ts";
 import { GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, earlierDigest } from "./board.ts";
 import { CREATE_CALC_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_INTERACTIVE_TOOL, CREATE_NOTE_TOOL, CREATE_PROBLEM_TOOL, CREATE_QUIZ_TOOL, FIND_SOURCE_QUESTION_TOOL, FLOW_ON_BOARD_TOOL, READ_PAGE_TOOL, SET_OBJECTIVES_TOOL, SOLID_ON_BOARD_TOOL, SVG_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, WEB_SEARCH_TOOL, WIDGET_ON_BOARD_TOOL, WRITE_TO_BOARD_TOOL } from "./tools.ts";
@@ -53,7 +53,7 @@ export function openerMemoryBlock(memory: TutorOpenerMemory[] | undefined): stri
  *  fence, a leading "Otto:" speaker label, a bullet dash, a surrounding quote pair, and markdown emphasis;
  *  collapses newlines to spaces; clamps at a sentence boundary. Exported for tests. */
 export function cleanOpener(raw: string): string {
-  let t = String(raw || "").trim();
+  let t = stripWrapperTags(String(raw || "")).trim();
   t = t.replace(/^```[a-z]*\n?/, "").replace(/```$/, "").trim();
   t = t.replace(/^[-–—*•]\s+/, "");
   t = t.replace(/^(otto|professeur|teacher)\s*:\s*/i, "");

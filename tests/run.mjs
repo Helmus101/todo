@@ -6686,5 +6686,21 @@ section("Production readiness — multi-user security + serverless reliability (
   check("the cron tick keeps one clock and stops starting work well before the 300 s limit", /tickStart/.test(jobsSrc) && /startWindowMs = 150_000/.test(jobsSrc));
 }
 
+
+section("Tutor reply hygiene — invented wrapper tags, board line numbers (reported live)");
+{
+  const { stripWrapperTags } = await import("../server/ai/client.ts");
+  const { citesMissingBoardLine } = await import("../shared/boardLines.ts");
+  const twoLines = [{ id: "a", kind: "given", at: "2026-10-14T10:00:00Z" }, { id: "b", kind: "formula", at: "2026-10-14T10:01:00Z" }];
+  const raw = "<speech>Ah, careful — think about who was knocking on whose door.\n\nLook at line 3 on the board. From the Qianlong Emperor's perspective, did he view Britain as an equal power?</speech>";
+  check("an invented <speech> wrapper is removed, the words kept", stripWrapperTags(raw).startsWith("Ah, careful") && !/<\/?speech>/.test(stripWrapperTags(raw)));
+  check("a leaked <thinking> block is dropped entirely", stripWrapperTags("<thinking>plan: ask about tan</thinking>What is θ?") === "What is θ?");
+  check("ordinary maths with < and > is untouched", stripWrapperTags("Is $a < b$ and $c > d$?") === "Is $a < b$ and $c > d$?");
+  check("'Look at line 3' on a two-line board is caught (reported live: there was no line 3)", citesMissingBoardLine(raw, twoLines) === 3);
+  check("pointing at a line that exists is fine", citesMissingBoardLine("Look at line 2 — what does it tell you?", twoLines) === 0);
+  check("'ligne 5' in French is caught too", citesMissingBoardLine("Regarde la ligne 5 du tableau.", twoLines) === 5);
+  check("the focus header and pointers don't count as numbered lines", citesMissingBoardLine("see line 2", [{ id: "f", kind: "focus", at: "2026-10-14T09:00:00Z" }, twoLines[0]]) === 2);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -10,7 +10,8 @@ import { type SpokenRepair } from "../../shared/spokenMath.ts";
 import { sanitizeSvg, svgText } from "../../shared/svgSafe.ts";
 import { findSourceQuestions } from "../questionSources.ts";
 import { extractPlan, validatePlan } from "../tutorBrain.ts";
-import { OUT, countWords, createTutorChat, detectLang, parseToolArgs, retryRequest, stripLeakedToolCallSyntax, tightenForChat, truncateCleanly, untrustedToolResult, usageOf } from "./client.ts";
+import { citesMissingBoardLine } from "../../shared/boardLines.ts";
+import { OUT, countWords, createTutorChat, detectLang, parseToolArgs, retryRequest, stripLeakedToolCallSyntax, stripWrapperTags, tightenForChat, truncateCleanly, untrustedToolResult, usageOf } from "./client.ts";
 import { isDuplicateBoardEntry, isDuplicateDiagram, isDuplicateProblem, isSubstantiveStep, leaksAnyProblemAnswer, makeBoardEntry, makeDeck, makeDiagramEntry, makeGeometryEntry, makeGraphEntry, makeInteractiveEntry, makeNote, makeObjectives, makeProblem, makeQuiz, resolveBoardTarget, shouldNudgeBoardContent, shouldNudgeBoardWrite } from "./board.ts";
 import { CREATE_FLASHCARDS_TOOL, CREATE_NOTE_TOOL, CREATE_QUIZ_TOOL, makeFlowEntry, makeSvgEntry, makeWidgetEntry, runCalcTool, runReadPage, runWebSearch } from "./tools.ts";
 import { applyRememberFact } from "./run.ts";
@@ -124,7 +125,7 @@ interface FinishChatReplyContext {
 
 export function finishChatReply(ctx: FinishChatReplyContext, reply: string): ChatResult {
   const { fr, history, logAudit, message, opts, result } = ctx;
-    reply = stripLeakedToolCallSyntax(extractPlan(reply).reply);
+    reply = stripWrapperTags(stripLeakedToolCallSyntax(extractPlan(reply).reply));
     // The redirect line replaces a violating REPLY, but if that same turn also produced artifacts, they were
     // almost certainly the same violation wearing a different container (a "fiche" that's just the essay) —
     // discard them too rather than hand over a chip whose text just got rejected.
@@ -480,6 +481,15 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
     };
     // "Spot on" to a message with nothing in it ("to do", "yeah") — praise for nothing teaches them nothing.
     let emptyPraiseFixed = false;
+    let boardLineFixed = false;
+    const guardBoardLine = (draft: string, round: number, lastRound: boolean): boolean => {
+      if (boardLineFixed || lastRound || !citesMissingBoardLine(draft, [...(opts?.currentBoard || []), ...result.board])) return false;
+      boardLineFixed = true;
+      console.log(`${new Date().toISOString()} [chat] round ${round}: reply points at a board line that does not exist — asking for a quote instead`);
+      messages.push({ role: "assistant", content: draft });
+      messages.push({ role: "user", content: "You pointed at a board line number that isn't on the board. Rewrite your reply: quote what the line actually says (or use a margin number that exists), and never point at something that isn't on the board. Same question otherwise." });
+      return true;
+    };
     const guardEmptyPraise = (draft: string, round: number, lastRound: boolean): boolean => {
       if (!opts?.primer || emptyPraiseFixed || lastRound || result.guardrailTripped || !praisesNothing(draft, message)) return false;
       emptyPraiseFixed = true;
@@ -887,6 +897,7 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
       if (guardListen(textContent, round, lastRound)) continue;
       if (guardGrounded(textContent, round, lastRound)) continue;
       if (guardEmptyPraise(textContent, round, lastRound)) continue;
+      if (guardBoardLine(textContent, round, lastRound)) continue;
       if (guardInvented(textContent, round, lastRound)) continue;
       if (guardOwnArithmetic(textContent, round, lastRound)) continue;
         if (guardMissedCase(textContent, round, lastRound)) continue;
@@ -903,6 +914,8 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
         if (guardListen(textContent, round, lastRound)) continue;
         if (guardGrounded(textContent, round, lastRound)) continue;
         if (guardEmptyPraise(textContent, round, lastRound)) continue;
+        if (guardBoardLine(textContent, round, lastRound)) continue;
+      if (guardBoardLine(textContent, round, lastRound)) continue;
         if (guardInvented(textContent, round, lastRound)) continue;
         if (guardOwnArithmetic(textContent, round, lastRound)) continue;
         if (guardGapAnswer(textContent, round, lastRound)) continue;

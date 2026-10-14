@@ -10,6 +10,7 @@
 //   · spoken input is repaired against the board, and the board never repeats a mishearing (spokenMath.ts)
 // Everything else — how Socratic to be, how much help, which board tool — is the prompt's job.
 import { randomUUID } from "node:crypto";
+import { citesMissingBoardLine } from "../shared/boardLines.ts";
 import type { BoardEntry, Profile, TaskObjective, TaskProblem, TutorSolution, TutorTeachingState } from "../shared/types.ts";
 import { practiceAnswerMatches } from "../shared/types.ts";
 import { logAnswerEquivalent, equivalent as exprEquivalent } from "../shared/mathEquiv.ts";
@@ -31,7 +32,7 @@ import { latexToPlainText } from "../shared/mathText.ts";
 import { toExprSource } from "../shared/mathEquiv.ts";
 import { compileExpr } from "../shared/mathExpr.ts";
 import {
-  createTutorChat, retryRequest, usageOf, parseToolArgs, stripLeakedToolCallSyntax, OUT,
+  createTutorChat, retryRequest, usageOf, parseToolArgs, stripLeakedToolCallSyntax, stripWrapperTags, OUT,
   CREATE_PROBLEM_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, SVG_ON_BOARD_TOOL, FLOW_ON_BOARD_TOOL,
   WIDGET_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, CREATE_INTERACTIVE_TOOL, ANNOTATE_BOARD_TOOL, SET_OBJECTIVES_TOOL,
   makeProblem, makeBoardEntry, makeGeometryEntry, makeGraphEntry, makeSvgEntry, makeFlowEntry, makeWidgetEntry,
@@ -93,7 +94,7 @@ THE BOARD — shared paper, one worksheet per problem
   E. Current task: the active question and expected student response format
 - Every maths line carries a short "why" (what it does and which rule allows it) — the board is read back later, so it must explain, not just list equations. Maths in LaTeX between $…$. When they ask you to write something, write it (their step goes in as owner "student"). Write proactively, every turn that teaches or asks something: the key idea or definition you just taught, the question you just asked (as the current task), the step they reached, a figure for any relationship. Use a GAP (kind "gap", line ending "= ?", expectedAnswer set) only when they should fill in one specific line — at most one, never a second while one is open. Never write a step they haven't reached or the answer; never answer your own question on the board.
 - Figures must be accurate, so use the tools that draw to scale: triangles/circles/polygons → GEOMETRY_ON_BOARD; towers, cliffs, angles of elevation → TRIG_SCENE_ON_BOARD; a block on a slope, forces → INCLINE_ON_BOARD; functions → GRAPH_ON_BOARD; processes, causes, essay plans → FLOW_ON_BOARD. SVG_ON_BOARD is only for qualitative pictures (a cell, apparatus, a map) — never for anything with angles or lengths.
-- Fix a wrong line of YOURS in place with UPDATE_BOARD_LINE (or take it off with REMOVE_BOARD_LINE); the student's own lines are protected — add your corrected line beside theirs. Every board tool returns {ok:true…} or {ok:false,error:{code}}: only say a change happened if the result says ok.
+- The board only ever grows: a correction to a line of YOURS is a NEW line (UPDATE_BOARD_LINE adds it below the original — nothing is overwritten); REMOVE_BOARD_LINE only if a line of yours is plainly wrong. The student's own lines are protected — add your corrected line beside theirs. When you point at a line, use its margin number only if that number is on the board, or quote what the line says. Every board tool returns {ok:true…} or {ok:false,error:{code}}: only say a change happened if the result says ok.
 - An answer they give in chat counts as much as one typed in the box: never make them re-enter a right answer.
 - Never mention the app's machinery to the student: if a board tool returns REJECTED/LIMIT/DUPLICATE, silently adjust (ask them for that step instead, or write something allowed). They never hear that a write \"bounced\" or that \"the board won't let me\".
 - Point at a line by its margin number ("look at line 4") or with ANNOTATE_BOARD. Never claim a board write you didn't make this turn.
@@ -178,7 +179,7 @@ const VOICE_BLOCK = `\n\nVOICE MODE: your reply is read aloud. Write it as speec
 // ── Tools (the board) ─────────────────────────────────────────────────────────────────────────────────
 const UPDATE_BOARD_LINE = {
   name: "UPDATE_BOARD_LINE",
-  description: "Correct or reword ONE of YOUR OWN board lines in place (its #n from the board listing). Student-written lines can never be changed — add the corrected line beside theirs with WRITE_TO_BOARD instead. Use it for a wrong line you wrote, not to redraw the board.",
+  description: "Add a corrected version of ONE of YOUR OWN board lines (its #n from the board listing) as a NEW line below the board — the original stays, nothing is overwritten. Student-written lines can never be changed — add the corrected line beside theirs with WRITE_TO_BOARD instead. Use it for a wrong line you wrote, not to redraw the board.",
   input_schema: { type: "object", properties: { target: { type: "string", description: "the line's #n (or id)" }, text: { type: "string", description: "the corrected line, maths in $…$" } }, required: ["target", "text"] },
 };
 const REMOVE_BOARD_LINE = {
@@ -867,7 +868,7 @@ export function wrongArithmetic(reply: string, message = ""): string | null {
 }
 
 function cleanReply(text: string, voice: boolean): string {
-  let t = stripLeakedToolCallSyntax(String(text || "")).replace(/<plan>[\s\S]*?<\/plan>/gi, "").replace(new RegExp(PLAN_RE.source, "gi"), "").replace(/<\/?(?:plan|path)\s*>/gi, "").trim();
+  let t = stripWrapperTags(stripLeakedToolCallSyntax(String(text || ""))).replace(/<plan>[\s\S]*?<\/plan>/gi, "").replace(new RegExp(PLAN_RE.source, "gi"), "").replace(/<\/?(?:plan|path)\s*>/gi, "").trim();
   t = t.replace(/^\s*(otto|tutor)\s*:\s*/i, "").replace(/\*\*(.+?)\*\*/g, "$1");
   // Read aloud: maths becomes readable text ("1000 × 9.8 × sin(10°) × 15", "1/2 mv^2"). It used to just delete every
   // \command, so \times and \sin vanished and "\frac12" read as "12" — "multiply 10009.8(10°)15" (reported live).
@@ -1066,6 +1067,8 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       // Sending them back to the problem statement to re-check a value they just gave is the loop the student
       // cannot break — reported live, four turns of "what is the exact pulling force given in the problem text?"
       // while they kept answering "12". Corrected with a prompt round; taken over in code below if it persists.
+      const missingLine = citesMissingBoardLine(reply, allBoard());
+      if (missingLine) issues.push(`you pointed at line ${missingLine}, but the board has no line ${missingLine}. Quote what the line says instead (or the right margin number), and never point at something that isn't on the board.`);
       const reread = sendsBackToStatement(reply, message);
       if (reread) issues.push(`it sends them back to the problem statement ("${reread}") to re-check something they ALREADY gave — don't re-ask it, use the value they said. If they misread it, say what the problem actually gives and why it differs. If the givens as written genuinely can't produce what the problem asks for, say so plainly ONCE (the numbers as given don't work out, and the one-line reason why) and offer to change one of them, instead of asking them to read it again`);
       // A NEW problem posed only in the message ("If a 2 kg block drops 3 m onto a spring k = 400 N/m, how would you…?") with nothing on the board.
@@ -1256,21 +1259,6 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       // Their own step, written up without owner:"student" (the model often forgets): an equation they just said is
       // THEIRS — it skips the "about the problem" and "equation ahead" checks and is labelled as their work.
       if (input.owner !== "student" && input.kind !== "gap" && isTheirStep(text, [c.message, ...(c.spokenRepair ? [c.spokenRepair.interpreted] : [])])) input.owner = "student";
-      // Spec §13.6 / test 26: ONE canonical summary per session, updated in place — a second "summary" write
-      // replaces Otto's existing summary line instead of stacking another near-identical block under it.
-      if (input.kind === "summary" && input.owner !== "student") {
-        const existing = [...c.allBoard()].reverse().find((e) => e.kind === "summary" && e.owner !== "student" && !(e as any).archived);
-        if (existing && text.trim()) {
-          if (leaks(text)) return LEAK;
-          if (!asksForFormula(c.message) && equationsAhead(text, c.said).length) return "REJECTED: that summary states an equation they haven't reached — summarize only what they've actually shown.";
-          const r = applyEntryAction(c.allBoard(), { action: "update", targetId: existing.id, patch: { text }, author: "tutor" });
-          if (r.ok) {
-            const mine = result.board.find((e) => e.id === existing.id);
-            if (mine) mine.text = text; else result.boardEdits = [...(result.boardEdits || []).filter((x) => x.id !== existing.id), { id: existing.id, text }];
-            return JSON.stringify({ ok: true, id: existing.id, note: "updated the existing summary in place (one summary per session)" });
-          }
-        }
-      }
       if (input.kind === "gap" && result.board.some((e) => e.kind === "gap")) return "LIMIT: one gap a turn — ask the next step in chat instead.";
       if (input.kind === "gap" && lastLineIsOpenGap(c.allBoard())) return "REJECTED: the board already ends on an open gap they haven't filled — ask in chat instead of adding another '= ?' line.";
       if (result.board.filter((e) => !["svg", "graph", "flow", "widget", "diagram", "annotation"].includes(String(e.kind))).length >= 4) return "LIMIT: four lines a turn is plenty — the board keeps only what's worth keeping.";
@@ -1326,11 +1314,10 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       const text = latexifyBoardLine(repairLatex(String(input.text || "")), String(hit.kind || "")).trim();
       if (!text) return JSON.stringify({ ok: false, error: { code: "INVALID_PAYLOAD", message: "the corrected line is empty" } });
       if (leaks(text)) return LEAK;
-      const r = applyEntryAction(c.allBoard(), { action: "update", targetId: hit.id, patch: { text }, author: "tutor" });
-      if (!r.ok) return JSON.stringify({ ok: false, error: { code: r.code, message: r.code === "FORBIDDEN_STUDENT_WORK" ? "that line is the student's — leave it, and add your corrected line beside it with WRITE_TO_BOARD" : r.message } });
-      const mine = result.board.find((e) => e.id === hit.id);
-      if (mine) mine.text = text; else { result.boardEdits = [...(result.boardEdits || []).filter((x) => x.id !== hit.id), { id: hit.id, text }]; }
-      return JSON.stringify({ ok: true, id: hit.id, revision: r.result.ok ? r.result.revision : 0, stale: r.result.ok ? r.result.stale : [] });
+      if (hit.owner === "student") return JSON.stringify({ ok: false, error: { code: "FORBIDDEN_STUDENT_WORK", message: "that line is the student's — leave it, and add your corrected line beside it with WRITE_TO_BOARD" } });
+      // The board is paper: a correction is a NEW line under the old one, never an overwrite (reported live —
+      // lines changed under the student instead of the board growing).
+      return push({ id: randomUUID(), text, kind: hit.kind === "gap" ? "result" : hit.kind, owner: "otto", at: new Date().toISOString() } as BoardEntry);
     }
     case "REMOVE_BOARD_LINE": {
       const hit = resolveBoardTarget(String(input.target || ""), c.allBoard());

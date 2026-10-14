@@ -324,6 +324,15 @@ export function stripLeakedToolCallSyntax(text: string): string {
   return text.slice(0, cut).trimEnd();
 }
 
+/** Models sometimes wrap a reply in invented markup (`<speech>…</speech>`, `<response>`) or leak a
+ *  `<thinking>` block. The student must only ever see the words: unwrap the former, drop the latter. */
+export function stripWrapperTags(text: string): string {
+  return text
+    .replace(/<(think|thinking|reasoning|scratchpad)\b[^>]*>[\s\S]*?<\/\1>/gi, "")
+    .replace(/<\/?(speech|speak|say|reply|response|answer|message|output|voice|text|otto|assistant)\b[^>]*>/gi, "")
+    .trim();
+}
+
 export function truncateCleanly(text: string, maxLen: number): string {
   if (text.length <= maxLen) return text;
   const slice = text.slice(0, maxLen);

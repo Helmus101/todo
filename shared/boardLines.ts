@@ -13,3 +13,13 @@ export function boardLineNumbers(entries: Pick<BoardEntry, "id" | "kind" | "at">
     .sort((a, b) => a.t - b.t || a.i - b.i);
   return new Map(lines.map(({ e }, k) => [e.id, k + 1]));
 }
+
+/** "Look at line 3" when the board's margin numbers stop before 3 → that number (else 0). */
+export function citesMissingBoardLine(reply: string, board: Pick<BoardEntry, "id" | "kind" | "at">[]): number {
+  const max = boardLineNumbers(board).size;
+  for (const m of String(reply || "").matchAll(/\b(?:line|ligne)\s*(?:#|n°)?\s*(\d{1,3})\b|#(\d{1,3})\b/gi)) {
+    const n = Number(m[1] || m[2]);
+    if (n > max) return n;
+  }
+  return 0;
+}
