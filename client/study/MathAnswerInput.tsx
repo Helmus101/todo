@@ -26,27 +26,34 @@ const K = {
   deg: { label: "°", text: "°", title: ["degrés", "degrees"] },
 } satisfies Record<string, Key>;
 
-/** Which keys this answer can use — read from the expected answer and the question, so a log question offers log/ln,
- *  a trig one sin/cos/tan, and a plain expression only the basics. Exported for tests. */
-export function keysFor(context: string): Key[] {
-  const c = String(context || "");
-  const out: Key[] = [K.frac, K.pow, K.sqrt, K.brackets];
+/** Which keys THIS answer needs — read from the expected answer itself (ASCII or LaTeX), so "√2/2" offers √ and a/b,
+ *  "log_2(5)" offers log, and "x + 3" offers nothing extra. No default keys: a box only gets the ones its answer uses.
+ *  Without a stored answer, the question's wording decides. Exported for tests. */
+export function keysFor(answer: string, question = ""): Key[] {
+  const a = String(answer || "").trim();
+  const c = a || String(question || "");
+  const out: Key[] = [];
+  if (/\/|\\frac|\bfraction\b/i.test(c)) out.push(K.frac);
+  if (/\^|[²³]|\bsquared\b|\bpower\b/i.test(c) && !/e\s*\^/.test(c)) out.push(K.pow);
+  if (/sqrt|√|\\sqrt|\broot\b/i.test(c)) out.push(K.sqrt);
   if (/\b(?:log|ln)\b|log_/i.test(c)) out.push(K.log, K.ln);
-  if (/\be\s*\^|\bexp|exponential|\bln\b/i.test(c)) out.push(K.exp);
-  if (/\b(?:sin|cos|tan|cot|sec|csc)\b|trig|°|\bangle/i.test(c)) out.push(K.sin, K.cos, K.tan, K.deg, K.theta);
-  if (/_|\bsubscript|[a-z]_\{?[a-z0-9]/i.test(c)) out.push(K.sub);
-  if (/π|\bpi\b|circle|radian/i.test(c)) out.push(K.pi);
-  if (/∫|\bintegra/i.test(c)) out.push(K.integral);
-  if (/[<>≤≥]|\binequalit|at most|at least/i.test(c)) out.push(K.le, K.ge);
-  out.push(K.times, K.minus);
+  if (/\be\s*\^|\bexp\b|\\exp/i.test(c)) out.push(K.exp);
+  if (/\b(?:sin|cos|tan|cot|sec|csc)\b|°/i.test(c)) out.push(K.sin, K.cos, K.tan, K.deg, K.theta);
+  if (/[a-z]_\{?[a-z0-9]/i.test(c) && !/log_/i.test(c)) out.push(K.sub);
+  if (/π|\bpi\b|\\pi/i.test(c)) out.push(K.pi);
+  if (/∫|\\int\b/i.test(c)) out.push(K.integral);
+  if (/[<>≤≥]|\\le|\\ge/.test(c)) out.push(K.le, K.ge);
+  if (a && /[()]/.test(a)) out.push(K.brackets);
+  if (a && /×|\\times|\\cdot/.test(a)) out.push(K.times);
+  if (a && /[-−]/.test(a)) out.push(K.minus);
   return [...new Map(out.map((k) => [k.label, k])).values()];
 }
 
-/** The free-response answer box with math keys that insert at the caret, picked to suit the answer, and a live
+/** The free-response answer box with math keys that insert at the caret — only the ones the expected answer uses — and a live
  *  typeset preview of what's typed. Keys show only for non-numeric answers. */
 export function MathAnswerInput(props: {
   value: string; onChange: (v: string) => void; onEnter: () => void; placeholder: string; ariaLabel?: string;
-  en: boolean; showKeys: boolean; context?: string; autoFocus?: boolean; disabled?: boolean;
+  en: boolean; showKeys: boolean; answer?: string; context?: string; autoFocus?: boolean; disabled?: boolean;
 }) {
   const ref = useRef<HTMLInputElement>(null);
   const insert = (k: Key) => {
@@ -57,7 +64,7 @@ export function MathAnswerInput(props: {
     const pos = start + (k.caret ?? k.text.length);
     requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(pos, pos); });
   };
-  const keys = props.showKeys ? keysFor(props.context || "") : [];
+  const keys = props.showKeys ? keysFor(props.answer || "", props.context || "") : [];
   const previewable = props.showKeys && props.value.trim() && autoMathLine(props.value) !== props.value;
   return (
     <div className="sm-math-input">

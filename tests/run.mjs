@@ -5002,7 +5002,15 @@ section("Answer box keys follow the answer; typed maths previews live; chat show
 {
   const mi = readFileSync("client/study/MathAnswerInput.tsx", "utf8");
   const ts = readFileSync("client/tutor/TutorSession.tsx", "utf8");
-  check("keys are chosen from the expected answer + question (log, trig, subscript, power, inequality)", /export function keysFor\(context: string\)/.test(mi) && /K\.log, K\.ln/.test(mi) && /K\.sin, K\.cos, K\.tan/.test(mi) && /K\.sub/.test(mi) && /K\.pow/.test(mi) && /K\.le, K\.ge/.test(mi));
+  const { keysFor: kf } = await import("../client/study/MathAnswerInput.tsx");
+  const labels = (a, q) => kf(a, q).map((k) => k.label);
+  // Reported live: √ / power / fraction keys showed on every answer box. Now only the keys the answer itself uses.
+  check("a plain linear answer gets no maths keys at all", labels("x + 3").length === 0);
+  check("√2/2 offers √ and a/b, nothing trig/log", labels("√2/2").includes("√") && labels("√2/2").includes("a/b") && !labels("√2/2").includes("sin") && !labels("√2/2").includes("log"));
+  check("LaTeX answers are read too (\\frac, \\sqrt)", labels("\\frac{\\sqrt{3}}{2}").includes("√") && labels("\\frac{\\sqrt{3}}{2}").includes("a/b"));
+  check("a log answer offers log/ln, not √", labels("log_2(5)").includes("log") && !labels("log_2(5)").includes("√"));
+  check("a trig answer offers sin/cos/tan", labels("sin(x)cos(x)").includes("sin"));
+  check("the question only decides when no answer is stored", labels("", "Simplify √50").includes("√") && !labels("5√2", "a question about fractions a/b").includes("a/b"));
   check("a power key says 'to the power of'", /to the power of/.test(mi));
   check("typed maths gets a live typeset preview", /sm-math-preview/.test(mi) && /<MathText text=\{props\.value\}/.test(mi));
   check("all three answer inputs pass the answer context", (readFileSync("client/study/InlineProblem.tsx", "utf8").match(/context=\{/g) || []).length === 1 && (readFileSync("client/study/artifacts/BoardArtifact.tsx", "utf8").match(/context=\{/g) || []).length === 2);

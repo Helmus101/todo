@@ -64,7 +64,8 @@ function GapAnswer({ entry, onCheck, en }: { entry: BoardEntry; onCheck: NonNull
         <MathAnswerInput
           en={en}
           showKeys={!isNumericAnswer(entry.expectedAnswer || "")}
-          context={`${entry.expectedAnswer || ""} ${entry.text || ""}`}
+          answer={entry.expectedAnswer || ""}
+          context={entry.text || ""}
           placeholder={en ? "Your answer…" : "Ta réponse…"}
           value={value}
           onChange={(v) => { setValue(v); if (verdict) setVerdict(null); }}
@@ -430,7 +431,8 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, sys
               <MathAnswerInput
                 en={en}
                 showKeys={!isNumericAnswer(problem.answer)}
-                context={`${problem.answer || ""} ${problem.question || ""}`}
+                answer={problem.answer || ""}
+                context={problem.question || ""}
                 placeholder={isNumericAnswer(problem.answer) ? (en ? "Your answer (a number, no units)…" : "Ta réponse (un nombre, sans unité)…") : (en ? "Your answer…" : "Ta réponse…")}
                 value={state.textAnswer}
                 onChange={onTextAnswer}
