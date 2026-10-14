@@ -314,7 +314,7 @@ export function recentJournalLine(entries: { date: string; text: string; subject
  *  Settings showed their real chosen name. Fixed by using the name they gave for this exact purpose instead
  *  of a made-up placeholder; silent when unset rather than inventing one. */
 export function studentNameLine(name?: string): string {
-  return name ? `\nCall the student "${name}" when addressing them directly — that's the name they gave Otto for this.\n` : "";
+  return name ? `\nThe student's name is "${name}". Use it rarely — a warm moment now and then, never to open reply after reply (it reads as a script).\n` : "";
 }
 
 /** profile.sessions — short end-of-session recaps written by the tutor itself via the "remember" tool

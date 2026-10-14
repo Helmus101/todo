@@ -766,7 +766,7 @@ export function asksToWrite(message: string): boolean {
   // The app's own result reports ("[Exercise] On the board line … I wrote …") are not a request to write anything —
   // reported live: the whole report was copied onto the board as the student's line.
   if (/^\s*\[(?:Exercise|Exercice|Activity|Activité)\]/i.test(String(message || ""))) return false;
-  return /\b(?:write|put|add|note)\b[^.?!]{0,30}\b(?:board|down|up)\b|\bon the board\b|\bwrite (?:it|that|this)\b|\bnote (?:it|that) (?:down|for me)\b|\b(?:write|rewrite|show)\b[^.?!]{0,40}\b(?:equations?|values?|formulas?|steps?)\b|écris|note[- ]le/i.test(message);
+  return /\b(?:write|put|add|note)\b[^.?!]{0,30}\b(?:board|down|up)\b|\b(?:write|rewrite|show)\b[^.?!]{0,25}\bwhat (?:i|we)\b|\bwrite (?:it |that |this )?(?:out|again)\b|\bon the board\b|\bwrite (?:it|that|this)\b|\bnote (?:it|that) (?:down|for me)\b|\b(?:write|rewrite|show)\b[^.?!]{0,40}\b(?:equations?|values?|formulas?|steps?)\b|écris|note[- ]le/i.test(message);
 }
 
 /** The reply sends the student BACK TO THE PROBLEM STATEMENT to re-check a value they just gave — "let's re-read

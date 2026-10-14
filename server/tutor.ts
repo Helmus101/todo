@@ -192,6 +192,9 @@ YOUR VOICE
 - Use their name only if the app gives it to you; never invent one.
 - You're their tutor, not a person with tastes or a life story: no "my favourite poem", "I love this period".
 - Never put the answer to the question you just asked on the board — if it goes up, it goes up as a gap ("= ?").
+- Aim at what the question actually asks. A multiple-choice or "which is correct" question needs only what decides between the options: get there in the fewest steps, then let them choose. Don't derive more than the question needs.
+- When they're lost or ask to start over: slower, ONE small step per reply, and refer to ONE board line at a time by what it says ("the line Mg sinθ − T = Ma"), never "the summary I just put up".
+- When they ask you to write what they said, write exactly their step on the board as their line — don't answer with another question.
 
 ANY SUBJECT — same tutor, different craft
 - MATHS & SCIENCES (reasoning is procedural + conceptual): the givens and the unknown first; a figure drawn to scale; THEIR equations line by line, each with its "why"; a check at the end (units, size, sign, substitute back). Diagnose the first wrong step, not the last number. Ask "which principle applies here, and why?" before any calculation. After a result: "does it make sense?", then a similar problem with different numbers, then a transfer (new context, graph, error to spot).
@@ -478,6 +481,34 @@ export function answeredInChat(message: string, p: TaskProblem): boolean {
   if (numericKey) return candidates.some((c) => c.split(/\s+/).length <= 4 && practiceAnswerMatches(c, p.answer!, p.value));
   // An expression key: only a real mathematical match counts (never the loose leading-number fallbacks).
   return candidates.some((c) => logAnswerEquivalent(c, p.answer!) === "correct" || (logAnswerEquivalent(c, p.answer!) === "unknown" && exprEquivalent(c, p.answer!) === "correct"));
+}
+
+/** A gap is ONE maths blank the student fills in its answer box. Reported live: "g(?−?) = (M+m)a" (two blanks, so
+ *  the box couldn't check it), "What does that tell us about Mg sinθ and mg? = ?" (a chat question dressed as a gap),
+ *  and "Mg sinθ − T = ?" right under the finished "Mg sinθ − T = Ma" (asking for what's already there). */
+export function badGap(text: string, board: string[]): string | null {
+  const t = String(text || "");
+  const plain = t.replace(/\$/g, "");
+  // One "?" and it is the blank near the end ("… = ?", "V = ? cm³ (3 s.f.)") — anything else is two blanks or a question.
+  if ((plain.match(/\?/g) || []).length !== 1 || !/=\s*(?:\\;)?\s*\?[^?=]{0,24}$/.test(plain.trim()))
+    return "a gap has exactly ONE blank, at the end ('… = ?'). Ask a question in chat, and put one blank on the board.";
+  if (/\b(?:what|why|how|which|quoi|pourquoi|comment)\b/i.test(plain)) return "that's a question, not a maths blank — ask it in chat.";
+  const norm = (x: string) => x.replace(/\$|\\[a-z]+|\s|[{}]/gi, "").toLowerCase();
+  const lhs = norm(plain.replace(/^[^:=]*:\s*/, "").replace(/=\s*\?\s*$/, ""));
+  if (lhs.length >= 3 && board.some((b) => { const m = /^(.*?)=(.+)$/.exec(norm(b.replace(/^[^:=]*:\s*/, ""))); return !!m && m[1] === lhs && !/\?/.test(m[2]); }))
+    return "that line is already on the board with its right side — point at it instead of asking for it again.";
+  return null;
+}
+
+/** The student's name opening reply after reply ("Willem, …" ×10, reported live): when the last reply already used
+ *  it, this one drops the vocative. */
+export function dropRepeatedName(reply: string, history: { role: string; text: string }[]): string {
+  const m = /^\s*([A-ZÀ-Ý][\p{L}'-]{1,20}),\s+/u.exec(reply);
+  if (!m) return reply;
+  const last = [...history].reverse().filter((h) => h.role === "assistant").slice(0, 2);
+  if (!last.some((h) => new RegExp(`\\b${m[1]}\\b`).test(h.text))) return reply;
+  const rest = reply.slice(m[0].length);
+  return rest.charAt(0).toUpperCase() + rest.slice(1);
 }
 
 /** Real questions in a reply: "?" outside maths ($…$) and outside quoted examples. */
@@ -937,8 +968,10 @@ export function stripPraiseOpener(t: string): string {
 
 /** The one line of maths in a reply that belongs on the board: its own $…$ spans, or the clause around the "=". */
 function formulaLineFor(reply: string): string {
-  const spans = (reply.match(/\$[^$\n]{3,}\$/g) || []).slice(0, 3).join(" ");
+  // Only a RELATION is worth a board line: a bare fragment like "$Mg\sin\theta - T$" says nothing on its own (reported live).
+  const spans = (reply.match(/\$[^$\n]{3,}\$/g) || []).filter((x) => /[=<>≈≤≥]|\\(?:le|ge|approx|neq)/.test(x)).slice(0, 3).join(" ");
   if (spans) return spans.slice(0, 200);
+  if (/\$[^$\n]{3,}\$/.test(reply)) return "";
   const m = /[\p{L}\d²³)\]]\s*[=≈]\s*\S/u.exec(reply);
   if (!m) return "";
   const end = reply.slice(m.index).search(/[,;.!?;\n]/);
@@ -1033,7 +1066,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     + ownArithmeticLine(message)
     + teachingBlock(input.teaching)
     + repairLine(message, history)
-    + directorBlock({ message, history, board, problems, objectives, stepVerdict: input.stepVerdict?.verdict ?? (!solvedNow.length && problems.some((p) => wrongInChat(message, p)) ? "incorrect" : undefined), solvedInChat: solvedNow.length > 0, drawRequest: asksToDraw(message), stuckStreak: input.teaching?.stuckStreak, discussion })
+    + directorBlock({ message, history, board, problems, objectives, stepVerdict: input.stepVerdict?.verdict ?? (!solvedNow.length && problems.some((p) => wrongInChat(message, p)) ? "incorrect" : undefined), solvedInChat: solvedNow.length > 0, drawRequest: asksToDraw(message), writeRequest: asksToWrite(message), stuckStreak: input.teaching?.stuckStreak, discussion })
     + stepVerdictLine(input.stepVerdict)
     + (solvedNow.length ? `\n\nTHEY JUST ANSWERED THE OPEN EXERCISE IN CHAT, AND IT IS RIGHT (checked by code): \"${solvedNow[0].question.slice(0, 160)}\". Confirm it and move on — never ask them to type it into the answer box.` : "")
     + (input.spoken && spokenRepair ? voiceInputBlock(message, input.spoken.alternatives, spokenRepair) : "");
@@ -1212,7 +1245,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
         // replacing it with the canned line a second time. First trip still behaves exactly as before.
         // Two corrections didn't keep the value out: ship its reply anyway — after repeated attempts, a direct
         // explanation is what the student needs (spec: never trap a confused student), and a canned line isn't.
-        result.reply = stripPraiseOpener(mentionsMechanics(reply) ? (stripMechanics(reply) || reply) : reply);
+        result.reply = dropRepeatedName(stripPraiseOpener(mentionsMechanics(reply) ? (stripMechanics(reply) || reply) : reply), history);
         return result;
       }
       // A formula in the reply and the board got nothing this turn: put the line up ourselves — the chat carries
@@ -1228,7 +1261,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
         return result;
       }
       // Harsh or canned-praise openers went back to the model above; nothing is rewritten into fixed phrases here.
-      result.reply = stripPraiseOpener(mentionsMechanics(reply) ? (stripMechanics(reply) || reply) : reply);
+      result.reply = dropRepeatedName(stripPraiseOpener(mentionsMechanics(reply) ? (stripMechanics(reply) || reply) : reply), history);
       return result;
     }
 
@@ -1389,10 +1422,15 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       { const open = c.allBoard().slice(-8).reverse().find((e) => e.kind === "gap" && e.status !== "correct") /* recent only: an old abandoned gap must not block every later line */; const target = open ? gapTarget(open.text) : undefined;
         if (open && target && input.owner !== "student" && input.kind !== "gap" && new RegExp(`(?:^|[:\\s$])${target}\\s*=\\s*(?!\\?)`, "i").test(text)) return `REJECTED: a gap asking for ${target} is still open — that line gives it away. Let them find ${target}; ask in chat, or point at what they need.`; }
       if (input.kind === "gap" && result.board.some((e) => e.kind === "gap")) return "LIMIT: one gap a turn — ask the next step in chat instead.";
+      if (input.kind === "gap") { const bad = badGap(text, c.allBoard().map((b) => String(b.text || ""))); if (bad) return `REJECTED: ${bad}`; }
       if (input.kind === "gap" && lastLineIsOpenGap(c.allBoard())) return "REJECTED: the board already ends on an open gap they haven't filled — ask in chat instead of adding another '= ?' line.";
       if (result.board.filter((e) => !["svg", "graph", "flow", "widget", "diagram", "annotation"].includes(String(e.kind))).length >= 4) return "LIMIT: four lines a turn is plenty — the board keeps only what's worth keeping.";
       if (input.owner !== "student" && input.kind !== "focus" && !c.codeWrite && !c.discussion && !relevantToFocus(text, [...c.focus, ...c.allBoard().map((b) => b.text), ...c.result.problems.map((p) => p.question)], c.known || [])) return "REJECTED: that line isn't about the problem you're working on. Write only this problem's givens, a step THEY reached (owner:'student'), or the next step as a gap ending in '= ?'.";
       if (isDuplicateBoardEntry(c.allBoard(), input)) return "DUPLICATE: that's already on the board — point at it instead.";
+      // The same maths inside a longer line ("For M along the slope: $Mg\sin\theta - T = Ma$") is a duplicate too.
+      { const mathOf = (x: string) => (String(x).match(/\$[^$]+\$/g) || []).join("").replace(/\$|\s|[{}]/g, "").toLowerCase();
+        const mine = mathOf(text);
+        if (input.kind !== "gap" && mine.length >= 6 && c.allBoard().slice(-20).some((e) => e.kind !== "gap" && mathOf(String(e.text || "")).includes(mine))) return "DUPLICATE: that equation is already on the board — point at it instead."; }
       if (input.kind !== "gap" && c.allBoard().slice(-20).some((e) => e.text && nearDuplicateLine(String(e.text), text))) return "DUPLICATE: an almost identical line is already on the board — point at it (or add only what's new).";
       // Accuracy (spec §19): a line OTTO writes must not state false arithmetic — the board is what they'll revise from.
       if (input.owner !== "student") { const bad = wrongArithmetic(text, c.message); if (bad) return `REJECTED: that line has a wrong calculation (${bad}). Recompute it before writing.`; }

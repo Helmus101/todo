@@ -18,6 +18,8 @@ export interface DirectorInput {
   discussion?: boolean;
   /** They asked Otto to draw/show the picture ("draw it"). */
   drawRequest?: boolean;
+  /** They asked Otto to write their working on the board ("write what I wrote"). */
+  writeRequest?: boolean;
 }
 
 const words = (t: string) => new Set(String(t || "").toLowerCase().replace(/\$[^$]*\$/g, " ").split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 4).map((w) => w.slice(0, 5)));
@@ -52,6 +54,8 @@ export function turnActions(d: DirectorInput): string[] {
   }
   // 2. They drew or wrote on the board: respond ON the board.
   if (DREW_ON_BOARD.test(msg)) out.push("They worked on the board: mark it up — ANNOTATE_BOARD on the relevant line (tone good for what's right, error for the first slip, hint for where to look next), or write the clean version of their step beside it as THEIR line (owner student). Then react to what they drew.");
+  // 2b. They asked to see their own working written up.
+  if (d.writeRequest) out.push("They asked you to write their working on the board: WRITE_TO_BOARD exactly the step they last stated, cleaned up in $…$, as THEIR line (owner student). Then one short sentence pointing at it — no new question about something else.");
   // 3. A right answer: record it and move on without being asked.
   if (right) {
     out.push(`They got it right: write their result on the board as their line (owner student) if it isn't there, then put the NEXT problem up with CREATE_PROBLEM in this same reply — ${current ? `still on "${current.label}" but harder or in a different format (graph, concept, application, spot-the-error)` : "harder, or in a different format (graph, concept, application, spot-the-error)"}. If this objective is now shown (two right answers on it), tick it with SET_OBJECTIVES and start the next objective instead. One line of specific credit, then the new task.`);

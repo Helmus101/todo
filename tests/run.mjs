@@ -6878,6 +6878,20 @@ section("Tutor reply hygiene — invented wrapper tags, board line numbers (repo
     check("figure labels never show raw LaTeX (reported live: a graph showed $\\theta$ and $Mg$)", plainLabel("$\\theta$") === "θ" && plainLabel("$Mg$") === "Mg" && plainLabel("$mg\\sin\\theta$") === "mg sin θ" && plainLabel("$v_0$") === "v₀" && plainLabel("$30^\\circ$") === "30°" && plainLabel("price ($)") === "price ($)");
     check("…including text inside a model-drawn SVG", sanitizeSvg('<svg viewBox="0 0 10 10"><text x="1" y="1">$\\theta$</text></svg>').includes(">θ</text>"));
   }
+  {
+    const { badGap, dropRepeatedName } = await import("../server/tutor.ts");
+    const { asksToWrite } = await import("../server/tutorAdapt.ts");
+    const B = ["$Mg\\sin\\theta - T = Ma$", "$T - mg = ma$"];
+    check("a gap with two blanks, or a chat question dressed as a gap, is refused (reported live)", !!badGap("Factor g out: $g(?-?) = (M+m)a$", B) && !!badGap("What does that tell us about $Mg\\sin\\theta$ and $mg$? = ?", B) && !!badGap("What does that tell us about $mg$ = ?", B));
+    check("a gap asking for a line already finished on the board is refused", !!badGap("$M g \\sin\\theta - T = ?$", B));
+    check("…ordinary one-blank gaps still pass, units after the blank allowed", !badGap("$a = ?$", B) && !badGap("Set $f'(x) = 0$: $x^2 - 3x + 2 = 0 \\Rightarrow x = ?$", B) && !badGap("So the maximum volume is $V = ?$ cm³ (3 s.f.)", B));
+    { const { applyTool } = await import("../server/tutor.ts");
+      const result = { reply: "", board: [], problems: [], tokens: { in: 0, out: 0 } };
+      const ctx = { message: "can you write it", result, allBoard: () => [{ id: "a", kind: "formula", owner: "student", text: "For M along the slope: $Mg\\sin\\theta - T = Ma$" }, ...result.board], allProblems: () => [], fr: false, said: [], focus: [], known: [], codeWrite: true };
+      check("the same equation already inside a longer board line isn't written again (reported live)", /^DUPLICATE/.test(applyTool("WRITE_TO_BOARD", { kind: "formula", text: "$Mg\\sin\\theta - T = Ma$" }, ctx))); }
+    check("the student's name doesn't open reply after reply", dropRepeatedName("Willem, look here?", [{ role: "assistant", text: "Willem, hi" }]) === "Look here?" && dropRepeatedName("Willem, look here?", [{ role: "assistant", text: "hi" }]) === "Willem, look here?");
+    check("'write out what I wrote' / 'write the equation I just got' are requests to write on the board", asksToWrite("can you just write out what I wrote again please") && asksToWrite("can you just write the equation I just got place") && !asksToWrite("I wrote 5"));
+  }
   const e = makeBoardEntry({ text: "Recap:\\n- slope\\n- $a \\neq 0$", kind: "summary", why: "word ".repeat(60) }).entry;
   check("a literal \\n in a board line is a line break, LaTeX \\neq is kept, and a long 'why' is cut on a word with …", e.text.includes("\n- slope") && e.text.includes("\\neq") && /word…$/.test(e.why) && e.why.length <= 160);
 }

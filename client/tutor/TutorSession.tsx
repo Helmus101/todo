@@ -949,7 +949,8 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
             </div>
             <div className="tutor-chat-history">
               {!task.chat?.length && <p className="tutor-chat-empty">{L("Rien encore — dis bonjour à Otto.", "Nothing yet — say hi to Otto.")}</p>}
-              {task.chat?.map((msg, i) => (
+              {/* Otto's latest reply is already in the bubble right below — listing it here too showed it twice. */}
+              {(task.chat || []).slice(0, task.chat?.length && task.chat[task.chat.length - 1].role === "assistant" ? -1 : undefined).map((msg, i) => (
                 <div key={i} className={`tutor-chat-message ${msg.role}`}>
                   <div className="tutor-chat-role">{msg.role === "user" ? L("Toi", "You") : "Otto"}</div>
                   <div className="tutor-chat-text"><MathText text={friendlyExerciseText(msg.text, L("fr", "en") === "en")} /></div>
