@@ -340,7 +340,7 @@ export function backgroundBlock(c: TutorContext): string {
 /** The session's objectives ARE its lesson plan (spec §6/§7): an ordered list of milestones the student can see and
  *  that gets ticked off. The first unfinished one is the CURRENT milestone — named explicitly so the tutor drives the
  *  lesson forward itself instead of asking the student what to study next (spec §2.1 Failure D/G). */
-function objectivesBlock(objectives: TaskObjective[]): string {
+export function objectivesBlock(objectives: TaskObjective[]): string {
   if (!objectives.length) return "";
   const current = objectives.find((o) => !o.done);
   return `\n\nLESSON PLAN (the session objectives, in order — the student sees this checklist):\n${objectives.map((o) => `- [${o.done ? "x" : " "}] ${o.label}${o === current ? "   ← CURRENT" : ""}`).join("\n")}`
@@ -1018,6 +1018,20 @@ function formulaLineFor(reply: string): string {
   if (/\$[^$\n]{3,}\$/.test(reply)) return "";
   return plainRelationIn(reply);
 }
+const GREEK_TEX: Record<string, string> = { "θ": "\\theta", "α": "\\alpha", "β": "\\beta", "μ": "\\mu", "π": "\\pi", "λ": "\\lambda", "ω": "\\omega", "Δ": "\\Delta", "ρ": "\\rho", "σ": "\\sigma", "φ": "\\phi" };
+/** Plain-text maths ("T - mg = ma", "Msinθ − m = 0") as one typeset span. Text that already has $…$, or reads as prose
+ *  (a word of 4+ letters that isn't a function name), is returned unchanged. Pure; exported for tests. */
+export function typesetPlainMath(line: string): string {
+  const t = String(line || "").trim();
+  const MATH_WORDS = /sin|cos|tan|log|ln|sqrt|theta|alpha|beta|gamma|delta|lambda|sigma|omega|phi|rho|mu|pi/gi;
+  if (!t || /\$/.test(t) || !/[=<>≤≥+\-−*/^×·]/.test(t) || /[A-Za-z]{4,}/.test(t.replace(MATH_WORDS, " "))) return t;
+  const tex = t.replace(/[θαβμπλωΔρσφ]/g, (c) => `${GREEK_TEX[c]} `)
+    .replace(/(?<!\\)\b(theta|alpha|beta|gamma|delta|lambda|sigma|omega|phi|rho|mu|pi)\b/gi, (w) => `\\${w.toLowerCase()} `)
+    .replace(/−/g, "-").replace(/×|·/g, "\\times ").replace(/²/g, "^2").replace(/³/g, "^3")
+    .replace(/(?<!\\)(sin|cos|tan)(?=\s|\\|\(|[a-zA-Z0-9]|$)/g, " \\$1 ").replace(/\s+/g, " ").trim();
+  return `$${tex}$`;
+}
+
 /** A plain-text relation in prose ("Work is force times distance: W = Fd when…" → "W = Fd"): only the run of maths
  *  tokens touching the "=", never the words around it — a clause cut at punctuation put fragments like
  *  ") =(M+ m)a right there" and "a = …: what does that tell us" on the board (reported live). Exported for tests. */
@@ -1035,9 +1049,7 @@ export function plainRelationIn(reply: string): string {
     const depth = [...line].reduce((d, ch) => (d < 0 ? d : d + (ch === "(" ? 1 : ch === ")" ? -1 : 0)), 0);
     if (depth !== 0 || /\?/.test(line) || line.length > 120) continue;
     // Typeset it ourselves: a bare "W = Fd" handed to the board's auto-LaTeX came out as "$W =$ Fd".
-    const GREEK: Record<string, string> = { "θ": "\\theta", "α": "\\alpha", "β": "\\beta", "μ": "\\mu", "π": "\\pi", "λ": "\\lambda", "ω": "\\omega", "Δ": "\\Delta", "ρ": "\\rho", "σ": "\\sigma", "φ": "\\phi" };
-    const tex = line.replace(/[θαβμπλωΔρσφ]/g, (c) => `${GREEK[c]} `).replace(/−/g, "-").replace(/×|·/g, "\\times ").replace(/²/g, "^2").replace(/³/g, "^3").replace(/(sin|cos|tan)(?=\s|\\|\(|[a-zA-Z]\b)/g, " \\$1 ").replace(/\s+/g, " ").trim();
-    return `$${tex}$`;
+    return typesetPlainMath(line);
   }
   return "";
 }

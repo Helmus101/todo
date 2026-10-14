@@ -206,7 +206,7 @@ export function boardSurfaceBlock(entries: BoardEntry[] | undefined, problems: T
   for (const p of probs) lines.push(`- [problem] ${p.question.slice(0, 300)}${p.options?.length ? ` (options: ${p.options.join(" / ")})` : ""}${p.solved ? " — SOLVED" : ""}`);
   return (
     `\nWHAT'S CURRENTLY ON THE BOARD (the visible surface next to this chat — you can see it, the student ` +
-    `can see it, don't ask them to describe it back to you; a NEW WRITE_TO_BOARD call adds to this, it ` +
+    `can see it, don't ask them to describe it back to you; anything new you write adds to this, it ` +
     `never replaces it). Entries marked STUDENT'S WORK are THEIRS, not yours — never rewrite, correct or ` +
     `delete one silently; respond to it in chat and let them fix it. Everything listed here is ALREADY DONE ` +
     `or already asked — never redo or re-explain it; continue from the LAST entry:\n` +

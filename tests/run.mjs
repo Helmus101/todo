@@ -6326,7 +6326,7 @@ section("the tutor's hidden worked solution and teaching state never reach the b
   check("outgoingTasks, the job kick and the chat echo all strip solution/tutorState; finished tasks drop them",
     /const \{ solution: _sol, tutorState: _ts, \.\.\.t \} = t0 as WebTask;/.test(idx) && /const \{ chat, board, problems, objectives, solution, tutorState, \.\.\.rest \} = t;/.test(idx) &&
     /const \{ solution: _hiddenSolution, tutorState: _hiddenState, \.\.\.leanTask \} = t;/.test(idx) && /solution: _s, tutorState: _t/.test(comp));
-  check("the tutor route solves the focus problem once and records code-verified evidence", /if \(focus && focusKeyOf\(focus\) !== t\.solution\?\.focusKey\)/.test(idx) && /recordConceptEvidence\(/.test(idx) && /nextTeachingState\(t\.tutorState/.test(idx));
+  check("the tutor route solves the focus problem once and records code-verified evidence", /if \(focus && focusKeyOf\(focus\) !== t\.solution\?\.focusKey\)/.test(idx) && /recordConceptEvidence\(/.test(idx) && /nextTeachingState\(prev,/.test(idx) && /nextSupportState\(prev,/.test(idx));
 }
 
 const { runTutorSim } = await import("./tutor-sim.mjs");
@@ -6382,6 +6382,8 @@ const { runTutorEngineSim } = await import("./tutor-engine-sim.mjs");
 await runTutorEngineSim(check, section);
 const { runTutorCompanionSim } = await import("./tutor-companion-sim.mjs");
 await runTutorCompanionSim(check, section);
+const { runTutorTurnSim } = await import("./tutor-turn-sim.mjs");
+await runTutorTurnSim(check, section);
 {
   const app = appSource();
   const t = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
@@ -6649,7 +6651,7 @@ section("Tutor sessions are fully local — the server stores no chat/board/prob
   check("…while the non-tutor chat route keeps persisting its own task fields (only the tutor went local, nothing else changed)",
     /if \(newChat\.length\) t\.chat = \[\.\.\.\(t\.chat \|\| \[\]\), \.\.\.newChat\]/.test(idxL));
   check("the turn hands back only this turn's delta (chatDelta/board/problems/objectives), never a task carrying content",
-    /res\.json\(\{\n\s*reply: out\.reply, chatDelta: newChat, board: out\.board, problems:/.test(turn) && /task: \{ id: t\.id, title: t\.title, status: t\.status, source: t\.source, sourceSubject: t\.sourceSubject, updatedAt: t\.updatedAt, createdAt: t\.createdAt \}/.test(turn));
+    /res\.json\(\{\n\s*reply: out\.reply, speech: out\.turn\?\.speech, chatDelta: newChat, board: out\.board, problems:/.test(turn) && /task: \{ id: t\.id, title: t\.title, status: t\.status, source: t\.source, sourceSubject: t\.sourceSubject, updatedAt: t\.updatedAt, createdAt: t\.createdAt \}/.test(turn));
 
   // Grading and the leak guard still work WITHOUT a server-held board: the line rides up, and the key is
   // recomputed from that line first — so the independent verification is unchanged.

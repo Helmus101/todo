@@ -11,7 +11,10 @@ import { nextTeachingState, learningPrefsFrom, mergePrefs, evidenceKindFor, reac
 import { solveProblem, focusKeyOf, isNewProblem } from "../solver.ts";
 import { studentProblemStatement } from "../tutorAdapt.ts";
 import { recordConceptEvidence, normalizeStudentModel, emptyStudentModel } from "../studentModel.ts";
-import { runTutorTurn, detectSubject, computedGapKey, solvedGapKey } from "../tutor.ts";
+import { detectSubject, computedGapKey, solvedGapKey } from "../tutor.ts";
+import { runTutorTurn } from "../tutorTurn/engine.ts";
+import { nextSupportState } from "../tutorTurn/policy.ts";
+import type { Move } from "../../shared/tutorTurn.ts";
 import { selectJournal } from "../journal.ts";
 import type { TutorOpenerMemory } from "../claude.ts";
 import type { WebTask, Profile, BoardEntry, TaskObjective, TaskProblem } from "../../shared/types.ts";
@@ -223,7 +226,13 @@ async function tutorTurn(
   const reached = reachedSolutionSteps(message, t.solution);
   const helpBefore = t.tutorState?.helpLevel ?? 0;
   { const found = learningPrefsFrom(message); if (found.length) profile.tutorPrefs = mergePrefs(profile.tutorPrefs, found); }
-  t.tutorState = nextTeachingState(t.tutorState, { message, verdict: stepVerdict?.verdict, plan: out.plan, reachedStep: reached.length > 0, leaked: out.leakedValue });
+  { const prev = t.tutorState;
+    const next = nextTeachingState(prev, { message, verdict: stepVerdict?.verdict, plan: out.plan, reachedStep: reached.length > 0, leaked: out.leakedValue });
+    // Support level and struggle count are owned by code (server/tutorTurn/policy.ts), from the move actually delivered.
+    const turn = out.turn;
+    const support = turn ? nextSupportState(prev, { move: turn.move as Move, verdict: stepVerdict?.verdict, progressed: stepVerdict?.verdict === "correct" || reached.length > 0 || !!out.solvedInChat?.length, struggled: turn.struggled }) : {};
+    const record = turn ? { at: new Date().toISOString(), move: turn.move, support: turn.support, intent: turn.intent, diagnosis: turn.diagnosis, ...(stepVerdict?.verdict ? { verdict: stepVerdict.verdict } : {}), words: turn.speech.join(" ").split(/\s+/).filter(Boolean).length, studentWords: message.split(/\s+/).filter(Boolean).length, repaired: turn.repaired, ms: turn.ms } : null;
+    t.tutorState = { ...next, ...support, ...(record ? { log: [...(prev?.log || []), record].slice(-30) } : {}) }; }
   const evidence = evidenceKindFor({ message, verdict: stepVerdict?.verdict, reachedFinal: reached.includes(0), helpLevel: helpBefore });
   const skill = t.solution?.skill || t.sourceSubject;
   if (evidence && skill) {
@@ -264,7 +273,7 @@ async function tutorTurn(
   t.updatedAt = now;
   await commit(req);
   res.json({
-    reply: out.reply, chatDelta: newChat, board: out.board, problems: out.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped, solvedInChat: out.solvedInChat,
+    reply: out.reply, speech: out.turn?.speech, chatDelta: newChat, board: out.board, problems: out.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped, solvedInChat: out.solvedInChat,
     // A gap they answered right in CHAT is closed on the board too, so its answer box doesn't sit there asking again.
     gapsClosed: closedGaps,
     task: { id: t.id, title: t.title, status: t.status, source: t.source, sourceSubject: t.sourceSubject, updatedAt: t.updatedAt, createdAt: t.createdAt },

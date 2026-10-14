@@ -1231,6 +1231,26 @@ export interface TutorTeachingState {
   /** Their motivational state last turn (expert tutors track it alongside what they know), and for how many turns in a row. */
   affect?: "frustrated" | "unsure" | "confident" | "neutral";
   affectStreak?: number;
+  /** Support level of the move delivered last turn (0 = none … 5 = a worked example), set by code from the move. */
+  lastSupport?: number;
+  /** Turns in a row with no verified progress (no right step, no reached solution step). Drives "explain after struggle". */
+  unproductive?: number;
+  /** The last few turns as data — move, support, verdict, words — for metrics and repetition checks. Max 30. */
+  log?: TutorTurnRecord[];
+}
+
+/** One tutor turn, recorded by code (never the student's own words). */
+export interface TutorTurnRecord {
+  at: string;
+  move: string;
+  support: number;
+  intent: string;
+  diagnosis: string;
+  verdict?: "correct" | "incorrect";
+  words: number;
+  studentWords: number;
+  repaired: boolean;
+  ms: number;
 }
 
 export interface WebTask {
@@ -1554,6 +1574,8 @@ export interface DailyPracticeProblem {
  *  `DailyPracticeProblem` (one free-response per day). */
 export interface TaskProblem {
   id: string;
+  /** Which sentence of the tutor's reply posted it (the board reveals it as that sentence is spoken). */
+  cue?: number;
   /** Client-only, sent with chat turns: the student has already answered this one correctly. */
   solved?: boolean;
   /** The question/prompt itself — one clear sentence or a short problem statement. */
@@ -1682,6 +1704,12 @@ export interface BoardEntry {
   /** kind === "annotation": the board entry this note points at (highlight / circle a mistake / point to it), and how. */
   targetId?: string;
   tone?: "error" | "hint" | "good" | "focus";
+  /** A mark's shape on its target line (circle, underline, box, arrow, cross, tick) — drawn over the line, not as text. */
+  markStyle?: "circle" | "underline" | "box" | "arrow" | "cross" | "tick";
+  /** The exact bit of the target line a mark points at ("2x", "−T"); the whole line when absent. */
+  markPart?: string;
+  /** Which sentence of the tutor's reply this entry belongs to: the board reveals it as that sentence is spoken. */
+  cue?: number;
   /** Present only when kind === "diagram" — the figure's shapes, rendered as SVG (BoardArtifact.tsx). Capped
    *  at 15 ops server-side (makeDiagramEntry, server/claude.ts): enough for a labeled triangle or a small
    *  graph, not enough to build a full illustration op-by-op. */
