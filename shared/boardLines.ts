@@ -26,7 +26,7 @@ export function pointsAtOffTopicLine(reply: string, board: Pick<BoardEntry, "id"
   const byN = new Map([...nums].map(([id, n]) => [n, board.find((e) => e.id === id)!]));
   const ctx = stems(context);
   if (!ctx.size) return null;
-  for (const m of String(reply || "").matchAll(/\b(?:line|ligne)\s*(?:#|n°)?\s*(\d{1,3})\b|#(\d{1,3})\b/gi)) {
+  for (const m of String(reply || "").matchAll(/\b(?:line|ligne)\s*(?:#|n°)?\s*(\d{1,3})\b|(?<![\w&])#(\d{1,3})\b/gi)) {
     const e = byN.get(Number(m[1] || m[2]));
     if (!e) continue;
     const words = stems(e.text);
@@ -38,7 +38,7 @@ export function pointsAtOffTopicLine(reply: string, board: Pick<BoardEntry, "id"
 /** "Look at line 3" when the board's margin numbers stop before 3 → that number (else 0). */
 export function citesMissingBoardLine(reply: string, board: Pick<BoardEntry, "id" | "kind" | "at">[]): number {
   const max = boardLineNumbers(board).size;
-  for (const m of String(reply || "").matchAll(/\b(?:line|ligne)\s*(?:#|n°)?\s*(\d{1,3})\b|#(\d{1,3})\b/gi)) {
+  for (const m of String(reply || "").matchAll(/\b(?:line|ligne)\s*(?:#|n°)?\s*(\d{1,3})\b|(?<![\w&])#(\d{1,3})\b/gi)) {
     const n = Number(m[1] || m[2]);
     if (n > max) return n;
   }

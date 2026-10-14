@@ -236,7 +236,10 @@ export function makeProblem(input: any, requireCheck = false): { problem: TaskPr
   // slope) into a "verified" −40,126 that marked the student's correct 25537.8 wrong (reported live). When the problem
   // is stated in degrees, sin/cos/tan in the check mean degrees.
   const checkSrc = input?.check ? String(input.check) : "";
-  const verified = !hasMCQ && checkSrc ? evalCheckFor(checkSrc, question) : null;
+  // A WORD key ("H₂", "the mitochondria") is never overwritten by a number: the check only verifies numeric keys
+  // (reported: a key of "H₂" with a stray check became "1").
+  const wordKey = !!answer && !/\d/.test(answer.replace(/[₀-₉²³]/g, ""));
+  const verified = !hasMCQ && checkSrc && !wordKey ? evalCheckFor(checkSrc, question) : null;
   if (verified != null) {
     // "25,538" is twenty-five thousand, not 25.538: thousands separators out before parsing the model's own key.
     const given = answer ? Number(answer.replace(/(\d)[,\s](?=\d{3}(?!\d))/g, "$1").replace(/,/g, ".").replace(/[^0-9.eE+-]/g, "")) : NaN;
@@ -335,10 +338,20 @@ const MAX_OUTLINE_SECTIONS = 6;
 
 const MAX_OUTLINE_BULLETS = 8;
 
+/** Cut at a word boundary, with an ellipsis, never mid-word (a "why" ending "…the gradi" read as broken). */
+export function clipWords(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max - 1);
+  const sp = cut.lastIndexOf(" ");
+  return (sp > max * 0.6 ? cut.slice(0, sp) : cut).replace(/[\s,;:—–-]+$/, "") + "…";
+}
+
 export function makeBoardEntry(input: any): { entry: BoardEntry } | { error: string } {
-  const text = stripLeakedToolCallSyntax(String(input?.text || "").trim()).replace(/<br\s*\/?>/gi, "\n").replace(/<\/?[a-z][^>]*>/gi, "").replace(/&nbsp;|&#160;/gi, " ").slice(0, 600);
+  // A literal "\n" the model typed (not LaTeX like \neq / \nu) is a line break (reported: recaps showed "\n").
+  const text = stripLeakedToolCallSyntax(String(input?.text || "").replace(/\\n(?![a-z])/g, "\n").trim()).replace(/<br\s*\/?>/gi, "\n").replace(/<\/?[a-z][^>]*>/gi, "").replace(/&nbsp;|&#160;/gi, " ").slice(0, 600);
   if (!text) return { error: "ERROR: a board entry needs non-empty text." };
-  const why = stripLeakedToolCallSyntax(String(input?.why || "")).replace(/<\/?[a-z][^>]*>/gi, "").replace(/&nbsp;|&#160;/gi, " ").replace(/\s+/g, " ").trim().slice(0, 160);
+  const whyRaw = stripLeakedToolCallSyntax(String(input?.why || "")).replace(/<\/?[a-z][^>]*>/gi, "").replace(/&nbsp;|&#160;/gi, " ").replace(/\s+/g, " ").trim();
+  const why = clipWords(whyRaw, 160);
   const kindRaw = String(input?.kind || "").trim();
   const kind = BOARD_KINDS.has(kindRaw) ? (kindRaw as BoardEntry["kind"]) : undefined;
   if (kind === "outline") {

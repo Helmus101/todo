@@ -61,7 +61,8 @@ import { speechErrorMessage } from "../client/voice/speechErrors.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, mergePronoteHomeworkAndTests } from "../server/discover.ts";
-import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, normalizeWhen, addUsage, monthKeyOf, monthCostUsd, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, validateThemeTokens, normalizeProfile, milestonesBySubject } from "../shared/types.ts";
+import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, normalizeWhen, addUsage, monthKeyOf, monthCostUsd, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, singleNumber, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, validateThemeTokens, normalizeProfile, milestonesBySubject } from "../shared/types.ts";
+import { gradeGapAnswer } from "../shared/exerciseVerification.ts";
 import { planStuckRecovery, sweepDueForDay, localDay, sweepDue, shouldRefreshStudentModel, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp } from "../server/workload.ts";
 import { stripHtml, applyPronoteGrades, applyPronoteLessons, isPrivateOrReservedIp, assertSafeExternalUrl } from "../server/pronote.ts";
@@ -4276,6 +4277,23 @@ section("practiceAnswerMatches — loose-but-not-fuzzy free-response checking");
   // 5%/0.08; these two cases sit between the OLD and NEW tolerance (would have failed before, pass now).
   check("a wider rounding-path gap (within 5%) now passes where the old 3% tolerance would have rejected it", practiceAnswerMatches("1.92", "2.0") && practiceAnswerMatches("1.94", "2.02"));
   check("still not unlimited — a value clearly outside even the widened tolerance still fails", !practiceAnswerMatches("1.5", "2.0"));
+
+  section("Grading a one-value answer: units, degrees, decimal commas accepted; extra values never are (reported live)");
+  // A French decimal comma is a DECIMAL, not a thousands separator: "1,5" must read 1.5, not 15.
+  check("a French decimal comma is checked like the decimal point it is", practiceAnswerMatches("1,5", "1.5") && practiceAnswerMatches("1.5", "1,5") && practiceAnswerMatches("2,5 m/s²", "2.5"));
+  check("…and a real thousands separator still reads as one", practiceAnswerMatches("1,000", "1000"));
+  // A one-value answer may carry a unit or a degree mark — the notation the problem itself used.
+  check("a unit or a degree mark on a one-value answer is not a wrong answer", singleNumber("12 N") === 12 && singleNumber("2.5 m/s²") === 2.5 && singleNumber("30°") === 30 && singleNumber("1,5") === 1.5);
+  check("…but an expression or a second quantity is never reduced to its first number", !Number.isFinite(singleNumber("2x + 1")) && !Number.isFinite(singleNumber("3 or 5")) && !Number.isFinite(singleNumber("x = 3")));
+  // The number fallbacks must only fire on a ONE-quantity answer each side: an extra root, a partial root,
+  // or the question itself restated all "contain" the right number, and none of them is the answer.
+  check("an answer with extra values is not the one-value key", !practiceAnswerMatches("x = 3 or x = 7", "3", 3) && !practiceAnswerMatches("3 and 5", "5"));
+  check("a key of two values is not matched by one of them", !practiceAnswerMatches("3", "3 and 5"));
+  check("a restated question is not the answer", !practiceAnswerMatches("Find x if 3x + 6 = 15", "3", 3));
+  // …and the same one-value rules apply to a board gap's key, where units were marked wrong.
+  check("a gap answer typed with its unit, degree or French decimal is checked", gradeGapAnswer("12", 12, "P", "12 N").verdict === "correct" && gradeGapAnswer("2.5", 2.5, "a", "2.5 m/s²").verdict === "correct" && gradeGapAnswer("30", 30, "angle", "30°").verdict === "correct" && gradeGapAnswer("1.5", 1.5, "v", "1,5").verdict === "correct");
+  check("…a genuinely wrong gap value with the same unit is still wrong", gradeGapAnswer("12", 12, "P", "14 N").verdict === "incorrect");
+  check("…and a gap whose key is an expression is still graded as an expression", gradeGapAnswer("2x+1", null, "f(x)", "2x + 1").verdict === "correct" && gradeGapAnswer("2x+1", null, "f(x)", "sin(30)").verdict === "incorrect");
 }
 
 section("looksLikeStem / makePracticeProblem — daily practice-problem generation gate + validation");
@@ -4288,6 +4306,14 @@ section("looksLikeStem / makePracticeProblem — daily practice-problem generati
   check("valid problem+answer is accepted", "problem" in okProblem);
   check("missing answer is rejected", "error" in makePracticeProblem({ problem: "Solve for x: 2x = 6" }));
   check("missing problem is rejected", "error" in makePracticeProblem({ answer: "3" }));
+  // Reported live: a WORD answer key was overwritten by the computed number — "H₂" became "2". The check
+  // COMPUTES a number, so it can only confirm or contradict a key that IS a number; a word key is left alone.
+  const wordKeyProblem = makePracticeProblem({ problem: "What is the chemical symbol for hydrogen?", answer: "H₂", check: "1+1" });
+  check("a word answer key is never overwritten by the computed number", "problem" in wordKeyProblem && wordKeyProblem.problem.answer === "H₂");
+  const unitKeyProblem = makePracticeProblem({ problem: "Give the mass", answer: "12 kg", check: "3*4" });
+  check("…and a numeric key that agrees with its own check is left alone too", "problem" in unitKeyProblem && unitKeyProblem.problem.answer === "12 kg");
+  const brokenKeyProblem = makePracticeProblem({ problem: "Give the mass", answer: "15 kg", check: "3*4" });
+  check("…while a numeric key that DISAGREES still yields to the computation (spec §19)", "problem" in brokenKeyProblem && brokenKeyProblem.problem.answer === "12");
 }
 
 section("bandit.ts — contextual bandit (Thompson Sampling) for Pomodoro personalization");
@@ -6756,6 +6782,14 @@ section("Tutor reply hygiene — invented wrapper tags, board line numbers (repo
   const leaked = '{\n  "operation": "WRITE_TO_BOARD",\n  "kind": "gap",\n  "why": "Sets up {the} comparison."\n}\n[ANNOTATE_BOARD target="10" tone="focus" note="Look here."]That gap is at its biggest.\n\nWhy is that top point not the whole surplus?';
   check("a JSON tool call and a bracket tool call written as text are removed, and the real reply AFTER them is kept (reported live)", stripLeakedToolCallSyntax(leaked) === "That gap is at its biggest.\n\nWhy is that top point not the whole surplus?");
   check("ordinary braces, brackets and fenced non-tool JSON are left alone", stripLeakedToolCallSyntax("Set {1,2} and see [the board].") === "Set {1,2} and see [the board]." && stripLeakedToolCallSyntax("Fine.\n```json\n{\"name\": \"CREATE_PROBLEM\"}\n```\nNext?") === "Fine.\n\nNext?");
+  // Reported live: an XML-style call still gets through. Every tool is ALL-CAPS_SNAKE, so a tag in that
+  // shape is plumbing; the prose on BOTH sides of it is the reply and must survive.
+  check("an XML-style tool call is removed and the reply on both sides of it is kept (reported live)", stripLeakedToolCallSyntax("Up it goes. <WRITE_TO_BOARD kind=\"gap\">{\"text\": \"x = ?\"}</WRITE_TO_BOARD> What's the first move?") === "Up it goes. What's the first move?");
+  check("a self-closing tool tag and a stray closing tag go without eating the prose", stripLeakedToolCallSyntax("Fine. <DRAW_ON_BOARD />Next?") === "Fine. Next?" && stripLeakedToolCallSyntax("done </WRITE_TO_BOARD> carry on") === "done carry on");
+  check("a namespaced <function_calls>/<invoke>/<parameter> block is removed whole", stripLeakedToolCallSyntax("Right. <antml:function_calls><antml:invoke name=\"SET_OBJECTIVES\"><antml:parameter name=\"objectives\">[]</antml:parameter></antml:invoke></antml:function_calls> Let's begin.") === "Right. Let's begin.");
+  check("an unclosed tool tag cuts the argument text after it, but not the reply before", stripLeakedToolCallSyntax("ok <WRITE_TO_BOARD>{\"text\": \"lots of arguments\"") === "ok");
+  check("an unclosed tool tag with no reply before it leaves nothing, not the arguments", stripLeakedToolCallSyntax("<TABLE_ON_BOARD rows=[[1,2]]>") === "");
+  check("maths and prose with '<' are untouched", stripLeakedToolCallSyntax("since 5 < 10, and H₂O stays") === "since 5 < 10, and H₂O stays");
 }
 
 {
@@ -6810,6 +6844,32 @@ section("Tutor reply hygiene — invented wrapper tags, board line numbers (repo
 {
   const { asksForSeveralValues } = await import("../server/tutor.ts");
   check("a one-box problem asking for several values is refused (reported: roots 3 and 4 keyed to 3 only); one named value is fine", asksForSeveralValues("A quadratic has the form x^2 - 7x + 12. Find the values of x where it equals zero.") && asksForSeveralValues("Find the roots of x^2 - 5x + 6 = 0") && !asksForSeveralValues("Find the larger root of x^2 - 5x + 6 = 0") && !asksForSeveralValues("Find the equilibrium price P."));
+}
+
+{
+  section("QA round fixes — chat wrong answers, director triggers, arithmetic, board hygiene (reported live)");
+  const { wrongInChat, questionCount } = await import("../server/tutor.ts");
+  const { turnActions } = await import("../server/tutorDirector.ts");
+  const { pointsAtOffTopicLine } = await import("../shared/boardLines.ts");
+  const p = { id: "a", question: "Solve 2x + 3 = 11", answer: "4" };
+  check("a wrong numeric answer typed in chat is recognised as wrong; a right one, a question, or prose is not", wrongInChat("I got 5", p) && wrongInChat("x = 3", p) && !wrongInChat("4", p) && !wrongInChat("why is it 4?", p) && !wrongInChat("I think we should subtract 3 from both sides first", p));
+  const base = { history: [{ role: "user", text: "hi" }], board: [{ kind: "line", text: "x" }], problems: [{ question: "Solve 2x+3=7", solved: false }], objectives: [{ id: "1", label: "Linear equations", done: false }] };
+  check("'what is the answer' / 'what is x' are about THIS problem, not a new concept", !turnActions({ ...base, message: "what is the answer" }).length && !turnActions({ ...base, message: "what is x" }).length);
+  check("'draw it' gets a visual, not a new-topic header", (() => { const a = turnActions({ ...base, message: "draw it", drawRequest: true }); return a.some((x) => /Visual first/.test(x)) && !a.some((x) => /NEW topic/.test(x)); })());
+  check("a real new concept still opens a new topic", turnActions({ ...base, message: "what is a derivative?" }).some((x) => /NEW topic/.test(x)));
+  check("'let me test x = 3' is not a study goal; 'a test tomorrow on derivatives' is", !turnActions({ ...base, objectives: [], message: "let me test x = 3" }).some((x) => /START TEACHING/.test(x)) && turnActions({ ...base, objectives: [], message: "I have a test on derivatives tomorrow" }).some((x) => /START TEACHING/.test(x)));
+  check("a wrong verdict asks for the first error and no new problem", turnActions({ ...base, message: "5", stepVerdict: "incorrect" }).some((x) => /Don't put up a new problem/.test(x)));
+  check("negative results and LaTeX \\times are checked", findArithmeticClaims("3 - 5 = -8")[0]?.mismatch === true && findArithmeticClaims("3 - 5 = -2")[0]?.mismatch === false && findArithmeticClaims("$3 \\times 4 = 13$")[0]?.mismatch === true);
+  check("an HTML entity like &#160; is not 'line 160'", !pointsAtOffTopicLine("x&#160;= 3, look at it", [], "anything"));
+  check("only real questions are counted (not ones inside maths or quotes)", questionCount("What do you see? And why?") === 2 && questionCount('If a critic asked "why?" what would you say?') === 1);
+  {
+    const { applyTool } = await import("../server/tutor.ts");
+    const mk = () => { const result = { reply: "", board: [], problems: [], tokens: { in: 0, out: 0 } }; return { message: "I got 7", result, allBoard: () => [{ id: "p", kind: "given", text: "Differentiate $3x^4 - 5x^2 + 7x - 2$" }, ...result.board], allProblems: () => [], fr: false, said: ["Differentiate the polynomial"], focus: [], known: [] }; };
+    check("a gap's own '… = ?' clause is the question, not an equation handed over (reported live: 'd/dx(3x^4) = ?' was refused)", /^\{"ok":true/.test(applyTool("WRITE_TO_BOARD", { kind: "gap", text: "First term: $\\frac{d}{dx}(3x^4) = ?$" }, mk())));
+    check("…but a gap that states the formula before its '= ?' is still refused", /^REJECTED/.test(applyTool("WRITE_TO_BOARD", { kind: "gap", text: "Power rule: $\\frac{d}{dx}x^n = nx^{n-1}$, so $\\frac{d}{dx}(3x^4) = ?$" }, mk())));
+  }
+  const e = makeBoardEntry({ text: "Recap:\\n- slope\\n- $a \\neq 0$", kind: "summary", why: "word ".repeat(60) }).entry;
+  check("a literal \\n in a board line is a line break, LaTeX \\neq is kept, and a long 'why' is cut on a word with …", e.text.includes("\n- slope") && e.text.includes("\\neq") && /word…$/.test(e.why) && e.why.length <= 160);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

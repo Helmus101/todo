@@ -521,7 +521,7 @@ function SourceBlock({ spec, en }: { spec: SourceSpec; en: boolean }) {
       {spec.attribution ? <figcaption className="sm-board-source-by">— {spec.attribution}</figcaption> : null}
       {spec.highlights.some((h) => h.note) ? (
         <ol className="sm-board-source-notes" aria-label={en ? "Notes on the source" : "Notes sur la source"}>
-          {spec.highlights.map((h, i) => h.note ? <li key={i} value={i + 1}><em>{h.phrase}</em> — {h.note}</li> : null)}
+          {spec.highlights.map((h, i) => h.note ? <li key={i} value={i + 1}><em>{h.phrase}</em> — <MathText text={h.note} /></li> : null)}
         </ol>
       ) : null}
     </figure>
@@ -582,6 +582,13 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
     // current one); a header that repeats the one just before it is shown once.
     .filter((e, i, arr) => e.kind !== "focus" || !arr.slice(0, i).reverse().find((x) => x.kind === "focus" && nearSameHeading(x.text, e.text)))
     .filter(e => (e.kind as string) !== "problem" && e.kind !== "annotation");
+
+  // Otto's mark-ups (ANNOTATE_BOARD) sit under the line they point at, in that line's place — not in the flow.
+  const notesFor = useMemo(() => {
+    const m = new Map<string, BoardEntry[]>();
+    for (const a of entries) if (a.kind === "annotation" && a.targetId) m.set(a.targetId, [...(m.get(a.targetId) || []), a]);
+    return m;
+  }, [entries]);
 
   // The margin line numbers — the SAME numbering the tutor reads (#n), so "look at line 4" is findable.
   const lineNo = useMemo(() => boardLineNumbers(entries), [entries]);
@@ -812,7 +819,7 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
           return (
             <div
               key={item.key}
-              className={`sm-board-entry sm-board-entry-${e.kind || "note"}${e.owner === "student" ? " sm-board-entry-student" : ""} sm-board-writein${fresh ? " sm-board-reveal" : ""}${isPastGap || (e.kind === "gap" && e.status === "correct") ? " sm-board-gap-past" : ""}`}
+              className={`sm-board-entry sm-board-entry-${e.kind || "note"}${e.owner === "student" ? " sm-board-entry-student" : ""}${e.status === "incorrect" && e.kind !== "gap" ? " sm-board-entry-incorrect" : ""} sm-board-writein${fresh ? " sm-board-reveal" : ""}${isPastGap || (e.kind === "gap" && e.status === "correct") ? " sm-board-gap-past" : ""}`}
               style={fresh ? { animationDuration: `.35s, ${revealDuration(e.text)}s` } : undefined}
             >
               {lineNo.get(e.id) ? <span className="sm-board-lineno" aria-label={en ? `line ${lineNo.get(e.id)}` : `ligne ${lineNo.get(e.id)}`}>{lineNo.get(e.id)}</span> : null}
@@ -907,6 +914,9 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
                   {e.kind === "gap" && e.expectedAnswer && e.status !== "correct" && !flowItems.slice(idx + 1).some((it) => it.entry?.kind === "gap") && onGapCheck ? <GapAnswer entry={e} onCheck={onGapCheck} en={en} /> : null}
                 </>
               )}
+              {(notesFor.get(e.id) || []).map((a) => (
+                <div key={a.id} className={`sm-board-note sm-board-note-${a.tone || "focus"}`}><span aria-hidden>↳ </span><MathText text={a.text} /></div>
+              ))}
               </div>
             </div>
           );

@@ -562,8 +562,9 @@ export async function chatAboutTask(
   // fallback is always the better outcome, and DeepSeek v4's hidden reasoning tokens make "slow" hard to
   // bound tightly (see the 28s→45s history right above).
   const CHAT_DEADLINE_MS = opts?.primer ? 45_000 : 120_000; // an interactive tutor turn never hangs for two minutes
+  let timer: ReturnType<typeof setTimeout> | undefined;
   return Promise.race([
     runRounds(),
-    new Promise<ChatResult>((resolve) => setTimeout(() => resolve(finish("")), CHAT_DEADLINE_MS)),
-  ]);
+    new Promise<ChatResult>((resolve) => { timer = setTimeout(() => resolve(finish("")), CHAT_DEADLINE_MS); }),
+  ]).finally(() => clearTimeout(timer)); // a finished turn must not fire a second (fallback) finish later
 }

@@ -26,7 +26,10 @@ export function makePracticeProblem(input: any): { problem: DailyPracticeProblem
   const value = check ? computeCheck(check, problem) : null;
   if (value != null) {
     const stated = statedKeyNumber(answer);
-    if (!Number.isFinite(stated) || Math.abs(stated - value) > Math.max(0.01, Math.abs(value) * 0.01)) {
+    // A WORD key ("H₂", "friction") is not a number, so the check — which COMPUTES a number — can't confirm or
+    // contradict it and must never replace it (reported live: a hydrogen-symbol key became "2"). Only a key
+    // that itself reads as a number can disagree with its own check; that one still yields to the computation.
+    if (Number.isFinite(stated) && Math.abs(stated - value) > Math.max(0.01, Math.abs(value) * 0.01)) {
       console.warn(`[practice] answer key disagreed with its own check — using the computed value ${value}`);
       answer = String(value);
     }

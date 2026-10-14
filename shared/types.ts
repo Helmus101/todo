@@ -1863,7 +1863,13 @@ function parsePi(s: string): number {
   return NaN;
 }
 function parseNumericOrFraction(s: string): number {
-  const cleaned = normalizeMinus(s).replace(/,/g, "");
+  // Comma handling matters (reported live): "1,5" is a FRENCH DECIMAL and must read as 1.5, while "1,000" is a
+  // thousands separator. Stripping every comma turned "1,5" into 15 and marked a right answer wrong. Same two
+  // rules firstNumber already uses: a comma/space before EXACTLY three digits is a thousands separator, any
+  // other digit-comma-digit is a decimal comma.
+  const cleaned = normalizeMinus(s)
+    .replace(/(\d)[ \u00a0,](?=\d{3}(?!\d))/g, "$1")
+    .replace(/(\d),(?=\d)/g, "$1.");
   const direct = Number(cleaned);
   if (Number.isFinite(direct)) return direct;
   const pi = parsePi(cleaned);
@@ -1874,6 +1880,34 @@ function parseNumericOrFraction(s: string): number {
     if (Number.isFinite(num) && Number.isFinite(den) && den !== 0) return num / den;
   }
   return NaN;
+}
+/** How many separate quantities an answer carries — a fraction ("7/2", "5pi/6") counts as ONE. Used to tell a
+ *  one-value answer ("x = 3", "84 m", "≈ 112 m") from one that carries extra values ("x = 3 or x = 7", a
+ *  question restated with its own numbers): the number fallbacks must never match the latter on their first
+ *  number alone — that is how an extra root, a partial root, or the question itself passed as the answer. */
+export function quantityCount(s: string): number {
+  let t = normalizeMinus(String(s || ""));
+  t = t.replace(/(\d)[ \u00a0,](?=\d{3}(?!\d))/g, "$1").replace(/(\d),(?=\d)/g, "$1.");
+  t = t.replace(/-?\d*(?:\.\d+)?\s*pi\s*\/\s*-?\d+(?:\.\d+)?/gi, " ")   // "5pi/6"
+    .replace(/-?\d+(?:\.\d+)?\s*\/\s*-?\d+(?:\.\d+)?/g, " ");           // "7/2"
+  return (t.match(/\d+(?:\.\d+)?(?:e-?\d+)?/gi) || []).length;
+}
+/** A whole answer that is ONE number with notation around it — a unit ("12 N", "2.5 m/s²"), a degree mark
+ *  ("30°"), a percent, thousands separators, a French decimal comma ("1,5") — returns that number. NaN when
+ *  the answer is an expression, a word, or carries a second quantity ("x = 3 or x = 7"): those are never
+ *  reduced to their first number. Reported live: "12 N", "2.5 m/s²", "30°" and "1,5" were all marked wrong. */
+export function singleNumber(s: string): number {
+  let t = normalizeMinus(String(s || "").trim()).replace(/^[≈~=]+\s*/, "").replace(/\s*=\s*$/, "");
+  t = t.replace(/(\d)[ \u00a0,](?=\d{3}(?!\d))/g, "$1").replace(/(\d),(?=\d)/g, "$1.");
+  const m = /^(\d+(?:\.\d+)?(?:e-?\d+)?)\s*(.*)$/i.exec(t);
+  if (!m) return NaN;
+  const num = Number(m[1]);
+  if (!Number.isFinite(num)) return NaN;
+  const rest = m[2].trim().replace(/\^(\d)/g, (_, d) => ({ "2": "²", "3": "³" } as Record<string, string>)[d] ?? "");
+  if (!rest) return num;
+  if (/^\d/.test(rest)) return NaN;                       // a second quantity, not a unit
+  if ((rest.match(/\S+/g) || []).length > 1) return NaN;   // more than one word after the number
+  return /^[A-Za-zµΩ°%²³·\/\s]*$/.test(rest) ? num : NaN;
 }
 // A multi-step numeric problem (physics, chemistry, finance) routinely has more than one legitimate path
 // to the final number — g = 9.8 vs 9.81, rounding an intermediate angle vs carrying full precision through
@@ -1927,8 +1961,9 @@ export function practiceAnswerMatches(given: string, correct: string, value?: nu
       if (Math.abs(asPercent - c) <= tol || Math.abs(asPercent - target) <= Math.max(Math.abs(target) * 0.006, 0.05) || Math.abs(g - c) <= tol) return true;
     }
   }
-  if (Number.isFinite(value as number)) {
+  if (Number.isFinite(value as number) && quantityCount(given) <= 1) {
     // The problem's verified exact value: any answer within rounding of it is right, whatever units or words surround it.
+    // Only for a ONE-quantity answer: "Find x if 3x + 6 = 15" also "contains" the right number, and it is not the answer.
     const gv = firstNumber(given);
     if (Number.isFinite(gv) && Math.abs(gv - (value as number)) <= Math.max(Math.abs(value as number) * 0.006, 0.05)) return true;
   }
@@ -1966,10 +2001,13 @@ export function practiceAnswerMatches(given: string, correct: string, value?: nu
     return m ? Number(m[0].replace(",", ".")) : NaN;
   };
   const gln = leadingNum(g), cln = leadingNum(c);
-  if (Number.isFinite(gln) && Number.isFinite(cln) && numbersMatch(gln, c.match(/-?\d+\.\d+/)?.[0] ?? cln)) return true;
+  // Both sides must be ONE quantity: a key of "3 and 5" is not "3", and "x = 3 or x = 7" is not "3" (reported
+  // live — a partial or extra root, and a restated question, were all accepted on their leading number alone).
+  const oneValueEach = quantityCount(given) <= 1 && quantityCount(correct) <= 1;
+  if (oneValueEach && Number.isFinite(gln) && Number.isFinite(cln) && numbersMatch(gln, c.match(/-?\d+\.\d+/)?.[0] ?? cln)) return true;
   // Last resort: the number may sit after words or signs ("≈ 112 m", "the height is 112 metres", "h≈111,99") — compare the first number on each side.
   const gfn = firstNumber(g), cfn = firstNumber(c);
-  if (Number.isFinite(gfn) && Number.isFinite(cfn)) return numbersMatch(gfn, c.match(/-?\d+\.\d+/)?.[0] ?? cfn);
+  if (oneValueEach && Number.isFinite(gfn) && Number.isFinite(cfn)) return numbersMatch(gfn, c.match(/-?\d+\.\d+/)?.[0] ?? cfn);
   return false;
 }
 

@@ -10,7 +10,7 @@
 // the SAME comparison, so a verdict can never depend on which side evaluated it.
 import { compileExpr } from "./mathExpr.ts";
 import { equivalent, logAnswerEquivalent, toExprSource } from "./mathEquiv.ts";
-import { practiceAnswerMatches } from "./types.ts";
+import { practiceAnswerMatches, singleNumber } from "./types.ts";
 
 /** What is known about an item's answer key. `conflict` is the release-critical one: it means the stored key
  *  and the independently computed value disagree, so the key — not the student — is what's wrong. */
@@ -247,10 +247,23 @@ export function verifyPolynomialDivision(line: string, given: string): "correct"
 export function gradeGapAnswer(storedKey: string | undefined, recomputed: number | null, target: string | undefined, given: string): { verdict: "correct" | "incorrect" | "unknown" | "system_error"; keyConflict: boolean; verification: VerificationStatus } {
   const key = recomputed != null ? String(recomputed) : String(storedKey || "");
   if (!key) return { verdict: "unknown", keyConflict: false, verification: "not_checked" };
+  const keyConflict = recomputed != null && !!storedKey && !keysAgree(storedKey, recomputed);
+  // A gap's answer is a VALUE, and students type it with the notation the problem used: "12 N", "2.5 m/s²",
+  // "30°" (degrees), "1,5" (French decimal comma). `equivalent` compiles both sides, so any unit, degree mark
+  // or comma makes it fail — reported live as four right answers marked wrong. When the key IS a plain number,
+  // compare the number itself, notation and all; anything else (an expression, a second quantity) falls through.
+  const keyNum = singleNumber(key), givenNum = singleNumber(given);
+  if (Number.isFinite(keyNum) && Number.isFinite(givenNum)) {
+    const ok = Math.abs(givenNum - keyNum) <= Math.max(Math.abs(keyNum) * 0.006, 0.05);
+    // Same contract as the expression path below: a right answer is right even on a broken key (flagged), and
+    // a miss on an item whose key disagrees with its own recomputation is the ITEM's fault, never theirs.
+    if (ok) return { verdict: "correct", keyConflict, verification: keyConflict ? "conflict" : "verified" };
+    if (keyConflict) return { verdict: "system_error", keyConflict: true, verification: "conflict" };
+    return { verdict: "incorrect", keyConflict: false, verification: "verified" };
+  }
   // A log-laws gap ("log_a(x^3) = ?") is compared term by term; anything else as a compiled expression.
   const logV = logAnswerEquivalent(given, key);
   const verdict = logV !== "unknown" ? logV : equivalent(given, key, target);
-  const keyConflict = recomputed != null && !!storedKey && !keysAgree(storedKey, recomputed);
   // "verified" here means THE VERDICT IS TRUSTWORTHY: comparing two compiled expressions is itself a real
   // mathematical test, so a definite correct/incorrect against a checkable key is verified even when the key
   // wasn't independently recomputed (a symbolic gap key like "h/tan 25°" has no numeric value to recompute).

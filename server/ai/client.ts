@@ -254,7 +254,7 @@ export async function rewriteReply(draft: string, fix: string, studentMessage: s
     }, true);
     const u = usageOf(res);
     if (usage) { usage.in += u.in; usage.out += u.out; usage.cachedIn = (usage.cachedIn || 0) + u.cachedIn; }
-    return stripWrapperTags(String(res?.choices?.[0]?.message?.content || "")).trim();
+    return stripLeakedToolCallSyntax(stripWrapperTags(String(res?.choices?.[0]?.message?.content || ""))).trim();
   } catch (e: any) {
     console.error(`[chat] rewrite failed: ${e?.message || e}`);
     return "";
@@ -364,8 +364,43 @@ function removeTextToolCalls(text: string): string {
   return out.replace(/\n{3,}/g, "\n\n").trim();
 }
 
+// Fourth leak format (reported live after the three above): the call written out as XML —
+// `<WRITE_TO_BOARD kind="gap">…</WRITE_TO_BOARD>`, `<function_calls><invoke name="SET_OBJECTIVES">`. Every tool
+// this app offers is ALL-CAPS_SNAKE (tools.ts / tutor.ts), so a TAG in that shape is plumbing, never a word a
+// student should read; `invoke`/`parameter`/`function_calls` are the generic wrappers those formats wrap it in.
+// Unlike the markers above this one is REMOVED rather than cut-at: the prose after such a block is often the
+// actual reply ("<DRAW_ON_BOARD/…>What do you notice?"), so only the element itself goes. An unclosed tool tag
+// means everything after it is the call's argument text — that is cut, same posture as the markers.
+const XML_TOOL_TAG = String.raw`(?:[a-z][a-z0-9]*:)?([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+|function_calls?|tool_calls?|tool_use|invoke|parameter)`;
+const XML_TOOL_ELEMENT = new RegExp(String.raw`<\/?${XML_TOOL_TAG}\b[^>]*\/?>`, "g");
+
+function removeXmlToolCalls(text: string): string {
+  let out = text;
+  for (let guard = 0; guard < 50; guard++) {
+    XML_TOOL_ELEMENT.lastIndex = 0;
+    const m = XML_TOOL_ELEMENT.exec(out);
+    if (!m) break;
+    const tag = m[1];
+    const before = out.slice(0, m.index);
+    // Keep the prose joined as the model wrote it: at most one space survives on either side of the cut.
+    const join = (a: string, b: string) => {
+      if (/\n[ \t]*$/.test(a) || /^[ \t]*\n/.test(b)) return a.replace(/[ \t]+$/, "") + b.replace(/^[ \t]+/, "");
+      const had = /[ \t]$/.test(a) || /^[ \t]/.test(b);
+      return a.replace(/[ \t]+$/, "") + (had ? " " : "") + b.replace(/^[ \t]+/, "");
+    };
+    // A stray closer (`</WRITE_TO_BOARD>` on its own) is only ever the tag — the prose around it is the reply.
+    const after = out.slice(m.index + m[0].length);
+    if (m[0].startsWith("</") || /\/\s*>$/.test(m[0])) { out = join(before, after); continue; }
+    const hit = new RegExp(String.raw`<\/(?:[a-z][a-z0-9]*:)?${tag}\b[^>]*>`, "i").exec(after);
+    if (hit) { out = join(before, after.slice(hit.index + hit[0].length)); continue; }
+    // Unclosed opener: everything after it is the call's argument text, so it goes too — same posture as the markers.
+    return before.replace(/```(?:json)?\s*$/i, "").replace(/\n{3,}/g, "\n\n").trim();
+  }
+  return out.replace(/\n{3,}/g, "\n\n").trim();
+}
+
 export function stripLeakedToolCallSyntax(input: string): string {
-  const text = removeTextToolCalls(input);
+  const text = removeXmlToolCalls(removeTextToolCalls(input));
   const hits = [TOOL_CALL_LEAK_MARKER.exec(text), TOOL_CALL_LEAK_MARKER2.exec(text), TOOL_CALL_LEAK_MARKER3.exec(text)].filter((m): m is RegExpExecArray => !!m);
   if (!hits.length) return text;
   const cut = Math.min(...hits.map((m) => m.index));

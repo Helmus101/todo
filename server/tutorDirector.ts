@@ -16,6 +16,8 @@ export interface DirectorInput {
   solvedInChat?: boolean;
   stuckStreak?: number;
   discussion?: boolean;
+  /** They asked Otto to draw/show the picture ("draw it"). */
+  drawRequest?: boolean;
 }
 
 const words = (t: string) => new Set(String(t || "").toLowerCase().replace(/\$[^$]*\$/g, " ").split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 4).map((w) => w.slice(0, 5)));
@@ -24,8 +26,11 @@ const overlaps = (a: string, b: string) => { const B = words(b); return [...word
 export const DREW_ON_BOARD = /\[(?:What I wrote\/drew on the board|Ce que j'ai écrit\/dessiné sur le tableau)\s*:/i;
 const EXERCISE_RIGHT = /\[(?:Exercise|Exercice)\][^\n]*(?:marked right|checked right|— juste|vérifié juste)/i;
 const EXERCISE_WRONG = /\[(?:Exercise|Exercice)\][^\n]*(?:marked wrong|checked wrong|— faux|vérifié faux|PARTLY right|en partie juste)/i;
-const CONCEPT_REQUEST = /\b(?:explain|what (?:is|are|does)|what's|how (?:does|do)|why (?:does|do|is)|teach me|show (?:me )?(?:the |a )?(?:graph|diagram|curve|picture|how)|draw|c'est quoi|qu'est-ce que|explique|montre(?:-moi)?|dessine)\b/i;
-const STUDY_GOAL = /\b(?:revis(?:e|ing|ion)|r[ée]vis(?:er|ion)|prep(?:are)?|exam|test|quiz|contr[ôo]le|learn|study|apprendre|go over|catch up)\b/i;
+const CONCEPT_REQUEST = /\b(?:explain|what (?:is|are|does)|what's|how (?:does|do)|why (?:does|do|is)|teach me|show (?:me )?(?:the |a )?(?:graph|diagram|curve|picture|how)|c'est quoi|qu'est-ce que|explique|montre(?:-moi)?)\b/i;
+// "what is the answer / x / the next step" asks about THIS problem, not for a new idea (reported: it opened a new topic).
+const NOT_A_CONCEPT = /\b(?:what(?:'s| is| are)|c'est quoi|quelle est)\s+(?:the\s+|la\s+|le\s+)?(?:answer|réponse|next|suivant|result|résultat|value|valeur|[xyzkn]|it|this|that|ça|wrong|my|mine|left)\b/i;
+// A goal, not just the word "learn"/"test" in passing ("let me test x = 3" is not a study goal).
+const STUDY_GOAL = /\b(?:revis(?:e|ing|ion)|r[ée]vis(?:er|ion)|prepar(?:e|ing) for|pr[ée]parer|(?:an?|my|the) (?:exam|test|quiz)|exam(?:s|en)?\b|contr[ôo]le|bac\b|learn (?:about|how|the)|study (?:for|the)|apprendre (?:les?|la|à)|go over|catch up|teach me)\b/i;
 const RECAP_REQUEST = /\b(?:summar(?:y|ise|ize)|recap|résumé|bilan|what (?:did|have) we (?:do|done|cover))/i;
 
 /** The actions this turn must take, most important first (at most 3). Empty when nothing in particular is due. */
@@ -37,8 +42,9 @@ export function turnActions(d: DirectorInput): string[] {
   const current = d.objectives.find((o) => !o.done);
   const right = d.stepVerdict === "correct" || !!d.solvedInChat || EXERCISE_RIGHT.test(msg);
   const wrong = !right && (d.stepVerdict === "incorrect" || EXERCISE_WRONG.test(msg));
-  const asksConcept = CONCEPT_REQUEST.test(msg) && !/^\s*\[(?:Exercise|Exercice)\]/.test(msg);
-  const topicChange = asksConcept && !!open && !overlaps(msg, open.question);
+  const asksConcept = (CONCEPT_REQUEST.test(msg) && !NOT_A_CONCEPT.test(msg) || !!d.drawRequest) && !/^\s*\[(?:Exercise|Exercice)\]/.test(msg);
+  // A new topic needs a topic: "draw it" / "explain that" is about what's already on the table.
+  const topicChange = asksConcept && !!open && words(msg.replace(/\b(?:explain|draw|show|sketch|please|could|would|can|what|does|this|that|again|dessine|explique|montre)\b/gi, " ")).size >= 1 && !overlaps(msg, open.question);
 
   // 1. A study goal and no plan yet: plan AND start, in this reply.
   if (!d.objectives.length && STUDY_GOAL.test(msg)) {

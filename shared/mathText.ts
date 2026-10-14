@@ -134,6 +134,8 @@ export function autoMathLine(line: string): string {
   const flush = () => {
     if (!run.length) return;
     const raw = run.join("").trim();
+    // "1916-17", "pages 12-15": a bare number range is prose (an en dash), never a subtraction.
+    if (/^\d{1,4}[-–]\d{1,4}$/.test(raw)) { out.push(run.join("").replace("-", "–") + trail); run = []; trail = ""; return; }
     // Wrap only when there's a real expression: a run with NO letters/digits at all (a lone "-", a table
     // rule "|---|:---:|") is structure, not maths — wrapping it would turn bullets into $-$ and break
     // markdown tables. A run that IS a LaTeX command wraps even without =/operator, so "\sin x" alone

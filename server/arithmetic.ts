@@ -63,7 +63,7 @@ const EQUALITY = new RegExp(
   // NUM_TOK MUST be wrapped in (?:…) or its internal | alternation escapes the capture group and
   // only the bare-\d+ branch keeps the operator suffix (the "234 × 2 = 2 468" mis-anchor bug).
   `\\s*(=|donne|fait|vaut)\\s*` +                           // 2: separator
-  `(${NUM})` +                                              // 3: claimed result
+  `([-−–]?(?:${NUM}))` +                                    // 3: claimed result (may be negative: 3 − 5 = −2)
   `(?![\\s]*(?:[+\\-−–×x*·÷/=]|\\d))`,
   "g",
 );
@@ -239,6 +239,8 @@ export function evaluateArithmetic(expr: string): number | null {
 export function findArithmeticClaims(text: string): ArithmeticClaim[] {
   const claims: ArithmeticClaim[] = [];
   const seen = new Set<string>();
+  // LaTeX operators read as the symbols they are ("$3 \\times 4 = 12$" was never checked).
+  text = text.replace(/\\times/g, "×").replace(/\\cdot/g, "·").replace(/\\div/g, "÷").replace(/\$/g, " ");
   for (const m of text.matchAll(EQUALITY)) {
     // Skip a match that begins mid-number (the regex can legally start inside a longer number when
     // the true start failed for an unrelated reason — e.g. the tail of "1,234" or "x = 34"): a
