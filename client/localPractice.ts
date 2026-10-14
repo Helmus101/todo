@@ -16,7 +16,3 @@ export function savePracticeLocally(taskId: string, problem: DailyPracticeProble
     localStorage.setItem(KEY, JSON.stringify(all));
   } catch { /* local backup is best-effort */ }
 }
-
-export function getLocalPractice(problemId: string): DailyPracticeProblem | null {
-  return readAll()[problemId]?.problem || null;
-}

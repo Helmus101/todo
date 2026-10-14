@@ -1,3 +1,4 @@
+import type { SpokenRepair } from "../shared/spokenMath.ts";
 // Tutor adaptation — keeps Otto from looping and lets it learn, per student, WHICH teaching move works.
 //
 // Two layers, both pure and unit-tested (tests/run.mjs, tests/tutor-sim.mjs):
@@ -120,18 +121,13 @@ export function repairLine(message: string, history: { role: string; text: strin
 // see the comment above MOVE_TEXT. tutorPolicy.ts's own `pendingExp` map is the one that scores the previous
 // turn's action against the student's reaction.)
 
-const HARSH_OPENERS: [RegExp, string][] = [
-  [/^(?:careful|watch out|attention)\s*[—–:,-]\s*/i, "Hm, let's check that — "],
-  [/^(?:no|nope|wrong|incorrect|not quite|non|faux)[,.!:—–-]\s*/i, "Almost — let's look closer. "],
-  [/^that(?:'|’)?s (?:not right|wrong|incorrect|not correct|false)[,.!:—–-]?\s*/i, "Let's check that together. "],
-  [/^actually[,:]?\s+/i, "Hm, one thing to check — "],
-];
-/** A reply must never OPEN harshly. Rewrites a leading "Careful —" / "No," / "Wrong." into a gentler lead-in
- *  (the persona forbids them; this is the backstop for a draft that did it anyway). */
-export function softenOpener(text: string): string {
-  const t = text.trimStart();
-  for (const [re, rep] of HARSH_OPENERS) if (re.test(t)) return t.replace(re, rep);
-  return text;
+/** A harsh lead-in ("Careful, Willem —", "No,", "Wrong.", "That's not right"), or null. Both engines send it back to
+ *  the model to rephrase — it is never rewritten into a fixed phrase. */
+export function harshOpener(reply: string): string | null {
+  const t = String(reply || "").trimStart();
+  const m = /^(?:careful|watch out|attention|hold on|no|nope|wrong|incorrect|non|faux)(?:,?\s*[A-ZÀ-Ý][\p{L}-]+)?\s*[—–:,!.-]+/iu.exec(t)
+    || /^that(?:'|’)?s (?:not right|wrong|incorrect|not correct|false)\b/i.exec(t);
+  return m ? m[0].trim() : null;
 }
 
 const SPOKEN: [RegExp, string][] = [
@@ -149,6 +145,40 @@ export function spokenMathHint(message: string): string {
   for (const [re, rep] of SPOKEN) s = s.replace(re, rep);
   s = s.replace(/\s+/g, " ").trim();
   return `\n\nDICTATED MATHS: the student's message looks spoken/transcribed. Literal symbol reading: «${s}». The GROUPING (what is under which fraction bar, what a bracket holds, what multiplies what) is NOT reliable in speech — write your typeset reading on the board and confirm it with them before working on it, and if a word looks like a transcription slip ("Cortex" for "cot x"), say what you took it to mean.\n`;
+}
+
+/** A message the student SPOKE (speech recognition, never typing). Always tells the tutor the input is a
+ *  transcript, hands it the recognizer's runner-up readings and the deterministic repair (spokenMath.ts), and
+ *  sets how to act on it: work from the likely meaning, confirm only a guess that changes the maths, never
+ *  quote the garbled words back or put them on the board. Replaces spokenMathHint's keyword trigger for voice
+ *  ("1025 = height over b" has no keyword at all, yet is "tan 25° = h / b"). */
+export function voiceInputBlock(message: string, alternatives: string[], repair: SpokenRepair): string {
+  const literal = spokenMathHint(message).match(/«([^»]*)»/)?.[1];
+  const alts = alternatives.filter((a) => a && a !== message).slice(0, 3);
+  const lines = [
+    `\n\nSPOKEN INPUT: the student SAID this; it reached you through speech recognition, which mishears maths (function names become numbers or words, letters become digits, grouping is lost). Raw transcript: «${message.slice(0, 400)}».`,
+    alts.length ? `The recognizer's other readings: ${alts.map((a) => `«${a.slice(0, 200)}»`).join(" · ")}.` : "",
+    literal ? `Literal symbol reading: «${literal}».` : "",
+    repair.changes.length
+      ? `Likely meaning given the board: «${repair.interpreted.slice(0, 400)}» (${repair.changes.map((c) => `"${c.from}" → "${c.to}": ${c.why}`).join("; ")}). Confidence: ${repair.confidence}.`
+      : "",
+    `HOW TO HANDLE IT: work from what they most likely MEANT, like a person in the room would. ${repair.confidence === "low" ? "At least one reading is a guess and it changes the maths — confirm it in ONE short clause inside your reply (\"you mean h over tan 25°, right?\") while still moving forward." : "If the likely meaning is clear, just use it — don't make them repeat themselves."} If you genuinely can't tell what they meant, ask once, offering your best reading. NEVER quote the garbled words back, never correct their pronunciation, and never write the raw transcript on the board: every board line uses the interpreted, typeset maths.\n`,
+  ];
+  return lines.filter(Boolean).join(" ");
+}
+
+/** True when a board line carries a raw-transcript token the repair flagged ("1025", "json", "count 25") —
+ *  the board must show the interpreted maths, never the mishearing (reported live: "1025 = height over B"
+ *  written on the board verbatim). */
+export function boardRepeatsMishearing(text: string, repair: SpokenRepair | null | undefined): string | null {
+  if (!repair) return null;
+  for (const c of repair.changes) {
+    const from = c.from.trim();
+    if (from.length < 2) continue; // a lone "8" (→ h) is far too common to police on the board
+    const re = new RegExp(`(?<![\\p{L}\\p{N}])${from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`, "iu");
+    if (re.test(text)) return from;
+  }
+  return null;
 }
 
 /** What the tutor is ASKING about: the specific values/expressions in its final question — angles/units ("270°",
@@ -244,17 +274,54 @@ export function cheerLine(message: string, history: { role: string; text: string
   return "";
 }
 
-// ---- Every question goes on the board ----
+// ---- The question a reply actually asks (repeat detection only) ----
 const GENERIC_CLOSER = /^(?:so\s+|and\s+)?(?:does (?:that|this|it) (?:make sense|click|help|work|sound)|make sense|(?:do you )?(?:want|wanna|would you like) (?:to |another|more|me)|ready|ok(?:ay)?|sound good|shall we|how (?:are|is) (?:you|it|that)|is that (?:ok|okay|clear|right)|any questions|veux-tu|tu veux|ça va|c['’]est clair|ça te parle)/i;
 
 /** The question Otto is asking, as one clean sentence — or "" when there is no real question about the work
- *  (a generic "does that make sense?" / "want another?" / "ok?" is conversation, not a board-worthy question). */
+ *  (a generic "does that make sense?" / "want another?" / "ok?" is conversation, not a question). Used to
+ *  catch Otto re-asking something it already asked. Questions are never written to the board — they live in
+ *  chat only, so this never becomes a board entry. */
 export function boardQuestionOf(reply: string): string {
   const qs = reply.replace(/\s+/g, " ").match(/[^.!?]*[^.!?\s][^.!?]*\?/g) || [];
   const last = (qs[qs.length - 1] || "").trim().replace(/^(?:and|so|now|okay|ok|alright|right|well)[,\s—–-]+/i, "").trim();
   if (last.length < 14 || last.split(/\s+/).length < 4) return "";
   if (GENERIC_CLOSER.test(last)) return "";
   return last.slice(0, 300);
+}
+
+// ---- Never hand over an open gap's answer ----
+/** True when `reply` plainly STATES `value` — the `expectedAnswer` of a gap still open on the board. Boundary-
+ *  aware on purpose: "4.9" must not fire inside "84.9" or "4.95", and "friction" must not fire inside
+ *  "frictionless". Word-valued answers only match as whole words; maths/number answers also match the
+ *  spacing-free form the model actually types ("x=2orx=3", "8.5n"), still never inside a longer number. */
+export function replyStatesValue(reply: string, value: string): boolean {
+  const raw = String(value || "").replace(/\$/g, "").trim().toLowerCase();
+  const compactNeedle = raw.replace(/\s+/g, "");
+  if (compactNeedle.length < 3) return false;
+  const hay = String(reply || "").toLowerCase();
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // word-for-word, with real word boundaries (spaces intact)
+  if (new RegExp(`(?<![\\p{L}\\d])${esc(raw)}(?![\\p{L}\\d])`, "u").test(hay)) return true;
+  // maths/number answers: also allow the no-spacing form, but never inside a longer number (digit/dot boundaries)
+  if (!/[\d=+*/^√π%:]/.test(compactNeedle)) return false;
+  return new RegExp(`(?<![\\d.])${esc(compactNeedle)}(?![\\d.])`).test(hay.replace(/\s+/g, ""));
+}
+
+// ---- Answers count, wherever they came from ----
+/** Did the STUDENT just put an answer on the table themselves? True for a stated value, an option letter, a
+ *  short maths statement — false for a question or an admission of confusion. Used so Otto can RECOGNISE an
+ *  answer (confirm it and move on) instead of tripping its own "never state the answer" guardrail on a reply
+ *  that only repeats what the student already said — which reads as the tutor failing to notice the question
+ *  was answered, even when the answer came from outside the session. */
+export function studentStatedAnswer(message: string, _history: { role: string; text: string }[] = []): boolean {
+  const last = String(message || "").trim();
+  if (!last || /\?/.test(last)) return false; // a question is not an answer
+  if (/\b(?:the (?:correct |final )?answer is|la (?:bonne )?réponse est|c['’]est donc l['’]option|option [a-d])\b/i.test(last)) return true;
+  if (/^\s*(?:option\s*)?[a-d][.)]?\s*$/i.test(last)) return true; // "B"
+  const words = last.split(/\s+/).length;
+  if (words < 2 || words > 14) return false;
+  if (/\b(?:why|how|don['’]?t|understand|explain|je ne|comment|pourquoi|explique)\b/i.test(last)) return false;
+  return /[0-9=+\-*/^√π]/.test(last); // a short maths statement: "x = 2 or x = 3", "8.5 N"
 }
 
 // ---- "How you got there" must be THEIR steps ----
@@ -326,3 +393,689 @@ export function planTurn(o: { userKey: string; message: string; history: { role:
   return { move: a.move, pace: a.pace, line, policy, ...(learned ? { learned } : {}), stuck: ctx.stuckStreak > 0 };
 }
 export const _POLICY_MOVES_CHECK: readonly string[] = POLICY_MOVES;
+
+// ---- Problems the STUDENT poses, multi-solution traps, and "I wrote the calculation for you" ----
+
+const POSE_WORD = /\b(?:find|solve|determine|calculate|compute|evaluate|simplify|express|prove|show(?: that)?|work out|how (?:many|much|long|far|fast)|what(?:'s| is| are) (?:the|all)|trouve[rz]?|résous|calcule[rz]?|détermine[rz]?|démontre[rz]?|combien)\b/i;
+
+/** A problem the student states in chat ("find all unknown angles in triangle ABC where a=35 …"), cleaned up for the
+ *  board — or "" when the message isn't a problem statement. Voice dictation spells things out ("equals", "degrees",
+ *  "centimeters"), which is tidied; the student's own wording is otherwise kept. */
+export function studentProblemStatement(message: string): string {
+  const raw = message.replace(/\s+/g, " ").trim();
+  if (raw.length < 25 || raw.length > 900 || /^\[(?:Exercise|Exercice|Activity|Activité)\]/i.test(raw)) return "";
+  if (!POSE_WORD.test(raw)) return "";
+  const quantities = (raw.match(/\d+(?:[.,]\d+)?/g) || []).length + (raw.match(/\b(?:equals?|égale?s?)\b/gi) || []).length;
+  if (quantities < 2) return ""; // "find the main idea" is a request, not a posed problem
+  if (/^(?:can|could|would|will|please|peux|pouvez)\b.{0,40}\b(?:you|tu|vous)\b/i.test(raw) && quantities < 3) return "";
+  let t = raw
+    .replace(/^(?:all ?right|alright|okay|ok|so|um+|uh+|well|right|d['’]accord|alors|bon)[,.\s]+(?:so\s+)?(?:(?:first|now|next)\s+)?(?:i(?:'ll| will)?\s+(?:do|try|have|want)\s+)?/i, "")
+    .replace(/\bequals?\b/gi, "=").replace(/\bdegrees?\b/gi, "°").replace(/\bcentimet(?:er|re)s?\b/gi, "cm").replace(/\bmet(?:er|re)s?\b/gi, "m")
+    .replace(/\s*=\s*/g, " = ").replace(/\s+°/g, "°").replace(/\s{2,}/g, " ").trim();
+  t = t.charAt(0).toUpperCase() + t.slice(1);
+  return t.slice(0, 600);
+}
+
+/** A student's own words only go on the board when they ARE a clean problem statement — never a spoken ramble, a
+ *  request wrapped around a problem ("just draw it…"), or a pasted math-renderer dump (duplicated "25 ∘ 25 ∘"). */
+export function cleanToPost(statement: string): boolean {
+  if (!statement || statement.length > 420) return false;
+  if (/[∘\u200b]|\n/.test(statement)) return false;
+  if (/\b(?:yeah|um+|uh+|like|you know|i want|i mean|please|can you|could you|draw|sketch|show me|action|actually|basically|go back)\b/i.test(statement)) return false;
+  return true;
+}
+
+/** Does any board entry / problem already carry this statement (by numbers + main words)? */
+export function boardCoversStatement(statement: string, boardTexts: string[]): boolean {
+  const nums = (statement.match(/\d+(?:[.,]\d+)?/g) || []).map((n) => n.replace(",", "."));
+  if (!nums.length) return false;
+  const hay = boardTexts.join("\n").replace(/[$\\{}]/g, " ").replace(/,/g, ".");
+  const hits = nums.filter((n) => new RegExp(`(?<![\\d.])${n.replace(".", "\\.")}(?![\\d])`).test(hay)).length;
+  return hits >= Math.max(2, Math.ceil(nums.length * 0.75));
+}
+
+interface CaseTrap { id: string; test: (t: string) => boolean; hint: string; covered: RegExp }
+const CASE_TRAPS: CaseTrap[] = [
+  {
+    id: "ssa",
+    test: (t) => /\btriangle\b|\bABC\b/i.test(t) && /(?:\bangle\b|°|degrees?)/i.test(t) && (t.match(/\b[a-c]\s*(?:=|equals)\s*\d/gi) || []).length >= 2
+      && /\b(?:find|solve|determine|all (?:the )?(?:unknown|missing)|sine (?:rule|law)|sin\b)/i.test(t),
+    hint: "two sides and a NON-included angle (SSA) can give TWO different triangles (the ambiguous case)",
+    covered: /ambiguous|second (?:case|triangle|solution|angle)|other (?:case|triangle|solution|angle)|obtuse|two (?:triangles|solutions|cases|possible)|180\s*[-−–]\s*(?:B|45|\d)|supplement/i,
+  },
+  {
+    id: "trig-eq",
+    test: (t) => /\b(?:sin|cos|tan)\s*\(?\s*[a-zθ]\w*\)?\s*=/i.test(t) && /\b(?:find all|all (?:values|solutions)|solve|interval|\[\s*0|0\s*[≤<]|0\s*to\s*(?:360|2π))/i.test(t),
+    hint: "a trig equation usually has MORE than one solution in the interval (the second quadrant / the period)",
+    covered: /second (?:solution|quadrant|angle)|other (?:solution|quadrant|angle)|180\s*[-−–]|period|all (?:the )?solutions|both/i,
+  },
+  {
+    id: "abs-or-square",
+    test: (t) => /\|[^|]{1,30}\|\s*=|\bx\^?2\s*=\s*\d|\bx²\s*=\s*\d|\bsquare root\b.*\bsolve\b/i.test(t),
+    hint: "an absolute-value or squared equation has TWO solutions (positive and negative)",
+    covered: /both|two (?:solutions|cases|roots|values)|±|negative (?:case|root|solution|value)|positive and negative/i,
+  },
+  {
+    id: "quadratic",
+    test: (t) => /\bsolve\b/i.test(t) && /\bx\^?2\b|x²|quadratic/i.test(t) && /=\s*0|quadratic/i.test(t),
+    hint: "a quadratic can have two roots (or none, or a double one)",
+    covered: /both|two (?:solutions|roots)|±|discriminant|other (?:root|solution)|second (?:root|solution)|roots?\b/i,
+  },
+];
+
+/** Multi-solution traps that apply to the problem under discussion and that nobody has raised yet. The student's
+ *  messages define the problem; the WHOLE conversation (including the tutor's own words) defines "raised". */
+export function pendingCaseTraps(message: string, history: { role: string; text: string }[], draft = ""): { id: string; hint: string }[] {
+  const userText = [...history.filter((h) => h.role === "user").map((h) => h.text), message].join(" \n ");
+  const all = `${history.map((h) => h.text).join(" \n ")} \n ${message} \n ${draft}`;
+  return CASE_TRAPS.filter((c) => c.test(userText) && !c.covered.test(all)).map((c) => ({ id: c.id, hint: c.hint }));
+}
+
+/** System-prompt block that makes the tutor raise the case itself — as a QUESTION, never as an announcement. */
+export function caseTrapBlock(traps: { hint: string }[]): string {
+  if (!traps.length) return "";
+  return `\n\nCASE CHECK (the student shouldn't have to raise this themselves): ${traps.map((t) => t.hint).join("; ")}. ` +
+    `Do not call the problem finished, and do not offer "another one", until the student has been ASKED whether there could be another case/solution — ` +
+    `ask it as a question once the first case is done ("how many triangles/solutions can fit these numbers?"), never announce it. ` +
+    `When they do raise or find the second case, don't write its calculation for them: ask what makes it possible (e.g. "which other angle between 0° and 180° has the same sine?") and let THEM produce it.\n`;
+}
+
+const WRAP_UP = /\b(?:whole|entire|full|complete|all)\b[^.!?]{0,30}\b(?:solved|done|finished|found|worked out)\b|\bsolved\b|\bthat'?s (?:it|everything|all|the lot)\b|\ball (?:angles|sides|unknowns?) (?:are )?(?:found|done)\b|\bnailed it\b|c['’]est tout|c['’]est résolu|\bterminé\b/i;
+const MOVE_ON = /\b(?:another|next one|harder|something else|want to try|autre|suivant|prochain)\b/i;
+/** True when the draft closes the problem (or moves on) while a multi-solution trap is still unraised. */
+export function closesWithMissedCase(draft: string, traps: { id: string }[]): boolean {
+  return traps.length > 0 && (WRAP_UP.test(draft) || MOVE_ON.test(draft)) ;
+}
+
+/** The tutor wrote out the calculation and only asked the student to EVALUATE it ("180° − 45.6° — what does that come
+ *  out to?"): choosing the operation was the real thinking, and it's been done for them. Echoing an expression the
+ *  student themselves just wrote is fine. */
+export function handsOverCalculation(reply: string, lastUser: string): boolean {
+  const ASKS_EVAL = /\bwhat (?:do|did|will|would) you (?:get|find|obtain)\b|\b(?:what|how much)\b[^.?!]{0,40}\b(?:come|comes|work|works|equal|equals|give|gives|simplify|simplifies|reduce|reduces)\b[^.?!]{0,30}\?|\bcalculate (?:it|that|this)\b|\bwhat(?:'s| is| are)\s+\$?\d[\d.,]*\s*(?:×|x|\*|\\times|\/|÷|\+|-)|\bwhat(?:'s| is) (?:the )?(?:result|value)\b|\bcombien (?:ça|cela|ca) (?:fait|donne)\b/i;
+  if (!ASKS_EVAL.test(reply)) return false;
+  const plain = reply.replace(/\\circ|\\degree|\^\s*\{?\\?circ\}?|\\[a-z]+/gi, " ").replace(/[$]/g, " ");
+  const exprs = [...plain.matchAll(/(\d+(?:\.\d+)?)\s*°?\s*([-−–+×x*/÷])\s*(\d+(?:\.\d+)?)/g)];
+  if (!exprs.length) return false;
+  const norm = (s: string) => s.replace(/\s+/g, "").replace(/[−–]/g, "-").replace(/[×x]/g, "*").replace(/÷/g, "/").replace(/°/g, "");
+  const user = norm(lastUser);
+  return exprs.some((m) => !user.includes(norm(m[0])) && !user.includes(`${m[1]}${norm(m[2])}${m[3]}`));
+}
+
+/** Specific, worked-out equation pieces in `text` — a trig value at a named angle ("tan(40°)") or a variable sum
+ *  ("x+500", "470+h") — that appear in NOTHING the student said and in no given. Those are the fingerprints of a
+ *  SETUP STEP the tutor took for them (the equation they were meant to build). General formulas ("a/sinA = b/sinB")
+ *  carry no such pieces, so teaching a formula is never flagged. */
+export function equationAhead(text: string, studentTexts: string[], givens: string[]): string[] {
+  const norm = (s: string) => s.toLowerCase().replace(/\\(?:circ|degree|left|right|cdot|times)|\^\s*\{?\\?circ\}?|degrees?|[°$\s{}\\*·×]/g, "").replace(/[−–]/g, "-");
+  const body = norm(text);
+  const pieces = new Set<string>();
+  for (const m of body.matchAll(/(?:sin|cos|tan)\(?\d+(?:\.\d+)?\)?/g)) pieces.add(m[0].replace(/[()]/g, ""));
+  for (const m of body.matchAll(/\(?[a-z]\+\d+(?:\.\d+)?\)?|\(?\d+(?:\.\d+)?\+[a-z]\)?/g)) pieces.add(m[0].replace(/[()]/g, ""));
+  if (!pieces.size) return [];
+  const said = norm([...studentTexts, ...givens].join(" \n ")).replace(/[()]/g, "");
+  return [...pieces].filter((p) => !said.includes(p));
+}
+
+// ---- The student shows Otto a drawing ----
+const DRAWING_MARKER = /Here's what I drew:|Voici ce que j['’]ai dessiné|What I wrote\/drew on the board:|Ce que j['’]ai écrit\/dessiné/i;
+/** The message carries a read of the student's whiteboard drawing (the "Show Otto" button, or ink read automatically). */
+export function isDrawingTurn(message: string): boolean { return DRAWING_MARKER.test(message); }
+/** Does the drawing look spatial (a figure worth redrawing) rather than just handwriting? */
+export function drawingLooksSpatial(message: string): boolean {
+  return /\b(?:diagram|triangle|circle|line|lines|axis|axes|graph|sketch|shape|angle|arrow|rectangle|square|polygon|figure|vector|curve|cliff|vertical|horizontal|schéma|triangle|cercle|droite|axe|courbe)\b/i.test(message);
+}
+/** System-prompt block for a turn where the student showed a drawing. */
+export const DRAWING_TURN_BLOCK = `
+
+THE STUDENT JUST SHOWED YOU A DRAWING (the text after "Here's what I drew" is a vision read of their whiteboard — it may mis-transcribe; trust the labels and numbers you can cross-check against the board). Do exactly this, in ONE reply:
+1. COMMENT on it first, in one or two short sentences: say what is genuinely right about it (be specific — "you've put the 470 on the vertical side"), and if something looks off or missing, raise it as a QUESTION, never a correction.
+2. Then REDRAW THE SAME THING, cleaner and clearer, with GEOMETRY_ON_BOARD (any triangle/circle/polygon/angles) or SVG_ON_BOARD (everything else — write the SVG): the same shapes, the same labels, the same numbers, the same layout — only neater (straight lines, correct proportions, readable labels, right angles marked). Add NOTHING they didn't draw: no solved values, no extra construction, no next step. If part of their drawing is doubtful, draw it as they drew it and ask about it.
+3. End with ONE short question about the next step. The board also shows what you drew earlier (listed above) — if they were commenting on one of YOUR figures, use what is on the board together with their marks.
+`;
+
+// ---- Consistency: answering the same question twice, and computing for the student ----
+
+/** The student asked (nearly) the same thing twice in a row — the previous answer didn't land or contradicted itself. */
+export function repeatedClaim(message: string, history: { role: string; text: string }[]): boolean {
+  const lastUser = [...history].reverse().find((h) => h.role === "user")?.text;
+  if (!lastUser || /^\[/.test(message) || /^\[/.test(lastUser)) return false;
+  const a = message.replace(/\s+/g, " ").trim(), b = lastUser.replace(/\s+/g, " ").trim();
+  if (a.length < 8 || b.length < 8) return false;
+  const tok = (t: string) => new Set(t.toLowerCase().replace(/[^a-z0-9à-ÿ°]+/g, " ").split(" ").filter((w) => w.length > 1 && !["no", "but", "wait", "so", "yes", "yeah", "ok", "okay", "um", "uh", "like", "just", "actually", "oui", "non", "mais"].includes(w)));
+  const ta = tok(a), tb = tok(b);
+  const [small, big] = ta.size <= tb.size ? [ta, tb] : [tb, ta];
+  if (small.size < 3) return false;
+  const shared = [...small].filter((w) => big.has(w)).length;
+  // the shorter restatement is mostly CONTAINED in the longer one ("no but angle J is 25° right" ⊂ "…we now know the angle J is 25° right")
+  return shared / small.size >= 0.7 || similarity(a, b) >= 0.55;
+}
+export const REPEATED_CLAIM_BLOCK = `\n\nTHEY JUST ASKED THE SAME THING AGAIN — your previous answer didn't land, or it contradicted something you said earlier. Don't flip your verdict to match their phrasing and don't repeat yourself: re-derive it from the givens and your ledger, answer the question plainly first (yes / no, in a few words, and the one-line reason), and if your earlier answer was wrong or inconsistent, say so openly ("I muddled that — here's the right way to see it"). Then ask your guiding question.\n`;
+
+/** "40° − 25° = 15°" written by the tutor where the result is a number nobody (student, givens, board) has produced:
+ *  the tutor did the step. Echoing a result the student already stated is fine. */
+export function arithmeticAhead(reply: string, studentTexts: string[], givens: string[]): string[] {
+  const plain = reply.replace(/\\circ|\\degree|\^\s*\{?\\?circ\}?|\\[a-z]+/gi, " ").replace(/[$]/g, " ");
+  const said = [...studentTexts, ...givens].join(" \n ").replace(/,/g, ".");
+  const out: string[] = [];
+  for (const m of plain.matchAll(/(\d+(?:\.\d+)?)\s*°?\s*[-−–+×x*/÷]\s*(\d+(?:\.\d+)?)\s*°?\s*(?:=|≈|equals|gives|makes)\s*(\d+(?:\.\d+)?)/g)) {
+    const result = m[3];
+    if (!new RegExp(`(?<![\\d.])${result.replace(".", "\\.")}(?![\\d])`).test(said)) out.push(m[0].trim());
+  }
+  return out;
+}
+
+/** What the session is about RIGHT NOW: the open exercise if there is one, else the givens on the board, else how the session began. */
+export function currentFocus(problems: { question: string; solved?: boolean }[], board: { kind?: string; owner?: string; text: string }[], opening: { role: string; text: string }[] = []): string {
+  const open = [...problems].reverse().find((p) => !p.solved);
+  if (open) return `the open exercise: ${open.question.replace(/\s+/g, " ").slice(0, 500)}`;
+  const givens = board.filter((e) => e.kind === "given" && e.owner !== "student").slice(-4).map((e) => e.text.replace(/\s+/g, " ")).join(" | ");
+  if (givens) return `the problem on the board: ${givens.slice(0, 500)}`;
+  const first = opening.find((m) => m.role === "user");
+  return first ? `the problem as the student first gave it: ${first.text.replace(/\s+/g, " ").slice(0, 500)}` : "";
+}
+export function focusBlock(focus: string): string {
+  if (!focus) return "";
+  return `CURRENT FOCUS — the ONLY thing this conversation is about right now is ${focus}\nEvery reply and every board line serves THAT: its givens, its numbers, its next step. Never bring in another scenario, other numbers or a different problem (a skier, a car, a tower…) unless the student asks for a new one. If they drift, answer in one friendly line and bring them back to the step they were on. If you are unsure which problem they mean, say which one you think it is and ask — never guess a new one.\n`;
+}
+
+/** Numbers the reply states (two+ significant digits, or decimals) that appear nowhere in the conversation, board or
+ *  givens — a figure Otto computed or made up on its own ("take the square root of 390.4") instead of the student's. */
+export function inventedNumbers(reply: string, sources: string[]): string[] {
+  const norm = (t: string) => t.replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1").replace(/(\d),(\d)/g, "$1.$2");
+  const hay = norm(sources.join(" \n "));
+  const plain = norm(reply.replace(/\\[a-z]+/gi, " ").replace(/\$/g, " "));
+  const out: string[] = [];
+  for (const m of plain.matchAll(/(?<![\d.])\d+(?:\.\d+)?(?![\d])/g)) {
+    const n = m[0];
+    if (!n.includes(".") && n.length < 3) continue;
+    if (n.includes(".") && n.replace(".", "").length < 3) continue;
+    if (!new RegExp(`(?<![\\d.])${n.replace(".", "\\.")}(?![\\d])`).test(hay)) out.push(n);
+  }
+  return [...new Set(out)];
+}
+
+// ---- "Just draw it" and praise for nothing ----
+/** The reply states a formula or equation ("W = F·d", "$mgh = \\frac{1}{2}mv^2$", "gh = ½v²"). Maths belongs ON
+ *  THE BOARD — a formula that only exists in the chat bubble is a lesson the student has to hold in their head
+ *  (reported live: Otto explained the whole work-energy relation in prose with the board empty). A bare number or
+ *  a sentence with no equation is not a formula. Pure. */
+export function statesFormula(reply: string): boolean {
+  const t = String(reply || "");
+  if (/\$[^$\n]*(?:[=≈]|\\frac|\\sqrt|\\times|\\cdot|\^)[^$\n]*\$/.test(t)) return true;
+  const plain = t.replace(/\$[^$\n]*\$/g, " ").replace(/\\[a-zA-Z]+/g, " ");
+  return /[\p{L}\dπθ²³½¾¼)\]]\s*[=≈]\s*\S/u.test(plain);
+}
+
+/** A sentence where Otto states WHAT THE PROBLEM GIVES, with a value that isn't in it — reported live: "let's look at
+ *  the problem on the board: a 3 kg box is pulled up by a force of 15 N (let's use 15 N instead so it actually
+ *  moves!)" when the exercise says 12 N. Replaces a given to make the numbers work, which is plain wrong: the
+ *  givens are theirs, not Otto's to edit. Sentences carrying arithmetic are skipped (they're a COMPUTATION of the
+ *  givens, not a restatement). Returns the offending value, or null. Pure. */
+const ATTRIBUTES_PROBLEM = /\b(?:the\s+)?(?:problem|question|exercise|statement|givens?|board)\b|(?:^|[:,])\s*(?:we(?:'re| are) given|given)\b/i;
+export function misstatesGiven(reply: string, sources: string[]): string | null {
+  const hay = (sources || []).join(" \n ").replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1");
+  const given = (n: string) => new RegExp(`(?<![\\d.])${n.replace(".", "\\.")}(?![\\d])`).test(hay);
+  for (const s of String(reply || "").split(/(?<=[.!?])\s+|\n+/)) {
+    if (!ATTRIBUTES_PROBLEM.test(s)) continue;
+    if (/[×÷*/^=]|\b(?:sin|cos|tan|sqrt|log|ln)\s*\(/i.test(s)) continue; // computed from the givens, not a restatement
+    const flat = s.replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1");
+    for (const m of flat.matchAll(/(?<![\d.])\d+(?:\.\d+)?(?![\d])/g)) if (!given(m[0])) return m[0];
+  }
+  return null;
+}
+
+// ---- "Just draw it" and praise for nothing ----
+/** The student is asking Otto to DRAW/show the picture (not describing their own drawing). */
+export function asksToDraw(message: string): boolean {
+  const m = String(message || "");
+  if (m.length > 320 || isDrawingTurn(m) || /\bi (?:drew|am drawing|'ll draw|will draw|created a drawing)\b|my (?:drawing|diagram|sketch)/i.test(m)) return false;
+  if (/\b(?:graph|plot|trace|représente)\b/i.test(m) && /\b(?:it|them|these|those|the (?:lines?|functions?|curves?|equations?)|can we|could we|let'?s|maybe|please|show|just)\b/i.test(m) && !/\bi (?:graphed|plotted)\b/i.test(m)) return true;
+  return /\b(?:draw|sketch|illustrate|dessine[rz]?|dessin|schéma|diagram)\b/i.test(m) && /\b(?:can you|could you|please|just|for me|again|show|do it|try|make|peux-tu|pouvez|s'il)\b|^draw\b/i.test(m)
+    || /\bshow (?:me )?(?:the )?(?:angles|diagram|picture|figure|situation|it)\b/i.test(m);
+}
+const PRAISE_OPEN = /^\s*(?:spot on|exactly|correct|that'?s (?:right|it|correct)|great|nice|perfect|well done|yes[,!.\s]|you(?:'ve| have) got)/i;
+/** The student said nothing checkable ("to do", "yeah", a stray name) — there is nothing to praise. */
+export function lowSignal(message: string): boolean {
+  const t = message.replace(/\[[^\]]*\]/g, "").trim();
+  if (!t || /^\[/.test(message.trim())) return false;
+  return t.split(/\s+/).length <= 4 && !/\d|=|[+\-×*/^]/.test(t) && !/\?/.test(t);
+}
+export function praisesNothing(reply: string, message: string): boolean { return PRAISE_OPEN.test(reply) && lowSignal(message); }
+
+// ---- Grounding: respond only to what the student ACTUALLY said ----
+const SUCCESS_EVIDENCE = new Set(["solved-unaided", "solved-after-hint", "solved-after-partial", "solved-after-explanation", "self-corrected", "recall", "transfer-success"]);
+const PRAISE_START = /^\s*(?:spot on|exactly|correct|that'?s (?:right|it|correct|the idea)|nailed it|perfect|well done|nice (?:one|work|job|catch)|great[,!.]|great (?:job|work|catch|idea|thinking)|yes[,!.\s]|you(?:'ve| have) got (?:it|that|the))/i;
+/** Praise (or "you're right") when nothing the student said was a checkable, correct step. Uses the tutor's own plan
+ *  (its read of the student's last move) when it has one, and the plain "nothing was said" test either way. */
+export function praiseUngrounded(reply: string, message: string, plan?: { studentStep?: { status?: string }; evidence?: { kind?: string } } | null): boolean {
+  if (!PRAISE_START.test(reply)) return false;
+  if (lowSignal(message)) return true;
+  if (/^\[/.test(message.trim())) return false; // an exercise/activity result is a real signal, handled elsewhere
+  if (!plan) return false;
+  const ok = plan.studentStep?.status === "correct" || (plan.evidence?.kind ? SUCCESS_EVIDENCE.has(plan.evidence.kind) : false);
+  return !ok;
+}
+
+const CONFIRM_ANY = /\b(?:spot on|(?:right )?on the money|exactly right|is (?:correct|right)|that'?s (?:right|correct)|nailed|crushed|you(?:'ve| have) got it)\b/i;
+const numVal = (t: string): number => Number(t.replace(/[\s,]/g, "").replace(",", "."));
+/** Otto confirms a value ("4,000 W is spot on! You crushed it") that the student's own working doesn't reach: their one
+ *  division gives something else (60,000 over 300 = 200), or its read of their last step wasn't "correct". */
+export function confirmsUnchecked(reply: string, message: string, plan?: { studentStep?: { status?: string } } | null): boolean {
+  const first = (reply.split(/(?<=[.!?])\s+/)[0] || "") + " " + (reply.split(/(?<=[.!?])\s+/)[1] || "");
+  if (!CONFIRM_ANY.test(first) || /^\[/.test(message.trim())) return false;
+  const status = plan?.studentStep?.status;
+  if (status && status !== "correct") return true;
+  const V = numVal((first.match(/\d[\d,]*(?:\.\d+)?/) || [""])[0]);
+  const mine = (message.replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1").match(/\d+(?:\.\d+)?/g) || []).map(Number);
+  // They gave numbers and Otto confirms a different one ("200,200 J is right on the money" after "200,000").
+  if (V && mine.length && !mine.some((n) => Math.abs(n - V) <= 1e-9 * Math.max(1, V)) && V >= 10) return true;
+  const divs = [...message.matchAll(/(\d[\d,]*(?:\.\d+)?)\s*(?:over|÷|\/|divided by)\s*(\d[\d,]*(?:\.\d+)?)/gi)];
+  if (divs.length !== 1 || !V) return false;
+  const q = numVal(divs[0][1]) / numVal(divs[0][2]);
+  return isFinite(q) && Math.abs(q - V) > 0.01 * Math.abs(V);
+}
+/** "Want to tackle one more, or call it a win?" when the student never asked to stop or move on. */
+export function wrapsUpUnasked(reply: string, message: string): boolean {
+  return /\b(?:ready for (?:another|one more)(?: one)?|call it a (?:win|day)|wrap (?:it |this |that |things )?(?:all )?up|tackle one more|ready for (?:another|the next)|want (?:to|another)[^.?!]{0,30}(?:one more|another|next))\b/i.test(reply) && !asksToMoveOn(message);
+}
+
+const GROUND_STOP = new Set("that this with have from what when where which their there about would could should these those them they then than just also into your yours been were will shall cannot dont doesnt isnt arent".split(" "));
+/** "You've got the two sides lined up" / "as you said, …" when the student never said it: the clause's content words
+ *  must (mostly) appear in what they actually said or wrote on the board. Returns the offending clause or null. */
+export function misattributes(reply: string, studentTexts: string[], studentBoard: string[] = []): string | null {
+  const said = new Set((studentTexts.concat(studentBoard).join(" ").toLowerCase().match(/[a-zà-ÿ0-9°]+/g) || []));
+  const re = /\b(?:you(?:'ve| have)?\s+(?:just\s+)?(?:said|mentioned|noticed|found|got|identified|written|wrote|drawn|drew|set up|lined up|worked out|figured out|spotted|used)|as you (?:said|noted|mentioned)|like you said|your (?:last|previous) (?:step|answer|idea))\b([^.?!\n]{0,90})/gi;
+  for (const m of reply.matchAll(re)) {
+    const words = (m[1].toLowerCase().match(/[a-zà-ÿ0-9°]{4,}/g) || []).filter((w) => !GROUND_STOP.has(w));
+    if (words.length < 2) continue;
+    const present = words.filter((w) => said.has(w) || [...said].some((s) => s.length >= 4 && (s.startsWith(w.slice(0, 5)) || w.startsWith(s.slice(0, 5))))).length;
+    if (present / words.length < 0.5) return m[0].trim();
+  }
+  return null;
+}
+
+const METHOD_WORDS = /\b(tan|sin|cos|arctan|arcsin|arccos|log|ln|sqrt|slope|gradient|derivative|integral|discriminant|quadratic formula|sine rule|cosine rule|pythagoras|chain rule|product rule|bayes|factorise|factorize|completing the square)\b/gi;
+export function wantsHelp(message: string): boolean {
+  return /\b(hint|help|stuck|lost|don'?t know|no idea|how (?:do|would|can) (?:i|we)|what (?:do i|should i)|explain|show me how|indice|aide|bloqué|perdu|je ne sais pas)\b/i.test(message);
+}
+/** The tutor names the METHOD/formula ("tan(θ) = slope") before the student reached for it. Only the words that
+ *  appear next to an equation sign in the reply count, and only when nobody (student, givens) has used them. */
+export function methodAhead(reply: string, said: string[]): string[] {
+  const hay = said.join(" ").toLowerCase();
+  const out = new Set<string>();
+  for (const sentence of reply.split(/(?<=[.!?\n])\s+/)) {
+    if (!/[=≈→]|\bequals?\b|\bgives?\b|\buse the\b|\bapply the\b|\bremember\b|\bcalculator\b/i.test(sentence)) continue;
+    for (const m of sentence.matchAll(METHOD_WORDS)) {
+      const w = m[1].toLowerCase();
+      if (!hay.includes(w) && !(w === "slope" && /gradient/.test(hay)) && !(w === "gradient" && /slope/.test(hay))) out.add(w);
+    }
+  }
+  return [...out];
+}
+
+// ---- Off-topic messages never become "student work" ----
+/** Does what the student said have anything to do with the problem/lesson in play? Math content (digits, operators,
+ *  degrees) always counts; otherwise it must share a real word with the problem, the board or what Otto just asked.
+ *  "Gary left avocado on the ground" shares nothing → it is chatter, not a step. */
+export function onTopic(text: string, context: string[]): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (/\d|=|[+×*/^√π∫°]|\b(?:equals?|plus|minus|times|over|divided|squared|slope|angle|sin|cos|tan|log|root|sum|value)\b/i.test(t)) return true;
+  const words = (s: string) => new Set((s.toLowerCase().match(/[a-zà-ÿ]{4,}/g) || []).filter((w) => !GROUND_STOP.has(w)));
+  const ctx = words(context.join(" "));
+  return [...words(t)].some((w) => ctx.has(w) || [...ctx].some((c) => c.length >= 6 && w.length >= 6 && c.slice(0, 6) === w.slice(0, 6)));
+}
+
+// ---- Listen first: answer THEIR question, respond to THEIR work, only then guide ----
+const Q_STOP = new Set("what whats what's does do did is are was the a an of to it this that mean means show shows stand stands for in on about why how which who when where wait so um uh and or but then you your tell me again exactly really just actually".split(" "));
+/** The student is asking what something IS or MEANS ("what does m show", "what's M1", "what is a slope?"): returns the term
+ *  they are asking about, or null when it isn't a clarification question. */
+export function clarificationTerm(message: string): string | null {
+  const m = message.replace(/\[[^\]]*\]/g, " ").replace(/\s+/g, " ").trim();
+  if (!m || m.length > 140 || /^\[/.test(message.trim())) return null;
+  if (!/^(?:wait[, ]+)?(?:what(?:'s|s| is| are| does| do)?|why|how come|which|who|i (?:don'?t|do not) (?:get|understand|know what)|c'est quoi|qu'est-ce|que veut|pourquoi)\b/i.test(m) && !/\?\s*$/.test(m)) return null;
+  const toks = (m.toLowerCase().match(/[a-zà-ÿ][a-zà-ÿ0-9₀-₉_]*/g) || []).filter((w) => !Q_STOP.has(w));
+  return toks.length ? toks[toks.length - 1].replace(/[₀-₉_]/g, (c) => (c === "_" ? "" : String("₀₁₂₃₄₅₆₇₈₉".indexOf(c)))) : null;
+}
+export const CLARIFY_BLOCK = `\n\nTHEY ASKED A QUESTION ABOUT WHAT SOMETHING IS OR MEANS. Answer THAT, and only that, this turn — a tutor who ignores the question and carries on with their own plan isn't listening. In one or two short sentences, say what the thing is IN THIS PROBLEM (e.g. "m₁ is just the name for the slope of the first line"), pointing at where it is on the board or in the problem, then ask ONE small question that makes THEM connect it to what they have ("which line has slope 5?"). A question about a term is NOT a request for the next step: don't escalate the help, don't advance your own plan, don't calculate anything for them, and don't write anything new on the board.\n`;
+
+/** The reply to a clarification question never mentions the term they asked about — it carried on with its own plan. */
+export function ignoresQuestion(reply: string, message: string): boolean {
+  const term = clarificationTerm(message);
+  if (!term) return false;
+  const norm = (s: string) => s.toLowerCase().replace(/[₀-₉]/g, (c) => String("₀₁₂₃₄₅₆₇₈₉".indexOf(c))).replace(/[_$\\{}\s]/g, "");
+  const r = norm(reply);
+  if (term.length >= 2) return !r.includes(norm(term));
+  return !new RegExp(`(?<![a-z0-9])${term}(?![a-z]|\\d)`, "i").test(reply.replace(/[_$\\{}]/g, "").replace(/[₀-₉]/g, (c) => String("₀₁₂₃₄₅₆₇₈₉".indexOf(c))));
+}
+
+/** The student reported real work (a value, a claim) and the reply says nothing about it: no number and no real word
+ *  of theirs appears. ("I found the intersection is x = 3/14" → "Got the formula up there. Now plug in…") */
+export function ignoresWork(reply: string, message: string): boolean {
+  const m = message.replace(/\[[^\]]*\]/g, " ").trim();
+  if (!m || /\?/.test(m) || clarificationTerm(m) || /^\[/.test(message.trim())) return false;
+  const nums = (m.match(/\d+(?:[.,]\d+)?/g) || []);
+  if (!nums.length) return false;
+  const words = (m.toLowerCase().match(/[a-zà-ÿ]{5,}/g) || []).filter((w) => !GROUND_STOP.has(w));
+  const r = reply.toLowerCase();
+  return !nums.some((n) => new RegExp(`(?<![\\d.])${n.replace(/[.,]/, "[.,]")}(?![\\d])`).test(r)) && !words.some((w) => r.includes(w.slice(0, Math.max(5, w.length - 2))));
+}
+
+/** The student explicitly wants something written down. */
+export function asksToWrite(message: string): boolean {
+  // The app's own result reports ("[Exercise] On the board line … I wrote …") are not a request to write anything —
+  // reported live: the whole report was copied onto the board as the student's line.
+  if (/^\s*\[(?:Exercise|Exercice|Activity|Activité)\]/i.test(String(message || ""))) return false;
+  return /\b(?:write|put|add|note)\b[^.?!]{0,30}\b(?:board|down|up)\b|\bon the board\b|\bwrite (?:it|that|this)\b|\bnote (?:it|that) (?:down|for me)\b|\b(?:write|rewrite|show)\b[^.?!]{0,40}\b(?:equations?|values?|formulas?|steps?)\b|écris|note[- ]le/i.test(message);
+}
+
+/** The reply sends the student BACK TO THE PROBLEM STATEMENT to re-check a value they just gave — "let's re-read
+ *  the problem's pulling force", "check the problem statement on the board", "what is the exact force given in the
+ *  problem text?" — the loop the student cannot break, because what they're sent back to is the thing that already
+ *  disagrees. Reported live: four turns of exactly this while they kept answering "12", going nowhere. Returns the
+ *  phrase that did it, or null. Only fires when they HAVE just given a number — otherwise pointing back at the
+ *  statement is legitimate (they may simply have misread it). Pure. */
+export function sendsBackToStatement(reply: string, message: string): string | null {
+  const t = String(reply || "");
+  const REREAD = /\b(?:re-?read|read (?:the|that|it) again|re-?check)\b/i;
+  const LOOK_BACK = /\b(?:look|have a look|check)\b[^.?!]{0,30}\b(?:original |actual )?(?:problem|question|exercise)\b/i;
+  const ASKS_STATEMENT = /\b(?:problem|question|exercise)\s+(?:statement|text|wording)\b|\bwhat (?:does|did) the (?:problem|question|exercise)\s+(?:say|give|state)\b/i;
+  const m = REREAD.exec(t) || LOOK_BACK.exec(t) || (t.includes("?") ? ASKS_STATEMENT.exec(t) : null);
+  if (!m) return null;
+  return /\d/.test(String(message || "")) ? m[0] : null;
+}
+
+/** A "reply" that is just a formula ("distance K = (470)/(tan 40)") — no sentence, so it is an answer dropped on the
+ *  student, not a tutor turn. Counts the real words left once maths is removed. */
+export function bareMath(reply: string): boolean {
+  const t = String(reply || "").replace(/\$[^$]*\$/g, " ").replace(/\\[a-zA-Z]+/g, " ");
+  if (!/[=+\-*/^]|\d/.test(t)) return false;
+  const words = t.replace(/\b(?:sin|cos|tan|log|ln|sqrt|distance|height)\b/gi, " ").match(/[A-Za-zÀ-ÿ]{3,}/g) || [];
+  return words.length < 4;
+}
+
+
+import { autoMathLine } from "../shared/mathText.ts";
+export { repairLatex } from "../shared/mathText.ts";
+
+/** Math lines on the board are ALWAYS typeset: a formula/result/given/summary line that is bare maths (an equation or LaTeX
+ *  commands with at most a couple of plain words, no $ already) is wrapped in $…$, and degree signs inside become ^\\circ.
+ *  Lines that already carry $…$ are only touched inside the delimiters' degree signs. Pure. */
+export function latexifyBoardLine(text: string, kind?: string): string {
+  const t = String(text || "");
+  if (!["formula", "result", "given", "summary"].includes(String(kind))) return t;
+  const lines = t.split("\n").map((line) => {
+    const raw = line.trim();
+    if (!raw) return line;
+    if (raw.includes("$")) return line.replace(/\$([^$]+)\$/g, (_, m) => `$${m.replace(/°/g, "^\\circ")}$`);
+    const bullet = /^([-*]\s+)/.exec(raw)?.[1] || "";
+    const body = raw.slice(bullet.length);
+    if (!/[=\\^]/.test(body)) return line;
+    const words = body.replace(/\\[a-zA-Z]+/g, " ").match(/[A-Za-zÀ-ÿ]{3,}/g) || [];
+    if (words.length > 2) return line; // prose with an equation inside: leave it to the model's own $…$
+    return bullet + autoMathLine(body.replace(/°/g, "°")); // the same plain→LaTeX conversion the page uses: tan→\\tan, (h)/(b)→\\frac{h}{b}, °→^\\circ
+  });
+  return lines.join("\n");
+}
+
+/** The student just stated work of their own — an equation, a relationship, a computed value — that belongs on the board
+ *  as their line. Spoken maths counts ("tan 30 equals h over 100 plus k"). */
+export function statesOwnMath(message: string): boolean {
+  const m = String(message || "");
+  if (m.trim().length < 12) return false;
+  return /[=]/.test(m) || /\b(?:equals?|égale?s?)\b/i.test(m) || /\b(?:sin|cos|tan|10 ?(?:of|de))\b[^.?!]{0,60}\b(?:over|divided|times|plus|minus)\b/i.test(m);
+}
+
+/** The reply tells the student WHICH operation to perform ("multiply both sides by…", "substitute that into…", "factor out h",
+ *  "divide by the bracket", "isolate k") — choosing the move was the thinking. Questions about the GOAL ("what would get all the h
+ *  terms together?") are fine; naming the operation is not. Pure. */
+export function namesExactStep(reply: string): boolean {
+  const raw = String(reply || "");
+  // "Go ahead and multiply 75 × 9.8 × 30" / "divide 750 by 2.5" / "plug in 1200 and 9.8": an operation word aimed at actual numbers is the move itself.
+  if (/\b(?:multiply|divide|add|subtract|plug(?: in)?|substitute|calculate|compute|work out|times)\b[^.?!]{0,30}\d[\d.,]*\s*(?:[×x*÷\/+−-]|by|and|times|plus|minus)\s*\d/i.test(raw.replace(/\$/g, " "))) return true;
+  const t = raw.replace(/\$[^$]*\$/g, " X ");
+  const OP = "(?:multiply|divide|substitute|plug|factor(?:ise|ize)?(?: out)?|isolate|subtract|add|expand|rearrange|collect|cross-multiply|take the (?:square root|inverse|reciprocal)|apply the (?:sine|cosine|tangent) (?:rule|law)|use the (?:sine|cosine|tangent) (?:rule|law)|solve for)";
+  const lead = "(?:can you|could you|how (?:do|would|can) you|now,? |next,? |then,? |try to |you (?:should|need to|can|could|now) |let'?s |please )";
+  return new RegExp(`\\b${lead}\\s*${OP}\\b[^.?!]{0,70}\\b(?:both sides|each side|the (?:equation|expression|bracket|brackets|denominator|numerator|terms?|left|right)|that (?:equation|expression)|into|from|by|out)\\b`, "i").test(t)
+    || new RegExp(`^\\s*${OP}\\b[^.?!]{0,70}\\b(?:both sides|each side|the (?:equation|expression|bracket|denominator)|into|by)\\b`, "i").test(t)
+    || /\b(?:multiplier|multiplie[rz]|divise[rz]|substitue[rz]|factorise[rz]|isole[rz])\b[^.?!]{0,60}\b(?:des deux côtés|chaque côté|par|dans)\b/i.test(t);
+}
+
+/** An equation in the chat bubble (outside $…$ or inside) that the student never wrote: the bubble is a nudge in words; the
+ *  board carries the maths. Compares by alphanumerics only, so a spoken/garbled student version doesn't match — which is the
+ *  safe direction (the worst case is one extra corrective round). Pure. */
+export function bubbleDoesMath(reply: string, studentTexts: string[]): boolean {
+  const norm = (x: string) => x.toLowerCase().replace(/\\(?:circ|degree|cdot|left|right|displaystyle)/g, "").replace(/[^a-z0-9]/g, "");
+  const corpus = norm(studentTexts.join(" "));
+  const text = String(reply || "").replace(/\$([^$]+)\$/g, " $1 ");
+  // For each "=": the token just before it and the next three after it must both appear in what the student wrote.
+  for (const m of text.matchAll(/(\S+)\s*=\s*((?:\S+\s*){1,3})/g)) {
+    const left = norm(m[1]), right = norm(m[2].split(/[.?!]/)[0]);
+    if (left.length >= 1 && right.length >= 2 && !(corpus.includes(left) && corpus.includes(right))) return true;
+  }
+  return false;
+}
+
+/** A tiny, safe numeric expression evaluator (no eval): numbers, + - * / ^ **, unary minus, parentheses, constants pi/e and the
+ *  functions sin cos tan asin acos atan sqrt ln log exp abs — plus DEGREE versions sind cosd tand asind acosd atand. Used to
+ *  verify an exercise's answer key independently of the model's own arithmetic. null when it can't be evaluated. */
+/** Evaluate a model-written `check` expression for a problem: when the problem is stated in DEGREES, plain
+ *  sin/cos/tan mean degrees (a plain sin(12) in radians turned a right key into −40,126 — reported live). Shared by
+ *  CREATE_PROBLEM's key verification and the solver. */
+export function evalCheckFor(check: string, problemText: string): number | null {
+  const src = String(check || "");
+  if (!src) return null;
+  const inDegrees = /°|\^\s*\{?\\circ|\bdeg(?:ree)?s?\b|\bdegrés?\b/i.test(problemText) && !/\bpi\b|π|\brad(?:ians?)?\b/i.test(problemText + " " + src);
+  return evalMathExpr(inDegrees ? src.replace(/\b(sin|cos|tan)\s*\(/gi, "$1d(") : src);
+}
+
+export function evalMathExpr(src: string): number | null {
+  const s = String(src || "").replace(/×/g, "*").replace(/÷/g, "/").replace(/\*\*/g, "^").replace(/\s+/g, "");
+  if (!s || s.length > 200 || !/^[0-9a-z+\-*/^().,]+$/i.test(s)) return null;
+  let i = 0;
+  const D = Math.PI / 180;
+  const FN: Record<string, (x: number) => number> = {
+    sin: Math.sin, cos: Math.cos, tan: Math.tan, asin: Math.asin, acos: Math.acos, atan: Math.atan, sqrt: Math.sqrt, ln: Math.log, log: Math.log10, exp: Math.exp, abs: Math.abs,
+    sind: (x) => Math.sin(x * D), cosd: (x) => Math.cos(x * D), tand: (x) => Math.tan(x * D), asind: (x) => Math.asin(x) / D, acosd: (x) => Math.acos(x) / D, atand: (x) => Math.atan(x) / D,
+  };
+  const peek = () => s[i];
+  const expr = (): number => { let v = term(); while (peek() === "+" || peek() === "-") { const op = s[i++]; const r = term(); v = op === "+" ? v + r : v - r; } return v; };
+  const term = (): number => { let v = unary(); while (peek() === "*" || peek() === "/") { const op = s[i++]; const r = unary(); v = op === "*" ? v * r : v / r; } return v; };
+  const unary = (): number => { if (peek() === "-") { i++; return -unary(); } if (peek() === "+") { i++; return unary(); } return pow(); };
+  const pow = (): number => { const b = atom(); if (peek() === "^") { i++; return Math.pow(b, unary()); } return b; };
+  const atom = (): number => {
+    if (peek() === "(") { i++; const v = expr(); if (s[i++] !== ")") throw new Error("paren"); return v; }
+    const num = /^\d+(?:\.\d+)?(?:e[+-]?\d+)?/i.exec(s.slice(i));
+    if (num) { i += num[0].length; return Number(num[0]); }
+    const id = /^[a-z]+/i.exec(s.slice(i));
+    if (!id) throw new Error("token");
+    const name = id[0].toLowerCase(); i += name.length;
+    if (name === "pi") return Math.PI;
+    if (name === "e") return Math.E;
+    if (FN[name] && peek() === "(") { i++; const v = expr(); if (s[i++] !== ")") throw new Error("paren"); return FN[name](v); }
+    throw new Error("ident");
+  };
+  try { const v = expr(); return i === s.length && Number.isFinite(v) ? v : null; } catch { return null; }
+}
+
+/** A problem posed in PROSE (no "=" anywhere): several numbers with units or angles plus a question — "a tower stands on level
+ *  ground; from A the elevation is 15°, from B, 100 m closer, 25°. What's the first thing you'd set up?". Pure. */
+export function posesProblemInProse(draft: string): boolean {
+  const t = String(draft || "").replace(/\$/g, " ").replace(/\^?\{?\\(?:circ|degree)\}?/g, "°");
+  if (!/[?？]/.test(t)) return false;
+  // At least two quantities carrying a unit or an angle sign ("12 g", "100 m", "25°") — a lone "25°" is just a question about an angle.
+  const quantities = t.match(/\d+(?:[.,]\d+)?\s?(?:°|(?:m|cm|mm|km|kg|g|s|min|h|N|J|V|A|W|mol|L|mL|%|degrees?)\b)/gi) || [];
+  return quantities.length >= 2 && t.length >= 50;
+}
+
+/** A board line that copies the student's own words: 4+ consecutive words of it appear verbatim in their message ("so now we can do
+ *  opposite over adjacent so…"). The board shows clean maths, never a transcript of speech. Pure. */
+export function echoesStudentWords(boardText: string, studentMessage: string): boolean {
+  const words = (x: string) => String(x || "").toLowerCase().replace(/\$[^$]*\$/g, " ").replace(/[^a-zà-ÿ\s']/g, " ").split(/\s+/).filter((w) => w.length >= 2);
+  const b = words(boardText), m = words(studentMessage).join(" ");
+  if (b.length < 4) return false;
+  for (let i = 0; i + 4 <= b.length; i++) if (m.includes(b.slice(i, i + 4).join(" "))) return true;
+  return false;
+}
+
+/** The reply already CONTAINS the answer to the question it asks ("750 J — what are the units?"). `askAnswer` is what the tutor wrote in its
+ *  plan as the correct answer to its own question. Unit-like answers (J, W, m/s) are detected as number+unit; word/number answers as a whole
+ *  token. Anything the student themselves said doesn't count (echoing their own word is fine). Pure. */
+export function statesOwnAnswer(reply: string, askAnswer: string | undefined, studentTexts: string[]): boolean {
+  const ans = String(askAnswer || "").replace(/\\(?:text|mathrm|textbf)\{([^}]*)\}/g, "$1").replace(/[$\\{}]/g, "").replace(/\s+/g, " ").trim();
+  if (!ans || ans.length > 40) return false;
+  const theirs = studentTexts.join(" ").replace(/\\(?:text|mathrm)\{([^}]*)\}/g, "$1").replace(/[$\\{}]/g, "");
+  const text = String(reply || "").replace(/\\(?:text|mathrm)\{([^}]*)\}/g, "$1").replace(/[$\\{}]/g, "");
+  const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (/^[A-Za-zμΩ°%/·]{1,6}$/.test(ans) && !/^(?:a|an|the|it|yes|no|is|are|of|to|in|on|or|so)$/i.test(ans)) {
+    const re = new RegExp(`\\d(?:[.,]\\d+)?\\s*(?:\\\\,)?\\s*${esc(ans)}(?![A-Za-z])`);
+    return re.test(text) && !re.test(theirs);
+  }
+  const re = new RegExp(`(?<![\\p{L}\\d])${esc(ans)}(?![\\p{L}\\d])`, "iu");
+  if (ans.replace(/\s+/g, "").length < 3) return false;
+  return re.test(text) && !re.test(theirs);
+}
+
+/** What the student's message IS, when it isn't plain work: lost / "I don't know", or an idea voiced in their own words. Each returns a
+ *  directive block for the tutor's context so the reply answers THAT first instead of marching on with its plan. */
+export const CONFUSED_BLOCK = `\n\nTHEY JUST TOLD YOU THEY ARE LOST OR DON'T KNOW. Your plan can wait. Use your judgement, but say back what you heard in a few words ("okay — that's the missing piece"), then drop a level: if it is a FACT that cannot be reasoned out (a unit's or law's name, a definition, a convention, a date) tell them in one short sentence and have them use it straight away; otherwise explain the ONE missing idea in plain words with a concrete everyday example and ask them to try it. A question they could not answer shouldn't be asked again in the same words.\n`;
+export const INSIGHT_BLOCK = `\n\nTHEY JUST PUT AN IDEA IN THEIR OWN WORDS ("so power is work over time"). That is the most important thing in their message: respond to IT first — say whether it holds and what to tighten, in a few words — let them state it precisely if it is loose, and make it the next step. Carrying on with the old question as if they had not spoken would not be listening.\n`;
+export function listenCue(message: string): "confused" | "insight" | null {
+  const m = String(message || "").trim();
+  if (!m || /^\[(?:Exercise|Exercice|Activity|Activité)\]/i.test(m)) return null;
+  if (/\b(?:i (?:don'?t|do not|really don'?t) (?:know|get|understand)|no idea|i'?m lost|i am lost|still (?:don'?t|do not) get|(?:i'?m )?confused|je (?:ne )?(?:sais|comprends) pas|aucune idée|je suis perdu)\b/i.test(m)) return "confused";
+  if (m.length >= 18 && (/\b(?:oh|ah|wait|okay|ok)\b[^.?!]{0,40}\bso\b/i.test(m) || /\bso\b[^.?!]{0,70}\b(?:is|are|means?)\b[^.?!]{0,20}\b(?:basically|just|like|the same|how fast|rate|over)\b/i.test(m) || /\bbasically\b/i.test(m))) return "insight";
+  return null;
+}
+
+/** "Why do I need to equate those?", "what's the point of…", "how does X connect to Y", "I don't understand why" — a request to UNDERSTAND (purpose,
+ *  reason, connection), spoken or typed (voice messages often have no question mark). Not a request for the problem's answer. */
+export function asksWhy(message: string): boolean {
+  const m = String(message || "").trim();
+  if (m.length < 12 || /^\[(?:Exercise|Exercice|Activity|Activité)\]/i.test(m)) return false;
+  return /\b(?:why|how come|pourquoi|à quoi (?:ça )?sert)\b/i.test(m)
+    || /\bwhat(?:'s| is) the (?:point|reason|use|purpose|idea)\b/i.test(m)
+    || /\b(?:i )?(?:don'?t|do not|still don'?t|can'?t) (?:really )?(?:understand|get|see) (?:why|how|what|the point)\b/i.test(m)
+    || /\bhow (?:is|are|does|do) (?:this|that|it|these|those|[a-z]+) (?:related|connected|linked)\b/i.test(m)
+    || /\bwhat(?:'s| is) the difference between\b/i.test(m);
+}
+export const WHY_BLOCK = `\n\nTHEY ASKED WHY (the point, the reason, how two things connect). That is a request to UNDERSTAND, not for the problem's answer — "never give the answer" does not apply here. Answer it directly first, in 2–3 plain sentences with the actual reason, in words — no new equations (a concrete example or comparison helps). Only then, if it fits, one small question that checks it landed. Sidestepping it with a counter-question, "notice that…", or a restatement of what they said ("You're wondering why…") is not an answer.\n`;
+/** The reply to a why-question gives no explanation: no plain (non-question) sentence of 7+ words, or only a restatement of their question. */
+export function ignoresWhy(draft: string): boolean {
+  const parts = String(draft || "").replace(/\s+/g, " ").match(/[^.!?]+[.!?]?/g) || [];
+  const declarative = parts.map((p) => p.trim()).filter((p) => p && !/[?？]$/.test(p));
+  const real = declarative.filter((p) => p.split(/\s+/).length >= 7 && !/^(?:you(?:'re| are) (?:wondering|asking)|you want to know|you ask|good question|great question)\b/i.test(p));
+  return real.length === 0;
+}
+
+/** Content that belongs on the BOARD, not in the tutor's tiny bubble: a numbered / bulleted list of 3+ items, or a long block (70+ words). */
+export function isBoardContent(reply: string): boolean {
+  const t = String(reply || "");
+  const items = (t.match(/(?:^|\n|\s)(?:\d{1,2}[.)]|[-•*])\s+\S/g) || []).length;
+  const words = t.replace(/\$[^$]*\$/g, " x ").split(/\s+/).filter(Boolean).length;
+  return items >= 3 || words >= 70;
+}
+
+/** Split a list-style reply into its board items and the closing question (kept for the bubble). */
+export function splitBoardContent(reply: string): { items: string[]; question: string } {
+  const t = String(reply || "").replace(/\r/g, "").trim();
+  const qMatch = /([^.!?\n]*[?？])\s*$/.exec(t);
+  const question = qMatch ? qMatch[1].trim() : "";
+  const body = (qMatch ? t.slice(0, qMatch.index) : t).trim();
+  let items = body.split(/\s*(?:^|\n|\s)(?:\d{1,2}[.)]|[-•*])\s+/).map((x) => x.trim()).filter((x) => x.length > 3);
+  if (items.length <= 1) items = (body.match(/[^.!?]+[.!?]+/g) || [body]).map((x) => x.trim()).filter((x) => x.length > 3);
+  // a lead-in sentence ("Here is the quick cheat sheet:") is not an item
+  items = items.filter((x, i) => !(i === 0 && /:\s*$/.test(x) || (i === 0 && items.length > 2 && /\b(?:here(?:'s| is| are)|voici)\b/i.test(x) && x.split(/\s+/).length <= 12)));
+  return { items: items.slice(0, 8), question };
+}
+
+/** Subject shorthand the student (or speech recognition) uses — "ep", "E_p", "PE", "ke" — that the tutor must read as the quantity, and SAY by name.
+ *  Returns "" when nothing recognisable appears in the recent conversation. */
+const GLOSS: { re: RegExp; line: string }[] = [
+  { re: /(?<![a-z])(?:e\s?_?\s?p|ep|pe|gpe|gp\.?e)(?![a-z])/i, line: `"ep" / "E_p" / "Ep" / "PE" = potential energy (gravitational, E_p = mgh, unless the problem is about a spring)` },
+  { re: /(?<![a-z])(?:e\s?_?\s?k|ek|ke|k\.?e)(?![a-z])/i, line: `"ek" / "E_k" / "Ek" / "KE" = kinetic energy (E_k = ½mv²)` },
+  { re: /(?<![a-z])(?:e\s?_?\s?t\s?h|eth)(?![a-z])/i, line: `"E_th" = thermal energy` },
+  { re: /(?<![a-z])(?:gpe)(?![a-z])/i, line: `"GPE" = gravitational potential energy` },
+  { re: /(?<![a-z])(?:eff|η|eta)(?![a-z])/i, line: `"η" / "eff" = efficiency (useful energy out ÷ total energy in)` },
+  { re: /(?<![a-z])(?:suvat)(?![a-z])/i, line: `"SUVAT" = the constant-acceleration equations (s, u, v, a, t)` },
+];
+export function notationGloss(message: string, history: { role: string; text: string }[] = []): string {
+  const text = [message, ...history.filter((h) => h.role === "user").slice(-6).map((h) => h.text)].join(" \n ");
+  const seen = GLOSS.filter((g) => g.re.test(text)).map((g) => g.line);
+  if (!seen.length) return "";
+  return `\n\nTHEIR SHORTHAND (read it as the quantity; in YOUR words always say the NAME — "potential energy", not "ep" — with the symbol in brackets the first time):\n${[...new Set(seen)].map((l) => `- ${l}`).join("\n")}\n`;
+}
+
+/** The student wants a (new) problem / exercise / question to work on — "can you do another exercise", "put a problem on the board", "give me a physics HL one". */
+export function asksForProblem(message: string): boolean {
+  const m = String(message || "");
+  if (m.length < 8 || /^\[(?:Exercise|Exercice|Activity|Activité)\]/i.test(m.trim())) return false;
+  return /\b(?:another|a new|new|next|different|one more|more)\b[^.?!]{0,30}\b(?:problem|exercise|question|one)\b/i.test(m)
+    || /\b(?:give|show|set|do|try|have|want)\b[^.?!]{0,25}\b(?:a|an|another|new|some)\b[^.?!]{0,25}\b(?:problem|exercise|question)\b/i.test(m)
+    || /\b(?:put|write|place)\b[^.?!]{0,30}\b(?:problem|exercise|question)\b[^.?!]{0,25}\b(?:board|up|there)\b/i.test(m)
+    || /\blet'?s do (?:a |another |one )?(?:new |another )?(?:problem|exercise|question|one)\b/i.test(m)
+    || /\b(?:un autre|une autre|nouvel|nouvelle)\b[^.?!]{0,20}\b(?:exercice|problème|question)\b/i.test(m);
+}
+/** "Which problem?", "I don't see the question you mean" — the tutor asked about a problem the student was never shown. */
+export function asksWhichProblem(message: string): boolean {
+  return /\b(?:which|what) (?:problem|question|exercise)\b|\b(?:don'?t|do not|can'?t) (?:see|find) (?:the |which |any |a )?(?:problem|question|exercise)\b|\bwhat are you (?:talking|asking) about\b|\bfor which (?:problem|question)\b|\bwhich one (?:are you|do you)\b/i.test(String(message || ""));
+}
+
+/** Does this tutor line START a new problem — a scenario with 2+ quantities (units / angles) and something to find — whose numbers are NOT already on the board? */
+export function startsNewProblem(text: string, existingTexts: string[]): boolean {
+  const t = String(text || "").replace(/\$/g, " ");
+  const quantities = t.match(/\d+(?:[.,]\d+)?\s?(?:°|(?:m|cm|mm|km|kg|g|s|min|h|N|J|V|A|W|mol|L|mL|%|kJ|kW|MJ)\b)/g) || [];
+  if (quantities.length < 2 || t.length < 40) return false;
+  if ((t.match(/[A-Za-zÀ-ÿ]{3,}/g) || []).length < 6) return false; // a scenario is told in words — a table of values or an equation is not
+  if (!/[?？]|=\s*\?|\b(?:find|calculate|determine|work out|what(?:'s| is)|how (?:much|fast|far|long))\b/i.test(t)) return false;
+  return !boardCoversStatement(t, existingTexts);
+}
+export const NO_UNPROMPTED_EXERCISE = "REJECTED: they didn't ask for a new problem. Keep helping with what they are doing right now — answer what they asked, guide the step they're on. When the current one is finished, OFFER another in one short question (\"want another one on this?\") and wait for a yes; never set one unasked.";
+
+/** A board line that is a list of givens ("Skier: mass m = 75 kg, height h = 30 m, friction loss W_f = 4000 J") or a worded scenario: 2+ quantities with units/angles. */
+export function looksLikeGivensOrScenario(text: string): boolean {
+  const t = String(text || "").replace(/\$/g, " ").replace(/\\(?:text|mathrm)\{([^}]*)\}/g, "$1");
+  const quantities = t.match(/\d+(?:[.,]\d+)?\s?(?:°|(?:m|cm|mm|km|kg|g|s|min|h|N|J|V|A|W|mol|L|mL|%|kJ|kW|MJ|m\/s|ms)\b)/g) || [];
+  return quantities.length >= 2;
+}
+
+/** Otto blames the exercise widget / app for a mismatch ("those widgets can be picky", "weird hiccup", "my bad on the board"). */
+export function blamesWidget(reply: string): boolean {
+  return /\b(?:widgets?|the (?:checker|answer box|exercise box|app)|the board)\b[^.?!]{0,50}\b(?:picky|hiccup|glitch|bug|buggy|quirk|wrong|mistake|fussy|finicky|weird)|\b(?:picky|finicky|fussy|weird hiccup|glitch)\b|classic (?:percentage )?trap|my bad on the board/i.test(reply);
+}
+
+const BOARD_CLAIM = /\b(?:here(?:'s| is)|check out|take a look at|have a look at|look at)\b[^.?!\n]{0,40}\b(?:new|fresh|next|another|smoother)\b[^.?!\n]{0,40}\b(?:problem|one|question|exercise)\b|\b(?:let'?s|i'?ll|i will|let me|going to|gonna)\s+(?:also\s+|now\s+|just\s+)?(?:log|put|write|add|record|jot|note|capture|pop|place)\b[^.?!\n]{0,60}\b(?:on|to|onto|up on|in)\s+(?:the |your )?board\b|\b(?:i(?:'ve| have|'ll| will)?|let me|just)\s+(?:also\s+|just\s+|now\s+)?(?:put|add(?:ed)?|wrote|written|write|jot(?:ted)?|plac(?:e|ed)|drew|draw(?:n)?|post(?:ed)?|not(?:e|ed)|sketch(?:ed)?|ma(?:de|ke))\b[^.?!\n]{0,70}\b(?:on|to|up on|onto|in)\s+(?:the |your )?board\b|\b(?:it'?s|that'?s|this is|is) (?:now )?(?:up )?on the board\b|\bup on the board\b|\bj'ai (?:mis|écrit|ajouté|noté|dessiné)\b[^.?!\n]{0,70}\btableau\b|\b(?:c'est|voilà)[^.?!\n]{0,20}au tableau\b/i;
+/** The reply says Otto wrote/drew something on the board ("I've put your point up on the board"). Only true if a board tool actually ran. */
+export function claimsBoardWrite(reply: string): boolean { return BOARD_CLAIM.test(reply); }
+/** Drops every sentence that claims a board write — the code fallback when the model claimed it without doing it. */
+export function stripBoardClaim(reply: string): string {
+  const parts = reply.split(/(?<=[.!?])\s+/);
+  return parts.filter((x) => !BOARD_CLAIM.test(x)).join(" ").trim();
+}
+
+/** The student just reached a result or step of their own (a statement with maths in it, not a question) and Otto confirms it in words: that is the
+ *  moment it belongs on the board (their equation/result, owner "student"). Used to ask for the write when none happened this turn. */
+export function reachedResultUnrecorded(reply: string, message: string, boardWrites: number): boolean {
+  if (boardWrites > 0 || /^\[/.test(message.trim())) return false;
+  const m = message.replace(/\[[^\]]*\]/g, "").trim();
+  if (!m || /\?\s*$/.test(m) || m.split(/\s+/).length > 40) return false;
+  const statesMath = /=|\d|\bpi\b|π|√|sqrt|\broot\b|\bover\b|\bsquared\b|\btimes\b|\bplus\b|\bminus\b/i.test(m);
+  // Any confirming opener counts ("That's the right structure", "Right — quotient law", "Good", "Yes"): a step the
+  // student took belongs on the board whether or not Otto used the stock phrase (reported: multi-step working was
+  // confirmed in chat but never appeared on the board).
+  const head = reply.slice(0, 90);
+  const confirms = /^\s*(?:spot on|exactly|correct|that'?s (?:right|it|correct|the right)|perfect|well done|you(?:'ve| have) got it|juste|exact|right\b|yes\b|oui\b)/i.test(reply) || /\b(?:spot on|that'?s (?:right|it|the right)|you(?:'ve| have) (?:turned|split|got|applied)|right structure|bonne structure)\b/i.test(head);
+  return statesMath && confirms;
+}
+
+/** The reply ends by setting the student a concrete maths task ("write 2 log_a x − log_a y as a single logarithm",
+ *  "what single logarithm is …?", "simplify …") but nothing went on the board this turn: the question belongs on the
+ *  board too, as a line ending "= ?". Reported live: the log questions only ever existed in chat. Exported for tests. */
+export function setsMathTaskUnboarded(reply: string, boardWrites: number): boolean {
+  if (boardWrites > 0) return false;
+  const sentences = String(reply || "").replace(/\s+/g, " ").trim().split(/(?<=[.!?])\s+/);
+  const last = sentences.slice(-2).join(" ");
+  const asks = /\b(?:write|express|simplify|condense|expand|combine|factor|solve|evaluate|find|compute|calculate|what (?:single|does|is|do|happens)|what\b[^.?]{0,30}\b(?:become|equal|collapse)s?|[ée]cris|simplifie|exprime|calcule|quel(?:le)? est)\b/i.test(last);
+  const hasMath = /\b(?:log|ln|sin|cos|tan|sqrt)(?:_|\s+base|\s*\()|[a-z]\s*[=+\-−×^]\s*[a-z0-9(]|\d\s*(?:log|ln|[a-z]\b)|[=²³√π]/i.test(last);
+  return asks && hasMath;
+}

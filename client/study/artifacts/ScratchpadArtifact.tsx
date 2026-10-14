@@ -14,7 +14,7 @@ export function ScratchpadArtifact({ value, onChange, onSaveToNotes }: Scratchpa
         className="sm-notes-textarea sm-scratch-textarea"
         value={value}
         onChange={e => onChange(e.target.value)}
-        placeholder={L("Espace de travail temporaire — effacé entre les sessions.", "Temporary working space — cleared between sessions.")}
+        placeholder={L("Espace de travail temporaire — effacé entre les sessions.", "Temporary working space — cleared between sessions.")} aria-label={L("Brouillon", "Scratchpad")}
         spellCheck={false}
       />
       {value.trim() && (

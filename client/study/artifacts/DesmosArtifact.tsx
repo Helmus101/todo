@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+
 import type { ArtifactState } from "../StudyTypes.ts";
 
 interface DesmosArtifactProps {

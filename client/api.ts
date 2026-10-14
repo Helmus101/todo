@@ -1,4 +1,6 @@
+import { boardLineNumbers } from "../shared/boardLines.ts";
 import type { CourseworkDoc } from "../shared/coursework.ts";
+import { taskSync } from "./taskDelta.ts";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, BoardEntry, TaskProblem, TaskObjective } from "../shared/types.ts";
 import { normalizeProfile } from "../shared/types.ts";
 
@@ -59,9 +61,6 @@ function translateServerError(msg: string): string {
   if (/AI is paused|otto is paused/i.test(msg)) return en
     ? "Otto is paused — resume it in Settings to continue."
     : "Otto est en pause — réactive-le dans les Réglages pour continuer.";
-  if (/monthly AI budget/i.test(msg)) return en
-    ? "Otto's reached its monthly AI budget — it resets on the 1st."
-    : "Otto a atteint son plafond mensuel d'IA — ça se renouvelle le 1er.";
   return msg;
 }
 
@@ -91,6 +90,11 @@ async function req(url: string, init?: RequestInit, retries = 6, isCsrfRetry = f
   // Also opted into by specific POST endpoints that poll on a fixed interval with no meaningful request
   // body (e.g. kick) — their response is cacheable the same way a GET's is, it's just not idempotent
   // server-side (it still does real work), so this only saves response BYTES, never the server-side call.
+  // Delta task lists: tell the server which tasks we already hold (see client/taskDelta.ts).
+  if (/^\/api\/(?:tasks(?!\/[^/]+\/chat\b)|study\/free|studylog)/.test(url)) {
+    const have = taskSync.haveHeader();
+    if (have) init = { ...init, headers: { ...(init?.headers || {}), "x-have": have } };
+  }
   const etagable = method === "GET" || cacheEtag;
   if (etagable) {
     const cached = etagCache.get(url);
@@ -144,7 +148,7 @@ async function req(url: string, init?: RequestInit, retries = 6, isCsrfRetry = f
       if (r.status === 403 && !isCsrfRetry && freshToken && freshToken !== (init?.headers as any)?.["x-csrf-token"]) {
         return req(url, { ...init, headers: { ...(init?.headers || {}), "x-csrf-token": freshToken } }, retries, true, cacheEtag);
       }
-      if (r.status >= 500 && attempt < retries) {
+      if (r.status >= 500 && attempt < Math.min(retries, method === "GET" ? 2 : retries)) {
         const ct = r.headers.get("content-type") || "";
         if (!ct.includes("application/json")) { await sleep(500 + attempt * 250); continue; } // proxy error page → retry
       }
@@ -181,7 +185,7 @@ const j = async (r: Response) => {
     err.status = r.status; // callers need this to tell "already running elsewhere" (409) from a real failure
     throw err;
   }
-  return r.json();
+  return taskSync.expand(await r.json());
 };
 // Comfortably under the serverless function's own execution ceiling, so a slow-but-working sweep gets told
 // "still running" by US (with a follow-up re-sync) rather than by the platform killing the request and
@@ -195,7 +199,7 @@ const post = (url: string, body?: unknown) =>
 // save) already has a valid token — capture it here, the one place both routes' responses are read.
 const authPost = (url: string, body: unknown): Promise<{ ok: boolean; error?: string; csrfToken?: string }> =>
   req(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
-    .then(async (r) => ({ ok: r.ok, ...(await r.json().catch(() => ({}))) }))
+    .then(async (r) => { taskSync.reset(); return { ok: r.ok, ...(await r.json().catch(() => ({}))) }; })
     .then((res) => { if (res.csrfToken) csrfToken = res.csrfToken; return res; });
 
 export const api = {
@@ -239,6 +243,9 @@ export const api = {
   syncPronoteGrades: (): Promise<{ grades: { subject: string; average: number; outOf: number }[]; synced: boolean }> => post("/api/pronote/grades/sync"),
   workload: (): Promise<{ days: { date: string; items: { kind: "homework" | "test" | "task"; subject?: string; title: string; effort: number; taskId?: string; movable?: boolean }[]; totalEffort: number }[] }> =>
     req("/api/workload").then(j),
+  exerciseSearch: (topic: string, subject?: string): Promise<{ track: string | null; sources: { name: string; host: string }[]; questions: { sourceName: string; url: string; title: string; excerpt: string }[] }> =>
+    post("/api/exercises/search", { topic, ...(subject ? { subject } : {}) }),
+  setDeadline: (id: string, when: string): Promise<WebTask[]> => post(`/api/tasks/${id}/deadline`, { when }),
   rescheduleTask: (id: string, when: string): Promise<WebTask[]> => post(`/api/tasks/${id}/reschedule`, { when }),
   setGrade: (subject: string, grade: number, scale?: number): Promise<Profile> => post("/api/profile/grade", { subject, grade, scale }).then(normalizeProfile),
   deleteGrade: (subject: string): Promise<Profile> => req(`/api/profile/grade/${encodeURIComponent(subject)}`, { method: "DELETE" }).then(j).then(normalizeProfile),
@@ -268,7 +275,7 @@ export const api = {
   // default resumes an already-active freestudy session instead of silently discarding it. See the route's
   // own comment (server/index.ts) for why this default changed: a passive mount (route remount, StrictMode
   // double-invoke) used to be indistinguishable from "the student wants a fresh session" and wiped it.
-  studyFreeSession: (fresh?: boolean, subject?: string): Promise<WebTask[]> => post("/api/study/free", fresh ? { fresh: true, subject } : { subject }),
+  studyFreeSession: (fresh?: boolean, subject?: string, topic?: string): Promise<WebTask[]> => post("/api/study/free", fresh ? { fresh: true, subject, topic } : { subject }),
   // Server-side text extraction for a document material's URL (a Google Doc, a Padlet board, a generic
   // webpage) — so Ask Otto can reference what's actually IN it, same as it already can for uploaded PDFs
   // (client-side, pdfText.ts). Best-effort: "" is a normal, valid result (a login-walled page, a non-text
@@ -404,10 +411,8 @@ export const api = {
   dismiss: (id: string): Promise<WebTask[]> => post(`/api/tasks/${id}/dismiss`),
   // 100s: an execute_step run now drains INLINE through runViaJob (server/index.ts) — a deliberate click
   // actually does the work and waits for the real result, rather than just enqueueing and hoping the
-  // background kick loop picks it up. runTask itself is bounded to ~90s by its own time-budget circuit
-  // breaker (see claude.ts's checkTimeBudget); this must stay safely ABOVE that so a legitimately-slower-
-  // but-still-bounded run doesn't get aborted client-side right as the server is about to finish it (the
-  // old 25s value predates that circuit breaker and would now abort even a normal, in-budget run).
+  // background kick loop picks it up. If this times out, the job keeps running server-side
+  // and the background kick loop picks up the result.
   runStep: (id: string, index: number, answer?: string): Promise<WebTask> => postTimed(`/api/tasks/${id}/step/${index}/run`, 100_000, answer ? { answer } : undefined),
   stepDone: (id: string, index: number, done = true, result?: string): Promise<WebTask[]> => post(`/api/tasks/${id}/step/${index}/done`, { done, result }),
   expandStep: (id: string, index: number): Promise<WebTask[]> => post(`/api/tasks/${id}/step/${index}/expand`),
@@ -427,7 +432,9 @@ export const api = {
   setProfilePreference: (key: string, value: any): Promise<Profile> => post("/api/profile/preference", { key, value }).then(normalizeProfile),
   delProfile: (category: string, index: number): Promise<Profile> => req(`/api/profile/${category}/${index}`, { method: "DELETE" }).then(j).then(normalizeProfile),
   clearProfile: (): Promise<Profile> => req("/api/profile", { method: "DELETE" }).then(j).then(normalizeProfile),
-  logout: (): Promise<{ ok: boolean }> => post("/api/auth/logout"),
+  /** Ask the server to write its pending write-behind snapshot now (tab hidden/closing). keepalive: outlives the page; fire-and-forget. */
+  flushSync: (): Promise<void> => { try { return fetch("/api/sync/flush", { method: "POST", keepalive: true, headers: { ...(csrfToken ? { "x-csrf-token": csrfToken } : {}) } }).then(() => undefined).catch(() => undefined); } catch { return Promise.resolve(); } },
+  logout: (): Promise<{ ok: boolean }> => post("/api/auth/logout").then((r) => { taskSync.reset(); return r; }),
   // GDPR self-serve: erasure (Art. 17) and portability (Art. 20) — no "email us and wait" step needed.
   deleteAccount: (): Promise<{ ok: boolean; errors: string[] }> => post("/api/account/delete"),
   exportDataUrl: (): string => "/api/account/export",
@@ -435,10 +442,9 @@ export const api = {
   // typically a different one) and merges it into the currently signed-in account.
   importData: (data: unknown): Promise<{ ok: boolean; tasksAfter: number; errorLogAfter: number }> => post("/api/account/import", data),
   setPaused: (paused: boolean): Promise<Profile> => post("/api/settings/pause", { paused }).then(normalizeProfile),
-  goUnlimited: (): Promise<Profile> => post("/api/settings/unlimited").then(normalizeProfile),
   smokeTest: (): Promise<{ app: string; step: string; ok: boolean; detail?: string }[]> => post("/api/settings/smoke"),
   cronStatus: (): Promise<{ lastSweepAt: string | null; lastSweepDay: string | null; today: string; sweptToday: boolean; queued: number; cronConfigured: boolean }> => req("/api/cron/status").then(j),
-  usage: (): Promise<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string; byCategory: Partial<Record<"sweep" | "autorun" | "chat" | "manual_refine" | "other", number>> }> => req("/api/usage").then(j),
+  usage: (): Promise<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; byCategory: Partial<Record<"sweep" | "autorun" | "chat" | "manual_refine" | "other", number>> }> => req("/api/usage").then(j),
   taskEvents: (id: string): Promise<{ kind: string; message?: string; at: string }[]> => req(`/api/tasks/${id}/events`).then(j),
   // stepIndex: set by the per-step "Aide" button (see F) — the server validates the range itself.
   // `history` is THIS BROWSER's own local chat thread (client/localChatBoard.ts) — chat/board/problems are
@@ -450,14 +456,30 @@ export const api = {
   // `board`/`problems`: THIS turn's local copy of what's currently on the board — sent so the tutor can see
   // what it's already written (see chatAboutTask's boardBlock) instead of writing blind, which read live as
   // Otto asking the student to describe its own board back to it.
-  chat: (id: string, message: string, history: NonNullable<WebTask["chat"]>, board: BoardEntry[], problems: TaskProblem[], stepIndex?: number, materials?: { label: string; text: string }[], voiceMode?: boolean, canvasMode?: boolean, primer?: boolean, objectives?: TaskObjective[]): Promise<{ reply: string; chatDelta: NonNullable<WebTask["chat"]>; board: BoardEntry[]; problems: TaskProblem[]; objectives?: TaskObjective[]; guardrailTripped: boolean; task: WebTask; sessionCapReached?: boolean; subject?: string; sessionEnded?: boolean; error?: string }> =>
+  // Grade an answer to a board gap ("b = ?") on the server — the answer key never has to be trusted to the
+  // browser, and "h/tan(25°)" / "h cot 25°" / "\frac{h}{\tan 25^\circ}" are all graded alike (mathEquiv.ts).
+  // A "system_error" verdict means the gap's stored key disagreed with the key the server recomputed from the
+  // line itself (shared/exerciseVerification.ts, spec §19.4): the attempt is preserved and never called wrong.
+  // `gap` carries the line and the key written with it: the tutor board lives in this browser only
+  // (client/localChatBoard.ts), so the server has no stored copy to look the gap up in. It recomputes the key
+  // from `text` itself first — the independent verification — and uses the sent key only when the line has no
+  // solvable equation of its own.
+  checkGap: (id: string, entryId: string, answer: string, gap?: { text: string; expectedAnswer?: string }): Promise<{ verdict: "correct" | "incorrect" | "unknown" | "system_error"; verification?: "verified" | "conflict" | "uncertain" | "not_checked"; keyConflict?: boolean }> =>
+    post(`/api/tasks/${encodeURIComponent(id)}/board/${encodeURIComponent(entryId)}/check`, { answer, ...(gap ? { text: gap.text, expectedAnswer: gap.expectedAnswer } : {}) }),
+  chat: (id: string, message: string, history: NonNullable<WebTask["chat"]>, board: BoardEntry[], problems: TaskProblem[], stepIndex?: number, materials?: { label: string; text: string }[], voiceMode?: boolean, canvasMode?: boolean, primer?: boolean, objectives?: TaskObjective[], spoken?: { alternatives: string[] }, session?: { id: string; source?: string; sourceSubject?: string; createdAt?: string }, memory?: { when: string; subject?: string; lines: string[]; asked: string[] }[]): Promise<{ reply: string; chatDelta: NonNullable<WebTask["chat"]>; board: BoardEntry[]; problems: TaskProblem[]; objectives?: TaskObjective[]; guardrailTripped: boolean; task: WebTask; sessionCapReached?: boolean; subject?: string; sessionEnded?: boolean; error?: string }> =>
     post(`/api/tasks/${id}/chat`, {
       // The on-device thread can be long: send how the session began (first 3) + the recent tail, not all of it
       // (the server pins the opening verbatim and keeps its own window).
       message, history: (history.length > 66 ? [...history.slice(0, 3), ...history.slice(-62)] : history).map((h) => ({ role: h.role, text: h.text })),
-      board: board.map((b) => ({ text: b.text, kind: b.kind, outline: b.outline, diagram: b.diagram?.slice(0, 40) })),
-      problems: problems.map((p) => ({ question: p.question, options: p.options, solved: p.solved === true })),
-      stepIndex, materials, voiceMode, canvasMode, primer, objectives,
+      // The board and problems live in this browser only, so their answer keys must travel with them: without them the
+      // server can't check a chat answer, close a gap, or tell when a reply gives an answer away.
+      board: ((nums) => board.map((b) => ({ n: nums.get(b.id), id: b.id, text: b.text, kind: b.kind, outline: b.outline, diagram: b.diagram?.slice(0, 40), owner: b.owner, status: b.status, concept: b.concept, targetId: b.targetId, expectedAnswer: b.expectedAnswer, gapAction: b.gapAction, table: b.table, source: b.source })))(boardLineNumbers(board)),
+      problems: problems.map((p) => ({ id: p.id, question: p.question, options: p.options, correct: p.correct, answer: p.answer, value: p.value, rubric: p.rubric, solved: p.solved === true })),
+      stepIndex, materials, voiceMode, canvasMode, primer, objectives, spoken,
+      // Who this tutor session is — lets the server rebuild a freestudy task it lost track of instead of 404ing.
+      session,
+      // The browser's record of recent tutor sessions — background for the tutor (never stored server-side).
+      memory,
     }),
   // Otto's opening line for a tutor session (see tutorOpener in server/claude.ts): the browser's own
   // session history — the REAL board lines and the student's questions from their last sessions, which the
@@ -503,6 +525,6 @@ export const api = {
   ttsAudio: (text: string, lang: string, signal?: AbortSignal): Promise<Response> =>
     req("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, lang }), signal }, 0),
   // Admin-only (server-side gated to one hardcoded email, see server/index.ts) — a 403 for anyone else.
-  adminMetrics: (): Promise<{ userCount: number; taskCount: number; tutorSessionCount: number; tutorMinutesTotal: number; tasksBySource: Record<string, number>; byUser: { email: string; taskCount: number; tutorSessionCount: number; tutorMinutes: number }[] }> =>
+  adminMetrics: (): Promise<{ userCount: number; taskCount: number; completedTaskCount: number; tutorSessionCount: number; tutorMinutesTotal: number; journalCount: number; tasksBySource: Record<string, number>; byUser: { email: string; taskCount: number; completedTaskCount: number; tutorSessionCount: number; tutorMinutes: number; journalCount: number }[] }> =>
     req("/api/admin/metrics").then(j),
 };

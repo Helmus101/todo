@@ -9,7 +9,7 @@ import type { Profile } from "../shared/types.ts";
 
 /** One (workMinutes, breakMinutes) option, or no-Pomodoro. Fixed, small menu — matched to how little data
  *  one student generates; a continuous action space would never converge on this little traffic. */
-export interface PomodoroArm { id: string; enabled: boolean; workMinutes: number; breakMinutes: number }
+interface PomodoroArm { id: string; enabled: boolean; workMinutes: number; breakMinutes: number }
 export const POMODORO_ARMS: PomodoroArm[] = [
   { id: "none", enabled: false, workMinutes: 0, breakMinutes: 0 },
   { id: "25/5", enabled: true, workMinutes: 25, breakMinutes: 5 },
@@ -24,7 +24,7 @@ export const POMODORO_ARMS: PomodoroArm[] = [
  *  is today's default (CARD_STYLE_RULE, unmodified). Reward comes from Leitner box movement on THAT deck's
  *  cards (see computeCardReward) — scored the next time a deck is generated for this student, since review
  *  activity only accumulates after the deck exists. */
-export interface FlashcardArm { id: "concise" | "standard" | "thorough" }
+interface FlashcardArm { id: "concise" | "standard" | "thorough" }
 export const FLASHCARD_ARMS: FlashcardArm[] = [
   { id: "concise" },
   { id: "standard" },
@@ -198,7 +198,7 @@ export function computeCardReward(netBoxDelta: number): number {
  *  appends an instruction asking the generator to split work into smaller, more numerous steps — the
  *  concrete "if it took a while, try smaller steps" behavior. Reward is the procrastination-latency signal
  *  (WebTask.shownAt -> firstActionAt, see shared/types.ts) already collected for exactly this purpose. */
-export interface GranularityArm { id: "standard" | "granular" }
+interface GranularityArm { id: "standard" | "granular" }
 export const GRANULARITY_ARMS: GranularityArm[] = [{ id: "standard" }, { id: "granular" }];
 
 /** Fourth bandit target: the desk's background ambience — the "pre-configured environment" the user asked
@@ -208,7 +208,7 @@ export const GRANULARITY_ARMS: GranularityArm[] = [{ id: "standard" }, { id: "gr
  *  outcome (did the session run its full length, how idle was the student), so it converges the same way
  *  Pomodoro length does. Custom uploads and Spotify links aren't arms here — those are the student's own
  *  explicit pick each time, not a small enumerable menu; this only learns among the built-in noise presets. */
-export interface AudioArm { id: "silence" | "brown" | "pink" | "white" }
+interface AudioArm { id: "silence" | "brown" | "pink" | "white" }
 export const AUDIO_ARMS: AudioArm[] = [{ id: "silence" }, { id: "brown" }, { id: "pink" }, { id: "white" }];
 
 /** Fifth bandit target: overall UI density — the "adapt background/borders/rounding/text size" ask from the
@@ -219,7 +219,7 @@ export const AUDIO_ARMS: AudioArm[] = [{ id: "silence" }, { id: "brown" }, { id:
  *  ratio) exactly like audio does — a layout a student is comfortable in should show up as more focused
  *  sessions, not a bespoke metric. A student's own manual choice in Settings always overrides this and is
  *  never silently changed back (see StudySetup's identical posture for Pomodoro/audio). */
-export interface DensityArm { id: "cozy" | "compact" | "spacious" }
+interface DensityArm { id: "cozy" | "compact" | "spacious" }
 export const DENSITY_ARMS: DensityArm[] = [{ id: "cozy" }, { id: "compact" }, { id: "spacious" }];
 
 /** Sixth bandit target: dashboard ORDERING strategy, layered on top of (never replacing) the existing
@@ -227,7 +227,7 @@ export const DENSITY_ARMS: DensityArm[] = [{ id: "cozy" }, { id: "compact" }, { 
  *  "quick-wins-first" nudges low-effort tasks up (momentum); "subject-balanced" spreads picks across
  *  subjects instead of one subject's tasks dominating the top of the list. Applied ambiently — the list
  *  just quietly orders better, no visible control for the student to fiddle with. */
-export interface OrderingArm { id: "urgency-first" | "quick-wins-first" | "subject-balanced" }
+interface OrderingArm { id: "urgency-first" | "quick-wins-first" | "subject-balanced" }
 export const ORDERING_ARMS: OrderingArm[] = [{ id: "urgency-first" }, { id: "quick-wins-first" }, { id: "subject-balanced" }];
 
 /** Seventh bandit target: tutor chat style bias, folded into chatAboutTask's system prompt (server/claude.ts).
@@ -235,7 +235,7 @@ export const ORDERING_ARMS: OrderingArm[] = [{ id: "urgency-first" }, { id: "qui
  *  already asks for this somewhat — this arm decides HOW MUCH); "worked-example" leans toward a parallel
  *  worked example before asking the student to try. Reward: does the student send a follow-up (real
  *  engagement) rather than the guardrail tripping or the thread just going quiet. */
-export interface ChatStyleArm { id: "concise" | "socratic" | "worked-example" }
+interface ChatStyleArm { id: "concise" | "socratic" | "worked-example" }
 export const CHAT_STYLE_ARMS: ChatStyleArm[] = [{ id: "concise" }, { id: "socratic" }, { id: "worked-example" }];
 
 /** Shorter time-to-first-action -> higher reward. 6 hours+ is treated as "so slow it may as well be zero"

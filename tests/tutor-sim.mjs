@@ -1,14 +1,23 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+// The AI layer was split into server/claude.ts (facade) + server/ai/*.ts; source checks read them as one.
+const claudeSource = () => ["../server/claude.ts", ...readdirSync(new URL("../server/ai/", import.meta.url)).map((f) => `../server/ai/${f}`)]
+  .map((f) => readFileSync(new URL(f, import.meta.url), "utf8")).join("\n");
+
 // Tutor pipeline simulation — runs the REAL chatAboutTask (tool loop, guards, nudges, board writes) against a
 // scripted fake model endpoint (globalThis.fetch is intercepted for api.deepseek.com). It cannot judge how a
 // live model WRITES, but it proves the machinery around it does what the tutor promises: never lets a stated
 // answer through, hands the thinking back, writes reasoning to the board, rejects bad/leaky tool calls and
 // keeps replies short. No network, no key needed.
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
-const { chatAboutTask, summarizeCoursework, makeGeometryEntry, makeProblem, isDuplicateProblem, isDuplicateBoardEntry, isDuplicateDiagram, wantsArtifactTools } = await import("../server/claude.ts");
+const { chatAboutTask, makeBoardEntry, summarizeCoursework, makeGeometryEntry, makeProblem, isDuplicateProblem, isDuplicateBoardEntry, isDuplicateDiagram, wantsArtifactTools } = await import("../server/claude.ts");
 const { buildGeometry } = await import("../shared/geometry.ts");
 const { autoMathLine } = await import("../shared/mathText.ts");
 const P = await import("../server/tutorPolicy.ts");
+const BR = await import("../server/tutorBrain.ts");
+const SM = await import("../server/studentModel.ts");
+const CG = await import("../server/conceptGraph.ts");
+const SS = await import("../server/sessionState.ts");
+const { resolveBoardTarget: wa_resolve } = await import("../server/claude.ts");
 
 let script = () => ({ content: "" });
 let calls = [];
@@ -24,7 +33,7 @@ globalThis.fetch = async (url, init) => {
 
 const task = { title: "Math session", why: "tutoring", source: "freestudy", sourceSubject: "Math" };
 const problem = { id: "p1", question: "Solve x² − 5x + 6 = 0", answer: "x = 2 or x = 3", why: "factors (x−2)(x−3)", createdAt: new Date().toISOString() };
-const run = async (message, o = {}) => { calls = []; const res = await chatAboutTask(task, o.history || [], message, undefined, undefined, { primer: true, canvasMode: true, currentProblems: o.problems || [], currentBoard: o.board || [], ...(o.opts || {}) }); return { ...res, boardAll: res.board, board: res.board.filter((e) => e.kind !== "question") }; };
+const run = async (message, o = {}) => { calls = []; const res = await chatAboutTask(task, o.history || [], message, undefined, undefined, { primer: true, canvasMode: true, currentProblems: o.problems || [], currentBoard: o.board || [], ...(o.opts || {}) }); return { ...res, boardAll: res.board }; };
 const tc = (name, args) => ({ name, args });
 const lastUserText = (body) => String([...body.messages].reverse().find((m) => m.role === "user")?.content || "");
 
@@ -32,9 +41,9 @@ export async function runTutorSim(check, section) {
   section("Tutor simulation — Socratic, never gives the answer, board as a companion (real pipeline, scripted model)");
 
   // 1. A model that blurts the answer is caught and replaced by a question.
-  script = () => ({ content: "The answer is x = 2 or x = 3. You just factor it." });
+  script = (b) => /Problem to fix/.test(lastUserText(b)) ? { content: "What two numbers multiply to 6 and add to −5?" } : { content: "The answer is x = 2 or x = 3. You just factor it." };
   let r = await run("what's the answer?", { problems: [problem], history: [{ role: "user", text: "hi" }, { role: "assistant", text: "Hey! What are you on?" }] });
-  check("a reply stating the problem's answer is blocked and replaced by a question", r.guardrailTripped && !/x = 2/.test(r.reply) && /\?\s*$/.test(r.reply));
+  check("a reply stating the problem's answer is rewritten BY THE MODEL into a question (no canned line)", r.guardrailTripped && !/x = 2/.test(r.reply) && /\?\s*$/.test(r.reply) && calls.some((c) => /Problem to fix/.test(lastUserText(c))));
 
   // 2. A Socratic reply passes through untouched.
   script = () => ({ content: "Mm, close. What two numbers multiply to 6 and add to −5?" });
@@ -99,9 +108,12 @@ export async function runTutorSim(check, section) {
 
   // 10. Persona + board context the model is actually given.
   const sys = String(calls[0].messages[0].content);
-  check("the system prompt carries the Socratic/board contract the tutor is held to", /SOUND LIKE A PERSON/.test(sys) && /THE BOARD IS THE WORKING/.test(sys) && /EXERCISE RESULTS ARRIVE AS/.test(sys) && /ASK what they want to do now/.test(sys) && /NEVER STATE THE CONCLUSION YOURSELF/.test(sys));
+  check("the system prompt carries the Socratic/board contract the tutor is held to", /THE CORE — WHO YOU ARE/.test(sys) && /THE BOARD IS THEIR PAPER/.test(sys) && /EXERCISE RESULTS ARRIVE AS/.test(sys) && /ASK what they want to do now/.test(sys) && /NEVER STATE THE CONCLUSION YOURSELF/.test(sys));
   r = await run("next", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }], problems: [problem], board: [{ id: "b1", kind: "summary", text: "Factor first", at: new Date().toISOString() }] });
-  check("the board + current problem are shown to the model as ALREADY DONE context", /WHAT'S CURRENTLY ON THE BOARD/.test(String(calls[0].messages[0].content)) && /\[summary\] Factor first/.test(String(calls[0].messages[0].content)) && /\[problem\] Solve x² − 5x \+ 6 = 0/.test(String(calls[0].messages[0].content)));
+  // boardSurfaceBlock (server/boardEvents.ts, wired in to replace the old hand-rolled block) always tags
+  // an Otto-owned entry "(yours)" — spec §11's ownership distinction made explicit even with nothing to
+  // contrast against yet, not just when a student entry is also present.
+  check("the board + current problem are shown to the model as ALREADY DONE context", /WHAT'S CURRENTLY ON THE BOARD/.test(String(calls[0].messages[0].content)) && /\[summary\] \(#1; yours\) Factor first/.test(String(calls[0].messages[0].content)) && /\[problem\] Solve x² − 5x \+ 6 = 0/.test(String(calls[0].messages[0].content)));
 
   // 11. Coursework: the summarizer parses/caps what the model returns, and uploaded docs reach the tutor's prompt.
   script = () => ({ content: JSON.stringify({ summary: "A worksheet on factoring quadratics with 8 exercises.", keyPoints: ["difference of squares", "sum and product of roots"], tasks: [{ title: "Do exercises 1-8 of the factoring worksheet", why: "set by the sheet", due: "2026-10-12" }, { title: "x", why: "too short" }, { title: "Redo the odd-numbered exercises with a timer", why: "practice", due: "next friday" }, { title: "Do the extension problems", why: "bonus" }, { title: "Fifth task that must be dropped", why: "cap" }] }) });
@@ -164,21 +176,21 @@ export async function runTutorSim(check, section) {
   check("GEOMETRY_ON_BOARD is offered to the tutor and its figure lands on the board", calls[0].tools.some((x) => x.function?.name === "GEOMETRY_ON_BOARD") && r.board.length === 1 && r.board[0].kind === "diagram" && r.board[0].diagram.length > 8);
 
   // Human tutor pass: gentle openers, dictated-maths hint, the session's start survives a long thread.
-  check("a harsh opener is softened (Careful —, No,, Wrong.)", /^Hm, let's check that/.test(adA.softenOpener("Careful — 1/cos x is sec x. What now?")) && !/^Wrong/i.test(adA.softenOpener("Wrong. Try again?")) && adA.softenOpener("Nice — what next?") === "Nice — what next?");
+  check("a harsh opener is detected (and sent back to the model — never rewritten into a fixed phrase)", !!adA.harshOpener("Careful — 1/cos x is sec x. What now?") && !!adA.harshOpener("Wrong. Try again?") && adA.harshOpener("Nice — what next?") === null && adA.softenOpener === undefined);
   const sp = adA.spokenMathHint("three times one over cotan squared minus 3 over cosine equals 8 sec plus 25");
   check("dictated maths gets a literal transcription plus a grouping warning; plain text gets none", /cot ²/.test(sp) && /GROUPING/.test(sp) && adA.spokenMathHint("what is the derivative of x squared") === "");
   const longHist = []; for (let n = 0; n < 40; n++) longHist.push({ role: n % 2 ? "assistant" : "user", text: n % 2 ? "ok, go on" : "step " + n });
   script = () => ({ content: "Which factor first?" });
   await run("next?", { history: longHist, opts: { opening: [{ role: "user", text: "Solve 3(1/cot^2 x - 3/cos x) = 8 sec x + 25 for the form (a sec x + b)(sec x + c)" }] } });
   check("the session's opening statement is pinned verbatim in the prompt even when the thread is long", JSON.stringify(calls[0].messages).includes("HOW THIS SESSION BEGAN") && JSON.stringify(calls[0].messages).includes("8 sec x + 25"));
-  script = () => ({ content: "Careful — that isn't it. What is 1/cos x?" });
+  script = (b) => /Problem to fix/.test(lastUserText(b)) ? { content: "Hm, what is 1/cos x?" } : { content: "Careful — that isn't it. What is 1/cos x?" };
   r = await run("is it 3 sec x", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
-  check("end to end: a harsh draft reaches the student softened", /^Hm, let's check that/.test(r.reply));
+  check("end to end: a harsh draft is rewritten by the model before the student sees it", /^Hm, what is/.test(r.reply) && calls.some((b) => /opens harshly/.test(lastUserText(b))));
 
   script = () => ({ content: "Mm. What happens to the −3 when you distribute it?" });
   await run("so it is 3 sec x", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
   const sysTxt = String(calls[0].messages[0].content);
-  check("the tutor is told to be critical-but-kind: verify every step, never wave a wrong step through, justify, never erase the board", /CRITICAL, KINDLY/.test(sysTxt) && /never wave it through/.test(sysTxt) && /ever erased/.test(sysTxt));
+  check("the tutor is told to be critical-but-kind: verify every step, never wave a wrong step through, justify, never erase the board", /SOUND HUMAN/.test(sysTxt) && /never wave it through/.test(sysTxt) && /ever erased/.test(sysTxt));
 
   // Exercises are only for ONE-answer questions.
   check("a short single-answer exercise is accepted", !("error" in makeProblem({ question: "Simplify $\\cos^2\\theta(1+\\tan^2\\theta)$ to a single number.", answer: "1" })) && !("error" in makeProblem({ question: "Solve 2x + 3 = 11.", answer: "x = 4" })));
@@ -216,11 +228,11 @@ export async function runTutorSim(check, section) {
   const exR = "[Exercise] I answered \"4\" — marked right (try #1).";
   check("milestone cheer: a streak of right exercises, or all objectives done; not on a plain turn or a single right answer", /MILESTONE/.test(adA.cheerLine(exR, [{ role: "user", text: exR }, { role: "assistant", text: "nice?" }])) && /every objective/.test(adA.cheerLine("ok", [], [{ done: true }, { done: true }])) && adA.cheerLine("x = 4", [], [{ done: true }, { done: false }]) === "" && adA.cheerLine(exR, []) === "");
   check("when stuck, the first rung normalises before shrinking the step", /NORMALISE/.test(adA.scaffoldLine("idk", [])));
-  check("the persona has the warm-older-student voice and uses what it knows about the student", /WARM OLDER STUDENT/.test(String(calls[0].messages[0].content)) && /use what you know about them/.test(String(calls[0].messages[0].content)));
+  check("the persona has the warm-older-student voice and uses what it knows about the student", /kind older student/.test(String(calls[0].messages[0].content)) && /Use what you know about them/.test(String(calls[0].messages[0].content)));
 
   check("plain-text maths in a trace line is wrapped as LaTeX (fractions, roots, greek, functions); prose and existing $…$ are left alone", autoMathLine("Evaluated: (√3/2)(√2/2) - (√2/2)(1/2)") === "Evaluated: $(\\frac{\\sqrt{3}}{2})(\\frac{\\sqrt{2}}{2}) - (\\frac{\\sqrt{2}}{2})(\\frac{1}{2})$" && /\$A = \\frac\{\\pi\}\{3\}\$, \$B = \\frac\{\\pi\}\{4\}\$/.test(autoMathLine("Substituted A = π/3, B = π/4")) && autoMathLine("Add up to 5π/12?") === "Add up to $\\frac{5\\pi}{12}$?" && autoMathLine("He should try again") === "He should try again" && autoMathLine("so $x^2$ is 4") === "so $x^2$ is 4" && /special-angle/.test(autoMathLine("mapped special-angle values for A = π/3")));
   check("an instruction ('Find … by writing π/12 as …') counts as asking: a board line that already shows the decomposition is detected", adA.boardStatesAskedValue("Find the exact value of sin(π/12) by writing π/12 as the difference of two special angles.", [{ text: "x", diagram: [{ latex: "\\sin(π/12) = \\sin(π/3 - π/4)" }] }]).length === 1 && adA.boardStatesAskedValue("Find the exact value of sin(π/12) by writing it as a difference of angles.", [{ text: "Target: sin(π/12) = ?" }]).length === 0);
-  check("the persona makes the first move (the key idea / decomposition) the student's and asks for LaTeX on the board", /THE FIRST MOVE IS THEIRS/.test(String(calls[0].messages[0].content)) && /WRITE MATHS ON THE BOARD IN LaTeX/.test(String(calls[0].messages[0].content)));
+  check("the persona makes the first move (the key idea / decomposition) the student's and asks for LaTeX on the board", /THE FIRST MOVE IS THEIRS/.test(String(calls[0].messages[0].content)) && /is LaTeX between/.test(String(calls[0].messages[0].content)));
 
   const loose = buildGeometry({ points: { A: [0, 0], B: [6, 0], C: [2, 4] } });
   check("points with no sides given are joined into a closed shape (never a figure of loose dots)", !loose.error && loose.ops.filter((o) => o.op === "line").length === 3 && buildGeometry({ points: { A: [0, 0], B: [3, 4] } }).ops.filter((o) => o.op === "line").length === 1);
@@ -230,22 +242,22 @@ export async function runTutorSim(check, section) {
   script = (b, i) => i === 0 ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "Split 5π/12 into π/4 + π/6", kind: "summary" })] } : { content: "What do you get for sin of 5π/12 — which two angles would you split it into?" };
   r = await run("hmm I have no idea where to start with sin(5π/12)", { history: [{ role: "user", text: "find sin(5π/12)" }, { role: "assistant", text: "ok" }] });
   check("end to end: a tutor-authored step is refused on the board's trace", r.board.every((e) => e.kind !== "summary") && /REJECTED/.test(JSON.stringify(calls[1].messages)));
-  check("a closing question is put on the board as a question entry; a generic 'does that make sense?' is not", adA.boardQuestionOf("Good. Which two special angles add up to 5π/12?") === "Which two special angles add up to 5π/12?" && adA.boardQuestionOf("Nice work. Does that make sense?") === "" && adA.boardQuestionOf("ok?") === "");
+  check("a reply's real closing question is extracted (that is how a re-ask is caught); a generic 'does that make sense?' is not", adA.boardQuestionOf("Good. Which two special angles add up to 5π/12?") === "Which two special angles add up to 5π/12?" && adA.boardQuestionOf("Nice work. Does that make sense?") === "" && adA.boardQuestionOf("ok?") === "");
   script = () => ({ content: "Good start. Which two special angles add up to 5π/12?" });
   r = await run("so I need exact values", { history: [{ role: "user", text: "find sin(5π/12)" }, { role: "assistant", text: "ok" }] });
-  check("end to end: the reply's guiding question lands on the board as kind 'question'", r.boardAll.some((e) => e.kind === "question" && /special angles add up/.test(e.text)));
+  check("end to end: the guiding question stays in chat — nothing question-shaped lands on the board", !r.boardAll.some((e) => e.kind === "question" || /special angles add up/.test(e.text)));
 
   const sysT = String(calls[0].messages[0].content);
-  check("the persona makes the board the student's paper for every subject (given / result / question / formulas / outlines / mnemonics)", /THE BOARD IS THEIR PAPER/.test(sysT) && /kind "result"/.test(sysT) && /kind "given"/.test(sysT) && /history\/economics\/literature/.test(sysT));
-  // a student step with only an auto-added question on the board still gets the write-to-board nudge (summary + result)
+  check("the persona makes the board the student's paper for every subject (given / result / question / formulas / outlines / mnemonics)", /THE BOARD IS THEIR PAPER/.test(sysT) && /kind "result"/.test(sysT) && /kind "given"/.test(sysT) && /history, economics, literature/.test(sysT));
+  // a student step with an empty board still gets the write-to-board nudge (summary + result)
   script = (b, i) => i === 0 ? { content: "Right, that's the sum formula. Which two special angles add up to 5π/12?" } : i === 1 ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "Established: $\\sin(A+B)=\\sin A\\cos B+\\cos A\\sin B$", kind: "result" })] } : { content: "Right, that's the sum formula. Which two special angles add up to 5π/12?" };
   r = await run("so I use sin(A+B) = sin A cos B + cos A sin B", { history: [{ role: "user", text: "find sin(5π/12)" }, { role: "assistant", text: "ok" }] });
-  check("a student step gets the nudge even though the question was auto-placed; a 'result' entry lands (kind result)", /kind \\\"result\\\"|kind \"result\"/.test(JSON.stringify(calls[1].messages)) || r.board.some((e) => e.kind === "result"));
+  check("a student step gets the nudge; a 'result' entry lands (kind result)", /kind \\\"result\\\"|kind \"result\"/.test(JSON.stringify(calls[1].messages)) || r.board.some((e) => e.kind === "result"));
 
-  check("the board guidance is judgement, not a checklist (no forced entries, no repeats)", /GUIDE TO YOUR JUDGEMENT|a guide to your judgement/.test(String(calls[0].messages[0].content)) && /never write an entry just to have written one/.test(String(calls[0].messages[0].content)));
+  check("the board guidance is judgement, not a checklist (no forced entries, no repeats)", /Add something only when it helps/.test(String(calls[0].messages[0].content)) && /never an entry just to have written one/.test(String(calls[0].messages[0].content)));
   script = () => ({ content: "Nice. Which factor first?" });
-  r = await run("ok", { history: [{ role: "user", text: "solve x^2-5x+6" }, { role: "assistant", text: "ok" }], board: [{ id: "q", kind: "question", text: "Which two numbers multiply to 6 and add to −5?", at: "" }] });
-  check("a new question card is not stacked on top of one the student is still working with", r.boardAll.every((e) => e.kind !== "question"));
+  r = await run("ok", { history: [{ role: "user", text: "solve x^2-5x+6" }, { role: "assistant", text: "ok" }], board: [{ id: "g", kind: "gap", text: "x² − 5x + 6 = (x − ?)(x − ?)", at: "" }] });
+  check("the board never grows a question card — questions are asked and answered in chat only", r.boardAll.every((e) => e.kind !== "question" && !/Which factor first/.test(e.text)));
 
   // One exercise at a time; never re-ask a question.
   check("a near-identical exercise is a duplicate (the 4× 'sin(5π/12) as a sum of special angles' problem)", isDuplicateProblem([{ id: "1", question: "Find the exact value of sin(5π/12) by writing 5π/12 as the sum of two special angles.", createdAt: "" }], { question: "Find the exact value of sin(5π/12) by writing 5π/12 = π/4 + π/6 as a sum of two special angles." }) && !isDuplicateProblem([{ id: "1", question: "Find sin(5π/12) as a sum of special angles.", createdAt: "" }], { question: "Given sin θ = 3/5 in the first quadrant, find sin(2θ)." }));
@@ -255,7 +267,7 @@ export async function runTutorSim(check, section) {
   const openP = { id: "p1", question: "Given sin θ = 3/5, find sin(2θ).", answer: "24/25", createdAt: new Date().toISOString() };
   script = (b, i) => i === 0 ? { content: "", tool_calls: [tc("CREATE_PROBLEM", { question: "What is the area of a circle of radius 3, in terms of π?", answer: "9π" })] } : { content: "What formula expands sin(2θ)?" };
   r = await run("I'm not sure", { problems: [openP], history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
-  check("no new exercise while one is unanswered (rejected, nothing piled on)", r.problems.length === 0 && /haven't answered the exercise/.test(JSON.stringify(calls[1].messages)));
+  check("no new exercise while one is unanswered (rejected, nothing piled on)", r.problems.length === 0 && /haven't answered the exercise|didn't ask for a new problem/.test(JSON.stringify(calls[1].messages)));
   r = await run("another one please", { problems: [openP], history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
   check("...but the student asking for another one gets it", r.problems.length === 1);
   r = await run("next", { problems: [{ ...openP, solved: true }], history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
@@ -294,9 +306,9 @@ export async function runTutorSim(check, section) {
   let nWrites = 0;
   script = (b, i) => i < 6 ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "Note number " + (nWrites++) + " about the unit circle and radians", kind: "note" })] } : { content: "Which angle first?" };
   await run("keep going", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
-  check("an interactive tutor turn makes at most 4 model rounds even if the model keeps calling tools (was 7)", calls.length <= 4);
-  const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
-  const cl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("an interactive tutor turn makes at most 4 model rounds even if the model keeps calling tools (was 7); the recovery rewrite is not a round", calls.filter((c) => !/Problem to fix/.test(lastUserText(c))).length <= 4);
+  const idx = ["../server/index.ts", "../server/http.ts", ...readdirSync(new URL("../server/routes/", import.meta.url)).map((f) => `../server/routes/${f}`)].map((f) => readFileSync(new URL(f, import.meta.url), "utf8")).join("\n");
+  const cl = claudeSource();
   check("Primer turns skip the Pronote + connected-app network lookups, and provider attempts have timeouts (Gemini 9s, DeepSeek 24s) so a stalled one fails over fast", /req\.body\?\.primer !== true && \(await pronoteSvc\.pronoteConnected/.test(idx) && /req\.body\?\.primer === true \? undefined : await toolsFor\(req\)/.test(idx) && /9_000 : 24_000/.test(cl) && /CHAT_DEADLINE_MS = opts\?\.primer \? 45_000 : 120_000/.test(cl));
 
   // "Done — 50 cards" with no deck behind it (reported live)
@@ -310,4 +322,249 @@ export async function runTutorSim(check, section) {
   // guardrail is enforced in CODE regardless (see the corrective-round check just above this one), not by
   // a prompt sentence, so removing that sentence here is not a behavioral regression.
   check("plain task chat (no primer) gets no board prompt text at all", !/THE BOARD IS PART OF THIS CHAT/.test(String(calls[0].messages[0].content)));
+
+  // ══ THE TUTOR BRAIN (server/tutorBrain.ts) — plan protocol, app policy, validation, evidence-based updates ══
+  section("Tutor brain — plan → policy → validation → student model (scenario evaluations A–F)");
+  {
+    const now = new Date("2026-10-08T15:00:00Z");
+    const fresh = () => SS.emptySessionState("t1", now);
+    // the hidden plan
+    const ex = BR.extractPlan('<plan>{"action":"ask_question","level":0,"concept":"Newton II","why":"check what they know","diagnosis":{"type":"misconception","hypothesis":"treats N as mg","confidence":0.7}}</plan>\nWhat forces act on the block?');
+    check("the hidden plan is parsed (action normalised, diagnosis kept) and stripped from what the student sees", ex.plan?.action === "ASK_QUESTION" && ex.plan.diagnosis?.type === "misconception" && ex.reply === "What forces act on the block?");
+    check("a malformed or cut-off plan never reaches the student", BR.extractPlan("<plan>{not json}</plan> Hi?").reply === "Hi?" && BR.extractPlan('<plan>{"action":"EXPL').reply === "" && BR.extractPlan("plain reply").plan === null);
+    check("an unknown action is rejected rather than guessed", BR.normalizePlan({ action: "SOLVE_IT_FOR_THEM" }) === null);
+
+    // Student D — constantly asks for answers
+    const D = BR.computePolicy({ message: "just give me the answer", history: [{ role: "assistant", text: "What forces act on the block?" }], state: fresh(), now });
+    check("Student D (answer-seeker, no attempt): policy asks for an attempt first and caps help at level 1", D.askAttemptFirst && D.maxLevel === 1);
+    check("...and an EXPLAIN plan is vetoed, an attempt-request question is allowed", !BR.validatePlan({ action: "EXPLAIN" }, D).ok && BR.validatePlan({ action: "ASK_QUESTION", level: 0 }, D).ok && !BR.validatePlan({ action: "GIVE_HINT" }, D).ok);
+    const D2 = BR.computePolicy({ message: "I got 9.8 sin 30 = 4.9 but the answer says 2.4, just tell me the answer", history: [], state: fresh(), now });
+    check("...but after a real attempt the request is answered from THEIR work (no attempt demand)", !D2.askAttemptFirst);
+    const trusted = { ...fresh(), turns: 14, independence: 0.85, unaidedSuccesses: 4 };
+    check("...and a long, independent session isn't artificially withheld from", !BR.computePolicy({ message: "what's the answer?", history: [], state: trusted, now }).askAttemptFirst);
+
+    // minimum necessary assistance: one rung at a time, faster only on evidence
+    const calm = BR.computePolicy({ message: "is it the normal force?", history: [], state: { ...fresh(), levelNow: 0 }, now });
+    const stuck = BR.computePolicy({ message: "idk", history: [{ role: "user", text: "no idea" }, { role: "assistant", text: "Which force?" }, { role: "user", text: "i'm lost" }, { role: "assistant", text: "Up or down?" }], state: { ...fresh(), levelNow: 2 }, now });
+    check("help climbs ONE rung past where the sub-problem is (no jumping to an explanation)", calm.maxLevel === 1 && !BR.validatePlan({ action: "EXPLAIN" }, calm).ok && !BR.validatePlan({ action: "GIVE_TARGETED_HINT" }, calm).ok && BR.validatePlan({ action: "ASK_FOLLOWUP" }, calm).ok);
+    check("...and climbs faster only when smaller help demonstrably failed (stuck 3 turns → up to a partial example)", stuck.maxLevel >= 5 && BR.validatePlan({ action: "SHOW_EXAMPLE" }, stuck).ok);
+    check("Socratic ≠ never explaining: 'explain what X is' may start at a short explanation", BR.computePolicy({ message: "can you explain what an externality is", history: [], state: fresh(), now }).maxLevel >= 5);
+
+    // Student F — works silently and is progressing: say little
+    const F = BR.computePolicy({ message: "so N = mg cos 30 = 8.5 N", history: [{ role: "assistant", text: "What's N here?" }], state: fresh(), now });
+    check("Student F (working, progressing): the policy says wait / say very little", F.waitOk && F.recommend.some((r) => /say very little/.test(r)));
+
+    // Student B — weak prerequisite: step back down the graph
+    const graph = CG.ensureGraph(undefined);
+    let model = SM.emptyStudentModel();
+    for (let k = 0; k < 3; k++) model = SM.recordConceptEvidence(model, { label: "Resolving a vector into components", kind: "mistake", detail: "uses sin for the adjacent side" }, now);
+    const B = BR.computePolicy({ message: "i don't know", history: [{ role: "user", text: "no idea" }, { role: "assistant", text: "Which component?" }], state: { ...fresh(), concept: "Motion on an inclined plane" }, model, graph, subject: "Physics", now });
+    check("Student B (stuck on inclines, weak at components): policy points BELOW the problem to the prerequisite", !!B.stepBack && /component/i.test(B.stepBack.label) && B.recommend.some((r) => /STEP_BACK_PREREQUISITE/.test(r)));
+
+    // Student C — strong memory/execution, never transferred: ask for transfer, not another of the same
+    let cmodel = SM.emptyStudentModel();
+    for (let k = 0; k < 3; k++) cmodel = SM.recordConceptEvidence(cmodel, { label: "Indirect taxes and subsidies", subject: "Economics", kind: "solved-unaided" }, now);
+    const C = BR.computePolicy({ message: "ok next", history: [], state: { ...fresh(), concept: "Indirect taxes and subsidies" }, model: cmodel, graph, subject: "Economics", now });
+    check("Student C (solves unaided, never transferred): policy asks for a transfer question in a new context", !!C.transfer && C.recommend.some((r) => /TRANSFER/.test(r)));
+
+    // spaced retrieval
+    let rmodel = SM.recordConceptEvidence(SM.emptyStudentModel(), { label: "Elasticity", subject: "Economics", kind: "solved-unaided" }, new Date("2026-09-20T10:00:00Z"));
+    rmodel = { ...rmodel, concepts: Object.fromEntries(Object.entries(rmodel.concepts).map(([k, c]) => [k, { ...c, nextReview: "2026-09-25T00:00:00Z" }])) };
+    const R = BR.computePolicy({ message: "hi, let's do econ", history: [], state: fresh(), model: rmodel, graph, subject: "Economics", now });
+    check("a concept due for review gets ONE natural retrieval check at the start of a session", R.retest?.label === "Elasticity" && R.recommend.some((r) => /quick check/.test(r)));
+
+    // Student E — recurring misconception, evidence-based model updates
+    let st = fresh(), em = SM.emptyStudentModel();
+    const a1 = BR.applyTurn(st, em, graph, { plan: { action: "HIGHLIGHT", concept: "Normal (contact) force", diagnosis: { type: "misconception", hypothesis: "takes N = mg on a slope", confidence: 0.8 }, why: "they wrote N = mg", expectedNext: "they question the direction" }, fallbackAction: "WAIT", fallbackWhy: "", message: "N = mg", history: [], subject: "Physics", now });
+    const rec1 = SM.findConcept(a1.model, "Normal (contact) force");
+    check("Student E: a confident misconception diagnosis becomes an evidence-backed hypothesis on that concept (not a label)", !!rec1 && rec1.misconceptions[0]?.text === "takes N = mg on a slope" && rec1.misconceptions[0].evidence.length === 1 && rec1.misconceptions[0].confidence < 1);
+    check("...and the decision log keeps the why / diagnosis / expected next (debuggable, spec §45)", a1.decision.action === "HIGHLIGHT" && /they wrote N = mg/.test(a1.decision.why) && /misconception/.test(a1.decision.evidence) && /question the direction/.test(a1.decision.expectedNext));
+    // help given on this sub-problem → an "unaided" claim is downgraded by the app
+    st = { ...a1.state, levelNow: 3 };
+    const a2 = BR.applyTurn(st, a1.model, graph, { plan: { action: "ASK_FOLLOWUP", concept: "Normal (contact) force", evidence: { kind: "solved-unaided" } }, fallbackAction: "WAIT", fallbackWhy: "", message: "oh so N = mg cos θ", history: [], subject: "Physics", now });
+    check("the APP decides mastery: 'solved unaided' after a level-3 hint is recorded as solved-after-hint", a2.evidenceKind === "solved-after-hint");
+    const rec2 = SM.findConcept(a2.model, "Normal (contact) force");
+    check("a demonstration schedules the next spaced retrieval check", !!rec2?.nextReview && Date.parse(rec2.nextReview) > now.getTime());
+    const a3 = BR.applyTurn(fresh(), em, graph, { plan: { action: "ASK_QUESTION", goal: { type: "exam", minutes: 30 }, objective: "Prepare for Friday's mechanics test" }, fallbackAction: "WAIT", fallbackWhy: "", message: "test friday, I have 30 min", history: [], now });
+    check("goal + time + objective are kept in session state and switch the policy to an efficient pace", a3.state.goalType === "exam" && a3.state.minutes === 30 && a3.state.objective === "Prepare for Friday's mechanics test" && BR.timeModeOf(a3.state) === "rush");
+    const a4 = BR.applyTurn(fresh(), em, graph, { plan: null, fallbackAction: "CREATE_PROBLEM", fallbackWhy: "called CREATE_PROBLEM", message: "next", history: [], exerciseResults: [{ correct: true, attempt: 1 }], now });
+    check("with no plan the turn is still logged (classifier fallback) and the app measures exercise results itself", a4.decision.action === "CREATE_PROBLEM" && a4.state.unaidedSuccesses === 1);
+    check("a student step from the plan becomes a student-owned board line with its status", (() => { const e = BR.studentStepEntry({ action: "ASK_FOLLOWUP", studentStep: { text: "$N = mg$", status: "incorrect" } }, now); return e.owner === "student" && e.status === "incorrect" && e.text === "$N = mg$"; })());
+  }
+
+  // End to end through the real pipeline: an over-helping plan is vetoed BEFORE its tools run, the model re-plans.
+  {
+    const now = new Date();
+    const pol = BR.computePolicy({ message: "just give me the answer", history: [{ role: "assistant", text: "What forces act on the block?" }], state: SS.emptySessionState("t1", now), now });
+    script = (b, i) => i === 0
+      ? { content: '<plan>{"action":"EXPLAIN","level":6,"why":"they want it"}</plan>', tool_calls: [tc("WRITE_TO_BOARD", { text: "N = mg cos 30 so a = g sin 30", kind: "note" })] }
+      : { content: '<plan>{"action":"ASK_QUESTION","level":0,"why":"no attempt yet","expected_next":"they name a force"}</plan>\nHappy to help — what have you tried so far, or which force would you start with?' };
+    r = await run("just give me the answer", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "What forces act on the block?" }], opts: { policy: pol, sessionState: SS.emptySessionState("t1", now) } });
+    check("end to end: an EXPLAIN plan on an un-attempted answer request is vetoed and its board write never runs", r.board.length === 0 && r.planCorrection?.from === "EXPLAIN" && r.plan?.action === "ASK_QUESTION");
+    check("...the student only ever sees the re-planned reply, never plan JSON", !/<plan>|"action"/.test(r.reply) && /what have you tried/.test(r.reply));
+    check("...and the binding TUTOR POLICY + plan protocol are in the tutor's prompt", /TUTOR POLICY FOR THIS TURN/.test(String(calls[0].messages[0].content)) && /HOW YOU THINK EACH TURN/.test(String(calls[0].messages[0].content)));
+  }
+
+  // A problem the STUDENT poses lands on the board even if the model never writes it; a closing reply on an SSA triangle is turned into the case check
+  {
+    const ssa = "find all unknown angles inside the triangle ABC where a equals 35 centimeters b equals 50 centimeters angle A equals 30 degrees";
+    script = () => ({ content: "Which rule connects two sides and an opposite angle?" });
+    r = await run(ssa, { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "What do you want to work on?" }] });
+    const given = r.boardAll.find((e) => e.kind === "given" && e.owner === "student");
+    check("end to end: the student's posed problem is put on the board for them", !!given && /35 cm/.test(given.text) && /30°/.test(given.text) && /^Find all unknown angles/.test(given.text));
+    script = (b, i) => i === 0 ? { content: "Side c ≈ 67.8 cm. That's the whole triangle solved. Want another one?" } : { content: "Before we move on — how many different triangles could fit a = 35, b = 50 and A = 30°?" };
+    r = await run("67.8", { history: [{ role: "user", text: ssa }, { role: "assistant", text: "ok" }, { role: "user", text: "sin B = 0.714 so B = 45.6, C = 104.4" }, { role: "assistant", text: "Good. Side c?" }], board: [{ id: "g", kind: "given", text: "Triangle ABC: a = 35 cm, b = 50 cm, A = 30°", at: "" }] });
+    check("end to end: closing an SSA triangle without the second case is turned into a question about it", !/whole triangle solved/i.test(r.reply) && /how many/i.test(r.reply));
+    script = (b, i) => i === 0 ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "x tan(40°) = (x + 500) tan(25°)", kind: "formula" })] } : { content: "What ratio links h, the angle and that distance?" };
+    r = await run("we label BJ as k", { history: [{ role: "user", text: "two boats 500 m apart, angles of depression 25 and 40, cliff 470 m" }, { role: "assistant", text: "ok" }] });
+    check("end to end: the tutor can't write the setup equation the student never built", !r.boardAll.some((e) => /tan\(40/.test(e.text)));
+  }
+  // The student shows a drawing: comment + a cleaner redraw (even if the model first forgets the redraw)
+  {
+    const drawn = "my diagram\n\nHere's what I drew: a right triangle with a vertical side marked 470, angle 25 at the bottom left and a horizontal line labelled 500";
+    script = (b, i) => i === 0 ? { content: "Nice — you put the 470 on the vertical side. What does the 25° tell you about the angle at the top?" }
+      : i === 1 ? { content: "", tool_calls: [tc("GEOMETRY_ON_BOARD", { caption: "Your sketch, cleaned up", triangle: { names: ["A", "B", "C"], sides: [3, 4, 5] }, angles: [{ at: "C", from: "A", to: "B", right: true }] })] }
+      : { content: "Nice — you put the 470 on the vertical side. What does the 25° tell you about the angle at the top?" };
+    r = await run(drawn, { history: [{ role: "user", text: "two boats" }, { role: "assistant", text: "ok" }] });
+    check("end to end: a shown drawing gets the system block and is redrawn on the board even if the first reply forgot", /THE STUDENT JUST SHOWED YOU A DRAWING/.test(String(calls[0].messages[0].content)) && r.boardAll.some((e) => e.kind === "diagram") && /\?/.test(r.reply));
+  }
+  // SVG_ON_BOARD — the tutor writes the figure itself; hostile markup is neutralised, an empty/non-SVG call is bounced for a retry
+  {
+    const fig = '<svg viewBox="0 0 800 500"><line x1="100" y1="400" x2="600" y2="400" stroke="currentColor" stroke-width="2"/><line x1="600" y1="400" x2="600" y2="100" stroke="currentColor" stroke-width="2"/><text x="610" y="250">470 m</text><script>alert(1)</script></svg>';
+    script = (b, i) => i === 0 ? { content: "", tool_calls: [tc("SVG_ON_BOARD", { caption: "Lighthouse and boats", svg: fig })] } : { content: "Which side does the 25° angle sit at?" };
+    r = await run("let's draw the situation", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
+    const f = r.boardAll.find((e) => e.kind === "svg");
+    check("end to end: the tutor's own SVG lands on the board, sanitised", !!f && /470 m/.test(f.svg) && !/script/.test(f.svg) && calls[0].tools.some((x) => x.function?.name === "SVG_ON_BOARD") && !calls[0].tools.some((x) => x.function?.name === "DRAW_ON_BOARD"));
+    script = (b, i) => i === 0 ? { content: "", tool_calls: [tc("SVG_ON_BOARD", { caption: "Bad", svg: "not svg at all" })] } : i === 1 ? { content: "", tool_calls: [tc("SVG_ON_BOARD", { caption: "Good", svg: fig })] } : { content: "What does the 25° tell you?" };
+    r = await run("draw it again", { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
+    check("end to end: a non-SVG call is bounced and the retry lands", r.boardAll.filter((e) => e.kind === "svg").length === 1);
+  }
+  // The tutor must not compute the student's step for them ("Spot on — 40° − 25° = 15°")
+  {
+    script = (b, i) => i === 0 ? { content: "Spot on — 40° - 25° = 15° for that top angle. How can you use the sine rule now?" } : { content: "Yes, the angle at J on the ground is 25°. What does that make the angle at the top between the two sightlines?" };
+    r = await run("wait without setting tangent ratio we now know that the angle J is 25 degrees right", { history: [{ role: "user", text: "two boats 500 m apart, angles of depression 25 and 40 degrees, cliff 470 m" }, { role: "assistant", text: "ok" }] });
+    check("end to end: a reply that computes the student's step is rewritten into a question", !/15°/.test(r.reply) && /\?/.test(r.reply));
+  }
+  // "Can you just draw it" must produce a figure — and the lighthouse figure is computed, not hand-drawn
+  {
+    script = (b, i) => i === 0 ? { content: "Look at the two right-angled triangles — how would you write the tangent ratio?" }
+      : i === 1 ? { content: "", tool_calls: [tc("TRIG_SCENE_ON_BOARD", { caption: "The lighthouse and the boats", mode: "depression", observers: [{ name: "J", angle: 25 }, { name: "K", angle: 40 }], separation: 500, towerHeight: 470, unknownTop: "h" })] }
+      : { content: "That's the situation, to scale. Which angle sits at boat J on the ground?" };
+    r = await run("can you just draw it out for me please", { history: [{ role: "user", text: "two boats J and K 500 m apart, lighthouse on a 470 m cliff, angles of depression 25 and 40" }, { role: "assistant", text: "ok" }] });
+    const fig = r.boardAll.find((e) => e.kind === "svg");
+    check("end to end: a request to draw is never answered with just a question — the computed figure lands", !!fig && /500 m/.test(fig.svg) && /470 m/.test(fig.svg) && (fig.svg.match(/25°/g) || []).length === 1 && calls[0].tools.some((x) => x.function?.name === "TRIG_SCENE_ON_BOARD"));
+    // KNOW THE ANSWER BEFORE YOU ASK: a reply that states the unit and then asks for the unit is sent back once.
+  script = (b, i) => i === 0
+    ? { content: '<plan>{"action":"ask_question","level":0,"ask":"what is the unit of work","ask_answer":"J"}</plan>750 J — exactly. What are the units on that?' }
+    : { content: "Exactly. Now the same push took 2.5 s — what could you work out from that?" };
+  r = await run("750", { history: [{ role: "user", text: "work is force times distance" }, { role: "assistant", text: "ok" }] });
+  check("end to end: a reply that already states the answer to the question it asks ('750 J — what are the units?') is corrected once", !/what are the units/i.test(r.reply) && /2\.5 s/.test(r.reply) && calls.some((b) => /already states "J"/.test(lastUserText(b))));
+  // BOARD CONTENT: a cheat sheet pasted in the bubble goes on the board (corrective round, then the app's own fallback), bubble = one short line.
+  const SHEET = "Here is the quick cheat sheet: 1. Kinetic energy (E_k): the energy an object has because it is moving. 2. Gravitational potential energy (E_p): the energy stored because of height. 3. Work (W): energy transferred when a force moves something over a distance. 4. Power (P): the rate of energy transfer, in watts. 5. Efficiency: useful energy out over total energy in. Do any of those need an example?";
+  script = (b) => /Problem to fix/.test(lastUserText(b)) ? { content: "I put it on the board. Do any of those need an example?" } : { content: SHEET };
+  r = await run("can you give me a cheat sheet of the five energy words", { history: [{ role: "user", text: "energy question" }, { role: "assistant", text: "ok" }] });
+  check("end to end: a cheat sheet in the bubble ends up on the board with a one-line bubble", r.board.filter((e) => e.kind === "definition").length === 5 && /put it on the board|mis au tableau/i.test(r.reply) && !/1\. Kinetic/.test(r.reply) && /Do any of those need an example\?/.test(r.reply) && r.reply.length < 120);
+  // PROBLEM AS WIDGET: asked for another exercise and answered with a chat question only → sent back to make a real exercise.
+  script = (b, i) => /real EXERCISE/.test(lastUserText(b)) && !b.messages.some((m) => m.role === "tool")
+    ? { content: "", tool_calls: [tc("CREATE_PROBLEM", { question: "A 1200 kg car rolls down a hill of height 45 m. Find its starting gravitational potential energy (g = 9.8 m/s²).", answer: "529200 J", check: "1200*9.8*45", format: "in joules" })] }
+    : i === 0 ? { content: "What energy does the car start with at the very top?" } : { content: "There's the problem — what do you get?" };
+  r = await run("no let's do a new problem physics higher level", { history: [{ role: "user", text: "work power" }, { role: "assistant", text: "ok" }] });
+  check("end to end: asked for a new problem, Otto ends up with a real exercise widget (bare-number key, exact value) instead of only chat text", r.problems.length === 1 && r.problems[0].answer === "529200" && /joules/.test(r.problems[0].format || "") && r.problems[0].value === 529200);
+  // UNPROMPTED EXERCISE: a plain answer from the student must not trigger a brand-new exercise.
+  script = (b, i) => i === 0
+    ? { content: "", tool_calls: [tc("CREATE_PROBLEM", { question: "A 1200 kg car rolls down a hill of height 45 m with friction doing 176,400 J of work. Find the new kinetic energy.", answer: "352800", check: "1200*9.8*45-176400" })] }
+    : { content: "Yes — that's the whole energy at the top. What does it turn into at the bottom?" };
+  r = await run("529200", { history: [{ role: "user", text: "work power energy" }, { role: "assistant", text: "ok" }] });
+  check("end to end: after a plain answer Otto cannot set a new exercise nobody asked for", r.problems.length === 0 && calls.some((b) => /didn't ask for a new problem/.test(JSON.stringify(b.messages))));
+  // NEW PROBLEM while one is still open: givens on the board as text are refused; CREATE_PROBLEM is allowed because they asked for a new one.
+  const openOne = { id: "p9", question: "An electric motor does 1200 J of useful work from 1600 J. Find the efficiency as a percentage.", answer: "75", createdAt: new Date().toISOString() };
+  script = (b, i) => i === 0
+    ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "Skier: mass m = 75 kg, height h = 30 m, friction loss W_f = 4000 J", kind: "given" })] }
+    : /PROBLEM — create it first/.test(JSON.stringify(b.messages)) && !b.messages.some((m) => m.role === "tool" && /"ok":true/.test(String(m.content)))
+      ? { content: "", tool_calls: [tc("CREATE_PROBLEM", { question: "A 75 kg skier starts from rest at a height of 30 m and loses 4000 J to friction. Find the speed at the bottom (g = 9.8 m/s²).", answer: "18.4", check: "sqrt(2*(75*9.8*30-4000)/75)", format: "to 1 decimal place, in m/s" })] }
+      : { content: "There's your new one — what do you get?" };
+  r = await run("can you do a new problem for me", { problems: [openOne], history: [{ role: "user", text: "efficiency" }, { role: "assistant", text: "ok" }] });
+  check("end to end: asked for a new problem while one is open, Otto's givens-as-text are refused and a real exercise is created instead", r.problems.length === 1 && r.board.length === 0 && r.problems[0].answer === "21.9" && r.problems[0].value > 21.9 && r.problems[0].value < 22);
+  // NO WORK FOR THEM: "Go ahead and multiply 75 × 9.8 × 30" hands over the move AND the numbers → sent back for a guiding question.
+  script = (b, i) => i === 0
+    ? { content: "That's our new skier problem on the board! Go ahead and multiply 75 × 9.8 × 30 to find their starting potential energy. What do you get?" }
+    : { content: "It's up there now. Which quantities would give you the energy it starts with at the top?" };
+  r = await run("ok", { history: [{ role: "user", text: "new problem" }, { role: "assistant", text: "here" }] });
+  check("end to end: a reply that tells the student which operation to do on which numbers is rewritten into a guiding question", !/multiply 75/.test(r.reply) && /Which quantities/.test(r.reply));
+  // WHY: a why-question that is answered with a restatement + a question is sent back once for a real explanation.
+  script = (b, i) => i === 0
+    ? { content: "You're wondering why we even need to bother equating them when we already found the speed with SUVAT. Notice how m shows up on both sides?" }
+    : { content: "Because SUVAT needs a constant acceleration, while energy conservation skips time and acceleration entirely — so it still works on a curved slide. Does that make sense?" };
+  r = await run("yeah ok understand but why do I need equate a potential energy to kinetic energy that's what I'm not understanding", { history: [{ role: "user", text: "so mgh" }, { role: "assistant", text: "ok" }] });
+  check("end to end: a why-question gets a real explanation, not 'You're wondering why…' + a counter-question", !/you're wondering/i.test(r.reply) && /constant acceleration/.test(r.reply) && calls.some((b) => /gives no explanation/.test(lastUserText(b))) && calls.some((b) => /THEY ASKED WHY/.test(JSON.stringify(b.messages))));
+  // LISTEN: "I don't know" / an idea in their own words reach the tutor as directives.
+  script = () => ({ content: "Okay — that's the missing piece. It's called the watt: one joule per second. So what's the power here?" });
+  r = await run("oh no I don't know", { history: [{ role: "user", text: "joules per second" }, { role: "assistant", text: "what's it called?" }] });
+  check("a student who says they don't know gets the CONFUSED directive (tell the fact, drop a level, never another riddle)", calls.some((b) => /THEY JUST TOLD YOU THEY ARE LOST OR DON'T KNOW/.test(JSON.stringify(b.messages))));
+  r = await run("wait so then power is basically work over time", { history: [{ role: "user", text: "300" }, { role: "assistant", text: "yes, 300" }] });
+  check("an idea in their own words reaches the tutor as the thing to respond to first", calls.some((b) => /THEY JUST PUT AN IDEA IN THEIR OWN WORDS/.test(JSON.stringify(b.messages))));
+  script = (b, i) => i === 0 ? { content: "Spot on — you've got the two sides lined up. How does the sine rule combine those?" } : { content: "Sorry, I didn't quite catch that — where are you in the problem right now?" };
+    r = await run("to do", { history: [{ role: "user", text: "find TJ" }, { role: "assistant", text: "ok" }] });
+    check("end to end: no 'spot on' for a message with nothing in it", !/spot on/i.test(r.reply));
+  }
+  // "maybe graph it" is done first, and an ungrounded "Great, tan θ = slope!" is rewritten around what they actually said
+  {
+    const hist = [{ role: "user", text: "find the acute angle between lines y = 5x - 2 and y = x/3 - 1" }, { role: "assistant", text: "What are the slopes of those two lines?" }];
+    script = (b, i) => i === 0 ? { content: "Great! tan(θ) = slope. How do you find the angle between two lines?" }
+      : i === 1 ? { content: "", tool_calls: [tc("GRAPH_ON_BOARD", { caption: "The two lines", fns: [{ expr: "5*x - 2", label: "y = 5x − 2" }, { expr: "x/3 - 1", label: "y = x/3 − 1" }], xmin: -3, xmax: 4 })] }
+      : { content: "Here are both lines. You said the slopes are 5 and one third — where do you see them crossing?" };
+    r = await run("so one slope is five the other is one over three can we maybe graph it right", { history: hist });
+    check("end to end: 'maybe graph it' puts the graph on the board, and the ungrounded 'Great! tan θ = slope' never reaches them", r.boardAll.some((e) => e.kind === "graph") && !/tan\(?θ/.test(r.reply) && /slopes/.test(r.reply));
+  }
+  // LISTEN FIRST — the reported lines session: "what's M1" must be answered about M1, and the intersection they found must be responded to
+  {
+    const hist = [{ role: "user", text: "find the acute angle between y = 5x - 2 and y = x/3 - 1" }, { role: "assistant", text: "What do you notice about their two slopes?" }, { role: "user", text: "what does m show" }, { role: "assistant", text: "m is the slope of a line. Which slope is 5?" }];
+    script = (b, i) => i === 0 ? { content: "Punch it into the calculator — what angle does arctan(1/3) give you in degrees?" } : { content: "M1 is just the name for the slope of the first line, y = 5x − 2. Which number in that equation is its slope?" };
+    r = await run("what's M1", { history: hist });
+    check("end to end: a question about a term is answered about that term, not with the next step of the plan", /M1/.test(r.reply) && !/arctan|calculator/.test(r.reply) && r.boardAll.length === 0);
+    script = (b, i) => i === 0 ? { content: "Got the formula up there. Now plug m1 = 5 into it — what do you get?" } : { content: "x = 3/14 — plug it into both equations: do they give the same y?" };
+    r = await run("intersect and I found the point of intersection is when x equals to over 14", { history: hist.slice(0, 2) });
+    check("end to end: the work they report is responded to before anything else", /14/.test(r.reply) && !/formula up there/.test(r.reply));
+  }
+  // ANNOTATE_BOARD — Otto points at an existing entry instead of explaining the mistake in chat
+  {
+    const board = [{ id: "e1", kind: "given", text: "A block on a 30° slope", at: "" }, { id: "e2", kind: "result", owner: "student", status: "incorrect", text: "N = mg", at: "" }];
+    check("a board target resolves by #n or id, never to an annotation or out of range", wa_resolve("#2", board)?.id === "e2" && wa_resolve("e1", board)?.id === "e1" && wa_resolve("#9", board) === null);
+    script = (b, i) => i === 0 ? { content: "", tool_calls: [tc("ANNOTATE_BOARD", { target: "#2", note: "Check the direction of this force — perpendicular to what?", tone: "error" })] } : { content: "Look at the circled line — what is the normal force perpendicular to?" };
+    r = await run("is N = mg?", { board, history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
+    const ann = r.boardAll.find((e) => e.kind === "annotation");
+    check("end to end: ANNOTATE_BOARD attaches a pointer to the student's entry (and is shown the #n listing)", !!ann && ann.targetId === "e2" && ann.tone === "error" && /#2; STUDENT'S WORK/.test(String(calls[0].messages[0].content)));
+    script = (b, i) => i === 0 ? { content: "", tool_calls: [tc("ANNOTATE_BOARD", { target: "#2", note: "It should be 8.5 N, not mg", tone: "error" })] } : { content: "Which direction does N point?" };
+    r = await run("is N = mg?", { board, problems: [{ id: "p1", question: "Block on 30° slope, m = 1 kg: find N", answer: "8.5 N", createdAt: "" }], history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
+    check("a pointer that states the problem's answer is refused (point and ask, never tell)", !r.boardAll.some((e) => e.kind === "annotation") && /REJECTED/.test(JSON.stringify(calls[1].messages)));
+  }
+
+  section("Tutor simulation — spoken input repair, code-verified steps, LaTeX-safe board (tower problem)");
+  {
+    const towerBoard = [
+      { id: "g1", at: "", kind: "given", text: "Observers A and B, angles of elevation $15^\\circ$ and $25^\\circ$, AB = 100 m" },
+      { id: "f1", at: "", kind: "formula", text: "$\\tan(25^\\circ) = \\frac{h}{b}$, $\\tan(15^\\circ) = \\frac{h}{100+b}$" },
+    ];
+    // Spoken "tan 25 = h over b" arrives as "1025 = height over b": the prompt names the likely meaning and the
+    // board refuses a line that repeats the mishearing.
+    script = (b, i) => i === 0
+      ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "1025 = height over b", kind: "summary" })] }
+      : i === 1 ? { content: "", tool_calls: [tc("WRITE_TO_BOARD", { text: "$\\tan(25^\\circ) = \\frac{h}{b}$", kind: "summary" })] }
+      : { content: "Right, two triangles. What does that give you for b?" };
+    let r = await run("1025 = height over b", { board: towerBoard, history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }], opts: { spoken: { alternatives: ["10 25 = height over b"] } } });
+    const sys = JSON.stringify(calls[0]?.messages || []);
+    check("spoken input: the prompt says it's a transcript and gives the board-aware reading (tan 25°)", /SPOKEN INPUT: the student SAID/.test(sys) && /tan 25°/.test(sys) && /10 25 = height over b/.test(sys));
+    check("spoken input: a board line repeating the mishearing (\"1025\") is rejected, the typeset reading lands", !r.board.some((e) => /1025/.test(e.text)) && r.board.some((e) => /\\tan\(25/.test(e.text)) && /speech-recognition slip/.test(JSON.stringify(calls[1]?.messages || [])));
+    // A typed message never gets the spoken block.
+    script = () => ({ content: "What does that give you for b?" });
+    await run("tan 25 = h/b", { board: towerBoard, history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }] });
+    check("typed input: no SPOKEN INPUT block", !/SPOKEN INPUT: the student SAID/.test(JSON.stringify(calls[0]?.messages || [])));
+    // A code-verified step reaches the prompt as binding.
+    script = () => ({ content: "Nice. Now put that into the second equation — what do you get?" });
+    await run("b = h/tan(25°)", { board: towerBoard, history: [{ role: "user", text: "hi" }, { role: "assistant", text: "ok" }], opts: { stepVerdict: { gap: "b = ?", given: "b = h/tan(25°)", verdict: "correct" } } });
+    check("a code-verified correct step tells the tutor to move on, not re-derive", /VERIFIED BY CODE[^"]*CORRECT[^"]*move to the NEXT step/.test(JSON.stringify(calls[0]?.messages || [])));
+    // LaTeX that can't typeset never reaches the board; the model gets KaTeX's error to fix it.
+    const bad = makeBoardEntry({ text: "$\\frac{h}{100 + \\tan(25^\\circ)$", kind: "summary" });
+    check("an unbalanced \\frac is bounced back with KaTeX's error, never written", "error" in bad && /doesn't typeset/.test(bad.error) && "entry" in makeBoardEntry({ text: "$\\frac{h}{100 + b} = \\tan(15^\\circ)$" }));
+  }
 }

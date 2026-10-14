@@ -2,7 +2,7 @@ import { useRef, useEffect, useState, useContext, useCallback } from "react";
 import type { ReactNode } from "react";
 import { Paperclip, TriangleAlert, Volume2, Square, StickyNote, Layers, CircleCheck } from "lucide-react";
 import type { WebTask } from "../../shared/types.ts";
-import { renderChatText, useThinkingWord, useLang, LangContext, CondensedUserMessage, FirstTimeHint, useNotify } from "../ui.tsx";
+import { renderChatText, useThinkingWord, useLang, LangContext, CondensedUserMessage, useNotify } from "../ui.tsx";
 import { useSpeechRecognition } from "../voice/useSpeechRecognition.ts";
 import { useSpeechSynthesis } from "../voice/useSpeechSynthesis.ts";
 import { lastMessageKey } from "../voice/replyKey.ts";
@@ -10,10 +10,10 @@ import { useVoiceModePref } from "../voice/useVoiceModePref.ts";
 import { VoiceControls } from "../voice/VoiceControls.tsx";
 import { createEchoFilter } from "../voice/echoGuard.ts";
 import { findArithmeticClaims } from "../../server/arithmetic.ts";
-import { InlineProblem } from "./InlineProblem.tsx";
 import { extractPdfText } from "./pdfText.ts";
 import { api } from "../api.ts";
 import { OttoAvatar } from "../tutor/OttoAvatar.tsx";
+import { MathText } from "./artifacts/BoardArtifact.tsx";
 
 interface AskOttoPanelProps {
   task: WebTask;
@@ -23,7 +23,10 @@ interface AskOttoPanelProps {
   sending: boolean;
   error: string | null;
   pendingMsg: string | null;
-  onSend: (override?: string, voiceMode?: boolean) => void;
+  /** `spoken` is set only for a message that came straight from speech recognition (never for typing with
+   *  voice mode on) — it carries the recognizer's runner-up readings so the tutor can repair a mishearing.
+   *  (The third slot is StudyMode's canvasMode — never pass `spoken` there: an object would read as true.) */
+  onSend: (override?: string, voiceMode?: boolean, canvasMode?: boolean, spoken?: { alternatives: string[] }) => void;
   onOpenNote: (id: string, title: string) => void;
   onOpenDeck: (id: string, title: string) => void;
   onOpenQuiz: (id: string, title: string) => void;
@@ -154,13 +157,13 @@ export function AskOttoPanel({
   };
   const recog = useSpeechRecognition({
     lang: speechLang,
-    onResult: (text) => {
+    onResult: (text, meta) => {
       if (sendingRef.current) return;
       // Otto's own voice coming back (during speech, in the post-speech tail, or verbatim) is NEVER input.
       if (echoFilterRef.current.isEcho(text)) return;
       // Real student speech while Otto talks: interrupt him — cancel the TTS, the utterance still sends.
       if (speakingRef.current && bargeIn) synth.cancel();
-      onSend(text, true);
+      onSend(text, true, undefined, { alternatives: meta?.alternatives || [] });
     },
     // Live barge-in channel: interim text streams in while the student is still talking — cancel the TTS
     // the instant real speech is detected. Echo-filtered so Otto doesn't cancel himself.
@@ -246,7 +249,6 @@ export function AskOttoPanel({
     spokenKeyRef.current = tailKey;
     const last = task.chat?.[task.chat.length - 1];
     if (voiceModeOn && last?.role === "assistant") {
-      console.log("[tts] speaking assistant message:", last.text.slice(0, 60));
       synth.speak(last.text);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -381,7 +383,11 @@ export function AskOttoPanel({
                 >{synth.speaking ? <Square size={13} aria-hidden="true" /> : <Volume2 size={15} aria-hidden="true" />}</button>
               </>
             ) : (
-              <p className="otto-bubble-empty">{emptyText ?? ""}</p>
+              // MathText, not raw text: the opener quotes real board maths ("Solve for $x ∈ [0, 2\pi]$: …")
+              // and used to print with literal $…$ / \\cos when pasted verbatim (report-live). A div, not a
+              // <p>: MathText's fallback path returns renderChatText's own <p>/<ul> blocks, and <p> in <p> is
+              // invalid DOM (the chat variant below already carries that warning comment).
+              <div className="otto-bubble-empty">{emptyText ? <MathText text={emptyText} /> : ""}</div>
             )}
           </div>
         </div>
@@ -402,9 +408,9 @@ export function AskOttoPanel({
     <div className="sm-ai-embed">
       <div className="sm-ai-chat" role="log" aria-live="polite" aria-label={L("Conversation avec Otto", "Conversation with Otto")} ref={chatContainerRef} onScroll={handleScroll}>
         {!task.chat?.length && !pendingMsg ? (
-          <p className="sm-ai-empty">
-            {emptyText ?? `Ask anything about ${currentStep ? `"${currentStep.text}"` : task.title}.`}
-          </p>
+          <div className="sm-ai-empty">
+            <MathText text={emptyText ?? `Ask anything about ${currentStep ? `"${currentStep.text}"` : task.title}.`} />
+          </div>
         ) : task.chat?.map((m, i) => (
           <div key={i} className={`sm-ai-msg sm-ai-msg-${m.role}`}>
             <span className={`sm-ai-sender sm-ai-sender-${m.role}`}>{m.role === "user" ? "You" : "Otto"}</span>
@@ -456,7 +462,7 @@ export function AskOttoPanel({
         ))}
         {pendingMsg ? <div className="sm-ai-msg sm-ai-msg-user sm-ai-msg-pending">{pendingMsg}</div> : null}
         {sending ? (
-          <div className="sm-ai-msg sm-ai-msg-assistant sm-ai-typing" role="status" aria-label={L("Otto réfléchit", "Otto is thinking")}>
+          <div className="sm-ai-msg sm-ai-msg-assistant sm-ai-typing" role="status" aria-label={L("Otto te cuisine", "Otto is working on you")}>
             <span className="sm-typing-dots" aria-hidden="true"><i /><i /><i /></span>
             {/* The cycling word itself already reads as "still actively working" (it keeps changing), so it
                 replaces the old static "still thinking…"/"might be putting something together…" text

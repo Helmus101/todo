@@ -2,7 +2,7 @@
 // Every age-sensitive behavior is a field in a Policy Profile, chosen by (ageBand, domainLevel)
 // See Primer plan §4 for the full specification
 
-export type PolicyProfile = {
+type PolicyProfile = {
   id: string;
   version: string;
   ageRange: [number, number];
@@ -181,7 +181,7 @@ const PROFILES_BY_ID = new Map(DEFAULT_PROFILES.map(p => [p.id, p]));
 /**
  * Calculate age from birth year
  */
-export function calculateAge(birthYear: number): number {
+function calculateAge(birthYear: number): number {
   const currentYear = new Date().getFullYear();
   return currentYear - birthYear;
 }
@@ -218,25 +218,4 @@ export function getPolicyProfile(age: number, domainLevel?: string): PolicyProfi
 export function getPolicyProfileFromBirthYear(birthYear: number): PolicyProfile {
   const age = calculateAge(birthYear);
   return getPolicyProfile(age);
-}
-
-/**
- * Get all available policy profiles (for admin/management interfaces)
- */
-export function getAllPolicyProfiles(): PolicyProfile[] {
-  return DEFAULT_PROFILES;
-}
-
-/**
- * Check if a policy profile exists by ID
- */
-export function policyProfileExists(id: string): boolean {
-  return PROFILES_BY_ID.has(id);
-}
-
-/**
- * Get a specific policy profile by ID
- */
-export function getPolicyProfileById(id: string): PolicyProfile | undefined {
-  return PROFILES_BY_ID.get(id);
 }

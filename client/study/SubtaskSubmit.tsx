@@ -56,7 +56,7 @@ export function SubtaskSubmit({ stepText, stepIndex, totalSteps, onSubmit, onCan
         {status && (
           <textarea
             className="sm-submit-note"
-            placeholder={status === "stuck" ? L("Sur quoi est-ce que tu bloques ?", "What are you stuck on?") : L("Facultatif : qu'as-tu terminé ?", "Optional: what did you complete?")}
+            placeholder={status === "stuck" ? L("Sur quoi est-ce que tu bloques ?", "What are you stuck on?") : L("Facultatif : qu'as-tu terminé ?", "Optional: what did you complete?")} aria-label={status === "stuck" ? L("Sur quoi est-ce que tu bloques ?", "What are you stuck on?") : L("Facultatif : qu'as-tu terminé ?", "Optional: what did you complete?")}
             value={note}
             onChange={e => setNote(e.target.value)}
             rows={3}

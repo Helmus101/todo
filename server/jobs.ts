@@ -7,13 +7,14 @@
  * (loadState → mutate → merge-with-fresh → saveState), never on an HTTP session, so a cron tick on a cold
  * serverless instance can execute a task end to end. The DB job row is the lock and the retry ledger.
  */
+import { schoolRecordLine } from "./schoolRecord.ts";
 import type { WebTask, Profile, TaskStatus } from "../shared/types.ts";
-import { emptyProfile, canonStatus, isHandled, isInFlight, tzOf, overMonthlyBudget, overInteractiveBudget, addUsage, learnedProductiveHour, bumpActivityHour } from "../shared/types.ts";
+import { emptyProfile, canonStatus, isHandled, isInFlight, tzOf, addUsage, learnedProductiveHour } from "../shared/types.ts";
 import * as store from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as integrations from "./integrations.ts";
 import * as claude from "./claude.ts";
-import { pronoteConnected, pronoteGrades, pronoteHomework, pronoteTests, applyPronoteGrades } from "./pronote.ts";
+import { pronoteConnected, pronoteGrades, pronoteHomework, pronoteTests, applyPronoteGrades, syncPronoteLessons } from "./pronote.ts";
 import type { AcademicContext } from "./claude.ts";
 import { replanMilestones } from "./milestones.ts";
 import { contextKey as banditContextKey, chooseArm, GRANULARITY_ARMS, type BanditState } from "./bandit.ts";
@@ -129,7 +130,8 @@ async function loadUser(email: string): Promise<{ profile: Profile; list: WebTas
  *  explicit `null` as "clear it", so that shape is no longer destructive either way — but this function
  *  still has no reason to name those columns at all.) Cached read, same reasoning as loadUser above. */
 async function commitUser(email: string, profile: Profile, list: WebTask[]): Promise<void> {
-  const current = await store.loadState(email);
+  // Validated read (version check; full row only if it changed) — this merge is followed by a write, so a stale cached base must never be merged into.
+  const current = await store.loadState(email, { bypassCache: true });
   const mergedTasks = tasks.mergeTaskLists(current.tasks || [], list);
   const mergedProfile = tasks.mergeProfileStates(current.profile || emptyProfile(), profile);
   await store.saveState(email, { profile: mergedProfile, tasks: mergedTasks });
@@ -139,7 +141,6 @@ async function processSweep(job: store.Job): Promise<string> {
   const email = job.user_email;
   const { profile, list } = await loadUser(email);
   if (profile.paused) return "skipped: AI paused";
-  if (overMonthlyBudget(profile)) return "skipped: monthly AI budget reached";
   const extras = await integrations.getAgentTools(email, { primaryAccounts: profile.primaryAccounts });
   // Pronote is read directly by discoverSourceItems (server/discover.ts), entirely outside the Composio
   // toolset — a Pronote-only lycéen (no Gmail) has an empty `extras.tools` but genuinely has something for
@@ -163,11 +164,11 @@ async function processSweep(job: store.Job): Promise<string> {
   let autoRunSpent = 0;
   for (const t of list.filter((x) => x.unrefined && !isHandled(x.status)).slice(0, 3)) {
     try {
-      const refined = await claude.refineManualTask(t.title, profile);
+      const refined = await claude.refineManualTask(t.title, profile, schoolRecordLine(list, profile, t.sourceSubject));
       if (refined) {
         // This call's cost was previously untracked entirely — refineManualTask returned no token info and
         // nothing here called addUsage, so a real DeepSeek spend on every unrefined manual task never
-        // counted toward profile.usage OR the monthly budget cap at all.
+        // counted toward profile.usage at all.
         addUsage(profile, refined.tokens, "manual_refine");
         tasks.applyRefinement(list, t.id, refined);
         void store.recordEvent(email, "refined", { taskId: t.id, message: `Refined to "${t.title}"` });
@@ -197,13 +198,10 @@ async function processSweep(job: store.Job): Promise<string> {
   // for what it reports" merge as the manual Settings sync, just automatic so a student never has to think
   // about it. A failure here (Pronote down, no grades yet) never blocks the sweep itself.
   try {
-    if ((await pronoteConnected(email)).connected) applyPronoteGrades(profile, await pronoteGrades(email));
+    if ((await pronoteConnected(email)).connected) { applyPronoteGrades(profile, await pronoteGrades(email)); await syncPronoteLessons(profile, email); }
   } catch { /* best-effort */ }
-  // Refresh Otto's synthesized "read" on this student (profile.studentModel) — the ONE new AI-spend site
-  // this feature adds, and it deliberately lives HERE, inside the sweep's own already-checked
-  // overMonthlyBudget gate above, rather than as a 4th standalone AI-spend window. shouldRefreshStudentModel
-  // already gates on "not already refreshed today" + "real activity since the last refresh", so an inactive
-  // account (or one already refreshed today) costs nothing — best-effort, must never block the sweep itself.
+  // Refresh Otto's synthesized "read" on this student (profile.studentModel). shouldRefreshStudentModel gates
+  // on "not already refreshed today" + "real activity since", so an inactive account costs nothing.
   if (shouldRefreshStudentModel(profile)) {
     try {
       // Best-effort: a bandit-state load hiccup just means the synthesis runs without the "learned
@@ -308,19 +306,12 @@ async function processExecuteTask(job: store.Job): Promise<string> {
   const email = job.user_email;
   const taskId = String(job.task_id || "");
   const { profile, list } = await loadUser(email);
-  // A manual run / revision is user-present, so it gets the interactive reserve (cap ×1.1); a background
-  // auto-run stops hard at the cap. Either way the check must MATCH the interactive route that enqueued it,
-  // or a run the route allowed would be silently skipped here.
-  const interactive = !!(job.input?.manual || job.input?.note);
-  const budgetBlocked = interactive ? overInteractiveBudget(profile) : overMonthlyBudget(profile);
-  // Pause / over-budget: this job is consumed (marked succeeded) by the drain, so DON'T leave the task
-  // stranded at "queued" — a queued task has no way back into the runnable set (cron's catch-all only
-  // re-enqueues "ready"), so it would look like it's "working" forever. Revert it to "ready" and commit,
-  // so the honest state shows AND the next sweep / cron ready-path picks it up once the block clears.
-  if (profile.paused || budgetBlocked) {
+  // Paused: the job is consumed, so revert the task from "queued" to "ready" — otherwise it would look
+  // like it's working forever, since nothing re-enqueues a queued task.
+  if (profile.paused) {
     const t = list.find((x) => x.id === taskId);
     if (t && isInFlight(t.status)) { t.status = "ready"; t.updatedAt = new Date().toISOString(); await commitUser(email, profile, list); }
-    return profile.paused ? "skipped: AI paused" : "skipped: monthly AI budget reached";
+    return "skipped: AI paused";
   }
   const t = list.find((x) => x.id === taskId);
   if (!t) return "skipped: task not found";
@@ -471,7 +462,6 @@ async function processExecuteStep(job: store.Job): Promise<string> {
   };
   if (profile.paused) { restStatus(); await commitUser(email, profile, list); return "skipped: AI paused"; }
   // Approve & Run is always user-present → interactive reserve, matching the route that enqueued it.
-  if (overInteractiveBudget(profile)) { restStatus(); await commitUser(email, profile, list); return "skipped: monthly AI budget reached"; }
   if (!Number.isInteger(index)) { restStatus(); await commitUser(email, profile, list); return "skipped: bad step index"; }
   await store.recordEvent(email, "step_started", { taskId, jobId: job.id, message: `Running step ${index + 1}` });
   // The user explicitly clicked Approve & Run — the permissioned toolset is correct here. Same multi-account
@@ -535,7 +525,7 @@ export async function processJob(job: store.Job): Promise<string> {
 
 /** Claim + process up to `limit` jobs, stopping when the time budget is spent (serverless functions have
  *  hard ceilings — persist progress per job, never hold work hostage to the batch). */
-export async function drain(limit = 3, budgetMs = 240_000, userEmail?: string): Promise<{ processed: number; failed: number }> {
+export async function drain(limit = 3, budgetMs = 120_000, userEmail?: string): Promise<{ processed: number; failed: number }> {
   const t0 = Date.now();
   let processed = 0, failed = 0;
   for (let i = 0; i < limit; i++) {
@@ -575,17 +565,46 @@ export async function drain(limit = 3, budgetMs = 240_000, userEmail?: string): 
  * A successful task write and job enqueue are normally one flow, but a dropped response, stale instance,
  * or a cloud write race can leave the task status committed while the job insert was not. The open-tab kick
  * is the fastest recovery path; cron also calls the same logic through its orphaned-task pass. */
-export async function recoverOrphanedQueuedTasks(email: string, limit = 3): Promise<string[]> {
-  const { list } = await loadUser(email);
+export async function recoverOrphanedQueuedTasks(email: string, limit = 3, now: Date = new Date()): Promise<string[]> {
+  const { profile, list } = await loadUser(email);
   const active = new Set(await store.activeJobTaskIds(email));
-  const orphaned = list
-    .filter((t) => canonStatus(t.status) === "queued" && !active.has(t.id) && t.source !== "studylog")
-    .slice(0, limit);
-  for (const t of orphaned) {
-    await store.enqueueJob(email, "execute_task", t.id);
-    void store.recordEvent(email, "queued", { taskId: t.id, message: "Recovered an orphaned task execution" });
+  const plan = planStuckRecovery(list, active, now);
+  for (const id of plan.requeue.slice(0, limit)) {
+    const t = list.find((x) => x.id === id);
+    if (t) t.recoveredAt = now.toISOString();
+    await store.enqueueJob(email, "execute_task", id);
+    void store.recordEvent(email, "queued", { taskId: id, message: "Recovered an orphaned task execution" });
   }
-  return orphaned.map((t) => t.id);
+  for (const id of plan.fail) {
+    const t = list.find((x) => x.id === id);
+    if (!t) continue;
+    t.status = "failed_retryable";
+    t.lastError = "Otto stopped before finishing this one — tap Retry to run it again.";
+    t.updatedAt = now.toISOString();
+    void store.recordEvent(email, "run_failed", { taskId: id, message: "Stuck in progress with no live job — released for retry" });
+  }
+  if (plan.requeue.length || plan.fail.length) await commitUser(email, profile, list);
+  return plan.requeue.slice(0, limit);
+}
+
+/** Which in-progress tasks have no job behind them, and what to do (reported: "Otto is working on…" for a very long
+ *  time). A task shows "working" while it's queued or executing; if its job was consumed, exhausted its attempts, or
+ *  its worker was killed, nothing ever moves it again.
+ *  - queued, no live job → re-enqueue, once per 30 min (a second orphaning that soon means it keeps dying: release it);
+ *  - executing, no live job, untouched for 3+ min → release it as failed_retryable (the student sees Retry, not a spinner).
+ *  Pure, exported for tests. */
+export function planStuckRecovery(list: { id: string; status: TaskStatus; source?: string; updatedAt?: string; createdAt?: string; recoveredAt?: string }[], activeJobTaskIds: Set<string>, now: Date): { requeue: string[]; fail: string[] } {
+  const requeue: string[] = [], fail: string[] = [];
+  const age = (iso?: string) => { const n = Date.parse(String(iso || "")); return Number.isFinite(n) ? now.getTime() - n : Infinity; };
+  for (const t of list) {
+    if (t.source === "studylog" || activeJobTaskIds.has(t.id)) continue;
+    const c = canonStatus(t.status);
+    if (c === "queued") {
+      if (age(t.recoveredAt) < 30 * 60_000) { if (age(t.updatedAt || t.createdAt) > 3 * 60_000) fail.push(t.id); }
+      else requeue.push(t.id);
+    } else if (c === "executing" && age(t.updatedAt || t.createdAt) > 3 * 60_000) fail.push(t.id);
+  }
+  return { requeue, fail };
 }
 
 export async function enqueueAndDrain(email: string, type: store.JobType, taskId?: string, input?: any, drainInline = true): Promise<store.Job> {
@@ -604,7 +623,7 @@ export async function enqueueAndDrain(email: string, type: store.JobType, taskId
       // Scoped to THIS account — an unscoped drain() claims the global oldest queued job across every user
       // (see the /api/jobs/kick fix for the same bug), which would make an interactive "run this now" request
       // process a stranger's job instead of the one it just enqueued.
-      await drain(2, undefined, email);
+      await drain(1, undefined, email);
     }
   }
   return (await store.getJob(job.id, email)) || job;
@@ -613,15 +632,18 @@ export async function enqueueAndDrain(email: string, type: store.JobType, taskId
 /** Cron entry: give every recently-active account its background turn — enqueue a sweep if none has
  *  succeeded within the watch window, enqueue execution for ready tasks, then drain a bounded batch. */
 export async function cronTick(): Promise<{ users: number; enqueued: number; processed: number; failed: number }> {
-  const emails = await store.listAccountEmails(500);
+  // One clock for the whole tick: Vercel kills the function at 300 s. Enqueueing stops at 100 s and no new job
+  // starts after 150 s. Accounts are shuffled so a time-cut never starves the same ones every day.
+  const tickStart = Date.now();
+  const emails = shuffle(await store.listAccountEmails(500));
   let enqueued = 0;
   const now = new Date();
 
   for (const email of emails) {
+    if (Date.now() - tickStart > 100_000) break;
     try {
       const { profile, list } = await loadUser(email);
       if (profile.paused) continue;
-      if (overMonthlyBudget(profile)) continue; // over the monthly AI budget — no new work until it resets
 
       // (1) SWEEP FIRST — once a day, fixed at SWEEP_HOUR (16:00) local time, not a multi-times-a-day
       // cadence (see sweepDue's own doc comment). Uses the persisted lastSweepAt marker (survives
@@ -670,17 +692,23 @@ export async function cronTick(): Promise<{ users: number; enqueued: number; pro
   // FAIRLY: round-robin a small per-user quota so one heavy account can't monopolise the batch and starve
   // the tail (global-oldest-first did exactly that). Each pass gives every user up to 2 jobs; repeat passes
   // until the function's time ceiling is near or a whole pass does nothing. Bounded by the 300s cap.
-  const t0 = Date.now(), budgetMs = 260_000;
+  const startWindowMs = 150_000;
   let processed = 0, failed = 0;
-  for (let pass = 0; pass < 6 && Date.now() - t0 < budgetMs; pass++) {
+  for (let pass = 0; pass < 6 && Date.now() - tickStart < startWindowMs; pass++) {
     let didWork = false;
     for (const email of emails) {
-      if (Date.now() - t0 >= budgetMs) break;
-      const r = await drain(2, budgetMs - (Date.now() - t0), email);
+      if (Date.now() - tickStart >= startWindowMs) break;
+      const r = await drain(2, startWindowMs - (Date.now() - tickStart), email);
       processed += r.processed; failed += r.failed;
       if (r.processed || r.failed) didWork = true;
     }
     if (!didWork) break; // nothing left anywhere this pass → stop
   }
   return { users: emails.length, enqueued, processed, failed };
+}
+
+function shuffle<T>(items: T[]): T[] {
+  const a = [...items];
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
 }

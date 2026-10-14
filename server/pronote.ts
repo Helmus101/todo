@@ -171,8 +171,9 @@ export async function assertSafeExternalUrl(rawUrl: string): Promise<void> {
   if (!addresses.length || addresses.some((a) => isPrivateOrReservedIp(a.address))) throw new Error("Cette adresse n'est pas autorisée.");
 }
 
-/** Connect a Pronote account: log in ONCE with the real credentials (never stored past this call), then
- *  persist only the rotating token pawnote issues in their place. */
+/** Connect a Pronote account: log in with the real credentials and persist the rotating token pawnote issues,
+ *  plus the password (both AES-256-GCM encrypted) so a dead token can be replaced by an automatic re-login.
+ *  Disconnecting or deleting the account clears both. */
 export async function connectPronote(email: string, opts: { url: string; username: string; password: string; kind?: number }): Promise<{ ok: boolean; error?: string; connected?: boolean; username?: string }> {
   // Mandatory HERE specifically, unlike the rest of the app: a Pronote token is the replacement for a
   // student's REAL school password, a materially bigger liability than a revocable Google OAuth token if
@@ -607,4 +608,40 @@ export async function pronoteGrades(email: string): Promise<PronoteGradeItem[]> 
     return [...bySubject.values()];
   });
   return out || [];
+}
+
+export interface PronoteLessonItem { id: string; subject: string; date: string; title?: string; text: string; category?: string; files?: { name: string; url: string }[] }
+
+/** Lesson content ("contenu du cours") and the resources/files teachers publish, for the last `daysBack` days and the
+ *  next 2. One entry per published content block. Best-effort: [] on any failure. */
+export async function pronoteLessons(email: string, daysBack = 21): Promise<PronoteLessonItem[]> {
+  const out = await withPronoteSession(email, async (session) => {
+    const now = new Date();
+    const resources = await withPronoteTimeout("resourcesFromIntervals", pronote.resourcesFromIntervals(session, new Date(now.getTime() - daysBack * 86_400_000), new Date(now.getTime() + 2 * 86_400_000)));
+    const items: PronoteLessonItem[] = [];
+    for (const r of resources) {
+      for (const c of r.contents || []) {
+        const text = stripHtml(String(c.description || "")).replace(/\s+/g, " ").trim().slice(0, 1500);
+        const files = (c.files || []).slice(0, 6).map((f) => ({ name: String(f.name || "").slice(0, 120), url: f.url }));
+        if (!text && !c.title && !files.length) continue;
+        items.push({ id: `${r.id}:${c.id}`, subject: r.subject?.name || "Class", date: r.startDate.toISOString().slice(0, 10), ...(c.title ? { title: String(c.title).slice(0, 140) } : {}), text, ...(c.categoryText ? { category: String(c.categoryText).slice(0, 40) } : {}), ...(files.length ? { files } : {}) });
+      }
+    }
+    return items;
+  });
+  return out || [];
+}
+
+/** Merge fetched lessons into profile.pronoteLessons: keyed by id, newest first, last 60 days, at most 40. */
+export function applyPronoteLessons(profile: Profile, fetched: PronoteLessonItem[]): void {
+  if (!fetched.length) return;
+  const byId = new Map<string, PronoteLessonItem>();
+  for (const l of [...(profile.pronoteLessons || []), ...fetched]) byId.set(l.id, l);
+  const cutoff = new Date(Date.now() - 60 * 86_400_000).toISOString().slice(0, 10);
+  profile.pronoteLessons = [...byId.values()].filter((l) => l.date >= cutoff).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 40);
+}
+
+/** Best-effort sync used wherever grades are synced. Never throws. */
+export async function syncPronoteLessons(profile: Profile, email: string): Promise<void> {
+  try { applyPronoteLessons(profile, await pronoteLessons(email)); } catch { /* best-effort */ }
 }

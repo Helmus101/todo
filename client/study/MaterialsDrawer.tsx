@@ -43,7 +43,7 @@ export function MaterialsDrawer({ materials, onClose, onOpenArtifact, onAddFiles
     <SmSurface variant="drawer" closing={closing} className="sm-drawer">
       <div className="sm-drawer-header">
         <span>{L("MATÉRIEL", "MATERIALS")}</span>
-        <button className="sm-drawer-close" onClick={doClose}>×</button>
+        <button className="sm-drawer-close" aria-label={L("Fermer", "Close")} onClick={doClose}>×</button>
       </div>
       <div className="sm-drawer-body">
         {materials.length === 0 ? (
@@ -84,7 +84,7 @@ export function MaterialsDrawer({ materials, onClose, onOpenArtifact, onAddFiles
               value={linkInput}
               onChange={(e) => setLinkInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && submitLink()}
-              placeholder={L("Colle un lien (ou une URL YouTube)…", "Paste a link (or YouTube URL)…")}
+              placeholder={L("Colle un lien (ou une URL YouTube)…", "Paste a link (or YouTube URL)…")} aria-label={L("Colle un lien (ou une URL YouTube)…", "Paste a link (or YouTube URL)…")}
             />
             <button className="sm-btn sm-btn-ghost sm-btn-sm" onClick={submitLink} disabled={!linkInput.trim()}>{L("Ajouter", "Add")}</button>
           </div>

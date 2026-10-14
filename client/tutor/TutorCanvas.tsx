@@ -1,6 +1,6 @@
 import { createPortal } from "react-dom";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { Pencil, Highlighter, Eraser, Type, Undo2, Redo2, Trash2, Hand, Send } from "lucide-react";
+import { Pencil, Highlighter, Eraser, Type, Undo2, Redo2, Trash2, Hand } from "lucide-react";
 import { api } from "../api.ts";
 import { useLang } from "../ui.tsx";
 
@@ -10,7 +10,7 @@ type Item =
   | { kind: "stroke"; tool: "pen" | "highlighter" | "eraser"; color: string; width: number; pts: Pt[] }
   | { kind: "text"; color: string; size: number; x: number; y: number; value: string };
 
-const COLORS = ["#18181B", "#2563EB", "#DC2626", "#16A34A", "#F59E0B", "#9333EA"];
+const COLORS = ["#18181B", "#2563EB", "#DC2626"];
 const WIDTH: Record<"pen" | "highlighter" | "eraser", number> = { pen: 3, highlighter: 18, eraser: 26 };
 
 function paint(ctx: CanvasRenderingContext2D, items: Item[], w: number, h: number) {
@@ -43,7 +43,7 @@ function paint(ctx: CanvasRenderingContext2D, items: Item[], w: number, h: numbe
 /** The Tutor's whiteboard layer — a transparent ink surface laid OVER the lesson board (Gauth-style: one big
  *  canvas where Otto writes and the student writes back), with a floating tool pill. Strokes are kept as
  *  resolution-independent items and re-painted, which is what makes undo/redo, a real eraser and crisp
- *  hi-DPI rendering all fall out of one model. "Show Otto" flattens the ink onto white and sends it to the
+ *  hi-DPI rendering all fall out of one model. Reading the ink (when the student asks Otto to look, or sends a message after drawing) flattens it onto white and sends it to the
  *  vision endpoint (same path as before — nothing is stored server-side). The "hand" tool lets pointer
  *  events fall through so the board underneath can still be scrolled. Stays mounted for the whole session so
  *  the drawing survives toggling Desmos. */
@@ -52,13 +52,17 @@ export interface TutorCanvasHandle {
   hasUnseenInk: () => boolean;
   /** Reads the unseen ink (vision) and returns Otto's description of it, or null when there's nothing new /
    *  vision isn't available / the read failed. Marks the ink as seen on success so it's never sent twice. */
-  readUnseenInk: () => Promise<string | null>;
+  readUnseenInk: (force?: boolean) => Promise<string | null>;
+  /** True when the page has any ink at all (seen or not). */
+  hasInk: () => boolean;
+  /** Ink the student drew on the blank page BELOW the board that hasn't been "frozen" into the board's flow yet:
+   *  returns the height (px) of the sheet to keep for it, or 0. After this call the board makes room for it, so
+   *  whatever Otto writes next lands AFTER the drawing instead of on top of it. */
+  freezeSheet: () => number;
 }
 
-export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean; hidden: boolean; surface: HTMLElement | null; onSend: (description: string, note?: string) => void; onDesmos: () => void }>(function TutorCanvas({ visionReady, hidden, surface, onSend, onDesmos }, handleRef) {
+export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean; hidden: boolean; surface: HTMLElement | null; onDesmos: () => void }>(function TutorCanvas({ visionReady, hidden, surface, onDesmos }, handleRef) {
   const L = useLang();
-  const [askOpen, setAskOpen] = useState(false);
-  const [askText, setAskText] = useState("");
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const items = useRef<Item[]>([]);
   const inkStamp = useRef(0);
@@ -68,7 +72,9 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
   // Starts in "pan" (select/hand) — the board underneath must be usable (scrolling, clicking a step,
   // following a link) the moment the tutor opens, without the ink layer eating every pointer event first.
   const [tool, setTool] = useState<Tool>("pan");
-  const [color, setColor] = useState(COLORS[1]);
+  // The tools stay folded into one "Draw" button until wanted: a full toolbar over the board was too much chrome.
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [color, setColor] = useState(COLORS[0]);
   const [version, setVersion] = useState(0); // bumps on every committed change → toolbar enable/disable
   const [typing, setTyping] = useState<{ x: number; y: number; value: string } | null>(null);
   const [sending, setSending] = useState(false);
@@ -83,24 +89,45 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
     paint(ctx, live.current ? [...items.current, live.current] : items.current, size.current.w, size.current.h);
   }, []);
 
+  // Lowest inked pixel in page coords (committed ink + the stroke in progress). The page must always cover
+  // it — both so a stroke is never clipped, and so a later refit (triggered by Otto writing a new entry)
+  // can't shrink the canvas out from under ink the student drew further down in the blank.
+  const inkBottom = useCallback(() => {
+    let y = 0;
+    for (const it of items.current) {
+      if (it.kind === "text") y = Math.max(y, it.y + it.size * 1.4);
+      else if (it.tool !== "eraser") for (const p of it.pts) y = Math.max(y, p.y + it.width);
+    }
+    const l = live.current;
+    if (l && l.tool !== "eraser") for (const p of l.pts) y = Math.max(y, p.y + l.width);
+    return y;
+  }, []);
+
+  // Sizes the ink page to the board PLUS an open blank area underneath (≈60% of the pane, min 400px) — the
+  // "infinite canvas": the student scrolls down into clean ruled space to draw, and a stroke that reaches
+  // the current bottom edge extends the page again (see move()) instead of hitting a wall.
+  const fit = useCallback(() => {
+    const c = canvasRef.current, surf = surface;
+    if (!surf || !c) return;
+    const w = surf.clientWidth;
+    if (!w) return; // hidden (Desmos open) — keep the old size, repaint on return
+    const board = surf.firstElementChild as HTMLElement | null;
+    // A FULL blank page under the lesson (a whole pane tall): scroll down and there is clean paper to draw on.
+    const blank = 120; // just a little room under the last line; the page grows as a stroke reaches the bottom edge
+    const h = Math.max(surf.clientHeight, board ? board.offsetTop + board.offsetHeight + blank : 0, inkBottom() + 240);
+    if (Math.abs(size.current.w - w) < 0.5 && Math.abs(size.current.h - h) < 0.5) return;
+    const dpr = window.devicePixelRatio || 1;
+    size.current = { w, h };
+    c.style.height = `${h}px`;
+    c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+    repaint();
+  }, [surface, repaint, inkBottom]);
+
   // The ink lives ON the board surface: the canvas is portalled INTO the board's scroll container and sized to
   // its full content height, so what the student writes scrolls with Otto's writing — one shared page, like
   // pen on paper — instead of floating over the viewport. (Ink coordinates are page coordinates.)
   useEffect(() => {
-    const c = canvasRef.current;
-    if (!surface || !c) return;
-    const fit = () => {
-      const w = surface.clientWidth;
-      if (!w) return; // hidden (Desmos open) — keep the old size, repaint on return
-      const board = surface.firstElementChild as HTMLElement | null;
-      const h = Math.max(surface.clientHeight, board ? board.offsetTop + board.offsetHeight + 300 : 0);
-      if (Math.abs(size.current.w - w) < 0.5 && Math.abs(size.current.h - h) < 0.5) return;
-      const dpr = window.devicePixelRatio || 1;
-      size.current = { w, h };
-      c.style.height = `${h}px`;
-      c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
-      repaint();
-    };
+    if (!surface) return;
     fit();
     const ro = new ResizeObserver(fit);
     ro.observe(surface);
@@ -108,7 +135,7 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
     const mo = new MutationObserver(fit);
     mo.observe(surface, { childList: true, subtree: true });
     return () => { ro.disconnect(); mo.disconnect(); };
-  }, [surface, repaint]);
+  }, [surface, fit]);
 
   useEffect(() => { if (typing) textRef.current?.focus(); }, [typing]);
 
@@ -147,7 +174,9 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
     const evs = (e.nativeEvent as PointerEvent).getCoalescedEvents?.() ?? [];
     const r = canvasRef.current!.getBoundingClientRect();
     if (evs.length) for (const ev of evs) s.pts.push({ x: ev.clientX - r.left, y: ev.clientY - r.top }); else s.pts.push(pos(e));
-    repaint();
+    // Ink reaching the current bottom edge extends the page (infinite canvas) instead of hitting a wall;
+    // fit() repaints when it actually grows, so don't repaint twice.
+    if (s.pts[s.pts.length - 1].y > size.current.h - 200) fit(); else repaint();
   };
   const up = (e: React.PointerEvent) => {
     const f = forwarded.current; forwarded.current = null;
@@ -185,6 +214,56 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
     flat.width = Math.max(1, Math.round(sw * dpr * scale)); flat.height = Math.max(1, Math.round(sh * dpr * scale));
     const f = flat.getContext("2d")!;
     f.fillStyle = "#FFFFFF"; f.fillRect(0, 0, flat.width, flat.height);
+    // Board context UNDER the ink: drawings sit on top of Otto's lesson (a circle around an equation, an
+    // arrow to a step) — cropped ink alone loses exactly what the student is pointing AT. Paint the printed
+    // board text behind the strokes in the same crop so the vision read sees the OVERLAP — what's drawn AND
+    // what it was drawn over — like looking at the real page instead of a floating doodle.
+    const canvasRect = c.getBoundingClientRect();
+    const ctxSel = ".sm-board-entry-text, .sm-board-line, .sm-board-problem-q, .sm-board-problem-compact-q";
+    const all = Array.from(surface?.querySelectorAll<HTMLElement>(ctxSel) ?? []);
+    const nodes = all.filter((el) => !all.some((o) => o !== el && o.contains(el))); // drop nested duplicates
+    f.textBaseline = "top";
+    for (const el of nodes) {
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) continue;
+      const ex = r.left - canvasRect.left, ey = r.top - canvasRect.top;
+      if (ex + r.width < sx || ey + r.height < sy || ex > sx + sw || ey > sy + sh) continue; // outside crop
+      const dx = (ex - sx) * dpr * scale, dy = (ey - sy) * dpr * scale;
+      const fs = Math.max(8, (parseFloat(getComputedStyle(el).fontSize) || 14) * dpr * scale);
+      f.font = `${Math.round(fs)}px Inter, system-ui, sans-serif`;
+      f.fillStyle = "#3F3E39";
+      const maxW = Math.max(40, Math.min(flat.width - dx, Math.min(r.width, sx + sw - Math.max(ex, sx)) * dpr * scale));
+      let lineY = dy, printed = 0;
+      for (const raw of (el.innerText || "").split("\n")) {
+        let cur = "";
+        const push = (t: string) => { if (lineY <= flat.height && printed < 12) { f.fillText(t, dx, lineY); printed++; } lineY += fs * 1.35; };
+        for (const word of raw.split(/\s+/).filter(Boolean)) {
+          const test = cur ? `${cur} ${word}` : word;
+          if (cur && f.measureText(test).width > maxW) { push(cur); cur = word; } else cur = test;
+        }
+        if (cur) push(cur);
+        if (printed >= 12) break;
+      }
+    }
+    // Otto's own FIGURES (a drawn diagram, a graph, an activity's picture) under the ink too — when the student circles
+    // or comments on something Otto drew, the vision read has to see that figure, not just the words around it.
+    const figs = Array.from(surface?.querySelectorAll<SVGSVGElement>("svg.sm-board-diagram, svg.sm-flow, .sm-svgfig svg, .sm-widget svg") ?? []);
+    for (const svg of figs) {
+      const r = svg.getBoundingClientRect();
+      if (!r.width || !r.height) continue;
+      const ex = r.left - canvasRect.left, ey = r.top - canvasRect.top;
+      if (ex + r.width < sx || ey + r.height < sy || ex > sx + sw || ey > sy + sh) continue;
+      try {
+        const clone = svg.cloneNode(true) as SVGSVGElement;
+        clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+        clone.setAttribute("width", String(Math.round(r.width))); clone.setAttribute("height", String(Math.round(r.height)));
+        clone.style.color = "#18181B";
+        const url = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(new XMLSerializer().serializeToString(clone).replace(/currentColor/g, "#18181B").replace(/var\(--[a-z0-9-]+\)/gi, "#18181B"));
+        const img = new Image();
+        await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = () => rej(new Error("svg")); img.src = url; });
+        f.drawImage(img, (ex - sx) * dpr * scale, (ey - sy) * dpr * scale, r.width * dpr * scale, r.height * dpr * scale);
+      } catch { /* a figure that won't rasterise is skipped — the text around it is still painted */ }
+    }
     f.drawImage(c, sx * dpr, sy * dpr, sw * dpr, sh * dpr, 0, 0, flat.width, flat.height);
     const { description } = await api.readWhiteboard(flat.toDataURL("image/png"));
     seenStamp.current = inkStamp.current;
@@ -192,25 +271,32 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
   };
   useImperativeHandle(handleRef, () => ({
     hasUnseenInk: () => visionReady && !!canvasRef.current && items.current.some((i) => i.kind === "text" || i.tool !== "eraser") && inkStamp.current !== seenStamp.current,
-    readUnseenInk: async () => {
-      if (!visionReady || !canvasRef.current || !items.current.some((i) => i.kind === "text" || i.tool !== "eraser") || inkStamp.current === seenStamp.current) return null;
-      try { return await readInk(); } catch { return null; }
+    freezeSheet: () => {
+      const surf = surface, board = surf?.firstElementChild as HTMLElement | null;
+      if (!surf || !board) return 0;
+      const boardBottom = board.offsetTop + board.offsetHeight;
+      // Only ink that sits IN the board's text column needs room kept for it. A sketch drawn out in the side margin never collides with
+      // Otto's lines, and reserving blank space for it left a big empty gap in the middle of the board (reported).
+      const c = canvasRef.current;
+      const cr = c?.getBoundingClientRect(), br = board.getBoundingClientRect();
+      const colL = cr ? br.left - cr.left - 16 : 0, colR = cr ? br.right - cr.left + 16 : Infinity;
+      let bottom = 0;
+      for (const it of items.current) {
+        if (it.kind === "text") { if (it.x + it.value.length * it.size * 0.6 >= colL && it.x <= colR) bottom = Math.max(bottom, it.y + it.size * 1.4); }
+        else if (it.tool !== "eraser") for (const p of it.pts) if (p.x >= colL && p.x <= colR) bottom = Math.max(bottom, p.y + it.width);
+      }
+      if (bottom <= boardBottom + 8) return 0;
+      const h = Math.round(bottom - boardBottom + 32);
+      return h;
+    },
+    hasInk: () => !!canvasRef.current && items.current.some((i) => i.kind === "text" || i.tool !== "eraser"),
+    // `force`: the student explicitly asked Otto to look, so re-read even ink Otto has already seen.
+    readUnseenInk: async (force?: boolean) => {
+      if (!visionReady || !canvasRef.current || !items.current.some((i) => i.kind === "text" || i.tool !== "eraser") || (!force && inkStamp.current === seenStamp.current)) return null;
+      // A failed read must not be silent: without this Otto never learns there is a drawing and carries on as if nothing was drawn.
+      try { return await readInk(); } catch { return L("(mon dessin n'a pas pu être lu — demande-moi de te le décrire)", "(my drawing couldn't be read just now — ask me to describe it)"); }
     },
   }));
-
-  const show = async () => {
-    const c = canvasRef.current;
-    if (!c || !hasInk || sending) return;
-    setSending(true); setError(null);
-    const note = askText.trim();
-    try {
-      const description = await readInk();
-      setAskOpen(false); setAskText("");
-      onSend(description, note || undefined);
-    } catch (e: any) {
-      setError(e?.status != null ? e.message : L("Otto n'a pas pu lire ton tableau — réessaie.", "Otto couldn't read your board — try again."));
-    } finally { setSending(false); }
-  };
 
   const btn = (t: Tool, icon: React.ReactNode, label: string, tourId?: string) => (
     <button type="button" data-tour={tourId} className={`tc-btn${tool === t ? " on" : ""}`} onClick={() => { if (typing) commitText(); setTool(t); }} title={label} aria-label={label} aria-pressed={tool === t}>{icon}</button>
@@ -229,7 +315,7 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
           {typing && !hidden && (
             <input
               ref={textRef} className="tc-text" style={{ left: typing.x, top: typing.y, color }} value={typing.value}
-              placeholder={L("Écris ici…", "Type here…")}
+              placeholder={L("Écris ici…", "Type here…")} aria-label={L("Écris ici…", "Type here…")}
               onChange={(e) => setTyping({ ...typing, value: e.target.value })}
               onKeyDown={(e) => { if (e.key === "Enter") commitText(); if (e.key === "Escape") setTyping(null); }}
               onBlur={commitText}
@@ -239,6 +325,12 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
       <div className="tc-layer" style={{ pointerEvents: "none" }}>
         {/* The toolbar is part of the screen chrome, not of the page: same place and same tools whether the
             board, a long scrolled lesson or Desmos is showing (drawing tools just dim while Desmos is up). */}
+        {!toolsOpen ? (
+          <div className="tc-toolbar tc-toolbar-folded" style={{ pointerEvents: "auto" }}>
+            <button type="button" className="tc-btn tc-draw-open" onClick={() => { setToolsOpen(true); setTool("pen"); }} aria-label={L("Dessiner sur le tableau", "Draw on the board")} title={L("Dessiner", "Draw")}><Pencil size={16} /><span>{L("Dessiner", "Draw")}</span></button>
+            <button type="button" className={`tc-btn tc-fn${hidden ? " on" : ""}`} onClick={onDesmos} title={hidden ? L("Retour au tableau", "Back to the board") : "Desmos"} aria-label="Desmos" aria-pressed={hidden}>ƒ</button>
+          </div>
+        ) : (
         <div className={`tc-toolbar${hidden ? " dim" : ""}`} role="toolbar" aria-label={L("Outils du tableau", "Whiteboard tools")} style={{ pointerEvents: "auto" }}>
           {btn("pen", <Pencil size={18} />, L("Stylo", "Pen"))}
           {btn("highlighter", <Highlighter size={18} />, L("Surligneur", "Highlighter"), "tc-highlighter")}
@@ -255,28 +347,9 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
           <button type="button" className="tc-btn" onClick={clear} disabled={!items.current.length} title={L("Tout effacer", "Clear all")} aria-label={L("Tout effacer", "Clear all")}><Trash2 size={18} /></button>
           <span className="tc-sep" aria-hidden />
           <button type="button" className={`tc-btn tc-fn${hidden ? " on" : ""}`} onClick={onDesmos} title={hidden ? L("Retour au tableau", "Back to the board") : "Desmos"} aria-label="Desmos" aria-pressed={hidden}>ƒ</button>
+          <span className="tc-sep" aria-hidden />
+          <button type="button" className="tc-btn" onClick={() => { if (typing) commitText(); setTool("pan"); setToolsOpen(false); }} title={L("Fermer les outils", "Close the tools")} aria-label={L("Fermer les outils", "Close the tools")}>✕</button>
         </div>
-        {visionReady && hasInk && !hidden && (
-          <div className="tc-show-wrap" style={{ pointerEvents: "auto" }}>
-            {askOpen && (
-              <div className="tc-ask" role="dialog" aria-label={L("Dire à Otto quoi regarder", "Tell Otto what to look at")}>
-                <label htmlFor="tc-ask-input">{L("Qu'est-ce qu'Otto doit regarder ?", "What should Otto look at?")}</label>
-                <textarea id="tc-ask-input" rows={2} autoFocus value={askText} maxLength={400}
-                  placeholder={L("ex. Vérifie ma 2e ligne · Est-ce que ce schéma est juste ?", "e.g. Check my 2nd line · Is this diagram right?")}
-                  onChange={(e) => setAskText(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void show(); } if (e.key === "Escape") setAskOpen(false); }} />
-                <div className="tc-ask-actions">
-                  <button type="button" className="btn ghost" onClick={() => setAskOpen(false)}>{L("Annuler", "Cancel")}</button>
-                  <button type="button" className="btn primary" disabled={sending} onClick={() => void show()}>{sending ? L("Otto regarde…", "Otto is looking…") : L("Envoyer", "Send")}</button>
-                </div>
-              </div>
-            )}
-            {!askOpen && (
-              <button type="button" className="tc-show" onClick={() => setAskOpen(true)}>
-                <Send size={16} /> {L("Montrer à Otto", "Show Otto")}
-              </button>
-            )}
-          </div>
         )}
         {error && <div className="tc-error" role="alert" style={{ pointerEvents: "auto" }}>{error}</div>}
       </div>

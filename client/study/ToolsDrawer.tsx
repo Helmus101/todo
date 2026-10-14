@@ -72,7 +72,7 @@ export function ToolsDrawer({ template, onClose, onAddTool, onAddLink, backgroun
     <SmSurface variant="drawer" closing={closing} className="sm-drawer">
       <div className="sm-drawer-header">
         <span>{L("OUTILS", "TOOLS")}</span>
-        <button className="sm-drawer-close" onClick={doClose}>×</button>
+        <button className="sm-drawer-close" aria-label={L("Fermer", "Close")} onClick={doClose}>×</button>
       </div>
       <div className="sm-drawer-body">
         <div className="sm-tools-divider">{L("Ouvrir un Google Doc, Sheet ou Slides", "Open a Google Doc, Sheet, or Slides")}</div>
@@ -80,7 +80,7 @@ export function ToolsDrawer({ template, onClose, onAddTool, onAddLink, backgroun
           <input
             type="text"
             className="sm-link-input"
-            placeholder={L("Colle un lien docs.google.com…", "Paste a docs.google.com link…")}
+            placeholder={L("Colle un lien docs.google.com…", "Paste a docs.google.com link…")} aria-label={L("Colle un lien docs.google.com…", "Paste a docs.google.com link…")}
             value={linkUrl}
             onChange={(e) => { setLinkUrl(e.target.value); setLinkError(""); }}
             onKeyDown={(e) => { if (e.key === "Enter") submitLink(); }}

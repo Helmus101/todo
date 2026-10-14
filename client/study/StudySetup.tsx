@@ -279,7 +279,7 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
             <input
               className="sm-setup-input"
               type="text"
-              placeholder={L("Colle un lien — YouTube, PDF, Google Doc, n'importe quoi…", "Paste a link — YouTube, PDF, Google Doc, anything…")}
+              placeholder={L("Colle un lien — YouTube, PDF, Google Doc, n'importe quoi…", "Paste a link — YouTube, PDF, Google Doc, anything…")} aria-label={L("Colle un lien — YouTube, PDF, Google Doc, n'importe quoi…", "Paste a link — YouTube, PDF, Google Doc, anything…")}
               value={linkInput}
               onChange={e => { setLinkInput(e.target.value); setLinkError(""); }}
               onKeyDown={e => e.key === "Enter" && addLink()}
@@ -287,7 +287,7 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
             <input
               className="sm-setup-input sm-setup-input-sm"
               type="text"
-              placeholder={L("Étiquette (optionnel)", "Label (optional)")}
+              placeholder={L("Étiquette (optionnel)", "Label (optional)")} aria-label={L("Étiquette (optionnel)", "Label (optional)")}
               value={linkLabel}
               onChange={e => setLinkLabel(e.target.value)}
             />
@@ -322,7 +322,7 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
                   <span className="sm-mat-icon">{typeIcon(m.type)}</span>
                   <span className="sm-mat-label">{m.label}</span>
                   {m.size && <span className="sm-mat-size">{(m.size / 1024).toFixed(0)} KB</span>}
-                  <button className="sm-mat-remove" onClick={() => removeMaterial(m.id)}>×</button>
+                  <button className="sm-mat-remove" aria-label={L("Retirer", "Remove")} onClick={() => removeMaterial(m.id)}>×</button>
                 </li>
               ))}
             </ul>

@@ -1,56 +1,32 @@
-import { useEffect, useState, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
-import type { WebTask, ConnectionStatus, Profile, TaskFlashcards, FocusSession } from "../shared/types.ts";
-import { canonStatus, isHandled, isInFlight, sortWithinQuadrant, errorLogBySubject, milestonesBySubject } from "../shared/types.ts";
-import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
-import { saveDeckLocally, getAllLocalDecks, clearLocalDecks } from "./localDecks.ts";
-import { saveQuizLocally, getAllLocalQuizzes, clearLocalQuizzes, getLocalQuiz } from "./localQuizzes.ts";
-// Deliberately NOT cleared on sign-out like localDecks/localQuizzes below — those are backup CACHES of data
-// the cloud still owns, safe to drop; chat/board are the ONLY copy (local-only, by direct request), so
-// clearing them on sign-out would permanently destroy conversation history the moment someone logs out.
-// Keyed by userId same as the others, so a different account signing in on the same browser never sees it.
-import { hydrateLocalThreads, clearLocalChatBoard } from "./localChatBoard.ts";
+import { useEffect, useState, useCallback, useRef } from "react";
+import type { WebTask, ConnectionStatus } from "../shared/types.ts";
+import { canonStatus, isHandled, isInFlight, sortWithinQuadrant } from "../shared/types.ts";
+import { api } from "./api.ts";
+import { saveDeckLocally } from "./localDecks.ts";
+import { saveQuizLocally } from "./localQuizzes.ts";
+import { hydrateLocalThreads } from "./localChatBoard.ts";
 import { pushError } from "./errorLog.ts";
 import { useIsPhone } from "./useIsPhone.ts";
-import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard, PageInfoHint } from "./ui.tsx";
+import { LangContext, useLang, todayIso, relTime, TaskModal, NotifyContext, PageInfoHint, Spinner } from "./ui.tsx";
 import { t } from "./i18n.ts";
 import { TaskCardRow, TaskFocus, TaskReadOnly } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
 import { TutorSession } from "./tutor/TutorSession.tsx";
 import { Coursework } from "./CourseworkPage.tsx";
+import { ExercisesPage } from "./ExercisesPage.tsx";
 import { TourProvider, PageTour } from "./PageTour.tsx";
 import { TOURS } from "./tours.ts";
-import { COMMON_SUBJECTS } from "../shared/coursework.ts";
-import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
-import { 
-  GraduationCap,
-  Lock,
-  Zap,
-  ShieldCheck,
-  Compass,
-  Mic,
-  MicOff
-} from "lucide-react";
-
-/** Scroll-reveal: any element with className "reveal" inside this component fades/rises into place the
- *  first time it enters the viewport (CSS does the actual animation — see `.reveal`/`.reveal.in` in
- *  styles.css). Originally inline in the marketing Landing page; pulled out so the same premium-feel
- *  entrance can be reused across the real app (Settings, the dashboard's own sections) without copying the
- *  IntersectionObserver wiring. Respects prefers-reduced-motion (reveals everything immediately, no motion). */
-function useReveal(deps: readonly unknown[] = []) {
-  useEffect(() => {
-    const reduced = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduced) { document.querySelectorAll(".reveal").forEach((el) => el.classList.add("in")); return; }
-    const io = new IntersectionObserver((entries) => {
-      for (const e of entries) if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
-    }, { threshold: 0.18, rootMargin: "0px 0px -8% 0px" });
-    document.querySelectorAll(".reveal:not(.in)").forEach((el) => io.observe(el));
-    return () => io.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
-}
-
-
-
+import { LEGAL_EMAIL, LEGAL_ENTITY, Logo, clearAllLocalAccountData, firstName, navigate, unionChatEntries } from "./appShared.tsx";
+import { LoginPage } from "./pages/Login.tsx";
+import { Landing } from "./pages/Landing.tsx";
+import { Onboarding } from "./pages/Onboarding.tsx";
+import { SettingsPage } from "./pages/Settings.tsx";
+import { StudyLogPage } from "./pages/Journal.tsx";
+import { StandaloneStudyEntry } from "./pages/StudyEntry.tsx";
+import { MistakeLogPage } from "./pages/MistakeLog.tsx";
+import { AdminPage } from "./pages/Admin.tsx";
+import { AddTask, ConnectCard, TaskSkeleton } from "./pages/Dashboard.tsx";
+import { PrivacyBody, ResearchPageBody, TermsBody } from "./pages/Legal.tsx";
 
 // How long a local optimistic mutation (confirm/dismiss/step-done/substep) outranks an incoming background
 // fetch for the same task — see `keepLocalHandled`/`patchTask` in App(). Long enough to cover a slow
@@ -78,32 +54,11 @@ export function shouldKeepLocal(cur: WebTask | undefined, incoming: WebTask, mut
   return false;
 }
 
-/** Union two copies of a task's chat thread by (role, at, text) — the client-side twin of server/tasks.ts's
- *  own unionChat, used everywhere a background sync's copy of a task needs merging against the locally-held
- *  Study Mode thread. Deliberately KEY-based, not a positional "incoming[i] must equal local[i]" prefix
- *  check (an earlier version of this used that and was fragile: the moment any single message's shape
- *  differed cosmetically between the optimistic local echo and a round-tripped server copy — an artifacts
- *  chip attached after the round trip, whitespace normalized server-side — the ENTIRE incoming thread was
- *  discarded, which is what "chat sometimes auto-deletes stuff" actually was: a background sync's fresher
- *  copy with a genuinely NEW message from another tab/device losing outright to a local copy that only
- *  LOOKED different by one cosmetic field on one older message). Exported for the same testability reason as
- *  shouldKeepLocal above. */
-export function unionChatEntries<T extends { role: string; text: string; at: string }>(local: T[], incoming: T[]): T[] {
-  if (!local.length) return incoming;
-  const key = (c: T) => `${c.role}|${c.at}|${c.text}`;
-  const seen = new Set(incoming.map(key));
-  return [...incoming, ...local.filter((c) => !seen.has(key(c)))]
-    .sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
-}
-
 // Translate a sweep job's skip/failure line into user terms — an honest reason, never a fake all-clear.
 function sweepSkipMessage(note: string, en?: boolean): string {
   if (/nothing connected/i.test(note)) return en
     ? "No apps are connected for this account — connect one in Settings (Pronote, Gmail…) so Otto has something to read, or add tasks yourself."
     : "Aucune app n'est connectée sur ce compte — connecte ton Pronote/Gmail dans les Réglages pour qu'Otto ait de quoi lire.";
-  if (/budget reached/i.test(note)) return en
-    ? "Otto's reached its monthly AI budget — it resets on the 1st."
-    : "Otto a atteint son plafond mensuel d'IA — ça se renouvelle le 1er.";
   if (/paused/i.test(note)) return en
     ? "AI is paused — resume it in Settings to sweep for new tasks."
     : "L'IA est en pause — réactive-la dans les Réglages pour chercher de nouvelles tâches.";
@@ -115,20 +70,6 @@ function todayLong(lang?: string): string {
   return new Date().toLocaleDateString(lang === "en" ? "en-US" : "fr-FR", { weekday: "long", month: "long", day: "numeric" });
 }
 
-// A "YYYY-MM-DD" (or ISO) date → "Aug 1". Used for the AI-budget renewal date. Optional `L(fr, en)` (same
-// one every caller already has from useLang()) picks the locale — a French account no longer falls back to
-// whatever locale the BROWSER happens to be set to, which isn't necessarily the same language at all.
-function fmtDay(iso: string, L?: (fr: string, en: string) => string): string {
-  const d = new Date(/T/.test(iso) ? iso : `${iso}T00:00:00`);
-  return isNaN(d.getTime()) ? iso : d.toLocaleDateString(L?.("fr-FR", "en-US"), { month: "short", day: "numeric" });
-}
-
-// Open a URL in a new tab. Tabs open via window.open (see client/ui.tsx's openTab).
-// Temporary: Otto still generates, ranks, and breaks tasks into steps, but does not auto-run or offer
-// one-click execution of them — the card shows the plan as a checklist for the user to work through
-// themselves. Flip back to true to restore auto-do/Approve & Run/Send. Nothing execution-related is deleted.
-const EXECUTION_ENABLED = false;
-
 /** Study Mode's in-app entry points — the sidebar "Réviser"/"Study" item and the per-task Study Mode
  *  buttons — are OFF by design: the /study URL is its ONE entry point (product call: "bring it back,
  *  but not as a tab — only accessible by going to the /study page"). Nothing is deleted and the route
@@ -136,26 +77,6 @@ const EXECUTION_ENABLED = false;
  *  no task anchor). Flip to true to restore the tab + buttons — and update run.mjs's pins, which pin
  *  this flag false as the intended state. */
 const STUDY_MODE_ENABLED = false;
-
-
-
-/** The Otto mark — an "O" (for Otto) with a checkmark inside it, not a separate badge bolted onto a
- *  generic shape: the letter and the "done" meaning read as ONE mark, not two ideas glued together. The
- *  ring inherits currentColor (ink, inverts in dark mode); the checkmark is always the warm orange
- *  --brand-mark token — a narrowly-scoped single-purpose color (just this mark), deliberately NOT a
- *  second general-purpose UI accent (the rest of the app has exactly one: --accent, blue) — so it never
- *  changes regardless of theme, unlike --accent which does swap for dark mode. Deliberately legible at
- *  favicon size: a checkmark stays readable
- *  at 16px in a way finer geometric detail doesn't, which the previous half-moon-cut-by-a-line mark wasn't
- *  reliably (it read as a blank shape at tab-icon scale, per direct feedback). */
-function Logo({ size = 22 }: { size?: number }) {
-  return (
-    <svg className="logo" width={size} height={size} viewBox="0 0 48 48" fill="none" aria-hidden="true">
-      <circle cx="24" cy="24" r="18" stroke="currentColor" strokeWidth="4" fill="none" />
-      <path d="M15 25 L21 31 L33 17" stroke="var(--brand-mark)" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-    </svg>
-  );
-}
 
 /** Strip leading/trailing slashes → the bare route ("" = dashboard, "settings", "login", "task/<id>"). */
 const routeOf = (pathname: string) => pathname.replace(/^\/+/, "").replace(/\/+$/, "");
@@ -196,111 +117,14 @@ const CACHED_STATUS: ConnectionStatus | null = (() => {
   try { return JSON.parse(localStorage.getItem("weave-status") || "null"); } catch { return null; }
 })();
 
-/** Shared by sign-out AND account deletion — both end an identity on this browser and must leave NO trace
- *  of it behind for whoever's on this account next (another account signing up/in on the same device, or
- *  this same browser after a delete). Account deletion used to skip this entirely: it only called the
- *  server-side erasure and navigated to "/", leaving every one of these caches sitting in localStorage
- *  completely untouched — a fresh signup right after, on the same browser, would start by briefly showing
- *  the JUST-DELETED account's cached tasks/status (CACHED_TASKS/CACHED_STATUS above read these exact keys
- *  at module-load time) until the real fetch overwrote them. The per-account stores (decks/quizzes/chat-
- *  board) are already namespaced by userId and so can't leak into a DIFFERENT account's reads even when
- *  left behind, but clearing them too is the honest behavior for "delete my account" — local traces should
- *  go, not just the server row. Module-level (not inside App()) so SettingsPage's own delete-account
- *  handler can call it too, without threading it through as a prop. */
-function clearAllLocalAccountData(userId: string | null): void {
-  try { ["otto-tasks", "weave-status", "otto-seen-tasks", "otto-lastgen", "otto-onboard", "otto-onboard-step", "otto-onboard-track", "otto-tours-seen"].forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
-  clearLocalDecks(userId);
-  clearLocalQuizzes(userId);
-  clearLocalChatBoard(userId);
-  // Journal week/month caches and per-deck review progress are keyed `<prefix><userId>:<date-or-id>` (see
-  // their definitions below) — date/deck-id isn't known here, so sweep every localStorage key for this
-  // user's namespace rather than needing a list of dates/deck ids.
-  try {
-    const ns = [`${STUDYLOG_CACHE_PREFIX}${userId || "anon"}:`, `${STUDYLOG_MONTH_CACHE_PREFIX}${userId || "anon"}:`, `otto-deck:${userId || "anon"}:`, `otto-quiz:${userId || "anon"}:`];
-    const toRemove: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k && ns.some((p) => k.startsWith(p))) toRemove.push(k);
-    }
-    toRemove.forEach((k) => localStorage.removeItem(k));
-  } catch { /* ignore */ }
-}
-
-/** A friendly first name from the account email's local part ("tjong.willem@…" → "Tjong"). Personalizes the UI. */
-const firstName = (user?: string) => {
-  const local = (user || "").split("@")[0].split(/[._+-]+/)[0];
-  return local ? local.charAt(0).toUpperCase() + local.slice(1) : "";
-};
-
-/** Grows a textarea to fit its content on every keystroke, up to its CSS max-height (where overflow-y:auto
- *  takes over and it scrolls instead of growing forever) — pairs with .errorlog-textarea's small one-line
- *  min-height. Reset to "auto" before reading scrollHeight each time, or a textarea that's SHRUNK (deleted
- *  text) would stay stuck at its previous, taller height — scrollHeight only ever reports the content's
- *  actual size against the CURRENT height, not the natural one. */
-function autoGrowTextarea(e: React.FormEvent<HTMLTextAreaElement>): void {
-  const el = e.currentTarget;
-  el.style.height = "auto";
-  el.style.height = `${el.scrollHeight}px`;
-}
-
-// Survives a PronoteTile remount (e.g. navigating away from Settings and back) — see its own comment on
-// `optimistic` for why plain component state wasn't enough. sessionStorage (not localStorage): this is a
-// per-tab "trust my own recent action over a possibly-lagging read" signal, not something that should
-// follow the account to a different tab/device where no such action just happened.
-const PRONOTE_OPTIMISTIC_KEY = "otto-pronote-optimistic";
-const PRONOTE_OPTIMISTIC_MAX_AGE_MS = 2 * 60_000;
-function readPronoteOptimistic(): boolean | null {
-  try {
-    const raw = sessionStorage.getItem(PRONOTE_OPTIMISTIC_KEY);
-    if (!raw) return null;
-    const { value, at } = JSON.parse(raw);
-    if (typeof at !== "number" || Date.now() - at > PRONOTE_OPTIMISTIC_MAX_AGE_MS) { sessionStorage.removeItem(PRONOTE_OPTIMISTIC_KEY); return null; }
-    return typeof value === "boolean" ? value : null;
-  } catch { return null; }
-}
-function writePronoteOptimistic(value: boolean | null): void {
-  try {
-    if (value === null) sessionStorage.removeItem(PRONOTE_OPTIMISTIC_KEY);
-    else sessionStorage.setItem(PRONOTE_OPTIMISTIC_KEY, JSON.stringify({ value, at: Date.now() }));
-  } catch { /* private browsing / storage full — falls back to the plain in-memory default */ }
-}
-
-/** Navigate the path router. "" → "/" (dashboard); otherwise "/<route>" (e.g. "task/<id>", "settings").
- *  pushState doesn't fire popstate, so we dispatch one to notify the router hook.
- *
- *  Every route swap (Tasks ↔ Journal ↔ Study ↔ Settings) is a hard ternary re-render in App() — the DOM for
- *  the old section unmounts and the new one mounts in the same tick, with no transition of any kind. That's
- *  the "ui isn't really smooth" complaint: the content area visibly snaps/flashes on every sidebar click,
- *  unlike the spring-driven overlays (TaskModal, Study Mode drawers) already using `motion`. Restructuring
- *  every branch of that ternary into an AnimatePresence-friendly shape is a much bigger, riskier change for
- *  what's a purely cosmetic cross-fade — the native View Transitions API gets the same "old fades out, new
- *  fades in" result with zero JSX changes, by snapshotting the DOM immediately before/after the mutation
- *  React already performs. `prefers-reduced-motion` is respected by simply not opting in below (falling back
- *  to the instant swap) rather than fighting the API's own reduced-motion handling. */
-const navigate = (r: string) => {
-  const go = () => {
-    window.history.pushState({}, "", r ? `/${r}` : "/");
-    window.dispatchEvent(new PopStateEvent("popstate"));
-  };
-  const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-  const vtDocument = document as Document & { startViewTransition?: (cb: () => void) => { finished: Promise<void>; ready: Promise<void>; updateCallbackDone: Promise<void> } };
-  if (reduceMotion || typeof vtDocument.startViewTransition !== "function") { go(); return; }
-  // Both of a transition's settlement promises can reject benignly when a newer transition starts first
-  // (expected on fast double-clicks / rapid sidebar navigation — the transition still runs/cross-fades
-  // correctly; only the promise is rejected): `finished` on some skip paths, and `ready` with the exact
-  // "Transition was skipped. New ViewTransition started" AbortError reported live from production. With
-  // no handler attached either surfaces as an "Unhandled promise rejection" in the console/Sentry.
-  // updateCallbackDone is deliberately NOT silenced — go() has no async work, so a rejection there would
-  // be a real bug worth surfacing.
-  const vt = vtDocument.startViewTransition(go);
-  vt.finished.catch(() => {});
-  vt.ready.catch(() => {});
-};
-
 // Last-known task list — hydrates the dashboard INSTANTLY on open (server truth replaces it right after).
 const CACHED_TASKS: WebTask[] = (() => {
   try { const t = JSON.parse(localStorage.getItem("otto-tasks") || "[]"); return Array.isArray(t) ? t : []; } catch { return []; }
 })();
+
+// Start the task fetch NOW (parallel with /api/status) when the last visit was signed in, instead of waiting for status
+// to resolve first — the first sync consumes it, so the list refreshes one round-trip sooner.
+let EARLY_TASKS: Promise<WebTask[] | null> | null = CACHED_STATUS?.loggedIn ? api.tasks().catch(() => null) : null;
 
 // "New" indicator: task ids the user has already OPENED at least once, so a fresh card gets a small dot
 // until they look at it, then never again — permanent per-id memory (not a session flag), purely local
@@ -397,13 +221,11 @@ export function App() {
   // still wins because it sets signedOutRef before calling the server.
   const lastAuthenticatedStatusRef = useRef<ConnectionStatus | null>(CACHED_STATUS?.loggedIn ? CACHED_STATUS : null);
   const [route] = usePathRoute();
-  // Phone-sized screens (iPhone, not iPad — see useIsPhone's 767px breakpoint) get a deliberately reduced
-  // app: review flashcards (/log's "Cartes" tab), and READ the task list — see what's there and what Otto
-  // planned — plus Settings. Everything that means actually working (chat, Study Mode's whiteboard, ticking
-  // steps off, the tutor) stays off the phone: those surfaces are dense multi-pane layouts that don't work
-  // at that size, and a half-working version of them is worse than a clean read-only one.
+  // Phone-sized screens keep the focused tutor available alongside the task list, journal, and settings.
+  // Dense workspaces remain restricted, but tutor is intentionally designed as a single-column, touch-first
+  // surface and must be reachable from a phone without being redirected back to Today.
   const isPhone = useIsPhone();
-  const PHONE_ALLOWED_ROUTES = ["", "tasks", "log", "settings"];
+  const PHONE_ALLOWED_ROUTES = ["", "tasks", "log", "settings", "tutor", "exercises"];
   const phoneRouteAllowed = (r: string) => PHONE_ALLOWED_ROUTES.includes(r) || r.startsWith("task/") || r.startsWith("tutor/session/");
   useEffect(() => {
     if (isPhone && status?.loggedIn && !phoneRouteAllowed(route)) navigate("tasks");
@@ -503,10 +325,6 @@ export function App() {
     const server = status?.toursSeen;
     if (server?.length) setToursSeen((prev) => { const n = new Set([...prev, ...server]); return n.size === prev.size ? prev : n; });
   }, [status?.toursSeen]);
-  // AI budget (from the CLOUD-authoritative /api/usage) — drives the "budget reached" banner + renewal date,
-  // so it reflects usage racked up by background jobs, not just this session.
-  const [budget, setBudget] = useState<{ over: boolean; renewsOn: string } | null>(null);
-  const loadBudget = useCallback(async () => { try { const u = await api.usage(); setBudget({ over: u.over, renewsOn: u.renewsOn }); } catch { /* keep last */ } }, []);
   // First-run onboarding is the ONE place Otto is explained — set on signup, cleared when the flow finishes.
   const startOnboard = () => { try { localStorage.setItem("otto-onboard", "1"); } catch { /* ignore */ } setOnboard(true); };
   const finishOnboard = () => {
@@ -625,10 +443,10 @@ export function App() {
     // function) — which, from the outside, looked exactly like "my task got deleted" when the error
     // boundary reset the tree. Treat anything non-array as "no update," never crash the app over it.
     if (!Array.isArray(incoming)) return prev;
-    // Chat/board/problems are cloud-persisted again (server/index.ts's chat route) — this only overlays
-    // this browser's local copy for whichever field the cloud copy is still missing (see
-    // hydrateLocalThreads' own comment), the one choke point every "fresh list from the server" path
-    // (initial load, polling, sync) already runs through.
+    // A tutor session's chat/board/problems/objectives live in THIS browser (server/index.ts's tutor turn
+    // writes none of them), so this overlay is what makes them survive a reload — local storage wins, and the
+    // server's copy only fills a field local storage has nothing for (a pre-local-switch conversation). It is
+    // the one choke point every "fresh list from the server" path (initial load, polling, sync) runs through.
     incoming = hydrateLocalThreads(incoming, status?.user || null);
     const now = Date.now();
     // Prune opportunistically so this Map can't grow unbounded over a long session — every entry is either
@@ -661,7 +479,8 @@ export function App() {
   // 15-min tick + focus re-sync retry a transient miss).
   const syncTasks = useCallback(async () => {
     if (signedOutRef.current) return;
-    const t = await api.tasks().catch(() => null);
+    const early = EARLY_TASKS; EARLY_TASKS = null;
+    const t = await (early ?? api.tasks().catch(() => null));
     if (signedOutRef.current) return; // signed out while the request was in flight — drop the stale response
     if (t) setTasks((prev) => keepLocalHandled(prev, retryFlags(t)));
     setLoaded(true);
@@ -679,7 +498,7 @@ export function App() {
   const SWEEP_HOUR = 16;
   const sweeping = useRef(false);
   const sweepIfDue = useCallback(async () => {
-    if (signedOutRef.current || !connected || status?.paused || status?.overBudget || sweeping.current) return;
+    if (signedOutRef.current || !connected || status?.paused || sweeping.current) return;
     if (new Date().getHours() < SWEEP_HOUR) return;
     let last = 0;
     try { last = Number(localStorage.getItem("otto-lastgen") || 0); } catch { /* sweep anyway */ }
@@ -697,16 +516,13 @@ export function App() {
       // retries again shortly instead of believing today's sweep already happened.
       if (/^sweep running:/.test(serverNote)) return;
       // A skipped sweep must say WHY (e.g. "nothing connected") — never look like a quiet all-clear.
-      if (/^(skipped:|sweep )/.test(serverNote)) notify(sweepSkipMessage(serverNote, status?.language === "en"), /budget|paused|connected/i.test(serverNote) ? "error" : "info");
+      if (/^(skipped:|sweep )/.test(serverNote)) notify(sweepSkipMessage(serverNote, status?.language === "en"), /paused|connected/i.test(serverNote) ? "error" : "info");
       try { localStorage.setItem("otto-lastgen", String(Date.now())); } catch { /* ignore */ }
     } catch { /* marker stays unset — next focus/interval tick retries */ }
     finally { sweeping.current = false; setScanning(false); }
   }, [connected, status?.paused]);
 
-  // Once Google is connected: load tasks + budget, trigger the daily sweep (silent, in background).
-  // These three are INDEPENDENT requests — `await syncTasks()` before starting the other two used to
-  // serialize budget/sweep behind the task-list fetch for no reason, adding its full round-trip to time-
-  // to-first-paint of unrelated UI (the budget banner, the sweep indicator). Fire all three at once.
+  // Once Google is connected: load tasks and trigger the daily sweep (silent, in background), in parallel.
   useEffect(() => {
     // A student who skipped connecting Google/Pronote (skippedConnect, see the ConnectCard gate below)
     // stays permanently `!connected` by design — Otto still works for them via manually-added tasks and
@@ -717,8 +533,8 @@ export function App() {
     // request ever in flight to resolve it. Reported live as "stuck on pulling up your day with no tasks."
     // There's nothing to sync from the server for a never-connected account, so just flip loaded directly.
     if (!connected) { setLoaded(true); return; }
-    void syncTasks(); void loadBudget(); void sweepIfDue();
-  }, [connected, status?.aiReady, syncTasks, sweepIfDue, loadBudget]);
+    void syncTasks(); void sweepIfDue();
+  }, [connected, status?.aiReady, syncTasks, sweepIfDue]);
 
   // Returning to the tab re-syncs the list (tasks finished elsewhere appear WITHOUT a manual reload) and
   // sweeps again if the watch interval has passed — so Otto keeps watching throughout the day, and the
@@ -767,9 +583,13 @@ export function App() {
     // serverless instance — fewer polls is the one lever that reduces total request volume regardless of
     // that, so this and the cache TTL bump are complementary, not redundant. 5 min still surfaces a new task
     // well within a normal session.
-    const syncTick = setInterval(() => { if (!document.hidden && !signedOutRef.current) { void syncTasks(); void loadStatus(); } }, 10 * 60_000);
-    const fullTick = setInterval(on, 15 * 60_000); // periodic Pronote keepalive heartbeat — was also a budget/sweep refresh before that got removed above
-    return () => { document.removeEventListener("visibilitychange", on); window.removeEventListener("focus", on); clearInterval(syncTick); clearInterval(fullTick); };
+    // Tab hidden or closing: ask the server to write its pending (write-behind) snapshot now. keepalive lets the request outlive the page.
+    const flushOnHide = () => { if (document.visibilityState === "hidden" && !signedOutRef.current) void api.flushSync(); };
+    document.addEventListener("visibilitychange", flushOnHide);
+    window.addEventListener("pagehide", flushOnHide);
+    const syncTick = setInterval(() => { if (!document.hidden && !signedOutRef.current) { void syncTasks(); void loadStatus(); } }, 20 * 60_000);
+    const fullTick = setInterval(on, 30 * 60_000); // periodic Pronote keepalive heartbeat — was also a budget/sweep refresh before that got removed above
+    return () => { document.removeEventListener("visibilitychange", on); window.removeEventListener("focus", on); document.removeEventListener("visibilitychange", flushOnHide); window.removeEventListener("pagehide", flushOnHide); clearInterval(syncTick); clearInterval(fullTick); };
   }, [connected, syncTasks, loadStatus, status?.pronoteConnected]);
 
   // THE SERVER OWNS EXECUTION. The browser no longer decides what runs — sweeps queue execution jobs
@@ -810,9 +630,8 @@ export function App() {
     };
     void tick();
     // Was 10s — halved the request RATE (not just the per-request cost) per direct instruction to cut
-    // egress further. 20s still surfaces a finished/failed task well within one "is it done yet" glance,
-    // and runTask's own time-budget breaker (claude.ts) bounds a single job to ~90s anyway, so this isn't
-    // trading away meaningfully faster feedback — just fewer identical "still running" round-trips.
+    // egress further. 20s still surfaces a finished/failed task well within one "is it done yet" glance — just fewer identical
+    // "still running" round-trips.
     const id = setInterval(tick, 20000);
     // Catch up immediately when the tab regains focus, instead of waiting up to 10s for the next tick —
     // the guard above means a backgrounded tab may have missed several ticks entirely.
@@ -844,7 +663,7 @@ export function App() {
       // gently rather than "Sweep didn't finish", which reads as an error when nothing's actually wrong.
       const sweepEn = status?.language === "en";
       if (stillRunning) notify(sweepEn ? "Still checking — hang on a moment." : "Vérification en cours — patiente un instant.");
-      else if (/^(skipped:|sweep )/.test(serverNote)) notify(sweepSkipMessage(serverNote, sweepEn), /budget|paused|connected/i.test(serverNote) ? "error" : "info");
+      else if (/^(skipped:|sweep )/.test(serverNote)) notify(sweepSkipMessage(serverNote, sweepEn), /paused|connected/i.test(serverNote) ? "error" : "info");
       // Name whatever source is actually connected instead of assuming Pronote — a Google-only (or manual)
       // student was being told about a school portal they never linked.
       else if (!t.length) notify(sweepEn
@@ -856,7 +675,6 @@ export function App() {
       else notify(sweepEn
         ? `Found ${fresh.length} new task${fresh.length === 1 ? "" : "s"}${queuedN ? `, ${queuedN} getting ready` : ""}${needsYou ? `, ${needsYou} need${needsYou === 1 ? "s" : ""} you` : ""}.`
         : `${fresh.length} nouvelle${fresh.length === 1 ? "" : "s"} tâche${fresh.length === 1 ? "" : "s"} trouvée${fresh.length === 1 ? "" : "s"}${queuedN ? `, ${queuedN} en préparation` : ""}${needsYou ? `, ${needsYou} ${needsYou === 1 ? "a besoin" : "ont besoin"} de toi` : ""}.`);
-      void loadBudget();
     }
     catch (e: any) {
       // A long sweep that outran the client timeout is NOT a failure — it's still running server-side and
@@ -960,7 +778,7 @@ export function App() {
         </div>
       );
     }
-    return <div className="screen"><div className="brand boot"><Logo size={26} /> Otto</div><div className="spinner" /></div>;
+    return <div className="screen"><div className="brand boot"><Logo size={26} /> Otto</div><Spinner /></div>;
   }
   if (!status.loggedIn) {
     // Carry the visitor's pre-account language choice into their new account — otherwise every signup
@@ -982,15 +800,12 @@ export function App() {
               if (isNew) { clearAllLocalAccountData(null); await onNewAccount(); startOnboard(); }
               await loadStatus(); navigate("tasks");
             }} initialMode={route === "signup" ? "signup" : route === "reset-password" ? "reset" : "login"} />
-          : route === "unlimited"
-          ? <LoginPage status={status} lang={preLoginLang} onLangChange={setLandingLang} onDone={async () => { signedOutRef.current = false; await loadStatus(); navigate("unlimited"); }} initialMode="login" />
           : route === "" || route === "/"
           ? <Landing lang={preLoginLang} onLangChange={setLandingLang} />
           : <LoginPage status={status} lang={preLoginLang} onLangChange={setLandingLang} onDone={async () => { signedOutRef.current = false; await loadStatus(); navigate(route); }} initialMode="login" />}
       </LangContext.Provider>
     );
   }
-  if (route === "unlimited") return <UnlimitedPage status={status} onDone={loadStatus} />;
 
   if (route.startsWith("study/")) {
     const taskId = route.split("/")[1];
@@ -1045,7 +860,7 @@ export function App() {
           </div>
         </main>
       )
-      : <div className="screen"><div className="brand boot"><Logo size={26} /> Otto</div><div className="spinner" /></div>;
+      : <div className="screen"><div className="brand boot"><Logo size={26} /> Otto</div><Spinner /></div>;
   }
 
   // Eisenhower ranking with deadline/VIP/freshness tie-breaks — same bands/cards, just a better order.
@@ -1086,10 +901,10 @@ export function App() {
     <div className="app">
       {/* Top nav — the prototype's single shell: lowercase "otto" wordmark left, plain text links right
           (Today/Tutor/Journal/Mistakes/Settings), active link in the orange. Replaces the old sidebar +
-          page-title topbar entirely. Hidden in Tutor: that screen is a full-screen, focused surface —
-          TutorSession carries its own breadcrumb row ("All sessions / Mathematics … End session"), the
-          same chrome the prototype's /tutor/session uses. */}
-      {!route.startsWith("tutor") && (
+          page-title topbar entirely. Shown on EVERY route including Tutor — it used to be hidden there as
+          a "focused, full-screen surface" (report-live ask: keep the nav). TutorSession still carries its
+          own breadcrumb row ("All sessions / Mathematics … End session") below this header, and the stage
+          subtracts --topnav-h from the viewport so it still fits exactly. */}
       <header className="topnav">
         <a className="topnav-brand" href="/tasks">otto</a>
         <nav className="topnav-links">
@@ -1099,12 +914,12 @@ export function App() {
           >
             {en ? "Today" : "Aujourd'hui"}
           </a>
-          {!isPhone && <a
+          <a
             className={`topnav-link ${route === "tutor" || route.startsWith("tutor/session/") ? "active" : ""}`}
             href="/tutor"
           >
             {en ? "Tutor" : "Tuteur"}
-          </a>}
+          </a>
           <a
             className={`topnav-link ${route === "log" ? "active" : ""}`}
             href="/log"
@@ -1117,29 +932,18 @@ export function App() {
           >
             {en ? "Coursework" : "Cours"}
           </a>}
-          {!isPhone && <a
-            className={`topnav-link ${route === "errorlog" ? "active" : ""}`}
-            href="/errorlog"
-          >
-            {en ? "Mistakes" : "Erreurs"}
-          </a>}
-          <a
-            className={`topnav-link ${route === "settings" ? "active" : ""}`}
-            href="/settings"
-          >
-            {en ? "Settings" : "Réglages"}
-          </a>
-          {!isPhone && isAdminUser(status?.user) && (
-            <a
-              className={`topnav-link ${route === "admin" ? "active" : ""}`}
-              href="/admin"
-            >
-              Admin
-            </a>
-          )}
+          {/* Hick's law: four primary destinations stay in view; the rest sit one tap away under "More" so the bar offers fewer
+              choices at once. The "More" label itself lights up when one of its pages is open. */}
+          <details className="topnav-more" key={route}>
+            <summary className={`topnav-link ${["errorlog", "settings", "admin"].includes(route) ? "active" : ""}`}>{en ? "More" : "Plus"}</summary>
+            <div className="topnav-more-menu">
+              {!isPhone && <a className={`topnav-link ${route === "errorlog" ? "active" : ""}`} href="/errorlog">{en ? "Mistakes" : "Erreurs"}</a>}
+              <a className={`topnav-link ${route === "settings" ? "active" : ""}`} href="/settings">{en ? "Settings" : "Réglages"}</a>
+              {!isPhone && !!status?.isAdmin && <a className={`topnav-link ${route === "admin" ? "active" : ""}`} href="/admin">Admin</a>}
+            </div>
+          </details>
         </nav>
       </header>
-      )}
 
       {/* Main content area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'visible' }}>
@@ -1171,14 +975,19 @@ export function App() {
       ) : route === "tutor" ? (
         <TutorSession userId={status?.user || null} onExit={() => navigate("tasks")} visionReady={!!status?.visionReady} />
       ) : route.startsWith("tutor/session/") ? (
-        <TutorSession userId={status?.user || null} onExit={() => navigate("tasks")} visionReady={!!status?.visionReady} sessionId={route.split("/")[3]} />
+        // split index [2]: routeOf strips the leading slash, so "tutor/session/<id>" is ["tutor","session","<id>"].
+        // It used to read [3] — ALWAYS undefined — so every deep link/refresh/history anchor loaded as if no
+        // session id had been passed and the full-page review (TutorSession, .../board|.../chat) never opened.
+        <TutorSession userId={status?.user || null} onExit={() => navigate("tasks")} visionReady={!!status?.visionReady} sessionId={route.split("/")[2]} reviewView={route.split("/")[3]} />
       ) : route === "study" ? (
         <StandaloneStudyEntry tasks={tasks} setTasks={setTasks} status={status} notify={notify} navigate={navigate} />
       ) : route === "coursework" ? (
         <Coursework onTasksChanged={() => { void api.tasks().then(setTasks).catch(() => {}); }} />
       ) : route === "errorlog" ? (
         <MistakeLogPage lang={status?.language} />
-      ) : route === "admin" && isAdminUser(status?.user) ? (
+      ) : route === "exercises" ? (
+        <ExercisesPage />
+      ) : route === "admin" && !!status?.isAdmin ? (
         <AdminPage />
       ) : !status.googleConnected && !status.pronoteConnected && !skippedConnect ? (
         <main className="list-wrap"><ConnectCard status={status} onSkip={() => {
@@ -1192,15 +1001,9 @@ export function App() {
                 no greeting-by-clock. Under it ONE gray line joins the date to the "Three priorities…"
                 reassurance with a middle dot ("Monday, 5 October · Three priorities. Everything else
                 can wait.") instead of a separate uppercase date label above the title. */}
-            <h1 className="list-head">{en ? "Your day, under control." : "Ta journée, sous contrôle."}</h1>
-            <p className="page-sub" style={{ marginTop: 10 }}>
-              {todayLong(status?.language)}{en ? " · Three priorities. Everything else can wait." : " · Trois priorités. Le reste peut attendre."}
-            </p>
-            {momentumSubject ? (
-              <p className="dash-momentum">
-                {T("dashboard.momentum", { subject: momentumSubject })}
-              </p>
-            ) : null}
+            {/* Warm, plain, human: a greeting by first name, then the date — no tagline, no progress widgets. */}
+            <h1 className="list-head">{(status?.name || "").trim().split(/\s+/)[0] ? (en ? `Hi ${(status?.name || "").trim().split(/\s+/)[0]}.` : `Salut ${(status?.name || "").trim().split(/\s+/)[0]}.`) : todayLong(status?.language)}</h1>
+            {(status?.name || "").trim() ? <p className="page-sub mt-2">{todayLong(status?.language)}</p> : null}
             {/* One plain sentence instead of the old "3 active · 1 processing · 5 done" mono readout —
                 that read like debug output, not like something written for a stressed 17-year-old. A second
                 sentence names what's actually next (the hero task) rather than just a count, so the line
@@ -1208,7 +1011,7 @@ export function App() {
             <p className="dash-line">
               {live.length === 0
                 ? (doneToday > 0 ? T("dashboard.doneForToday") : T("dashboard.allCaughtUp"))
-                : (T("dashboard.thingsLeft", { count: live.length, plural: live.length > 1 ? "s" : "" }) +
+                : ((live.length > 3 ? T("dashboard.focusThree", { rest: live.length - 3 }) : T("dashboard.thingsLeft", { count: live.length, plural: live.length > 1 ? "s" : "" })) +
                    (doneToday > 0 ? T("dashboard.alreadyDone", { count: doneToday, plural: doneToday > 1 ? "s" : "" }) : "") + ".")}
               {/* One status signal at a time, in priority order — overdue outranks in-progress work,
                   which outranks a routine scan — instead of stacking every pill that happens to apply. */}
@@ -1222,20 +1025,6 @@ export function App() {
                 <span className="scan-note"><span className="scan-dot" /> {en ? "checking…" : "vérification…"}</span>
               ) : null}
             </p>
-            {/* Today's progress, not all-time — see doneToday. Hidden when there's nothing to measure.
-                The prototype puts the caption ("1 of 3 complete · A good start.") ABOVE the bar. */}
-            {todayTotal > 0 && (
-              <>
-                <p className="dash-progress-caption">
-                  {en
-                    ? `${doneToday} of ${todayTotal} complete · ${doneToday === 0 ? "Ready when you are." : doneToday >= todayTotal ? "All done for today." : "A good start."}`
-                    : `${doneToday} sur ${todayTotal} terminée${doneToday > 1 ? "s" : ""} · ${doneToday === 0 ? "Prêt quand tu veux." : doneToday >= todayTotal ? "Tout est fait pour aujourd'hui." : "Un bon début."}`}
-                </p>
-                <div className="dash-progress" role="img" aria-label={en ? `${doneToday} of ${todayTotal} done today` : `${doneToday} sur ${todayTotal} faites aujourd'hui`}>
-                  <div className="dash-progress-fill" style={{ width: `${Math.round((doneToday / todayTotal) * 100)}%` }} />
-                </div>
-              </>
-            )}
           </div>
           {/* Onboarding's sidebar tour explains what the Tasks tab IS, but never what "Do now"/"This
               week"/"Later" actually mean or how a task lands in one — the one piece of real complexity
@@ -1249,18 +1038,7 @@ export function App() {
             <div className="intro paused-banner">
               <div className="intro-body">
                 <div className="intro-title">{en ? "Otto is paused" : "Otto est en pause"}</div>
-                <p>{en ? "Turn it back on in Settings to continue." : "Réactive-le dans les Réglages pour continuer."}</p>
-              </div>
-              <button className="btn xs ghost" onClick={() => navigate("settings")}>{en ? "Settings" : "Réglages"}</button>
-            </div>
-          )}
-          {!status.paused && (budget?.over ?? status.overBudget) && (
-            <div className="intro paused-banner">
-              <div className="intro-body">
-                <div className="intro-title">{en ? "Monthly cap reached" : "Plafond mensuel atteint"}</div>
-                <p>{en
-                  ? `Otto has paused new work — it renews ${budget?.renewsOn ? fmtDay(budget.renewsOn, (fr, enS) => en ? enS : fr) : "on the 1st"}. Your tasks stay as they are.`
-                  : `Otto a mis en pause le nouveau travail — ça se renouvelle ${budget?.renewsOn ? fmtDay(budget.renewsOn, (fr, enS) => en ? enS : fr) : "le 1er"}. Tes tâches restent en place.`}</p>
+                <p>{en ? "Turn it back on in Settings whenever you're ready — nothing's been lost." : "Réactive-le dans les Réglages quand tu veux — rien n'a été perdu."}</p>
               </div>
               <button className="btn xs ghost" onClick={() => navigate("settings")}>{en ? "Settings" : "Réglages"}</button>
             </div>
@@ -1292,28 +1070,25 @@ export function App() {
                 return handled === 0 ? (
                   connected ? (
                     <div className="empty-state">
-                      <div className="empty-mark"><Logo size={28} /></div>
-                      <h3>{en ? `Otto is watching ${watching}${who ? `, ${who}` : ""}` : `Otto surveille ${watching}${who ? `, ${who}` : ""}`}</h3>
-                      <p>{en ? "It reads your homework and tests. Tasks arrive automatically." : "Il lit tes devoirs et contrôles. Les tâches arrivent automatiquement."}</p>
-                      <button className="btn primary" disabled={busy} onClick={() => void generate()}>{busy ? (en ? "Searching…" : "Recherche…") : (en ? "Check now" : "Vérifier maintenant")}</button>
+                      <h3>{en ? `I'm watching ${watching}${who ? `, ${who}` : ""}` : `Je surveille ${watching}${who ? `, ${who}` : ""}`}</h3>
+                      <p>{en ? "Homework and tests land here the second I spot them. Until then — this quiet is yours, not empty time." : "Devoirs et contrôles arrivent ici dès que je les repère. D'ici là — ce calme est à toi, pas du temps mort."}</p>
+                      <button className="btn primary" disabled={busy} onClick={() => void generate()}>{busy ? (en ? "Looking…" : "Je regarde…") : (en ? "Look again" : "Regarde encore")}</button>
                     </div>
                   ) : (
                     <div className="empty-state">
-                      <div className="empty-mark"><Logo size={28} /></div>
-                      <h3>{en ? `Nothing on your list yet${who ? `, ${who}` : ""}` : `Rien sur ta liste pour l'instant${who ? `, ${who}` : ""}`}</h3>
+                      <h3>{en ? `Nothing on your list${who ? `, ${who}` : ""} — suspicious` : `Rien sur ta liste${who ? `, ${who}` : ""} — suspect`}</h3>
                       <p>{en
-                        ? "Add a task above and Otto takes it from there — or connect an app in Settings so homework and deadlines arrive on their own."
-                        : "Ajoute une tâche ci-dessus et Otto s'occupe du reste — ou connecte une app dans les Réglages pour que devoirs et échéances arrivent tout seuls."}</p>
+                        ? "Add what you've been putting off — you already know what it is. Or connect an app in Settings and I'll find the deadlines before you do."
+                        : "Ajoute ce que tu repousses — tu sais déjà ce que c'est. Ou connecte une app dans les Réglages, je trouverai les échéances avant toi."}</p>
                       <a className="btn ghost" href="/settings">{en ? "Connect an app" : "Connecter une app"}</a>
                     </div>
                   )
                 ) : (
                   <div className="empty-state">
-                    <div className="empty-mark done"><span className="empty-check">✓</span></div>
-                    <h3>{en ? `All caught up${who ? `, ${who}` : ""}` : `Tout est à jour${who ? `, ${who}` : ""}`}</h3>
+                    <h3>{en ? `Clear${who ? `, ${who}` : ""}` : `C'est dégagé${who ? `, ${who}` : ""}`}</h3>
                     <p>{connected
-                      ? (en ? `You're all caught up — Otto's still keeping an eye on ${watching}.` : `Tu es à jour — Otto continue de surveiller ${watching}.`)
-                      : (en ? "You're all caught up. Nothing else needs your attention right now." : "Tu es à jour. Rien d'autre ne demande ton attention pour l'instant.")}</p>
+                      ? (en ? `Nothing outstanding. I'm still watching ${watching} — so go get ahead on something that's actually hard.` : `Rien en retard. Je surveille toujours ${watching} — alors prends de l'avance sur quelque chose de vraiment dur.`)
+                      : (en ? "Nothing outstanding. Pick the hardest thing on your plate and get ahead of it — that's the whole game." : "Rien en retard. Choisis la chose la plus dure sur ta liste et prends-la de vitesse — c'est tout le jeu.")}</p>
                   </div>
                 );
               })() : (
@@ -1348,25 +1123,35 @@ export function App() {
                     {!showAllTasks ? (
                       <button className="btn xs ghost show-more-btn" onClick={() => setShowAllTasks(true)}>
                         {en
-                          ? `See ${live.length - 3} more task${live.length - 3 > 1 ? "s" : ""}…`
-                          : `Voir ${live.length - 3} tâche${live.length - 3 > 1 ? "s" : ""} de plus…`}
+                          ? `${live.length - 3} more waiting`
+                          : `${live.length - 3} de plus qui attendent`}
                       </button>
                     ) : (
-                      <div className="list">
-                        {live.slice(3).map((t, i) => (
+                      <div className="later-groups">
+                        {[
+                          { key: "week", label: en ? "This week" : "Cette semaine", items: live.slice(3).filter((t) => t.quadrant === "do" || t.quadrant === "schedule") },
+                          { key: "later", label: en ? "Later" : "Plus tard", items: live.slice(3).filter((t) => t.quadrant !== "do" && t.quadrant !== "schedule") },
+                        ].filter((g) => g.items.length).map((g) => (
+                          <section key={g.key} className="later-group">
+                            <h3 className="later-group-head">{g.label}</h3>
+                            <div className="list compact">
+                              {g.items.map((t, i) => (
                           <TaskCardRow
-                            key={t.id}
-                            task={t}
-                            index={i + 3}
-                            retrying={retryingIds.includes(t.id)}
-                            isNew={!seenTasks.has(t.id) && !isHandled(t.status) && !isInFlight(t.status)}
-                            onOpen={() => navigate(`task/${t.id}`)}
-                            onChange={setTasks}
-                            onTask={patchTask}
-                            onConfirmed={flagJustDone}
-                            onEnterStudyMode={STUDY_MODE_ENABLED && !isPhone ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
-                            readOnly={isPhone}
-                          />
+                                  key={t.id}
+                                  task={t}
+                                  index={3 + i}
+                                  retrying={retryingIds.includes(t.id)}
+                                  isNew={!seenTasks.has(t.id) && !isHandled(t.status) && !isInFlight(t.status)}
+                                  onOpen={() => navigate(`task/${t.id}`)}
+                                  onChange={setTasks}
+                                  onTask={patchTask}
+                                  onConfirmed={flagJustDone}
+                                  onEnterStudyMode={STUDY_MODE_ENABLED && !isPhone ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
+                                  readOnly={isPhone}
+                                />
+                              ))}
+                            </div>
+                          </section>
                         ))}
                       </div>
                     )}
@@ -1409,7 +1194,7 @@ export function App() {
                     same task and the plan Otto wrote, with no chat and nothing to act on, instead of
                     TaskFocus's full working surface. */}
                 {isPhone ? (
-                  <TaskReadOnly task={openTask} />
+                  <TaskReadOnly task={openTask} onTask={patchTask} userId={status?.user || null} />
                 ) : (
                   <TaskFocus
                     task={openTask}
@@ -1434,2511 +1219,7 @@ export function App() {
     </LangContext.Provider>
   );
 }
-
-/** Modal shell for the task detail — backdrop-click, ✕, and Esc all close; locks body scroll while open.
- *  `nested`: this is a popup opened FROM WITHIN an already-open TaskModal (a brief/flashcard deck opened
- *  from the task detail) — it renders as a smaller centered card over the primary modal instead of also
- *  going full-bleed, and always via a PORTAL to `document.body`. The portal isn't cosmetic: the primary
- *  modal's own open/close animation (`modalPop`/`modalOut`) animates `transform`, and per the CSS spec any
- *  animated `transform` makes that element the containing block for `position: fixed` descendants — so
- *  without a portal, a nested modal's `inset: 0` was resolving against the OUTER modal's box, not the real
- *  viewport (it rendered pinned to the top of the outer card instead of centered on screen). Portaling both
- *  modals to `<body>` sidesteps that entirely, for every popup, not just nested ones. */
-
-/** LEGACY SUPPORT ONLY: the IB "big project" milestone breakdown (Extended Essay/TOK/CAS/IA) this surfaced
- *  was removed by direct request — server/claude.ts's writeStepsFromContext no longer ever creates a new
- *  `targetDate` step, for IB or anything else. Kept so a task that already has `targetDate` steps from
- *  before that change still renders correctly; entirely client-derived from tasks already in state (no
- *  fetch, no server endpoint), so it's a permanent no-op for every task going forward. */
-function Milestones({ tasks }: { tasks: WebTask[] }) {
-  const L = useLang();
-  const [showAll, setShowAll] = useState(false);
-  const all = tasks
-    .flatMap((t) => (t.steps || [])
-      .filter((s) => !s.done && s.targetDate)
-      .map((s) => ({ taskId: t.id, taskTitle: t.title, text: s.text, targetDate: s.targetDate! })))
-    .sort((a, b) => a.targetDate.localeCompare(b.targetDate));
-  const items = showAll ? all : all.slice(0, 3);
-  useReveal([items.length]);
-  if (!all.length) return null;
-  return (
-    <div className="milestone-wrap reveal">
-      <div className="exam-strip-label">{L("Prochains jalons", "Upcoming milestones")}</div>
-      <div className="milestone-list">
-        {items.map((it, i) => {
-          const late = it.targetDate < todayIso();
-          return (
-            <div key={i} className={`milestone-chip ${late ? "late" : ""}`}>
-              <span className="milestone-date">{late ? L("en retard", "overdue") : fmtDate(it.targetDate, L)}</span>
-              <span className="milestone-text">{it.text}</span>
-              <span className="milestone-task">{it.taskTitle}</span>
-            </div>
-          );
-        })}
-        {!showAll && all.length > 3 && (
-          <button type="button" className="btn xs ghost milestone-more" onClick={() => setShowAll(true)}>
-            {L(`+${all.length - 3} de plus`, `+${all.length - 3} more`)}
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** Always-on-screen entry point for the exam/week ambient context. Used to render inline in the task
- *  list (splitting it in two), then as a full-screen modal (too heavy for what's basically a glance-and-
- *  close panel) — this is a small floating button, fixed to the same spot at every scroll position, that
- *  opens a compact anchored popover instead of taking over the whole screen. */
-function WeekRailFab({ lang, onTask, tasks }: { lang?: "fr" | "en"; onTask: (t: WebTask) => void; tasks: WebTask[] }) {
-  const en = lang === "en";
-  const [open, setOpen] = useState(false);
-
-  return (
-    <div className="week-fab-wrap">
-      <button type="button" className="week-fab" onClick={() => setOpen(true)}>
-        <span>{en ? "This week" : "Cette semaine"}</span>
-      </button>
-      {/* A hand-rolled outside-click/Escape popover here turned out unreliable (reported as "loads but
-          doesn't open") — TaskModal is the SAME popup mechanism already proven to open/close correctly
-          everywhere else in the app (task detail, settings), so reuse it instead of a second bespoke
-          implementation. `nested` keeps it from re-locking body scroll if it's ever opened from inside
-          another modal. */}
-      {open && (
-        <TaskModal onClose={() => setOpen(false)} title={en ? "This week" : "Cette semaine"}>
-          <div className="week-fab-popover-body">
-            {/* Temporarily hidden — rarely has anything to show outside a detected big IB project
-                (Extended Essay/TOK/CAS/IA), so it was mostly just empty space on the rail. */}
-            <DueReviews lang={lang} tasks={tasks} />
-            <WeekLoad lang={lang} onTask={onTask} />
-          </div>
-        </TaskModal>
-      )}
-    </div>
-  );
-}
-
-/** Cards due for spaced-repetition review, across EVERY task — the one genuinely new cross-task view the
- *  spaced-repetition work needed (see nextLeitnerReview in shared/types.ts): a deck's own player only ever
- *  shows what's due for THAT task's deck, but the whole point of spacing is seeing everything due at a
- *  glance without reopening every task to check. Opens the deck's review player DIRECTLY in a modal —
- *  reported live that linking to `/task/<id>` instead (the original version) meant clicking a due-review
- *  chip opened the whole task, and the student still had to go find the flashcard deck inside it. `tasks`
- *  is already loaded by the parent (App.tsx's main dashboard state), so the deck itself can be looked up
- *  locally — no extra fetch needed, same pattern as the Journal page's day/month deck review modals
- *  (StudyLogPage's onDayReview/onSummaryReview). */
-function DueReviews({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] }) {
-  const en = lang === "en";
-  const [due, setDue] = useState<{ taskId: string; taskTitle: string; deckId: string; deckTitle: string; cardIndex: number }[] | null>(null);
-  const [error, setError] = useState(false);
-  const [openDeck, setOpenDeck] = useState<{ taskId: string; deckId: string } | null>(null);
-  useEffect(() => { void api.reviewsDue().then((r) => setDue(r.due)).catch(() => { setDue([]); setError(true); }); }, []);
-  // Once the open deck has nothing left due, close the modal automatically — a clear "you're done" signal
-  // instead of leaving an empty-feeling review screen open with nothing more to click through.
-  useEffect(() => {
-    if (openDeck && due && !due.some((d) => d.deckId === openDeck.deckId)) setOpenDeck(null);
-  }, [due, openDeck]);
-  if (error) return <p className="rewrite-error small">{en ? "Couldn't load reviews due." : "Impossible de charger les révisions dues."}</p>;
-  if (!due?.length) return null;
-  // Group by DECK (not task) — a task with two decks should show two chips, not one merged count.
-  const byDeck = new Map<string, { taskId: string; deckTitle: string; count: number }>();
-  for (const d of due) {
-    const cur = byDeck.get(d.deckId);
-    if (cur) cur.count++; else byDeck.set(d.deckId, { taskId: d.taskId, deckTitle: d.deckTitle, count: 1 });
-  }
-  // Capped at 3 decks/day — this strip sits at the very top of the Journal tab, and a student with a lot of
-  // accumulated review debt used to see every single overdue deck at once (reported live: 7+ chips stacked
-  // above the day picker), crowding out the actual journal entry below the fold. Most decks with the most
-  // cards due first — that's the review that's actually gone stale longest, the one worth surfacing over a
-  // deck that's barely behind.
-  const dueDecks = [...byDeck.entries()].sort((a, b) => b[1].count - a[1].count).slice(0, 3);
-  const openTask = openDeck ? tasks.find((t) => t.id === openDeck.taskId) : undefined;
-  const openDeckObj = openTask?.flashcards?.find((f) => f.id === openDeck?.deckId);
-  return (
-    <div className="due-reviews">
-      <div className="exam-strip-label">{en ? "Due for review" : "À réviser"}</div>
-      <div className="exam-strip">
-        {dueDecks.map(([deckId, t]) => (
-          <button key={deckId} type="button" className="exam-chip due-review-chip" onClick={() => setOpenDeck({ taskId: t.taskId, deckId })}>
-            <span className="exam-days">{t.count}</span>
-            <span className="exam-subject">{t.deckTitle}</span>
-          </button>
-        ))}
-      </div>
-      {openTask && openDeckObj && (
-        <TaskModal onClose={() => setOpenDeck(null)} title={openDeckObj.title} nested>
-          <FlashcardDeck
-            deck={openDeckObj}
-            taskId={openTask.id}
-            onlyIndices={due.filter((d) => d.deckId === openDeckObj.id).map((d) => d.cardIndex)}
-            onReview={(cardIndex, correct) => {
-              void api.reviewFlashcard(openTask.id, openDeckObj.id, cardIndex, correct).catch(() => {});
-              // Mark it complete immediately — reported live that a reviewed card stayed showing as "due"
-              // (chip count unchanged) until the next full reload. Reviewing IS what clears "due today,"
-              // regardless of right/wrong (that only changes which Leitner box it moves to next), so drop
-              // it from the local due list the moment the review fires rather than waiting on a refetch.
-              setDue((prev) => prev?.filter((d) => !(d.deckId === openDeckObj.id && d.cardIndex === cardIndex)) ?? prev);
-            }}
-            onAllCorrect={() => setOpenDeck(null)}
-          />
-        </TaskModal>
-      )}
-    </div>
-  );
-}
-
-/** Otto's own record of what's actually landed, per topic — profile.milestones (shared/types.ts), extracted
- *  from journal entries (extractJournalMemory, server/claude.ts) alongside the existing journal→courses fact
- *  pipeline. Same chip strip pattern as DueReviews/exam-strip right above — one visual language for "here's
- *  a small stack of things about your studying," not a new bespoke widget. This is the direct, visible half
- *  of "the tutor remembers your progress" — the other half (feeding it back INTO chat so Otto builds on it
- *  instead of re-teaching) is milestoneLine in server/claude.ts, invisible by design (a tutor doesn't
- *  announce "per my notes...").  Own profile fetch (same pattern as MistakeLogPage/SettingsPage below) since
- *  StudyLogPage doesn't otherwise carry profile state. */
-function MilestonesStrip({ lang }: { lang?: "fr" | "en" }) {
-  const en = lang === "en";
-  const [groups, setGroups] = useState<ReturnType<typeof milestonesBySubject> | null>(null);
-  useEffect(() => { void api.profile().then((p) => setGroups(milestonesBySubject(p.milestones))).catch(() => setGroups([])); }, []);
-  if (!groups?.length) return null;
-  return (
-    <div className="due-reviews milestones-strip">
-      <div className="exam-strip-label">{en ? "What's clicked so far" : "Ce qui a déclic jusqu'ici"}</div>
-      <div className="exam-strip">
-        {groups.flatMap((g) => g.entries.slice(0, 3).map((m) => (
-          <span key={m.id} className="exam-chip milestone-chip" title={m.label}>
-            <span className="exam-subject">{g.subject}</span>
-            <span className="milestone-topic">{m.topic}</span>
-          </span>
-        )))}
-      </div>
-    </div>
-  );
-}
-
-type WorkloadDay = { date: string; items: { kind: "homework" | "test" | "task"; subject?: string; title: string; effort: number; taskId?: string; movable?: boolean }[]; totalEffort: number };
-
-/** Deterministic "this week" strip — no AI call, just real Pronote homework/tests + open tasks bucketed
- *  by day. Answers the 4 workload gaps in one glance: what's on each day, how heavy it actually is (bar
- *  height, relative to the week — never presented as minutes), which day is a pile-up (accent chip, same
- *  visual language for a heavy day), and — once expanded — a way to nudge a movable task off an
- *  overloaded day onto the lightest one, without any AI round-trip. */
-function WeekLoad({ lang, onTask }: { lang?: "fr" | "en"; onTask: (t: WebTask) => void }) {
-  const en = lang === "en";
-  const notify = useNotify();
-  const [days, setDays] = useState<WorkloadDay[] | null>(null);
-  const [openDay, setOpenDay] = useState<string | null>(null);
-  const [moving, setMoving] = useState<string | null>(null);
-  // Which item's day-picker is open — was a single "move to the lightest day" auto-pick; now the student
-  // chooses WHICH later day, since "lighter" and "when I actually want to do it" aren't always the same
-  // day (a lighter Thursday doesn't help if there's a match Thursday evening).
-  const [pickingFor, setPickingFor] = useState<string | null>(null);
-  // A failed load also fell into `setDays([])`, same as a genuinely empty week — "Nothing due this week"
-  // is reassuring when it's actually a load failure, exactly the misleading case this pass targets.
-  const [error, setError] = useState(false);
-  const load = useCallback(() => { setError(false); void api.workload().then((r) => setDays(r.days)).catch(() => { setDays([]); setError(true); }); }, []);
-  useEffect(() => { load(); }, [load]);
-  // This used to return null and rely on the OLD dash-rail card collapsing itself via `.dash-rail:empty` —
-  // now it renders standalone inside the "This week" popover (WeekRailFab), so a silent null here just
-  // reads as "the popup doesn't work": you click the button and nothing shows up, loading or genuinely
-  // empty look identical (blank). Say which one it actually is instead.
-  if (!days) return <p className="muted small">{en ? "Finding time for everything…" : "Recherche du temps pour tout…"}</p>;
-  if (error) return <p className="rewrite-error small">{en ? "Couldn't load this week." : "Impossible de charger la semaine."} <button type="button" className="btn xs ghost" onClick={load}>{en ? "Retry" : "Réessayer"}</button></p>;
-  if (days.every((d) => d.items.length === 0)) return <p className="muted small">{en ? "Your week is still open." : "Ta semaine est encore libre."}</p>;
-
-  const max = Math.max(1, ...days.map((d) => d.totalEffort));
-  // Baselined against days that actually have something due (not the whole week) — see server/workload.ts's
-  // isPileUp for why a whole-week median would sit at ~0 and never trigger.
-  const busy = [...days.map((d) => d.totalEffort)].filter((e) => e > 0).sort((a, b) => a - b);
-  const busyMedian = busy[Math.floor(busy.length / 2)];
-  const pileUp = (d: WorkloadDay) => d.totalEffort > 0 && (busy.length < 2 ? d.totalEffort >= 3 : d.totalEffort >= busyMedian * 1.6);
-  const lightestOtherDate = (excludeDate: string) => {
-    const others = days.filter((d) => d.date !== excludeDate);
-    if (!others.length) return undefined;
-    return others.reduce((a, b) => (b.totalEffort < a.totalEffort ? b : a)).date;
-  };
-  const dow = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(en ? "en-US" : "fr-FR", { weekday: "short" });
-  const dm = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(en ? "en-US" : "fr-FR", { day: "numeric", month: "short" });
-  const todayKey = days[0]?.date;
-
-  const moveTask = async (taskId: string, to: string) => {
-    const prevDays = days;
-    setPickingFor(null);
-    setMoving(taskId);
-    const from = days.find((d) => d.items.some((it) => it.taskId === taskId));
-    const item = from?.items.find((it) => it.taskId === taskId);
-    if (from && item) {
-      setDays(days.map((d) => {
-        if (d.date === from.date) return { ...d, items: d.items.filter((it) => it.taskId !== taskId), totalEffort: d.totalEffort - item.effort };
-        if (d.date === to) return { ...d, items: [...d.items, item], totalEffort: d.totalEffort + item.effort };
-        return d;
-      }));
-    }
-    try {
-      const list = await api.rescheduleTask(taskId, to);
-      const updated = list.find((t) => t.id === taskId);
-      if (updated) onTask(updated);
-      load();
-    } catch (e: any) {
-      setDays(prevDays);
-      notify(e?.message || (en ? "Couldn't move that task — try again." : "Impossible de déplacer cette tâche — réessaie."), "error");
-    }
-    setMoving(null);
-  };
-
-  return (
-    <div className="week-load-wrap">
-      <div className="exam-strip-label">{en ? "This week" : "Cette semaine"}</div>
-      <div className="week-load-strip">
-        {days.map((d) => {
-          const isToday = d.date === todayKey;
-          const heavy = pileUp(d);
-          const open = openDay === d.date;
-          return (
-            <button
-              type="button"
-              key={d.date}
-              className={`week-day ${heavy ? "heavy" : ""} ${isToday ? "is-today" : ""} ${open ? "open" : ""}`}
-              onClick={() => setOpenDay(open ? null : d.date)}
-            >
-              <span className="week-day-dow">{isToday ? (en ? "Today" : "Aujourd'hui") : dow(d.date)}</span>
-              <span className="week-day-bar-track"><span className="week-day-bar" style={{ height: `${Math.max(6, (d.totalEffort / max) * 100)}%` }} /></span>
-              <span className="week-day-count">{d.items.length || ""}</span>
-            </button>
-          );
-        })}
-      </div>
-      {openDay && (() => {
-        const d = days.find((x) => x.date === openDay);
-        if (!d) return null;
-        return (
-          <div className="week-day-detail">
-            <div className="week-day-detail-head">{dow(d.date)} {dm(d.date)}{pileUp(d) ? <span className="chip chip-attention">{en ? "Heavy day" : "Journée chargée"}</span> : null}</div>
-            {d.items.length === 0 ? (
-              <p className="muted small">{en ? "Nothing due." : "Rien de prévu."}</p>
-            ) : (
-              <ul className="week-day-items">
-                {[...d.items].sort((a, b) => b.effort - a.effort).map((it, i) => (
-                  <li key={i} className="week-day-item">
-                    <span className={`week-item-dot week-item-${it.kind}`} />
-                    <span className="week-item-title">{it.subject ? <b>{it.subject}: </b> : null}{it.title}</span>
-                    {it.movable && it.taskId && (
-                      pickingFor === it.taskId ? (
-                        <div className="week-day-picker">
-                          {days.filter((x) => x.date !== d.date).map((x) => (
-                            <button key={x.date} type="button" className="btn xs ghost" disabled={moving === it.taskId} onClick={() => void moveTask(it.taskId!, x.date)}>
-                              {dow(x.date)}{x.date === lightestOtherDate(d.date) ? " ✦" : ""}
-                            </button>
-                          ))}
-                          <button type="button" className="x" title={en ? "Cancel" : "Annuler"} aria-label={en ? "Cancel" : "Annuler"} onClick={() => setPickingFor(null)}>×</button>
-                        </div>
-                      ) : (
-                        <button type="button" className="btn xs ghost" disabled={moving === it.taskId} onClick={() => setPickingFor(it.taskId!)}>
-                          {moving === it.taskId ? "…" : (en ? "Move to another day" : "Déplacer à un autre jour")}
-                        </button>
-                      )
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        );
-      })()}
-    </div>
-  );
-}
-
-/** Thorough loading screen while Otto loads/scans — a spinner, a status line, and shimmer rows so the
- *  whole list arrives at once (never a half-populated flash). */
-function TaskSkeleton() {
-  const L = useLang();
-  const widths = ["66%", "52%", "71%", "58%", "63%"];
-  return (
-    <div className="loading-screen" aria-busy="true" aria-live="polite">
-      <div className="loading-head">
-        <span className="spinner sm" />
-        <span className="loading-msg">{L("Récupération de ta journée…", "Pulling up your day…")}</span>
-      </div>
-      <div className="list" aria-hidden="true">
-        {widths.map((w, i) => (
-          <div key={i} className="card skel">
-            <div className="card-main">
-              <span className="skel-box skel-pill" />
-              <div className="card-text">
-                <div className="skel-box skel-line" style={{ width: w }} />
-                <div className="skel-box skel-line sm" style={{ width: "34%" }} />
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/** A connect-Gmail call to action — shown on the dashboard until Gmail is linked (via Composio, in Settings). */
-function ConnectCard({ status, onSkip }: { status: ConnectionStatus; onSkip: () => void }) {
-  const who = status.name || firstName(status.user);
-  const en = status.language === "en";
-  return (
-    <div className="connect-card">
-      <div className="connect-mark"><Logo size={30} /></div>
-      <h2>{who ? (en ? `Welcome, ${who}` : `Bienvenue, ${who}`) : (en ? "Welcome to Otto" : "Bienvenue sur Otto")}</h2>
-      {/* Pronote is ONE option, never the premise: someone with no Pronote (IB/AP, a school on another
-          portal, or nobody at all) must not read this as "this app isn't for me". Same picker either way. */}
-      <p>{en
-        ? "Connect whatever holds your homework — Pronote, Gmail, Calendar or Drive — and Otto turns it into a clear plan for today. It never does the exercise for you, and never checks anything off without you."
-        : "Connecte ce qui contient tes devoirs — Pronote, Gmail, Calendar ou Drive — et Otto en fait un plan clair pour aujourd'hui. Il ne fait jamais l'exercice à ta place, et ne coche jamais rien sans toi."}</p>
-      {/* A raw env-var name means nothing to a student — say what's actually broken instead. */}
-      {!status.aiReady && <div className="warn">{en ? "Otto's AI isn't set up on this server yet — task generation is off for now." : "L'IA d'Otto n'est pas encore configurée sur ce serveur — la génération de tâches est désactivée pour l'instant."}</div>}
-      <a className="btn primary big" href="/settings">{en ? "Choose what to connect" : "Choisir quoi connecter"}</a>
-      {/* Escape hatch — reported live: no Pronote/school with Pronote, no Google account, just wants to add
-          tasks by hand and use the tutor. Connecting nothing is a legitimate way to use Otto (manual tasks
-          + chat/Study Mode still work fully; the only thing missing is AUTOMATIC detection), so this isn't
-          hidden behind Settings or worded as a dead end — it's a real, first-class choice right here. It
-          sits at the same weight as the connect button for the same reason: nothing connected is not a
-          downgrade, and Otto must not read as a Pronote-only app. */}
-      <button type="button" className="btn ghost" onClick={onSkip}>{en ? "Use Otto without connecting" : "Utiliser Otto sans connecter"}</button>
-      <p className="fineprint">{en ? "Connect or disconnect any app, or pause Otto, any time in Settings. " : "Connecte ou déconnecte n'importe quelle app, ou mets Otto en pause, à tout moment dans les Réglages. "}<a href="/privacy">{en ? "What Otto reads and why →" : "Ce qu'Otto lit et pourquoi →"}</a></p>
-    </div>
-  );
-}
-
-/** Language toggle — shared between Settings and Onboarding so the same question/UI isn't built twice.
- *  Renders bare rows (no wrapping section) so it drops into either container's own `.set-list`/step
- *  markup. `onChanged` receives the fresh profile after each save. */
-function PreferencesFields({ profile, onChanged }: { profile: Profile | null; onChanged?: (p: Profile) => void }) {
-  const L = useLang();
-  const notify = useNotify();
-  const [lang, setLang] = useState<"fr" | "en">(profile?.language === "en" ? "en" : "fr");
-  useEffect(() => { setLang(profile?.language === "en" ? "en" : "fr"); }, [profile?.language]);
-  const saveLang = async (v: "fr" | "en") => {
-    const prev = lang;
-    setLang(v); // optimistic — revert below on failure
-    try { onChanged?.(await api.setProfilePreference("language", v)); }
-    catch (e: any) {
-      setLang(prev);
-      notify(e?.message || L("Ta langue n'a pas été enregistrée — réessaie.", "Your language didn't save — give it another try."), "error");
-    }
-  };
-  // Track: onboarding's copy has always claimed this is "changeable any time in Settings" — it wasn't
-  // actually wired up here, so that claim was false for anyone past onboarding. Same optimistic-save
-  // pattern as language above.
-  const [track, setTrackState] = useState<"ib" | "ap" | "bac" | "other" | undefined>(profile?.track);
-  useEffect(() => { setTrackState(profile?.track); }, [profile?.track]);
-  const saveTrack = async (v: "ib" | "ap" | "bac" | "other") => {
-    const prev = track;
-    setTrackState(v);
-    try { onChanged?.(await api.setProfilePreference("track", v)); }
-    catch (e: any) { setTrackState(prev); notify(e?.message || L("Ça n'a pas été enregistré — réessaie.", "That didn't save — give it another try."), "error"); }
-  };
-  // Hint density — a DIFFERENT axis from learningStyle (VARK, presentation-only): this is how much the
-  // tutor walks through vs. just nudges when the student is stuck. Never changes whether the direct
-  // answer is given (that's unconditionally never, server-side) — only how much scaffolding leads there.
-  // A 3-position slider/bar, not two separate toggle buttons — "hints" (0) ↔ "balanced" (1, default) ↔
-  // "steps" (2). "balanced" is an explicit value (not just unset) so the slider always has a definite
-  // position to render, including for a brand-new account that's never touched this preference.
-  const HINT_DENSITY_POSITIONS: ("hints" | "balanced" | "steps")[] = ["hints", "balanced", "steps"];
-  const [hintDensity, setHintDensityState] = useState<"steps" | "hints" | "balanced" | undefined>(profile?.hintDensity);
-  useEffect(() => { setHintDensityState(profile?.hintDensity); }, [profile?.hintDensity]);
-  const saveHintDensity = async (v: "steps" | "hints" | "balanced") => {
-    const prev = hintDensity;
-    setHintDensityState(v);
-    try { onChanged?.(await api.setProfilePreference("hintDensity", v)); }
-    catch (e: any) { setHintDensityState(prev); notify(e?.message || L("Ça n'a pas été enregistré — réessaie.", "That didn't save — give it another try."), "error"); }
-  };
-  // Year/grade level — free text (see Profile.yearLevel's doc comment for why not a dropdown). Local draft
-  // state so typing doesn't round-trip on every keystroke; saved on blur/Enter like other free-text fields.
-  const [yearLevel, setYearLevelState] = useState(profile?.yearLevel || "");
-  useEffect(() => { setYearLevelState(profile?.yearLevel || ""); }, [profile?.yearLevel]);
-  const saveYearLevel = async () => {
-    const v = yearLevel.trim();
-    if (v === (profile?.yearLevel || "")) return;
-    try { onChanged?.(await api.setProfilePreference("yearLevel", v)); }
-    catch (e: any) { notify(e?.message || L("Ça n'a pas été enregistré — réessaie.", "That didn't save — give it another try."), "error"); }
-  };
-  return (
-    <>
-      <div className="set-row">
-        <span className="set-text"><b>{lang === "en" ? "Language" : "Langue"}</b><span className="settings-hint">{lang === "en" ? "Switches the interface and everything Otto writes." : "Change l'interface et tout ce qu'Otto écrit."}</span></span>
-        <div className="lang-toggle">
-          <button type="button" className={`btn xs ${lang === "fr" ? "" : "ghost"}`} aria-pressed={lang === "fr"} onClick={() => void saveLang("fr")}>Français</button>
-          <button type="button" className={`btn xs ${lang === "en" ? "" : "ghost"}`} aria-pressed={lang === "en"} onClick={() => void saveLang("en")}>English</button>
-        </div>
-      </div>
-      <div className="set-row">
-        <span className="set-text"><b>{L("Ton parcours", "Your track")}</b><span className="settings-hint">{L("Vocabulaire, intégrations proposées, et le style des exercices/quiz générés. Pas en Bac, IB ou AP (collège, etc.) ? Choisis « Autre ».", "Vocabulary, integrations offered, and the style of generated exercises/quizzes. Not doing Bac, IB, or AP (middle school, etc.)? Pick \"Other\".")}</span></span>
-        <div className="lang-toggle">
-          <button type="button" className={`btn xs ${track === "bac" ? "" : "ghost"}`} aria-pressed={track === "bac"} onClick={() => void saveTrack("bac")}>{L("Bac", "Bac")}</button>
-          <button type="button" className={`btn xs ${track === "ib" ? "" : "ghost"}`} aria-pressed={track === "ib"} onClick={() => void saveTrack("ib")}>IB</button>
-          <button type="button" className={`btn xs ${track === "ap" ? "" : "ghost"}`} aria-pressed={track === "ap"} onClick={() => void saveTrack("ap")}>AP</button>
-          <button type="button" className={`btn xs ${track === "other" ? "" : "ghost"}`} aria-pressed={track === "other"} onClick={() => void saveTrack("other")}>{L("Autre", "Other")}</button>
-        </div>
-      </div>
-      <div className="set-row">
-        <span className="set-text"><b>{L("Style d'accompagnement", "Learning style")}</b><span className="settings-hint">{L("Quand tu bloques : Otto te donne juste un indice, t'accompagne pas à pas, ou juge lui-même selon la situation. Il ne te donnera jamais directement la réponse, quel que soit ton choix.", "When you're stuck: Otto gives just a hint, walks through it step by step, or judges it case by case. Either way, it never just gives you the direct answer.")}</span></span>
-        <div className="hint-density-slider">
-          <input
-            type="range" min={0} max={2} step={1}
-            value={HINT_DENSITY_POSITIONS.indexOf(hintDensity || "balanced")}
-            onChange={(e) => void saveHintDensity(HINT_DENSITY_POSITIONS[Number(e.target.value)])}
-            aria-label={L("Style d'accompagnement", "Learning style")}
-          />
-          <div className="hint-density-slider-labels">
-            <span className={hintDensity === "hints" ? "active" : ""}>{L("Juste un indice", "Just a hint")}</span>
-            <span className={!hintDensity || hintDensity === "balanced" ? "active" : ""}>{L("Équilibré", "Balanced")}</span>
-            <span className={hintDensity === "steps" ? "active" : ""}>{L("Pas à pas", "All the steps")}</span>
-          </div>
-        </div>
-      </div>
-      <label className="set-row">
-        <span className="set-text"><b>{L("Ta classe / ton année", "Your year/grade")}</b><span className="settings-hint">{L("Aide Otto à caler la difficulté des fiches et exercices sur ton niveau exact.", "Helps Otto match revision sheets and exercises to your exact level.")}</span></span>
-        <input className="addinput" style={{ maxWidth: 160 }} maxLength={40}
-          placeholder={track === "ib" ? L("ex. DP1", "e.g. DP1") : track === "ap" ? L("ex. Junior", "e.g. Junior year") : track === "other" ? L("ex. 5ème", "e.g. Grade 7") : L("ex. Terminale", "e.g. Terminale")}
-          value={yearLevel} onChange={(e) => setYearLevelState(e.target.value)}
-          onBlur={() => void saveYearLevel()} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
-      </label>
-    </>
-  );
-}
-
-// Monday (YYYY-MM-DD) of the week containing `dateStr` — mirrors mondayOf in server/index.ts exactly
-// (same simple, year-boundary-safe scheme, not a formal ISO week number). MUST do the arithmetic in UTC,
-// not local time: parsing "T00:00:00" (no Z) reads it as LOCAL midnight, but then calling .toISOString()
-// converts that back to UTC — for anyone in a timezone ahead of UTC (most of Europe/Asia/Australia), local
-// midnight is still the PREVIOUS day in UTC, so every date this produced came out shifted back by one day.
-// That silently misaligned which date a saved entry's logDate landed on vs. what the server's own
-// (correctly all-UTC) mondayOf/weekdayDates expected when building the week-summary lookup — the real cause
-// of "No entries logged this week yet" despite entries clearly being there. Parsing with an explicit "Z"
-// and using the UTC getters/setters throughout makes this a pure calendar-string computation, immune to the
-// browser's local timezone, and byte-for-byte the same scheme the server already uses.
-const mondayOf = (dateStr: string): string => {
-  const d = new Date(`${dateStr}T00:00:00Z`);
-  const day = d.getUTCDay();
-  d.setUTCDate(d.getUTCDate() + (day === 0 ? -6 : 1 - day));
-  return d.toISOString().slice(0, 10);
-};
-const addDays = (dateStr: string, n: number): string => {
-  const d = new Date(`${dateStr}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
-};
-
-/** Standalone "Study" mode (route /study, no task id) — the exact same full StudyMode workspace a task's
- *  own "Study Mode" button opens, just not anchored to a real to-do. StudyMode.tsx persists everything
- *  (chat, notes, artifacts) keyed off task.id server-side, so a session with no task still needs a
- *  lightweight placeholder to attach to — POST /api/study/free finds-or-creates one (source:"freestudy",
- *  excluded from the normal dashboard, see the `live`/`completed` filters above), so returning to /study
- *  later resumes the same workspace instead of starting over. */
-/** Every flashcard deck this browser has ever generated, in one place, reachable regardless of where its
- *  source task/journal entry lives — built on the local backup (client/localDecks.ts) that already mirrors
- *  every deck as it's created, so this is always populated even offline or if a task got pruned/merged
- *  server-side. Reviewing from here posts back to the deck's real owner (taskId) exactly like reviewing it
- *  from the task/journal itself — this is a second way IN, not a separate copy of the review state. */
-function FlashcardsLibraryPage({ lang, tasks, embedded, userId }: { lang?: "fr" | "en"; tasks: WebTask[]; embedded?: boolean; userId: string | null }) {
-  const L = useLang();
-  const en = lang === "en";
-  const [decks, setDecks] = useState(() => getAllLocalDecks(userId));
-  const [quizzes, setQuizzes] = useState(() => getAllLocalQuizzes(userId));
-  const [openId, setOpenId] = useState<string | null>(null);
-  const [openQuizId, setOpenQuizId] = useState<string | null>(null);
-  // Local storage isn't reactive — refresh the list on focus so a deck/quiz generated in another tab (or
-  // just now, before this page was opened) shows up without needing a full reload.
-  //
-  // Reported live as a genuine cross-account leak: `decks`/`quizzes` above are seeded via a useState LAZY
-  // initializer, which only ever runs on this component's very first mount. Signing out and into a
-  // DIFFERENT account is an SPA-style soft reset (App.tsx's signOut — no full page reload), so if this
-  // component instance survives that transition (React keeps it mounted since the tree shape around it
-  // didn't change), its `decks` state kept showing the FIRST account's locally-cached flashcard decks
-  // indefinitely — this effect's own cleanup/re-run on `userId` changing only re-pointed the FOCUS listener
-  // at the new id, it never actually re-fetched immediately. A plain account switch inside the same tab
-  // never fires a real window blur/focus cycle, so the stale list could sit there until the student
-  // happened to tab away and back. Calling refresh() directly here (not just registering it for later)
-  // closes that gap — it now re-reads local storage under the CURRENT userId the instant that id changes,
-  // not just on the next incidental focus event.
-  useEffect(() => {
-    const refresh = () => { setDecks(getAllLocalDecks(userId)); setQuizzes(getAllLocalQuizzes(userId)); };
-    refresh();
-    window.addEventListener("focus", refresh);
-    return () => window.removeEventListener("focus", refresh);
-  }, [userId]);
-  const open = decks.find((d) => d.deck.id === openId) || null;
-  const openQuiz = quizzes.find((q) => q.quiz.id === openQuizId) || null;
-  // The local backup can outlive the deck/quiz it's a copy of — an old day's deck gets replaced by a fresh
-  // one (a new id) on regeneration, so a STALE local entry from before that happened points at an id the
-  // server no longer has under that task at all. Posting a review for it 404s on every single card (this
-  // was observed live: 17 consecutive 404s reviewing a stale deck). Check it actually still exists in the
-  // live task list before ever attempting a server post — a stale copy is still fully reviewable locally
-  // (FlashcardDeck/QuizPlayer track their own right/wrong regardless), it just can't sync anymore.
-  const liveOwner = open ? tasks.find((t) => t.id === open.taskId && t.flashcards?.some((d) => d.id === open.deck.id)) : undefined;
-  const liveQuizOwner = openQuiz ? tasks.find((t) => t.id === openQuiz.taskId && t.quizzes?.some((q) => q.id === openQuiz.quiz.id)) : undefined;
-  const Wrap = embedded ? "div" : "main";
-  return (
-    <Wrap className={embedded ? "" : "list-wrap"}>
-      {!embedded ? (
-        <div className="dash-head">
-          <h2>{L("Tes cartes", "Your flashcards")}</h2>
-          <p className="dash-line">{L("Toutes les cartes et quiz générés, accessibles à tout moment — même sans connexion.", "Every deck and quiz you've ever generated, accessible anytime — even offline.")}</p>
-        </div>
-      ) : null}
-      {decks.length === 0 ? (
-        <p className="muted small">{L("Pas encore de cartes — elles apparaissent ici dès qu'Otto (ou toi) en crée.", "No flashcards yet — they'll show up here as soon as Otto (or you) creates some.")}</p>
-      ) : (
-        <div className="list">
-          {decks.map(({ deck, taskTitle, savedAt, logDate }) => (
-            <button key={deck.id} type="button" className="card" onClick={() => setOpenId(deck.id)}>
-              <div className="card-text">
-                <div className="card-title">{deck.title}</div>
-                <div className="card-sub">
-                  {logDate ? `${L("Journal du", "Journal entry —")} ${new Date(`${logDate}T00:00:00Z`).toLocaleDateString(en ? "en-GB" : "fr-FR", { timeZone: "UTC" })} · ` : `${taskTitle} · `}
-                  {deck.cards.length} {L("cartes", "cards")} · {new Date(savedAt).toLocaleDateString(en ? "en-GB" : "fr-FR")}
-                </div>
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
-      {quizzes.length > 0 ? (
-        <div className="dash-head" style={{ marginTop: "var(--space-4)" }}>
-          <h2>{L("Tes quiz", "Your quizzes")}</h2>
-        </div>
-      ) : null}
-      {quizzes.length > 0 ? (
-        <div className="list">
-          {quizzes.map(({ quiz, taskTitle, savedAt, logDate }) => (
-            <button key={quiz.id} type="button" className="card" onClick={() => setOpenQuizId(quiz.id)}>
-              <div className="card-text">
-                <div className="card-title">{quiz.title}</div>
-                <div className="card-sub">
-                  {logDate ? `${L("Journal du", "Journal entry —")} ${new Date(`${logDate}T00:00:00Z`).toLocaleDateString(en ? "en-GB" : "fr-FR", { timeZone: "UTC" })} · ` : `${taskTitle} · `}
-                  {quiz.questions.length} {L("questions", "questions")} · {new Date(savedAt).toLocaleDateString(en ? "en-GB" : "fr-FR")}
-                </div>
-              </div>
-            </button>
-          ))}
-        </div>
-      ) : null}
-      {open ? (
-        <TaskModal onClose={() => setOpenId(null)} title={open.deck.title}>
-          {!liveOwner ? (
-            <p className="settings-hint" style={{ marginBottom: "var(--space-3)" }}>
-              {L("Cette source a changé côté serveur — tu peux toujours réviser, mais ta progression ne sera pas synchronisée.", "This deck's source has changed on the server — you can still review it, but progress won't sync.")}
-            </p>
-          ) : null}
-          <FlashcardDeck
-            deck={open.deck}
-            taskId={open.taskId}
-            userId={userId}
-            onReview={liveOwner ? (cardIndex, correct) => { void api.reviewFlashcard(open.taskId, open.deck.id, cardIndex, correct).catch(() => {}); } : undefined}
-            onNotNeeded={liveOwner ? (cardIndex) => { void api.markFlashcardNotNeeded(open.taskId, open.deck.id, cardIndex).catch(() => {}); } : undefined}
-            onAllCorrect={() => setOpenId(null)}
-          />
-        </TaskModal>
-      ) : null}
-      {openQuiz ? (
-        <TaskModal onClose={() => setOpenQuizId(null)} title={openQuiz.quiz.title}>
-          {!liveQuizOwner ? (
-            <p className="settings-hint" style={{ marginBottom: "var(--space-3)" }}>
-              {L("Cette source a changé côté serveur — tu peux toujours réviser, mais ta progression ne sera pas synchronisée.", "This quiz's source has changed on the server — you can still review it, but progress won't sync.")}
-            </p>
-          ) : null}
-          <QuizPlayer quiz={openQuiz.quiz} taskId={liveQuizOwner ? openQuiz.taskId : undefined} userId={userId} />
-        </TaskModal>
-      ) : null}
-    </Wrap>
-  );
-}
-
-/** Standalone "Error log" tab (route /errorlog) — a student-maintained record of specific mistakes: what
- *  question tripped them up, what they got wrong, what to do next time. Separate from the journal's
- *  flashcards (that's "review this fact again"); this is closer to an exam-prep error journal, grouped by
- *  subject (errorLogBySubject, shared/types.ts — subjects with the most entries surface first, since that's
- *  where mistakes are piling up). Fetches its own profile copy rather than threading one down from
- *  Settings — this tab needs to work as a standalone destination, not only reachable via Settings. */
-/** Admin-only usage dashboard — access is enforced SERVER-SIDE (server/index.ts's isAdmin, one hardcoded
- *  email), this component only decides whether to render the nav link/route at all; a non-admin hitting
- *  /admin directly would just get a 403 from the API and see the error state below, never real data. */
-const ADMIN_EMAIL = "tjong.willem@gmail.com";
-function isAdminUser(email?: string | null): boolean {
-  return (email || "").toLowerCase() === ADMIN_EMAIL;
-}
-type AdminUserRow = { email: string; taskCount: number; tutorSessionCount: number; tutorMinutes: number };
-type AdminSortKey = "email" | "taskCount" | "tutorSessionCount" | "tutorMinutes";
-function AdminPage() {
-  const L = useLang();
-  const [metrics, setMetrics] = useState<{ userCount: number; taskCount: number; tutorSessionCount: number; tutorMinutesTotal: number; tasksBySource: Record<string, number>; byUser: AdminUserRow[] } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [sortKey, setSortKey] = useState<AdminSortKey>("taskCount");
-  const [sortDesc, setSortDesc] = useState(true);
-  const toggleSort = (key: AdminSortKey) => {
-    if (key === sortKey) setSortDesc((d) => !d);
-    else { setSortKey(key); setSortDesc(true); }
-  };
-  const load = () => {
-    setError(null);
-    void api.adminMetrics().then(setMetrics).catch((e: any) => setError(e?.message || L("Impossible de charger les métriques.", "Couldn't load metrics.")));
-  };
-  useEffect(() => { load(); }, []);
-  const cards: { label: [string, string]; value: string }[] = metrics ? [
-    { label: ["Utilisateurs", "Users"], value: String(metrics.userCount) },
-    { label: ["Tâches", "Tasks"], value: String(metrics.taskCount) },
-    { label: ["Séances de tuteur", "Tutor sessions"], value: String(metrics.tutorSessionCount) },
-    { label: ["Minutes de tuteur (total)", "Tutor minutes (total)"], value: String(metrics.tutorMinutesTotal) },
-  ] : [];
-  return (
-    <main className="list-wrap">
-      <h1 className="list-head">{L("Admin", "Admin")}</h1>
-      {error ? (
-        <p className="rewrite-error">{error} <button type="button" className="btn xs ghost" onClick={load}>{L("Réessayer", "Retry")}</button></p>
-      ) : !metrics ? (
-        <p className="settings-hint">{L("Chargement…", "Loading…")}</p>
-      ) : (
-        <>
-          <div className="admin-metric-grid">
-            {cards.map((c, i) => (
-              <div key={i} className="admin-metric-card">
-                <span className="admin-metric-value">{c.value}</span>
-                <span className="admin-metric-label">{L(c.label[0], c.label[1])}</span>
-              </div>
-            ))}
-          </div>
-          <section className="settings-sec" style={{ marginTop: "var(--space-5)" }}>
-            <h3>{L("Tâches par source", "Tasks by source")}</h3>
-            <div className="set-list">
-              {Object.entries(metrics.tasksBySource).sort((a, b) => b[1] - a[1]).map(([src, n]) => (
-                <div key={src} className="modal-row"><span className="lbl">{src}</span><span className="val">{n}</span></div>
-              ))}
-            </div>
-          </section>
-          <section className="settings-sec" style={{ marginTop: "var(--space-5)" }}>
-            <h3>{L("Par utilisateur", "By user")}</h3>
-            <div className="admin-table-wrap">
-              <table className="admin-table">
-                <thead>
-                  <tr>
-                    {([
-                      ["email", "Utilisateur", "User"],
-                      ["taskCount", "Tâches", "Tasks"],
-                      ["tutorSessionCount", "Séances", "Sessions"],
-                      ["tutorMinutes", "Minutes", "Minutes"],
-                    ] as [AdminSortKey, string, string][]).map(([key, fr, en]) => (
-                      <th key={key} onClick={() => toggleSort(key)} className={sortKey === key ? "sorted" : ""}>
-                        {L(fr, en)}{sortKey === key ? (sortDesc ? " ↓" : " ↑") : ""}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {[...metrics.byUser].sort((a, b) => {
-                    const dir = sortDesc ? -1 : 1;
-                    if (sortKey === "email") return dir * a.email.localeCompare(b.email);
-                    return dir * (a[sortKey] - b[sortKey]);
-                  }).map((u) => (
-                    <tr key={u.email}>
-                      <td className="admin-table-email">{u.email}</td>
-                      <td>{u.taskCount}</td>
-                      <td>{u.tutorSessionCount}</td>
-                      <td>{u.tutorMinutes}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        </>
-      )}
-    </main>
-  );
-}
-
-function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
-  const L = useLang();
-  const notify = useNotify();
-  const en = lang === "en";
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [loaded, setLoaded] = useState(false);
-  const [subject, setSubject] = useState("");
-  const [question, setQuestion] = useState("");
-  const [mistake, setMistake] = useState("");
-  const [fix, setFix] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [filterSubject, setFilterSubject] = useState("");
-  const [expandedSubjects, setExpandedSubjects] = useState<Set<string>>(new Set());
-  // Same "don't silently drop a failed load" fix as SettingsPage's profileError/loadProfile — a failed
-  // fetch used to just flip `loaded` true with `profile` still null, rendering the same "no mistakes yet"
-  // empty state a genuinely-empty account gets, with no way to tell the two apart or retry.
-  const [profileError, setProfileError] = useState(false);
-  const loadProfile = () => { setProfileError(false); void api.profile().then((p) => { setProfile(p); setLoaded(true); }).catch(() => { setProfileError(true); setLoaded(true); }); };
-
-  useEffect(loadProfile, []);
-
-  const groups = errorLogBySubject(profile?.errorLog);
-  const [expandAll, setExpandAll] = useState(false);
-  const filteredGroups = filterSubject ? groups.filter(g => g.subject.toLowerCase().includes(filterSubject.toLowerCase())) : groups;
-
-  const toggleExpandAll = () => {
-    setExpandAll(!expandAll);
-    if (!expandAll) {
-      setExpandedSubjects(new Set(filteredGroups.map(g => g.subject)));
-    } else {
-      setExpandedSubjects(new Set());
-    }
-  };
-
-  const toggleSubject = (subject: string) => {
-    const newExpanded = new Set(expandedSubjects);
-    if (newExpanded.has(subject)) {
-      newExpanded.delete(subject);
-    } else {
-      newExpanded.add(subject);
-    }
-    setExpandedSubjects(newExpanded);
-  };
-
-  const add = async () => {
-    const s = subject.trim(), q = question.trim();
-    if (!s || !q) return;
-    setSaving(true);
-    try {
-      const p = await api.addErrorLogEntry(s, q, mistake.trim(), fix.trim());
-      setProfile(p); setQuestion(""); setMistake(""); setFix(""); setSubject("");
-      setShowAddForm(false);
-      setExpandedSubjects(new Set([s]));
-    } catch (e: any) { notify(e?.message || L("Impossible d'ajouter cette erreur.", "Couldn't add that entry."), "error"); }
-    finally { setSaving(false); }
-  };
-  const remove = async (id: string) => {
-    try { setProfile(await api.deleteErrorLogEntry(id)); }
-    catch (e: any) { notify(e?.message || L("Impossible de supprimer cette entrée.", "Couldn't remove that entry."), "error"); }
-  };
-
-  const totalMistakes = groups.reduce((sum, g) => sum + g.entries.length, 0);
-
-  return (
-    <main className="list-wrap">
-      <div className="dash-head">
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--space-3)" }}>
-          <h1 className="list-head">{L("Des erreurs qui méritent d'être retenues.", "Mistakes worth remembering.")}</h1>
-          <button className="btn primary" onClick={() => setShowAddForm(!showAddForm)}>
-            {showAddForm ? L("Fermer", "Close") : L("+ Ajouter", "+ Add")}
-          </button>
-        </div>
-        <p className="page-sub" style={{ marginTop: 10 }}>
-          {totalMistakes > 0 ? (
-            <>{totalMistakes} {totalMistakes === 1 ? L("erreur notée", "mistake logged") : L("erreurs notées", "mistakes logged")} · {groups.length} {groups.length === 1 ? L("matière", "subject") : L("matières", "subjects")}</>
-          ) : (
-            L("La question. Ce qui a mal tourné. Ce que tu essaieras la prochaine fois.", "The question. What went wrong. What you'll try next time.")
-          )}
-        </p>
-      </div>
-
-      {profileError ? (
-        <p className="rewrite-error">{L("Certaines infos n'ont pas pu être chargées.", "Some info couldn't load.")} <button type="button" className="btn xs ghost" onClick={loadProfile}>{L("Réessayer", "Retry")}</button></p>
-      ) : null}
-
-      {groups.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)", marginTop: "var(--space-4)" }}>
-          <input
-            className="addinput"
-            placeholder={L("Filtrer par matière...", "Filter by subject...")}
-            value={filterSubject}
-            onChange={(e) => setFilterSubject(e.target.value)}
-            style={{ marginBottom: 0 }}
-          />
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--space-3)" }}>
-            <p className="muted small">
-              {filteredGroups.length} {filteredGroups.length === 1 ? L("résultat", "result") : L("résultats", "results")}
-            </p>
-            <button className="btn xs ghost" onClick={toggleExpandAll}>
-              {expandAll ? L("Tout réduire", "Collapse all") : L("Tout développer", "Expand all")}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {showAddForm && (
-        <div className="errorlog-addform">
-          <div className="addrow">
-            <input className="addinput sm" placeholder={L("ex : Physique", "e.g. Physics")} value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={60} />
-          </div>
-          <textarea className="errorlog-textarea" rows={1} placeholder={L("La question ?", "What was the question?")} value={question} onChange={(e) => setQuestion(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
-          <textarea className="errorlog-textarea" rows={1} placeholder={L("Ce qui a mal tourné ?", "What went wrong?")} value={mistake} onChange={(e) => setMistake(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
-          <textarea className="errorlog-textarea" rows={1} placeholder={L("Ce que tu essaieras la prochaine fois ?", "What will you try next time?")} value={fix} onChange={(e) => setFix(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
-          <button type="button" className="btn primary" disabled={saving || !subject.trim() || !question.trim()} onClick={() => void add()}>
-            {saving ? L("Enregistrement…", "Saving…") : L("Ajouter au journal", "Add to log")}
-          </button>
-        </div>
-      )}
-
-      {!loaded ? (
-        <p className="muted small">{L("Récupération de ton journal…", "Pulling up your log…")}</p>
-      ) : groups.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-mark"><span className="empty-check">✓</span></div>
-          <h3>{L("Aucune erreur notée", "No mistakes logged yet")}</h3>
-          <p>{L("Ajoute ta première erreur pour commencer à préparer tes tests.", "Add your first mistake to start building your test prep log.")}</p>
-          <button className="btn primary" onClick={() => setShowAddForm(true)}>{L("Ajouter une erreur", "Add a mistake")}</button>
-        </div>
-      ) : (
-        <div className="errorlog-groups">
-          {filteredGroups.map((g) => (
-            <div key={g.subject} className="errorlog-group">
-              <button type="button" className="errorlog-group-head" onClick={() => toggleSubject(g.subject)}>
-                <span className="card-title">{g.subject}</span>
-                <span className="card-sub">{g.entries.length} {g.entries.length === 1 ? L("erreur", "mistake") : L("erreurs", "mistakes")}</span>
-              </button>
-              {expandedSubjects.has(g.subject) ? (
-                <ul className="errorlog-entries">
-                  {g.entries.map((e) => (
-                    <li key={e.id} className="errorlog-entry">
-                      <div className="errorlog-entry-head">
-                        <span className="muted">{new Date(e.createdAt).toLocaleDateString(en ? "en-GB" : "fr-FR", { day: "numeric", month: "short", year: "numeric" })}</span>
-                        <button className="x" title={L("Supprimer", "Remove")} onClick={() => void remove(e.id)}>×</button>
-                      </div>
-                      <p><strong>{L("Question : ", "Question: ")}</strong>{e.question}</p>
-                      {e.mistake ? <p><strong>{L("Erreur : ", "Mistake: ")}</strong>{e.mistake}</p> : null}
-                      {e.fix ? <p><strong>{L("À faire : ", "Next time: ")}</strong>{e.fix}</p> : null}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      )}
-    </main>
-  );
-}
-
-
-function StandaloneStudyEntry({ tasks, setTasks, status, notify, navigate }: {
-  tasks: WebTask[]; setTasks: Dispatch<SetStateAction<WebTask[]>>; status: ConnectionStatus; notify: (msg: string, kind?: "error" | "info") => void; navigate: (r: string) => void;
-}) {
-  const en = status?.language === "en";
-  const [taskId, setTaskId] = useState<string | null>(null);
-  const [starting, setStarting] = useState(false);
-  // Same stable-ref pattern as the main study/:id route (App.tsx's studyModeTask) — a freestudy task has no
-  // URL to re-derive from, so a background syncTasks that momentarily omits or dismisses it (e.g. right after
-  // /api/study/free's own "dismiss the previous freestudy task" step, or a plain stale/incomplete fetch) must
-  // not make `task` go null mid-session, or this component falls straight back to the landing screen — the
-  // "study mode auto gets out of it" report, for free-study sessions specifically.
-  const studyTaskRef = useRef<WebTask | null>(null);
-  const start = () => {
-    setStarting(true);
-    void api.studyFreeSession(true).then((list) => {
-      setTasks(list);
-      const t = list.find((x) => x.source === "freestudy" && !isHandled(x.status));
-      if (t) { studyTaskRef.current = t; setTaskId(t.id); }
-      else notify(en ? "Couldn't start a study session — try again." : "Impossible de démarrer une session — réessaie.", "error");
-    }).catch((e: any) => notify(e?.message || (en ? "Couldn't start a study session — try again." : "Impossible de démarrer une session — réessaie."), "error"))
-      .finally(() => setStarting(false));
-  };
-  if (taskId && studyTaskRef.current?.id === taskId) {
-    const fresh = tasks.find((t) => t.id === taskId);
-    if (fresh) studyTaskRef.current = fresh;
-  }
-  const task = taskId && studyTaskRef.current?.id === taskId ? studyTaskRef.current : null;
-  if (!task) {
-    return (
-      <main className="list-wrap">
-        <div className="empty-state">
-          <div className="empty-mark"><GraduationCap /></div>
-          <h3>{en ? "Study whenever you want" : "Révise quand tu veux"}</h3>
-          <p>{en ? "Not tied to a task — a free workspace with notes, materials, and Otto's help." : "Sans tâche associée — un espace libre avec notes, ressources, et l'aide d'Otto."}</p>
-          <button className="btn primary" disabled={starting} onClick={start}>{starting ? (en ? "Starting…" : "Démarrage…") : (en ? "Enter study mode" : "Entrer en mode étude")}</button>
-        </div>
-      </main>
-    );
-  }
-  return (
-    <StudyMode
-      task={task}
-      onExit={() => navigate("tasks")}
-      // Free-study session (no linked task, its own synthetic "study id" task) — same chat-union protection
-      // as the task-linked path above, previously entirely missing here: a plain replace let a stale
-      // background sync directly overwrite a fresher local chat with no merge at all, the most exposed of
-      // the three onTaskUpdate call sites to "chat sometimes auto-deletes stuff".
-      onTaskUpdate={(u) => setTasks((prev) => prev.some((x) => x.id === u.id)
-        ? prev.map((x) => {
-            if (x.id !== u.id) return x;
-            const existingChat = x.chat || [];
-            if (!existingChat.length) return u;
-            return { ...u, chat: unionChatEntries(existingChat, u.chat || []) };
-          })
-        : [...prev, u])}
-      userId={status?.user}
-      language={en ? "en" : "fr"}
-      betaFeatures={!!status?.betaFeatures}
-    />
-  );
-}
-
-/** The Journal tab (route /log): Monday-Friday, a free-text "what did I learn today" box per day, auto-
- *  generating flashcards on save (server/index.ts's /api/studylog/day → generateDailyStudyCards). End of
- *  week, an on-demand summary deck weighted toward whatever got marked wrong that week (generateWeeklyStudyDeck).
- *  Both decks reuse the exact same FlashcardDeck review UI + Leitner spaced-repetition schedule as any other
- *  task's deck — reviewing a card here shows up in the normal cross-task "due for review" view for free. */
-// Local cache for a week's studylog data (days + week summary), keyed by that week's Monday — this is
-// what makes a day's flashcards/quiz "always accessible": the page paints from whatever's in
-// localStorage INSTANTLY on mount/week-change (no loading flash, works even the moment before the network
-// request resolves), then a background fetch reconciles with the server as the source of truth. Not a
-// replacement for server persistence (Leitner review state still lives server-side) — purely a fast local
-// mirror of what was last seen, same spirit as FlashcardDeck/QuizPlayer's own localStorage progress saves.
-// Keyed by userId + calendar date — NOT just the date. A date-only key is GLOBAL/shared across every
-// account that's ever signed into this browser during the same ISO week, so a different account signing
-// in right after would see account A's cached journal flashcards/quiz on mount (useState's initializer
-// reads this synchronously, before any network fetch resolves) — reported live as "flashcards saved in a
-// different account even though it was never associated with that account." Same scoping pattern as
-// localDecks.ts/localChatBoard.ts, which already fixed this exact bug class for their own caches.
-const STUDYLOG_CACHE_PREFIX = "otto-studylog-week:";
-function studylogWeekKey(userId: string | null, monday: string): string { return `${STUDYLOG_CACHE_PREFIX}${userId || "anon"}:${monday}`; }
-function loadWeekCache(userId: string | null, monday: string): { days: (WebTask | null)[]; summary: WebTask | null } | null {
-  try {
-    const raw = localStorage.getItem(studylogWeekKey(userId, monday));
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
-}
-function saveWeekCache(userId: string | null, monday: string, data: { days: (WebTask | null)[]; summary: WebTask | null }): void {
-  try { localStorage.setItem(studylogWeekKey(userId, monday), JSON.stringify(data)); } catch { /* storage full/private — cache is best-effort only */ }
-}
-// Same local-mirror pattern as the week cache, for the month summary (deck + companion quiz) — this was
-// the one piece of the Journal that DIDN'T get a local copy, so its flashcards/quiz only ever showed up
-// after a fresh network round-trip instead of being "always accessible" like the daily/weekly ones.
-const STUDYLOG_MONTH_CACHE_PREFIX = "otto-studylog-month:";
-function studylogMonthKey(userId: string | null, month: string): string { return `${STUDYLOG_MONTH_CACHE_PREFIX}${userId || "anon"}:${month}`; }
-function loadMonthCache(userId: string | null, month: string): { weeks: WebTask[]; summary: WebTask | null } | null {
-  try {
-    const raw = localStorage.getItem(studylogMonthKey(userId, month));
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
-}
-function saveMonthCache(userId: string | null, month: string, data: { weeks: WebTask[]; summary: WebTask | null }): void {
-  try { localStorage.setItem(studylogMonthKey(userId, month), JSON.stringify(data)); } catch { /* best-effort */ }
-}
-// REVERSAL: this used to prefer "whichever side actually has content" (server vs. local cache) on the
-// theory that a server response briefly showing no deck was more likely a stale read/merge race than a
-// real absence. In practice this masked genuine data loss instead: a day whose save never actually finished
-// writing to the cloud (see commit()'s awaitCloud fix) still showed its deck forever via the local cache,
-// with no way to tell "safely stored" from "only exists in this one browser" — reported live as a deck
-// visible in the Journal while the week-summary route (which only ever reads real server state) insisted
-// the day had nothing. A successful server response is now trusted outright; the local cache is used ONLY
-// when the fetch itself fails (see load()'s .catch() below), never merged against a response that succeeded.
-
-function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" | "en"; tasks: WebTask[]; status?: ConnectionStatus | null; phoneOnly?: boolean }) {
-  const L = useLang();
-  const notify = useNotify();
-  const en = lang === "en";
-  // The flashcards library used to be its own top-level tab — folded in here instead, since every deck a
-  // student reviews (Journal-generated or task-generated) belongs next to where they're already studying,
-  // not one more thing in the sidebar to remember. Journal is the default view; Flashcards is a click away.
-  // On a phone (phoneOnly), this page IS the flashcards library — writing a journal entry on a phone-sized
-  // screen is one of the things deliberately not offered there (see App.tsx's PHONE_ALLOWED_ROUTES comment).
-  const [tab, setTab] = useState<"journal" | "flashcards">(phoneOnly ? "flashcards" : "journal");
-  const [monday, setMonday] = useState(() => mondayOf(todayIso()));
-  const [days, setDays] = useState<(WebTask | null)[]>(() => loadWeekCache(status?.user || null, mondayOf(todayIso()))?.days || [null, null, null, null, null, null, null]);
-  const [summary, setSummary] = useState<WebTask | null>(() => loadWeekCache(status?.user || null, mondayOf(todayIso()))?.summary || null);
-  const [loaded, setLoaded] = useState(false);
-  // Mon=0..Sun=6 (the week now covers all 7 days, not just weekdays) — getUTCDay() is Sun=0..Sat=6, so
-  // shifting by +6 mod 7 maps Mon(1)->0 ... Sat(6)->5, Sun(0)->6.
-  const todayIdx = (() => { const d = new Date(`${todayIso()}T00:00:00Z`).getUTCDay(); return (d + 6) % 7; })();
-  const [selected, setSelected] = useState(mondayOf(todayIso()) === monday ? todayIdx : 0);
-  const [text, setText] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [genBusy, setGenBusy] = useState(false);
-
-  // Speech-to-text dictation for the Journal entry — never auto-started; explicit user tap required.
-  const speechLang = en ? "en-US" : "fr-FR";
-  const recog = useSpeechRecognition({
-    lang: speechLang,
-    onResult: (transcript) => {
-      if (transcript.trim()) {
-        setText((prev) => (prev ? `${prev} ${transcript.trim()}` : transcript.trim()));
-      }
-    },
-  });
-
-  // Stop listening whenever switching tabs, days, or unmounting (prevents stray mic active state) — NOT on
-  // every render. useSpeechRecognition returns a fresh object literal each call (its individual functions
-  // are memoized via useCallback, but the wrapping object itself isn't), so having `recog` itself in this
-  // effect's deps meant the cleanup ran on EVERY re-render of this page, not just a real tab/day switch —
-  // any unrelated re-render while dictating (a background status poll landing, anything) silently called
-  // stop() mid-sentence. Reported live as "voice dictation turns off by itself." A ref sidesteps this: it
-  // always holds the LATEST recog for the cleanup to read, without the effect re-subscribing on every render.
-  const recogRef = useRef(recog);
-  recogRef.current = recog;
-  useEffect(() => {
-    return () => {
-      if (recogRef.current.listening) recogRef.current.stop();
-    };
-  }, [selected, monday, tab]);
-  // Editing a day whose deck already exists — false by default so a day WITH a deck shows the deck/quiz
-  // straight away, not the entry textarea again. Flipping this back to the textarea is an explicit choice
-  // (the "modifier" link), never the default view once a deck exists.
-  const [editingDay, setEditingDay] = useState(false);
-  const [openDeckFor, setOpenDeckFor] = useState<"summary" | "month" | null>(null);
-  // Companion quiz on week/month summaries — separate open-state from the flashcard deck's, since a summary
-  // can have both live at once and they're reviewed independently (see generateWeeklyStudyDeck/
-  // generateMonthlyStudyDeck in server/claude.ts: a quiz is included only when the material genuinely calls
-  // for discrimination-style testing, so it may not exist even when the deck does).
-  const [openQuizFor, setOpenQuizFor] = useState<"day" | "summary" | "month" | null>(null);
-
-  // Month summary: aggregates whatever weekly decks already exist in the month containing `monday`, not
-  // its own calendar nav — riding the week nav keeps this simple (no second date picker) at the cost of
-  // the month view following whichever week you're currently on.
-  const month = monday.slice(0, 7);
-  const [monthWeeks, setMonthWeeks] = useState<WebTask[]>(() => loadMonthCache(status?.user || null, mondayOf(todayIso()).slice(0, 7))?.weeks || []);
-  const [monthSummary, setMonthSummary] = useState<WebTask | null>(() => loadMonthCache(status?.user || null, mondayOf(todayIso()).slice(0, 7))?.summary || null);
-  const [monthGenBusy, setMonthGenBusy] = useState(false);
-
-  // Journal decks/quizzes live on their own synthetic studylog tasks, fetched through /api/studylog/* —
-  // entirely separate from the main app-level `tasks` list, so they never reached the App-level backup
-  // effect that mirrors every deck/quiz to localStorage (client/localDecks.ts, client/localQuizzes.ts) for
-  // the Flashcards tab. That's why a Journal deck could be generated, reviewed, everything — yet never show
-  // up in "Your flashcards" and not survive a sync hiccup the way an ordinary task's deck already did. Same
-  // backup call, just driven off this page's own day/week/month state instead of the global task list.
-  const userId = status?.user;
-  useEffect(() => {
-    for (const d of days) {
-      if (!d) continue;
-      for (const deck of d.flashcards || []) saveDeckLocally(d.id, d.title, deck, d.logDate, userId);
-      for (const quiz of d.quizzes || []) saveQuizLocally(d.id, d.title, quiz, d.logDate, userId);
-    }
-    if (summary) {
-      for (const deck of summary.flashcards || []) saveDeckLocally(summary.id, summary.title, deck, undefined, userId);
-      for (const quiz of summary.quizzes || []) saveQuizLocally(summary.id, summary.title, quiz, undefined, userId);
-    }
-  }, [days, summary, userId]);
-  useEffect(() => {
-    if (!monthSummary) return;
-    for (const deck of monthSummary.flashcards || []) saveDeckLocally(monthSummary.id, monthSummary.title, deck, undefined, userId);
-    for (const quiz of monthSummary.quizzes || []) saveQuizLocally(monthSummary.id, monthSummary.title, quiz, undefined, userId);
-  }, [monthSummary, userId]);
-
-  // STALE-RESPONSE GUARD: clicking "prev/next week" (or arriving back at a week you'd already left)
-  // fires a new fetch on every `monday` change, but nothing stopped an OLDER request from resolving AFTER
-  // a newer one and overwriting the right week's data with the wrong week's — reported live as "I go back
-  // a week and it shows only the entry, not the flashcards" (a day that genuinely has a deck momentarily,
-  // or permanently if the user doesn't revisit, shows as deck-less because a slower, now-stale response
-  // for a DIFFERENT week landed last and clobbered `days`/`summary`). A plain incrementing ref — bumped on
-  // every call, captured per-call, checked before either setState — makes only the LATEST request's
-  // response ever allowed to apply, same pattern as useSpeechSynthesis's genRef for the identical class of
-  // "an async step must not touch state after something newer has superseded it" race.
-  const loadGenRef = useRef(0);
-  const load = useCallback((m: string) => {
-    const gen = ++loadGenRef.current;
-    const cached = loadWeekCache(status?.user || null, m);
-    if (cached) { setDays(cached.days); setSummary(cached.summary); setLoaded(true); }
-    else setLoaded(false);
-    void api.studyLogWeek(m).then((r) => {
-      if (loadGenRef.current !== gen) return; // superseded by a newer week request — discard
-      // A SUCCESSFUL server response is authoritative, full stop — richerTask's "prefer whichever has
-      // content" merge used to run even here, which meant a day the server genuinely has no deck for could
-      // still show a stale LOCAL-ONLY deck left over from an earlier save that looked like it worked
-      // client-side but never actually finished writing to the cloud (reported live: a deck visible on
-      // screen, yet the week-summary route — which only ever reads real server state — insisted the day had
-      // nothing). richerTask stays useful for the .catch() branch below (a genuine fetch failure, where the
-      // cache is the only copy there is at all) — just not here, where server truth already won the race.
-      setDays(r.days); setSummary(r.summary); setLoaded(true);
-      saveWeekCache(status?.user || null, m, { days: r.days, summary: r.summary });
-    }).catch(() => {
-      if (loadGenRef.current !== gen) return; // superseded — a newer request's own success/failure wins
-      if (!cached) { setLoaded(true); notify(en ? "Couldn't load this week." : "Impossible de charger la semaine.", "error"); }
-    });
-  }, [en, notify]);
-  useEffect(() => { load(monday); }, [monday, load]);
-  // `days` gets a new array reference on every background refresh (load()'s cache-then-network double-set,
-  // onDayReview after a flashcard review, save() itself) — resetting text/editingDay on every single one of
-  // those silently discarded in-progress edits, and on a page refresh could flash a saved entry then snap
-  // back to an empty textarea before the network response landed. Only force a reset when the student
-  // actually navigated to a different day/week (tracked via this ref); a `days` update while they're
-  // actively editing is left alone entirely, and a `days` update while they're NOT editing still re-syncs
-  // `text` (so a fresh fetch's content actually shows up) without touching `editingDay`.
-  const navKeyRef = useRef<string>("");
-  const editingDayRef = useRef(editingDay);
-  editingDayRef.current = editingDay;
-  useEffect(() => {
-    const key = `${monday}:${selected}`;
-    const navigated = navKeyRef.current !== key;
-    navKeyRef.current = key;
-    if (navigated) { setText(days[selected]?.logText || ""); setEditingDay(false); }
-    else if (!editingDayRef.current) { setText(days[selected]?.logText || ""); }
-  }, [selected, monday, days]);
-  // Same stale-response race as the week loader above (loadGenRef) — the month changes alongside `monday`
-  // every time the week nav crosses a month boundary, so a slower, now-superseded request here can land
-  // just as easily and clobber the right month's data with the wrong one's.
-  const monthGenRef = useRef(0);
-  useEffect(() => {
-    const gen = ++monthGenRef.current;
-    const cached = loadMonthCache(status?.user || null, month);
-    if (cached) { setMonthWeeks(cached.weeks); setMonthSummary(cached.summary); }
-    void api.studyLogMonth(month).then((r) => {
-      if (monthGenRef.current !== gen) return; // superseded by a newer month request — discard
-      // Same reasoning as the week load above — a successful response is authoritative, never overridden
-      // by a stale local-only cache entry.
-      setMonthWeeks(r.weeks); setMonthSummary(r.summary);
-      saveMonthCache(status?.user || null, month, { weeks: r.weeks, summary: r.summary });
-    }).catch(() => {});
-  }, [month]);
-
-  const dates = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
-  const dayLabels = en ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] : ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
-
-  const save = async () => {
-    setSaving(true);
-    try {
-      const list = await api.studyLogDay(dates[selected], text);
-      const fresh = list.find((t) => t.logDate === dates[selected]) || null;
-      setDays((prev) => {
-        const next = prev.map((d, i) => (i === selected ? fresh : d));
-        saveWeekCache(status?.user || null, monday, { days: next, summary });
-        return next;
-      });
-      setEditingDay(false);
-      // The server saves the log text either way (never loses what you typed) but can come back with a
-      // 200 success and an EMPTY deck if generation itself failed (a truncated/unparseable model response —
-      // see generateDailyStudyCards) — that used to be entirely silent: text saved, no deck, no error, no
-      // clue why the flashcards never appeared. Detect it here since the client already has enough info
-      // (non-empty text, no cards) without needing a server response-shape change.
-      if (text.trim() && !fresh?.flashcards?.length) {
-        notify(en ? "Saved, but couldn't make flashcards from that — try saving again." : "Enregistré, mais impossible de créer les cartes — réessaie d'enregistrer.", "error");
-      }
-    } catch (e: any) { notify(e?.message || (en ? "That didn't save — give it another try." : "Ça n'a pas été enregistré — réessaie."), "error"); }
-    finally { setSaving(false); }
-  };
-  const genSummary = async () => {
-    setGenBusy(true);
-    try {
-      const list = await api.studyLogWeekSummary(monday);
-      const fresh = list.find((t) => t.logDate === `week:${monday}`) || null;
-      setSummary(fresh);
-      saveWeekCache(status?.user || null, monday, { days, summary: fresh });
-      // Open it immediately — leaving the student to notice a button's label silently changed to "View
-      // summary" and click it a SECOND time read as "nothing happened" after a real wait for generation.
-      if (fresh?.flashcards?.length) setOpenDeckFor("summary");
-    } catch (e: any) { notify(e?.message || (en ? "Couldn't build the week summary — try again." : "Impossible de créer le résumé — réessaie."), "error"); }
-    finally { setGenBusy(false); }
-  };
-
-  // NEWEST deck wins — deliberately not `flashcards[0]`. A journal day normally holds exactly one deck (the
-  // save route replaces it in place), but a cross-device/list merge can legitimately end up holding two copies
-  // of the same day under different deck ids, and the merge sorts decks oldest-first — so `[0]` handed the
-  // student a STALE deck from before the day was regenerated. Reported live as a journal day showing only 10
-  // cards when the newer deck for that same day had many more. The newest copy is the one that day's current
-  // entry actually generated; the same reasoning applies to the week/month summaries below.
-  const newestDeck = (t: WebTask | null | undefined): NonNullable<WebTask["flashcards"]>[number] | undefined =>
-    (t?.flashcards || []).reduce<NonNullable<WebTask["flashcards"]>[number] | undefined>(
-      (best, d) => (best && (Date.parse(best.createdAt || "") || 0) > (Date.parse(d.createdAt || "") || 0) ? best : d), undefined);
-  const dayTask = days[selected];
-  const dayDeck = newestDeck(dayTask);
-  const dayQuiz = dayTask?.quizzes?.[0];
-  const summaryDeck = newestDeck(summary);
-  const summaryQuiz = summary?.quizzes?.[0];
-  const anyEntryThisWeek = days.some((d) => d?.logText?.trim());
-  const onDayReview = dayTask && dayDeck ? (cardIndex: number, correct: boolean) => {
-    void api.reviewFlashcard(dayTask.id, dayDeck.id, cardIndex, correct).then((list) => {
-      const fresh = list.find((t) => t.id === dayTask.id);
-      if (fresh) setDays((prev) => {
-        const next = prev.map((d) => (d?.id === dayTask.id ? fresh : d));
-        saveWeekCache(status?.user || null, monday, { days: next, summary });
-        return next;
-      });
-    }).catch(() => {});
-  } : undefined;
-  const onSummaryReview = summary && summaryDeck ? (cardIndex: number, correct: boolean) => {
-    void api.reviewFlashcard(summary.id, summaryDeck.id, cardIndex, correct).then((list) => {
-      const fresh = list.find((t) => t.id === summary.id);
-      if (fresh) { setSummary(fresh); saveWeekCache(status?.user || null, monday, { days, summary: fresh }); }
-    }).catch(() => {});
-  } : undefined;
-
-  const monthDeck = newestDeck(monthSummary);
-  const monthQuiz = monthSummary?.quizzes?.[0];
-  const onMonthReview = monthSummary && monthDeck ? (cardIndex: number, correct: boolean) => {
-    void api.reviewFlashcard(monthSummary.id, monthDeck.id, cardIndex, correct).then((list) => {
-      const fresh = list.find((t) => t.id === monthSummary.id);
-      if (fresh) { setMonthSummary(fresh); saveMonthCache(status?.user || null, month, { weeks: monthWeeks, summary: fresh }); }
-    }).catch(() => {});
-  } : undefined;
-  const genMonthSummary = async () => {
-    setMonthGenBusy(true);
-    try {
-      const list = await api.studyLogMonthSummary(month);
-      const fresh = list.find((t) => t.logDate === `month:${month}`) || null;
-      setMonthSummary(fresh);
-      saveMonthCache(status?.user || null, month, { weeks: monthWeeks, summary: fresh });
-      if (fresh?.flashcards?.length) setOpenDeckFor("month");
-    } catch (e: any) { notify(e?.message || (en ? "Couldn't build the month summary — try again." : "Impossible de créer le résumé mensuel — réessaie."), "error"); }
-    finally { setMonthGenBusy(false); }
-  };
-
-  return (
-    <main className="list-wrap studylog-page">
-      <h1 className="list-head">{phoneOnly ? L("Tes cartes", "Your flashcards") : L("Journal", "Journal")}</h1>
-      <p className="page-sub" style={{ marginTop: 10 }}>{phoneOnly
-        ? L("Révise tes cartes ici — le reste d'Otto marche mieux sur un plus grand écran.", "Review your flashcards here — the rest of Otto works better on a bigger screen.")
-        : L("Garde ce que tu as appris. Reviens à ce qui compte.", "Keep what you learned. Come back to what matters.")}</p>
-
-      {/* Same .seg/.seg-btn segmented-control pattern as Pronote's Student/Parent picker — one visual
-          language for every binary switcher in the app, not a second bespoke tab style. Hidden on phone:
-          there's only one tab to show there, so a switcher with one real destination is just clutter. */}
-      {!phoneOnly && <div className="seg studylog-tabs" role="tablist">
-        <button type="button" role="tab" aria-selected={tab === "journal"} className={`seg-btn ${tab === "journal" ? "on" : ""}`} onClick={() => setTab("journal")}>{L("Journal", "Journal")}</button>
-        <button type="button" role="tab" aria-selected={tab === "flashcards"} className={`seg-btn ${tab === "flashcards" ? "on" : ""}`} onClick={() => setTab("flashcards")}>{L("Cartes", "Flashcards")}</button>
-      </div>}
-
-      {/* The spaced-repetition system (Leitner boxes, see nextLeitnerReview in shared/types.ts) was otherwise
-          entirely invisible from Journal — the ONE place a student would expect to see "you have cards due
-          for review," reported live as "i never see this." The cross-task /api/reviews/due signal already
-          existed but was buried in the dashboard's "This week" popover, nowhere near the Journal tab where
-          these decks actually live. */}
-      {!phoneOnly && <DueReviews lang={lang} tasks={tasks} />}
-      {!phoneOnly && <MilestonesStrip lang={lang} />}
-
-      {phoneOnly || tab === "flashcards" ? <FlashcardsLibraryPage lang={lang} tasks={tasks} embedded userId={status?.user || null} /> : (
-      <>
-      <div className="studylog-weeknav">
-        <button type="button" className="btn xs ghost" onClick={() => setMonday(addDays(monday, -7))}>{"← " + L("Semaine préc.", "Prev week")}</button>
-        <span className="studylog-weeklabel">{fmtDate(monday, L)} – {fmtDate(addDays(monday, 4), L)}</span>
-        <button type="button" className="btn xs ghost" onClick={() => setMonday(addDays(monday, 7))}>{L("Semaine suiv.", "Next week") + " →"}</button>
-      </div>
-
-      <div className="studylog-days">
-        {dayLabels.map((label, i) => (
-          <button key={i} type="button" className={`studylog-day-btn ${selected === i ? "active" : ""} ${days[i]?.logText ? "has-entry" : ""}`} onClick={() => setSelected(i)}>
-            <span>{label}</span><span className="studylog-day-date">{fmtDate(dates[i], L)}</span>
-          </button>
-        ))}
-      </div>
-
-      {!loaded ? <p className="muted small">{L("Récupération de ton journal…", "Pulling up your journal…")}</p> : (
-        <>
-          {/* Once a day has a deck, that IS the view — the entry textarea only comes back if you explicitly
-              ask to edit. This is the point of the whole redesign: flashcards (and the quiz, when Otto made
-              one) are always what you see for a day you already logged, not a "make cards" screen again. */}
-          {dayDeck && !editingDay ? (
-            <div className="studylog-day-cards">
-              <div className="studylog-day-cards-head">
-                <h3>{dayDeck.title}</h3>
-                <button type="button" className="btn xs ghost" onClick={() => setEditingDay(true)}>{L("Modifier l'entrée", "Edit entry")}</button>
-              </div>
-              <FlashcardDeck deck={dayDeck} onReview={onDayReview} taskId={dayTask?.id} userId={status?.user || null} />
-              {/* The quiz is only present when today's material genuinely called for discrimination-style
-                  testing (server decides, not a guaranteed add-on) — so it may not exist even with a deck. */}
-              {dayQuiz ? <button type="button" className="btn ghost" onClick={() => setOpenQuizFor("day")}>{L("Quiz", "Quiz")} ({dayQuiz.questions.length})</button> : null}
-              {/* Only present when the day's entry actually covered math/physics/science (server decides via
-                  looksLikeStem) — a free-response problem, not multiple choice, so it's rendered inline
-                  rather than behind a button: it's one problem, not a sequence to open a popup for. */}
-              {dayTask?.practiceProblem ? (
-                <div className="studylog-practice-sec">
-                  <h4>{L("Problème d'application", "Practice problem")}</h4>
-                  <PracticeProblemCard problem={dayTask.practiceProblem} taskId={dayTask.id} />
-                </div>
-              ) : null}
-              {/* Feynman-technique gap-check on the entry's OWN explanation (server/claude.ts's
-                  checkFeynmanGap) — quiet, only shown when a real gap was actually found (most entries clear
-                  this silently). Not a form to fill in: the point is to notice the gap and go find the
-                  answer, in the cours or by asking Otto in chat — not to answer it here on the spot. */}
-              {dayTask?.feynmanGap ? (
-                <p className="studylog-feynman-gap">
-                  <span aria-hidden="true">◐</span> {dayTask.feynmanGap}
-                </p>
-              ) : null}
-            </div>
-          ) : (
-            <>
-              <div className="studylog-editor-toolbar">
-                {recog.supported ? (
-                  <button
-                    type="button"
-                    className={`btn xs ${recog.listening ? "danger pulse-btn" : "ghost"}`}
-                    onClick={() => {
-                      if (recog.listening) recog.stop();
-                      else recog.start();
-                    }}
-                    title={recog.listening ? L("Arrêter la dictée vocale", "Stop voice dictation") : L("Dictée vocale (STT)", "Voice dictation (STT)")}
-                  >
-                    {recog.listening ? <MicOff size={13} /> : <Mic size={13} />}
-                    <span>{recog.listening ? L("Écoute en cours…", "Listening…") : L("Dictée vocale", "Voice dictation")}</span>
-                  </button>
-                ) : null}
-              </div>
-              {recog.listening ? (
-                <div className="studylog-stt-live">
-                  <span className="stt-dot" /> {recog.interimTranscript || L("Parle maintenant, Otto note tes propos…", "Speak now, Otto is writing down your notes…")}
-                </div>
-              ) : null}
-              <textarea className="studylog-textarea" rows={14}
-                placeholder={L("Qu'as-tu appris aujourd'hui ?", "What did you learn today?")}
-                value={text} onChange={(e) => setText(e.target.value)} maxLength={4000} />
-              <div className="studylog-actions">
-                <button type="button" className="btn primary" disabled={saving || !text.trim()} onClick={() => void save()}>
-                  {saving ? L("Enregistrement…", "Saving…") : L("Enregistrer et créer les cartes", "Save & make flashcards")}
-                </button>
-                {dayDeck ? <button type="button" className="btn ghost" onClick={() => setEditingDay(false)}>{L("Voir les cartes", "View flashcards")}</button> : null}
-              </div>
-            </>
-          )}
-
-          <div className="studylog-summary-sec">
-            <h3>{L("Résumé de la semaine", "Week summary")}</h3>
-            {summaryDeck ? (
-              <div className="studylog-actions">
-                <button type="button" className="btn ghost" onClick={() => setOpenDeckFor("summary")}>{L("Voir le résumé", "View summary")} ({summaryDeck.cards.length})</button>
-                {/* The quiz is only present when the week's material genuinely called for discrimination-style
-                    testing (server decides, not a guaranteed add-on) — so it may not exist even with a deck. */}
-                {summaryQuiz ? <button type="button" className="btn ghost" onClick={() => setOpenQuizFor("summary")}>{L("Quiz", "Quiz")} ({summaryQuiz.questions.length})</button> : null}
-              </div>
-            ) : (
-              <button type="button" className="btn ghost" disabled={genBusy || !anyEntryThisWeek} onClick={() => void genSummary()}>
-                {genBusy ? L("Création…", "Building…") : L("Créer le résumé de la semaine", "Generate week summary")}
-              </button>
-            )}
-            {!anyEntryThisWeek ? <p className="settings-hint">{L("Ajoute au moins une entrée cette semaine d'abord.", "Add at least one entry this week first.")}</p> : null}
-          </div>
-
-          <div className="studylog-summary-sec">
-            <h3>{L("Résumé du mois", "Month summary")}</h3>
-            {monthDeck ? (
-              <div className="studylog-actions">
-                <button type="button" className="btn ghost" onClick={() => setOpenDeckFor("month")}>{L("Voir le résumé", "View summary")} ({monthDeck.cards.length})</button>
-                {monthQuiz ? <button type="button" className="btn ghost" onClick={() => setOpenQuizFor("month")}>{L("Quiz", "Quiz")} ({monthQuiz.questions.length})</button> : null}
-              </div>
-            ) : (
-              <button type="button" className="btn ghost" disabled={monthGenBusy || monthWeeks.length === 0} onClick={() => void genMonthSummary()}>
-                {monthGenBusy ? L("Création…", "Building…") : L("Créer le résumé du mois", "Generate month summary")}
-              </button>
-            )}
-            {monthWeeks.length === 0 ? <p className="settings-hint">{L("Crée d'abord au moins un résumé de semaine ce mois-ci.", "Build at least one week summary this month first.")}</p> : null}
-          </div>
-        </>
-      )}
-
-      {openDeckFor === "summary" && summaryDeck ? (
-        <TaskModal onClose={() => setOpenDeckFor(null)} title={summaryDeck.title}><FlashcardDeck deck={summaryDeck} onReview={onSummaryReview} taskId={summary?.id} onAllCorrect={() => setOpenDeckFor(null)} userId={status?.user || null} /></TaskModal>
-      ) : null}
-      {openDeckFor === "month" && monthDeck ? (
-        <TaskModal onClose={() => setOpenDeckFor(null)} title={monthDeck.title}><FlashcardDeck deck={monthDeck} onReview={onMonthReview} taskId={monthSummary?.id} onAllCorrect={() => setOpenDeckFor(null)} userId={status?.user || null} /></TaskModal>
-      ) : null}
-      {openQuizFor === "day" && dayQuiz ? (
-        <TaskModal onClose={() => setOpenQuizFor(null)} title={dayQuiz.title}><QuizPlayer quiz={dayQuiz} taskId={dayTask?.id} userId={status?.user || null} /></TaskModal>
-      ) : null}
-      {openQuizFor === "summary" && summaryQuiz ? (
-        <TaskModal onClose={() => setOpenQuizFor(null)} title={summaryQuiz.title}><QuizPlayer quiz={summaryQuiz} taskId={summary?.id} userId={status?.user || null} /></TaskModal>
-      ) : null}
-      {openQuizFor === "month" && monthQuiz ? (
-        <TaskModal onClose={() => setOpenQuizFor(null)} title={monthQuiz.title}><QuizPlayer quiz={monthQuiz} taskId={monthSummary?.id} userId={status?.user || null} /></TaskModal>
-      ) : null}
-      </>
-      )}
-    </main>
-  );
-}
-
-/** The landing page (shown logged out at route /) — sharp, crisp positioning as a trusted decision engine. */
-/** The Settings PAGE (route /settings): account, ALL app connections (Composio — incl. Google), the
- *  person-profile editor, and exactly what Otto will/won't do. */
-/** Settings → "How Otto teaches you": what the tutor's learned policy (a small neural net trained with reinforcement
- *  learning on how you react to each teaching move) currently favours for you, with a reset. */
-const MOVE_LABEL: Record<string, [string, string]> = {
-  probe: ["te poser une question ouverte", "asking you an open question"],
-  "smaller-step": ["découper en plus petites étapes", "breaking it into smaller steps"],
-  "worked-parallel": ["montrer un exemple parallèle", "showing a parallel worked example"],
-  visual: ["dessiner un schéma", "drawing a picture"],
-  analogy: ["utiliser une analogie", "using an analogy"],
-  "reflect-back": ["reformuler ce que tu dis", "saying back what you said"],
-  "direct-hint": ["te donner un indice précis", "giving one concrete hint"],
-};
-const PACE_LABEL: Record<string, [string, string]> = { slow: ["en allant doucement", "going slowly"], steady: ["à rythme normal", "at a steady pace"], stretch: ["en poussant plus loin", "stretching you"] };
-function TutorPolicyRow() {
-  const L = useLang();
-  const [info, setInfo] = useState<Awaited<ReturnType<typeof api.tutorPolicy>> | null>(null);
-  const load = useCallback(() => { void api.tutorPolicy().then(setInfo).catch(() => setInfo(null)); }, []);
-  useEffect(load, [load]);
-  const say = (m?: { move: string; pace: string }) => m ? `${L(...(MOVE_LABEL[m.move] || ["", ""]))}, ${L(...(PACE_LABEL[m.pace] || ["", ""]))}` : "";
-  return (
-    <div className="modal-row">
-      <span className="lbl">{L("Comment Otto t'enseigne", "How Otto teaches you")}</span>
-      <span className="val">
-        {info?.learning && info.updates >= 8
-          ? <>{L(`Otto apprend de tes réactions (${info.updates} échanges). Quand ça roule : ${say(info.flow)}. Quand tu bloques : ${say(info.stuck)}. `, `Otto learns from how you react (${info.updates} replies so far). When you're flowing: ${say(info.flow)}. When you're stuck: ${say(info.stuck)}. `)}</>
-          : L("Otto commence à apprendre ce qui marche pour toi — quelques séances et il s'adaptera. ", "Otto is starting to learn what works for you — a few sessions and it will adapt. ")}
-        <button type="button" className="btn xs ghost" onClick={() => { if (window.confirm(L("Réinitialiser ce qu'Otto a appris sur ta façon d'apprendre ?", "Reset what Otto has learned about how you learn?"))) void api.resetTutorPolicy().then(load); }}>{L("Réinitialiser", "Reset")}</button>
-      </span>
-    </div>
-  );
-}
-
-function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onStatusUpdate, onReplayOnboarding }: { status: ConnectionStatus; tasks: WebTask[]; onSignOut: () => void; onChanged: () => void; onTasksChanged: (tasks: WebTask[]) => void; onStatusUpdate?: () => void; onReplayOnboarding?: () => void }) {
-  const L = useLang();
-  const notify = useNotify();
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [usage, setUsage] = useState<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string; byCategory: Partial<Record<"sweep" | "autorun" | "chat" | "manual_refine" | "studylog" | "student_model" | "other", number>> } | null>(null);
-  const [showKnows, setShowKnows] = useState(false);
-  const [showStudentModel, setShowStudentModel] = useState(false);
-  const [patterns, setPatterns] = useState<{
-    predictedEngagement: { weekday: number; hour: number; confidence: number } | null; weakSubjects: string[];
-    subjectMastery: { subject: string; correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }[];
-    subjectFocus: { subject: string; peak: { hour: number; confidence: number } }[];
-    bandits: Record<string, { armId: string; confidence: number } | null>;
-    studyMetrics: { totalSessions: number; totalStudySeconds: number; totalBreakSeconds: number; avgIdleRatio: number | null; earlyExitRate: number | null; pomodoroCyclesCompleted: number; windowDays: number; avgFocusScore: number | null; avgGazeOnScreenPct: number | null; focusSessionCount: number } | null;
-  } | null>(null);
-  useEffect(() => { void api.patternsSummary().then(setPatterns).catch(() => {}); }, []);
-  
-  // Optimistic toggles/selects — flip instantly, reconcile with the server after (no round-trip lag).
-  const [paused, setPausedLocal] = useState(status.paused);
-  const [deletingAccount, setDeletingAccount] = useState(false);
-  const [importingData, setImportingData] = useState(false);
-  const [importProgress, setImportProgress] = useState<[number, number] | null>(null);
-  const importFileRef = useRef<HTMLInputElement>(null);
-  // Splits `tasks` into byte-budgeted batches and uploads them as SEPARATE import requests — each one
-  // still goes through POST /api/account/import's existing MERGE logic (mergeTaskLists/mergeProfileStates,
-  // server/index.ts), so sending the same account's data in 5 pieces instead of 1 produces the exact same
-  // end state; the route has no idea it's being fed incrementally. Originally added suspecting a Vercel
-  // platform body-size cap — the REAL cause of the reported 413 (on a file as small as 1.8MB) turned out to
-  // be a global `express.json({limit:"1mb"})` in server/index.ts running before this route's own 20mb
-  // parser ever got a chance to (now fixed — that route is excluded from the global one). Kept anyway as a
-  // defensive measure for a genuinely huge export (tutor sessions are cloud-persisted again now, so a
-  // long-lived, chat-heavy account's export can still grow large) — just no longer the primary fix.
-  const MAX_IMPORT_BATCH_BYTES = 3_500_000;
-  function splitImportBatches(profile: unknown, allTasks: unknown[]): unknown[][] {
-    const encoder = new TextEncoder();
-    const baseSize = encoder.encode(JSON.stringify({ profile, tasks: [] })).length;
-    const batches: unknown[][] = [];
-    let current: unknown[] = [];
-    let currentSize = baseSize;
-    for (const t of allTasks) {
-      const taskSize = encoder.encode(JSON.stringify(t)).length;
-      if (current.length && currentSize + taskSize > MAX_IMPORT_BATCH_BYTES) {
-        batches.push(current);
-        current = [];
-        currentSize = baseSize;
-      }
-      current.push(t);
-      currentSize += taskSize;
-      // One single task bigger than the whole budget (a genuinely huge chat/board history on one task) —
-      // still send it alone rather than looping forever trying to split further; the server's own caps
-      // (CHAT_CAP/BOARD_MERGE_CAP/ARTIFACT_CAP) bound how big one task can realistically get regardless.
-    }
-    if (current.length) batches.push(current);
-    return batches.length ? batches : [[]]; // profile-only import (no tasks at all) still gets one request
-  }
-  const onImportFile = async (file: File) => {
-    setImportingData(true);
-    setImportProgress(null);
-    try {
-      const text = await file.text();
-      let parsed: any;
-      try { parsed = JSON.parse(text); }
-      catch { throw new Error(L("Ce fichier n'est pas un export Otto valide.", "That file isn't a valid Otto export.")); }
-      // jobs/events ride along in a full export for GDPR Art.15 completeness, but POST /api/account/import
-      // only ever reads `profile`/`tasks` (see that route's own body) — pure dead weight here, dropped
-      // before even computing batches below.
-      const allTasks: unknown[] = Array.isArray(parsed.tasks) ? parsed.tasks : [];
-      const batches = splitImportBatches(parsed.profile, allTasks);
-      let result: { ok: boolean; tasksAfter: number; errorLogAfter: number } | undefined;
-      for (let i = 0; i < batches.length; i++) {
-        if (batches.length > 1) setImportProgress([i + 1, batches.length]);
-        result = await api.importData({ profile: parsed.profile, tasks: batches[i] });
-      }
-      notify(L(`Importé — ${result!.tasksAfter} tâches, ${result!.errorLogAfter} erreurs au total.`, `Imported — ${result!.tasksAfter} tasks, ${result!.errorLogAfter} error-log entries in total now.`));
-      loadProfile();
-      onChanged();
-    } catch (e: any) {
-      notify(e?.message || L("Impossible d'importer ce fichier — réessaie.", "Couldn't import that file — try again."), "error");
-    } finally {
-      setImportingData(false);
-      setImportProgress(null);
-      if (importFileRef.current) importFileRef.current.value = "";
-    }
-  };
-  const [profileError, setProfileError] = useState(false);
-  const loadProfile = () => { setProfileError(false); void api.profile().then(setProfile).catch(() => setProfileError(true)); };
-  useEffect(() => { setPausedLocal(status.paused); }, [status.paused]);
-  useEffect(() => { loadProfile(); void api.usage().then(setUsage).catch(() => {}); }, []);
-  useReveal();
-
-  return (
-    <main className="settings-page">
-      {/* The prototype's Settings head: "Make Otto yours." + "Your account, your connections, your pace." */}
-      <h1 className="list-head">{L("Fais d'Otto le tien.", "Make Otto yours.")}</h1>
-      <p className="page-sub" style={{ marginTop: 10, marginBottom: "var(--space-6)" }}>{L("Ton compte, tes connexions, ton rythme.", "Your account, your connections, your pace.")}</p>
-      {profileError ? (
-        <p className="rewrite-error">{L("Certaines infos du profil n'ont pas pu être chargées.", "Some profile info couldn't load.")} <button type="button" className="btn xs ghost" onClick={loadProfile}>{L("Réessayer", "Retry")}</button></p>
-      ) : null}
-
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.03s" }}>
-        <h3>{L("Compte", "Account")}</h3>
-        <div className="acct-card">
-          <span className="acct-avatar" aria-hidden="true">{(status.user || "?").charAt(0).toUpperCase()}</span>
-          <div className="acct-id">
-            <span className="acct-email">{status.user}</span>
-            <span className={`acct-sync ${status.cloud ? "on" : ""}`}>
-              <span className="acct-sync-dot" aria-hidden="true" />
-              {status.cloud ? L("Synchronisé", "Synced") : L("Hors ligne", "Not synced")}
-            </span>
-          </div>
-          <button className="btn xs ghost" onClick={() => void onSignOut()}>{L("Se déconnecter", "Sign out")}</button>
-        </div>
-        <div className="modal-row"><span className="lbl">{L("Confidentialité", "Privacy")}</span><span className="val">{L("Ton mot de passe Pronote est chiffré et jamais revendu. ", "Your Pronote password is encrypted and never resold. ")}<a href="/privacy">{L("Détails →", "Details →")}</a></span></div>
-        <div className="modal-row"><span className="lbl">{L("Mentions légales", "Legal")}</span><span className="val"><a href="/privacy">{L("Confidentialité", "Privacy")}</a> · <a href="/terms">{L("CGU", "Terms")}</a></span></div>
-        <TutorPolicyRow />
-        <div className="modal-row" data-tour="replay-onboarding">
-          <span className="lbl">{L("Visite guidée", "Welcome tour")}</span>
-          <span className="val"><button type="button" className="btn xs ghost" onClick={() => onReplayOnboarding?.()}>{L("Tester l'onboarding", "Test onboarding")}</button></span>
-        </div>
-        <div className="modal-row">
-          <span className="lbl">{L("Tes données", "Your data")}</span>
-          <span className="val"><a href={api.exportDataUrl()} download>{L("Télécharger mes données", "Download my data")}</a></span>
-        </div>
-        {/* Reported live: "i don't see import place" — the handler/state (onImportFile, importFileRef,
-            importingData) were fully built but nothing in this render ever used them, so the whole feature
-            was invisible. Same pattern as the export row above: a plain link-styled trigger for the actual
-            hidden file input, which does the real work. Typically used right after importing a GET
-            /api/account/export file from a DIFFERENT account/project (see server/index.ts's own comment on
-            that route) — e.g. moving to a freshly created Supabase project. */}
-        <div className="modal-row">
-          <span className="lbl">{L("Importer des données", "Import data")}</span>
-          <span className="val">
-            <input ref={importFileRef} type="file" accept="application/json" style={{ display: "none" }}
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) void onImportFile(f); }} />
-            <button type="button" className="btn xs ghost" disabled={importingData} onClick={() => importFileRef.current?.click()}>
-              {importingData
-                ? (importProgress ? L(`Import en cours… (${importProgress[0]}/${importProgress[1]})`, `Importing… (${importProgress[0]}/${importProgress[1]})`) : L("Import en cours…", "Importing…"))
-                : L("Importer un export Otto", "Import an Otto export")}
-            </button>
-          </span>
-        </div>
-        <div className="danger-zone">
-          <div className="modal-row">
-            <span className="lbl">{L("Supprimer le compte", "Delete account")}<span className="settings-hint" style={{ margin: 0 }}>{L("Tâches, profil, connexions — irréversible.", "Tasks, profile, connections — can't be undone.")}</span></span>
-            <button
-              className="btn xs danger"
-              disabled={deletingAccount}
-              onClick={async () => {
-                if (!window.confirm(L("Supprimer ton compte Otto (tâches, profil, connexions) ? Irréversible.", "Delete your Otto account (tasks, profile, connections)? This can't be undone."))) return;
-                setDeletingAccount(true);
-                try { await api.deleteAccount(); clearAllLocalAccountData(status.user || null); window.location.href = "/"; }
-                catch (e: any) { setDeletingAccount(false); notify(e?.message || L("Impossible de supprimer le compte — réessaie.", "Couldn't delete the account — try again."), "error"); }
-              }}
-            >{deletingAccount ? L("Suppression…", "Deleting…") : L("Tout supprimer", "Delete everything")}</button>
-          </div>
-        </div>
-      </section>
-
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.07s" }}>
-        <h3>{L("Sources", "Sources")}</h3>
-        <p className="settings-hint">{L("Otto lit ces sources et prépare le travail — ", "Otto reads these sources and preps the work — ")}<b>{L("il n'envoie et ne rend jamais rien à ta place", "it never sends or hands anything in for you")}</b>.</p>
-        <PronoteTile status={status} onStatusUpdate={onStatusUpdate} />
-        <GoogleTiles onChanged={onChanged} restricted={profile?.track !== "ib" && profile?.track !== "ap" && profile?.track !== "other"} />
-      </section>
-
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.09s" }}>
-        <h3>{L("Préférences", "Preferences")}</h3>
-        <div className="set-list">
-          <label className="set-row">
-            <span className="set-text"><b>{L("Mettre Otto en pause", "Pause Otto")}</b><span className="settings-hint">{L("Arrête toute l'IA. Tes tâches restent en place.", "Stops all AI activity. Your tasks stay as they are.")}</span></span>
-            <span className="switch"><input type="checkbox" checked={paused} onChange={(e) => {
-              const v = e.target.checked;
-              setPausedLocal(v);
-              void api.setPaused(v).then(() => onChanged()).catch((err: any) => {
-                setPausedLocal(!v);
-                notify(err?.message || L("Ce réglage n'a pas été enregistré — réessaie.", "That setting didn't save — give it another try."), "error");
-              });
-            }} /><span className="switch-track" /></span>
-          </label>
-          <PreferencesFields profile={profile} onChanged={(p) => { setProfile(p); onChanged(); }} />
-        </div>
-      </section>
-
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.13s" }}>
-        <button className="sec-toggle" aria-expanded={showKnows} onClick={() => setShowKnows((v) => !v)}>
-          <h3>{L("Ce qu'Otto sait sur toi", "What Otto knows about you")}</h3>
-          <span className={`caret ${showKnows ? "open" : ""}`} aria-hidden="true">›</span>
-        </button>
-        {showKnows && <div className="settings-reveal"><p className="settings-hint">{L("Otto remplit ça au fil du temps. Tu peux tout modifier.", "Otto fills this in over time. You can edit anything.")}</p><ProfileEditor /></div>}
-      </section>
-
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.18s" }}>
-        <button className="sec-toggle" aria-expanded={showStudentModel} onClick={() => setShowStudentModel((v) => !v)}>
-          <h3>{L("Comment Otto te voit", "How Otto sees you")}</h3>
-          <span className={`caret ${showStudentModel ? "open" : ""}`} aria-hidden="true">›</span>
-        </button>
-        {showStudentModel && (
-          <div className="settings-reveal">
-            <p className="settings-hint">{L(
-              "Mis à jour au plus une fois par jour à partir de tes sessions de tuteur et ton activité. Jamais partagé, jamais utilisé pour te noter.",
-              "Updated at most once a day from your tutor sessions and activity. Never shared, never used to grade you."
-            )}</p>
-            {profile?.studentModel?.summary ? (
-              <>
-                <p className="student-model-text">{profile.studentModel.summary}</p>
-                <p className="settings-hint">{L(`Mis à jour le ${fmtDay(profile.studentModel.updatedAt, L)}`, `Updated ${fmtDay(profile.studentModel.updatedAt, L)}`)}</p>
-                <button type="button" className="btn xs ghost" onClick={async () => {
-                  try { setProfile(await api.resetStudentModel()); }
-                  catch (e: any) { notify(e?.message || L("Réinitialisation impossible — réessaie.", "Couldn't reset — try again."), "error"); }
-                }}>{L("Réinitialiser", "Reset")}</button>
-              </>
-            ) : <p className="settings-hint">{L("Pas encore assez d'activité pour ça.", "Not enough activity yet.")}</p>}
-          </div>
-        )}
-      </section>
-    </main>
-  );
-}
-
-
-/** Pronote (French school portal) — no OAuth exists for it, so this is a credential form instead of a
- *  redirect link. The password is sent once to connect and never stored (see server/pronote.ts); only a
- *  rotating token comes back. Reads homework due dates into the to-do list — nothing is ever written back. */
-
-function PronoteTile({ status: mainStatus, onStatusUpdate, onChanged }: { status?: ConnectionStatus | null; onStatusUpdate?: () => void; onChanged?: () => void } = {}) {
-  const L = useLang();
-  const notify = useNotify();
-  const [open, setOpen] = useState(false);
-  const [url, setUrl] = useState("");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [kind, setKind] = useState<"student" | "parent">("student");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  const [pronoteUsername, setPronoteUsername] = useState<string | undefined>();
-
-  // The server's /api/status read is now always a fresh, uncached Supabase read (see server/pronote.ts —
-  // the in-memory per-instance cache that used to sit in front of it was removed after it kept serving
-  // stale readings from whichever OTHER warm Vercel instance happened to have cached one). Even so, a
-  // status fetch that fires IMMEDIATELY after the connect/disconnect write can still race Supabase's own
-  // connection-pooled read-after-write consistency and briefly see the pre-write value — reported live as
-  // "connect succeeds, but navigate away and back to Settings and it shows Connect again": this tile used
-  // to keep its optimistic override in plain component state, which React destroys the instant it unmounts
-  // (leaving Settings for any other page), so that one lagging background read after a navigation had
-  // nothing left to override it. Persisting the override in sessionStorage instead survives the remount —
-  // capped at 2 minutes so a genuinely wrong override (e.g. the connect actually failed downstream) can't
-  // get stuck forever, but comfortably outlives a page navigation or two.
-  const [optimistic, setOptimisticState] = useState<boolean | null>(() => readPronoteOptimistic());
-  const setOptimistic = useCallback((v: boolean | null) => { writePronoteOptimistic(v); setOptimisticState(v); }, []);
-  useEffect(() => {
-    if (optimistic !== null && mainStatus?.pronoteConnected === optimistic) setOptimistic(null);
-  }, [mainStatus?.pronoteConnected, optimistic, setOptimistic]);
-  const effectivelyConnected = optimistic ?? mainStatus?.pronoteConnected;
-
-  // Load pronote username when connected — skipped while `optimistic` already set it locally (see connect()
-  // below), so this effect doesn't clear it back to undefined for the few seconds mainStatus lags behind.
-  useEffect(() => {
-    if (optimistic !== null) return;
-    if (mainStatus?.pronoteConnected) {
-      api.pronoteStatus().then(s => setPronoteUsername(s.username)).catch(() => {});
-    } else {
-      setPronoteUsername(undefined);
-    }
-  }, [mainStatus?.pronoteConnected, optimistic]);
-
-  const status = effectivelyConnected ? { connected: true, username: pronoteUsername } : { connected: false };
-
-  const connect = async () => {
-    const trimmedUrl = url.trim();
-    const trimmedUsername = username.trim();
-    if (!trimmedUrl || !trimmedUsername || !password) { setErr(L("Renseigne l'URL, l'identifiant et le mot de passe.", "Fill in the URL, username, and password.")); return; }
-    setBusy(true); setErr("");
-    try {
-      const r = await api.connectPronote(trimmedUrl, trimmedUsername, password, kind === "parent" ? 7 : 6);
-      if (!r.ok) { setErr(r.error || L("Connexion impossible.", "Couldn't connect.")); return; }
-      setPassword(""); setOpen(false);
-      setPronoteUsername(trimmedUsername);
-      setOptimistic(true);
-      onStatusUpdate?.();
-      onChanged?.();
-    } catch (e: any) {
-      setErr(e?.message || L("Connexion impossible.", "Couldn't connect."));
-    } finally { setBusy(false); }
-  };
-  const disconnect = async () => {
-    setBusy(true);
-    try {
-      await api.disconnectPronote();
-      setOptimistic(false);
-      onStatusUpdate?.();
-      onChanged?.();
-    }
-    catch (e: any) { notify(e?.message || L("Déconnexion impossible — réessaie.", "Couldn't disconnect — try again."), "error"); }
-    finally { setBusy(false); }
-  };
-
-  // A blank gap while `status` loads reads as "this section is stuck/slow" — a lightweight skeleton in the
-  // exact shape of the real tile makes the wait feel instant instead of leaving Sources looking empty.
-  if (!mainStatus) return <div className="int-group"><div className="int-grid"><div className="int-tile int-tile-skel" /></div></div>;
-  return (
-    <div className="int-group">
-      <div className="int-grid">
-        <div className={`int-tile ${status.connected ? "on" : ""}`}>
-          {/* Index Éducation's official PRONOTE logo, via Wikimedia Commons (CC BY-SA 4.0, credited to
-              Index Éducation) — self-hosted at public/logos/pronote.png, see public/logos/ATTRIBUTION.md. */}
-          <span className="int-logo pronote-logo"><img src="/logos/pronote.png" alt="" loading="lazy" /></span>
-          <div className="int-info">
-            <div className="int-name">Pronote{status.connected && <span className="int-dot" title={L("Connecté", "Connected")} />}</div>
-            <div className="int-blurb">{L(
-              "Devoirs et contrôles à venir. Otto lit ces sources et prépare le travail — il ne renvoie jamais rien à ta place. Connexion non-officielle (Index Éducation n'a pas d'API publique) — ton mot de passe sert une seule fois puis n'est jamais conservé ; un jeton chiffré le remplace ensuite.",
-              "Upcoming homework and tests. Otto reads these sources and preps the work — it never sends or hands anything in for you. Unofficial connection (Index Éducation has no public API) — your password is used once and never stored; an encrypted token replaces it afterwards."
-            )}</div>
-          </div>
-          {status.connected
-            ? <button className="btn xs" disabled={busy} onClick={() => void disconnect()}>{busy ? "…" : L("Déconnecter", "Disconnect")}</button>
-            : <button className="btn xs" disabled={busy} onClick={() => setOpen((v) => !v)}>{open ? L("Annuler", "Cancel") : L("Connecter", "Connect")}</button>}
-        </div>
-      </div>
-      {status.connected && <div className="int-accounts"><div className="int-acct"><span className="int-acct-email">{status.username}</span></div></div>}
-      {open && !status.connected && (
-        <div className="pronote-form">
-          <input className="addinput sm" placeholder={L("URL Pronote de ton établissement (ex : https://0000000a.index-education.net/pronote/eleve.html)", "Your school's Pronote URL (e.g. https://0000000a.index-education.net/pronote/eleve.html)")}
-            value={url} onChange={(e) => setUrl(e.target.value)} disabled={busy} />
-          <div className="pronote-form-row">
-            <input className="addinput sm" placeholder={L("Identifiant", "Username")} value={username} onChange={(e) => setUsername(e.target.value)} disabled={busy} />
-            <input className="addinput sm" type="password" placeholder={L("Mot de passe", "Password")} value={password}
-              onChange={(e) => setPassword(e.target.value)} disabled={busy}
-              onKeyDown={(e) => { if (e.key === "Enter") void connect(); }} />
-          </div>
-          <div className="pronote-form-row">
-            <div className="seg" role="group" aria-label={L("Type de compte", "Account type")}>
-              <button type="button" className={`seg-btn ${kind === "student" ? "on" : ""}`} aria-pressed={kind === "student"} onClick={() => setKind("student")}>{L("Élève", "Student")}</button>
-              <button type="button" className={`seg-btn ${kind === "parent" ? "on" : ""}`} aria-pressed={kind === "parent"} onClick={() => setKind("parent")}>{L("Parent", "Parent")}</button>
-            </div>
-            <button className="btn primary xs" disabled={busy} onClick={() => void connect()}>{busy ? L("Connexion…", "Connecting…") : L("Connecter", "Connect")}</button>
-          </div>
-          {err && <div className="autherr">{err}</div>}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Blackbaud (school Education Management — assignments/grades) — MOCK ONLY right now, see
- *  server/blackbaud.ts's own comment: unlike Pronote, a student can't just type their own credentials —
- *  it needs a registered SKY API subscription key AND the school's own admin enabling API access, neither
- *  of which exists yet. No credential form here at all (there's nothing to fill in); just a demo-connect
- *  button when the server has BLACKBAUD_MOCK=1 set, and an honest explanation otherwise. */
-function BlackbaudTile({ onChanged }: { onChanged?: () => void } = {}) {
-  const L = useLang();
-  const notify = useNotify();
-  const [status, setStatus] = useState<{ connected: boolean; schoolName?: string; configured: boolean; realAuthAvailable: boolean } | null>(null);
-  const [busy, setBusy] = useState(false);
-  const load = useCallback(async () => { try { setStatus(await api.blackbaudStatus()); } catch { setStatus({ connected: false, configured: false, realAuthAvailable: false }); } }, []);
-  useEffect(() => { void load(); }, [load]);
-
-  const connect = async () => {
-    setBusy(true);
-    try {
-      const r = await api.blackbaudConnectMock();
-      if (!r.ok) { notify(r.error || L("Connexion impossible.", "Couldn't connect."), "error"); return; }
-      await load(); onChanged?.();
-    } finally { setBusy(false); }
-  };
-  const disconnect = async () => {
-    setBusy(true);
-    try { await api.blackbaudDisconnect(); await load(); onChanged?.(); }
-    catch (e: any) { notify(e?.message || L("Déconnexion impossible — réessaie.", "Couldn't disconnect — try again."), "error"); }
-    finally { setBusy(false); }
-  };
-
-  if (!status) return <div className="int-group"><div className="int-grid"><div className="int-tile int-tile-skel" /></div></div>;
-  return (
-    <div className="int-group">
-      <div className="int-grid">
-        <div className={`int-tile ${status.connected ? "on" : ""}`}>
-          <span className="int-logo" aria-hidden="true" style={{ display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 11 }}>BB</span>
-          <div className="int-info">
-            <div className="int-name">Blackbaud{status.connected && <span className="int-dot" title={L("Connecté", "Connected")} />}</div>
-            <div className="int-blurb">
-              {status.realAuthAvailable
-                ? L(
-                    "Devoirs et notes depuis le portail Blackbaud de ton établissement.",
-                    "Assignments and grades from your school's Blackbaud portal.",
-                  )
-                : status.configured
-                ? L(
-                    "Devoirs et notes depuis le portail Blackbaud de ton établissement. Mode démo — données factices, aucune vraie connexion à une école pour l'instant.",
-                    "Assignments and grades from your school's Blackbaud portal. Demo mode — fake data, no real school connection yet.",
-                  )
-                : L(
-                    "Pas encore disponible : nécessite une clé d'API Blackbaud (SKY API) et que ton établissement active l'accès — aucun des deux n'existe pour l'instant.",
-                    "Not available yet — needs a Blackbaud SKY API subscription key and your school enabling access, neither of which exists yet.",
-                  )}
-            </div>
-          </div>
-          {status.connected
-            ? <button className="btn xs" disabled={busy} onClick={() => void disconnect()}>{busy ? "…" : L("Déconnecter", "Disconnect")}</button>
-            : status.realAuthAvailable
-            ? <a className="btn xs" href="/api/integrations/blackbaud/connect">{L("Connecter", "Connect")}</a>
-            : <button className="btn xs" disabled={busy || !status.configured} title={!status.configured ? L("Pas encore configuré sur ce serveur", "Not configured on this server yet") : undefined} onClick={() => void connect()}>{busy ? "…" : L("Essayer en démo", "Try demo mode")}</button>}
-        </div>
-      </div>
-      {status.connected && status.schoolName && <div className="int-accounts"><div className="int-acct"><span className="int-acct-email">{status.schoolName}</span></div></div>}
-    </div>
-  );
-}
-
-/** Connected accounts for one Google app — one row per account with its address + an individual
- *  Disconnect. Google apps support multiple accounts (perso + a parent's, e.g.). */
-function GoogleAppAccounts({ appKey, onChanged }: { appKey: string; onChanged?: () => void }) {
-  const L = useLang();
-  const notify = useNotify();
-  const [accts, setAccts] = useState<ConnectedAccount[] | null>(null);
-  const [busy, setBusy] = useState("");
-  const load = useCallback(async () => { try { setAccts((await api.integrationAccounts(appKey)).accounts); } catch { setAccts([]); } }, [appKey]);
-  useEffect(() => { void load(); }, [load]);
-  useEffect(() => { const on = () => { if (!document.hidden) void load(); }; window.addEventListener("focus", on); return () => window.removeEventListener("focus", on); }, [load]);
-  const disc = async (id: string) => {
-    setBusy(id);
-    try { await api.disconnectAccount(appKey, id); await load(); onChanged?.(); }
-    catch (e: any) { notify(e?.message || L("Déconnexion impossible — réessaie.", "Couldn't disconnect — try again."), "error"); }
-    finally { setBusy(""); }
-  };
-  if (!accts?.length) return null;
-  return (
-    <div className="int-accounts">
-      {accts.map((a, i) => (
-        <div key={a.id} className="int-acct">
-          <span className="int-acct-email">{a.email || (accts.length > 1 ? L(`Compte ${i + 1}`, `Account ${i + 1}`) : L("Connecté", "Connected"))}</span>
-          <div className="int-acct-actions">
-            <button className="btn xs ghost" disabled={busy === a.id} onClick={() => void disc(a.id)}>{busy === a.id ? "…" : L("Déconnecter", "Disconnect")}</button>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// Otto Lycée v1 keeps Gmail, Calendar, and Drive — kept alongside Pronote (explicit ask) so teacher/club
-// emails, calendar deadlines, and PDFs teachers drop in Drive can still surface as tasks even when Pronote
-// itself doesn't have them. Everything else in Composio (GitHub/Slack/Linear/…) stays hidden.
-const GOOGLE_LYCEE_APPS = ["gmail", "googlecalendar", "googledrive"];
-// For IB/Other tracks: the FULL Composio catalog (GitHub/Slack/Linear/Todoist/…) turned out to be more
-// than actually wanted — the curated set is Google Workspace (all of it, not just the 3-app Lycée subset —
-// Docs/Sheets/Slides matter for building study materials) plus Notion, alongside Pronote which is its own
-// separate tile. Not the whole catalog.
-const GOOGLE_EXPANDED_APPS = ["gmail", "googlecalendar", "googledrive", "googledocs", "googlesheets", "googleslides"];
-const GOOGLE_APP_BLURBS: Record<string, string> = {
-  gmail: "Emails de profs, clubs, associations — Otto ne fait qu'y répondre en brouillon, jamais d'envoi automatique.",
-  googlecalendar: "Événements et échéances à venir, pour préparer ce qui arrive.",
-  googledrive: "Documents partagés par tes profs — pour enrichir les fiches de révision.",
-};
-const GOOGLE_APP_BLURBS_EN: Record<string, string> = {
-  gmail: "Emails from teachers, clubs, associations — Otto only replies as a draft, never sends automatically.",
-  googlecalendar: "Upcoming events and deadlines, to prep for what's coming.",
-  googledrive: "Documents your teachers shared — to enrich revision guides.",
-};
-
-/** Integrations grid. `restricted` (default true) scopes it to just Gmail/Calendar/Drive (GOOGLE_LYCEE_APPS,
- *  the French-Bac default); false shows the curated IB/Other set — Google Workspace + Notion
- *  (GOOGLE_EXPANDED_APPS), not the entire Composio catalog. */
-function GoogleTiles({ onChanged, restricted = true }: { onChanged?: () => void; restricted?: boolean }) {
-  const [items, setItems] = useState<IntegrationItem[] | null | undefined>(undefined); // undefined = loading, null = unavailable
-  const load = useCallback(async () => {
-    const allow = restricted ? GOOGLE_LYCEE_APPS : GOOGLE_EXPANDED_APPS;
-    try { const r = await api.integrations(); setItems(r.items.filter((i) => allow.includes(i.key))); }
-    catch { setItems(null); }
-  }, [restricted]);
-  useEffect(() => { void load(); }, [load]);
-  useEffect(() => { const id = setTimeout(() => void load(), 1200); return () => clearTimeout(id); }, [load]);
-  useEffect(() => {
-    const on = () => { if (!document.hidden) void load(); };
-    document.addEventListener("visibilitychange", on);
-    window.addEventListener("focus", on);
-    return () => { document.removeEventListener("visibilitychange", on); window.removeEventListener("focus", on); };
-  }, [load]);
-
-  const L = useLang();
-  // Same reasoning as PronoteTile's skeleton — an empty gap while `items` loads reads as stuck, not loading.
-  if (items === undefined) return <div className="int-group"><div className="int-grid"><div className="int-tile int-tile-skel" /><div className="int-tile int-tile-skel" /></div></div>;
-  if (items === null || !items.length) return <div className="warn">{L("Google n'est pas encore activé sur ce serveur.", "Google isn't set up on this server yet.")}</div>;
-  return (
-    <div className="int-group">
-      {items.map((item) => (
-        <div key={item.key} className="int-tile-block">
-          <div className="int-grid">
-            <div className={`int-tile ${item.connected ? "on" : ""}`}>
-              <img className="int-logo" src={item.logo} alt="" loading="lazy" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
-              <div className="int-info">
-                <div className="int-name">{item.name}{item.connected && <span className="int-dot" title={L("Connecté", "Connected")} />}</div>
-                <div className="int-blurb">{L(GOOGLE_APP_BLURBS[item.key] || item.blurb, GOOGLE_APP_BLURBS_EN[item.key] || item.blurb)}</div>
-              </div>
-              <a className="btn xs" href={`/integrations/${item.key}/connect`} target="_blank" rel="noreferrer">{item.connected ? L("Ajouter un compte ↗", "Add an account ↗") : L("Connecter ↗", "Connect ↗")}</a>
-            </div>
-          </div>
-          {/* The connected account(s) for THIS app, right below its own tile — not lumped together
-              after the whole grid, so it's unambiguous which app each account belongs to. */}
-          {item.connected && <GoogleAppAccounts appKey={item.key} onChanged={() => { void load(); onChanged?.(); }} />}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/** First-run ONBOARDING for a brand-new account — the ONE place Otto is explained. A guided 5-step overlay:
- *  welcome + name ��� how it works → connect Pronote → preferences → done. Pronote's connect opens in a new
- *  tab; we re-check on focus so the tile flips to ✓ when the user comes back. Shown once after sign-up;
- *  finishing (or "Skip") clears the otto-onboard flag. */
-// 6 screens, steps 0-5 (name, track, tour step 3, tour step 4, "where to find things", done). Was 5 while
-// step 5 (the personalized "you're all set" done screen, with the student's name + Pronote-aware copy)
-// existed in the JSX below but nothing ever advanced to it — step 4's button called onDone directly, so
-// that screen was dead code: unreachable, and the progress dots undercounted by one. Fixed by actually
-// advancing through it instead of deleting it; it's a better finish than exiting straight from step 4.
-const OB_STEPS = 5;
-/** Otto Lycée v2: onboarding is SIX short steps — name → track+language → what Otto does → connect
- *  everything (Pronote + Google on ONE step) → one-screen feature tour with a direct start action → a final
- *  personalized "you're all set" closing screen. v1 ran 12 screens, most of
- *  them full-page essays about one feature each (Study Mode, tutor, flashcards, automation); every extra
- *  screen is dropout for a lycéen who just wants to see the app. The per-feature detail those screens
- *  carried lives in each feature's own first-time hint instead (FirstTimeHint, client/ui.tsx), shown when
- *  the student actually reaches the feature. The old 3-app OAuth picker (Gmail/Calendar/Drive) is gone —
- *  Pronote's connect flow (URL + identifiants, handled by PronoteTile) isn't OAuth at all. */
-function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | null; onStatus: () => void; onDone: () => void }) {
-  const L = useLang();
-  // Every profile write below is deliberately non-blocking (a failed save shouldn't trap the student on
-  // this screen — see saveTrack's own comment, and the copy already tells them everything here is
-  // "changeable any time in Settings"), but non-blocking used to also mean SILENT: the catch blocks were
-  // empty, so a failed save looked identical to a successful one from the student's side — they'd move on
-  // thinking Otto knew their name/track when it didn't. A brief toast (the same NotifyContext every other
-  // save failure in the app already uses) doesn't change the non-blocking design, it just makes "this
-  // didn't save" an honest, visible fact instead of a silent one.
-  const notify = useNotify();
-  // Reload mid-onboarding used to always restart at step 0 — `onboard` itself survives a reload
-  // (localStorage["otto-onboard"]), but `step` was plain useState with no persistence, so a student who
-  // got to step 5 and refreshed (or the tab got killed/restored) landed back on "what's your name" with
-  // no memory of getting that far. Name/track/language ALREADY saved server-side by that point get
-  // silently redone, which is at least harmless — but re-walking steps you already finished is exactly
-  // the opposite of "seamless." Persisted the same way `onboard` itself is.
-  const [step, setStepState] = useState(() => {
-    try { return Math.min(OB_STEPS - 1, Math.max(0, Number(localStorage.getItem("otto-onboard-step")) || 0)); }
-    catch { return 0; }
-  });
-  const setStep = (s: number) => {
-    setStepState(s);
-    try { localStorage.setItem("otto-onboard-step", String(s)); } catch { /* best-effort */ }
-  };
-  const [name, setName] = useState("");
-  const [pronoteConnected, setPronoteConnected] = useState(false);
-  // Which curriculum/track the student is on — drives both AI vocabulary (trackLine() in server/claude.ts,
-  // already good) and, from here on, whether Pronote gets framed as THE data source or as one option among
-  // several. Previously never asked anywhere, so every account silently defaulted to unset/"bac"-shaped
-  // assumptions regardless of what the student actually needed.
-  // Persisted the same way `step` is (localStorage) — plain useState reverted to null on every reload, so a
-  // student who picked "ib" on step 1 and refreshed mid-onboarding (their track already saved server-side
-  // by then) would see step 3's pronoteIsPrimary computed from a null track again, i.e. the wrong (primary)
-  // Pronote copy for an IB student.
-  const [track, setTrackState] = useState<"ib" | "ap" | "bac" | "other" | null>(() => {
-    try { return (localStorage.getItem("otto-onboard-track") as "ib" | "ap" | "bac" | "other" | null) || null; }
-    catch { return null; }
-  });
-  const setTrack = (t: "ib" | "ap" | "bac" | "other" | null) => {
-    setTrackState(t);
-    try { if (t) localStorage.setItem("otto-onboard-track", t); else localStorage.removeItem("otto-onboard-track"); } catch { /* best-effort */ }
-  };
-  // Language pick lives on step 1 next to the track — two button rows, one save pattern. Same optimistic
-  // save + revert as PreferencesFields.saveLang (which onboarding used to render wholesale for this one
-  // choice, plus a duplicate track picker it didn't need).
-  const [lang, setLang] = useState<"fr" | "en">("fr");
-  const saveLang = async (v: "fr" | "en") => {
-    const prev = lang;
-    setLang(v);
-    try { await api.setProfilePreference("language", v); await onStatus(); } // onStatus flips the WHOLE app's LangContext live
-    catch { setLang(prev); notify(L("Ta langue n'a pas été enregistrée — réessaie.", "Your language didn't save — give it another try."), "error"); }
-  };
-  // Year level is no longer asked in onboarding: it was one more field on day one for optional context,
-  // and the track pick already calibrates the AI vocabulary. It remains fully settable in Settings
-  // (PreferencesFields.saveYearLevel), which is the right home for an optional detail.
-  // Year + subjects: the last things the basic flow collects (the page guides cover everything else).
-  const [year, setYear] = useState("");
-  const [subs, setSubs] = useState<string[]>([]);
-  // Prefill from what the account already has — matters for "Test onboarding" replays, where re-asking
-  // for what's already known (and showing empty fields) would look broken.
-  useEffect(() => {
-    let alive = true;
-    void api.profile().then((p) => {
-      if (!alive) return;
-      if (p.name) setName((n) => n || p.name!);
-      if (p.language === "en" || p.language === "fr") setLang(p.language);
-      if (p.track) setTrack(p.track);
-      if (p.yearLevel) setYear(p.yearLevel);
-      if (p.subjects?.length) setSubs(p.subjects);
-    }).catch(() => { /* a blank form is fine */ });
-    return () => { alive = false; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  const saveYearSubjects = async () => {
-    try {
-      if (year.trim()) await api.setProfilePreference("yearLevel", year.trim());
-      await api.setSubjects(subs);
-    } catch { notify(L("Année/matières non enregistrées — tu peux les refaire dans Réglages.", "Year/subjects didn't save — you can set them later in Settings."), "error"); }
-    setStep(3);
-  };
-  const saveName = async () => {
-    const n = name.trim();
-    if (n) { try { await api.setProfile("name", n); await onStatus(); } catch { notify(L("Prénom non enregistré — tu peux le refaire dans Réglages.", "Name didn't save — you can set it later in Settings."), "error"); } }
-    setStep(1);
-  };
-  const saveTrack = async (t: "ib" | "ap" | "bac" | "other") => {
-    setTrack(t);
-    try { await api.setProfilePreference("track", t); await onStatus(); } catch { notify(L("Parcours non enregistré — tu peux le refaire dans Réglages.", "Track didn't save — you can set it later in Settings."), "error"); }
-    // Used to jump straight to step 2 here — but the year-level field below lives on this SAME step, so
-    // auto-advancing the instant a track button is clicked never gave the student a chance to see or fill
-    // it in. Stay put; "Continue" (added alongside the field) is what actually moves on now.
-  };
-  const checkPronote = useCallback(async () => { try { const s = await api.pronoteStatus(); setPronoteConnected(s.connected); onStatus(); } catch { /* keep last */ } }, [onStatus]);
-  useEffect(() => { void checkPronote(); }, [checkPronote]);
-  // Pronote is a French national-education-system tool — real and worth asking about for "bac"/unset, but
-  // actively misleading to lead with for an IB/other-track student whose school very likely doesn't use it
-  // at all (Google Classroom, Managebac, Toddle, or just email/calendar are far more common internationally).
-  // Previously hardcoded `false` regardless of the track picked in step 1 — every student, including "bac"
-  // ones who'd just chosen Pronote as their real primary source, saw the non-primary "if you have one"
-  // copy. Derive it from the actual selection: primary unless the student is explicitly on IB or AP (unset
-  // track still defaults to primary, same as the "bac"/unset framing the comment above already describes).
-  // AP is a US College Board program — like IB, essentially never on Pronote (a French national tool).
-  const pronoteIsPrimary = track !== "ib" && track !== "ap";
-
-  return (
-    <div className="onboard-overlay" role="dialog" aria-modal="true">
-      <div className="onboard-card">
-        <button className="onboard-skip" onClick={onDone} aria-label={L("Passer", "Skip")}>{L("Passer", "Skip")}</button>
-        <div className="onboard-top">
-          <div className="onboard-brand"><Logo size={20} /> <span>Otto</span></div>
-          <div className="onboard-progress" role="progressbar" aria-valuemin={1} aria-valuemax={OB_STEPS} aria-valuenow={step + 1} aria-label={L(`Étape ${step + 1} sur ${OB_STEPS}`, `Step ${step + 1} of ${OB_STEPS}`)}>
-            {Array.from({ length: OB_STEPS }).map((_, d) => <span key={d} aria-hidden="true" className={d <= step ? "on" : ""} />)}
-          </div>
-        </div>
-
-        {step === 0 && (
-          <div className="onboard-step">
-            <h2>{L("Bienvenue sur Otto", "Welcome to Otto")}</h2>
-            <p className="onboard-lead">{L("Otto lit tes devoirs, contrôles et mails, transforme tout ça en un plan clair pour aujourd'hui, et t'aide à démarrer — sans jamais faire le travail à ta place. Connecte Pronote, Gmail, ou ajoute tes tâches à la main.", "Otto turns homework, tests, and emails into a clear plan — without doing the work for you. Connect a source or add tasks yourself.")}</p>
-            <label className="field onboard-name"><span>{L("Comment veux-tu qu'Otto t'appelle ?", "What should Otto call you?")}</span>
-              <input className="addinput" placeholder={L("Ton prénom (optionnel)", "Your first name (optional)")} value={name} maxLength={60} autoFocus
-                onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void saveName(); }} />
-            </label>
-            <p className="muted small">{L("Tu peux le renseigner plus tard dans les Réglages.", "You can set this later in Settings.")}</p>
-            <div className="onboard-actions"><button className="btn primary big" onClick={() => void saveName()}>{L("Commencer", "Get started")}</button></div>
-          </div>
-        )}
-
-        {step === 1 && (
-          <div className="onboard-step">
-            <h2>{L("Ton parcours", "Your track")}</h2>
-            <p className="onboard-lead">{L("Change le vocabulaire qu'Otto utilise.", "Changes the vocabulary Otto uses.")}</p>
-            <div className="onboard-apps">
-              <button type="button" className={`btn xs ob-track-btn ${track === "bac" ? "" : "ghost"}`} onClick={() => void saveTrack("bac")}>{L("Bac français (lycée)", "French Bac (lycée)")}</button>
-              <button type="button" className={`btn xs ob-track-btn ${track === "ib" ? "" : "ghost"}`} onClick={() => void saveTrack("ib")}>IB</button>
-              <button type="button" className={`btn xs ob-track-btn ${track === "ap" ? "" : "ghost"}`} onClick={() => void saveTrack("ap")}>AP</button>
-              <button type="button" className={`btn xs ob-track-btn ${track === "other" ? "" : "ghost"}`} onClick={() => void saveTrack("other")}>{L("Autre (collège, etc.)", "Other (middle school, etc.)")}</button>
-            </div>
-            <p className="onboard-lead" style={{ marginTop: 20 }}>{L("Ta langue", "Your language")}</p>
-            {/* Two buttons, not the full PreferencesFields block: track was ALREADY picked above on this
-                same step, and PreferencesFields would render its own (duplicate, unset-looking) track
-                picker plus fields onboarding never needed. Language saves server-side immediately — the
-                same api call Settings uses — and onStatus() makes the WHOLE onboarding (and app) flip
-                live, same wiring requirement the old PreferencesFields usage documented below. */}
-            <div className="onboard-apps">
-              <button type="button" className={`btn xs ${lang === "fr" ? "" : "ghost"}`} onClick={() => void saveLang("fr")}>Français</button>
-              <button type="button" className={`btn xs ${lang === "en" ? "" : "ghost"}`} onClick={() => void saveLang("en")}>English</button>
-            </div>
-            <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(0)}>{L("Retour", "Back")}</button>
-              <button className="btn primary" onClick={() => setStep(2)}>{L("Continuer", "Continue")}</button>
-            </div>
-          </div>
-        )}
-
-        {step === 2 && (
-          <div className="onboard-step">
-            <h2>{L("Ta classe", "Your classes")}</h2>
-            <p className="onboard-lead">{L("Otto règle son niveau et classe tes cours par matière.", "Otto pitches his level to you and files your coursework by subject.")}</p>
-            <p className="onboard-lead" style={{ marginTop: 12 }}>{L("Ton année", "Your year")}</p>
-            <div className="onboard-chips">
-              {["Seconde", "Première", "Terminale", "IB DP1", "IB DP2", "Grade 9", "Grade 10", "Grade 11", "Grade 12"].map((y) => (
-                <button key={y} type="button" className={`btn xs ${year === y ? "" : "ghost"}`} onClick={() => setYear(y)} aria-pressed={year === y}>{y}</button>
-              ))}
-            </div>
-            <p className="onboard-lead" style={{ marginTop: 18 }}>{L("Tes matières", "Your subjects")}</p>
-            <div className="onboard-chips">
-              {COMMON_SUBJECTS.filter((x) => x !== "Other").map((x) => (
-                <button key={x} type="button" className={`btn xs ${subs.includes(x) ? "" : "ghost"}`} onClick={() => setSubs((cur) => (cur.includes(x) ? cur.filter((c) => c !== x) : [...cur, x]))} aria-pressed={subs.includes(x)}>{x}</button>
-              ))}
-            </div>
-            <p className="muted small">{L("Optionnel — modifiable à tout moment dans les Réglages.", "Optional — change it any time in Settings.")}</p>
-            <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(1)}>{L("Retour", "Back")}</button>
-              <button className="btn primary" onClick={() => void saveYearSubjects()}>{L("Continuer", "Continue")}</button>
-            </div>
-          </div>
-        )}
-
-        {step === 3 && (
-          <div className="onboard-step">
-            {/* Pronote is a French national-education-system tool — only worth leading with for a Bac/unset
-                track. An IB/other-track student's school very likely doesn't use it at all, so this step
-                reframes as optional/parallel rather than "the one thing Otto reads" for them. Pronote and
-                Google live on ONE step now — two separate connect screens was two more taps for zero
-                extra understanding, and both are skippable anyway. */}
-            <h2>{L("Connecte tes sources", "Connect your sources")}</h2>
-            <p className="onboard-lead">{pronoteIsPrimary
-              ? L("Pronote suffit pour lancer Otto. Gmail et Calendar sont optionnels — Otto y repère devoirs et échéances. Tes identifiants sont chiffrés, jamais revendus.", "Pronote alone gets Otto going. Gmail and Calendar are optional — Otto spots homework and deadlines in them. Your credentials are encrypted, never resold.")
-              : L("La plupart des écoles IB n'utilisent pas Pronote — connecte-le seulement si ton école l'a. Sinon Gmail/Calendar, ou ajoute tes devoirs à la main.", "Most IB schools don't use Pronote — connect it only if your school has it. Otherwise Gmail/Calendar, or add your homework by hand.")}</p>
-            <div className="onboard-apps">
-              <PronoteTile status={status} onChanged={() => void checkPronote()} />
-              <GoogleTiles restricted={true} onChanged={() => void onStatus()} />
-            </div>
-            <p className="muted small">{L("Tout se connecte aussi plus tard, depuis les Réglages.", "You can connect any of these later from Settings.")}</p>
-            <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(2)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(4)}>{pronoteConnected ? L("Continuer — connecté ✓", "Continue — connected ✓") : L("Plus tard", "Later")}</button>
-            </div>
-          </div>
-        )}
-
-        {/* One screen, one line per feature — the old flow spent FOUR separate screens (Study Mode,
-            tutor, flashcards/quiz/notes, daily automation) on this same content. Those screens were the
-            flow's whole length problem: everything a student actually needs on day one fits in one line
-            each here, and the per-feature detail lives where it belongs — in the feature's own
-            first-time hint (FirstTimeHint, client/ui.tsx), shown when the student actually reaches it. */}
-        {step === 4 && (
-          <div className="onboard-step onboard-done">
-            <div className="onboard-done-mark"><Logo size={30} /></div>
-            <h2>{L("C'est prêt", "You're all set")}{name.trim() ? `, ${name.trim().split(/\s+/)[0]}` : ""}</h2>
-            <p className="onboard-lead">{pronoteConnected
-              ? L("Otto se met au travail. Ton plan du jour arrive.", "Otto is getting to work. Your plan for today is on its way.")
-              // Nothing connected yet — offer the whole picker (Pronote, Gmail, Calendar, Drive) rather
-              // than naming Pronote as if it were required, and remind them manual tasks work too.
-              : L("Connecte une app (Pronote, Gmail, Calendar) ou ajoute tes examens depuis les Réglages, et Otto se met au travail.", "Connect an app (Pronote, Gmail, Calendar) or add your exams from Settings, and Otto gets to work.")}</p>
-            <p className="muted small">{L("La première fois que tu ouvres une page, Otto te montre comment elle marche — étape par étape, sur les vrais boutons.", "The first time you open a page, Otto shows you how it works — step by step, on the real buttons.")}</p>
-            <div className="onboard-actions"><button className="btn primary big" onClick={onDone}>{L("Voir mes tâches", "See my tasks")}</button></div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** Dedicated login / sign-up PAGE (routes /login and /signup). Its own clean, centered card. */
-function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status: ConnectionStatus; lang: "fr" | "en"; onLangChange: (v: "fr" | "en") => void; onDone: (isNew?: boolean) => void; initialMode: "login" | "signup" | "reset" }) {
-  const en = lang === "en";
-  const L = (fr: string, e: string) => (en ? e : fr);
-  const [mode, setMode] = useState<"login" | "signup" | "forgot" | "reset">(initialMode);
-  const [email, setEmail] = useState("");
-  const [pw, setPw] = useState("");
-  const [consent, setConsent] = useState(false);
-  const [isChildAccount, setIsChildAccount] = useState(false);
-  const [birthYear, setBirthYear] = useState("");
-  const [parentalConsent, setParentalConsent] = useState(false);
-  const [err, setErr] = useState("");
-  const [busy, setBusy] = useState(false);
-  // The reset link's token lives in the URL's query string, which the app's own client-side router
-  // (routeOf/navigate, above) deliberately drops — read it directly off the page's FIRST load instead of
-  // through the route state. A reset link opened with no token, or an already-used/expired one, still shows
-  // the form; the actual validation happens server-side when they submit (resetToken's error covers both).
-  const [resetToken] = useState(() => new URLSearchParams(window.location.search).get("token") || "");
-  const [resetSent, setResetSent] = useState(false);
-  const [resetDone, setResetDone] = useState(false);
-  const submit = async () => {
-    if (busy) return;
-    if (mode === "forgot") {
-      if (!email.trim()) return;
-      setBusy(true); setErr("");
-      try {
-        await api.forgotPassword(email.trim(), lang);
-        setResetSent(true); // always show the same "check your email" outcome — never reveal whether the account exists
-      } catch {
-        setErr(L("Impossible de contacter le serveur. Vérifie ta connexion et réessaie.", "Couldn't reach the server. Check your connection and try again."));
-      } finally { setBusy(false); }
-      return;
-    }
-    if (mode === "reset") {
-      if (!pw) return;
-      setBusy(true); setErr("");
-      try {
-        const r = await api.resetPassword(resetToken, pw);
-        if (r.ok) { setResetDone(true); setTimeout(() => onDone(false), 1200); }
-        else setErr(r.error || L("Une erreur est survenue.", "Something went wrong."));
-      } catch {
-        setErr(L("Impossible de contacter le serveur. Vérifie ta connexion et réessaie.", "Couldn't reach the server. Check your connection and try again."));
-      } finally { setBusy(false); }
-      return;
-    }
-    if (!email.trim() || !pw || (mode === "signup" && !consent)) return;
-    if (mode === "signup" && isChildAccount && (!birthYear || !parentalConsent)) return;
-    setBusy(true); setErr("");
-    try {
-      const r = mode === "signup" 
-        ? await api.signup(email.trim(), pw, consent, isChildAccount, birthYear ? parseInt(birthYear) : undefined, parentalConsent) 
-        : await api.login(email.trim(), pw, en ? "en" : "fr");
-      if (r.ok) onDone(mode === "signup"); else setErr(r.error || L("Une erreur est survenue.", "Something went wrong."));
-    } catch {
-      setErr(L("Impossible de contacter le serveur. Vérifie ta connexion et réessaie.", "Couldn't reach the server. Check your connection and try again."));
-    } finally {
-      setBusy(false);
-    }
-  };
-  // The two main modes use the prototype's auth copy verbatim (login "Welcome back." · signup "A clearer
-  // day starts here."); forgot/reset keep their own explanatory copy — the prototype doesn't design those
-  // states. French adapted through L() as everywhere else.
-  const titles: Record<typeof mode, string> = {
-    signup: L("Une journée plus claire commence ici.", "A clearer day starts here."),
-    login: L("Content de te revoir.", "Welcome back."),
-    forgot: L("Mot de passe oublié", "Forgot password"),
-    reset: L("Choisis un nouveau mot de passe", "Choose a new password"),
-  };
-  const subs: Record<typeof mode, string> = {
-    signup: L("Un agenda qui s'organise. Un tuteur qui t'explique.", "Meet your planner. Find your tutor."),
-    login: L("Un peu de clarté t'attend.", "A little clarity is waiting for you."),
-    forgot: L("On t'envoie un lien pour en choisir un nouveau.", "We'll email you a link to pick a new one."),
-    reset: L("Ce lien ne fonctionne qu'une seule fois.", "This link only works once."),
-  };
-  return (
-    <div className="login-page">
-      {/* Same nav chrome as the landing page (landing-nav-framer) — the prototype's public pages share
-          one shell: lowercase "otto" wordmark left, language toggle right. */}
-      <header className="landing-nav-framer">
-        <a className="brand-framer" href="/"><Logo size={20} /> <span className="brand-name-framer">otto</span></a>
-        <button type="button" className="lang-toggle-framer" onClick={() => onLangChange(en ? "fr" : "en")} aria-label={en ? "Switch language" : "Changer de langue"}>{en ? "FR" : "EN"}</button>
-      </header>
-      <main className="login-main">
-        <div className="login-card">
-          <h1 className="login-title">{titles[mode]}</h1>
-          <p className="login-sub">{subs[mode]}</p>
-          {/* "Supabase"/an env-var name means nothing to a student — say what's actually broken instead. */}
-          {!status.cloud && <div className="warn">{L("Les comptes ne sont pas encore activés sur ce serveur.", "Accounts aren't set up on this server yet.")}</div>}
-          {mode === "forgot" && resetSent ? (
-            <p className="settings-hint">{L("Si un compte existe avec cette adresse, un e-mail vient de partir avec un lien de réinitialisation.", "If an account exists with that address, an email with a reset link just went out.")}</p>
-          ) : mode === "reset" && resetDone ? (
-            <p className="settings-hint">{L("Mot de passe mis à jour — connexion en cours…", "Password updated — logging you in…")}</p>
-          ) : (
-            <>
-              {mode !== "reset" && (
-                <label className="field"><span>{L("Email", "Email")}</span>
-                  <input className="addinput" type="email" autoComplete="email" placeholder={L("toi@email.com", "you@email.com")} value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
-                </label>
-              )}
-              {mode !== "forgot" && (
-                <label className="field"><span>{mode === "reset" ? L("Nouveau mot de passe", "New password") : L("Mot de passe", "Password")}</span>
-                  <input className="addinput" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} placeholder={L("8 caractères minimum", "At least 8 characters")} value={pw} onChange={(e) => setPw(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void submit(); }} autoFocus={mode === "reset"} />
-                </label>
-              )}
-              {/* RGPD Art.8: under-15s need a parent to set the account up (see Privacy Policy) — a required,
-                  recorded checkbox instead of the previous text-only claim with no actual signal captured. */}
-              {mode === "signup" && (
-                <>
-                  <label className="field-check">
-                    <input type="checkbox" checked={isChildAccount} onChange={(e) => setIsChildAccount(e.target.checked)} />
-                    <span>{L("C'est un compte pour un enfant (moins de 15 ans)", "This is a child account (under 15)")}</span>
-                  </label>
-                  {isChildAccount && (
-                    <>
-                      <label className="field"><span>{L("Année de naissance", "Birth year")}</span>
-                        <input className="addinput" type="number" placeholder="2010" value={birthYear} onChange={(e) => setBirthYear(e.target.value)} />
-                      </label>
-                      <label className="field-check">
-                        <input type="checkbox" checked={parentalConsent} onChange={(e) => setParentalConsent(e.target.checked)} />
-                        <span>{L("En tant que parent, je consens à la création de ce compte.", "As a parent, I consent to this account creation.")}</span>
-                      </label>
-                    </>
-                  )}
-                  {!isChildAccount && (
-                    <label className="field-check">
-                      <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
-                      <span>{L("J'ai 15 ans ou plus, ou un parent a créé ce compte pour moi.", "I'm 15 or older, or a parent set this account up for me.")}</span>
-                    </label>
-                  )}
-                </>
-              )}
-              {err && <div className="autherr">{err}</div>}
-              <button className="btn primary big" disabled={busy || (mode === "forgot" ? !email.trim() : mode === "reset" ? !pw : !email.trim() || !pw || (mode === "signup" && !consent))} onClick={() => void submit()}>
-                {busy ? "…" : mode === "signup" ? L("Créer le compte", "Create account") : mode === "forgot" ? L("Envoyer le lien", "Send link") : mode === "reset" ? L("Changer le mot de passe", "Change password") : L("Se connecter", "Log in")}
-              </button>
-            </>
-          )}
-          {mode === "login" && (
-            <button className="btn ghost" onClick={() => { setMode("forgot"); setErr(""); setResetSent(false); }}>{L("Mot de passe oublié ?", "Forgot password?")}</button>
-          )}
-          {(mode === "login" || mode === "signup") && (
-            <button className="btn ghost" onClick={() => { setMode((m) => (m === "signup" ? "login" : "signup")); setErr(""); }}>
-              {mode === "signup" ? L("Déjà un compte ? Se connecter", "Have an account? Log in") : L("Nouveau ici ? Créer un compte", "New here? Create an account")}
-            </button>
-          )}
-          {mode === "forgot" && (
-            <button className="btn ghost" onClick={() => { setMode("login"); setErr(""); setResetSent(false); }}>{L("← Retour à la connexion", "← Back to login")}</button>
-          )}
-          <a className="login-back" href="/">{L("← Retour à l'accueil", "← Back to home")}</a>
-          {/* target="_blank" deliberately — these would otherwise fall through this file's own SPA router
-              (usePathRoute's click handler) which swaps the ENTIRE route to /terms or /privacy, unmounting
-              this form and losing every typed field (email/password/consent/child-account fields) with no
-              way back except restarting from scratch. Opening in a new tab keeps the signup form alive in
-              THIS tab while the policy opens in its own — reported live as a signup-abandonment risk. */}
-          <div className="login-legal">{L("En continuant, tu acceptes nos ", "By continuing you agree to our ")}<a href="/terms" target="_blank" rel="noopener">{L("conditions", "Terms")}</a> {L("et notre", "&")} <a href="/privacy" target="_blank" rel="noopener">{L("politique de confidentialité", "Privacy Policy")}</a>.</div>
-          <div className="login-copyright">© 2026 Otto</div>
-        </div>
-      </main>
-    </div>
-  );
-}
-
-/** Marketing landing (signed out, route /). Plain white canvas, sharp positioning — one screen per
- *  idea, nothing decorative. Deliberately text-only: no product mock, no demo window. */
-// Exported (not just used internally) so scripts/prerender-landing.tsx can render it in isolation at build
-// time — the only piece of this whole SPA that gets static HTML pre-baked into dist/index.html, since it's
-// the only screen a logged-out visitor or a non-JS crawler/link-unfurler ever needs to see real content
-// for. See that script's own comment for why this is a build-time static render, not per-request SSR.
-export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChange: (v: "fr" | "en") => void }) {
-  const en = lang === "en";
-  const L = (fr: string, e: string) => (en ? e : fr);
-
-  return (
-    <div className="landing landing-framer">
-      {/* Framer-style Navigation */}
-      <header className="landing-nav-framer">
-        <span className="brand-framer"><Logo size={20} /> <span className="brand-name-framer">otto</span></span>
-        <nav className="landing-navlinks-framer">
-          {/* The prototype's nav link leads somewhere real: the /research page, the long-form write-up of
-              Otto's learning philosophy (the research the approach is grounded in) — not an in-page anchor. */}
-          <a href="/research" className="nav-link-framer">{L("Notre approche", "Our approach")}</a>
-          <button type="button" className="lang-toggle-framer" onClick={() => onLangChange(en ? "fr" : "en")} aria-label={en ? "Switch language" : "Changer de langue"}>{en ? "FR" : "EN"}</button>
-          <a className="btn ghost-framer" href="/login">{L("Se connecter", "Log in")}</a>
-        </nav>
-      </header>
-
-      {/* Hero Section */}
-      <main className="hero-framer">
-        <h1 className="hero-title-framer">
-          {en ? "Less busywork. More understanding." : "Moins de travail. Plus de compréhension."}
-        </h1>
-
-        <p className="hero-sub-framer">
-          {en
-            ? "Your school day, organized. Your questions, worked through. Otto brings proactive planning and personal tutoring together."
-            : "Ta journée d'école, organisée. Tes questions, résolues. Otto réunit la planification proactive et le tutorat personnel."}
-        </p>
-
-        <div className="hero-cta-framer">
-          <a className="btn primary-framer" href="/signup">{en ? "Open Otto" : "Ouvrir Otto"}</a>
-        </div>
-
-        <p className="hero-tagline-framer">
-          {en ? "A study companion, not a shortcut." : "Un compagnon d'étude, pas un raccourci."}
-        </p>
-      </main>
-
-      {/* Two-column Feature Section */}
-      <section id="features" className="features-framer">
-        <div className="feature-column-framer">
-          <div className="feature-number-framer">01</div>
-          <h2 className="feature-title-framer">{en ? "PROACTIVE TASKS" : "TÂCHES PROACTIVES"}</h2>
-          <h3 className="feature-heading-framer">
-            {en ? "Your day, already sorted." : "Ta journée, déjà organisée."}
-          </h3>
-          <p className="feature-desc-framer">
-            {en
-              ? "Pronote, Gmail, Calendar, Drive — they all become priorities, with materials and steps ready before you sit down."
-              : "Pronote, Gmail, Calendar, Drive — tout devient priorité, avec les matériaux et les étapes prêts avant même que tu t'installes."}
-          </p>
-
-          {/* Sample Task Card */}
-          <div className="sample-task-framer">
-            <div className="sample-task-subject-framer">
-              {en ? "MATHEMATICS · TOMORROW" : "MATHÉMATIQUES · DEMAIN"}
-            </div>
-            <h4 className="sample-task-title-framer">
-              {en ? "Get ready for derivatives" : "Prépare-toi aux dérivées"}
-            </h4>
-            <p className="sample-task-meta-framer">
-              {en ? "15 min review · 2 practice questions" : "15 min de révision · 2 questions d'exercice"}
-            </p>
-          </div>
-        </div>
-
-        <div className="feature-column-framer">
-          <div className="feature-number-framer">02</div>
-          <h2 className="feature-title-framer">{en ? "PERSONAL TUTOR" : "TUTEUR PERSONNEL"}</h2>
-          <h3 className="feature-heading-framer">
-            {en ? "A nudge. Not the answer." : "Un coup de pouce. Pas la réponse."}
-          </h3>
-          <p className="feature-desc-framer">
-            {en
-              ? "Stuck on a concept? Otto asks questions, adapts its approach, and helps you find your own way through."
-              : "Bloqué sur un concept ? Otto pose des questions, adapte son approche et t'aide à trouver ton propre chemin."}
-          </p>
-
-          {/* Sample Tutor Interaction */}
-          <div className="sample-tutor-framer">
-            <div className="sample-tutor-label-framer">
-              {en ? "OTTO / YOUR TUTOR" : "OTTO / TON TUTEUR"}
-            </div>
-            <p className="sample-tutor-question-framer">
-              {en ? "What does the slope tell us about how this function changes?" : "Que nous dit la pente sur la façon dont cette fonction change ?"}
-            </p>
-            <p className="sample-tutor-prompt-framer">
-              {en ? "Start with your observations — what do you notice?" : "Commence par tes observations — que remarques-tu ?"}
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* Footer */}
-      <footer className="landing-footer-framer">
-        <div className="footer-brand-framer">
-          otto · {en ? "Made for learning, not shortcuts." : "Fait pour apprendre, pas pour tricher."}
-        </div>
-        <nav className="footer-links-framer">
-          <a href="/privacy">{en ? "Privacy" : "Confidentialité"}</a>
-          <a href="/terms">{en ? "Terms" : "Conditions"}</a>
-          {/* Not in the prototype's footer, but /research is this landing's long-form "Research" section —
-              dropping the link during the restyle would orphan the page entirely. (The /unlimited page
-              stays reachable through its own routes; it's just not a footer link any more.) */}
-          <a href="/research">{en ? "Research" : "Recherche"}</a>
-        </nav>
-      </footer>
-    </div>
-  );
-}
-
-// ── Legal pages (public) ──────────────────────────────────────────────────────
-// An accurate privacy policy is required for Google's OAuth verification (Gmail/Calendar/Drive are
-// sensitive/restricted scopes) and is basic legal table-stakes for publishing.
-const LEGAL_ENTITY = "Willem Tjong";
-const LEGAL_EMAIL = "tjong.willem@gmail.com";
-const LEGAL_JURISDICTION = "France";
 const LEGAL_UPDATED = "July 30, 2026";
-
-function UnlimitedPage({ status, onDone }: { status: ConnectionStatus; onDone: () => Promise<void> }) {
-  const en = status.language === "en";
-  const [busy, setBusy] = useState(false);
-  const already = !!status.unlimited;
-  const claim = async () => {
-    setBusy(true);
-    try { await api.goUnlimited(); await onDone(); } finally { setBusy(false); }
-  };
-  return (
-    <div className="landing legal-page">
-      <header className="landing-nav glass-nav">
-        <a className="brand" href="/"><Logo size={22} /> Otto</a>
-      </header>
-      <main className="legal unlimited-page">
-        <h1>{en ? "Unlimited credits" : "Crédits illimités"}</h1>
-        {already ? (
-          <>
-            <p>{en ? "Your account already has no monthly AI budget cap." : "Ton compte n'a déjà plus de plafond d'utilisation IA mensuel."}</p>
-            <a className="btn primary big" href="/tasks">{en ? "Back to tasks" : "Retour aux tâches"}</a>
-          </>
-        ) : (
-          <>
-            <p>{en ? "Remove the monthly AI spend cap on this account." : "Retire le plafond mensuel de dépense IA de ce compte."}</p>
-            <button className="btn primary big" disabled={busy} onClick={() => void claim()}>
-              {busy ? (en ? "Applying…" : "Application…") : (en ? "Get unlimited credits" : "Obtenir des crédits illimités")}
-            </button>
-          </>
-        )}
-        <a className="legal-back" href="/">← {en ? "Back to Otto" : "Retour à Otto"}</a>
-      </main>
-      <footer className="legal-foot">
-        <span className="foot-mit">© 2026 Otto</span>
-      </footer>
-    </div>
-  );
-}
 
 function LegalPage({ kind, lang }: { kind: "privacy" | "terms"; lang?: string }) {
   return (
@@ -3970,106 +1251,6 @@ function LegalPageBody({ kind }: { kind: "privacy" | "terms" }) {
   );
 }
 
-function PrivacyBody() {
-  const L = useLang();
-  return (
-    <>
-      <h1>{L("Politique de confidentialité", "Privacy Policy")}</h1>
-      <p>{L(`Otto (« nous ») est un assistant de tâches qui lit les applications que tu connectes et prépare le travail pour toi. Cette politique explique ce à quoi nous accédons, pourquoi, et tes choix. Otto est géré par ${LEGAL_ENTITY}.`, `Otto ("we", "us") is a to-do assistant that reads the apps you connect and prepares work for you. This policy explains what we access, why, and your choices. Otto is operated by ${LEGAL_ENTITY}.`)}</p>
-
-      <h2>{L("Ce à quoi nous accédons", "What we access")}</h2>
-      <p>{L("Uniquement les applications que tu connectes explicitement, et uniquement pour faire le travail demandé :", "Only the apps you explicitly connect, and only to do the work you asked for:")}</p>
-      <ul>
-        <li><b>Gmail</b> — {L("pour lire les fils récents et préparer des brouillons de réponse. Otto crée des brouillons ; il n'envoie, ne supprime, ni ne modifie jamais un mail de lui-même.", "to read recent threads and prepare draft replies. Otto creates drafts; it never sends, deletes, or modifies mail on its own.")}</li>
-        <li><b>Google Calendar</b> — {L("pour lire les événements et préparer des brouillons de nouveaux événements pour ta relecture.", "to read events and prepare drafts of new events for your review.")}</li>
-        <li><b>Google Drive / Docs / Sheets / Slides</b> — {L("pour lire les fichiers pertinents et créer des documents qu'il fait pour toi. Otto ne modifie jamais que les documents qu'il a lui-même créés — jamais un fichier qui est déjà le tien.", "to read relevant files and create documents it makes for you. Otto only ever edits a document it created itself — it never modifies a file that's already yours.")}</li>
-        <li><b>Pronote</b> ({L("optionnel, non officiel — aucune API Pronote officielle n'existe", "optional, unofficial — no official Pronote API exists")}) — {L("lecture seule, pour voir les dates de rendu des devoirs. Otto n'écrit jamais rien sur Pronote.", "read-only, to see homework due dates. Otto never writes anything back to Pronote.")}</li>
-        <li>{L("Autres intégrations que tu connectes", "Other integrations you connect")} — {L("accédées uniquement pour les tâches auxquelles elles se rapportent.", "accessed only for the tasks they relate to.")}</li>
-      </ul>
-      <p>{L("Otto effectue de manière autonome le travail ", "Otto performs autonomously the work that is ")}<b>{L("réversible", "reversible")}</b>{L(" (brouillons, documents, recherche). Tout ce qui est irréversible — envoyer un mail, publier, inviter, supprimer, ou payer — n'est ", " (drafts, documents, research). Anything irreversible — sending an email, posting, inviting, deleting, or paying — is ")}<b>{L("jamais", "never")}</b>{L(" fait sans ta confirmation explicite. Il ne modifie jamais non plus un document, une feuille ou une présentation qu'il n'a pas créé — seulement tes propres fichiers, jamais ceux d'Otto.", " done without your explicit confirmation. It also never edits a document, sheet, or slide deck that it didn't create — only your own files, never Otto's.")}</p>
-
-      <h2>{L("Ce que nous stockons", "What we store")}</h2>
-      <ul>
-        <li>{L("Ton email de compte et un mot de passe haché de manière sécurisée (nous ne stockons jamais ton mot de passe en clair).", "Your account email and a securely hashed password (we never store your password in plain text).")}</li>
-        <li>{L("Les tâches qu'Otto génère et un profil de faits qu'il apprend pour mieux travailler (personnes, projets, préférences) — tu peux les consulter et les supprimer à tout moment dans les Réglages.", "The tasks Otto generates and a profile of facts it learns to do better work (people, projects, preferences) — you can view and delete these any time in Settings.")}</li>
-        <li>{L("Un décompte approximatif de l'usage IA pour afficher ton utilisation mensuelle.", "Approximate AI-usage counts for showing your monthly usage.")}</li>
-      </ul>
-      <p>{L("Nous ne vendons pas tes données, ne les utilisons pas pour de la publicité, et n'utilisons pas ton contenu pour entraîner des modèles de fondation.", "We do not sell your data, use it for advertising, or use your content to train foundation models.")}</p>
-
-      <h2>{L("Prestataires de service", "Service providers")}</h2>
-      <p>{L("Otto partage des données avec les prestataires nécessaires au fonctionnement du service, selon leurs conditions :", "Otto shares data with the processors needed to run the service, under their terms:")}</p>
-      <ul>
-        <li><b>Composio</b> — {L("gère les connexions OAuth vers tes applications et exécute les actions de lecture/écriture en ton nom.", "brokers the OAuth connections to your apps and executes read/write actions on your behalf.")}</li>
-        <li><b>DeepSeek</b> — {L("le modèle IA qui lit le contexte et rédige le travail. Le contenu pertinent est envoyé pour générer chaque tâche/brouillon.", "the AI model that reads context and drafts the work. Relevant content is sent to generate each task/draft.")}</li>
-        <li><b>Supabase</b> — {L("stocke ton compte, tes tâches et ton profil.", "stores your account, tasks, and profile.")}</li>
-        <li>{L("Prestataires d'hébergement/infrastructure qui font tourner l'application.", "Hosting/infrastructure providers that run the app.")}</li>
-      </ul>
-
-      <h2>{L("Conservation et suppression", "Retention & deletion")}</h2>
-      <p>{L(`Tes données sont conservées tant que ton compte existe — nous ne les supprimons pas automatiquement en cas d'inactivité, c'est à toi de le faire quand tu le souhaites. Tu gardes le contrôle, sans email ni attente nécessaire : efface tout ce qu'Otto a appris via Réglages → « Tout oublier », déconnecte n'importe quelle application à tout moment (révoque immédiatement l'accès d'Otto), télécharge tout ce qui est stocké sur toi via Réglages → « Télécharger mes données », ou supprime définitivement ton compte et tout ce qu'il contient via Réglages → « Tout supprimer » — instantané, en libre-service, et irréversible.`, `Your data is kept for as long as your account exists — we don't automatically delete it after a period of inactivity; deleting it when you're done is up to you. You're in control, with no email-and-wait required: clear everything Otto has learned via Settings → "Forget everything", disconnect any app at any time (revokes Otto's access immediately), download everything stored about you via Settings → "Download my data", or permanently delete your account and everything with it via Settings → "Delete everything" — instant, self-serve, and irreversible.`)}</p>
-
-      <h2>{L("Sécurité", "Security")}</h2>
-      <p>{L("Google et les autres connexions via OAuth signifient que nous ne voyons jamais tes mots de passe d'application. Pronote est la seule exception — il n'a pas d'OAuth, donc son identifiant/mot de passe transitent une seule fois par notre serveur pour se connecter ; le mot de passe lui-même n'est jamais stocké ni journalisé, seulement un jeton rotatif que Pronote émet à sa place. Les données sont transmises via HTTPS et l'accès est limité à ton compte. Aucun système n'est parfaitement sûr, mais nous prenons des mesures raisonnables pour protéger tes informations.", "Google and other OAuth-based connections mean we never see your app passwords. Pronote is the one exception — it has no OAuth, so its username/password pass through our server once to connect; the password itself is never stored or logged, only a rotating token Pronote issues in its place. Data is transmitted over HTTPS and access is scoped to your account. No system is perfectly secure, but we take reasonable measures to protect your information.")}</p>
-
-      <h2>{L("Déclaration API Google", "Google API disclosure")}</h2>
-      <p>{L("L'utilisation par Otto des informations reçues des API Google respecte la ", "Otto's use of information received from Google APIs adheres to the ")}<a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noreferrer">{L("politique d'utilisation des données utilisateur des services API Google", "Google API Services User Data Policy")}</a>{L(", y compris les exigences de Limited Use.", ", including the Limited Use requirements.")}</p>
-
-      <h2>{L("Tes droits (RGPD)", "Your rights (GDPR)")}</h2>
-      <p>{L(`Si tu es dans l'UE/EEE, le RGPD te donne le droit d'accéder à, de corriger, d'exporter (portabilité), ou de supprimer (effacement) tes données, et de t'opposer à ou de restreindre leur traitement. Les trois premiers sont en libre-service dans les Réglages, dès maintenant, sans demande nécessaire ; pour tout le reste, ou si tu es ailleurs et souhaites la même chose, contacte ${LEGAL_EMAIL} et nous nous en occuperons directement. Notre base légale de traitement est l'exécution du service que tu as demandé (contrat) plus notre intérêt légitime à faire bien fonctionner Otto pour toi.`, `If you're in the EU/EEA, GDPR gives you the right to access, correct, export (portability), or delete (erasure) your data, and to object to or restrict how it's processed. The first three are self-serve in Settings, right now, with no request needed; for anything else, or if you're elsewhere and want the same, contact ${LEGAL_EMAIL} and we'll handle it directly. Our legal basis for processing is performing the service you asked for (contract) plus our legitimate interest in making Otto work well for you.`)}</p>
-
-      <h2>{L("Transferts internationaux", "International transfers")}</h2>
-      <p>{L(`Tes données sont traitées par des prestataires situés hors de ${LEGAL_JURISDICTION} (y compris aux États-Unis et ailleurs) — Composio, DeepSeek, Supabase, et notre hébergeur. Nous n'utilisons que des prestataires qui s'engagent contractuellement à protéger tes données (par ex. des clauses contractuelles types le cas échéant) au niveau exigé par le RGPD.`, `Your data is processed by providers based outside ${LEGAL_JURISDICTION} (including the US and elsewhere) — Composio, DeepSeek, Supabase, and our hosting provider. We only use providers that commit contractually to protecting your data (e.g. standard contractual clauses where applicable) to the standard GDPR requires.`)}</p>
-
-      <h2>{L("Âge", "Age")}</h2>
-      <p>{L(`Otto est pensé pour les élèves, mais ouvrir un compte nécessite d'avoir l'âge légal pour consentir soi-même au traitement de ses données (15 ans en ${LEGAL_JURISDICTION}) ; en dessous, un parent ou tuteur doit le créer et rester impliqué.`, `Otto is built with students in mind, but opening an account requires being old enough to consent to data processing on your own (15 in ${LEGAL_JURISDICTION}); younger than that, a parent or guardian should set it up and stay involved.`)}</p>
-
-      <h2>{L("Modifications et contact", "Changes & contact")}</h2>
-      <p>{L(`Nous mettrons à jour cette politique au fil de l'évolution du service et noterons la date ci-dessus. Questions ou tout ce qui n'est pas couvert ici : ${LEGAL_EMAIL}.`, `We'll update this policy as the service evolves and note the date above. Questions or anything not covered here: ${LEGAL_EMAIL}.`)}</p>
-    </>
-  );
-}
-
-function TermsBody() {
-  const L = useLang();
-  return (
-    <>
-      <h1>{L("Conditions d'utilisation", "Terms of Service")}</h1>
-      <p>{L(`En utilisant Otto, géré par ${LEGAL_ENTITY}, tu acceptes ces conditions.`, `By using Otto, operated by ${LEGAL_ENTITY}, you agree to these terms.`)}</p>
-
-      <h2>{L("Le service", "The service")}</h2>
-      <p>{L("Otto lit les applications que tu connectes et prépare le travail — brouillons, documents, et tâches organisées. Il effectue les actions réversibles de manière autonome et demande ta confirmation avant tout ce qui est irréversible (envoyer, publier, inviter, supprimer, payer). Tu es responsable de la relecture de tout ce qu'Otto prépare avant d'agir dessus.", "Otto reads the apps you connect and prepares work — drafts, documents, and organized tasks. It performs reversible actions autonomously and asks for your confirmation before anything irreversible (sending, posting, inviting, deleting, paying). You are responsible for reviewing anything Otto prepares before you act on it.")}</p>
-
-      <h2>{L("Tes responsabilités", "Your responsibilities")}</h2>
-      <ul>
-        <li>{L("Garde tes identifiants de compte en sécurité et fournis des informations exactes.", "Keep your account credentials secure and provide accurate information.")}</li>
-        <li>{L("Ne connecte que des comptes que tu es autorisé à utiliser.", "Only connect accounts you are authorized to use.")}</li>
-        <li>{L("Utilise Otto de manière licite et non pour envoyer du spam, harceler, ou violer les droits d'autrui ou les conditions des applications connectées.", "Use Otto lawfully and not to send spam, harass, or violate others' rights or the connected apps' terms.")}</li>
-      </ul>
-
-      <h2>{L("Contenu généré par IA — tout relire", "AI-generated content — review everything")}</h2>
-      <p>{L("Otto utilise l'IA, qui peut être inexacte, incomplète, ou erronée. Chaque brouillon, document, et suggestion est un point de départ que ", "Otto uses AI, which can be inaccurate, incomplete, or wrong. Every draft, document, and suggestion is a starting point that ")}<b>{L("tu dois relire et vérifier", "you must review and verify")}</b>{L(" avant de l'envoyer, l'enregistrer, ou t'y fier. Tu es seul responsable de tout ce que tu choisis d'envoyer, publier, ou sur quoi tu agis. Otto ne prépare que du travail réversible et demande ta confirmation avant tout ce qui est irréversible ; la décision — et ses conséquences — t'appartiennent.", " before sending, saving, or relying on it. You are solely responsible for anything you choose to send, publish, or act upon. Otto only prepares reversible work and asks for your confirmation before anything irreversible; the decision — and its consequences — are yours.")}</p>
-
-      <h2>{L("Aucune garantie", "No warranty")}</h2>
-      <p>{L("Le service est fourni « tel quel » et « selon disponibilité », sans garantie d'aucune sorte, expresse, implicite, ou légale — y compris toute garantie implicite de qualité marchande, d'adéquation à un usage particulier, d'exactitude, ou de non-contrefaçon. Nous ne garantissons pas qu'Otto sera ininterrompu, sans erreur, sécurisé, ou que ses résultats seront corrects ou adaptés à un usage quelconque. Tu l'utilises à tes propres risques.", "The service is provided \"as is\" and \"as available\", without warranties of any kind, whether express, implied, or statutory — including any implied warranties of merchantability, fitness for a particular purpose, accuracy, or non-infringement. We do not warrant that Otto will be uninterrupted, error-free, secure, or that its output will be correct or suitable for any purpose. You use it at your own risk.")}</p>
-
-      <h2>{L("Limitation de responsabilité", "Limitation of liability")}</h2>
-      <p>{L(`Dans toute la mesure permise par la loi applicable, ${LEGAL_ENTITY} et toute personne impliquée dans la fourniture d'Otto ne sauraient être tenus responsables de dommages indirects, accessoires, spéciaux, consécutifs, exemplaires, ou punitifs, ni d'aucune perte de données, de profits, de revenus, de clientèle, de communications manquées, d'envois erronés, ou d'interruption d'activité, découlant de ou liés à ton utilisation (ou incapacité d'utiliser) Otto ou de tout ce qu'il prépare ou fait — même si informé de cette possibilité. Dans toute la mesure permise par la loi, notre responsabilité totale cumulée pour toutes les réclamations liées au service n'excédera pas le plus élevé entre le montant que tu nous as payé au cours des 12 mois précédant la réclamation, ou 50 €. Rien dans ces conditions n'exclut une responsabilité qui ne peut être exclue en vertu de la loi applicable.`, `To the fullest extent permitted by applicable law, ${LEGAL_ENTITY} and anyone involved in providing Otto shall not be liable for any indirect, incidental, special, consequential, exemplary, or punitive damages, nor for any loss of data, profits, revenue, goodwill, missed communications, mistaken sends, or business interruption, arising out of or relating to your use of (or inability to use) Otto or anything it prepares or does — even if advised of the possibility. To the fullest extent permitted by law, our total aggregate liability for all claims relating to the service will not exceed the greater of the amount you paid us in the 12 months before the claim, or €50. Nothing in these terms excludes liability that cannot be excluded under applicable law.`)}</p>
-
-      <h2>{L("Tes données et ta responsabilité", "Your data & your responsibility")}</h2>
-      <p>{L(`Tu es responsable des comptes et du contenu que tu connectes et de t'assurer que tu as le droit de le faire. Tu agis en tant que responsable de traitement des données personnelles dans tes comptes connectés ; Otto ne les traite que pour fournir le service, comme décrit dans la Politique de confidentialité. Tu acceptes d'indemniser et de dégager ${LEGAL_ENTITY} de toute réclamation, perte, ou dépense découlant de ton utilisation d'Otto, de ton contenu, ou de ta violation de ces conditions ou des droits ou conditions d'un tiers.`, `You are responsible for the accounts and content you connect and for ensuring you have the right to do so. You act as the controller of the personal data in your connected accounts; Otto processes it only to provide the service, as described in the Privacy Policy. You agree to indemnify and hold ${LEGAL_ENTITY} harmless from any claims, losses, or expenses arising from your use of Otto, your content, or your breach of these terms or of any third party's rights or terms.`)}</p>
-
-      <h2>{L("Disponibilité et modifications", "Availability & changes")}</h2>
-      <p>{L("Otto est un outil indépendant et n'est ni approuvé par ni affilié à Google, ou tout autre prestataire intégré. Nous pouvons modifier, suspendre, limiter (y compris via un budget IA mensuel), ou interrompre toute partie du service à tout moment sans responsabilité.", "Otto is an independent tool and is not endorsed by or affiliated with Google, or any other integrated provider. We may change, suspend, limit (including via a monthly AI budget), or discontinue any part of the service at any time without liability.")}</p>
-
-      <h2>{L("Résiliation", "Termination")}</h2>
-      <p>{L("Tu peux arrêter d'utiliser Otto et supprimer ton compte à tout moment. Nous pouvons suspendre ou résilier les comptes qui violent ces conditions ou qui créent un risque ou une exposition légale.", "You may stop using Otto and delete your account at any time. We may suspend or terminate accounts that violate these terms or that create risk or legal exposure.")}</p>
-
-      <h2>{L("Droit applicable et contact", "Governing law & contact")}</h2>
-      <p>{L(`Ces conditions sont régies par les lois de ${LEGAL_JURISDICTION}, sans égard aux règles de conflit de lois, et les tribunaux de ${LEGAL_JURISDICTION} sont compétents, sauf disposition contraire d'une loi locale impérative sur la consommation. Si une disposition est jugée inapplicable, le reste demeure en vigueur. Questions : ${LEGAL_EMAIL}.`, `These terms are governed by the laws of ${LEGAL_JURISDICTION}, without regard to conflict-of-laws rules, and the courts of ${LEGAL_JURISDICTION} have jurisdiction, except where mandatory local consumer law provides otherwise. If any provision is held unenforceable, the rest remains in effect. Questions: ${LEGAL_EMAIL}.`)}</p>
-    </>
-  );
-}
-
 /** /research — the philosophy page, linked from the landing nav's "Our approach". The landing's compact
  *  "Research" list stays a 4-line citation on purpose; this page is the mission statement plus the four
  *  methods, one short user-facing paragraph each — deliberately NO file/function names here (reported:
@@ -4080,256 +1261,5 @@ function ResearchPage({ lang }: { lang?: string }) {
     <LangContext.Provider value={lang === "en" ? "en" : "fr"}>
       <ResearchPageBody />
     </LangContext.Provider>
-  );
-}
-function ResearchPageBody() {
-  const L = useLang();
-  return (
-    <div className="landing research-page">
-      <header className="landing-nav-framer">
-        <a className="brand-framer" href="/"><Logo size={20} /> <span className="brand-name-framer">otto</span></a>
-        <nav className="landing-navlinks-framer">
-          <a className="btn ghost-framer" href="/">{L("Accueil", "Home")}</a>
-        </nav>
-      </header>
-      <main className="research-main">
-        {/* The mission statement leads the page, set in the same serif display face as the landing hero —
-            this page is the philosophy, typeset like a manifesto, not a plain article. */}
-        <p className="micro-label accent">{L("Recherche", "Research")}</p>
-        <h1 className="research-title">{L("Fait pour apprendre, pas pour tricher.", "Made for learning, not shortcuts.")}</h1>
-        <p className="research-intro">
-          {L(
-            "La plupart des tuteurs IA promettent d'enseigner. Sous la pression, ils donnent la réponse. Otto est construit sur quatre méthodes qui rendent plus difficile de donner la réponse que t'aider à apprendre.",
-            "Most AI tutors promise to teach. Under pressure, they hand over the answer. Otto is built on four methods that make handing over the answer harder than helping you learn.",
-          )}
-        </p>
-
-        <section className="research-sec">
-          <p className="research-sec-kicker" aria-hidden>01</p>
-          <h2 className="research-sec-title">{L("Le questionnement socratique", "Socratic questioning")}</h2>
-        <p className="research-sec-body">
-          {L(
-            "Otto ne donne jamais la conclusion — c'est toi qui la trouves. Il repère exactement où tu bloques, donne un seul indice à la fois, puis te demande de reformuler avec tes mots. Et s'il commence à glisser vers la réponse toute faite, un garde-fou intégré l'arrête et le redirige.",
-            "Otto never states the conclusion — you do. It finds exactly where you're stuck, gives one hint at a time, then asks you to say it back in your own words. And if it ever drifts toward just handing over the answer, a built-in guardrail stops it and redirects.",
-          )}
-        </p>
-        </section>
-
-        <section className="research-sec">
-          <p className="research-sec-kicker" aria-hidden>02</p>
-          <h2 className="research-sec-title">{L("La répétition espacée", "Spaced repetition")}</h2>
-        <p className="research-sec-body">
-          {L(
-            "Chaque carte revient juste avant que tu l'aurais oubliée — ni plus tôt, ni plus tard. Celles que tu rates reviennent vite ; celles que tu connais s'éloignent.",
-            "Every card comes back right before you'd forget it — not sooner, not later. The ones you miss return quickly; the ones you know drift further away.",
-          )}
-        </p>
-        </section>
-
-        <section className="research-sec">
-          <p className="research-sec-kicker" aria-hidden>03</p>
-          <h2 className="research-sec-title">{L("La hiérarchie de l'engagement", "The engagement hierarchy")}</h2>
-        <p className="research-sec-body">
-          {L(
-            "Lire une réponse n'apprend presque rien. Expliquer son raisonnement à voix haute apprend le plus. Chaque réponse d'Otto est écrite pour te faire monter d'un cran — jamais descendre.",
-            "Reading an answer teaches you almost nothing. Explaining your reasoning out loud teaches you the most. Every Otto reply is written to pull you one level deeper — never shallower.",
-          )}
-        </p>
-        </section>
-
-        <section className="research-sec">
-          <p className="research-sec-kicker" aria-hidden>04</p>
-          <h2 className="research-sec-title">{L("La matrice d'Eisenhower", "The Eisenhower matrix")}</h2>
-        <p className="research-sec-body">
-          {L(
-            "Ta journée n'est pas une pile triée par échéance. Chaque tâche est notée pour l'urgence et l'importance — et re-notée à mesure que les dates approchent — pour que la bonne chose reste en haut.",
-            "Your day isn't a pile sorted by deadline. Every task is scored for urgency and importance — and re-scored as deadlines approach — so the right thing stays on top.",
-          )}
-        </p>
-        </section>
-
-        <section className="research-sec research-sec-closing">
-          <h2 className="research-sec-title">{L("Ce que ça ne veut pas dire", "What this doesn't mean")}</h2>
-          <p className="research-sec-body">
-            {L(
-              "Otto peut se tromper — un modèle de langage reste un modèle de langage. Alors chaque fois qu'un garde-fou se déclenche, Otto l'affiche sur l'échange, au lieu de prétendre qu'il est infaillible.",
-              "Otto can still be wrong — a language model is a language model. So whenever a guardrail fires, Otto says so right on the exchange, instead of claiming to be infallible.",
-            )}
-          </p>
-        </section>
-
-        <a className="legal-back" href="/">{L("← Retour à Otto", "← Back to Otto")}</a>
-      </main>
-      <footer className="legal-foot">
-        <span className="foot-mit">© 2026 Otto</span>
-      </footer>
-    </div>
-  );
-}
-
-/** The person-profile editor (lives in the Settings page): about + preferences + people + projects.
- *  Otto fills it in as it works; it's injected into how tasks are chosen + done. Always expanded here. */
-function ProfileEditor() {
-  const L = useLang();
-  const notify = useNotify();
-  const [p, setP] = useState<Profile | null>(null);
-  // A load failure used to be indistinguishable from "still loading" — `catch(() => setP(null))` left this
-  // stuck on "Chargement…" forever with no way to tell the user anything went wrong or let them retry.
-  const [loadError, setLoadError] = useState(false);
-  const load = () => { setLoadError(false); void api.profile().then(setP).catch(() => setLoadError(true)); };
-  useEffect(load, []);
-  if (loadError) return <p className="rewrite-error">{L("Impossible de charger ton profil.", "Couldn't load your profile.")} <button type="button" className="btn xs ghost" onClick={load}>{L("Réessayer", "Retry")}</button></p>;
-  if (!p) return <p className="muted small">{L("Chargement…", "Loading…")}</p>;
-  const saveErr = () => L("Ça n'a pas été enregistré — réessaie.", "That didn't save — give it another try.");
-  const count = (p.name ? 1 : 0) + (p.about ? 1 : 0) + p.preferences.length + p.people.length + p.projects.length + p.courses.length;
-  const lists = [
-    { key: "preference" as const, label: L("Préférences", "Preferences"), items: p.preferences },
-    { key: "person" as const, label: L("Personnes", "People"), items: p.people },
-    { key: "project" as const, label: L("Projets", "Projects"), items: p.projects },
-    { key: "course" as const, label: L("Cours", "Courses"), items: p.courses },
-  ];
-  return (
-    <div className="memory-body">
-      <NameRow name={p.name || ""} onSave={async (v) => { try { setP(await api.setProfile("name", v)); } catch (e: any) { notify(e?.message || saveErr(), "error"); } }} />
-      <AboutRow about={p.about} onSave={async (v) => { try { setP(await api.setProfile("about", v)); } catch (e: any) { notify(e?.message || saveErr(), "error"); } }} />
-      {lists.map((l) => (
-        <div className="prof-group" key={l.key}>
-          <div className="prof-label">{l.label}</div>
-          <ul className="memory-list">
-            {l.items.map((it, i) => (
-              <li key={i}><span>{it}</span><button className="x" title={L("Supprimer", "Remove")} aria-label={L("Supprimer", "Remove")} onClick={async () => { try { setP(await api.delProfile(l.key, i)); } catch (e: any) { notify(e?.message || saveErr(), "error"); } }}>×</button></li>
-            ))}
-          </ul>
-          <AddRow placeholder={L(`Ajouter : ${l.label.toLowerCase().replace(/s$/, "")}…`, `Add a ${l.label.toLowerCase().replace(/s$/, "")}…`)} onAdd={async (v) => { try { setP(await api.setProfile(l.key, v)); } catch (e: any) { notify(e?.message || saveErr(), "error"); } }} />
-        </div>
-      ))}
-      {count === 0
-        ? <div className="muted small">{L("Vide pour l'instant — Otto le remplit au fil du travail, ou ajoute ton nom, une description, tes préférences, personnes et projets ici.", "Empty for now — Otto fills this in as it works, or add your name, about, preferences, people and projects here.")}</div>
-        : <div className="forget-row">
-            <button
-              className="btn xs forget"
-              onClick={async () => {
-                if (!window.confirm(L("Oublier tout ce qu'Otto a appris sur toi ? Ça efface ta description, préférences, personnes et projets, sans retour en arrière possible.", "Forget everything Otto has learned about you? This clears your About, preferences, people and projects, and can't be undone."))) return;
-                try { setP(await api.clearProfile()); } catch (e: any) { notify(e?.message || saveErr(), "error"); }
-              }}
-            >{L("Tout oublier", "Forget everything")}</button>
-            <span className="muted small">{L("Efface la mémoire d'Otto — il repart de zéro et te réapprend au fil du travail.", "Wipes Otto's memory — it starts from zero and learns you again as it works.")}</span>
-          </div>}
-    </div>
-  );
-}
-
-function NameRow({ name, onSave }: { name: string; onSave: (v: string) => Promise<void> }) {
-  const L = useLang();
-  const [text, setText] = useState(name);
-  useEffect(() => { setText(name); }, [name]);
-  return (
-    <div className="prof-group">
-      <div className="prof-label">{L("Nom", "Name")}</div>
-      <div className="addrow">
-        <input className="addinput sm" placeholder={L("Comment Otto doit-il t'appeler ?", "What should Otto call you?")} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void onSave(text.trim()); }} />
-        <button className="btn" disabled={text.trim() === name.trim()} onClick={() => void onSave(text.trim())}>{L("Enregistrer", "Save")}</button>
-      </div>
-    </div>
-  );
-}
-
-function AboutRow({ about, onSave }: { about: string; onSave: (v: string) => Promise<void> }) {
-  const L = useLang();
-  const [text, setText] = useState(about);
-  useEffect(() => { setText(about); }, [about]);
-  return (
-    <div className="prof-group">
-      <div className="prof-label">{L("À propos de toi", "About you")}</div>
-      <div className="addrow">
-        <input className="addinput sm" placeholder={L("Une ligne : qui tu es / comment tu travailles", "One line: who you are / how you work")} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void onSave(text.trim()); }} />
-        <button className="btn" disabled={text.trim() === about.trim()} onClick={() => void onSave(text.trim())}>{L("Enregistrer", "Save")}</button>
-      </div>
-    </div>
-  );
-}
-
-function AddRow({ placeholder, onAdd }: { placeholder: string; onAdd: (v: string) => Promise<void> }) {
-  const L = useLang();
-  const [text, setText] = useState("");
-  // onAdd already notifies on failure (see ProfileEditor) and never rejects — but guard anyway so a future
-  // caller that DOES reject can't clear the user's typed text or leave an unhandled rejection here.
-  const go = async () => { const v = text.trim(); if (!v) return; try { await onAdd(v); setText(""); } catch { /* text stays — onAdd already surfaced the error */ } };
-  return (
-    <div className="addrow">
-      <input className="addinput sm" placeholder={placeholder} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void go(); }} />
-      <button className="btn" disabled={!text.trim()} onClick={() => void go()}>{L("Ajouter", "Add")}</button>
-    </div>
-  );
-}
-
-function AddTask({ onAdded }: { onAdded: Dispatch<SetStateAction<WebTask[]>> }) {
-  const L = useLang();
-  const notify = useNotify();
-  const [text, setText] = useState("");
-  const [busy, setBusy] = useState(false);
-  // Optional explicit date — the "personal commitment" capture path (a job shift, a club meeting, an
-  // appointment): a real date attached right here beats waiting on the AI to maybe infer one from vague
-  // phrasing, and it's the lowest-friction way to get something that isn't from a connected app onto the
-  // same list as everything else. Collapsed by default so it never adds weight to the common case of just
-  // typing a quick task.
-  const [showWhen, setShowWhen] = useState(false);
-  const [when, setWhen] = useState("");
-  const submit = async () => {
-    const v = text.trim();
-    if (!v || busy) return;
-    setBusy(true); setText("");
-    const whenToSend = when;
-    setShowWhen(false); setWhen("");
-    // Show it in the list RIGHT AWAY instead of waiting on the round-trip — which includes a blocking AI
-    // refinement call server-side and can take a couple seconds. A real "Add" should feel instant, like
-    // any to-do list. The server's actual response (refined title, possibly auto-queued) replaces this
-    // stub the moment it lands; a failure rolls the stub back and returns your text so nothing is lost.
-    const stubId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const stub: WebTask = {
-      id: stubId, title: v, why: L("Ajouté par toi", "Added by you"), when: whenToSend || undefined, source: "manual", risk: "low",
-      urgency: 0.5, importance: 0.5, quadrant: "do", score: 1,
-      status: "ready", createdAt: new Date().toISOString(), unrefined: true,
-    };
-    onAdded((prev) => [stub, ...prev]);
-    try {
-      const fresh = await api.add(v, whenToSend || undefined, stubId);
-      // Defensive: a 401 (session expired) resolves instead of throwing (see api.ts's j()), returning the
-      // error BODY where an array was expected. Setting `tasks` state to that non-array object crashed the
-      // whole app on the next render — which, from the outside, looked exactly like the new task vanishing.
-      if (!Array.isArray(fresh)) throw new Error(L("On dirait que tu as été déconnecté — recharge la page.", "Looks like you got logged out — reload the page."));
-      onAdded(fresh);
-    } catch (e: any) {
-      onAdded((prev) => prev.filter((t) => t.id !== stubId));
-      setText(v); setWhen(whenToSend);
-      notify(e?.message || L("Impossible d'ajouter cette tâche — réessaie.", "Couldn't add this task — try again."), "error");
-    }
-    finally { setBusy(false); }
-  };
-  return (
-    <div className="add-task-row">
-      <span className="add-plus" aria-hidden="true">+</span>
-      <input
-        className="add-task-input"
-        placeholder={L("Qu'est-ce qu'il faut faire ?", "What needs to get done?")}
-        value={text}
-        disabled={busy}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => { if (e.key === "Enter") void submit(); }}
-      />
-      {showWhen ? (
-        <input
-          className="addinput sm add-task-when"
-          type="date"
-          value={when}
-          disabled={busy}
-          onChange={(e) => setWhen(e.target.value)}
-          title={L("Date d'échéance", "When this is due")}
-        />
-      ) : (
-        <button type="button" className="btn xs ghost add-when-toggle" disabled={busy} onClick={() => setShowWhen(true)}>{L("+ date", "+ date")}</button>
-      )}
-      {text.trim() && <button className="btn xs primary" disabled={busy} onClick={() => void submit()}>{busy ? L("Ajout…", "Adding…") : L("Ajouter", "Add")}</button>}
-    </div>
   );
 }

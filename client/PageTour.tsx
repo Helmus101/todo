@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { useLang } from "./ui.tsx";
+import { COACH_MARKS, useLang } from "./ui.tsx";
 
 /** One stop of a page guide. `target` is a CSS selector for the REAL control being explained (a step whose target
  *  isn't on the page — e.g. a task card when there are no tasks — is skipped, never shown pointing at nothing).
@@ -37,7 +37,7 @@ export function PageTour({ id, steps, ready = true }: { id: string; steps: TourS
   const missingSince = useRef<number | null>(null);
   const shown = useRef(false);
   const [dead, setDead] = useState(false); // every target was missing: stop quietly WITHOUT marking the page seen
-  const active = !!ctx && !dead && !ctx.seen.has(id) && !ctx.suppressed && ready && steps.length > 0;
+  const active = COACH_MARKS && !!ctx && !dead && !ctx.seen.has(id) && !ctx.suppressed && ready && steps.length > 0;
 
   // Give the page a moment to paint its controls before the first step appears.
   useEffect(() => {

@@ -1,9 +1,13 @@
+import { selectJournal } from "./journal.ts";
 import { randomUUID } from "node:crypto";
 import type { WebTask, Quadrant, TaskLink, Profile, Sendable, AddUsageCategory, TaskStep, BoardEntry } from "../shared/types.ts";
+import { BOARD_EVENT_CAP } from "../shared/agentTypes.ts";
 import { dedupeFacts, sameFact, canonStatus, sortWithinQuadrant, addUsage, isHandled, tzOf, deadlineEpoch, normalizeWhen, gradesBySubject } from "../shared/types.ts";
+import { loadPronoteConnection } from "./store.ts";
+import { schoolRecordLine } from "./schoolRecord.ts";
 import { generateTasks, classifyCandidates, pickOneTask, runTask as aiRun, type ProfileUpdate, type RefinedTask, type AcademicContext } from "./claude.ts";
 import { readOnly, scopeTools, DOC_LINK, type AgentTools } from "./integrations.ts";
-import { discoverSourceItems, filterCandidates, hasAssignmentText } from "./discover.ts";
+import { discoverSourceItems, filterCandidates, hasAssignmentText, sameAssignmentText } from "./discover.ts";
 import { TEST_DAYS_AHEAD } from "./pronote.ts";
 import { aggregateSubjectSignals } from "./patterns.ts";
 
@@ -88,17 +92,18 @@ export function inAppContextFor(list: WebTask[], task: WebTask, profile?: Profil
     lines.push(`Time left on THIS task: ${daysLeft < 0 ? "overdue" : daysLeft < 1 ? "due within a day" : `${Math.floor(daysLeft)} days`}`);
   }
 
-  if (!lines.length) return "";
+  const school = schoolRecordLine(list, profile, task.sourceSubject);
+  if (!lines.length) return school.slice(0, 2600);
   const block = `\nWHAT OTTO ALREADY HAS IN-APP FOR THIS (the student's own history — use it, never redo it):\n` +
     lines.map((l) => `- ${l}`).join("\n") + "\n" +
     `Build on this: a step should USE an existing fiche/deck/quiz (open it, drill the weak cards, retake the quiz) ` +
     `rather than recreate it; skip work already done; lean on what earlier tasks in this subject showed is shaky; ` +
     `and size the plan to the time left and the other deadlines — with little time or a crowded week, keep ` +
     `only the highest-value steps.\n`;
-  return block.slice(0, 2200);
+  return block.slice(0, 2200) + school.slice(0, 2600);
 }
 
-function personalizationFor(list: WebTask[], subject: string | undefined): { subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; recentJournal?: { date: string; text: string }[]; notNeeded?: string[] } {
+function personalizationFor(list: WebTask[], subject: string | undefined): { subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; recentJournal?: { date: string; text: string; subjects?: string[] }[]; journalMeta?: { total: number; subjects: Record<string, number> }; notNeeded?: string[] } {
   let subjectSignal: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" } | undefined;
   try {
     if (subject) {
@@ -106,12 +111,10 @@ function personalizationFor(list: WebTask[], subject: string | undefined): { sub
       if (signal) subjectSignal = { correctRate: signal.correctRate, attempts: signal.attempts, trend: signal.trend };
     }
   } catch { /* best-effort */ }
-  const recentJournal = list
-    .filter((x) => x.source === "studylog" && x.logDate && !x.logDate.startsWith("week:") && !x.logDate.startsWith("month:") && x.logText?.trim())
-    .sort((a, b) => (b.logDate || "").localeCompare(a.logDate || ""))
-    .slice(0, 14)
-    .map((x) => ({ date: x.logDate!, text: x.logText!.trim() }));
-  return { subjectSignal, recentJournal, notNeeded: notNeededFronts(list, subject) };
+  const jc = selectJournal(list, { subject });
+  const recentJournal = jc.entries;
+  const journalMeta = { total: jc.total, subjects: jc.subjects };
+  return { subjectSignal, recentJournal, journalMeta, notNeeded: notNeededFronts(list, subject) };
 }
 
 // Broad-scope verbs that genuinely tend to bundle several sub-actions under one short step text ("Review
@@ -388,7 +391,9 @@ export function pruneHandled(list: WebTask[], keep: number): WebTask[] {
  *  focusSessions is only needed on focus-specific routes, not on /api/tasks. */
 export function stripProfileForResponse(profile: any): any {
   if (!profile) return profile;
-  const { focusSessions, ...stripped } = profile;
+  // Server-only tutor state (student model, concept graph, decision log, per-session state) is never read by
+  // the client (the transparency view has its own endpoint) — dropping it keeps every page's profile fetch small.
+  const { focusSessions, conceptModel, conceptGraph, tutorDecisions, tutorSessions, ...stripped } = profile;
   return stripped;
 }
 
@@ -524,6 +529,44 @@ const sameTask = (a: WebTask, b: WebTask): boolean => {
  * merge — two sessions can each mint a FRESH random id for the same real-world item (e.g. two tabs both
  * sweeping the same Gmail thread at once), so an id-only union isn't enough to keep it from duplicating.
  */
+/** Subject names a Pronote homework is filed under, with the words a school email uses for the same class. */
+const SUBJECT_ALIASES: [RegExp, RegExp][] = [
+  [/physique|chimie|physics|chemistry/i, /\b(?:physique|chimie|physics|chemistry|phys|chem|pc)\b/i],
+  [/math/i, /\b(?:maths?|mathématiques|mathematics|calc(?:ulus)?|algebra|algèbre)\b/i],
+  [/histoire|history|géo|geography/i, /\b(?:histoire|history|hist|géo(?:graphie)?|geography|hg)\b/i],
+  [/svt|biolog/i, /\b(?:svt|biology|biologie|bio)\b/i],
+  [/anglais|english/i, /\b(?:anglais|english)\b/i],
+  [/espagnol|spanish/i, /\b(?:espagnol|spanish|español)\b/i],
+  [/allemand|german/i, /\b(?:allemand|german|deutsch)\b/i],
+  [/français|french|lettres/i, /\b(?:français|francais|french|lettres)\b/i],
+  [/philo/i, /\b(?:philo(?:sophie|sophy)?)\b/i],
+  [/ses|économ|econom/i, /\b(?:ses|économie|economics|econ)\b/i],
+];
+function mentionsSubject(subject: string, text: string): boolean {
+  const s = String(subject || "").trim();
+  if (!s) return false;
+  const t = String(text || "");
+  for (const [is, words] of SUBJECT_ALIASES) if (is.test(s)) return words.test(t);
+  return new RegExp(`\\b${s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(t);
+}
+const dayOf = (v?: string): number | null => { const n = Date.parse(String(v || "").slice(0, 10)); return Number.isFinite(n) ? Math.round(n / 86_400_000) : null; };
+/** The SAME homework seen from Pronote AND from another source (a school email about it). Their anchors always
+ *  differ and Pronote titles are generic ("Physique-Chimie homework"), so neither the anchor nor the title match
+ *  caught it — reported: "tasks repeating even though it got it from another source". Same subject AND (due within a
+ *  day OR the assignment text overlaps the other card). Exported for tests. */
+export function crossSourceSame(a: Pick<WebTask, "source" | "title" | "why" | "sourceSubject" | "sourceDetail" | "sourceDue" | "when">, b: typeof a): boolean {
+  if (a.source === b.source) return false;
+  const p = a.source === "pronote" ? a : b.source === "pronote" ? b : null;
+  if (!p) return false;
+  const o = p === a ? b : a;
+  if (o.source === "manual" || o.source === "studylog" || o.source === "freestudy") return false;
+  const otherText = `${o.title || ""} ${o.why || ""} ${o.sourceDetail || ""}`;
+  if (!mentionsSubject(p.sourceSubject || p.title || "", otherText)) return false;
+  const pd = dayOf(p.sourceDue || p.when), od = dayOf(o.sourceDue || o.when);
+  if (pd !== null && od !== null && Math.abs(pd - od) <= 1) return true;
+  return !!p.sourceDetail && looseDup(p.sourceDetail, `${o.title || ""} ${o.why || ""}`);
+}
+
 export function dedupeTasks(list: WebTask[]): WebTask[] {
   const kept: WebTask[] = [];
   const when = (t: WebTask) => Date.parse(t.updatedAt || t.createdAt || "") || 0;
@@ -535,6 +578,11 @@ export function dedupeTasks(list: WebTask[]): WebTask[] {
       const kak = normKey(k.anchorKey);
       if (!!ak && kak === ak) { matchedByAnchor = true; return true; }             // SAME anchor (same thread/event) → dup
       if (!!link && linkOf(k) === link) { matchedByAnchor = true; return true; }   // same source link → dup
+      // The SAME Pronote homework listed twice with slightly different text: same subject + due day + same distinctive words.
+      if (t.source === "pronote" && k.source === "pronote" && !!t.sourceDetail && !!k.sourceDetail && (t.sourceSubject || "").toLowerCase() === (k.sourceSubject || "").toLowerCase()
+        && String(t.sourceDue || "").slice(0, 10) === String(k.sourceDue || "").slice(0, 10) && sameAssignmentText(t.sourceDetail, k.sourceDetail)) { matchedByAnchor = true; return true; }
+      // The same homework from Pronote and from a school email: one item, whatever the anchors or statuses.
+      if (crossSourceSame(t, k)) { matchedByAnchor = true; return true; }
       // Two tasks that BOTH carry a REAL anchor and those anchors DIFFER: if either side is already handled
       // (done/dismissed), they are distinct real-world items (e.g. an old done email vs a new fresh email).
       // But two ACTIVE same-title tasks (distinct anchors) still merge so visual duplicates never appear.
@@ -600,6 +648,23 @@ export function dedupeTasks(list: WebTask[]): WebTask[] {
   return kept;
 }
 
+// ── The tutor is LOCAL-ONLY: chat/board/problems/objectives live in the browser (client/localChatBoard.ts).
+// tutorTurn (server/index.ts) clears all four on the task and commits — but every merge below reads the
+// account row FIRST, and the union logic always re-adds the LOSER's chat/board/problems, so a "cleared"
+// session got its content written straight back on the very next poll or commit and the row never actually
+// went clean. These helpers give the merge the one signal it needs: an incoming freestudy copy carrying
+// NONE of the four means "cleared by the tutor turn", not "not loaded yet".
+const TUTOR_CONTENT_KEYS = ["chat", "board", "problems", "objectives"] as const;
+function carriesTutorContent(t: WebTask): boolean {
+  return TUTOR_CONTENT_KEYS.some((k) => Array.isArray(t[k]) && (t[k] as unknown[]).length > 0);
+}
+/** Drop the tutor session's local-only content (plus the derived board-event transcript) — used when the
+ *  incoming side has already expressed the clear. Freestudy-only by construction: callers gate on source. */
+function withoutTutorContent<T extends WebTask>(t: T): T {
+  const { chat: _c, board: _b, problems: _p, objectives: _o, boardEvents: _be, ...rest } = t as any;
+  return rest as T;
+}
+
 /** Cross-device/instance task merge (used by session commits AND the session-free job runner). The
  *  more-PROGRESSED copy wins (done never regresses); equal progress → most recently UPDATED wins; step
  *  done-state is unioned. Then entity-dedupe, since two sessions can mint different ids for one item. */
@@ -618,7 +683,11 @@ export function mergeTaskLists(existing: WebTask[], incoming: WebTask[]): WebTas
     let identical = true;
     for (const a of existing) {
       const b = incomingById.get(a.id);
-      if (!b || a.updatedAt !== b.updatedAt || a.status !== b.status) { identical = false; break; }
+      // Tutor content presence participates in "identical": two copies with the same updatedAt but
+      // different content-carrying state must reach the real merge, where the clear either strips the
+      // row's legacy copy or (migration window) unions it back toward the client.
+      const tutorDiffers = !!b && (a.source === "freestudy" || b.source === "freestudy") && carriesTutorContent(a) !== carriesTutorContent(b);
+      if (!b || a.updatedAt !== b.updatedAt || a.status !== b.status || tutorDiffers) { identical = false; break; }
     }
     if (identical) return existing;
   }
@@ -633,6 +702,13 @@ export function mergeTaskLists(existing: WebTask[], incoming: WebTask[]): WebTas
       : rank(t.status) < rank(ext.status) ? ext
       : when(t) >= when(ext) ? t : ext;
     const loser = winner === t ? ext : t;
+    // A freestudy (tutor) copy that carries NONE of chat/board/problems/objectives is the tutor turn's
+    // deliberate clear — drop the account row's legacy copy instead of unioning it back in (which is what
+    // used to happen on every merge, making tutorTurn's clear non-durable). An incoming copy that DOES
+    // carry content is the migration window: a pre-local-only conversation the browser hasn't hydrated
+    // yet, so the normal unions run unchanged and it can still reach the client. Every other task's
+    // chat/board keeps syncing across devices exactly as before.
+    const tutorCleared = t.source === "freestudy" && !carriesTutorContent(t);
     const steps = winner.steps?.map((s) => {
       if (s.done) return s;
       const other = loser.steps?.find((o) => o.text === s.text);
@@ -645,19 +721,20 @@ export function mergeTaskLists(existing: WebTask[], incoming: WebTask[]): WebTas
     // device, since only `steps` was unioned). Union both sides by (role, at, text) instead, so no device's
     // conversation is ever silently discarded; capped to mirror CHAT_CAP in index.ts.
     const chatB = loser.chat || [];
-    const chat = chatB.length ? unionChat(winner.chat || [], chatB, 60) : undefined;
+    const chat = tutorCleared ? undefined : chatB.length ? unionChat(winner.chat || [], chatB, 60) : undefined;
     // In-app study artifacts (fiches, decks, quizzes) are append-only per device, exactly like chat — and
     // now that the TUTOR CHAT can create them, two devices genuinely diverge (device A asks Otto for a
     // deck; device B ticks a step a second later and wins the whole-object race). Without a union, A's
     // deck vanishes while the chat message that announced it survives — a chip pointing at nothing.
     // Union by id, newest last, same cap as the run path.
-    const artifacts = unionStudyArtifacts(winner, loser);
+    const artifacts = tutorCleared ? null : unionStudyArtifacts(winner, loser);
     // carrySource here too, NOT just in dedupeTasks: by the time dedupeTasks runs at the bottom, these two
     // copies have already collapsed into one map entry (same id), so it never sees the loser to carry from.
     map.set(t.id, carrySource(
-      steps || chat || artifacts
-        ? { ...winner, ...(steps ? { steps } : {}), ...(chat ? { chat } : {}), ...artifacts }
-        : winner,
+      tutorCleared ? withoutTutorContent(winner)
+        : steps || chat || artifacts
+          ? { ...winner, ...(steps ? { steps } : {}), ...(chat ? { chat } : {}), ...artifacts }
+          : winner,
       winner, loser));
   }
   return dedupeTasks(Array.from(map.values()));
@@ -677,8 +754,8 @@ export const AUDIT_CAP = 20;
 // Board entries (kept separate from ARTIFACT_CAP-limited note/flashcard/quiz chips) — a real tutoring
 // session can rack up a couple dozen short board writes, and this is the ONE running record of what Otto
 // actually wrote/summarized during a session, so it gets a more generous cap than the other artifact types.
-export const BOARD_MERGE_CAP = 60;
-function unionStudyArtifacts(winner: WebTask, loser: WebTask): Partial<Pick<WebTask, "notes" | "flashcards" | "quizzes" | "board" | "problems">> | null {
+export const BOARD_MERGE_CAP = 300; // a safety net only — the board is meant to keep every line
+function unionStudyArtifacts(winner: WebTask, loser: WebTask): Partial<Pick<WebTask, "notes" | "flashcards" | "quizzes" | "board" | "problems" | "boardEvents">> | null {
   const merge = <T extends { id: string }>(a: T[] | undefined, b: T[] | undefined, atOf: (x: T) => string, cap: number): T[] | undefined => {
     if (!b?.length) return undefined;                       // nothing on the losing side → keep winner's
     const seen = new Set((a || []).map((x) => x.id));
@@ -708,10 +785,22 @@ function unionStudyArtifacts(winner: WebTask, loser: WebTask): Partial<Pick<WebT
     if (lostInteractive.length) board = [...board, ...lostInteractive];
   }
   const problems = merge(winner.problems, loser.problems, createdAtOf, ARTIFACT_CAP);
-  if (!notes && !flashcards && !quizzes && !board && !problems) return null;
+  // Events have no `id` (they're derived diffs, not authored entities) — dedupe by content (at+kind+detail)
+  // instead, same chronological-concat-then-cap shape as the id-keyed merge above.
+  const boardEvents = (() => {
+    const b = loser.boardEvents;
+    if (!b?.length) return undefined;
+    const seen = new Set((winner.boardEvents || []).map((e) => `${e.at}|${e.kind}|${e.detail}`));
+    const extra = b.filter((e) => !seen.has(`${e.at}|${e.kind}|${e.detail}`));
+    if (!extra.length) return undefined;
+    return [...(winner.boardEvents || []), ...extra]
+      .sort((x, y) => (Date.parse(x.at) || 0) - (Date.parse(y.at) || 0))
+      .slice(-BOARD_EVENT_CAP);
+  })();
+  if (!notes && !flashcards && !quizzes && !board && !problems && !boardEvents) return null;
   return {
     ...(notes ? { notes } : {}), ...(flashcards ? { flashcards } : {}), ...(quizzes ? { quizzes } : {}),
-    ...(board ? { board } : {}), ...(problems ? { problems } : {}),
+    ...(board ? { board } : {}), ...(problems ? { problems } : {}), ...(boardEvents ? { boardEvents } : {}),
   };
 }
 
@@ -735,7 +824,6 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     paused: pausedSide.paused,
     pausedAt: pausedSide.pausedAt,
     // Sticky once granted on EITHER side — a stale copy that predates the claim must never un-grant it.
-    unlimited: !!p1.unlimited || !!p2.unlimited,
     // Keep the MOST RECENT sweep marker across devices/instances (a stale copy must never reset it).
     lastSweepAt: (Date.parse(p2.lastSweepAt || "") || 0) >= (Date.parse(p1.lastSweepAt || "") || 0) ? (p2.lastSweepAt ?? p1.lastSweepAt) : (p1.lastSweepAt ?? p2.lastSweepAt),
     lastForcedAt: (Date.parse(p2.lastForcedAt || "") || 0) >= (Date.parse(p1.lastForcedAt || "") || 0) ? (p2.lastForcedAt ?? p1.lastForcedAt) : (p1.lastForcedAt ?? p2.lastForcedAt),
@@ -851,6 +939,9 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     // Union by id, same reasoning as manual grade entries above — a manually-logged exam added on one
     // device must survive a merge against another device's copy that doesn't have it yet.
     // Union by id (a delete persists cloud-first in its route). onboardedAt keeps the earliest stamp.
+    pronoteLessons: (p1.pronoteLessons?.length || p2.pronoteLessons?.length)
+      ? [...new Map([...(p1.pronoteLessons || []), ...(p2.pronoteLessons || [])].map((l) => [l.id, l])).values()].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 40)
+      : undefined,
     coursework: (p1.coursework?.length || p2.coursework?.length)
       ? [...new Map([...(p1.coursework || []), ...(p2.coursework || [])].map((d) => [d.id, d])).values()].slice(0, 60)
       : undefined,
@@ -976,6 +1067,25 @@ export function nothingToPrepare(t: { source?: string; sourceDetail?: string }):
  * Only fills the GAP — candidates already covered by a classified-and-kept task (matched by anchorKey) are
  * left alone, so this never creates a duplicate alongside a richer AI-written task for the same assignment.
  */
+/** The NAME a Pronote homework task deserves — report-live: "always rewrite full task name from Pronote,
+ *  not just the subject … never just subject" (pasted cards literally titled "French Literature" /
+ *  "Math Analysis and Approaches HL", the subject repeated as title AND subject line). The teacher's own
+ *  description (the énoncé, carried in the candidate's snippet) IS the full task name. With no real text
+ *  (hasAssignmentText rejects a bare "Due <date>" placeholder), fall back to a subject + due-date line —
+ *  which still says what the work is; never collapse to the bare subject. */
+export function homeworkTaskTitle(subject: string | undefined, snippet: string, en: boolean, dueIso?: string): string {
+  if (hasAssignmentText(snippet)) {
+    // One line: fold whitespace and drop teacher-attachment markers ([Pièce jointe : …]) a title shouldn't carry.
+    const line = snippet.replace(/\[Pièce jointe[^\]]*\]/gi, " ").replace(/\s+/g, " ").trim();
+    if (line) return line.slice(0, 120);
+  }
+  const due = (dueIso || "").slice(0, 10);
+  const s = subject?.trim();
+  return (s
+    ? (en ? `${s} — homework due ${due}` : `${s} — devoir pour le ${due}`)
+    : (en ? `Homework due ${due}` : `Devoirs pour le ${due}`)
+  ).slice(0, 120);
+}
 export function forceWeekCoverage(
   candidates: { sourceApp: string; anchorKey: string; snippet: string; timestamp?: string; subject?: string; labels: string[] }[],
   coveredAnchors: (string | undefined)[],
@@ -1002,9 +1112,12 @@ export function forceWeekCoverage(
     const urgency = Math.max(0.35, Math.min(0.9, (isTest ? 0.4 : 0.5) + (isTest ? 7 - daysLeft : 2 - daysLeft) * (isTest ? 0.08 : 0.15)));
     const importance = isTest ? 0.75 : 0.55;
     out.push({
+      // NEVER the bare subject (report-live: cards titled "French Literature" / "Math Analysis and
+      // Approaches HL" — subject-only names): homework takes its full name from the énoncé via
+      // homeworkTaskTitle; the test branch already has a proper action line.
       title: (isTest
         ? (en ? `Start reviewing for the ${c.subject || "class"} test` : `Commencer à réviser pour le contrôle de ${c.subject || "la matière"}`)
-        : (en ? `${c.subject || "Homework"}` : `${c.subject || "Devoir"}`)).slice(0, 120),
+        : homeworkTaskTitle(c.subject, c.snippet, en, c.timestamp)).slice(0, 120),
       // "Due this week" used to be hardcoded here even for items up to 21 days out once daysAhead was
       // widened past WEEK_COVERAGE_DAYS — genuinely misleading for something 3 weeks away. Phrase off the
       // real daysLeft instead: still "this week" language when it actually is, a plain due-date line otherwise.
@@ -1058,7 +1171,7 @@ export function supplementarySweepDue(profile: Profile, now: Date = new Date()):
 // instruction ("remove daily check limit auto run everything"). This has flip-flopped before (3/day → briefly
 // removed → 7/day → removed again here) — if a real ceiling is ever wanted again, autoRunDay/autoRunCount
 // below are still tracked and ready to gate against; only the CAP itself (this function's return value) was
-// dropped. The monthly $ budget (overMonthlyBudget) remains the real backstop against runaway spend.
+// dropped. There is no monthly cost cap either (removed by decision); spend is visible in Settings.
 export function autoRunBudgetLeft(_profile: Profile, _now: Date = new Date()): number {
   return Infinity;
 }
@@ -1091,7 +1204,30 @@ export function setReviewSetDeckIdsToday(profile: Profile, deckIds: string[], no
   profile.reviewSetsUpdatedAt = now.toISOString();
 }
 
+/** Every task that came from Pronote carries a link back to Pronote: the specific attachment/page when one was found,
+ *  otherwise the school's own Pronote address — so "where did this come from?" is always one tap. Pure; existing
+ *  links are kept (the specific one first) and nothing is added twice. */
+export function ensurePronoteLinks<T extends { source?: string; links?: TaskLink[] }>(list: T[], pronoteUrl: string | undefined, en = true): T[] {
+  const url = String(pronoteUrl || "").trim();
+  if (!/^https:\/\//i.test(url)) return list;
+  return list.map((t) => {
+    if (t.source !== "pronote") return t;
+    const links = t.links || [];
+    if (links.some((l) => l.url === url)) return t;
+    return { ...t, links: [...links, { label: en ? "Open in Pronote" : "Ouvrir dans Pronote", url }].slice(0, 6) };
+  });
+}
+
 export async function generate(existing: WebTask[], profile: Profile, extras?: AgentTools, userEmail?: string): Promise<WebTask[]> {
+  const out = await generateRaw(existing, profile, extras, userEmail);
+  if (!userEmail || !out.some((t) => t.source === "pronote")) return out;
+  try {
+    const stored = await loadPronoteConnection(userEmail);
+    return ensurePronoteLinks(out, stored?.url, profile.language === "en");
+  } catch { return out; }
+}
+
+async function generateRaw(existing: WebTask[], profile: Profile, extras?: AgentTools, userEmail?: string): Promise<WebTask[]> {
   // Tell the generator what's already finished/dismissed so it never resurfaces a handled to-do. Sorted by
   // recency (most recently actioned first) BEFORE the cap below truncates it — same reasoning as
   // pruneHandled's own sort (see its comment on "the exact 'I dismissed this and it came right back' failure
@@ -1191,7 +1327,7 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
           if (otherTools.length && supplementarySweepDue(profile)) {
             try {
               const otherActive = result.filter((t) => t.status !== "done" && t.status !== "dismissed").map((t) => ({ title: t.title, anchorKey: t.anchorKey }));
-              const gen2 = await generateTasks(profile, readOnly({ tools: otherTools, call: extras.call, connected: extras.connected }), handled, otherActive);
+              const gen2 = await generateTasks(profile, readOnly({ tools: otherTools, call: extras.call, connected: extras.connected }), handled, otherActive, schoolRecordLine(existing, profile));
               addUsage(profile, gen2.tokens, "sweep");
               profile.lastSupplementarySweepAt = new Date().toISOString();
               for (const u of gen2.profileUpdates) applyProfileUpdate(profile, u);
@@ -1207,7 +1343,7 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
 
   // FALLBACK — open-ended agent sweep over the read-only tool view (covers non-Google sources too).
   // Only reached when the deterministic pipeline couldn't attempt anything at all (e.g. Gmail not connected).
-  const gen = await generateTasks(profile, extras ? readOnly(extras) : undefined, handled, active);
+  const gen = await generateTasks(profile, extras ? readOnly(extras) : undefined, handled, active, schoolRecordLine(existing, profile));
   addUsage(profile, gen.tokens, "sweep");
   for (const u of gen.profileUpdates) applyProfileUpdate(profile, u);
   const result = foldGenerated(existing, gen.tasks, profile.highPriorityPeople || []);
@@ -1289,6 +1425,8 @@ export function foldGenerated(existing: WebTask[], genTasks: {
         (g.source === d.source && looseDup(g.why, d.why));
     });
   genTasks = genTasks.filter((g) => !resemblesDismissed(g));
+  // Never create a card for a homework that already exists from ANOTHER source (Pronote ↔ email), active or done.
+  genTasks = genTasks.filter((g) => !existing.some((e) => crossSourceSame(g as unknown as WebTask, e)));
 
   const candidates: WebTask[] = [...existing];
   const freshIds = new Set<string>();
@@ -1702,4 +1840,28 @@ export async function applyAdaptiveRegeneration(task: WebTask, profile: Profile)
   }
 
   return task;
+}
+
+/** A tutor (freestudy) session's task, rebuilt from the chat request when the server can't find it anywhere.
+ *  Only for a tutor turn (`primer`), only when the client says it IS a freestudy session, only for a
+ *  well-formed UUID, and NEVER for an id the account already has — a dismissed or finished session must not
+ *  come back to life. Same fields /api/study/free sets. Pure; exported for tests. */
+export function recoverTutorTask(id: string, body: any, existing: WebTask[], en: boolean): WebTask | null {
+  if (body?.primer !== true) return null;
+  const s = body?.session;
+  if (!s || typeof s !== "object" || s.source !== "freestudy" || s.id !== id) return null;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) return null;
+  if (existing.some((x) => x.id === id)) return null;
+  const subject = typeof s.sourceSubject === "string" && s.sourceSubject.trim() ? s.sourceSubject.trim().slice(0, 80) : undefined;
+  const createdAt = typeof s.createdAt === "string" && !Number.isNaN(Date.parse(s.createdAt)) ? new Date(s.createdAt).toISOString() : new Date().toISOString();
+  const e = eisenhower(0, 0);
+  return {
+    id,
+    title: subject ? `${subject} session` : (en ? "Free study session" : "Séance de révision libre"),
+    why: en ? "Started on demand, not tied to a task." : "Lancée à la demande, sans tâche associée.",
+    source: "freestudy", risk: "low",
+    urgency: 0, importance: 0, quadrant: e.quadrant, score: e.score, status: "needs_review",
+    createdAt, updatedAt: new Date().toISOString(), anchorKey: `freestudy:${id}`,
+    sourceSubject: subject,
+  };
 }

@@ -1,10 +1,14 @@
+import { makeEgressMeter, DEFAULT_EGRESS_BUDGET_BYTES } from "./egress.ts";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import session from "express-session";
+import { createHash } from "node:crypto";
 import type { Credentials } from "google-auth-library";
 import type { WebTask, Profile, StudySession, StudyProfile } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile } from "../shared/types.ts";
+import { compactTasksForStorage } from "../shared/taskCompaction.ts";
 import { encryptSecret, decryptSecret } from "./crypto.ts";
 import { reportError } from "./sentry.ts";
+import { countJournalEntries } from "../shared/journalCount.ts";
 import type { BanditState } from "./bandit.ts";
 
 /** A persisted Google connection for an account (incl. the refresh token, so it stays connected). */
@@ -131,36 +135,13 @@ export async function makeSessionStore(): Promise<session.Store | undefined> {
   if (probe) { console.warn(`[store] persistent sessions OFF — run web/supabase.sql to create '${SESSIONS}' (${probe.message}). Using in-memory sessions (lost on restart).`); return undefined; }
   const ttlMs = (sess: any) => (sess?.cookie?.maxAge ?? 30 * 24 * 3600 * 1000);
   const expiry = (sess: any) => new Date(Date.now() + ttlMs(sess)).toISOString();
-  // express-session's middleware calls store.get() on EVERY authenticated request to hydrate req.session —
-  // each one was a fresh `select("sess,expire")` pulling the ENTIRE session blob (profile + all tasks,
-  // notes, flashcards, quizzes, chat history, audit trail — see shared/types.ts) straight from Supabase.
-  // That's the single biggest egress driver in this app: a page load alone fires several API calls close
-  // together (status, tasks, reviews/due, ...), each separately re-fetching the identical blob, and the
-  // client's own 45s poll (client/App.tsx) repeats that every cycle for every open tab. A short in-memory
-  // cache (per warm process — helps a long-running server fully, and helps a serverless deployment for
-  // requests landing on the same warm instance within the window) collapses that burst into one real read.
-  // Was 4s, then 60s. Raised further to 3min (direct egress reduction, requested after a real Supabase
-  // egress-cap outage) — same reasoning as before, just a bigger window: same-instance writes still update
-  // the cache immediately (see set() below), so this only affects CROSS-instance/cross-device staleness,
-  // which now takes up to 3min to self-heal instead of 1min. Acceptable for a single-student account where
-  // near-simultaneous multi-device edits are rare; if that tradeoff ever bites, lower this back down rather
-  // than reverting to the old 60s/4s — the egress savings compound with every open tab/poll tick.
-  const GET_CACHE_TTL_MS = 900_000; // 15min — was 3min. Every get() past TTL re-reads the FULL session blob
-  // (profile + every task + chat history) from Supabase and JSON.parses it: CPU + Supabase egress paid by
-  // the very first request on any warm-but-stale instance. The client's real poll cadence is 10 minutes
-  // (App.tsx's syncTick) plus occasional clicks, so a 3min TTL meant virtually every poll landed past
-  // expiry and paid the full re-hydration anyway. 15min means a warm instance almost always serves the
-  // session from memory; every WRITE still refreshes the cache immediately (set() below), and cross-tab/
-  // cross-device task freshness flows through /api/tasks's cloud merge (loadState), not through re-reading
-  // this blob — so the staleness window only ever affects unmodified reads. If a tradeoff ever bites,
-  // lower this rather than reverting to 3min: the savings compound with every open tab/poll tick.
-  // Bounded so this can't grow forever on a long-running server (a serverless deployment recycles the
-  // process anyway) — every distinct sid that's ever hit get()/set() would otherwise sit in memory until
-  // process restart, and a session blob can be sizeable (see comment above). A Map preserves insertion
-  // order, so deleting from the front evicts the OLDEST entries first — a crude but correct LRU-ish bound
-  // given entries are re-inserted (moved conceptually to "recently used") via delete+set in `touch()` below.
+  // Per-instance read cache for sessions (rows are slim now — see set()). Kept short: a logout, password
+  // reset or account deletion on another instance must take effect here within this window.
+  const GET_CACHE_TTL_MS = 60_000;
   const GET_CACHE_MAX = 500;
+  let hasUserEmailCol = true;
   const getCache = new Map<string, { at: number; sess: any }>();
+  const lastWritten = new Map<string, string>();
   const cacheSet = (sid: string, sess: any) => {
     getCache.delete(sid); // re-insert to the end so this counts as "most recently used" for eviction below
     getCache.set(sid, { at: Date.now(), sess });
@@ -186,9 +167,31 @@ export async function makeSessionStore(): Promise<session.Store | undefined> {
       // burst (extremely common: a route calls commit() then the response handler re-reads) would otherwise
       // do a real round-trip anyway, right after we already had the answer in hand.
       cacheSet(sid, sess);
-      c.from(SESSIONS).upsert({ sid, sess, expire: expiry(sess) }, { onConflict: "sid" }).then(
-        ({ error }) => { if (error) reportError("session-store-set", error); cb?.(error || undefined); },
-        (e) => { reportError("session-store-set", e); cb?.(e); },
+      // EGRESS/CPU: the account's profile + tasks already live in their own row (saveState, written by
+      // commit()). Persisting them a SECOND time inside every session row doubled every write and made each
+      // cold-instance session read drag the whole blob across the wire. Persist only the slim session
+      // (user, cookie, small flags); the "re-hydrate from the account row" middleware in index.ts restores
+      // tasks/profile from loadState (cached) when a fresh instance reads a slim session.
+      const { tasks: _t, profile: _p, ...slim } = sess || {};
+      const payload = JSON.stringify(slim);
+      // Skip identical rewrites (touching the session on every request used to re-upload it unchanged).
+      if (lastWritten.get(sid) === payload) { cb?.(); return; }
+      lastWritten.set(sid, payload);
+      while (lastWritten.size > GET_CACHE_MAX) { const oldest = lastWritten.keys().next().value; if (oldest === undefined) break; lastWritten.delete(oldest); }
+      const row = { sid, sess: slim, expire: expiry(sess), ...(hasUserEmailCol && slim.user ? { user_email: slim.user } : {}) };
+      const write = async () => {
+        let { error } = await c.from(SESSIONS).upsert(row, { onConflict: "sid" });
+        // Older database without the user_email column: keep logins working, just without per-user sign-out.
+        if (error && "user_email" in row && /user_email/.test(error.message || "")) {
+          hasUserEmailCol = false;
+          const { user_email: _u, ...legacy } = row as any;
+          ({ error } = await c.from(SESSIONS).upsert(legacy, { onConflict: "sid" }));
+        }
+        return error;
+      };
+      write().then(
+        (error) => { if (error) { lastWritten.delete(sid); reportError("session-store-set", error); } cb?.(error || undefined); },
+        (e) => { lastWritten.delete(sid); reportError("session-store-set", e); cb?.(e); },
       );
     }
     destroy(sid: string, cb?: (err?: any) => void) {
@@ -209,18 +212,23 @@ export async function makeSessionStore(): Promise<session.Store | undefined> {
 // so accounts were merely visible in the dashboard's Auth tab — never actually read back. That
 // table is gone now; Supabase Auth's own admin API is the real, only credential store.
 
-/** Find an account's Supabase Auth user by email. Single shared lookup — signup's duplicate-check,
- *  the password-reset flow, and account deletion all go through this ONE function.
- *  SCALING NOTE: listUsers() paginates (default ~50/page); perPage:1000 raises that ceiling cheaply
- *  without needing real pagination. Fine for this app's current/expected account volume — revisit
- *  with a proper paginated/filtered lookup if that ever stops being true. */
+/** Find an account's Supabase Auth user by email (signup duplicate-check, password reset, deletion).
+ *  Uses the `otto_auth_user_id` SQL function (supabase.sql) for an indexed lookup; falls back to paging
+ *  through every user when that function hasn't been created yet. */
 export async function findAuthUserByEmail(email: string): Promise<{ id: string; email: string } | null> {
   if (!client) return null;
+  const wanted = email.toLowerCase();
   try {
-    const { data, error } = await client.auth.admin.listUsers({ perPage: 1000 } as any);
-    if (error) { console.warn("[store] findAuthUserByEmail failed:", error.message); return null; }
-    const match = data.users.find((u) => u.email?.toLowerCase() === email.toLowerCase());
-    return match ? { id: match.id, email: match.email! } : null;
+    const { data, error } = await client.rpc("otto_auth_user_id", { p_email: wanted });
+    if (!error) return data ? { id: String(data), email: wanted } : null;
+    const perPage = 1000;
+    for (let page = 1; ; page++) {
+      const { data: list, error: listErr } = await client.auth.admin.listUsers({ page, perPage });
+      if (listErr) { console.warn("[store] findAuthUserByEmail failed:", listErr.message); return null; }
+      const match = list.users.find((u) => u.email?.toLowerCase() === wanted);
+      if (match) return { id: match.id, email: match.email! };
+      if (list.users.length < perPage) return null;
+    }
   } catch (e) { console.warn("[store] findAuthUserByEmail threw:", (e as any)?.message || e); return null; }
 }
 
@@ -265,28 +273,45 @@ export async function setAuthPassword(userId: string, password: string): Promise
   } catch (e) { console.warn("[store] setAuthPassword threw:", (e as any)?.message || e); return false; }
 }
 
-/** One-time password-reset tokens — in-memory, not a table: a token lives 30 minutes (see
- *  /api/auth/forgot-password), so losing the Map on a server restart just means "request a new
- *  link," never real data loss. Mirrors this same file's existing in-memory-fallback posture for
- *  the job queue (see further down) rather than adding a table for a 30-minute-lived value. */
-const resetTokens = new Map<string, { email: string; expiresAt: number }>();
+// One-time password-reset tokens. Stored in Supabase (only the SHA-256 of the token) because on serverless
+// the "forgot" and "reset" requests usually land on different instances. The Map is the no-cloud dev fallback.
+const RESET_TOKENS = "weave_web_reset_tokens";
+const memResetTokens = new Map<string, { email: string; expiresAt: number }>();
+export const hashResetToken = (token: string) => createHash("sha256").update(token).digest("hex");
 
-/** Stamp a one-time password-reset token, replacing any prior one for this email — only the latest
- *  link a student requested should ever work. */
-export function setResetToken(email: string, token: string, expiresAt: string): void {
-  for (const [t, v] of resetTokens) if (v.email === email) resetTokens.delete(t);
-  resetTokens.set(token, { email, expiresAt: Date.parse(expiresAt) });
+/** Store a reset token, replacing any earlier one for this email — only the latest link works. */
+export async function setResetToken(email: string, token: string, expiresAt: string): Promise<void> {
+  const tokenHash = hashResetToken(token);
+  if (client) {
+    await client.from(RESET_TOKENS).delete().eq("email", email);
+    const { error } = await client.from(RESET_TOKENS).insert({ token_hash: tokenHash, email, expires_at: expiresAt });
+    if (!error) return;
+    console.warn("[store] reset tokens table unavailable — run supabase.sql. Falling back to memory:", error.message);
+  }
+  for (const [t, v] of memResetTokens) if (v.email === email) memResetTokens.delete(t);
+  memResetTokens.set(tokenHash, { email, expiresAt: Date.parse(expiresAt) });
 }
 
-/** Look up the account a still-valid (not expired) reset token belongs to, and consume it (a used
- *  token must never work a second time — same one-shot guarantee the old DB column's clear-on-use
- *  gave). */
-export function consumeResetToken(token: string): { email: string } | null {
-  const v = resetTokens.get(token);
+/** Consume a reset token: returns its email if it exists and hasn't expired. Single use — deleted either way. */
+export async function consumeResetToken(token: string): Promise<{ email: string } | null> {
+  const tokenHash = hashResetToken(token);
+  if (client) {
+    const { data, error } = await client.from(RESET_TOKENS).delete().eq("token_hash", tokenHash).select("email,expires_at");
+    if (!error && data?.length) return Date.parse(data[0].expires_at) > Date.now() ? { email: data[0].email } : null;
+  }
+  const v = memResetTokens.get(tokenHash);
   if (!v) return null;
-  resetTokens.delete(token);
-  if (v.expiresAt < Date.now()) return null;
-  return { email: v.email };
+  memResetTokens.delete(tokenHash);
+  return v.expiresAt > Date.now() ? { email: v.email } : null;
+}
+
+/** Sign an account out everywhere (account deletion, password reset), optionally keeping one session. */
+export async function destroySessionsForUser(email: string, exceptSid?: string): Promise<void> {
+  if (!client) return;
+  let q = client.from(SESSIONS).delete().eq("user_email", email);
+  if (exceptSid) q = q.neq("sid", exceptSid);
+  const { error } = await q;
+  if (error) console.warn("[store] destroySessionsForUser failed (run supabase.sql to add weave_web_sessions.user_email):", error.message);
 }
 
 /** Remove the Supabase Auth user on account deletion — the real erasure now, not a mirror cleanup. */
@@ -347,10 +372,15 @@ const STATE_CACHE_TTL_MS = 300_000; // 5min — was 3min. Same lever as makeSess
 // Mutations always invalidate (saveState/cacheSetState), and POST /api/jobs/kick reads with bypassCache: true
 // when freshness matters, so the wider window only affects best-effort poll merges.
 const STATE_CACHE_MAX = 500;
-const stateCache = new Map<string, { at: number; state: AccountState }>();
-function cacheSetState(email: string, state: AccountState) {
+// `ver` is the row's updated_at when we read it. Every writer of this table (saveState, savePronoteConnection) bumps it, so
+// a ~60-byte `select updated_at` can prove a cached copy is still current — which is how a stale or `bypassCache` read
+// avoids re-downloading the whole profile+tasks blob (the dominant PostgREST egress) when nothing changed.
+const egress = makeEgressMeter(Number(process.env.EGRESS_BUDGET_BYTES) > 0 ? Number(process.env.EGRESS_BUDGET_BYTES) : DEFAULT_EGRESS_BUDGET_BYTES);
+export const egressUsedToday = (email: string): number => egress.used(email);
+const stateCache = new Map<string, { at: number; state: AccountState; ver?: string }>();
+function cacheSetState(email: string, state: AccountState, ver?: string) {
   stateCache.delete(email);
-  stateCache.set(email, { at: Date.now(), state });
+  stateCache.set(email, { at: Date.now(), state, ver });
   while (stateCache.size > STATE_CACHE_MAX) { const oldest = stateCache.keys().next().value; if (oldest === undefined) break; stateCache.delete(oldest); }
 }
 
@@ -365,10 +395,19 @@ function cacheSetState(email: string, state: AccountState) {
  *  bounded; every other call site keeps the cached read this function defaults to. */
 export async function loadState(email?: string, opts?: { bypassCache?: boolean }): Promise<AccountState> {
   if (!client || !email) return { profile: emptyProfile(), tasks: [] };
-  const cached = opts?.bypassCache ? undefined : stateCache.get(email);
-  if (cached && Date.now() - cached.at < STATE_CACHE_TTL_MS) return cached.state;
+  const held = stateCache.get(email);
+  if (held && !opts?.bypassCache && Date.now() - held.at < STATE_CACHE_TTL_MS) return held.state;
+  // Over this profile's daily PostgREST budget: serve what we hold (writes still invalidate/replace it) rather than read more.
+  // (only while the copy is recent: beyond 15 minutes it is validated with the cheap version check below, so a task another process added is never hidden for the rest of the day)
+  if (held && !opts?.bypassCache && egress.over(email) && Date.now() - held.at < 900_000) return held.state;
+  // Expired or bypassed: ask only for the row's version first; an unchanged row means the cached copy is still right.
+  if (held?.ver) {
+    const { data: v } = await withRetry("load-ver", async () => client!.from(TABLE).select("updated_at").eq("email", email).maybeSingle());
+    egress.note(email, 120);
+    if ((v as any)?.updated_at && (v as any).updated_at === held.ver) { held.at = Date.now(); return held.state; }
+  }
   let { data, error } = await withRetry("load", async () =>
-    client!.from(TABLE).select("profile,tasks,google,pronote,blackbaud,studySessions,studyProfile").eq("email", email).maybeSingle());
+    client!.from(TABLE).select("profile,tasks,google,pronote,blackbaud,studySessions,studyProfile,updated_at").eq("email", email).maybeSingle());
   // A missing column (schema drift — a migration that shipped in code but was never run against this
   // database; see supabase.sql's own note on studySessions/studyProfile, added after exactly this happened
   // live) is a DIFFERENT failure than "the database is unreachable." Postgres fails the ENTIRE query when
@@ -384,15 +423,16 @@ export async function loadState(email?: string, opts?: { bypassCache?: boolean }
   }
   if (error) { console.warn("[store] load failed:", error.message); reportError("load-state", error, { email }); return { profile: emptyProfile(), tasks: [] }; }
   const d = data as any;
+  if (d) { const before = egress.used(email), after = egress.note(email, JSON.stringify(d).length); if (before < egress.budget && after >= egress.budget) console.warn(`[store] ${email} reached its daily PostgREST read budget (${Math.round(egress.budget / 1048576)} MB) — serving cached state for the rest of the day`); }
   const google = d?.google && d.google.tokens ? (d.google as StoredGoogle) : undefined;
   const pronote = d?.pronote && d.pronote.token
     ? { ...(d.pronote as StoredPronote), token: decryptSecret(d.pronote.token), ...(d.pronote.password ? { password: decryptSecret(d.pronote.password) } : {}) }
     : undefined;
   const blackbaud = d?.blackbaud && d.blackbaud.accessToken
-    ? { ...(d.blackbaud as StoredBlackbaud), accessToken: decryptSecret(d.blackbaud.accessToken) }
+    ? { ...(d.blackbaud as StoredBlackbaud), accessToken: decryptSecret(d.blackbaud.accessToken), ...(d.blackbaud.refreshToken ? { refreshToken: decryptSecret(d.blackbaud.refreshToken) } : {}) }
     : undefined;
   const result = { profile: normalizeProfile(d?.profile), tasks: Array.isArray(d?.tasks) ? d.tasks : [], google, pronote, blackbaud, studySessions: d?.studySessions, studyProfile: d?.studyProfile };
-  cacheSetState(email, result);
+  cacheSetState(email, result, typeof d?.updated_at === "string" ? d.updated_at : undefined);
   return result;
 }
 
@@ -420,7 +460,7 @@ export function connectionColumnUpdates(state: AccountState): Record<string, unk
       : { ...state.pronote, token: encryptSecret(state.pronote.token), ...(state.pronote.password ? { password: encryptSecret(state.pronote.password) } : {}) };
   }
   if (state.blackbaud !== undefined) {
-    out.blackbaud = state.blackbaud === null ? null : { ...state.blackbaud, accessToken: encryptSecret(state.blackbaud.accessToken) };
+    out.blackbaud = state.blackbaud === null ? null : { ...state.blackbaud, accessToken: encryptSecret(state.blackbaud.accessToken), ...(state.blackbaud.refreshToken ? { refreshToken: encryptSecret(state.blackbaud.refreshToken) } : {}) };
   }
   if (state.studySessions !== undefined) out.studySessions = state.studySessions;
   if (state.studyProfile !== undefined) out.studyProfile = state.studyProfile;
@@ -431,15 +471,26 @@ export function connectionColumnUpdates(state: AccountState): Record<string, unk
  *  request path). Transient network failures are retried so a blip doesn't silently drop a write. */
 export async function saveState(email: string | undefined, state: AccountState, opts?: { throwOnError?: boolean }): Promise<void> {
   if (!client || !email) return;
+  // Finished work is compacted on EVERY write (shared/taskCompaction.ts): every later read downloads the whole row,
+  // so what an ended tutor session or a done task carries is paid for again on each read, all day.
+  state = { ...state, tasks: compactTasksForStorage(state.tasks || []) };
   const row: Record<string, unknown> = { email, profile: state.profile || emptyProfile(), tasks: state.tasks || [], updated_at: new Date().toISOString() };
   Object.assign(row, connectionColumnUpdates(state));
   // Invalidate rather than try to update-in-place: `state` here often omits google/pronote entirely (see
   // connectionColumnUpdates), so overwriting the cached entry with it would wrongly blank out fields this
   // save never touched. A plain delete costs one extra real read on the next loadState() for this email —
   // cheap and safe compared to reconstructing the merged shape by hand.
+  const heldBefore = stateCache.get(email);
   stateCache.delete(email);
   const { error } = await withRetry("save", async () =>
     client!.from(TABLE).upsert(row, { onConflict: "email" }).then((r) => ({ data: null, error: r.error })));
+  // Write-through: we know exactly what we just wrote and its updated_at, so the next read doesn't have to download the
+  // row again. Columns this save didn't touch (an undefined connection) keep the values we already held.
+  if (!error && heldBefore?.ver) {
+    const merged: AccountState = { ...heldBefore.state, profile: state.profile || emptyProfile(), tasks: state.tasks || [] };
+    for (const k of ["google", "pronote", "blackbaud", "studySessions", "studyProfile"] as const) if ((state as any)[k] !== undefined) (merged as any)[k] = (state as any)[k] === null ? undefined : (state as any)[k];
+    cacheSetState(email, merged, String(row.updated_at));
+  }
   if (error) {
     console.warn("[store] save failed:", error.message);
     reportError("save-state", error, { email });
@@ -486,9 +537,12 @@ export async function savePronoteConnection(email: string | undefined, pronote: 
     pronote: pronote ? { ...pronote, token: encryptSecret(pronote.token), ...(pronote.password ? { password: encryptSecret(pronote.password) } : {}) } : null,
     updated_at: new Date().toISOString(),
   };
+  const heldBefore = stateCache.get(email);
   stateCache.delete(email); // the whole-row cache holds a copy of this column too
   const { error } = await withRetry("save-pronote", async () =>
     client!.from(TABLE).upsert(row, { onConflict: "email" }).then((r) => ({ data: null, error: r.error })));
+  // Write-through (the token rotates often) — only when the held copy was verified moments ago, since this write touches one column and cannot vouch for the rest.
+  if (!error && heldBefore?.ver && Date.now() - heldBefore.at < 60_000) cacheSetState(email, { ...heldBefore.state, pronote }, row.updated_at);
   if (error) {
     console.warn("[store] pronote save failed:", error.message);
     reportError("save-pronote", error, { email });
@@ -691,11 +745,7 @@ export async function deleteAccount(email: string): Promise<{ ok: boolean; error
       if (error) errors.push(`${table}: ${error.message}`);
     } catch (e: any) { errors.push(`${table}: ${e?.message || e}`); }
   }
-  // Sessions aren't keyed by email (sid is the primary key, email lives inside the serialized `sess` jsonb) —
-  // best-effort text match rather than a full table scan/parse; a stray orphaned session row here is inert
-  // (it can't authenticate as anyone once deleteAuthUser below has removed the real Supabase Auth account)
-  // but worth attempting.
-  try { await client.from(SESSIONS).delete().ilike("sess", `%${email}%`); } catch { /* best-effort, non-fatal */ }
+  await destroySessionsForUser(email);
   await deleteAuthUser(email); // the actual credential erasure now, not a mirror cleanup — best-effort, never blocks the rest
   return { ok: errors.length === 0, errors };
 }
@@ -729,14 +779,11 @@ export interface Job {
 
 const JOBS = "weave_web_jobs";
 const EVENTS = "weave_web_job_events";
-// A claim's lease. This MUST exceed the longest realistic single-job wall time, or a still-running job's
-// lock expires and a second worker claims + RE-RUNS it — duplicate drafts/docs, double spend, the worst
-// possible bug for a "never behind your back" product. A task run is up to 8 rounds × (90s request × 3
-// retries) plus Composio latency, which can pass 12 min. So the lease is generous AND a heartbeat
-// (renewLock, called from the drain while a job runs) extends it in-flight, so only a genuinely dead
-// worker ever loses its lock.
-const LOCK_MS = 15 * 60_000;
-const HEARTBEAT_MS = 4 * 60_000; // re-extend the lease this often while a job runs
+// A claim's lease. A heartbeat (renewLock, called by drain() every HEARTBEAT_MS while a job runs) keeps a
+// live job's lock fresh, so only a dead worker loses it. The lease is kept short because on Vercel a killed
+// function (300 s limit) leaves its job "running" until the lock expires — 6 min means it's retried soon.
+const LOCK_MS = 6 * 60_000;
+const HEARTBEAT_MS = 2 * 60_000;
 // Exponential backoff before a retried (non-terminal) job becomes claimable again — 2s, 4s, 8s, capped at
 // 30s. `attemptCount` is the count AFTER the failed attempt (i.e. how many tries have happened so far).
 const retryBackoffUntil = (attemptCount: number): string => new Date(Date.now() + Math.min(2 ** attemptCount * 1000, 30_000)).toISOString();
@@ -913,7 +960,8 @@ export async function finishJob(id: string, workerId: string, outcome: "succeede
 export async function getLatestJob(userEmail: string, type: JobType): Promise<Job | null> {
   const db = await jobsDb();
   if (db) {
-    const { data } = await db.from(JOBS).select("*").eq("user_email", userEmail).eq("type", type).order("created_at", { ascending: false }).limit(1);
+    // Everything BUT input/output: callers only read status/timestamps/error, and a sweep job's output can be a whole task list.
+    const { data } = await db.from(JOBS).select("id,user_email,task_id,type,status,attempt_count,max_attempts,idempotency_key,locked_until,locked_by,last_error,created_at,started_at,finished_at").eq("user_email", userEmail).eq("type", type).order("created_at", { ascending: false }).limit(1);
     return (data?.[0] as Job) || null;
   }
   const mine = memJobs.filter((j) => j.user_email === userEmail && j.type === type);
@@ -1008,40 +1056,68 @@ export async function exportJobsAndEvents(userEmail: string): Promise<{ jobs: Jo
 export interface AdminUserMetrics {
   email: string;
   taskCount: number;
+  completedTaskCount: number;
   tutorSessionCount: number;
   tutorMinutes: number;
+  journalCount: number;
 }
 export interface AdminMetrics {
   userCount: number;
   taskCount: number;
+  completedTaskCount: number;
   tutorSessionCount: number;
   tutorMinutesTotal: number;
+  journalCount: number;
   tasksBySource: Record<string, number>;
   /** Per-account breakdown — sorted by taskCount descending (the most active accounts first, the view
    *  this dashboard actually gets used for: "who's using it, how much"). */
   byUser: AdminUserMetrics[];
 }
-const ADMIN_METRICS_ACCOUNT_LIMIT = 5000;
+/** One Supabase page for the account scan. This is a PAGE SIZE, not a cap: getAdminMetrics loops until a
+ *  short page, so every total covers every account (the old `limit(5000)` silently undercounted userCount,
+ *  taskCount and every derived number past 5000 accounts — an accurate-looking dashboard with wrong
+ *  numbers is worse than no dashboard). ADMIN_METRICS_MAX_ROWS is only a runaway guard. */
+const ADMIN_METRICS_PAGE = 1000;
+const ADMIN_METRICS_MAX_ROWS = 100_000;
+// Every account's FULL task blob is read to compute these — by far the heaviest read in the app — so a
+// dashboard visit must not repeat it: serve the last result for 10 minutes (a headcount doesn't need seconds).
+let adminMetricsCache: { at: number; value: AdminMetrics } | null = null;
+const ADMIN_METRICS_TTL_MS = 600_000;
 export async function getAdminMetrics(): Promise<AdminMetrics | null> {
   if (!client) return null;
+  if (adminMetricsCache && Date.now() - adminMetricsCache.at < ADMIN_METRICS_TTL_MS) return adminMetricsCache.value;
   try {
-    const { data, error } = await client.from(TABLE).select("email, tasks").limit(ADMIN_METRICS_ACCOUNT_LIMIT);
-    if (error) { console.warn("[store] getAdminMetrics failed:", error.message); return null; }
-    const rows = data || [];
+    const rows: { email?: unknown; tasks?: unknown }[] = [];
+    for (let from = 0; from < ADMIN_METRICS_MAX_ROWS; from += ADMIN_METRICS_PAGE) {
+      const { data, error } = await client.from(TABLE).select("email, tasks").range(from, from + ADMIN_METRICS_PAGE - 1);
+      if (error) { console.warn("[store] getAdminMetrics failed:", error.message); return null; }
+      rows.push(...((data || []) as { email?: unknown; tasks?: unknown }[]));
+      if (!data || data.length < ADMIN_METRICS_PAGE) break;
+    }
     let taskCount = 0;
+    let completedTaskCount = 0;
     let tutorSessionCount = 0;
+    // Headline total = the SUM of the per-user rounded column, so the table always adds up to the card
+    // (summing the raw floats and rounding once could differ from the displayed column by a minute or two —
+    // small, but exactly the kind of thing that makes a dashboard's own numbers disagree with itself).
     let tutorMinutesTotal = 0;
+    let journalTotal = 0;
     const tasksBySource: Record<string, number> = {};
     const byUser: AdminUserMetrics[] = [];
     for (const row of rows) {
       const email = String((row as any).email || "unknown");
       const tasks: any[] = Array.isArray((row as any).tasks) ? (row as any).tasks : [];
       taskCount += tasks.length;
+      let userCompletedTasks = 0;
       let userTutorSessions = 0;
       let userTutorMinutes = 0;
       for (const t of tasks) {
         const src = String(t?.source || "unknown");
         tasksBySource[src] = (tasksBySource[src] || 0) + 1;
+        // "done" is the one status that means Otto's work was confirmed handled (see TaskStatus's own
+        // doc comment in shared/types.ts) — "dismissed" is also "handled" in isHandled's sense but means
+        // the student dropped it, the opposite of what "completed" asks here.
+        if (t?.status === "done") { completedTaskCount++; userCompletedTasks++; }
         if (src === "freestudy") {
           // SAME substance gate TutorSession.tsx's saveAndClose uses to decide whether a session is even
           // worth keeping (a real user message or board content) — reported live: without this, the count
@@ -1057,15 +1133,20 @@ export async function getAdminMetrics(): Promise<AdminMetrics | null> {
           const times = chat.map((m) => Date.parse(m?.at || "")).filter((n) => Number.isFinite(n));
           if (times.length >= 2) {
             const minutes = Math.max(0, (Math.max(...times) - Math.min(...times)) / 60000);
-            tutorMinutesTotal += minutes;
             userTutorMinutes += minutes;
           }
         }
       }
-      byUser.push({ email, taskCount: tasks.length, tutorSessionCount: userTutorSessions, tutorMinutes: Math.round(userTutorMinutes) });
+      const userJournal = countJournalEntries(tasks);
+      journalTotal += userJournal;
+      const roundedMinutes = Math.round(userTutorMinutes);
+      tutorMinutesTotal += roundedMinutes;
+      byUser.push({ email, taskCount: tasks.length, completedTaskCount: userCompletedTasks, tutorSessionCount: userTutorSessions, tutorMinutes: roundedMinutes, journalCount: userJournal });
     }
     byUser.sort((a, b) => b.taskCount - a.taskCount);
-    return { userCount: rows.length, taskCount, tutorSessionCount, tutorMinutesTotal: Math.round(tutorMinutesTotal), tasksBySource, byUser };
+    const value = { userCount: rows.length, taskCount, completedTaskCount, tutorSessionCount, tutorMinutesTotal, journalCount: journalTotal, tasksBySource, byUser };
+    adminMetricsCache = { at: Date.now(), value };
+    return value;
   } catch (e) {
     reportError("admin-metrics", e);
     return null;

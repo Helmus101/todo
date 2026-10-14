@@ -1,7 +1,7 @@
 // IndexedDB wrapper for Study Mode
 // All workspace state is local-first; cloud sync is separate.
 
-import type { StudyEnvironment, ArtifactState, SessionLog } from "./StudyTypes.ts";
+import type { StudyEnvironment, SessionLog } from "./StudyTypes.ts";
 
 const DB_NAME = "otto-study";
 const DB_VERSION = 2; // bumped to add the "files" store (uploaded audio) — existing users' v1 DBs upgrade in place
@@ -59,12 +59,6 @@ function tx(
   );
 }
 
-// ── Environments ──────────────────────────────────────────────────────────────
-
-export async function getEnvironment(id: string): Promise<StudyEnvironment | undefined> {
-  return tx("environments", "readonly", (s) => s.get(id)) as Promise<StudyEnvironment | undefined>;
-}
-
 export async function saveEnvironment(env: StudyEnvironment): Promise<void> {
   await tx("environments", "readwrite", (s) => s.put(env));
 }
@@ -106,16 +100,4 @@ export async function getFile(id: string): Promise<Blob | undefined> {
 
 export async function deleteFile(id: string): Promise<void> {
   await tx("files", "readwrite", (s) => s.delete(id));
-}
-
-export async function getSessionsByTask(taskId: string): Promise<SessionLog[]> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const t = db.transaction("sessions", "readonly");
-    const store = t.objectStore("sessions");
-    const idx = store.index("by_task");
-    const req = idx.getAll(taskId);
-    req.onsuccess = () => resolve(req.result as SessionLog[]);
-    req.onerror = () => reject(req.error);
-  });
 }

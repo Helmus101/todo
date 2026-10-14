@@ -49,6 +49,8 @@ export function DocumentArtifact({ url, title }: DocumentArtifactProps) {
   const L = useLang();
   const canEmbed = !!url && isHttpUrl(url);
   const isGoogleDocsHost = !!url && GOOGLE_DOCS_HOST_RE.test(url);
+  // Never grant allow-same-origin to a page on Otto's own origin: that would hand it this app's session.
+  const isOwnOrigin = (() => { try { return !!url && new URL(url).origin === window.location.origin; } catch { return false; } })();
 
   return (
     <div className="sm-document-body">
@@ -70,7 +72,7 @@ export function DocumentArtifact({ url, title }: DocumentArtifactProps) {
             // can never navigate/redirect the outer Otto page (allow-top-navigation is never granted), so
             // the attack surface is "misbehaves within its own frame," not "attacks Otto directly."
             <iframe className="sm-embed" src={toEmbeddableUrl(url)} title={title}
-              sandbox={`allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox${isGoogleDocsHost ? "" : " allow-same-origin"}`} />
+              sandbox={`allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox${isGoogleDocsHost || isOwnOrigin ? "" : " allow-same-origin"}`} />
           ) : (
             <div className="sm-document-reference">
               <strong>{title}</strong>
@@ -88,7 +90,7 @@ export function DocumentArtifact({ url, title }: DocumentArtifactProps) {
         </>
       ) : (
         <div className="sm-document-editor">
-          <textarea placeholder={L("Commence à écrire ici.", "Start writing here.")} />
+          <textarea placeholder={L("Commence à écrire ici.", "Start writing here.")} aria-label={L("Commence à écrire ici.", "Start writing here.")} />
         </div>
       )}
     </div>

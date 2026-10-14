@@ -26,7 +26,7 @@ export const DESMOS_TOOLS = [
   },
 ] as const;
 
-export type DesmosToolId = (typeof DESMOS_TOOLS)[number]["id"];
+type DesmosToolId = (typeof DESMOS_TOOLS)[number]["id"];
 
 /** The embed URL for a tool id — all call sites go through here so the URL contract has one home. */
 export function desmosToolUrl(id: DesmosToolId): string {

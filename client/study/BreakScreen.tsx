@@ -32,7 +32,7 @@ export function BreakScreen({ elapsed, formatTime, onResume, onEnd, countdownRem
         )}
         <p className="sm-break-hint">{L("Éloigne-toi de l'écran.", "Step away from your screen.")}</p>
         <button className="sm-btn sm-btn-primary" onClick={onResume}>{L("Reprendre", "Resume studying")}</button>
-        <button className="sm-btn sm-btn-ghost" onClick={onEnd} style={{ marginTop: "8px" }}>{L("Terminer la session", "End session")}</button>
+        <button className="sm-btn sm-btn-ghost mt-2" onClick={onEnd}>{L("Terminer la session", "End session")}</button>
       </div>
     </div>
   );

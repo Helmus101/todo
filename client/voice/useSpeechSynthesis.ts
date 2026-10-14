@@ -70,7 +70,10 @@ export function stripLatexForSpeech(text: string): string {
   // run twice so the inner pair resolves before the outer one is matched.
   for (let i = 0; i < 2; i++) {
     s = s
-      .replace(/\\d?frac\{([^{}]*)\}\{([^{}]*)\}/g, " ($1) over ($2) ")
+      // [cdt]? — `d?` alone never matched \tfrac/\cfrac (spoken as nothing; the braces then got deleted
+      // along with the syntax, losing the fraction's arguments entirely).
+      .replace(/\\[cdt]?frac\{([^{}]*)\}\{([^{}]*)\}/g, " ($1) over ($2) ")
+      .replace(/\\[cdt]?frac(\S)(\S)/g, " ($1) over ($2) ") // brace-less: \tfrac12 → ( 1 ) over (2)
       .replace(/\\sqrt\[(\d+)\]\{([^{}]*)\}/g, " the $1th root of ($2) ")
       .replace(/\\sqrt\{([^{}]*)\}/g, " the square root of ($1) ");
   }
@@ -94,6 +97,7 @@ export function stripLatexForSpeech(text: string): string {
     .replace(/_\{([^{}]*)\}/g, " sub $1 ")
     .replace(/_(\w)/g, " sub $1 ")
     .replace(/\\[a-zA-Z]+/g, " ")                       // any other LaTeX command — not worth guessing at
+    .replace(/\\/g, " ")                                // lone backslash ("\ J" control space) — silence, not "backslash"
     .replace(/[{}$]/g, "")                              // remaining braces/delimiters
     // Plain-text trig abbreviations (no backslash at all — angle-addition identities are often typed this
     // way directly, "sin A cos B + cos A sin B") get the same word-form treatment as the LaTeX case above.
@@ -423,7 +427,6 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
   const fetchChunk = async (text: string, gen: number): Promise<string> => {
     try { return await fetchChunkOnce(text); }
     catch (e) {
-      console.warn(`[tts] cloud voice request failed, retrying once: ${(e as any)?.status ?? (e as any)?.message ?? e}`);
       await sleep(CLOUD_RETRY_DELAY_MS);
       if (genRef.current !== gen) throw e;
       return fetchChunkOnce(text);
@@ -477,7 +480,6 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
       try { url = await pending[i]; }
       catch (e) {
         if (genRef.current !== gen) return;
-        console.warn(`[tts] cloud voice failed twice — skipping this reply's audio (never the browser voice): ${(e as any)?.status ?? (e as any)?.message ?? e}`);
         failedEverywhere("cloud-unavailable");
         releaseUrls();
         setSpeaking(false);
@@ -487,7 +489,6 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
       try { await playUrl(url, chunks[i]); }
       catch (e) {
         if (genRef.current !== gen) return;
-        console.warn(`[tts] cloud audio failed to play — skipping this reply's audio (never the browser voice): ${(e as any)?.message ?? e}`);
         failedEverywhere("playback-failed");
         releaseUrls();
         setSpeaking(false);
@@ -519,7 +520,6 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
     // server-side voice pool's success. See this file's top-of-hook comment for why a cloud FAILURE never
     // falls through to the browser voice (that's handled inside speakWithCloud instead, as a silent skip).
     const useCloud = audioSupported;
-    console.info(`[tts] speaking ${sentences.length} sentence(s) via ${useCloud ? "cloud voice" : "browser voice (no <audio> support)"}`);
     if (useCloud) void speakWithCloud(gen, sentences);
     else speakWithBrowser(gen, sentences);
   // eslint-disable-next-line react-hooks/exhaustive-deps

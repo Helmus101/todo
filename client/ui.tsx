@@ -10,7 +10,8 @@ import { useEffect, useState, useCallback, useRef, useContext, createContext, ty
 import { createPortal } from "react-dom";
 import { motion, useReducedMotion } from "motion/react";
 import type { WebTask, TaskFlashcards, TaskQuiz, DailyPracticeProblem } from "../shared/types.ts";
-import { canonStatus, practiceAnswerMatches, LEITNER_BOX_LABEL } from "../shared/types.ts";
+import { canonStatus, LEITNER_BOX_LABEL } from "../shared/types.ts";
+import { gradeExerciseAnswer } from "../shared/exerciseVerification.ts";
 import { api } from "./api.ts";
 import { savePracticeLocally } from "./localPractice.ts";
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
@@ -29,6 +30,22 @@ export function useLang(): (fr: string, en: string) => string {
   return (fr: string, en: string) => (lang === "en" ? en : fr);
 }
 
+/** The app's one loading indicator. */
+export function Spinner({ size }: { size?: "xs" | "sm" }) {
+  return <span className={`spinner${size ? ` ${size}` : ""}`} aria-hidden="true" />;
+}
+
+/** The app's one inline error line, with an optional Retry. */
+export function ErrorNote({ children, onRetry, small }: { children: ReactNode; onRetry?: () => void; small?: boolean }) {
+  const L = useLang();
+  return (
+    <p className={`rewrite-error${small ? " small" : ""}`} role="alert">
+      {children}
+      {onRetry && <> <button type="button" className="btn xs ghost" onClick={onRetry}>{L("Réessayer", "Retry")}</button></>}
+    </p>
+  );
+}
+
 /** A small dismissible callout shown the FIRST time a student encounters a specific feature — Study Mode's
  *  desk, the tutor Board, canvas mode, a flashcard review, Journal, etc. Distinct from the one-time signup
  *  Onboarding() flow (App.tsx): that's a deliberately SHORT linear tour (name, track/language, one-screen
@@ -39,9 +56,12 @@ export function useLang(): (fr: string, en: string) => string {
  *  useFirstTime.ts), then gets out of the way for good.
  *  `id` must be unique per feature and stable across releases (it's the persistence key). Renders nothing
  *  once dismissed or already seen — cheap to leave mounted unconditionally at a feature's entry point. */
+/** Coach marks, first-visit tours and "how this page works" captions are off: an interface that needs a tour to be understood
+ *  should be simpler, not annotated. Flip to true to bring them back. */
+export const COACH_MARKS = false;
 export function FirstTimeHint({ id, title, body, className }: { id: string; title: string; body: string; className?: string }) {
   const [isFirst, dismiss] = useFirstTime(id);
-  if (!isFirst) return null;
+  if (!COACH_MARKS || !isFirst) return null;
   return (
     <div className={`first-time-hint ${className || ""}`} role="note">
       <div className="first-time-hint-body">
@@ -184,7 +204,7 @@ export function PageInfoHint({ pageKey, text }: { pageKey: string; text: string 
   const [dismissed, setDismissed] = useState(() => {
     try { return localStorage.getItem(storageKey) === "1"; } catch { return false; }
   });
-  if (dismissed) return null;
+  if (!COACH_MARKS || dismissed) return null;
   return (
     <p className="page-info-hint muted small">
       {text}
@@ -405,6 +425,74 @@ const LATEX_SYMBOLS: [RegExp, string][] = [
   [/\\(begin|end)\{[a-zA-Z*]+\}/g, ""], [/&/g, ""], [/\\\\/g, "\n"],
   [/\\(left|right|,|!|;|:|quad|qquad|displaystyle|textstyle)\b/g, ""],
 ];
+// Commands whose argument(s) are REAL LaTeX braces (can nest arbitrarily), not the fixed-depth `[^{}]*` a
+// plain regex can match. Reported live: "\frac{35}{\sin 30^{\circ}}" — the degree's own "^{\circ}" is a
+// braced group INSIDE the frac's denominator, so a `\frac\{([^{}]*)\}\{([^{}]*)\}` regex hunting for the
+// denominator's closing brace stopped at the circ group's inner "}" instead, slicing the denominator down
+// to "" and treating "\sin 30^" + whatever followed as unrelated leftover text — corrupting everything
+// from there on ("()/(3)5sin 30^° = (50)/(sin B) implies sin B = ()/(5)0 sin 30^°35"). Walks real brace
+// nesting instead, so a nested \frac/\sqrt/^{…} inside an argument can never desync the outer match.
+function matchBrace(s: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < s.length; i++) {
+    if (s[i] === "{") depth++;
+    else if (s[i] === "}") { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+}
+/** One argument at `pos`: a balanced "{…}" group, or — for the brace-less shorthand (`\frac12`) — a
+ *  single bare character. Returns [content, indexAfterArg], or null if there's nothing valid to take. */
+function takeArg(s: string, pos: number): [string, number] | null {
+  if (s[pos] === "{") {
+    const close = matchBrace(s, pos);
+    return close === -1 ? null : [s.slice(pos + 1, close), close + 1];
+  }
+  return pos < s.length && /\S/.test(s[pos]) ? [s[pos], pos + 1] : null;
+}
+const FRAC_CMDS = new Set(["frac", "dfrac", "tfrac", "cfrac"]);
+const MARK_CMDS: Record<string, string> = { overline: "̅", vec: "⃗", hat: "̂", bar: "̄", dot: "̇" };
+function convertBracedCommands(s: string): string {
+  const re = /\\(frac|dfrac|tfrac|cfrac|binom|sqrt|text|mathrm|mathbf|operatorname|overline|vec|hat|bar|dot)(?![a-zA-Z])/;
+  let out = "";
+  let i = 0;
+  while (i < s.length) {
+    const m = re.exec(s.slice(i));
+    if (!m) { out += s.slice(i); break; }
+    out += s.slice(i, i + m.index);
+    const name = m[1];
+    const pos = i + m.index + m[0].length;
+    // \sqrt[n]{x} (nth root) — the optional bracketed index, before the 1-arg cases below.
+    if (name === "sqrt" && s[pos] === "[") {
+      const closeBracket = s.indexOf("]", pos);
+      const arg = closeBracket !== -1 ? takeArg(s, closeBracket + 1) : null;
+      if (arg) { out += `${scriptify(s.slice(pos + 1, closeBracket), SUPERSCRIPT, "^")}√(${convertBracedCommands(arg[0])})`; i = arg[1]; continue; }
+    }
+    if (FRAC_CMDS.has(name) || name === "binom") {
+      const a = takeArg(s, pos);
+      const b = a ? takeArg(s, a[1]) : null;
+      if (a && b) {
+        out += name === "binom" ? `C(${convertBracedCommands(a[0])},${convertBracedCommands(b[0])})` : `(${convertBracedCommands(a[0])})/(${convertBracedCommands(b[0])})`;
+        i = b[1]; continue;
+      }
+    } else {
+      const a = takeArg(s, pos);
+      if (a) {
+        const inner = convertBracedCommands(a[0]);
+        // \overline{AB} / \vec{v} / \hat{x} / \bar{x} / \dot{x} — combining marks per character rather
+        // than dropping the annotation entirely (a segment bar, a vector arrow, and a derivative dot all
+        // change the MEANING of the expression, not just its styling). text/mathrm/mathbf/operatorname
+        // just unwrap to their plain content.
+        out += name === "sqrt" ? `√(${inner})` : MARK_CMDS[name] ? [...inner].map((c) => `${c}${MARK_CMDS[name]}`).join("") : inner;
+        i = a[1]; continue;
+      }
+    }
+    // No valid argument found (malformed input) — leave the command name itself, same as the old regexes
+    // implicitly did by simply not matching.
+    out += `\\${name}`;
+    i = pos;
+  }
+  return out;
+}
 function formatMath(text: string): string {
   // Reported live: a generated flashcard/quiz/practice-problem written as plain "x^2 + y^2 = z^2" (no LaTeX
   // escaping at all, just a bare caret — a common way both the model and students themselves write exponents)
@@ -418,26 +506,22 @@ function formatMath(text: string): string {
     // Strip the delimiter wrappers — \( \) \[ \] $ $ $$ $$ — the content inside is what actually gets
     // converted; the delimiters themselves are LaTeX plumbing a reader has no use for.
     .replace(/\\\[|\\\]|\\\(|\\\)/g, "")
-    .replace(/\$\$?/g, "")
+    .replace(/\$\$?/g, "");
+  s = convertBracedCommands(s);
+  s = s
     // \circ has no LATEX_SYMBOLS entry — reported live: "60^\circ" (an extremely common way to write a
     // degree measure, e.g. cos(60°) in the Law of Cosines) came out as raw "^\circ" text. Handle the
     // "^\circ" idiom directly as a plain degree symbol (no leftover caret) BEFORE the generic superscript
     // pass below would otherwise grab just the backslash as a one-character "exponent" and mangle it.
-    .replace(/\^\\circ/g, "°").replace(/\\circ/g, "°")
-    .replace(/\\d?frac\{([^{}]*)\}\{([^{}]*)\}/g, "($1)/($2)") // \frac AND \dfrac/\tfrac
-    // \sqrt[n]{x} (nth root) before the plain \sqrt{x} case, or the `[n]` would be left dangling.
-    .replace(/\\sqrt\[([^\]]*)\]\{([^{}]*)\}/g, (_, n, g) => `${scriptify(n, SUPERSCRIPT, "^")}√(${g})`)
-    .replace(/\\sqrt\{([^{}]*)\}/g, "√($1)")
-    .replace(/\\binom\{([^{}]*)\}\{([^{}]*)\}/g, "C($1,$2)")
-    .replace(/\\(text|mathrm|mathbf|operatorname)\{([^{}]*)\}/g, "$2")
-    // \overline{AB} / \vec{v} / \hat{x} / \bar{x} / \dot{x} — combining marks per character rather than
-    // dropping the annotation entirely (a segment bar, a vector arrow, and a derivative dot all change
-    // the MEANING of the expression, not just its styling).
-    .replace(/\\overline\{([^{}]*)\}/g, (_, g) => [...g].map((c: string) => `${c}̅`).join(""))
-    .replace(/\\vec\{([^{}]*)\}/g, (_, g) => [...g].map((c: string) => `${c}⃗`).join(""))
-    .replace(/\\hat\{([^{}]*)\}/g, (_, g) => [...g].map((c: string) => `${c}̂`).join(""))
-    .replace(/\\bar\{([^{}]*)\}/g, (_, g) => [...g].map((c: string) => `${c}̄`).join(""))
-    .replace(/\\dot\{([^{}]*)\}/g, (_, g) => [...g].map((c: string) => `${c}̇`).join(""));
+    // Runs AFTER convertBracedCommands: a frac/sqrt argument can itself contain "^{\circ}" (that's the
+    // nested-brace case this whole function exists to survive), and convertBracedCommands leaves that
+    // superscript syntax untouched (\circ isn't one of its commands), so it's still there to catch here.
+    // Braced form FIRST — "^{\circ}" (very common; \circ doesn't strictly need the braces but models and
+    // humans both write it) otherwise only has its "\circ" matched and stripped by the next line, leaving
+    // the caret and braces behind for the superscript pass below to turn into a bare, dangling "^°"
+    // (reported live, inside the same garbled expression as the frac bug above).
+    .replace(/\^\{\\circ\}/g, "°")
+    .replace(/\^\\circ/g, "°").replace(/\\circ/g, "°");
   for (const [re, rep] of LATEX_SYMBOLS) s = s.replace(re, rep);
   // ^{...}/_{...} (braced, so multi-char) then ^x/_x (single char) — braced form must run first or the
   // single-char pattern would fire on just the `{`.
@@ -451,7 +535,11 @@ function formatMath(text: string): string {
   s = s.replace(/_(?!\{)(\S)/g, (_, g) => scriptify(g, SUBSCRIPT, "_"));
   s = s.replace(/\^\{([^{}]*)\}/g, (_, g) => scriptify(g, SUPERSCRIPT, "^"));
   s = s.replace(/_\{([^{}]*)\}/g, (_, g) => scriptify(g, SUBSCRIPT, "_"));
-  return s.replace(/[{}]/g, "").replace(/ {2,}/g, " ").trim();
+  // Never hand a raw backslash to the reader (reported live: "E = \tfrac12(250)(0.12)^2 = 1.8\ J" printed
+  // verbatim): any command still unhandled becomes its plain name, a control-space becomes a space, and
+  // any other stray backslash is dropped. KaTeX never sees this output — MathText routes real $…$ spans to
+  // KaTeX before formatMath runs — so removing syntax can only ever lose a raw "\\" the reader can't use.
+  return s.replace(/\\\s+/g, " ").replace(/\\([a-zA-Z]+)/g, "$1").replace(/\\/g, "").replace(/[{}]/g, "").replace(/ {2,}/g, " ").trim();
 }
 
 export { formatMath, boldify };
@@ -464,7 +552,7 @@ function boldify(s: string): ReactNode {
   // **bold** and ==highlight== (the tutor marks the key part of a passage/problem/working with ==…==).
   const parts = s.split(/(\*\*[^*]+\*\*|==[^=\n]+==)/g);
   return parts.map((p, i) => (p.startsWith("**") && p.endsWith("**") ? <b key={i}>{p.slice(2, -2)}</b>
-    : p.length > 4 && p.startsWith("==") && p.endsWith("==") ? <mark key={i} className="otto-mark">{p.slice(2, -2)}</mark> : p));
+    : p.length > 4 && p.startsWith("==") && p.endsWith("==") ? p.slice(2, -2) : p));
 }
 
 // A GFM-style pipe row: "| a | b | c |" (leading/trailing pipes optional). Splits on unescaped `|`.
@@ -593,7 +681,7 @@ export function renderChatText(text: string): ReactNode {
           rows.push(splitRow(lines[j].trim())); j++;
         }
         blocks.push(
-          <div key={bk++} className="note-table-wrap" style={{ margin: "6px 0" }}>
+          <div key={bk++} className="note-table-wrap my-2">
             <table className="note-table">
               <thead><tr>{header.map((c, ci) => <th key={ci}>{boldify(c)}</th>)}</tr></thead>
               <tbody>{rows.map((r, ri) => <tr key={ri}>{r.map((c, ci) => <td key={ci}>{boldify(c)}</td>)}</tr>)}</tbody>
@@ -759,7 +847,7 @@ function StudyHelpPanel({ taskId, card }: { taskId?: string; card: StudyHelpCard
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) send(); }}
-              placeholder={L("Demande un indice…", "Ask for a hint…")}
+              placeholder={L("Demande un indice…", "Ask for a hint…")} aria-label={L("Demande un indice…", "Ask for a hint…")}
               disabled={busy}
             />
             <VoiceControls
@@ -797,7 +885,7 @@ function loadDeckProgress(deckId: string, userId: string | null): { i: number; r
     return { i: p.i, right: p.right, wrong: p.wrong };
   } catch { return null; }
 }
-export function FlashcardDeck({ deck, onReview, onNotNeeded, taskId, onAllCorrect, onlyIndices, userId }: { deck: TaskFlashcards; onReview?: (cardIndex: number, correct: boolean) => void; onNotNeeded?: (cardIndex: number) => void; taskId?: string; onAllCorrect?: () => void; userId?: string | null;
+function FlashcardDeckInner({ deck, onReview, onNotNeeded, taskId, onAllCorrect, onlyIndices, userId }: { deck: TaskFlashcards; onReview?: (cardIndex: number, correct: boolean) => void; onNotNeeded?: (cardIndex: number) => void; taskId?: string; onAllCorrect?: () => void; userId?: string | null;
   /** Restricts the review pass to exactly these card indices (still excludes `notNeeded` ones) instead of
    *  every card in the deck — the DueReviews cross-task view (App.tsx) needs this: a deck's spaced-
    *  repetition schedule (nextLeitnerReview, shared/types.ts) can have most of its cards sitting on a
@@ -843,8 +931,10 @@ export function FlashcardDeck({ deck, onReview, onNotNeeded, taskId, onAllCorrec
   const [dropped, setDropped] = useState<number[]>([]);
   const inScope = baseSeq.length - dropped.length;
   const seqLen = retryQueue ? retryQueue.length : baseSeq.length;
-  const done = i >= seqLen;
   const cardIndex = retryQueue ? retryQueue[i] : baseSeq[i];
+  // A deck that shrank under us (regenerated/replaced server-side while this pass was open) leaves cardIndex
+  // pointing past the end — treat that as "finished" instead of crashing on card.review.
+  const done = i >= seqLen || !deck.cards[cardIndex];
   const card = !done ? deck.cards[cardIndex] : null;
   const mark = (ok: boolean) => {
     if (!card) return;
@@ -988,6 +1078,13 @@ export function FlashcardDeck({ deck, onReview, onNotNeeded, taskId, onAllCorrec
       <StudyHelpPanel taskId={taskId} card={{ kind: "flashcard", front: card!.front, back: card!.back }} />
     </div>
   );
+}
+
+/** Keyed by deck id + size: the review pass freezes its card order at mount, so reusing one mounted instance for
+ *  a DIFFERENT deck (switching journal days/weeks) kept the first deck's card count and indexed past the end of
+ *  a shorter one ("Cannot read properties of undefined (reading 'review')"). A new deck is a fresh pass. */
+export function FlashcardDeck(props: React.ComponentProps<typeof FlashcardDeckInner>) {
+  return <FlashcardDeckInner key={`${props.deck.id}:${props.deck.cards.length}`} {...props} />;
 }
 
 /** An MCQ quiz player — answer, get immediate right/wrong + a one-line explanation, then advance; a score
@@ -1182,7 +1279,7 @@ export function QuizPlayer({ quiz, taskId, subject, userId }: { quiz: TaskQuiz; 
 export function PracticeProblemCard({ problem, taskId, onAnswered }: { problem: DailyPracticeProblem; taskId?: string; onAnswered?: (correct: boolean) => void }) {
   const L = useLang();
   const [answer, setAnswer] = useState(problem.attempt?.answer || "");
-  const [result, setResult] = useState<{ correct: boolean } | null>(problem.attempt ? { correct: problem.attempt.correct } : null);
+  const [result, setResult] = useState<{ correct: boolean; systemError?: boolean } | null>(problem.attempt ? { correct: problem.attempt.correct, systemError: problem.attempt.systemError } : null);
   const [checking, setChecking] = useState(false);
   const cleanProblem = stripStrayMarkdown(problem.problem).trim();
   const problemTitle = /^(practice problem|problème d'application)\s*[:\-]?\s*/i.test(cleanProblem)
@@ -1194,23 +1291,22 @@ export function PracticeProblemCard({ problem, taskId, onAnswered }: { problem: 
     if (!answer.trim() || checking) return;
     setChecking(true);
     try {
+      // The shared grader (shared/exerciseVerification.ts, spec §19) decides in every path — server and local
+      // alike — so the same answer can never get two different verdicts, and a key that disagrees with the
+      // independently computed value is a system error rather than a mistake.
+      const local = gradeExerciseAnswer({ question: problem.problem, answer: problem.answer, check: problem.check, value: problem.value }, answer.trim());
+      let correct = local.status === "correct";
+      let systemError = local.status === "system_error";
       if (taskId) {
         const list = await api.submitPracticeAnswer(taskId, answer.trim());
-        const fresh = list.find((t) => t.id === taskId);
-        const correct = fresh?.practiceProblem?.attempt?.correct ?? practiceAnswerMatches(answer, problem.answer);
-        const saved = { ...problem, attempt: { answer: answer.trim(), correct, at: new Date().toISOString() } };
-        setResult({ correct });
-        if (taskId) savePracticeLocally(taskId, saved);
-        onAnswered?.(correct);
-      } else {
-        // No live owner (e.g. reviewing from the Flashcards tab's local backup) — check locally with the
-        // exact same matching rule the server uses, so the verdict is identical either way, just unsynced.
-        const correct = practiceAnswerMatches(answer, problem.answer);
-        const saved = { ...problem, attempt: { answer: answer.trim(), correct, at: new Date().toISOString() } };
-        setResult({ correct });
-        if (taskId) savePracticeLocally(taskId, saved);
-        onAnswered?.(correct);
+        const attempt = list.find((t) => t.id === taskId)?.practiceProblem?.attempt;
+        if (attempt) { correct = attempt.correct; systemError = !!attempt.systemError; }
       }
+      const saved = { ...problem, attempt: { answer: answer.trim(), correct, at: new Date().toISOString(), ...(systemError ? { systemError: true } : {}) } };
+      setResult({ correct, systemError });
+      if (taskId) savePracticeLocally(taskId, saved);
+      // An ungradeable attempt (the ITEM is broken, not the answer) never moves the session's tally (spec §19).
+      if (!systemError) onAnswered?.(correct);
     } catch { /* best-effort — the student can just retry the check */ }
     finally { setChecking(false); }
   };
@@ -1222,7 +1318,7 @@ export function PracticeProblemCard({ problem, taskId, onAnswered }: { problem: 
   <div className="practice-problem-row">
   <input
   type="text" className="practice-problem-input" value={answer}
-  placeholder={L("Ta réponse…", "Your answer…")}
+  placeholder={L("Ta réponse…", "Your answer…")} aria-label={L("Ta réponse…", "Your answer…")}
   disabled={result !== null}
   onChange={(e) => { setAnswer(e.target.value); setResult(null); }}
   onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) void check(); }}
@@ -1237,9 +1333,11 @@ export function PracticeProblemCard({ problem, taskId, onAnswered }: { problem: 
       </div>
       {result ? (
         <p className={`practice-problem-verdict ${result.correct ? "correct" : "wrong"}`} role="status" aria-live="polite">
-          {result.correct
-            ? L("✓ Correct.", "✓ Correct.")
-            : L("✗ Pas tout à fait — réessaie (l'indice d'Otto juste en dessous peut t'aider).", "✗ Not quite — try again (Otto's hint just below can help).")}
+          {result.systemError
+            ? L("ⓘ La clé de ce problème ne correspond pas à la valeur vérifiée — ta réponse n'est pas comptée comme fausse.", "ⓘ This problem's answer key disagrees with the verified value — your answer isn't counted as wrong.")
+            : result.correct
+              ? L("✓ Correct.", "✓ Correct.")
+              : L("✗ Pas tout à fait — réessaie (l'indice d'Otto juste en dessous peut t'aider).", "✗ Not quite — try again (Otto's hint just below can help).")}
         </p>
       ) : null}
       {taskId ? (
@@ -1325,8 +1423,9 @@ export function TaskModal({ onClose, children, nested, title, wide }: { onClose:
     const focusables = () => Array.from(
       panelRef.current?.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])') || [],
     ).filter((el) => el.offsetParent !== null); // skip anything hidden (a closed disclosure, etc.)
-    const first = focusables()[0];
-    (first || panelRef.current)?.focus();
+    // Focus the dialog itself (not its first button), so opening a task doesn't light up a focus ring on
+    // whichever control happens to come first; Tab moves into the controls from here.
+    panelRef.current?.focus({ preventScroll: true });
     const onTrapTab = (e: KeyboardEvent) => {
       if (e.key !== "Tab") return;
       const els = focusables();

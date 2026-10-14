@@ -118,7 +118,7 @@ export function DictionaryArtifact({ artifact, onChange, language = "en" }: Dict
           value={word}
           onChange={(e) => setWord(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && lookup()}
-          placeholder={uiEn ? "Search a word" : "Cherche un mot"}
+          placeholder={uiEn ? "Search a word" : "Cherche un mot"} aria-label={uiEn ? "Search a word" : "Cherche un mot"}
           autoCapitalize="none"
           spellCheck={false}
         />

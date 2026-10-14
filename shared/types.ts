@@ -1,5 +1,14 @@
 // Shared task model — imported by both the Express backend and the React client.
+import type { TableSpec, SourceSpec } from "./boardTable.ts";
 import { normalizeCoursework, type CourseworkDoc } from "./coursework.ts";
+// The adaptive-agent layer's shapes (the persistent student model, the concept graph, the app-owned session
+// state, the board event stream and the action space). They live in their own shared module so the client can
+// type the transparency panel without importing any server code — see shared/agentTypes.ts.
+import type { WidgetSpec } from "./widgets.ts";
+import type { FlowSpec } from "./flow.ts";
+import type { StudentModelShape, ConceptGraphShape, TutorSessionStateShape, TutorDecisionShape, BoardEventShape } from "./agentTypes.ts";
+import { SESSION_CAP } from "./agentTypes.ts";
+import { equivalent, logAnswerEquivalent } from "./mathEquiv.ts";
 
 export type Quadrant = "do" | "schedule" | "delegate" | "later";
 
@@ -31,6 +40,9 @@ export interface TaskLink {
 
 /** A lightweight model of WHO THE USER IS — built up over time, used to ground + personalize tasks. */
 export interface Profile {
+  /** How this student likes to be taught, learned from what they ask the tutor for ("examples first", "draw it",
+   *  "shorter") — short labels only, never conversation text. Max 6, newest last. */
+  tutorPrefs?: string[];
   name?: string;          // what to call the user (asked at onboarding / learned from their mail)
   about: string;          // a short paragraph: role, how they work, what matters
   preferences: string[];  // e.g. "concise emails", "no meetings before 10am"
@@ -73,6 +85,27 @@ export interface Profile {
     unaidedRate: number;  // success without hints
     fadeIndex: number;  // are hint levels trending down?
   }>;
+  // The WEEKLY SERIES the same-named snapshot above was always meant to be derived from — see
+  // server/hintLadder.ts. The snapshot alone (one week, overwritten in place) could never answer the
+  // question the anti-dependence rules actually ask ("are hint levels TRENDING down?"), which is why
+  // server/dependenceMetrics.ts's array-based functions had no caller: there was nothing to feed them.
+  // Capped at 52 entries per domain (a year of weeks) in normalizeProfile, newest last.
+  dependenceHistory?: Record<string, DependenceMetric[]>;
+  // The persistent, per-CONCEPT student model (server/studentModel.ts) — what Otto believes about how this
+  // student learns, with the evidence behind each belief. One object so it's validated, capped and reset as
+  // a unit. Fully visible in the transparency panel (spec §30) and resettable from Settings.
+  conceptModel?: StudentModelShape;
+  // The concept/prerequisite graph (server/conceptGraph.ts) — the curated spine plus the concepts discovered
+  // in this student's own courses and uploaded documents. Persisted so discovery is paid for once.
+  conceptGraph?: ConceptGraphShape;
+  // Per-task tutor session state (server/sessionState.ts), newest last, capped — the app-owned record of
+  // where a session had got to (objective, live concept, rung used, interventions issued, independence), so
+  // a resumed session doesn't restart from nothing and the learning curve across sessions is readable.
+  tutorSessions?: TutorSessionStateShape[];
+  // The agent's own decision log (server/actionSpace.ts) — one entry per tutor turn: which action was chosen,
+  // at what it was aimed, and why. NEVER shown to the student (spec §45 is explicit that this exists to make
+  // the agent debuggable), so it is bounded aggressively and reset alongside the concept model.
+  tutorDecisions?: TutorDecisionShape[];
   // Consent records (parental/guardian consent for under-13s)
   consentRecords?: {
     guardianId?: string;
@@ -89,8 +122,6 @@ export interface Profile {
   // course's facts don't scroll off the list behind unrelated ongoing projects, and so the UI/prompts can
   // treat "this is about a specific class" as a distinct, groupable kind of fact.
   courses: string[];
-  unlimited?: boolean;    // account has no monthly AI spend cap (set by visiting /unlimited) — overMonthlyBudget/
-                          // overInteractiveBudget always read false for it, regardless of monthCostUsd
   // Opt-in gate for anything experimental: the 7 bandit-personalization suggestions (Pomodoro/audio/
   // density/chat-style/flashcard-verbosity/granularity/ordering), the Study Mode focus camera, and the
   // AI-personalized theme generator. Off (undefined) by default for every account — each gated feature
@@ -237,6 +268,9 @@ export interface Profile {
   manualExams?: { id: string; subject: string; deadline: string }[];
   // Documents uploaded per subject (shared/coursework.ts): a bounded summary + excerpt the tutor and chat can cite.
   coursework?: CourseworkDoc[];
+  // What the teachers publish on Pronote ("contenu du cours" / ressources): lesson title + text and the files attached,
+  // newest first, capped. Refreshed by the daily sweep and "Sync from Pronote"; read by chat/tutor/task generation.
+  pronoteLessons?: { id: string; subject: string; date: string; title?: string; text: string; category?: string; files?: { name: string; url: string }[] }[];
   // When the student finished (or skipped) the first-run tour — server-side so it follows the account across devices.
   onboardedAt?: string;
   // Page guides already shown (ids like "tasks", "tutor-session") — server-side so a guide never repeats on another device.
@@ -412,7 +446,6 @@ export function normalizeProfile(p: any): Profile {
     // standing fact, so two genuinely different sessions that happen to read similarly (sameFact is fuzzy)
     // must not collapse into one. Capped here instead, newest last so a simple .slice(-N) keeps recency.
     sessions: arr(p?.sessions).slice(-30),
-    unlimited: !!p?.unlimited,
     paused: !!p?.paused,
     pausedAt: typeof p?.pausedAt === "string" ? p.pausedAt : undefined,
     lastSweepAt: typeof p?.lastSweepAt === "string" ? p.lastSweepAt : undefined,
@@ -480,6 +513,13 @@ export function normalizeProfile(p: any): Profile {
         })).filter((e: { subject: string; deadline: string }) => e.subject && e.deadline).slice(0, 100)
       : undefined,
     coursework: normalizeCoursework(p?.coursework),
+    pronoteLessons: Array.isArray(p?.pronoteLessons)
+      ? p.pronoteLessons.filter((l: any) => l && typeof l.id === "string" && typeof l.date === "string" && typeof l.text === "string").slice(0, 40).map((l: any) => ({
+          id: l.id.slice(0, 80), subject: String(l.subject || "").slice(0, 60), date: l.date.slice(0, 10), text: l.text.slice(0, 1500),
+          ...(l.title ? { title: String(l.title).slice(0, 140) } : {}), ...(l.category ? { category: String(l.category).slice(0, 40) } : {}),
+          ...(Array.isArray(l.files) && l.files.length ? { files: l.files.slice(0, 6).map((f: any) => ({ name: String(f?.name || "").slice(0, 120), url: String(f?.url || "").slice(0, 600) })) } : {}),
+        }))
+      : undefined,
     onboardedAt: typeof p?.onboardedAt === "string" ? p.onboardedAt : undefined,
     toursSeen: Array.isArray(p?.toursSeen) ? [...new Set<string>(p.toursSeen.map((t: any) => String(t).slice(0, 40)).filter(Boolean))].slice(0, 40) : undefined,
     subjects: Array.isArray(p?.subjects) ? [...new Set<string>(p.subjects.map((t: any) => String(t).trim().slice(0, 60)).filter(Boolean))].slice(0, 14) : undefined,
@@ -524,6 +564,27 @@ export function normalizeProfile(p: any): Profile {
         ? (Object.fromEntries(Object.entries(p.focusStats.subjectFocus).filter(([, v]) => typeof v === "number")) as Record<string, number>)
         : undefined,
     } : undefined,
+    // The adaptive-agent fields (agentTypes.ts) were being silently DROPPED on every normalize cycle —
+    // this function builds a brand-new object from an explicit whitelist, so anything not listed here
+    // vanishes the next time a profile round-trips through loadState (server/store.ts calls
+    // normalizeProfile on every load). That's exactly how server/sessionState.ts/server/actionSpace.ts's
+    // writes would have been quietly undone. Deep validation of conceptModel/conceptGraph belongs to their
+    // own server-side normalizers (normalizeStudentModel/normalizeConceptGraph) — this file can't import
+    // those (shared/types.ts is also the client bundle), so this is a shallow, defensive pass-through:
+    // keep it only if it's a plausibly-shaped object, let the server-side normalizers do the real work
+    // once those are wired up (not yet, for these two — see the plan's "explicitly deferred" section).
+    conceptModel: p?.conceptModel && typeof p.conceptModel === "object" && p.conceptModel.concepts && typeof p.conceptModel.concepts === "object" ? p.conceptModel : undefined,
+    conceptGraph: p?.conceptGraph && typeof p.conceptGraph === "object" && p.conceptGraph.nodes && typeof p.conceptGraph.nodes === "object" ? p.conceptGraph : undefined,
+    // Validated more concretely — these two are actively read/written every Tutor turn as of this change.
+    tutorSessions: Array.isArray(p?.tutorSessions)
+      ? p.tutorSessions.filter((s: any) => s && typeof s.taskId === "string" && typeof s.updatedAt === "string").slice(-SESSION_CAP)
+      : undefined,
+    tutorDecisions: Array.isArray(p?.tutorDecisions)
+      ? p.tutorDecisions.filter((d: any) => d && typeof d.at === "string" && typeof d.action === "string" && typeof d.why === "string").slice(-40)
+      : undefined,
+    focusSessions: Array.isArray(p?.focusSessions)
+      ? p.focusSessions.slice(-10)
+      : undefined,
   };
 }
 
@@ -611,7 +672,7 @@ export function subjectMastery(tasks: WebTask[], milestones: Profile["milestones
   for (const t of tasks) {
     if ((t.sourceSubject || "").toLowerCase() !== subjectKey) continue;
     for (const deck of t.flashcards || []) {
-      for (const card of deck.cards) {
+      for (const card of deck?.cards || []) {
         if (card.notNeeded) continue; // excluded from every other "still shaky"/scoring signal too
         totalCards++;
         if (card.review?.box === 2) knownCards++;
@@ -620,7 +681,7 @@ export function subjectMastery(tasks: WebTask[], milestones: Profile["milestones
   }
   const leitnerRatio = totalCards > 0 ? knownCards / totalCards : null;
 
-  const subjectEntries = (milestones || []).filter((m) => m.subject.toLowerCase() === subjectKey);
+  const subjectEntries = (milestones || []).filter((m) => String(m?.subject || "").toLowerCase() === subjectKey);
   let milestoneWeight = 0;
   for (const m of subjectEntries) {
     const daysAgo = (now.getTime() - Date.parse(m.achievedAt)) / 86_400_000;
@@ -800,34 +861,8 @@ export function monthCostUsd(profile?: Profile | null, tz?: string, now: Date = 
   // pre-upgrade rows that never accumulated it.
   return typeof u.monthCost === "number" ? u.monthCost : usageCostUsd(u.monthIn || 0, u.monthOut || 0);
 }
-/** The monthly AI budget (USD). Override with MONTHLY_AI_BUDGET_USD (server-side); default effectively unlimited. */
-export function monthlyBudgetUsd(): number {
-  const raw = typeof process !== "undefined" ? Number(process.env?.MONTHLY_AI_BUDGET_USD) : NaN;
-  return Number.isFinite(raw) && raw >= 0 ? raw : 999999;
-}
-/** Has this account crossed its monthly AI budget? Gates BACKGROUND generation + execution when true. */
-export function overMonthlyBudget(profile?: Profile | null, now: Date = new Date()): boolean {
-  if (profile?.unlimited) return false;
-  return monthCostUsd(profile, tzOf(profile), now) >= monthlyBudgetUsd();
-}
-/** A small reserve above the cap kept for INTERACTIVE, user-present actions — the Approve & Run click, a
- *  manual run, a revision. The whole point of the product is that a human is the last step, so the last step
- *  must not be the thing the cap kills; it can spill slightly past the cap to let the user finish. Background
- *  work (sweeps, offline auto-run) still stops hard at the cap via overMonthlyBudget. */
-export const INTERACTIVE_RESERVE = 1.1;
-export function overInteractiveBudget(profile?: Profile | null, now: Date = new Date()): boolean {
-  if (profile?.unlimited) return false;
-  return monthCostUsd(profile, tzOf(profile), now) >= monthlyBudgetUsd() * INTERACTIVE_RESERVE;
-}
-/** When the budget resets — the 1st of next month in the user's timezone, as an ISO date ("YYYY-MM-DD"). */
-export function budgetRenewsOn(profile?: Profile | null, now: Date = new Date()): string {
-  const [y, m] = monthKeyOf(tzOf(profile), now).split("-").map(Number);
-  const ny = m === 12 ? y + 1 : y, nm = m === 12 ? 1 : m + 1;
-  return `${ny}-${String(nm).padStart(2, "0")}-01`;
-}
-
-/** Add one AI call's token cost to a profile's usage counters (mutates in place) — cumulative for the
- *  Settings view, plus month-to-date (with calendar-month rollover) for the spend cap. Best-effort. */
+/** Add one AI call's token cost to a profile's usage counters (mutates in place) — cumulative plus
+ *  month-to-date (with calendar-month rollover), both shown in Settings. Best-effort. */
 // What kind of AI call spent the money — lets Settings answer "what's actually costing money" instead of
 // just a single opaque total. Deliberately a small, fixed set (not a free-text label) so it stays a real
 // breakdown a person can scan, not a growing pile of one-off strings.
@@ -1158,6 +1193,46 @@ export interface Sendable {
   sent?: boolean;       // fired already (can't double-send)
 }
 
+/** A problem's worked solution, kept hidden from the student (server/solver.ts). */
+export interface TutorSolution {
+  /** What problem this solves (normalized statement) — a different focus means a new solve. */
+  focusKey: string;
+  statement: string;
+  finalAnswer: string;
+  /** The answer as a number when it is one, from the code-evaluated check expression. */
+  value?: number;
+  /** True only when code confirmed the answer (or the answer isn't numeric and needs no check). */
+  verified: boolean;
+  steps: { idea: string; result?: string; value?: number }[];
+  keyIdea?: string;
+  alternatives?: string[];
+  mistakes?: string[];
+  skill?: string;
+  at: string;
+}
+/** The tutor's running record of help given this session (server/tutor.ts). */
+export interface TutorTeachingState {
+  helpLevel: number;
+  stuckStreak: number;
+  lastAction?: string;
+  lastDiagnosis?: string;
+  turns: number;
+  /** The `leaked` identifier (from server/tutor.ts's leakedValue()) that tripped the "don't give away the
+   *  answer" guard LAST turn, if any — lets the engine tell "still stuck on the same value" (which must not
+   *  repeat the identical non-answer forever) from "a fresh trip on something else" (reported live: Otto
+   *  stuck replaying one canned sentence for four turns straight, regardless of what the student said). */
+  guardrailValue?: string;
+  /** Consecutive turns tripped on that SAME guardrailValue. Resets to 0 the instant a turn doesn't trip the
+   *  guard at all — moving on, or the value actually got resolved. */
+  guardrailStreak?: number;
+  /** Misconceptions Otto diagnosed this session (short labels from its hidden turn plan, never the student's words):
+   *  carried across turns so it revisits them instead of forgetting after one reply. Max 5. */
+  misconceptions?: { label: string; turns: number; resolved?: boolean }[];
+  /** Their motivational state last turn (expert tutors track it alongside what they know), and for how many turns in a row. */
+  affect?: "frustrated" | "unsure" | "confident" | "neutral";
+  affectStreak?: number;
+}
+
 export interface WebTask {
   id: string;
   title: string;
@@ -1223,12 +1298,16 @@ export interface WebTask {
   sourceDetail?: string;
   /** The real subject as Pronote names it ("Physique-Chimie") — drives per-subject artifact shaping. */
   sourceSubject?: string;
+  /** Free-study tutor session: the exact topic the student picked at the start ("Théorème de Pythagore", "Chapter 3 exercises"). */
+  sourceTopic?: string;
   /** The source item's own due date (ISO) — Pronote's, not the model's reading of it. */
   sourceDue?: string;
   /** Daily study-log entry text (source:"studylog" only) — what the student typed for that day/week. Not
    *  a to-do; these tasks are filtered out of the normal dashboard (see App.tsx) and only shown in the
    *  Journal tab. Capped ~4000 chars. */
   logText?: string;
+  /** Subjects this journal entry talks about (computed when the entry is saved); lets the tutor find the right entries. */
+  logSubjects?: string[];
   /** Which day (or week) a studylog task is for — "2026-08-30" for a daily entry, "week:2026-08-24" (that
    *  week's MONDAY, prefixed) for the week summary — a simple, year-boundary-safe week key rather than a
    *  formal ISO "2026-W35" string. The lookup key for find-or-create, instead of parsing anchorKey. */
@@ -1239,6 +1318,8 @@ export interface WebTask {
   updatedAt?: string;
   /** Why the last run failed (shown on failed_* cards with the Retry button). */
   lastError?: string;
+  /** When the job system last re-enqueued this task because it was stuck queued with no job (server/jobs.ts). */
+  recoveredAt?: string;
   /** A manual task added while AI was paused/unavailable — raw text, not yet refined. The card offers a
    *  "Refine" action to clean it up once AI is back. */
   unrefined?: boolean;
@@ -1290,6 +1371,17 @@ export interface WebTask {
    *  something the student has to be shown a specific artifact chip to find. Append-only from Otto's side
    *  (WRITE_TO_BOARD tool); grows over the life of the task, across sessions, same as `chat`. */
   board?: BoardEntry[];
+  /** The board EVENT STREAM (server/boardEvents.ts) — what HAPPENED on the board (wrote/erased/rewrote/
+   *  answered), diffed turn over turn, distinct from `board` itself (the current state). Capped
+   *  (BOARD_EVENT_CAP, shared/agentTypes.ts) — a session-scale trajectory signal, not an archive. Read by
+   *  chatAboutTask to build the "what just happened" prompt block (boardTrajectoryBlock) so a self-
+   *  correction or an erase-and-retry is visible as reasoning, not silently lost the next turn. */
+  boardEvents?: BoardEventShape[];
+  /** Tutor only, SERVER-ONLY (stripped before any task reaches the client): the worked solution of the problem the
+   *  session is on, produced once by server/solver.ts and verified by code — what the tutor steers by. */
+  solution?: TutorSolution;
+  /** Tutor only, server-only: the running teaching state (help given, stuck streak) — see server/tutor.ts. */
+  tutorState?: TutorTeachingState;
   /** This session's learning objectives (SET_OBJECTIVES tool) — a short checklist Otto lays out once a
    *  topic is chosen (3-6 items) and updates `done` on as the student demonstrates each one, instead of the
    *  single free-text `focus` board entry. Client-local, same as chat/board/problems: replaced wholesale on
@@ -1439,10 +1531,19 @@ export interface DailyPracticeProblem {
   /** Guidance on expected format/units/notation AND which plain-text symbols to use for anything not on a
    *  standard keyboard — shown to the student BEFORE they answer, not part of grading itself. */
   format?: string;
+  /** An expression that COMPUTES the numeric answer from the problem's own numbers (server/claude.ts's
+   *  makePracticeProblem evaluates it and stores `value`) — the independent verification spec §19 requires
+   *  before an item is graded. Absent on older entries, which are graded on the stored key alone. */
+  check?: string;
+  /** The exact computed value of a numeric answer (from `check`) — anything within rounding of it is right,
+   *  and a stored key that disagrees with it becomes a system error instead of a student mistake. */
+  value?: number;
   createdAt: string;
   /** Set once the student checks their answer — persisted so re-opening the day shows the outcome instead
-   *  of re-asking, same spirit as a flashcard's review state. */
-  attempt?: { answer: string; correct: boolean; at: string };
+   *  of re-asking, same spirit as a flashcard's review state. `systemError` records an attempt that could
+   *  NOT be graded because the item's key disagreed with the independently computed value (spec §19.1):
+   *  the attempt is preserved, but it is never counted as a mistake. */
+  attempt?: { answer: string; correct: boolean; at: string; systemError?: boolean };
 }
 
 /** A single standalone practice problem created by the tutor mid-conversation — rendered INLINE in the
@@ -1471,6 +1572,15 @@ export interface TaskProblem {
   hint?: string;
   /** Guidance on expected format/units/notation for free-response mode (e.g. "two decimal places, in m/s"). */
   format?: string;
+  /** The exact computed value of a numeric answer (from the problem's verified `check` expression) — the widget accepts anything within rounding of it. */
+  value?: number;
+  /** A conceptual (worded) answer's rubric, graded by code in shared/exerciseVerification.ts (spec §18.2): every
+   *  `required` entry is one idea, given as alternative phrasings (any one counts); `misconceptions` are related
+   *  ideas that must NOT pass on their own ("opportunity cost" for "define scarcity"). */
+  rubric?: { required: string[][]; misconceptions?: string[] };
+  /** Where the question comes from when it was adapted from a registered source (IB Documents, Revision Village,
+   *  AP Central…) — shown as a link under the question. Absent for generated questions. */
+  source?: { name: string; url: string };
   createdAt: string;
 }
 
@@ -1484,19 +1594,20 @@ export interface TaskProblem {
  *  0-800 x 0-600 space so the model never has to reason about the container's actual pixel size — the
  *  renderer scales the viewBox to fit. */
 export type DiagramOp =
-  | { op: "line"; x1: number; y1: number; x2: number; y2: number; arrow?: boolean; dashed?: boolean; color?: string }
-  | { op: "rect"; x: number; y: number; w: number; h: number; fill?: boolean; color?: string }
-  | { op: "circle"; cx: number; cy: number; r: number; fill?: boolean; dashed?: boolean; color?: string }
-  | { op: "polyline"; points: { x: number; y: number }[]; dashed?: boolean; color?: string }
+  | { op: "line"; x1: number; y1: number; x2: number; y2: number; arrow?: boolean; dashed?: boolean; color?: string; id?: string }
+  | { op: "rect"; x: number; y: number; w: number; h: number; fill?: boolean; color?: string; id?: string }
+  | { op: "circle"; cx: number; cy: number; r: number; fill?: boolean; dashed?: boolean; color?: string; id?: string }
+  | { op: "polyline"; points: { x: number; y: number }[]; dashed?: boolean; color?: string; id?: string }
   /** Closed shape (outline, optionally lightly filled). */
-  | { op: "polygon"; points: { x: number; y: number }[]; fill?: boolean; color?: string }
+  | { op: "polygon"; points: { x: number; y: number }[]; fill?: boolean; color?: string; id?: string }
   /** Circular arc about (cx,cy) from screen-angle a0 to a1 in degrees (y points DOWN, so counter-clockwise on screen is a1 < a0); sweeps the way from a0 to a1, may exceed 180°. */
-  | { op: "arc"; cx: number; cy: number; r: number; a0: number; a1: number; dashed?: boolean; color?: string }
-  | { op: "label"; x: number; y: number; text: string; size?: "sm" | "md" | "lg"; anchor?: "start" | "middle" }
-  | { op: "axes"; x: number; y: number; w: number; h: number; xLabel?: string; yLabel?: string }
+  | { op: "arc"; cx: number; cy: number; r: number; a0: number; a1: number; dashed?: boolean; color?: string; id?: string }
+  /** `id` lets the tutor point at one label (e.g. highlight the angle) without rewriting the figure. */
+  | { op: "label"; x: number; y: number; text: string; size?: "sm" | "md" | "lg"; anchor?: "start" | "middle"; id?: string }
+  | { op: "axes"; x: number; y: number; w: number; h: number; xLabel?: string; yLabel?: string; id?: string }
   /** Real typeset math (KaTeX), not the plain-text approximation formatMath (client/ui.tsx) does for chat.
    *  `latex` is raw LaTeX with no surrounding $/\( \) delimiters — e.g. "\\frac{2}{x-1} + \\frac{3}{x+2}". */
-  | { op: "equation"; x: number; y: number; latex: string };
+  | { op: "equation"; x: number; y: number; latex: string; id?: string };
 
 /** A function graph the tutor puts on the board (GRAPH_ON_BOARD). Expressions are plain math in x and the
  *  slider parameters ("a*x^2 + b*x + c", "sin(k x)"), compiled by shared/mathExpr.ts — never eval'd. */
@@ -1522,6 +1633,9 @@ export interface GraphSpec {
 
 export interface BoardEntry {
   id: string;
+  /** The line number the student sees in the board's margin (shared/boardLines.ts) — sent with the board so the
+   *  tutor's "#n" means the same line. Never stored as truth: recomputed from the board each time. */
+  n?: number;
   /** Plain text/markdown-lite (renderChatText already handles this) — not restricted to any one format,
    *  since a formula, an instruction, and a summary all need different shapes. When kind === "diagram" this
    *  is still a one-line caption (not the figure itself — see `diagram` below), so the entry reads sensibly
@@ -1537,13 +1651,56 @@ export interface BoardEntry {
    *  (see `outline`) — for essay-based/humanities content (history causes, source analysis, an essay plan)
    *  where a flat sentence or a spatial diagram both fit poorly; math/science still reach for
    *  formula/diagram first. */
-  kind?: "note" | "instruction" | "question" | "given" | "result" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "interactive" | "graph";
+  kind?: "note" | "instruction" | "given" | "result" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram" | "outline" | "interactive" | "graph" | "widget" | "flow" | "svg" | "gap" | "annotation" | "strategy" | "table" | "source";
+  /** Who authored this entry — "otto" (default for backward compat) or "student". Student-owned entries are
+   *  never silently rewritten by Otto. Used to visually distinguish Otto's scaffolding from the student's
+   *  own work on the board (see BoardArtifact.tsx). */
+  owner?: "otto" | "student";
+  /** Removed from the active board by the tutor (reversible — the entry is kept, just not shown). */
+  archived?: boolean;
+  /** Present only when kind === "gap" — the answer the student is expected to fill in. The board renders this
+   *  as an interactive blank the student must complete (the completion effect: doing the last step yourself
+   *  is where the learning happens). Otto must NEVER reveal this value in chat while the gap is open. */
+  expectedAnswer?: string;
+  /** Present only when kind === "gap" — the SPECIFIC next move that line is asking for (2-6 words, written by
+   *  Otto: "expand the bracket"). Shown as the chip under the line ("Your turn: expand the bracket") so a gap
+   *  names what to DO instead of a generic "finish this". Never carries the value itself. */
+  gapAction?: string;
+  /** A short plain-language explanation shown under the line ("power law: the exponent comes out front") — so the
+   *  board can be re-read later and still make sense, not just a column of equations. */
+  why?: string;
+  /** How a STUDENT-authored entry turned out — set by the app (never by the model), the moment the student
+   *  answers on the board (see server/boardEvents.ts's tagStudentAnswer). Purely presentational: it lets the
+   *  page keep a wrong attempt visible and struck through instead of either silently deleting it or letting
+   *  it read as correct, which is §12's "a wrong turn is part of the trajectory" made visible. Otto's own
+   *  entries never carry this — it is a record of the student's work, not a grade of Otto's. */
+  status?: "correct" | "incorrect";
+  /** The concept this entry is about, when the writer knew it — the join between the board and the persistent
+   *  student model (server/studentModel.ts). Optional and loose: a board entry is not required to be about a
+   *  named concept, and an unnamed one simply carries no evidence. */
+  concept?: string;
+  /** kind === "annotation": the board entry this note points at (highlight / circle a mistake / point to it), and how. */
+  targetId?: string;
+  tone?: "error" | "hint" | "good" | "focus";
   /** Present only when kind === "diagram" — the figure's shapes, rendered as SVG (BoardArtifact.tsx). Capped
    *  at 15 ops server-side (makeDiagramEntry, server/claude.ts): enough for a labeled triangle or a small
    *  graph, not enough to build a full illustration op-by-op. */
   diagram?: DiagramOp[];
   /** Present only when kind === "graph" (GRAPH_ON_BOARD) — a live, slider-driven function plot. */
   graph?: GraphSpec;
+  /** Present only when kind === "widget" (WIDGET_ON_BOARD) — a pre-built interactive activity (match / order / sort /
+   *  unit circle / projectile) rendered by the client from this content. */
+  widget?: WidgetSpec;
+  /** Present only when kind === "flow" (FLOW_ON_BOARD) — an auto-laid-out flowchart / cycle / timeline. */
+  flow?: FlowSpec;
+  /** Present only when kind === "table" (TABLE_ON_BOARD) — shared/boardTable.ts. */
+  table?: TableSpec;
+  /** Present only when kind === "source" (SOURCE_ON_BOARD) — an excerpt with annotated highlights. */
+  source?: SourceSpec;
+  /** Present only when kind === "svg" (SVG_ON_BOARD) — a sanitised model-authored SVG diagram (shared/svgSafe.ts). */
+  svg?: string;
+  /** Plain-language geometry of a computed figure (TRIG_SCENE_ON_BOARD) — fed to the tutor so it reads the figure correctly; never shown. */
+  facts?: string;
   /** Present only when kind === "outline" — one or more headed sections, each a short list of bullet
    *  points. Built for a history/essay-style board (causes-of-an-event, a source's key points, an essay's
    *  section-by-section plan) the same way `diagram` is built for a geometric figure: structure the model
@@ -1741,16 +1898,65 @@ function parseNumericOrFraction(s: string): number {
 function numbersMatch(given: number, correct: string | number): boolean {
   const correctNum = typeof correct === "number" ? correct : parseNumericOrFraction(correct);
   const looksDecimal = typeof correct === "string" && /\.\d/.test(correct);
-  if (!looksDecimal) return Math.abs(given - correctNum) < 1e-6 * Math.max(1, Math.abs(correctNum));
+  // A bare integer is exact — except a large one (≥ 50), which is nearly always a ROUNDED result ("112" for 111.99): allow rounding drift there.
+  if (!looksDecimal) return Math.abs(given - correctNum) < (Math.abs(correctNum) >= 50 ? Math.max(0.5, Math.abs(correctNum) * 0.005) : 1e-6 * Math.max(1, Math.abs(correctNum)));
   const relTol = Math.abs(correctNum) * 0.05; // covers g=9.8-vs-9.81/9.8-vs-10 and a couple of rounded steps
   const absFloor = 0.08; // last-digit rounding drift for small answers (7.42 vs 7.43, 1.94 vs 1.97)
   return Math.abs(given - correctNum) <= Math.max(relTol, absFloor);
 }
-export function practiceAnswerMatches(given: string, correct: string): boolean {
+/** The first number in free text, ignoring units, words and signs like "≈" or "=": "≈ 112 m", "h = 111,99 metres", "1 500 J", "1,500". NaN if none. */
+export function firstNumber(s: string): number {
+  let t = normalizeMinus(String(s || ""));
+  t = t.replace(/(\d)[ \u00a0,](?=\d{3}(?!\d))/g, "$1");          // thousands separators: 1 500 / 1,500
+  t = t.replace(/(\d),(?=\d)/g, "$1.");                             // decimal comma: 111,99
+  const m = t.match(/-?\d+(?:\.\d+)?(?:e-?\d+)?/i);
+  return m ? Number(m[0]) : NaN;
+}
+/** A free-response key that is a plain number (no unit text): the widget then asks for "a number". */
+export function isNumericAnswer(answer: string | undefined): boolean {
+  return !!answer && /^[\s≈~=]*[-−–]?\d[\d\s.,]*(?:e-?\d+)?\s*(?:\/\s*\d+(?:\.\d+)?)?\s*$/i.test(String(answer));
+}
+/** Does this exercise ask for a percentage? Then 0.75, 3/4, 75 and 75% are all the same right answer. */
+export function problemIsPercent(p: { question?: string; format?: string; answer?: string }): boolean {
+  return /%|percent|pourcent/i.test(`${p.question || ""} ${p.format || ""}`);
+}
+export function practiceAnswerMatches(given: string, correct: string, value?: number, percent?: boolean): boolean {
+  if (percent) {
+    // A percentage may be given as a fraction/decimal (0.75, 3/4) or as a percent (75, 75%): compare in percent.
+    const c = firstNumber(correct), gRaw = String(given || "");
+    const frac = /^\s*(-?\d+(?:[.,]\d+)?)\s*\/\s*(\d+(?:[.,]\d+)?)\s*$/.exec(gRaw);
+    const g = frac ? Number(frac[1].replace(",", ".")) / Number(frac[2].replace(",", ".")) : firstNumber(gRaw);
+    if (Number.isFinite(c) && Number.isFinite(g)) {
+      const hasPct = /%/.test(gRaw);
+      const asPercent = hasPct || frac || (g > 1 || g < 0) ? (frac ? g * 100 : g) : g * 100; // 0 ≤ g ≤ 1 without a % sign is a fraction
+      const tol = Math.max(Math.abs(c) * 0.006, 0.05);
+      const target = Number.isFinite(value as number) ? (value as number) : c;
+      if (Math.abs(asPercent - c) <= tol || Math.abs(asPercent - target) <= Math.max(Math.abs(target) * 0.006, 0.05) || Math.abs(g - c) <= tol) return true;
+    }
+  }
+  if (Number.isFinite(value as number)) {
+    // The problem's verified exact value: any answer within rounding of it is right, whatever units or words surround it.
+    const gv = firstNumber(given);
+    if (Number.isFinite(gv) && Math.abs(gv - (value as number)) <= Math.max(Math.abs(value as number) * 0.006, 0.05)) return true;
+  }
   const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ").replace(/^[a-z]\s*=\s*/, "").replace(/\.$/, "");
   const g = norm(given), c = norm(correct);
   if (!g) return false;
   if (g === c) return true;
+  // An algebraic answer ("3x+1") against a key written with different spacing/glyphs ("3x + 1") fails the
+  // exact-string check above even though it's the same expression — reported live: a correct remainder
+  // marked wrong purely on whitespace. `equivalent` compiles both sides and compares them NUMERICALLY (at
+  // sampled points for any free variable), so it's immune to spacing, ×/* and reordering, not just a
+  // string-cleanup special case. Only tried when a letter is present — a pure-numeric answer already works
+  // via the paths above/below, and `equivalent` safely returns "unknown" (never a false "correct") for
+  // genuine prose like a word answer, since that fails to compile as an expression at all.
+  if ((/[a-z]/i.test(g) || /[a-z]/i.test(c)) && equivalent(given, correct) === "correct") return true;
+  // Logarithm answers (log laws exercises): compared term by term, see logAnswerEquivalent.
+  // Decisive either way: the number-fallbacks below would otherwise match "3log_a x + 2log_a y" to a key starting
+  // "3\\log_a x…" on its leading 3 alone.
+  const logVerdict = logAnswerEquivalent(given, correct);
+  if (logVerdict === "correct") return true;
+  if (logVerdict === "incorrect") return false;
   const gn = parseNumericOrFraction(g);
   if (Number.isFinite(gn) && Number.isFinite(parseNumericOrFraction(c))) return numbersMatch(gn, c);
   // Leading-number fallback: makePracticeProblem's own prompt (server/claude.ts) tells the STUDENT to
@@ -1767,7 +1973,10 @@ export function practiceAnswerMatches(given: string, correct: string): boolean {
     return m ? Number(m[0].replace(",", ".")) : NaN;
   };
   const gln = leadingNum(g), cln = leadingNum(c);
-  if (Number.isFinite(gln) && Number.isFinite(cln)) return numbersMatch(gln, c.match(/-?\d+\.\d+/)?.[0] ?? cln);
+  if (Number.isFinite(gln) && Number.isFinite(cln) && numbersMatch(gln, c.match(/-?\d+\.\d+/)?.[0] ?? cln)) return true;
+  // Last resort: the number may sit after words or signs ("≈ 112 m", "the height is 112 metres", "h≈111,99") — compare the first number on each side.
+  const gfn = firstNumber(g), cfn = firstNumber(c);
+  if (Number.isFinite(gfn) && Number.isFinite(cfn)) return numbersMatch(gfn, c.match(/-?\d+\.\d+/)?.[0] ?? cfn);
   return false;
 }
 
@@ -1791,8 +2000,7 @@ export interface ConnectionStatus {
   onboarded?: boolean;  // the basic onboarding has been finished/skipped (or the account clearly predates it)
   toursSeen?: string[]; // page guides already shown on this account (Profile.toursSeen)
   betaFeatures?: boolean;     // opt-in gate for bandit personalization / focus camera / AI theme — see Profile's own doc comment
-  overBudget?: boolean;       // month-to-date AI spend has crossed the cap — gen/exec paused until it resets
-  unlimited?: boolean;        // account has no monthly AI spend cap (set via the /unlimited page)
+  isAdmin?: boolean;          // this account is listed in the server's ADMIN_EMAILS
   language?: "fr" | "en";     // the account's UI + AI-content language (Settings toggle) — defaults "fr"
   csrfToken?: string;         // synchronizer-token CSRF defense (server/index.ts's requireAuth) — only present when loggedIn
 }

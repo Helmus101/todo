@@ -1,9 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { MathAnswerInput } from "../MathAnswerInput.tsx";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import katex from "katex";
 import type { WebTask, BoardEntry, TaskProblem, DiagramOp } from "../../../shared/types.ts";
-import { practiceAnswerMatches } from "../../../shared/types.ts";
-import { autoMathLine } from "../../../shared/mathText.ts";
+import { sourceRuns, type TableSpec, type SourceSpec } from "../../../shared/boardTable.ts";
+import { isNumericAnswer, problemIsPercent } from "../../../shared/types.ts";
+import { gradeExerciseAnswer, gradeConceptAnswer, type GradeStatus } from "../../../shared/exerciseVerification.ts";
+import { autoMathLine, repairLatex, latexToPlainText } from "../../../shared/mathText.ts";
 import { GraphBlock } from "./GraphBlock.tsx";
+import { FlowDiagram } from "./FlowDiagram.tsx";
+import { sanitizeSvg } from "../../../shared/svgSafe.ts";
+import { boardLineNumbers } from "../../../shared/boardLines.ts";
+import { WidgetBlock, type WidgetResult } from "./WidgetBlock.tsx";
 import { renderChatText, useLang, FirstTimeHint, stripStrayMarkdown, formatMath, boldify } from "../../ui.tsx";
 
 // A guarded DYNAMIC import, not a static `import "katex/dist/katex.min.css"` — this module is also pulled
@@ -11,10 +18,15 @@ import { renderChatText, useLang, FirstTimeHint, stripStrayMarkdown, formatMath,
 // ESM loader hard-crashes on a bare `.css` specifier with ERR_UNKNOWN_FILE_EXTENSION. `typeof window` is
 // false in that Node test run, so the import() call inside is never reached there; in an actual browser
 // (Vite), it resolves normally and Vite bundles/injects the stylesheet as it would any CSS import.
+// The stylesheet is ALSO imported statically from client/main.tsx: without it KaTeX's hidden MathML copy
+// shows next to the HTML copy (every equation printed twice). Both renderers below also pass
+// output:"html", so even a missing stylesheet can no longer double the text.
 if (typeof window !== "undefined") { void import("katex/dist/katex.min.css"); }
 
 interface BoardArtifactProps {
   task: WebTask;
+  /** Undo the last board change (Tutor session) — rendered in the board's own header row, not floating over content. */
+  onUndo?: () => void;
   /** True while the tutor's reply is being generated — the board shows a live "Otto écrit…" indicator so
    *  the document feels like it's being drafted in real time next to the conversation, not refreshed after
    *  the fact (reported: board work should feel "smooth, mechanical" — the writing hand is always visible). */
@@ -22,66 +34,57 @@ interface BoardArtifactProps {
   /** Tutor only — fired on every answer attempt (right or wrong) so Otto can react to it like a person would
    *  ("what made you pick B?") instead of the board silently marking it. `attempt` counts tries on this
    *  problem including this one. Never carries the correct answer — only what the student gave. */
-  onProblemResult?: (r: { problem: TaskProblem; given: string; correct: boolean; attempt: number }) => void;
-  /** Lets the student answer directly where the question lives, instead of having to scroll down to chat
-   *  to reply — a 'question' entry or a completion-gap line ("= ?") was otherwise pure text to read, even
-   *  though CREATE_PROBLEM entries right next to them already had a real inline answer box. Sends the text
-   *  exactly like typing it into chat (same `send`), so Otto's reply lands normally and can add its own
-   *  next board entry. Omitted entirely on a read-only surface (the phone view, a past session's history). */
-  onAnswer?: (text: string) => void;
-  /** True while a reply to an on-board answer is in flight — disables the box so a second submit can't
-   *  fire before the first one's reply (and the board's own `writing` indicator) lands. */
-  answering?: boolean;
+  onProblemResult?: (r: { problem: TaskProblem; given: string; correct: boolean; attempt: number; /** the item's own key and the independently computed value disagreed — nobody's mistake (spec §19.1). */ systemError?: boolean; /** a worded answer had some, not all, of the rubric's key ideas (spec §8.3). */ partial?: boolean }) => void;
+  /** Tutor only — a match / order / sort activity was finished (how many slips), so Otto can react to it. */
+  onWidgetResult?: (r: WidgetResult) => void;
+  /** Tutor only — each bump reserves `height` px of blank space right after the board's CURRENT last item: the
+   *  student drew on the blank page below, and whatever Otto writes next must land AFTER that drawing. */
+  sheetSignal?: { n: number; height: number };
+  /** Tutor only — a gap with an answer key ("b = ?") gets an answer box; the attempt is graded by the SERVER
+   *  (numeric equivalence, shared/mathEquiv.ts) and the result reaches Otto like an exercise result does. */
+  onGapCheck?: (entry: BoardEntry, given: string) => Promise<"correct" | "incorrect" | "unknown" | "system_error">;
 }
 
-const KIND_LABEL: Record<string, [string, string]> = {
-  focus: ["Objectif du jour", "Today's focus"],
-  instruction: ["Consigne", "Instruction"],
-  question: ["Question", "Question"],
-  given: ["Donnée", "Given"],
-  result: ["Établi", "Established"],
-  formula: ["Formule", "Formula"],
-  summary: ["Ton raisonnement", "Your reasoning"],
-  problem: ["Problème", "Problem"],
-  insight: ["Déclic", "Insight"],
-  definition: ["Définition", "Definition"],
-  diagram: ["Figure", "Figure"],
-  outline: ["Plan", "Outline"],
-  interactive: ["Interactif", "Interactive"],
-  graph: ["Graphique", "Graph"],
-};
-
-// Quiet margin glyph per kind — a worksheet's annotations, not badges. Typographic on purpose (no icon
-// dependency here), muted, identical across languages.
-const KIND_GLYPH: Record<string, string> = {
-  focus: "◎",
-  instruction: "→",
-  question: "?",
-  given: "▤",
-  result: "✓",
-  formula: "∑",
-  summary: "⌇",
-  insight: "✦",
-  definition: "≡",
-  diagram: "◫",
-  outline: "▤",
-  interactive: "◈",
-  graph: "◠",
-};
+/** The answer box under an open gap. "unknown" (an answer the checker couldn't read) is never shown as
+ *  wrong, and neither is "system_error" (the stored key disagreed with the value the app computed itself,
+ *  spec §19.4) — both say Otto will look at it, and the attempt still goes to the tutor. */
+function GapAnswer({ entry, onCheck, en }: { entry: BoardEntry; onCheck: NonNullable<BoardArtifactProps["onGapCheck"]>; en: boolean }) {
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [verdict, setVerdict] = useState<"correct" | "incorrect" | "unknown" | "system_error" | null>(null);
+  const submit = async () => {
+    const given = value.trim();
+    if (!given || busy) return;
+    setBusy(true);
+    try { setVerdict(await onCheck(entry, given)); } catch { setVerdict("unknown"); } finally { setBusy(false); }
+  };
+  if (verdict === "correct") return <div className="sm-inline-problem-result correct">{en ? "Correct!" : "Correct !"}</div>;
+  return (
+    <div className="sm-board-problem-free sm-board-gap-answer">
+      <div className="sm-inline-problem-input-row">
+        <MathAnswerInput
+          en={en}
+          showKeys={!isNumericAnswer(entry.expectedAnswer || "")}
+          answer={entry.expectedAnswer || ""}
+          context={entry.text || ""}
+          placeholder={en ? "Your answer…" : "Ta réponse…"}
+          value={value}
+          onChange={(v) => { setValue(v); if (verdict) setVerdict(null); }}
+          onEnter={() => void submit()}
+          ariaLabel={en ? "Your answer for this line" : "Ta réponse pour cette ligne"}
+        />
+        <button type="button" className="sm-btn sm-btn-primary sm-btn-sm" disabled={!value.trim() || busy} onClick={() => void submit()}>
+          {en ? "Check" : "Vérifier"}
+        </button>
+      </div>
+      {verdict === "incorrect" ? <div className="sm-inline-problem-result wrong" role="status">{en ? "Not quite — Otto will help you check it." : "Pas tout à fait — Otto va t'aider à vérifier."}</div> : null}
+      {verdict === "unknown" ? <div className="sm-inline-problem-result" role="status">{en ? "Sent to Otto to look at." : "Envoyé à Otto pour qu'il regarde."}</div> : null}
+      {verdict === "system_error" ? <div className="sm-inline-problem-result" role="status">{en ? "Otto can't trust this line's answer key — he'll check it with you." : "La clé de cette ligne n'est pas fiable — Otto va la vérifier avec toi."}</div> : null}
+    </div>
+  );
+}
 
 const LABEL_SIZE: Record<string, number> = { sm: 12, md: 14, lg: 18 };
-
-/** The completion effect made visible: a worked line the tutor deliberately left unfinished ("= ?", a short
- *  line ending in "?") renders with a highlighted "à toi" chip — the gap is an invitation, not an omission
- *  (Sweller's completion effect: doing the last step yourself is where the learning happens; the prompt
- *  already asks Otto to end worked lines this way, the board now SHOWS it). Only a line ENDING in a gap
- *  marker qualifies, and short, so mid-sentence question marks never trigger it. */
-function isCompletionGap(text: string): boolean {
-  const t = text.trimEnd();
-  if (/[=→>:]\s*\?\s*$/.test(t)) return true;
-  const last = t.split("\n").pop() || "";
-  return /\?\s*$/.test(last) && last.trim().length <= 40;
-}
 
 /** Decorative glyphs a model sometimes prefixes a step with ("○ 6. collect → …"). They carry no meaning at
  *  all, and left in place they render as part of the step's own text. */
@@ -135,17 +138,53 @@ export function traceLines(text: string): string[] {
   return lines;
 }
 
+// Reported live: a board question rendered as "...05 m*underaforceof*10 N, *what's*k?" — the model had
+// wrapped a whole PROSE phrase in $…$ (over-applying the board prompt's "maths in $…$" instruction to a
+// sentence fragment, not just the actual numbers/variables). KaTeX happily "renders" that: real English
+// words become a run of individually-italicized single-letter atoms with none of their original spacing
+// (math mode has no concept of word-spacing), which is exactly the jammed-together, italic mess reported.
+// Guard: a captured $…$ span only goes to KaTeX if it actually LOOKS like math — plain multi-letter
+// English words (not a recognized function/unit/greek name) are the tell that this is misplaced prose,
+// not an equation. A real equation ("0.05 m", "F = ma", "\sin(x)") has at most one such word, if any.
+const MATH_WORD_ALLOW = new Set([
+  "sin", "cos", "tan", "cot", "sec", "csc", "log", "ln", "exp", "lim", "sqrt", "frac", "mod", "min", "max",
+  "det", "gcd", "arg", "sup", "inf", "pi", "theta", "alpha", "beta", "gamma", "delta", "lambda", "mu",
+  "sigma", "phi", "omega", "eta", "rho", "tau", "chi", "psi", "nu", "xi", "zeta", "kappa",
+  // the other macros a tutoring model actually writes — without these, a perfectly good equation whose
+  // latex uses two unfamiliar commands ("\Rightarrow … \approx …") counted as 2 "prose words", tripped
+  // the gate and fell back to plain text, which is how the (1)/(2) pseudo-fractions reached the chat.
+  "tfrac", "dfrac", "cfrac", "approx", "Rightarrow", "rightarrow", "Leftrightarrow", "infty", "times", "div",
+  "cdot", "cdots", "ldots", "dots", "angle", "perp", "parallel", "cong", "sim", "equiv", "propto",
+  "sinh", "cosh", "tanh", "arcsin", "arccos", "arctan", "gcd",
+]);
+export function looksLikeRealMath(latex: string): boolean {
+  // A backslash command is never prose: "\displaystyle \frac{h}{100+\tan 25^\circ}" fell back to raw source
+  // because "displaystyle" and "circ" counted as two English words (reported live on the tower problem).
+  // Only bare words count; the words inside \text{…} are still bare, so prose-in-\text still trips the gate.
+  const words = latex.replace(/\\[a-zA-Z]+/g, " ").match(/\p{L}{3,}/gu) || [];
+  const prose = words.filter((w) => !MATH_WORD_ALLOW.has(w.toLowerCase()));
+  return prose.length < 2;
+}
+
 /** Prose with real typeset math inline: `$…$` and `\(…\)` segments go through KaTeX, everything else through
  *  the normal chat renderer (bold, ==highlight==, unicode math). A bad equation falls back to its source. */
 export function MathText({ text }: { text: string }) {
-  const parts = text.split(/(\$\$[^$]+\$\$|\$[^$\n]+\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\])/g);
-  if (parts.length === 1) return <>{renderChatText(text)}</>;
+  // Bare model maths (no $…$: "E = \tfrac12(250)(0.12)^2 = 1.8\ J", "(1)/(2)(0.5)v² = 1.8 ⇒ v ≈ 2.68\ m/s")
+  // used to fall straight through to formatMath's plain-text approximation — literal \tfrac commands and
+  // (1)/(2) pseudo-fractions in the chat, reported live twice. autoMathLine wraps each line's maths in $…$
+  // FIRST so the KaTeX path below renders real stacked fractions; prose passes through untouched and text
+  // already in $…$ is left alone (autoMathLine is a no-op on it), so this is safe for every caller.
+  const auto = autoMathLine(repairLatex(text));
+  const parts = auto.split(/(\$\$[^$]+\$\$|\$[^$\n]+\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\])/g);
+  if (parts.length === 1) return <>{renderChatText(auto)}</>;
   return (
     <>
       {parts.map((p, i) => {
         const m = /^\$\$([^$]+)\$\$$|^\$([^$\n]+)\$$|^\\\(([\s\S]*)\\\)$|^\\\[([\s\S]*)\\\]$/.exec(p);
         const latex = m ? (m[1] ?? m[2] ?? m[3] ?? m[4]) : null;
-        return latex ? <InlineEquation key={i} latex={latex.trim()} /> : <span key={i} style={{ whiteSpace: "pre-wrap" }}>{boldify(formatMath(p))}</span>;
+        return latex && looksLikeRealMath(latex)
+          ? <InlineEquation key={i} latex={latex.trim()} />
+          : <span key={i} style={{ whiteSpace: "pre-wrap" }}>{boldify(formatMath(latex ?? p))}</span>;
       })}
     </>
   );
@@ -153,49 +192,21 @@ export function MathText({ text }: { text: string }) {
 
 function InlineEquation({ latex }: { latex: string }) {
   const html = useMemo(() => {
-    try { return katex.renderToString(/\\frac|\\sqrt/.test(latex) ? `\\displaystyle ${latex}` : latex, { throwOnError: false, strict: false, trust: false, displayMode: false }); } catch { return null; }
+    try { return katex.renderToString(/\\frac|\\sqrt/.test(latex) ? `\\displaystyle ${latex}` : latex, { throwOnError: false, strict: false, trust: false, displayMode: false, output: "html" }); } catch { return null; }
   }, [latex]);
-  if (html === null) return <span>{latex}</span>;
-  return <span className="sm-inline-eq" dangerouslySetInnerHTML={{ __html: html }} />;
+  if (html === null) return <span>{latexToPlain(latex)}</span>;
+  return <span className="sm-inline-eq" role="math" aria-label={latexToPlain(latex)} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-/** kind:"summary" rendered as a REASONING TRACE — the record of HOW the student got there: numbered lines in
- *  the order they actually did it, wrong turns they corrected included. This is the board's centerpiece:
- *  what accumulates on it should increasingly be the student's own thinking, not the tutor's explanation.
- *  (ICAP: the visible artifact of a session is the student's constructions — the tutor's voice stays in chat.) */
-function ReasoningTrace({ text, en }: { text: string; en: boolean }) {
+// The "how you got there" reasoning-trace box is gone by direct instruction — a board line is a board line:
+// no heading, no numbering, no category, just the work written out (kind:"summary" now renders like any
+// other text entry). traceLines below stays exported: it still backs the model's own header-peeling and tests.
+
+/** The student's reasoning, written as plain lines on the page — one step per line, no heading, no boxes. */
+function PlainSteps({ text }: { text: string }) {
   const lines = traceLines(text);
   if (!lines.length) return null;
-  return (
-    <div className="sm-board-trace">
-      <div className="sm-board-trace-heading">{en ? "How you got there" : "Ton raisonnement"}</div>
-      <ol className="sm-board-trace-list">
-        {lines.map((l, i) => (
-          <li key={i} className={/\b(corrigé?|en fait|non pas|pas ça|oops|my bad)\b/i.test(l) ? "sm-board-trace-turn" : undefined}><MathText text={autoMathLine(l)} /></li>
-        ))}
-      </ol>
-    </div>
-  );
-}
-
-/** Real typeset math (stacked fractions, exponents, roots) instead of formatMath's plain-text approximation
- *  (client/ui.tsx) — this is what makes "2/(x-1) + 3/(x+2)" actually show as a fraction, not a slash. KaTeX
- *  throws on malformed LaTeX (a model slip, an unbalanced brace); caught here so ONE bad equation renders as
- *  its raw source instead of blanking the whole board entry or crashing the canvas. `strict: false` because
- *  a tutoring model's LaTeX is rarely publication-clean (stray spacing, a non-standard macro) and KaTeX's
- *  default strict mode throws console warnings-as-errors for things that still render fine visually.
- *  `trust: false` is KaTeX's own default (not set here for any OTHER value), made explicit rather than
- *  implied — this output goes straight into dangerouslySetInnerHTML below, and `trust: false` is what
- *  disables KaTeX's own url/\href-style macros that would otherwise let an equation smuggle in an
- *  attacker-controlled link or resource; `latex` here is model-generated text the student doesn't control
- *  directly, but there's no reason to ever opt into trusting it. */
-function Equation({ latex }: { latex: string }) {
-  const html = useMemo(() => {
-    try { return katex.renderToString(latex, { throwOnError: true, strict: false, trust: false, displayMode: true }); }
-    catch { try { return katex.renderToString(latex, { throwOnError: false, strict: false, trust: false, displayMode: true }); } catch { return null; } }
-  }, [latex]);
-  if (html === null) return <span className="sm-board-eq-fallback">{latex}</span>;
-  return <span className="sm-board-eq" dangerouslySetInnerHTML={{ __html: html }} />;
+  return <>{lines.map((l, i) => <div key={i} className="sm-board-line"><MathText text={autoMathLine(l)} /></div>)}</>;
 }
 
 /** An AI-authored interactive scene (CREATE_INTERACTIVE, server/claude.ts) — rendered in a sandboxed
@@ -227,19 +238,46 @@ function InteractiveFrame({ taskId, entryId }: { taskId: string; entryId: string
 /** Pure mapping from one DiagramOp (shared/types.ts) to its SVG element — DRAW_ON_BOARD's real-figure
  *  rendering, plus real typeset math via the "equation" op (KaTeX, see Equation above). Coordinates arrive
  *  already clamped to 0-800x0-600 server-side (makeDiagramEntry) — this component trusts that and just draws. */
-function DiagramOpSVG({ op }: { op: DiagramOp }) {
+/** LaTeX → readable plain text for figure labels (figures are SVG text, never KaTeX). */
+function latexToPlain(latex: string): string {
+  return formatMath(latexToPlainText(latex));
+}
+/** Tight viewBox around what a figure actually draws (so no dead space above/below it), with a little margin. */
+function opsViewBox(ops: DiagramOp[]): string {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const add = (x: number, y: number, r = 0) => { x0 = Math.min(x0, x - r); y0 = Math.min(y0, y - r); x1 = Math.max(x1, x + r); y1 = Math.max(y1, y + r); };
+  for (const o of ops as any[]) {
+    if (o.op === "line") { add(o.x1, o.y1); add(o.x2, o.y2); }
+    else if (o.op === "rect") { add(o.x, o.y); add(o.x + o.w, o.y + o.h); }
+    else if (o.op === "circle" || o.op === "arc") add(o.cx, o.cy, o.r);
+    else if (o.op === "polyline" || o.op === "polygon") for (const p of o.points || []) add(p.x, p.y);
+    else if (o.op === "axes") { add(o.x, o.y); add(o.x + o.w, o.y + o.h); }
+    else if (o.op === "label") add(o.x + ((o.text || "").length * 5), o.y, 12);
+    else if (o.op === "equation") add(o.x + 140, o.y, 16);
+  }
+  if (!Number.isFinite(x0)) return "0 0 800 600";
+  const pad = 28;
+  x0 = Math.max(0, x0 - pad); y0 = Math.max(0, y0 - pad); x1 = Math.min(800, x1 + pad); y1 = Math.min(600, y1 + pad);
+  return `${Math.round(x0)} ${Math.round(y0)} ${Math.max(120, Math.round(x1 - x0))} ${Math.max(80, Math.round(y1 - y0))}`;
+}
+
+/** `partId` scopes the op's stable id to its own figure (shared/geometry.ts gives every element one, so the
+ *  tutor can say "highlight segment_AB" and the app points at that exact element rather than redrawing). */
+function DiagramOpSVG({ op, partId }: { op: DiagramOp; partId?: string }) {
   const stroke = op.op !== "label" && "color" in op && op.color ? op.color : "currentColor";
+  // data-geo-id, not id: ids share a document with <marker id> references, and the scoped value can contain ':'.
+  const gid = op.id && partId ? { "data-geo-id": `${partId}#${op.id}` } : {};
   switch (op.op) {
     case "line":
-      return <line x1={op.x1} y1={op.y1} x2={op.x2} y2={op.y2} stroke={stroke} strokeWidth={2} strokeLinecap="round" strokeDasharray={op.dashed ? "6 5" : undefined} markerEnd={op.arrow ? "url(#sm-diagram-arrow)" : undefined} />;
+      return <line {...gid} x1={op.x1} y1={op.y1} x2={op.x2} y2={op.y2} stroke={stroke} strokeWidth={2} strokeLinecap="round" strokeDasharray={op.dashed ? "6 5" : undefined} markerEnd={op.arrow ? "url(#sm-diagram-arrow)" : undefined} />;
     case "rect":
-      return <rect x={op.x} y={op.y} width={op.w} height={op.h} stroke={stroke} strokeWidth={2} fill={op.fill ? stroke : "none"} fillOpacity={op.fill ? 0.15 : undefined} />;
+      return <rect {...gid} x={op.x} y={op.y} width={op.w} height={op.h} stroke={stroke} strokeWidth={2} fill={op.fill ? stroke : "none"} fillOpacity={op.fill ? 0.15 : undefined} />;
     case "circle":
-      return <circle cx={op.cx} cy={op.cy} r={op.r} stroke={op.r <= 4 && op.fill ? "none" : stroke} strokeWidth={2} strokeDasharray={op.dashed ? "6 5" : undefined} fill={op.fill ? stroke : "none"} fillOpacity={op.fill ? (op.r <= 4 ? 1 : 0.15) : undefined} />;
+      return <circle {...gid} cx={op.cx} cy={op.cy} r={op.r} stroke={op.r <= 4 && op.fill ? "none" : stroke} strokeWidth={2} strokeDasharray={op.dashed ? "6 5" : undefined} fill={op.fill ? stroke : "none"} fillOpacity={op.fill ? (op.r <= 4 ? 1 : 0.15) : undefined} />;
     case "polyline":
-      return <polyline points={op.points.map((p) => `${p.x},${p.y}`).join(" ")} stroke={stroke} strokeWidth={2} strokeDasharray={op.dashed ? "6 5" : undefined} strokeLinejoin="round" fill="none" />;
+      return <polyline {...gid} points={op.points.map((p) => `${p.x},${p.y}`).join(" ")} stroke={stroke} strokeWidth={2} strokeDasharray={op.dashed ? "6 5" : undefined} strokeLinejoin="round" fill="none" />;
     case "polygon":
-      return <polygon points={op.points.map((p) => `${p.x},${p.y}`).join(" ")} stroke={stroke} strokeWidth={2} strokeLinejoin="round" fill={op.fill ? stroke : "none"} fillOpacity={op.fill ? 0.12 : undefined} />;
+      return <polygon {...gid} points={op.points.map((p) => `${p.x},${p.y}`).join(" ")} stroke={stroke} strokeWidth={2} strokeLinejoin="round" fill={op.fill ? stroke : "none"} fillOpacity={op.fill ? 0.12 : undefined} />;
     case "arc": {
       const rad = (d: number) => (d * Math.PI) / 180;
       const sweep = op.a1 > op.a0;
@@ -248,12 +286,12 @@ function DiagramOpSVG({ op }: { op: DiagramOp }) {
       const end = Math.abs(op.a1 - op.a0) >= 359.9 ? op.a0 + (sweep ? 359.9 : -359.9) : op.a1;
       const sx = op.cx + op.r * Math.cos(rad(op.a0)), sy = op.cy + op.r * Math.sin(rad(op.a0));
       const ex = op.cx + op.r * Math.cos(rad(end)), ey = op.cy + op.r * Math.sin(rad(end));
-      return <path d={`M ${sx} ${sy} A ${op.r} ${op.r} 0 ${large} ${sweep ? 1 : 0} ${ex} ${ey}`} stroke={stroke} strokeWidth={2} strokeDasharray={op.dashed ? "6 5" : undefined} fill="none" />;
+      return <path {...gid} d={`M ${sx} ${sy} A ${op.r} ${op.r} 0 ${large} ${sweep ? 1 : 0} ${ex} ${ey}`} stroke={stroke} strokeWidth={2} strokeDasharray={op.dashed ? "6 5" : undefined} fill="none" />;
     }
     case "label": {
       const mid = op.anchor === "middle";
       const t = formatMath(op.text);
-      return <text x={op.x} y={op.y} fontSize={LABEL_SIZE[op.size || "md"]} fill="currentColor" textAnchor={mid ? "middle" : "start"} dominantBaseline={mid ? "central" : undefined} fontStyle={/^[A-Za-z][′'₀-₉0-9]*$/.test(t) ? "italic" : undefined}>{t}</text>;
+      return <text {...gid} x={op.x} y={op.y} fontSize={LABEL_SIZE[op.size || "md"]} fill="currentColor" textAnchor={mid ? "middle" : "start"} dominantBaseline={mid ? "central" : undefined} fontStyle={/^[A-Za-z][′'₀-₉0-9]*$/.test(t) ? "italic" : undefined}>{t}</text>;
     }
     case "axes":
       return (
@@ -265,30 +303,9 @@ function DiagramOpSVG({ op }: { op: DiagramOp }) {
         </g>
       );
     case "equation": {
-      // Generous, uncapped-looking box (foreignObject can't auto-size to its HTML content in SVG) — KaTeX
-      // content is left-aligned and vertically centered inside it via CSS (.sm-board-eq below) so a short
-      // equation doesn't look adrift in a huge box and a long one still has real room.
-      //
-      // Two fixes to a real "doesn't work well for diagrams" complaint: (1) width used to be a bare
-      // `800 - x`, so an equation placed anywhere past x≈600 got squeezed into a shrinking sliver (down to
-      // nothing at x=800) instead of a usable box — now guaranteed a MIN_W-wide box by pulling its left
-      // edge back when there isn't enough room to the right, same way a tooltip flips sides near a screen
-      // edge. (2) height was a flat 70px, too short for anything with vertical structure — a fraction,
-      // a sum/integral with limits, an exponent stack — so real math routinely got visually clipped
-      // against whatever was drawn below it on the board. Taller now, and still overflow:visible
-      // (.sm-board-eq-box) as a second line of defense for the rare equation taller even than that.
-      const MIN_W = 220;
-      const x = Math.min(Math.max(0, op.x - 10), Math.max(0, 800 - MIN_W));
-      const width = 800 - x;
-      return (
-        <foreignObject x={x} y={Math.max(0, op.y - 36)} width={width} height={96}>
-          {/* No xmlns needed — React renders this div straight into the live DOM (not serialized XML), same
-              as any other JSX inside an SVG foreignObject. */}
-          <div className="sm-board-eq-box">
-            <Equation latex={op.latex} />
-          </div>
-        </foreignObject>
-      );
+      // Diagrams are plain SVG text now (no KaTeX): the equation is rendered as readable text next to the figure.
+      const t = latexToPlain(op.latex);
+      return <text x={op.x} y={op.y} fontSize={16} fill="currentColor" fontStyle="italic">{t}</text>;
     }
     default:
       return null;
@@ -311,6 +328,8 @@ interface ProblemBlockProps {
   onSubmit: () => void;
   en: boolean;
   fresh?: boolean;
+  /** The submitted answer met a stored key that contradicts the verified value (spec §19.1): never shown as wrong. */
+  systemError?: boolean;
 }
 
 // A practice problem NEVER reveals its answer. Reported live ("it gives the answer, this should never
@@ -320,21 +339,59 @@ interface ProblemBlockProps {
 // student gets it right themselves.
 type ProblemState = { picked: number | null; textAnswer: string; submitted: boolean; wrong?: number[] };
 
-function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onShowHint, onPick, onTextAnswer, onSubmit, en, fresh }: ProblemBlockProps) {
+/** A rubric-graded (worded) answer's specific miss message (spec §8.3/§8.6): "partly right — an idea is missing",
+ *  or "related idea, not what's asked" — instead of a bare "Not quite". null for anything without a rubric. Never
+ *  reveals the model answer. Exported for tests. */
+export function conceptMissMessage(problem: Pick<TaskProblem, "rubric">, given: string, en: boolean): string | null {
+  if (!problem.rubric?.required?.length || !String(given || "").trim()) return null;
+  const g = gradeConceptAnswer(problem.rubric, given);
+  if (g.status === "partially_correct") return en ? `Partly right — you have ${g.met} of the ${g.total} key ideas. What's still missing?` : `En partie juste — tu as ${g.met} des ${g.total} idées clés. Qu'est-ce qui manque encore ?`;
+  if (g.misconception) return en ? `"${g.misconception}" is a related idea, but it isn't what's being asked here. Try again.` : `« ${g.misconception} » est une idée liée, mais ce n'est pas ce qui est demandé ici. Réessaie.`;
+  return null;
+}
+
+function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, systemError, onShowHint, onPick, onTextAnswer, onSubmit, en, fresh }: ProblemBlockProps) {
+  const [expanded, setExpanded] = useState(false);
   const problemIsMCQ = Array.isArray(problem.options) && problem.options.length >= 2;
   const wrong = state.wrong || [];
-  const answered = problemIsMCQ ? state.picked !== null && state.picked === problem.correct : state.submitted && isCorrect;
-  const missed = !answered && (problemIsMCQ ? wrong.length > 0 : state.submitted);
+  const answered = !!problem.solved || (problemIsMCQ ? state.picked !== null && state.picked === problem.correct : state.submitted && isCorrect);
+  const missed = !answered && !systemError && (problemIsMCQ ? wrong.length > 0 : state.submitted);
+
+  if (answered && !expanded) {
+    return (
+      <div
+        className={`sm-board-problem sm-board-problem-solved-compact sm-board-writein${fresh ? " sm-board-reveal" : ""}`}
+        style={fresh ? { animationDuration: `.35s, ${Math.min(1.6, Math.max(0.5, problem.question.length / 90))}s` } : undefined}
+      >
+        <div className="sm-board-entry-main">
+          <div className="sm-board-problem-compact-inner">
+            <span className="sm-board-problem-compact-mark" aria-hidden="true">✓</span>
+            <span className="sm-board-problem-compact-q"><MathText text={stripStrayMarkdown(problem.question)} /></span>
+            <button type="button" className="sm-btn sm-btn-ghost sm-btn-xs sm-board-compact-btn" onClick={() => setExpanded(true)}>
+              {en ? "Details" : "Détails"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
-      className={`sm-board-problem sm-board-writein${fresh ? " sm-board-reveal" : ""}`}
+      className={`sm-board-problem sm-board-writein${answered ? " sm-board-problem-solved" : ""}${fresh ? " sm-board-reveal" : ""}`}
       style={fresh ? { animationDuration: `.35s, ${Math.min(1.6, Math.max(0.5, problem.question.length / 90))}s` } : undefined}
     >
-
-      <span className="sm-board-section-num" aria-hidden="true">{String(sectionNumber).padStart(2, "0")}</span>
       <div className="sm-board-entry-main">
-      <div className="sm-board-problem-label">{en ? "Try it" : "À toi"}</div>
+      <div className="sm-board-problem-heading-row">
+        <div className="sm-board-problem-label">{answered ? (en ? "Resolved" : "Résolu") : (en ? "Your turn" : "À toi")}</div>
+        {answered && (
+          <button type="button" className="sm-btn sm-btn-ghost sm-btn-xs sm-board-compact-btn" onClick={() => setExpanded(false)}>
+            {en ? "Compact" : "Réduire"}
+          </button>
+        )}
+      </div>
       <div className="sm-board-problem-q"><MathText text={stripStrayMarkdown(problem.question)} /></div>
+      {problem.source ? <a className="sm-board-problem-source" href={problem.source.url} target="_blank" rel="noopener noreferrer">{en ? "Source" : "Source"}: {problem.source.name} ↗</a> : null}
       {problem.format && !answered ? <div className="sm-board-problem-format"><MathText text={problem.format} /></div> : null}
       {problem.hint && !answered ? (
         <div className="sm-board-problem-hint-row">
@@ -372,13 +429,15 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
             <div className="sm-inline-problem-result correct">{en ? "Correct!" : "Correct !"}</div>
           ) : (
             <div className="sm-inline-problem-input-row">
-              <input
-                type="text"
-                className="sm-inline-problem-input"
-                placeholder={en ? "Your answer…" : "Ta réponse…"}
+              <MathAnswerInput
+                en={en}
+                showKeys={!isNumericAnswer(problem.answer)}
+                answer={problem.answer || ""}
+                context={problem.question || ""}
+                placeholder={isNumericAnswer(problem.answer) ? (en ? "Your answer (a number, no units)…" : "Ta réponse (un nombre, sans unité)…") : (en ? "Your answer…" : "Ta réponse…")}
                 value={state.textAnswer}
-                onChange={e => onTextAnswer(e.target.value)}
-                onKeyDown={e => { if (e.key === "Enter" && state.textAnswer.trim()) onSubmit(); }}
+                onChange={onTextAnswer}
+                onEnter={() => { if (state.textAnswer.trim()) onSubmit(); }}
                 disabled={answered}
               />
               <button
@@ -397,7 +456,12 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
         <div className="sm-inline-problem-result wrong" role="status">
           {problemIsMCQ
             ? (en ? "Not quite — try another option." : "Pas tout à fait — essaie une autre réponse.")
-            : (en ? "Not quite — try again." : "Pas tout à fait — réessaie.")}
+            : conceptMissMessage(problem, state.textAnswer, en) || (en ? "Not quite — try again." : "Pas tout à fait — réessaie.")}
+        </div>
+      ) : null}
+      {systemError && state.submitted && !answered ? (
+        <div className="sm-inline-problem-result" role="status">
+          {en ? "This exercise's answer key disagrees with the verified value — your answer isn't counted wrong. Otto will sort it out." : "La clé de cet exercice contredit la valeur vérifiée — ta réponse n'est pas comptée fausse. Otto va corriger."}
         </div>
       ) : null}
       {answered && problem.why ? (
@@ -413,17 +477,64 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onS
  *  and practice problems. ONE DOCUMENT, ONE FLOW: entries and problems interleave in the order the session
  *  actually produced them (a problem sits between the formula it exercises and the insight answering it —
  *  the lesson's story, not a problem section pinned on top). kind:"focus" stays pinned above as the heading. */
-export function BoardArtifact({ task, writing, onProblemResult, onAnswer, answering }: BoardArtifactProps) {
+/** Two headings that say the same thing ("Test-2 prep: Exponents & Logarithms" / "Math HL Test-2 Prep: Exponents &
+ *  Logarithms"): most of the shorter one's words appear in the other. Exported for tests. */
+export function nearSameHeading(a: string, b: string): boolean {
+  const words = (x: string) => new Set(String(x || "").toLowerCase().replace(/\$[^$]*\$/g, " ").split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 3));
+  const A = words(a), B = words(b);
+  if (!A.size || !B.size) return false;
+  const [small, big] = A.size <= B.size ? [A, B] : [B, A];
+  return [...small].filter((w) => big.has(w)).length / small.size >= 0.8;
+}
+
+/** A table on the board. With `hideColumn` set (recall practice) those cells stay hidden until the student reveals them. */
+function BoardTable({ spec, en }: { spec: TableSpec; en: boolean }) {
+  const [shown, setShown] = useState<Set<number>>(new Set());
+  const hide = spec.hideColumn;
+  const reveal = (i: number) => setShown((prev) => new Set(prev).add(i));
+  return (
+    <div className="sm-board-table-wrap">
+      <table className="sm-board-table">
+        <thead><tr>{spec.headers.map((h, i) => <th key={i} scope="col"><MathText text={h} /></th>)}</tr></thead>
+        <tbody>
+          {spec.rows.map((r, ri) => (
+            <tr key={ri}>
+              {r.map((c, ci) => ci === hide && !shown.has(ri)
+                ? <td key={ci}><button type="button" className="sm-board-table-reveal" onClick={() => reveal(ri)}>{en ? "Recall, then reveal" : "Rappelle-toi, puis révèle"}</button></td>
+                : <td key={ci}><MathText text={c} /></td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** A source excerpt with its highlighted phrases and the notes beside them (close reading). */
+function SourceBlock({ spec, en }: { spec: SourceSpec; en: boolean }) {
+  const runs = sourceRuns(spec);
+  return (
+    <figure className="sm-board-source">
+      <blockquote className="sm-board-source-text">
+        {runs.map((r, i) => r.mark == null ? <span key={i}>{r.text}</span> : <mark key={i} className="sm-board-source-mark"><sup>{r.mark + 1}</sup>{r.text}</mark>)}
+      </blockquote>
+      {spec.attribution ? <figcaption className="sm-board-source-by">— {spec.attribution}</figcaption> : null}
+      {spec.highlights.some((h) => h.note) ? (
+        <ol className="sm-board-source-notes" aria-label={en ? "Notes on the source" : "Notes sur la source"}>
+          {spec.highlights.map((h, i) => h.note ? <li key={i} value={i + 1}><em>{h.phrase}</em> — {h.note}</li> : null)}
+        </ol>
+      ) : null}
+    </figure>
+  );
+}
+
+export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidgetResult, sheetSignal, onGapCheck }: BoardArtifactProps) {
   const L = useLang();
   const endRef = useRef<HTMLDivElement>(null);
-  const entries = task.board || [];
+  const entries = (task.board || []).filter((e) => !e.archived);
   const problems = task.problems || [];
   const [showHint, setShowHint] = useState<{ [key: string]: boolean }>({});
   const [problemState, setProblemState] = useState<{ [key: string]: ProblemState }>({});
-  // The inline answer box (see onAnswer below) — keyed by the entry it's answering so switching to a
-  // DIFFERENT question starts blank instead of carrying over half-typed text from the last one.
-  const [answerKey, setAnswerKey] = useState<string | null>(null);
-  const [answerText, setAnswerText] = useState("");
 
   // Content-level dedupe on RENDER (by id): sync merges (tasks.ts's unionStudyArtifacts) and a
   // double-responded turn can hand back an array containing the same entry/problem twice. Entries drop
@@ -450,10 +561,30 @@ export function BoardArtifact({ task, writing, onProblemResult, onAnswer, answer
       const withState = dupes.find(x => hasState(x.id));
       return (withState || dupes[0]).id === p.id;
     });
-  const latestFocus = [...entries].reverse().find((e) => e.kind === "focus");
+  // KEY IDEAS — the definitions, rules, strategies and the summary, gathered into one compact strip at the top so the
+  // board doubles as the student's revision sheet (spec §10.4 knowledge panel). Rendered as a COPY: each entry also
+  // keeps its place in the flow, so line numbers, undo and pointers are untouched.
+  // Only once the board is long enough to scroll, and never repeating what is already in the first few lines
+  // (reported: the definition and the laws appeared twice in a row at the top).
+  const topIds = new Set(entries.filter((e) => e.kind !== "focus" && e.kind !== "annotation").slice(0, 4).map((e) => e.id));
+  const boardIsLong = entries.length + (task.problems?.length || 0) >= 7;
+  const keyIdeas = boardIsLong ? entries.filter((e, i, arr) => arr.findIndex((x) => x.id === e.id) === i && !topIds.has(e.id) && (e.kind === "definition" || e.kind === "formula" || e.kind === "strategy")).slice(-8) : [];
+  const latestSummary = boardIsLong ? [...entries].reverse().find((e) => e.kind === "summary" && e.owner !== "student" && !topIds.has(e.id)) : undefined;
+  const [ideasOpen, setIdeasOpen] = useState<boolean>(() => { try { return localStorage.getItem("otto.board.ideasOpen") !== "0"; } catch { return true; } });
+  const toggleIdeas = () => setIdeasOpen((o) => { try { localStorage.setItem("otto.board.ideasOpen", o ? "0" : "1"); } catch { /* storage blocked: still toggles */ } return !o; });
+  // A heading that only repeats a topic header ("Math HL Test-2 Prep: Exponents & Logarithms" under "Test-2 prep:
+  // Exponents & Logarithms") is shown once: the repeat's title is hidden, the content stays.
+  const focusTexts = entries.filter((e) => e.kind === "focus").map((e) => e.text);
+  const repeatsHeading = (text: string, except?: string) => focusTexts.some((f) => f !== except && nearSameHeading(f, text));
   const flowEntries = entries
     .filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i)
-    .filter(e => e.kind !== "focus" && (e.kind as string) !== "problem");
+    // Topic headers stay in the flow where they were written, each starting a section (the session bar shows the
+    // current one); a header that repeats the one just before it is shown once.
+    .filter((e, i, arr) => e.kind !== "focus" || !arr.slice(0, i).reverse().find((x) => x.kind === "focus" && nearSameHeading(x.text, e.text)))
+    .filter(e => (e.kind as string) !== "problem" && e.kind !== "annotation");
+
+  // The margin line numbers — the SAME numbering the tutor reads (#n), so "look at line 4" is findable.
+  const lineNo = useMemo(() => boardLineNumbers(entries), [entries]);
 
   // THE FLOW: entries (by their `at`) and problems (by `createdAt`) merged and sorted by timestamp —
   // the board reads top-to-bottom in the order the session actually happened. A missing/unparseable
@@ -464,12 +595,35 @@ export function BoardArtifact({ task, writing, onProblemResult, onAnswer, answer
     for (const p of dedupedProblems) items.push({ key: p.id, at: Date.parse(p.createdAt || "") || Number.MAX_SAFE_INTEGER, problem: p });
     items.sort((a, b) => a.at - b.at);
     return items;
+    // Keyed on the arrays themselves, not their lengths: a gap marked right, or a cleared board with the same count,
+    // must re-render (it used to keep showing the stale lines).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entries.length, problems.length]);
+  }, [entries, problems, problemState, showHint]);
 
+  // Sheets: blank room kept for a drawing the student made BELOW the board, so Otto's next writes come after it.
+  const [sheets, setSheets] = useState<{ id: number; afterKey: string | null; height: number }[]>([]);
+  const lastSheetN = useRef(0);
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "nearest" });
-  }, [entries.length, problems.length]);
+    if (!sheetSignal || sheetSignal.n === lastSheetN.current || sheetSignal.height <= 0) return;
+    lastSheetN.current = sheetSignal.n;
+    const afterKey = flowItems.length ? flowItems[flowItems.length - 1].key : null;
+    setSheets((prev) => [...prev, { id: sheetSignal.n, afterKey, height: Math.min(sheetSignal.height, 240) }]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sheetSignal?.n]);
+
+  // Default position: all the way down to the END of the board (the newest line) — the blank page for drawing is one
+  // more page below that, reached by scrolling, never the place the board opens on.
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+  }, [entries.length, problems.length, sheets.length]);
+  // OPENING a board (a resumed session, a past one) lands on the bottom at once — no visible scroll from the top. Math and
+  // diagrams finish laying out a moment later and push the end down, so re-pin a few times while it settles.
+  useEffect(() => {
+    const jump = () => endRef.current?.scrollIntoView({ block: "end", behavior: "auto" });
+    jump();
+    const timers = [80, 250, 700].map((ms) => window.setTimeout(jump, ms));
+    return () => timers.forEach((t) => window.clearTimeout(t));
+  }, []);
 
   // "Ink reveal" — an entry that just arrived writes itself onto the page (clip-path wipe, duration scaled
   // to how much text there is) instead of popping in fully formed, the "watching it actually get written"
@@ -491,12 +645,13 @@ export function BoardArtifact({ task, writing, onProblemResult, onAnswer, answer
 
   // A wrong pick is recorded (struck out) but never "answers" the problem — only the correct one does.
   const attemptsRef = useRef<Record<string, number>>({});
-  const reportResult = (problem: TaskProblem, given: string, correct: boolean) => {
+  const lastGivenRef = useRef<Record<string, string>>({});
+  const reportResult = (problem: TaskProblem, given: string, status: GradeStatus) => {
     const attempt = (attemptsRef.current[problem.id] = (attemptsRef.current[problem.id] || 0) + 1);
-    onProblemResult?.({ problem, given, correct, attempt });
+    onProblemResult?.({ problem, given, correct: status === "correct", attempt, ...(status === "system_error" ? { systemError: true } : {}), ...(status === "partially_correct" ? { partial: true } : {}) });
   };
   const setProblemPicked = (problem: TaskProblem, picked: number) => {
-    reportResult(problem, problem.options?.[picked] ?? String(picked), picked === problem.correct);
+    reportResult(problem, problem.options?.[picked] ?? String(picked), gradeExerciseAnswer(problem, String(picked)).status);
     setProblemState(prev => {
       const cur = prev[problem.id] || { picked: null, textAnswer: "", submitted: false };
       return picked === problem.correct
@@ -511,7 +666,8 @@ export function BoardArtifact({ task, writing, onProblemResult, onAnswer, answer
 
   const submitProblem = (problemId: string) => {
     const pr = problems.find((p) => p.id === problemId);
-    if (pr && pr.answer) { const given = (problemState[problemId]?.textAnswer || "").trim(); if (given) reportResult(pr, given, practiceAnswerMatches(given, pr.answer)); }
+    // The same answer checked twice in a row is one attempt, not two (reported: identical "[Exercise] … wrong" spam to Otto).
+    if (pr && pr.answer) { const given = (problemState[problemId]?.textAnswer || "").trim(); if (given && lastGivenRef.current[problemId] !== given) { lastGivenRef.current[problemId] = given; reportResult(pr, given, gradeExerciseAnswer(pr, given, { percent: problemIsPercent(pr) }).status); } }
     setProblemState(prev => ({ ...prev, [problemId]: { ...prev[problemId] || { picked: null, textAnswer: "", submitted: false }, submitted: true } }));
   };
 
@@ -524,11 +680,19 @@ export function BoardArtifact({ task, writing, onProblemResult, onAnswer, answer
   // order for no real benefit. Reverted.
 
   // Free-response check: the same lenient matcher as the journal's practice problem (shared/types.ts) —
-  // "5pi/6" = "5π/6", "7/2" = "3.5", "84" = "84 m". A plain string compare here marked those wrong.
+  // "5pi/6" = "5π/6", "7/2" = "3.5", "84" = "84 m" — wrapped in the shared grader (spec §19), which grades
+  // against the independently computed value and reports a stored key that disagrees with it as a SYSTEM
+  // ERROR (shown as "Otto will check it", never as wrong). A plain string compare here marked those wrong.
+  const freeResponseStatus = (problemId: string): GradeStatus | null => {
+    const problem = problems.find(p => p.id === problemId);
+    const st = getProblemState(problemId);
+    if (!problem || !problem.answer || !st.submitted) return null;
+    return gradeExerciseAnswer(problem, st.textAnswer, { percent: problemIsPercent(problem) }).status;
+  };
   const checkFreeResponse = (problemId: string): boolean => {
     const problem = problems.find(p => p.id === problemId);
     if (!problem || !problem.answer) return false;
-    return practiceAnswerMatches(getProblemState(problemId).textAnswer, problem.answer);
+    return gradeExerciseAnswer(problem, getProblemState(problemId).textAnswer, { percent: problemIsPercent(problem) }).status === "correct";
   };
 
   const hint = (
@@ -557,9 +721,9 @@ export function BoardArtifact({ task, writing, onProblemResult, onAnswer, answer
         <div className="sm-board-empty">
           {/* The prototype's board empty state: two big serif lines with a quiet promise under them —
               the page reads as an invitation, not as an error message about missing content. */}
-          <p className="sm-board-empty-line">{L("Travaillons ça ensemble.", "Let's work it out, together.")}</p>
-          <p className="sm-board-empty-line">{L("Qu'aimerais-tu mieux comprendre ?", "What would you like to understand better?")}</p>
-          <p className="sm-board-empty-sub">{L("On construit l'explication ensemble, une idée à la fois.", "We'll build the explanation together. One idea at a time.")}</p>
+          <p className="sm-board-empty-line">{L("On va le démonter ensemble.", "Let's take it apart together.")}</p>
+          <p className="sm-board-empty-line">{L("Qu'est-ce qui te résiste en ce moment ?", "What's beating you right now?")}</p>
+          <p className="sm-board-empty-sub">{L("Je ne te donne pas la réponse : tu la trouves, je te pousse. Une idée à la fois.", "I won't give you the answer — you find it, I push. One idea at a time.")}</p>
         </div>
         {writing ? (
           <div className="sm-board-drafting" role="status" aria-live="polite">
@@ -585,24 +749,47 @@ export function BoardArtifact({ task, writing, onProblemResult, onAnswer, answer
           {new Date().toLocaleDateString(en ? "en-US" : "fr-FR", { weekday: "long", day: "numeric", month: "long" })}
         </span>
         {task.sourceSubject ? <span className="sm-board-header-subject">{task.sourceSubject}</span> : null}
+        {onUndo ? (
+          <button type="button" className="sm-board-undo" onClick={onUndo} title={en ? "Undo the last board change" : "Annuler la dernière modification du tableau"}>
+            ↶ {en ? "Undo" : "Annuler"}
+          </button>
+        ) : null}
       </div>
 
-      {/* The pinned session goal (kind:"focus") — always the FIRST thing on the board, like the heading of
-          a lesson page: the day's arc stays visible no matter how long the flow below grows. The latest
-          focus wins if a session ever writes a second one. */}
-      {latestFocus ? (
-        <div className="sm-board-focus-pin">
-          <span className="sm-board-entry-kind"><span className="sm-board-glyph">{KIND_GLYPH.focus}</span>{L(...KIND_LABEL.focus)}</span>
-          <div className="sm-board-focus-text">{renderChatText(latestFocus.text)}</div>
-        </div>
+
+      {keyIdeas.length || latestSummary ? (
+        <section className={`sm-board-ideas${ideasOpen ? "" : " is-collapsed"}`} aria-label={en ? "Key ideas" : "À retenir"}>
+          <button type="button" className="sm-board-ideas-head" aria-expanded={ideasOpen} onClick={toggleIdeas}>
+            <span>{en ? "Key ideas" : "À retenir"}</span>
+            <span className="sm-board-ideas-count">{keyIdeas.length + (latestSummary ? 1 : 0)}</span>
+            <span className="sm-board-ideas-chev" aria-hidden="true">{ideasOpen ? "▾" : "▸"}</span>
+          </button>
+          {ideasOpen ? (
+            <ul className="sm-board-ideas-list">
+              {keyIdeas.map((e) => (
+                <li key={`idea-${e.id}`} className={`sm-board-idea sm-board-idea-${e.kind}`}>
+                  {e.kind === "strategy" ? <span className="sm-board-idea-tag">{en ? "Strategy" : "Méthode"}</span> : null}
+                  <MathText text={autoMathLine(stripStrayMarkdown(e.text))} />
+                </li>
+              ))}
+              {latestSummary ? (
+                <li className="sm-board-idea sm-board-idea-summary">
+                  <span className="sm-board-idea-tag">{en ? "Summary" : "Bilan"}</span>
+                  <MathText text={autoMathLine(stripStrayMarkdown(latestSummary.text))} />
+                </li>
+              ) : null}
+            </ul>
+          ) : null}
+        </section>
       ) : null}
 
       {/* ONE FLOW — entries and problems interleaved by timestamp, in the order the session produced them.
-          Problems are NOT a pinned section: a CREATE_PROBLEM sits right between the entry that set it up and
-          the insight that answered it. Every item gets a worksheet section number (01, 02, …) — the document
-          is being drafted, section by section, not fed in as cards, same as everything else on the board. */}
-      {flowItems.map((item, idx) =>
-        item.problem ? (
+          Every step stays visible: an earlier version collapsed everything but the last four behind a
+          show/hide disclosure, but the board is a lesson document — hiding the working is the opposite of
+          what a student needs when they scroll back to see how they got here. */}
+      {sheets.filter((sh) => sh.afterKey === null).map((sh) => <div key={`sheet-${sh.id}`} className="sm-board-sheet" style={{ height: sh.height }} aria-hidden />)}
+      {flowItems.map((item, idx) => {
+        const node = item.problem ? (
           <ProblemBlock
             key={item.key}
             fresh={isFreshlyWritten(item.key)}
@@ -611,6 +798,7 @@ export function BoardArtifact({ task, writing, onProblemResult, onAnswer, answer
             state={getProblemState(item.problem.id)}
             hintShown={!!showHint[item.problem.id]}
             isCorrect={checkFreeResponse(item.problem.id)}
+            systemError={freeResponseStatus(item.problem.id) === "system_error"}
             onShowHint={() => setShowHint(prev => ({ ...prev, [item.problem!.id]: true }))}
             onPick={(picked) => setProblemPicked(item.problem!, picked)}
             onTextAnswer={(text) => setProblemTextAnswer(item.problem!.id, text)}
@@ -620,13 +808,14 @@ export function BoardArtifact({ task, writing, onProblemResult, onAnswer, answer
         ) : (() => {
           const e = item.entry!;
           const fresh = isFreshlyWritten(item.key);
+          const isPastGap = idx < flowItems.length - 1 && e.kind === "gap";
           return (
             <div
               key={item.key}
-              className={`sm-board-entry sm-board-entry-${e.kind || "note"} sm-board-writein${fresh ? " sm-board-reveal" : ""}`}
+              className={`sm-board-entry sm-board-entry-${e.kind || "note"}${e.owner === "student" ? " sm-board-entry-student" : ""} sm-board-writein${fresh ? " sm-board-reveal" : ""}${isPastGap || (e.kind === "gap" && e.status === "correct") ? " sm-board-gap-past" : ""}`}
               style={fresh ? { animationDuration: `.35s, ${revealDuration(e.text)}s` } : undefined}
             >
-              <span className="sm-board-section-num" aria-hidden="true">{String(idx + 1).padStart(2, "0")}</span>
+              {lineNo.get(e.id) ? <span className="sm-board-lineno" aria-label={en ? `line ${lineNo.get(e.id)}` : `ligne ${lineNo.get(e.id)}`}>{lineNo.get(e.id)}</span> : null}
               <div className="sm-board-entry-main">
               {/* No kind-label chip here on purpose (removed: "Formule"/"Définition"/"Insight"/…) — the board
                   reads as ONE continuous document the tutor is working on, not a form with labeled fields.
@@ -642,35 +831,34 @@ export function BoardArtifact({ task, writing, onProblemResult, onAnswer, answer
                   // that fixed canvas to keep its geometry proportional; a bare equation doesn't — it's just
                   // typeset text that should size to its own content and wrap like the rest of the board.
                   <>
-                    <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>
+                    <div className="sm-board-entry-text sm-board-diagram-caption"><MathText text={stripStrayMarkdown(e.text)} /></div>
                     <div className="sm-board-eq-list">
-                      {e.diagram.map((op, i) => op.op === "equation" ? <Equation key={i} latex={op.latex} /> : null)}
+                      {e.diagram.map((op, i) => op.op === "equation" ? <div key={i} className="sm-board-line">{latexToPlain(op.latex)}</div> : null)}
                     </div>
                   </>
                 ) : (
                   <>
-                    <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>
-                    <svg viewBox="0 0 800 600" className="sm-board-diagram" preserveAspectRatio="xMidYMid meet">
+                    <div className="sm-board-entry-text sm-board-diagram-caption"><MathText text={stripStrayMarkdown(e.text)} /></div>
+                    <svg viewBox={opsViewBox(e.diagram)} className="sm-board-diagram" preserveAspectRatio="xMidYMid meet">
                       <defs>
                         <marker id="sm-diagram-arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
                           <path d="M0,0 L8,4 L0,8 z" fill="currentColor" />
                         </marker>
-                      </defs>
-                      {e.diagram.map((op, i) => <DiagramOpSVG key={i} op={op} />)}
+                      </defs>                       {e.diagram.map((op, i) => <DiagramOpSVG key={i} op={op} partId={e.id} />)}
                     </svg>
                   </>
                 )
               ) : e.kind === "summary" ? (
-                <ReasoningTrace text={e.text} en={en} />
+                <PlainSteps text={e.text} />
               ) : e.kind === "outline" && e.outline?.length ? (
                 <>
-                  {stripStrayMarkdown(e.text) ? <div className="sm-board-entry-text sm-board-outline-title">{stripStrayMarkdown(e.text)}</div> : null}
+                  {stripStrayMarkdown(e.text) && !repeatsHeading(e.text) ? <div className="sm-board-entry-text sm-board-outline-title">{stripStrayMarkdown(e.text)}</div> : null}
                   <div className="sm-board-outline">
                     {e.outline.map((section, i) => (
                       <div key={i} className="sm-board-outline-section">
                         <div className="sm-board-outline-heading">{stripStrayMarkdown(section.heading)}</div>
                         <ul className="sm-board-outline-bullets">
-                          {section.bullets.map((b, j) => <li key={j}>{renderChatText(b)}</li>)}
+                          {section.bullets.map((b, j) => <li key={j}><MathText text={b} /></li>)}
                         </ul>
                       </div>
                     ))}
@@ -678,58 +866,53 @@ export function BoardArtifact({ task, writing, onProblemResult, onAnswer, answer
                 </>
               ) : e.kind === "graph" && e.graph ? (
                 <>
-                  <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>
+                  <div className="sm-board-entry-text sm-board-diagram-caption"><MathText text={stripStrayMarkdown(e.text)} /></div>
                   <GraphBlock spec={e.graph} />
+                </>
+              ) : e.kind === "svg" && e.svg ? (
+                <>
+                  <div className="sm-board-entry-text sm-board-diagram-caption"><MathText text={stripStrayMarkdown(e.text)} /></div>
+                  {/* sanitised again on render (defence in depth): stored entries can come back from the cloud/local cache */}
+                  <div className="sm-svgfig" role="img" aria-label={latexToPlain(e.text)} dangerouslySetInnerHTML={{ __html: sanitizeSvg(e.svg) }} />
+                </>
+              ) : e.kind === "table" && e.table ? (
+                <>
+                  <div className="sm-board-entry-text sm-board-diagram-caption"><MathText text={stripStrayMarkdown(e.text)} /></div>
+                  <BoardTable spec={e.table} en={en} />
+                </>
+              ) : e.kind === "source" && e.source ? (
+                <>
+                  <div className="sm-board-entry-text sm-board-diagram-caption"><MathText text={stripStrayMarkdown(e.text)} /></div>
+                  <SourceBlock spec={e.source} en={en} />
+                </>
+              ) : e.kind === "flow" && e.flow ? (
+                <>
+                  <div className="sm-board-entry-text sm-board-diagram-caption"><MathText text={stripStrayMarkdown(e.text)} /></div>
+                  <FlowDiagram spec={e.flow} />
+                </>
+              ) : e.kind === "widget" && e.widget ? (
+                <>
+                  <div className="sm-board-entry-text sm-board-diagram-caption"><MathText text={stripStrayMarkdown(e.text)} /></div>
+                  <WidgetBlock id={e.id} caption={e.text} spec={e.widget} onResult={onWidgetResult} Text={MathText} />
                 </>
               ) : e.kind === "interactive" && e.html ? (
                 <>
-                  <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>
+                  <div className="sm-board-entry-text sm-board-diagram-caption"><MathText text={stripStrayMarkdown(e.text)} /></div>
                   <InteractiveFrame taskId={task.id} entryId={e.id} />
                 </>
               ) : (
                 <>
-                  <div className="sm-board-entry-text">{e.kind === "question" || e.kind === "given" || e.kind === "result" ? <div style={{ whiteSpace: "pre-wrap" }}><MathText text={autoMathLine(stripStrayMarkdown(e.kind === "result" ? e.text.replace(/^\s*(?:established|établi|found|result|trouvé)\s*:\s*/i, "") : e.text))} /></div> : e.kind === "formula" ? <div style={{ whiteSpace: "pre-wrap" }}><MathText text={autoMathLine(stripStrayMarkdown(e.text))} /></div> : renderChatText(e.text)}</div>
-                  {isCompletionGap(e.text) ? (
-                    <span className="sm-board-todo-chip">{en ? "Your turn to finish" : "À toi de finir"}</span>
-                  ) : null}
-                  {/* Answer right where the question lives, instead of having to scroll down to chat —
-                      only on the single NEWEST entry, and only when it's actually something to answer
-                      (a guiding question, or a worked line Otto deliberately left as "= ?"). Once the
-                      student replies, Otto's next turn adds a new entry after this one, which naturally
-                      stops being "last" — the box just disappears on its own, no extra bookkeeping. */}
-                  {onAnswer && idx === flowItems.length - 1 && (e.kind === "question" || isCompletionGap(e.text)) ? (
-                    <div className="sm-board-answer-row">
-                      <input
-                        type="text"
-                        className="sm-board-answer-input"
-                        placeholder={en ? "Your answer…" : "Ta réponse…"}
-                        value={answerKey === e.id ? answerText : ""}
-                        onChange={(ev) => { setAnswerKey(e.id); setAnswerText(ev.target.value); }}
-                        onKeyDown={(ev) => {
-                          if (ev.key !== "Enter") return;
-                          const v = (answerKey === e.id ? answerText : "").trim();
-                          if (!v || answering) return;
-                          onAnswer(v); setAnswerKey(e.id); setAnswerText("");
-                        }}
-                        disabled={!!answering}
-                      />
-                      <button
-                        type="button"
-                        className="sm-btn sm-btn-primary sm-btn-sm"
-                        disabled={!!answering || !(answerKey === e.id && answerText.trim())}
-                        onClick={() => { const v = answerText.trim(); if (!v) return; onAnswer(v); setAnswerKey(e.id); setAnswerText(""); }}
-                      >
-                        {en ? "Send" : "Envoyer"}
-                      </button>
-                    </div>
-                  ) : null}
+                  <div className="sm-board-line"><MathText text={autoMathLine(stripStrayMarkdown((e.kind === "result" ? e.text.replace(/^\s*(?:established|établi|found|result|trouvé)\s*:\s*/i, "") : e.text).replace(/&nbsp;|&#160;/gi, " ")))} /></div>
+                  {e.why ? <div className="sm-board-why"><MathText text={autoMathLine(stripStrayMarkdown(e.why))} /></div> : null}
+                  {e.kind === "gap" && e.expectedAnswer && e.status !== "correct" && !flowItems.slice(idx + 1).some((it) => it.entry?.kind === "gap") && onGapCheck ? <GapAnswer entry={e} onCheck={onGapCheck} en={en} /> : null}
                 </>
               )}
               </div>
             </div>
           );
-        })()
-      )}
+        })();
+        return <Fragment key={item.key}>{node}{sheets.filter((sh) => sh.afterKey === item.key).map((sh) => <div key={`sheet-${sh.id}`} className="sm-board-sheet" style={{ height: sh.height }} aria-hidden />)}</Fragment>;
+      })}
 
       {/* The live drafting indicator — while the tutor's reply is being generated the document shows its
           writing hand ("Otto écrit…"), so new entries arrive as the continuation of a visible act of

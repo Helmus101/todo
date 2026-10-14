@@ -3,7 +3,7 @@
 // just stacks it on top of what's already open. Deliberately simple (no packing/constraint solver): a few
 // hand-tuned layouts for small counts (which is the overwhelmingly common case on a study desk — 1-4 tools
 // open at once), falling back to a generic grid beyond that.
-export interface TileRect { x: number; y: number; width: number; height: number; }
+interface TileRect { x: number; y: number; width: number; height: number; }
 
 // Percent — both the margin from the canvas edge and the gutter between tiles. Deliberately not tiny: a
 // custom desk background (StudyMode.tsx's setBackgroundImage) is meant to stay visible behind the tools,
@@ -11,7 +11,7 @@ export interface TileRect { x: number; y: number; width: number; height: number;
 // several tools open, not just when the desk is empty.
 const GAP = 4;
 
-export function tileLayout(n: number): TileRect[] {
+function tileLayout(n: number): TileRect[] {
   if (n <= 0) return [];
   const full = 100 - GAP * 2;
   if (n === 1) return [{ x: GAP, y: GAP, width: full, height: full }];
@@ -60,7 +60,7 @@ export function tileLayout(n: number): TileRect[] {
 /** Is this artifact in "normal" freeform placement — the only state auto-tiling is allowed to touch?
  *  Minimized/maximized/docked artifacts are a DELIBERATE placement the student made; re-tiling would throw
  *  that away the moment they open one more tool, which would read as Otto randomly rearranging their desk. */
-export function isTileable(a: { minimized: boolean; maximized: boolean; dockSide: string }): boolean {
+function isTileable(a: { minimized: boolean; maximized: boolean; dockSide: string }): boolean {
   return !a.minimized && !a.maximized && a.dockSide === "none";
 }
 

@@ -1,4 +1,4 @@
-import { useState } from "react";
+
 import type { ArtifactState } from "../StudyTypes.ts";
 import { useLang } from "../../ui.tsx";
 
@@ -31,7 +31,7 @@ export function StickyNoteArtifact({ artifact, onChange }: StickyNoteArtifactPro
         style={{ backgroundColor: "transparent" }}
         value={text}
         onChange={e => onChange({ text: e.target.value, color })}
-        placeholder={L("Écris une note…", "Write a note…")}
+        placeholder={L("Écris une note…", "Write a note…")} aria-label={L("Écris une note…", "Write a note…")}
       />
     </div>
   );

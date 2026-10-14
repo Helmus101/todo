@@ -9,7 +9,7 @@
  * ui.tsx — progress bar, one big thing, one primary button — because that's a pattern the student has
  * already met inside this app, so there's nothing new to learn.
  */
-import { useEffect, useState, useRef, useContext, useCallback, type ReactNode, type Dispatch, type SetStateAction, type MutableRefObject } from "react";
+import { useEffect, useState, useRef, useContext, type ReactNode, type Dispatch, type SetStateAction, type MutableRefObject } from "react";
 import type { WebTask, TaskStep, Profile } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight, deadlineEpoch } from "../shared/types.ts";
 import { api } from "./api.ts";
@@ -17,7 +17,7 @@ import { BookOpen, MessageCircle, Layers, CircleHelp, Rows3 } from "lucide-react
 import {
   LangContext, useLang, todayIso, fmtDate, relTime, statusChip, subtitle, quadrantLabel, sourceAttributionLine,
   fmtWhen, TAB_GROUP, openTab, openTabs, autoOpenTaskDocs,
-  withInlineLinks, stripStrayMarkdown, renderNoteBody, renderChatText, CondensedUserMessage, FlashcardDeck, QuizPlayer, TaskModal, useNotify, useThinkingWord,
+  withInlineLinks, stripStrayMarkdown, renderNoteBody, renderChatText, CondensedUserMessage, FlashcardDeck, QuizPlayer, TaskModal, useNotify, useThinkingWord, Spinner,
 } from "./ui.tsx";
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
 import { createEchoFilter } from "./voice/echoGuard.ts";
@@ -26,6 +26,30 @@ import { lastMessageKey } from "./voice/replyKey.ts";
 import { useVoiceModePref } from "./voice/useVoiceModePref.ts";
 import { getLocalThread } from "./localChatBoard.ts";
 import { VoiceControls } from "./voice/VoiceControls.tsx";
+
+/** The NAME shown for a task — report-live: "always rewrite full task name from Pronote, not just the
+ *  subject … never just subject" (cards literally titled "French Literature" / "Math Analysis and
+ *  Approaches HL", subject shown twice). New cards no longer GENERATE bare names (homeworkTaskTitle in
+ *  server/tasks.ts), but every card saved before that fix still carries one — so the display rewrites it
+ *  from the teacher's own énoncé (sourceDetail) whenever the stored name is just the subject (or a
+ *  "<subject> homework"-style stub) and there is fuller text to show. Everything else passes through. */
+function taskDisplayName(task: WebTask): string {
+  const stored = String(task.title || "").trim();
+  const subj = String(task.sourceSubject || "").trim();
+  if (subj) {
+    const t = stored.toLowerCase();
+    const bare = t === subj.toLowerCase()
+      || t === `${subj} homework`.toLowerCase()
+      || t === `${subj} devoir`.toLowerCase()
+      || t === `${subj} test`.toLowerCase();
+    const detail = String(task.sourceDetail || "").replace(/\[Pièce jointe[^\]]*\]/gi, " ").replace(/\s+/g, " ").trim();
+    if (bare && detail) {
+      const full = stripStrayMarkdown(detail);
+      if (full && full !== stored) return full.slice(0, 140);
+    }
+  }
+  return stripStrayMarkdown(stored);
+}
 
 /**
  * The leave animation + API call for finishing or dismissing a task. Extracted so the collapsed row and the
@@ -137,40 +161,15 @@ function Disclosure({ label, count, open, onToggle, children }: { label: string;
   );
 }
 
-function TaskPlanningPanel({ task }: { task: WebTask }) {
-  const L = useLang();
-  const plan = task.taskContext;
-  if (!plan) return null;
-  const groups = [
-    { label: L("Requis", "Required"), items: plan.requirements.filter((r) => r.importance === "required").map((r) => r.text) },
-    { label: L("Utile", "Useful"), items: plan.requirements.filter((r) => r.importance !== "required").map((r) => r.text) },
-    { label: L("Ce qu'Otto peut faire", "Otto can do"), items: plan.ottoCanDo },
-    { label: L("Ce qui reste à faire", "You must do"), items: plan.userMustDo },
-  ].filter((g) => g.items.length);
-  return (
-    <div className="task-plan-panel">
-      <p className="task-plan-objective"><strong>{L("Résultat attendu", "Expected outcome")}:</strong> {plan.objective}</p>
-      <p className="task-plan-done"><strong>{L("Terminé quand", "Done when")}:</strong> {plan.definitionOfDone}</p>
-      {groups.map((group) => (
-        <div className="task-plan-group" key={group.label}>
-          <strong>{group.label}</strong>
-          <ul>{group.items.map((item) => <li key={item}>{item}</li>)}</ul>
-        </div>
-      ))}
-      {plan.unknowns.length ? <div className="task-plan-group"><strong>{L("À préciser", "Still unknown")}</strong><ul>{plan.unknowns.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
-      {plan.outputs.length ? <div className="task-plan-group"><strong>{L("Livrables", "Outputs")}</strong><ul>{plan.outputs.map((output) => <li key={output.id}>{output.title}{output.owner === "otto" ? ` — ${L("Otto", "Otto")}` : output.owner === "user" ? ` — ${L("toi", "you")}` : ""}</li>)}</ul></div> : null}
-    </div>
-  );
-}
-
 /* ─────────────────────────────── collapsed row ─────────────────────────────── */
 
 export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isNew, index, onOpen, onEnterStudyMode, readOnly }: {
   task: WebTask; onChange: (t: WebTask[]) => void; onTask?: (t: WebTask) => void; retrying?: boolean; onConfirmed?: (id: string) => void;
   isNew?: boolean; index?: number; onOpen: () => void; onEnterStudyMode?: () => void;
-  /** Phone (see useIsPhone): the row is a VIEW of the task, nothing more — no tick-off, no Study Mode, no
-   *  dismiss. Direct instruction: on a phone you should "just be able to see the tasks and what it planned",
-   *  not act on them. Opening the row still works; it lands on the read-only TaskReadOnly view below. */
+  /** Phone (see useIsPhone): no Study Mode, no dismiss, no opening into the full working surface —
+   *  opening the row lands on the read-only TaskReadOnly view below. Direct instruction, reversing an
+   *  earlier "nothing to act on" restriction: ticking a task off as done must still work on a phone, so
+   *  the check button is NOT gated behind this — see its own condition below. */
   readOnly?: boolean;
 }) {
   const L = useLang();
@@ -237,7 +236,7 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
           real button itself (real visible content, not an invisible layer), which is the standard,
           maximally-compatible pattern every list-based mobile app uses. .card-check/.card-x moved to true
           siblings, since a <button> can't contain another <button>. */}
-      {!isDone && !readOnly ? (
+      {!isDone ? (
         <button type="button" className={`card-check ${leaving && leaveKind === "confirm" ? "checked" : ""}`}
           title={L("Marquer comme fait", "Mark as done")} aria-label={L(`Marquer « ${task.title} » comme faite`, `Mark "${task.title}" as done`)} disabled={leaving}
           onClick={() => void leave(() => api.confirm(task.id), "confirm", task)}>
@@ -254,7 +253,7 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
       )}
       <button type="button" className="card-main" onClick={onOpen} aria-label={L(`Ouvrir : ${task.title}`, `Open: ${task.title}`)}>
         <span className="card-text">
-          <span className="card-title">{isNew ? <span className="new-dot" title={L("Nouveau", "New")} /> : null}{stripStrayMarkdown(task.title)}</span>
+          <span className="card-title">{isNew ? <span className="new-dot" title={L("Nouveau", "New")} /> : null}{taskDisplayName(task)}</span>
           {/* Compact row: at most subject + one of {due date, secondary text} — the quadrant word-label
               used to also render here, stacking up to 4 distinct pieces into one 2-line-clamped span on
               every ordinary task (direct instruction: cut crowding). Urgency is still visible via the
@@ -313,7 +312,7 @@ export function TaskHero({ task, onOpen, onChange, onTask, onConfirmed, readOnly
       {/* The prototype leads with the subject ("Mathematics"); fall back to the priority label when a
           task has no subject. */}
       <div className="dash-hero-kicker">{task.sourceSubject || L("Ta priorité", "Your next priority")}</div>
-      <h2 className="dash-hero-title">{stripStrayMarkdown(task.title)}</h2>
+      <h2 className="dash-hero-title">{taskDisplayName(task)}</h2>
       {task.goal ? <div className="task-goal-banner"><span className="task-goal-tag">{L("Objectif", "Goal")}:</span> {stripStrayMarkdown(task.goal)}</div> : null}
       {(task.nudgeLine || task.why) ? <p className="dash-hero-why">{stripStrayMarkdown(task.nudgeLine || task.why)}</p> : null}
       {sourceAttributionLine(task, cardEn) ? <p className="card-source-attribution">{sourceAttributionLine(task, cardEn)}</p> : null}
@@ -361,9 +360,34 @@ export function TaskHero({ task, onOpen, onChange, onTask, onConfirmed, readOnly
  *  most race-sensitive component in the app for no gain. This renders the same underlying data (what the
  *  task is, when it's due, and the plan Otto wrote) straight from the WebTask, with no handlers at all.
  *  Chat is absent on purpose — direct instruction, "no chat for the moment" on a phone. */
-export function TaskReadOnly({ task }: { task: WebTask }) {
+export function TaskReadOnly({ task, onTask, userId }: { task: WebTask; onTask: (t: WebTask) => void; userId: string | null }) {
   const L = useLang();
+  const notify = useNotify();
+  const [openNote, setOpenNote] = useState<string | null>(null);
+  const [openDeck, setOpenDeck] = useState<string | null>(null);
+  const [openQuiz, setOpenQuiz] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const cardEn = useContext(LangContext) === "en";
+  // Direct instruction: checking a task off as done must work on a phone too — this view otherwise has
+  // no onChange (list setter) the way TaskCardRow's useTaskLeave does, just the single-task patch, so a
+  // small self-contained confirm instead of reusing that hook. The parent's own task-modal effect
+  // (App.tsx) already closes the modal the instant the task's status is handled, so no onLeft is needed.
+  const markDone = async () => {
+    if (confirming) return;
+    setConfirming(true);
+    onTask({ ...task, status: "done", updatedAt: new Date().toISOString() });
+    try {
+      const list = await api.confirm(task.id);
+      if (!Array.isArray(list)) throw new Error((list as any)?.error || L("On dirait que tu as été déconnecté — recharge la page.", "Looks like you got logged out — reload the page."));
+      const updated = list.find((t) => t.id === task.id);
+      if (updated) onTask(updated);
+    } catch (e: any) {
+      onTask(task); // roll back the optimistic flip
+      notify(e?.message || L("Un imprévu est survenu — réessaie.", "Something went wrong on our end — try again."), "error");
+    } finally {
+      setConfirming(false);
+    }
+  };
   const w = taskDateLabel(task, L);
   const steps = task.steps || [];
   const doneCount = steps.filter((s) => s.done).length;
@@ -384,6 +408,7 @@ export function TaskReadOnly({ task }: { task: WebTask }) {
   };
   return (
     <div className="task-readonly">
+      <h2 className="tf-title">{task.title}</h2>
       {(task.sourceSubject || w) ? (
         <div className="task-readonly-meta">
           {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
@@ -428,22 +453,22 @@ export function TaskReadOnly({ task }: { task: WebTask }) {
               <span className="prepared-label">{L("Créé pour toi", "Made for you")}</span>
               <div className="note-chips prepared-chips">
                 {task.notes?.map((n) => (
-                  <div key={n.id} className="note-chip" style={{ pointerEvents: "none" }}>
+                  <button key={n.id} type="button" className="note-chip" onClick={() => setOpenNote(n.id)}>
                     <span className="note-chip-icon" aria-hidden="true">▤</span>
-                    <span className="note-chip-text"><span className="note-chip-title">{n.title}</span><span className="note-chip-meta">{L("Fiche", "Note")}</span></span>
-                  </div>
+                    <span className="note-chip-text"><span className="note-chip-title">{n.title}</span><span className="note-chip-meta">{L("Fiche · Ouvrir", "Note · Open")}</span></span>
+                  </button>
                 ))}
                 {task.flashcards?.map((f) => (
-                  <div key={f.id} className="note-chip" style={{ pointerEvents: "none" }}>
+                  <button key={f.id} type="button" className="note-chip" onClick={() => setOpenDeck(f.id)}>
                     <span className="note-chip-icon" aria-hidden="true"><Layers size={13} /></span>
-                    <span className="note-chip-text"><span className="note-chip-title">{f.title}</span><span className="note-chip-meta">{L(`${f.cards.length} cartes`, `${f.cards.length} cards`)}</span></span>
-                  </div>
+                    <span className="note-chip-text"><span className="note-chip-title">{f.title}</span><span className="note-chip-meta">{L(`${f.cards.length} carte${f.cards.length === 1 ? "" : "s"} · Ouvrir`, `${f.cards.length} card${f.cards.length === 1 ? "" : "s"} · Open`)}</span></span>
+                  </button>
                 ))}
                 {task.quizzes?.map((qz) => (
-                  <div key={qz.id} className="note-chip" style={{ pointerEvents: "none" }}>
+                  <button key={qz.id} type="button" className="note-chip" onClick={() => setOpenQuiz(qz.id)}>
                     <span className="note-chip-icon" aria-hidden="true">?</span>
-                    <span className="note-chip-text"><span className="note-chip-title">{qz.title}</span><span className="note-chip-meta">{L(`${qz.questions.length} questions`, `${qz.questions.length} questions`)}</span></span>
-                  </div>
+                    <span className="note-chip-text"><span className="note-chip-title">{qz.title}</span><span className="note-chip-meta">{L(`${qz.questions.length} questions · Ouvrir`, `${qz.questions.length} questions · Open`)}</span></span>
+                  </button>
                 ))}
               </div>
             </>
@@ -453,15 +478,51 @@ export function TaskReadOnly({ task }: { task: WebTask }) {
           ) : null}
         </div>
       ) : null}
+      <button type="button" className="btn primary task-readonly-done" disabled={confirming} onClick={() => void markDone()}>
+        {confirming ? L("…", "…") : L("Marquer comme fait", "Mark as done")}
+      </button>
       <p className="task-readonly-foot">
-        {L("Sur téléphone, Otto est en lecture seule. Ouvre-le sur un ordinateur ou un iPad pour travailler dessus.",
-           "On a phone, Otto is read-only. Open it on a laptop or iPad to actually work on this.")}
+        {L("Sur téléphone, Otto est en lecture seule pour le travail lui-même — ouvre-le sur un ordinateur ou un iPad pour ça.",
+           "On a phone, Otto is read-only for the actual work — open it on a laptop or iPad for that.")}
       </p>
+      <ArtifactPopups task={task} onTask={onTask} openNote={openNote} openDeck={openDeck} openQuiz={openQuiz}
+        setOpenNote={setOpenNote} setOpenDeck={setOpenDeck} setOpenQuiz={setOpenQuiz} userId={userId} />
     </div>
   );
 }
 
 /* ─────────────────────────────── the focused task view ─────────────────────────────── */
+
+/** "Edit" next to the date: opens a date field with Save / Cancel (and Clear when a firm date is set) on any live task. */
+function DeadlineEdit({ task, onChange }: { task: WebTask; onChange: (t: WebTask[]) => void }) {
+  const L = useLang();
+  const notify = useNotify();
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const ms = deadlineEpoch(task.when);
+  const current = Number.isFinite(ms) && !task.whenApprox ? new Date(ms).toISOString().slice(0, 10) : "";
+  const [draft, setDraft] = useState(current);
+  useEffect(() => { if (!editing) setDraft(current); }, [current, editing]);
+  const save = async (v: string) => {
+    if (busy) return;
+    if (v === current) { setEditing(false); return; }
+    setBusy(true);
+    try { onChange(await api.setDeadline(task.id, v)); setEditing(false); }
+    catch (e: any) { notify(e?.message || L("Impossible de changer l'échéance — réessaie.", "Couldn't change the deadline — try again."), "error"); }
+    setBusy(false);
+  };
+  if (!editing) {
+    return <button type="button" className="ghost small deadline-edit-btn" onClick={() => setEditing(true)} aria-label={L("Modifier l'échéance", "Edit the deadline")}>✎ {L("Modifier", "Edit")}</button>;
+  }
+  return (
+    <span className="deadline-edit">
+      <input type="date" value={draft} disabled={busy} autoFocus onChange={(e) => setDraft(e.target.value)} aria-label={L("Nouvelle échéance", "New deadline")} />
+      <button type="button" className="btn xs primary" disabled={busy || !draft} onClick={() => void save(draft)}>{L("Enregistrer", "Save")}</button>
+      {current ? <button type="button" className="ghost small" disabled={busy} onClick={() => void save("")}>{L("Effacer", "Clear")}</button> : null}
+      <button type="button" className="ghost small" disabled={busy} onClick={() => { setDraft(current); setEditing(false); }}>{L("Annuler", "Cancel")}</button>
+    </span>
+  );
+}
 
 export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfirmed, onLeft, onEnterStudyMode, userId }: {
   task: WebTask; onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void; retrying?: boolean;
@@ -697,7 +758,7 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
       {/* (A) header — title and deadline only. Everything else that used to crowd this line moved into the
           hero (in-flight state) or was dropped (priority chip). */}
       <div className="tf-head">
-        <h2 className="tf-title">{stripStrayMarkdown(task.title)}</h2>
+        <h2 className="tf-title">{taskDisplayName(task)}</h2>
         {task.goal ? (
           <div className="task-goal-banner">
             <span className="task-goal-tag">{L("Objectif de fin", "Definition of Done")}:</span> {stripStrayMarkdown(task.goal)}
@@ -710,6 +771,7 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
               metadata, not anything a student chose) — the header keeps subject · date · quadrant · status. */}
           {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
           {taskDateLabel(task, L) ? <span className={`when ${(deadlineEpoch(task.when) - Date.now()) / 86_400_000 <= 3 ? "when-soon" : ""}`}>{taskDateLabel(task, L)}</span> : null}
+          {!isDone ? <DeadlineEdit task={task} onChange={onChange} /> : null}
           {!isDone ? <span className={`card-quadrant card-quadrant-${task.quadrant}`}>{quadrantLabel(task.quadrant, cardEn)}</span> : null}
           {chip ? <span className={`chip chip-${chip.tone}`}>{chip.label}</span> : null}
           {task.audit?.some((a) => a.kind === "guardrail") ? <span className="row-guardrail" title={L("Otto a refusé de faire cette tâche à ta place ici — voir le journal d'activité", "Otto declined to do this one for you here — see the activity log")} aria-hidden="true">✦</span> : null}
@@ -802,40 +864,6 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
       <ArtifactPopups task={task} onTask={onTask} openNote={openNote} openDeck={openDeck} openQuiz={openQuiz}
         setOpenNote={setOpenNote} setOpenDeck={setOpenDeck} setOpenQuiz={setOpenQuiz} userId={userId ?? null} />
     </div>
-  );
-}
-
-/* ─────────────────────────────── the hero ─────────────────────────────── */
-
-/** Exactly one shape, by precedence. Ticking the current step advances it in place — that's what makes
- *  "one thing at a time" self-evident without a word of instruction. */
-/** A step's `minutes` estimate used to just sit there as a static "~15 min" label — real raw material
- *  (a model-provided time estimate) for a focus timer that never actually existed anywhere in the app.
- *  Plain countdown, started on tap; at zero it becomes a gentle "still going?" nudge, never a forced
- *  cutoff or a notification — this is a focus AID, not a hard limit. Client-side only (a local interval),
- *  since a timer has no reason to survive a reload; resets automatically per-step via the `key` the caller
- *  passes (StepHero remounts it on `currentIdx`). */
-function SessionTimer({ minutes }: { minutes: number }) {
-  const L = useLang();
-  const [secsLeft, setSecsLeft] = useState<number | null>(null); // null = not started yet
-  useEffect(() => {
-    if (secsLeft === null) return;
-    const id = setInterval(() => setSecsLeft((s) => (s === null ? s : s - 1)), 1000);
-    return () => clearInterval(id);
-  }, [secsLeft === null]);
-  const fmt = (s: number) => `${Math.floor(Math.abs(s) / 60)}:${String(Math.abs(s) % 60).padStart(2, "0")}`;
-  if (secsLeft === null) {
-    return (
-      <button type="button" className="step-minutes step-timer-start" onClick={() => setSecsLeft(minutes * 60)}>
-        ~{minutes} {L("min", "min")} · {L("Démarrer", "Start timer")}
-      </button>
-    );
-  }
-  const over = secsLeft <= 0;
-  return (
-    <span className={`step-minutes step-timer ${over ? "over" : ""}`}>
-      {over ? L(`Temps écoulé — ${fmt(secsLeft)} de plus, tu continues ?`, `Time's up — still going? +${fmt(secsLeft)}`) : fmt(secsLeft)}
-    </span>
   );
 }
 
@@ -1151,7 +1179,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                     ) : null}
                     <input
                       className="step-input"
-                      placeholder={s.options?.length ? L("Ou écris ta propre réponse…", "Or type your own answer…") : L("Écris ta réponse…", "Type your answer…")}
+                      placeholder={s.options?.length ? L("Ou écris ta propre réponse…", "Or type your own answer…") : L("Écris ta réponse…", "Type your answer…")} aria-label={s.options?.length ? L("Ou écris ta propre réponse…", "Or type your own answer…") : L("Écris ta réponse…", "Type your answer…")}
                       value={decided[i] || ""}
                       disabled={answering === i}
                       onChange={(e) => setDecided((d) => ({ ...d, [i]: e.target.value }))}
@@ -1195,7 +1223,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                             instead of the student going to find it themselves. */}
                         {sub.automatable && !sub.done ? (
                           <button type="button" className="btn xs ghost substep-run" disabled={subRunning} onClick={() => void runSubstep(i, si)}>
-                            {subRunning ? <span className="spinner xs" aria-hidden="true" /> : null}
+                            {subRunning ? <Spinner size="xs" /> : null}
                             {subRunning ? L("Otto cherche…", "Otto's looking…") : L("Laisser Otto répondre", "Let Otto answer")}
                           </button>
                         ) : null}
@@ -1208,7 +1236,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                   // Otto can still feel like too much in the moment, so the option to split it further is
                   // always one tap away instead of being reserved for a detected big project.
                   <button type="button" className="btn xs ghost substep-expand" disabled={expanding === i} onClick={() => void expandStep(i)}>
-                    {expanding === i ? <span className="spinner xs" aria-hidden="true" /> : null}
+                    {expanding === i ? <Spinner size="xs" /> : null}
                     {expanding === i ? L("Découpage…", "Breaking down…") : L("Détailler cette étape", "Break this step down")}
                   </button>
                 ) : null}
@@ -1268,7 +1296,7 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
             ) : c.kind === "deck" ? (
               <button key={c.item.id} type="button" className="note-chip" onClick={() => onOpenDeck(c.item.id)}>
                 <span className="note-chip-icon" aria-hidden="true"><Layers size={13} /></span>
-                <span className="note-chip-text"><span className="note-chip-title">{c.item.title}</span><span className="note-chip-meta">{L(`${c.item.cards.length} cartes`, `${c.item.cards.length} cards`)}</span></span>
+                <span className="note-chip-text"><span className="note-chip-title">{c.item.title}</span><span className="note-chip-meta">{L(`${c.item.cards.length} carte${c.item.cards.length === 1 ? "" : "s"}`, `${c.item.cards.length} card${c.item.cards.length === 1 ? "" : "s"}`)}</span></span>
               </button>
             ) : (
               <button key={c.item.id} type="button" className="note-chip" onClick={() => onOpenQuiz(c.item.id)}>
@@ -1434,7 +1462,7 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
             waiting, instead of swallowing what they just typed. */}
         {pendingMsg ? <div className="chat-msg chat-user chat-pending">{pendingMsg}</div> : null}
         {sending ? (
-          <div className="chat-msg chat-assistant chat-typing" role="status" aria-label={L("Otto réfléchit", "Otto is thinking")}>
+          <div className="chat-msg chat-assistant chat-typing" role="status" aria-label={L("Otto te cuisine", "Otto is working on you")}>
             <span className="typing-dots" aria-hidden="true"><i /><i /><i /></span>
             {/* Cycling word (see useThinkingWord, ui.tsx) replaces the old static "still thinking…"/"might
                 be putting something together…" text — it already reads as "still actively working" since

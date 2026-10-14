@@ -60,7 +60,7 @@ export function isLikelyEcho(spoken: string, heard: string): boolean {
   return hWords >= 3 && isOrderedSubsequence(s, h);
 }
 
-export interface EchoFilter {
+interface EchoFilter {
   /** Call when TTS starts, with the reply text being synthesized. Re-call on a new utterance while the
    *  synth flag stayed true (a second reply queued back-to-back) — it re-arms the window. */
   speechStarted(text: string): void;

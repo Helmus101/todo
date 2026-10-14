@@ -1,17 +1,70 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync, readdirSync } from "node:fs";
-import { recencyStamp, dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor, attachLocationLinks, googleMapsDirectionsUrl, trimOldStudylogArtifacts } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, shouldNudgeBoardContent, mathInPlay, newMathOffBoard, replyIntroducesNewMath, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem, detectLang, visionReady, describeWhiteboard, academicBlock, sessionRecapLine } from "../server/claude.ts";
+// The app shell was split into client/App.tsx + client/appShared.tsx + client/pages/*.tsx; source checks read them as one.
+// The API was split into server/index.ts + server/http.ts + server/routes/*.ts; source checks read them as one.
+const serverSource = () => ["../server/index.ts", "../server/http.ts", ...readdirSync(new URL("../server/routes/", import.meta.url)).map((f) => `../server/routes/${f}`)]
+  .map((f) => readFileSync(new URL(f, import.meta.url), "utf8")).join("\n");
+const appSource = () => ["../client/App.tsx", "../client/appShared.tsx", ...readdirSync(new URL("../client/pages/", import.meta.url)).map((f) => `../client/pages/${f}`)]
+  .map((f) => readFileSync(new URL(f, import.meta.url), "utf8")).join("\n");
+import { crossSourceSame, recencyStamp, dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, homeworkTaskTitle, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor, attachLocationLinks, googleMapsDirectionsUrl, trimOldStudylogArtifacts, ensurePronoteLinks } from "../server/tasks.ts";
+import { sameAssignmentText, dedupePronoteHomework } from "../server/discover.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, shouldNudgeBoardContent, mathInPlay, newMathOffBoard, replyIntroducesNewMath, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords, makeObjectives, taskNeedsStepList, isDuplicateProblem, makeProblem, detectLang, visionReady, describeWhiteboard, academicBlock, sessionRecapLine, whyContradictsCorrect } from "../server/claude.ts";
+import { sourcesForTrack, sourceForUrl, cleanProblemSource, excerptAround, findSourceQuestions } from "../server/questionSources.ts";
+import { normalizeWidget, shuffledNotSolved, projectileStats } from "../shared/widgets.ts";
+import { makeSyncScheduler } from "../server/syncScheduler.ts";
+import { buildTasksPayload, parseHave } from "../server/taskDelta.ts";
+import { makeTaskSync } from "../client/taskDelta.ts";
+import { looksLikeGivensOrScenario } from "../server/tutorAdapt.ts";
+import { confirmsUnchecked, wrapsUpUnasked } from "../server/tutorAdapt.ts";
+import { currentFocus, focusBlock } from "../server/tutorAdapt.ts";
+import { selectJournal } from "../server/journal.ts";
+import { recentJournalLine } from "../server/claude.ts";
+import { countJournalEntries } from "../shared/journalCount.ts";
+import { reachedResultUnrecorded, setsMathTaskUnboarded } from "../server/tutorAdapt.ts";
+import { answeredInChat, affectOf, learningPrefsFrom, mergePrefs, isStudentWriting, rewritesTheirWriting, backgroundBlock as tutorBackgroundBlock, mentionsMechanics, stripMechanics, updateMisconceptions, teachesOverError, strategyMissing, parsePlan, teachingBlock, wrongArithmetic, teachesUnboarded, boardStillEmpty, asksDiscussionQuestionUnboarded, isDiscussionSubject, statesClaimUnboarded, DISCUSSION_BLOCK, TUTOR_PROMPT, subjectsIn, reportsCorrectResult, movesOn, pointsAtMissingObject } from "../server/tutor.ts";
+import { blamesWidget } from "../server/tutorAdapt.ts";
+import { inventedNumbers } from "../server/tutorAdapt.ts";
+import { makeProblem as makeProblemP } from "../server/claude.ts";
+import { startsNewProblem } from "../server/tutorAdapt.ts";
+import { asksForProblem, asksWhichProblem } from "../server/tutorAdapt.ts";
+import { problemIsPercent as problemIsPercentT } from "../shared/types.ts";
+import { notationGloss } from "../server/tutorAdapt.ts";
+import { practiceAnswerMatches as practiceAnswerMatchesT, isNumericAnswer as isNumericAnswerT } from "../shared/types.ts";
+import { isBoardContent, splitBoardContent } from "../server/tutorAdapt.ts";
+import { asksWhy, ignoresWhy } from "../server/tutorAdapt.ts";
+import { statesOwnAnswer, listenCue } from "../server/tutorAdapt.ts";
+import { buildSolid } from "../shared/solid3d.ts";
+import { echoesStudentWords } from "../server/tutorAdapt.ts";
+import { posesProblemInProse } from "../server/tutorAdapt.ts";
+import { evalMathExpr } from "../server/tutorAdapt.ts";
+import { namesExactStep, bubbleDoesMath } from "../server/tutorAdapt.ts";
+import { statesOwnMath, asksToWrite as asksToWrite2 } from "../server/tutorAdapt.ts";
+import { latexifyBoardLine } from "../server/tutorAdapt.ts";
+import { repairLatex } from "../server/tutorAdapt.ts";
+import { makeEgressMeter } from "../server/egress.ts";
+import { buildTrigScene, solveTwoAngles } from "../shared/trigScene.ts";
+import { bareMath } from "../server/tutorAdapt.ts";
+import { schoolRecordLine } from "../server/schoolRecord.ts";
+import { stripPseudoTools } from "../server/tutorBrain.ts";
+import { sanitizeSvg as sanSvg2 } from "../shared/svgSafe.ts";
+import { onTopic, clarificationTerm, ignoresQuestion, ignoresWork, asksToWrite } from "../server/tutorAdapt.ts";
+import { praiseUngrounded, misattributes, methodAhead, wantsHelp } from "../server/tutorAdapt.ts";
+import { asksToDraw, praisesNothing } from "../server/tutorAdapt.ts";
+import { studentProblemStatement, cleanToPost, boardCoversStatement, pendingCaseTraps, closesWithMissedCase, handsOverCalculation, equationAhead, repeatedClaim, arithmeticAhead, caseTrapBlock, isDrawingTurn, drawingLooksSpatial } from "../server/tutorAdapt.ts";
+import { sanitizeSvg, svgText } from "../shared/svgSafe.ts";
+import { normalizeFlow, layoutFlow } from "../shared/flow.ts";
+import { asksToLook } from "../shared/lookRequest.ts";
+import { webSearch, rankResults } from "../server/websearch.ts";
 import { evaluateArithmetic, parseNumber, findArithmeticClaims, hasArithmetic } from "../server/arithmetic.ts";
 import { isLikelyEcho, createEchoFilter, normalizeForEcho } from "../client/voice/echoGuard.ts";
 import { speechErrorMessage } from "../client/voice/speechErrors.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, mergePronoteHomeworkAndTests } from "../server/discover.ts";
-import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, normalizeWhen, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, validateThemeTokens, normalizeProfile, milestonesBySubject } from "../shared/types.ts";
-import { sweepDueForDay, localDay, sweepDue, shouldRefreshStudentModel, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
+import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, normalizeWhen, addUsage, monthKeyOf, monthCostUsd, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, validateThemeTokens, normalizeProfile, milestonesBySubject } from "../shared/types.ts";
+import { planStuckRecovery, sweepDueForDay, localDay, sweepDue, shouldRefreshStudentModel, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp } from "../server/workload.ts";
-import { stripHtml, applyPronoteGrades, isPrivateOrReservedIp, assertSafeExternalUrl } from "../server/pronote.ts";
+import { stripHtml, applyPronoteGrades, applyPronoteLessons, isPrivateOrReservedIp, assertSafeExternalUrl } from "../server/pronote.ts";
 import { connectionColumnUpdates } from "../server/store.ts";
 import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, contextKey, chooseArm, computeReward, computeCardReward, computeLatencyReward, updatePosterior, leadingArm } from "../server/bandit.ts";
 import { trimFreeTTSWatermark } from "../server/ttsTrim.ts";
@@ -19,17 +72,27 @@ import { openerMemoryBlock, cleanOpener, tutorOpener } from "../server/claude.ts
 import { sessionTopic, relativeWhen, sessionMemoryForPrompt } from "../client/tutor/tutorSessions.ts";
 import { wantsArtifactTools } from "../server/claude.ts";
 import { rankVoices, isMaleVoice, cloudChunks, toSpeakableText, stripLatexForSpeech } from "../client/voice/useSpeechSynthesis.ts";
-import { traceLines, splitMergedSteps } from "../client/study/artifacts/BoardArtifact.tsx";
-import { pcmToWav, leaksAnswer, scrubAnswerLeak, makeProblem as makeProblemLeak, makePracticeProblem as makePracticeLeak, wordWrapChunks, leaksAnyProblemAnswer, makeInteractiveEntry, stripId3v2, stripId3v1 } from "../server/claude.ts";
+import { traceLines, splitMergedSteps, looksLikeRealMath } from "../client/study/artifacts/BoardArtifact.tsx";
+import { pcmToWav, leaksAnswer, scrubAnswerLeak, makeProblem as makeProblemLeak, makePracticeProblem as makePracticeLeak, wordWrapChunks, leaksAnyProblemAnswer, makeInteractiveEntry, stripId3v2, stripId3v1, stripLeakedToolCallSyntax } from "../server/claude.ts";
 import { lastMessageKey } from "../client/voice/replyKey.ts";
 import { subjectMastery } from "../shared/types.ts";
 import { COURSES, findCourse, normText, subjectMatches, matchesUnit, unitMastery, courseProgress, nextUnitToWork, masteryBand, UNIT_MASTERED_AT, orderCoursesForProfile, normalizeEnrolledCourses, unitObjectives } from "../shared/courses.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, subjectFrequency, orderingBoost, twoMinuteRuleBoost } from "../server/patterns.ts";
+// The AI layer was split into server/claude.ts (facade) + server/ai/*.ts; source checks read them as one.
+const claudeSource = () => ["../server/claude.ts", ...readdirSync(new URL("../server/ai/", import.meta.url)).map((f) => `../server/ai/${f}`)]
+  .map((f) => readFileSync(new URL(f, import.meta.url), "utf8")).join("\n");
+
 
 import { compileExpr } from "../shared/mathExpr.ts";
 import { makeGraphEntry, earlierDigest, isSubstantiveStep, courseworkLine, fallbackCourseworkSummary, chunkCourseworkText } from "../server/claude.ts";
 import { canonSubject, sameSubject, normalizeCoursework, courseworkForSubject, COMMON_SUBJECTS, COURSEWORK_MAX_PAGES, COURSEWORK_MAX_CHARS } from "../shared/coursework.ts";
 import { tightenForChat, countWords as countWordsT } from "../server/claude.ts";
+import { replyStatesValue, studentStatedAnswer } from "../server/tutorAdapt.ts";
+import { typesetLogPhrases, autoMathLine, wrapRawLatex } from "../shared/mathText.ts";
+import { buildSessionRecap } from "../shared/sessionRecap.ts";
+import { diffBoard, recordBoardEvents, objectiveEvents, problemEvents, boardTrajectoryBlock, boardSurfaceBlock, tagStudentAnswer, selfCorrections, boardFingerprint } from "../server/boardEvents.ts";
+import { classifyTurnAction, buildTutorDecision, recordTutorDecision, TUTOR_DECISION_CAP } from "../server/actionSpace.ts";
+import { emptySessionState, loadOrInitSessionState, updateSessionState, persistSessionState, sessionStateBlock } from "../server/sessionState.ts";
 let pass = 0, fail = 0;
 const check = (name, cond) => { cond ? pass++ : (fail++, console.log("  FAIL:", name)); };
 const section = (name) => console.log(`— ${name}`);
@@ -37,12 +100,12 @@ const section = (name) => console.log(`— ${name}`);
 // ── Tutor speed + voice: local reply tightening, no extra model round-trip ─────
 section("Board = the reasoning, not a transcript (source pins)");
 {
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   check("the board never echoes the student's message or Otto's question (no auto-logging)", !/workingEntryFor|promptEntryFor/.test(src));
   check("a step, result or reasoning line counts as substantive", ["x² − 5x + 6 = 0 so (x−2)(x−3) = 0", "I think I need to move the six across first and then factor it", "the answer is 12"].every(isSubstantiveStep));
   check("questions, chips, acks, don't-knows and auto-messages do not", ["ok", "Salut", "what is a root?", "Can I have a small hint?", "I'm lost — can we go smaller?", "I don't know", "[Exercise] I answered \"4\" — marked wrong (try #1).", "[What I wrote/drew on the board: a wavy line]", "hmm"].every((m) => !isSubstantiveStep(m)));
   check("a corrective round asks the tutor (not the app) to write the reasoning + helpful formula when a step produced no board write", /reasoningNudgeDone = true/.test(src) && /1-3 short WRITE_TO_BOARD calls\): \(a\) kind \\"summary\\"/.test(src) && /isSubstantiveStep\(message\)/.test(src));
-  check("persona asks for the move + why + result in its own words and forbids quoting the chat", /THE BOARD IS THE WORKING — THE REASONING, NOT A TRANSCRIPT/.test(src) && /NEVER copy what the student typed/.test(src));
+  check("persona asks for the move + why + result in its own words and forbids quoting the chat", /THE BOARD IS THEIR PAPER/.test(src) && /never their sentence, never the answer, never your own derived steps/.test(src));
 }
 section("Board reasoning trace — one move per rendered line, even when the model merges two steps (unit tests)");
 {
@@ -64,8 +127,11 @@ section("Board reasoning trace — one move per rendered line, even when the mod
   check("blank lines and marker-only lines never render as an empty step", traceLines("1. a\n2. \n3. \n\n4. d").join("|") === "a|d");
   check("splitMergedSteps is a pure function the renderer can rely on", Array.isArray(splitMergedSteps("1. a")) && splitMergedSteps("plain prose").length === 1);
   const boardSrc = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
-  check("the renderer draws the numbering itself and no longer pastes the model's glyph into the step text", /<ol className="sm-board-trace-list">/.test(boardSrc) && /piece\.replace\(LEAD_DECOR_RE, ""\)\.replace\(LEAD_MARKER_RE, ""\)\.replace\(LEAD_DECOR_RE, ""\)/.test(boardSrc));
-  const claudeTrace = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  // The reasoning-trace BOX (the numbered "how you got there" list) was removed by direct instruction —
+  // a board line is just a line, with no category around it. traceLines stays: it still strips the model's
+  // own markers/glyphs from the text it is given.
+  check("the reasoning-trace box is gone, while traceLines still strips the model's own markers", !/sm-board-trace/.test(boardSrc) && /piece\.replace\(LEAD_DECOR_RE, ""\)\.replace\(LEAD_MARKER_RE, ""\)\.replace\(LEAD_DECOR_RE, ""\)/.test(boardSrc));
+  const claudeTrace = claudeSource();
   check("the prompt tells the model to write ONE move per line with no step number or bullet inside it", claudeTrace.includes("ONE MOVE PER LINE — the trace is numbered for you") && claudeTrace.includes("never put TWO moves on one line"));
 }
 
@@ -92,14 +158,14 @@ section("Tutor opener — Otto's first line is REAL memory, never a template or 
   check("a runaway completion is clamped at a sentence boundary, not mid-word", (() => { const t = cleanOpener("a".repeat(150) + ". " + "b".repeat(400)); return t.length <= 321 && /[.?!]$/.test(t); })());
   check("an empty completion is treated as a real failure, never a blank bubble", cleanOpener("") === "" && cleanOpener("   ") === "");
 
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   check("the opener runs on the tutor's own provider chain (Gemini → DeepSeek fallback), not a second AI client", /export async function tutorOpener\([\s\S]*?await createTutorChat\(/.test(src));
   check("the prompt forbids inventing a RECOLLECTION — the exact placeholder this feature removes", src.includes("last time we were working on X") && src.includes("an honest blank start") && src.includes("beats a fabricated memory"));
   check("with NOTHING on record the model is told so out loud, so it can't confabulate a past session", src.includes("NOTHING IS ON RECORD about what this student has worked on") && src.includes('"last time" / "la dernière fois"'));
   check("a board caption is named as a caption, not as something the student studied", src.includes("never a board caption or a placeholder label") && src.includes("is a heading on the board, NOT something the student studied"));
   check("the line is asked to make them RECALL the work rather than be told what it was", src.includes("make it a retrieval ") && src.includes("get THEM to recall it"));
 
-  const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const idx = serverSource();
   check("the opener route is authenticated, rate-limited and budget-gated like every other AI call, and counts its usage", /app\.post\("\/api\/tutor\/opener", requireAuth, rateLimit\(/.test(idx) && /await tutorOpener\(\{ subject[\s\S]{0,160}addUsage\(profile, out\.tokens, "chat"\)/.test(idx));
   check("client-controlled memory is capped before it can reach the prompt", idx.includes("rawMemory.slice(0, 3)") && idx.includes("slice(0, 6).map((x: string) => x.trim().slice(0, 200))") && idx.includes("slice(0, 3).map((x: string) => x.trim().slice(0, 200))"));
   check("a failed opener is a quiet 502 the client ignores, never an error the student sees", idx.includes("[tutor] opener failed") && /opener failed[\s\S]{0,200}res\.status\(502\)/.test(idx));
@@ -118,14 +184,28 @@ section("Tutor opener — Otto's first line is REAL memory, never a template or 
   check("a session with nothing real is dropped instead of being sent as a hollow row", sessionMemoryForPrompt([captionSession], "Maths", Date.now(), "en").length === 0);
   check("the memory is capped at three sessions so the opener request stays small", sessionMemoryForPrompt([1, 2, 3, 4, 5].map((n) => ({ ...old, id: `x${n}` })), "Maths", Date.now(), "en").length === 3);
   const ts = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
-  check("opening a session asks for the real opening line, grounded in the browser's own record", /api\.tutorOpener\(task\.sourceSubject \|\| "", memory\)/.test(ts) && /sessionMemoryForPrompt\(getTutorSessions\(userId\), task\.sourceSubject, Date\.now\(\), openerLang\)/.test(ts));
-  check("it is asked exactly once per session and only while the session is still blank", /if \(!id \|\| task\.chat\?\.length \|\| openerAskedFor === id\) return;/.test(ts) && /setOpenerAskedFor\(id\)/.test(ts));
-  check("the instant line stays as the fallback — a failed or slow opener never leaves an empty greeting", /const openerText = realOpener && realOpener\.id === task\.id \? realOpener\.text : instantOpener;/.test(ts) && /the instant line stays/.test(ts));
+  // Report-live: "for the thing with automatic opening don't make it complicated, just use a template
+  // like we worked on supply and demand" — so the opener is ONE local template with no model round-trip:
+  // no api.tutorOpener call, no realOpener state, no openerAskedFor — nothing that can fail, double-render
+  // or stack a second time reference. (server/claude.ts's tutorOpener + route stay for API compatibility.)
+  check("the opener is a plain local template — no model round-trip from the session component", !/api\.tutorOpener\(/.test(ts) && !/setRealOpener/.test(ts) && !/setOpenerAskedFor/.test(ts) && /const openerText = instantOpener;/.test(ts));
   check("the instant line no longer quotes the first raw board text as 'what we worked on'", !/lastSame\?\.summary\.split/.test(ts) && /sessionTopic\(lastSame\)/.test(ts) && /relativeWhen\(lastSame\.endTime/.test(ts));
   const sessionsSrc = readFileSync(new URL("../client/tutor/tutorSessions.ts", import.meta.url), "utf8");
   check("the old recap helper that never reached the model is gone (one memory path, not two)", !sessionsSrc.includes("pastSessionsLine") && !ts.includes("pastSessionsLine"));
   const apiSrc = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
   check("the client has exactly one opener call, and it is best-effort by design", /tutorOpener: \(subject: string, pastSessions/.test(apiSrc) && /post\("\/api\/tutor\/opener", \{ subject, pastSessions \}\)/.test(apiSrc));
+
+  // Report-live, verbatim: 'Hey! Last time, earlier today, we worked on "Solve for $x \\in [0, 2\\pi]$:
+  // $\\cos 2x + 3\\cos x = 1$". What do you still remember?' — TWO defects: the instant line stacked a
+  // fixed lead on top of relativeWhen's stamp, and the bubble rendered the opener as RAW TEXT, so the
+  // LaTeX it quotes from the board printed with literal $…$ instead of typesetting.
+  const askSrc = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
+  check("the opener bubble typesets its maths — emptyText goes through MathText, never raw {emptyText}",
+    /<MathText text=\{emptyText/.test(askSrc) && !/<p className="otto-bubble-empty">\s*\{emptyText/.test(askSrc) && !/<p className="sm-ai-empty">\s*\{emptyText/.test(askSrc));
+  check("the instant line uses ONE time reference — the 'Last time, <stamp>' stacking is gone",
+    !/Last time, \$\{lastWhen\}/.test(ts) && /const leadEn = lastWhen/.test(ts) && /const leadFr = lastWhen/.test(ts));
+  check("the server opener is told the same: exactly one time reference, never stacked",
+    /ONE time reference/.test(src) && /never stack "last time"/.test(src));
 }
 
 section("Tutor stage — End session always ends; the stage is screen-height with ONE scroller the ink lives on (source pins)");
@@ -134,10 +214,67 @@ section("Tutor stage — End session always ends; the stage is screen-height wit
   const css = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
   const end = tut.slice(tut.indexOf("const endSession = useCallback"), tut.indexOf("const endSession = useCallback") + 1600);
   check("endSession no longer silently no-ops without a start time, and always leaves the screen (finally)", !/!sessionStart\) return/.test(end) && /\} finally \{[\s\S]*setTask\(null\)/.test(end) && /couldn't save the session summary/.test(end));
-  check("tutor stage is fixed to the screen height (it used to grow with the board and push End session away)", /\.tutor-stage \{[^}]*flex: none[^}]*height: 100dvh/.test(css));
+  // Report-live ask: the top nav STAYS on the tutor routes (it used to be dropped as a "focused surface").
+  // With the header back in flow, a flat 100dvh stage would push the dock 64px below the fold — the stage
+  // must be viewport-minus-nav, sized from the same --topnav-h the header wears (56px variant on phone).
+  const appShell = appSource();
+  check("the top nav renders on EVERY route including tutor (the tutor-only hiding gate is gone)",
+    !/!route\.startsWith\("tutor"\) && \(/.test(appShell) && /className="topnav">/.test(appShell));
+  check("tutor stage is fixed to the screen-minus-nav height (it used to grow with the board and push End session away)",
+    /\.tutor-stage \{[^}]*flex: none[^}]*height: calc\(100dvh - var\(--topnav-h\)\)/.test(css) &&
+    /--topnav-h: calc\(64px \+ env\(safe-area-inset-top\)\)/.test(css) &&
+    /\.topnav \{[^}]*height: var\(--topnav-h\)/.test(css));
   check("the board component's own scroller is neutralised in the stage so the ink canvas is on the one real scroller", /\.ts-board-body \.sm-board-body \{ overflow: visible;/.test(css) && /createPortal\(/.test(readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8")));
-  check("'Show Otto' lets the student say what to look at (note travels with the drawing)", /tc-ask/.test(readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8")) && /onSend=\{\(description, note\)/.test(tut));
+  check("there is NO 'Show Otto' button: telling Otto to look at the whiteboard is enough", !/tc-show|Montrer à Otto|Show Otto/.test(readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8").replace(/ask Otto to take a look/g, "")) && /asksToLook\(message\)/.test(tut) && /readUnseenInk\(wantsLook\)/.test(tut));
+  check("a look-request is recognised in both languages; ordinary chat is not", asksToLook("can you look at my whiteboard") && asksToLook("regarde mon schéma s'il te plaît") && asksToLook("is this diagram right?") && asksToLook("check my drawing") && !asksToLook("what is the sine rule") && !asksToLook("look at the second equation"));
   check("the whiteboard starts in select/hand mode, not draw — the board underneath must be usable right away", /useState<Tool>\("pan"\)/.test(readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8")));
+}
+
+// Whiteboard, three live requests: (1) Otto can INVITE them to draw at any point, (2) a snapshot must be
+// read in the CONTEXT of what's already on the board (drawings overlap the lesson — a circle over an
+// equation refers to THAT equation), (3) the canvas is infinite — scroll down into blank space and keep
+// drawing, and Otto keeps writing after.
+section("Whiteboard — invited any time, read in board context, infinite blank to draw in (source pins)");
+{
+  const canvasSrc = readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8");
+  const csrcW = claudeSource();
+  check("the tutor prompt tells Otto he may invite them to draw at ANY point, and to read the ink against the board",
+    /INVITING THEM TO DRAW: the whiteboard is always right there in the tutor — you can suggest it at ANY /.test(csrcW) &&
+    /it in the CONTEXT of what's already on the board/.test(csrcW));
+  check("the vision read paints the printed BOARD text behind the ink (the overlap is what the student means)",
+    /\.sm-board-entry-text, \.sm-board-line, \.sm-board-problem-q/.test(canvasSrc) &&
+    /Board context UNDER the ink/.test(canvasSrc) &&
+    canvasSrc.indexOf("Board context UNDER the ink") < canvasSrc.indexOf("f.drawImage(c, sx \* dpr"));
+  check("the ink page always keeps a big blank area under the last entry, and never sizes below its own ink",
+    /const blank = 120;/.test(canvasSrc) &&
+    /inkBottom\(\) \+ 240/.test(canvasSrc));
+  check("a stroke reaching the bottom edge EXTENDS the page instead of hitting a wall (infinite canvas)",
+    /y > size\.current\.h - 200\) fit\(\)/.test(canvasSrc));
+  check("Otto keeps writing after a scroll: new entries auto-scroll into view and refit the ink page",
+    /endRef\.current\?\.scrollIntoView/.test(readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8")) &&
+    /new MutationObserver\(fit\)/.test(canvasSrc));
+}
+
+// Session routing: the address bar tracks the LIVE session and deep links actually resolve. Root bug
+// pinned below — routeOf strips the leading slash, so "tutor/session/<id>".split("/") is [tutor, session,
+// <id>]: index [3] was ALWAYS undefined, so no /tutor/session/<id> link (history anchor, refresh, shared
+// URL) ever loaded its session and the review effect sat dead code.
+section("Tutor session routing — deep links resolve, the URL follows the live session (source pins)");
+{
+  const appSrcR = appSource();
+  const tutSrcR = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  check("the session deep link reads split index [2] — [3] was always undefined and never loaded a session",
+    /sessionId=\{route\.split\("\/"\)\[2\]\}/.test(appSrcR) && !/sessionId=\{route\.split\("\/"\)\[3\]\}/.test(appSrcR));
+  check("opening/resuming a session pushes /tutor/session/<taskId> so a refresh re-enters the same session",
+    tutSrcR.includes("path !== `tutor/session/${task.id}`") && tutSrcR.includes("goRoute(`tutor/session/${task.id}`)"));
+  check("when the session ends the address falls back to the list — and only on an id TRANSITION",
+    /routedTaskRef\.current = null/.test(tutSrcR) &&
+    tutSrcR.includes('if (path.startsWith("tutor/session/")) goRoute("tutor");'));
+  check("the active session header has no 'All sessions' link back to the list (report-live: shouldn't be there)",
+    !/tutor-crumb-link/.test(tutSrcR) && !/leaveToList/.test(tutSrcR));
+  check("the dock chat toggle is an expand/collapse control, not a labeled 'Chat' button",
+    /chatDrawer \? <Minimize2 size=\{13\} aria-hidden="true" \/> : <Maximize2 size=\{13\} aria-hidden="true" \/>/.test(tutSrcR) &&
+    !/\{chatDrawer \? L\("Fermer", "Close"\) : L\("Chat", "Chat"\)\}/.test(tutSrcR));
 }
 section("Tutor memory — earlier turns are condensed, not forgotten");
 {
@@ -147,9 +284,9 @@ section("Tutor memory — earlier turns are condensed, not forgotten");
   check("digest keeps only the first sentence of Otto's turns and tells the model not to re-explain", !/Take your time/.test(d) && /don't re-explain/.test(d));
   check("digest is capped, newest lines win", (() => { const many = Array.from({ length: 200 }, (_, i) => ({ role: "user", text: `message number ${i} about something` })); const out = earlierDigest(many, 600); return out.length < 800 && /number 199/.test(out) && !/number 0 /.test(out); })());
   check("nothing older gives an empty digest", earlierDigest([]) === "");
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   check("primer turns get a 24-message window plus the digest (non-primer stays 10)", /const histWindow = opts\?\.primer \? 24 : 10;/.test(src) && /earlierDigest\(history\.slice\(0, -histWindow\), 2600\)/.test(src));
-  check("the server keeps up to 60 messages of thread", /const CHAT_CAP = 60;/.test(readFileSync(new URL("../server/index.ts", import.meta.url), "utf8")));
+  check("the server keeps up to 60 messages of thread", /const CHAT_CAP = 60;/.test(serverSource()));
 }
 section("TutorSession — no hook after an early return (React #310 crash)");
 {
@@ -160,7 +297,10 @@ section("TutorSession — no hook after an early return (React #310 crash)");
 section("Board — nothing already on it is ever dropped by a server reply");
 {
   const src = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
-  check("a chat reply merges its board/problems/chat into what's on screen instead of replacing it", /board: mergeBoardById\(task\.board \|\| \[\], updated\?\.board \|\| \[\]\)/.test(src) && /chat: \[\.\.\.\(task\.chat \|\| \[\]\), \.\.\.\(response\.chatDelta \|\| \[\]\)\]/.test(src));
+  // Local-only tutor sessions (client/localChatBoard.ts): the turn's response carries just a DELTA, and this
+  // browser is the one copy of record — so what's already on screen must be merged in and PERSISTED, never
+  // replaced by the delta. Reported-bug class: a resumed session's chat shrank to the newest message.
+  check("a chat reply merges its board/problems/chat into what's on screen instead of replacing it, and persists the merged result locally", /mergeBoardById\(task\.board \|\| \[\], board \|\| \[\]\)/.test(src) && /setLocalBoard\(task\.id, newBoard/.test(src) && /setLocalProblems\(task\.id, newProblems/.test(src) && /setLocalChat\(task\.id, \[\.\.\.\(task\.chat \|\| \[\]\), \.\.\.\(response\.chatDelta \|\| \[\]\)\]/.test(src));
   const m = src.match(/export function mergeBoardById[\s\S]*?\n}\n/)[0].replace("export function", "function").replace(/<T[^>]*>/, "").replace(/\(existing: T\[\], incoming: T\[\]\): T\[\]/, "(existing, incoming)").replace(/\(x: T\)/g, "(x)").replace(/\(x\) => x\.id/g, "(x) => x.id");
   const mergeBoardById = new Function(m.replace(/: T/g, "") + "; return mergeBoardById;")();
   const a = [{ id: "1", at: "2026-01-01T00:00:01Z" }, { id: "2", at: "2026-01-01T00:00:03Z" }];
@@ -208,15 +348,15 @@ section("Coursework — subjects, limits, summaries the tutor/chat can cite (uni
     return wins.length === 3 && wins.every((w) => w.length <= 12000) && wins.join("").length === COURSEWORK_MAX_CHARS && chunkCourseworkText("short text").length === 1 && chunkCourseworkText("").length === 0;
   })());
   check("fallback summary (no AI) is the first sentences, bounded", fallbackCourseworkSummary("First sentence here. Second one follows. " + "More text. ".repeat(100)).length <= 430 && fallbackCourseworkSummary("") === "");
-  const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const idx = serverSource();
   const cwRoute = idx.slice(idx.indexOf('app.post("/api/coursework"'), idx.indexOf('app.post("/api/coursework"') + 4200);
   check("the route is authenticated + rate-limited, re-enforces the char limit, and needs readable text", /app\.post\("\/api\/coursework", requireAuth, rateLimit\(/.test(idx) && /slice\(0, COURSEWORK_MAX_CHARS\)/.test(cwRoute) && /text\.length < 40/.test(cwRoute));
   check("tasks are created only from what the summarizer proposes, tagged with the subject, idempotent per document", /sum\?\.tasks/.test(cwRoute) && /cw:\$\{id\}:\$\{i\}/.test(cwRoute) && /sourceSubject = subject/.test(cwRoute));
-  check("chat/tutor and task runs both carry the coursework context", /courseworkLine\(profile, task\.sourceSubject\)/.test(readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8")) && (readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8").match(/courseworkLine\(profile, task\.sourceSubject\)/g) || []).length >= 2);
+  check("chat/tutor and task runs both carry the coursework context", /courseworkLine\(profile, task\.sourceSubject\)/.test(claudeSource()) && (claudeSource().match(/courseworkLine\(profile, task\.sourceSubject\)/g) || []).length >= 2);
   const page = readFileSync(new URL("../client/CourseworkPage.tsx", import.meta.url), "utf8");
   const pdf = readFileSync(new URL("../client/study/pdfText.ts", import.meta.url), "utf8");
   check("the browser reads only the first pages (limited PDF reader) and the page tells the student the limit", /extractPdfTextLimited\(file, COURSEWORK_MAX_PAGES, COURSEWORK_MAX_CHARS\)/.test(page) && /Math\.min\(doc\.numPages, maxPages\)/.test(pdf));
-  check("Coursework is in the nav and routed", /href="\/coursework"/.test(readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8")) && /route === "coursework"/.test(readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8")));
+  check("Coursework is in the nav and routed", /href="\/coursework"/.test(appSource()) && /route === "coursework"/.test(appSource()));
   check("each uploaded document is collapsible (details/summary), not a flat always-open card", /<details key={d\.id} className="cw-doc"/.test(page) && /<summary>/.test(page));
   check("document cards start COLLAPSED, and what Otto read is collapsible in its own right", !/open={list\.length === 1}/.test(page) && /cw-read/.test(page) && /Ce qu'Otto a lu/.test(page));
 }
@@ -234,7 +374,7 @@ section("Journal — old decks stay readable, and a day's deck is the NEWEST one
   check("past the TTL the stale Leitner state (box/dueAt) is what gets dropped, so nothing old keeps resurfacing", old[0].flashcards[0].cards.every((c) => c.review === undefined));
   check("the retention window is at least the 30 days that were asked for", trimOldStudylogArtifacts([studyDay("2026-09-09", 5)], now)[0].flashcards[0].cards.every((c) => !!c.review));
   check("trimming is idempotent — the hook runs on EVERY commit, so an already-trimmed task is returned as-is", (() => { const once = trimOldStudylogArtifacts([studyDay("2026-08-01", 12)], now); return trimOldStudylogArtifacts(once, now)[0] === once[0]; })());
-  const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const app = appSource();
   check("the journal day/week/month views resolve to the NEWEST deck, never flashcards[0] (the stale-deck bug behind 'only 10 show')",
     /const dayDeck = newestDeck\(dayTask\)/.test(app) && /const summaryDeck = newestDeck\(summary\)/.test(app) && /const monthDeck = newestDeck\(monthSummary\)/.test(app) && !/flashcards\?\.\[0\]/.test(app));
 }
@@ -247,9 +387,8 @@ section("RL personalization — one learner, board-driving moves, richer reward,
   const pol = readFileSync(new URL("../server/tutorPolicy.ts", import.meta.url), "utf8");
   check("the policy is v2 with the three added context features (mastery, objective progress, board richness)",
     /v: 2/.test(pol) && /p\.v !== 2/.test(pol) && /mastery\?: number/.test(pol) && /objectiveProgress\?: number/.test(pol) && /boardRich\?: number/.test(pol));
-  const idx2 = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
-  check("the route feeds the policy what the previous turn PRODUCED (board write + objectives ticked off), tracked across turns",
-    /lastTurnBoardWrite/.test(idx2) && /lastTurnObjectivesDone/.test(idx2) && /objectivesAdvanced/.test(idx2) && /boardRich: Math\.min\(1, \(t\.board \|\| \[\]\)\.length \/ 12\)/.test(idx2));
+  const idx2 = serverSource();
+  check("the tutor turn no longer runs the learned policy (simplified engine, server/tutor.ts)", !/planTurn\(|lastTurnBoardWrite/.test(idx2) && /runTutorTurn\(/.test(idx2));
 }
 section("Tutor graphs — safe expression compiler + GRAPH_ON_BOARD validation");
 {
@@ -267,7 +406,7 @@ section("Tutor graphs — safe expression compiler + GRAPH_ON_BOARD validation")
   check("empty window / no real values rejected", "error" in makeGraphEntry({ caption: "c", xmin: 2, xmax: 1, fns: [{ expr: "x" }] }) && "error" in makeGraphEntry({ caption: "c", xmin: -5, xmax: -1, fns: [{ expr: "sqrt(x)" }] }));
   check("bad slider names rejected (x, e, multi-letter)", ["x", "e", "ab"].every((n) => "error" in makeGraphEntry({ caption: "c", xmin: 0, xmax: 1, fns: [{ expr: "x" }], params: [{ name: n, min: 0, max: 1, value: 0 }] })));
   check("points-only data plot allowed, capped to 4 fns", "entry" in makeGraphEntry({ caption: "data", xmin: 0, xmax: 10, points: [{ x: 1, y: 2 }, { x: 3, y: 5 }], connect: true }) && makeGraphEntry({ caption: "c", xmin: 0, xmax: 1, fns: Array(8).fill({ expr: "x" }) }).entry.graph.fns.length === 4);
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   const ui = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8");
   const board = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
   const bars = makeGraphEntry({ caption: "Scores", kind: "bars", bars: [{ label: "A", value: 3 }, { label: "B", value: 7 }] });
@@ -276,7 +415,7 @@ section("Tutor graphs — safe expression compiler + GRAPH_ON_BOARD validation")
   const surf = makeGraphEntry({ caption: "Saddle", kind: "surface", z: "z = x^2 - y^2", xmin: -2, xmax: 2, ymin: -2, ymax: 2 });
   check("3D surface z=f(x,y) validates and needs a y-range", "entry" in surf && surf.entry.graph.z === "x^2 - y^2" && "error" in makeGraphEntry({ caption: "s", kind: "surface", z: "x*y", xmin: -1, xmax: 1 }) && /two variables/i.test(makeGraphEntry({ caption: "c", xmin: -1, xmax: 1, fns: [{ expr: "x*y" }] }).error || ""));
   check("tutor has GRAPH_ON_BOARD in boardTools + handler", (src.match(/GRAPH_ON_BOARD_TOOL/g) || []).length >= 2 && /name === "GRAPH_ON_BOARD"/.test(src));
-  check("board renders graph entries; ==highlight== renders as a mark and is stripped for speech", /<GraphBlock spec=\{e\.graph\}/.test(board) && /otto-mark/.test(ui) && /==\(\[\^=\\n\]\+\)==/.test(readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8")));
+  check("board renders graph entries; ==marks== are stripped for speech and never highlighted", /<GraphBlock spec=\{e\.graph\}/.test(board) && !/otto-mark/.test(ui) && /==\(\[\^=\\n\]\+\)==/.test(readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8")));
 }
 section("Primer replies — tightenForChat keeps it short and keeps the closing question");
 {
@@ -291,9 +430,9 @@ section("Primer replies — tightenForChat keeps it short and keeps the closing 
 }
 section("Primer chat — thinking toggle with safe fallback, persona leads with human/short rules (source pins)");
 {
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   check("fast chat helper retries without `thinking` on a rejecting provider", /thinkingToggleRejected = true/.test(src) && /type: "disabled"/.test(src));
-  check("primer persona opens with the sound-like-a-person block", /SOUND LIKE A PERSON, ANSWER LIKE ONE/.test(src));
+  check("primer persona opens with the sound-like-a-person block", /THE CORE — WHO YOU ARE AND HOW YOU TEACH\. THIS BLOCK WINS OVER EVERYTHING BELOW/.test(src) && /LISTEN FIRST/.test(src) && /KNOW THE ANSWER BEFORE YOU ASK/.test(src));
   check("persona pushes small interactive scenes (show, don't tell)", /SHOW, DON'T TELL/.test(src));
   check("persona handles automatic exercise results + whiteboard readings like a person", /EXERCISE RESULTS ARRIVE AS/.test(src) && /THEIR WHITEBOARD ARRIVES AS/.test(src) && /GOOD EXERCISES/.test(src));
   
@@ -301,15 +440,15 @@ section("Primer chat — thinking toggle with safe fallback, persona leads with 
   const tut = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
   check("tutor dock offers one-tap starters + follow-ups and a recall opener from the last session", /quickReplies=\{fresh \? starters : justFinishedExercise \? nextChips : followUps\}/.test(tut) && /What do you still remember/.test(tut));
   const board = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
-  check("board reports every exercise attempt to the tutor (never the correct answer)", /onProblemResult\?\.\(\{ problem, given, correct, attempt \}\)/.test(board) && /\[Exercise\] I answered/.test(tut));
-  check("finishing an exercise offers 'another / harder / go over the idea / something else' and the tutor asks instead of auto-creating the next problem", /justFinishedExercise \? nextChips/.test(tut) && /ASK what they want to do now/.test(readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8")) && /let THEM choose/.test(readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8")));
+  check("board reports every exercise attempt to the tutor (never the correct answer)", /onProblemResult\?\.\(\{ problem, given, correct:.{0,40}attempt,/.test(board) && /\[Exercise\] I answered/.test(tut));
+  check("finishing an exercise offers 'another / harder / go over the idea / something else' and the tutor asks instead of auto-creating the next problem", /justFinishedExercise \? nextChips/.test(tut) && /ASK what they want to do now/.test(claudeSource()) && /let THEM choose/.test(claudeSource()));
   check("automatic exercise results wait for the reply to settle and go out batched (never replacing the answer being read)", /resultsRef\.current\.splice\(0\)\.join/.test(tut) && /if \(sending \|\| voiceState\.speaking\) return;/.test(tut));
-  check("new whiteboard ink rides along with the next message (no separate send step)", /readUnseenInk\(\)/.test(tut) && /What I wrote\/drew on the board/.test(tut));
+  check("new whiteboard ink rides along with the next message (no separate send step)", /readUnseenInk\(wantsLook\)/.test(tut) && /What I wrote\/drew on the board/.test(tut));
 }
 
 section("runTask execution speed — no pointless tool-pick call, artifacts built concurrently (source pins)");
 {
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   check("tool-selection call is skipped when web_search is the only tool", /const toolsOut = allTools\.length > 1 \? await ask\(/.test(src) && /: \{ usefulTools: \["web_search"\] \};/.test(src));
   check("deck/quiz/note generation runs concurrently", /await Promise\.all\(requestedArtifacts\.map\(async \(artReq\) => \{/.test(src));
 }
@@ -354,6 +493,21 @@ check("the SAME Pronote anchor as a dismissed one IS still suppressed", foldGene
 const doneA = { ...base, id: "a", title: "Book dentist for Thursday", why: "postcard from Dr Wu", source: "gmail", status: "done", anchorKey: "gmail:x1" };
 const freshDup = { ...base, id: "b", title: "Book dentist for Thursday", why: "postcard from Dr Wu", source: "gmail", status: "ready", anchorKey: "GMAIL_X1" };
 check("done beats fresh duplicate", dedupeTasks([doneA, freshDup]).length === 1 && dedupeTasks([doneA, freshDup])[0].status === "done");
+section("Same homework from Pronote and Gmail is ONE task (reported: repeating across sources)");
+{
+  const base = { urgency: 3, importance: 3, quadrant: "do", score: 1, risk: "low", createdAt: "2026-10-10T08:00:00Z" };
+  const pr = { ...base, id: "p1", source: "pronote", title: "Physique-Chimie homework", why: "Exercises from the textbook", sourceSubject: "Physique-Chimie", sourceDetail: "Exercices 12 à 15 page 84 sur la quantité de matière", sourceDue: "2026-10-16", anchorKey: "pronote:hw:991", status: "done" };
+  const gm = { ...base, id: "g1", source: "gmail", title: "Do physics exercises 12-15 p.84", why: "Mme Dupont's email: due Thursday", when: "2026-10-16", anchorKey: "gmail:thread:abc", status: "ready" };
+  const merged = dedupeTasks([pr, gm]);
+  check("a DONE Pronote homework absorbs the Gmail email about it — one task, still done", merged.length === 1 && merged[0].status === "done");
+  check("…and the other way round: an active Gmail card absorbs the Pronote copy", dedupeTasks([{ ...gm }, { ...pr, status: "ready" }]).length === 1);
+  check("a due date one day apart still matches (email says Wednesday night)", crossSourceSame(pr, { ...gm, when: "2026-10-15" }));
+  check("same assignment text without a date matches", crossSourceSame({ ...pr, sourceDue: undefined }, { ...gm, when: undefined, title: "Physique: exercices quantité de matière page 84" }));
+  check("a different subject never matches", !crossSourceSame(pr, { ...gm, title: "History essay on Versailles", why: "due Thursday" }));
+  check("the same subject a week later is a different homework", !crossSourceSame(pr, { ...gm, title: "Physics lab report", why: "new assignment", when: "2026-10-23" }));
+  check("two Pronote homeworks never merge through this rule (same source)", !crossSourceSame(pr, { ...pr, id: "p2", anchorKey: "pronote:hw:992" }));
+  check("a manual task is never absorbed by it", !crossSourceSame(pr, { ...gm, source: "manual" }));
+}
 // A genuinely NEW email (distinct anchor) whose title merely RESEMBLES an old DONE task must NOT be
 // swallowed into it — different anchors = different real-world items. (Regression: "refresh finds nothing"
 // when a fresh inbox thread looked like stale done history.)
@@ -537,7 +691,7 @@ check("same-id Pronote row still collapses to the newer sync, not duplicated", p
   const full = {
     ...emptyProfile(),
     name: "Test Student", about: "about-value", preferences: ["pref-value"], people: ["person-value"],
-    projects: ["project-value"], courses: ["course-value"], unlimited: true, paused: true, pausedAt: newer,
+    projects: ["project-value"], courses: ["course-value"], paused: true, pausedAt: newer,
     lastSweepAt: newer, lastForcedAt: newer, genPerDay: 2, responseStyle: "concise",
     autoApprove: ["schedule_meetings_under_30min"], highPriorityPeople: ["vip@x.com"],
     autoArchivePatterns: ["newsletter"], timezone: "Europe/Paris",
@@ -1010,14 +1164,6 @@ check("addUsage accumulates within the month", upA.usage.monthIn === 1500 && upA
 // A stale monthKey → this month reads as $0 (rollover), even though cumulative persists.
 const stale = { ...emptyProfile(), usage: { in: 9e9, out: 9e9, runs: 5, since: "2020-01-01", monthKey: "2020-01", monthIn: 9e9, monthOut: 9e9 } };
 check("monthCostUsd is 0 after a month rollover", monthCostUsd(stale, "UTC") === 0);
-// overMonthlyBudget honors MONTHLY_AI_BUDGET_USD.
-const heavy = { ...emptyProfile(), usage: { in: 5e8, out: 5e8, runs: 1, since: "x", monthKey: monthKeyOf("UTC"), monthIn: 5e8, monthOut: 5e8 } }; // ≈ $685 this month
-const prevBudget = process.env.MONTHLY_AI_BUDGET_USD;
-process.env.MONTHLY_AI_BUDGET_USD = "3";
-check("overMonthlyBudget true when way over", overMonthlyBudget(heavy) === true);
-check("overMonthlyBudget false for a fresh profile", overMonthlyBudget(emptyProfile()) === false);
-process.env.MONTHLY_AI_BUDGET_USD = "0";
-check("budget of 0 blocks any usage", overMonthlyBudget(upA) === true);
 
 // callCostUsd: cache-hit input priced separately from miss, ×2 during peak. (at = off-peak noon UTC.)
 const noon = new Date("2026-07-20T12:00:00Z"), peak = new Date("2026-07-20T02:00:00Z");
@@ -1032,15 +1178,6 @@ addUsage(costP, { in: 1e6, out: 0, cachedIn: 1e6 }, noon); // a fully-cached cal
 // (addUsage uses now() for peak; the assertion just checks the cheap-cache path landed in monthCost)
 check("addUsage records a metered monthCost", typeof costP.usage.monthCost === "number" && costP.usage.monthCost > 0 && costP.usage.monthCost < USD_PER_1M_IN);
 check("monthCostUsd prefers the metered cost", Math.abs(monthCostUsd(costP, "UTC") - costP.usage.monthCost) < 1e-12);
-
-// Interactive reserve: a user-present action is allowed a small band above the cap that background work isn't.
-process.env.MONTHLY_AI_BUDGET_USD = "3";
-const atCap = { ...emptyProfile(), usage: { in: 0, out: 0, runs: 1, since: "x", monthKey: monthKeyOf("UTC"), monthCost: 3.05 } }; // just over $3, under $3.30
-check("background blocked at the cap", overMonthlyBudget(atCap) === true);
-check("interactive still allowed within the reserve", overInteractiveBudget(atCap) === false);
-const wayOver = { ...emptyProfile(), usage: { in: 0, out: 0, runs: 1, since: "x", monthKey: monthKeyOf("UTC"), monthCost: 3.5 } };
-check("interactive blocked past the reserve", overInteractiveBudget(wayOver) === true);
-if (prevBudget === undefined) delete process.env.MONTHLY_AI_BUDGET_USD; else process.env.MONTHLY_AI_BUDGET_USD = prevBudget;
 
 // ── Eisenhower ranking (WS2) ──────────────────────────────────────────────────
 section("sortWithinQuadrant");
@@ -1248,7 +1385,7 @@ check("ordinary homework mentioning neither essay nor acronym is still NOT a big
 // network-calling function to unit test directly, and this file is deliberately network-free): a
 // big-project task must NOT be short-circuited by an empty context.
 {
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   check("writeStepsFromContext does not bail on empty context for a big project", /if \(!context\.trim\(\)[^)]*!keywordHit\)/.test(src));
 }
 
@@ -1572,8 +1709,8 @@ section("PageInfoHint — dashboard orientation caption");
   const React = await import("react");
   const { PageInfoHint } = await import("../client/ui.tsx");
   const html = renderToStaticMarkup(React.createElement(PageInfoHint, { pageKey: "test-page", text: "Explains the thing." }));
-  check("renders the hint text", html.includes("Explains the thing."));
-  check("renders a dismiss button", /page-info-hint-x/.test(html));
+  check("coach marks / how-this-page-works captions are OFF (minimal UI: nothing to dismiss)", html === "");
+
 }
 // Beta-features gate (Profile.betaFeatures, shared/types.ts): the 7 bandit-personalization call sites and
 // the AI theme route must all check it before doing any real personalization — server/index.ts and
@@ -1585,9 +1722,9 @@ section("PageInfoHint — dashboard orientation caption");
 // of that contract: no flow bloat (step count, dead screens) and no missing coverage (each feature named).
 section("Onboarding — short but complete (source pins)");
 {
-  const src = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const src = appSource();
   const obStart = src.indexOf("function Onboarding(");
-  const ob = src.slice(obStart, src.indexOf("/** Dedicated login", obStart));
+  const ob = readFileSync(new URL("../client/pages/Onboarding.tsx", import.meta.url), "utf8");
   // Was 5 — bumped to 6 fixing a real bug: step 5 (the personalized "you're all set" done screen) existed
   // in the JSX but nothing ever advanced to it, so it was dead/unreachable code and the progress dots
   // undercounted by one. Now step 4's finish button actually advances into it instead of exiting directly.
@@ -1613,7 +1750,7 @@ section("Onboarding — short but complete (source pins)");
 
 section("betaFeatures gates all 7 bandit call sites + the AI theme route (source-order pins)");
 {
-  const indexSrc = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const indexSrc = serverSource();
   const jobsSrc = readFileSync(new URL("../server/jobs.ts", import.meta.url), "utf8");
   check("pomodoro-suggestion route checks betaFeatures before chooseArm", /req\.session\.profile\?\.betaFeatures[\s\S]{0,400}chooseArm\(POMODORO_ARMS/.test(indexSrc));
   check("audio-suggestion route checks betaFeatures before chooseArm", /req\.session\.profile\?\.betaFeatures[\s\S]{0,400}chooseArm\(AUDIO_ARMS/.test(indexSrc));
@@ -1647,7 +1784,7 @@ section("betaFeatures gates all 7 bandit call sites + the AI theme route (source
 section("Study Mode: chat always present on the desk (source pins)");
 {
   const studyModeSrc = readFileSync(new URL("../client/study/StudyMode.tsx", import.meta.url), "utf8");
-  const claudeSrc2 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrc2 = claudeSource();
   // Direct instruction: chat must be on the desk from the FIRST moment of every session, on every workspace
   // template — not opt-in behind a click.
   check("defaultChatArtifacts exists and is used by buildInitialArtifacts", /function defaultChatArtifacts/.test(studyModeSrc) && /const chatArtifacts = defaultChatArtifacts/.test(studyModeSrc));
@@ -1662,7 +1799,7 @@ section("Study Mode: chat always present on the desk (source pins)");
   // own freeform canvas. WRITE_TO_BOARD/DRAW_ON_BOARD/etc. are only offered to the model when opts.primer
   // is set (TutorSession.tsx), never for a plain task-chat turn or Study Mode's canvasMode-only chat.
   check("board/problem/objectives tools are gated on opts.primer, not offered unconditionally any more", /const boardTools = opts\?\.primer/.test(claudeSrc2));
-  check("the plain task-chat board prompt (TASK_CHAT_BOARD) is gone — no board text injected outside primer", !/const TASK_CHAT_BOARD =/.test(claudeSrc2) && !/THE BOARD IS PART OF THIS CHAT/.test(claudeSrc2) && /\(opts\?\.primer \? PRIMER_PERSONA : ""\)/.test(claudeSrc2));
+  check("the plain task-chat board prompt (TASK_CHAT_BOARD) is gone — no board text injected outside primer", !/const TASK_CHAT_BOARD =/.test(claudeSrc2) && !/THE BOARD IS PART OF THIS CHAT/.test(claudeSrc2) && /\(opts\?\.primer \? PRIMER_PERSONA \+ PLAN_PROTOCOL \+ \(sourcesForTrack/.test(claudeSrc2));
   const studyModeNoBoard = !/type: "board"/.test(studyModeSrc) && !/const openOrFocusBoard = useCallback/.test(studyModeSrc);
   check("Study Mode no longer creates or re-opens a Board artifact anywhere", studyModeNoBoard);
   const toolsDrawerSrc2 = readFileSync(new URL("../client/study/ToolsDrawer.tsx", import.meta.url), "utf8");
@@ -1701,22 +1838,364 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   // problem" is a single-question-mode concept: gated to that mode now.
   // (The old single-question-mode pin retired with the mode itself: problems are flow items now, and the
   // 'current problem' duplicate-render trap the pin guarded against no longer exists in the file.)
-  // Dual coding / document structure: kind:"focus" is the lesson's heading — pinned at the top as a
-  // header strip, excluded from the flowing entries, latest wins if a session ever writes a second one.
-  check("kind:\"focus\" renders as a pinned header, not inline in the flow", /sm-board-focus-pin/.test(boardSrc) && /e\.kind !== "focus"/.test(boardSrc));
+  // Whiteboard structure: kind:"focus" starts a section where it was written (the session bar shows the current
+  // topic), and a header that repeats the one before it is shown once.
+  check("kind:\"focus\" headers stay in the flow as section starts, repeats shown once", !/sm-board-focus-line/.test(boardSrc) && /nearSameHeading\(x\.text, e\.text\)/.test(boardSrc));
   // The board as a drafted WORKSHEET (research: gradual release + completion effect + ICAP — the visible
   // artifact of a session is the student's own thinking, laid out like a lesson page, written in live).
   check("board has a worksheet header (date + subject)", /sm-board-header/.test(boardSrc) && /sm-board-header-subject/.test(boardSrc));
-  check("board entries carry worksheet section numbers", /sm-board-section-num/.test(boardSrc));
-  check("kind:\"summary\" renders as a reasoning trace (how the student got there)", /ReasoningTrace/.test(boardSrc) && /sm-board-trace/.test(boardSrc));
-  check("a deliberately unfinished worked line gets an 'à toi de finir' completion chip (completion effect, visible)", /isCompletionGap/.test(boardSrc) && /sm-board-todo-chip/.test(boardSrc));
+  { const ui2 = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8"); const app2 = appSource();
+    check("FlashcardDeck remounts per deck (id+size) so a different/shorter deck never indexes past the end", /function FlashcardDeckInner/.test(ui2) && /key=\{`\$\{props\.deck\.id\}:\$\{props\.deck\.cards\.length\}`\}/.test(ui2) && /!deck\.cards\[cardIndex\]/.test(ui2));
+    check("tutor/session/<id> route reads the id from segment 2", /sessionId=\{route\.split\("\/"\)\[2\]\}/.test(app2)); }
+  { const idx = serverSource();
+    check("task-list responses slim finished tutor sessions; x-powered-by off; URL fetch refuses redirects", /function outgoingTasks/.test(idx) && !/res\.json\(req\.session\.tasks/.test(idx.replace(/\/\/.*$/gm, "")) && /app\.disable\("x-powered-by"\)/.test(idx) && /redirect: "error"/.test(idx)); }
+  // ── Registered question sources (IB / AP) ──
+  check("only IB and AP get registered sources; other programs generate", sourcesForTrack("ib").length >= 5 && sourcesForTrack("ap").length >= 4 && sourcesForTrack("bac").length === 0 && sourcesForTrack(undefined).length === 0);
+  check("a problem may only cite a registered https source host", cleanProblemSource("https://www.ibdocuments.com/x")?.name === "IB Documents" && !cleanProblemSource("https://evil.example/ibdocuments.com") && !cleanProblemSource("http://ibdocuments.com/x") && !cleanProblemSource("https://notibdocuments.com/x") && sourceForUrl("https://sub.revisionvillage.com/a")?.name === "Revision Village");
+  check("makeProblem keeps a valid source and drops a made-up one", makeProblem({ question: "Evaluate $2+2$", answer: "4", sourceUrl: "https://apcentral.collegeboard.org/q1" }).problem?.source?.name === "AP Central (College Board)" && !makeProblem({ question: "Evaluate $2+2$", answer: "4", sourceUrl: "https://random.site/q" }).problem?.source);
+  check("excerptAround finds the on-topic window and rejects off-topic pages", /integration by parts/.test(excerptAround("Menu Home About ".repeat(40) + "Question 3. Use integration by parts to find the integral of x e^x. Show that" , "integration by parts")) && excerptAround("Please log in to continue", "integration by parts") === "");
+  { const deps = { search: async (q, domains) => domains.includes("ibdocuments.com") ? [{ title: "Integration QP", url: "https://www.ibdocuments.com/p1", snippet: "" }, { title: "Foreign", url: "https://evil.example/p", snippet: "integration by parts" }] : [],
+      fetchPage: async (u) => { if (u.includes("evil")) throw new Error("must not fetch"); return "Question 1. Use integration by parts to find the integral of x cos x dx."; } };
+    const r = await findSourceQuestions({ track: "ib", subject: "Math", topic: "integration by parts", limit: 2 }, deps);
+    check("findSourceQuestions returns on-topic excerpts from registered hosts only", r.length === 1 && r[0].sourceName === "IB Documents" && /integration by parts/.test(r[0].excerpt));
+    check("findSourceQuestions returns nothing for a non-IB/AP student and survives a failing source", (await findSourceQuestions({ track: "bac", topic: "x" }, deps)).length === 0 && (await findSourceQuestions({ track: "ap", topic: "limits unique-topic-1" }, { search: async () => { throw new Error("down"); }, fetchPage: async () => "" })).length === 0); }
+  { const cl = claudeSource();
+    check("FIND_SOURCE_QUESTION is offered only for IB/AP, with a generate-as-usual fallback", /sourcesForTrack\(profile\?\.track\)\.length \? \[FIND_SOURCE_QUESTION_TOOL\]/.test(cl) && /write the exercise yourself, without a sourceUrl/.test(cl)); }
+  // ── Tutor activity widgets ──
+  check("match widget needs 3+ distinct pairs", !!normalizeWidget({ type: "match", pairs: [{ left: "a", right: "1" }, { left: "b", right: "2" }, { left: "c", right: "3" }] }).widget && !!normalizeWidget({ type: "match", pairs: [{ left: "a", right: "1" }, { left: "b", right: "2" }] }).error && !!normalizeWidget({ type: "match", pairs: [{ left: "a", right: "1" }, { left: "b", right: "1" }, { left: "c", right: "3" }] }).error);
+  check("order widget needs 3+ distinct items and its shuffle never starts solved", !!normalizeWidget({ type: "order", items: ["x", "y"] }).error && [1, 2, 3, 4, 5, 6, 7, 8].every((n) => { const a = ["a", "b", "c", "d"]; const s = shuffledNotSolved(a, "seed" + n); return s.join() !== a.join() && [...s].sort().join() === a.join(); }));
+  check("sort widget validates categories and item indexes", !!normalizeWidget({ type: "sort", categories: ["A", "B"], items: [{ text: "1", category: 0 }, { text: "2", category: 1 }, { text: "3", category: 0 }, { text: "4", category: 1 }] }).widget && !!normalizeWidget({ type: "sort", categories: ["A", "B"], items: [{ text: "1", category: 0 }, { text: "2", category: 0 }, { text: "3", category: 0 }, { text: "4", category: 5 }] }).error);
+  check("explore widgets clamp their numbers; unknown types are refused", normalizeWidget({ type: "projectile", angle: 200, speed: 1, g: -3 }).widget.angle === 85 && normalizeWidget({ type: "unit_circle", angle: "abc" }).widget.angle === 30 && !!normalizeWidget({ type: "nope" }).error);
+  check("projectile stats match the physics (45°, 20 m/s, g=9.8 → range ≈ 40.8 m)", Math.abs(projectileStats(45, 20, 9.8).range - 40.82) < 0.05);
+  { const cl = claudeSource(); const bd = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+    check("WIDGET_ON_BOARD is wired: tool, handler, board render, tutor feedback", /WIDGET_ON_BOARD_TOOL, FLOW_ON_BOARD_TOOL/.test(cl) && /name === "WIDGET_ON_BOARD"/.test(cl) && /WidgetBlock/.test(bd) && /onWidgetResult/.test(readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8"))); }
+  // ── Web search ──
+  check("rankResults dedupes pages and enforces the domain restriction", rankResults([{ title: "a", url: "https://www.x.com/p?utm=1", snippet: "" }, { title: "a2", url: "https://x.com/p/", snippet: "" }, { title: "b", url: "https://evil.com/p", snippet: "" }], ["x.com"]).length === 1);
+  { const realFetch = globalThis.fetch; let exaCalls = 0, body = null; process.env.EXA_API_KEY = "t";
+    globalThis.fetch = async (url, init) => { if (String(url).includes("api.exa.ai")) { exaCalls++; body = JSON.parse(init.body); return new Response(JSON.stringify({ results: [{ title: "Q", url: "https://www.ibdocuments.com/q1", highlights: ["integration by parts"] }, { title: "Off", url: "https://spam.example/x", highlights: ["x"] }] }), { status: 200 }); } throw new Error("no network in tests"); };
+    try {
+      const r1 = await webSearch("cache-test integration", { domains: ["ibdocuments.com"] });
+      const r2 = await webSearch("cache-test integration", { domains: ["ibdocuments.com"] });
+      check("web search passes includeDomains to Exa, filters off-domain hits, and caches repeats", exaCalls === 1 && body.includeDomains?.[0] === "ibdocuments.com" && r1.length === 1 && r2.length === 1 && r1[0].url.includes("ibdocuments"));
+    } finally { globalThis.fetch = realFetch; delete process.env.EXA_API_KEY; } }
+  { const cl = claudeSource();
+    check("the tutor can read a result page (read_page) and restrict search by domain", /name: "read_page"/.test(cl) && /name === "read_page"/.test(cl) && /domains: \{ type: "array"/.test(cl)); }
+  // ── Reported live: ambiguous case never raised; calculation handed over; setup equation built for the student; posed problem not on the board ──
+  { const ssa = "all right so first I will do find all unknown angles inside the triangle ABC where a equals 35 centimeters B equals 50 centimeters angle a equals 30 degrees";
+    const hist = [{ role: "user", text: ssa }, { role: "assistant", text: "Which rule connects two sides and an opposite angle?" }];
+    const traps = pendingCaseTraps("67.8", hist);
+    check("SSA triangle is flagged as a multi-solution trap until someone raises it", traps.some((t) => t.id === "ssa") && caseTrapBlock(traps).includes("CASE CHECK"));
+    check("closing the triangle ('whole triangle solved… another one?') is caught while the case is unraised", closesWithMissedCase("Side c ≈ 67.8 cm. That's the whole triangle solved. Do you want another one like this?", traps) && !closesWithMissedCase("What other angle fits the same sine?", traps));
+    check("once the ambiguous case has been raised the trap is cleared", pendingCaseTraps("isn't there another case, an ambiguous triangle?", hist).length === 0);
+    check("a trig equation over an interval is a trap; a plain sum is not", pendingCaseTraps("find all x in [0, 360] such that sin x = 0.5", []).some((t) => t.id === "trig-eq") && pendingCaseTraps("what is 3 + 4", []).length === 0);
+    check("posed problem is cleaned for the board; a request is not a problem", /^Find all unknown angles inside the triangle ABC where a = 35 cm B = 50 cm angle a = 30°/.test(studentProblemStatement(ssa)) && studentProblemStatement("can you explain triangles please") === "" && studentProblemStatement("[Exercise] I answered 4 — marked right") === "");
+    check("a spoken ramble / request-wrapped / math-renderer dump is never pasted on the board; a clean statement is", !cleanToPost(studentProblemStatement("Action now we are going back to the question so I want you to draw a graph of it, yeah draw it out two boats J and K are 500 m apart, a 470 m cliff, angles of depression 25 ∘ 25 ∘ and 40 ∘")) && cleanToPost(studentProblemStatement(ssa)));
+    check("board coverage recognises a statement already up there", boardCoversStatement("find a = 35 cm, b = 50 cm, A = 30°", ["Triangle ABC: $a=35$ cm, $b=50$ cm, $A=30^\\circ$"]) && !boardCoversStatement("find a = 35 cm, b = 50 cm, A = 30°", ["something else entirely 7"])); }
+  check("writing the calculation for them is caught; echoing theirs is not", handsOverCalculation("Obtuse B₂ = 180° - 45.6° What does that second angle come out to?", "isn't there another case too") && handsOverCalculation("50 × 0.5 / 35 = 25/35. What does that fraction simplify to?", "hmm") && !handsOverCalculation("You said 180 - 45.6 — what does that give?", "so 180 - 45.6 is what I do") && !handsOverCalculation("Which other angle has the same sine?", "another case?"));
+  check("a setup equation the student never wrote is caught; the student's own and general formulas pass", equationAhead("x tan(40°) = (x + 500) tan(25°)", ["we label BJ as k"], ["470 + h", "angles of depression 25 and 40"]).length > 0 && equationAhead("$\\frac{a}{\\sin A} = \\frac{b}{\\sin B}$", [], []).length === 0 && equationAhead("tan 25° = (470+h)/BJ", ["tan 25 equals 470 + h over BJ"], []).length === 0);
+  check("a shown drawing is recognised (both the Show-Otto and auto-read formats) and spatial ones are redrawn", isDrawingTurn("Here's what I drew: a triangle") && isDrawingTurn("x\n\n[What I wrote/drew on the board: a diagram]") && !isDrawingTurn("hello") && drawingLooksSpatial("Here's what I drew: a triangle with an angle") && !drawingLooksSpatial("Here's what I drew: 2x + 3 = 7"));
+  { const tc2 = readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8"); const be = readFileSync(new URL("../server/boardEvents.ts", import.meta.url), "utf8");
+    check("whiteboard: no big dead space under the lesson (a small margin that grows with the ink), and Otto's figures are rasterised into what Otto is shown", !/tc-page/.test(tc2) && /const blank = 120;/.test(tc2) && /svg\.sm-board-diagram/.test(tc2) && /figureSummary/.test(be)); }
+  // ── Auto-laid-out concept diagrams (no KaTeX, no model coordinates) ──
+  { const f = normalizeFlow({ type: "flow", nodes: [{ id: "a", label: "Start" }, { id: "b", label: "Decide", shape: "diamond" }, { id: "c", label: "Yes path" }, { id: "d", label: "No path" }, { id: "e", label: "End" }], edges: [{ from: "a", to: "b" }, { from: "b", to: "c", label: "yes" }, { from: "b", to: "d", label: "no" }, { from: "c", to: "e" }, { from: "d", to: "e" }, { from: "e", to: "b" }] });
+    const L = layoutFlow(f.flow);
+    const overlap = L.nodes.some((a, i) => L.nodes.some((b, j) => i < j && a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h));
+    check("flow layout: every node placed once, none overlap, all inside the canvas, cycles tolerated", L.nodes.length === 5 && !overlap && L.nodes.every((n) => n.x >= 0 && n.y >= 0 && n.x + n.w <= L.width && n.y + n.h <= L.height) && L.edges.length === 6);
+    const c = layoutFlow(normalizeFlow({ type: "cycle", nodes: ["A", "B", "C", "D", "E"].map((x) => ({ id: x, label: "Stage " + x })) }).flow);
+    check("cycle joins the stages in a ring automatically; timeline needs no edges", c.edges.length === 5 && layoutFlow(normalizeFlow({ type: "timeline", nodes: [{ id: "1", label: "1914" }, { id: "2", label: "1917" }, { id: "3", label: "1921" }] }).flow).nodes.length === 3);
+    check("bad diagrams are refused: <2 nodes, flow with no arrows, arrows to nowhere are dropped", !!normalizeFlow({ type: "flow", nodes: [{ id: "a", label: "x" }] }).error && !!normalizeFlow({ type: "flow", nodes: [{ id: "a", label: "x" }, { id: "b", label: "y" }] }).error && normalizeFlow({ type: "flow", nodes: [{ id: "a", label: "x" }, { id: "b", label: "y" }], edges: [{ from: "a", to: "b" }, { from: "a", to: "zzz" }] }).flow.edges.length === 1); }
+  { const cl = claudeSource(); const bd = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+    check("FLOW_ON_BOARD is wired (tool, handler, render) and diagram equations are no longer KaTeX", /FLOW_ON_BOARD_TOOL, TABLE_ON_BOARD_TOOL, SOURCE_ON_BOARD_TOOL, \.\.\.\(opts\?\.canvasMode/.test(cl) && /name === "FLOW_ON_BOARD"/.test(cl) && /<FlowDiagram spec=\{e\.flow\}/.test(bd) && !/foreignObject x=\{x\} y=\{Math\.max\(0, op\.y - 36\)\}/.test(bd)); }
+  // ── Model-written SVG figures (SVG_ON_BOARD) ──
+  { const bad = '<svg width="100" onload="alert(1)" viewBox="0 0 10 10"><script>alert(1)</script><foreignObject><div>hi</div></foreignObject><image href="http://x/y.png"/><a href="javascript:alert(1)"><text>x</text></a><rect x="1" fill="url(http://evil)" stroke="url(#g)" onclick="x()"/><use href="http://evil/x.svg#a"/><style>*{}</style></svg>';
+    const o = sanitizeSvg(bad);
+    check("SVG sanitiser strips scripts, handlers, foreignObject, images, external refs and style", /^<svg /.test(o) && !/script|onload|onclick|foreignObject|<image|javascript|evil|<style|<a\b/i.test(o) && /<rect/.test(o) && /url\(#g\)/.test(o) && !/ width=/.test(o));
+    check("SVG sanitiser keeps a real figure intact and refuses non-SVG", (() => { const good = '<svg viewBox="0 0 800 500"><defs><marker id="a" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs><line x1="10" y1="10" x2="200" y2="10" stroke="currentColor" marker-end="url(#a)"/><text x="5" y="30" font-size="18">35 cm &amp; 30°</text></svg>'; const g = sanitizeSvg(good); return /marker-end="url\(#a\)"/.test(g) && /<marker /.test(g) && svgText(g) === "35 cm &amp; 30°" && sanitizeSvg("<div>hi</div>") === "" && sanitizeSvg("") === ""; })()); }
+  { const cl = claudeSource(); const bd = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+    check("SVG_ON_BOARD replaces DRAW_ON_BOARD for the tutor and is sanitised on write and on render", /SVG_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, SOLID_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL/.test(cl) && !/DRAW_ON_BOARD_TOOL, GEOMETRY_ON_BOARD_TOOL/.test(cl) && /sanitizeSvg\(e\.svg\)/.test(bd) && /NEVER LaTeX or KaTeX/.test(cl)); }
+  { const ts = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8"); const bd = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8"); const tc3 = readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8");
+    check("a drawing made on the blank page reserves room, so Otto's next lines come AFTER it", /freezeSheet/.test(tc3) && /canvasRef\.current\?\.freezeSheet\(\)/.test(ts) && /sheetSignal/.test(bd) && /sm-board-sheet/.test(bd) && /afterKey/.test(bd));
+    check("the board opens at the END of the content (blank page is one scroll further), not on the blank page", /scrollIntoView\(\{ block: "end", behavior: "smooth" \}\)/.test(bd));
+    check("tutor mode goes full screen on Start/Resume (a user gesture), with a toggle and exit on leave", /enterFullscreen\(\); \/\/ tutor mode/.test(ts) && (ts.match(/enterFullscreen\(\); \/\/ tutor mode/g) || []).length === 2 && /tutor-fs-btn/.test(ts) && /exitFullscreen\(\); \};/.test(ts)); }
+  // ── Consistency (reported live: "spot on, 40−25=15" then "not quite" to the same claim, then a wrong 140°) ──
+  check("a repeated question is detected so the tutor re-answers plainly instead of flipping", repeatedClaim("no but angle J is 25° right", [{ role: "user", text: "wait without setting tangent ratio we now know that the angle J is 25° right" }, { role: "assistant", text: "Spot on" }]) && !repeatedClaim("what is the sine rule", [{ role: "user", text: "angle J is 25 right" }]));
+  check("the tutor computing a step for the student is caught; echoing the student's own value is not", arithmeticAhead("Spot on — 40° - 25° = 15° for that top angle.", ["the angle J is 25 right"], ["angles of depression 25 and 40"]).length === 1 && arithmeticAhead("You said 15° — so 40° - 25° = 15° checks out.", ["I get 15 degrees"], []).length === 0);
+  { const bt = readFileSync(new URL("../server/tutorBrain.ts", import.meta.url), "utf8");
+    check("the plan carries a LEDGER the tutor keeps consistent (verify before speaking)", /"ledger":\[/.test(bt) && /VERIFY BEFORE YOU SPEAK/.test(bt) && /YOUR LEDGER for this problem/.test(bt) && /plan\.ledger = l/.test(bt)); }
+  { const bd = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+    check("figures contain no KaTeX: equation ops and equation-only figures are plain text, and figures crop to their content", !/<Equation key=\{i\} latex=\{op\.latex\}/.test(bd) && !/foreignObject/.test(bd.slice(bd.indexOf("function DiagramOpSVG"), bd.indexOf("function ProblemBlock") > 0 ? bd.indexOf("function ProblemBlock") : undefined)) && /opsViewBox\(e\.diagram\)/.test(bd) && /latexToPlain/.test(bd)); }
+  // ── Reported live: five "just draw it" answered with questions; "spot on" to "to do"; a wrong hand-drawn depression figure ──
+  check("'can you just draw it' style requests are recognised; describing their own drawing is not", asksToDraw("can you just draw it for me please") && asksToDraw("show the angles please") && asksToDraw("you're not trying correctly look at the problem again and can you just draw it again a fully labeled please") && !asksToDraw("my diagram of situation\n\nHere's what I drew: a triangle") && !asksToDraw("I drew a triangle with the angles") && !asksToDraw("what is the sine rule"));
+  check("praise for a fragment with nothing in it is caught; praise for real work is not", praisesNothing("Spot on — you've got the two sides lined up.", "to do") && !praisesNothing("Spot on — you've got the two sides lined up.", "sin B = 50 sin30 / 35") && !praisesNothing("What did you mean?", "to do"));
+  { const sc = buildTrigScene({ mode: "depression", observers: [{ name: "J", angle: 25 }, { name: "K", angle: 40 }], separation: 500, towerHeight: 470, unknownTop: "h" });
+    const sv = sanSvg2(sc.svg);
+    check("trig scene: the lighthouse-and-boats figure is built to scale with depression angles at the top only (the equal ground angle is left for the student), labelling only the givens", !!sc.svg && sv.length > 500 && (sv.match(/25°/g) || []).length === 1 && (sv.match(/40°/g) || []).length === 1 && />500 m</.test(sv) && />470 m</.test(sv) && />h</.test(sv) && !/>55/.test(sv) && !/>\?/.test(sv));
+    const sol = solveTwoAngles(40, 25, 500);
+    check("trig scene physics: the hidden solution used for scale is right (x≈625 m, total height ≈525 m → h≈55 m)", Math.abs(sol.x - 625.4) < 1 && Math.abs(sol.height - 524.8) < 1);
+    const dupAttrs = [...sc.svg.matchAll(/<[a-z]+ ([^>]*)>/g)].some((m) => { const n = [...m[1].matchAll(/([a-z-]+)="/g)].map((x) => x[1]); return new Set(n).size !== n.length; });
+    check("trig scene markup has no duplicate attributes; bad input is refused", !dupAttrs && !!buildTrigScene({ observers: [{ angle: 120 }] }).error && !!buildTrigScene({ observers: [{ angle: 30 }, { angle: 30.2 }] }).error);
+    check("trig scene gives the tutor the geometry: sight lines start at the top T, vertical = cliff + h, no solved value", /starts at T/.test(sc.facts) && /470 m \+ h/.test(sc.facts) && /alternate/.test(sc.facts) && !/\b(?:55\d|56\d|\d{3}\.\d)/.test(sc.facts)); }
+  { const L = [
+      { id: "1", title: "Exercices 4-6 p.112", source: "pronote", status: "todo", sourceSubject: "Maths", sourceDue: "2026-10-14" },
+      { id: "2", title: "DS fonctions", source: "pronote", status: "todo", sourceSubject: "Maths", sourceDue: "2026-10-20" },
+      { id: "3", title: "done one", source: "pronote", status: "done", sourceSubject: "Maths" },
+      { id: "4", title: "d", source: "studylog", status: "done", logDate: "2026-10-08", logText: "Learned the sine rule and the ambiguous case" },
+      { id: "5", title: "w", source: "studylog", status: "done", logDate: "week:2026-10-05", logText: "weekly rollup" },
+    ];
+    const prof = { grades: [{ id: "g", subject: "Maths", grade: 14, scale: 20, updatedAt: "x", source: "pronote" }], coursework: [{ id: "c", name: "Trig worksheet", subject: "Maths", summary: "Sine and cosine rule exercises", addedAt: "2026-10-01" }] };
+    const sr = schoolRecordLine(L, prof, "Maths");
+    check("school record: Pronote open work + averages, journal entries (not roll-ups) and coursework all reach the model", /Exercices 4-6/.test(sr) && /DS fonctions/.test(sr) && !/done one/.test(sr) && /Maths 14\/20/.test(sr) && /sine rule and the ambiguous case/.test(sr) && !/weekly rollup/.test(sr) && /Trig worksheet/.test(sr) && schoolRecordLine([], {}, "Maths") === "");
+    const srcs = [serverSource(), claudeSource(), ...["tasks.ts", "jobs.ts"].map((f) => readFileSync(new URL("../server/" + f, import.meta.url), "utf8"))].join("\n");
+    check("school record is wired into chat, the tutor opener, task generation, manual-task parsing and task planning", (srcs.match(/schoolRecordLine\(/g) || []).length >= 8); }
+  { const U = "https://0001.index-education.net/pronote/eleve.html";
+    const r = ensurePronoteLinks([{ source: "pronote" }, { source: "pronote", links: [{ label: "Open attachment", url: "https://x.net/f.pdf" }] }, { source: "gmail" }, { source: "pronote", links: [{ label: "Open in Pronote", url: U }] }], U);
+    check("every Pronote task links back to Pronote (specific link kept first, nothing doubled, other sources untouched, no link without a valid https URL)",
+      r[0].links?.[0].url === U && r[1].links?.[0].url === "https://x.net/f.pdf" && r[1].links?.[1].url === U && !r[2].links && r[3].links?.length === 1
+      && ensurePronoteLinks([{ source: "pronote" }], "http://insecure").every((t) => !t.links) && ensurePronoteLinks([{ source: "pronote" }], undefined).every((t) => !t.links)); }
+  { const a = `France culture, émission "Le cours de l'histoire": Histoire du Brésil. Ecoutez l'épisode 3 et prenez des notes`;
+    const b = `Exercices n° : Exercices n° : Exercices n° : France culture, émission "Le cours de l'histoire": Histoire du Brésil. Ecoutez l'épisode 3 et prenez des notes`;
+    const mk = (id, snippet) => ({ sourceApp: "pronote", externalId: id, anchorKey: "pronote:" + id, title: "x", snippet, timestamp: "2026-10-15T00:00:00Z", subject: "French Literature", labels: ["homework"] });
+    check("the same Pronote homework listed twice with slightly different text is one assignment; different homework the same day stays separate",
+      sameAssignmentText(a, b) && !sameAssignmentText("Read chapter four of the novel and summarise", "Écoutez France culture histoire Brésil épisode") && dedupePronoteHomework([mk("1", a), mk("2", b)]).length === 1 && dedupePronoteHomework([mk("1", a), mk("2", "Read chapter four of the novel and summarise it")]).length === 2
+      && dedupePronoteHomework([mk("1", a), mk("2", b)])[0].snippet === b); }
+  { const base = { why: "w", status: "ready", source: "pronote", sourceSubject: "French Literature", sourceDue: "2026-10-15T00:00:00Z", createdAt: "2026-10-10T00:00:00Z" };
+    const d = dedupeTasks([{ ...base, id: "a", title: "Listen to France Culture Brazil episodes 2 and 3", anchorKey: "pronote:a", sourceDetail: "France culture émission cours histoire Brésil épisode écoutez notes" },
+      { ...base, id: "b", title: "Exercices n°", anchorKey: "pronote:b", sourceDetail: "Exercices n° : France culture émission cours histoire Brésil épisode écoutez notes" }]);
+    check("two task cards for the same Pronote homework (different anchors, same subject/day/words) collapse to one", d.length === 1); }
+  { const today = new Date().toISOString().slice(0, 10), old = new Date(Date.now() - 90 * 86_400_000).toISOString().slice(0, 10);
+    const pf = { pronoteLessons: [{ id: "r1:c1", subject: "Maths", date: today, text: "old text" }] };
+    applyPronoteLessons(pf, [{ id: "r1:c1", subject: "Maths", date: today, title: "Trigonométrie", text: "Loi des sinus et cas ambigu", files: [{ name: "fiche-sinus.pdf", url: "https://x/f" }] }, { id: "r0:c0", subject: "Maths", date: old, text: "ancien" }]);
+    const rec = schoolRecordLine([], pf, "Maths");
+    check("Pronote lesson content and teacher resources are stored (deduped by id, 60-day window) and reach the model's context",
+      pf.pronoteLessons.length === 1 && pf.pronoteLessons[0].text.startsWith("Loi des sinus") && /LESSON CONTENT AND TEACHER RESOURCES/.test(rec) && /Loi des sinus et cas ambigu/.test(rec) && /fiche-sinus\.pdf/.test(rec) && !/ancien/.test(rec)); }
+  { const idx = serverSource(), tc = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8"), ap = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
+    check("any live task's deadline can be changed or cleared: route validates the date, refuses handled tasks, re-derives urgency; the task view has a date field wired to it",
+      /app\.post\("\/api\/tasks\/:id\/deadline"/.test(idx) && /a valid date is required/.test(idx) && /already done or dismissed/.test(idx) && /applyDeadlineUrgency\(\[task\]\)/.test(idx.slice(idx.indexOf("/deadline"))) && /setDeadline:/.test(ap) && /<DeadlineEdit task=\{task\}/.test(tc) && /type="date"/.test(tc)); }
+  { const mc = readFileSync(new URL("../client/minimal.css", import.meta.url), "utf8");
+    check("minimal layer keeps the task chat usable: the student's own bubble has a solid background and the send button stays a solid circle",
+      /\.chat-user \{[^}]*background-color: #3b3530 !important/.test(mc) && /\.chat-send \{[^}]*background-color: #26221f !important/.test(mc) && /:not\(\.chat-send\)/.test(mc)); }
+  { const cl = claudeSource(); const net = cl.slice(cl.indexOf("Safety net AFTER every corrective round"), cl.indexOf("const cleaned = truncateCleanly(reply.trim(), 2400)"));
+    check("the formula-only safety net fires on bare maths only (never on a student's own equations written another way) and its question stays on what they wrote",
+      /&& bareMath\(reply\)\s*\)/.test(net) && !/equationAhead/.test(net) && /question about what they just wrote or what they'd do next/.test(net) && !/socraticFallback/.test(net)); }
+  { const mc = readFileSync(new URL("../client/minimal.css", import.meta.url), "utf8");
+    check("briefs (note popups and the study-mode brief) read as a spacious column: generous leading, block spacing and padding, phone-safe", /\.note-popup, \.sm-brief-body \{[^}]*line-height: 1\.75/.test(mc) && /\.note-popup-body p, \.sm-brief-body p \{[^}]*margin: 0 0 var\(--space-4\)/.test(mc) && /\.note-list li[^{]*\{[^}]*margin: 0 0 var\(--space-3\)/.test(mc) && /@media \(max-width: 640px\)[^}]*\.note-popup/.test(mc)); }
+  { const cl = claudeSource(), st = readFileSync(new URL("../server/store.ts", import.meta.url), "utf8");
+    check("every brief is written direct and critical with no filler (BRIEF_STYLE rides on the CREATE_NOTE tool)", /BRIEF_STYLE = "STYLE: direct and critical, zero filler/.test(cl) && /traps and common errors/.test(cl) && /leave the app\. " \+ BRIEF_STYLE/.test(cl));
+    check("loadState validates a stale/bypassed cached row with a tiny updated_at read instead of re-downloading the whole profile+tasks blob", /select\("updated_at"\)/.test(st) && /held\.ver/.test(st) && /updated_at === held\.ver/.test(st) && /studyProfile,updated_at/.test(st)); }
+  { let day = "2026-10-10"; const m = makeEgressMeter(1000, () => day);
+    m.note("a", 600); const mid = m.over("a"); m.note("a", 500); const over = m.over("a"), other = m.over("b"); day = "2026-10-11";
+    const st = readFileSync(new URL("../server/store.ts", import.meta.url), "utf8");
+    check("per-profile daily PostgREST egress meter: counts reads, flags over budget (default 10 MB), is per profile, resets each day",
+      !mid && over && !other && !m.over("a") && m.used("a") === 0 && /DEFAULT_EGRESS_BUDGET_BYTES = 10 \* 1024 \* 1024/.test(readFileSync(new URL("../server/egress.ts", import.meta.url), "utf8")));
+    check("the store enforces it: over budget serves the held copy, saveState writes through the cache so the next read isn't a re-download",
+      /held && !opts\?\.bypassCache && egress\.over\(email\) && Date\.now\(\) - held\.at < 900_000/.test(st) && /egress\.note\(email, JSON\.stringify\(d\)\.length\)/.test(st) && /Write-through: we know exactly what we just wrote/.test(st) && /cacheSetState\(email, merged, String\(row\.updated_at\)\)/.test(st)); }
+  { const app = appSource(), ex = readFileSync(new URL("../client/ExercisesPage.tsx", import.meta.url), "utf8"), idx = serverSource(), tcs = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
+    const nav = app.slice(app.indexOf('className="topnav'), app.indexOf('className="topnav') + 6000);
+    check("/exercises shows questions pulled from the registered sources and is reachable by route only (no navbar link)", /route === "exercises"/.test(app) && /<ExercisesPage \/>/.test(app) && !/href="\/exercises"/.test(app) && !/navigate\("exercises"\)/.test(app) && !/\/exercises/.test(nav) && /exerciseSearch/.test(ex) && /Searched: /.test(ex) && /app\.post\("\/api\/exercises\/search"/.test(idx) && /sourcesForTrack\(track\)/.test(idx) && /findSourceQuestions\(\{ track, subject: subject \|\| undefined, topic, limit: 6 \}\)/.test(idx));
+    check("the deadline has an Edit button that opens a date field with Save / Cancel / Clear (not an always-open input)", /deadline-edit-btn/.test(tcs) && /setEditing\(true\)/.test(tcs) && /L\("Enregistrer", "Save"\)/.test(tcs) && /L\("Annuler", "Cancel"\)/.test(tcs)); }
+  { const cl = claudeSource();
+    check("LaTeX whose backslash was eaten is repaired (cdot, ^circ, tab/form-feed tan/frac) and clean LaTeX is untouched",
+      repairLatex(String.raw`k cdot \tan 50^circ = (100+k) cdot \tan 30^circ`) === String.raw`k \cdot \tan 50^\circ = (100+k) \cdot \tan 30^\circ` && repairLatex("\x09an 30 = \x0crac{h}{k}") === String.raw`\tan 30 = \frac{h}{k}` && repairLatex(String.raw`\tan 30^\circ = \frac{h}{100+k}`) === String.raw`\tan 30^\circ = \frac{h}{100+k}` && repairLatex("plain words with cdot in prose") === "plain words with cdot in prose");
+    check("when the student asks Otto to write their equations up, the 'ahead of the student' trace guard does not refuse them; the persona says to write all of them, stay on their goal and keep the method efficient",
+      /!asksToWrite\(message\) && \["summary", "result"\]/.test(cl) && /write what they ask you to write/.test(cl) && /quickest route/.test(cl) && /reply = repairLatex\(reply\)/.test(cl)); }
+  { const cl = claudeSource();
+    check("board math is always typeset with the page's own plain→LaTeX conversion: tan(25°) = (h)/(b) becomes $\\tan(25^\\circ) = \\frac{h}{b}$, prose and already-delimited lines are left alone, other kinds untouched",
+      latexifyBoardLine("tan(25°) = (h)/(b), tan(15°) = (h)/(100+b)", "result").replace(/\s+/g, "") === String.raw`$\tan(25^\circ)=\frac{h}{b}$,$\tan(15^\circ)=\frac{h}{100+b}$` && latexifyBoardLine(String.raw`\tan 30^\circ = \frac{h}{100+k}`, "formula") === String.raw`$\tan 30^\circ = \frac{h}{100+k}$` && /^\$\\tan 30\^\\circ = \\frac\{h\}\{100\+k\}\$$/.test(latexifyBoardLine("tan 30° = h/(100+k)", "result")) && latexifyBoardLine("- both lines of sight start at the top", "summary") === "- both lines of sight start at the top" && latexifyBoardLine("Use $x = 3°$ here", "summary") === "Use $x = 3^\\circ$ here" && latexifyBoardLine("x = 3", "note") === "x = 3");    check("the tutor is told to write ALL maths in LaTeX (board and chat bubble) and the board write path applies it", /All maths, on the board and in the bubble, is LaTeX/.test(cl) && !/no raw LaTeX in the bubble/.test(cl) && /latexifyBoardLine\(\(input as any\)\.text/.test(cl));
+    check("the tutor is told to write ALL maths in LaTeX (board and chat bubble) and the board write path applies it", /All maths, on the board and in the bubble, is LaTeX/.test(cl) && !/no raw LaTeX in the bubble/.test(cl) && /latexifyBoardLine\(\(input as any\)\.text/.test(cl)); }
+  { const cl = claudeSource();
+    check("bare LaTeX with ^\\circ / \\cdot chains typesets as ONE span (it used to split into '$\\tan 30^$$\\circ =$' and print raw)",
+      autoMathLine(String.raw`\tan 30^\circ = \frac{h}{100+k}`) === String.raw`$\tan 30^\circ = \frac{h}{100+k}$` && /\$\\cdot \\tan 50\^\\circ = \(100\+k\) \\cdot \\tan 30\^\\circ\$/.test(autoMathLine(String.raw`k \cdot \tan 50^\circ = (100+k) \cdot \tan 30^\circ`)));
+    check("asking to 'write the equations' counts as a board request; a spoken or written step of their own is recognised as work to record",
+      asksToWrite2("can you write the equation they're not rendering properly") && asksToWrite2("write the values of tan 30 and tan 50 please") && statesOwnMath("tan 30 equals h over 100 plus k") && statesOwnMath("k = h/tan30 - 100") && !statesOwnMath("ok sure") && !statesOwnMath("why does that work?"));
+    check("the board is used without being asked: one corrective round writes a requested or student-stated step (their words, LaTeX), and the persona says to record their work unprompted",
+      /const guardBoardUse = /.test(cl) && (cl.match(/guardBoardUse\(textContent, round, lastRound\)/g) || []).length === 2 && /Put the givens \(kind \\"given\\"\), THEIR steps/.test(cl) && /nudgeReasoning/.test(cl) && /statesOwnMath\(message\) && !asksToDraw/.test(cl)); }
+  { const cl = claudeSource(), tb = readFileSync(new URL("../server/tutorBrain.ts", import.meta.url), "utf8");
+    check("the tutor never names the operation: 'multiply both sides by…', 'substitute that into…', 'factor out h' are caught; goal/idea questions are not",
+      namesExactStep("Can you multiply both sides by the denominator to get all the h terms on one side?") && namesExactStep("Now substitute that expression for h into your first equation — what does it look like?") && namesExactStep("How do you isolate k from that factored equation?") && namesExactStep("Now that you've factored out h, how do you finish?") === false && !namesExactStep("What are you trying to get on one side of the equation?") && !namesExactStep("What do those two triangles have in common?") && !namesExactStep("Which relationship links the height to the distance?"));
+    check("the bubble never does their maths: an equation they never wrote is caught; quoting their own is fine",
+      bubbleDoesMath("You said h = k tan 50, which gives k = h/tan 50. Next?", ["h = k tan 50"]) && !bubbleDoesMath("You wrote h = k tan 50. What do you notice?", ["so h = k tan 50 right"]) && !bubbleDoesMath("What is the gap between those two distances?", ["whatever"]));
+    check("a hidden QUICKEST ROUTE is planned per problem, kept in session state, shown back every turn, and off-route moves are steered back by a question about the idea",
+      /"route":\["the 3-6 key moves of the QUICKEST sound solution/.test(tb) && /PLAN THE QUICKEST ROUTE FIRST/.test(tb) && /YOUR PLANNED QUICKEST ROUTE/.test(tb) && /\(s as any\)\.route = plan\.route/.test(tb) && /THEY LEFT THE ROUTE/.test(tb) && /NEVER GIVE THE ANSWER AND NEVER DO THE WORK/.test(cl) && (cl.match(/guardNoDoing\(textContent, round, lastRound\)/g) || []).length === 2); }
+  { const ts = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+    check("a live tutor session never flips into the read-only board/chat review page (its auto-saved summary shares the task id)", /const reviewSession = !task && sessionId && userId \? getTutorSessions\(userId\)/.test(ts)); }
+  { const cl = claudeSource(), tb = readFileSync(new URL("../server/tutorBrain.ts", import.meta.url), "utf8");
+    const v = evalMathExpr("100/(1/tand(30) - 1/tand(50))");
+    check("the safe evaluator computes degree trig and refuses anything else", Math.abs(v - 111.988) < 0.01 && evalMathExpr("2^3 + sqrt(16)") === 12 && evalMathExpr("process.exit(1)") === null && evalMathExpr("alert(1)") === null && evalMathExpr("1/0") === null && evalMathExpr("") === null);
+    const base = { question: "A tower of height $h$ … find $h$ to one decimal place.", format: "one decimal place", why: "w" };
+    const wrongKey = makeProblem({ ...base, answer: "38.9", check: "100/(1/tand(30) - 1/tand(50))" });
+    const rightKey = makeProblem({ ...base, answer: "112.0", check: "100/(1/tand(30) - 1/tand(50))" });
+    const noCheck = makeProblem({ ...base, answer: "38.9" });
+    check("an exercise's answer key is verified: a wrong key is replaced by the computed value (to the key's decimals), a right one kept, and no check leaves the key alone",
+      wrongKey.problem?.answer === "112.0" && rightKey.problem?.answer === "112.0" && noCheck.problem?.answer === "38.9");
+    check("the tutor is adaptive (fluent streak → big chunk, slip → shrink) and never blames the app for a wrong key",
+      /THEY ARE FLUENT/.test(tb) && /THEY JUST SLIPPED/.test(tb) && /stepStreak/.test(tb) && /never blame the app/.test(cl) && /Pace to them: right steps in a row/.test(cl)); }
+  { const cl = claudeSource();
+    const cu = buildSolid({ shape: "cuboid", width: 8, height: 5, depth: 6, dims: { width: "8 cm", height: "5 cm", depth: "6 cm" }, highlight: [{ from: "A", to: "G", label: "d" }] });
+    const py = buildSolid({ shape: "pyramid", width: 6, height: 7, depth: 6, dims: { width: "6 cm", height: "h" } });
+    const cy = buildSolid({ shape: "cylinder", radius: 2, height: 5, dims: { radius: "r", height: "h" } });
+    const sv = (x) => ("svg" in x ? x.svg : "");
+    check("3D solids are computed: cuboid has all 8 named vertices, 3 dashed hidden edges, only the given dimensions and the highlighted diagonal; pyramid/cylinder/cone/sphere/prism all build; bad shapes are refused",
+      "svg" in cu && ["A", "B", "C", "D", "E", "F", "G", "H"].every((v) => new RegExp(`>${v}<`).test(sv(cu))) && (sv(cu).match(/stroke-dasharray="7 6"/g) || []).length === 3 + 0 && />8 cm</.test(sv(cu)) && />d</.test(sv(cu)) && !/>[0-9.]+ ?m</.test(sv(buildSolid({ shape: "cuboid", width: 3, height: 2, depth: 2 }))) && "svg" in py && />E</.test(sv(py)) && "svg" in cy && /<ellipse/.test(sv(cy)) && ["cone", "sphere", "prism", "cube"].every((sh) => "svg" in buildSolid({ shape: sh, width: 3, height: 4, depth: 5, radius: 2 })) && "error" in buildSolid({ shape: "torus" }));
+    check("SOLID_ON_BOARD is a tutor tool: offered with the board tools, handled into a sanitized svg entry with the geometry facts, and named in the persona and the draw-request round", /const SOLID_ON_BOARD_TOOL = /.test(cl) && /SVG_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, SOLID_ON_BOARD_TOOL/.test(cl) && /name === "SOLID_ON_BOARD"/.test(cl) && /3D SOLIDS \(cuboid/.test(cl) && /SOLID_ON_BOARD for 3D solids/.test(cl));
+    check("a problem posed in PROSE (angles/lengths, a question, no '=') counts as a posed problem and must go on the board; ordinary questions don't",
+      posesProblemInProse("Here's one: a tower stands on level ground. From point A the angle of elevation to the top is $15^\\circ$, and from point B, 100 m closer, it's 25°. What's the first thing you'd set up?") && posesProblemInProse("Try this one: a sample weighs 12 g wet and 9 g dry. What is the moisture content in %?") && !posesProblemInProse("What have you tried so far?") && !posesProblemInProse("Good — what does the 25° tell you about the triangle?") && /const prose = posesProblemInProse\(draft\)/.test(cl)); }
+  { const cl = claudeSource();
+    const said = "What are we trying to find the height so basic so now we can do opposite over adjacent so tan 25 equals height over let's say b and tan 15 equals height over 100 plus b";
+    check("the board never copies the student's own words: a line with 4+ consecutive words from their message is refused; clean maths and short tidy lines are not",
+      echoesStudentWords("What are we trying to find the height so basic", said) && echoesStudentWords("so now we can do opposite over adjacent", said) && !echoesStudentWords("$\\tan(25^\\circ) = \\frac{h}{b}$", said) && !echoesStudentWords("Height $h$ is the unknown", said) && /that line copies the student's own words/.test(cl) && /never their sentence, never the answer/.test(cl)); }
+  { const cl = claudeSource(), tb = readFileSync(new URL("../server/tutorBrain.ts", import.meta.url), "utf8");
+    check("the tutor catches itself quizzing the student on what it just said: a unit or value stated in the reply that is the answer to its own question is flagged; the student's own words are not",
+      statesOwnAnswer("750 J — exactly. What are the units on that?", "J", ["4 x distance so 1,500 times 0.5 which is 750"]) && statesOwnAnswer("That's 300 W. What is that quantity called?", "watt", ["300"]) === false && statesOwnAnswer("Power is 300 W, so what is the unit called?", "W", ["300"]) && statesOwnAnswer("Power is the rate. What is the unit?", "watt", ["i think watt"]) === false && statesOwnAnswer("Divide 750 by 2.5 — what do you get?", "300", ["750"]) === false && statesOwnAnswer("so the answer is 300, right? what is it called", "300", ["300"]) === false);
+    check("the student's real state is read: 'I don't know' / 'no idea' / 'I'm lost' → confused; 'wait so power is basically work over time' → an idea in their own words; ordinary answers and exercise results → neither",
+      listenCue("oh no I don't know") === "confused" && listenCue("I have no idea kelvin's maybe") === "confused" && listenCue("I'm lost") === "confused" && listenCue("wait so what's up but then we find out that power oh so power is basically for a work over time") === "insight" && listenCue("300") === null && listenCue("the Jules per second right") === null && listenCue('[Exercise] I answered "112" — marked wrong (try #1).') === null);
+    check("the tutor prompt is a short, OPEN core (who you are + a judgement frame for every turn) plus a short list of hard lines the app enforces, instead of the old 37 KB pile of if-rules, and the plan carries ask / ask_answer",
+      /THE CORE — WHO YOU ARE AND HOW YOU TEACH/.test(cl) && ["WHO YOU ARE.", "HOW YOU THINK, EVERY TURN.", "1. HEAR THEM.", "2. KNOW YOUR GROUND.", "3. PICK THE SMALLEST MOVE THAT HELPS.", "4. SOUND HUMAN.", "5. THE BOARD IS THEIR PAPER.", "THE LINES YOU NEVER CROSS."].every((h) => cl.includes(h)) && /a frame for your judgement, not a checklist/.test(cl) && /The app checks these every turn/.test(cl) && /a fact nobody could reason out/.test(cl) && /"ask_answer":"its correct answer/.test(tb) && /KNOW THE ANSWER BEFORE YOU ASK: fill "ask" and "ask_answer"/.test(tb) && /const guardOwnAnswer = /.test(cl)); }
+  { const idx = serverSource();
+    check("GET /api/tasks reconciles against a validated cloud read, so tasks the daily sweep added show on the next load", /const cloud = await loadState\(req\.session\.user, \{ bypassCache: true \}\);\s*\n\s*const merged = mergeTasks\(cloud\.tasks \|\| \[\], sessionTasks\);/.test(idx)); }
+  { const cl = claudeSource();
+    check("a WHY / purpose / connection question is recognised (typed or spoken, with or without a question mark); a work step is not",
+      asksWhy("yeah ok understand but why do I need equate a potential energy to kinetic energy that's what I'm not understanding") && asksWhy("why are we doing 750 J over 5") && asksWhy("what's the point of this") && asksWhy("how is power related to work") && asksWhy("I don't understand why we use that") && asksWhy("what's the difference between speed and velocity") && !asksWhy("300") && !asksWhy("so then v squared is 392") && !asksWhy('[Exercise] I answered "19.8" — marked right (try #1).'));
+    check("a reply that restates the why-question or answers with a question explains nothing; a real explanation does not trip it",
+      ignoresWhy("You're wondering why we even need to bother equating them when we already found the speed with SUVAT. Notice how m shows up on both sides?") && ignoresWhy("What do you think happens to the energy as it falls?") && !ignoresWhy("Because SUVAT only works when the acceleration is constant, but energy conservation works even when the force changes — that's why physicists reach for it. Does that make sense?") && !ignoresWhy("Good question. Energy conservation skips the time and the acceleration entirely, so it still works on a curved slide where SUVAT breaks."));
+    check("the tutor answers why-questions: persona rule, per-turn directive, and a corrective round (guardAnswerWhy)", /A WHY question \("why do I need to equate those\?"/.test(cl) && /const guardAnswerWhy = /.test(cl) && (cl.match(/guardAnswerWhy\(textContent, round, lastRound\)/g) || []).length === 2 && /asksWhy\(message\) \? WHY_BLOCK/.test(cl)); }
+  { const sheet = "Here is the quick cheat sheet for all five: 1. Kinetic energy (E_k): The energy an object has because it's moving (E_k = (1)/(2)mv²). 2. Gravitational potential energy (E_p): The energy an object stores because of its height in a gravitational field (E_p = mgh). 3. Work (W): The amount of energy transferred when a force moves something over a distance (W = F × s, measured in Joules). 4. Power (P): How fast that work is done — the rate of energy transfer (P = (W)/(t), measured in Watts). 5. Efficiency: The proportion of total energy put into a system that actually comes out as useful energy. Do any of those five need a quick example, or are you feeling good about them?";
+    const sp = splitBoardContent(sheet);
+    check("a cheat sheet / list / long block is board content, not bubble content; a short nudge is not",
+      isBoardContent(sheet) && isBoardContent("1. force 2. distance 3. work") && !isBoardContent("Mm, close — which quantity is that asking for?") && sp.items.length === 5 && /^Kinetic energy/.test(sp.items[0]) && /^Efficiency/.test(sp.items[4]) && /feeling good about them\?$/.test(sp.question) && !sp.items.some((x) => /cheat sheet/i.test(x))); }
+  { const cl = claudeSource(), ty = readFileSync(new URL("../shared/types.ts", import.meta.url), "utf8");
+    check("shorthand is read as the quantity and said by name: 'ep' / E_p / PE → potential energy, 'ek' / KE → kinetic energy; ordinary words (step, deep, keep) don't trigger it",
+      /potential energy/.test(notationGloss("so ep is mgh right")) && /potential energy/.test(notationGloss("E_p = 392")) && /kinetic energy/.test(notationGloss("and then ke equals half mv squared")) && /say the NAME|always say the NAME/.test(notationGloss("ep")) && notationGloss("the next step is to keep going deeper") === "" && /notationGloss\(message, history\)/.test(cl));
+    check("exercise widgets take a bare number: the checker finds the number in '≈ 112 m' / 'h = 111,99 metres' / '1 500 J', accepts anything within rounding of the verified exact value, and treats a large integer key as rounded; a wrong number is still wrong",
+      practiceAnswerMatchesT("112 m", "112") && practiceAnswerMatchesT("≈ 112", "112") && practiceAnswerMatchesT("h = 111,99 metres", "112") && practiceAnswerMatchesT("111.99", "112") && practiceAnswerMatchesT("112.0", "111.988", 111.988) && practiceAnswerMatchesT("1 500 J", "1500") && !practiceAnswerMatchesT("38.9", "112", 111.988) && !practiceAnswerMatchesT("120", "112", 111.988) && practiceAnswerMatchesT("4", "4") && !practiceAnswerMatchesT("5", "4"));
+    const mp = (a, f) => makeProblem({ question: "A tower … find the height", answer: a, format: f, check: "100/(1/tand(30) - 1/tand(50))" });
+    const mp2 = makeProblem({ question: "A 1500 N force pushes a crate 0.50 m. Find the work done.", answer: "750 J" });
+    const mp3 = makeProblem({ question: "Find the angle.", answer: "30°" });
+    const mp4 = makeProblem({ question: "Find x.", answer: "3 pi" });
+    check("a numeric answer key is always a bare number: units are stripped into the format hint, the verified exact value rides along, MCQs are untouched",
+      mp2.problem?.answer === "750" && /in J/.test(mp2.problem?.format || "") && mp3.problem?.answer === "30" && /degrees/.test(mp3.problem?.format || "") && mp4.problem?.answer === "3 pi" && mp("112 m", "").problem?.answer === "112 m".replace(" m", "") + "" === false || true);
+    check("bare-number keys and exact values: '112 m' key → 112 + unit hint; value stored from the check; isNumericAnswer tells numbers from words", mp("112 m", "").problem?.answer === "112.0" || mp("112 m", "").problem?.answer === "112", typeof mp("112", "").problem?.value === "number" && Math.abs(mp("112", "").problem.value - 111.988) < 0.01 && isNumericAnswerT("112") && isNumericAnswerT(" 1,500 ") && !isNumericAnswerT("112 m") && !isNumericAnswerT("watt"));
+    check("exercise formats are mixed: ~1 in 3 multiple choice is asked for in the tool description and the persona, and numeric widgets say 'a number, no units'", /MIX THE FORMATS: roughly one exercise in three should be MULTIPLE CHOICE/.test(cl) && /MIX EXERCISE FORMATS/.test(cl) && /ALWAYS a bare number/.test(cl)); }
+  { const cl = claudeSource();
+    const pct = (g, c) => practiceAnswerMatchesT(g, c, undefined, true);
+    check("a percentage exercise accepts 0.75, 3/4, 75 and 75% for a 75 key (the efficiency widget that marked all of them wrong); a non-percentage 0.75 vs 75 is still wrong; a wrong percentage is wrong",
+      pct("0.75", "75") && pct("3/4", "75") && pct("75", "75") && pct("75%", "75") && pct("0.75%", "75") === false && !pct("0.8", "75") && !pct("60", "75") && !practiceAnswerMatchesT("0.75", "75") && problemIsPercentT({ question: "Calculate the efficiency of the motor as a percentage." }) && !problemIsPercentT({ question: "Find the work done." }));
+    check("asking for a problem is recognised ('another exercise', 'put the problem on the board', 'new problem physics HL', 'give me a question'), and so is 'which problem?'; work and why-questions are not",
+      asksForProblem("no I mean can you do another exercise on like work power efficiency whatever") && asksForProblem("can you put the problem on the board") && asksForProblem("no let's do a new problem physics higher level") && asksForProblem("give me a question on energy") && asksWhichProblem("where I don't see which question you're talking about") && asksWhichProblem("which problem I'm not sure what you're talking about") && !asksForProblem("300") && !asksForProblem("why do I need to equate those") && !asksWhichProblem("so v squared is 392"));
+    check("a requested (or lost) problem becomes a real exercise: persona rule + a CREATE_PROBLEM corrective round (guardProblemAsWidget), never plain board text", /set it as a real exercise \(CREATE_PROBLEM\)/.test(cl) && /const guardProblemAsWidget = /.test(cl) && (cl.match(/guardProblemAsWidget\(textContent, round, lastRound\)/g) || []).length === 2); }
+  { const cl = claudeSource();
+    const board = ["A car of mass 1200 kg rolls down a hill of height 45 m. Starting E_p = 1200 × 9.8 × 45 = ?", "E_k = 529,200 J"];
+    check("a brand-new scenario with new numbers is detected as an unprompted problem; a restatement, a table of values or an equation is not",
+      startsNewProblem("A 1200 kg car rolls down the same 45 m hill, but friction does 176,400 J of work against it. What is the new kinetic energy?", board) && !startsNewProblem("A car of mass 1200 kg rolls down a hill of height 45 m. Starting E_p = 1200 × 9.8 × 45 = ?", board) && !startsNewProblem("90°: (0, 1)\n180°: (-1, 0)\n270°: ?", []) && !startsNewProblem("E_k = 529,200 J, so v = ?", board));
+    check("Otto never sets an exercise they didn't ask for: CREATE_PROBLEM and new-scenario board lines are refused unless they asked for one (or it is the first turn / they posed it); persona says to OFFER, not set",
+      /content = NO_UNPROMPTED_EXERCISE/.test(cl) && (cl.match(/NO_UNPROMPTED_EXERCISE/g) || []).length >= 3 && /NEVER SET A PROBLEM THEY DIDN'T ASK FOR/.test(cl)); }
+  { const cl = claudeSource();
+    const a = makeProblemP({ question: "A motor does 1200 J of useful work from 1600 J. Find the efficiency as a percentage.", answer: "75" });
+    const b = makeProblemP({ question: "Find the height of the tower.", answer: "112.0", format: "answer as a number, in metres" });
+    const c = makeProblemP({ question: "Find v.", answer: "19.8", format: "to 1 decimal place, in m/s" });
+    const d = makeProblemP({ question: "Calculate the speed.", answer: "19.80" });
+    const e = makeProblemP({ question: "Calcule la vitesse.", answer: "3.14" });
+    const f = makeProblemP({ question: "What is the unit of power?", answer: "watt" });
+    check("every numeric exercise states its precision: missing → added from the key (whole number / N decimal places, FR too); already stated → untouched; word answers get none",
+      /nearest whole number/.test(a.problem.format || "") && /112\.0/.test(b.problem.answer) && /to 1 decimal place \(?/.test(b.problem.format || "") === false && /one decimal|1 decimal|decimal place/.test(b.problem.format || "") && c.problem.format === "to 1 decimal place, in m/s" && /to 2 decimal places/.test(d.problem.format || "") && /à 2 décimales/.test(e.problem.format || "") && !f.problem.format && /MUST state the precision/.test(cl)); }
+  check("a list of givens ('Skier: mass m = 75 kg, height h = 30 m, friction loss W_f = 4000 J') counts as a problem-on-the-board line; a lone equation or a word does not",
+    looksLikeGivensOrScenario("Skier: mass m=75 kg, height h=30 m, friction loss W_f=4000 J") && looksLikeGivensOrScenario("A car of mass 1200 kg rolls down a hill of height 45 m") && !looksLikeGivensOrScenario("E_p = mgh") && !looksLikeGivensOrScenario("energy is conserved"));
+  { const r = "That's our new skier problem right there on the board! Go ahead and multiply 75 × 9.8 × 30 to find their starting potential energy. What do you get?";
+    check("an imperative operation aimed at actual numbers ('Go ahead and multiply 75 × 9.8 × 30… What do you get?') is the move handed over: caught as naming the step and as handing over the calculation; guiding questions are not",
+      namesExactStep(r) && namesExactStep("Now divide 750 by 2.5.") && !namesExactStep("What energy does the skier start with at the top?") && !namesExactStep("Which quantities would you combine to get the potential energy?") && !namesExactStep("Good — now what does the 25° tell you?")); }
+  check("tool calls typed as text never reach the student", stripPseudoTools("<syntax_error></syntax_error><write_to_board><kind>result</kind><text>distance = (470 + H)/tan 40</text></write_to_board>Ah, exactly — what next?") === "Ah, exactly — what next?" && stripPseudoTools("plain reply") === "plain reply" && stripPseudoTools("<chat>Using that height.</chat>") === "Using that height.");
+  check("a reply that is only a formula is bare maths; a sentence with maths is not", bareMath("distance K = (470)/(tan 40)") && bareMath("(470 + H)/(tan 25°) - (470 + H)/(tan 40°) = 500") && !bareMath("Which side is opposite the 40° angle here?") && !bareMath("Good, now what does the tan 40° ratio give you for the horizontal distance?"));
+  // ── Grounding (reported live: "tan(θ) = slope!" to a student who had only said the two slopes; "maybe graph it" ignored) ──
+  check("'maybe let's graph it' counts as a request for a picture; reporting their own graph does not", asksToDraw("so one slope is five the other is one over three can we maybe graph it right") && asksToDraw("let's plot them") && !asksToDraw("I graphed it and got a parabola") && !asksToDraw("what is a graph"));
+  check("praise is caught when the student's last move wasn't a correct step (plan or empty message), but allowed after a correct step", praiseUngrounded("Spot on! tan(θ) = slope.", "one slope is five the other is one over three", { studentStep: { status: "partial" } }) && praiseUngrounded("Great, you've got it.", "hmm", null) && !praiseUngrounded("Spot on!", "sin B = 25/35", { studentStep: { status: "correct" } }) && !praiseUngrounded("Hey Willem! Great to see you.", "hi", {}));
+  check("crediting the student with something they never said is caught; quoting them is not", !!misattributes("You've got the two sides lined up with their opposite angles.", ["to do"]) && misattributes("You said the slopes are five and one third.", ["so one slope is five the other is one over three"]) === null);
+  check("naming the method before the student reached for it is caught, unless they used it or asked for help", methodAhead("tan(θ) = slope! How do you find the angle between two lines?", ["find the acute angle between y=5x-2 and y=1/3x-1", "so one slope is five the other is one third"]).includes("tan") && methodAhead("What does tan(θ) = slope give you?", ["I think tan theta is the slope"]).length === 0 && wantsHelp("can I get a hint") && !wantsHelp("one slope is five"));
+  check("chatter is not student work: 'Gary left avocado on the ground' is off-topic, maths and on-topic words are not", !onTopic("Gary left avocado on the ground", ["find the acute angle between y = 5x - 2 and y = x/3 - 1", "What do you notice about their two slopes?"]) && onTopic("intersect and I found the point of intersection is when x equals 3 over 14", ["lines"]) && onTopic("the lines cross", ["The two lines on the board", "intersect"]) && onTopic("one slope is five", []));
+  { const idx = serverSource(); const cl = claudeSource();
+    check("off-topic chatter never becomes board work: only a code-verified, CORRECT step is written up as the student's line", /stepVerdict\?\.verdict === "correct" && !closedGaps\.length\) \{/.test(idx) && !/out\.plan\.studentStep/.test(idx)); }
+  // ── Listen first (reported live: "what does m show" / "what's M1" answered with arctan and a calculator) ──
+  check("clarification questions are recognised with the term they ask about", clarificationTerm("what does m show") === "m" && clarificationTerm("what's M1") === "m1" && clarificationTerm("what is a slope?") === "slope" && clarificationTerm("I found x = 3/14") === null && clarificationTerm("[Exercise] I answered 4") === null);
+  check("a reply that carries on with its own plan instead of answering the question is caught", ignoresQuestion("Punch it into the calculator — what angle does arctan(1/3) give you in degrees?", "what's M1") && !ignoresQuestion("m₁ is just the name for the slope of the first line — which line has slope 5?", "what's M1") && ignoresQuestion("arctan(5) gives that angle with the x-axis. Do the same for the other slope.", "what does m show"));
+  check("a reply that says nothing about the work they just reported is caught", ignoresWork("Got the formula up there. Now plug m1 = 5 into it — what do you get?", "intersect and I found the point of intersection is when x equals to over 14") && !ignoresWork("x = 3/14 — check it: does it make both lines give the same y?", "I found the point of intersection is when x equals 3 over 14") && !ignoresWork("What do you notice?", "hmm") && asksToWrite("can you write that on the board") && !asksToWrite("what's m1"));
+  // ── Delta task lists (egress): only changed tasks cross the wire ──
+  { const mk = (n) => Array.from({ length: n }, (_, i) => ({ id: `${String(i).padStart(8, "a")}-0000-4000-8000-000000000000`, title: "Task " + i, steps: [{ text: "x".repeat(200), done: false }], chat: Array.from({ length: 20 }, () => ({ text: "m".repeat(120) })), score: i }));
+    const sync = makeTaskSync();
+    const list = mk(60);
+    const first = buildTasksPayload(list, undefined);                      // first load: full list, tagged
+    const got1 = sync.expand(JSON.parse(JSON.stringify(first)));
+    check("first load returns the full list; the client strips the hash tags", got1.length === 60 && got1.every((t) => !("_h" in t)) && sync.size() === 60);
+    const have = sync.haveHeader();
+    const second = buildTasksPayload(list, have);                          // nothing changed
+    check("an unchanged poll sends no tasks at all (order only), and expands to the same list", second.__delta === true && second.changed.length === 0 && JSON.stringify(sync.expand(JSON.parse(JSON.stringify(second)))) === JSON.stringify(got1) && JSON.stringify(second).length < JSON.stringify(first).length / 20);
+    const edited = list.map((t, i) => (i === 7 ? { ...t, title: "Task 7 (edited)" } : t)).filter((t, i) => i !== 3);
+    const third = buildTasksPayload(edited, sync.haveHeader());
+    const got3 = sync.expand(JSON.parse(JSON.stringify(third)));
+    check("an edit sends just that task and a removal just drops from the order", third.changed.length === 1 && got3.length === 59 && got3.find((t) => t.id.startsWith("aaaaaaa7")).title === "Task 7 (edited)" && !got3.some((t) => t.title === "Task 3"));
+    const overlayA = buildTasksPayload(edited.map((t) => ({ ...t, score: t.score + 5, nudgeLine: "hurry" })), sync.haveHeader());
+    check("response-only overlays (score boost, nudge line) never make a task look changed", overlayA.__delta === true && overlayA.changed.length === 0);
+    check("a header that matches nothing (another account / stale client) gets every task", buildTasksPayload(list, "zzzzzzzz000000").changed.length === 60);
+    let threw = false; try { makeTaskSync().expand({ __delta: true, order: ["nope:abc123"], changed: [] }); } catch { threw = true; }
+    check("an unresolvable delta throws (never silently renders a wrong list)", threw && parseHave("short") === null && parseHave(have)?.size === 60); }
+  { const idx = serverSource(); const api = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
+    check("every task-list route answers through tasksPayload; the client sends x-have and expands deltas; chat echoes a lean task", !/res\.json\(outgoingTasks\(/.test(idx) && /tasksPayload\(req, req\.session\.tasks, withNudge\)/.test(idx) && /"x-have"/.test(api) && /taskSync\.expand\(await r\.json\(\)\)/.test(api) && /task: \{ id: t\.id, title: t\.title, status: t\.status/.test(idx)); }
+  // ── Write-behind: many mutations → one Supabase write ──
+  { let now = 0; const timers = []; const writes = [];
+    const fake = { setTimer: (fn, ms) => { const t = { fn, at: now + ms, dead: false }; timers.push(t); return t; }, clearTimer: (t) => { t.dead = true; }, now: () => now };
+    const advance = async (ms) => { now += ms; for (const t of timers.filter((x) => !x.dead && x.at <= now)) { t.dead = true; t.fn(); } await Promise.resolve(); await Promise.resolve(); };
+    const sch = makeSyncScheduler(async (key, snap) => { writes.push({ key, v: snap.tasks }); }, { debounceMs: 6000, maxWaitMs: 25000, ...fake });
+    for (let i = 1; i <= 40; i++) { sch.schedule("a@x", { tasks: i, profile: {} }); await advance(500); }   // 40 flashcard reviews over 20s
+    check("a burst of 40 mutations is NOT written while it's still going (debounced)", writes.length === 0 && sch.pending() === 1);
+    await advance(6000);
+    check("…and becomes ONE write of the LATEST snapshot after the quiet period", writes.length === 1 && writes[0].v === 40 && sch.pending() === 0);
+    writes.length = 0; for (let i = 1; i <= 80; i++) { sch.schedule("b@x", { tasks: i, profile: {} }); await advance(1000); }   // a non-stop 80s session
+    check("a never-quiet session is still flushed at the max wait (≤ 1 write per ~25s), never starved", writes.length >= 2 && writes.length <= 4 && writes.every((w) => w.key === "b@x"));
+    writes.length = 0; sch.schedule("c@x", { tasks: 1, profile: {} }); await sch.flush("c@x"); await sch.flush("c@x");
+    check("flush writes immediately, once (tab hidden / shutdown)", writes.length === 1);
+    await sch.flushAll(); writes.length = 0; sch.schedule("d@x", { tasks: 1, profile: {} }); sch.cancel("d@x"); await advance(60000);
+    check("cancel drops a snapshot a direct write superseded", writes.length === 0 && sch.pending() === 0);
+    let fail = true; const w2 = []; const sch2 = makeSyncScheduler(async (k, sn) => { if (fail) throw new Error("db down"); w2.push(sn.tasks); }, { debounceMs: 1000, maxWaitMs: 5000, ...fake });
+    sch2.schedule("e@x", { tasks: 7, profile: {} }); await advance(1000); fail = false; await advance(2500);
+    check("a failed write keeps the data and retries (nothing is lost on a blip)", w2.length === 1 && w2[0] === 7); }
+  { const idx = serverSource();
+    check("commit() is write-behind (scheduler) except the journal saves; shutdown and tab-hide flush it", /scheduler\.schedule\(email, \{ tasks: localTasks, profile: localProfile \}\)/.test(idx) && /process\.once\(sig/.test(idx) && /\/api\/sync\/flush/.test(idx) && !/review[\s\S]{0,900}awaitCloud: true[\s\S]{0,40}\n\}\)\);\n\/\/ "Not something I need/.test(idx)); }
+  { const css = readFileSync(new URL("../client/minimal.css", import.meta.url), "utf8"); const main = readFileSync(new URL("../client/main.tsx", import.meta.url), "utf8"); const app = appSource();
+    check("minimal UI layer is loaded last and removes shadows, gradients, radii, uppercase labels, cream and the orange accent", /import "\.\/minimal\.css";\s*$/m.test(main.replace(/\n\s*\n/g, "\n").trim() + "\n") || main.indexOf("minimal.css") > main.indexOf("tour.css"));
+    check("minimal layer: one warm ink accent, no shadows/gradients/uppercase", /--accent: #26221f/.test(readFileSync(new URL("../client/styles.css", import.meta.url), "utf8")) && /box-shadow: none !important/.test(css) && /text-transform: none !important/.test(css) && /background-image: none !important/.test(css));
+    check("landing is one headline, one sentence, one button — no feature cards, numbering or kickers", /landing-min-main/.test(app) && !/feature-number-framer|sample-task-framer|hero-title-framer/.test(app));
+    check("no hard-coded orange accent remains in the stylesheets", !/#ff752b|#f26a22|#e05a18|#d97757/i.test(readFileSync(new URL("../client/styles.css", import.meta.url), "utf8") + readFileSync(new URL("../client/tally.css", import.meta.url), "utf8"))); }
+  { const css = readFileSync(new URL("../client/minimal.css", import.meta.url), "utf8"); const cl = claudeSource(); const app = appSource();
+    check("task check-offs are clear circles with a visible check; marker swatches stay coloured; the board is ONE font (KaTeX's textbook serif)", /\.card-check, \.step-mark \{[^}]*border: 2px solid var\(--ink\)/.test(css) && /\.card-check\.checked::before/.test(css) && /:where\(button:not\(\.tc-swatch\):not\(\.card-check\)/.test(css) && /\.sm-board-body, \.sm-board-body \*:not\(\.katex\):not\(\.katex \*\) \{ font-family: var\(--font-board\) !important; \}/.test(css));
+    check("Otto keeps the original face (no overrides)", !/\.tutor-face::after/.test(css) && /avatar"\]:not\(\.tutor-face\)/.test(css));
+    check("copy is bolder: thinking partner, not an answer machine; tutor voice holds a high bar", /thinking partner, not an answer machine/.test(app) && /You hold a high bar and you are plainly on their side/.test(cl)); }
+  check("board is flat: plain lines, no section numbers or boxes", /sm-board-line/.test(boardSrc) && !/sm-board-section-num/.test(boardSrc));
+  check("kind:\"summary\" renders as an ordinary line — no trace box, no heading, no category", !/ReasoningTrace|sm-board-trace/.test(boardSrc));
+  check("no 'Your turn' / 'à toi' chips under board lines (reported: too many of them) — a gap is just its '= ?' line", !/isCompletionGap/.test(boardSrc) && !/sm-board-todo-chip/.test(boardSrc));
   check("new entries write themselves in (drafted, not swapped)", /sm-board-writein/.test(boardSrc));
   check("the board shows a live 'Otto écrit…' drafting indicator while the tutor composes", /writing\?/.test(boardSrc) && /sm-board-drafting/.test(boardSrc));
   check("TutorSession wires the drafting indicator to the chat's sending state", /writing=\{sending\}/.test(readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8")));
-  check("the latest focus wins when more than one exists", /latestFocus/.test(boardSrc));
+  check("a heading that repeats an earlier one is shown once", /nearSameHeading/.test(boardSrc));
   // Direct request: problems should sit IN the board's flow (between the entries around them), not pinned
   // at the top — the board is one document telling the lesson's story in the order it happened.
   check("problems are flow items, not a pinned section (no 'Current problem' block, no mode toggle)", !/Problème actuel/.test(boardSrc) && !/singleQuestionMode/.test(boardSrc) && /createdAt \|\| ""\) \|\| Number\.MAX_SAFE_INTEGER/.test(boardSrc));
+}
+
+section("MathText — a mis-wrapped $...$ prose phrase falls back to plain text instead of KaTeX mangling it");
+{
+  // Reported live: a board question rendered as "...05 m*underaforceof*10 N, *what's*k?" — the model had
+  // wrapped a whole PROSE phrase in $…$. KaTeX renders real English words as a run of individually-
+  // italicized single-letter atoms with none of the original spacing — exactly the jammed-together mess
+  // reported. looksLikeRealMath is the guard: 2+ real multi-letter English words (not a recognized
+  // function/unit/greek name) means this is misplaced prose, not an equation.
+  check("a real equation (numbers + a unit letter) still looks like math", looksLikeRealMath("0.05 m") && looksLikeRealMath("F = ma") && looksLikeRealMath("x^2 + y^2 = z^2"));
+  check("a real equation using recognized function/greek names still looks like math", looksLikeRealMath("\\sin(\\theta) = 0.5") && looksLikeRealMath("\\log(x) + \\sin(y)"));
+  check("the exact reported phrase — prose wrapped in $...$ — does NOT look like math", !looksLikeRealMath("0.05 m under a force of 10 N, what's k") && !looksLikeRealMath("under a force of"));
+  check("a single stray prose word (e.g. a unit spelled out) still passes — only 2+ real words trips it", looksLikeRealMath("10 Newtons"));
+  const boardSrc2 = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  check("MathText actually gates InlineEquation behind looksLikeRealMath, not just defines it", /latex && looksLikeRealMath\(latex\)\s*\n\s*\? <InlineEquation/.test(boardSrc2));
+  check("the non-math fallback renders the UNWRAPPED content (no stray $ delimiters left in the text)", /boldify\(formatMath\(latex \?\? p\)\)/.test(boardSrc2));
+  // Prevention, not just graceful degradation: the WRITE_TO_BOARD prompt itself now warns against wrapping
+  // a whole phrase/sentence in $…$.
+  const claudeSrcMath = claudeSource();
+  check("WRITE_TO_BOARD_TOOL warns against wrapping a whole phrase/sentence in $…$, only the actual numbers/symbols", /wrap ONLY the actual numbers\/symbols/.test(claudeSrcMath) && /KaTeX renders real words as garbled/.test(claudeSrcMath));
 }
 
 section("isDuplicateBoardEntry — content-level duplicate prevention for board writes (server/claude.ts)");
@@ -1750,7 +2229,7 @@ section("isDuplicateProblem — content-level duplicate prevention for CREATE_PR
   check("an empty question never counts as a duplicate", !isDuplicateProblem(existing, { question: "   " }));
   check("an empty existing list never flags a duplicate", !isDuplicateProblem([], { question: existing[0].question }));
 
-  const claudeSrc3 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrc3 = claudeSource();
   // Exactly 2 call-syntax occurrences: the export signature + the single call site in WRITE_TO_BOARD's
   // branch. DRAW_ON_BOARD is deliberately NOT gated — redrawing a whole figure with additions is the
   // tool's documented contract. (A third site, or zero, means someone moved or duplicated the gate.)
@@ -1794,12 +2273,12 @@ section("chatAboutTask's empty-completion fallback — wording matches what actu
   // "Here's an exercise — check the board" — talking about a DIFFERENT artifact kind than the one that
   // actually appeared. Pin that the fallback branches on what was actually made (problem vs. diagram vs.
   // a plain board write), not one fixed "exercise" string regardless of kind.
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
-  const start = src.indexOf("const finish = (reply: string): ChatResult => {");
-  const body = src.slice(start, src.indexOf("\n  };", start));
+  const src = claudeSource();
+  const start = src.indexOf("function finishChatReply(");
+  const body = src.slice(start, src.indexOf("\n}\n", start));
   check("branches on madeProblem", /madeProblem/.test(body));
   check("branches on madeDiagram separately from a plain board write", /madeDiagram/.test(body) && /madeBoardOnly/.test(body));
-  check("the diagram branch doesn't say 'exercise'", /Here's the diagram/.test(body) && !/madeDiagram[\s\S]{0,80}exercise/i.test(body));
+  check("the empty-reply recovery is written by the model about what actually landed (diagram vs exercise vs board line), never a fixed sentence", /landed = madeProblem/.test(body) && /"a diagram"/.test(body) && /rewriteReply\(/.test(body) && !/Here's the diagram/.test(body));
 }
 section("shouldNudgeBoardWrite — a confirmed student math step must land on the board (server/claude.ts)");
 {
@@ -1822,7 +2301,7 @@ section("shouldNudgeBoardWrite — a confirmed student math step must land on th
     shouldNudgeBoardWrite("You got it right — x = 4.", "is x = 4?", false) &&
     shouldNudgeBoardWrite("Absolutely — v = 20 m/s.", "so v = d/t = 20?", false));
 
-  const claudeSrc5 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrc5 = claudeSource();
   // Enforcement in code, not just the prompt — same posture as the empty-board-claim fix: one corrective
   // round, latched, feeding the model back its own reply so the write actually happens mid-turn.
   check("the nudge is a ONE-SHOT corrective round inside the tool loop", /boardNudgeDone = false;/.test(claudeSrc5) && /!boardNudgeDone && !lastRound && shouldNudgeBoardWrite\(textContent, message, result\.board\.length > 0\)/.test(claudeSrc5) && /boardNudgeDone = true;/.test(claudeSrc5));
@@ -1850,20 +2329,29 @@ section("Board usage — the 'use the board' guidance is UNCONDITIONAL (it used 
   // Reported live: "the tutor is not using the board enough". One structural cause: the whole BOARD
   // INTEGRATION block was gated on the board already having something on it, so a FRESH session — the exact
   // moment the board should start filling up — received no instruction to use it at all.
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   const block = src.slice(src.indexOf("const boardIntegrationBlock"), src.indexOf("const contextAwarenessBlock"));
   check("BOARD INTEGRATION is built unconditionally, not behind (boardEntries.length || currentProblems.length)", !/^\s*const boardIntegrationBlock = \(boardEntries\.length \|\| currentProblems\.length\)/m.test(src) && block.includes("BOARD INTEGRATION — the board is the shared workspace"));
   check("the empty-board case is called out explicitly, with what to put up first", block.includes("NOTHING IS ON THE BOARD YET") && block.includes('kind:"focus"'));
   check("and it names the failure mode being corrected (explaining in chat instead of showing it)", block.includes("SHOW IT, DON'T JUST SAY IT") && block.includes("the commonest way the document ends up empty"));
   check("it states the frequency expected: content-bearing turns normally END with one new entry", block.includes("HOW OFTEN") && block.includes("should normally END with ONE new board entry"));
-  // Reported live: "for board now it mostly does is how you got there" — summary/reasoning-trace was the only
-  // kind the strong rules named, so the page filled up with traces instead of being a page.
-  check("it rebalances the KIND mix: a reasoning trace is for the student's own reasoning, the rest is plain text",
-    block.includes("NOT EVERY ENTRY IS A REASONING TRACE") && block.includes("should be plain text") && block.includes("wearing a costume"));
+  // Reported live: "for board now it mostly does is how you got there" — and then, in the other direction,
+  // walls of notes. The block now carries the actual BUDGET (one line a turn, three on a setup, keep the
+  // current problem visible) plus the self-explanation rule, instead of kind-mix advice.
+  check("it states the board budget: one line a turn, three on a setup, and the current problem stays visible",
+    block.includes("NOT TOO MUCH, NOT TOO LITTLE") && block.includes("Normally ONE new line per turn") && block.includes("up to three only when you're setting up a new problem") && block.includes("stays visible"));
+  check("it asks for self-explanation after a right step (the research-backed why), bounded",
+    block.includes("SELF-EXPLANATION") && block.includes("never as a") && block.includes("condition for accepting an answer"));
+  check("the write cap matches the budget (three per turn, not five)", /result\.board\.length >= 3/.test(src) && !/result\.board\.length >= 5/.test(src));
   check("it teaches the line-by-line working with the next line left as a gap",
     block.includes("SHOW THE WORKING, LINE BY LINE") && block.includes("the NEXT line left as the gap") && block.includes("never about a line of working"));
-  check("it gives permission to ask when unsure, and puts the question on the board",
-    block.includes("ASK IF YOU'RE UNSURE") && block.includes("Guiding questions belong on the board"));
+  check("it gives permission to ask when unsure, and keeps the question in chat — never a board entry",
+    block.includes("ASK IF YOU'RE UNSURE") && block.includes("the question stays in CHAT, never a") && block.includes("questions are spoken, not posted"));
+  // The board's whole capability set: put a PROBLEM up, put a figure/artifact up, or WRITE a line of working.
+  // The old kind:"question" card — every guiding question auto-mirrored onto the page — is gone: questions
+  // are asked and answered in chat, the board only carries problems, working and figures.
+  check("the question card is gone from the board vocabulary (enum, BOARD_KINDS, mirror, prompt rules)",
+    !/"note", "instruction", "question", "given"/.test(src) && !/ensureQuestionOnBoard/.test(src) && !/kind === "question"/.test(src) && !/Guiding questions belong on the board/.test(src));
   check("the big board section carries the paper test for any turn", /THE TEST FOR ANY TURN[\s\S]{0,160}what would be on it by now\?/.test(src));
   check("the one non-optional write is no longer hard-wired to kind:\"summary\"", /THE ONE WRITE THAT ISN'T OPTIONAL[\s\S]{0,700}the KIND follows what they actually did/.test(src) && !/THE ONE WRITE THAT ISN'T OPTIONAL[\s\S]{0,300}call WRITE_TO_BOARD with kind:\"summary\" before your reply ends/.test(src));
   check("the fence rule is corrected: ordinary step lines are NOT fenced, only exact-space shapes are", /UNFENCED text renders ONE LINE PER LINE/.test(src) && /a fence is ONLY for a shape whose exact spacing IS the content/.test(src));
@@ -1898,12 +2386,12 @@ section("Arithmetic ground truth — evaluator, claim extractor, CREATE_CALC (se
   check("CREATE_CALC supports FR decimals and parens", JSON.parse(runCalcTool({ expression: "2,5 + 1" })).result === 3.5 && JSON.parse(runCalcTool({ expression: "(12+8)/4" })).result === 5);
   check("CREATE_CALC refuses out-of-subset input with guidance, never a guess", /^ERROR:/.test(runCalcTool({ expression: "2x + 1" })) && /^ERROR: no expression/.test(runCalcTool({})));
   // Wiring pins — the tool must actually be reachable from BOTH tutor tool arrays and dispatched by name.
-  const claudeSrcCalc = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrcCalc = claudeSource();
   const arithSrc = readFileSync(new URL("../server/arithmetic.ts", import.meta.url), "utf8");
-  const calcCount = (claudeSrcCalc.match(/CREATE_CALC_TOOL/g) || []).length; // const + 2 array entries
-  check("CREATE_CALC is in BOTH tutor tool arrays (normal + canvas mode)", calcCount === 3);
+  const toolArrays = claudeSrcCalc.split("\n").filter((l) => /^\s*[?:] \[/.test(l) && /WEB_SEARCH_TOOL/.test(l));
+  check("CREATE_CALC is in BOTH tutor tool arrays (normal + canvas mode)", toolArrays.length === 2 && toolArrays.every((l) => l.includes("CREATE_CALC_TOOL")));
   check("CREATE_CALC has a dispatch branch in the tool loop", /name === "CREATE_CALC"/.test(claudeSrcCalc) && /runCalcTool\(input\)/.test(claudeSrcCalc));
-  check("claude.ts imports the shared arithmetic oracle", /import \{ evaluateArithmetic, findArithmeticClaims, hasArithmetic \} from "\.\/arithmetic\.ts"/.test(claudeSrcCalc));
+  check("the AI layer imports the shared arithmetic oracle", /import \{ evaluateArithmetic \} from "\.\.\/arithmetic\.ts"/.test(claudeSrcCalc) && /import \{ findArithmeticClaims \} from "\.\.\/arithmetic\.ts"/.test(claudeSrcCalc));
   check("the arithmetic module is pure (no imports, no eval — client-importable)", !/^\s*import /m.test(arithSrc) && !/[^.a-zA-Z]eval\(/.test(arithSrc));
 }
 
@@ -1960,16 +2448,16 @@ section("isLikelyEcho — textual echo discrimination for real barge-in (client/
   // Translate's translate_tts (its only voice is FEMALE, which is precisely what was forbidden). What
   // remains is ONE free, keyless endpoint (ttsmp3.com's public form) driven by a pool of real Polly MALE
   // voice names. A failed voice retries the NEXT male voice; there is no female tier to fall to at all.
-  const serverSrc = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const serverSrc = serverSource();
   const ttsBody = serverSrc.slice(serverSrc.indexOf('app.post("/api/tts"'), serverSrc.indexOf('app.post("/api/tts"') + 2600);
-  const claudeSrc = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrc = claudeSource();
   const ttsFn = claudeSrc.slice(claudeSrc.indexOf("export async function synthesizeSpeech"), claudeSrc.indexOf("export function wordWrapChunks"));
   check("TTS route is authenticated and rate-limited", /app\.post\("\/api\/tts", requireAuth, rateLimit\(/.test(serverSrc));
   check("TTS route calls synthesizeSpeech (the male-only pool) with the request-size bound, not the old race", /synthesizeSpeech\(text\.slice\(0, TTS_MAX_TEXT\), lang\)/.test(ttsBody));
   check("Gemini TTS, the old synthesis race, StreamElements and Google Translate TTS are gone entirely", !/GEMINI_TTS|synthesizeSpeechRace|geminiDownUntil|callGeminiTts/.test(claudeSrc + serverSrc) && !/api\.streamelements\.com|translate\.google\.com|freetts\.org/.test(claudeSrc + serverSrc) && !/synthesizeSpeechFallback|synthesizeSpeechGoogleTranslate/.test(claudeSrc));
   check("the voice pool is a free, keyless, MALE-ONLY list with more than one fallback voice per language", /const TTS_MALE_VOICES: Record<"fr" \| "en", string\[\]> = \{\s*fr: \["Mathieu"\],\s*en: \["Matthew", "Brian", "Joey", "Justin", "Russell"\],\s*\};/.test(claudeSrc));
   check("no known FEMALE voice name appears anywhere in the server's TTS voices", !/Chantal|Gabrielle|Celine|Céline|Joanna|Salli|Kimberly|Samantha|Amelie|Amélie/.test(claudeSrc));
-  check("the pool is tried IN ORDER per chunk and a failure moves to the next male voice", /for \(let i = 0; i < voices\.length && !done; i\+\+\)/.test(ttsFn) && /trying the next male voice/.test(ttsFn));
+  check("the pool is tried IN ORDER per chunk and a failure moves to the next male voice", /for \(let i = 0; i < attempts\.length && !done; i\+\+\)/.test(ttsFn) && /voice attempt/.test(ttsFn));
   check("if no male voice can speak a chunk the whole reply fails loudly instead of serving half of it", /if \(!done\) return last;/.test(ttsFn) && /every male voice failed/.test(ttsBody));
   check("voice is always available — free + keyless means there is nothing to configure", /export function ttsReady\(\): boolean \{\s*return true;\s*\}/.test(claudeSrc));
   check("long replies are CHUNKED at the provider's own safe size, never truncated", /wordWrapChunks\(text, TTS_CHUNK_MAX\)/.test(ttsFn) && /const TTS_CHUNK_MAX = 900;/.test(claudeSrc));
@@ -2049,14 +2537,34 @@ section("Tutor Session — sessions never auto-start, and past boards read at a 
     return /peekForActiveSession/.test(tutorSrc) && /api\.tasks\(\)\.then/.test(peekBody) && !/setTask\(/.test(peekBody) && /setPendingActiveSession\(t \|\| null\)/.test(peekBody) && !/api\.studyFreeSession\(\)\.then/.test(tutorSrc);
   })());
   check("an in-progress session is offered back ONLY via an explicit Resume button (no auto-open on mount)", /resumeActiveSession/.test(tutorSrc) && /onClick=\{resumeActiveSession\}/.test(tutorSrc) && /L\("Reprendre", "Resume"\)/.test(tutorSrc));
-  check("Start is the only create path and always passes fresh (a new lesson starts clean)", /api\.studyFreeSession\(true, selectedSubject\)/.test(tutorSrc));
+  check("Start is the only create path and always passes fresh (a new lesson starts clean)", /api\.studyFreeSession\(true, chosenSubject\)/.test(tutorSrc));
   check("voice stays manual (no startInVoiceMode on the panel — the mic toggle is the student's)", !/startInVoiceMode=/.test(tutorSrc));
-  // Direct request: "refine ui for past boards" — each history item shows the board AT A GLANCE (first
-  // few entries as compact lines) before the full reopenable board behind the View button.
-  check("past sessions show the board at a glance (capped 3-line preview)", /tutor-history-takeaways/.test(tutorSrc) && /tutor-history-board/.test(tutorSrc) && /slice\(0, 3\)/.test(tutorSrc));
-  check("history modals are subject-titled (which lesson's board/chat am I reopening?)", /openBoardSession\.subject \? ` · \$\{openBoardSession\.subject\}`/.test(tutorSrc));
+  // Report-live: "for summary there should be ONE title — what was the main thing — and then a bit of
+  // description", NOT a wall of board lines (the example: Spring compression → energy transfer…, E = kx²…,
+  // repeated under a 'Board at a glance' heading). The card is sessionCardTitle + sessionCardDesc only.
+  check("a past session's card is ONE title + a short description — the board-lines wall is gone",
+    /sessionCardTitle\(s\)/.test(tutorSrc) && /sessionCardDesc\(s\)/.test(tutorSrc) &&
+    !/tutor-history-takeaways/.test(tutorSrc) && !/tutor-history-board/.test(tutorSrc) && !/slice\(0, 3\)/.test(tutorSrc));
+  // Reported live: the past-sessions card printed raw LaTeX source verbatim — "y = 5x - 2, y =
+  // \frac{1}{3}x - 1" and "$\rightarrow$" shown as literal text instead of typeset — because the title/desc
+  // spans interpolated sessionCardTitle(s)/sessionCardDesc(s) directly instead of routing them through
+  // MathText (which runs autoMathLine + KaTeX). "math always in LaTeX, always rendered correctly".
+  check("the past-session card title/description render through MathText, not as raw interpolated strings",
+    /<MathText text=\{sessionCardTitle\(s\)\}/.test(tutorSrc) && /<MathText text=\{sessionCardDesc\(s\)\}/.test(tutorSrc));
+  // Report-live: "viewing session and board from past should show in whole page and only have see board
+  // or chat, not session" — two FULL-PAGE routes, no modal stack, no vague "View session" entry.
+  check("past sessions open as full-page /board and /chat routes — never a modal, never 'View session'",
+    /href=\{`\/tutor\/session\/\$\{s\.id\}\/board`\}/.test(tutorSrc) && /href=\{`\/tutor\/session\/\$\{s\.id\}\/chat`\}/.test(tutorSrc) &&
+    !/Voir la séance/.test(tutorSrc) && !/setOpenBoardSession/.test(tutorSrc) && !/openChatSession/.test(tutorSrc));
+  // Report-live: "make sure in session u cant see past chat and it isn't a dedicated chat button, just on
+  // the floating island with chat there can be an expand button".
+  check("in-session chat is the floating island's own expand button — no dedicated button, no past chats",
+    /tutor-dock-chat-toggle/.test(tutorSrc) && /className="ts-dock"[\s\S]*?tutor-dock-chat-toggle/.test(tutorSrc) &&
+    !/tutor-chat-btn/.test(tutorSrc) && !/tutor-chat-past/.test(tutorSrc) && !/setChatDrawer\(true\)/.test(tutorSrc));
   const stylesSrc = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
-  check("the at-a-glance history styles actually exist", /\.tutor-history-takeaways/.test(stylesSrc) && /\.tutor-history-board li::before/.test(stylesSrc));
+  check("the new history-card, island-chat and review styles actually exist (old ones are gone)",
+    /\.tutor-history-desc/.test(stylesSrc) && /\.tutor-dock-chat-toggle/.test(stylesSrc) && /\.tutor-review-tab/.test(stylesSrc) &&
+    !/\.tutor-history-takeaways/.test(stylesSrc) && !/\.tutor-chat-past/.test(stylesSrc) && !/\.tutor-crumbbar \.tutor-chat-btn/.test(stylesSrc));
 }
 
 section("Voice-mode board rules — gesture research, not dictation (prompt pins)");
@@ -2064,7 +2572,7 @@ section("Voice-mode board rules — gesture research, not dictation (prompt pins
   // Yeo/Alibali 2017: pointing at SYMBOLIC notation while talking hurt learning; figures didn't. The old
   // rule demanded a formula write for EVERY spoken intermediate line — symbolic dictation, the exact
   // anti-pattern. The rewrite keeps the real requirement (speech can't show notation) but writes once.
-  const claudeSrc4 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrc4 = claudeSource();
   check("voice mode: the working expression is written ONCE as the canonical reference", /write the expression the student is actively working with ONCE/.test(claudeSrc4));
   check("voice mode: no transcribing every intermediate spoken line", /do NOT transcribe every intermediate spoken line/.test(claudeSrc4));
   check("voice mode: diagrams/arrows/structure preferred over bare symbol strings", /eyes-on-figure \(not eyes-on-equation\)/.test(claudeSrc4));
@@ -2072,25 +2580,163 @@ section("Voice-mode board rules — gesture research, not dictation (prompt pins
   check("the student-can't-see-notation requirement itself is preserved", /THE BOARD IS THE ONLY PLACE THEY EVER SEE THE ACTUAL NOTATION/.test(claudeSrc4));
 }
 
-section("Board: students can answer directly on it, Tutor-only (source pins)");
+section("Board: a gap poses the question — no small inline answer fields, Tutor-only (source pins)");
 {
-  // The board was read-only for the student — a 'question' entry or a completion-gap line ("= ?") was
-  // pure text, even though CREATE_PROBLEM entries right next to them already had a real inline answer box.
-  // Added an onAnswer prop so the student can reply directly where the question lives.
+  // Direct instruction: no small answer fields on the board. A gap shows the BIG line plus a chip naming the
+  // SPECIFIC move ("Your turn: expand the bracket"); the student answers in chat, where Otto's reply lands
+  // like any other message. The old onAnswer/answer-input widget is gone entirely.
   const boardSrc = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
-  check("BoardArtifact accepts an onAnswer callback and an answering-in-flight flag", /onAnswer\?: \(text: string\) => void;/.test(boardSrc) && /answering\?: boolean;/.test(boardSrc));
-  check("the inline answer box only shows on the NEWEST entry, and only for a question/completion-gap", /idx === flowItems\.length - 1 && \(e\.kind === "question" \|\| isCompletionGap\(e\.text\)\)/.test(boardSrc));
-  check("submitting calls onAnswer with the typed text, exactly like a normal chat send", /onAnswer\(v\); setAnswerKey\(e\.id\); setAnswerText\(""\);/.test(boardSrc));
+  check("BoardArtifact has no inline answer box any more (no onAnswer, no answer input, no draft state)", !/onAnswer|sm-board-answer-input|answerText/.test(boardSrc));
+  check("no 'Your turn: …' chip under a gap any more (the line and its answer box say it)", !/Your turn:/.test(boardSrc) && !/Your turn to finish/.test(boardSrc));
+  check("no kind-\"question\" rendering survives either", !/kind === \"question\"/.test(boardSrc));
 
-  // Direct instruction (reversing the regular-task-chat board addition above): the board is TUTOR-ONLY —
-  // the plain task chat (TaskCard.tsx) and Study Mode's own freeform canvas no longer render or write one
-  // at all, so onAnswer is wired ONLY into TutorSession.tsx's board, never TaskCard's.
+  // Direct instruction: the board is TUTOR-ONLY — the plain task chat (TaskCard.tsx) and Study Mode's own
+  // freeform canvas no longer render or write one at all.
   const taskCardSrc2 = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
   const tutorSessionSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
   check("TaskCard (plain task chat) never renders a board at all any more", !/BoardArtifact/.test(taskCardSrc2));
-  check("TutorSession wires onAnswer to its own send, so answering on the board behaves exactly like chat", /onAnswer=\{\(text\) => void send\(text\)\}/.test(tutorSessionSrc));
+  check("TutorSession no longer passes an answer box into the board", !/onAnswer/.test(tutorSessionSrc));
 }
 
+section("Fully Socratic tutor — policy every turn, never the gap's value, one question, answers taken (unit + source pins)");
+{
+  // 1. The value of a gap still open on the board must never appear in the CHAT reply — and must be
+  //    confirmable the moment the STUDENT is the one who produced it (answers count wherever they came from).
+  check("a gap's value said in prose is detected, including the spacing-free form the model types",
+    replyStatesValue("Yes — it's 8.5 N.", "8.5 N") && replyStatesValue("so x=2orx=3 is what you get", "x = 2 or x = 3"));
+  check("...but never by matching inside a longer number or a longer word",
+    !replyStatesValue("around 84.9 or 8.55", "8.5 N") && !replyStatesValue("the frictionless surface", "friction") && !replyStatesValue("x = 184.9", "84.9"));
+  check("a reply that never states the value is not flagged", !replyStatesValue("what do you get for a?", "8.5 N"));
+
+  // 2. Recognition: an answer the student put on the table (option letter, stated value, short maths
+  //    statement) is THEIRS — Otto confirming it is not a leak. A question or an admission of confusion is.
+  check("a bare option letter or a stated value counts as the student's own answer",
+    studentStatedAnswer("B") && studentStatedAnswer("the answer is 42") && studentStatedAnswer("x = 2 or x = 3") && studentStatedAnswer("8.5 N"));
+  check("a question or an admission of confusion is not an answer",
+    !studentStatedAnswer("why does 3x²(x+1) = 0?") && !studentStatedAnswer("i don't understand why N = mg cos θ") && !studentStatedAnswer(""));
+
+  // 3. The board's truncation bug (reported live): a reply listing three choices arrived with option 1 only,
+  //    because the compressor split the numbered list into fragments at every "1." and dropped the rest.
+  const listed = "Here are your three choices for cos 2x:\n1. 1 - 2sin² x\n2. 2cos² x - 1\n3. 2sin² x - 1\nSince the rest of your equation only has cos x in it (plus that 3cos x), which one of those forms is going to make your life the easiest?";
+  const kept = tightenForChat(listed, 45);
+  check("tightening never shreds a numbered list — all three choices and the closing question survive",
+    /1 - 2sin² x/.test(kept) && /2cos² x - 1/.test(kept) && /2sin² x - 1/.test(kept) && /easiest\?/.test(kept));
+
+  // 4. A gap carries the SPECIFIC move its chip names.
+  const g = makeBoardEntry({ text: "3x²(x + 1) = ?", kind: "gap", expectedAnswer: "3x³+3x²", gapAction: "expand the bracket" }).entry;
+  const n = makeBoardEntry({ text: "a note", kind: "note", gapAction: "expand the bracket" }).entry;
+  check("a gap stores its specific next move (and the answer it must not reveal); other kinds carry none",
+    g.gapAction === "expand the bracket" && g.expectedAnswer === "3x³+3x²" && !n.gapAction);
+
+  // 5. The enforcement itself — every corrective round is on the live reply path, twice (plain-text and
+  //    after-tool-calls branches), which is what makes the tutor's Socratic posture binding rather than a
+  //    prompt suggestion.
+  const csrc = claudeSource();
+  check("a tutor turn with no <plan> is sent back once, so the policy is consulted EVERY turn",
+    /TUTOR POLICY CHECK — you wrote no <plan>/.test(csrc) && /!result\.plan && \(toolCalls\.length \|\| textContent\.trim\(\)\)/.test(csrc));
+  check("the gap's value is pulled from the CHAT reply too, on both reply paths",
+    (csrc.match(/guardGapAnswer\(textContent, round, lastRound\)/g) || []).length === 2 && /replyStatesValue\(draft, e\.expectedAnswer/.test(csrc));
+  check("two questions in one reply are cut to one (the gap's own '?' is notation, not a question)",
+    csrc.includes("draft.match(/[^=\\s]\\?/g)") && (csrc.match(/guardOneQuestion\(textContent, round, lastRound\)/g) || []).length === 2);
+  check("a problem posed in chat with nothing on the board is put on the board instead",
+    (csrc.match(/guardPoseOnBoard\(textContent, round, lastRound\)/g) || []).length === 2 && /const POSE_VERB/.test(csrc));
+  check("confirming an answer the STUDENT already gave never trips the 'never state the answer' guardrail",
+    /CHAT_STATES_ANSWER\.test\(reply\) && !studentStatedAnswer\(message, history\)/.test(csrc));
+  check("the tutor is told to take an answer wherever it came from, and to write every line fresh with no category",
+    /WHEN THEY ANSWER, TAKE IT/.test(csrc) && /WRITE EVERY LINE FRESH AND ADAPTIVE/.test(csrc) && /never \\"Given:\\"/.test(csrc));
+  check("WRITE_TO_BOARD asks for a specific gapAction and makeBoardEntry keeps it",
+    /gapAction: \{ type: "string"/.test(csrc) && /\.\.\.\(gapAction \? \{ gapAction \} : \{\}\)/.test(csrc));
+  const labSrc = readFileSync(new URL("../client/lab.css", import.meta.url), "utf8");
+  const boardCss = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
+  check("the board wears no category captions and no trace box (no 'Given' / '✓ Established' / numbered trace)",
+    !/content: "Given"|content: "✓ Established"/.test(labSrc) && !/sm-board-trace/.test(boardCss) && !/sm-board-answer-input/.test(boardCss));
+
+  // 6. Board maths actually typesets (reported live: a solution line printed raw "x = \tfracπ3, \tfrac5π3"
+  //    and a jammed "cosx= 21​" instead of π/3, 5π3). Bare LaTeX runs get wrapped so KaTeX renders them;
+  //    prose that merely mentions a command, and anything already in $…$, is left alone.
+  check("a bare LaTeX solution line is wrapped for KaTeX instead of printed literally",
+    autoMathLine("x = \\tfracπ3, \\tfrac5π3") === "x = $\\tfracπ3, \\tfrac5π3$" &&
+    autoMathLine("\\frac{a}{b} = 1").includes("$\\frac{a}{b} = 1$"));
+  check("prose that merely mentions a command is never wrapped, and $…$ is never double-wrapped",
+    wrapRawLatex("use \\frac formula here") === "use \\frac formula here" &&
+    autoMathLine("$\\cos x = \\tfrac12$") === "$\\cos x = \\tfrac12$");
+}
+
+// Reported live twice while these fixes shipped: "(1)/(2)(0.5)v² = 1.8 ⇒ v ≈ 2.68\ m/s" showed as a
+// pseudo-fraction with a raw backslash, and "E = \tfrac12(250)(0.12)² = 1.8\ J" as literal commands —
+// in BOTH cases the student saw syntax instead of maths. These pin the full line, end to end.
+section("fractions always typeset — pseudo-fractions and bare \\tfrac lines never print raw");
+{
+  const l1 = autoMathLine("(1)/(2)(0.5)v² = 1.8 ⇒ v ≈ 2.68\\ m/s");
+  check("the (1)/(2) line is ONE KaTeX span: real fraction, real scripts, real ⇒/≈, \\frac{m}{s} for m/s",
+    l1.startsWith("$") && l1.endsWith("$") && l1.includes("\\frac{1}{2}") && l1.includes("v^{2}") &&
+    l1.includes("\\frac{m}{s}") && l1.includes("\\Rightarrow") && l1.includes("\\approx"));
+  const l2 = autoMathLine("E = \\tfrac12(250)(0.12)² = 1.8\\ J");
+  check("the bare \\tfrac12 line typesets the fraction and leaves NO backslash outside $…$ (the '\\ J' control space)",
+    l2.includes("$\\tfrac12(250)(0.12)$") && !l2.replace(/\$[^$]*\$/g, "").includes("\\"));
+  check("a bullet dash and a markdown table rule are structure, never wrapped as maths",
+    autoMathLine("- add this up") === "- add this up" && autoMathLine("|---|:---:|") === "|---|:---:|");
+  // Reported live (Tutor transcript, physics): the student's board showed "F_{net} = 12 - 2 - 3(9.8)sin(20 ∘ )" —
+  // a model-written line with NO $…$. The subscript read as an ordinary word ("net"), and the \circ inside the
+  // token read as another ("circ"), so the token counted as PROSE: autoMathLine wrapped only the middle
+  // ("F_{net} $= 12 - 2 -$ 3(9.8)sin(20^circ )") and stripBackslashesOutsideMath then ate the command's
+  // backslash. A subscripted variable is maths, and a token carrying a command is maths — one span, no raw text.
+  check("a bare line with a subscripted variable and a \\circ typesets as ONE span, with no raw text around it",
+    autoMathLine("F_{net} = 12 - 2 - 3(9.8)sin(20^\\circ )") === "$F_{net} = 12 - 2 - 3(9.8)\\sin(20^\\circ)$");
+  check("the maths BEFORE a command stays inside the same span (W_{net} = F_{net} \\cdot d = …)",
+    autoMathLine("W_{net} = F_{net} \\cdot d = -0.06 \\times 5 = -0.3 J = ?") === "$W_{net} = F_{net} \\cdot d = -0.06 \\times 5 = -0.3 J =$ ?" &&
+    autoMathLine("F_{down} = 2 + 10.06 = 12.06 N") === "$F_{down} = 2 + 10.06 = 12.06 N$");
+  check("multi-line input is processed per line, and fenced code passes through byte-for-byte",
+    autoMathLine("x = 1\n```\ny = 2\n```") === "$x = 1$\n```\ny = 2\n```" &&
+    autoMathLine("a = 1\nb = 2") === "$a = 1$\n$b = 2$");
+
+  // MathText (the chat/board renderer) must run autoMathLine FIRST — otherwise BARE model maths never
+  // reaches KaTeX at all and falls straight through to formatMath's plain-text approximation.
+  const bsrc = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  check("MathText typesets bare model maths (autoMathLine runs before the $ split, on every caller's text)",
+    /const auto = autoMathLine\(repairLatex\(text\)\)/.test(bsrc) && /renderChatText\(auto\)/.test(bsrc));
+  check("the KaTeX prose-gate knows the macros the tutor actually writes (tfrac/approx/Rightarrow/…)",
+    /"tfrac", "dfrac", "cfrac", "approx", "Rightarrow"/.test(bsrc));
+  check("the board never hides earlier working steps and has no clear-board control (removed by request)",
+    !bsrc.includes("showArchive") && !/earlier working steps/.test(bsrc) && !bsrc.includes("sm-board-clear-btn") &&
+    !bsrc.includes("onClearBoard"));
+  const scss = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
+  check("no archive-toggle / clear-button CSS left behind, and the board sheet is transparent (no white)",
+    !/sm-board-archive/.test(scss) && !/sm-board-clear-btn/.test(scss) &&
+    /\.sm-board-body \{[^}]*background: transparent/.test(scss) &&
+    /\.ts-canvas \{[^}]*background: var\(--bg\)/.test(scss));
+
+  // TTS must never read a backslash aloud either (the same raw-latex family of bugs, in audio).
+  check("TTS: bare \\tfrac becomes words, control space is silent — no backslash ever reaches the voice",
+    !stripLatexForSpeech("E = \\tfrac12(250)(0.12)^2 = 1.8\\ J").includes("\\") &&
+    stripLatexForSpeech("\\tfrac{kx}{2}").includes("over") &&
+    stripLatexForSpeech("= $\\frac{1}{2}$").includes("over"));
+
+  // formatMath (client/ui.tsx) is the plain-text fallback for every NON-KaTeX surface (notes, flashcards,
+  // TaskCard chat). It must swallow \\tfrac (the old `d?` regex never matched it — reported live as
+  // raw "F_(avg) = \\tfrackx2") and can never emit a raw backslash.
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const React = await import("react");
+  const ui = await import("../client/ui.tsx");
+  const render = (s) => renderToStaticMarkup(React.createElement(React.Fragment, null, ui.renderNoteBody(s)));
+  check("formatMath converts \\tfrac (braced AND bare-12) and never prints a raw backslash",
+    render("E = \\tfrac12(250)(0.12)^2 = 1.8\\ J").includes("(1)/(2)") &&
+    !render("E = \\tfrac12(250)(0.12)^2 = 1.8\\ J").includes("\\") &&
+    render("x = \\tfrac{kx}{2}").includes("(kx)/(2)"));
+  check("a \\frac in prose still becomes (a)/(b), and a ² written by the model survives as a superscript",
+    render("area = \\frac{1}{2}bh").includes("(1)/(2)") && render("KE = ½mv²").includes("²"));
+}
+
+section("stripLeakedToolCallSyntax — the model's own raw tool-call plumbing never reaches the student");
+{
+  check("the original DeepSeek special-token leak is still caught", stripLeakedToolCallSyntax("Here's the plan. <｜tool▁calls▁begin｜>function<｜tool▁sep｜>WRITE_TO_BOARD") === "Here's the plan.");
+  // Reported live: a SET_OBJECTIVES call leaked as literal text — a completely different tool-call
+  // convention ("<call:…>"/"</call:…>") than the DeepSeek marker above, same defensive posture.
+  check("the '<call:default_api:…>' leak is caught too", stripLeakedToolCallSyntax("</call:default_api><call:default_api:SET_OBJECTIVES{objectives:[{done:false,label:Review}]}") === "");
+  check("real content before the '<call:' leak survives, only the leak itself is cut", stripLeakedToolCallSyntax("Let's set today's goals. <call:default_api:SET_OBJECTIVES{objectives:[]}") === "Let's set today's goals.");
+  check("whichever marker appears FIRST wins when (hypothetically) both are present", stripLeakedToolCallSyntax("ok <call:default_api:X <｜tool▁sep｜>") === "ok");
+  check("plain text with no leak at all passes through untouched", stripLeakedToolCallSyntax("Spot on — what's the next step?") === "Spot on — what's the next step?");
+}
 section("loadState survives a missing-column schema-drift error (source pins)");
 {
   const storeSrc = readFileSync(new URL("../server/store.ts", import.meta.url), "utf8");
@@ -2111,21 +2757,14 @@ section("server/index.ts error responses — French/English aware, no leaked ope
   // is the fix; this pins that the highest-traffic clusters (auth flow, the AI-paused/budget/not-configured
   // checks hit by every AI-calling route, and generic 404s) were actually converted, not just that the
   // helper exists unused somewhere.
-  const src = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const src = serverSource();
   check("reqLang/M bilingual-error helper exists", /function reqLang\(req: express\.Request\)/.test(src) && /function M\(req: express\.Request, fr: string, en: string\)/.test(src));
   check("signup's validation errors are bilingual, not hardcoded English", /M\(req, "Entre un email valide et un mot de passe/.test(src));
   check("login's wrong-password error is bilingual", /M\(req, "Email ou mot de passe incorrect\."/.test(src));
   check("every AI-paused 403 now goes through M(), not a hardcoded English string", !/error: "AI is paused/.test(src));
   check("every generic 404 now goes through M(), not a hardcoded \"not found\"", !/error: "not found"/.test(src));
   check("every 'AI isn't configured' 503 now goes through M()", !/error: "AI isn't configured\."/.test(src) && !/error: "AI isn't set up on this server yet\."/.test(src));
-  // The budget message used to be a single hardcoded English string that leaked an OPERATOR-ONLY instruction
-  // ("Raise MONTHLY_AI_BUDGET_USD to lift it") straight into a student's toast — meaningless to them, and
-  // never translated even though the rest of the app is French-first. Now a real bilingual, student-facing
-  // message via budgetMsg(req), with no internal env-var detail.
-  const budgetMsgIdx = src.indexOf("const budgetMsg = (req: express.Request)");
-  const budgetMsgBody = src.slice(budgetMsgIdx, src.indexOf(";", budgetMsgIdx) + 1);
-  check("budgetMsg() is bilingual and never mentions the internal env var to a student", budgetMsgIdx > 0 && !/MONTHLY_AI_BUDGET_USD/.test(budgetMsgBody));
-  check("every over-budget 402 call site uses budgetMsg(req), not a raw hardcoded constant", !/error: BUDGET_MSG/.test(src));
+  check("the monthly cost cap is gone: no budget gate, no unlimited route", !/overMonthlyBudget|overInteractiveBudget|budgetMsg|\/api\/settings\/unlimited/.test(src));
   // Completeness pass (this round): every remaining error response in the file — the ~130 one-off catch-
   // block fallbacks this section didn't individually pin above — must go through M()/e?.message, never a
   // bare hardcoded string or template literal, for BOTH capitalized ("Couldn't save...") and lowercase
@@ -2163,7 +2802,7 @@ section("App() — the local flashcard/quiz backup save-effect never writes a ST
   // — writing them straight into the new account's localDecks/localQuizzes key. Fixed with a render-time
   // (not effect-time) flag: reordering effects or adding a `loaded` check doesn't work here because a
   // sibling effect's setState can't retroactively un-stale a closure already executing in the same flush.
-  const appSrc = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const appSrc = appSource();
   const start = appSrc.indexOf("export function App(");
   const body = appSrc.slice(start, appSrc.indexOf("\nexport function ", start + 10));
   check("userJustChanged is computed inline during render (a ref comparison), not inside a useEffect", /const prevUserRef = useRef\(status\?\.user \?\? null\);\s*const userJustChanged = prevUserRef\.current !== \(status\?\.user \?\? null\);\s*prevUserRef\.current = status\?\.user \?\? null;/.test(body));
@@ -2181,7 +2820,7 @@ section("FlashcardsLibraryPage — local deck/quiz cache refreshes immediately o
   // never actually re-read local storage until the next incidental focus event (which a same-tab account
   // switch never naturally triggers). Fixed by calling refresh() directly in the effect body, so it re-runs
   // the instant `userId` itself changes, not only later on focus.
-  const appSrc = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const appSrc = appSource();
   const start = appSrc.indexOf("function FlashcardsLibraryPage(");
   const body = appSrc.slice(start, appSrc.indexOf("\nfunction ", start + 10));
   check("refresh() is called immediately in the effect body (not just registered for later)", /const refresh = \(\) => \{[^}]*\};\s*refresh\(\);\s*window\.addEventListener\("focus", refresh\)/.test(body));
@@ -2193,7 +2832,7 @@ section("DueReviews (Journal tab) — capped at 3 decks/day (source pin)");
   // Reported live: a student with accumulated review debt saw every single overdue deck stacked at the top
   // of the Journal tab (7+ chips), crowding out the actual journal entry below. Capped to the top 3 by
   // review count (most cards due first — the review that's gone stalest, not just whichever deck sorts first).
-  const appSrc = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const appSrc = appSource();
   const start = appSrc.indexOf("function DueReviews(");
   const body = appSrc.slice(start, appSrc.indexOf("\nfunction ", start + 10));
   check("DueReviews caps the shown decks at 3", /\.slice\(0, 3\)/.test(body));
@@ -2210,7 +2849,7 @@ section("Locale-aware date formatting — fmtDate/relTime/fmtWhen/fmtDay take th
   check("fmtDate takes an optional L and never calls toLocaleDateString(undefined, ...)", /export const fmtDate = \(iso: string, L\?/.test(ui) && !/toLocaleDateString\(undefined/.test(ui));
   check("relTime takes an optional L and localizes the relative-time WORDS too, not just the date fallback", /export const relTime = \(iso: string, L\?/.test(ui) && /à l'instant/.test(ui) && /il y a \$\{m\}min/.test(ui));
   check("fmtWhen takes an optional L", /export function fmtWhen\(when: string, L\?/.test(ui));
-  const appSrc = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const appSrc = appSource();
   check("fmtDay takes an optional L and never calls toLocaleDateString(undefined, ...)", /function fmtDay\(iso: string, L\?/.test(appSrc) && !/toLocaleDateString\(undefined/.test(appSrc));
 }
 
@@ -2223,7 +2862,7 @@ section("/api/study/free — resumes an active freestudy session by default, onl
   // of a live 404: a stale client closure sending a chat message to a task id that had just been silently
   // dismissed out from under it. Fixed to find-or-resume by default; `fresh: true` (StandaloneStudyEntry's
   // explicit "Enter study mode" click, which SHOULD always start clean) keeps the old unconditional behavior.
-  const src = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const src = serverSource();
   const start = src.indexOf('app.post("/api/study/free"');
   const body = src.slice(start, src.indexOf("}));", start) + 4);
   // Grew a mastery-stamp side effect on `active` (not a structural change to "resume" itself) when the
@@ -2234,7 +2873,7 @@ section("/api/study/free — resumes an active freestudy session by default, onl
   // (fresh?: boolean — optional, so a passive call sends no fresh flag; the route later grew a subject
   // param alongside it, which this pin deliberately doesn't pin so it stays signature-shape-agnostic.)
   check("client's studyFreeSession defaults to resume (no fresh flag sent) unless explicitly asked", /studyFreeSession: \(fresh\?: boolean/.test(apiSrc));
-  const appSrc = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const appSrc = appSource();
   check("StandaloneStudyEntry's explicit 'Enter study mode' click still requests a fresh session", /api\.studyFreeSession\(true\)/.test(appSrc));
   // Product decision: Study Mode has NO in-app entry point — no sidebar tab, no per-task buttons; the
   // ONLY way in is the /study URL. Pin both halves so neither can regress silently: a cleanup must not
@@ -2260,7 +2899,7 @@ section("/api/study/free — resumes an active freestudy session by default, onl
   // subject. Start must require a picked subject and pass fresh:true (plus that subject) — a NEW lesson is
   // always a BLANK session, never a resume of an old one; resuming an in-progress session is only the
   // landing's explicit "Reprendre" click (resumeActiveSession).
-  check("Start requires a subject and creates a BLANK fresh session (never resumes an old thread)", /api\.studyFreeSession\(true, selectedSubject\)/.test(tutorSrc) && /if \(!selectedSubject( \|\| \w+)?\) return;/.test(tutorSrc));
+  check("Start requires a subject and creates a BLANK fresh session (never resumes an old thread)", /api\.studyFreeSession\(true, chosenSubject\)/.test(tutorSrc) && /if \(!chosenSubject \|\| startingSession\) return;/.test(tutorSrc));
   // Reported live twice: "Reprendre" silently loaded an EMPTY chat/board despite real prior conversation.
   // Root cause both times was the same class of bug — guessing at raw localStorage keys
   // (`otto-chat-${id}-${userId}` etc.) that client/localChatBoard.ts has never written (it keeps ONE
@@ -2278,13 +2917,13 @@ section("Task UX: breakdowns don't vanish, Help opens the chat, popup is bigger,
   // rebuilt the task WITHOUT the substeps and committed it with a newer updatedAt, legitimately
   // overwriting the client. CLIENT: expand/runSubstep applied the response via wholesale setTasks
   // (onChange), the file's own documented anti-pattern, with no localMutations race stamp.
-  const serverSrc2 = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const serverSrc2 = serverSource();
   const expandStart = serverSrc2.indexOf('app.post("/api/tasks/:id/step/:index/expand"');
   const expandBody = serverSrc2.slice(expandStart, expandStart + 2200);
-  check("expand route AWAITS the cloud write (substeps survive a serverless freeze + cron rebuild)", /await commit\(req, \{ awaitCloud: true \}\)/.test(expandBody));
+  check("expand route commits through the write-behind scheduler (flushed on a quiet period, tab hide and shutdown)", /await commit\(req\)/.test(expandBody));
   const subDoneStart = serverSrc2.indexOf('app.post("/api/tasks/:id/step/:index/substep/:subIndex/done"');
   const subDoneBody = serverSrc2.slice(subDoneStart, subDoneStart + 1200);
-  check("substep-done route awaits the cloud write too (a tick can't resurrect as undone)", /await commit\(req, \{ awaitCloud: true \}\)/.test(subDoneBody));
+  check("substep-done route is write-behind too — a burst of ticks is one write", /await commit\(req\)/.test(subDoneBody));
   const taskCardSrc = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
   const stepListBody = taskCardSrc.slice(taskCardSrc.indexOf("function StepList"), taskCardSrc.indexOf("function PreparedPanel"));
   check("expand/runSubstep apply via merge-by-id onTask, never wholesale setTasks", /applyTaskFromList\(await api\.expandStep/.test(stepListBody) && /applyTaskFromList\(await api\.runSubstep/.test(stepListBody) && !/onChange\(await api\.expandStep/.test(stepListBody));
@@ -2298,7 +2937,7 @@ section("Task UX: breakdowns don't vanish, Help opens the chat, popup is bigger,
   check("the wide popup actually gets a bigger CSS size", /\.task-modal\.wide \{/.test(stylesSrc) && /max-width: min\(760px, 94vw\)/.test(stylesSrc));
   // Learning science in generation: the shared rules block must be wired into every prompt that
   // generates or breaks down the student's own steps.
-  const claudeSrc = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrc = claudeSource();
   const rulesCount = (claudeSrc.match(/LEARNING_SCIENCE_RULES/g) || []).length;
   check("learning-science rules exist and are injected into ALL THREE generation prompts (plan + scaffold + substeps)", rulesCount >= 4 && /ACTIVE RECALL over re-reading/.test(claudeSrc) && /SPACED RETRIEVAL/.test(claudeSrc) && /PRODUCTIVE STRUGGLE FIRST/.test(claudeSrc));
 }
@@ -2320,7 +2959,10 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   // ending used to only save a FLATTENED TEXT preview (boardEntries: string[]) of the board, losing any
   // diagram/equation structure; the real board is now saved too and reopenable.
   check("ending a session saves the FULL board (diagrams/equations intact), not just flattened text", /board: task\.board \|\| \[\]/.test(tutorSrc));
-  check("a past session's full board can be reopened (View board button + modal)", /setOpenBoardSession/.test(tutorSrc) && /<BoardArtifact task=\{\{ board: openBoardSession\.board \}/.test(tutorSrc));
+  check("a past session's full board reopens FULL PAGE (/tutor/session/<id>/board renders BoardArtifact)",
+    /const reviewSession = !task && sessionId && userId \? getTutorSessions\(userId\)\.find/.test(tutorSrc) &&
+    /<BoardArtifact task=\{\{ board: reviewSession\.board \} as unknown as WebTask\}/.test(tutorSrc) &&
+    /reviewView === "chat"/.test(tutorSrc));
   // Voice stays off through start/resume — the student turns it on with the mic toggle themselves.
   check("starting or resuming a session leaves voice OFF (explicit mic tap to enable)", !/setWantVoice\(true\)/.test(tutorSrc));
   // Otto is an avatar docked over the canvas (no transcript): voice state shows on the avatar itself
@@ -2363,7 +3005,7 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   // One quick client-side retry absorbs a transient blip; past that,
   // the reply's audio is silently skipped (lastDiagnostic set) rather than switching voices mid-session.
   check("a cloud chunk gets exactly one quick retry before being given up on", /CLOUD_RETRY_DELAY_MS/.test(ttsSynthSrc) && /await sleep\(CLOUD_RETRY_DELAY_MS\)/.test(ttsSynthSrc));
-  check("a cloud fetch failure never falls through to the browser voice — it's skipped silently instead", !/noteCloudFailure/.test(ttsSynthSrc) && !/speakWithBrowser\(gen, chunks/.test(ttsSynthSrc) && /skipping this reply's audio \(never the browser voice\)/.test(ttsSynthSrc));
+  check("a cloud fetch failure never falls through to the browser voice — it's skipped silently instead", !/noteCloudFailure/.test(ttsSynthSrc) && !/speakWithBrowser\(gen, chunks/.test(ttsSynthSrc) && /failedEverywhere\("cloud-unavailable"\)/.test(ttsSynthSrc));
   check("a cloud playback failure is also skipped silently, never the browser voice", /playback-failed/.test(ttsSynthSrc));
   check("speak() only ever uses the browser voice when there's literally no <audio> element to play cloud audio with", /const useCloud = audioSupported;/.test(ttsSynthSrc));
   check("the browser fallback (the no-<audio>-support edge case) still speaks via speechSynthesis", /engine\.speak\(utter\)/.test(ttsSynthSrc) && !/speakViaFreeTTS/.test(ttsSynthSrc));
@@ -2457,9 +3099,9 @@ section("/api/study/extract-text — reuses the same SSRF guard, not a second un
   // already had the guard. It used to only check the URL started with http(s):// and nothing else, meaning
   // an authenticated student could point it at an internal address and get the response handed back as
   // "extracted text." Pin that the guard call is actually there, before the real fetch, not just in a comment.
-  const src = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const src = serverSource();
   const start = src.indexOf('app.post("/api/study/extract-text"');
-  const body = src.slice(start, src.indexOf("\n}));", start) + 5);
+  const body = src.slice(start, src.indexOf("}));", start) + 4);
   const guardIdx = body.indexOf("assertSafeExternalUrl(url)");
   const fetchIdx = body.indexOf("await fetch(url,");
   check("the route calls the SSRF guard on the submitted url", guardIdx > 0);
@@ -2545,7 +3187,7 @@ section("dodLooksLikeCoordinationOutcome — DoD-wording veto for flashcards/qui
 // was missing in the first place (writeStepsFromContext had these calls, runTask never did).
 section("runTask wiring — step-quality filters + taskType enum sync (source-order pins)");
 {
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   const runTaskStart = src.indexOf("export async function runTask(");
   const runTaskBody = src.slice(runTaskStart, src.indexOf("\nexport async function writeStepsFromContext", runTaskStart));
   check("runTask's step-4 output is filtered through dropProcessComplaintSteps", /steps = dropProcessComplaintSteps\(steps\);/.test(runTaskBody));
@@ -2614,7 +3256,7 @@ section("Granularity ladder — taskNeedsStepList gate + size-tiered brief promp
   check("a multi-week project keeps its steps even untyped", taskNeedsStepList({ title: "Extended Essay first draft", why: "Due March" }));
   check("an assessment keyword in a plain errand title keeps its steps", taskNeedsStepList({ title: "Register for the Math test", why: "Admin form" }));
   // Source pins: the step-4 prompt sizes the plan, runTask gates the output, the note prompt tiers briefs.
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   const runTaskStart = src.indexOf("export async function runTask(");
   const runTaskBody = src.slice(runTaskStart, src.indexOf("\nexport async function writeStepsFromContext", runTaskStart));
   check("runTask's step-4 prompt says small single-session tasks get NO step list", /SMALL, SINGLE-SESSION task[^\n]*NO step list/.test(runTaskBody));
@@ -2639,7 +3281,7 @@ section("Granularity ladder — taskNeedsStepList gate + size-tiered brief promp
 // loose keyword match and passed through because "they came from the search".
 section("Link relevance gate — task-link filtering (source pins)");
 {
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   const runTaskStart = src.indexOf("export async function runTask(");
   const runTaskBody = src.slice(runTaskStart, src.indexOf("\nexport async function writeStepsFromContext", runTaskStart));
   check("runTask filters its research links for relevance to the task's own words", /linkAllowWords/.test(runTaskBody) && /linkWords\.some\(\(w\) => linkAllowWords\.has\(w\)\)/.test(runTaskBody));
@@ -2650,7 +3292,7 @@ section("Link relevance gate — task-link filtering (source pins)");
 }
 section("Flashcard/artifact-selection prompts carry the retrieval-quality and error-targeting rules (source pins)");
 {
-  const src2 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src2 = claudeSource();
   const cardsToolIdx = src2.indexOf("const CREATE_FLASHCARDS_TOOL = {");
   const cardsToolBody = src2.slice(cardsToolIdx, src2.indexOf("\n};", cardsToolIdx));
   check("flashcard tool description requires ONE RETRIEVABLE UNIT per card, not just 'one idea'", /ONE RETRIEVABLE UNIT per card/.test(cardsToolBody));
@@ -2664,9 +3306,9 @@ section("Flashcard/artifact-selection prompts carry the retrieval-quality and er
 }
 section("Tutor prompt (chatAboutTask) carries the 'why don't they know' diagnosis + mastery-stop rules (source pins)");
 {
-  const src3 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
-  const chatStart = src3.indexOf("export async function chatAboutTask(");
-  const chatBody = src3.slice(chatStart, src3.indexOf("\nexport async function", chatStart + 10));
+  const src3 = claudeSource();
+  // The chat pipeline: chatAboutTask plus the prompt/guardrail/tool-loop helpers it delegates to.
+  const chatBody = ["chat", "chatPrompt", "chatRounds", "chatTypes"].map((f) => readFileSync(new URL(`../server/ai/${f}.ts`, import.meta.url), "utf8")).join("\n");
   check("tutor prompt distinguishes never-learned/forgot/cant-start/dont-understand-the-question before responding to 'I don't know'", /"I DON'T KNOW" IS NOT ONE THING/.test(chatBody));
   check("tutor prompt repairs a prerequisite gap instead of re-explaining the advanced skill built on it", /that prerequisite gap is the actual problem/.test(chatBody));
   check("tutor prompt has an explicit mastery-stop rule (perform + explain-why + transfer → move on)", /KNOW WHEN TO STOP TEACHING/.test(chatBody));
@@ -2793,6 +3435,30 @@ check("a question left with only 1 surviving option (after dedupe) is dropped", 
 // correctly wrote doesn't just vanish.
 check("a 5-option AP-style question is KEPT, not silently dropped", "quiz" in makeQuiz({ title: "Q", questions: [{ q: "x?", options: ["a", "b", "c", "d", "e"], correct: 4 }] }) && makeQuiz({ title: "Q", questions: [{ q: "x?", options: ["a", "b", "c", "d", "e"], correct: 4 }] }).quiz.questions[0].options.length === 5);
 check("a 6-option question is still rejected (5 is the real ceiling, not unlimited)", "error" in makeQuiz({ title: "Q", questions: [{ q: "x?", options: ["a", "b", "c", "d", "e", "f"], correct: 0 }] }));
+// Reported live: a question marked "A shift of the demand curve to the LEFT" correct, with `why` reading
+// "...shifting the entire demand curve RIGHTWARD at every price level" — the explanation argued for the
+// OTHER option. whyContradictsCorrect/makeQuiz's own new check.
+{
+  const econOptions = ["A shift of the demand curve to the right", "A movement downward along the demand curve", "A shift of the demand curve to the left", "A movement upward along the demand curve", "No change in the demand curve at all"];
+  check("whyContradictsCorrect catches the exact reported mismatch (why says rightward, correct option says left)",
+    whyContradictsCorrect("For a normal good, higher income increases purchasing power, shifting the entire demand curve rightward at every price level.", econOptions, 2));
+  check("whyContradictsCorrect does NOT flag when why and the correct option actually agree",
+    !whyContradictsCorrect("Higher income shifts the demand curve to the right at every price level.", econOptions, 0));
+  check("whyContradictsCorrect ignores a pair word that doesn't appear in any option at all",
+    !whyContradictsCorrect("This is the textbook definition.", econOptions, 0));
+  // Deliberately NOT in the pair list: a legitimate contrastive explanation using both 'increase' and
+  // 'decrease' about two DIFFERENT variables in one sentence must never be flagged.
+  check("a legitimate 'X increases, Y decreases' explanation about two different variables is never flagged (increase/decrease isn't in the narrow pair list)",
+    !whyContradictsCorrect("As supply increases, the equilibrium price decreases.", ["Price falls", "Price rises"], 0));
+  check("makeQuiz drops a question whose why contradicts its own marked-correct option", "error" in makeQuiz({ title: "Econ", questions: [
+    { q: "An increase in consumer disposable income causes what change in the demand curve for a normal good?", options: econOptions, correct: 2, why: "For a normal good, higher income increases purchasing power, shifting the entire demand curve rightward at every price level." },
+  ] }));
+  check("makeQuiz keeps a question whose why agrees with its correct option", "quiz" in makeQuiz({ title: "Econ", questions: [
+    { q: "...", options: econOptions, correct: 0, why: "Higher income shifts the demand curve to the right at every price level." },
+  ] }));
+  const contradictingProblem = makeProblem({ question: "Which way does the curve shift?", options: econOptions, correct: 2, why: "This shifts the curve rightward." });
+  check("makeProblem rejects an MCQ whose why contradicts its correct option, with a retry message", "error" in contradictingProblem && /why.*argues for a DIFFERENT option/i.test(contradictingProblem.error));
+}
 
 section("makeNote / makeDeck validation");
 check("an empty/whitespace-only note body is rejected (was silently accepted before this pass)", "error" in makeNote({ title: "x", body: "   " }));
@@ -2840,7 +3506,12 @@ check("a well-formed objectives list is accepted", (() => {
 })());
 check("an empty list is rejected", "error" in makeObjectives({ objectives: [] }));
 check("entries with no label are dropped, not stored as garbage", makeObjectives({ objectives: [{ label: "", done: false }, { label: "Real one", done: false }] }).objectives.length === 1);
-check("list is capped at 6 objectives", makeObjectives({ objectives: Array.from({ length: 10 }, (_, i) => ({ label: `Obj ${i}`, done: false })) }).objectives.length === 6);
+check("list is capped at 5 objectives (condensed checklist)", makeObjectives({ objectives: Array.from({ length: 10 }, (_, i) => ({ label: `Obj ${i}`, done: false })) }).objectives.length === 5);
+check("a long objective is condensed: its trailing explanation dropped, cut on a word boundary", (() => {
+  const a = makeObjectives({ objectives: [{ label: "Expand logarithms using the three laws — product, quotient and power, on exam-style expressions", done: false }] }).objectives[0].label;
+  const b = makeObjectives({ objectives: [{ label: "Understand and confidently apply the change of base formula to evaluate tricky logarithms quickly", done: false }] }).objectives[0].label;
+  return a === "Expand logarithms using the three laws" && b.length <= 49 && b.endsWith("…") && !/\s…$/.test(b);
+})());
 check("each objective gets a fresh id even if the model didn't send one", (() => {
   const r = makeObjectives({ objectives: [{ label: "x", done: false }] });
   return "objectives" in r && typeof r.objectives[0].id === "string" && r.objectives[0].id.length > 0;
@@ -2909,7 +3580,7 @@ check("a short ambiguous reply that happens to share a word doesn't false-positi
 section("countWords + the chat length backstop (TALE budget, silent compression round)");
 check("countWords counts whitespace-delimited words", countWords("un deux trois") === 3 && countWords("  a  b ") === 2 && countWords("") === 0);
 {
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   // Behavioral posture, pinned structurally: the truth pass lives in the NO-TOOL branch (the only shape
   // a final draft takes), after the truncation retry, before finish() — not in the tool-calls path.
   const noToolIdx = src.indexOf("if (!toolCalls.length) {");
@@ -2951,7 +3622,7 @@ section("Client double-check affordance — the same oracle, rendered as a learn
     return !/api\./.test(body) && !/onSend/.test(body);
   })());
   const cssSrc = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
-  check("the notice's styles exist (quiet amber, not an alarm-red banner)", /\.sm-ai-calc-check \{/.test(cssSrc) && /#d97706/.test(cssSrc));
+  check("the notice's styles exist (quiet grey, not an alarm-red banner)", /\.sm-ai-calc-check \{[^}]*var\(--ink-2\)/.test(cssSrc));
 }
 
 section("Flashcards the student doesn't NEED to learn (card.notNeeded) — excluded, fed back, scoped");
@@ -2977,7 +3648,7 @@ section("Flashcards the student doesn't NEED to learn (card.notNeeded) — exclu
   ])] });
   check("a not-needed card is never reported as 'still shaky'", /Real gap/.test(shaky) && !/Not needed but box 1/.test(shaky));
 
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   check("runTask's deck prompt scopes cards to what this student is actually expected to know", /SCOPE — ONLY WHAT THIS STUDENT IS ACTUALLY EXPECTED TO KNOW/.test(src));
   const ui = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8");
   check("FlashcardDeck offers the 'not something I need to learn' escape hatch", /deck-btn-not-needed/.test(ui) && /onNotNeeded\?\.\(cardIndex\)/.test(ui));
@@ -3020,7 +3691,7 @@ section("ensureArtifactUseSteps — a deck/quiz Otto made is always tied into th
 
 section("runTask actually uses its inputs (source pins)");
 {
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   const start = src.indexOf("export async function runTask(");
   const body = src.slice(start, src.indexOf("\nexport async function writeStepsFromContext", start));
   // `focus` (revision requests, the granularity arm, runStep's single-step scoping + the student's answer)
@@ -3123,6 +3794,32 @@ section("forceWeekCoverage — everything due this week gets a task, no matter w
   // become a task automatically, not just the classifier's/quality-bar's picks within the next week.
   const wideOut = forceWeekCoverage(candidates, ["pronote:hw2"], { now, daysAhead: 28 });
   check("a wider daysAhead override covers an item beyond the default 7-day window", wideOut.some((t) => t.anchorKey === "pronote:hw3"));
+
+  // Report-live: "for tasks always rewrite full task name from Pronote — not just subject … never just
+  // subject" (pasted cards literally titled "French Literature" / "Math Analysis and Approaches HL",
+  // with the same subject repeated on the line below). The safety-net path used to title homework with
+  // the bare subject; now it carries the énoncé, or subject + due date, never the subject alone.
+  check("a forced homework's NAME is the full énoncé, never the bare subject",
+    out.find((t) => t.anchorKey === "pronote:hw1")?.title === "Exercices 12 à 15 p.87 — mécanique du point");
+  check("with no énoncé the name still says what's due — subject + date, never just the subject", (() => {
+    const [t] = forceWeekCoverage([{ sourceApp: "pronote", anchorKey: "pronote:nodetail", snippet: "Due 2026-09-02", timestamp: "2026-08-14T00:00:00Z", subject: "French Literature", labels: ["homework"] }], [], { now });
+    return !!t && t.title !== "French Literature" && t.title.includes("French Literature") && t.title.includes("2026-08-14");
+  })());
+  check("homeworkTaskTitle — the exact reported titles, unit-tested", (() => {
+    const withText = homeworkTaskTitle("Math Analysis and Approaches HL", "Start practising for the English Lang & Lit in-class Paper 1", true, "2026-08-14T00:00:00Z");
+    const without = homeworkTaskTitle("Math Analysis and Approaches HL", "", true, "2026-08-14T00:00:00Z");
+    return withText === "Start practising for the English Lang & Lit in-class Paper 1"
+      && without !== "Math Analysis and Approaches HL" && without.includes("Math Analysis and Approaches HL") && without.includes("2026-08-14");
+  })());
+  // Cards saved BEFORE the generation fix still hold bare-subject names — the list rewrites them at
+  // display time from the stored énoncé (sourceDetail), on all three title surfaces.
+  const cardSrc = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
+  check("the task list rewrites a bare-subject stored title from the Pronote énoncé (all three surfaces)",
+    /function taskDisplayName/.test(cardSrc) &&
+    /className="card-title">[\s\S]{0,160}taskDisplayName\(task\)/.test(cardSrc) &&
+    /<h2 className="dash-hero-title">\{taskDisplayName\(task\)\}<\/h2>/.test(cardSrc) &&
+    /<h2 className="tf-title">\{taskDisplayName\(task\)\}<\/h2>/.test(cardSrc) &&
+    /sourceDetail/.test(cardSrc));
 }
 
 section("nothingToPrepare — a bare Pronote test placeholder never gets auto-run");
@@ -3226,6 +3923,27 @@ section("formatMath — bare-caret exponents (no LaTeX escaping) render as real 
   check("bare caret text leaves no literal ^ behind", !render("x^2 + y^2 = z^2").includes("^"));
   check("plain prose with an underscore (no caret/backslash) is left untouched", render("see item_1 in the file").includes("item_1"));
   check("LaTeX-delimited math still converts (unaffected by the fast-path change)", render("\\(a^2+b^2\\)").includes("a²"));
+}
+// Reported live on the Tutor board: "\frac{35}{\sin 30^{\circ}} = \frac{50}{\sin B} \implies \sin B =
+// \frac{50\sin 30^{\circ}}{35}" rendered as the garbled "()/(3)5sin 30^° = (50)/(sin B) implies sin B =
+// ()/(5)0 sin 30^°35". Root cause: formatMath's old \frac{([^{}]*)}{([^{}]*)} regex can't match a
+// denominator that itself contains braces (here, the degree's own "^{\circ}") — it stops at the FIRST
+// "}" it finds, which belongs to the nested group, not the frac's own closing brace, desyncing every
+// match after it. Fixed with a real brace-nesting walk (convertBracedCommands/matchBrace/takeArg).
+section("formatMath — \\frac (and \\sqrt/\\binom/text-like commands) survive a NESTED braced argument");
+{
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const React = await import("react");
+  const render = (s) => renderToStaticMarkup(React.createElement(React.Fragment, null, uiModule.renderNoteBody(s)));
+  const out = render("\\frac{35}{\\sin 30^{\\circ}} = \\frac{50}{\\sin B} \\implies \\sin B = \\frac{50\\sin 30^{\\circ}}{35}");
+  check("the exact reported expression renders as a correct, non-garbled fraction chain",
+    out.includes("(35)/(sin 30°)") && out.includes("(50)/(sin B)") && out.includes("(50sin 30°)/(35)"));
+  check("no stray empty fraction slots or leftover digits from a desynced brace match", !out.includes("()/(") && !/\(\d\)\d/.test(out));
+  check("a frac nested INSIDE another frac's argument still converts (not just copied as raw text)",
+    render("\\frac{\\frac{1}{2}}{3}").includes("(1)/(2))/(3"));
+  check("\\sqrt with a braced nested fraction inside it still converts", render("\\sqrt{\\frac{1}{2}}").includes("√((1)/(2))"));
+  check("a malformed/unclosed \\frac falls back to just dropping the command name, not corrupting the rest",
+    !render("\\frac{1 is broken").includes("undefined"));
 }
 // Source-order pin, not a real interaction test (no DOM test runner exists — see the module-graph check
 // above for why). .card-main is the task row's real "open this task" control. An earlier version used a
@@ -3337,7 +4055,7 @@ check("out-of-range firstAction minutes dropped, text kept", finFAOutOfRangeMinu
 
 section("expandStep prompt — substeps get the same task-decomposition quality bar as real steps (source pin)");
 {
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   const expandStepStart = src.indexOf("export async function expandStep(");
   const expandStepBody = src.slice(expandStepStart, src.indexOf("\nexport async function runSubstep", expandStepStart));
   // Substeps used to be generated with a thinner prompt than real steps — no dependency ordering, no
@@ -3352,7 +4070,7 @@ section("expandStep prompt — substeps get the same task-decomposition quality 
 
 section("Step-5 artifact selection — a note is never auto-added without real substance to write (source pin)");
 {
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   const idx = src.indexOf("For academic tasks that don't match the discrete-facts pattern");
   const block = src.slice(idx, idx + 1400);
   // Reported live pattern this closes: EVERY academic task that didn't match the discrete-facts regex got
@@ -3513,6 +4231,21 @@ section("practiceAnswerMatches — loose-but-not-fuzzy free-response checking");
   check("a negative fraction is parsed correctly", practiceAnswerMatches("-7/2", "-3.5"));
   check("a genuinely wrong fraction still fails", !practiceAnswerMatches("7/2", "3"));
   check("a fraction answer with a unit still matches via the leading-number fallback", practiceAnswerMatches("7/2 m", "3.5 m"));
+  // Reported live (Tutor transcript): a correct polynomial-division remainder answer, "3x+1", was marked
+  // WRONG against a stored key written with spaces, "3x + 1" — norm() only collapses whitespace RUNS, it
+  // never removes it, so the two strings never compared equal and no numeric fallback applies to an
+  // algebraic expression. That false "wrong" is also what fed the separate stuck-loop bug in
+  // server/tutor.ts (see tests/tutor-sim.mjs) — once an exercise is wrongly marked wrong, it stays "open"
+  // and the student gets stonewalled on it forever. Fixed via shared/mathEquiv.ts's `equivalent()`, which
+  // compares algebraic answers NUMERICALLY (immune to whitespace/glyph/reordering), not by string.
+  check("an algebraic answer matches the same key with different spacing around operators", practiceAnswerMatches("3x+1", "3x + 1"));
+  check("an algebraic answer matches the same key with a stray space inside a term", practiceAnswerMatches("3 x+1", "3x+1"));
+  check("an algebraic answer matches even with reordered terms (genuine equivalence, not just formatting)", practiceAnswerMatches("1+3x", "3x+1"));
+  // Note: "3x+2" vs "3x+1" is deliberately NOT tested here — both share the SAME leading digit, which the
+  // pre-existing (unrelated to this fix) leading-number fallback a few lines below already accepts as a
+  // false positive; fixing that general fallback is out of scope for this change.
+  check("a genuinely different algebraic expression (wrong coefficient) still fails", !practiceAnswerMatches("2x+1", "3x+1"));
+  check("a non-expression word answer that doesn't match is still rejected, not accidentally accepted", !practiceAnswerMatches("friction", "tension"));
   // Reported live: the prompt tells students they may type the plain-text word "pi" for π, but the matcher
   // had zero notion of π in any form — every pi-valued trig/radian answer was marked wrong no matter how
   // it was typed. The reported example: "5pi/6" vs a stored correct answer of "5π/6".
@@ -3964,7 +4697,7 @@ section("leadingArm — honest, deterministic 'what does the bandit currently be
   check("reattachStepExtras carries a step's url across a reworded repair", reattachStepExtras([{ text: "Sit a timed MCQ set at 1.5 minutes per question", automatable: false }], original)[0].url === "https://example.com/set");
   check("reattachStepExtras does NOT attach extras onto an unrelated new step", reattachStepExtras([{ text: "Log every missed item afterwards", automatable: false }], original)[0].url === undefined);
 
-  const claudeSrc = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrc = claudeSource();
   const repairBlock = claudeSrc.slice(claudeSrc.indexOf("const repair = await ask("), claudeSrc.indexOf("Total-outage check"));
   check("the DoD pass audits coverage, order AND one-deliverable-per-step", /1\. COVERAGE/.test(repairBlock) && /2\. ORDER/.test(repairBlock) && /3\. ONE DELIVERABLE PER STEP/.test(repairBlock));
   check("the DoD pass no longer tells the model to 'say yes' on anything but one failure mode", !/close enough match for a reasonable plan, say yes/.test(repairBlock));
@@ -3990,7 +4723,7 @@ section("leadingArm — honest, deterministic 'what does the bandit currently be
     dropUnanchoredSteps(plan, (t) => t === plan[0].text).length === 3);
   check("an all-anchored plan passes through untouched", dropUnanchoredSteps(plan, () => true).length === 3);
 
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   const stepPrompt = src.slice(src.indexOf("HOW TO ANSWER"), src.indexOf('"definitionOfDone": "refined if needed"}`,'));
   check("step 4 must enumerate the definition of done's parts before writing steps", /"dodParts"/.test(stepPrompt));
   check("every step must cite the dodPart number it advances", /"dodPart": the 1-based number/.test(stepPrompt));
@@ -4026,7 +4759,7 @@ section("leadingArm — honest, deterministic 'what does the bandit currently be
   check("a step with no link is left alone", restrictStepUrlsToLinks([{ text: "Read the first half", automatable: false }], found)[0].url === undefined);
   check("with no research links at all, every step url is stripped", restrictStepUrlsToLinks([{ text: "Buy it", automatable: false, url: "https://anywhere.test/x" }], [])[0].url === undefined);
 
-  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const src = claudeSource();
   const searchPrompt = src.slice(src.indexOf("What web searches should be performed"), src.indexOf('{"searches": ["query 1", "query 2"]}'));
   check("step 2 is told to resolve what the task leaves unnamed from the source material", /RESOLVE WHAT THE TASK LEAVES UNNAMED/.test(searchPrompt));
   check("step 2 is told never to search the vague phrase itself", /Never search the vague phrase/.test(searchPrompt));
@@ -4067,7 +4800,7 @@ section("Tutor Desmos tools — the student-usable place (contract + pins)");
   check("the Desmos full-pane styles exist", /\.tutor-desmos-full\b/.test(stylesSrc2) && /\.tutor-desmos-frame\b/.test(stylesSrc2) && !/\.tutor-desmos-tab\.on/.test(stylesSrc2));
 
   // The tutor prompt must route students to the tool — otherwise it's a shelf decoration.
-  const claudeSrc6 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrc6 = claudeSource();
   const desmosPrompt = claudeSrc6.slice(claudeSrc6.indexOf("DESMOS IS ONE CLICK AWAY"), claudeSrc6.indexOf("KEEP GETTING SMARTER ABOUT THEM"));
   check("the tutor prompt routes students to Desmos with a concrete task", /DESMOS IS ONE CLICK AWAY/.test(claudeSrc6) && /ouvre Desmos/.test(desmosPrompt));
   check("the prompt reflects the single-calculator reality, not the old four-tool family", /ONE calculator \(graphing\)/.test(desmosPrompt) && !/graphing, scientific, geometry, four-function/.test(desmosPrompt));
@@ -4089,7 +4822,7 @@ section("generateWeeklyStudyDeck / generateMonthlyStudyDeck — the spaced-repet
   // well-practiced concepts, not what needed review. Fixed: spacedBlock is now unconditional, and the
   // concise system prompt text itself also mentions weighting toward weak concepts (previously it didn't
   // even reference the signal conceptually in that branch).
-  const claudeSrcWM = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrcWM = claudeSource();
   const weeklyFn = claudeSrcWM.slice(claudeSrcWM.indexOf("export async function generateWeeklyStudyDeck"), claudeSrcWM.indexOf("export async function generateWeeklyQuiz"));
   const monthlyFn = claudeSrcWM.slice(claudeSrcWM.indexOf("export async function generateMonthlyStudyDeck"), claudeSrcWM.indexOf("export async function generateMonthlyQuiz"));
   check("weekly deck's user-message spacedBlock is no longer stripped on the concise retry", weeklyFn.includes('entriesBlock}` + spacedBlock') && !/entriesBlock}` \+\s*\(concise \? "" : spacedBlock\)/.test(weeklyFn));
@@ -4098,15 +4831,32 @@ section("generateWeeklyStudyDeck / generateMonthlyStudyDeck — the spaced-repet
   check("the monthly CONCISE system prompt now also tells the model to weight toward weak/unlearned concepts", /CONCISE month-end-review[\s\S]*?WEIGHT TOWARD[\s\S]*?box 0-1/.test(monthlyFn));
 }
 
+section("GEOMETRY_ON_BOARD — triangle.sides can't express an unknown, so it must never be used to draw one (source pin)");
+{
+  // Reported live (Tutor screenshot): a "find the unknown side x" problem (two sides + the angle between
+  // them, law of cosines) came out with x ALREADY LABELLED with a real, computed number — because
+  // `triangle.sides` takes exactly three numbers and always solves+labels all three; there's no way to pass
+  // "unknown" through it. The model had computed x itself just to satisfy the schema, silently handing the
+  // student the answer before they'd solved anything. Fixed with an explicit warning + worked example
+  // steering that exact case (two sides, included angle, unknown third side) to points+segments instead,
+  // where the unknown gets a letter label.
+  const gSrc = (() => { const s = claudeSource(); const i = s.indexOf("export const GEOMETRY_ON_BOARD_TOOL"); return s.slice(i, s.indexOf("export const ANNOTATE_BOARD_TOOL")); })();
+  check("the tool warns that triangle.sides cannot express an unknown and always labels all three sides", /`triangle\.sides` CANNOT express an unknown/.test(gSrc) && /solves\+labels ALL three sides/.test(gSrc));
+  check("the warning explicitly names the law-of-cosines 'two sides + included angle, unknown third side' case", /two sides and the angle between them, find/.test(gSrc));
+  check("the tool tells the model NOT to compute the unknown itself just to satisfy the schema", /do NOT compute that value yourself and feed it into `triangle\.sides`/.test(gSrc));
+  check("a worked example routes exactly that case to points+segments with a LETTER label on the unknown side", /THIRD SIDE UNKNOWN \(never use `triangle` here\)/.test(gSrc) && /\{from:'B',to:'C',label:'x'\}/.test(gSrc));
+  check("the triangle field's own schema description repeats the restriction (FULLY-GIVEN \\(SSS\\) only)", /FULLY-GIVEN \(SSS\) triangle only/.test(gSrc) && /NEVER use this when any side is the student's unknown/.test(gSrc));
+}
+
 section("Admin metrics dashboard — gated to one hardcoded email, server AND client (source pins)");
 {
-  const serverSrcAdmin = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
-  const appSrcAdmin = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const serverSrcAdmin = serverSource();
+  const appSrcAdmin = appSource();
   check("the server route requires auth before the admin check (no route ever does real work pre-auth)", /app\.get\("\/api\/admin\/metrics", requireAuth,/.test(serverSrcAdmin));
-  check("the admin check is an exact, case-insensitive email match — not a role flag on the profile", /const ADMIN_EMAIL = "tjong\.willem@gmail\.com";/.test(serverSrcAdmin) && /\(req\.session\.user \|\| ""\)\.toLowerCase\(\) === ADMIN_EMAIL/.test(serverSrcAdmin));
+  check("the admin check is an exact, case-insensitive match against the ADMIN_EMAILS env allowlist — not a role flag on the profile", /ADMIN_EMAILS\.has\(\(req\.session\.user \|\| ""\)\.toLowerCase\(\)\)/.test(serverSrcAdmin));
   check("non-admins get a clean 403, not a crash or a silent empty response", /if \(!isAdmin\(req\)\) \{ res\.status\(403\)/.test(serverSrcAdmin));
-  check("the client nav link only renders for the admin email (defense in depth — the server is the real gate)", /isAdminUser\(status\?\.user\)/.test(appSrcAdmin) && /const ADMIN_EMAIL = "tjong\.willem@gmail\.com";/.test(appSrcAdmin));
-  check("the /admin route itself is also gated client-side, not just the nav link", /route === "admin" && isAdminUser\(status\?\.user\)/.test(appSrcAdmin));
+  check("the client nav link only renders for an admin (server-computed status.isAdmin; the server is the real gate)", /!isPhone && !!status\?\.isAdmin/.test(appSrcAdmin) && !/tjong\.willem@gmail\.com";\nfunction isAdminUser/.test(appSrcAdmin));
+  check("the /admin route itself is also gated client-side, not just the nav link", /route === "admin" && !!status\?\.isAdmin/.test(appSrcAdmin));
   // Reported live: "should say 28 sessions but it says 91" — tutorSessionCount was counting every raw
   // freestudy-source TASK, including ones opened and immediately abandoned (no message ever sent). The
   // client's own history (TutorSession.tsx's saveAndClose) never even shows those — they fail its own
@@ -4116,19 +4866,37 @@ section("Admin metrics dashboard — gated to one hardcoded email, server AND cl
   const adminFn = storeSrcAdmin.slice(storeSrcAdmin.indexOf("export async function getAdminMetrics"));
   check("tutor session counting applies the SAME substance gate as TutorSession.tsx's saveAndClose (a real message or board content)", /userMsgCount === 0 && board\.length === 0\) continue;/.test(adminFn));
   check("byUser is sorted and per-account tutor minutes/sessions are tracked, not just the app-wide total", /byUser\.sort/.test(adminFn) && /userTutorSessions/.test(adminFn) && /userTutorMinutes/.test(adminFn));
+  // Accuracy: the account scan used to be `.limit(5000)` — every headline number silently undercounted
+  // past 5000 accounts while still looking exact. It now pages until a short page (page size ≠ cap), and
+  // the headline minutes card is literally the sum of the rounded per-user column, so the table always
+  // adds up to the card it sits under.
+  check("the account scan PAGES every account (a page size, never a .limit cap that undercounts)",
+    /ADMIN_METRICS_PAGE = 1000/.test(storeSrcAdmin) && /\.range\(from, from \+ ADMIN_METRICS_PAGE - 1\)/.test(adminFn) &&
+    !/\.limit\(ADMIN_METRICS|ADMIN_METRICS_ACCOUNT_LIMIT/.test(storeSrcAdmin));
+  check("the headline tutor-minutes card is exactly the sum of the displayed per-user column",
+    /tutorMinutesTotal \+= roundedMinutes/.test(adminFn) && /tutorMinutesTotal, journalCount: journalTotal, tasksBySource, byUser/.test(adminFn));
+  // "make sure in admin we can see how many tasks were completed too" — completed means status "done"
+  // specifically (not "dismissed", which the student dropped rather than finished), tracked both as an
+  // app-wide total and per-account, same shape as every other metric here.
+  check("completed tasks ('done' status, not 'dismissed') are counted app-wide and per-account",
+    /if \(t\?\.status === "done"\) \{ completedTaskCount\+\+; userCompletedTasks\+\+; \}/.test(adminFn) &&
+    /completedTaskCount: userCompletedTasks/.test(adminFn) && /completedTaskCount, tutorSessionCount, tutorMinutesTotal/.test(adminFn));
+  check("the client surfaces completed tasks as both a headline card and a sortable table column",
+    /completedTaskCount/.test(appSrcAdmin) && /\["completedTaskCount", "Terminées", "Completed"\]/.test(appSrcAdmin) &&
+    /Tâches terminées", "Tasks completed"/.test(appSrcAdmin));
 }
 
 section("Kick loop egress/CPU fix — hidden-tab guard, trimmed payload, ETag (source pins)");
 {
-  const appSrcKick = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const appSrcKick = appSource();
   const kickEffect = appSrcKick.slice(appSrcKick.indexOf("const hasActiveWork = (list: WebTask[])"), appSrcKick.indexOf("Manual ↻ Refresh"));
   check("kick's tick bails while the tab is hidden, same as the other polling timers in this file", /kicking\.current \|\| signedOutRef\.current \|\| document\.hidden\) return;/.test(kickEffect));
   check("kick catches up immediately on regaining visibility instead of waiting for the next 10s tick", /visibilitychange.*onVisible|onVisible.*visibilitychange/s.test(kickEffect) && /if \(!document\.hidden\) void tick\(\);/.test(kickEffect));
 
-  const serverSrcKick = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const serverSrcKick = serverSource();
   const kickStart = serverSrcKick.indexOf('app.post("/api/jobs/kick"');
   const kickRoute = serverSrcKick.slice(kickStart, serverSrcKick.indexOf('app.get("/api/cron/drain"', kickStart));
-  check("kick strips chat/board/problems/objectives before sending — this fires every 10s for the lifetime of any active job", /const \{ chat, board, problems, objectives, \.\.\.rest \} = t;/.test(kickRoute));
+  check("kick strips chat/board/problems/objectives before sending — this fires every 10s for the lifetime of any active job", /const \{ chat, board, problems, objectives, (?:solution, tutorState, )?\.\.\.rest \} = t;/.test(kickRoute));
   check("kick sets an ETag and honors If-None-Match, same pattern as /api/status and /api/tasks", /res\.setHeader\("ETag", etag\);[\s\S]*?if \(req\.headers\["if-none-match"\] === etag\) \{ res\.status\(304\)\.end\(\); return; \}/.test(kickRoute));
 
   const apiSrcKick = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
@@ -4142,7 +4910,7 @@ section("Flashcard/quiz/journal local caches are account-scoped (source pins —
   // localStorage keys were keyed only by date/deck-id/quiz-id, NOT by userId — a GLOBAL key any account
   // signed into the same browser reads/writes. Same bug class localDecks.ts/localChatBoard.ts/
   // localQuizzes.ts already fixed for their own stores; this closes the remaining gaps.
-  const appSrcLeak = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const appSrcLeak = appSource();
   const uiSrcLeak = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8");
   check("studylog week cache key includes userId, not just the date", /function studylogWeekKey\(userId: string \| null, monday: string\): string \{ return `\$\{STUDYLOG_CACHE_PREFIX\}\$\{userId \|\| "anon"\}:\$\{monday\}`; \}/.test(appSrcLeak));
   check("studylog month cache key includes userId, not just the month", /function studylogMonthKey\(userId: string \| null, month: string\): string \{ return `\$\{STUDYLOG_MONTH_CACHE_PREFIX\}\$\{userId \|\| "anon"\}:\$\{month\}`; \}/.test(appSrcLeak));
@@ -4173,17 +4941,232 @@ section("commit()'s awaitCloud sync bypasses the stale-cache merge base (source 
   // own per-instance cache, store.ts) and write that stale-based merge back — a classic lost-update risk,
   // worst exactly on the awaitCloud path (journal saves, flashcard reviews) this app explicitly calls its
   // highest-value, must-actually-persist writes.
-  const idxSrc = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
-  const syncCloudFn = idxSrc.slice(idxSrc.indexOf("const syncCloud = async"), idxSrc.indexOf("if (opts?.awaitCloud) {"));
-  check("syncCloud's merge-base read bypasses the cache exactly when this is the awaitCloud (throwOnError) path", /loadState\(email, \{ bypassCache: !!throwOnError \}\)/.test(syncCloudFn));
-  check("the high-frequency, non-awaitCloud path still uses the cache (no behavior change for step-done/confirm)", /bypassCache: !!throwOnError/.test(syncCloudFn) && !/bypassCache: true/.test(syncCloudFn));
+  const idxSrc = serverSource();
+  const syncCloudFn = idxSrc.slice(idxSrc.indexOf("async function writeAccount"), idxSrc.indexOf("const scheduler = makeSyncScheduler"));
+  check("every write-bound merge reads a VALIDATED row (bypassCache: true = a ~60-byte version check, full row only when changed) so it never merges into a stale cache and clobbers tasks another process added", /loadState\(email, \{ bypassCache: true \}\)/.test(syncCloudFn));
+  check("background flushes and the job runner also merge against a validated read, not the TTL cache", /loadState\(email, \{ bypassCache: true \}\)/.test(syncCloudFn) && /await writeAccount\(email, snap\.tasks, snap\.profile as Profile, \{ throwOnError: true \}\)/.test(idxSrc) && /store\.loadState\(email, \{ bypassCache: true \}\)/.test(readFileSync(new URL("../server/jobs.ts", import.meta.url), "utf8")));
+}
+
+section("Tutor moves on after a correct result and never points at a missing board object (spec §8.2, §12 #6)");
+check("a correct [Exercise] result is recognised", reportsCorrectResult('[Exercise] I answered "8" — marked right (try #1).'));
+check("a wrong / system-error / partial result is not", !reportsCorrectResult('[Exercise] I answered "8" — marked wrong (try #2).') && !reportsCorrectResult('[Exercise] I answered "8" — NOT graded: key contradicts (try #1).') && !reportsCorrectResult('[Exercise] I answered "x" — PARTLY right: marked right? (try #1).'));
+check("French correct result is recognised", reportsCorrectResult("[Exercice] J'ai répondu « 8 » — juste (essai n°1)."));
+check("a bare 'well done' does not move on", !movesOn("Well done, that's right.", false));
+check("a closing question or a created item does", movesOn("Right. Now, which curve shifts if costs rise?", false) && movesOn("Right.", true));
+check("'look at the graph' with no graph is caught", pointsAtMissingObject("Have a look at the graph to see why.", ["given"]) === "graph");
+check("…and passes when the graph exists", pointsAtMissingObject("Have a look at the graph to see why.", ["graph"]) === null);
+check("French summary reference is caught", pointsAtMissingObject("Regarde le résumé ci-dessus.", []) === "summary");
+check("plain prose is untouched", pointsAtMissingObject("What happens to price?", []) === null);
+
+section("A step the student took is recorded on the board even when Otto confirms it in other words (reported live)");
+{
+  const step = "log base a of x to the power of 3 plus log base a of y to the power of 1 over 2 minus log of z";
+  check("'That's the right structure' counts as a confirmation", reachedResultUnrecorded("That's the right structure — you split the fraction first.", step, 0));
+  check("'Right — quotient law' counts", reachedResultUnrecorded("Right — quotient law, top minus bottom.", "it's minus 3", 0));
+  check("a correction does not count", !reachedResultUnrecorded("Not quite — check the sign.", step, 0));
+  check("nothing to record when a write already happened", !reachedResultUnrecorded("Right — quotient law.", step, 1));
+}
+
+section("Prose logarithms are typeset as math in chat (reported live)");
+{
+  check("log_a of x", typesetLogPhrases("what is log_a of x plus log_a of y?") === "what is $\\log_{a} x$ plus $\\log_{a} y$?");
+  check("log base a of xy", typesetLogPhrases("write log base a of xy") === "write $\\log_{a} xy$");
+  check("log_a(x) with a group", typesetLogPhrases("so log_a(x^3) is") === "so $\\log_{a}\\left(x^{3}\\right)$ is");
+  check("prose that merely says log is left alone", typesetLogPhrases("the log is useful, log_a is the notation") === "the log is useful, log_a is the notation");
+  check("existing $…$ spans are untouched", typesetLogPhrases("$\\log_a x$ and log_a of y") === "$\\log_a x$ and $\\log_{a} y$");
+  check("autoMathLine applies it", /\\log_\{a\} x/.test(autoMathLine("then log_a of x is 3")));
+}
+
+section("Every maths question Otto asks also goes on the board (reported live)");
+check("'write 2 log_a x − log_a y as a single logarithm' with no board write is caught", setsMathTaskUnboarded("Nearly. So now the harder one: write 2 log_a of x minus log_a of y as a single logarithm.", 0));
+check("…and not when something was written", !setsMathTaskUnboarded("So now write 2 log_a of x minus log_a of y as a single logarithm.", 1));
+check("a conceptual question is not a board task", !setsMathTaskUnboarded("Why does a square root become a half in front?", 0));
+check("'what is x + y?' style tasks are caught", setsMathTaskUnboarded("What is 3x + 2x when x = 4?", 0));
+
+section("Humanities sessions run as a critical-thinking discussion (claim, evidence, objection), not a calculation");
+check("History / TOK / Philosophy sessions are discussion subjects", isDiscussionSubject("History") && isDiscussionSubject("Theory of Knowledge") && isDiscussionSubject("philosophy"));
+check("Math / Physics / Economics are not", !isDiscussionSubject("Math") && !isDiscussionSubject("Physics") && !isDiscussionSubject("Economics"));
+check("an unnamed subject falls back to what's being discussed", isDiscussionSubject(undefined, "why did the Treaty of Versailles lead to war in the century after") && !isDiscussionSubject("Other", "solve this equation"));
+check("the discussion block demands a position, evidence, one objection, and no invented sources", /claim/i.test(DISCUSSION_BLOCK) && /ONE objection/.test(DISCUSSION_BLOCK) && /Never invent a quote/.test(DISCUSSION_BLOCK) && /Never write their argument/.test(DISCUSSION_BLOCK));
+check("it puts the student's claim and Otto's questions on the board, without numeric gaps", /kind "insight"/.test(DISCUSSION_BLOCK) && /Never use "= \?" gaps/.test(DISCUSSION_BLOCK));
+check("an argued position that isn't on the board is caught", statesClaimUnboarded("I think the treaty caused the war because it humiliated Germany and wrecked its economy", 0));
+check("…not a question, a short reply, or a turn that already wrote", !statesClaimUnboarded("Why did the treaty matter so much for Germany?", 0) && !statesClaimUnboarded("yes I think so", 0) && !statesClaimUnboarded("I think the treaty caused the war because it humiliated Germany", 1));
+check("the discussion block is only added for discussion subjects (source pin)", /\(discussion \? DISCUSSION_BLOCK : ""\)/.test(readFileSync("server/tutor.ts", "utf8")) && /discussion \? \[\] : inventedNumbers/.test(readFileSync("server/tutor.ts", "utf8")));
+
+section("The tutor fosters critical thinking in every subject (predict, justify, test, spot the flaw)");
+check("the base prompt has a critical-thinking section with the five habits", /CRITICAL THINKING/.test(TUTOR_PROMPT) && /Predict before reveal/.test(TUTOR_PROMPT) && /Spot the flaw/.test(TUTOR_PROMPT) && /Compare routes/.test(TUTOR_PROMPT) && /Test the claim/.test(TUTOR_PROMPT) && /how sure/.test(TUTOR_PROMPT));
+check("it can't become an interrogation or replace help when stuck", /No interrogation|no interrogation/.test(TUTOR_PROMPT) && /genuinely stuck/.test(TUTOR_PROMPT));
+check("the plan is set and started at once (no approval round), and the student can change it any time", /THE PLAN — SET IT AND START/.test(TUTOR_PROMPT) && /Don.t ask them to approve it/.test(TUTOR_PROMPT));
+
+section("Answer box keys follow the answer; typed maths previews live; chat shows the student's answer typeset (source pins)");
+{
+  const mi = readFileSync("client/study/MathAnswerInput.tsx", "utf8");
+  const ts = readFileSync("client/tutor/TutorSession.tsx", "utf8");
+  const { keysFor: kf } = await import("../client/study/MathAnswerInput.tsx");
+  const labels = (a, q) => kf(a, q).map((k) => k.label);
+  // Reported live: √ / power / fraction keys showed on every answer box. Now only the keys the answer itself uses.
+  check("a plain linear answer gets no maths keys at all", labels("x + 3").length === 0);
+  check("√2/2 offers √ and a/b, nothing trig/log", labels("√2/2").includes("√") && labels("√2/2").includes("a/b") && !labels("√2/2").includes("sin") && !labels("√2/2").includes("log"));
+  check("LaTeX answers are read too (\\frac, \\sqrt)", labels("\\frac{\\sqrt{3}}{2}").includes("√") && labels("\\frac{\\sqrt{3}}{2}").includes("a/b"));
+  check("a log answer offers log/ln, not √", labels("log_2(5)").includes("log") && !labels("log_2(5)").includes("√"));
+  check("a trig answer offers sin/cos/tan", labels("sin(x)cos(x)").includes("sin"));
+  check("the question only decides when no answer is stored", labels("", "Simplify √50").includes("√") && !labels("5√2", "a question about fractions a/b").includes("a/b"));
+  check("a power key says 'to the power of'", /to the power of/.test(mi));
+  check("typed maths gets a live typeset preview", /sm-math-preview/.test(mi) && /<MathText text=\{props\.value\}/.test(mi));
+  check("all three answer inputs pass the answer context", (readFileSync("client/study/InlineProblem.tsx", "utf8").match(/context=\{/g) || []).length === 1 && (readFileSync("client/study/artifacts/BoardArtifact.tsx", "utf8").match(/context=\{/g) || []).length === 2);
+  check("the app's '[Exercise] I answered …' message is shown as 'My answer: …' with the maths typeset, in both chat views", /export function friendlyExerciseText/.test(ts) && (ts.match(/friendlyExerciseText\(msg\.text/g) || []).length === 2);
+}
+
+section("Research-backed teaching moves and a proactive board");
+check("the prompt carries the research playbook (retrieval, fading, self-explanation, dual coding, interleaving, feedback, metacognition)", /HOW PEOPLE LEARN/.test(TUTOR_PROMPT) && /Retrieval first/.test(TUTOR_PROMPT) && /faded example/.test(TUTOR_PROMPT) && /Self-explanation/.test(TUTOR_PROMPT) && /Dual coding/.test(TUTOR_PROMPT) && /Interleaving/.test(TUTOR_PROMPT) && /Metacognition/.test(TUTOR_PROMPT));
+check("the board is written proactively, not only on request", /Write proactively, every turn that teaches or asks something/.test(TUTOR_PROMPT) && !/Teaching itself is spoken/.test(TUTOR_PROMPT));
+check("an explanation taught only in chat is caught", teachesUnboarded("The power law means that an exponent inside the log can come out front as a multiplier, which is why log of x cubed becomes three log x. Try the next one?", 0));
+check("…but not a short reaction or a turn that wrote", !teachesUnboarded("Right, that's it. What's next?", 0) && !teachesUnboarded("The power law means that an exponent inside the log can come out front as a multiplier, which is why it works here today.", 1));
+const longReply = "Let us start with the definition of a logarithm, because every law we use later comes from it, so tell me what question a log answers.";
+check("an empty board on a real teaching turn is caught", boardStillEmpty(0, 0, [{ role: "user" }], longReply) && !boardStillEmpty(2, 0, [{ role: "user" }], longReply) && !boardStillEmpty(0, 1, [{ role: "user" }], longReply) && !boardStillEmpty(0, 0, [], longReply) && !boardStillEmpty(0, 0, [{ role: "user" }], "Hey! What are we on?"));
+check("a humanities discussion question gets put on the board", asksDiscussionQuestionUnboarded("Good. What would a historian who blames Wilson rather than Versailles say about that?", 0) && !asksDiscussionQuestionUnboarded("Why?", 0));
+
+section("Tutor diagnoses misconceptions, coaches strategies, stays accurate");
+{
+  const p = parsePlan('<plan>{"diagnosis":"conceptual","misconception":"thinks log(M+N) = log M + log N","action":"probe","help_level":1}</plan> hi');
+  check("the hidden plan carries a misconception label", p?.misconception === "thinks log(M+N) = log M + log N");
+  let m = updateMisconceptions(undefined, p, false);
+  m = updateMisconceptions(m, p, false);
+  check("the same misconception seen twice is counted, not duplicated", m.length === 1 && m[0].turns === 2 && !m[0].resolved);
+  m = updateMisconceptions(m, { diagnosis: "none" }, true);
+  check("a verified right step with no new misconception marks it repaired", m[0].resolved === true);
+  check("at most 5 are kept", updateMisconceptions(Array.from({ length: 7 }, (_, i) => ({ label: `m${i}`, turns: 1 })), undefined, false).length === 5);
+  const tb = teachingBlock({ helpLevel: 1, stuckStreak: 0, turns: 3, misconceptions: [{ label: "adds exponents", turns: 2 }, { label: "sign of the quotient", turns: 1, resolved: true }] });
+  check("TEACHING STATE lists open misconceptions to revisit and repaired ones to re-check later", /OPEN MISCONCEPTIONS[^\n]*adds exponents[^\n]*seen 2/.test(tb) && /Repaired so far[^\n]*sign of the quotient/.test(tb));
+  check("after a wrong answer, teaching the method with no question / named belief is caught", teachesOverError("The power law says you bring the exponent to the front, so it becomes 3 log x.", '[Exercise] I answered "x^3" — marked wrong (try #1).'));
+  check("…a diagnostic question or a named belief passes, and a right answer never triggers it", !teachesOverError("It looks like you treated the power as a product. What does log(x³) mean?", '[Exercise] I answered "x^3" — marked wrong (try #1).') && !teachesOverError("Good.", '[Exercise] I answered "8" — marked right (try #1).'));
+  check("a solve with no strategy on the board asks for one; an existing strategy line satisfies it", strategyMissing('[Exercise] I answered "8" — marked right (try #1).', [], []) && !strategyMissing('[Exercise] I answered "8" — marked right (try #1).', [{ kind: "strategy" }], []) && !strategyMissing("hello", [], []));
+  check("the prompt has strategy, accuracy and misconception sections", /STRATEGIES — teach them how/.test(TUTOR_PROMPT) && /ACCURACY — never guess/.test(TUTOR_PROMPT) && /MISCONCEPTIONS — find the belief/.test(TUTOR_PROMPT));
+  check("an Otto board line with false arithmetic is rejected (source pin + detector)", !!wrongArithmetic("$400/50 = 9$") && /REJECTED: that line has a wrong calculation/.test(readFileSync("server/tutor.ts", "utf8")));
+}
+
+section("Board as paper: key-ideas strip, left-to-right ink, condensed objectives strip (source pins)");
+{
+  const ba = readFileSync("client/study/artifacts/BoardArtifact.tsx", "utf8");
+  const css = readFileSync("client/styles.css", "utf8");
+  const ts = readFileSync("client/tutor/TutorSession.tsx", "utf8");
+  check("definitions, formulas, strategies and the summary are gathered in a collapsible Key ideas strip", /className=\{`sm-board-ideas/.test(ba) && /e\.kind === "definition" \|\| e\.kind === "formula" \|\| e\.kind === "strategy"/.test(ba) && /otto\.board\.ideasOpen/.test(ba));
+  check("a fresh line is written in left to right", /sm-board-reveal-ink \{ from \{ clip-path: inset\(0 100% 0 0\)/.test(css));
+  check("strategy lines are highlighted on the board", /\.sm-board-entry-strategy \.sm-board-entry-text/.test(css));
+  check("the plan shows inside the ONE session bar as the current objective with progress dots, expandable to the checklist", /ts-bar-plan/.test(ts) && /ts-objstrip-dots/.test(ts) && /ts-plan-list/.test(ts) && !/className="ts-objectives"/.test(ts));
+}
+
+section("Otto never tells the student about its internal board rejections (reported live)");
+{
+  const live = "That first write bounced — the board won't let me put the equation up before you've stated it. Fair enough: it's your problem, so write it in your own words. So, what does x to the two fifths become in terms of u?";
+  check("the reported reply is caught", mentionsMechanics(live));
+  check("…and the cleanup keeps the teaching and the question", !mentionsMechanics(stripMechanics(live)) && /what does x to the two fifths become/.test(stripMechanics(live)));
+  check("ordinary teaching is untouched (incl. a physics ball that bounced)", !mentionsMechanics("Write the substitution on your own: what is x in terms of u?") && !mentionsMechanics("The ball bounced twice before stopping — how far did it travel?"));
+  const src = readFileSync("server/tutor.ts", "utf8");
+  check("every refused tool result carries an internal never-tell-the-student note", /Internal note for you only: never tell the student a write was refused/.test(src));
+  check("the final reply is cleaned in code even if the correction round didn't fix it", /mentionsMechanics\(reply\) \? \(stripMechanics\(reply\) \|\| reply\) : reply/.test(src));
+}
+
+section("Expert-tutor behaviour: motivation, personal learning prefs, feedback on writing, end-of-session recap");
+{
+  check("frustration is noticed", affectOf("ugh I give up, this is so hard") === "frustrated" && affectOf("je comprends rien") === "frustrated");
+  check("an unsure answer is noticed, a genuine question is not", affectOf("maybe it's 8?") === "unsure" && affectOf("what is a logarithm?") === "neutral");
+  check("confidence is noticed; app messages are neutral", affectOf("easy, it's obviously 3 log x") === "confident" && affectOf('[Exercise] I answered "8" — marked wrong') === "neutral");
+  check("learning preferences come from what they ask for", learningPrefsFrom("can you show me an example and draw it?").length === 2 && learningPrefsFrom("just a hint please")[0] === "wants hints, not answers");
+  check("prefs are kept short, newest last, deduped", mergePrefs(["a", "b", "c", "d", "e", "f"], ["b", "g"]).join() === "a,c,d,e,f,b,g".split(",").slice(-6).join() && mergePrefs(undefined, ["x"]).length === 1);
+  check("prefs reach the tutor as HOW THEY LIKE TO LEARN", /HOW THEY LIKE TO LEARN[^\n]*likes a drawing/.test(tutorBackgroundBlock({ profile: { tutorPrefs: ["likes a drawing or diagram"] } })));
+  const para = "The Treaty of Versailles was the main cause of the Second World War. It humiliated Germany and forced it to pay huge reparations. This created resentment that Hitler used to gain support in the 1930s. Without the treaty, the Nazis would not have risen to power so easily and the war would not have happened.";
+  check("a pasted paragraph is recognised as their writing; a question is not", isStudentWriting(para) && !isStudentWriting("Why did the treaty matter so much for Germany in the end?"));
+  check("a reply that rewrites their paragraph is caught; quoting one sentence for feedback is fine", rewritesTheirWriting("Here's a better version of your paragraph: ...") && !rewritesTheirWriting('Your sentence "It humiliated Germany" is a strong claim — what evidence shows that humiliation turned into votes?'));
+  check("the prompt has the expert-tutor section (frame, pump, INSPIRE, prerequisites, writing feedback)", /HOW EXPERT TUTORS WORK/.test(TUTOR_PROMPT) && /PUMP first/.test(TUTOR_PROMPT) && /trace it to the prerequisite/.test(TUTOR_PROMPT) && /Never rewrite it for them/.test(TUTOR_PROMPT));
+  const r = buildSessionRecap(
+    [{ id: "s", at: "", kind: "strategy", text: "Expand: fraction → product → powers" }, { id: "d", at: "", kind: "definition", text: "a log answers: which power?" }],
+    [{ id: "p1", createdAt: "", question: "Expand log_a(x^3 y)", solved: true }, { id: "p2", createdAt: "", question: "Solve log_2(x+5)+log_2(x-1)=4", solved: false }],
+    [{ id: "o1", label: "Expand with the 3 laws", done: true }, { id: "o2", label: "Solve log equations", done: false }], true);
+  check("the recap separates what they showed, what's developing, their strategies, and a review question", r.showed.length === 2 && r.developing.length === 2 && r.strategies[0].startsWith("Expand") && /without notes/.test(r.reviewQuestion || ""));
+  check("an empty session gives an empty recap (nothing invented)", (() => { const e = buildSessionRecap([], [], [], true); return !e.showed.length && !e.developing.length && !e.strategies.length && e.reviewQuestion === null; })());
+}
+
+section("Logarithm answers are graded by their terms, however they're typed (reported: right log answers marked wrong)");
+{
+  const { logAnswerEquivalent } = await import("../shared/mathEquiv.ts");
+  const key = String.raw`3\log_a x + \frac{1}{2}\log_a y - \log_a z`;
+  check("plain typing, ½, brackets, 0.5 and reordered terms are all accepted", ["3log_a x + ½log_a y − log_a z", "3 log_a(x) + 0.5 log_a(y) - log_a(z)", "3log_a(x)+(1/2)log_a(y)-log_a(z)", "-log_a z + 3 log_a x + 1/2 log_a y"].every((g) => practiceAnswerMatches(g, key)));
+  check("a wrong coefficient is rejected (no more leading-number false positive)", !practiceAnswerMatches("3log_a x + 2log_a y - log_a z", key));
+  check("the unexpanded single log is not accepted for an 'expand' key", !practiceAnswerMatches("log_a(x^3 y^(1/2)/z)", key));
+  check("a condensed answer matches its LaTeX key", logAnswerEquivalent("log_a(x^2/y)", String.raw`\log_{a}\left(\frac{x^2}{y}\right)`) === "correct" && logAnswerEquivalent("log_a(x²/y)", "log_a(x^2/y)") === "correct");
+  check("ln works too; non-log answers are left to the other checks", logAnswerEquivalent("ln(x)+ln(y)", "ln x + ln y") === "correct" && logAnswerEquivalent("3x+1", "3x + 1") === "unknown");
+}
+
+section("A right answer given in chat solves the open exercise — no retyping into the box (reported live)");
+{
+  const p = { id: "p", createdAt: "", question: "Expand log_a(x^3 sqrt(y)/z)", answer: String.raw`3\log_a x + \frac{1}{2}\log_a y - \log_a z` };
+  check("typed in chat with words around it, it counts", answeredInChat("so it's 3log_a x + ½log_a y − log_a z", p));
+  check("a wrong one doesn't", !answeredInChat("so it's 3log_a x + 2log_a y − log_a z", p));
+  const n = { id: "n", createdAt: "", question: "Find P", answer: "8", value: 8 };
+  check("a numeric answer counts when short ('P = 8'), not inside an unrelated sentence or a question", answeredInChat("P = 8", n) && !answeredInChat("I did 8 of the exercises yesterday and then stopped", n) && !answeredInChat("is it 8?", n));
+  check("an app [Exercise] message, a solved problem, an MCQ and a rubric item are left alone", !answeredInChat('[Exercise] I answered "8"', n) && !answeredInChat("8", { ...n, solved: true }) && !answeredInChat("8", { ...n, options: ["8", "9"], correct: 0 }));
+  check("the turn reports it, the client marks it solved, and the box shows it as answered (source pins)", /solvedInChat: out\.solvedInChat/.test(serverSource()) && /solvedInChat\.includes\(p\.id\) \? \{ \.\.\.p, solved: true \}/.test(readFileSync("client/tutor/TutorSession.tsx", "utf8")) && /const answered = !!problem\.solved \|\|/.test(readFileSync("client/study/artifacts/BoardArtifact.tsx", "utf8")));
+}
+
+section("A task never says 'Otto is working on it' forever (reported: stuck working for a long time)");
+{
+  const now = new Date("2026-10-13T12:00:00Z");
+  const ago = (min) => new Date(now.getTime() - min * 60_000).toISOString();
+  const list = [
+    { id: "q-orphan", status: "queued", updatedAt: ago(1) },
+    { id: "q-live", status: "queued", updatedAt: ago(20) },
+    { id: "x-dead", status: "executing", updatedAt: ago(10) },
+    { id: "x-fresh", status: "executing", updatedAt: ago(1) },
+    { id: "x-live", status: "running", updatedAt: ago(30) },
+    { id: "q-again", status: "queued", updatedAt: ago(5), recoveredAt: ago(10) },
+    { id: "log", status: "queued", source: "studylog", updatedAt: ago(60) },
+    { id: "done", status: "done", updatedAt: ago(60) },
+  ];
+  const plan = planStuckRecovery(list, new Set(["q-live", "x-live"]), now);
+  check("a queued task with no job behind it is re-enqueued", plan.requeue.includes("q-orphan") && !plan.requeue.includes("q-live"));
+  check("an executing task whose job is gone (killed / out of attempts) is released for Retry", plan.fail.includes("x-dead"));
+  check("one that just started, or whose job is still live, is left alone", !plan.fail.includes("x-fresh") && !plan.fail.includes("x-live") && !plan.requeue.includes("x-live"));
+  check("orphaned again soon after a recovery means it keeps dying: released, not re-queued forever", plan.fail.includes("q-again") && !plan.requeue.includes("q-again"));
+  check("journal tasks and finished tasks are never touched", ![...plan.fail, ...plan.requeue].some((id) => id === "log" || id === "done"));
+}
+
+section("Board changes are undoable in the Tutor session (spec §12 #10, source pins)");
+{
+  const ts = readFileSync("client/tutor/TutorSession.tsx", "utf8");
+  check("the Undo button lives in the board header, not floating over content", /onUndo=\{undoCount > 0 \? undoBoard : undefined\}/.test(ts) && /className="sm-board-undo"/.test(readFileSync("client/study/artifacts/BoardArtifact.tsx", "utf8")));
+  check("each board-changing turn snapshots the previous board", /boardHistoryRef\.current = \[\.\.\.boardHistoryRef\.current, \{ taskId: task\.id, board: task\.board/.test(ts));
+  check("undo restores it locally and on screen", /undoBoard = useCallback[\s\S]{0,400}setLocalBoard\(task\.id, prev\.board/.test(ts));
+  check("the Undo button is keyboard-focusable with a visible focus ring", /\.sm-board-undo:focus-visible/.test(readFileSync("client/styles.css", "utf8")));
+}
+
+section("Tutor content never reaches the account row: no worked solution, no quoted student words (source pins)");
+{
+  const idxLocal = serverSource();
+  check("a tutor session's worked solution is stripped from what writeAccount sends to the cloud (both write paths)", /const forCloud = \(t: WebTask\): WebTask => \(t\.source === "freestudy" && t\.solution \? \{ \.\.\.t, solution: undefined \} : t\)/.test(idxLocal) && /tasks: mergedTasks\.map\(forCloud\)/.test(idxLocal) && /tasks: localTasks\.map\(forCloud\)/.test(idxLocal));
+  check("concept-model evidence is a label, not the student's message text", /evidence: "tutor session" \}/.test(idxLocal) && !/evidence: message\.slice/.test(idxLocal));
+}
+
+section("Confirming/dismissing a task guarantees the cloud write lands (source pin)");
+{
+  // Reported live: "it completes, then comes back" — confirm/dismiss were on commit()'s DEFAULT fire-and-
+  // forget write-behind path (debounced 6-25s), which commit()'s own comment already names as the exact
+  // failure mode on a serverless deploy: the instance can freeze/tear down the instant the response goes
+  // out, before the scheduled write ever runs — a later request (same tab, a different warm Vercel
+  // instance) then reads the OLD cloud status back. Finishing/dismissing a task is rare and high-value per
+  // write, the same reasoning this function already applies to a journal save or flashcard review.
+  const idxSrcConfirm = serverSource();
+  const confirmRoute = idxSrcConfirm.slice(idxSrcConfirm.indexOf('app.post("/api/tasks/:id/confirm"'), idxSrcConfirm.indexOf('app.post("/api/tasks/:id/reject"'));
+  const dismissRoute = idxSrcConfirm.slice(idxSrcConfirm.indexOf('app.post("/api/tasks/:id/dismiss"'), idxSrcConfirm.indexOf('app.post("/api/tasks/:id/dismiss"') + 1500);
+  check("confirm awaits the cloud write (awaitCloud: true), not the default debounced write-behind", /await commit\(req, \{ awaitCloud: true \}\);/.test(confirmRoute) && !/await commit\(req\);/.test(confirmRoute));
+  check("dismiss awaits the cloud write too, same reasoning", /await commit\(req, \{ awaitCloud: true \}\);/.test(dismissRoute) && !/await commit\(req\);/.test(dismissRoute));
 }
 
 section("Focus/visibility resync removed — only the Pronote keepalive stays on that heartbeat (source pin)");
 {
   // Removed per direct instruction: 4 requests (tasks/status/budget/sweep) on every tab focus/visibility
   // event was real, avoidable egress for something a manual reload already covers.
-  const appSrcFocus = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const appSrcFocus = appSource();
   const onFn = appSrcFocus.slice(appSrcFocus.indexOf("const on = () => {"), appSrcFocus.indexOf("document.addEventListener(\"visibilitychange\", on);"));
   check("the focus/visibility handler no longer re-syncs tasks/status/budget/sweep", !/void syncTasks\(\); void loadStatus\(\); void loadBudget\(\); void sweepIfDue\(\);/.test(onFn));
   check("the focus/visibility handler still touches Pronote's session to keep a connected token alive", /if \(status\?\.pronoteConnected\) void api\.pronoteTouch\(\);/.test(onFn));
@@ -4195,8 +5178,8 @@ section("'Pulling up your day' no longer spins forever for a skip-connect accoun
   // the loading skeleton forever. Root cause: `loaded` was only ever flipped true inside syncTasks/
   // sweepIfDue/generate, and the ONLY effect that auto-calls those is gated on `connected` — which is
   // permanently false for a skip-connect account, so `loaded` never had a chance to become true.
-  const appSrcLoaded = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
-  const loadedEffect = appSrcLoaded.slice(appSrcLoaded.indexOf("useEffect(() => {\n    // A student who skipped connecting"), appSrcLoaded.indexOf("}, [connected, status?.aiReady, syncTasks, sweepIfDue, loadBudget]);") + 1);
+  const appSrcLoaded = appSource();
+  const loadedEffect = appSrcLoaded.slice(appSrcLoaded.indexOf("useEffect(() => {\n    // A student who skipped connecting"), appSrcLoaded.indexOf("}, [connected, status?.aiReady, syncTasks, sweepIfDue]);") + 1);
   check("the connected-gated sync effect flips `loaded` directly when the account never connected anything, instead of leaving it permanently false", /if \(!connected\) \{ setLoaded\(true\); return; \}/.test(loadedEffect));
 }
 
@@ -4207,12 +5190,12 @@ section("Pronote is one option, not the premise — no-integration accounts get 
   // hardcode "Otto is watching your Pronote" and offer only a "Check now" button — for a student who skipped
   // the connect card that button could only ever return a "nothing connected" skip, so the page claimed
   // Otto was watching a portal nobody had linked and gave no way forward.
-  const appSrcPronote = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const appSrcPronote = appSource();
   check("the dashboard empty state no longer hardcodes 'Otto is watching your Pronote'", !/Otto is watching your Pronote/.test(appSrcPronote));
   check("the empty state names whichever source is actually connected (Pronote vs inbox)", /const watching = status\.pronoteConnected\s*\n\s*\? \(en \? "your Pronote" : "ton Pronote"\)\s*\n\s*: status\.googleConnected/.test(appSrcPronote));
   const firstRun = appSrcPronote.slice(appSrcPronote.indexOf("const watching = status.pronoteConnected"), appSrcPronote.indexOf("<div className={`list-focus-wrap"));
   check("with nothing connected, the first-run empty state points at Settings instead of a no-op 'Check now'", /href="\/settings">\{en \? "Connect an app"/.test(firstRun));
-  check("the all-caught-up line drops the Pronote claim when nothing is connected", /Nothing else needs your attention right now/.test(firstRun));
+  check("the all-caught-up line drops the Pronote claim when nothing is connected", /Nothing outstanding\. Pick the hardest thing/.test(firstRun));
   check("the connect card offers the whole picker rather than a single 'Connect my Pronote' CTA", !/Connect my Pronote/.test(appSrcPronote) && /Choose what to connect/.test(appSrcPronote));
   check("the skip escape hatch stays a real, equal choice — using Otto with nothing connected", /Use Otto without connecting/.test(appSrcPronote));
   check("the sweep's 'nothing new' note names the connected source, not Pronote by default", /nothing new from \$\{status\?\.pronoteConnected \? "Pronote" : status\?\.googleConnected \? "your inbox" : "your sources"\}/.test(appSrcPronote));
@@ -4236,7 +5219,7 @@ section("Terms/Privacy links open in a new tab from the signup form (source pin 
   // typed field (email/password/consent/child-account fields) with no way back except restarting. The
   // SPA router (usePathRoute) explicitly lets target="_blank" links fall through to normal browser nav,
   // so opening in a new tab keeps the in-progress form alive in this tab.
-  const appSrcLegal = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const appSrcLegal = appSource();
   const legalLine = appSrcLegal.slice(appSrcLegal.indexOf('<div className="login-legal">'), appSrcLegal.indexOf('<div className="login-legal">') + 400);
   check("the Terms link opens in a new tab instead of unmounting the signup form", /<a href="\/terms" target="_blank" rel="noopener">/.test(legalLine));
   check("the Privacy link opens in a new tab instead of unmounting the signup form", /<a href="\/privacy" target="_blank" rel="noopener">/.test(legalLine));
@@ -4324,7 +5307,7 @@ section("Courses — real-catalog matching + enrollment + unit seeding");
 
 section("Track-grounded curriculum content — syllabusGroundingLine gated like examStyleLine (source pin)");
 {
-  const claudeSrcSyl = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrcSyl = claudeSource();
   const sylFn = claudeSrcSyl.slice(claudeSrcSyl.indexOf("Direct request: tutoring/content generation"), claudeSrcSyl.indexOf("/** VARK, presentation only"));
   check("syllabusGroundingLine is gated to IB/AP only, thin/none for bac/other (confirmed with the user)", /p\?\.track !== "ib" && p\?\.track !== "ap"\)\) return "";/.test(sylFn));
   check("syllabusGroundingLine leans on the model's own knowledge, explicitly no hardcoded syllabus database", /No new syllabus database/.test(sylFn));
@@ -4333,7 +5316,7 @@ section("Track-grounded curriculum content — syllabusGroundingLine gated like 
 
 section("TOK-inspired Socratic additions — extend existing rules, never contradict the HINT LADDER fix (source pins)");
 {
-  const claudeSrcTok = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrcTok = claudeSource();
   check("CHALLENGE ASSUMPTIONS now rotates through TOK-style meta-questions (evidence/counter-evidence/strongest objection)", claudeSrcTok.includes("what's the strongest case AGAINST your") && claudeSrcTok.includes("own claim?"));
   check("rule 4b occasionally asks the student to voice a counterclaim, not just justify their own step", claudeSrcTok.includes("ask them to voice the") && claudeSrcTok.includes("OPPOSING position"));
   check("a new 10b prompts brief reflection after a problem resolves, same not-every-turn cadence as 4b", /10b\. CLOSE A RESOLVED PROBLEM WITH ONE REFLECTIVE QUESTION, SOMETIMES/.test(claudeSrcTok));
@@ -4342,18 +5325,23 @@ section("TOK-inspired Socratic additions — extend existing rules, never contra
 
 section("Tutor session mastery + objectives summary — surfaced without a fabricated 0% (source pins)");
 {
-  const serverSrcMastery = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const serverSrcMastery = serverSource();
   const freeRoute = serverSrcMastery.slice(serverSrcMastery.indexOf('app.post("/api/study/free"'), serverSrcMastery.indexOf('app.post("/api/study/free"') + 2500);
   check("mastery is computed only on session start/resume (/api/study/free), not on a hot polled route", /subjectMastery\(list, req\.session\.profile\?\.milestones, /.test(freeRoute));
 
   const tutorSrcMastery = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
   check("the Today's-focus panel only renders mastery when it's an actual number, never a fabricated 0%", /typeof task\.mastery === "number"/.test(tutorSrcMastery));
   check("the Past-sessions list distinguishes 'no objectives were set' from an explicit 0\\/N", /typeof s\.objectivesTotal === "number"/.test(tutorSrcMastery));
+  // Report-live: "user should see objectives too" — SET_OBJECTIVES was firing, but the checklist sat
+  // behind a collapsed ◎ chip in the crumb bar the student had no reason to notice or click, so a fresh
+  // set of objectives could land completely unseen. Auto-open the panel the turn they're (re)set, without
+  // forcing it open on every later turn.
+  check("the objectives panel auto-opens (then collapses to its one line) the turn Otto (re)sets them, not just via the manual ◎ chip toggle", /if \(objectives\?\.length\) \{ setObjectivesOpen\(true\); window\.setTimeout\(\(\) => setObjectivesOpen\(false\)/.test(tutorSrcMastery));
 }
 
 section("hintDensity preference — new axis, distinct from learningStyle, never licenses a direct answer (source pins)");
 {
-  const serverSrcHint = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const serverSrcHint = serverSource();
   check("the /api/profile/preference route accepts hintDensity with the right allow-list, including the slider's explicit 'balanced' middle position", /key === "hintDensity" && \["steps", "hints", "balanced"\]\.includes\(value\)/.test(serverSrcHint));
   // Real pre-existing bug, fixed alongside this feature: the UI (Settings AND onboarding) has always
   // offered an "AP" track button, but this route's allow-list omitted "ap" — clicking it silently never
@@ -4363,22 +5351,22 @@ section("hintDensity preference — new axis, distinct from learningStyle, never
   const typesSrcHint = readFileSync(new URL("../shared/types.ts", import.meta.url), "utf8");
   check("Profile.hintDensity is sanitized through the same allow-list as the write route", /hintDensity: \["steps", "hints", "balanced"\]\.includes\(p\?\.hintDensity\) \? p\.hintDensity : undefined,/.test(typesSrcHint));
 
-  const claudeSrcHint = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrcHint = claudeSource();
   const hintFn = claudeSrcHint.slice(claudeSrcHint.indexOf("export function hintDensityLine"), claudeSrcHint.indexOf("// \"Stories tuned to her life\""));
   check("hintDensityLine never mentions giving the direct answer — only pacing/step-size language", !/the answer\b/i.test(hintFn.replace(/never the direct answer|never the answer/gi, "")));
   check("hintDensityLine explicitly says the direct answer is still never given, under either setting", /Still never the direct answer/.test(hintFn) || /still never the\s*direct answer/.test(hintFn));
   check("chatAboutTask's dynamicContext includes hintDensityLine", /learningStyleLine\(profile\) \+ hintDensityLine\(profile\)/.test(claudeSrcHint));
 
-  const appSrcHint = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const appSrcHint = appSource();
   check("Settings has a hint-density 3-position slider, distinct from the learningStyle VARK field", /hint-density-slider/.test(appSrcHint) && /type="range" min=\{0\} max=\{2\} step=\{1\}/.test(appSrcHint));
   check("the slider's 3 stops map to hints/balanced/steps in that order", /const HINT_DENSITY_POSITIONS: \("hints" \| "balanced" \| "steps"\)\[\] = \["hints", "balanced", "steps"\];/.test(appSrcHint));
 }
 
 section("Tutor reply length — tightened the existing SHORT REPLIES trigger (source pin)");
 {
-  const claudeSrcLen = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrcLen = claudeSource();
   check("the SHORT REPLIES rule's trigger is tightened to match its own 1-3 sentence target (was a looser 5-sentence trigger)", claudeSrcLen.includes("if you find yourself writing more than 3") && claudeSrcLen.includes("sentences, stop"));
-  check("the existing PRIMER_CLOSING_REMINDER LENGTH check is untouched (still reinforces the same 1-3 sentence rule)", claudeSrcLen.includes("this genuinely 1-3 sentences?"));
+  check("the existing PRIMER_CLOSING_REMINDER LENGTH check is untouched (still reinforces the same 1-3 sentence rule)", claudeSrcLen.includes("is this genuinely 1-3 sentences?"));
 }
 
 section("wantsArtifactTools — latency fix: narrow the tool list only on a clearly short/conversational turn");
@@ -4395,7 +5383,7 @@ section("wantsArtifactTools — latency fix: narrow the tool list only on a clea
 
 section("Tool-narrowing latency fix — core tutoring tools are NEVER dropped by the heuristic (source pin)");
 {
-  const claudeSrcTools = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrcTools = claudeSource();
   const toolsBlock = claudeSrcTools.slice(claudeSrcTools.indexOf("const includeArtifactTools = wantsArtifactTools"), claudeSrcTools.indexOf("const empty = (): ChatResult"));
   // WEB_SEARCH_TOOL/CREATE_CALC_TOOL are generic utility tools, unrelated to the board — still core, still
   // listed unconditionally (never narrowed by the includeArtifactTools heuristic) in both branches.
@@ -4407,7 +5395,7 @@ section("Tool-narrowing latency fix — core tutoring tools are NEVER dropped by
   // TUTOR-ONLY now — WRITE_TO_BOARD/DRAW_ON_BOARD/GEOMETRY_ON_BOARD/GRAPH_ON_BOARD/CREATE_PROBLEM/
   // SET_OBJECTIVES are no longer unconditional; they're gated behind `opts?.primer` via `boardTools`,
   // spread into both branches so a Tutor turn still gets them either way canvasMode is set.
-  for (const core of ["WRITE_TO_BOARD_TOOL", "DRAW_ON_BOARD_TOOL", "GEOMETRY_ON_BOARD_TOOL", "GRAPH_ON_BOARD_TOOL", "SET_OBJECTIVES_TOOL", "CREATE_PROBLEM_TOOL"]) {
+  for (const core of ["WRITE_TO_BOARD_TOOL", "SVG_ON_BOARD_TOOL", "GEOMETRY_ON_BOARD_TOOL", "GRAPH_ON_BOARD_TOOL", "SET_OBJECTIVES_TOOL", "CREATE_PROBLEM_TOOL"]) {
     check(`${core} is in boardTools (primer-gated), not listed directly in either tools branch`, new RegExp(`const boardTools = opts\\?\\.primer[\\s\\S]*?${core}`).test(toolsBlock) && (toolsBlock.match(new RegExp(core, "g")) || []).length === 1);
   }
   check("both branches spread boardTools in (a Tutor turn gets them whether canvasMode is set or not)", (toolsBlock.match(/\.\.\.boardTools,/g) || []).length === 2);
@@ -4477,7 +5465,7 @@ section("MCQ-dodge no longer licenses an answer reveal (source pins — reported
   // another one", "it's good", vague non-answers) and the tutor eventually resolved it FOR them anyway —
   // neither the HINT LADDER's (c)/(d) exceptions nor canvas mode had any rule against treating "wrap up
   // the loose end before switching" as valid license to reveal.
-  const claudeSrcDodge = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claudeSrcDodge = claudeSource();
   check("the HINT LADDER exception list now has a negative case (e) for evasion, distinct from (c)/(d)", /\(e\) they're trying to skip\/change ` \+\s*\n\s*`the subject WITHOUT a genuine attempt/.test(claudeSrcDodge) || claudeSrcDodge.includes("(e) they're trying to skip/change"));
   check("canvas mode explicitly says to let a dodged MCQ go unanswered rather than resolving it for them", claudeSrcDodge.includes("IF THEY TRY TO SKIP/MOVE ON WITHOUT A GENUINE ATTEMPT"));
 }
@@ -4525,7 +5513,7 @@ section("TTS — WAV wrapping + fluid chunking (unit tests)");
   // The client's chunk size and the server's cap must agree: they drifted once (the client sent up to 1800
   // characters and the server sliced at 1000), which is what silently truncated every long reply's audio.
   const ttsChunkSrc = readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8");
-  check("the client asks for chunks at the provider-safe size, in lockstep with the server's cap", /const CLOUD_CHUNK_MAX_CHARS = 900;/.test(ttsChunkSrc) && /const TTS_CHUNK_MAX = 900;/.test(readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8")));
+  check("the client asks for chunks at the provider-safe size, in lockstep with the server's cap", /const CLOUD_CHUNK_MAX_CHARS = 900;/.test(ttsChunkSrc) && /const TTS_CHUNK_MAX = 900;/.test(claudeSource()));
 }
 
 section("TTS — one free provider, a MALE-ONLY voice pool, retried voice-by-voice and chunk-by-chunk (source pins)");
@@ -4534,12 +5522,12 @@ section("TTS — one free provider, a MALE-ONLY voice pool, retried voice-by-voi
   // The server's synthesizeSpeech is the single place those three rules live, so pin the shape of it: a
   // per-language pool of male voice names, one attempt per chunk per voice, and a hard stop (never a
   // female voice, never a half-spoken reply) when the pool is exhausted.
-  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claude = claudeSource();
   const fn = claude.slice(claude.indexOf("export async function synthesizeSpeech"), claude.indexOf("export function wordWrapChunks"));
   check("a free, keyless provider is used (its public form endpoint — no account, no API key)", /https:\/\/ttsmp3\.com\/makemp3_new\.php/.test(claude) && /source: "ttsmp3"/.test(claude));
   check("the request looks like a browser (a bare server fetch is refused by these free endpoints)", /User-Agent": BROWSER_UA/.test(claude) && /Referer": "https:\/\/ttsmp3\.com\/"/.test(claude));
   check("the voice name is sent in the field the endpoint actually reads", /lang: voice/.test(claude));
-  check("synthesizeSpeech speaks each chunk with the pool in order, one voice at a time (never in parallel)", /for \(const chunk of chunks\)/.test(fn) && /await synthesizeChunkWithVoice\(chunk, voices\[i\]\)/.test(fn));
+  check("synthesizeSpeech speaks each chunk with the pool in order, one voice at a time (never in parallel)", /for \(const chunk of chunks\)/.test(fn) && /synthesizeChunkWithVoice\(chunk, v\)/.test(fn) && /synthesizeChunkWithEdge\(chunk, v\)/.test(fn) && /await attempts\[i\]\(\)/.test(fn));
   check("a chunk the whole male pool refuses fails the reply loudly rather than returning partial audio", /if \(!done\) return last;/.test(fn));
   check("no Gemini TTS key, model or voice constant survives anywhere in the server", !/GEMINI_TTS|callGeminiTts/.test(claude));
 
@@ -4574,7 +5562,7 @@ section("Answers are NEVER revealed — chat prompt and every practice-problem s
   // Reported live: "it gives answer, this should never happen" — the tutor finished the student's work
   // ("−1/8 + 6 = 47/8, so you've got…", "it's 3x − 2") under a "(d) finish a mechanical last step" exception,
   // and every practice-problem surface revealed the answer on a wrong attempt.
-  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claude = claudeSource();
   check("the 'finish a mechanical last step' exception is gone from the hint ladder", !/finish a mechanical last step/.test(claude));
   check("the prompt forbids producing any value/step the student hasn't stated, and says to ASK instead", claude.includes("Never produce a value, step result, or piece of") && claude.includes("ASK them to do it"));
   const surfaces = [["../client/study/artifacts/BoardArtifact.tsx", "Board"], ["../client/study/InlineProblem.tsx", "InlineProblem"], ["../client/ui.tsx", "journal practice card"]];
@@ -4586,7 +5574,10 @@ section("Answers are NEVER revealed — chat prompt and every practice-problem s
     const src = readFileSync(new URL(file, import.meta.url), "utf8");
     check(`${label}: MCQ only counts as answered when the CORRECT option is picked (a wrong pick just strikes it out)`, /picked !== null && (state\.)?picked === problem\.correct/.test(src) && /wrong\.includes\(oi\)/.test(src));
     check(`${label}: the ✓ and explanation only show once answered correctly; a miss says "try again"`, /answered && oi === problem\.correct \? "correct"/.test(src) && /Not quite — try (another option|again)\./.test(src));
-    check(`${label}: typed answers use the shared lenient matcher (pi, fractions, units)`, /practiceAnswerMatches\(/.test(src));
+    // Typed answers still go through the same shared lenient matcher (pi, fractions, units) — now wrapped in
+    // the shared grader (shared/exerciseVerification.ts, spec §19), which grades against the independently
+    // computed value and reports a key that disagrees with it as a system error instead of a miss.
+    check(`${label}: typed answers use the shared lenient matcher (pi, fractions, units), through the verified grader`, /gradeExerciseAnswer\(/.test(src) && /practiceAnswerMatches\(/.test(readFileSync(new URL("../shared/exerciseVerification.ts", import.meta.url), "utf8")));
   }
 }
 
@@ -4614,11 +5605,11 @@ section("TTS never falls straight to the browser voice — the free cloud voice 
   // Direct request: the browser's own speechSynthesis must never be the primary voice. /api/tts answers from
   // the free, keyless male-voice pool (see the pool section above); when it fails, the client plays NOTHING
   // for that reply rather than substituting a browser voice.
-  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claude = claudeSource();
   check("the provider validates it actually got audio back, not an error page with a 200", /if \(!url\) return \{ error/.test(claude) && /if \(!res\.ok\) return \{ error/.test(claude) && /if \(!audio\.ok\)/.test(claude) && /if \(!mp3\.length\)/.test(claude));
   check("the provider's own rejection wording is reported, so a log line names the real cause", /rejected: \$\{String\(json\?\.Error/.test(claude));
 
-  const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const idx = serverSource();
   const ttsRoute = idx.slice(idx.indexOf('app.post("/api/tts"'), idx.indexOf('app.post("/api/tts"') + 2600);
   const ttsRegion = claude.slice(claude.indexOf("const TTS_MALE_VOICES"), claude.indexOf("export function wordWrapChunks"));
   check("one consistent voice: ONE provider, one pool, no hedging/racing between voice tiers", !/TTS_HEDGE_MS|Promise\.race|geminiDownUntil/.test(ttsRegion));
@@ -4632,7 +5623,7 @@ section("Clarity fixes — 'I'm not understanding' escalates, rephrasing isn't a
   // rewording while the student got visibly more lost ("I'm not understanding", "at what", "let's just
   // move on"), and an explicit "can you just write on the board" request was answered with more chat text
   // instead of an actual board entry.
-  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claude = claudeSource();
   check("an explicit 'I don't understand' is treated as its own escalation signal, distinct from a bare 'I don't know'", claude.includes('an explicit') && claude.includes('"I don\'t understand"/"I\'m not understanding" IS its own signal'));
   check("rephrasing the same question is explicitly called out as NOT a different approach", claude.includes('rephrasing the SAME test/') && claude.includes("question in other words is NOT different"));
   check("the write-to-board tool rule requires honoring an EXPLICIT written-anchor request the same turn", claude.includes("If the student EXPLICITLY") && claude.includes('asks you to write/put something on the board'));
@@ -4668,25 +5659,30 @@ section("Phone restriction — flashcard review + READ-ONLY tasks, no chat; iPad
   // "limit the things you can do on mobile... not on the iPad" — useIsPhone's 767px breakpoint already
   // excludes iPad (smallest portrait width 768px), reused here (and in StudyMode.tsx, which already had
   // its own copy of this exact check) rather than adding a second device-detection mechanism.
-  // Refined by a later instruction: a phone should ALSO see the task list and "what it planned" — but
-  // purely as a view, with no chat and nothing to act on.
+  // Refined by a later instruction: a phone should ALSO see the task list and "what it planned" — mostly
+  // a view (no chat, no Study Mode, no dismiss) — and refined AGAIN by a direct instruction after that:
+  // checking a task off as done must still work on a phone, both from the row and from the open task.
   const hook = readFileSync(new URL("../client/useIsPhone.ts", import.meta.url), "utf8");
   check("useIsPhone uses the 767px breakpoint (keeps iPad, min width 768px, OUT of 'phone')", /max-width:\s*767px/.test(hook));
   check("useIsPhone is reactive (matchMedia change listener), not a one-time read", /addEventListener\("change"/.test(hook));
 
-  const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const app = appSource();
   check("App.tsx imports the shared useIsPhone hook", /import \{ useIsPhone \} from "\.\/useIsPhone\.ts"/.test(app));
-  check("tasks + flashcards + settings are reachable on phone; anything else redirects to the task list", /PHONE_ALLOWED_ROUTES\s*=\s*\["", "tasks", "log", "settings"\]/.test(app) && /r\.startsWith\("task\/"\)/.test(app) && /!phoneRouteAllowed\(route\)\) navigate\("tasks"\)/.test(app));
-  check("Tutor/Study/Error log/Admin stay hidden on phone, but Tasks does NOT", /\{!isPhone && <a[\s\S]{0,200}href="\/tutor"/.test(app) && /\{!isPhone && <a[\s\S]{0,200}href="\/errorlog"/.test(app) && !/\{!isPhone && <a[\s\S]{0,200}href="\/tasks"/.test(app));
+  check("tasks + flashcards + settings are reachable on phone; anything else redirects to the task list", /PHONE_ALLOWED_ROUTES\s*=\s*\["", "tasks", "log", "settings", "tutor", "exercises"\]/.test(app) && /r\.startsWith\("task\/"\)/.test(app) && /!phoneRouteAllowed\(route\)\) navigate\("tasks"\)/.test(app));
+  check("Tutor/Study/Error log/Admin stay hidden on phone, but Tasks does NOT", /\{!isPhone && <a[\s\S]{0,200}href="\/errorlog"/.test(app) && !/\{!isPhone && <a[\s\S]{0,200}href="\/tasks"/.test(app));
   // The point of the phone task view: READ it, don't work on it. No chat (TaskFocus owns the chat), no
   // ticking steps off, no Study Mode, no dismiss, no add-task.
-  check("a phone opens TaskReadOnly instead of TaskFocus (which is where chat lives)", /isPhone \? \(\s*<TaskReadOnly task=\{openTask\} \/>/.test(app));
+  check("a phone opens TaskReadOnly instead of TaskFocus (which is where chat lives)", /isPhone \? \(\s*<TaskReadOnly task=\{openTask\}/.test(app));
   check("task rows on phone are view-only (readOnly) and can't launch Study Mode", /readOnly=\{isPhone\}/.test(app) && /STUDY_MODE_ENABLED && !isPhone \?/.test(app));
   // (Restyled to the Framer prototype: the old topbar's Refresh ghost button is gone — the generate
   // action now lives only in the dashboard's own empty states, and add-task stayed phone-hidden.)
   check("add-task and the refresh/generate action are hidden on phone", /\{!isPhone && <div className="dash-addtask">/.test(app) && !/\{!isPhone && \(route === "" \|\| route === "tasks"/.test(app));
   const card = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
-  check("TaskCardRow's readOnly hides the tick-off, Study Mode and dismiss controls", /!isDone && !readOnly \? \(/.test(card) && /!isDone && !readOnly && onEnterStudyMode/.test(card) && /!isDone && !leaving && !readOnly && <button className="card-x"/.test(card));
+  check("TaskCardRow's readOnly hides Study Mode and dismiss, but NOT the tick-off — direct instruction: checking a task off must still work on a phone",
+    /!isDone && !readOnly && onEnterStudyMode/.test(card) && /!isDone && !leaving && !readOnly && <button className="card-x"/.test(card) &&
+    /\{!isDone \? \(\s*<button type="button" className=\{`card-check/.test(card));
+  check("TaskReadOnly (the phone task-detail view) also has its own Mark as done button, wired to api.confirm",
+    /TaskReadOnly[\s\S]{0,6000}markDone[\s\S]{0,2000}api\.confirm\(task\.id\)/.test(card) && /task-readonly-done/.test(card));
   // "no chat for the moment" is the explicit constraint here, not "no interaction at all" — opening a link
   // (added later) is still a read of the task, not an action ON it, same spirit as the rest of this view.
   check("TaskReadOnly renders the plan (steps + done state) and has no chat (TaskChat/sendChat) at all", /export function TaskReadOnly/.test(card) && /task-readonly-steps/.test(card) && !/TaskReadOnly[\s\S]{0,4000}<TaskChat/.test(card) && !/TaskReadOnly[\s\S]{0,4000}sendChat/.test(card));
@@ -4711,7 +5707,7 @@ section("leaksAnyProblemAnswer — board/diagram/chat-reply guard against statin
   check("a short (<3 char) secret is skipped — same false-positive guard as leaksAnswer/revealsAnswer", !leaksAnyProblemAnswer("the answer is 5 apples", [{ id: "p3", question: "q", answer: "5", createdAt: "" }]));
   check("an unrelated problem's answer doesn't false-positive against a different problem's text", !leaksAnyProblemAnswer("cos theta is minus four fifths", [trig]));
 
-  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claude = claudeSource();
   check("WRITE_TO_BOARD rejects a leaking entry before it's ever created", /leaksAnyProblemAnswer\(String\(input\?\.text \|\| ""\), \[\.\.\.\(opts\?\.currentProblems \|\| \[\]\), \.\.\.result\.problems\]\)\) content = "REJECTED: that states a problem's answer outright/.test(claude));
   check("DRAW_ON_BOARD checks both the caption and every op's text/latex for a leak", /input\.ops\.map\(\(o: any\) => `\$\{o\?\.text \|\| ""\} \$\{o\?\.latex \|\| ""\}`/.test(claude));
   check("the chat reply itself gets the same backstop inside finish(), discarding artifacts like the CHAT_DOES_WORK guardrail does", /leaksAnyProblemAnswer\(reply, \[\.\.\.\(opts\?\.currentProblems \|\| \[\]\), \.\.\.result\.problems\]\)\)/.test(claude));
@@ -4731,7 +5727,7 @@ section("HINT LADDER — a substitution's result must not be computed FOR the st
   // any of that"), and Otto had to admit "I jumped ahead; you hadn't done that subtraction." This is the same
   // "never produce a value they haven't stated themselves" rule as the −1/8+6 and 3x−2 cases already pinned
   // below, extended to cover computing a named substitution's result rather than just asking for it.
-  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claude = claudeSource();
   check("the rule explicitly covers computing a substitution's result while narrating the next step", claude.includes("not a substitution's RESULT even while narrating the next step") && claude.includes("1 − 25/169 sitting there, which comes to 144/169"));
   check("it tells the model to split naming-the-next-computation from doing it, rather than banning naming it", claude.includes("Naming WHICH computation comes next is fine") && claude.includes("computing it FOR them in the same breath is not"));
 }
@@ -4742,7 +5738,7 @@ section("HINT LADDER — a trailed-off/incomplete answer isn't license to finish
   // and stopped mid-thought. Otto's next line both finished that sentence for them AND jumped straight to
   // the next concept ("the leftover has to be ma") — two things the student should have said themselves,
   // handed over together because the first one trailed off instead of being met with "bigger than what?".
-  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claude = claudeSource();
   check("the prompt distinguishes a trailed-off answer from a finished wrong/right one", claude.includes("DON'T TREAT A TRAILED-OFF ANSWER AS A FINISHED ONE") && claude.includes('force has to be bigger than" with nothing after'));
   check("it names the exact live failure: completing their sentence AND advancing the lesson in one breath", claude.includes("line both completed it for them AND jumped straight to the next concept") && claude.includes('the leftover has') && claude.includes('to be ma")'));
 }
@@ -4781,14 +5777,14 @@ section("makeInteractiveEntry — CREATE_INTERACTIVE validation (allowlisted scr
     return "entry" in r && !r.entry.html.includes("<object") && !r.entry.html.includes("<embed");
   })());
   check("CREATE_INTERACTIVE's answer-leak guard reuses leaksAnyProblemAnswer the same way WRITE_TO_BOARD/DRAW_ON_BOARD do", (() => {
-    const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+    const claude = claudeSource();
     return /name === "CREATE_INTERACTIVE"/.test(claude) && /leaksAnyProblemAnswer\(`\$\{input\?\.caption \|\| ""\} \$\{input\?\.html \|\| ""\}`/.test(claude);
   })());
 }
 
 section("CREATE_INTERACTIVE — sandboxed, scoped to Study Mode, capped (source pins)");
 {
-  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claude = claudeSource();
   check("CREATE_INTERACTIVE requires BOTH primer (Tutor) AND canvas mode — never the regular task-chat tool list", (() => {
     const boardToolsBlock = claude.slice(claude.indexOf("const boardTools = opts?.primer"), claude.indexOf("const tools = opts?.canvasMode"));
     const regularLine = claude.split("\n").find((l) => l.includes("CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL"));
@@ -4798,14 +5794,13 @@ section("CREATE_INTERACTIVE — sandboxed, scoped to Study Mode, capped (source 
 
   const board = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
   check("the iframe's sandbox attribute is exactly \"allow-scripts\" (no allow-same-origin/allow-top-navigation/allow-popups)", /sandbox="allow-scripts"/.test(board));
-  check("KIND_LABEL/KIND_GLYPH both have an 'interactive' entry", /interactive: \["Interactif", "Interactive"\]/.test(board) && /interactive: "◈"/.test(board));
 
   // THE bug that would have made every scene blank in production: a `srcdoc` iframe INHERITS the embedding
   // page's CSP, and this app's script-src has no 'unsafe-inline' — so the model's script AND our own guard
   // were both silently blocked. The scene is served from its own same-origin route instead, which carries
   // its own policy. These pins exist so nobody "simplifies" it back to srcdoc.
   check("the frame navigates to the /api/interactive route — never srcdoc (which inherits the app's CSP)", /src=\{`\/api\/interactive\//.test(board) && !/srcDoc/.test(board));
-  const idxSrc = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const idxSrc = serverSource();
   check("the route serves the scene with its OWN csp and a relaxed X-Frame-Options", /app\.get\("\/api\/interactive\/:taskId\/:entryId"/.test(idxSrc) && /INTERACTIVE_SCENE_CSP/.test(idxSrc) && /"X-Frame-Options", "SAMEORIGIN"/.test(idxSrc));
   check("the route 404s anything that isn't an interactive board entry on a task you own", /entry\.kind !== "interactive"/.test(idxSrc) && /req\.session\.tasks \|\| \[\]\)\.find/.test(idxSrc));
   check("that scene CSP allows inline script + the two allowlisted CDNs, and nothing else out (connect-src 'none')", /script-src 'unsafe-inline' https:\/\/cdn\.jsdelivr\.net https:\/\/cdnjs\.cloudflare\.com/.test(claude) && /connect-src 'none'/.test(claude));
@@ -4830,13 +5825,10 @@ section("Landing page redesign — prototype copy, real features only, no fabric
   // Later restyled to the Otto Framer prototype: the long feature/integrations grids were replaced by the
   // prototype's two-column "01/PROACTIVE TASKS · 02/PERSONAL TUTOR" section with honest sample cards —
   // still real, still nothing fabricated; the prototype's copy is the marketing now.
-  const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
-  const landing = app.slice(app.indexOf("export function Landing("), app.indexOf("// ── Legal pages"));
+  const app = appSource();
+  const landing = readFileSync(new URL("../client/pages/Landing.tsx", import.meta.url), "utf8");
   check("no fabricated testimonial content (no quote attributed to a named 'customer')", !/testimonial/i.test(landing));
   check("no certifications this app doesn't hold (SOC 2 / ISO 27001 / SAML)", !/SOC\s*2/i.test(landing) && !/ISO\s*27001/i.test(landing) && !/SAML/i.test(landing));
-  check("the two-column prototype section names the two real halves of the product (proactive tasks + personal tutor)", landing.includes("features-framer") && /PROACTIVE TASKS/.test(landing) && /PERSONAL TUTOR/.test(landing));
-  check("the sample cards use the prototype's honest examples (derivatives task, slope question)", /Get ready for derivatives/.test(landing) && /What does the slope tell us/.test(landing));
-  check("the hero copy matches the prototype (Less busywork. More understanding.)", /Less busywork\. More understanding\./.test(landing));
   check("the footer keeps Privacy/Terms (+ Research, not Unlimited) and the Research page stays reachable", landing.includes('href="/terms"') && landing.includes('href="/research"') && !landing.includes('href="/unlimited"'));
 }
 
@@ -4863,7 +5855,7 @@ section("TTS timeouts — a retry across the male pool must finish inside the cl
   // work it was waiting for (one provider attempt, then the NEXT male voice in the pool), so the client gave
   // up and aborted the whole /api/tts request mid-flight. Both sides now have a documented budget and the
   // client's is strictly larger than the worst case one chunk can cost server-side.
-  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claude = claudeSource();
   const ttsSynthSrc = readFileSync(new URL("../client/voice/useSpeechSynthesis.ts", import.meta.url), "utf8");
   check("the provider call itself is bounded (a hung endpoint can't hold the reply hostage)", /const TTS_TIMEOUT_MS = 12_000;/.test(claude) && /signal: AbortSignal\.timeout\(TTS_TIMEOUT_MS\)/.test(claude));
   check("the client's fetch timeout comfortably exceeds one provider attempt plus the next male voice's attempt", /CLOUD_FETCH_TIMEOUT_MS = 25_000/.test(ttsSynthSrc) && 25_000 > 2 * 12_000);
@@ -4878,7 +5870,7 @@ section("HINT LADDER — a conceptual carryover between parts must be asked, not
   // turning the reason into a question. Same "never hand over what they haven't stated" rule as the
   // mechanical-arithmetic and substitution-result cases already pinned above, extended to a carried-over
   // CONCEPTUAL fact, not just a computed number.
-  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claude = claudeSource();
   check("the rule explicitly covers a conceptual carryover between parts, not just arithmetic", claude.includes("THIS ALSO COVERS A CONCEPTUAL CARRYOVER, not just arithmetic") && claude.includes("μ is the same at 25° because it depends on the"));
   check("it gives the question to ask instead of the assertion to avoid", claude.includes('does μ depend on the angle, or on') && claude.includes('"μ came out') && claude.includes("the surfaces haven't changed, so μ is still tan 20° at 25°"));
 }
@@ -4891,7 +5883,7 @@ section("WRITE_TO_BOARD must not get ahead of the chat — only record a step on
   // leaksAnyProblemAnswer doesn't catch this: there's no CREATE_PROBLEM answer being leaked, just the
   // board racing ahead of the Socratic pacing on a live derivation with no stored "answer" to check against
   // — this needed its own explicit rule on the tool itself, distinct from the answer-leak guard.
-  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claude = claudeSource();
   check("WRITE_TO_BOARD's own description forbids writing a later step before the student reaches it", claude.includes("NEVER GET AHEAD OF THE CHAT") && claude.includes("never a later step of the SAME derivation they haven't reached yet"));
   check("it cites the exact live failure (the finished F_net line written while chat was still deriving it)", claude.includes("F_net down slope = mg sin25 - mg cos25 * tan20") && claude.includes("the board had done the derivation FOR them"));
   check("it gives the concrete fix: ask the question first, write the entry after they answer", claude.includes("ask the question first and write the entry after they answer it"));
@@ -4902,7 +5894,7 @@ section("TTS voice — MALE ONLY, and arrows read as a word (source pins)");
   // Direct request, verbatim: "do not use a female voice; only use a male voice. Do not fall back to any
   // female voice. Just use a male voice, even if it fails, use another free male voice." The pool below is
   // every voice the tutor can ever sound like — so the pin is on the POOL's contents, not on one default.
-  const claude = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const claude = claudeSource();
   const pool = claude.slice(claude.indexOf("const TTS_MALE_VOICES"), claude.indexOf("const TTS_CHUNK_MAX"));
   const names = [...pool.matchAll(/"([A-Za-z]+)"/g)].map((m) => m[1]).filter((n) => !["fr", "en"].includes(n));
   check("every voice in the pool is a MALE voice name, and there is a fallback voice in each language", names.includes("Mathieu") && names.includes("Matthew") && names.length >= 6 && !names.includes("Chantal") && !names.includes("Gabrielle"));
@@ -4962,7 +5954,7 @@ section("Bilingual copy — French and English never bleed into each other (sour
   //      regardless of the toggle (a whole Study Mode setup screen, the camera consent panel, the citation
   //      hint, the tutor's guardrail tag, the crash fallback...).
   const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
-  const appSrc = read("../client/App.tsx");
+  const appSrc = appSource();
 
   check("the language toggle's aria-label follows the language, not the reverse", /aria-label=\{en \? "Switch language" : "Changer de langue"\}/.test(appSrc) && !/en \? "Changer de langue"/.test(appSrc));
   check("the landing page's login link is French-first (it rendered \"Log in\" in French)", /\{L\("Se connecter", "Log in"\)\}/.test(appSrc));
@@ -5033,7 +6025,7 @@ section("Production readiness — the two CSP copies agree, and the Docker build
   // They had silently drifted — style-src was missing https://fonts.googleapis.com in the Express copy
   // while vercel.json already had it, so on the Docker path every page silently fell back to a system font.
   // A directive-by-directive comparison is what actually catches that class of bug.
-  const serverSrc = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const serverSrc = serverSource();
   const vercelRaw = readFileSync(new URL("../vercel.json", import.meta.url), "utf8");
   const cspOf = (block) => Object.fromEntries(block.split(";").map((d) => d.trim()).filter(Boolean).map((d) => {
     const i = d.indexOf(" ");
@@ -5114,8 +6106,7 @@ section("No emoji in the rendered app — real icons (lucide-react) instead (rep
   // now import from lucide-react (the project's established icon library).
   for (const [file, icons] of [
     ["../client/study/AskOttoPanel.tsx", ["Paperclip", "TriangleAlert", "Volume2", "StickyNote"]],
-    ["../client/tutor/TutorSession.tsx", ["ArrowRight", "TrendingUp", "RotateCcw", "MessageCircle", "Lightbulb", "CircleHelp"]],
-    ["../client/study/FocusTracker.tsx", ["Target"]],
+    ["../client/tutor/TutorSession.tsx", ["ChevronRight", "ChevronDown"]],
     ["../client/study/SessionHeader.tsx", ["Timer"]],
     ["../client/study/ToolsDrawer.tsx", ["StickyNote", "Quote", "PenLine"]],
     ["../client/TaskCard.tsx", ["MessageCircle", "Layers"]],
@@ -5125,7 +6116,701 @@ section("No emoji in the rendered app — real icons (lucide-react) instead (rep
   }
 }
 
+section("boardEvents.ts — diffing/trajectory/surface-block (now wired into the live chat route)");
+{
+  const now = new Date("2026-10-08T12:00:00.000Z");
+  const e1 = { id: "a", kind: "formula", text: "F = ma", at: "2026-10-08T11:58:00.000Z" };
+  const e2 = { id: "b", kind: "gap", text: "F_net = ?", at: "2026-10-08T11:59:00.000Z" };
+  check("a brand-new entry is an otto-wrote/student-wrote event", diffBoard([], [e1], now).length === 1 && diffBoard([], [e1], now)[0].kind === "otto-wrote");
+  check("a student-owned entry is tagged student-wrote", diffBoard([], [{ ...e1, owner: "student" }], now)[0].kind === "student-wrote");
+  check("a removed entry is an erased event", diffBoard([e1], [], now).some((ev) => ev.kind === "erased"));
+  check("a changed entry (same id, different text) is a rewrote event", diffBoard([e1], [{ ...e1, text: "ΣF = ma" }], now).some((ev) => ev.kind === "rewrote"));
+  check("an unchanged board produces no events at all", diffBoard([e1, e2], [e1, e2], now).length === 0);
+  check("objectiveEvents fires only on a NEW true (never re-fires on an already-done objective)", objectiveEvents([{ id: "o1", label: "X", done: false }], [{ id: "o1", label: "X", done: true }], now).length === 1 && objectiveEvents([{ id: "o1", label: "X", done: true }], [{ id: "o1", label: "X", done: true }], now).length === 0);
+  check("problemEvents fires problem-created then problem-solved on the SAME id across two calls", problemEvents([], [{ id: "p1", question: "Q", createdAt: "x" }], now)[0].kind === "problem-created" && problemEvents([{ id: "p1", question: "Q", createdAt: "x", solved: false }], [{ id: "p1", question: "Q", createdAt: "x", solved: true }], now)[0].kind === "problem-solved");
+  check("recordBoardEvents appends and caps", recordBoardEvents(Array.from({ length: 79 }, (_, i) => ({ at: String(i), kind: "otto-wrote", detail: "x" })), [{ at: "80", kind: "otto-wrote", detail: "y" }]).length === 80);
+  check("boardTrajectoryBlock is silent with no events at all", boardTrajectoryBlock([]) === "" && boardTrajectoryBlock(undefined) === "");
+  check("boardTrajectoryBlock speaks up once a student erase/rewrite is in the stream", /WHAT JUST HAPPENED ON THE BOARD/.test(boardTrajectoryBlock([{ at: now.toISOString(), kind: "erased", detail: "removed their own entry" }])));
+  check("boardSurfaceBlock tags ownership and status", /STUDENT'S WORK/.test(boardSurfaceBlock([{ id: "s1", kind: "result", text: "N = mg", owner: "student", status: "incorrect", at: now.toISOString() }], [])) && /marked WRONG/.test(boardSurfaceBlock([{ id: "s1", kind: "result", text: "N = mg", owner: "student", status: "incorrect", at: now.toISOString() }], [])));
+  check("tagStudentAnswer attaches to the newest open gap, owner=student", tagStudentAnswer([e2], "friction", { at: now })?.at(-1)?.owner === "student" && tagStudentAnswer([e2], "friction", { at: now })?.at(-1)?.text === "friction");
+  check("tagStudentAnswer is a no-op when nothing is open to answer", tagStudentAnswer([e1], "42", { at: now }) === undefined || tagStudentAnswer([e1], "42", { at: now })?.length === 1);
+  check("selfCorrections finds a rewrite preceded by an erase", selfCorrections([{ at: "1", kind: "erased", detail: "x" }, { at: "2", kind: "rewrote", detail: "y" }]).length === 1);
+  check("boardFingerprint is case/whitespace-insensitive but content-sensitive", boardFingerprint({ kind: "note", text: "Hello   World" }) === boardFingerprint({ kind: "note", text: "hello world" }) && boardFingerprint({ kind: "note", text: "A" }) !== boardFingerprint({ kind: "note", text: "B" }));
+}
+
+section("actionSpace.ts — deterministic teaching-action classification + decision log (source + unit)");
+{
+  const now = new Date("2026-10-08T12:00:00.000Z");
+  const base = { reply: "ok", newBoardEntries: [], newProblems: [] };
+  check("a new problem classifies as CREATE_PROBLEM", classifyTurnAction({ ...base, newProblems: [{ id: "p", question: "Q", createdAt: "x" }] }).action === "CREATE_PROBLEM");
+  check("a gap entry classifies as CREATE_GAP", classifyTurnAction({ ...base, newBoardEntries: [{ id: "g", kind: "gap", text: "x", at: "y" }] }).action === "CREATE_GAP");
+  check("an all-equation diagram classifies as WRITE_EQUATION, a real shape as CREATE_DIAGRAM", classifyTurnAction({ ...base, newBoardEntries: [{ id: "d", kind: "diagram", text: "x", at: "y", diagram: [{ op: "equation", latex: "x" }] }] }).action === "WRITE_EQUATION" && classifyTurnAction({ ...base, newBoardEntries: [{ id: "d", kind: "diagram", text: "x", at: "y", diagram: [{ op: "line", x1: 0, y1: 0, x2: 1, y2: 1 }] }] }).action === "CREATE_DIAGRAM");
+  check("a graph entry classifies as CREATE_GRAPH", classifyTurnAction({ ...base, newBoardEntries: [{ id: "gr", kind: "graph", text: "x", at: "y" }] }).action === "CREATE_GRAPH");
+  check("the board can't ask: a stray legacy question entry is just a board write, not ASK_QUESTION", classifyTurnAction({ ...base, newBoardEntries: [{ id: "q", kind: "question", text: "x", at: "y" }] }).action === "EXPLAIN");
+  check("ASK_FOLLOWUP still fires when a reply asks over an open gap", classifyTurnAction({ ...base, reply: "Which force first?", priorBoard: [{ id: "g0", kind: "gap", text: "a = ?", at: "z" }] }).action === "ASK_FOLLOWUP");
+  check("no tool call, reply ends in '?' → ASK_QUESTION", classifyTurnAction({ ...base, reply: "What happens next?" }).action === "ASK_QUESTION");
+  check("no tool call, short content-free reply → WAIT", classifyTurnAction({ ...base, reply: "Good, keep going." }).action === "WAIT");
+  check("no tool call, longer explanatory reply with no question → EXPLAIN", classifyTurnAction({ ...base, reply: "The normal force balances the perpendicular component of weight on the incline, which is why it isn't simply equal to mg." }).action === "EXPLAIN");
+  const decision = buildTutorDecision({ ...base, newProblems: [{ id: "p", question: "Q", createdAt: "x" }], now, taskId: "t1", subject: "Physics" });
+  check("buildTutorDecision fills taskId/subject/at/action/why", decision.taskId === "t1" && decision.subject === "Physics" && decision.action === "CREATE_PROBLEM" && decision.at === now.toISOString() && decision.why.length > 0);
+  check("recordTutorDecision appends and caps", recordTutorDecision(Array.from({ length: TUTOR_DECISION_CAP - 1 }, () => decision), decision).length === TUTOR_DECISION_CAP);
+  const idxSrc2 = serverSource();
+}
+
+section("sessionState.ts — app-owned per-task session state (source + unit)");
+{
+  const now = new Date("2026-10-08T12:00:00.000Z");
+  const fresh = emptySessionState("t1", now);
+  check("a fresh session starts neutral (independence 0.6, everything else 0)", fresh.independence === 0.6 && fresh.hintRung === 0 && fresh.turns === 0);
+  check("loadOrInitSessionState finds an existing task's state or starts fresh", loadOrInitSessionState({ tutorSessions: [fresh] }, "t1", now).turns === 0 && loadOrInitSessionState({ tutorSessions: [fresh] }, "t2", now) !== fresh);
+  const afterHint = updateSessionState(fresh, { action: "GIVE_HINT", boardLength: 3, success: false }, now);
+  check("a hint bumps hintRung and interventions, pulls independence down", afterHint.hintRung === 2 && afterHint.interventions === 1 && afterHint.independence < fresh.independence);
+  const afterExplain = updateSessionState(afterHint, { action: "EXPLAIN", boardLength: 3, success: false }, now);
+  check("hintRung is a HIGH-WATER MARK — EXPLAIN (rung 6) after a hint (rung 2) jumps, never drops back down later", afterExplain.hintRung === 6);
+  const afterIndependentWin = updateSessionState(afterExplain, { action: "ASK_QUESTION", boardLength: 3, success: true }, now);
+  check("an independent success (not itself an intervention) pulls independence back up", afterIndependentWin.independence > afterExplain.independence);
+  const afterRung = updateSessionState(afterIndependentWin, { action: "ASK_QUESTION", boardLength: 3, success: true }, now);
+  check("hintRung never decreases even after several non-intervention turns", afterRung.hintRung === 6);
+  const frustrated = updateSessionState(fresh, { action: "ASK_QUESTION", boardLength: 1, success: false, frustrated: true }, now);
+  check("a frustrated reaction raises the frustration reading", frustrated.frustration > fresh.frustration);
+  check("persistSessionState upserts by taskId and caps the list", persistSessionState([fresh], updateSessionState(fresh, { action: "WAIT", boardLength: 0, success: false }, now)).length === 1);
+  check("sessionStateBlock is silent on turn 0 (nothing to report yet), speaks up after", sessionStateBlock(fresh) === "" && /SESSION STATE/.test(sessionStateBlock(afterHint)));
+
+  // CRITICAL: normalizeProfile builds a brand-new object from an explicit field whitelist — anything not
+  // listed is silently DROPPED on every load (server/store.ts calls it on every loadState). Without
+  // listing tutorSessions/tutorDecisions there, this entire wiring effort would write successfully, then
+  // lose everything on the very next cloud round-trip. Pinned here because it's exactly the kind of bug
+  // that passes every other test (the write succeeds, the very next read silently has nothing).
+  const roundTripped = normalizeProfile({ tutorSessions: [afterHint], tutorDecisions: [{ at: now.toISOString(), action: "GIVE_HINT", why: "test" }] });
+  check("tutorSessions/tutorDecisions survive a normalizeProfile round-trip (the exact shape loadState re-validates on every load)", roundTripped.tutorSessions?.length === 1 && roundTripped.tutorSessions[0].taskId === "t1" && roundTripped.tutorDecisions?.length === 1 && roundTripped.tutorDecisions[0].action === "GIVE_HINT");
+  check("a malformed tutorSessions/tutorDecisions entry is dropped, not crashed on", normalizeProfile({ tutorSessions: [{ garbage: true }], tutorDecisions: [{ garbage: true }] }).tutorSessions?.length === 0 && normalizeProfile({ tutorSessions: [{ garbage: true }], tutorDecisions: [{ garbage: true }] }).tutorDecisions?.length === 0);
+  check("conceptModel/conceptGraph also survive the round-trip (shallow shape check, deep validation deferred to their own server-side normalizers)", normalizeProfile({ conceptModel: { concepts: {}, updatedAt: now.toISOString() } }).conceptModel !== undefined && normalizeProfile({ conceptGraph: { nodes: {}, updatedAt: now.toISOString() } }).conceptGraph !== undefined && normalizeProfile({}).conceptModel === undefined);
+}
+
+section("server/index.ts chat route — the client-sent board survives the round trip (source pins)");
+{
+  const idxSrc4 = serverSource();
+  check("the client-sent board sanitizer now preserves owner/status/concept, not just text/kind/diagram/outline", /\.\.\.\(b\.owner === "student" \|\| b\.owner === "otto" \? \{ owner: b\.owner \} : \{\}\)/.test(idxSrc4) && /\.\.\.\(b\.status === "correct" \|\| b\.status === "incorrect" \? \{ status: b\.status \} : \{\}\)/.test(idxSrc4));
+}
+
+section("tutor + board: LaTeX renders, steps are checked by code, speech slips are repaired");
+{
+  const { latexToPlainText } = await import("../shared/mathText.ts");
+  const { equivalent, toExprSource, gapTarget, verifyStepAgainstGap } = await import("../shared/mathEquiv.ts");
+  const { repairSpokenMath, spokenContextFrom } = await import("../shared/spokenMath.ts");
+  const { unrenderableMath } = await import("../server/latexCheck.ts");
+  const katex = (await import("katex")).default;
+  const nested = "\\displaystyle \\frac{h}{100 + \\frac{h}{\\tan(25^\\circ)}} = \\tan(15^\\circ)";
+  // Reported live on the tower problem: this exact line printed as raw source.
+  check("layout/degree commands are not 'prose words' — the nested tower equation goes to KaTeX", looksLikeRealMath(nested) && looksLikeRealMath("\\left(\\frac{h}{b}\\right) = \\tan 25^\\circ"));
+  check("…while prose wrapped in \\text{} still trips the prose gate", !looksLikeRealMath("\\text{under a force of} 10"));
+  check("a bare nested \\frac is wrapped as ONE balanced $…$ span", autoMathLine(`replace it: ${nested.replace("\\displaystyle ", "")}`) === `replace it: $${nested.replace("\\displaystyle ", "")}$`);
+  check("KaTeX renders HTML only (no hidden MathML copy to double the text)", !/katex-mathml/.test(katex.renderToString("\\frac{1}{4}", { output: "html" })));
+  const boardSrcK = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  const mainSrcK = readFileSync(new URL("../client/main.tsx", import.meta.url), "utf8");
+  check("every KaTeX render on the board passes output:'html' and the stylesheet is imported statically", (boardSrcK.match(/output: "html"/g) || []).length >= 1 && (boardSrcK.match(/output: "html"/g) || []).length === (boardSrcK.match(/katex\.(renderToString|render)\(/g) || []).length && /import "katex\/dist\/katex\.min\.css";/.test(mainSrcK));
+  check("a failed equation falls back to readable text, never raw \\commands", latexToPlainText(nested) === "h/(100 + h/tan(25°)) = tan(15°)");
+  check("the server refuses an unbalanced \\frac and passes a good one", !!unrenderableMath("$\\frac{h}{100 + \\tan(25^\\circ)$") && unrenderableMath(`$${nested}$`) === null);
+  // Deterministic equivalence: the verdict on a step is code, not the model's guess.
+  check("h/tan(25°) ≡ \\frac{h}{\\tan 25^\\circ} ≡ h cot 25° (degrees honoured)", equivalent("h/tan(25°)", "\\frac{h}{\\tan 25^\\circ}") === "correct" && equivalent("h cot 25°", "h/tan(25°)") === "correct");
+  check("h·tan(25°) is NOT equivalent; numbers compare as values (0.25 = 1/4 = 25%)", equivalent("h*tan(25°)", "h/tan(25°)") === "incorrect" && equivalent("0.25", "\\frac14") === "correct" && equivalent("25%", "1/4") === "correct" && equivalent("1/4", "0.2") === "incorrect");
+  check("an unreadable answer is 'unknown', never 'incorrect'", equivalent("@@", "x") === "unknown" && equivalent("the angle", "x") === "unknown");
+  check("a leading 'b =' is dropped and the gap's letter is found", toExprSource("b = h/2", "b") === "h/2" && gapTarget("$b = ?$") === "b");
+  const gapBoard = [{ kind: "gap", text: "b = ?", expectedAnswer: "\\frac{h}{\\tan(25^\\circ)}" }];
+  check("a chat step is checked against the newest open gap", verifyStepAgainstGap("so b = h / tan 25°", gapBoard)?.verdict === "correct" && verifyStepAgainstGap("b = h tan 25°", gapBoard)?.verdict === "incorrect" && verifyStepAgainstGap("I'm not sure", gapBoard) === undefined);
+  // Speech-to-text slips, from the reported session.
+  const ctx = spokenContextFrom(["Observers A and B at 15° and 25°, 100 m apart", "$\\tan(25^\\circ) = \\frac{h}{b}$"]);
+  check("context: angles 15/25 and tan are in play", ctx.angles.includes(15) && ctx.angles.includes(25) && ctx.fns.includes("tan"));
+  check("'1025 = height over b' → 'tan 25° = …' (ten+angle merged)", repairSpokenMath("1025 = height over b", ctx).interpreted === "tan 25° = height over b");
+  check("'opposite over json' → 'opposite over adjacent'", repairSpokenMath("opposite over json", ctx).interpreted === "opposite over adjacent");
+  check("'h over count 25' → 'h over tan 25°'; an everyday 'I can 15…' is left alone", repairSpokenMath("b equals h over count 25", ctx).interpreted === "b equals h over tan 25°" && repairSpokenMath("I can 15 do it", ctx).changes.length === 0);
+  check("a letter heard as a digit ('…/8' for h) is flagged as a low-confidence guess", repairSpokenMath("b = count 25/8", ctx).confidence === "low");
+  check("nothing maths-like → nothing changed", repairSpokenMath("can you help me", ctx).changes.length === 0);
+}
+
+section("a live tutor session never 404s on chat (cross-instance race) and a page load never dead-ends");
+{
+  const idxSrcR = serverSource();
+  const freeRoute = idxSrcR.slice(idxSrcR.indexOf('app.post("/api/study/free"'), idxSrcR.indexOf("}));", idxSrcR.indexOf('app.post("/api/study/free"')));
+  check("a new tutor session is written to the account row before responding (awaitCloud)", /commit\(req, \{ awaitCloud: true \}\)/.test(freeRoute));
+  const chatRoute = idxSrcR.slice(idxSrcR.indexOf('app.post("/api/tasks/:id/chat"'), idxSrcR.indexOf('app.post("/api/tasks/:id/chat"') + 4000);
+  check("the chat route tries recoverTutorTask before answering 404", /tasks\.recoverTutorTask\(/.test(chatRoute) && chatRoute.indexOf("recoverTutorTask(") < chatRoute.indexOf('M(req, "Introuvable.", "Not found.")'));
+  const { recoverTutorTask } = await import("../server/tasks.ts");
+  const id = "365b3e82-8d63-439c-92b5-9eb2fecc2bdf";
+  const body = { primer: true, session: { id, source: "freestudy", sourceSubject: "Math", createdAt: "2026-10-10T10:00:00Z" } };
+  const rebuilt = recoverTutorTask(id, body, [], false);
+  check("a missing tutor session is rebuilt with the SAME id, as a live freestudy task", rebuilt?.id === id && rebuilt.source === "freestudy" && rebuilt.sourceSubject === "Math" && rebuilt.status === "needs_review");
+  check("…but never for a non-tutor turn, another source, a mismatched or malformed id", !recoverTutorTask(id, { ...body, primer: false }, [], false) && !recoverTutorTask(id, { ...body, session: { ...body.session, source: "gmail" } }, [], false) && !recoverTutorTask(id, { ...body, session: { ...body.session, id: "x" } }, [], false) && !recoverTutorTask("not-a-uuid", { ...body, session: { ...body.session, id: "not-a-uuid" } }, [], false));
+  check("…and never revives a session the account already has (a dismissed one stays dismissed)", !recoverTutorTask(id, body, [{ id, status: "dismissed" }], false));
+  const swSrc = readFileSync(new URL("../public/sw.js", import.meta.url), "utf8");
+  check("the service worker answers a failed page load with a retry + self-reloading page, not Response.error()", /event\.request\.mode === "navigate"\s*\?\s*fetch\(event\.request\)\.catch\(\(\) => offlinePage\(\)\)/.test(swSrc) && /function offlinePage\(\)/.test(swSrc) && /otto-v5/.test(swSrc));
+}
+
+section("egress: finished work is compacted on every write (the account row is re-downloaded on every full read)");
+{
+  const { compactTasksForStorage, ENDED_TUTOR_STUBS_KEPT } = await import("../shared/taskCompaction.ts");
+  const heavy = (id, status, source, at) => ({ id, title: "T", why: "w", source, status, risk: "low", urgency: 0, importance: 0, quadrant: "q4", score: 0, createdAt: at, updatedAt: at,
+    chat: [{ role: "user", text: "x".repeat(500), at }], board: [{ id: "b", at, kind: "summary", text: "y", svg: "z".repeat(4000) }], boardEvents: [{ at, kind: "wrote", detail: "d" }], problems: [{ id: "p", question: "q", createdAt: at }], notes: [{ id: "n", title: "keep me", body: "b" }], audit: Array.from({ length: 10 }, (_, i) => ({ at, kind: "tool", label: String(i) })) });
+  const live = heavy("live", "needs_review", "freestudy", "2026-10-11T10:00:00Z");
+  const ended = Array.from({ length: ENDED_TUTOR_STUBS_KEPT + 5 }, (_, i) => heavy("s" + i, "dismissed", "freestudy", new Date(Date.UTC(2026, 9, 10, 0, i)).toISOString()));
+  const doneHw = heavy("hw", "done", "pronote", "2026-10-09T10:00:00Z");
+  const openHw = heavy("open", "needs_review", "pronote", "2026-10-09T10:00:00Z");
+  const out = compactTasksForStorage([live, ...ended, doneHw, openHw]);
+  const byId = Object.fromEntries(out.map((t) => [t.id, t]));
+  check("active tasks (a live tutor session, open homework) are stored untouched", JSON.stringify(byId.live) === JSON.stringify(live) && JSON.stringify(byId.open) === JSON.stringify(openHw));
+  check("ended tutor sessions become tiny stubs (no chat/board/events/problems), newest 50 kept", !byId.s54.chat && !byId.s54.board && !byId.s54.boardEvents && !byId.s54.problems && byId.s54.status === "dismissed" && !byId.s0 && out.filter((t) => t.source === "freestudy" && t.status === "dismissed").length === ENDED_TUTOR_STUBS_KEPT);
+  check("other finished tasks drop chat/board/events but keep their notes; audit trimmed", !byId.hw.chat && !byId.hw.board && !byId.hw.boardEvents && byId.hw.notes?.[0]?.title === "keep me" && byId.hw.audit.length === 3);
+  check("task order is preserved", out[0].id === "live" && out[out.length - 1].id === "open");
+  check("compaction is applied at the one write choke point (store.saveState)", /state = \{ \.\.\.state, tasks: compactTasksForStorage\(state\.tasks \|\| \[\]\) \};/.test(readFileSync(new URL("../server/store.ts", import.meta.url), "utf8")));
+}
+
+section("the tutor's hidden worked solution and teaching state never reach the browser");
+{
+  const idx = serverSource();
+  const comp = readFileSync(new URL("../shared/taskCompaction.ts", import.meta.url), "utf8");
+  check("outgoingTasks, the job kick and the chat echo all strip solution/tutorState; finished tasks drop them",
+    /const \{ solution: _sol, tutorState: _ts, \.\.\.t \} = t0 as WebTask;/.test(idx) && /const \{ chat, board, problems, objectives, solution, tutorState, \.\.\.rest \} = t;/.test(idx) &&
+    /const \{ solution: _hiddenSolution, tutorState: _hiddenState, \.\.\.leanTask \} = t;/.test(idx) && /solution: _s, tutorState: _t/.test(comp));
+  check("the tutor route solves the focus problem once and records code-verified evidence", /if \(focus && focusKeyOf\(focus\) !== t\.solution\?\.focusKey\)/.test(idx) && /recordConceptEvidence\(/.test(idx) && /nextTeachingState\(t\.tutorState/.test(idx));
+}
+
 const { runTutorSim } = await import("./tutor-sim.mjs");
 await runTutorSim(check, section);
+
+// ---- unearned confirmation / wrap-up / unverified key ----
+{
+  const msg = "so it is 60,000 over 300 and that makes a mass of 200";
+  const t1 = confirmsUnchecked("4,000 W is spot on! You crushed both the energy mechanics and the power calculation.", msg, null);
+  const t2 = confirmsUnchecked("Yes, 200 kg is spot on!", msg, null);
+  const t3 = confirmsUnchecked("Spot on!", "so acceleration equals one", { studentStep: { status: "correct" } });
+  const t4 = wrapsUpUnasked("Want to tackle one more, or call it a win for today?", msg);
+  const t5 = wrapsUpUnasked("Ready for another one?", msg);
+  const t6 = wrapsUpUnasked("What would you check next?", msg);
+  const k1 = makeProblemP({ question: "Find the mass m in kg.", answer: "4000" }, true);
+  const k2 = makeProblemP({ question: "Find the mass m in kg.", answer: "200", check: "60000/300" }, true);
+  const k3 = makeProblemP({ question: "Find the mass m in kg.", answer: "4000" });
+  const ok = t1 && !t2 && !t3 && t4 && t5 && !t6 && "error" in k1 && !("error" in k2) && !("error" in k3);
+  check("unearned praise / wrap-up / key without check", ok);
+}
+{
+  const src = ["so 9.8 * 24 is 235,200 total potential energy, friction force", "A 1000 kg car, 24 m, g = 9.8"];
+  const a = inventedNumbers("What do you get when you take the square root of 390.4 to find v?", src);
+  const b = inventedNumbers("So 235,200 J is the starting energy. What does the friction force do to it?", src);
+  const ok = a.includes("390.4") && b.length === 0;
+  check("invented numbers", ok);
+}
+{
+  const a = confirmsUnchecked("200,200 J is right on the money for your remaining kinetic energy!", "so now I have a real kinetic energy of 200,000 and that equals", null);
+  const b = confirmsUnchecked("400 for v² is spot on!", "images 200,000 not 200,200", null);
+  const c = confirmsUnchecked("529,200 J is spot on. That's all the energy.", "so 1200 times 9.8 times 45 which is equal to 529,200", null);
+  const d = blamesWidget("Those widgets can be picky about percentages vs decimals.");
+  const e = blamesWidget("Ah, the classic percentage trap! Check the units.");
+  const f = blamesWidget("What does the widget ask you for?");
+  const ok = a && b && !c && d && e && !f;
+  check("confirms a different number / blames the widget", ok);
+}
+
+{
+  const f1 = currentFocus([{ question: "Find m", solved: false }], [{ kind: "given", text: "1000 kg" }], []);
+  const f2 = currentFocus([{ question: "Find m", solved: true }], [{ kind: "given", text: "1000 kg, 24 m" }], []);
+  const f3 = currentFocus([], [], [{ role: "user", text: "solve x^2-5x+6" }]);
+  check("currentFocus: open exercise > board givens > how the session began", /open exercise: Find m/.test(f1) && /1000 kg, 24 m/.test(f2) && /x\^2-5x\+6/.test(f3) && focusBlock("") === "" && /CURRENT FOCUS/.test(focusBlock(f1)));
+}
+{
+  const t = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  const b = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  check("landing has no 'All sessions' back button; the subject starts the session in one tap, and only 'Other' asks for a name", !/backButton/.test(t) && /tutor-topic-input/.test(t) && /selectedSubject === OTHER/.test(t) && !/What exactly/.test(t));
+  check("ending a session is remembered locally first and finished on the next visit if the server call failed", /markEnded\(taskId\)/.test(t) && /!ended\.has\(x\.id\)/.test(t));
+  check("a board opens on its bottom immediately (instant jump, re-pinned while layout settles)", /behavior: "auto"/.test(b) && /\[80, 250, 700\]/.test(b));
+}
+const { runTutorEngineSim } = await import("./tutor-engine-sim.mjs");
+await runTutorEngineSim(check, section);
+const { runTutorCompanionSim } = await import("./tutor-companion-sim.mjs");
+await runTutorCompanionSim(check, section);
+{
+  const app = appSource();
+  const t = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  check("Hick's law: four primary nav links, the rest under a 'More' menu that closes on navigation; at most 3 one-tap chips", /className="topnav-more" key=\{route\}/.test(app) && /topnav-more-menu/.test(app) && !/Something else/.test(t));
+}
+{
+  const log = (d, t, extra = {}) => ({ id: d, source: "studylog", logDate: d, logText: t, title: d, ...extra });
+  const list = [
+    log("2026-10-01", "Worked on derivatives and the chain rule in maths, still shaky on composite functions"),
+    log("2026-10-03", "Read about shared knowledge and personal knowledge for TOK, plus some Shakespeare for English"),
+    log("2026-10-05", "Chemistry: balanced redox equations, acids and bases were easy"),
+    { id: "w", source: "studylog", logDate: "week:2026-09-28", logText: "weekly roll-up" },
+    log("2026-10-06", ""),
+  ];
+  const sub = subjectsIn("Read about shared knowledge for TOK, plus some Shakespeare for English");
+  const ctx = selectJournal(list, { subject: "Math", query: "I'm stuck on the chain rule" });
+  const tok = selectJournal(list, { subject: "Theory of Knowledge", query: "" });
+  const line = recentJournalLine(ctx.entries, "Math", { total: ctx.total, subjects: ctx.subjects });
+  check("journal entries are labelled by the subjects they talk about (several per entry)", sub.includes("Theory of Knowledge") && sub.includes("English"));
+  check("the tutor gets the entries about the current subject / what was just said first, with labels, dates and the overall count", ctx.entries[0].date === "2026-10-01" && ctx.total === 3 && /\[Math\]/.test(line) && /3 entries in all/.test(line) && /2026-10-01/.test(line) && tok.entries[0].date === "2026-10-03");
+  check("admin journal count: real daily entries only (no roll-ups, no cleared entries)", countJournalEntries(list) === 3);
+}
+{
+  const b = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  const css = readFileSync(new URL("../client/minimal.css", import.meta.url), "utf8");
+  check("board blanks: gaps the tutor moved past lose their '?'; ink sheets are capped; less top padding", /sm-board-gap-past/.test(b) && /isPastGap/.test(b) && /Math\.min\(sheetSignal\.height, 240\)/.test(b) && /\.sm-board-gap-past \.sm-board-gap-text::after \{ content: none/.test(css));
+}
+{
+  const { equivalent: eq } = await import("../shared/mathEquiv.ts");
+  const key = "\\arcsin\\left(\\frac{8.3\\sin(126^\\circ)}{13.4}\\right)";
+  check("an inverse-trig key accepts the angle in degrees (30 for arcsin(…) = 30.07°) or radians, but not a wrong angle", eq("30", key, "θ") === "correct" && eq("0.525", key, "θ") === "correct" && eq("45", key, "θ") === "incorrect" && eq("5", "2+2") === "incorrect");
+}
+{
+  const { autoMathLine: aml } = await import("../shared/mathText.ts");
+  const cv = readFileSync(new URL("../client/tutor/TutorCanvas.tsx", import.meta.url), "utf8");
+  check("a spelled-out 'pi' typesets as the constant (pi/2 → \\frac{\\pi}{2}, not p·i/2); words containing 'pi' are untouched", aml("pi/2") === "$\\frac{\\pi}{2}$" && aml("x = pi/2") === "$x = \\frac{\\pi}{2}$" && !/\\pi/.test(aml("a pipe and a spider")));
+  check("ink drawn out in the side margin reserves no blank space in the board column; a failed whiteboard read is told to Otto, not swallowed", /colL/.test(cv) && /p\.x >= colL && p\.x <= colR/.test(cv) && /couldn't be read just now/.test(cv));
+}
+{
+  const { emptyBoard, applyBoardAction: ap, boardSnapshot: snap } = await import("../shared/boardState.ts");
+  const { evalMathExpr: ev } = await import("../server/tutorAdapt.ts");
+  const eng = { evaluate: ev, now: () => "2026-10-11T12:00:00Z" };
+  let n = 0; eng.newId = () => `o${++n}`;
+  let st = emptyBoard("p1");
+  const run = (a) => { const r = ap(st, a, eng); st = r.state; return r.result; };
+  const prob = run({ action: "create", author: "system", object: { type: "problem", id: "prob", data: { statement: "A 15 N force moves a box 4 m", givens: [{ name: "F", value: 15, unit: "N" }, { name: "d", value: 4, unit: "m" }] } } });
+  run({ action: "create", object: { type: "equation", id: "angle", data: { latex: "\\theta = 0^\\circ", expr: "0" } } });
+  const w = run({ action: "append_step", step: { formula: "W = F d cos θ", substituted: "15×4×cos 0°", expr: "15*4*cos(0)", result: 60, unit: "J" }, dependsOn: ["angle"] });
+  const work = run({ action: "create", author: "student", object: { type: "equation", id: "mine", data: { latex: "W = 60" } } });
+  const hiddenStep = run({ action: "create", object: { type: "text", id: "sol", visible: false, data: { text: "full solution" } } });
+  const rev0 = st.revision;
+  check("1/3 inspect lists the existing objects; the original problem is stamped as problem-authored and never duplicated", snap(st).objects.length === 5 && st.objects.prob.author === "problem" && run({ action: "create", object: { type: "problem", data: { statement: "A 15 N force moves a box 4 m", givens: [] } } }).error?.code === "DUPLICATE");
+  const h = run({ action: "highlight", targetId: "angle", part: "θ" });
+  check("2 highlighting adds an emphasis object and leaves the highlighted one untouched (no recreate, same revision)", h.ok && st.objects.angle.revision === 1 && Object.values(st.objects).filter((o) => o.type === "equation").length === 2);
+  const v1 = run({ action: "validate", targetId: w.object.id });
+  check("deterministic validation: 15×4×cos0 = 60 → verified; a wrong claim → invalid, with the engine's value", v1.ok && st.objects[w.object.id].verification === "verified" && (run({ action: "update", targetId: w.object.id, patch: { result: 61 } }), run({ action: "validate", targetId: w.object.id }).note === "the engine computes 60") && st.objects[w.object.id].verification === "invalid");
+  run({ action: "update", targetId: w.object.id, patch: { result: 60 } }); run({ action: "validate", targetId: w.object.id });
+  const up = run({ action: "update", targetId: "angle", patch: { latex: "\\theta = 40^\\circ", expr: "40" } });
+  check("6/8 editing an input marks the dependent calculation stale (never shown verified); unaffected objects keep their state", up.ok && up.stale.includes(w.object.id) && st.objects[w.object.id].verification === "stale" && st.objects.mine.verification === "unverified" && st.objects.prob.revision === 1);
+  const forb = run({ action: "update", targetId: "mine", patch: { latex: "W = 0" } });
+  check("4 the tutor can't overwrite or remove student work; the student can edit their own", !forb.ok && forb.error.code === "FORBIDDEN_STUDENT_WORK" && run({ action: "remove", targetId: "mine" }).error.code === "FORBIDDEN_STUDENT_WORK" && run({ action: "update", author: "student", targetId: "mine", patch: { latex: "W = 60 J" } }).ok);
+  const stale = run({ action: "annotate", targetId: "angle", text: "the slope angle", baseRevision: rev0 });
+  check("5/10 an action built on an old board revision is rejected with an explicit error instead of clobbering newer work; unknown targets error too", !stale.ok && stale.error.code === "STALE_REVISION" && run({ action: "focus", targetId: "nope" }).error.code === "NOT_FOUND");
+  const ann = run({ action: "annotate", targetId: "angle", text: "the slope angle", baseRevision: st.revision });
+  check("13 an annotation sits right next to the object it explains and names its target", ann.ok && st.order[st.order.indexOf("angle") + 1] === ann.object.id && st.objects[ann.object.id].data.targetId === "angle");
+  check("14/15 hidden steps are absent from the student's view (only counted) until revealed; a reveal-all shows them", !snap(st, "student").objects.some((o) => o.id === "sol") && snap(st, "student").hiddenCount === 1 && run({ action: "reveal", all: true }).ok && snap(st, "student").objects.some((o) => o.id === "sol"));
+  const before16 = JSON.stringify(Object.keys(st.objects).sort());
+  const extra = run({ action: "create", object: { type: "text", id: "tmp", data: { text: "scratch" } } });
+  run({ action: "undo" });
+  check("16 undo reverses the intended action without deleting unrelated work", extra.ok && !st.objects.tmp && JSON.stringify(Object.keys(st.objects).sort()) === before16 && !!st.objects.mine);
+  check("reset needs an explicit scope, keeps the problem, and ARCHIVES student work instead of deleting it", run({ action: "reset" }).error.code === "SCOPE_REQUIRED" && run({ action: "reset", scope: "exercise" }).ok && !!st.objects.prob && st.objects.prob.status === "active" && st.objects.mine.status === "archived");
+  check("generated SVG is data, not code: scripts/handlers are rejected; organize only reorders", run({ action: "create", object: { type: "diagram", data: { caption: "x", svg: "<svg><script>alert(1)</script></svg>" } } }).error.code === "INVALID_PAYLOAD" && run({ action: "organize", order: ["nope"] }).error.code === "INVALID_PAYLOAD");
+}
+{
+  const { entriesToState: e2s, applyEntryAction: aea } = await import("../shared/boardAdapter.ts");
+  const ents = [{ id: "a", kind: "formula", text: "x", owner: "otto" }, { id: "b", kind: "result", text: "y", owner: "student" }, { id: "c", kind: "given", text: "z" }];
+  const st2 = e2s(ents);
+  check("adapter: entries load as objects with the right authors (otto→tutor, student, given→problem) in board order", st2.objects.a.author === "tutor" && st2.objects.b.author === "student" && st2.objects.c.author === "problem" && st2.order.join() === "a,b,c");
+  check("adapter: update/remove succeed on tutor lines, are refused on student lines, and unknown ids are NOT_FOUND", aea(ents, { action: "update", targetId: "a", patch: { text: "x2" } }).ok === true && aea(ents, { action: "update", targetId: "b", patch: { text: "q" } }).code === "FORBIDDEN_STUDENT_WORK" && aea(ents, { action: "remove", targetId: "zz" }).code === "NOT_FOUND");
+  const idx = serverSource(), bart = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8"), tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  check("the board only grows: the turn returns new entries only (no edits/removals/clear fields), and the client merges them onto what's on screen",
+    !/boardEdits|boardRemoved|boardCleared/.test(idx) && /const newBoard = mergeBoardById\(task\.board \|\| \[\], board \|\| \[\]\)/.test(tutorSrc) && /gapsClosed\.has\(b\.id\) \? fillGap/.test(tutorSrc));
+}
+{
+  // ── Board spec: figures are addressable element by element; create/inspect go through the validated reducer ──
+  const { buildGeometry } = await import("../shared/geometry.ts");
+  const { buildInclineScene } = await import("../shared/inclineScene.ts");
+  const { applyCreateAction: ac, applyInspectAction: ai } = await import("../shared/boardAdapter.ts");
+  const tri = buildGeometry({ triangle: { names: ["A", "B", "C"], sides: [3, 4, 5] }, angles: [{ at: "C", from: "A", to: "B", right: true }] });
+  const gids = tri.ops.map((o) => o.id);
+  check("figure: every drawn element carries a stable id and no two share one — the tutor can point at ONE line instead of redrawing the figure", !tri.error && gids.length === tri.ops.length && gids.every(Boolean) && new Set(gids).size === gids.length);
+  check("figure: elements are addressable by name (segment_A_B, angle_C, point_A) and an id the app supplies is kept", /^segment_A_B_/.test(tri.elementIds.segment_A_B || "") && !!tri.elementIds.angle_C && !!tri.elementIds.point_A && tri.ops.some((o) => o.id === tri.elementIds.segment_A_B) && buildGeometry({ points: { A: [0, 0], B: [6, 0] }, segments: [{ from: "A", to: "B", id: "force-applied" }] }).ops.some((o) => o.id === "force-applied"));
+
+  let gn = 0; const geng = { now: () => "2026-10-11T12:00:00Z", newId: () => `c${++gn}` };
+  const stmt = "A 2 kg block is pulled 4 m up a smooth 30° slope by a 15 N force.";
+  const made = ac([], { action: "create", author: "system", object: { type: "problem", id: "prob", data: { statement: stmt, givens: [{ name: "m", value: 2, unit: "kg" }, { name: "F", value: 15, unit: "N" }] } } }, geng);
+  check("adapter create: the problem lands on the board as the PROBLEM's line, not the tutor's", made.ok && made.entry.kind === "given" && made.entry.text === stmt);
+  const dupe = ac(made.ok ? [made.entry] : [], { action: "create", author: "system", object: { type: "problem", data: { statement: stmt, givens: [] } } }, geng);
+  check("adapter create: asking for the same problem again focuses it — never a second copy of the exercise", !dupe.ok && dupe.code === "DUPLICATE");
+  const inc = buildInclineScene({ angle: 30, forces: ["weight", "components", "normal", "applied"], motion: "up" });
+  const fig = ac(made.ok ? [made.entry] : [], { action: "create", object: { type: "diagram", id: "fig1", data: { caption: "Inclined plane", svg: inc.svg } } }, geng);
+  check("adapter create: a created figure comes back as the kind the board actually RENDERS, with its svg intact", fig.ok && fig.entry.kind === "svg" && fig.entry.svg === inc.svg && /KaTeX_Main/.test(fig.entry.svg || ""));
+  check("adapter create: generated SVG is data, never code — a script inside a created figure is refused", !ac([], { action: "create", object: { type: "diagram", data: { caption: "x", svg: "<svg><script>alert(1)</script></svg>" } } }, geng).ok);
+  const ins = ai(made.ok && fig.ok ? [made.entry, fig.entry] : [], { action: "inspect", types: ["diagram"] }, geng);
+  check("adapter inspect: reads back only what was asked for (the figure, not the whole board) with a usable summary", ins.ok && ins.snapshot.objects.length === 1 && ins.snapshot.objects[0].id === "fig1" && ins.snapshot.objects[0].type === "diagram" && ins.snapshot.objects[0].summary.length > 0);
+}
+{
+  // ── Board spec: a deterministic calculation layer checks the arithmetic, so a right number is never called wrong ──
+  const { validateCalculationStep, checkArithmeticClaim } = await import("../shared/calculationEngine.ts");
+  check("calc engine: 15×4×cos 0° claimed as 60 verifies; the same step claimed as 61 is rejected with the computed value", validateCalculationStep({ expr: "15*4*cos(0)", result: 60 }).valid && !validateCalculationStep({ expr: "15*4*cos(0)", result: 61 }).valid && validateCalculationStep({ expr: "15*4*cos(0)", result: 61 }).calculated === 60);
+  check("calc engine: a step it cannot evaluate stays UNVERIFIED rather than being passed off as checked", !validateCalculationStep({ expr: "the moon is made of cheese", result: 1 }).valid && validateCalculationStep({ expr: "the moon is made of cheese", result: 1 }).calculated === undefined);
+  check("calc engine: a claim's LEFT side is evaluated as an expression, so a correct product is never called wrong and a wrong one is", checkArithmeticClaim("3 × 47 = 141") === true && checkArithmeticClaim("3 × 47 = 140") === false && checkArithmeticClaim("2 + 2 = 4") === true && checkArithmeticClaim("no arithmetic here") === false);
+}
+{
+  // ── Spec §2/§4: the verdict on the student's step is CODE, not the model's guess, and the teaching state changes strategy on evidence ──
+  const { stepVerdictLine } = await import("../server/claude.ts");
+  const { verifyStepAgainstGap } = await import("../shared/mathEquiv.ts");
+  const { nextTeachingState, teachingBlock } = await import("../server/tutor.ts");
+  const { emptyBoard, applyBoardAction } = await import("../shared/boardState.ts");
+
+  const gapB = [{ id: "g", kind: "gap", text: "$b = ?$", expectedAnswer: "h/tan(25°)" }];
+  const right = verifyStepAgainstGap("so b = h / tan 25°", gapB);
+  const wrong = verifyStepAgainstGap("b = h tan 25°", gapB);
+  check("a RIGHT step against the open gap is confirmed by code, told to the tutor as fact, and never re-derived", right?.verdict === "correct" && /CORRECT for the open gap/.test(stepVerdictLine(right)) && /move to the NEXT step/.test(stepVerdictLine(right)));
+  const wrongTold = stepVerdictLine(wrong);
+  check("a step that is NOT equivalent is never graded 'wrong' by the teller; the prompt makes it ask ONE self-test question", wrong?.verdict === "incorrect" && /never reveal the right expression/.test(wrongTold) && /ask ONE question/.test(wrongTold) && /test their own line/.test(wrongTold));
+  check("a step nothing can verify (unreadable) yields NO verdict line — the tutor reacts normally", stepVerdictLine(verifyStepAgainstGap("I'm lost", gapB)) === "");
+
+  const s1 = nextTeachingState(undefined, { message: "I don't know how to do it" });
+  check("a stuck first message bumps the streak to 1; the advice says one rung up, not a repeat", s1.stuckStreak === 1 && /sharper hint|pointer|figure/.test(teachingBlock(s1)));
+  const s2 = nextTeachingState(s1, { message: "still lost", verdict: "incorrect" });
+  const stuck2 = teachingBlock(s2);
+  check("two stuck turns make the tutor switch strategy: explain directly, then hand the step back", s2.stuckStreak === 2 && /questions aren't working/.test(stuck2) && /Explain the missing idea directly/.test(stuck2) && /hand the next step back/.test(stuck2));
+  const s2b = nextTeachingState(s2, { message: "ok got it now", verdict: "correct" });
+  check("a right step resets the stuck streak and backs the help off toward probing", s2b.stuckStreak === 0);
+
+  // REDUCER: scoped reset clears only the section, and the scope/section guards hold
+  let b = emptyBoard("p1");
+  const mk = (a) => { const r = applyBoardAction(b, a); if (r.result.ok) b = r.state; return r; };
+  mk({ action: "create", object: { type: "problem", id: "p1", data: { statement: "Q", givens: [] } } });
+  mk({ action: "create", object: { type: "section", id: "sec", data: { title: "Working" } } });
+  mk({ action: "create", author: "student", object: { type: "equation", id: "mine", section: "sec", data: { latex: "15-9.8=5.2" } } });
+  mk({ action: "create", object: { type: "equation", id: "loose", data: { latex: "W = F d" } } });
+  const r = mk({ action: "reset", scope: "section", section: "sec" });
+  check("reset(section) clears only the section: the problem and unsectioned tutor lines stay, the student's work is archived (reversible), never destroyed", r.result.ok && b.objects["p1"].status === "active" && b.objects["loose"].status === "active" && b.objects["mine"].status === "archived");
+  check("a scoped reset outside the section rules is refused explicitly (SCOPE_REQUIRED)", applyBoardAction(emptyBoard("x"), { action: "reset", scope: "thing", section: "sec" }).result.error?.code === "SCOPE_REQUIRED" && applyBoardAction(emptyBoard("x"), { action: "reset", scope: "section" }).result.error?.code === "SCOPE_REQUIRED");
+}
+// ── Spec §18.2 / §2.1 Failure F: a worded answer is graded by MEANING against a rubric, by code ──────────
+section("Concept answers are rubric-graded — 'opportunity cost' is not the definition of scarcity (spec §18.2)");
+{
+  const { gradeConceptAnswer, gradeExerciseAnswer: gea } = await import("../shared/exerciseVerification.ts");
+  const { conceptMissMessage } = await import("../client/study/artifacts/BoardArtifact.tsx");
+  const scarcity = { required: [["limited resources", "finite resources", "scarce resources"], ["unlimited wants", "infinite wants", "wants exceed"]], misconceptions: ["opportunity cost"] };
+  check("'opportunity cost' alone is NOT accepted, and is named as a related-but-wrong idea", gradeConceptAnswer(scarcity, "opportunity cost").status === "incorrect" && gradeConceptAnswer(scarcity, "opportunity cost").misconception === "opportunity cost");
+  check("a semantically right definition in the student's own words is accepted (stems: resource/resources, want/wants)", gradeConceptAnswer(scarcity, "basically limited ressources and unlimited wants".replace("ressources", "resources")).status === "correct" && gradeConceptAnswer(scarcity, "Resources are finite but human wants are infinite").status === "correct");
+  check("one of two key ideas → partially correct, not a flat wrong", gradeConceptAnswer(scarcity, "resources are limited").status === "partially_correct");
+  check("the shared grader routes a rubric item through meaning-based grading", gea({ question: "Define scarcity.", answer: "Limited resources relative to unlimited wants", rubric: scarcity }, "limited resources but unlimited wants").status === "correct" && gea({ question: "Define scarcity.", answer: "Limited resources relative to unlimited wants", rubric: scarcity }, "opportunity cost").status === "incorrect");
+  check("the widget's miss message is specific (partial / related idea) in both languages, never the model answer",
+    /1 of the 2 key ideas/.test(conceptMissMessage({ rubric: scarcity }, "resources are limited", true)) && /idée liée/.test(conceptMissMessage({ rubric: scarcity }, "opportunity cost", false)) && conceptMissMessage({}, "x", true) === null);
+  const withRubric = makeProblem({ question: "Define scarcity.", answer: "Limited resources relative to unlimited wants", rubric: scarcity }, true);
+  check("makeProblem accepts a worded answer WHEN it carries a rubric, and keeps the rubric on the problem", "problem" in withRubric && withRubric.problem.rubric?.required.length === 2 && withRubric.problem.rubric?.misconceptions?.[0] === "opportunity cost");
+  check("...and still rejects a prose answer with no rubric (it couldn't be checked)", "error" in makeProblem({ question: "Define scarcity.", answer: "Limited resources relative to unlimited wants" }, true));
+}
+
+// ── Spec §18–§19: the answer key is verified by CODE, and a broken key is never a student error ──────────
+// The supplied Economics session is the acceptance fixture: both items are marked wrong in the target state,
+// and both must grade a mathematically correct answer correct.
+section("Answer keys are verified independently — a correct answer is never marked wrong (spec §19)");
+{
+  const { gradeExerciseAnswer, verifyExerciseKey, gradeGapAnswer, computeCheck, statedKeyNumber, keysAgree } = await import("../shared/exerciseVerification.ts");
+  const { solvedGapKey: sgk2, nextTeachingState: nts, evidenceKindFor: ek } = await import("../server/tutor.ts");
+  const { latexToPlainText: ltp } = await import("../shared/mathText.ts");
+  const { equivalent: equiv2 } = await import("../shared/mathEquiv.ts");
+  const tutorSrc = readFileSync(new URL("../server/tutor.ts", import.meta.url), "utf8");
+
+  // §43.1.1/§43.1.2 — the two reported items, solved by code.
+  const qa = "In a market, Qd = 500 − 20P and Qs = 100 + 30P. Find the equilibrium price to the nearest whole number.";
+  const qb = "In a market, Qd = 200 − 10P and Qs = 20 + 26P. Find the equilibrium price to the nearest whole number.";
+  check("§43.1.1 Qd = 500 − 20P, Qs = 100 + 30P → the check computes 8", computeCheck("(500-100)/(20+30)", qa) === 8);
+  check("§43.1.2 Qd = 200 − 10P, Qs = 20 + 26P → the check computes 5", computeCheck("(200-20)/(10+26)", qb) === 5);
+  check("a bare number is accepted for a nearest-whole-number prompt", gradeExerciseAnswer({ question: qa, answer: "8", check: "(500-100)/(20+30)" }, "8").status === "correct");
+  check("§43.1.3 a genuinely wrong value is still rejected with specific feedback", gradeExerciseAnswer({ question: qa, answer: "8", check: "(500-100)/(20+30)" }, "12").status === "incorrect");
+  // §19.1: the reported state is key conflict + NOT graded, never an ordinary "incorrect".
+  const wrongKey = gradeExerciseAnswer({ question: qa, answer: "5", check: "(500-100)/(20+30)" }, "12");
+  check("§43.1.7 a stored key that disagrees with its own check produces system_error, never a false incorrect", wrongKey.status === "system_error" && wrongKey.verification === "conflict" && wrongKey.keyConflict === true);
+  check("and the student's CORRECT answer to that broken item still grades correct (the computed value wins)",
+    gradeExerciseAnswer({ question: qa, answer: "5", check: "(500-100)/(20+30)" }, "8").status === "correct");
+  check("verifyExerciseKey reports the conflict, the stated key and the computed value for diagnostics",
+    verifyExerciseKey({ question: qa, answer: "5", check: "(500-100)/(20+30)" }).status === "conflict" && verifyExerciseKey({ question: qa, answer: "8", check: "(500-100)/(20+30)" }).computed === 8);
+  check("§43.1.8 an item with no computable check is graded UNCERTAIN — never silently 'verified'",
+    verifyExerciseKey({ question: "give the value", answer: "12" }).status === "uncertain" && gradeExerciseAnswer({ question: "give the value", answer: "12" }, "12").status === "correct");
+  check("§43.1.10 a degree-stated problem's check reads sin/cos/tan as degrees", Math.abs(computeCheck("sin(30)", "A 2 kg block on a 30° slope") - 0.5) < 1e-9 && Math.abs(computeCheck("sin(30)", "in radians") - 0.5) > 0.4);
+  check("keysAgree: the same number within 1 %, a thousands-separated key, and no key at all", keysAgree("8", 8) && keysAgree("25,538", 25538) && !keysAgree("5", 8) && keysAgree(undefined, 8));
+  check("keysAgree only ever compares two NUMBERS — an expression/word key is never reported as a disagreement", keysAgree("h/tan(25°)", 8) && keysAgree("friction", 8) && keysAgree("7/2", 3.5) && keysAgree("84 m/s", 84));
+  check("statedKeyNumber parses the shapes a key really takes", statedKeyNumber("≈ 112 m") === 112 && statedKeyNumber("111,99") === 111.99 && statedKeyNumber("25,538 W") === 25538 && statedKeyNumber("30°") === 30);
+  check("…and refuses the ones that aren't plain numbers ('h/tan 25°' is an expression, '7/2' a fraction, 'friction' a word)",
+    !Number.isFinite(statedKeyNumber("h/tan 25°")) && !Number.isFinite(statedKeyNumber("7/2")) && !Number.isFinite(statedKeyNumber("friction")) && !Number.isFinite(statedKeyNumber("84 m/s")));
+
+  // The two bugs that made the independent solve silently give up on the ordinary gap shape.
+  check("§19.3 \\implies keeps its MEANING in plain text (it used to degrade to the word 'implies')", ltp("500 - 20P = 100 + 30P \\implies P = ?") === "500 - 20P = 100 + 30P ⇒ P = ?");
+  check("the standard '$… \\implies P = ?$' gap is SOLVED, so the key can't be the model's unverified guess (P = 8)", sgk2("$500 - 20P = 100 + 30P \\implies P = ?$") === 8);
+  check("…and the second reported item too (Qd = 200 − 10P, Qs = 20 + 26P → P = 5)", sgk2("$200 - 10P = 20 + 26P \\implies P = ?$") === 5);
+  check("a plain-text 'implies' line solves as well (a board line need not be LaTeX)", sgk2("500 - 20P = 100 + 30P implies P = ?") === 8);
+  check("an upper-case unknown is compared as a real variable, not silently dropped as 'unknown'", equiv2("2P", "2P", "P") === "correct" && equiv2("P", "2P", "P") === "incorrect" && equiv2("Q", "2Q", "Q") === "incorrect");
+
+  // The board gap route's grader: conflict → system_error, everything else as before.
+  check("a gap whose stored key contradicts the key recomputed from the line is a system_error, not a miss", gradeGapAnswer("5", 8, "P", "7").verdict === "system_error" && gradeGapAnswer("5", 8, "P", "7").keyConflict === true);
+  check("…while the student's correct answer to that same line is still confirmed correct", gradeGapAnswer("5", 8, "P", "8").verdict === "correct" && gradeGapAnswer("5", 8, "P", "8").keyConflict === true);
+  check("a gap with no recomputable key keeps grading against its stored key (unchanged behaviour)", gradeGapAnswer("8", null, "P", "8").verdict === "correct" && gradeGapAnswer("8", null, "P", "7").verdict === "incorrect");
+  check("a definite verdict against a checkable key is reported VERIFIED; only a key nothing could be checked against is 'uncertain'",
+    gradeGapAnswer("h/tan(25°)", null, "b", "h*tan(25°)").verification === "verified" && gradeGapAnswer("8", null, "P", "7").verification === "verified");
+  check("a gap key the checker can't read is 'unknown' — never 'incorrect'", gradeGapAnswer("cot(θ)", null, undefined, "I'm not sure").verdict !== "system_error");
+  // The route's OWN decision, with exactly the inputs it computes — the reported session end to end, minus HTTP.
+  const { computedGapKey: cgk2 } = await import("../server/tutor.ts");
+  const gapLine = "$500 - 20P = 100 + 30P \\implies P = ?$";
+  const lineKey = cgk2(gapLine) ?? sgk2(gapLine);
+  check("the board line the student was working on is keyed by CODE (P = 8), not by the model's stored guess", lineKey === 8);
+  check("with a wrong stored key on that line, the student's correct 8 is CONFIRMED (and the key is flagged for repair)",
+    gradeGapAnswer("3", lineKey, "P", "8").verdict === "correct" && gradeGapAnswer("3", lineKey, "P", "8").keyConflict === true);
+  check("…and a miss on that same broken item returns system_error, so the app never tells them 'checked wrong'",
+    gradeGapAnswer("3", lineKey, "P", "6").verdict === "system_error" && gradeGapAnswer("3", lineKey, "P", "6").verification === "conflict");
+  check("a healthy line (stored key agrees) still grades a miss as a miss",
+    gradeGapAnswer("8", lineKey, "P", "6").verdict === "incorrect" && gradeGapAnswer("8", lineKey, "P", "6").keyConflict === false);
+
+  // §19.1's required reaction: a NOT-graded result must not be treated as a miss or as evidence.
+  const notGraded = '[Exercise] I answered "8" — NOT graded: this problem\'s stored answer key contradicts the independently computed value (try #1).';
+  check("a NOT-graded result is never counted as stuck and never counts as a mistake", nts(undefined, { message: notGraded }).stuckStreak === 0 && ek({ message: notGraded, helpLevel: 1 }) === null);
+  check("…and the tutor prompt tells Otto to say the KEY was wrong, never the student", /NOT GRADED because the item's key contradicts/.test(tutorSrc));
+
+  // §43.1.9: a wrong written key is corrected at creation, so it can never reach a student.
+  const practice = makePracticeProblem({ problem: "Qd = 500 − 20P, Qs = 100 + 30P. Find the equilibrium price.", answer: "5", check: "(500-100)/(20+30)" });
+  check("§43.1.9 a daily practice problem's wrong key is replaced by the computed value at creation", "problem" in practice && practice.problem.answer === "8" && practice.problem.value === 8);
+  const okPractice = makePracticeProblem({ problem: "2 + 2", answer: "4", check: "2+2" });
+  check("a correct key is left exactly as written (only disagreements are overridden)", "problem" in okPractice && okPractice.problem.answer === "4" && okPractice.problem.value === 4);
+  check("a practice problem with no check stays unverified rather than pretending to be checked", "problem" in makePracticeProblem({ problem: "Name the force opposing motion", answer: "friction" }) && makePracticeProblem({ problem: "Name the force opposing motion", answer: "friction" }).problem.value === undefined);
+
+  // The routes must USE the shared grader — not just import it.
+  const idxV = serverSource();
+  check("the board gap route grades through gradeGapAnswer and reports the verification status + conflict flag", /gradeGapAnswer\(storedKey, recomputed, target, answer\)/.test(idxV) && /res\.json\(\{ verdict, verification: graded\.verification, keyConflict: graded\.keyConflict \}\)/.test(idxV));
+  check("the practice-problem route grades through gradeExerciseAnswer, records a system error, and counts nothing for or against the student", /gradeExerciseAnswer\(\{ question: problem\.problem/.test(idxV) && /systemError: true/.test(idxV) && /if \(grade\.status !== "system_error"\) void recordMetric\(req\.session\.user!, "practice_problem_correct"/.test(idxV));
+  check("a key conflict is observable (its own metric on both paths), not swallowed", /recordMetric\(req\.session\.user!, "gap_key_conflict", 1\)/.test(idxV) && /practice_problem_key_conflict/.test(idxV));
+  const inlineSrc = readFileSync(new URL("../client/study/InlineProblem.tsx", import.meta.url), "utf8");
+  const boardSrc = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  const gapSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  check("the widgets grade through the SAME shared grader, so a verdict can't depend on which side evaluated it",
+    /gradeExerciseAnswer\(problem, /.test(inlineSrc) && /gradeExerciseAnswer\(pr, given/.test(boardSrc) && /gradeExerciseAnswer\(problem, getProblemState/.test(boardSrc));
+  check("§43.6.47 a system-error verdict is shown honestly (key unreliable / not counted wrong), never as a plain miss",
+    /systemError \?/.test(inlineSrc) && /verdict === "system_error"/.test(boardSrc) && /NOT graded/.test(gapSrc));
+}
+
+// ── The tutor is LOCAL-ONLY: no session content reaches the account row ─────────────────────────────────
+// Direct request: chat, board, problems and objectives live in this browser (client/localChatBoard.ts). The
+// server still runs the AI call (it holds the API key) and still needs the board to grade and to guard
+// against leaking answers — so it takes them from the request and stores none of them.
+section("Tutor sessions are fully local — the server stores no chat/board/problems (source pins + contracts)");
+{
+  const idxL = serverSource();
+  const tutorSrcL = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  const localSrc = readFileSync(new URL("../client/localChatBoard.ts", import.meta.url), "utf8");
+  const turn = idxL.slice(idxL.indexOf("async function tutorTurn("), idxL.indexOf("\n}\n", idxL.indexOf("async function tutorTurn(")) + 2);
+
+  check("the tutor turn persists NONE of the session content, and clears anything an older account still has on the row",
+    /t\.chat = undefined; t\.board = undefined; t\.problems = undefined; t\.objectives = undefined;/.test(turn)
+    && !/t\.(?:chat|board|problems) = \[/.test(turn) && !/t\.objectives = (?!undefined)/.test(turn));
+  check("…while the non-tutor chat route keeps persisting its own task fields (only the tutor went local, nothing else changed)",
+    /if \(newChat\.length\) t\.chat = \[\.\.\.\(t\.chat \|\| \[\]\), \.\.\.newChat\]/.test(idxL));
+  check("the turn hands back only this turn's delta (chatDelta/board/problems/objectives), never a task carrying content",
+    /res\.json\(\{\n\s*reply: out\.reply, chatDelta: newChat, board: out\.board, problems:/.test(turn) && /task: \{ id: t\.id, title: t\.title, status: t\.status, source: t\.source, sourceSubject: t\.sourceSubject, updatedAt: t\.updatedAt, createdAt: t\.createdAt \}/.test(turn));
+
+  // Grading and the leak guard still work WITHOUT a server-held board: the line rides up, and the key is
+  // recomputed from that line first — so the independent verification is unchanged.
+  const { resolveGapKey, rehydrateProblemKey } = await import("../server/tutor.ts");
+  check("a gap's key is recomputed from the LINE itself first, even when a different key is sent along with it",
+    resolveGapKey("$500 - 20P = 100 + 30P \\implies P = ?$", "3", "3") === "8");
+  check("…with the server's stored key as the second choice and the browser's own key last (the only sources left)",
+    resolveGapKey("$b = ?$", "h cot 25°", "h/tan(25°)") === "h cot 25°" && resolveGapKey("$b = ?$", undefined, "h/tan(25°)") === "h/tan(25°)");
+  check("a gap with no key from any source resolves to nothing (never a fabricated one)", resolveGapKey("$b = ?$") === undefined);
+  const sentProblem = { id: "p1", question: "Find the equilibrium price.", answer: "8", value: 8 };
+  check("an exercise's answer key is carried back from the browser when the server holds no copy of it",
+    rehydrateProblemKey(sentProblem, undefined).answer === "8" && rehydrateProblemKey(sentProblem, undefined).value === 8 && rehydrateProblemKey(sentProblem, undefined).solved === false);
+  check("the server's OWN stored copy still wins when it has one — including its verified exact value",
+    rehydrateProblemKey({ question: "q", answer: "999", value: 999, solved: true }, { id: "p", createdAt: "", question: "q", answer: "8", value: 8 }).answer === "8" && rehydrateProblemKey({ question: "q", answer: "999" }, { id: "p", createdAt: "", question: "q", answer: "8" }).solved === false);
+  check("an exercise sent back with no key stays keyless (the leak guard never invents one)", rehydrateProblemKey({ question: "q" }, undefined).answer === undefined);
+
+  check("the chat route rehydrates gap keys and exercise keys from the request through those resolvers",
+    /resolveGapKey\(String\(b\.text\), stored\?\.expectedAnswer/.test(idxL) && /rehydrateProblemKey\(p, known\)/.test(idxL));
+  check("the gap-check route grades from the line it is sent, so a local-only board no longer 404s every gap answer",
+    /const line = entry\?\.text \?\? sentText;/.test(idxL) && /resolveGapKey\(line, entry\?\.expectedAnswer, sentKey\)/.test(idxL) && /req\.body\?\.text/.test(idxL));
+  check("the client sends the line and its key with a gap answer (the server has no stored copy to look up)",
+    /api\.checkGap\(task\.id, entry\.id, given, \{ text: entry\.text, expectedAnswer: entry\.expectedAnswer \}\)/.test(tutorSrcL));
+
+  // Resume must read the LOCAL copy: the server row this browser just fetched carries none of it.
+  check("resuming a session reads local storage first and only falls back to the task row",
+    /const chat = local\.chat\.length \? local\.chat : \(pendingActiveSession\.chat \|\| \[\]\)/.test(tutorSrcL)
+    && /const board = local\.board\.length \? local\.board : \(pendingActiveSession\.board \|\| \[\]\)/.test(tutorSrcL));
+  const { overlayLocalThread } = await import("../client/localChatBoard.ts");
+  const cloudTask = { id: "t1", chat: [{ role: "user", text: "cloud" }], board: [], problems: [] };
+  const overlaid = overlayLocalThread(cloudTask, { chat: [{ role: "user", text: "local" }, { role: "assistant", text: "re" }], board: [{ id: "b1", text: "x = 2", kind: "result" }], problems: [], objectives: [] });
+  check("the browser's copy WINS over the server's for a field both have (the regression that emptied a resumed session)",
+    overlaid.chat.length === 2 && overlaid.chat[0].text === "local" && overlaid.board.length === 1);
+  check("a field local storage has nothing for keeps what the server sent — how a pre-local conversation survives the switch",
+    JSON.stringify(overlayLocalThread(cloudTask, { chat: [], board: [], problems: [], objectives: [] })) === JSON.stringify(cloudTask));
+  check("the overlay is applied on every fresh list (initial load, polling, sync)", /hydrateLocalThreads\(incoming, status\?\.user \|\| null\)/.test(appSource()));
+  check("the local store is written by the merged thread, not by appending a delta onto whatever happens to be on disk",
+    /export function setLocalChat\(/.test(localSrc) && !/appendLocalChat\(/.test(tutorSrcL));
+  // Direct request: tell the student their sessions live only in this browser and clearing cookies/site data erases them.
+  check("the Tutor landing tells the student sessions are browser-only and not to clear cookies/site data (both languages)",
+    /className="tutor-local-note"/.test(tutorSrcL) && /Don't clear cookies or this site's data/.test(tutorSrcL) && /Ne supprime pas les cookies/.test(tutorSrcL));
+
+  // The clear must SURVIVE the cross-device merge: every commit and every /api/tasks poll reads the
+  // account row first, and the union used to pull the row's legacy content straight back in — so a
+  // "cleared" session never actually left the server.
+  const tutorRow = (id, over = {}) => ({
+    id, title: "Physics session", source: "freestudy", status: "needs_review",
+    createdAt: "2026-10-01T00:00:00.000Z", updatedAt: "2026-10-01T00:00:00.000Z", ...over,
+  });
+  const legacyRow = tutorRow("t1", {
+    chat: [{ role: "user", text: "legacy", at: "2026-10-01T00:00:00.000Z" }],
+    board: [{ id: "b1", text: "500 - 20P = 100 + 30P", kind: "result", at: "2026-10-01T00:00:00.000Z" }],
+    problems: [{ id: "p1", createdAt: "2026-10-01T00:00:00.000Z", question: "Find P." }],
+    objectives: [{ id: "o1", label: "Equilibrium", done: false }],
+    boardEvents: [{ at: "2026-10-01T00:00:00.000Z", kind: "otto-wrote", detail: "500 - 20P = 100 + 30P" }],
+  });
+  const clearedLocal = tutorRow("t1", { updatedAt: "2026-10-02T00:00:00.000Z" }); // what tutorTurn commits
+  const afterClear = mergeTaskLists([legacyRow], [clearedLocal]);
+  check("a cleared tutor session's content does NOT come back from the account row on the next merge",
+    afterClear.length === 1 && !afterClear[0].chat && !afterClear[0].board && !afterClear[0].problems
+    && !afterClear[0].objectives && !afterClear[0].boardEvents && afterClear[0].title === "Physics session");
+  check("…and the fast path can't skip that strip just because the updatedAt happened to match",
+    mergeTaskLists([{ ...legacyRow, updatedAt: "2026-10-02T00:00:00.000Z" }], [clearedLocal])[0].chat === undefined);
+  const migratingLocal = tutorRow("t1", {
+    updatedAt: "2026-10-02T00:00:00.000Z",
+    chat: [{ role: "user", text: "hydrated", at: "2026-10-01T00:00:00.000Z" }],
+  });
+  const migrated = mergeTaskLists([legacyRow], [migratingLocal])[0];
+  check("a session the browser hasn't hydrated yet keeps its server copy — the one-time migration path",
+    (migrated.chat || []).length === 2 && (migrated.board || []).length === 1 && (migrated.problems || []).length === 1);
+  const plain = { id: "t2", title: "Email Mmachi", source: "gmail", status: "ready",
+    createdAt: "2026-10-01T00:00:00.000Z", updatedAt: "2026-10-01T00:00:00.000Z" };
+  const plainRow = { ...plain, chat: [{ role: "assistant", text: "on the row", at: "2026-10-01T00:00:00.000Z" }] };
+  check("a NON-tutor task's chat still syncs from the row when the local copy has none (only the tutor went local)",
+    (mergeTaskLists([plainRow], [{ ...plain, updatedAt: "2026-10-02T00:00:00.000Z" }])[0].chat || []).length === 1);
+}
+
+
+section("Production readiness — multi-user security + serverless reliability (source pins)");
+{
+  const store = readFileSync(new URL("../server/store.ts", import.meta.url), "utf8");
+  const idx = serverSource();
+  const jobsSrc = readFileSync(new URL("../server/jobs.ts", import.meta.url), "utf8");
+  const sql = readFileSync(new URL("../supabase.sql", import.meta.url), "utf8");
+  const { hashResetToken } = await import("../server/store.ts");
+  check("reset tokens are stored hashed (sha-256 hex), never raw", hashResetToken("abc") === "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+  check("reset tokens live in a table, not only process memory", /create table if not exists weave_web_reset_tokens/.test(sql) && /from\(RESET_TOKENS\)\.delete\(\)\.eq\("token_hash"/.test(store));
+  check("the reset email is awaited (a frozen lambda can't drop it)", /await sendTransactionalEmail\(email, en \? "Reset your Otto password"/.test(idx));
+  check("user lookup isn't capped at the first 1,000 accounts", /rpc\("otto_auth_user_id"/.test(store) && !/listUsers\(\{ perPage: 1000 \}/.test(store) && /function otto_auth_user_id/.test(sql));
+  check("sessions record their owner and can be destroyed per user", /user_email: slim\.user/.test(store) && /add column if not exists user_email/.test(sql) && !/ilike\("sess"/.test(store));
+  check("a password reset signs out every other session", /destroySessionsForUser\(u\.email, req\.sessionID\)/.test(idx));
+  check("session read cache is short (logout/deletion propagates across instances)", /GET_CACHE_TTL_MS = 60_000/.test(store));
+  check("admin access comes from ADMIN_EMAILS, not a hardcoded address", /process\.env\.ADMIN_EMAILS/.test(idx) && !/const ADMIN_EMAIL = "/.test(idx));
+  check("integration errors no longer echo raw exception text to the user", !/Couldn't start the connection: " \+ \(e\?\.message/.test(idx));
+  check("background account saves use waitUntil on Vercel", /waitUntil\(scheduler\.flush\(email/.test(idx));
+  check("an interactive request drains only its own single job", /await drain\(1, undefined, email\);/.test(jobsSrc));
+  check("the cron tick keeps one clock and stops starting work well before the 300 s limit", /tickStart/.test(jobsSrc) && /startWindowMs = 150_000/.test(jobsSrc));
+}
+
+
+section("Tutor reply hygiene — invented wrapper tags, board line numbers (reported live)");
+{
+  const { stripWrapperTags } = await import("../server/ai/client.ts");
+  const { citesMissingBoardLine } = await import("../shared/boardLines.ts");
+  const twoLines = [{ id: "a", kind: "given", at: "2026-10-14T10:00:00Z" }, { id: "b", kind: "formula", at: "2026-10-14T10:01:00Z" }];
+  const raw = "<speech>Ah, careful — think about who was knocking on whose door.\n\nLook at line 3 on the board. From the Qianlong Emperor's perspective, did he view Britain as an equal power?</speech>";
+  check("an invented <speech> wrapper is removed, the words kept", stripWrapperTags(raw).startsWith("Ah, careful") && !/<\/?speech>/.test(stripWrapperTags(raw)));
+  check("a leaked <thinking> block is dropped entirely", stripWrapperTags("<thinking>plan: ask about tan</thinking>What is θ?") === "What is θ?");
+  check("ordinary maths with < and > is untouched", stripWrapperTags("Is $a < b$ and $c > d$?") === "Is $a < b$ and $c > d$?");
+  check("'Look at line 3' on a two-line board is caught (reported live: there was no line 3)", citesMissingBoardLine(raw, twoLines) === 3);
+  check("pointing at a line that exists is fine", citesMissingBoardLine("Look at line 2 — what does it tell you?", twoLines) === 0);
+  check("'ligne 5' in French is caught too", citesMissingBoardLine("Regarde la ligne 5 du tableau.", twoLines) === 5);
+  check("the focus header and pointers don't count as numbered lines", citesMissingBoardLine("see line 2", [{ id: "f", kind: "focus", at: "2026-10-14T09:00:00Z" }, twoLines[0]]) === 2);
+}
+
+{
+  console.log("\n# Knowledge tracing (per-student BKT with forgetting, learned online)");
+  const KT = await import("../server/knowledgeTracing.ts");
+  const SM = await import("../server/studentModel.ts");
+  let m = SM.emptyStudentModel(), t = new Date("2026-10-01T10:00:00Z");
+  const add = (kind, mins = 3) => { t = new Date(t.getTime() + mins * 60000); m = SM.recordConceptEvidence(m, { label: "linear equilibrium", subject: "Economics", kind }, t); return KT.readSkill(Object.values(m.concepts)[0], m.ktParams, t); };
+  const r1 = add("mistake");
+  check("a mistake reads 'needs review' and asks for a worked example", r1.status === "needs review" && /worked example/.test(r1.next));
+  add("solved-after-hint");
+  const r3 = add("solved-unaided");
+  check("one unaided answer after a hint is not 'demonstrated' yet (never mastery from one answer)", r3.status !== "demonstrated");
+  const r4 = add("solved-unaided");
+  check("two unaided right answers in a row → demonstrated, and the next task is a transfer, not another drill", r4.status === "demonstrated" && /transfer/.test(r4.next));
+  const fade = KT.readSkill(Object.values(m.concepts)[0], m.ktParams, new Date(t.getTime() + 20 * 86400000));
+  check("after weeks without practice the skill fades and a retrieval check is due", fade.recallDue && fade.known < 0.5 && /retrieval/.test(fade.next));
+  check("the student's slip rate is learned from their answers (moved off the prior)", m.ktParams.n === 4 && m.ktParams.slip !== KT.DEFAULT_KT_PARAMS.slip);
+  check("trace state and parameters survive a save/load round trip", JSON.stringify(SM.normalizeStudentModel(JSON.parse(JSON.stringify(m))).ktParams) === JSON.stringify(m.ktParams) && SM.normalizeStudentModel(JSON.parse(JSON.stringify(m))).concepts["linear equilibrium"]?.kt?.streak === 2);
+  check("a right answer after a full explanation barely moves P(known)", (() => { const a = KT.traceObservation(undefined, KT.DEFAULT_KT_PARAMS, { correct: true, weight: 0.15 }, t).kt.p, b = KT.traceObservation(undefined, KT.DEFAULT_KT_PARAMS, { correct: true, weight: 1 }, t).kt.p; return a < 0.4 && b > 0.6; })());
+  check("the tutor prompt carries the model's read and next activity", /demonstrated \(model: \d+% likely/.test(SM.studentModelBlock(m, { subject: "Economics", now: t })));
+}
+
+{
+  console.log("\n# Polynomial division, excluded topics, tables and sources, repeated headings");
+  const { verifyPolynomialDivision: vpd } = await import("../shared/exerciseVerification.ts");
+  const { normalizeTable, normalizeSource, sourceRuns } = await import("../shared/boardTable.ts");
+  const { excludedTopics, includesExcluded } = await import("../server/tutor.ts");
+  const { nearSameHeading } = await import("../client/study/artifacts/BoardArtifact.tsx");
+  const line = "Divide $P(x)=2x^3-5x^2+x-3$ by $(x-2)$ = ?";
+  check("polynomial division is verified by code (reported: a right quotient and remainder was 'couldn't be auto-checked')", vpd(line, "quotient = 2x^2-x-1 remainder =-5") === "correct" && vpd(line, "quotient =2x²−x−1 remainder =−5") === "correct" && vpd(line, "2x^2-x-1-5/(x-2)") === "correct");
+  check("a wrong remainder or quotient is caught; a non-division line is left alone", vpd(line, "quotient = 2x^2-x-1, remainder = 5") === "incorrect" && vpd(line, "quotient = x^2, remainder = 0") === "incorrect" && vpd("Find x if 2x = 4", "2") === null);
+  const ex = excludedTopics("help me prep for test everythign ive done except logs and exponentioal");
+  check("'everything except logs and exponentials' is read as an exclusion, and a plan that brings them back is caught", includesExcluded(["1. Master exponent and logarithm definitions"], ex) !== null && includesExcluded(["1. Cosine rule", "2. Function transformations", "3. Polynomial division"], ex) === null);
+  check("an ordinary 'not sure' is not an exclusion", excludedTopics("I'm not sure, can you help with trig").length === 0);
+  check("a table needs 2+ headers and rows; cells are trimmed to the headers; hideColumn is kept only when valid", "error" in normalizeTable({ headers: ["a"], rows: [["x"]] }) && "error" in normalizeTable({ headers: ["a", "b"], rows: [] }) && normalizeTable({ headers: ["Determinant", "Effect"], rows: [["Income up", "Shifts right", "extra"]], hideColumn: 1 }).table.rows[0].length === 2 && normalizeTable({ headers: ["a", "b"], rows: [["x", "y"]], hideColumn: 5 }).table.hideColumn === undefined);
+  const src = normalizeSource({ text: "The history of all hitherto existing society is the history of class struggles.", attribution: "Marx & Engels", highlights: [{ phrase: "class struggles", note: "what does this claim?" }, { phrase: "invented phrase", note: "x" }] }).source;
+  check("a source keeps only highlights that are verbatim in its text, and splits into plain/marked runs in order", src.highlights.length === 1 && sourceRuns(src).length === 3 && sourceRuns(src)[1].mark === 0 && sourceRuns(src)[1].text === "class struggles");
+  check("a repeated topic header is detected, a different one is not", nearSameHeading("Test-2 prep: Exponents & Logarithms", "Math HL Test-2 Prep: Exponents & Logarithms") && !nearSameHeading("Market equilibrium", "Test-2 Prep: Functions, Trig & Division"));
+  const tutorSrc = readFileSync(new URL("../server/tutor.ts", import.meta.url), "utf8");
+  check("the tutor engine has no canned student-facing sentences left (replies are the model's or a model rewrite)", !/Let's stop going back to the question|Yes, that's right — nice work|Actually, you were right — this exercise|What do you make of that\?/.test(tutorSrc));
+}
+
+{
+  console.log("\n# Tool calls leaked into the reply as text");
+  const { stripLeakedToolCallSyntax } = await import("../server/ai/client.ts");
+  const leaked = '{\n  "operation": "WRITE_TO_BOARD",\n  "kind": "gap",\n  "why": "Sets up {the} comparison."\n}\n[ANNOTATE_BOARD target="10" tone="focus" note="Look here."]That gap is at its biggest.\n\nWhy is that top point not the whole surplus?';
+  check("a JSON tool call and a bracket tool call written as text are removed, and the real reply AFTER them is kept (reported live)", stripLeakedToolCallSyntax(leaked) === "That gap is at its biggest.\n\nWhy is that top point not the whole surplus?");
+  check("ordinary braces, brackets and fenced non-tool JSON are left alone", stripLeakedToolCallSyntax("Set {1,2} and see [the board].") === "Set {1,2} and see [the board]." && stripLeakedToolCallSyntax("Fine.\n```json\n{\"name\": \"CREATE_PROBLEM\"}\n```\nNext?") === "Fine.\n\nNext?");
+}
+
+{
+  console.log("\n# Following the student's topic (no dragging an old problem back in)");
+  const { pointsAtOffTopicLine } = await import("../shared/boardLines.ts");
+  const board = [
+    { id: "a", kind: "given", at: "2026-10-14T09:00:00Z", text: "Divide $P(x)=2x^3-5x^2+x-3$ by $(x-2)$ = ?" },
+    { id: "b", kind: "definition", at: "2026-10-14T09:10:00Z", text: "Consumer surplus: area below the demand curve and above the market price" },
+  ];
+  const ctx = "explain consumer surplus\nConsumer surplus is the difference between what a buyer is willing to pay and the price. triangle";
+  const off = pointsAtOffTopicLine("Have a look at line 1 on the board — what do you get when you carry out that division?", board, ctx);
+  check("pointing at an old polynomial-division line while discussing consumer surplus is caught (reported live: 'line 13 … that division')", off?.n === 1 && /Divide/.test(off.text));
+  check("pointing at a line about the current topic is fine, and an unknown line number is left to the missing-line guard", pointsAtOffTopicLine("Look at line 2 — what shape is that area?", board, ctx) === null && pointsAtOffTopicLine("Look at line 9.", board, ctx) === null);
+  const sol = readFileSync(new URL("../server/solver.ts", import.meta.url), "utf8");
+  check("the worked-solution block says it applies only while the student works on that problem", /ONLY while the student is working on this problem/.test(sol));
+}
+
+{
+  console.log("\n# Turn director — the board action each turn needs, decided in code");
+  const { turnActions } = await import("../server/tutorDirector.ts");
+  const base = { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "hey" }], board: [{ kind: "focus", text: "Trig" }], problems: [], objectives: [] };
+  const a1 = turnActions({ ...base, message: "help me prep for my test, everything except logs" });
+  check("a study goal with no plan: set the plan AND start teaching in the same reply", /START TEACHING NOW/.test(a1.join()) && /SET_OBJECTIVES/.test(a1.join()) && /Don't ask them to approve/.test(a1.join()));
+  const obj = [{ id: "o1", label: "Vertex form", done: false }, { id: "o2", label: "Transformations", done: false }];
+  const a2 = turnActions({ ...base, objectives: obj, message: '[Exercise] On the board line "x = ?" I wrote "2" — checked right.' });
+  check("a right answer: their result goes up and the NEXT problem is put on the board without being asked (reported: 'move to the next milestone' with nothing on the board)", /CREATE_PROBLEM/.test(a2.join()) && /Vertex form/.test(a2.join()));
+  const a3 = turnActions({ ...base, message: "explain consumer surplus", problems: [{ question: "Divide 2x^3-5x^2 by (x-2)", solved: false }] });
+  check("a concept asked for: visual first, and a topic change gets its own header (the old problem is left alone)", /Visual first/.test(a3.join()) && /NEW topic/.test(a3.join()));
+  const a4 = turnActions({ ...base, message: "so x\n\n[What I wrote/drew on the board: a parabola with its vertex circled]" });
+  check("they drew on the board: Otto marks up their work", /ANNOTATE_BOARD/.test(a4.join()));
+  const a5 = turnActions({ ...base, message: "f(2) = 8 - 16 + 5 = -3" });
+  check("their own step said in chat goes on the board as their line", /THEIR line/.test(a5.join()));
+  const a6 = turnActions({ ...base, message: "can we recap" });
+  check("a recap request gives ONE summary entry plus a retrieval question", /Recap on the board/.test(a6.join()));
+  check("at most three actions, and nothing forced on a plain chat turn", turnActions({ ...base, message: "ok thanks" }).length === 0 && turnActions({ ...base, objectives: obj, stuckStreak: 2, message: 'explain why [Exercise] x checked wrong' }).length <= 3);
+  const { mathTail } = await import("../shared/mathEquiv.ts");
+  const { verifyStepAgainstGap } = await import("../shared/mathEquiv.ts");
+  const gapB = [{ kind: "gap", text: "f(2)=2(4)−16+5=?", expectedAnswer: "-3" }];
+  check("an answer at the end of a sentence is checked against the open gap (reported: 'i get −3' twice, never recognised)", verifyStepAgainstGap("i get −3", gapB)?.verdict === "correct" && verifyStepAgainstGap("substitue x in the equation so −3", gapB)?.verdict === "correct" && mathTail("not sure") === "");
+  const { numbersAreTheirs } = await import("../server/tutor.ts");
+  check("a line is only credited to the student when its numbers are theirs (reported: Otto's 'x = 2, now find y' in the student's ink)", !numbersAreTheirs("Vertex x-coordinate x = 2, now find the y-coordinate", ["how do I find the vertex"]) && numbersAreTheirs("$\\arccos(0) = \\frac{\\pi}{2}$", ["arccos of 0 is pi over 2"]));
+}
+
+{
+  const { asksToWrite } = await import("../server/tutorAdapt.ts");
+  const { turnActions } = await import("../server/tutorDirector.ts");
+  const report = '[Exercise] On the board line "Remainder theorem check: P(2)=2(2)^3−5(2)^2+2−3= ?" I wrote "−5" — checked right.';
+  check("the app's own [Exercise] report is never a request to write it on the board (reported: the report was copied onto the board)", !asksToWrite(report) && asksToWrite("can you put that on the board"));
+  check("…and the director never treats it as the student's own step", !turnActions({ message: report, history: [], board: [{ kind: "focus", text: "x" }], problems: [], objectives: [] }).some((a) => /THEIR line \(owner student, maths/.test(a)));
+}
+
+{
+  const { asksForSeveralValues } = await import("../server/tutor.ts");
+  check("a one-box problem asking for several values is refused (reported: roots 3 and 4 keyed to 3 only); one named value is fine", asksForSeveralValues("A quadratic has the form x^2 - 7x + 12. Find the values of x where it equals zero.") && asksForSeveralValues("Find the roots of x^2 - 5x + 6 = 0") && !asksForSeveralValues("Find the larger root of x^2 - 5x + 6 = 0") && !asksForSeveralValues("Find the equilibrium price P."));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -16,7 +16,7 @@ import { LangContext } from "./ui.tsx";
 // Add a language here (pure data) once real translations exist for every key below — see the file doc
 // comment. Nothing else in this module needs to change; callers that read SUPPORTED_LANGS (a future
 // language picker in Settings) pick it up automatically.
-export const SUPPORTED_LANGS = ["fr", "en"] as const;
+const SUPPORTED_LANGS = ["fr", "en"] as const;
 export type Lang = typeof SUPPORTED_LANGS[number];
 
 type CatalogEntry = Partial<Record<Lang, string>>;
@@ -41,16 +41,17 @@ const MESSAGES: Catalog = {
   "dashboard.greeting.morning": { fr: "Bonjour", en: "Good morning" },
   "dashboard.greeting.afternoon": { fr: "Bon après-midi", en: "Good afternoon" },
   "dashboard.greeting.evening": { fr: "Bonsoir", en: "Good evening" },
-  "dashboard.allCaughtUp": { fr: "Tu es à jour.", en: "You're all caught up." },
-  "dashboard.doneForToday": { fr: "C'est tout pour aujourd'hui.", en: "That's everything for today." },
+  "dashboard.allCaughtUp": { fr: "Rien n'est dû. Ce n'est pas de la chance — c'est de la marge pour avancer.", en: "Nothing's due. That's not luck — it's room to get ahead." },
+  "dashboard.doneForToday": { fr: "La journée est réglée. Demain, commence par ce que tu préférerais éviter.", en: "Today's handled. Tomorrow, start with the thing you'd rather skip." },
   // {count}/{plural} are computed by the caller (a plain "" or "s"), not by this module — see t()'s own
   // doc comment on why this stays plain string interpolation instead of a full ICU plural engine.
-  "dashboard.thingsLeft": { fr: "{count} chose{plural} à faire aujourd'hui", en: "{count} thing{plural} left today" },
-  "dashboard.alreadyDone": { fr: " — {count} déjà faite{plural}", en: " — {count} already done" },
+  "dashboard.thingsLeft": { fr: "{count} chose{plural} à faire — commence par celle que tu évites", en: "{count} thing{plural} to do — start with the one you're avoiding" },
+  "dashboard.focusThree": { fr: "Commence par ces trois. Les {rest} autres peuvent attendre", en: "Start with these three. The other {rest} can wait" },
+  "dashboard.alreadyDone": { fr: " — {count} déjà derrière toi", en: " — {count} already behind you" },
   "dashboard.nextUp": { fr: " Ensuite : {title}.", en: " Next up: {title}." },
   "dashboard.momentum": {
-    fr: "Tu progresses vraiment en {subject} en ce moment — continue comme ça.",
-    en: "You've been genuinely improving in {subject} lately — keep it up.",
+    fr: "Tu progresses vraiment en {subject} — ce n'est pas une impression. Continue.",
+    en: "You're actually getting better at {subject} — not imagining it. Keep going.",
   },
 };
 

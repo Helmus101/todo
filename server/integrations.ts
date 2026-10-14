@@ -16,7 +16,7 @@ export interface AgentTool { name: string; description?: string; input_schema: {
 export interface Integration { key: string; name: string; toolkit: string; blurb: string; category: string; }
 
 /** Details of a connected account for a specific app/toolkit. */
-export interface ConnectedAccount {
+interface ConnectedAccount {
   id: string;           // Composio connected account ID
   email?: string;       // Account email (if available from Composio)
   toolkit: string;      // e.g. "GMAIL"
@@ -40,13 +40,13 @@ const TOOLKIT_OF = (app: string) => CATALOG.find((c) => c.key === app.toLowerCas
 const norm = (s: string) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 // Apps that support connecting MULTIPLE accounts (personal + work). All Google services — the user often
 // has two Google accounts. Others stay single-account (connecting again replaces the old connection).
-export const MULTI_APPS = new Set(["gmail", "googlecalendar", "googledocs", "googleslides", "googledrive", "googlesheets"]);
+const MULTI_APPS = new Set(["gmail", "googlecalendar", "googledocs", "googleslides", "googledrive", "googlesheets"]);
 // A task's `source` (gmail/calendar/drive) → the Composio toolkit prefix, so execution routes that toolkit's
 // actions to the SAME account the task came from.
 const SOURCE_TOOLKIT: Record<string, string> = { gmail: "GMAIL", calendar: "GOOGLECALENDAR", drive: "GOOGLEDRIVE" };
 // Google apps Composio lets a user connect more than once (personal + work inbox, etc.) — same list Settings
 // uses to decide whether to offer "Add account". Everything else is effectively single-account per user.
-export const MULTI_ACCOUNT_APPS = ["gmail", "googlecalendar", "googledocs", "googleslides", "googledrive", "googlesheets"];
+const MULTI_ACCOUNT_APPS = ["gmail", "googlecalendar", "googledocs", "googleslides", "googledrive", "googlesheets"];
 
 /** Real brand logo for a toolkit — served straight from Composio's logo CDN (SVG). Used by the Settings grid
  *  so each app shows its actual logo (not a hand-drawn icon). Verified to resolve for every catalog slug. */
@@ -62,7 +62,7 @@ export function integrationsReady(): boolean { return !!process.env.COMPOSIO_API
 //   never    — irreversible/outbound/destructive: stripped from the toolset entirely
 // Actions NOT listed here fall back to the regex classifiers below (isGatedAction/isWriteGatedAction),
 // so a new/unknown Composio action is still risk-classified rather than silently allowed.
-export type ActionMode = "auto" | "approve" | "never";
+type ActionMode = "auto" | "approve" | "never";
 export const ACTION_POLICIES: Record<string, ActionMode> = {
   // Gmail — read + draft are auto; anything that leaves the account or destroys mail is never.
   GMAIL_FETCH_EMAILS: "auto", GMAIL_FETCH_MESSAGE_BY_THREAD_ID: "auto", GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID: "auto",
@@ -607,7 +607,7 @@ export function readOnly(t: AgentTools): AgentTools {
 /** Drafting (never sending) a Gmail email — GMAIL_CREATE/UPDATE_EMAIL_DRAFT are both policy "auto": a draft
  *  sits in the user's own Drafts folder until THEY click Send (GMAIL_SEND_* is separately policy "never" and
  *  isn't matched here), so it's fully reversible via delete. */
-export const isEmailDraftTool = (n: string): boolean => /^GMAIL_(CREATE|UPDATE)_EMAIL_DRAFT/.test(n);
+const isEmailDraftTool = (n: string): boolean => /^GMAIL_(CREATE|UPDATE)_EMAIL_DRAFT/.test(n);
 
 /** Plan-only mode's one exception's-worth of EXTERNAL writes: drafting (never sending) a Gmail email. A new
  *  Google Doc/Sheet/Slides is deliberately NOT in this carve-out — Otto's own in-house note/flashcard/quiz
@@ -688,7 +688,7 @@ export async function readAction(userId: string, action: string, args: Record<st
 // check that unit tests can't provide. It executes directly (its own hardcoded steps, not the agent), so
 // the agent policy registry doesn't apply — the user's click IS the approval, and every artifact it
 // creates is labeled and removed at the end.
-export interface SmokeResult { app: string; step: string; ok: boolean; detail?: string }
+interface SmokeResult { app: string; step: string; ok: boolean; detail?: string }
 
 async function execDirect(userId: string, action: string, args: Record<string, unknown>): Promise<any> {
   const r: any = await withComposioTimeout(action, sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true } as any));

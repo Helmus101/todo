@@ -4,7 +4,7 @@ import type { PronoteHomeworkItem, PronoteTestItem } from "./pronote.ts";
 import { localDay } from "./jobs.ts";
 
 /** One thing due/owed on a given day — a real Pronote homework/test, or an open Otto task. */
-export interface WorkloadItem {
+interface WorkloadItem {
   kind: "homework" | "test" | "task";
   subject?: string;
   title: string;
@@ -16,7 +16,7 @@ export interface WorkloadItem {
    *  worse than just not offering the move. */
   movable?: boolean;
 }
-export interface WorkloadDay { date: string; items: WorkloadItem[]; totalEffort: number; }
+interface WorkloadDay { date: string; items: WorkloadItem[]; totalEffort: number; }
 
 const DAYS_AHEAD = 7;
 
