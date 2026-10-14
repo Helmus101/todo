@@ -10,7 +10,7 @@
 //   · spoken input is repaired against the board, and the board never repeats a mishearing (spokenMath.ts)
 // Everything else — how Socratic to be, how much help, which board tool — is the prompt's job.
 import { randomUUID } from "node:crypto";
-import { citesMissingBoardLine, pointsAtOffTopicLine } from "../shared/boardLines.ts";
+import { citesMissingBoardLine, pointsAtOffTopicLine, boardLineNumbers } from "../shared/boardLines.ts";
 import { directorBlock } from "./tutorDirector.ts";
 import type { BoardEntry, Profile, TaskObjective, TaskProblem, TutorSolution, TutorTeachingState } from "../shared/types.ts";
 import { practiceAnswerMatches } from "../shared/types.ts";
@@ -25,12 +25,12 @@ import { equationsAhead, asksForFormula, questionAhead } from "../shared/equatio
 import { findArithmeticClaims } from "./arithmetic.ts";
 import { applyEntryAction } from "../shared/boardAdapter.ts";
 import { boardSurfaceBlock } from "./boardEvents.ts";
-import { replyStatesValue, harshOpener, repeatsRecentReply, repeatsRecentQuestion, repairLine, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario, inventedNumbers, claimsBoardWrite, stripBoardClaim, posesProblemInProse, reachedResultUnrecorded, setsMathTaskUnboarded, confirmsUnchecked, wrapsUpUnasked, blamesWidget, asksToWrite, handsOverCalculation, sendsBackToStatement, statesFormula, misstatesGiven } from "./tutorAdapt.ts";
+import { replyStatesValue, harshOpener, similarity, repeatsRecentReply, repeatsRecentQuestion, repairLine, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario, inventedNumbers, claimsBoardWrite, stripBoardClaim, posesProblemInProse, reachedResultUnrecorded, setsMathTaskUnboarded, confirmsUnchecked, wrapsUpUnasked, blamesWidget, asksToWrite, handsOverCalculation, sendsBackToStatement, statesFormula, misstatesGiven } from "./tutorAdapt.ts";
 import { type LessonState } from "../shared/lessonState.ts";
 import { getCurrentTopic, generateLessonPlanSummary, type LessonPlan } from "../shared/lessonPlanner.ts";
 export { sendsBackToStatement, statesFormula, misstatesGiven, harshOpener } from "./tutorAdapt.ts";
 import { latexToPlainText } from "../shared/mathText.ts";
-import { toExprSource, gapTarget } from "../shared/mathEquiv.ts";
+import { toExprSource, gapTarget, mathTail } from "../shared/mathEquiv.ts";
 import { compileExpr } from "../shared/mathExpr.ts";
 import {
   createTutorChat, rewriteReply, retryRequest, usageOf, parseToolArgs, stripLeakedToolCallSyntax, stripWrapperTags, OUT,
@@ -908,7 +908,7 @@ function cleanReply(text: string, voice: boolean): string {
 const PRAISE_OPENER = /^\s*(?:spot on|exactly|perfect|nailed it|well done|great (?:job|work|one))\s*[,.!:—–-]+\s*(?:[A-ZÀ-Ý][\p{L}'’-]+\s*[,.!:—–-]+\s*)?/iu;
 export function stripPraiseOpener(t: string): string {
   const rest = t.trimStart().replace(PRAISE_OPENER, "").trimStart();
-  return rest.length >= 12 ? rest : t;
+  return rest.length >= 12 ? rest.charAt(0).toUpperCase() + rest.slice(1) : t;
 }
 
 /** The one line of maths in a reply that belongs on the board: its own $…$ spans, or the clause around the "=". */
@@ -1006,6 +1006,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     + solutionBlock(input.solution)
     + solutionMatchLine(message, input.solution)
     + (misgraded ? `\n\nCHECKED BY CODE — THEY WERE RIGHT: ${misgraded} Say so plainly in your own words (the exercise's key was wrong, not them), keep their working, and move on — never ask them to redo or re-enter it.` : "")
+    + ownArithmeticLine(message)
     + teachingBlock(input.teaching)
     + repairLine(message, history)
     + directorBlock({ message, history, board, problems, objectives, stepVerdict: input.stepVerdict?.verdict, solvedInChat: solvedNow.length > 0, stuckStreak: input.teaching?.stuckStreak, discussion })
@@ -1066,7 +1067,9 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
         if (/^(?:REJECTED|LIMIT|DUPLICATE|ERROR|LEAK)/.test(content)) { allLanded = false; content += " (Internal note for you only: never tell the student a write was refused, bounced or blocked, and never mention the board's or app's rules — just carry on teaching naturally.)"; }
         messages.push({ role: "tool", tool_call_id: tc.id, content });
       }
-      if (!allLanded || !cleanReply(text, !!input.voiceMode)) continue;
+      // …but only when the reply hands the turn back (asks something); "Let me set us up…" alone needs the next round.
+      const draftNow = cleanReply(text, !!input.voiceMode);
+      if (!allLanded || !draftNow || !/\?/.test(draftNow)) continue;
     }
     {
       let reply = cleanReply(text, !!input.voiceMode);
@@ -1247,6 +1250,37 @@ export function asksForSeveralValues(question: string): boolean {
   return /\b(?:values of|all (?:the )?(?:values|solutions|roots)|(?:the )?(?:roots|solutions|zeros|zeroes|x-intercepts)\b)/i.test(q);
 }
 
+/** Most of the line's content words are the student's own (a claim credited to them must be one they made —
+ *  reported live: Otto's own Macbeth reading was written up as "your claim"). Lines that are only maths pass. */
+/** The student's own calculation, checked by code ("10/100 divided by 10/40 = 0.4"): when every claim in it is true,
+ *  the tutor is told so — reported live: a right PED of 0.4 was sent back to be worked out again. */
+export function ownArithmeticLine(message: string): string {
+  if (/^\s*\[(?:Exercise|Exercice)\]/.test(message)) return "";
+  // "a/b divided by c/d = v" means (a/b)/(c/d), not a/b/c/d.
+  const text = String(message || "").replace(/([\d.]+\s*\/\s*[\d.]+)\s+divided by\s+([\d.]+\s*\/\s*[\d.]+)/gi, "($1)/($2)")
+    .replace(/\bdivided by\b/gi, "/").replace(/\btimes\b/gi, "*").replace(/\bplus\b/gi, "+").replace(/\bminus\b/gi, "-");
+  const checked: string[] = [];
+  for (const m of text.matchAll(/([^=?\n]*?)=\s*(-?\d+(?:\.\d+)?)/g)) {
+    const lhs = mathTail(m[1]);
+    if (!/[-+*/×÷^]/.test(lhs.replace(/^-/, ""))) continue;
+    const f = compileExpr(toExprSource(lhs), []);
+    if ("error" in f) continue;
+    const v = f.fn({}), r = Number(m[2]);
+    const dp = (m[2].split(".")[1] || "").length;
+    if (!Number.isFinite(v) || Math.abs(v - r) > Math.max(1e-9, 0.5 * 10 ** -dp + 1e-9)) return "";
+    checked.push(`${lhs} = ${m[2]}`);
+  }
+  return checked.length ? `\n\nVERIFIED BY CODE: the student's own calculation is correct (${checked.join("; ")}). Confirm it specifically — never ask them to work it out again.` : "";
+}
+
+export function wordsAreTheirs(line: string, theirWords: string[]): boolean {
+  const ws = (x: string) => String(x || "").toLowerCase().replace(/\$[^$]*\$/g, " ").split(/[^\p{L}]+/u).filter((w) => w.length >= 4).map((w) => w.slice(0, 5));
+  const mine = ws(line);
+  if (mine.length < 3) return true;
+  const theirs = new Set(theirWords.flatMap(ws));
+  return mine.filter((w) => theirs.has(w)).length / mine.length >= 0.5;
+}
+
 export function numbersAreTheirs(line: string, theirWords: string[]): boolean {
   const nums = (x: string) => (latexToPlainText(String(x || "").replace(/\$/g, " ")).replace(/[−–]/g, "-").match(/\d+(?:\.\d+)?/g) || []);
   const theirs = new Set(theirWords.flatMap(nums));
@@ -1310,7 +1344,7 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       // A gap is Otto's question, never the student's line; and a line only counts as THEIRS when it is what they said
       // (reported live: Otto's "x = ?" gaps and its own "x = 2, now find y" showed in the student's ink).
       if (input.kind === "gap") input.owner = "otto";
-      else if (input.owner === "student" && !c.codeWrite && !numbersAreTheirs(text, [c.message, ...(c.spokenRepair ? [c.spokenRepair.interpreted] : [])])) input.owner = "otto";
+      else if (input.owner === "student" && !c.codeWrite && !(numbersAreTheirs(text, [c.message, ...(c.spokenRepair ? [c.spokenRepair.interpreted] : [])]) && wordsAreTheirs(text, [c.message, ...c.said.slice(-3)]))) input.owner = "otto";
       // While a gap is open, the line that answers it is theirs to write — not a definition or formula that solves it.
       { const open = [...c.allBoard()].reverse().find((e) => e.kind === "gap" && e.status !== "correct"); const target = open ? gapTarget(open.text) : undefined;
         if (open && target && input.owner !== "student" && input.kind !== "gap" && new RegExp(`(?:^|[:\\s$])${target}\\s*=\\s*(?!\\?)`, "i").test(text)) return `REJECTED: a gap asking for ${target} is still open — that line gives it away. Let them find ${target}; ask in chat, or point at what they need.`; }
@@ -1319,6 +1353,7 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       if (result.board.filter((e) => !["svg", "graph", "flow", "widget", "diagram", "annotation"].includes(String(e.kind))).length >= 4) return "LIMIT: four lines a turn is plenty — the board keeps only what's worth keeping.";
       if (input.owner !== "student" && input.kind !== "focus" && !c.codeWrite && !c.discussion && !relevantToFocus(text, [...c.focus, ...c.allBoard().map((b) => b.text), ...c.result.problems.map((p) => p.question)], c.known || [])) return "REJECTED: that line isn't about the problem you're working on. Write only this problem's givens, a step THEY reached (owner:'student'), or the next step as a gap ending in '= ?'.";
       if (isDuplicateBoardEntry(c.allBoard(), input)) return "DUPLICATE: that's already on the board — point at it instead.";
+      if (input.kind !== "gap" && c.allBoard().slice(-20).some((e) => e.text && similarity(String(e.text), text) >= 0.75)) return "DUPLICATE: an almost identical line is already on the board — point at it (or add only what's new).";
       // Accuracy (spec §19): a line OTTO writes must not state false arithmetic — the board is what they'll revise from.
       if (input.owner !== "student") { const bad = wrongArithmetic(text, c.message); if (bad) return `REJECTED: that line has a wrong calculation (${bad}). Recompute it before writing.`; }
       if (input.why && leaks(String(input.why))) return LEAK;
@@ -1386,6 +1421,8 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       if (!hit?.id) return "ERROR: no such board entry — use a #n from the board listing.";
       if (!note) return "ERROR: a pointer needs a short note.";
       if (count("annotation") >= 2) return "LIMIT: two pointers per turn is plenty.";
+      { const n = boardLineNumbers(c.allBoard() as any).get(hit.id); const ctx = [c.message, ...c.said.slice(-4)].join("\n");
+        if (n && pointsAtOffTopicLine(`line ${n}`, c.allBoard() as any, ctx)) return "REJECTED: that line is about something else than what you're discussing now — point at the line about THIS (or write it first)."; }
       if (leaks(note)) return LEAK;
       if (!asksForFormula(c.message) && equationsAhead(note, c.said).length) return "REJECTED: that note hands them an equation they haven't stated — point and ask instead.";
       const tone = ["error", "hint", "good", "focus"].includes(input.tone) ? input.tone : "focus";
@@ -1443,6 +1480,8 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
     case "TABLE_ON_BOARD": {
       if (count("table") >= 2) return "LIMIT: enough tables for one turn.";
       if (leaks(JSON.stringify(input))) return LEAK;
+      const caption = String(input?.caption || "");
+      if (caption && c.allBoard().some((e) => e.kind === "table" && similarity(String(e.text), caption) >= 0.7)) return "DUPLICATE: that table is already on the board — refer to it (or ask them to fill its blank column) instead of drawing it again.";
       const r = makeTableEntry(input);
       return "error" in r ? r.error : push(r.entry);
     }
@@ -1486,7 +1525,9 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
 // History, literature, philosophy, geography, TOK, languages: there is rarely one right answer to compute, so the
 // tutor works as a discussion partner that builds critical thinking — it asks for a claim and the evidence behind
 // it, raises the strongest counter-argument, and makes the student defend or revise — never writing the argument.
-const DISCUSSION_SUBJECTS = new Set(["history", "geography", "philosophy", "english", "french", "spanish", "german", "theory of knowledge", "tok", "art", "music", "literature", "politics", "global politics", "psychology", "sociology", "religion", "classics", "latin"]);
+const DISCUSSION_SUBJECTS = new Set(["history", "geography", "philosophy", "english", "french", "spanish", "german", "theory of knowledge", "tok", "art", "music", "literature", "politics", "global politics", "psychology", "sociology", "religion", "classics", "latin",
+  // French and other common names (reported: "Histoire"/"Philosophie" sessions got the maths-mode guards)
+  "histoire", "géographie", "geographie", "histoire-géographie", "philosophie", "français", "francais", "littérature", "litterature", "anglais", "espagnol", "allemand", "italien", "ses", "sciences économiques et sociales", "économie", "economie", "economics", "hggsp", "humanités", "humanites", "emc"]);
 /** Is this session a discussion/argument subject (vs a calculation one)? The session's own subject wins; otherwise the
  *  recent text decides, but only when it names a humanities subject outright. Exported for tests. */
 export function isDiscussionSubject(subject: string | undefined, recentText = ""): boolean {

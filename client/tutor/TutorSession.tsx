@@ -59,7 +59,7 @@ async function dismissWithRetry(taskId: string): Promise<boolean> {
 /** A gap answered right: the line is completed in place with their answer ("… = ?" → "… = −3") and marked done. */
 export function fillGap<T extends { text: string; status?: string }>(b: T, given: string): T {
   const v = (String(given || "").split("=").pop() || "").trim();
-  return { ...b, status: "correct", ...(v ? { text: b.text.replace(/=\s*\?\s*(\$?)\s*$/, `= ${v}$1`) } : {}) };
+  return { ...b, status: "correct", ...(v ? { text: b.text.replace(/=\s*\?/, `= ${v}`) } : {}) };
 }
 
 export function mergeBoardById<T extends { id: string; at?: string; createdAt?: string }>(existing: T[], incoming: T[]): T[] {
@@ -312,7 +312,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     if (!message || sending || !task) return;
     const isAutoResult = /^\[(?:Exercise|Exercice)\]/.test(message);
     if (!isAutoResult) setExerciseDone(false);
-    else if (/\b(marked right|juste)\b/.test(message)) setExerciseDone(true);
+    else if (/\b(marked right|juste)\b/.test(message) && !/en partie juste|PARTLY right/i.test(message)) setExerciseDone(true);
     setInput(""); setSending(true); setError(null); setPendingMsg(message);
     try {
       // Anything new on the whiteboard rides along with the message — draw, then just say "is this right?"
@@ -333,7 +333,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       // come back as a hard "Otto couldn't reply" with no message at all. canvasMode restricts the tutor to
       // CREATE_PROBLEM (individual, inline, answerable right on the board) instead — the only artifact this
       // screen actually knows how to show.
-      const response = await api.chat(task.id, message, task.chat || [], task.board || [], (task.problems || []).map((p) => ({ ...p, solved: solvedRef.current.has(p.id) })), undefined, undefined, voiceMode, true, true, task.objectives || [], spoken, { id: task.id, source: task.source, sourceSubject: task.sourceSubject, createdAt: task.createdAt }, sessionMemoryForPrompt(pastSessions, task.sourceSubject, Date.now(), openerLang));
+      const response = await api.chat(task.id, message, task.chat || [], task.board || [], (task.problems || []).map((p) => ({ ...p, solved: p.solved === true || solvedRef.current.has(p.id) })), undefined, undefined, voiceMode, true, true, task.objectives || [], spoken, { id: task.id, source: task.source, sourceSubject: task.sourceSubject, createdAt: task.createdAt }, sessionMemoryForPrompt(pastSessions, task.sourceSubject, Date.now(), openerLang));
       const { task: updated, objectives, board, problems } = response as typeof response & { board?: typeof task.board; problems?: typeof task.problems };
       // objectives is only ever the FULL replacement list (SET_OBJECTIVES' own contract), or undefined
       // when Otto didn't touch it this turn — never overwrite the existing list with an empty one.
@@ -433,7 +433,11 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   const sendRef = useRef(send);
   sendRef.current = send;
   const onProblemResult = useCallback((r: { problem: TaskProblem; given: string; correct: boolean; attempt: number; systemError?: boolean; partial?: boolean }) => {
-    if (r.correct) solvedRef.current.add(r.problem.id);
+    if (r.correct) {
+      solvedRef.current.add(r.problem.id);
+      // Saved as solved right away, so a reload or "Reprendre" doesn't bring it back as open.
+      setTask((cur) => { if (!cur) return cur; const problems = (cur.problems || []).map((p) => (p.id === r.problem.id ? { ...p, solved: true } : p)); setLocalProblems(cur.id, problems, userId); return { ...cur, problems }; });
+    }
     // A system-error result (the item's stored key disagreed with the independently computed value, spec §19.1)
     // is reported AS that, not as a miss: Otto must never treat it as evidence against the student.
     resultsRef.current.push(L(
@@ -454,7 +458,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     // has no stored copy to look the gap up in for a tutor session. It still recomputes the key from the line
     // itself first, and only falls back to what it's sent.
     const { verdict } = await api.checkGap(task.id, entry.id, given, { text: entry.text, expectedAnswer: entry.expectedAnswer });
-    if (verdict === "correct") setTask((cur) => cur ? { ...cur, board: (cur.board || []).map((b) => b.id === entry.id ? fillGap(b, given) : b) } : cur);
+    if (verdict === "correct") setTask((cur) => { if (!cur) return cur; const board = (cur.board || []).map((b) => (b.id === entry.id ? fillGap(b, given) : b)); setLocalBoard(cur.id, board, userId); return { ...cur, board }; });
     const line = entry.text.replace(/\s+/g, " ").slice(0, 100);
     // The same answer to the same line is reported once (a second click, or the line re-rendered with different
     // spacing, used to send Otto the identical result twice — and get two identical replies back).

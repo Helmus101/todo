@@ -23,7 +23,7 @@ const overlaps = (a: string, b: string) => { const B = words(b); return [...word
 
 export const DREW_ON_BOARD = /\[(?:What I wrote\/drew on the board|Ce que j'ai écrit\/dessiné sur le tableau)\s*:/i;
 const EXERCISE_RIGHT = /\[(?:Exercise|Exercice)\][^\n]*(?:marked right|checked right|— juste|vérifié juste)/i;
-const EXERCISE_WRONG = /\[(?:Exercise|Exercice)\][^\n]*(?:marked wrong|checked wrong|— faux|vérifié faux|PARTLY right)/i;
+const EXERCISE_WRONG = /\[(?:Exercise|Exercice)\][^\n]*(?:marked wrong|checked wrong|— faux|vérifié faux|PARTLY right|en partie juste)/i;
 const CONCEPT_REQUEST = /\b(?:explain|what (?:is|are|does)|what's|how (?:does|do)|why (?:does|do|is)|teach me|show (?:me )?(?:the |a )?(?:graph|diagram|curve|picture|how)|draw|c'est quoi|qu'est-ce que|explique|montre(?:-moi)?|dessine)\b/i;
 const STUDY_GOAL = /\b(?:revis(?:e|ing|ion)|r[ée]vis(?:er|ion)|prep(?:are)?|exam|test|quiz|contr[ôo]le|learn|study|apprendre|go over|catch up)\b/i;
 const RECAP_REQUEST = /\b(?:summar(?:y|ise|ize)|recap|résumé|bilan|what (?:did|have) we (?:do|done|cover))/i;
