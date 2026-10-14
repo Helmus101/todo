@@ -6709,5 +6709,26 @@ section("Tutor reply hygiene — invented wrapper tags, board line numbers (repo
   check("the focus header and pointers don't count as numbered lines", citesMissingBoardLine("see line 2", [{ id: "f", kind: "focus", at: "2026-10-14T09:00:00Z" }, twoLines[0]]) === 2);
 }
 
+{
+  console.log("\n# Knowledge tracing (per-student BKT with forgetting, learned online)");
+  const KT = await import("../server/knowledgeTracing.ts");
+  const SM = await import("../server/studentModel.ts");
+  let m = SM.emptyStudentModel(), t = new Date("2026-10-01T10:00:00Z");
+  const add = (kind, mins = 3) => { t = new Date(t.getTime() + mins * 60000); m = SM.recordConceptEvidence(m, { label: "linear equilibrium", subject: "Economics", kind }, t); return KT.readSkill(Object.values(m.concepts)[0], m.ktParams, t); };
+  const r1 = add("mistake");
+  check("a mistake reads 'needs review' and asks for a worked example", r1.status === "needs review" && /worked example/.test(r1.next));
+  add("solved-after-hint");
+  const r3 = add("solved-unaided");
+  check("one unaided answer after a hint is not 'demonstrated' yet (never mastery from one answer)", r3.status !== "demonstrated");
+  const r4 = add("solved-unaided");
+  check("two unaided right answers in a row → demonstrated, and the next task is a transfer, not another drill", r4.status === "demonstrated" && /transfer/.test(r4.next));
+  const fade = KT.readSkill(Object.values(m.concepts)[0], m.ktParams, new Date(t.getTime() + 20 * 86400000));
+  check("after weeks without practice the skill fades and a retrieval check is due", fade.recallDue && fade.known < 0.5 && /retrieval/.test(fade.next));
+  check("the student's slip rate is learned from their answers (moved off the prior)", m.ktParams.n === 4 && m.ktParams.slip !== KT.DEFAULT_KT_PARAMS.slip);
+  check("trace state and parameters survive a save/load round trip", JSON.stringify(SM.normalizeStudentModel(JSON.parse(JSON.stringify(m))).ktParams) === JSON.stringify(m.ktParams) && SM.normalizeStudentModel(JSON.parse(JSON.stringify(m))).concepts["linear equilibrium"]?.kt?.streak === 2);
+  check("a right answer after a full explanation barely moves P(known)", (() => { const a = KT.traceObservation(undefined, KT.DEFAULT_KT_PARAMS, { correct: true, weight: 0.15 }, t).kt.p, b = KT.traceObservation(undefined, KT.DEFAULT_KT_PARAMS, { correct: true, weight: 1 }, t).kt.p; return a < 0.4 && b > 0.6; })());
+  check("the tutor prompt carries the model's read and next activity", /demonstrated \(model: \d+% likely/.test(SM.studentModelBlock(m, { subject: "Economics", now: t })));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

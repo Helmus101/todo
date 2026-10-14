@@ -101,11 +101,33 @@ export interface ConceptRecord {
   updatedAt: string;
   /** The extensibility escape hatch: new scalars land here until they've earned a real field. */
   extras: Record<string, number | string>;
+  /** Knowledge tracing state (server/knowledgeTracing.ts). */
+  kt?: KnowledgeTrace;
 }
+
+/** One skill's knowledge-tracing state: P(known) after the last observation and the learning transition. */
+export interface KnowledgeTrace {
+  p: number;
+  /** P(known) after the observation, before the learning transition (used to fit the learn rate). */
+  post: number;
+  at: string;
+  /** Days for the gain above the prior to halve without practice. */
+  halfLife: number;
+  /** Observations strong enough to count (a right answer after a full explanation doesn't). */
+  n: number;
+  /** Unaided right answers in a row. */
+  streak: number;
+  /** Has it been shown in a new context? */
+  transfer: boolean;
+}
+
+/** The student's own knowledge-tracing parameters, as logits within fixed bounds, learned online. */
+export interface KnowledgeTraceParams { init: number; learn: number; slip: number; guess: number; n: number }
 
 export interface StudentModelShape {
   concepts: Record<string, ConceptRecord>;
   updatedAt: string;
+  ktParams?: KnowledgeTraceParams;
 }
 
 export const CONCEPT_CAP = 60;

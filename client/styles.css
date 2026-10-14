@@ -4750,8 +4750,15 @@ mark.otto-mark { background: linear-gradient(transparent 12%, color-mix(in srgb,
 @media (max-width: 420px) { .sm-math-key { min-width: 30px; padding: var(--space-1) var(--space-2); } .sm-inline-problem-input-row { flex-wrap: wrap; } .sm-inline-problem-input-row > .sm-btn { width: 100%; } }
 
 /* The line's explanation — so the board reads back as notes, not a bare column of equations. */
-.sm-board-why { margin-top: 2px; font-size: 13px; line-height: 1.45; color: var(--ink-2, var(--ink)); font-style: italic; }
-.sm-board-why::before { content: "↳ "; font-style: normal; color: var(--ink-3, var(--ink-2)); }
+.sm-board-why { display: flex; gap: 6px; align-items: baseline; margin-top: 4px; font-size: 13px; line-height: 1.45; color: var(--ink-2, var(--ink)); font-style: italic; }
+.sm-board-why::before { content: "↳"; flex: none; font-style: normal; color: var(--ink-3, var(--ink-2)); }
+/* Clearer board: the open problem's label reads as a call to act, the problem's data is set apart from the
+   working, and a definition or rule stands out as something to keep. */
+.sm-board-body .sm-board-problem:not(.sm-board-problem-solved) .sm-board-problem-label { font-family: inherit; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink); }
+.sm-board-body .sm-board-entry-given .sm-board-entry-main { padding-left: var(--space-3); border-left: 2px solid var(--line); }
+.sm-board-body .sm-board-entry-definition .sm-board-line,
+.sm-board-body .sm-board-entry-formula .sm-board-line,
+.sm-board-body .sm-board-entry-strategy .sm-board-line { font-weight: 600; }
 
 /* End-of-session recap: what they showed, what's developing, their strategies, one review question. */
 .tutor-recap { display: grid; gap: var(--space-3); margin: var(--space-1) 0 var(--space-4); padding: var(--space-3) var(--space-4); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); max-height: 40vh; overflow-y: auto; }

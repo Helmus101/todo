@@ -39,7 +39,10 @@ import {
   type ConceptEvidence,
   type EvidenceKind,
   type StudentModelShape,
+  type KnowledgeTrace,
+  type KnowledgeTraceParams,
 } from "../shared/agentTypes.ts";
+import { DEFAULT_KT_PARAMS, observationFor, traceObservation, readSkill } from "./knowledgeTracing.ts";
 
 export type {
   ConceptRecord, ConceptMisconception, ConceptError, ConceptEvidence, EvidenceKind, StudentModelShape,
@@ -252,7 +255,16 @@ export function recordConceptEvidence(model: StudentModelShape, ev: ConceptEvide
     ...(ev.subject && !existing.subject ? { subject: String(ev.subject).slice(0, 60) } : {}),
   };
   const updated = applyEvidence(relabeled, ev, now);
-  return capConcepts({ concepts: { ...model.concepts, [key]: updated }, updatedAt: iso(now) });
+  let ktParams = model.ktParams;
+  const obs = observationFor(ev.kind);
+  if (obs) {
+    const traced = traceObservation(existing.kt, model.ktParams || DEFAULT_KT_PARAMS, obs, now);
+    updated.kt = traced.kt;
+    ktParams = traced.params;
+    // The review date follows the trace: when retention is predicted to drop to ~70%.
+    if (traced.kt.p >= 0.6) updated.nextReview = new Date(now.getTime() + traced.kt.halfLife * 0.5 * 86_400_000).toISOString();
+  }
+  return capConcepts({ concepts: { ...model.concepts, [key]: updated }, updatedAt: iso(now), ...(ktParams ? { ktParams } : {}) });
 }
 
 /** Enforce CONCEPT_CAP by evicting the LEAST RECENTLY DEMONSTRATED concept (falling back to `updatedAt`).
@@ -362,9 +374,22 @@ export function normalizeStudentModel(raw: unknown): StudentModelShape | undefin
       ...(stamp(v.nextReview) ? { nextReview: stamp(v.nextReview)! } : {}),
       updatedAt: stamp(v.updatedAt) || new Date(0).toISOString(),
       extras,
+      ...(normalizeTrace(v.kt) ? { kt: normalizeTrace(v.kt)! } : {}),
     };
   }
-  return capConcepts({ concepts, updatedAt: stamp(r.updatedAt) || new Date(0).toISOString() });
+  const ktParams = normalizeParams(r.ktParams);
+  return capConcepts({ concepts, updatedAt: stamp(r.updatedAt) || new Date(0).toISOString(), ...(ktParams ? { ktParams } : {}) });
+}
+
+function normalizeTrace(v: any): KnowledgeTrace | undefined {
+  if (!v || typeof v !== "object" || !stamp(v.at)) return undefined;
+  const p = ratio(v.p);
+  return { p, post: ratio(v.post ?? p), at: stamp(v.at)!, halfLife: Math.min(120, Math.max(0.5, num(v.halfLife, 2))), n: count(v.n), streak: count(v.streak), transfer: v.transfer === true };
+}
+function normalizeParams(v: any): KnowledgeTraceParams | undefined {
+  if (!v || typeof v !== "object") return undefined;
+  const l = (x: unknown, d: number) => Math.max(-6, Math.min(6, num(x, d)));
+  return { init: l(v.init, DEFAULT_KT_PARAMS.init), learn: l(v.learn, DEFAULT_KT_PARAMS.learn), slip: l(v.slip, DEFAULT_KT_PARAMS.slip), guess: l(v.guess, DEFAULT_KT_PARAMS.guess), n: count(v.n) };
 }
 
 /** Look a concept up by either its label or its key — the two ways callers name it. */
@@ -403,9 +428,13 @@ export function studentModelBlock(model: StudentModelShape | undefined, opts: { 
   const concepts = relevantConcepts(model, { subject: opts.subject, now, limit: opts.limit });
   if (!concepts.length) return "";
   const band = (m: number): string => (m >= 0.8 ? "solid" : m >= 0.62 ? "working" : m >= 0.45 ? "shaky" : "very shaky");
+  const params = model.ktParams || DEFAULT_KT_PARAMS;
   const lines: string[] = [];
   for (const c of concepts) {
-    const bits: string[] = [`mastery ${band(c.mastery)}`];
+    const read = readSkill(c, params, now);
+    const bits: string[] = read
+      ? [`${read.status} (model: ${Math.round(read.predicted * 100)}% likely to get the next one right)`, `next: ${read.next}`]
+      : [`mastery ${band(c.mastery)}`];
     if (c.confidence < 0.35) bits.push("(thin evidence — treat as a guess, not a fact)");
     if (c.attempts > 0) {
       const ind = independentSuccess(c);

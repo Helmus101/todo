@@ -382,7 +382,7 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, sys
     >
       <div className="sm-board-entry-main">
       <div className="sm-board-problem-heading-row">
-        <div className="sm-board-problem-label">{answered ? (en ? "Resolved" : "Résolu") : (en ? "Try it" : "À toi")}</div>
+        <div className="sm-board-problem-label">{answered ? (en ? "Resolved" : "Résolu") : (en ? "Your turn" : "À toi")}</div>
         {answered && (
           <button type="button" className="sm-btn sm-btn-ghost sm-btn-xs sm-board-compact-btn" onClick={() => setExpanded(false)}>
             {en ? "Compact" : "Réduire"}
