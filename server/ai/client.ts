@@ -337,6 +337,11 @@ const TOOL_CALL_LEAK_MARKER2 = /<\/?call:[a-zA-Z0-9_]*/i;
 // Third leak format: "<patch><default_api:.../></patch>" - raw tool call XML in the reply text
 const TOOL_CALL_LEAK_MARKER3 = /<patch>/i;
 
+// Sixth leak format (reported live): "#%%call:default_api:" shown as the whole bubble — the same call template as
+// MARKER2 without its "<", with junk glued in front. "default_api" is never a word a student should read, and a run
+// of "#%%"-style junk is template residue; everything from there on is plumbing.
+const TOOL_CALL_LEAK_MARKER4 = /[#%@!&*~^]*\b(?:call\s*:\s*)?default_api\b|#?%%/i;
+
 const TOOL_NAME = "[A-Z]{2,}(?:_[A-Z]{2,})+";
 /** Tool calls written out as TEXT: a JSON object naming a tool ({"operation": "WRITE_TO_BOARD", …}) or a bracket call
  *  ([ANNOTATE_BOARD target="10" …]). Only those blocks are removed — the reply around them is the student's. */
@@ -478,6 +483,12 @@ function removeAnyToolCall(text: string): string {
 export function textToolCalls(text: string): { name: string; args: Record<string, string> }[] {
   const out: { name: string; args: Record<string, string> }[] = [...bracketObjectCalls(text)];
   const KINDS = /^(?:gap|line|formula|definition|given|result|insight|strategy|summary|focus|note|instruction)$/i;
+  // `default_api:WRITE_TO_BOARD{"kind":"gap",…}` — a name followed straight by a JSON object.
+  for (const m of String(text || "").matchAll(new RegExp(String.raw`\b(${TOOL_NAMES})\s*[:=]?\s*(?=\{)`, "gi"))) {
+    const start = m.index! + m[0].length;
+    const args = firstJson<Record<string, unknown>>(text.slice(start, groupEnd(text, start)));
+    if (args && typeof args === "object" && !Array.isArray(args) && Object.keys(args).length) out.push({ name: m[1].toUpperCase(), args: Object.fromEntries(Object.entries(args).map(([k, v]) => [k, typeof v === "string" ? v : JSON.stringify(v)])) });
+  }
   for (const m of String(text || "").matchAll(new RegExp(String.raw`\b(${TOOL_NAMES})\s*\(`, "gi"))) {
     const start = m.index! + m[0].length - 1;
     const body = text.slice(start + 1, groupEnd(text, start) - 1);
@@ -495,7 +506,7 @@ export function textToolCalls(text: string): { name: string; args: Record<string
 
 export function stripLeakedToolCallSyntax(input: string): string {
   const text = removeAnyToolCall(removeXmlToolCalls(removeTextToolCalls(input)));
-  const hits = [TOOL_CALL_LEAK_MARKER.exec(text), TOOL_CALL_LEAK_MARKER2.exec(text), TOOL_CALL_LEAK_MARKER3.exec(text)].filter((m): m is RegExpExecArray => !!m);
+  const hits = [TOOL_CALL_LEAK_MARKER.exec(text), TOOL_CALL_LEAK_MARKER2.exec(text), TOOL_CALL_LEAK_MARKER3.exec(text), TOOL_CALL_LEAK_MARKER4.exec(text)].filter((m): m is RegExpExecArray => !!m);
   if (!hits.length) return text;
   const cut = Math.min(...hits.map((m) => m.index));
   return text.slice(0, cut).trimEnd();

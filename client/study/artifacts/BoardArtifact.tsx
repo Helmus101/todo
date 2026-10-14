@@ -528,6 +528,50 @@ function SourceBlock({ spec, en }: { spec: SourceSpec; en: boolean }) {
   );
 }
 
+/** One worksheet per problem: the flow splits into sections at every topic header (kind focus) and every new practice
+ *  problem (unless a header was written just before it). Only the CURRENT section is open; earlier ones fold into a
+ *  one-line row the student can tap open again — nothing is ever deleted, but the board stops reading as one long
+ *  pile of three different problems (reported live: "the board is cluttered"). Returns the index where each section
+ *  starts. Pure; exported for tests. */
+export function boardSectionStarts(items: Array<{ entry?: Pick<BoardEntry, "kind">; problem?: unknown }>): number[] {
+  const starts: number[] = [];
+  items.forEach((it, i) => {
+    if (i === 0) { starts.push(0); return; }
+    const prev = items[i - 1];
+    if (it.entry?.kind === "focus") starts.push(i);
+    else if (it.problem && prev.entry?.kind !== "focus") starts.push(i);
+  });
+  return starts;
+}
+
+/** The section's one-line title for its folded row: its header, its problem, or its first line. Pure; exported for tests. */
+export function boardSectionTitle(items: Array<{ entry?: Pick<BoardEntry, "kind" | "text">; problem?: { question: string } }>): string {
+  const head = items.find((it) => it.entry?.kind === "focus")?.entry?.text || items.find((it) => it.problem)?.problem?.question || items.find((it) => it.entry?.text)?.entry?.text || "";
+  const t = head.replace(/\s+/g, " ").trim();
+  return t.length > 90 ? `${t.slice(0, 88).replace(/\s+\S*$/, "")}…` : t;
+}
+
+/** "Key ideas" holds only what's worth revising from: definitions, strategies, and formulas Otto wrote WITH a why —
+ *  never a fragment cut out of a sentence (") =(M+ m)a right there"), a line with a blank or a question in it, or two
+ *  near-identical strategies. Pure; exported for tests. */
+export function keyIdeaEntries<T extends Pick<BoardEntry, "id" | "kind" | "text" | "why">>(entries: T[], exclude: Set<string> = new Set()): T[] {
+  const balanced = (t: string) => [...t].reduce((d, ch) => (d < 0 ? d : d + (ch === "(" ? 1 : ch === ")" ? -1 : 0)), 0) === 0;
+  const words = (t: string) => new Set(String(t).toLowerCase().replace(/\$[^$]*\$/g, " ").split(/[^\p{L}\d]+/u).filter((w) => w.length >= 4));
+  const near = (a: string, b: string) => { const A = words(a), B = words(b); if (!A.size || !B.size) return false; const both = [...A].filter((w) => B.has(w)).length; return both / Math.min(A.size, B.size) >= 0.6; };
+  const out: T[] = [];
+  for (const e of entries) {
+    if (exclude.has(e.id) || out.some((x) => x.id === e.id)) continue;
+    const t = String(e.text || "").trim();
+    if (!t || /\?/.test(t) || !balanced(t) || /^[)\]}=+\-−*/]/.test(t)) continue;
+    const ok = e.kind === "definition" || e.kind === "strategy" || (e.kind === "formula" && !!String(e.why || "").trim() && /=/.test(t));
+    if (!ok) continue;
+    const dupe = out.findIndex((x) => near(x.text, t));
+    if (dupe >= 0) { out[dupe] = e; continue; } // the newer wording of the same idea wins
+    out.push(e);
+  }
+  return out.slice(-5);
+}
+
 export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidgetResult, sheetSignal, onGapCheck }: BoardArtifactProps) {
   const L = useLang();
   const endRef = useRef<HTMLDivElement>(null);
@@ -568,7 +612,7 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
   // (reported: the definition and the laws appeared twice in a row at the top).
   const topIds = new Set(entries.filter((e) => e.kind !== "focus" && e.kind !== "annotation").slice(0, 4).map((e) => e.id));
   const boardIsLong = entries.length + (task.problems?.length || 0) >= 7;
-  const keyIdeas = boardIsLong ? entries.filter((e, i, arr) => arr.findIndex((x) => x.id === e.id) === i && !topIds.has(e.id) && (e.kind === "definition" || e.kind === "formula" || e.kind === "strategy")).slice(-8) : [];
+  const keyIdeas = boardIsLong ? keyIdeaEntries(entries, topIds) : [];
   const latestSummary = boardIsLong ? [...entries].reverse().find((e) => e.kind === "summary" && e.owner !== "student" && !topIds.has(e.id)) : undefined;
   const [ideasOpen, setIdeasOpen] = useState<boolean>(() => { try { return localStorage.getItem("otto.board.ideasOpen") !== "0"; } catch { return true; } });
   const toggleIdeas = () => setIdeasOpen((o) => { try { localStorage.setItem("otto.board.ideasOpen", o ? "0" : "1"); } catch { /* storage blocked: still toggles */ } return !o; });
@@ -606,6 +650,12 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
     // must re-render (it used to keep showing the stale lines).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entries, problems, problemState, showHint]);
+
+  const sectionStarts = useMemo(() => boardSectionStarts(flowItems), [flowItems]);
+  const currentSection = sectionStarts.length ? sectionStarts[sectionStarts.length - 1] : 0;
+  const sectionOf = (idx: number) => { let s = 0; for (const st of sectionStarts) if (st <= idx) s = st; return s; };
+  const [openSections, setOpenSections] = useState<Set<string>>(() => new Set());
+  const toggleSection = (key: string) => setOpenSections((prev) => { const n = new Set(prev); if (n.has(key)) n.delete(key); else n.add(key); return n; });
 
   // Sheets: blank room kept for a drawing the student made BELOW the board, so Otto's next writes come after it.
   const [sheets, setSheets] = useState<{ id: number; afterKey: string | null; height: number }[]>([]);
@@ -744,58 +794,7 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
 
   const en = L("fr", "en") === "en";
 
-  return (
-    <div className="sm-board-body">
-      {hint}
-
-      {/* THE WORKSHEET HEADER — date + subject above the pinned goal, like a lesson page's heading block:
-          the board is a document you could print and keep, not a feed. The subject comes from the task's
-          sourceSubject (stamped at session start); date is today (the board is per-session). */}
-      <div className="sm-board-header">
-        <span className="sm-board-header-date">
-          {new Date().toLocaleDateString(en ? "en-US" : "fr-FR", { weekday: "long", day: "numeric", month: "long" })}
-        </span>
-        {task.sourceSubject ? <span className="sm-board-header-subject">{task.sourceSubject}</span> : null}
-        {onUndo ? (
-          <button type="button" className="sm-board-undo" onClick={onUndo} title={en ? "Undo the last board change" : "Annuler la dernière modification du tableau"}>
-            ↶ {en ? "Undo" : "Annuler"}
-          </button>
-        ) : null}
-      </div>
-
-
-      {keyIdeas.length || latestSummary ? (
-        <section className={`sm-board-ideas${ideasOpen ? "" : " is-collapsed"}`} aria-label={en ? "Key ideas" : "À retenir"}>
-          <button type="button" className="sm-board-ideas-head" aria-expanded={ideasOpen} onClick={toggleIdeas}>
-            <span>{en ? "Key ideas" : "À retenir"}</span>
-            <span className="sm-board-ideas-count">{keyIdeas.length + (latestSummary ? 1 : 0)}</span>
-            <span className="sm-board-ideas-chev" aria-hidden="true">{ideasOpen ? "▾" : "▸"}</span>
-          </button>
-          {ideasOpen ? (
-            <ul className="sm-board-ideas-list">
-              {keyIdeas.map((e) => (
-                <li key={`idea-${e.id}`} className={`sm-board-idea sm-board-idea-${e.kind}`}>
-                  {e.kind === "strategy" ? <span className="sm-board-idea-tag">{en ? "Strategy" : "Méthode"}</span> : null}
-                  <MathText text={autoMathLine(stripStrayMarkdown(e.text))} />
-                </li>
-              ))}
-              {latestSummary ? (
-                <li className="sm-board-idea sm-board-idea-summary">
-                  <span className="sm-board-idea-tag">{en ? "Summary" : "Bilan"}</span>
-                  <MathText text={autoMathLine(stripStrayMarkdown(latestSummary.text))} />
-                </li>
-              ) : null}
-            </ul>
-          ) : null}
-        </section>
-      ) : null}
-
-      {/* ONE FLOW — entries and problems interleaved by timestamp, in the order the session produced them.
-          Every step stays visible: an earlier version collapsed everything but the last four behind a
-          show/hide disclosure, but the board is a lesson document — hiding the working is the opposite of
-          what a student needs when they scroll back to see how they got here. */}
-      {sheets.filter((sh) => sh.afterKey === null).map((sh) => <div key={`sheet-${sh.id}`} className="sm-board-sheet" style={{ height: sh.height }} aria-hidden />)}
-      {flowItems.map((item, idx) => {
+  const renderItem = (item: (typeof flowItems)[number], idx: number) => {
         const node = item.problem ? (
           <ProblemBlock
             key={item.key}
@@ -922,6 +921,78 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
           );
         })();
         return <Fragment key={item.key}>{node}{sheets.filter((sh) => sh.afterKey === item.key).map((sh) => <div key={`sheet-${sh.id}`} className="sm-board-sheet" style={{ height: sh.height }} aria-hidden />)}</Fragment>;
+  };
+
+  return (
+    <div className="sm-board-body">
+      {hint}
+
+      {/* THE WORKSHEET HEADER — date + subject above the pinned goal, like a lesson page's heading block:
+          the board is a document you could print and keep, not a feed. The subject comes from the task's
+          sourceSubject (stamped at session start); date is today (the board is per-session). */}
+      <div className="sm-board-header">
+        <span className="sm-board-header-date">
+          {new Date().toLocaleDateString(en ? "en-US" : "fr-FR", { weekday: "long", day: "numeric", month: "long" })}
+        </span>
+        {task.sourceSubject ? <span className="sm-board-header-subject">{task.sourceSubject}</span> : null}
+        {onUndo ? (
+          <button type="button" className="sm-board-undo" onClick={onUndo} title={en ? "Undo the last board change" : "Annuler la dernière modification du tableau"}>
+            ↶ {en ? "Undo" : "Annuler"}
+          </button>
+        ) : null}
+      </div>
+
+
+      {keyIdeas.length || latestSummary ? (
+        <section className={`sm-board-ideas${ideasOpen ? "" : " is-collapsed"}`} aria-label={en ? "Key ideas" : "À retenir"}>
+          <button type="button" className="sm-board-ideas-head" aria-expanded={ideasOpen} onClick={toggleIdeas}>
+            <span>{en ? "Key ideas" : "À retenir"}</span>
+            <span className="sm-board-ideas-count">{keyIdeas.length + (latestSummary ? 1 : 0)}</span>
+            <span className="sm-board-ideas-chev" aria-hidden="true">{ideasOpen ? "▾" : "▸"}</span>
+          </button>
+          {ideasOpen ? (
+            <ul className="sm-board-ideas-list">
+              {keyIdeas.map((e) => (
+                <li key={`idea-${e.id}`} className={`sm-board-idea sm-board-idea-${e.kind}`}>
+                  {e.kind === "strategy" ? <span className="sm-board-idea-tag">{en ? "Strategy" : "Méthode"}</span> : null}
+                  <MathText text={autoMathLine(stripStrayMarkdown(e.text))} />
+                </li>
+              ))}
+              {latestSummary ? (
+                <li className="sm-board-idea sm-board-idea-summary">
+                  <span className="sm-board-idea-tag">{en ? "Summary" : "Bilan"}</span>
+                  <MathText text={autoMathLine(stripStrayMarkdown(latestSummary.text))} />
+                </li>
+              ) : null}
+            </ul>
+          ) : null}
+        </section>
+      ) : null}
+
+      {/* ONE FLOW — entries and problems interleaved by timestamp, in the order the session produced them.
+          Every step stays visible: an earlier version collapsed everything but the last four behind a
+          show/hide disclosure, but the board is a lesson document — hiding the working is the opposite of
+          what a student needs when they scroll back to see how they got here. */}
+      {sheets.filter((sh) => sh.afterKey === null).map((sh) => <div key={`sheet-${sh.id}`} className="sm-board-sheet" style={{ height: sh.height }} aria-hidden />)}
+      {flowItems.map((item, idx) => {
+        // Earlier worksheets fold away: the first item of a closed section becomes its one-line row, the rest hide.
+        const sec = sectionOf(idx);
+        const secKey = flowItems[sec]?.key || String(sec);
+        const folded = sec !== currentSection && !openSections.has(secKey);
+        if (sec !== currentSection && idx === sec) {
+          const end = sectionStarts.find((st) => st > sec) ?? flowItems.length;
+          const row = (
+            <button type="button" className={`sm-board-section-row${folded ? "" : " is-open"}`} aria-expanded={!folded} onClick={() => toggleSection(secKey)}>
+              <span className="sm-board-section-chev" aria-hidden="true">{folded ? "▸" : "▾"}</span>
+              <span className="sm-board-section-title"><MathText text={autoMathLine(stripStrayMarkdown(boardSectionTitle(flowItems.slice(sec, end))))} /></span>
+              <span className="sm-board-section-count">{end - sec}</span>
+            </button>
+          );
+          if (folded) return <Fragment key={`sec-${item.key}`}>{row}</Fragment>;
+          return <Fragment key={`sec-${item.key}`}>{row}{renderItem(item, idx)}</Fragment>;
+        }
+        if (folded) return null;
+        return renderItem(item, idx);
       })}
 
       {/* The live drafting indicator — while the tutor's reply is being generated the document shows its

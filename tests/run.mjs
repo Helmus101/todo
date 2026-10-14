@@ -72,8 +72,8 @@ import { trimFreeTTSWatermark } from "../server/ttsTrim.ts";
 import { openerMemoryBlock, cleanOpener, tutorOpener } from "../server/claude.ts";
 import { sessionTopic, relativeWhen, sessionMemoryForPrompt } from "../client/tutor/tutorSessions.ts";
 import { wantsArtifactTools } from "../server/claude.ts";
-import { rankVoices, isMaleVoice, cloudChunks, toSpeakableText, stripLatexForSpeech } from "../client/voice/useSpeechSynthesis.ts";
-import { traceLines, splitMergedSteps, looksLikeRealMath } from "../client/study/artifacts/BoardArtifact.tsx";
+import { rankVoices, isMaleVoice, cloudChunks, toSpeakableText, stripLatexForSpeech, mathSymbolsToWords, spokenBrackets } from "../client/voice/useSpeechSynthesis.ts";
+import { traceLines, splitMergedSteps, looksLikeRealMath, boardSectionStarts, boardSectionTitle, keyIdeaEntries } from "../client/study/artifacts/BoardArtifact.tsx";
 import { pcmToWav, leaksAnswer, scrubAnswerLeak, makeProblem as makeProblemLeak, makePracticeProblem as makePracticeLeak, wordWrapChunks, leaksAnyProblemAnswer, makeInteractiveEntry, stripId3v2, stripId3v1, stripLeakedToolCallSyntax } from "../server/claude.ts";
 import { lastMessageKey } from "../client/voice/replyKey.ts";
 import { subjectMastery } from "../shared/types.ts";
@@ -5076,7 +5076,7 @@ section("Board as paper: key-ideas strip, left-to-right ink, condensed objective
   const ba = readFileSync("client/study/artifacts/BoardArtifact.tsx", "utf8");
   const css = readFileSync("client/styles.css", "utf8");
   const ts = readFileSync("client/tutor/TutorSession.tsx", "utf8");
-  check("definitions, formulas, strategies and the summary are gathered in a collapsible Key ideas strip", /className=\{`sm-board-ideas/.test(ba) && /e\.kind === "definition" \|\| e\.kind === "formula" \|\| e\.kind === "strategy"/.test(ba) && /otto\.board\.ideasOpen/.test(ba));
+  check("definitions, formulas, strategies and the summary are gathered in a collapsible Key ideas strip", /className=\{`sm-board-ideas/.test(ba) && /keyIdeaEntries\(entries, topIds\)/.test(ba) && /e\.kind === "definition" \|\| e\.kind === "strategy" \|\| \(e\.kind === "formula"/.test(ba) && /otto\.board\.ideasOpen/.test(ba));
   check("a fresh line is written in left to right", /sm-board-reveal-ink \{ from \{ clip-path: inset\(0 100% 0 0\)/.test(css));
   check("strategy lines are highlighted on the board", /\.sm-board-entry-strategy \.sm-board-entry-text/.test(css));
   check("the plan shows inside the ONE session bar as the current objective with progress dots, expandable to the checklist", /ts-bar-plan/.test(ts) && /ts-objstrip-dots/.test(ts) && /ts-plan-list/.test(ts) && !/className="ts-objectives"/.test(ts));
@@ -5928,8 +5928,37 @@ section("TTS voice — MALE ONLY, and arrows read as a word (source pins)");
 
   // Direct request: "make sure here it doesn't say the arrow but replaces by word" — a worked-math arrow
   // ("t² = 9.18 → t = 3.03 s") either got read literally as "arrow" or mangled by the TTS engine.
-  check("a unicode arrow is read as a word, not a symbol", toSpeakableText("t² = 9.18 → t = 3.03 s") === "t² = 9.18 gives t = 3.03 s");
+  check("a unicode arrow is read as a word, not a symbol — and so is every other symbol", toSpeakableText("t² = 9.18 → t = 3.03 s") === "t squared equals 9.18 gives t equals 3.03 seconds");
   check("an ASCII '->' arrow is also replaced", toSpeakableText("x -> y") === "x gives y");
+  // Reported live: "when there is - it should say minus" — what's SHOWN keeps the maths, what's SAID is words only.
+  {
+    const said = toSpeakableText("Now we have two equations: $Mg\\sin\\theta - T = Ma$ and $T - mg = ma$.");
+    check("speech: a minus in maths is spoken 'minus', = is 'equals', no symbol survives", /theta minus T equals M times a/.test(said) && /T minus m times g equals m times a/.test(said) && !/[-=$\\]/.test(said));
+    check("speech: plain-text maths too (unicode minus, brackets as a spoken group)", toSpeakableText("M g sinθ −mg=(M+m)a.") === "M g sine theta minus mg equals M plus m, times a.");
+    check("speech: a fraction is 'all over' its compound denominator", toSpeakableText("$a = \\frac{g(M\\sin\\theta - m)}{M+m}$") === "a equals g times, M sine theta minus m, all over M plus m");
+    check("speech: units and powers are read as words", toSpeakableText("2.0×10^3 cm3 per hour, 12 kW, 30 kJ/cm3, g = 9.8 m/s²") === "2.0 times 10 cubed cubic centimetres per hour, 12 kilowatts, 30 kilojoules per cubic centimetre, g equals 9.8 metres per second squared");
+    check("speech: unary minus, percent, degrees, ±", toSpeakableText("x = -3, 72%, 30°, x = ±2") === "x equals minus 3, 72 percent, 30 degrees, x equals plus or minus 2");
+    check("speech: a hyphenated word and a prose dash stay words; a single letter is never mistaken for a unit", toSpeakableText("a well-known trick - nice, on the x-axis") === "a well-known trick, nice, on the x-axis" && toSpeakableText("$\\frac{1}{2}mv^2$") === "one half m times v squared");
+    check("speech: French says 'moins', 'égale', 'sur', 'au carré'", toSpeakableText("Résous $x^2 - 4 = 0$ avec $\\frac{a}{b}$", "fr-FR") === "Résous x au carré moins 4 égale 0 avec a sur b");
+    check("speech: leaked tool plumbing is never read aloud", toSpeakableText("#%%call:default_api:") === "");
+    check("spokenBrackets leaves a function's argument alone", spokenBrackets("sine (x)") .replace(/\s+/g, " ").trim() === "sine x" && mathSymbolsToWords("3 < 4") === "3 is less than 4");
+  }
+  // Reported live: "the board is cluttered" — three problems' working in one long pile, and fragments in Key ideas.
+  {
+    const items = [{ entry: { kind: "focus", text: "Connected masses" } }, { entry: { kind: "formula", text: "a" } }, { problem: { question: "Efficiency of a pump?" } }, { entry: { kind: "gap", text: "E = ?" } }, { entry: { kind: "focus", text: "Energy on an incline" } }, { problem: { question: "Find v" } }, { entry: { kind: "result", text: "v" } }];
+    check("board: a new worksheet starts at each header and each new problem (a problem right under its header stays with it)", JSON.stringify(boardSectionStarts(items)) === "[0,2,4]");
+    check("board: a folded worksheet is titled by its header, else its problem", boardSectionTitle(items.slice(0, 2)) === "Connected masses" && boardSectionTitle(items.slice(2, 4)) === "Efficiency of a pump?");
+    const ideas = keyIdeaEntries([
+      { id: "1", kind: "formula", text: "g=(M+m)a" },
+      { id: "2", kind: "formula", text: ") =(M+ m)a right there", why: "x" },
+      { id: "3", kind: "formula", text: "a= (g(Msinθ −m))/(M+m): what does that tell us about Msinθ −m?", why: "x" },
+      { id: "4", kind: "strategy", text: "Efficiency: match time units (per hour or per second) for both input and output energy." },
+      { id: "5", kind: "strategy", text: "Always check that energy input and power output use the same time unit (per second or per hour) before dividing." },
+      { id: "6", kind: "formula", text: "$T - mg = ma$", why: "Newton's second law for the hanging mass." },
+      { id: "7", kind: "definition", text: "Tension: the pull of the string, the same all along it." },
+    ]);
+    check("board: Key ideas drop fragments, questions and why-less code lines, and keep one of two near-identical strategies", JSON.stringify(ideas.map((e) => e.id)) === '["5","6","7"]');
+  }
   check("a '=>' arrow is also replaced", toSpeakableText("A => B") === "A gives B");
   check("spacing around the substituted word is normal regardless of how tight the arrow was in source", toSpeakableText("a→b") === "a gives b");
 
@@ -5944,8 +5973,8 @@ section("TTS voice — MALE ONLY, and arrows read as a word (source pins)");
     return !/[\\${}]/.test(out) && /pi/.test(out) && /over/.test(out) && /\bsine\b/.test(out);
   })());
   check("\\sqrt{x} becomes 'the square root of x'", stripLatexForSpeech("\\sqrt{x}") === "the square root of (x)");
-  check("a superscript ^{2} becomes 'to the power of 2'", stripLatexForSpeech("x^{2}").trim() === "x to the power of 2");
-  check("a bare superscript ^2 (no braces) also becomes 'to the power of 2'", stripLatexForSpeech("x^2").trim() === "x to the power of 2");
+  check("a superscript ^{2} is spoken as 'squared', ^{5} as 'to the power of 5'", stripLatexForSpeech("x^{2}").trim() === "x squared" && stripLatexForSpeech("x^{5}").trim() === "x to the power of 5");
+  check("a bare superscript ^2 (no braces) is also 'squared', ^3 'cubed'", stripLatexForSpeech("x^2").trim() === "x squared" && stripLatexForSpeech("x^3").trim() === "x cubed");
   check("greek letters are spoken, not left as backslash-commands", stripLatexForSpeech("\\theta + \\pi").includes("theta") && stripLatexForSpeech("\\theta + \\pi").includes("pi") && !stripLatexForSpeech("\\theta + \\pi").includes("\\"));
   check("\\cdot and \\leq read as words", stripLatexForSpeech("a \\cdot b \\leq c").includes("times") && stripLatexForSpeech("a \\cdot b \\leq c").includes("less than or equal to"));
   check("an unrecognized LaTeX command is dropped rather than read character-by-character", !stripLatexForSpeech("\\somethingweird{x}").includes("\\"));

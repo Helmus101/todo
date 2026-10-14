@@ -48,6 +48,15 @@ export const TUTOR_PROMPT = `You are Otto, a learning companion working one-on-o
 
 MISSION: make them an independent thinker — they leave able to solve the next problem WITHOUT you. Success is what they can explain and do on their own, not how fast the answer appears. So they do the thinking; you choose, every turn, the single most useful teaching move.
 
+CLEAR, PATIENT, ADAPTIVE — YOUR FIRST PRIORITY (this wins whenever it conflicts with anything below)
+- Being understood beats being Socratic. Ask first; but the moment a question doesn't land — they're unsure, lost, ask you to explain, ask to start over, ask "why", or repeat themselves — EXPLAIN it plainly yourself, then hand back the next small step.
+- Speak like the clearest teacher they've ever had: short sentences, everyday words, one idea per sentence, concrete before abstract (the picture or real numbers first, then the symbols). Say what each letter stands for the first time it appears ("T is the pull of the string"). No jargon without its meaning.
+- Show, don't just name: when they need an equation or a step, write it and say in one plain sentence why it's true ("the string pulls both masses equally, so the same T appears in both equations").
+- Check it landed with ONE easy question they can answer in a few words. If it didn't land, never repeat the same explanation — change the angle: a picture instead of algebra, numbers instead of letters, a smaller piece, an everyday analogy.
+- Patient, always: no "as I said", no rush. A confused student gets a slower, smaller step and specific credit for what they did get.
+- Teach WITH the board, like a tutor holding a pen: as you explain, write each step on the board in the SAME message — your words say it, the board shows it. Never wait to be asked, and never leave them hunting for what you mean.
+- Concise: only what's needed. Most replies are 1-3 short sentences; an explanation at most 4.
+
 A THINKING PARTNER, NOT A QUIZ MASTER — Socratic about the IDEAS, decisive about the LESSON
 - Think WITH them. Take their idea seriously and follow it: "ok, suppose you're right — then what would happen to Q?" If it's wrong, let the consequence surface the contradiction, so they find it; if it's right, they've just proved it.
 - Ask real questions, not guess-what-I'm-thinking: questions you'd want answered if you were working it out together. The Socratic kinds, one at a time: clarify ("what do you mean by 'it goes up'?"), assumptions ("what are we assuming stays fixed?"), evidence ("how do you know?"), implications ("if that's true, what else must be?"), alternatives ("is there another way to see it?"), and the question itself ("what is this question really asking?").
@@ -92,7 +101,7 @@ Start your reply with a hidden plan, exactly: <plan>{"diagnosis":"conceptual|pro
 HOW MUCH HELP
 - Least help that unlocks them. Never trap a confused student in endless questions: if they're stuck twice (see TEACHING STATE), explain the missing idea directly, then give the step back. If they ask for an explanation, respect it.
 - Never give the answer, a step's result, or the option letter — not even slipped in ("so it's 12, right?"). Asked for it? Give a smaller piece.
-- The first move is theirs: the key idea (which identity, the substitution, how to set up the equation) is never in your question or on the board. Never derive an equation for them or name the formula to use — ask what relationship they'd use. If they ask outright for a formula or definition, answer it.
+- The first move is theirs: try asking for the key idea (which identity, the substitution, how to set up the equation) before you give it. But once they're lost, stuck, or ask you to explain or write it, show it: write the equation with its why, then hand them the next step. If they ask outright for a formula or definition, answer it.
 - Only their numbers: every figure you say is one they or the problem gave. Never compute ahead, never state something and then quiz them on it.
 - Accept any valid method, even if it's not yours. A correct step is done: acknowledge it specifically and move on — never make them redo it.
 
@@ -114,7 +123,7 @@ THE BOARD — shared paper, one worksheet per problem
   C. Step-by-step working: separate structured items for each step (given, unknown, relationship, equation setup, manipulation, result, interpretation)
   D. Key knowledge: concise concepts, definitions, formulas, or rules most relevant to the lesson (do NOT add the answer while testing recall)
   E. Current task: the active question and expected student response format
-- Every maths line carries a short "why" (what it does and which rule allows it) — the board is read back later, so it must explain, not just list equations. Maths in LaTeX between $…$. When they ask you to write something, write it (their step goes in as owner "student"). Write proactively, every turn that teaches or asks something: the key idea or definition you just taught, the question you just asked (as the current task), the step they reached, a figure for any relationship. Use a GAP (kind "gap", line ending "= ?", expectedAnswer set) only when they should fill in one specific line — at most one, never a second while one is open. Never write a step they haven't reached or the answer; never answer your own question on the board.
+- Every maths line carries a short "why" (what it does and which rule allows it) — the board is read back later, so it must explain, not just list equations. Maths in LaTeX between $…$. When they ask you to write something, write it (their step goes in as owner "student"). Write proactively, every turn that teaches or asks something: the key idea or definition you just taught, the question you just asked (as the current task), the step they reached, a figure for any relationship. Use a GAP (kind "gap", line ending "= ?", expectedAnswer set) only when they should fill in one specific line — at most one, never a second while one is open. Never write a step they haven't reached unless you are explaining it to them right now (then write it, with its why), never the final answer, and never answer your own question on the board.
 - Figures must be accurate, so use the tools that draw to scale: triangles/circles/polygons → GEOMETRY_ON_BOARD; towers, cliffs, angles of elevation → TRIG_SCENE_ON_BOARD; a block on a slope, forces → INCLINE_ON_BOARD; functions → GRAPH_ON_BOARD; processes, causes, essay plans → FLOW_ON_BOARD; comparisons, determinants and their effects, causes/effects/evidence, vocabulary → TABLE_ON_BOARD; a quote or passage to read closely → SOURCE_ON_BOARD (verbatim only; highlight 1-5 phrases with a short question or note each). SVG_ON_BOARD is only for qualitative pictures (a cell, apparatus, a map) — never for anything with angles or lengths.
 - Send your words in the SAME message as your board tool calls (one round — faster for the student).
 - The board only ever grows: a correction to a line of YOURS is a NEW line (UPDATE_BOARD_LINE adds it below the original — nothing is overwritten). Nothing is ever removed or cleared. The student's own lines are protected — add your corrected line beside theirs. When you point at a line, use its margin number only if that number is on the board, or quote what the line says. Every board tool returns {ok:true…} or {ok:false,error:{code}}: only say a change happened if the result says ok.
@@ -210,7 +219,29 @@ CONTEXT
 - THIS conversation comes first. The background (what they've proved before, journal, past sessions, deadlines) is there when it genuinely helps — start at their level, link to what they learned, never recite it, never invent it.
 - Their JOURNAL is your memory of them: dated entries labelled by subject. When one bears on what they're doing, bring it up naturally ("on Tuesday you wrote that…"). If they ask what's in their journal, answer from it. Never invent an entry.`;
 
-const VOICE_BLOCK = `\n\nVOICE MODE: your reply is read aloud. Write it as speech: no symbols, no LaTeX, no markdown in the reply. Every equation goes on the board, and you refer to it ("look at the second line").`;
+const VOICE_BLOCK = `\n\nVOICE MODE: your reply is shown AND read aloud (the app turns maths into spoken words, so "$a - b$" is heard as "a minus b"). Write it to be heard: short spoken sentences, no markdown, no lists, at most one short formula in $…$ in the reply — every other equation goes on the board, and you refer to it by what it says ("the line with the tension"). Never spell symbols out yourself.`;
+
+/** The student needs an explanation now, not another question: they're lost, asked to start over, asked to be shown
+ *  or told, asked why, or questions have failed twice. In this mode the "never derive an equation" guards step aside
+ *  (the final answer stays protected). Exported for tests. */
+const NEEDS_EXPLANATION = /\b(?:(?:can|could) we (?:start|go) (?:over|again|back)|start (?:over|again|from (?:the )?(?:beginning|start|scratch))|from the (?:beginning|start)|(?:i )?(?:still )?(?:don'?t|do not|didn'?t|did not|can'?t) (?:really )?(?:understand|get it|get (?:this|that|it)|see|follow)|(?:they|i) don'?t understand|i'?m (?:so |still |really )?(?:lost|confused|stuck)|(?:makes|made) no sense|doesn'?t make sense|what do you mean|(?:explain|show me|walk me through|tell me)\b|(?:can|could) you (?:just )?(?:explain|show|tell|write|do)|i (?:have|got) no idea|i don'?t know|no idea|help me|on (?:recommence|reprend)|recommen[cç]|depuis le d[ée]but|je (?:ne )?(?:comprends|capte|vois) (?:pas|rien)|j'?ai pas compris|je suis (?:perdu|bloqu[ée])e?|explique|montre[- ]moi|aide[- ]moi|je sais pas)/i;
+export function needsExplanation(message: string, teaching?: TutorTeachingState): boolean {
+  const m = String(message || "").trim();
+  if (/^\s*\[(?:Exercise|Exercice|Activity|Activité)\]/i.test(m)) return (teaching?.stuckStreak || 0) >= 2;
+  return NEEDS_EXPLANATION.test(m) || asksWhy(m) || asksToWrite(m) || (teaching?.stuckStreak || 0) >= 2 || (teaching?.affect === "frustrated");
+}
+/** The student wants to restart the problem from scratch ("can we start over"). Exported for tests. */
+export function asksToRestart(message: string): boolean {
+  return /\b(?:start (?:over|again|from (?:the )?(?:beginning|start|scratch))|(?:go|begin) (?:back )?(?:to|from) the (?:beginning|start)|from scratch|restart|on (?:recommence|reprend)|recommen[cç]|depuis le d[ée]but|reprendre (?:depuis|du) d[ée]but)\b/i.test(String(message || ""));
+}
+export const EXPLAIN_BLOCK = `\n\nEXPLAIN MODE — THEY NEED IT EXPLAINED NOW. Questions have stopped helping (they're lost, asked to start over, asked you to explain/show/write it, asked why, or have been stuck). This turn you TEACH; "never derive an equation" and "the first move is theirs" step aside for it:
+- Start with a few words that show you heard them ("ok — let's rebuild it slowly").
+- Explain the ONE idea they're missing in plain spoken words: short sentences, one idea each, concrete (what is pulling which way, the actual numbers, an everyday comparison). Name what every letter means. 2-4 sentences, nothing more.
+- In the SAME message, write it on the board: the step(s) you're explaining, one line each, in order, each with a short why. Show the actual equation, not a description of it.
+- Stop at the next small step and hand THAT to them with ONE easy question they can answer in a few words — never the question that just failed.
+- If you already explained this and it didn't land, explain it a DIFFERENT way (a picture, numbers instead of letters, a smaller piece, an analogy) instead of repeating yourself.
+- Still never state the problem's final answer.\n`;
+export const RESTART_BLOCK = `\n\nTHEY ASKED TO START OVER. Begin a clean page: write a focus header first (WRITE_TO_BOARD kind focus, e.g. "Starting again: connected masses"), then the givens in one short line. Don't point at old lines. Explain the very first step plainly (what acts on what), write it, and ask one easy question about only that step.\n`;
 
 // ── Tools (the board) ─────────────────────────────────────────────────────────────────────────────────
 const UPDATE_BOARD_LINE = {
@@ -339,6 +370,8 @@ export function delegatesChoice(message: string): boolean {
 /** The student states a study goal that deserves a lesson plan ("help me revise for my econ test", "prepare for the
  *  exam", "learn supply and demand"). Exported for tests. */
 export function statesStudyGoal(message: string): boolean {
+  // "I don't understand" / "je comprends pas" is confusion, not a study goal (it used to set a lesson plan mid-problem).
+  message = String(message || "").replace(/\b(?:don'?t|do not|didn'?t|did not|can'?t|not|never|still don'?t)\s+(?:really\s+|fully\s+)?(?:understand|get|learn)\w*|\b(?:ne\s+)?(?:comprends|comprend|compris)\s+(?:pas|rien)\b|\bpas\s+compris\b/gi, " ");
   return /\b(?:revis(?:e|ing|ion)|r[ée]vis(?:er|ion)|exam|test|quiz|contr[ôo]le|dst|bac|prepare|pr[ée]parer|study|learn|apprendre|understand|comprendre|go over|catch up)\b/i.test(String(message || ""));
 }
 
@@ -961,9 +994,10 @@ export function wrongArithmetic(reply: string, message = ""): string | null {
 function cleanReply(text: string, voice: boolean): string {
   let t = stripWrapperTags(stripLeakedToolCallSyntax(String(text || ""))).replace(/<plan>[\s\S]*?<\/plan>/gi, "").replace(new RegExp(PLAN_RE.source, "gi"), "").replace(/<\/?(?:plan|path)\s*>/gi, "").trim();
   t = t.replace(/^\s*(otto|tutor)\s*:\s*/i, "").replace(/\*\*(.+?)\*\*/g, "$1");
-  // Read aloud: maths becomes readable text ("1000 × 9.8 × sin(10°) × 15", "1/2 mv^2"). It used to just delete every
-  // \command, so \times and \sin vanished and "\frac12" read as "12" — "multiply 10009.8(10°)15" (reported live).
-  if (voice) t = t.replace(/\$([^$]+)\$/g, (_, x: string) => latexToPlainText(x)).replace(/\\[a-zA-Z]+(?:\s*\{[^{}]*\})*/g, (m) => latexToPlainText(m));
+  // Voice mode keeps the maths typeset on screen: what is SHOWN and what is SAID differ, and the spoken words are made
+  // in the browser (client/voice/useSpeechSynthesis.ts toSpeakableText: "a − b" → "a minus b"). Flattening the LaTeX
+  // here made the bubble unreadable ("a=(M sin(theta) −m)M+mg") without making the speech any better.
+  void voice;
   return dedupeParagraphs(t.trim());
 }
 /** Canned praise as an OPENER ("Spot on, Willem!", "Exactly — 60 J", "Perfect, that's 20.8"): the student sees it
@@ -980,12 +1014,32 @@ export function stripPraiseOpener(t: string): string {
 function formulaLineFor(reply: string): string {
   // Only a RELATION is worth a board line: a bare fragment like "$Mg\sin\theta - T$" says nothing on its own (reported live).
   const spans = (reply.match(/\$[^$\n]{3,}\$/g) || []).filter((x) => /[=<>≈≤≥]|\\(?:le|ge|approx|neq)/.test(x)).slice(0, 3).join(" ");
-  if (spans) return spans.slice(0, 200);
+  if (spans) return /\?/.test(spans) ? "" : spans.slice(0, 200);
   if (/\$[^$\n]{3,}\$/.test(reply)) return "";
-  const m = /[\p{L}\d²³)\]]\s*[=≈]\s*\S/u.exec(reply);
-  if (!m) return "";
-  const end = reply.slice(m.index).search(/[,;.!?;\n]/);
-  return (end > 0 ? reply.slice(m.index, m.index + end) : reply.slice(m.index)).replace(/\s+/g, " ").trim().slice(0, 200);
+  return plainRelationIn(reply);
+}
+/** A plain-text relation in prose ("Work is force times distance: W = Fd when…" → "W = Fd"): only the run of maths
+ *  tokens touching the "=", never the words around it — a clause cut at punctuation put fragments like
+ *  ") =(M+ m)a right there" and "a = …: what does that tell us" on the board (reported live). Exported for tests. */
+export function plainRelationIn(reply: string): string {
+  const MATH = /^(?:[A-Za-zα-ωΔΣΩ]{1,2}[\d²³]*|(?:sin|cos|tan|log)[a-zθα-ω]*|[a-z]*[A-Zα-ωΔΣΩ][A-Za-zα-ω]{0,2}[\d²³]*|[\d.,]+[A-Za-z]{0,2}|[=≈<>≤≥+\-−*/·×^()²³√]+|[()\dA-Za-zα-ωθ+\-−*/·×^²³√.]*[=+\-−*/·×^()²³√][()\dA-Za-zα-ωθ+\-−*/·×^²³√.=]*)$/u;
+  const toks = String(reply || "").replace(/\s*([=≈])\s*/g, " $1 ").split(/\s+/);
+  for (let i = 0; i < toks.length; i++) {
+    if (!/^[=≈]$/.test(toks[i])) continue;
+    let a = i, b = i;
+    const clean = (t: string) => t.replace(/[,;:.!?]+$/, "");
+    while (a > 0 && MATH.test(toks[a - 1]) && !/[,;:.!?]$/.test(toks[a - 1]) && !/^(?:is|it|so|we|to|of|in|on|at|as|an|or|by|be|the|and|you|for|but|now|get|its)$/i.test(toks[a - 1])) a--;
+    while (b < toks.length - 1 && MATH.test(clean(toks[b + 1])) && !/^(?:is|it|so|we|to|of|in|on|at|as|an|or|by|be|the|and|you|for|but|now|get|its)$/i.test(clean(toks[b + 1]))) { b++; if (/[,;:.!?]$/.test(toks[b])) break; }
+    if (a === i || b === i) continue;
+    const line = toks.slice(a, b + 1).map(clean).join(" ").trim();
+    const depth = [...line].reduce((d, ch) => (d < 0 ? d : d + (ch === "(" ? 1 : ch === ")" ? -1 : 0)), 0);
+    if (depth !== 0 || /\?/.test(line) || line.length > 120) continue;
+    // Typeset it ourselves: a bare "W = Fd" handed to the board's auto-LaTeX came out as "$W =$ Fd".
+    const GREEK: Record<string, string> = { "θ": "\\theta", "α": "\\alpha", "β": "\\beta", "μ": "\\mu", "π": "\\pi", "λ": "\\lambda", "ω": "\\omega", "Δ": "\\Delta", "ρ": "\\rho", "σ": "\\sigma", "φ": "\\phi" };
+    const tex = line.replace(/[θαβμπλωΔρσφ]/g, (c) => `${GREEK[c]} `).replace(/−/g, "-").replace(/×|·/g, "\\times ").replace(/²/g, "^2").replace(/³/g, "^3").replace(/(sin|cos|tan)(?=\s|\\|\(|[a-zA-Z]\b)/g, " \\$1 ").replace(/\s+/g, " ").trim();
+    return `$${tex}$`;
+  }
+  return "";
 }
 
 /** The comparison key for duplicate detection: case, ALL whitespace, and the glyph variants the model
@@ -1062,6 +1116,9 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const planConsent = true;
   const planPending = !objectives.length && history.length > 0 && (() => { const l = [...history].reverse().find((h) => h.role === "assistant"); return !!l && proposesPlan(l.text); })();
   const discussion = isDiscussionSubject(context.subject, [message, ...history.slice(-4).map((h) => h.text)].join(" "));
+  // They need it explained, not another question: the "don't hand them an equation" checks step aside this turn.
+  const explain = needsExplanation(message, input.teaching);
+  const restart = asksToRestart(message);
   const system = TUTOR_PROMPT
     + (input.voiceMode ? VOICE_BLOCK : "")
     + nowBlock()
@@ -1077,6 +1134,8 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     + teachingBlock(input.teaching)
     + repairLine(message, history)
     + (asksWhy(message) ? WHY_BLOCK : "")
+    + (explain ? EXPLAIN_BLOCK : "")
+    + (restart ? RESTART_BLOCK : "")
     + directorBlock({ message, history, board, problems, objectives, stepVerdict: input.stepVerdict?.verdict ?? (!solvedNow.length && problems.some((p) => wrongInChat(message, p)) ? "incorrect" : undefined), solvedInChat: solvedNow.length > 0, drawRequest: asksToDraw(message), writeRequest: asksToWrite(message), stuckStreak: input.teaching?.stuckStreak, discussion })
     + stepVerdictLine(input.stepVerdict)
     + (solvedNow.length ? `\n\nTHEY JUST ANSWERED THE OPEN EXERCISE IN CHAT, AND IT IS RIGHT (checked by code): \"${solvedNow[0].question.slice(0, 160)}\". Confirm it and move on — never ask them to type it into the answer box.` : "")
@@ -1136,7 +1195,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
         const name = tc.function?.name;
         const args = parseToolArgs(tc.function?.arguments) || {};
         let content: string;
-        try { content = applyTool(name, args, { message, result, allBoard, allProblems, spokenRepair, fr, said, wantsExercise: wantsProblem, focus, known, solution: input.solution, discussion, planConsent }); }
+        try { content = applyTool(name, args, { message, result, allBoard, allProblems, spokenRepair, fr, said, wantsExercise: wantsProblem, focus, known, solution: input.solution, discussion, planConsent, explain }); }
         catch (e: any) { content = `ERROR: ${e?.message || e}`; }
         if (/^(?:REJECTED|LIMIT|DUPLICATE|ERROR|LEAK)/.test(content)) { allLanded = false; content += " (Internal note for you only: never tell the student a write was refused, bounced or blocked, and never mention the board's or app's rules — just carry on teaching naturally.)"; }
         if (process.env.TUTOR_TRACE) console.log(`[tool] ${name} → ${content.slice(0, 160)}`);
@@ -1172,7 +1231,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       if (doubt) issues.push(doubt);
       const badMath = wrongArithmetic(reply, message);
       if (badMath) issues.push(`it contains a wrong calculation: ${badMath}`);
-      const ahead = asksForFormula(message) ? [] : equationsAhead(reply, said);
+      const ahead = asksForFormula(message) || explain ? [] : equationsAhead(reply, said);
       if (ahead.length) issues.push(`it hands them an equation they haven't stated (${ahead.join("; ")}) — don't derive it or name the formula; ask what relationship they'd use`);
       const invented = discussion ? [] : inventedNumbers(reply, [...said, ...allBoard().map((b) => b.text), ...allProblems().map((p) => p.question)]);
       if (invented.length) issues.push(`it uses numbers nobody gave (${invented.slice(0, 3).join(", ")}) — only their numbers and the problem's; never compute ahead or bring in a new scenario`);
@@ -1180,7 +1239,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       const lines = boardLineSet(board, result.board);
       const badLine = [...reply.matchAll(/\b(?:line|ligne)\s*#?\s*(\d{1,3})\b|(?<![\w&])#(\d{1,3})\b/gi)].map((m) => Number(m[1] || m[2])).find((n) => !lines.has(n));
       if (badLine) issues.push(`it points at line ${badLine}, which doesn't exist on their board — use the line's real margin number from the board listing, or describe it`);
-      if (!doubt && handsOverCalculation(reply, message)) issues.push("it hands them the calculation (which numbers to multiply/add) — ask what THEY would compute next instead");
+      if (!doubt && !explain && handsOverCalculation(reply, message)) issues.push("it hands them the calculation (which numbers to multiply/add) — ask what THEY would compute next instead");
       // Canned praise as the OPENER — the same "Spot on, Willem!" every turn, with nothing specific in it.
       // Otto restates a GIVEN with a number that isn't in it — reported live: "the problem on the board: a 3 kg box
       // is pulled up by a force of 15 N (let's use 15 N instead so it actually moves!)" when the exercise says 12 N.
@@ -1212,7 +1271,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       if (boardStillEmpty(board.length, writes, history, reply)) issues.push("the board is still empty. Open it now: a header line (WRITE_TO_BOARD kind focus: subject → topic → what we're doing) and the starting point (the question you're asking, the key definition, or the givens). The board must show what you're working on from the first turn");
       else if (teachesUnboarded(reply, writes)) issues.push("you taught an idea in chat but the board doesn't show it. Write the key idea in one short line (kind definition, formula or insight; maths in $…$) — or draw it if it's a relationship — then keep the message as it is");
       if (discussion && asksDiscussionQuestionUnboarded(reply, writes)) issues.push("put the question you're asking them to think about on the board as one short line (kind focus), so the discussion is visible");
-      if (teachesOverError(reply, message, input.stepVerdict?.verdict)) issues.push("they just got it wrong and you went straight to the method. First find out what they were thinking: name the belief you suspect (\"it looks like you treated log(x+y) as log x + log y\") or ask one question / give one counter-example that tests it — then help. The goal is to fix the misconception, not to show the right answer");
+      if (!explain && teachesOverError(reply, message, input.stepVerdict?.verdict)) issues.push("they just got it wrong and you went straight to the method. First find out what they were thinking: name the belief you suspect (\"it looks like you treated log(x+y) as log x + log y\") or ask one question / give one counter-example that tests it — then help. The goal is to fix the misconception, not to show the right answer");
       if (strategyMissing(message, allBoard(), result.board)) issues.push("they just solved it: name the reusable strategy behind it and put it on the board (WRITE_TO_BOARD kind strategy, a few words, e.g. \"Expand: fraction → product → powers\"), ideally asking them to put it in their own words");
       if (mentionsMechanics(reply)) issues.push("it talks about the app's machinery (a write that bounced, the board not letting you, a rule) — the student must never hear that. Drop it and just teach: ask them for the step, or write what's allowed");
       if (isStudentWriting(message) && rewritesTheirWriting(reply)) issues.push("they shared their own writing and you rewrote it. Don't: quote ONE of their sentences, name one real strength, then the single most important improvement (claim, evidence, analysis or link to the question), and ask them to rewrite that sentence themselves");
@@ -1238,7 +1297,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       // code, through the same checks. Reported: "it says it wrote it, nothing on the board".
       if (asksToWrite(message) && !result.board.length && !result.problems.length) {
         const line = studentBoardLine([spokenRepair?.interpreted || "", message, ...history.filter((h) => h.role === "user").slice(-2).reverse().map((h) => h.text)]);
-        if (line) applyTool("WRITE_TO_BOARD", { text: line, kind: "result", owner: "student" }, { message, result, allBoard, allProblems, spokenRepair, fr, said, wantsExercise: wantsProblem, focus, known, solution: input.solution });
+        if (line) applyTool("WRITE_TO_BOARD", { text: line, kind: "result", owner: "student" }, { message, result, allBoard, allProblems, spokenRepair, fr, said, wantsExercise: wantsProblem, focus, known, solution: input.solution, explain });
       }
       // Still failing a hard check after the corrections: ONE last model-written rewrite of that reply, never a fixed line.
       if (hard) {
@@ -1265,7 +1324,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       // stated (that stays forbidden), and it can't add a second line to a turn that already wrote one.
       if (statesFormula(reply) && !ahead.length && !result.board.length && !result.problems.length && !claimedBoard) {
         const formulaLine = formulaLineFor(reply);
-        if (formulaLine) applyTool("WRITE_TO_BOARD", { text: formulaLine, kind: "formula" }, { message, result, allBoard, allProblems, spokenRepair, fr, said, wantsExercise: wantsProblem, focus, known, solution: input.solution, codeWrite: true });
+        if (formulaLine) applyTool("WRITE_TO_BOARD", { text: formulaLine, kind: "formula" }, { message, result, allBoard, allProblems, spokenRepair, fr, said, wantsExercise: wantsProblem, focus, known, solution: input.solution, codeWrite: true, explain });
       }
       // Claimed a board write but never made one, even after the correction round: remove the false claim.
       if (claimsBoardWrite(reply) && !result.board.length && !result.problems.length) {
@@ -1306,6 +1365,8 @@ interface ToolCtx {
   discussion?: boolean;
   /** Session objectives may only be created once the student has agreed to a proposed plan (or asked for one). */
   planConsent?: boolean;
+  /** Explain mode (needsExplanation): Otto may write the step it is explaining, and a worked example with its own numbers. */
+  explain?: boolean;
 }
 
 /** Does `line` state an open gap's answer? Numbers/maths: anywhere (replyStatesValue). A WORD answer ("friction")
@@ -1436,8 +1497,8 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       if (input.kind === "gap" && result.board.some((e) => e.kind === "gap")) return "LIMIT: one gap a turn — ask the next step in chat instead.";
       if (input.kind === "gap") { const bad = badGap(text, c.allBoard().map((b) => String(b.text || ""))); if (bad) return `REJECTED: ${bad}`; }
       if (input.kind === "gap" && lastLineIsOpenGap(c.allBoard())) return "REJECTED: the board already ends on an open gap they haven't filled — ask in chat instead of adding another '= ?' line.";
-      if (result.board.filter((e) => !["svg", "graph", "flow", "widget", "diagram", "annotation"].includes(String(e.kind))).length >= 4) return "LIMIT: four lines a turn is plenty — the board keeps only what's worth keeping.";
-      if (input.owner !== "student" && input.kind !== "focus" && !c.codeWrite && !c.discussion && !relevantToFocus(text, [...c.focus, ...c.allBoard().map((b) => b.text), ...c.result.problems.map((p) => p.question)], c.known || [])) return "REJECTED: that line isn't about the problem you're working on. Write only this problem's givens, a step THEY reached (owner:'student'), or the next step as a gap ending in '= ?'.";
+      if (result.board.filter((e) => !["svg", "graph", "flow", "widget", "diagram", "annotation"].includes(String(e.kind))).length >= (c.explain ? 6 : 4)) return "LIMIT: four lines a turn is plenty — the board keeps only what's worth keeping.";
+      if (input.owner !== "student" && input.kind !== "focus" && !c.codeWrite && !c.discussion && !(c.explain && !/[A-Za-zÀ-ÿ]{4,}/.test(text.replace(/\$[^$]*\$/g, " "))) && !relevantToFocus(text, [...c.focus, ...c.allBoard().map((b) => b.text), ...c.result.problems.map((p) => p.question)], c.known || [])) return "REJECTED: that line isn't about the problem you're working on. Write only this problem's givens, a step THEY reached (owner:'student'), or the next step as a gap ending in '= ?'.";
       if (isDuplicateBoardEntry(c.allBoard(), input)) return "DUPLICATE: that's already on the board — point at it instead.";
       // The same maths inside a longer line ("For M along the slope: $Mg\sin\theta - T = Ma$") is a duplicate too.
       { const mathOf = (x: string) => (String(x).match(/\$[^$]+\$/g) || []).join("").replace(/\$|\s|[{}]/g, "").toLowerCase();
@@ -1455,12 +1516,12 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       // A problem is posted with CREATE_PROBLEM (answer box, checked key) — never as board text plus a "= ?" gap.
       if (input.owner !== "student" && c.wantsExercise && !result.problems.length && (input.kind === "gap" || looksLikeGivensOrScenario(text)))
         return "REJECTED: they asked for an exercise — post it with CREATE_PROBLEM (the full statement, one short answer, a check expression, precision and unit in the hint), not as board text.";
-      if (input.owner !== "student" && inventsProblemOnBoard(text, [...c.said, ...c.allBoard().map((b) => b.text), ...result.problems.map((q) => q.question)], c.known || []))
+      if (input.owner !== "student" && !c.explain && inventsProblemOnBoard(text, [...c.said, ...c.allBoard().map((b) => b.text), ...result.problems.map((q) => q.question)], c.known || []))
         return "REJECTED: that line has numbers that aren't in their problem. Write the givens exactly as THEY stated them (a new problem goes through CREATE_PROBLEM, only when they ask for one).";
       // Never derive an equation or show which formula to use: the student names the relationship first.
       // A gap's own "… = ?" clause is the question, not an equation handed over: only the rest of the line is checked.
       const stated = input.kind === "gap" ? text.replace(/[^,;:.]*=\s*\??\s*\$?\s*\??\s*$/, "") : text;
-      const ahead = input.owner !== "student" && !asksForFormula(c.message) && stated.trim() ? equationsAhead(stated, c.said) : [];
+      const ahead = input.owner !== "student" && !c.explain && !asksForFormula(c.message) && stated.trim() ? equationsAhead(stated, c.said) : [];
       if (ahead.length) return `REJECTED: that writes an equation they haven't stated (${ahead[0]}). Don't derive it or show which formula to use — ask them what relationship they'd use, and write it up (owner:'student') once THEY say it. You can still write the givens, or the unknown as '… = ?'.`;
       if (input.kind === "gap") { const k = computedGapKey(text) ?? solvedGapKey(text); if (k !== null) input.expectedAnswer = String(k); }
       const heard = boardRepeatsMishearing(text, c.spokenRepair);

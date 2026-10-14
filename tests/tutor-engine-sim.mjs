@@ -1,3 +1,4 @@
+import { toSpeakableText } from "../client/voice/useSpeechSynthesis.ts";
 // The new tutor engine (server/tutor.ts) against a scripted fake model: globalThis.fetch is intercepted for
 // api.deepseek.com, so the REAL turn loop, tools and guards run with no network and no key. It can't judge how
 // a live model writes; it proves the few hard guarantees hold: no answer leaks, wrong arithmetic gets fixed,
@@ -5,7 +6,9 @@
 // carries the conversation first and the background second.
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
 delete process.env.GEMINI_API_KEY;
-const { runTutorTurn, detectSubject, backgroundBlock, TUTOR_PROMPT, leakedValue, wantsExercise, inventsProblemOnBoard, doubtsRightAnswer, misgradedExercise, harshOpener, computedGapKey, nextTeachingState, sendsBackToStatement, statesFormula, misstatesGiven, stripPraiseOpener, tutorTools, applyTool, delegatesChoice, statesStudyGoal, proposesPlan, planConsented, agreesWithoutChallenge, asksStudentToChoose, repeatsSolvedCalculation } = await import("../server/tutor.ts");
+const { runTutorTurn, detectSubject, backgroundBlock, TUTOR_PROMPT, leakedValue, wantsExercise, inventsProblemOnBoard, doubtsRightAnswer, misgradedExercise, harshOpener, computedGapKey, nextTeachingState, sendsBackToStatement, statesFormula, misstatesGiven, stripPraiseOpener, tutorTools, applyTool, delegatesChoice, statesStudyGoal, proposesPlan, planConsented, agreesWithoutChallenge, asksStudentToChoose, repeatsSolvedCalculation, needsExplanation, asksToRestart, plainRelationIn, EXPLAIN_BLOCK } = await import("../server/tutor.ts");
+const { stripLeakedToolCallSyntax, textToolCalls } = await import("../server/ai/client.ts");
+const { hideToolLeaks } = await import("../shared/toolLeak.ts");
 const { equivalent } = await import("../shared/mathEquiv.ts");
 const { equationsAhead } = await import("../shared/equationsAhead.ts");
 const { boardLineNumbers } = await import("../shared/boardLines.ts");
@@ -184,7 +187,10 @@ export async function runTutorEngineSim(check, section) {
   check("'write it on the board' is done, not answered with a question", r.board.length === 1 && /write it on the board/.test(lastUser(calls[1])));
   script = () => ({ content: "Multiply $1000 \\times 9.8 \\times \\sin(10^\\circ) \\times 15$ — what do you get? Then $\\frac{1}{2}mv^2$." });
   r = await run("1000 times 9.8 times sine 10 times 15", { opts: { voiceMode: true } });
-  check("voice mode keeps the maths readable (× and sin survive, ½ isn't '12')", /1000 × 9\.8 × sin\(10°\) × 15/.test(r.reply) && /1\/2/.test(r.reply) && !/\\/.test(r.reply));
+  // What is SHOWN keeps the typeset maths; what is SAID is words only (client/voice toSpeakableText).
+  check("voice mode keeps the maths typeset on screen (the speech is made from it in the browser)", /\$1000 \\times 9\.8/.test(r.reply) && /\\frac\{1\}\{2\}/.test(r.reply));
+  { const said = toSpeakableText(r.reply);
+    check("…and the spoken version has no symbols, only words (× is 'times', ½ is 'one half')", /1000 times 9\.8 times sine 10 degrees times 15/.test(said) && /one half m times v squared/.test(said) && !/[\\$×=^{}()]/.test(said)); }
   check("doubtsRightAnswer leaves a genuinely wrong answer alone", doubtsRightAnswer("Check that again: $1000 \\times 9.8 \\times \\sin(10^\\circ) \\times 15$.", "5,526") === null);
   // Reported live: a correct, SMALL final answer (P=8, an ordinary supply/demand equilibrium price) kept
   // getting doubted turn after turn — doubtsRightAnswer's own number extraction filtered out anything under
@@ -467,4 +473,37 @@ export async function runTutorEngineSim(check, section) {
     const out = applyTool("WRITE_TO_BOARD", { kind: "summary", text: "Demand ↑ ⟹ price ↑, quantity ↑; supply ↓ ⟹ price ↑, quantity ↓" }, { message: "summarize", result: res, allBoard: () => [...sumBoard, ...res.board], allProblems: () => [], spokenRepair: null, fr: false, said: [], wantsExercise: false, focus: ["supply demand"], known: [], solution: undefined });
     check("a second summary is added as a new line — the first one is never overwritten", /"ok":true/.test(out) && res.board.length === 1 && !res.boardEdits?.length && /supply ↓/.test(res.board[0].text));
   }
+
+  section("Explain mode — when they're lost, Otto teaches the step plainly and writes it (reported live: 'it doesn't explain')");
+  {
+    check("lost / start over / explain / write it / stuck twice switch on explain mode; an ordinary step doesn't",
+      needsExplanation("But Wait can we start over let's start over from the beginning they don't understand") &&
+      needsExplanation("I didn't understand what we put on the board") && needsExplanation("can you just write the equation") &&
+      needsExplanation("why do you multiply them together") && needsExplanation("je comprends pas") &&
+      needsExplanation("ok", { helpLevel: 1, stuckStreak: 2, turns: 4 }) &&
+      !needsExplanation("MG sin theta") && !needsExplanation("it's a tension right") && !needsExplanation("ok where do I start"));
+    check("'start over' is recognised as a restart", asksToRestart("can we start over") && asksToRestart("on recommence depuis le début") && !asksToRestart("the start of the slope"));
+    const incline = [{ id: "g", at: "", kind: "given", text: "Masses $M$ on a slope at $\\theta$ and $m$ hanging, joined over a pulley. $M$ moves down." }];
+    script = (b, i) => i === 0
+      ? { content: "Ok — let's rebuild it slowly. The string pulls both masses with the same force T. Along the slope, gravity pulls M down with Mg sin θ and the string pulls it back with T, so $Mg\\sin\\theta - T = Ma$. What two forces act on the hanging mass m?", tool_calls: [tc("WRITE_TO_BOARD", { text: "$Mg\\sin\\theta - T = Ma$", kind: "formula", why: "Newton's second law along the slope for M: pull down minus pull back equals mass times acceleration." })] }
+      : { content: "What two forces act on the hanging mass m?" };
+    r = await run("can we start over I don't understand", { board: incline });
+    check("explain mode: the prompt says to teach this turn (and to open a clean page on a restart)", /EXPLAIN MODE/.test(systemOf(calls[0])) && /START OVER/.test(systemOf(calls[0])));
+    check("explain mode: Otto may write the equation it's explaining on the board", r.board.length === 1 && /Ma/.test(r.board[0].text));
+    check("explain mode: the explanation ships — not bounced back for 'handing them an equation'", calls.every((c) => !/hands them an equation/.test(lastUser(c))) && /same force T/.test(r.reply));
+    // The same write without the student being lost is still refused (Socratic first).
+    script = (b, i) => i === 0 ? { tool_calls: [tc("WRITE_TO_BOARD", { text: "$Mg\\sin\\theta - T = Ma$", kind: "formula", why: "Newton's second law along the slope." })] } : { content: "Which forces act on M along the slope?" };
+    r = await run("ok so what next", { board: incline });
+    check("…but outside explain mode the first move is still theirs", r.board.length === 0);
+    check("the prompt puts clarity first and adapts when an explanation doesn't land", /CLEAR, PATIENT, ADAPTIVE/.test(TUTOR_PROMPT) && /change the angle/.test(TUTOR_PROMPT) && /DIFFERENT way/.test(EXPLAIN_BLOCK));
+    check("a plain-text relation goes on the board as maths only — never a prose fragment",
+      plainRelationIn("Work is force times distance: W = Fd when the force is parallel.") === "$W = Fd$" &&
+      plainRelationIn("You've got g(Msinθ −m)=(M+ m)a right there. How do we finish?") === "$g(M \\sin \\theta -m) = (M+ m)a$" &&
+      plainRelationIn("so ) =(M+ m)a right there") === "");
+  }
+
+  section("Leaked tool-call plumbing never reaches the student (reported live: '#%%call:default_api:')");
+  check("'#%%call:default_api:' is removed, on the server and on display", stripLeakedToolCallSyntax("#%%call:default_api:") === "" && hideToolLeaks("#%%call:default_api:") === "" && stripLeakedToolCallSyntax("Give it a go. #%%call:default_api:x") === "Give it a go.");
+  check("a call written as NAME{json} still happens", textToolCalls('Try it. default_api:WRITE_TO_BOARD{"kind":"gap","text":"a = ?"}').some((c) => c.name === "WRITE_TO_BOARD" && c.args.text === "a = ?"));
+  check("display cleanup removes NAME(…) with nested brackets and keeps the prose", hideToolLeaks("WRITE_TO_BOARD(gap, a=M+mg(Msinθ−m)=?)\n\nAh, let's look") === "Ah, let's look" && hideToolLeaks("## Heading\n50% done") === "## Heading\n50% done");
 }

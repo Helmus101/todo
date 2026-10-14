@@ -20,6 +20,7 @@ import { useVoiceModePref } from "./voice/useVoiceModePref.ts";
 import { VoiceControls } from "./voice/VoiceControls.tsx";
 import { createEchoFilter } from "./voice/echoGuard.ts";
 import { useFirstTime } from "./useFirstTime.ts";
+import { hideToolLeaks } from "../shared/toolLeak.ts";
 
 // App-wide UI language (default French; toggled in Settings, sourced from the account's ConnectionStatus/
 // Profile). `L(fr, en)` picks the right string for whichever language is active — used everywhere instead of
@@ -629,7 +630,7 @@ function withInlineLinksAndBold(text: string): ReactNode {
  *  conversation, not a document). User messages are never run through this — a student pasting `**` from
  *  their own notes shouldn't get it silently eaten. */
 export function renderChatText(text: string): ReactNode {
-  const md = formatMath(text).replace(/\r\n/g, "\n");
+  const md = formatMath(hideToolLeaks(text)).replace(/\r\n/g, "\n");
   // Split out triple-backtick code blocks first — these render as <pre> for ASCII diagrams/timelines.
   // Everything outside a code block goes through the line-by-line pass below (tables, bold, links, lists).
   const segments: { code: boolean; content: string }[] = [];
