@@ -8,6 +8,9 @@ const FN = new Set(["sin", "cos", "tan", "cot", "sec", "csc", "log", "ln", "exp"
 const isMathToken = (t: string): boolean => {
   const bare = t.replace(/^[(\[{]+|[)\]},.;:]+$/g, "");
   if (!bare) return /[=+\-−×·÷/^<>≤≥≈≠→⇒]/.test(t);
+  // Year ranges like "1916-17" / "1916–17" are common in history/humanities content and should NOT be
+  // treated as subtraction (reported: "winter 1916-17" rendered as "1916 − 17" via autoMathLine).
+  if (/^\d{4}[-–]\d{1,2}$/.test(bare)) return false;
   // a LaTeX command token ("\sin", "\alpha", "\tfrac12") is maths by definition — without this the
   // command's letters read as prose ("tfrackx" is 7 letters) and the line prints with a raw backslash.
   if (/^\\[a-zA-Z]+/.test(bare)) return true;

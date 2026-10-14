@@ -775,7 +775,15 @@ function unionStudyArtifacts(winner: WebTask, loser: WebTask): Partial<Pick<WebT
   // pick (by status rank/updatedAt) silently dropped the LOSING device's board writes and problems, same
   // failure class chat/notes/flashcards/quizzes were already fixed for. Reported live as "sometimes chat
   // and board delete" — chat already had its own union (see mergeTaskLists), board/problems never did.
-  const board = merge(winner.board, loser.board, (x: BoardEntry) => x.at, BOARD_MERGE_CAP);
+  let board = merge(winner.board, loser.board, (x: BoardEntry) => x.at, BOARD_MERGE_CAP);
+  // Preserve interactive entries that fell outside the board cap — they're loaded by id from the server
+  // and dropping one makes its iframe show "Not found" (same fix as server/index.ts's per-turn cap).
+  if (board) {
+    const allBoard = [...(winner.board || []), ...(loser.board || [])];
+    const boardIds = new Set(board.map((e) => e.id));
+    const lostInteractive = allBoard.filter((e) => e.kind === "interactive" && e.html && !boardIds.has(e.id));
+    if (lostInteractive.length) board = [...board, ...lostInteractive];
+  }
   const problems = merge(winner.problems, loser.problems, createdAtOf, ARTIFACT_CAP);
   // Events have no `id` (they're derived diffs, not authored entities) — dedupe by content (at+kind+detail)
   // instead, same chronological-concat-then-cap shape as the id-keyed merge above.
