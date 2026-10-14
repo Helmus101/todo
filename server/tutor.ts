@@ -25,7 +25,7 @@ import { equationsAhead, asksForFormula, questionAhead } from "../shared/equatio
 import { findArithmeticClaims } from "./arithmetic.ts";
 import { applyEntryAction } from "../shared/boardAdapter.ts";
 import { boardSurfaceBlock } from "./boardEvents.ts";
-import { replyStatesValue, harshOpener, asksToDraw, similarity, repeatsRecentReply, repeatsRecentQuestion, repairLine, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario, inventedNumbers, claimsBoardWrite, stripBoardClaim, posesProblemInProse, reachedResultUnrecorded, setsMathTaskUnboarded, confirmsUnchecked, wrapsUpUnasked, blamesWidget, asksToWrite, handsOverCalculation, sendsBackToStatement, statesFormula, misstatesGiven } from "./tutorAdapt.ts";
+import { replyStatesValue, harshOpener, asksToDraw, asksWhy, ignoresWhy, WHY_BLOCK, similarity, repeatsRecentReply, repeatsRecentQuestion, repairLine, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario, inventedNumbers, claimsBoardWrite, stripBoardClaim, posesProblemInProse, reachedResultUnrecorded, setsMathTaskUnboarded, confirmsUnchecked, wrapsUpUnasked, blamesWidget, asksToWrite, handsOverCalculation, sendsBackToStatement, statesFormula, misstatesGiven } from "./tutorAdapt.ts";
 import { type LessonState } from "../shared/lessonState.ts";
 import { getCurrentTopic, generateLessonPlanSummary, type LessonPlan } from "../shared/lessonPlanner.ts";
 export { sendsBackToStatement, statesFormula, misstatesGiven, harshOpener } from "./tutorAdapt.ts";
@@ -474,8 +474,14 @@ export function answeredInChat(message: string, p: TaskProblem): boolean {
   const m = String(message || "").trim();
   if (!p.answer || p.solved || p.options?.length || p.rubric || /^\s*\[/.test(m) || /\?\s*$/.test(m)) return false;
   const words = m.split(/\s+/).length;
-  if (words > 40) return false;
   const numericKey = /^\s*-?\d+(?:[.,]\d+)?\s*[a-zA-Z%°/²³]*\s*$/.test(p.answer);
+  // A long spoken working that ENDS on its result ("…12 over 16.67 so it's about 0.72 I'd say") — reported live: the
+  // right 0.72 was ignored because the message was long. Only the last number in its last few words counts.
+  if (words > 40) {
+    if (!numericKey || /\b(?:not|isn'?t|wrong|pas)\b[^.?!]{0,30}$/i.test(m)) return false;
+    const last = (m.split(/\s+/).slice(-12).join(" ").match(/-?\d+(?:[.,]\d+)?/g) || []).pop();
+    return !!last && practiceAnswerMatches(last, p.answer!, p.value);
+  }
   const tail = m.split(/=|\bit'?s\b|\bit is\b|\bis\b|:|\best\b|\bc'est\b|\bso\b|\bdonc\b/i).pop() || m;
   const candidates = [...new Set([m, tail.trim()])].filter(Boolean);
   if (numericKey) return candidates.some((c) => c.split(/\s+/).length <= 4 && practiceAnswerMatches(c, p.answer!, p.value));
@@ -1070,6 +1076,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     + ownArithmeticLine(message)
     + teachingBlock(input.teaching)
     + repairLine(message, history)
+    + (asksWhy(message) ? WHY_BLOCK : "")
     + directorBlock({ message, history, board, problems, objectives, stepVerdict: input.stepVerdict?.verdict ?? (!solvedNow.length && problems.some((p) => wrongInChat(message, p)) ? "incorrect" : undefined), solvedInChat: solvedNow.length > 0, drawRequest: asksToDraw(message), writeRequest: asksToWrite(message), stuckStreak: input.teaching?.stuckStreak, discussion })
     + stepVerdictLine(input.stepVerdict)
     + (solvedNow.length ? `\n\nTHEY JUST ANSWERED THE OPEN EXERCISE IN CHAT, AND IT IS RIGHT (checked by code): \"${solvedNow[0].question.slice(0, 160)}\". Confirm it and move on — never ask them to type it into the answer box.` : "")
@@ -1215,6 +1222,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       const missingObj = pointsAtMissingObject(reply, allBoard().map((b) => String(b.kind)));
       if (missingObj) issues.push(`you point at "the ${missingObj}" but none is on the board — draw/write it now with the matching board tool, or reword so you don't refer to it`);
       if (blamesWidget(reply)) issues.push("it blames the app/widget — if an exercise's key disagrees with a right answer, say plainly the key was wrong");
+      if (asksWhy(message) && ignoresWhy(reply)) issues.push("they asked WHY. Answer the why first: the actual reason in 1-2 plain sentences (what the step achieves, e.g. what the units become) — repeating the instruction is not an answer. Then at most one question");
       if (questionCount(reply) > 1) issues.push("it asks more than one question — keep only the one that matters most, at the end");
       const opener = harshOpener(reply);
       if (opener) issues.push(`it opens with "${opener}" — never open harshly; start with what's worth keeping in their thinking, or go straight to the question`);

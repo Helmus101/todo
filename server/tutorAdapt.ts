@@ -965,7 +965,10 @@ export function ignoresWhy(draft: string): boolean {
   const parts = String(draft || "").replace(/\s+/g, " ").match(/[^.!?]+[.!?]?/g) || [];
   const declarative = parts.map((p) => p.trim()).filter((p) => p && !/[?？]$/.test(p));
   const real = declarative.filter((p) => p.split(/\s+/).length >= 7 && !/^(?:you(?:'re| are) (?:wondering|asking)|you want to know|you ask|good question|great question)\b/i.test(p));
-  return real.length === 0;
+  if (real.length === 0) return true;
+  // Only instructions ("Multiply the volume by the energy per cm³.") restate WHAT to do, not why (reported live: asked
+  // "why multiply them?" twice and got the instruction back). A real answer gives a reason.
+  return !real.some((p) => /\b(?:because|since|so that|that'?s why|which is why|the reason|cancel|means|leaves|gives you|tells you|that way|otherwise|parce que|car\b|donc|sinon|ce qui)\b/i.test(p));
 }
 
 /** Content that belongs on the BOARD, not in the tutor's tiny bubble: a numbered / bulleted list of 3+ items, or a long block (70+ words). */
