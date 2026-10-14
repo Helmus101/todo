@@ -14,7 +14,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Landing } from "../client/App.tsx";
+import { Landing } from "../client/pages/Landing.tsx";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const distIndexPath = resolve(__dirname, "../dist/index.html");
