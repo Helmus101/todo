@@ -10,7 +10,7 @@
 //   · spoken input is repaired against the board, and the board never repeats a mishearing (spokenMath.ts)
 // Everything else — how Socratic to be, how much help, which board tool — is the prompt's job.
 import { randomUUID } from "node:crypto";
-import { citesMissingBoardLine } from "../shared/boardLines.ts";
+import { citesMissingBoardLine, pointsAtOffTopicLine } from "../shared/boardLines.ts";
 import type { BoardEntry, Profile, TaskObjective, TaskProblem, TutorSolution, TutorTeachingState } from "../shared/types.ts";
 import { practiceAnswerMatches } from "../shared/types.ts";
 import { logAnswerEquivalent, equivalent as exprEquivalent } from "../shared/mathEquiv.ts";
@@ -55,6 +55,10 @@ A THINKING PARTNER, NOT A QUIZ MASTER — Socratic about the IDEAS, decisive abo
 - Build on THEIR words: reuse their phrasing, connect it to what they said earlier ("that's your idea from before — substitutes — showing up again"), and add only the missing piece.
 - Leave room: after a real question, stop. One question per reply, then wait. Don't answer it yourself, don't stack a second one.
 - Not endless questions: Socratic is for the thinking, not the logistics. Never ask permission for ordinary teaching moves or ask what to study next — decide, say it in a line, and start (they can redirect). If questions aren't landing (stuck twice), explain the idea plainly and hand the step back. If they ask for an explanation, give it.
+
+FOLLOW THE STUDENT'S TOPIC
+- The board and the plan span the whole session; the conversation does not. When they move to another topic ("explain consumer surplus", "show the graph", a question about something else), follow them fully: the earlier exercise and its worked solution are NOT the subject any more. Don't point at its lines, steer by it, or set a new problem on it until they come back to it. Finish the detour; then bring them back to the plan in one natural sentence ("want to return to the division, or keep going with this?" only if it fits) — never jump back mid-thought.
+- Every "look at line N" must be about what you're discussing right now.
 
 FOCUSING, NOT FUNNELING — match the help to their state, and let them do the talking
 - Working successfully → let them keep going: a few words at most ("go on", "and then?"). Don't interrupt progress with a lesson.
@@ -1089,6 +1093,9 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       // while they kept answering "12". Corrected with a prompt round; taken over in code below if it persists.
       const missingLine = citesMissingBoardLine(reply, allBoard());
       if (missingLine) issues.push(`you pointed at line ${missingLine}, but the board has no line ${missingLine}. Quote what the line says instead (or the right margin number), and never point at something that isn't on the board.`);
+      const recentContext = [...history.slice(-5).map((h) => h.text), message].join("\n");
+      const offTopic = pointsAtOffTopicLine(reply, allBoard() as any, recentContext);
+      if (offTopic) issues.push(`you pointed at line ${offTopic.n} ("${offTopic.text}"), but that line is about something else than what you two are discussing now. Point at a line from THIS topic (or write one), or quote what you mean — don't drag an earlier problem back in`);
       const reread = sendsBackToStatement(reply, message);
       if (reread) issues.push(`it sends them back to the problem statement ("${reread}") to re-check something they ALREADY gave — don't re-ask it, use the value they said. If they misread it, say what the problem actually gives and why it differs. If the givens as written genuinely can't produce what the problem asks for, say so plainly ONCE (the numbers as given don't work out, and the one-line reason why) and offer to change one of them, instead of asking them to read it again`);
       // A NEW problem posed only in the message ("If a 2 kg block drops 3 m onto a spring k = 400 N/m, how would you…?") with nothing on the board.
@@ -1133,7 +1140,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       // Still failing a hard check after the corrections: ONE last model-written rewrite of that reply, never a fixed line.
       if (hard) {
         const fixed = await rewriteReply(reply, issues.join("; "), message, result.tokens);
-        if (fixed) reply = fixed;
+        if (fixed) reply = dedupeParagraphs(fixed);
       }
       if (leaked) {
         result.guardrailTripped = true;

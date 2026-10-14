@@ -6758,5 +6758,20 @@ section("Tutor reply hygiene — invented wrapper tags, board line numbers (repo
   check("ordinary braces, brackets and fenced non-tool JSON are left alone", stripLeakedToolCallSyntax("Set {1,2} and see [the board].") === "Set {1,2} and see [the board]." && stripLeakedToolCallSyntax("Fine.\n```json\n{\"name\": \"CREATE_PROBLEM\"}\n```\nNext?") === "Fine.\n\nNext?");
 }
 
+{
+  console.log("\n# Following the student's topic (no dragging an old problem back in)");
+  const { pointsAtOffTopicLine } = await import("../shared/boardLines.ts");
+  const board = [
+    { id: "a", kind: "given", at: "2026-10-14T09:00:00Z", text: "Divide $P(x)=2x^3-5x^2+x-3$ by $(x-2)$ = ?" },
+    { id: "b", kind: "definition", at: "2026-10-14T09:10:00Z", text: "Consumer surplus: area below the demand curve and above the market price" },
+  ];
+  const ctx = "explain consumer surplus\nConsumer surplus is the difference between what a buyer is willing to pay and the price. triangle";
+  const off = pointsAtOffTopicLine("Have a look at line 1 on the board — what do you get when you carry out that division?", board, ctx);
+  check("pointing at an old polynomial-division line while discussing consumer surplus is caught (reported live: 'line 13 … that division')", off?.n === 1 && /Divide/.test(off.text));
+  check("pointing at a line about the current topic is fine, and an unknown line number is left to the missing-line guard", pointsAtOffTopicLine("Look at line 2 — what shape is that area?", board, ctx) === null && pointsAtOffTopicLine("Look at line 9.", board, ctx) === null);
+  const sol = readFileSync(new URL("../server/solver.ts", import.meta.url), "utf8");
+  check("the worked-solution block says it applies only while the student works on that problem", /ONLY while the student is working on this problem/.test(sol));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

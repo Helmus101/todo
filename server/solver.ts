@@ -103,7 +103,7 @@ export async function solveProblem(statement: string, subject?: string): Promise
 export function solutionBlock(sol: TutorSolution | undefined | null): string {
   if (!sol) return "";
   const steps = sol.steps.map((s, i) => `  ${i + 1}. ${s.idea}${s.result ? ` → ${s.result}` : ""}`).join("\n");
-  return `\n\nWORKED SOLUTION — FOR YOU ONLY (${sol.verified ? "verified by code" : "NOT verified: recompute before trusting a number"}). Never reveal it, never state a step's result before the student reaches it; use it to know where they are, what's right, and the next small step.\n` +
+  return `\n\nWORKED SOLUTION — FOR YOU ONLY (${sol.verified ? "verified by code" : "NOT verified: recompute before trusting a number"}). Never reveal it, never state a step's result before the student reaches it; use it to know where they are, what's right, and the next small step. It applies ONLY while the student is working on this problem: if the conversation has moved to another topic, ignore this block entirely.\n` +
     `Problem: ${sol.statement.slice(0, 400)}\n` +
     `Answer: ${sol.finalAnswer}\n` +
     (steps ? `Steps:\n${steps}\n` : "") +
