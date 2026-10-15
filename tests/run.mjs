@@ -1150,7 +1150,23 @@ check("isValidTz rejects junk", !isValidTz("Mars/Olympus"));
 // ── Monthly spend cap ─────────────────────────────────────────────────────────
 section("spend cap");
 // usageCostUsd: 1M input + 1M output = 0.27 + 1.10 USD.
-check("usageCostUsd weights in/out separately", Math.abs(usageCostUsd(1e6, 1e6) - 1.37) < 1e-9);
+check("usageCostUsd weights in/out separately", Math.abs(usageCostUsd(1e6, 1e6) - (USD_PER_1M_IN + USD_PER_1M_OUT)) < 1e-9);
+{
+  const { ratesFor, DEEPSEEK_RATES, applyPricingOverride, setPricingModel } = await import("../shared/types.ts");
+  const { usageOf } = await import("../server/ai/client.ts");
+  check("V4-Flash is priced at DeepSeek's published $0.14 miss / $0.0028 hit / $0.28 out per 1M", USD_PER_1M_IN === 0.14 && USD_PER_1M_CACHED_IN === 0.0028 && USD_PER_1M_OUT === 0.28);
+  check("a cache hit is ~50x cheaper than a miss, so a mostly-cached prompt costs a fraction of an uncached one", callCostUsd(1e6, 0, 1e6, new Date("2026-10-14T12:00:00Z")) < callCostUsd(1e6, 0, 0, new Date("2026-10-14T12:00:00Z")) / 40);
+  check("each model has its own rates and an unknown model falls back to Flash", ratesFor("deepseek-v4-pro").out > ratesFor("deepseek-v4-flash").out && ratesFor("mistralai/whatever") === DEEPSEEK_RATES["deepseek-v4-flash"]);
+  setPricingModel("deepseek-v4-pro");
+  check("the meter prices the configured model", Math.abs(callCostUsd(0, 1e6, 0, new Date("2026-10-14T12:00:00Z")) - ratesFor("deepseek-v4-pro").out) < 1e-9);
+  setPricingModel("deepseek-v4-flash");
+  applyPricingOverride('{"deepseek-v4-flash":{"miss":1,"hit":0.1,"out":2},"bad":{"miss":"x"}}');
+  check("DEEPSEEK_PRICING overrides the table; junk entries are ignored", ratesFor("deepseek-v4-flash").out === 2 && !DEEPSEEK_RATES.bad);
+  applyPricingOverride('{"deepseek-v4-flash":{"miss":0.14,"hit":0.0028,"out":0.28}}');
+  applyPricingOverride("not json");
+  check("a bad override never breaks metering", ratesFor("deepseek-v4-flash").out === 0.28);
+  check("a call served by Gemini is not counted on the DeepSeek meter; a DeepSeek call reports its cache hits", usageOf({ model: "gemini-3.5-flash-lite", usage: { prompt_tokens: 1000, completion_tokens: 100 } }).in === 0 && usageOf({ model: "deepseek-v4-flash", usage: { prompt_tokens: 1000, completion_tokens: 100, prompt_cache_hit_tokens: 900 } }).cachedIn === 900);
+}
 // addUsage accumulates within a month and rolls the month* counters over at the boundary.
 const upA = emptyProfile();
 addUsage(upA, { in: 1000, out: 2000 });

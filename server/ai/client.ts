@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { setPricingModel, applyPricingOverride } from "../../shared/types.ts";
 
 
 // DeepSeek retired "deepseek-chat"/"deepseek-reasoner" in favor of "deepseek-v4-flash" (fast/cheap) and
@@ -21,6 +22,9 @@ const USING_NVIDIA = AI_PROVIDER === "nvidia";
 export const DEEPSEEK_MODEL = USING_NVIDIA
   ? (process.env.NVIDIA_MODEL || "mistralai/mistral-nemotron")
   : (LEGACY_DEEPSEEK_MODEL_MAP[process.env.DEEPSEEK_MODEL || ""] || process.env.DEEPSEEK_MODEL || "deepseek-v4-flash");
+// The meter prices calls at the configured model's rates; DEEPSEEK_PRICING (JSON) corrects them without a deploy.
+setPricingModel(DEEPSEEK_MODEL);
+applyPricingOverride(process.env.DEEPSEEK_PRICING);
 
 // CRITICAL: deepseek-v4-flash (and -pro) are REASONING models — they emit hidden reasoning tokens that
 // count against `max_tokens` BEFORE the visible answer. Confirmed live: a classify call spends ~400-1500+
@@ -84,6 +88,9 @@ export function visionReady(): boolean {
  *  report a cache-hit split at all (prompt_tokens_details comes back null), so cachedIn is simply 0 there,
  *  same as any provider with no cache-aware pricing. `in` is the FULL prompt token count either way. */
 export function usageOf(res: any): { in: number; out: number; cachedIn: number } {
+  // A call that Gemini served (the tutor's first provider) is billed by Google, not DeepSeek: counting it here would put it
+  // on the DeepSeek meter at DeepSeek's rates and overstate the spend.
+  if (/^gemini/i.test(String(res?.model || ""))) return { in: 0, out: 0, cachedIn: 0 };
   const u = res?.usage || {};
   const cachedIn = Number(u.prompt_cache_hit_tokens ?? u.prompt_tokens_details?.cached_tokens ?? 0) || 0;
   return { in: Number(u.prompt_tokens) || 0, out: Number(u.completion_tokens) || 0, cachedIn };

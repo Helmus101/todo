@@ -4,7 +4,7 @@ import { dedupeFacts, sameFact, tzOf } from "../../shared/types.ts";
 import type { AgentTools } from "../integrations.ts";
 import { webSearch } from "../websearch";
 import { AcademicContext, AuditEvent, academicBlock, assignmentBlock, errorLogLine, isBigIbProject, languageLine, learningStyleLine, notNeededLine, nowBlock, personalContextLine, profileBlock, recentJournalLine, studentModelLine, syllabusGroundingLine, taskNeedsStepList, trackLine, weakCardLine } from "./context.ts";
-import { DEEPSEEK_MODEL, OUT, countWords, deepseekClient, firstJson, retryRequest } from "./client.ts";
+import { DEEPSEEK_MODEL, OUT, countWords, deepseekClient, firstJson, retryRequest, usageOf } from "./client.ts";
 import { courseworkLine } from "./coursework.ts";
 import { runWebSearch } from "./tools.ts";
 import { DOABLE_STEP, EXECUTION_ENABLED, JUDGMENT_STEP, OTTO_INTERNAL_STEP, STUDY_TASK_TYPES, THIRD_PERSON_STUDENT_STEP, anchorStepsToTask, bestMatchingStep, canonicalUrl, dodLooksLikeCoordinationOutcome, dropForeignEntityLinks, dropForeignEntitySteps, dropOffTopicStudySteps, dropProcessComplaintSteps, dropRedundantArtifactSteps, dropSiblingBleedSteps, dropTrivialSteps, dropUnanchoredSteps, ensureArtifactUseSteps, hasDomainContamination, isFolderHousekeepingDrift, reattachStepExtras, restrictStepUrlsToLinks, sanitizeStepExtras, sanitizeSteps, separateArtifactsFromSteps, stepsMatchTitle, titleKeywords, truncateStepText } from "./steps.ts";
@@ -171,6 +171,7 @@ export async function runTask(
 
   let tokIn = 0;
   let tokOut = 0;
+  let tokCached = 0;
   // Total-outage detection: ask() deliberately never throws (a single failed call shouldn't break the
   // whole pipeline — see its own comment), which means a COMPLETE AI outage for this entire run previously
   // fell through silently: every ask() call returned {}, but runTask still built and returned a normal-
@@ -223,8 +224,7 @@ export async function runTask(
         response_format: { type: "json_object" },
         messages: [{ role: "user", content: prompt + baseCtx + extraInstruction + langLine + nowLine }],
       }));
-      tokIn += res.usage?.prompt_tokens || 0;
-      tokOut += res.usage?.completion_tokens || 0;
+      { const u = usageOf(res); tokIn += u.in; tokOut += u.out; tokCached += u.cachedIn; }
       const content = String(res.choices?.[0]?.message?.content || "");
       const truncated = res.choices?.[0]?.finish_reason === "length";
       const parsed = firstJson<any>(content);
@@ -1038,7 +1038,7 @@ export async function runTask(
       flashcards: flashcards.length ? flashcards : undefined,
       quizzes: quizzes.length ? quizzes : undefined,
       profileUpdates: [],
-      tokens: { in: tokIn, out: tokOut, cachedIn: 0 },
+      tokens: { in: tokIn, out: tokOut, cachedIn: tokCached },
       audit: audit.length ? audit : undefined,
     };
   } catch (e: any) {
@@ -1054,7 +1054,7 @@ export async function runTask(
       flashcards: flashcards.length ? flashcards : undefined,
       quizzes: quizzes.length ? quizzes : undefined,
       profileUpdates: [],
-      tokens: { in: tokIn, out: tokOut, cachedIn: 0 },
+      tokens: { in: tokIn, out: tokOut, cachedIn: tokCached },
       audit: audit.length ? audit : undefined,
     };
   }
