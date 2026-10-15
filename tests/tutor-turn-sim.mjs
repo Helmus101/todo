@@ -112,6 +112,10 @@ export async function runTutorTurnSim(check, section) {
     r = await runTutorTurn({ ...base, message: "give me a problem on equilibrium" });
     check("an exercise and a plan land as real objects (answer key code-checked)", r.problems.length === 1 && r.problems[0].answer === "8" && r.objectives?.length === 2);
 
+    {
+      const leaky = normalizeTurn({ heard: "x", intent: "other", diagnosis: { status: "unclear" }, move: "elicit", support: 1, speech: ["Nice work. #%%call:default_api:write_board{\"text\":\"x\"}", "WRITE_TO_BOARD(gap, \"x\") What is 2 plus 2?"], board: [{ op: "topic", cue: 0, text: "Sums #%%call:default_api:" }], expects: "answer" });
+      check("tool-call text in speech or on the board never survives parsing (reported live: '#%%call:default_api:')", !!leaky && !/default_api|%%|WRITE_TO_BOARD|call:/i.test(JSON.stringify(leaky)) && leaky.speech.join(" ").includes("What is 2 plus 2?"));
+    }
     script = () => ({ fail: true });
     r = await runTutorTurn({ ...base, message: "hello?" });
     check("the model being down is an error for the route to report — never a made-up reply", r.error === true && !r.reply);

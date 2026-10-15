@@ -6,6 +6,7 @@
 // Inspired by HeyAristotle's loop: interpret → diagnose → choose ONE teaching move at a support level → verify →
 // speak while the board changes in step (each board op carries the sentence it belongs to, `cue`).
 
+import { hideToolLeaks } from "./toolLeak.ts";
 export const INTENTS = ["answer", "reasoning", "ask_why", "ask_explain", "write_my_work", "new_problem", "restart", "stuck", "check", "off_topic", "chat", "other"] as const;
 export type Intent = (typeof INTENTS)[number];
 
@@ -86,7 +87,7 @@ export interface TurnOutput {
   expects: (typeof EXPECTS)[number];
 }
 
-const str = (x: unknown, cap: number): string => String(x ?? "").replace(/\s+/g, " ").trim().slice(0, cap);
+const str = (x: unknown, cap: number): string => hideToolLeaks(String(x ?? "")).replace(/\s+/g, " ").trim().slice(0, cap);
 const pick = <T extends readonly string[]>(list: T, x: unknown, fallback: T[number]): T[number] => {
   const v = String(x ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
   return (list as readonly string[]).includes(v) ? (v as T[number]) : fallback;
