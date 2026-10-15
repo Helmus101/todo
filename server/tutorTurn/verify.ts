@@ -12,6 +12,7 @@ import { resolveBoardTarget, leaksAnyProblemAnswer } from "../claude.ts";
 import { replyStatesValue, ignoresWhy, repeatsRecentReply, repeatsRecentQuestion, inventedNumbers, harshOpener } from "../tutorAdapt.ts";
 import { statesFinalAnswer, wrongArithmetic, badGap, mentionsMechanics } from "../tutor.ts";
 import type { Policy } from "./policy.ts";
+import { repeatedExercise } from "./exercises.ts";
 
 /** A sentence that says something is (or is about to be) on the board. */
 const BOARD_CLAIM = /\b(?:on the (?:board|whiteboard)|(?:look|take a look|have a look) at the (?:board|chart|grid|diagram|table|graph|figure|picture)|(?:i'?ve|i have|i'?ll|i will|let me|let'?s|we'?ll|here'?s|here is|here are) (?:just )?(?:draw|drawn|sketch|put|add|map|write|written|plot|build|make|made|show)\w*|sur le tableau|regarde (?:le|la|l')\s*(?:tableau|sch[ée]ma|graphique|figure))\b/i;
@@ -38,10 +39,14 @@ export interface VerifyContext {
   /** Everything the student and the problem said — the only legitimate source of numbers. */
   said: string[];
   discussion: boolean;
+  /** Exercises already used this session and in earlier ones (exercises.ts). */
+  usedExercises?: string[];
+  /** The code-checked verdict on their step/answer this turn, if any. */
+  verdict?: "correct" | "incorrect";
 }
 
 export interface Issue {
-  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh";
+  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "unwritten" | "diagnosis" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh";
   /** The instruction for the repair call. */
   fix: string;
   /** A leak or a pointer at nothing must be fixed; the rest are quality. */
@@ -85,6 +90,28 @@ function missingLineRefs(speech: string, board: BoardEntry[]): number[] {
   return [...speech.matchAll(/\b(?:line|ligne)\s*#?\s*(\d{1,3})\b|(?<![\w&])#(\d{1,3})\b/gi)].map((m) => Number(m[1] || m[2])).filter((n) => !nums.has(n));
 }
 
+const FILLER = new Set(["that","this","with","have","what","your","about","there","their","then","them","into","from","will","would","could","should","some","just","like","next","part","lets","let's","okay","right","good","great","here","step","time","back","work","going","think","thing","things","know","need","want"]);
+const contentWords = (text: string) => new Set((String(text || "").toLowerCase().match(/[a-zà-ÿ]{4,}/g) || []).filter((w) => !FILLER.has(w)));
+
+/** A reply that says nothing in particular: too short, hands nothing back, or touches nothing the student said or the board shows. */
+export function vagueReply(t: TurnOutput, c: VerifyContext): string | null {
+  const say = speechText(t);
+  const words = countWords(say);
+  if (words < 5) return "it is only a few words";
+  if (["elicit", "focus", "practice", "probe_why", "hint_concept", "hint_procedure", "worked_step", "correct_error", "explain", "worked_example"].includes(t.move)) {
+    const hands = t.speech.some((s) => /\?\s*["»”)]*\s*$/.test(s) || /^(?:try|write|tell|find|compute|work out|calculate|draw|sketch|say|explain|show|now (?:try|write|find))\b/i.test(s.trim()));
+    if (!hands) return "it ends without handing the student anything to do or answer";
+  }
+  const concrete = /\d|\$|[=^]/.test(say) || t.board.some((o) => ["draw", "step", "gap", "problem", "mark"].includes(o.op));
+  const askedSomethingReal = t.speech.some((s) => /\?\s*["»”)]*\s*$/.test(s) && contentWords(s).size >= 2);
+  if (!concrete && !askedSomethingReal) {
+    const anchors = contentWords([c.message, ...c.board.map((b) => b.text || ""), ...c.problems.map((p) => p.question || ""), ...c.history.slice(-4).map((h) => h.text)].join(" "));
+    const hit = [...contentWords(say)].some((w) => anchors.has(w));
+    if (!hit) return "it names nothing from the student's words, the board or the problem";
+  }
+  return null;
+}
+
 export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   const out: Issue[] = [];
   const say = speechText(t);
@@ -107,6 +134,23 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   if (c.wants.exercise && !t.board.some((o) => o.op === "problem")) out.push({ code: "intent_exercise", hard: false, fix: "they asked for an exercise: add a problem op (full statement, one short answer, a check expression for a number, the format in 'format')." });
   if (c.wants.draw && !t.board.some((o) => o.op === "draw" || o.op === "step")) out.push({ code: "intent_draw", hard: true, fix: "they asked you to draw or show it — do it NOW, in this turn: add a draw op (a table op for a sign chart, grid or comparison; graph, numberline, geometry, flow for the rest), or a step op for a formula. Don't describe it and wait for them to ask again." });
   if (t.speech.some(claimsBoard) && !t.board.some((o) => CREATING.has(o.op))) out.push({ code: "board_promise", hard: true, fix: "the speech says something is on the board (or will be) but the board list has nothing new — add the draw/step op that puts it there, or take the board claim out of the speech." });
+  // An exercise is never set twice: the spoken question or a problem op must differ from every earlier one.
+  if (c.usedExercises?.length) {
+    const prompts = [...t.board.filter((o) => o.op === "problem").map((o) => String(o.question || "")), t.speech.length ? t.speech.filter((s) => /\?\s*["»”)]*\s*$/.test(s)).pop() || "" : ""].filter(Boolean);
+    const dup = prompts.map((p) => repeatedExercise(p, c.usedExercises!)).find(Boolean);
+    if (dup) out.push({ code: "repeat_exercise", hard: true, fix: `this is the same exercise as one already used ("${dup}"). Set a NEW one: change the function or numbers AND the situation, and either make it a step harder or test the skill a different way (spot the error, sketch, explain).` });
+  }
+  const vague = vagueReply(t, c);
+  if (vague) out.push({ code: "vague", hard: true, fix: `the reply says nothing in particular (${vague}). Say something specific: refer to their actual words, a board line or the problem, teach or check ONE concrete thing, and hand back one concrete question or step.` });
+  // Teaching must leave something on the board to look back at, and an error must be diagnosed and named.
+  const WRITTEN = ["step", "draw", "mark", "gap", "problem", "topic"];
+  if (["explain", "worked_step", "worked_example", "correct_error"].includes(t.move) && !t.board.some((o) => WRITTEN.includes(o.op))) out.push({ code: "unwritten", hard: false, fix: "you taught something but wrote nothing: add a step op with the key idea or formula (with its short 'why'), or a mark on the line that is off, so it stays on the board after you've spoken." });
+  const d = t.diagnosis;
+  if (c.verdict === "incorrect" && ["none", "correct", "unclear"].includes(d.status)) out.push({ code: "diagnosis", hard: false, fix: "their answer is wrong (checked by code) but the diagnosis says otherwise: find the FIRST thing that's off and set diagnosis.status to slip, misconception or partial." });
+  if (d.status === "misconception") {
+    if (!d.misconception) out.push({ code: "diagnosis", hard: false, fix: "you diagnosed a misconception: name the mistaken belief in diagnosis.misconception (≤8 words)." });
+    if (["confirm", "elicit", "recap"].includes(t.move)) out.push({ code: "diagnosis", hard: false, fix: "a misconception shows, so don't just confirm or move on: name the idea that is off, gently, in the speech, and choose focus, correct_error, explain or probe_why to repair it." });
+  }
   // 5. One question, last.
   const qs = t.speech.map((s, i) => ({ i, q: /\?\s*["»”)]*\s*$/.test(s.replace(/\$[^$]*\$/g, "x")) })).filter((x) => x.q);
   if (qs.length > 1 || (qs.length === 1 && qs[0].i !== t.speech.length - 1)) out.push({ code: "questions", hard: false, fix: "ask at most ONE question, as the last sentence." });
@@ -148,6 +192,7 @@ export function degradeTurn(t: TurnOutput, c: VerifyContext): TurnOutput {
     if (o.op !== "gap" && revealsKey(opText(o), c)) return false;
     if (o.op === "mark" && !targetExists(o.target, c.board)) return false;
     if (o.op === "draw" && ++draws > 1) return false;
+    if (o.op === "problem" && c.usedExercises?.length && repeatedExercise(String(o.question || ""), c.usedExercises)) return false;
     if (o.op === "gap" && badGap(String(o.text || ""), c.board.map((b) => String(b.text || "")))) return false;
     return true;
   }).map((o) => ({ ...o, cue: Math.min(o.cue, Math.max(0, speech.length - 1)) }));

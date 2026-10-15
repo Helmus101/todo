@@ -56,7 +56,7 @@ export function registerTutorRoutes(app: express.Express): void {
     if (!image) { res.status(400).json({ error: M(req, "Aucun dessin reçu.", "No drawing received.") }); return; }
     // The vision helper composes its own (diagnostic, sometimes upstream-detail-bearing) message, so it
     // takes the request's language instead of returning English the client would show inside a French UI.
-    const r = await describeWhiteboard(image, (fr, en) => M(req, fr, en));
+    const r = await describeWhiteboard(image, (fr, en) => M(req, fr, en), typeof req.body?.context === "string" ? req.body.context : "");
     if ("error" in r) { res.status(422).json({ error: r.error }); return; }
     void recordEvent(req.session.user!, "whiteboard_read", {});
     res.json({ description: r.description });

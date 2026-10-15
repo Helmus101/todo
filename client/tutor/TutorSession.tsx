@@ -920,6 +920,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
         ) : null}
         <TutorCanvas
           ref={canvasRef}
+          contextText={[...(task.problems || []).filter((p) => !p.solved).slice(-1).map((p) => p.question), ...(task.board || []).filter((b) => b.kind !== "annotation" && b.text).slice(-6).map((b) => b.text)].join(" | ").slice(0, 700)}
           visionReady={visionReady}
           hidden={desmosOpen}
           surface={surfaceEl}
@@ -941,6 +942,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           onClick={() => setChatDrawer((v) => !v)}
         >
           {chatDrawer ? <Minimize2 size={13} aria-hidden="true" /> : <Maximize2 size={13} aria-hidden="true" />}
+          <span className="tutor-dock-chat-toggle-label">{L("Historique", "History")}{task.chat?.length ? ` (${task.chat.length})` : ""}</span>
         </button>
         {chatDrawer && (
           <div className="tutor-dock-chat">

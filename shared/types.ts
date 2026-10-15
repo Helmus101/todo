@@ -1253,6 +1253,7 @@ export interface TutorTurnRecord {
   intent: string;
   diagnosis: string;
   angle?: string;
+  misconception?: string;
   verdict?: "correct" | "incorrect";
   words: number;
   studentWords: number;

@@ -304,9 +304,22 @@ export interface TutorContext {
 }
 
 /** The background digest: everything the rest of the app knows, compact, explicitly secondary to the chat. */
+/** Their level, from Settings (year/grade + programme) and the courses they listed: the tutor pitches vocabulary, method and depth
+ *  at exactly this rung, and lets demonstrated evidence overrule it either way. Empty when Settings has nothing. */
+export function levelLine(p?: Profile, subject?: string): string {
+  const year = p?.yearLevel?.trim();
+  const track = ({ ib: "IB Diploma", ap: "AP (US)", bac: "French baccalauréat", other: "" } as Record<string, string>)[p?.track || ""] || "";
+  const courses = (p?.courses || []).slice(0, 8);
+  if (!year && !track && !courses.length) return "";
+  return `THEIR LEVEL (from their Settings${subject ? `; subject: ${subject}` : ""}): ${[year ? `year/grade "${year}"` : "", track ? `programme ${track}` : "", courses.length ? `their courses: ${courses.join(", ")}` : ""].filter(Boolean).join("; ")}. ` +
+    `Pitch every explanation, example and exercise at exactly this level: use the vocabulary and methods taught up to this year, don't re-teach what earlier years already covered, and don't use methods from later years. ` +
+    `If what they actually do (see what they've proved, and their answers this session) is clearly above or below it, trust that evidence and adjust.`;
+}
+
 export function backgroundBlock(c: TutorContext): string {
   const p = c.profile;
   const parts = [
+    levelLine(p, c.subject),
     studentNameLine(p?.name),
     personalContextLine(p),
     milestoneLine(p, c.subject),
@@ -317,6 +330,7 @@ export function backgroundBlock(c: TutorContext): string {
     recentJournalLine(c.journal, c.subject, c.journalMeta),
     sessionRecapLine(p?.sessions, c.subject),
     openerMemoryBlock(c.memory),
+    (c.memory || []).some((m) => m?.lines?.length || m?.asked?.length) ? "USE THAT MEMORY: it is what they really did before (kept on their own device). Build on it — pick up where it left off, don't re-teach what they already worked through, and revisit what they struggled with — and use it to plan this sitting." : "",
     c.schoolRecord || "",
   ].map((s) => s.trim()).filter(Boolean);
   if (!parts.length) return "";

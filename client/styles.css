@@ -4864,3 +4864,5 @@ mark.otto-mark { background: linear-gradient(transparent 12%, color-mix(in srgb,
 @media (prefers-reduced-motion: reduce) { .sm-mark { animation: none; } }
 
 .otto-replay-label { margin-left: 6px; font-size: 12px; font-weight: 600; }
+
+.tutor-dock-chat-toggle-label { margin-left: 6px; font-size: 12px; font-weight: 600; }

@@ -61,8 +61,11 @@ export interface TutorCanvasHandle {
   freezeSheet: () => number;
 }
 
-export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean; hidden: boolean; surface: HTMLElement | null; onDesmos: () => void }>(function TutorCanvas({ visionReady, hidden, surface, onDesmos }, handleRef) {
+export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean; hidden: boolean; surface: HTMLElement | null; onDesmos: () => void; contextText?: string }>(function TutorCanvas({ visionReady, hidden, surface, onDesmos, contextText }, handleRef) {
   const L = useLang();
+  // What they're working on, handed to the image reader so it can name what they drew (kept in a ref: readInk is async).
+  const contextRef = useRef("");
+  contextRef.current = contextText || "";
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const items = useRef<Item[]>([]);
   const inkStamp = useRef(0);
@@ -265,7 +268,7 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
       } catch { /* a figure that won't rasterise is skipped — the text around it is still painted */ }
     }
     f.drawImage(c, sx * dpr, sy * dpr, sw * dpr, sh * dpr, 0, 0, flat.width, flat.height);
-    const { description } = await api.readWhiteboard(flat.toDataURL("image/png"));
+    const { description } = await api.readWhiteboard(flat.toDataURL("image/png"), contextRef.current);
     seenStamp.current = inkStamp.current;
     return description;
   };

@@ -313,17 +313,30 @@ async function describeImageWithGemini(dataUrl: string, instruction: string, nou
  *  concern" posture as the rest of this file: this function's only job is "what does the image show",
  *  exactly like stripHtmlToText's "what does the page say" in server/index.ts). Returns an error string
  *  (never throws) so the route can hand the student an honest, specific failure. */
-export async function describeWhiteboard(dataUrl: string, t: Msg = EN_ONLY): Promise<{ description: string } | { error: string }> {
-  return describeImageWithGemini(
+export async function describeWhiteboard(dataUrl: string, t: Msg = EN_ONLY, context = ""): Promise<{ description: string } | { error: string }> {
+  const ctx = String(context || "").replace(/\s+/g, " ").trim().slice(0, 700);
+  const r = await describeImageWithGemini(
     dataUrl,
-    "Transcribe exactly what is drawn/written on this whiteboard — any text, numbers, " +
-      "equations, diagrams, or shapes. Be literal and factual: describe what's actually there, " +
-      "including the shape/layout of any diagram, not what it might mean or whether it's correct. " +
-      "If it's a math expression, transcribe it precisely (e.g. \"x^2 + 3x - 4 = 0\", not a vague " +
-      "paraphrase). If the board is genuinely blank or illegible, say so plainly instead of guessing.",
+    "You are reading a student's whiteboard drawing for their tutor. Answer in plain text in EXACTLY this format:\n" +
+      "TEXT: every word, number and equation written, exactly as written (x^2 style for powers); write [illegible] for anything you cannot read.\n" +
+      "DRAWING: first say what the drawing IS (for example: a graph of a rational function with asymptotes, a unit circle with an angle marked, a right triangle, a number line, a table, a sign chart, a free-body diagram, a parabola). Then list its parts one by one: the axes and whether they are labelled; each line or curve, its direction and how it behaves (rising, falling, bending, approaching a line, crossing another); dashed versus solid lines; marked points with their labels or coordinates; arrows; shaded regions; angle marks; every letter or label and which part it sits beside.\n" +
+      "LOOKS LIKE: one sentence naming what the student seems to have intended, then your confidence (high / medium / low) and anything ambiguous.\n" +
+      "Rules: describe only what is really on the board. Do not judge whether it is correct, do not solve anything, do not invent labels or points that are not drawn. If the board is blank or illegible, say so plainly." +
+      (ctx ? `\nWHAT THEY ARE WORKING ON (only to help you read their handwriting and name the drawing — never copy it into your answer): ${ctx}` : ""),
     { frSubj: "Le tableau blanc", frOf: "du tableau blanc", frOn: "le tableau blanc", en: "whiteboard", blockedFr: "L'image du tableau a été bloquée", blockedEn: "The whiteboard image was blocked" },
     t,
   );
+  return "description" in r ? { description: cleanVisionText(r.description) } : r;
+}
+
+/** Drops the model's chatty preamble and markdown headers so only the reading itself reaches the tutor. Exported for tests. */
+export function cleanVisionText(raw: string): string {
+  return String(raw || "")
+    .replace(/^\s*(?:based on|looking at|from) the (?:image|photo|picture|drawing)[^\n]*?(?:here is|follows?|below)[^\n]*\n+/i, "")
+    .replace(/^#{1,4}\s*/gm, "")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 /** Reads a student-supplied photo (an exercise sheet, a textbook page, a handwritten note, a diagram) —
