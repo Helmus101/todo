@@ -833,25 +833,53 @@ export function monthKeyOf(tz?: string, now: Date = new Date()): string {
   catch { return now.toISOString().slice(0, 7); }
 }
 
-// DeepSeek pricing in USD per 1M tokens. Cache-HIT input is dramatically cheaper than a miss, and we resend
-// a large system prompt every round, so hit rates are high — pricing all input at the miss rate (the old
-// behaviour) over-charged the meter. Output ≈4× a miss. Single source of truth so the Settings display and
-// the server-side cap always agree with the invoice.
-export const USD_PER_1M_IN = 0.27;        // cache-MISS input
-export const USD_PER_1M_CACHED_IN = 0.07; // cache-HIT input (~¼ the miss price)
-export const USD_PER_1M_OUT = 1.10;
-/** Flat-rate estimate from token totals — used only for display of PRE-upgrade data that lacks a per-call
- *  cost. New spend is metered by callCostUsd (cache- and peak-aware) at the point of each call. */
-export function usageCostUsd(inTok: number, outTok: number): number {
-  return (Number(inTok) || 0) / 1e6 * USD_PER_1M_IN + (Number(outTok) || 0) / 1e6 * USD_PER_1M_OUT;
+// DeepSeek pricing in USD per 1M tokens, PER MODEL, at the OFF-PEAK rate (peak is ×2 — see callCostUsd). Cache-HIT input is
+// ~50× cheaper than a miss and we resend a large system prompt every round, so the hit/miss split is most of the bill; reasoning
+// ("thinking") tokens are counted inside completion_tokens and billed as output. Single source of truth so the Settings display
+// and the server-side meter agree with the invoice.
+//
+// SOURCES / CAVEAT: the V4-Flash numbers ($0.14 miss, $0.0028 hit, $0.28 out) agree across every price guide checked; the V4-Pro
+// numbers are less certain (guides disagree on list vs promotional prices; hit is estimated at the June list ratio). DeepSeek's own
+// pricing page was not reachable when this was written — correct them with the DEEPSEEK_PRICING env var (JSON, see
+// applyPricingOverride) the moment the invoice says otherwise, no deploy needed.
+export interface Rates { miss: number; hit: number; out: number }
+export const DEEPSEEK_RATES: Record<string, Rates> = {
+  "deepseek-v4-flash": { miss: 0.14, hit: 0.0028, out: 0.28 },
+  "deepseek-v4-pro": { miss: 0.66, hit: 0.0055, out: 1.98 },
+};
+let ACTIVE_MODEL = "deepseek-v4-flash";
+/** Which model the meter prices (the server sets this from DEEPSEEK_MODEL at startup). Unknown models fall back to Flash rates. */
+export function setPricingModel(model: string): void { ACTIVE_MODEL = String(model || "deepseek-v4-flash"); }
+export function ratesFor(model: string = ACTIVE_MODEL): Rates { return DEEPSEEK_RATES[model] || DEEPSEEK_RATES["deepseek-v4-flash"]; }
+/** DEEPSEEK_PRICING='{"deepseek-v4-flash":{"miss":0.14,"hit":0.0028,"out":0.28}}' — merges over the table; junk entries are ignored. */
+export function applyPricingOverride(json: string | undefined): void {
+  if (!json) return;
+  try {
+    const o = JSON.parse(json);
+    for (const [m, r] of Object.entries<any>(o || {})) {
+      const miss = Number(r?.miss), hit = Number(r?.hit), out = Number(r?.out);
+      if ([miss, hit, out].every((x) => Number.isFinite(x) && x >= 0)) DEEPSEEK_RATES[m] = { miss, hit, out };
+    }
+  } catch { /* a bad override must never break metering */ }
 }
-/** The TRUE cost of one AI call: cache-hit input priced separately from miss, and the whole call ×2 during
- *  DeepSeek's peak window (per isPeakHourUtc). `inTok` is the FULL prompt-token count; `cachedIn` is the
- *  cache-hit portion of it (the rest is charged at the miss rate). This is what the cap must count. */
-export function callCostUsd(inTok: number, outTok: number, cachedIn = 0, at: Date = new Date()): number {
+// The default model's rates, kept as plain constants for display/tests.
+export const USD_PER_1M_IN = DEEPSEEK_RATES["deepseek-v4-flash"].miss;
+export const USD_PER_1M_CACHED_IN = DEEPSEEK_RATES["deepseek-v4-flash"].hit;
+export const USD_PER_1M_OUT = DEEPSEEK_RATES["deepseek-v4-flash"].out;
+/** Flat-rate estimate from token totals (no cache split) — used only for display of PRE-upgrade data that lacks a per-call
+ *  cost. New spend is metered by callCostUsd (cache-, model- and peak-aware) at the point of each call. */
+export function usageCostUsd(inTok: number, outTok: number): number {
+  const r = ratesFor();
+  return (Number(inTok) || 0) / 1e6 * r.miss + (Number(outTok) || 0) / 1e6 * r.out;
+}
+/** The TRUE cost of one AI call: cache-hit input priced separately from miss, at the active model's rates, and the whole call ×2
+ *  during DeepSeek's peak window (per isPeakHourUtc). `inTok` is the FULL prompt-token count; `cachedIn` is the cache-hit portion
+ *  of it (the rest is charged at the miss rate). This is what the meter must count. */
+export function callCostUsd(inTok: number, outTok: number, cachedIn = 0, at: Date = new Date(), model?: string): number {
+  const r = ratesFor(model);
   const total = Math.max(0, Number(inTok) || 0), cached = Math.min(total, Math.max(0, Number(cachedIn) || 0));
   const miss = total - cached;
-  const base = miss / 1e6 * USD_PER_1M_IN + cached / 1e6 * USD_PER_1M_CACHED_IN + (Number(outTok) || 0) / 1e6 * USD_PER_1M_OUT;
+  const base = miss / 1e6 * r.miss + cached / 1e6 * r.hit + (Number(outTok) || 0) / 1e6 * r.out;
   return base * (isPeakHourUtc(at) ? 2 : 1);
 }
 /** Month-to-date AI spend (USD) for this account, honoring the calendar-month rollover. */
