@@ -192,3 +192,21 @@ export function extractJsonObject(text: string): unknown {
   }
   return null;
 }
+
+/** When the reply isn't a clean JSON object — cut off mid-way (token limit), a trailing comma, or plain prose — pull out what
+ *  the model did say rather than failing the turn: the "speech" sentences if they're there, else the prose itself. Pure. */
+export function salvageTurn(text: string, opts: { prose?: boolean } = {}): unknown {
+  const s = String(text || "").replace(/```(?:json)?/gi, "").trim();
+  if (!s) return null;
+  try { const t = JSON.parse(s.replace(/,\s*([}\]])/g, "$1")); if (t && typeof t === "object") return t; } catch { /* fall through */ }
+  const m = /"speech"\s*:\s*\[((?:\s*"(?:\\.|[^"\\])*"\s*,?)+)/.exec(s);
+  if (m) {
+    const speech = [...m[1].matchAll(/"((?:\\.|[^"\\])*)"/g)].map((x) => { try { return JSON.parse(`"${x[1]}"`); } catch { return x[1]; } });
+    const move = /"move"\s*:\s*"([a-z_]+)"/i.exec(s)?.[1];
+    return { speech, ...(move ? { move } : {}) };
+  }
+  const one = /"speech"\s*:\s*"((?:\\.|[^"\\])*)/.exec(s);
+  if (one) return { speech: one[1].replace(/\\"/g, '"') };
+  if (opts.prose && !s.includes("{") && s.split(/\s+/).length >= 3) return { speech: s };
+  return null;
+}
