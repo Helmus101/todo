@@ -175,6 +175,29 @@ export function normalizeTurn(raw: unknown): TurnOutput | null {
   };
 }
 
+// LaTeX in a JSON string: models write "\\text{x}" with ONE backslash. JSON then reads \t as a TAB (so \text and \times come out as
+// "<tab>ext" and "<tab>imes") and rejects \s, \c, \l… outright (so \sin or \theta makes the whole reply unparseable).
+// This doubles every backslash that starts a LaTeX command and leaves the real JSON escapes alone. Pure.
+const LATEX_BFNRT = /^(?:text|textbf|textit|times|tan|tanh|theta|tau|tfrac|tilde|to|top|therefore|triangle|frac|forall|beta|bar|begin|binom|bullet|because|bmod|bigg?|neq|ne|nu|nabla|not|neg|notin|ni|rho|right|rightarrow|Rightarrow|rangle|rfloor|rceil|nearrow|implies)(?![A-Za-z])/;
+export function fixJsonBackslashes(raw: string): string {
+  const s = String(raw || "");
+  let out = "", inStr = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (!inStr) { out += ch; if (ch === '"') inStr = true; continue; }
+    if (ch === '"') { out += ch; inStr = false; continue; }
+    if (ch !== "\\") { out += ch; continue; }
+    const nx = s[i + 1];
+    if (nx === undefined) { out += "\\\\"; continue; }
+    if (nx === "\\") { out += "\\\\"; i++; continue; }          // an already-doubled backslash: keep the pair
+    if (nx === '"' || nx === "/") { out += ch + nx; i++; continue; }
+    if (nx === "u" && /^[0-9a-fA-F]{4}$/.test(s.slice(i + 2, i + 6))) { out += ch; continue; }
+    if ("bfnrt".includes(nx)) { out += LATEX_BFNRT.test(s.slice(i + 1)) ? "\\\\" : ch; continue; }   // \n / \t only when it is not a LaTeX command
+    out += "\\\\";                                                // \sin, \sqrt, \Delta, \( … → a literal backslash
+  }
+  return out;
+}
+
 /** The first JSON object in a model reply (tolerates a ```json fence or text around it). Pure. */
 export function extractJsonObject(text: string): unknown {
   const s = String(text || "");
@@ -188,7 +211,7 @@ export function extractJsonObject(text: string): unknown {
     if (inStr) { if (esc) esc = false; else if (ch === "\\") esc = true; else if (ch === '"') inStr = false; continue; }
     if (ch === '"') inStr = true;
     else if (ch === "{") depth++;
-    else if (ch === "}" && --depth === 0) { try { return JSON.parse(body.slice(start, i + 1)); } catch { return null; } }
+    else if (ch === "}" && --depth === 0) { const chunk = body.slice(start, i + 1); try { return JSON.parse(fixJsonBackslashes(chunk)); } catch { try { return JSON.parse(chunk); } catch { return null; } } }
   }
   return null;
 }
@@ -196,7 +219,7 @@ export function extractJsonObject(text: string): unknown {
 /** When the reply isn't a clean JSON object — cut off mid-way (token limit), a trailing comma, or plain prose — pull out what
  *  the model did say rather than failing the turn: the "speech" sentences if they're there, else the prose itself. Pure. */
 export function salvageTurn(text: string, opts: { prose?: boolean } = {}): unknown {
-  const s = String(text || "").replace(/```(?:json)?/gi, "").trim();
+  const s = fixJsonBackslashes(String(text || "").replace(/```(?:json)?/gi, "").trim());
   if (!s) return null;
   try { const t = JSON.parse(s.replace(/,\s*([}\]])/g, "$1")); if (t && typeof t === "object") return t; } catch { /* fall through */ }
   const m = /"speech"\s*:\s*\[((?:\s*"(?:\\.|[^"\\])*"\s*,?)+)/.exec(s);

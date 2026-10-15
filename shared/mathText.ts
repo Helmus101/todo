@@ -163,9 +163,13 @@ export function repairLatex(text: string): string {
   const t = String(text || "");
   const mathy = /[=^\\]/.test(t); // a bare "cdot" is only repaired inside something that already looks like maths
   return t
-    .replace(/\x09(?=an\b|imes\b|heta\b|ext\b|o\b)/g, "\\t")
-    .replace(/\x0c(?=rac\b|dfrac\b)/g, "\\f")
-    .replace(/\x08(?=eta\b|inom\b|ar\b)/g, "\\b")
+    // A control character where a LaTeX command's backslash was swallowed by a JSON escape (\text → TAB+"ext"). The command
+    // name needs no word boundary: "\x09ext" is followed by the braces' content, "\x09imes" by a space.
+    .replace(/\x09(?=an(?![a-z])|anh(?![a-z])|imes(?![a-z])|heta(?![a-z])|au(?![a-z])|ext(?:bf|it|rm)?\b|ext\s*\{|o(?![a-z])|frac\b|riangle|herefore|ilde)/g, "\\t")
+    .replace(/\x0c(?=rac\b|rac\s*\{|dfrac\b|orall)/g, "\\f")
+    .replace(/\x08(?=eta\b|inom\b|ar\b|egin\b|ullet|ecause)/g, "\\b")
+    .replace(/\x0d(?=ho\b|ight\b|ightarrow|angle)/g, "\\r")
+    .replace(/\x0a(?=eq\b|u\b|abla|ot\b|eg\b|otin|earrow)/g, "\\n")
     .replace(/\^\{?circ\}?/g, "^\\circ")
     .replace(/(?<=[\s)\d])cdot(?=[\s(\d\\])/g, (m) => (mathy ? "\\cdot" : m));
 }

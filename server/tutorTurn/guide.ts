@@ -15,9 +15,13 @@ export interface GuideInput {
   /** An exercise or a gap is still open on the board. */
   openWork: boolean;
   hasObjectives: boolean;
+  /** The exercise's final answer was reached (code-checked) or every exercise is solved. */
+  finalReached?: boolean;
   /** From Settings: year/grade, programme, courses — empty when unknown. */
   level?: string;
 }
+
+const drewMarker = (m: string) => /\[(?:What I wrote\/drew on the board|Ce que j'ai écrit\/dessiné sur le tableau)\s*:/i.test(m);
 
 export function sessionGuide(i: GuideInput): string[] {
   const out: string[] = [];
@@ -38,16 +42,26 @@ export function sessionGuide(i: GuideInput): string[] {
       : "THEY WANT TO SWITCH TOPICS but the current one is not solid yet: say in one short sentence that you'll come back to it, finish it with ONE more step or check (about a minute), then offer the switch. Don't refuse — if they ask again, switch.");
   }
 
+  // 2b. They pushed back on a question: accept it, don't ask another about the same step.
+  const PUSHBACK = /\b(?:that'?s just|that is just|it'?s just|it is just|but we (?:are|were) (?:asked|looking)|we'?re asked|we are asked|i (?:already|just) (?:did|said|told|gave)|just tell me|why does that matter|c'?est juste|on (?:nous )?demande|je l'?ai d[ée]j[àa])\b/i;
+  const pushedBack = PUSHBACK.test(i.message);
+  if (pushedBack) out.push("THEY PUSHED BACK on your question. Accept their answer in a few words, answer their point (\"yes, the question asks for X and you have it\"), and move on to the next piece or finish. Do NOT ask another why, unit or definition question about this step.");
+  // 2c. Pasted material: pick one question, name it, put it on the board.
+  const pasted = i.message.length > 600 || (i.message.match(/\?/g) || []).length >= 3 || /\n\s*(?:[A-D][.)]|\d+[.)])\s/.test(i.message);
+  if (pasted && !drewMarker(i.message)) out.push("THEY PASTED MATERIAL (a quiz, a worksheet…). Choose ONE question from it and SAY which one by quoting its first words; put it on the board (a topic op, the givens as steps) and ask the first step. Never say \"that question\" or \"the car problem\" without quoting it. If it holds several questions, add a plan op listing them in the order you will do them, and work them one at a time.");
   // 3. A right answer is the start of consolidating, not the signal to leave.
-  if (i.correctNow) {
+  if (i.correctNow && !pushedBack) {
     const recentDeepening = log.slice(-3).some((r) => DEEPENING.has(r.move));
-    out.push(recentDeepening
+    const askedWhyRecently = log.slice(-6).some((r) => r.move === "probe_why");
+    if (i.finalReached) out.push("THE EXERCISE IS DONE: confirm the result in a few words" + (askedWhyRecently ? ", then offer" : ", add one sentence on the key idea, then offer") + " a variation with new numbers that is a step harder, or the next item of the plan. No further questions about how they got there.");
+    else out.push(recentDeepening
       ? "SOLID NOW (they got it right and you already tested why): name in a few words what they can do, then move on to the next piece of the plan."
       : "MAKE IT SOLID BEFORE MOVING ON: credit exactly what was right, then do ONE of — ask why that step works, give a variation with different numbers, or ask them to state the rule in their own words. Don't open a new topic or a new exercise this turn.");
   }
 
   // 3b. A drawing came with the message: react to what is really in it.
-  const drew = /\[(?:What I wrote\/drew on the board|Ce que j'ai écrit\/dessiné sur le tableau)\s*:/i.test(i.message);
+  const drew = drewMarker(i.message);
+
   if (drew) out.push("THEY DREW OR WROTE ON THE BOARD (an image reader described it after the bracket; it can misread, so treat it as likely, not certain). Respond to the SPECIFIC features: say in one sentence what you see ('a curve with a vertical dashed line at x = 1 and …'), compare it with the problem and the verified solution (asymptote positions, intercepts, branches, labels), name what is right and the first thing that is off, then ask one question about that spot or mark it. Never say a sketch is good without checking it; if the reading looks implausible or low-confidence, say what you can make out and ask them to confirm.");
   // 4. Questions at THEIR level, guided by the board, rising while they succeed.
   const unaided = log.slice(-3);

@@ -46,7 +46,7 @@ export interface VerifyContext {
 }
 
 export interface Issue {
-  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "unwritten" | "diagnosis" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh";
+  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "unwritten" | "diagnosis" | "invented_object" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh";
   /** The instruction for the repair call. */
   fix: string;
   /** A leak or a pointer at nothing must be fixed; the rest are quality. */
@@ -112,6 +112,28 @@ export function vagueReply(t: TurnOutput, c: VerifyContext): string | null {
   return null;
 }
 
+/** Scenario objects a tutor might invent ("the cyclist" in a problem about a car). */
+const SCENE_NOUNS = ["cyclist","bicycle","bike","runner","sprinter","skier","skater","swimmer","diver","climber","hiker","pilot","driver","passenger","pedestrian","car","truck","lorry","bus","train","boat","ship","plane","aeroplane","rocket","satellite","ball","stone","rock","block","box","crate","barrel","pulley","spring","pendulum","ladder","elevator","lift","cart","trolley","parachutist","skydiver","football","bullet","arrow","dog","bird","horse"];
+const nounRe = (n: string) => new RegExp(`\\b${n}(?:s|es)?\\b`, "i");
+/** The scenario objects a text mentions (synonyms folded: bike = bicycle = cyclist, car = truck…). */
+export function sceneNounsIn(text: string): string[] {
+  const fold = (n: string) => ({ bicycle: "bike", cyclist: "bike", truck: "car", lorry: "car", driver: "car", elevator: "lift", aeroplane: "plane", football: "ball", skydiver: "parachutist" } as Record<string, string>)[n] || n;
+  return [...new Set(SCENE_NOUNS.filter((n) => nounRe(n).test(text)).map(fold))];
+}
+
+/** Scenario objects the reply names that the problem, the board and the student never mentioned. */
+export function inventedObjects(texts: string[], sources: string[]): string[] {
+  const src = sources.join(" ").toLowerCase();
+  const out: string[] = [];
+  for (const n of SCENE_NOUNS) {
+    if (!texts.some((t) => nounRe(n).test(t))) continue;
+    // a synonym group counts as present (car/truck/lorry/driver, ball/football, bike/bicycle/cyclist…)
+    const near = ({ car: ["truck","lorry","driver","vehicle"], truck: ["car","lorry","vehicle"], bike: ["bicycle","cyclist"], bicycle: ["bike","cyclist"], ball: ["football","sphere"], lift: ["elevator"], elevator: ["lift"], plane: ["aeroplane","aircraft"], aeroplane: ["plane","aircraft"] } as Record<string, string[]>)[n] || [];
+    if (!nounRe(n).test(src) && !near.some((m) => nounRe(m).test(src))) out.push(n);
+  }
+  return out;
+}
+
 export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   const out: Issue[] = [];
   const say = speechText(t);
@@ -151,6 +173,9 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
     if (!d.misconception) out.push({ code: "diagnosis", hard: false, fix: "you diagnosed a misconception: name the mistaken belief in diagnosis.misconception (≤8 words)." });
     if (["confirm", "elicit", "recap"].includes(t.move)) out.push({ code: "diagnosis", hard: false, fix: "a misconception shows, so don't just confirm or move on: name the idea that is off, gently, in the speech, and choose focus, correct_error, explain or probe_why to repair it." });
   }
+  // Only objects that exist in the problem: no cyclist in a car problem.
+  const objs = inventedObjects([say, ...t.board.map(opText)], [...c.said, ...c.board.map((b) => b.text || ""), ...c.problems.map((p) => p.question || ""), ...(c.solution ? [c.solution.statement, ...c.solution.steps.map((s) => `${s.idea || ""} ${s.result || ""}`)] : [])]);
+  if (objs.length) out.push({ code: "invented_object", hard: true, fix: `it mentions ${objs.slice(0, 2).map((o) => `"${o}"`).join(" and ")}, which is not in the problem, the board or anything the student said. Refer only to the actual objects of the problem.` });
   // 5. One question, last.
   const qs = t.speech.map((s, i) => ({ i, q: /\?\s*["»”)]*\s*$/.test(s.replace(/\$[^$]*\$/g, "x")) })).filter((x) => x.q);
   if (qs.length > 1 || (qs.length === 1 && qs[0].i !== t.speech.length - 1)) out.push({ code: "questions", hard: false, fix: "ask at most ONE question, as the last sentence." });

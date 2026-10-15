@@ -207,6 +207,34 @@ export async function runTutorTurnSim(check, section) {
       check("a wrong answer diagnosed as nothing is flagged, and a misconception must be named and not just confirmed", codes(mk({ move: "focus", board: [{ op: "mark", cue: 0, target: "#1" }] }), { verdict: "incorrect" }).includes("diagnosis") && codes(mk({ move: "confirm", diagnosis: { status: "misconception" } })).includes("diagnosis") && codes(mk({ move: "correct_error", diagnosis: { status: "misconception", misconception: "treats remainder as the line" }, board: [{ op: "step", cue: 0, text: "x" }] })).filter((c) => c === "diagnosis").length === 0);
       check("the recap lists the misconceptions that were worked on", buildRecap({ lang: "en", board: [], log: [{ at: "x", move: "correct_error", support: 3, intent: "answer", diagnosis: "misconception", misconception: "treats remainder as the line", words: 10, studentWords: 4, repaired: false, ms: 1 }] }).mistakes[0] === "Misconception worked on: treats remainder as the line");
     }
+    {
+      const { extractJsonObject, normalizeTurn, fixJsonBackslashes } = await import("../shared/tutorTurn.ts");
+      const { repairLatex } = await import("../shared/mathText.ts");
+      const { inventedObjects } = await import("../server/tutorTurn/verify.ts");
+      const { sessionGuide } = await import("../server/tutorTurn/guide.ts");
+      // Reported live: "F_ extresistive = kv²", "P = F_{total} imes v" — single-backslash LaTeX inside the model's JSON.
+      const raw = '{"heard":"x","move":"elicit","speech":["Use the formula.","Line one\\nline two?"],"board":[{"op":"step","cue":0,"text":"$F_\\text{resistive} = kv^2$"},{"op":"step","cue":0,"text":"$P = F_{total} \\times v$"},{"op":"step","cue":0,"text":"$a=\\sin\\theta$"},{"op":"step","cue":0,"text":"$\\frac{1}{2}\\beta \\neq \\rho$"},{"op":"step","cue":0,"text":"$\\\\sqrt{2}$"}]}';
+      const t = normalizeTurn(extractJsonObject(raw));
+      check("single-backslash LaTeX in the model's JSON parses (it used to fail outright on \\sin) and comes out clean, with no tab characters", !!t && t.board.length === 5 && t.board[0].text === "$F_\\text{resistive} = kv^2$" && t.board[1].text === "$P = F_{total} \\times v$" && t.board[2].text === "$a=\\sin\\theta$" && t.board[3].text === "$\\frac{1}{2}\\beta \\neq \\rho$" && !/[\t\f\b\r]/.test(JSON.stringify(t.board)));
+      check("a real \\n and an already-doubled backslash are left alone", JSON.parse(fixJsonBackslashes('{"a":"x\\ny","b":"\\\\frac"}')).a === "x\ny" && JSON.parse(fixJsonBackslashes('{"b":"\\\\frac"}')).b === "\\frac");
+      check("boards already saved with the corrupted characters render again", repairLatex("F_\x09ext{resistive} = kv²") === "F_\\text{resistive} = kv²" && repairLatex("P = F\x09imes v") === "P = F\\times v" && repairLatex("\x0crac{1}{2}") === "\\frac{1}{2}");
+      const src = ["A car of mass 1000 kg travels up a 10° slope at a steady speed of 15 m s-1."];
+      check("an object the problem never mentioned is caught (the cyclist), a car is not", inventedObjects(["What total driving force must the cyclist maintain?"], src).includes("cyclist") && inventedObjects(["What total driving force must the car maintain?"], src).length === 0);
+      const G = (o) => sessionGuide({ message: "ok", history: [{ role: "user", text: "a" }, { role: "assistant", text: "b" }, { role: "user", text: "ok" }], log: [], correctNow: false, openWork: false, hasObjectives: true, ...o }).join("\n");
+      check("when they push back ('that is just equation', 'but we are asked power') Otto accepts and moves on, no more why", /PUSHED BACK/.test(G({ message: "that is just equation" })) && /PUSHED BACK/.test(G({ message: "but we are asked power" })) && !/MAKE IT SOLID/.test(G({ message: "that is just equation", correctNow: true })));
+      check("when the exercise is finished: confirm, then a harder variation or the next item — no more 'why'", /THE EXERCISE IS DONE/.test(G({ correctNow: true, finalReached: true })) && !/MAKE IT SOLID/.test(G({ correctNow: true, finalReached: true })));
+      check("pasted material: pick ONE question, quote it, put it on the board", /quoting its first words/.test(G({ message: "can we do energy like this\n1. What is the energy?\nA. 10 J\nB. 20 J\n2. What is the power?\n3. Why?" })) && !/PASTED/.test(G({ message: "ok" })));
+    }
+    {
+      // Reported live: Otto talked about a bicycle and "work at a point" in a car-on-a-slope problem.
+      const car = { id: "p1", question: "A car of mass 1000 kg travels up a 10 degree slope at a steady speed of 15 m per second. The resistive force is proportional to the square of the speed, 450 N at 15 m per second. What effective power is required?", answer: "32790", solved: false };
+      const oldSol = { ...sol, statement: "A cyclist rides a bicycle of mass 80 kg along a flat road at 6 m per second and does work against drag over a long distance" };
+      script = () => T({ heard: "ok", intent: "answer", diagnosis: { status: "none" }, move: "elicit", support: 1, speech: ["Start with the resistive force at 15 m per second.", "What is k in $F = kv^2$?"], board: [] });
+      calls = [];
+      await runTutorTurn({ ...base, problems: [car], solution: oldSol, message: "ok go on", history: [{ role: "user", text: "hi" }, { role: "assistant", text: "Hello." }] });
+      const sys = systemOf(calls[0]);
+      check("the current problem is stated to the model, and a saved solution for a different problem is not used", /THE PROBLEM RIGHT NOW[^]*car of mass 1000 kg/.test(sys) && !/cyclist/.test(sys));
+    }
     script = () => ({ fail: true });
     r = await runTutorTurn({ ...base, message: "hello?" });
     check("the model being down is an error for the route to report — never a made-up reply", r.error === true && !r.reply);

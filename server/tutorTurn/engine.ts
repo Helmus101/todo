@@ -15,7 +15,7 @@ import { repairSpokenMath, spokenContextFrom, type SpokenRepair } from "../../sh
 import { boardSurfaceBlock } from "../boardEvents.ts";
 import { solutionBlock } from "../solver.ts";
 import { createTutorChat, retryRequest, usageOf, OUT, nowBlock, rewriteReply, stepVerdictLine } from "../claude.ts";
-import { asksWhy, asksToWrite, asksToDraw, voiceInputBlock } from "../tutorAdapt.ts";
+import { asksWhy, asksToWrite, asksToDraw, voiceInputBlock, similarity } from "../tutorAdapt.ts";
 import {
   backgroundBlock, objectivesBlock, solutionMatchLine, misgradedExercise, ownArithmeticLine, answeredInChat, wrongInChat,
   isDiscussionSubject, DISCUSSION_BLOCK, needsExplanation, asksToRestart, wantsExercise, reachedSolutionSteps,
@@ -24,7 +24,7 @@ import {
 } from "../tutor.ts";
 import { TURN_PROMPT, VOICE_NOTE } from "./prompt.ts";
 import { supportPolicy, asksForWorkedExample, adaptationLines, type Policy } from "./policy.ts";
-import { verifyTurn, degradeTurn, acceptsBoardOffer, claimsBoard, type Issue, type VerifyContext } from "./verify.ts";
+import { verifyTurn, degradeTurn, acceptsBoardOffer, claimsBoard, sceneNounsIn, type Issue, type VerifyContext } from "./verify.ts";
 import { applyOps } from "./apply.ts";
 import { sessionGuide } from "./guide.ts";
 import { exercisesSoFar, exercisesBlock, recentQuestionKinds, varietyLine } from "./exercises.ts";
@@ -86,9 +86,30 @@ export interface TurnExtras {
   struggled: boolean;
 }
 
+/** Both texts name scenario objects, and not one in common (a bicycle problem vs a car problem). */
+function differentScene(a: string, b: string): boolean {
+  const A = sceneNounsIn(a), B = sceneNounsIn(b);
+  return A.length > 0 && B.length > 0 && !A.some((n) => B.includes(n));
+}
+
+/** The student re-stated the solved problem's own numbers (so the saved solution is still the right one). */
+function statedAgain(message: string, statement: string): boolean {
+  const nums = (t: string) => new Set(String(t).match(/\d+(?:[.,]\d+)?/g) || []);
+  const a = nums(message), b = nums(statement);
+  if (a.size < 2) return false;
+  let hit = 0; for (const n of a) if (b.has(n)) hit++;
+  return hit >= 2;
+}
+
 export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResult & { turn?: TurnExtras }> {
   const t0 = Date.now();
   const { message, history, board, problems, objectives, context, lang } = input;
+  // WHAT THE PROBLEM IS RIGHT NOW, decided by code: the open exercise, else the last given/topic on the board. A saved
+  // solution for some OTHER problem (a bicycle, an earlier question) must never steer this one.
+  const focusText = [...problems].reverse().find((p) => !p.solved)?.question
+    || [...board].reverse().find((b) => b.kind === "given" && b.text && b.text.split(/\s+/).length >= 12)?.text || "";
+  // Only a full problem statement can contradict a saved solution (a short given like "M = 3 kg" never does).
+  if (input.solution && focusText && focusText.split(/\s+/).length >= 8 && (similarity(input.solution.statement, focusText) < 0.12 || differentScene(input.solution.statement, focusText)) && !statedAgain(message, input.solution.statement)) input = { ...input, solution: undefined };
   const fr = lang === "fr";
   const result: TutorTurnResult & { turn?: TurnExtras } = { reply: "", board: [], problems: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false };
 
@@ -118,9 +139,10 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     + (misgraded ? `\n\nCHECKED BY CODE — THEY WERE RIGHT: ${misgraded} Say so plainly (the exercise's key was wrong, not them) and move on.` : "")
     + ownArithmeticLine(message)
     + stepVerdictLine(input.stepVerdict)
+    + (focusText ? `\n\nTHE PROBLEM RIGHT NOW (stay on it; the session memory and earlier problems are about OTHER work — never mix them in, and use only the objects, quantities and numbers this problem and the student gave): ${focusText.slice(0, 400)}` : "")
     + (usedExercises.length ? `\n\n${exercisesBlock(usedExercises)}` : "")
     + (() => { const v = varietyLine(recentQuestionKinds(history)); return v ? `\n\n${v}` : ""; })()
-    + factsBlock({ policy, verdict: input.stepVerdict, solvedInChat: solvedNow[0]?.question, wrongInChat: wrongNow, wants, teaching: input.teaching, affect, adapt: [...sessionGuide({ message, history, log: input.teaching?.log, correctNow: verdict === "correct", openWork: problems.some((p) => !p.solved) || board.some((b) => b.kind === "gap" && b.status !== "correct"), hasObjectives: objectives.length > 0, level: [context.profile?.yearLevel, context.profile?.track === "ib" ? "IB" : context.profile?.track === "ap" ? "AP" : context.profile?.track === "bac" ? "bac" : "", ...(context.profile?.courses || []).slice(0, 4)].filter(Boolean).join(", ") }), ...adaptationLines(input.teaching?.log, { wrong: verdict === "incorrect", stuck: STUCK.test(message) })] })
+    + factsBlock({ policy, verdict: input.stepVerdict, solvedInChat: solvedNow[0]?.question, wrongInChat: wrongNow, wants, teaching: input.teaching, affect, adapt: [...sessionGuide({ message, history, log: input.teaching?.log, correctNow: verdict === "correct", openWork: problems.some((p) => !p.solved) || board.some((b) => b.kind === "gap" && b.status !== "correct"), hasObjectives: objectives.length > 0, finalReached: solvedNow.length > 0 || reachedSolutionSteps(message, input.solution).includes(0) || (problems.length > 0 && problems.every((p) => p.solved)), level: [context.profile?.yearLevel, context.profile?.track === "ib" ? "IB" : context.profile?.track === "ap" ? "AP" : context.profile?.track === "bac" ? "bac" : "", ...(context.profile?.courses || []).slice(0, 4)].filter(Boolean).join(", ") }), ...adaptationLines(input.teaching?.log, { wrong: verdict === "incorrect", stuck: STUCK.test(message) })] })
     + (input.spoken && spokenRepair ? voiceInputBlock(message, input.spoken.alternatives, spokenRepair) : "")
     + `\n\nReply in ${fr ? "French" : "English"} unless the student is writing in another language. Return ONLY the JSON object.`;
 
