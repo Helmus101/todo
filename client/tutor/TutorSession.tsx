@@ -962,7 +962,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           </div>
         )}
         <AskOttoPanel
-          variant="dock" bargeIn
+          variant="dock"
           task={task} currentStep={undefined} input={input} setInput={setInput} sending={sending}
           error={error} pendingMsg={pendingMsg} onSend={(o, v, _canvas, sp) => void send(o, v, sp)}
           onOpenNote={noop} onOpenDeck={noop} onOpenQuiz={noop}

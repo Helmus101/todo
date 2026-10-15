@@ -1,7 +1,8 @@
 // Assistance ledger, knowledge states and recap (server/tutorTurn/ledger.ts) — pure code, no model.
+import { createEchoFilter } from "../client/voice/echoGuard.ts";
 import { logAssistance, settleRetest, dueRetests, knowledgeState, buildRecap } from "../server/tutorTurn/ledger.ts";
 
-export function runTutorLedgerSim(check, section) {
+export async function runTutorLedgerSim(check, section) {
   section("Assistance ledger, knowledge states, recap");
   const t0 = new Date("2026-01-01T10:00:00Z");
   const later = new Date("2026-01-02T10:00:00Z");
@@ -27,4 +28,13 @@ export function runTutorLedgerSim(check, section) {
   check("recap reports mistakes, the key line and the open objective as the gap", r.mistakes.length === 1 && r.keyLines[0] === "$x=3$" && r.gaps[0] === "Solve linear equations" && /Solve linear/.test(r.next));
   const empty = buildRecap({ lang: "en", board: [], log: [] });
   check("an empty session claims nothing", !empty.canDoAlone.length && !empty.canDoWithHelp.length && !empty.learned.length);
+
+  const f = createEchoFilter();
+  f.speechStarted("So the force on the block is mass times acceleration. What is the mass?", false);
+  f.speechEnded();
+  await new Promise((r) => setTimeout(r, 600)); // a student never answers inside the speakers' last half second
+  check("with the mic closed while Otto spoke, an answer reusing his words is NOT dropped as echo", !f.isEcho("the force is mass times acceleration"));
+  const g = createEchoFilter();
+  g.speechStarted("So the force on the block is mass times acceleration. What is the mass?", true);
+  check("with the mic open, his own voice coming back mid-speech is still dropped", g.isEcho("force on the block is mass times acceleration"));
 }
