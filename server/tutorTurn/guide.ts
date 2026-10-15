@@ -24,7 +24,7 @@ export function sessionGuide(i: GuideInput): string[] {
 
   // 1. Open with a plan, never an open question.
   if (studentTurns <= 1 && !SWITCH.test(i.message) ) {
-    out.push(`OPEN THE SITTING WITH A PLAN, don't ask "where do you want to start?": in two sentences say what you will cover today and why (their objectives, the upcoming test, what was shaky last time — see BACKGROUND), start on the first item, and end with ONE easy question or "ready?". ${i.hasObjectives ? "" : "They have no plan yet: add a plan op with 3–4 objectives. "}If they named a topic, honour it and plan around it.`);
+    out.push(`OPEN THE SITTING WITH A PLAN, don't ask "where do you want to start?": in two sentences say what you will cover today and why (their level and courses, their objectives, the upcoming test, what they did and what was shaky last time — see BACKGROUND and its memory), start on the first item, and end with ONE easy question or "ready?". ${i.hasObjectives ? "" : "They have no plan yet: add a plan op with 3–4 objectives. "}If they named a topic, honour it and plan around it.`);
   }
 
   // 2. Don't abandon a topic that isn't solid yet.

@@ -159,6 +159,15 @@ export async function runTutorTurnSim(check, section) {
       check("'yeah can you do that' after Otto offered to map the quadrants counts as a request to draw; after a plain question it doesn't", acceptsBoardOffer("yeah can you do that", [{ role: "assistant", text: "Let's map out all four quadrants on a simple grid." }]) && !acceptsBoardOffer("yeah", [{ role: "assistant", text: "What is the radius?" }]));
       check("board claims are recognised, plain teaching isn't", claimsBoard("Take a look at the sign chart on the board.") && claimsBoard("I'll draw the grid.") && !claimsBoard("Sine is positive where y is positive."));
     }
+    {
+      const { levelLine, backgroundBlock } = await import("../server/tutor.ts");
+      const prof = { about: "", preferences: [], people: [], projects: [], courses: ["Maths AA HL", "Physics SL"], sessions: [], yearLevel: "DP1", track: "ib" };
+      const lv = levelLine(prof, "Math");
+      check("their level comes from Settings: year, programme and courses, with an instruction to pitch at it", /year\/grade "DP1"/.test(lv) && /IB Diploma/.test(lv) && /Maths AA HL/.test(lv) && /don't use methods from later years/.test(lv));
+      check("nothing is said about level when Settings has none", levelLine({ about: "", preferences: [], people: [], projects: [], courses: [], sessions: [] }, "Math") === "");
+      const bg = backgroundBlock({ profile: prof, subject: "Math", memory: [{ when: "yesterday", subject: "Math", lines: ["Partial fractions"], asked: ["why A over x+1"] }] });
+      check("the tutor's background carries the level and uses the on-device memory to plan", /THEIR LEVEL/.test(bg) && /Partial fractions/.test(bg) && /USE THAT MEMORY/.test(bg));
+    }
     script = () => ({ fail: true });
     r = await runTutorTurn({ ...base, message: "hello?" });
     check("the model being down is an error for the route to report — never a made-up reply", r.error === true && !r.reply);
