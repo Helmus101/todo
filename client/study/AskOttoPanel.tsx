@@ -114,6 +114,9 @@ export function AskOttoPanel({
   // (createEchoFilter, client/voice/echoGuard.ts) classifies across the whole speech window PLUS a tail
   // after it, and drops a verbatim repeat of the just-spoken reply regardless of timing.
   const echoFilterRef = useRef(createEchoFilter());
+  // What the mic heard but dropped as Otto's own echo — shown briefly so a silent drop is never invisible.
+  const [heardNote, setHeardNote] = useState<string | null>(null);
+  useEffect(() => { if (!heardNote) return; const t = setTimeout(() => setHeardNote(null), 5000); return () => clearTimeout(t); }, [heardNote]);
   const [micError, setMicError] = useState<[string, string] | null>(null);
   // File attach — "upload a file into the tutor" (a PDF worksheet, a photo of an exercise, a plain text
   // note): three file types need three different extraction paths, but all three land the same way —
@@ -161,7 +164,8 @@ export function AskOttoPanel({
     onResult: (text, meta) => {
       if (sendingRef.current) return;
       // Otto's own voice coming back (during speech, in the post-speech tail, or verbatim) is NEVER input.
-      if (echoFilterRef.current.isEcho(text)) return;
+      if (echoFilterRef.current.isEcho(text)) { setHeardNote(text); return; }
+      setHeardNote(null);
       // Real student speech while Otto talks: interrupt him — cancel the TTS, the utterance still sends.
       if (speakingRef.current && bargeIn) synth.cancel();
       onSend(text, true, undefined, { alternatives: meta?.alternatives || [] });
@@ -182,7 +186,7 @@ export function AskOttoPanel({
   // utterance (with the text being spoken — the echo reference), speechEnded opens the post-speech tail.
   const wasSpeakingEchoRef = useRef(false);
   useEffect(() => {
-    if (synth.speaking && !wasSpeakingEchoRef.current) echoFilterRef.current.speechStarted(speakingNowText(task));
+    if (synth.speaking && !wasSpeakingEchoRef.current) echoFilterRef.current.speechStarted(speakingNowText(task), !!bargeIn);
     else if (!synth.speaking && wasSpeakingEchoRef.current) echoFilterRef.current.speechEnded();
     wasSpeakingEchoRef.current = synth.speaking;
   }, [synth.speaking, task]);
@@ -288,6 +292,7 @@ export function AskOttoPanel({
       ) : null}
       {/* Real mic failure surfacing (permission denied, no mic, network) — previously silent. */}
       {micError ? <div className="sm-ai-error" role="alert">{L(micError[0], micError[1])}</div> : null}
+      {heardNote ? <div className="sm-ai-hint" role="status">{L("J'ai entendu « ", "I heard “")}{heardNote.slice(0, 80)}{L(" » — ignoré (écho d'Otto ?). Redis-le après sa phrase.", "” — ignored as Otto's own voice. Say it again after he finishes.")}</div> : null}
       {/* TTS diagnostic (useSpeechSynthesis's lastDiagnostic): which speech path actually ran and, when it
           fell back, WHY. Voice failures were the last fully-silent surface in this panel — a 501 from a
           missing server key, a CSP-blocked audio element, and a vendor outage all looked like "Otto just
@@ -382,7 +387,7 @@ export function AskOttoPanel({
                   onClick={() => (synth.speaking ? synth.cancel() : (synth.unlock(), synth.speak(lastReply.text)))}
                   title={synth.speaking ? L("Arrêter la voix", "Stop voice") : L("Réécouter", "Listen again")}
                   aria-label={synth.speaking ? L("Arrêter la voix", "Stop voice") : L("Réécouter", "Listen again")}
-                >{synth.speaking ? <Square size={13} aria-hidden="true" /> : <Volume2 size={15} aria-hidden="true" />}</button>
+                >{synth.speaking ? <><Square size={13} aria-hidden="true" /><span className="otto-replay-label">{L("Interrompre", "Interrupt")}</span></> : <Volume2 size={15} aria-hidden="true" />}</button>
               </>
             ) : (
               // MathText, not raw text: the opener quotes real board maths ("Solve for $x ∈ [0, 2\pi]$: …")

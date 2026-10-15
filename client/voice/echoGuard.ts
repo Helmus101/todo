@@ -57,13 +57,13 @@ export function isLikelyEcho(spoken: string, heard: string): boolean {
   // spoken reply. Checking the spoken-side prefix too catches the common case where the recognizer
   // lands mid-word and the transcription starts partway into a sentence.
   if (s.includes(h) || h.includes(s.slice(0, Math.min(s.length, h.length)))) return true;
-  return hWords >= 3 && isOrderedSubsequence(s, h);
+  return hWords >= 4 && isOrderedSubsequence(s, h);
 }
 
 interface EchoFilter {
   /** Call when TTS starts, with the reply text being synthesized. Re-call on a new utterance while the
    *  synth flag stayed true (a second reply queued back-to-back) — it re-arms the window. */
-  speechStarted(text: string): void;
+  speechStarted(text: string, micOpen?: boolean): void;
   /** Call when TTS stops — the echo TAIL window starts here. */
   speechEnded(): void;
   /** Classify recognition text (final or interim): true → DROP (Otto's own voice coming back). */
@@ -85,13 +85,17 @@ interface EchoFilter {
  *  Plain factory (not a hook) so it's trivially unit-testable and usable from any surface. One instance
  *  per mounted voice surface (AskOttoPanel, TaskCard's TaskChat, StudyHelpPanel) — driven by that
  *  surface's synth.speaking transitions. */
-export function createEchoFilter(tailMs = 5000): EchoFilter {
+export function createEchoFilter(tailMs = 1500): EchoFilter {
   let spokenText = "";
   let speaking = false;
   let speechEndedAt = 0;
+  // When the mic was CLOSED during speech there is no echo to catch, so only a short tail (the speakers' last few ms)
+  // applies and a student's answer that reuses Otto's words is never mistaken for him.
+  let micOpen = true;
   let recentReplies: string[] = []; // Track last few replies to catch delayed echoes
   return {
-    speechStarted(text) {
+    speechStarted(text, open = true) {
+      micOpen = open;
       spokenText = text || "";
       speaking = true;
       speechEndedAt = 0;
@@ -119,7 +123,7 @@ export function createEchoFilter(tailMs = 5000): EchoFilter {
         if (heardNorm === normalizeForEcho(reply)) return true;
       }
       
-      const inWindow = speaking || (speechEndedAt > 0 && Date.now() - speechEndedAt < tailMs);
+      const inWindow = micOpen ? speaking || (speechEndedAt > 0 && Date.now() - speechEndedAt < tailMs) : speechEndedAt > 0 && Date.now() - speechEndedAt < 500;
       if (!inWindow) return false;
       return isLikelyEcho(spokenText, heard);
     },

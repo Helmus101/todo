@@ -47,3 +47,4 @@ npm run dev           # http://localhost:5273
 - `apply.ts` turns the ops into board entries (topic, step, gap, mark, draw, problem, plan); `ledger.ts` keeps the assistance ledger (help at support ≥ 4 is retested next sitting) and builds the recap (`POST /api/tasks/:id/tutor/close`). Tool-call text is stripped in `normalizeTurn`.
 - Tests: `tests/tutor-turn-sim.mjs` (scripted fake model, real engine) and `tests/tutor-ledger-sim.mjs`.
 - Known gaps: answer keys still travel with the board to the browser; Study Mode chat (`server/ai/chat*.ts`) still uses the older tutorBrain/sessionState modules.
+- Voice: the mic is closed while Otto thinks or speaks (the Web Speech API can't tell his voice from the student's); the student interrupts with the "Interrupt" button, which reopens the mic at once. `echoGuard` only drops text when the mic was open during speech.

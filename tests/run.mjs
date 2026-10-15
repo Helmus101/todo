@@ -6382,7 +6382,7 @@ await runTutorCompanionSim(check, section);
 const { runTutorTurnSim } = await import("./tutor-turn-sim.mjs");
 await runTutorTurnSim(check, section);
 const { runTutorLedgerSim } = await import("./tutor-ledger-sim.mjs");
-runTutorLedgerSim(check, section);
+await runTutorLedgerSim(check, section);
 {
   const app = appSource();
   const t = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
