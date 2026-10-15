@@ -23,6 +23,15 @@ export function sameExercise(a: string, b: string, threshold = 0.5): boolean {
   return inter / (A.size + B.size - inter) >= threshold;
 }
 
+/** One text contains most of the other's content (an old problem quoted inside a longer reply). */
+export function mostlyContains(longer: string, problem: string, threshold = 0.5): boolean {
+  const A = grams(longer), B = grams(problem);
+  if (B.size < 6) return false;
+  let inter = 0;
+  for (const g of B) if (A.has(g)) inter++;
+  return inter / B.size >= threshold;
+}
+
 const hasMaths = (s: string) => /\d|\$|\\[a-z]+|[=^]/.test(s);
 const clip = (s: string) => s.replace(/\s+/g, " ").trim().slice(0, 120);
 

@@ -68,7 +68,7 @@ export async function runTutorTurnSim(check, section) {
       return d.speech.join(" ") === "Nice try. What's the net force on m?" && d.board.length === 1 && d.board[0].op === "draw"; })());
 
     const actx = { message: "x", theirWords: ["T - mg = ma"], board, problems: [], fr: false };
-    check("apply: a mark points at a real line, keeps the part only when it's in the line, and carries its cue", (() => { const a = applyOps([{ op: "mark", cue: 2, target: "#2", style: "circle", part: "-T", tone: "focus", note: "the pull back" }, { op: "mark", cue: 0, target: "#2", style: "box", part: "zzz" }], actx); return a.board.length === 2 && a.board[0].markStyle === "circle" && a.board[0].markPart === "-T" && a.board[0].cue === 2 && !a.board[1].markPart && a.board[0].targetId === "s"; })());
+    check("apply: a mark points at a real line, keeps the part only when it's in the line, and carries its cue", (() => { const a = applyOps([{ op: "mark", cue: 2, target: "#2", style: "circle", part: "-T", tone: "focus", note: "the pull back" }, { op: "mark", cue: 0, target: "#2", style: "box", part: "zzz", tone: "error" }], actx); return a.board.length === 2 && a.board[0].markStyle === "circle" && a.board[0].markPart === "-T" && a.board[0].cue === 2 && !a.board[1].markPart && a.board[0].targetId === "s"; })());
     check("apply: a gap's key is computed from the line when it can be; a typed plain step is typeset; their ink only when it's their numbers", (() => {
       const a = applyOps([{ op: "gap", cue: 0, text: "$12 \\times 3 = ?$", expected: "38" }, { op: "step", cue: 0, text: "T - mg = ma", owner: "student" }, { op: "step", cue: 0, text: "$v = 14$", owner: "student" }], actx);
       return a.board[0].expectedAnswer === "36" && a.board[1].text === "$T - mg = ma$" && a.board[1].owner === "student" && a.board[2].owner !== "student"; })());
@@ -301,6 +301,27 @@ export async function runTutorTurnSim(check, section) {
     {
       const { wantsMoreExercises, difficultyAsked } = await import("../server/tutorTurn/intents.ts");
       check("the one-tap chips ('Got it! Give me another to try', 'Give me a harder one') ask for a new exercise; a harder/easier ask sets the difficulty", wantsMoreExercises("Got it! Give me another to try.") && wantsMoreExercises("Give me a harder one.") && !wantsMoreExercises("I'm lost — can we go smaller?") && difficultyAsked("Give me a harder one.") === "harder" && difficultyAsked("something easier please") === "easier" && difficultyAsked("another one") === null);
+    }
+    {
+      const { proseEquation } = await import("../server/tutorTurn/verify.ts");
+      const { repairLatex } = await import("../shared/mathText.ts");
+      const { cantSeeProblem } = await import("../server/tutorTurn/intents.ts");
+      check("a board 'equation' with words on a side is caught (the line '4 x 10 x sin(25) - 3 x 10 = pull down - 30'); real maths and \\text units are not", proseEquation("4 \\times 10 \\times \\sin(25^\\circ) - 3 \\times 10 = pull down - 30") && !proseEquation("$a = \\frac{Mg\\sin\\theta - mg}{M+m}$") && !proseEquation("$F = 450\\text{ N}$") && !proseEquation("v = 15 m/s"));
+      check("a second note of the same kind on one line, or a note saying the same thing, is dropped; a different kind is allowed", (() => {
+        const bd = [{ id: "L1", text: "$a = 1$", kind: "formula", at: "x" }, { id: "N1", text: "net force driving both masses", kind: "annotation", targetId: "L1", tone: "focus", at: "x" }];
+        const base2 = { message: "x", theirWords: [], board: bd, problems: [], fr: false };
+        const again = applyOps([{ op: "mark", cue: 0, target: "L1", note: "net force driving the whole system" }], base2);
+        const diff = applyOps([{ op: "mark", cue: 0, target: "L1", note: "check the sign", tone: "error" }], base2);
+        return again.board.length === 0 && diff.board.length === 1; })());
+      check("boards saved with the swallowed backslash heal even after the tab became a space", repairLatex("F_ extresistive = kv^2") === "F_\\text{resistive} = kv^2" && repairLatex("P = F_{total} imes v") === "P = F_{total} \\times v" && repairLatex("an imes word") === "an imes word");
+      check("'i dont see anything', 'what is questions asking', 'which question' mean they can't see the problem", cantSeeProblem("i dont see anything") && cantSeeProblem("what is the question asking") && cantSeeProblem("which question") && !cantSeeProblem("I see, so it is 5"));
+    }
+    {
+      const { verifyTurn } = await import("../server/tutorTurn/verify.ts");
+      const used = ["A car of mass 1000 kg rolls down a 10 degree slope and the resistive force is 2 v squared. At what speed does it stop accelerating?"];
+      const t = { speech: ["That's it.", "Now let's look at the car problem on the board: it's rolling down a 10 degree slope with a resistive force of F = 2 v squared.", "When the car stops accelerating, what is the net force acting on it?"], move: "elicit", board: [], heard: "", intent: "other", diagnosis: { status: "none" }, support: 1, expects: "open" };
+      const issues = verifyTurn(t, { message: "upwards", history: [], board: [], problems: [], policy: { maxSupport: 5, allowed: [], reason: "" }, wants: {}, said: [], discussion: false, usedExercises: used });
+      check("dragging an old problem back into the conversation after the current one is solved is caught", issues.some((i) => i.code === "repeat_exercise"));
     }
     script = () => ({ fail: true });
     r = await runTutorTurn({ ...base, message: "hello?" });

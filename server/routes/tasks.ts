@@ -201,7 +201,9 @@ async function tutorTurn(
   const statedRaw = studentProblemStatement(message);
   // Their own working on the current problem (its numbers) is not a new problem — only a genuinely new statement is.
   const stated = statedRaw && isNewProblem(statedRaw, t.solution) ? statedRaw : "";
-  const focus = openProblem?.question || stated;
+  // The board's own problem (a full given line) counts too: Otto may have put it there in words, with no widget.
+  const boardGiven = [...currentBoard].reverse().find((b) => b.kind === "given" && b.text && b.text.split(/\s+/).length >= 12)?.text || "";
+  const focus = openProblem?.question || stated || boardGiven;
   if (focus && focusKeyOf(focus) !== t.solution?.focusKey) {
     const solved = await solveProblem(focus, t.sourceSubject);
     addUsage(profile, solved.tokens, "chat");

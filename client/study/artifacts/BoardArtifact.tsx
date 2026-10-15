@@ -572,7 +572,8 @@ export function keyIdeaEntries<T extends Pick<BoardEntry, "id" | "kind" | "text"
     if (!t || /\?/.test(t) || !balanced(t) || /^[)\]}=+\-−*/]/.test(t)) continue;
     const ok = e.kind === "definition" || e.kind === "strategy" || (e.kind === "formula" && !!String(e.why || "").trim() && /=/.test(t));
     if (!ok) continue;
-    const dupe = out.findIndex((x) => near(x.text, t));
+    const mathKey = (z: string) => repairLatex(String(z)).replace(/\\(?:times|cdot)|[×·]|[\s${}\\]/g, "").toLowerCase();
+    const dupe = out.findIndex((x) => near(x.text, t) || (mathKey(x.text).length >= 5 && mathKey(x.text) === mathKey(t)));
     if (dupe >= 0) { out[dupe] = e; continue; } // the newer wording of the same idea wins
     out.push(e);
   }

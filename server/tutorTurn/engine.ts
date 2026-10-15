@@ -27,7 +27,7 @@ import { supportPolicy, asksForWorkedExample, adaptationLines, type Policy } fro
 import { verifyTurn, degradeTurn, acceptsBoardOffer, claimsBoard, sceneNounsIn, type Issue, type VerifyContext } from "./verify.ts";
 import { applyOps } from "./apply.ts";
 import { sessionGuide } from "./guide.ts";
-import { asksToWriteProblem, wantsDifferent, problemStatement, wantsMoreExercises, difficultyAsked } from "./intents.ts";
+import { asksToWriteProblem, wantsDifferent, problemStatement, wantsMoreExercises, difficultyAsked, cantSeeProblem } from "./intents.ts";
 import { generateProblem, difficultyFrom } from "./problemGen.ts";
 import { exercisesSoFar, exercisesBlock, recentQuestionKinds, varietyLine, sameExercise } from "./exercises.ts";
 
@@ -43,7 +43,7 @@ export function factsBlock(f: { policy: Policy; verdict?: { gap: string; given: 
     f.wrongInChat ? "Their number for the open exercise is WRONG (code-checked): look for the first slip, no new exercise." : "",
     f.wants.why ? "THEY ASKED WHY: give the real reason first, in plain words." : "",
     f.wants.explain && !f.wants.why ? "THEY NEED IT EXPLAINED (lost, asked to be shown, or stuck): teach the missing idea plainly and write it on the board as you say it, then hand back one small step." : "",
-    f.wants.problemOnBoard ? "THEY ASKED YOU TO PUT THE PROBLEM ON THE BOARD: in THIS turn add a topic op, then the FULL problem statement (every given and the question) as a step of kind \"given\", then ask the first step. Don't ask another question instead." : "",
+    f.wants.problemOnBoard ? "THEY ASKED YOU TO PUT THE PROBLEM ON THE BOARD (or can't see it / don't know what is asked): in THIS turn say in one plain sentence what is given and what is asked, put the FULL problem on the board (the app shows it in the answer widget), then ask the first step. Don't ask a different question instead." : "",
     f.wants.different ? "THEY WANT SOMETHING TOTALLY DIFFERENT: a new problem in a different situation and, if you can, a different idea from everything used so far — not a variation of the last one. Open a fresh worksheet with a topic op." : "",
     f.wants.write ? "THEY ASKED YOU TO WRITE THEIR WORKING: put their last step on the board as their own line (owner student)." : "",
     f.wants.restart ? "THEY ASKED TO START OVER: open a fresh worksheet (topic op), restate the givens, explain the first idea slowly." : "",
@@ -126,7 +126,10 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   if (solvedNow.length) { for (const p of solvedNow) p.solved = true; result.solvedInChat = solvedNow.map((p) => p.id); }
   const wrongNow = !solvedNow.length && problems.some((p) => wrongInChat(message, p));
   const spokenRepair: SpokenRepair | null = input.spoken ? repairSpokenMath(message, spokenContextFrom([context.subject || "", ...board.map((b) => b.text || ""), ...problems.map((p) => p.question || "")])) : null;
-  const problemOnBoard = asksToWriteProblem(message);
+  // "write on board" with nothing of theirs to write, while a problem is in play, means THE PROBLEM.
+  const nothingOfTheirs = !studentBoardLine([message]);
+  const problemInPlay = problems.some((p) => !p.solved) || history.slice(-4).some((h) => h.role === "assistant" && statesAProblem(h.text));
+  const problemOnBoard = asksToWriteProblem(message) || cantSeeProblem(message) || (asksToWrite(message) && nothingOfTheirs && problemInPlay && message.length < 60);
   const wants = { why: asksWhy(message), write: asksToWrite(message) && !problemOnBoard, problemOnBoard, different: wantsDifferent(message), restart: asksToRestart(message), exercise: wantsExercise(message) || wantsMoreExercises(message), explain: needsExplanation(message, input.teaching), draw: asksToDraw(message) || acceptsBoardOffer(message, history) };
   const verdict = input.stepVerdict?.verdict ?? (solvedNow.length ? "correct" : wrongNow ? "incorrect" : undefined);
   const policy = supportPolicy({ teaching: input.teaching, needsExplanation: wants.explain, asksWhy: wants.why, asksForWorkedExample: asksForWorkedExample(message), verdict });
@@ -151,7 +154,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     + (focusText ? `\n\nTHE PROBLEM RIGHT NOW (stay on it; the session memory and earlier problems are about OTHER work — never mix them in, and use only the objects, quantities and numbers this problem and the student gave): ${focusText.slice(0, 400)}` : "")
     + (usedExercises.length ? `\n\n${exercisesBlock(usedExercises)}` : "")
     + (() => { const v = varietyLine(recentQuestionKinds(history)); return v ? `\n\n${v}` : ""; })()
-    + factsBlock({ policy, verdict: input.stepVerdict, solvedInChat: solvedNow[0]?.question, wrongInChat: wrongNow, wants, teaching: input.teaching, affect, adapt: [...sessionGuide({ message, history, log: input.teaching?.log, correctNow: verdict === "correct", openWork: problems.some((p) => !p.solved) || board.some((b) => b.kind === "gap" && b.status !== "correct"), hasObjectives: objectives.length > 0, different: wants.different, finalReached: solvedNow.length > 0 || reachedSolutionSteps(message, input.solution).includes(0) || (problems.length > 0 && problems.every((p) => p.solved)), level: [context.profile?.yearLevel, context.profile?.track === "ib" ? "IB" : context.profile?.track === "ap" ? "AP" : context.profile?.track === "bac" ? "bac" : "", ...(context.profile?.courses || []).slice(0, 4)].filter(Boolean).join(", ") }), ...adaptationLines(input.teaching?.log, { wrong: verdict === "incorrect", stuck: STUCK.test(message) })] })
+    + factsBlock({ policy, verdict: input.stepVerdict, solvedInChat: solvedNow[0]?.question, wrongInChat: wrongNow, wants, teaching: input.teaching, affect, adapt: [...sessionGuide({ message, history, log: input.teaching?.log, correctNow: verdict === "correct", openWork: problems.some((p) => !p.solved) || board.some((b) => b.kind === "gap" && b.status !== "correct"), hasObjectives: objectives.length > 0, different: wants.different, finalValue: input.solution?.finalAnswer, finalReached: solvedNow.length > 0 || reachedSolutionSteps(message, input.solution).includes(0) || (problems.length > 0 && problems.every((p) => p.solved)), level: [context.profile?.yearLevel, context.profile?.track === "ib" ? "IB" : context.profile?.track === "ap" ? "AP" : context.profile?.track === "bac" ? "bac" : "", ...(context.profile?.courses || []).slice(0, 4)].filter(Boolean).join(", ") }), ...adaptationLines(input.teaching?.log, { wrong: verdict === "incorrect", stuck: STUCK.test(message) })] })
     + (input.spoken && spokenRepair ? voiceInputBlock(message, input.spoken.alternatives, spokenRepair) : "")
     + `\n\nReply in ${fr ? "French" : "English"} unless the student is writing in another language. Return ONLY the JSON object.`;
 

@@ -14,7 +14,7 @@ import {
   makeBoardEntry, makeGeometryEntry, makeGraphEntry, makeFlowEntry, makeTableEntry, makeSourceEntry, makeWidgetEntry, makeSvgEntry,
   makeProblem, makeObjectives, isDuplicateBoardEntry, isDuplicateProblem, resolveBoardTarget,
 } from "../claude.ts";
-import { latexifyBoardLine, repairLatex } from "../tutorAdapt.ts";
+import { latexifyBoardLine, repairLatex, similarity } from "../tutorAdapt.ts";
 import { computedGapKey, solvedGapKey, typesetPlainMath, numbersAreTheirs, asksForSeveralValues, repeatsSolvedCalculation, nearDuplicateLine } from "../tutor.ts";
 
 export interface ApplyContext {
@@ -105,6 +105,9 @@ export function applyOps(ops: BoardOp[], c: ApplyContext): Applied {
         const hit = resolveBoardTarget(String(o.target || ""), c.board);
         if (!hit?.id) { drop(`no line ${o.target ?? ""}`); break; }
         if (out.board.filter((e) => e.kind === "annotation").length >= 2) { drop("two marks a turn"); break; }
+        // One note per line: a second note on the same line, or one saying the same thing as another, is clutter.
+        const onLine = [...c.board, ...out.board].filter((e) => e.kind === "annotation" && e.targetId === hit.id);
+        if (onLine.some((e) => (e.tone || "focus") === (o.tone || "focus")) || [...c.board, ...out.board].filter((e) => e.kind === "annotation").slice(-6).some((e) => e.text && o.note && similarity(String(e.text), String(o.note)) >= 0.5)) { drop("that line is already marked"); break; }
         // The part to circle must actually be in the line (else the whole line is marked).
         const plain = (x: string) => x.replace(/[\s$\\{}]/g, "").toLowerCase();
         const part = o.part && plain(String(hit.text || "")).includes(plain(o.part)) ? o.part : undefined;
