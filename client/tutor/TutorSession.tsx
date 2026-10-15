@@ -11,6 +11,7 @@ import { BoardArtifact, MathText } from "../study/artifacts/BoardArtifact.tsx";
 import { TutorDesmos } from "./TutorDesmos.tsx";
 import { enterFullscreen, exitFullscreen, inFullscreen } from "./fullscreen.ts";
 import { asksToLook } from "../../shared/lookRequest.ts";
+import { hideToolLeaks } from "../../shared/toolLeak.ts";
 import { TutorCanvas, type TutorCanvasHandle } from "./TutorCanvas.tsx";
 import { PageTour } from "../PageTour.tsx";
 import { TOURS } from "../tours.ts";
@@ -74,7 +75,7 @@ export function mergeBoardById<T extends { id: string; at?: string; createdAt?: 
  *  own answer with the maths typeset ("My answer: $…$ — ✓ right") instead of the raw bracketed message. */
 export function friendlyExerciseText(text: string, en: boolean): string {
   const m = /^\s*\[(?:Exercise|Exercice)\]\s*(?:I answered|J'ai répondu)\s*["«]\s*([\s\S]*?)\s*["»]\s*—\s*([^\n(]*)/i.exec(text);
-  if (!m) return text;
+  if (!m) return hideToolLeaks(text);
   const verdict = /NOT graded|non not/i.test(m[2]) ? (en ? "not graded (the key was off)" : "non noté (la clé était fausse)") : /PARTLY|en partie/i.test(m[2]) ? (en ? "partly right" : "en partie juste") : /\bright\b|juste/i.test(m[2]) && !/wrong|faux/i.test(m[2]) ? (en ? "✓ right" : "✓ juste") : (en ? "✗ not yet" : "✗ pas encore");
   return `${en ? "My answer" : "Ma réponse"} : ${autoMathLine(m[1])} — ${verdict}`;
 }
@@ -961,7 +962,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           </div>
         )}
         <AskOttoPanel
-          variant="dock"
+          variant="dock" bargeIn
           task={task} currentStep={undefined} input={input} setInput={setInput} sending={sending}
           error={error} pendingMsg={pendingMsg} onSend={(o, v, _canvas, sp) => void send(o, v, sp)}
           onOpenNote={noop} onOpenDeck={noop} onOpenQuiz={noop}

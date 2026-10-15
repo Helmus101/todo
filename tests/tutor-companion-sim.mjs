@@ -3,7 +3,7 @@
 // figures drawn to scale (INCLINE_ON_BOARD). Real loop, scripted model (fetch intercepted for api.deepseek.com).
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
 delete process.env.GEMINI_API_KEY;
-const { runTutorTurn, nextTeachingState, teachingBlock, evidenceKindFor, reachedSolutionSteps, statesFinalAnswer, relevantToFocus, parsePlan, tutorTools, applyTool, inventsProblemOnBoard, statesGapAnswer, isTheirStep, studentBoardLine, boardLineSet } = await import("../server/tutor.ts");
+const { nextTeachingState, teachingBlock, evidenceKindFor, reachedSolutionSteps, statesFinalAnswer, relevantToFocus, parsePlan, tutorTools, applyTool, inventsProblemOnBoard, statesGapAnswer, isTheirStep, studentBoardLine, boardLineSet } = await import("../server/tutor.ts");
 const { toSolution, solveProblem, solutionBlock, focusKeyOf, isNewProblem, solutionValues } = await import("../server/solver.ts");
 const { buildInclineScene } = await import("../shared/inclineScene.ts");
 
@@ -38,7 +38,6 @@ export async function runTutorCompanionSim(check, section) {
   check("a solution whose answer matches its own check is verified, with every step's number computed by code", sol.verified && Math.abs(sol.value - 25537.81) < 0.01 && Math.abs(sol.steps[2].value - 2553.78) < 0.01 && sol.skill === "power on an incline");
   check("a solution whose stated answer disagrees with its check is NOT verified", !toSolution(truckQ, { ...truckJson, final_answer: "40125 W" }).verified);
   check("a non-numeric answer (an essay point) needs no check", toSolution("Why did WWI start?", { final_answer: "alliance system + nationalism + the assassination as trigger", steps: [{ idea: "long-term causes" }] }).verified);
-
   script = (b, i) => i === 0 ? { content: JSON.stringify({ ...truckJson, final_answer: "40125 W" }) } : { content: "```json\n" + JSON.stringify(truckJson) + "\n```" };
   calls = [];
   const solved = await solveProblem(truckQ, "Physics");
@@ -52,16 +51,6 @@ export async function runTutorCompanionSim(check, section) {
   check("the hidden solution block steers the tutor and says never reveal", /WORKED SOLUTION — FOR YOU ONLY \(verified by code\)/.test(solutionBlock(sol)) && /Never reveal it/.test(solutionBlock(sol)) && /subtracting friction/.test(solutionBlock(sol)));
   check("a student number matching a step is recognised (2553.8 → step 3; 25,538 → the final answer)", reachedSolutionSteps("so F is 2553.8", sol).includes(3) && reachedSolutionSteps("25,538 W", sol).includes(0) && !reachedSolutionSteps("2600", sol).length);
   check("statesFinalAnswer: the answer counts, a given that equals nothing doesn't, small answers only as '= 4'", statesFinalAnswer("that comes to 25,537.8 W", sol) && !statesFinalAnswer("the truck is 900 kg", sol) && statesFinalAnswer("so x = 4", { ...sol, value: 4, statement: "3x + 7 = 19" }) && !statesFinalAnswer("step 4 of 6", { ...sol, value: 4, statement: "3x + 7 = 19" }));
-
-  // ── the turn uses it ──
-  script = (b, i) => i === 0 ? { content: '<plan>{"diagnosis":"computational","action":"probe","help_level":1}</plan>Hm, so the power is 25,538 W — does that make sense?' } : { content: '<plan>{"diagnosis":"none","action":"probe","help_level":1}</plan>Nice set-up. What force does the engine have to supply?' };
-  calls = [];
-  let r = await runTutorTurn({ history: [{ role: "user", text: truckQ }, { role: "assistant", text: "What's your plan?" }], message: "I'd find the force first", board: [], problems: [], objectives: [], context: {}, lang: "en", solution: sol });
-  check("the worked solution is in the prompt, the reply never states its final answer", /WORKED SOLUTION/.test(sys(calls[0])) && /gives away the answer/.test(lastUser(calls[1])) && !/25,?538/.test(r.reply) && r.plan?.action === "probe");
-  script = (b) => /Problem to fix/.test(lastUser(b)) ? { content: "Yes, that's right — 2553.8 N. What does the engine have to supply on top of it?" } : { content: "Let's check that multiplication again — try 900 × 9.8 × sin(12°) + 360 + 360." };
-  calls = [];
-  r = await runTutorTurn({ history: [], message: "so F = 2553.8 N", board: [], problems: [], objectives: [], context: {}, lang: "en", solution: sol });
-  check("a student number that IS a solution step is confirmed (the model is told by code, and a final model rewrite replaces any redo request)", /VERIFIED BY CODE: the number they just gave matches step 3/.test(sys(calls[0])) && /that's right/i.test(r.reply));
 
   // ── teaching state ──
   check("parsePlan reads the hidden plan leniently", parsePlan('<plan>{"diagnosis":"conceptual","action":"explain","help_level":7}</plan>x')?.helpLevel === 4 && parsePlan("<plan>nope</plan>") === undefined);
@@ -82,20 +71,6 @@ export async function runTutorCompanionSim(check, section) {
 
   // ── the board ──
   check("a board line about something else is refused; one about the problem is kept", !relevantToFocus("Photosynthesis needs sunlight and chlorophyll", [truckQ]) && relevantToFocus("$F = mg\\sin 12^\\circ + 360$", [truckQ]) && relevantToFocus("anything", []));
-  script = (b, i) => i === 0
-    ? { tool_calls: [tc("WRITE_TO_BOARD", { text: "Fun fact: photosynthesis converts sunlight into chemical energy", kind: "insight" }), tc("WRITE_TO_BOARD", { text: "Truck: 900 kg, slope 12°, friction 360 N", kind: "given" })] }
-    : { content: "What's the first force you'd look at?" };
-  calls = [];
-  r = await runTutorTurn({ history: [{ role: "user", text: truckQ }], message: "ok", board: [], problems: [], objectives: [], context: {}, lang: "en", solution: sol });
-  check("…in a real turn: the off-topic line bounces, the givens land", r.board.length === 1 && /900 kg/.test(r.board[0].text) && /isn't about the problem/.test(calls[1].messages.filter((m) => m.role === "tool").map((m) => m.content).join(" ")));
-
-  script = (b, i) => i === 0
-    ? { tool_calls: [tc("SVG_ON_BOARD", { caption: "slope", svg: '<svg viewBox="0 0 400 200"><line x1="0" y1="200" x2="400" y2="120" stroke="black"/><text x="40" y="190">12°</text></svg>' }), tc("INCLINE_ON_BOARD", { angle: 12, forces: ["weight", "normal", "friction", "applied"], motion: "up", labels: { friction: "360 N", applied: "F = ?" } })] }
-    : { content: "Look at the figure — which forces fight the motion?" };
-  calls = [];
-  r = await runTutorTurn({ history: [{ role: "user", text: truckQ }], message: "can you draw it", board: [], problems: [], objectives: [], context: {}, lang: "en", solution: sol });
-  const toolOut = calls[1].messages.filter((m) => m.role === "tool").map((m) => m.content).join(" ");
-  check("a hand-drawn SVG with an angle is refused (draw to scale), INCLINE_ON_BOARD draws it", /must be drawn to scale/.test(toolOut) && r.board.length === 1 && r.board[0].kind === "svg" && /KaTeX_Main/.test(r.board[0].svg));
   check("the tutor is offered INCLINE_ON_BOARD, and SVG_ON_BOARD is described as qualitative only", tutorTools(false).some((t) => t.name === "INCLINE_ON_BOARD") && /QUALITATIVE picture only/.test(tutorTools(false).find((t) => t.name === "SVG_ON_BOARD").description));
 
   // ── the incline figure is geometrically exact ──
@@ -132,11 +107,5 @@ export async function runTutorCompanionSim(check, section) {
   check("isTheirStep / studentBoardLine", isTheirStep("$P = F v$", ["power is force times velocity"]) && !isTheirStep("$P = F v$", ["no idea"]) && studentBoardLine(["can you write 2553.8 times 10 on the board"]) === "2553.8 times 10" && studentBoardLine(["write it on the board", "F = 2553.8 N"]) === "F = 2553.8 N" && studentBoardLine(["write it down"]) === "");
   check("one gap a turn, and none while the board ends on an open gap", /one gap a turn/.test((() => { const c = ctx(); applyTool("WRITE_TO_BOARD", { text: "$F = ?$", kind: "gap", expectedAnswer: "2553.8" }, c); return applyTool("WRITE_TO_BOARD", { text: "$P = ?$", kind: "gap", expectedAnswer: "25538" }, c); })()) && /already ends on an open gap/.test(write({ text: "$P = ?$", kind: "gap", expectedAnswer: "25538" }, { board: [{ id: "g1", kind: "gap", text: "$F = ?$", expectedAnswer: "2553.8", at: "z" }] }).out));
   check("line numbers include this turn's new lines", [...boardLineSet([{ id: "a", kind: "given", text: "x", n: 4 }, { id: "f", kind: "focus", text: "f" }], [{ id: "b", kind: "result", text: "y" }, { id: "c", kind: "annotation", text: "z" }])].join() === "4,5");
-
-  // Asked to write, every model write refused → code writes THEIR line, and the reply's claim stands.
-  script = (b, i) => i < 2 ? { tool_calls: [tc("WRITE_TO_BOARD", { text: "Photosynthesis is cool", kind: "insight" })] } : { content: "Done — it's on the board. What would you do with it next?" };
-  calls = [];
-  r = await runTutorTurn({ history: [{ role: "user", text: truckQ }], message: "write F = 2553.8 N on the board", board: [], problems: [], objectives: [], context: {}, lang: "en", solution: sol });
-  check("'write it on the board' always ends with their line on the board", r.board.length === 1 && r.board[0].owner === "student" && /2553\.8/.test(r.board[0].text) && /on the board/.test(r.reply));
   globalThis.fetch = realFetch;
 }

@@ -100,7 +100,11 @@ export function useSpeechRecognition({ lang, onResult, onInterim, onError }: Use
   }, []);
   const scheduleFlush = useCallback(() => {
     if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
-    flushTimerRef.current = setTimeout(flushPending, 900);
+    // Adaptive end of utterance: a trailing filler or connective ("so", "and", "um", "donc", "alors") means the student is
+    // still reasoning aloud, so wait longer before sending; a clean ending flushes at 1.2 s.
+    const tail = pendingFinalRef.current.trim().toLowerCase().split(/\s+/).slice(-1)[0] || "";
+    const thinking = /^(?:so|and|but|because|then|um+|uh+|er+|hmm+|like|if|or|donc|alors|et|mais|parce|euh+|ben|puis|si|ou)$/.test(tail);
+    flushTimerRef.current = setTimeout(flushPending, thinking ? 2500 : 1200);
   }, [flushPending]);
 
   const createAndStart = useCallback(() => {

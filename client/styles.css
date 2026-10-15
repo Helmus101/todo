@@ -4718,6 +4718,15 @@ mark.otto-mark { background: linear-gradient(transparent 12%, color-mix(in srgb,
 .sm-board-undo { margin-left: auto; font: inherit; font-size: 12px; padding: var(--space-1) var(--space-3); border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink-2, inherit); cursor: pointer; }
 .sm-board-undo:hover { border-color: var(--ink-3, currentColor); color: var(--ink); }
 .sm-board-undo:focus-visible, .sm-board-ideas-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Earlier worksheets on the board fold into one quiet row each (BoardArtifact boardSectionStarts) — tap to reopen. */
+.sm-board-section-row { display: flex; align-items: center; gap: var(--space-2); width: 100%; margin: 0 0 var(--space-2); padding: var(--space-2) var(--space-3); font: inherit; font-size: 13px; color: var(--ink-2, var(--ink)); background: color-mix(in srgb, var(--surface) 96%, var(--ink) 4%); border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; text-align: left; opacity: .85; }
+.sm-board-section-row:hover { opacity: 1; }
+.sm-board-section-row.is-open { opacity: 1; margin-bottom: var(--space-3); }
+.sm-board-section-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sm-board-section-chev { flex: none; width: 1em; }
+.sm-board-section-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sm-board-section-title p { margin: 0; display: inline; }
+.sm-board-section-count { flex: none; font-size: 11px; padding: 0 6px; border-radius: 999px; background: var(--line); }
 /* Key ideas — the board's revision strip: definitions, rules, strategies, the summary. */
 .sm-board-ideas { margin: var(--space-1) 0 var(--space-4); border: 1px solid var(--line); border-radius: var(--radius); background: color-mix(in srgb, var(--surface) 92%, var(--accent) 8%); }
 .sm-board-ideas-head { display: flex; align-items: center; gap: var(--space-2); width: 100%; padding: var(--space-2) var(--space-3); font: inherit; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-2, var(--ink)); background: none; border: 0; cursor: pointer; text-align: left; }
@@ -4841,3 +4850,15 @@ mark.otto-mark { background: linear-gradient(transparent 12%, color-mix(in srgb,
   /* The folded Draw button is icon-only so it covers less of the board. */
   .tc-draw-open > span { display: none; }
 }
+
+/* Otto's pen marks on a board line (BoardArtifact markClass). */
+.sm-mark { position: relative; border-radius: 10px; animation: sm-mark-in .45s ease-out both; }
+.sm-mark-circle { box-shadow: 0 0 0 2px var(--vermilion, #d4452f); border-radius: 999px; padding: 2px 12px; }
+.sm-mark-box { outline: 2px solid var(--vermilion, #d4452f); outline-offset: 3px; border-radius: 6px; }
+.sm-mark-underline { text-decoration: underline wavy var(--vermilion, #d4452f); text-underline-offset: 5px; }
+.sm-mark-arrow::before { content: "➜"; position: absolute; left: -22px; top: 0; color: var(--vermilion, #d4452f); }
+.sm-mark-cross { opacity: .7; text-decoration: line-through; text-decoration-color: var(--vermilion, #d4452f); }
+.sm-mark-tick::after { content: " ✓"; color: var(--green, #2f8f4e); font-weight: 600; }
+.sm-mark-good.sm-mark-circle, .sm-mark-good.sm-mark-box { box-shadow: 0 0 0 2px var(--green, #2f8f4e); outline-color: var(--green, #2f8f4e); }
+@keyframes sm-mark-in { from { opacity: 0; transform: scale(.97); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .sm-mark { animation: none; } }

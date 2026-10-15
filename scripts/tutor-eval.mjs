@@ -4,7 +4,7 @@
 // Each persona is played by the same model with a short brief; the REAL tutor pipeline (solver + runTutorTurn + guards)
 // answers. Transcripts are printed for a human to read: does Otto diagnose, choose the right amount of help, stay
 // correct, and leave the student doing the thinking?
-import { runTutorTurn } from "../server/tutor.ts";
+import { runTutorTurn } from "../server/tutorTurn/engine.ts";
 import { solveProblem } from "../server/solver.ts";
 import { createTutorChat } from "../server/claude.ts";
 

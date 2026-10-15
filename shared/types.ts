@@ -95,6 +95,8 @@ export interface Profile {
   // student learns, with the evidence behind each belief. One object so it's validated, capped and reset as
   // a unit. Fully visible in the transparency panel (spec §30) and resettable from Settings.
   conceptModel?: StudentModelShape;
+  /** Assistance ledger (server/tutorTurn/ledger.ts), capped at 50. */
+  assistance?: AssistanceEntry[];
   // The concept/prerequisite graph (server/conceptGraph.ts) — the curated spine plus the concepts discovered
   // in this student's own courses and uploaded documents. Persisted so discovery is paid for once.
   conceptGraph?: ConceptGraphShape;
@@ -574,6 +576,7 @@ export function normalizeProfile(p: any): Profile {
     // keep it only if it's a plausibly-shaped object, let the server-side normalizers do the real work
     // once those are wired up (not yet, for these two — see the plan's "explicitly deferred" section).
     conceptModel: p?.conceptModel && typeof p.conceptModel === "object" && p.conceptModel.concepts && typeof p.conceptModel.concepts === "object" ? p.conceptModel : undefined,
+    assistance: Array.isArray(p?.assistance) ? p.assistance.filter((a: any) => a && typeof a.skill === "string" && typeof a.at === "string" && (a.status === "pending" || a.status === "passed")).slice(-50) : undefined,
     conceptGraph: p?.conceptGraph && typeof p.conceptGraph === "object" && p.conceptGraph.nodes && typeof p.conceptGraph.nodes === "object" ? p.conceptGraph : undefined,
     // Validated more concretely — these two are actively read/written every Tutor turn as of this change.
     tutorSessions: Array.isArray(p?.tutorSessions)
@@ -1231,6 +1234,30 @@ export interface TutorTeachingState {
   /** Their motivational state last turn (expert tutors track it alongside what they know), and for how many turns in a row. */
   affect?: "frustrated" | "unsure" | "confident" | "neutral";
   affectStreak?: number;
+  /** Support level of the move delivered last turn (0 = none … 5 = a worked example), set by code from the move. */
+  lastSupport?: number;
+  /** Turns in a row with no verified progress (no right step, no reached solution step). Drives "explain after struggle". */
+  unproductive?: number;
+  /** The last few turns as data — move, support, verdict, words — for metrics and repetition checks. Max 30. */
+  log?: TutorTurnRecord[];
+}
+
+/** One tutor turn, recorded by code (never the student's own words). */
+/** Help Otto gave at support level 4+ on a skill, until the student succeeds on it alone in a later sitting. */
+export interface AssistanceEntry { skill: string; level: number; at: string; status: "pending" | "passed"; settledAt?: string }
+
+export interface TutorTurnRecord {
+  at: string;
+  move: string;
+  support: number;
+  intent: string;
+  diagnosis: string;
+  angle?: string;
+  verdict?: "correct" | "incorrect";
+  words: number;
+  studentWords: number;
+  repaired: boolean;
+  ms: number;
 }
 
 export interface WebTask {
@@ -1554,6 +1581,8 @@ export interface DailyPracticeProblem {
  *  `DailyPracticeProblem` (one free-response per day). */
 export interface TaskProblem {
   id: string;
+  /** Which sentence of the tutor's reply posted it (the board reveals it as that sentence is spoken). */
+  cue?: number;
   /** Client-only, sent with chat turns: the student has already answered this one correctly. */
   solved?: boolean;
   /** The question/prompt itself — one clear sentence or a short problem statement. */
@@ -1682,6 +1711,12 @@ export interface BoardEntry {
   /** kind === "annotation": the board entry this note points at (highlight / circle a mistake / point to it), and how. */
   targetId?: string;
   tone?: "error" | "hint" | "good" | "focus";
+  /** A mark's shape on its target line (circle, underline, box, arrow, cross, tick) — drawn over the line, not as text. */
+  markStyle?: "circle" | "underline" | "box" | "arrow" | "cross" | "tick";
+  /** The exact bit of the target line a mark points at ("2x", "−T"); the whole line when absent. */
+  markPart?: string;
+  /** Which sentence of the tutor's reply this entry belongs to: the board reveals it as that sentence is spoken. */
+  cue?: number;
   /** Present only when kind === "diagram" — the figure's shapes, rendered as SVG (BoardArtifact.tsx). Capped
    *  at 15 ops server-side (makeDiagramEntry, server/claude.ts): enough for a labeled triangle or a small
    *  graph, not enough to build a full illustration op-by-op. */

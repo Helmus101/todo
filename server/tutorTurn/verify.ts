@@ -1,0 +1,141 @@
+// THE PEDAGOGY CHECK — a handful of structural checks on the structured turn, run in code before anything reaches the
+// student. They replace the old pile of regex guards: with a structured turn, a tool call can't leak into the text, a
+// board pointer either names a listed line or it doesn't, and the amount of help is a number to compare with a limit.
+//
+// verifyTurn() lists what's wrong (each issue is a precise instruction for the one repair call); degradeTurn() fixes
+// what code can fix on its own (drops a leaking sentence or a bad board op, trims to one question) when the repair
+// call didn't — so the reply that ships is always the model's own words, never a canned sentence.
+import type { BoardEntry, TaskProblem, TutorSolution } from "../../shared/types.ts";
+import { MOVE_SUPPORT, type BoardOp, type TurnOutput } from "../../shared/tutorTurn.ts";
+import { boardLineNumbers } from "../../shared/boardLines.ts";
+import { resolveBoardTarget, leaksAnyProblemAnswer } from "../claude.ts";
+import { replyStatesValue, ignoresWhy, repeatsRecentReply, repeatsRecentQuestion, inventedNumbers, harshOpener } from "../tutorAdapt.ts";
+import { statesFinalAnswer, wrongArithmetic, badGap, mentionsMechanics } from "../tutor.ts";
+import type { Policy } from "./policy.ts";
+
+export interface VerifyContext {
+  message: string;
+  history: { role: string; text: string }[];
+  board: BoardEntry[];
+  problems: TaskProblem[];
+  solution?: TutorSolution;
+  policy: Policy;
+  /** What code detected the student wants this turn. */
+  wants: { why: boolean; write: boolean; restart: boolean; exercise: boolean };
+  /** Everything the student and the problem said — the only legitimate source of numbers. */
+  said: string[];
+  discussion: boolean;
+}
+
+export interface Issue {
+  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh";
+  /** The instruction for the repair call. */
+  fix: string;
+  /** A leak or a pointer at nothing must be fixed; the rest are quality. */
+  hard: boolean;
+}
+
+/** Words a reply may use for its move (maths spans count as one word). */
+export function wordBudget(move: TurnOutput["move"]): number {
+  return move === "worked_example" ? 120 : move === "explain" || move === "worked_step" ? 95 : move === "practice" || move === "recap" ? 60 : 50;
+}
+export const countWords = (text: string): number => String(text || "").replace(/\$[^$]*\$/g, " x ").split(/\s+/).filter(Boolean).length;
+
+const speechText = (t: TurnOutput) => t.speech.join(" ");
+const opText = (o: BoardOp) => [o.text, o.why, o.note, o.question, o.hint, o.spec ? JSON.stringify(o.spec) : ""].filter(Boolean).join(" ");
+
+/** The open answer keys this turn must not reveal: the verified solution's final answer, open gaps' keys, unsolved
+ *  exercises' answers. A value the student already said themselves is theirs. */
+export function revealsKey(text: string, c: VerifyContext): string | null {
+  if (!text.trim()) return null;
+  if (c.solution && statesFinalAnswer(text, c.solution) && !statesFinalAnswer(c.message, c.solution)) return "the problem's final answer";
+  for (const g of c.board) {
+    if (g.kind !== "gap" || !g.expectedAnswer || g.status === "correct") continue;
+    if (replyStatesValue(text, g.expectedAnswer) && !replyStatesValue(c.message, g.expectedAnswer)) return `the open gap's answer (${g.expectedAnswer})`;
+  }
+  const open = c.problems.filter((p) => !p.solved);
+  if (open.length && leaksAnyProblemAnswer(text, open) && !leaksAnyProblemAnswer(c.message, open)) return "the open exercise's answer";
+  return null;
+}
+
+/** Does a board pointer name a line the student can actually see? */
+export function targetExists(target: string | undefined, board: BoardEntry[]): boolean {
+  if (!target) return false;
+  const n = /^#?\s*(\d{1,3})$/.exec(target.trim());
+  if (n) return [...boardLineNumbers(board as any).values()].includes(Number(n[1]));
+  return !!resolveBoardTarget(target, board);
+}
+
+/** Every "line N" / "#N" in the speech must be a real margin number. */
+function missingLineRefs(speech: string, board: BoardEntry[]): number[] {
+  const nums = new Set(boardLineNumbers(board as any).values());
+  return [...speech.matchAll(/\b(?:line|ligne)\s*#?\s*(\d{1,3})\b|(?<![\w&])#(\d{1,3})\b/gi)].map((m) => Number(m[1] || m[2])).filter((n) => !nums.has(n));
+}
+
+export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
+  const out: Issue[] = [];
+  const say = speechText(t);
+  const level = MOVE_SUPPORT[t.move];
+  // 1. Help within the limit code set for this turn.
+  if (level > c.policy.maxSupport) out.push({ code: "support", hard: true, fix: `"${t.move}" gives too much help right now (level ${level}; the limit is ${c.policy.maxSupport} because ${c.policy.reason}). Choose one of: ${c.policy.allowed.join(", ")} — let them take the next step.` });
+  // 2. No answer given away (an explanation may show steps, never the final answer or an open blank's value).
+  const leakSpeech = revealsKey(say, c);
+  if (leakSpeech) out.push({ code: "leak", hard: true, fix: `the speech states ${leakSpeech} — they must find it. Keep the idea, drop the value, and end with one question that gets them there.` });
+  for (const o of t.board) { const l = o.op !== "gap" ? revealsKey(opText(o), c) : null; if (l) { out.push({ code: "leak", hard: true, fix: `a board ${o.op} shows ${l} — leave it as '?' or don't write it.` }); break; } }
+  // 3. Every pointer names a real board line.
+  const missing = missingLineRefs(say, c.board);
+  if (missing.length) out.push({ code: "target", hard: true, fix: `the speech mentions line ${missing[0]}, which isn't on the board. Use a margin number from the listing, or say what the line says.` });
+  const badMark = t.board.find((o) => o.op === "mark" && !targetExists(o.target, c.board));
+  if (badMark) out.push({ code: "target", hard: true, fix: `the mark points at "${badMark.target ?? ""}", which isn't a line on the board — use a #n from the listing.` });
+  // 4. What they asked for is actually done.
+  if (c.wants.why && (!["probe_why", "explain", "hint_concept", "worked_step", "worked_example", "correct_error", "revoice"].includes(t.move) || ignoresWhy(say))) out.push({ code: "intent_why", hard: false, fix: "they asked WHY. Give the actual reason first, in 1–2 plain sentences (because…, so that…, it means…) — repeating the instruction is not a reason. Then at most one question." });
+  if (c.wants.write && !t.board.some((o) => o.op === "step" && o.owner === "student")) out.push({ code: "intent_write", hard: false, fix: 'they asked you to write their working on the board: add a step op with owner "student" holding exactly the step they last stated, tidied into $…$.' });
+  if (c.wants.restart && !t.board.some((o) => o.op === "topic")) out.push({ code: "intent_restart", hard: false, fix: 'they asked to start over: begin with a topic op (a fresh worksheet), put the givens up again as one step, and explain the very first idea plainly.' });
+  if (c.wants.exercise && !t.board.some((o) => o.op === "problem")) out.push({ code: "intent_exercise", hard: false, fix: "they asked for an exercise: add a problem op (full statement, one short answer, a check expression for a number, the format in 'format')." });
+  // 5. One question, last.
+  const qs = t.speech.map((s, i) => ({ i, q: /\?\s*["»”)]*\s*$/.test(s.replace(/\$[^$]*\$/g, "x")) })).filter((x) => x.q);
+  if (qs.length > 1 || (qs.length === 1 && qs[0].i !== t.speech.length - 1)) out.push({ code: "questions", hard: false, fix: "ask at most ONE question, as the last sentence." });
+  // 6. Length for the move.
+  if (countWords(say) > wordBudget(t.move)) out.push({ code: "length", hard: false, fix: `too long for "${t.move}" (${countWords(say)} words; keep it under ${wordBudget(t.move)}). Fewer, shorter sentences — longer maths goes on the board.` });
+  // 7. Board tidy: one new visual; one valid gap.
+  if (t.board.filter((o) => o.op === "draw").length > 1) out.push({ code: "visuals", hard: false, fix: "at most ONE new visual per turn — keep the most useful one." });
+  for (const g of t.board.filter((o) => o.op === "gap")) { const bad = badGap(String(g.text || ""), c.board.map((b) => String(b.text || ""))); if (bad) { out.push({ code: "gap", hard: false, fix: `gap "${g.text}": ${bad}` }); break; } }
+  // 8. Correct maths, and no numbers from nowhere (a worked example may use its own).
+  const maths = [say, ...t.board.filter((o) => o.op === "step").map((o) => o.text || "")].join("\n");
+  const bad = wrongArithmetic(maths, c.message);
+  if (bad) out.push({ code: "arithmetic", hard: true, fix: `a calculation is wrong: ${bad}. Recompute it.` });
+  if (!c.discussion && t.move !== "worked_example") {
+    const invented = inventedNumbers(say, [...c.said, ...c.board.map((b) => b.text), ...c.problems.map((p) => p.question), ...(c.solution ? [c.solution.statement, ...c.solution.steps.map((s) => s.result || "")] : [])]);
+    if (invented.length) out.push({ code: "numbers", hard: false, fix: `it uses numbers nobody gave (${invented.slice(0, 3).join(", ")}) — only the problem's, the student's, or the verified solution's.` });
+  }
+  // 9. Not a repeat of what just failed to land; no app machinery; never harsh.
+  if (repeatsRecentReply(say, c.history) || repeatsRecentQuestion(say, c.history)) out.push({ code: "repeat", hard: false, fix: "you said almost exactly this a moment ago and it didn't land. Change the angle: a smaller step, a picture on the board, numbers instead of letters, or explain it plainly." });
+  if (mentionsMechanics(say)) out.push({ code: "mechanics", hard: false, fix: "it talks about the app's machinery — just teach." });
+  const harsh = harshOpener(say);
+  if (harsh) out.push({ code: "harsh", hard: false, fix: `it opens with "${harsh}" — start with what's worth keeping in their thinking.` });
+  return out;
+}
+
+/** Fix in code what the repair call didn't: drop leaking sentences and ops, bad pointers, extra visuals and invalid
+ *  gaps; keep only the last question; trim an over-long reply at sentence boundaries. Never adds words of its own. */
+export function degradeTurn(t: TurnOutput, c: VerifyContext): TurnOutput {
+  let speech = t.speech.filter((s) => !revealsKey(s, c));
+  const nums = new Set(boardLineNumbers(c.board as any).values());
+  speech = speech.map((s) => s.replace(/\s*\(?(?:look at |see |on )?(?:line|ligne)\s*#?\s*(\d{1,3})\)?/gi, (m, n) => (nums.has(Number(n)) ? m : "")).trim()).filter(Boolean);
+  // One question, kept at the end: earlier questions go (their statements stay).
+  const lastQ = [...speech].reverse().find((s) => /\?\s*["»”)]*\s*$/.test(s));
+  speech = speech.filter((s) => !/\?\s*["»”)]*\s*$/.test(s) || s === lastQ);
+  if (lastQ && speech[speech.length - 1] !== lastQ) speech = [...speech.filter((s) => s !== lastQ), lastQ];
+  // Over budget: keep the opening sentences and the closing question.
+  while (speech.length > 2 && countWords(speech.join(" ")) > wordBudget(t.move)) speech.splice(speech.length - 2, 1);
+  let draws = 0;
+  const board = t.board.filter((o) => {
+    if (o.op !== "gap" && revealsKey(opText(o), c)) return false;
+    if (o.op === "mark" && !targetExists(o.target, c.board)) return false;
+    if (o.op === "draw" && ++draws > 1) return false;
+    if (o.op === "gap" && badGap(String(o.text || ""), c.board.map((b) => String(b.text || "")))) return false;
+    return true;
+  }).map((o) => ({ ...o, cue: Math.min(o.cue, Math.max(0, speech.length - 1)) }));
+  // Empty speech (every sentence leaked) is returned as is: the engine then asks for a rewrite rather than shipping a leak.
+  return { ...t, speech, board };
+}

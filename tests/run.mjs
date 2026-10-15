@@ -72,8 +72,8 @@ import { trimFreeTTSWatermark } from "../server/ttsTrim.ts";
 import { openerMemoryBlock, cleanOpener, tutorOpener } from "../server/claude.ts";
 import { sessionTopic, relativeWhen, sessionMemoryForPrompt } from "../client/tutor/tutorSessions.ts";
 import { wantsArtifactTools } from "../server/claude.ts";
-import { rankVoices, isMaleVoice, cloudChunks, toSpeakableText, stripLatexForSpeech } from "../client/voice/useSpeechSynthesis.ts";
-import { traceLines, splitMergedSteps, looksLikeRealMath } from "../client/study/artifacts/BoardArtifact.tsx";
+import { rankVoices, isMaleVoice, cloudChunks, toSpeakableText, stripLatexForSpeech, mathSymbolsToWords, spokenBrackets } from "../client/voice/useSpeechSynthesis.ts";
+import { traceLines, splitMergedSteps, looksLikeRealMath, boardSectionStarts, boardSectionTitle, keyIdeaEntries } from "../client/study/artifacts/BoardArtifact.tsx";
 import { pcmToWav, leaksAnswer, scrubAnswerLeak, makeProblem as makeProblemLeak, makePracticeProblem as makePracticeLeak, wordWrapChunks, leaksAnyProblemAnswer, makeInteractiveEntry, stripId3v2, stripId3v1, stripLeakedToolCallSyntax } from "../server/claude.ts";
 import { lastMessageKey } from "../client/voice/replyKey.ts";
 import { subjectMastery } from "../shared/types.ts";
@@ -2986,7 +2986,7 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   // so `sending` pauses the mic even with bargeIn on; only the speaking half stays gated off by bargeIn).
   check("mic stays open during speech when barge-in is on (pause-the-mic is gated off for the speaking half)", /const busy = sending \|\| \(!bargeIn && synth\.speaking\);/.test(askOttoSrc));
   check("the mic is paused during generation too, not just during speech (reported: mic stayed open the whole time a reply was generating)", /busy && !wasBusyRef\.current/.test(askOttoSrc) && /recog\.abort\(\);/.test(askOttoSrc));
-  check("live interim text cancels the TTS mid-sentence (≥2 words, echo-filtered)", /onInterim: \(text\) =>/.test(askOttoSrc) && /echoFilterRef\.current\.isEcho\(text\)/.test(askOttoSrc) && /text\.trim\(\)\.split\(\/\\s\+\/\)\.length >= 2\) synth\.cancel\(\)/.test(askOttoSrc));
+  check("live interim text cancels the TTS mid-sentence (≥2 words, echo-filtered, sustained 400 ms)", /onInterim: \(text\) =>/.test(askOttoSrc) && /echoFilterRef\.current\.isEcho\(text\)/.test(askOttoSrc) && /text\.trim\(\)\.split\(\/\\s\+\/\)\.length >= 2/.test(askOttoSrc) && /setTimeout\(\(\) => \{ bargeTimerRef\.current = null; if \(speakingRef\.current\) synth\.cancel\(\); \}, 400\)/.test(askOttoSrc));
   check("the recognition hook exposes the live interim channel", /onInterim\?: \(text: string\) => void;/.test(recogSrc) && /onInterimRef\.current\?\.\(interim\.trim\(\)\)/.test(recogSrc));
   // TTS history: a third-party vendor (FreeTTS) used to be tried FIRST, browser speechSynthesis as
   // fallback. Reported live, repeatedly, across several rounds of fixes (a bare fetch missing the CSRF
@@ -5017,7 +5017,6 @@ check("the discussion block demands a position, evidence, one objection, and no 
 check("it puts the student's claim and Otto's questions on the board, without numeric gaps", /kind "insight"/.test(DISCUSSION_BLOCK) && /Never use "= \?" gaps/.test(DISCUSSION_BLOCK));
 check("an argued position that isn't on the board is caught", statesClaimUnboarded("I think the treaty caused the war because it humiliated Germany and wrecked its economy", 0));
 check("…not a question, a short reply, or a turn that already wrote", !statesClaimUnboarded("Why did the treaty matter so much for Germany?", 0) && !statesClaimUnboarded("yes I think so", 0) && !statesClaimUnboarded("I think the treaty caused the war because it humiliated Germany", 1));
-check("the discussion block is only added for discussion subjects (source pin)", /\(discussion \? DISCUSSION_BLOCK : ""\)/.test(readFileSync("server/tutor.ts", "utf8")) && /discussion \? \[\] : inventedNumbers/.test(readFileSync("server/tutor.ts", "utf8")));
 
 section("The tutor fosters critical thinking in every subject (predict, justify, test, spot the flaw)");
 check("the base prompt has a critical-thinking section with the five habits", /CRITICAL THINKING/.test(TUTOR_PROMPT) && /Predict before reveal/.test(TUTOR_PROMPT) && /Spot the flaw/.test(TUTOR_PROMPT) && /Compare routes/.test(TUTOR_PROMPT) && /Test the claim/.test(TUTOR_PROMPT) && /how sure/.test(TUTOR_PROMPT));
@@ -5076,7 +5075,7 @@ section("Board as paper: key-ideas strip, left-to-right ink, condensed objective
   const ba = readFileSync("client/study/artifacts/BoardArtifact.tsx", "utf8");
   const css = readFileSync("client/styles.css", "utf8");
   const ts = readFileSync("client/tutor/TutorSession.tsx", "utf8");
-  check("definitions, formulas, strategies and the summary are gathered in a collapsible Key ideas strip", /className=\{`sm-board-ideas/.test(ba) && /e\.kind === "definition" \|\| e\.kind === "formula" \|\| e\.kind === "strategy"/.test(ba) && /otto\.board\.ideasOpen/.test(ba));
+  check("definitions, formulas, strategies and the summary are gathered in a collapsible Key ideas strip", /className=\{`sm-board-ideas/.test(ba) && /keyIdeaEntries\(entries, topIds\)/.test(ba) && /e\.kind === "definition" \|\| e\.kind === "strategy" \|\| \(e\.kind === "formula"/.test(ba) && /otto\.board\.ideasOpen/.test(ba));
   check("a fresh line is written in left to right", /sm-board-reveal-ink \{ from \{ clip-path: inset\(0 100% 0 0\)/.test(css));
   check("strategy lines are highlighted on the board", /\.sm-board-entry-strategy \.sm-board-entry-text/.test(css));
   check("the plan shows inside the ONE session bar as the current objective with progress dots, expandable to the checklist", /ts-bar-plan/.test(ts) && /ts-objstrip-dots/.test(ts) && /ts-plan-list/.test(ts) && !/className="ts-objectives"/.test(ts));
@@ -5089,8 +5088,6 @@ section("Otto never tells the student about its internal board rejections (repor
   check("…and the cleanup keeps the teaching and the question", !mentionsMechanics(stripMechanics(live)) && /what does x to the two fifths become/.test(stripMechanics(live)));
   check("ordinary teaching is untouched (incl. a physics ball that bounced)", !mentionsMechanics("Write the substitution on your own: what is x in terms of u?") && !mentionsMechanics("The ball bounced twice before stopping — how far did it travel?"));
   const src = readFileSync("server/tutor.ts", "utf8");
-  check("every refused tool result carries an internal never-tell-the-student note", /Internal note for you only: never tell the student a write was refused/.test(src));
-  check("the final reply is cleaned in code even if the correction round didn't fix it", /mentionsMechanics\(reply\) \? \(stripMechanics\(reply\) \|\| reply\) : reply/.test(src));
 }
 
 section("Expert-tutor behaviour: motivation, personal learning prefs, feedback on writing, end-of-session recap");
@@ -5928,8 +5925,37 @@ section("TTS voice — MALE ONLY, and arrows read as a word (source pins)");
 
   // Direct request: "make sure here it doesn't say the arrow but replaces by word" — a worked-math arrow
   // ("t² = 9.18 → t = 3.03 s") either got read literally as "arrow" or mangled by the TTS engine.
-  check("a unicode arrow is read as a word, not a symbol", toSpeakableText("t² = 9.18 → t = 3.03 s") === "t² = 9.18 gives t = 3.03 s");
+  check("a unicode arrow is read as a word, not a symbol — and so is every other symbol", toSpeakableText("t² = 9.18 → t = 3.03 s") === "t squared equals 9.18 gives t equals 3.03 seconds");
   check("an ASCII '->' arrow is also replaced", toSpeakableText("x -> y") === "x gives y");
+  // Reported live: "when there is - it should say minus" — what's SHOWN keeps the maths, what's SAID is words only.
+  {
+    const said = toSpeakableText("Now we have two equations: $Mg\\sin\\theta - T = Ma$ and $T - mg = ma$.");
+    check("speech: a minus in maths is spoken 'minus', = is 'equals', no symbol survives", /theta minus T equals M times a/.test(said) && /T minus m times g equals m times a/.test(said) && !/[-=$\\]/.test(said));
+    check("speech: plain-text maths too (unicode minus, brackets as a spoken group)", toSpeakableText("M g sinθ −mg=(M+m)a.") === "M g sine theta minus mg equals M plus m, times a.");
+    check("speech: a fraction is 'all over' its compound denominator", toSpeakableText("$a = \\frac{g(M\\sin\\theta - m)}{M+m}$") === "a equals g times, M sine theta minus m, all over M plus m");
+    check("speech: units and powers are read as words", toSpeakableText("2.0×10^3 cm3 per hour, 12 kW, 30 kJ/cm3, g = 9.8 m/s²") === "2.0 times 10 cubed cubic centimetres per hour, 12 kilowatts, 30 kilojoules per cubic centimetre, g equals 9.8 metres per second squared");
+    check("speech: unary minus, percent, degrees, ±", toSpeakableText("x = -3, 72%, 30°, x = ±2") === "x equals minus 3, 72 percent, 30 degrees, x equals plus or minus 2");
+    check("speech: a hyphenated word and a prose dash stay words; a single letter is never mistaken for a unit", toSpeakableText("a well-known trick - nice, on the x-axis") === "a well-known trick, nice, on the x-axis" && toSpeakableText("$\\frac{1}{2}mv^2$") === "one half m times v squared");
+    check("speech: French says 'moins', 'égale', 'sur', 'au carré'", toSpeakableText("Résous $x^2 - 4 = 0$ avec $\\frac{a}{b}$", "fr-FR") === "Résous x au carré moins 4 égale 0 avec a sur b");
+    check("speech: leaked tool plumbing is never read aloud", toSpeakableText("#%%call:default_api:") === "");
+    check("spokenBrackets leaves a function's argument alone", spokenBrackets("sine (x)") .replace(/\s+/g, " ").trim() === "sine x" && mathSymbolsToWords("3 < 4") === "3 is less than 4");
+  }
+  // Reported live: "the board is cluttered" — three problems' working in one long pile, and fragments in Key ideas.
+  {
+    const items = [{ entry: { kind: "focus", text: "Connected masses" } }, { entry: { kind: "formula", text: "a" } }, { problem: { question: "Efficiency of a pump?" } }, { entry: { kind: "gap", text: "E = ?" } }, { entry: { kind: "focus", text: "Energy on an incline" } }, { problem: { question: "Find v" } }, { entry: { kind: "result", text: "v" } }];
+    check("board: a new worksheet starts at each header and each new problem (a problem right under its header stays with it)", JSON.stringify(boardSectionStarts(items)) === "[0,2,4]");
+    check("board: a folded worksheet is titled by its header, else its problem", boardSectionTitle(items.slice(0, 2)) === "Connected masses" && boardSectionTitle(items.slice(2, 4)) === "Efficiency of a pump?");
+    const ideas = keyIdeaEntries([
+      { id: "1", kind: "formula", text: "g=(M+m)a" },
+      { id: "2", kind: "formula", text: ") =(M+ m)a right there", why: "x" },
+      { id: "3", kind: "formula", text: "a= (g(Msinθ −m))/(M+m): what does that tell us about Msinθ −m?", why: "x" },
+      { id: "4", kind: "strategy", text: "Efficiency: match time units (per hour or per second) for both input and output energy." },
+      { id: "5", kind: "strategy", text: "Always check that energy input and power output use the same time unit (per second or per hour) before dividing." },
+      { id: "6", kind: "formula", text: "$T - mg = ma$", why: "Newton's second law for the hanging mass." },
+      { id: "7", kind: "definition", text: "Tension: the pull of the string, the same all along it." },
+    ]);
+    check("board: Key ideas drop fragments, questions and why-less code lines, and keep one of two near-identical strategies", JSON.stringify(ideas.map((e) => e.id)) === '["5","6","7"]');
+  }
   check("a '=>' arrow is also replaced", toSpeakableText("A => B") === "A gives B");
   check("spacing around the substituted word is normal regardless of how tight the arrow was in source", toSpeakableText("a→b") === "a gives b");
 
@@ -5944,8 +5970,8 @@ section("TTS voice — MALE ONLY, and arrows read as a word (source pins)");
     return !/[\\${}]/.test(out) && /pi/.test(out) && /over/.test(out) && /\bsine\b/.test(out);
   })());
   check("\\sqrt{x} becomes 'the square root of x'", stripLatexForSpeech("\\sqrt{x}") === "the square root of (x)");
-  check("a superscript ^{2} becomes 'to the power of 2'", stripLatexForSpeech("x^{2}").trim() === "x to the power of 2");
-  check("a bare superscript ^2 (no braces) also becomes 'to the power of 2'", stripLatexForSpeech("x^2").trim() === "x to the power of 2");
+  check("a superscript ^{2} is spoken as 'squared', ^{5} as 'to the power of 5'", stripLatexForSpeech("x^{2}").trim() === "x squared" && stripLatexForSpeech("x^{5}").trim() === "x to the power of 5");
+  check("a bare superscript ^2 (no braces) is also 'squared', ^3 'cubed'", stripLatexForSpeech("x^2").trim() === "x squared" && stripLatexForSpeech("x^3").trim() === "x cubed");
   check("greek letters are spoken, not left as backslash-commands", stripLatexForSpeech("\\theta + \\pi").includes("theta") && stripLatexForSpeech("\\theta + \\pi").includes("pi") && !stripLatexForSpeech("\\theta + \\pi").includes("\\"));
   check("\\cdot and \\leq read as words", stripLatexForSpeech("a \\cdot b \\leq c").includes("times") && stripLatexForSpeech("a \\cdot b \\leq c").includes("less than or equal to"));
   check("an unrecognized LaTeX command is dropped rather than read character-by-character", !stripLatexForSpeech("\\somethingweird{x}").includes("\\"));
@@ -6297,7 +6323,7 @@ section("the tutor's hidden worked solution and teaching state never reach the b
   check("outgoingTasks, the job kick and the chat echo all strip solution/tutorState; finished tasks drop them",
     /const \{ solution: _sol, tutorState: _ts, \.\.\.t \} = t0 as WebTask;/.test(idx) && /const \{ chat, board, problems, objectives, solution, tutorState, \.\.\.rest \} = t;/.test(idx) &&
     /const \{ solution: _hiddenSolution, tutorState: _hiddenState, \.\.\.leanTask \} = t;/.test(idx) && /solution: _s, tutorState: _t/.test(comp));
-  check("the tutor route solves the focus problem once and records code-verified evidence", /if \(focus && focusKeyOf\(focus\) !== t\.solution\?\.focusKey\)/.test(idx) && /recordConceptEvidence\(/.test(idx) && /nextTeachingState\(t\.tutorState/.test(idx));
+  check("the tutor route solves the focus problem once and records code-verified evidence", /if \(focus && focusKeyOf\(focus\) !== t\.solution\?\.focusKey\)/.test(idx) && /recordConceptEvidence\(/.test(idx) && /nextTeachingState\(prev,/.test(idx) && /nextSupportState\(prev,/.test(idx));
 }
 
 const { runTutorSim } = await import("./tutor-sim.mjs");
@@ -6353,6 +6379,10 @@ const { runTutorEngineSim } = await import("./tutor-engine-sim.mjs");
 await runTutorEngineSim(check, section);
 const { runTutorCompanionSim } = await import("./tutor-companion-sim.mjs");
 await runTutorCompanionSim(check, section);
+const { runTutorTurnSim } = await import("./tutor-turn-sim.mjs");
+await runTutorTurnSim(check, section);
+const { runTutorLedgerSim } = await import("./tutor-ledger-sim.mjs");
+runTutorLedgerSim(check, section);
 {
   const app = appSource();
   const t = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
@@ -6620,7 +6650,7 @@ section("Tutor sessions are fully local — the server stores no chat/board/prob
   check("…while the non-tutor chat route keeps persisting its own task fields (only the tutor went local, nothing else changed)",
     /if \(newChat\.length\) t\.chat = \[\.\.\.\(t\.chat \|\| \[\]\), \.\.\.newChat\]/.test(idxL));
   check("the turn hands back only this turn's delta (chatDelta/board/problems/objectives), never a task carrying content",
-    /res\.json\(\{\n\s*reply: out\.reply, chatDelta: newChat, board: out\.board, problems:/.test(turn) && /task: \{ id: t\.id, title: t\.title, status: t\.status, source: t\.source, sourceSubject: t\.sourceSubject, updatedAt: t\.updatedAt, createdAt: t\.createdAt \}/.test(turn));
+    /res\.json\(\{\n\s*reply: out\.reply, speech: out\.turn\?\.speech, chatDelta: newChat, board: out\.board, problems:/.test(turn) && /task: \{ id: t\.id, title: t\.title, status: t\.status, source: t\.source, sourceSubject: t\.sourceSubject, updatedAt: t\.updatedAt, createdAt: t\.createdAt \}/.test(turn));
 
   // Grading and the leak guard still work WITHOUT a server-held board: the line rides up, and the key is
   // recomputed from that line first — so the independent verification is unchanged.
@@ -6809,22 +6839,7 @@ section("Tutor reply hygiene — invented wrapper tags, board line numbers (repo
 
 {
   console.log("\n# Turn director — the board action each turn needs, decided in code");
-  const { turnActions } = await import("../server/tutorDirector.ts");
   const base = { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "hey" }], board: [{ kind: "focus", text: "Trig" }], problems: [], objectives: [] };
-  const a1 = turnActions({ ...base, message: "help me prep for my test, everything except logs" });
-  check("a study goal with no plan: set the plan AND start teaching in the same reply", /START TEACHING NOW/.test(a1.join()) && /SET_OBJECTIVES/.test(a1.join()) && /Don't ask them to approve/.test(a1.join()));
-  const obj = [{ id: "o1", label: "Vertex form", done: false }, { id: "o2", label: "Transformations", done: false }];
-  const a2 = turnActions({ ...base, objectives: obj, message: '[Exercise] On the board line "x = ?" I wrote "2" — checked right.' });
-  check("a right answer: their result goes up and the NEXT problem is put on the board without being asked (reported: 'move to the next milestone' with nothing on the board)", /CREATE_PROBLEM/.test(a2.join()) && /Vertex form/.test(a2.join()));
-  const a3 = turnActions({ ...base, message: "explain consumer surplus", problems: [{ question: "Divide 2x^3-5x^2 by (x-2)", solved: false }] });
-  check("a concept asked for: visual first, and a topic change gets its own header (the old problem is left alone)", /Visual first/.test(a3.join()) && /NEW topic/.test(a3.join()));
-  const a4 = turnActions({ ...base, message: "so x\n\n[What I wrote/drew on the board: a parabola with its vertex circled]" });
-  check("they drew on the board: Otto marks up their work", /ANNOTATE_BOARD/.test(a4.join()));
-  const a5 = turnActions({ ...base, message: "f(2) = 8 - 16 + 5 = -3" });
-  check("their own step said in chat goes on the board as their line", /THEIR line/.test(a5.join()));
-  const a6 = turnActions({ ...base, message: "can we recap" });
-  check("a recap request gives ONE summary entry plus a retrieval question", /Recap on the board/.test(a6.join()));
-  check("at most three actions, and nothing forced on a plain chat turn", turnActions({ ...base, message: "ok thanks" }).length === 0 && turnActions({ ...base, objectives: obj, stuckStreak: 2, message: 'explain why [Exercise] x checked wrong' }).length <= 3);
   const { mathTail } = await import("../shared/mathEquiv.ts");
   const { verifyStepAgainstGap } = await import("../shared/mathEquiv.ts");
   const gapB = [{ kind: "gap", text: "f(2)=2(4)−16+5=?", expectedAnswer: "-3" }];
@@ -6835,10 +6850,8 @@ section("Tutor reply hygiene — invented wrapper tags, board line numbers (repo
 
 {
   const { asksToWrite } = await import("../server/tutorAdapt.ts");
-  const { turnActions } = await import("../server/tutorDirector.ts");
   const report = '[Exercise] On the board line "Remainder theorem check: P(2)=2(2)^3−5(2)^2+2−3= ?" I wrote "−5" — checked right.';
   check("the app's own [Exercise] report is never a request to write it on the board (reported: the report was copied onto the board)", !asksToWrite(report) && asksToWrite("can you put that on the board"));
-  check("…and the director never treats it as the student's own step", !turnActions({ message: report, history: [], board: [{ kind: "focus", text: "x" }], problems: [], objectives: [] }).some((a) => /THEIR line \(owner student, maths/.test(a)));
 }
 
 {
@@ -6849,16 +6862,10 @@ section("Tutor reply hygiene — invented wrapper tags, board line numbers (repo
 {
   section("QA round fixes — chat wrong answers, director triggers, arithmetic, board hygiene (reported live)");
   const { wrongInChat, questionCount } = await import("../server/tutor.ts");
-  const { turnActions } = await import("../server/tutorDirector.ts");
   const { pointsAtOffTopicLine } = await import("../shared/boardLines.ts");
   const p = { id: "a", question: "Solve 2x + 3 = 11", answer: "4" };
   check("a wrong numeric answer typed in chat is recognised as wrong; a right one, a question, or prose is not", wrongInChat("I got 5", p) && wrongInChat("x = 3", p) && !wrongInChat("4", p) && !wrongInChat("why is it 4?", p) && !wrongInChat("I think we should subtract 3 from both sides first", p));
   const base = { history: [{ role: "user", text: "hi" }], board: [{ kind: "line", text: "x" }], problems: [{ question: "Solve 2x+3=7", solved: false }], objectives: [{ id: "1", label: "Linear equations", done: false }] };
-  check("'what is the answer' / 'what is x' are about THIS problem, not a new concept", !turnActions({ ...base, message: "what is the answer" }).length && !turnActions({ ...base, message: "what is x" }).length);
-  check("'draw it' gets a visual, not a new-topic header", (() => { const a = turnActions({ ...base, message: "draw it", drawRequest: true }); return a.some((x) => /Visual first/.test(x)) && !a.some((x) => /NEW topic/.test(x)); })());
-  check("a real new concept still opens a new topic", turnActions({ ...base, message: "what is a derivative?" }).some((x) => /NEW topic/.test(x)));
-  check("'let me test x = 3' is not a study goal; 'a test tomorrow on derivatives' is", !turnActions({ ...base, objectives: [], message: "let me test x = 3" }).some((x) => /START TEACHING/.test(x)) && turnActions({ ...base, objectives: [], message: "I have a test on derivatives tomorrow" }).some((x) => /START TEACHING/.test(x)));
-  check("a wrong verdict asks for the first error and no new problem", turnActions({ ...base, message: "5", stepVerdict: "incorrect" }).some((x) => /Don't put up a new problem/.test(x)));
   check("negative results and LaTeX \\times are checked", findArithmeticClaims("3 - 5 = -8")[0]?.mismatch === true && findArithmeticClaims("3 - 5 = -2")[0]?.mismatch === false && findArithmeticClaims("$3 \\times 4 = 13$")[0]?.mismatch === true);
   check("an HTML entity like &#160; is not 'line 160'", !pointsAtOffTopicLine("x&#160;= 3, look at it", [], "anything"));
   check("only real questions are counted (not ones inside maths or quotes)", questionCount("What do you see? And why?") === 2 && questionCount('If a critic asked "why?" what would you say?') === 1);
