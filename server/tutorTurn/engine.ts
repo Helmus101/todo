@@ -29,10 +29,12 @@ import { applyOps } from "./apply.ts";
 import { sessionGuide } from "./guide.ts";
 import { asksToWriteProblem, wantsDifferent, problemStatement, wantsMoreExercises, difficultyAsked, cantSeeProblem } from "./intents.ts";
 import { generateProblem, difficultyFrom } from "./problemGen.ts";
-import { sessionScope, inScope, contentWords, sameSubjectMemory } from "./scope.ts";
+import { sessionScope, inScope, contentWords, sameSubjectMemory, cleanObjectives } from "./scope.ts";
 import { exercisesSoFar, exercisesBlock, recentQuestionKinds, varietyLine, sameExercise } from "./exercises.ts";
 
 const MAX_HISTORY = 14;
+/** A turn is a few hundred tokens of JSON; this only bounds a runaway reply (and its wait), it doesn't shape normal ones. */
+const TURN_MAX_TOKENS = 6000;
 const STUCK = /\b(?:i (?:don'?t|do not) (?:know|get it|understand)|idk|no idea|i'?m (?:stuck|lost|confused)|not sure|je (?:ne )?sais pas|j'?sais pas|aucune idée|je suis (?:perdu|bloqué)e?|je comprends pas|help me|aide[- ]moi)\b/i;
 
 /** The turn the app has already worked out, as a prompt block the model must respect. Exported for tests. */
@@ -65,7 +67,7 @@ function planOf(t: TurnOutput): TutorPlanLite {
 }
 
 async function callTurn(messages: any[], tokens: TutorTurnResult["tokens"]): Promise<{ turn: TurnOutput | null; raw: string }> {
-  const ask = async (json: boolean) => retryRequest(() => createTutorChat({ max_tokens: OUT.chat, temperature: 0.5, messages, ...(json ? { response_format: { type: "json_object" } } : {}) }, true), 2, 400);
+  const ask = async (json: boolean) => retryRequest(() => createTutorChat({ max_tokens: TURN_MAX_TOKENS, temperature: 0.5, messages, ...(json ? { response_format: { type: "json_object" } } : {}) }, true), 2, 400);
   let res: any;
   // JSON mode first; a provider that rejects the parameter gets the same request without it (the prompt asks for JSON anyway).
   try { res = await ask(true); } catch (e: any) { if (Number(e?.status) === 400) res = await ask(false); else throw e; }
@@ -114,6 +116,12 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const t0 = Date.now();
   // Other subjects' memory never reaches this session (a labour-market plan in a physics session).
   input = { ...input, context: { ...input.context, memory: sameSubjectMemory(input.context.memory, input.context.subject) } };
+  // Objectives a past (bad) turn saved that the session never supports — an economics goal in a physics session — are purged
+  // here, before anything uses them (the plan block, the generator's topic, the pinned goal on the board).
+  const baseScope = sessionScope({ subject: input.context.subject, objectives: [], board: input.board, problems: input.problems, history: input.history, message: input.message, memory: input.context.memory });
+  const cleanObjs = cleanObjectives(input.objectives, baseScope);
+  const purgedObjectives = cleanObjs.length < input.objectives.length;
+  input = { ...input, objectives: cleanObjs };
   const { message, history, board, problems, objectives, context, lang } = input;
   // WHAT THE PROBLEM IS RIGHT NOW, decided by code: the open exercise, else the last given/topic on the board. A saved
   // solution for some OTHER problem (a bicycle, an earlier question) must never steer this one.
@@ -138,6 +146,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const policy = supportPolicy({ teaching: input.teaching, needsExplanation: wants.explain, asksWhy: wants.why, asksForWorkedExample: asksForWorkedExample(message), verdict });
   const discussion = isDiscussionSubject(context.subject, [message, ...history.slice(-4).map((h) => h.text)].join(" "));
   const scope = sessionScope({ subject: context.subject, objectives, board, problems, history, message, memory: context.memory });
+  void baseScope;
   const affect = affectOf(message);
   const misgraded = misgradedExercise(message, input.solution);
   const usedExercises = exercisesSoFar({ history, problems, memory: context.memory, board });
@@ -172,6 +181,24 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const said = [...history.filter((h) => h.role === "user").map((h) => h.text), message, input.solution?.statement || "", ...(spokenRepair ? [spokenRepair.interpreted, ...(input.spoken?.alternatives || [])] : []), ...problems.map((p) => p.question || ""), ...board.filter((b) => b.kind === "given" || b.owner === "student").map((b) => b.text)];
   const vctx: VerifyContext = { message, history, board, problems, solution: input.solution, policy, wants: { why: wants.why, write: wants.write, restart: wants.restart, exercise: wants.exercise, draw: wants.draw, problemOnBoard: wants.problemOnBoard, different: wants.different }, said, discussion, usedExercises, verdict, scope };
 
+  // ── The exercise generator doesn't depend on what the tutor says, so when they have asked for one it runs IN PARALLEL with the
+  //    tutor's own call (the longest wait in a turn) instead of after it. ──
+  const levelText = [context.profile?.yearLevel, context.profile?.track === "ib" ? "IB Diploma" : context.profile?.track === "ap" ? "AP" : context.profile?.track === "bac" ? "baccalauréat" : "", ...(context.profile?.courses || []).slice(0, 4)].filter(Boolean).join(", ");
+  const buildGenRequest = (spokenText: string) => {
+    const topic = objectives.find((o) => !o.done)?.label || [...board].reverse().find((b) => b.kind === "focus" && b.text)?.text || context.subject || "";
+    const used = exercisesSoFar({ history, problems, memory: context.memory, board });
+    const kinds = recentQuestionKinds(history);
+    const nextKind = (["compute", "explain_why", "spot_error", "predict", "compare"] as const).find((k) => !kinds.includes(k)) ?? "any";
+    return {
+      subject: context.subject, topic: wants.different ? "" : topic, level: levelText, difficulty: difficultyAsked(message) ?? difficultyFrom(input.teaching?.log),
+      kind: (isDiscussionSubject(context.subject, spokenText) && nextKind === "compute" ? "explain_why" : nextKind) as any,
+      used, lang: (fr ? "fr" : "en") as "fr" | "en", ask: wants.exercise || wants.different ? message.slice(0, 200) : undefined,
+      allowedTopics: objectives.map((o) => o.label), scope,
+    };
+  };
+  const genTokens = { in: 0, out: 0, cachedIn: 0 };
+  const earlyGen = !wants.problemOnBoard && (wants.exercise || wants.different) ? generateProblem(buildGenRequest(message), genTokens).catch(() => null) : null;
+
   // ── One structured call (+ one retry if it isn't JSON at all) ──
   let turn: TurnOutput | null = null, raw = "";
   try {
@@ -186,11 +213,21 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   if (!turn) turn = normalizeTurn(salvageTurn(raw, { prose: true }));
   if (!turn) { console.error("[tutor] no usable JSON turn"); result.error = true; return result; }
 
+  // A solve that ran alongside the tutor's call is needed from here on (leak checks, the verdicts, the answer key).
+  if (input.solutionPromise) {
+    const sol = await input.solutionPromise.catch(() => null);
+    if (sol) { input = { ...input, solution: sol }; vctx.solution = sol; vctx.said.push(sol.statement); }
+  }
+
   // ── Verify, repair once, then fix in code what's left ──
   let issues: Issue[] = verifyTurn(turn, vctx);
+  // When the generator is writing the exercise, the tutor's reply is only a lead-in: checks about the exercise itself (is it there,
+  // is it new, are its numbers the student's) are about text that won't be shown, so they must not cost a repair call.
+  if (earlyGen) issues = issues.filter((i) => !["intent_exercise", "vague", "repeat_exercise", "numbers", "invented_object", "length"].includes(i.code));
   let repaired = false;
   const firstIssues = issues.map((i) => i.code);
-  if (issues.length) {
+  // A repair is a whole extra model call: worth it for a hard problem or several soft ones; a single soft issue is fixed in code.
+  if (issues.some((i) => i.hard) || issues.length >= 2) {
     try {
       const fixed = await callTurn([...messages, { role: "assistant", content: raw.slice(0, 6000) }, { role: "user", content: `(Before the student sees it, fix this turn:\n- ${issues.map((i) => i.fix).join("\n- ")}\nSend the corrected turn as ONLY the JSON object. Don't mention this note.)` }], result.tokens);
       if (fixed.turn) { const again = verifyTurn(fixed.turn, vctx); if (again.length < issues.length || !again.some((i) => i.hard)) { turn = fixed.turn; issues = again; repaired = true; } }
@@ -211,18 +248,12 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   {
     const speechAll = turn.speech.join(" ");
     const newExercise = !wants.problemOnBoard && (wants.exercise || wants.different || turn.move === "practice");
-    const levelText = [context.profile?.yearLevel, context.profile?.track === "ib" ? "IB Diploma" : context.profile?.track === "ap" ? "AP" : context.profile?.track === "bac" ? "baccalauréat" : "", ...(context.profile?.courses || []).slice(0, 4)].filter(Boolean).join(", ");
     if (newExercise) {
-      const topic = objectives.find((o) => !o.done)?.label || [...board].reverse().find((b) => b.kind === "focus" && b.text)?.text || context.subject || "";
-      const used = exercisesSoFar({ history, problems, memory: context.memory, board });
-      const kinds = recentQuestionKinds(history);
-      const nextKind = (["compute", "explain_why", "spot_error", "predict", "compare"] as const).find((k) => !kinds.includes(k)) ?? "any";
-      const gen = await generateProblem({
-        subject: context.subject, topic: wants.different ? "" : topic, level: levelText, difficulty: difficultyAsked(message) ?? difficultyFrom(input.teaching?.log),
-        kind: isDiscussionSubject(context.subject, speechAll) && nextKind === "compute" ? "explain_why" : nextKind,
-        used, lang: fr ? "fr" : "en", ask: wants.exercise || wants.different ? message.slice(0, 200) : undefined,
-        allowedTopics: objectives.map((o) => o.label), scope,
-      }, result.tokens);
+      let gen: Awaited<ReturnType<typeof generateProblem>> = null;
+      if (earlyGen) {
+        gen = await earlyGen; // started before the tutor's own call, so its wait overlapped
+        result.tokens.in += genTokens.in; result.tokens.out += genTokens.out; result.tokens.cachedIn += genTokens.cachedIn;
+      } else gen = await generateProblem(buildGenRequest(speechAll), result.tokens);
       if (gen) {
         // The widget carries the problem text; the speech keeps only the lead-in (the sentences before the problem is stated).
         // The problem starts at the first sentence with a number from which the rest of the reply poses a problem.
@@ -282,6 +313,12 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   result.board = applied.board;
   result.problems = applied.problems;
   if (applied.objectives) result.objectives = applied.objectives;
+  else if (purgedObjectives) {
+    // The stored plan is replaced by its on-topic part; if nothing is left, by one goal taken from the session's own worksheet.
+    const header = [...board].reverse().find((b) => b.kind === "focus" && b.text && inScope(b.text, baseScope))?.text;
+    const fallback = cleanObjs.length ? cleanObjs : header ? [{ id: `obj-${Date.now().toString(36)}`, label: String(header).replace(/\$/g, "").slice(0, 48), done: false }] : [];
+    if (fallback.length) result.objectives = fallback as any;
+  }
   if (applied.dropped.length) console.log(`[tutor] dropped ops: ${applied.dropped.join(" | ")}`);
 
   // The board ops can still fail to build (a bad figure spec, a duplicate): then the speech must not claim them.

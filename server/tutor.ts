@@ -605,6 +605,8 @@ export interface TutorTurnInput {
   stepVerdict?: { gap: string; given: string; verdict: "correct" | "incorrect" };
   /** The verified worked solution of the problem in focus (server/solver.ts) — hidden, the tutor steers by it. */
   solution?: TutorSolution;
+  /** A solve still running for a NEW problem: the turn starts without waiting for it and awaits it just before verifying. */
+  solutionPromise?: Promise<TutorSolution | null>;
   /** Help given so far this session (nextTeachingState). */
   teaching?: TutorTeachingState;
   lang: "fr" | "en";

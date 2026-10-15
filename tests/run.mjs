@@ -6334,7 +6334,7 @@ section("the tutor's hidden worked solution and teaching state never reach the b
   check("outgoingTasks, the job kick and the chat echo all strip solution/tutorState; finished tasks drop them",
     /const \{ solution: _sol, tutorState: _ts, \.\.\.t \} = t0 as WebTask;/.test(idx) && /const \{ chat, board, problems, objectives, solution, tutorState, \.\.\.rest \} = t;/.test(idx) &&
     /const \{ solution: _hiddenSolution, tutorState: _hiddenState, \.\.\.leanTask \} = t;/.test(idx) && /solution: _s, tutorState: _t/.test(comp));
-  check("the tutor route solves the focus problem once and records code-verified evidence", /if \(focus && focusKeyOf\(focus\) !== t\.solution\?\.focusKey\)/.test(idx) && /recordConceptEvidence\(/.test(idx) && /nextTeachingState\(prev,/.test(idx) && /nextSupportState\(prev,/.test(idx));
+  check("the tutor route solves the focus problem once and records code-verified evidence", /const solving = focus && focusKeyOf\(focus\) !== t\.solution\?\.focusKey \? solveProblem\(focus, t\.sourceSubject\) : null/.test(idx) && /recordConceptEvidence\(/.test(idx) && /nextTeachingState\(prev,/.test(idx) && /nextSupportState\(prev,/.test(idx));
 }
 
 const { runTutorSim } = await import("./tutor-sim.mjs");
