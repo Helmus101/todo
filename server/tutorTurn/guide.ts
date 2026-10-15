@@ -17,6 +17,8 @@ export interface GuideInput {
   hasObjectives: boolean;
   /** The exercise's final answer was reached (code-checked) or every exercise is solved. */
   finalReached?: boolean;
+  /** The verified final answer of the current problem, when known. */
+  finalValue?: string;
   /** They asked for something totally different / a new problem. */
   different?: boolean;
   /** From Settings: year/grade, programme, courses — empty when unknown. */
@@ -55,7 +57,7 @@ export function sessionGuide(i: GuideInput): string[] {
   if (i.correctNow && !pushedBack) {
     const recentDeepening = log.slice(-3).some((r) => DEEPENING.has(r.move));
     const askedWhyRecently = log.slice(-6).some((r) => r.move === "probe_why");
-    if (i.finalReached) out.push("THE EXERCISE IS DONE: confirm the result in a few words" + (askedWhyRecently ? ", then offer" : ", add one sentence on the key idea, then offer") + " a variation with new numbers that is a step harder, or the next item of the plan. No further questions about how they got there.");
+    if (i.finalReached) out.push("THE EXERCISE IS DONE: confirm the result in a few words" + (i.finalValue ? ` and state the exact value (${i.finalValue.slice(0, 40)}) with its unit and direction, so they see how their rounding compares` : "") + (askedWhyRecently ? ", then offer" : ", add one sentence on the key idea, then offer") + " a variation with new numbers that is a step harder, or the next item of the plan. No further questions about how they got there.");
     else out.push(recentDeepening
       ? "SOLID NOW (they got it right and you already tested why): name in a few words what they can do, then move on to the next piece of the plan."
       : "MAKE IT SOLID BEFORE MOVING ON: credit exactly what was right, then do ONE of — ask why that step works, give a variation with different numbers, or ask them to state the rule in their own words. Don't open a new topic or a new exercise this turn.");

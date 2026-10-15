@@ -170,6 +170,10 @@ export function repairLatex(text: string): string {
     .replace(/\x08(?=eta\b|inom\b|ar\b|egin\b|ullet|ecause)/g, "\\b")
     .replace(/\x0d(?=ho\b|ight\b|ightarrow|angle)/g, "\\r")
     .replace(/\x0a(?=eq\b|u\b|abla|ot\b|eg\b|otin|earrow)/g, "\\n")
+    // Boards saved before the JSON fix: the TAB had already been collapsed into a space ("F_ extresistive", "F_{total} imes v").
+    .replace(/(?<=_)\s?ext([a-z]+)/g, "\\text{$1}")
+    .replace(/(?<=[\w}\)\]])\s+imes\s+(?=[\w\\(])/g, (m) => (mathy ? " \\times " : m))
+    .replace(/(?<![\\\w])\s?ext\{/g, (m) => (mathy ? "\\text{" : m))
     .replace(/\^\{?circ\}?/g, "^\\circ")
     .replace(/(?<=[\s)\d])cdot(?=[\s(\d\\])/g, (m) => (mathy ? "\\cdot" : m));
 }

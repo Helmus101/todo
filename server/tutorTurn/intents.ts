@@ -53,3 +53,8 @@ export function difficultyAsked(message: string): "harder" | "easier" | null {
   if (/\b(?:easier|simpler|less difficult|plus facile|plus simple)/i.test(m)) return "easier";
   return null;
 }
+
+/** "i don't see anything", "what is the question asking", "which question", "nothing on the board" — they can't see or place the problem. */
+export function cantSeeProblem(message: string): boolean {
+  return /\b(?:i (?:don'?t|do not|can'?t|cannot) see (?:anything|it|the (?:problem|question))|(?:don'?t|can'?t) see (?:anything|the (?:problem|question))|nothing (?:is )?(?:on|in) (?:the )?(?:board|baord)|what(?:'s| is| are) (?:the )?(?:question|problem) (?:asking|even)|what is (?:it|this|the question) asking|what am i (?:solving|supposed to)|which (?:question|problem)|what is just on (?:the )?bo|je (?:ne )?vois (?:rien|pas)|quelle question)\b/i.test(String(message || ""));
+}

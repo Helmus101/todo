@@ -12,7 +12,7 @@ import { resolveBoardTarget, leaksAnyProblemAnswer } from "../claude.ts";
 import { replyStatesValue, ignoresWhy, repeatsRecentReply, repeatsRecentQuestion, inventedNumbers, harshOpener } from "../tutorAdapt.ts";
 import { statesFinalAnswer, wrongArithmetic, badGap, mentionsMechanics } from "../tutor.ts";
 import type { Policy } from "./policy.ts";
-import { repeatedExercise } from "./exercises.ts";
+import { repeatedExercise, mostlyContains } from "./exercises.ts";
 
 /** A sentence that says something is (or is about to be) on the board. */
 const BOARD_CLAIM = /\b(?:on the (?:board|whiteboard)|(?:look|take a look|have a look) at the (?:board|chart|grid|diagram|table|graph|figure|picture)|(?:i'?ve|i have|i'?ll|i will|let me|let'?s|we'?ll|here'?s|here is|here are) (?:just )?(?:draw|drawn|sketch|put|add|map|write|written|plot|build|make|made|show)\w*|sur le tableau|regarde (?:le|la|l')\s*(?:tableau|sch[ée]ma|graphique|figure))\b/i;
@@ -46,7 +46,7 @@ export interface VerifyContext {
 }
 
 export interface Issue {
-  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh";
+  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh";
   /** The instruction for the repair call. */
   fix: string;
   /** A leak or a pointer at nothing must be fixed; the rest are quality. */
@@ -134,6 +134,13 @@ export function inventedObjects(texts: string[], sources: string[]): string[] {
   return out;
 }
 
+/** A board "equation" with plain words on a side ("4 × 10 × sin 25° − 30 = pull down − 30"): not maths. */
+export function proseEquation(text: string): boolean {
+  const t = String(text || "").replace(/\$/g, " ").replace(/\\(?:text|mathrm|mathbf|operatorname)\s*\{[^}]*\}/g, " ").replace(/\\[a-zA-Z]+/g, " ").replace(/\b(?:sin|cos|tan|cot|sec|csc|log|ln|exp|sqrt|min|max|mod|lim|det|arcsin|arccos|arctan)\b/gi, " ");
+  if (!/=/.test(t)) return false;
+  return t.split("=").some((side) => (side.match(/\b[a-zA-Z]{3,}\b/g) || []).length >= 2 && /\b[a-zA-Z]{3,}\s+[a-zA-Z]{3,}\b/.test(side));
+}
+
 export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   const out: Issue[] = [];
   const say = speechText(t);
@@ -159,8 +166,10 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   if (t.speech.some(claimsBoard) && !t.board.some((o) => CREATING.has(o.op))) out.push({ code: "board_promise", hard: true, fix: "the speech says something is on the board (or will be) but the board list has nothing new — add the draw/step op that puts it there, or take the board claim out of the speech." });
   // An exercise is never set twice: the spoken question or a problem op must differ from every earlier one.
   if (c.usedExercises?.length) {
-    const prompts = [...t.board.filter((o) => o.op === "problem").map((o) => String(o.question || "")), t.speech.length ? t.speech.filter((s) => /\?\s*["»”)]*\s*$/.test(s)).pop() || "" : ""].filter(Boolean);
-    let dup = prompts.map((p) => repeatedExercise(p, c.usedExercises!, c.wants.different ? 0.35 : 0.5)).find(Boolean);
+    // The whole reply counts when it sets a problem in words ("now let's look at the car problem: … 10° … 2v²"): an old problem dragged back.
+    const setsProblem = (say.match(/\d+(?:[.,]\d+)?/g) || []).length >= 2 && /\?/.test(say) && say.length >= 60;
+    const prompts = [...t.board.filter((o) => o.op === "problem").map((o) => String(o.question || "")), t.speech.length ? t.speech.filter((s) => /\?\s*["»”)]*\s*$/.test(s)).pop() || "" : "", ...(setsProblem ? [say] : [])].filter(Boolean);
+    let dup = prompts.map((p) => (p === say ? c.usedExercises!.find((u) => mostlyContains(say, u, 0.45)) : repeatedExercise(p, c.usedExercises!, c.wants.different ? 0.35 : 0.5))).find(Boolean);
     // "Totally different" means a different SITUATION: sharing the setting (a car again) with a recent exercise is the same idea re-skinned.
     if (!dup && c.wants.different) {
       const recent = c.usedExercises.slice(-3);
@@ -179,6 +188,8 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
     if (!d.misconception) out.push({ code: "diagnosis", hard: false, fix: "you diagnosed a misconception: name the mistaken belief in diagnosis.misconception (≤8 words)." });
     if (["confirm", "elicit", "recap"].includes(t.move)) out.push({ code: "diagnosis", hard: false, fix: "a misconception shows, so don't just confirm or move on: name the idea that is off, gently, in the speech, and choose focus, correct_error, explain or probe_why to repair it." });
   }
+  const prose = t.board.find((o) => (o.op === "step" || o.op === "gap") && o.kind !== "note" && o.kind !== "definition" && proseEquation(String(o.text || "")));
+  if (prose) out.push({ code: "prose_equation", hard: false, fix: `the board line "${String(prose.text).slice(0, 80)}" has words where numbers or symbols belong. Write the actual value (or just the expression) and put the explanation in the step's "why".` });
   // Only objects that exist in the problem: no cyclist in a car problem.
   const objs = inventedObjects([say, ...t.board.map(opText)], [...c.said, ...c.board.map((b) => b.text || ""), ...c.problems.map((p) => p.question || ""), ...(c.solution ? [c.solution.statement, ...c.solution.steps.map((s) => `${s.idea || ""} ${s.result || ""}`)] : [])]);
   // A NEW problem brings its own objects; only an existing problem's objects are fixed.
@@ -225,6 +236,7 @@ export function degradeTurn(t: TurnOutput, c: VerifyContext): TurnOutput {
     if (o.op !== "gap" && revealsKey(opText(o), c)) return false;
     if (o.op === "mark" && !targetExists(o.target, c.board)) return false;
     if (o.op === "draw" && ++draws > 1) return false;
+    if ((o.op === "step" || o.op === "gap") && o.kind !== "note" && o.kind !== "definition" && proseEquation(String(o.text || ""))) return false;
     if (o.op === "problem" && c.usedExercises?.length && repeatedExercise(String(o.question || ""), c.usedExercises)) return false;
     if (o.op === "gap" && badGap(String(o.text || ""), c.board.map((b) => String(b.text || "")))) return false;
     return true;
