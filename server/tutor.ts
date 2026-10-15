@@ -10,36 +10,29 @@
 //   · spoken input is repaired against the board, and the board never repeats a mishearing (spokenMath.ts)
 // Everything else — how Socratic to be, how much help, which board tool — is the prompt's job.
 import { randomUUID } from "node:crypto";
-import { citesMissingBoardLine, pointsAtOffTopicLine, boardLineNumbers } from "../shared/boardLines.ts";
-import { directorBlock } from "./tutorDirector.ts";
+import { pointsAtOffTopicLine, boardLineNumbers } from "../shared/boardLines.ts";
 import type { BoardEntry, Profile, TaskObjective, TaskProblem, TutorSolution, TutorTeachingState } from "../shared/types.ts";
 import { practiceAnswerMatches } from "../shared/types.ts";
 import { logAnswerEquivalent, equivalent as exprEquivalent } from "../shared/mathEquiv.ts";
-import { solutionBlock, solutionValues } from "./solver.ts";
 import { buildInclineScene, type InclineForce } from "../shared/inclineScene.ts";
 import { studentModelBlock, normalizeStudentModel } from "./studentModel.ts";
 import { buildTrigScene } from "../shared/trigScene.ts";
 import { sanitizeSvg, svgText } from "../shared/svgSafe.ts";
-import { repairSpokenMath, spokenContextFrom, type SpokenRepair } from "../shared/spokenMath.ts";
+import { type SpokenRepair } from "../shared/spokenMath.ts";
 import { equationsAhead, asksForFormula, questionAhead } from "../shared/equationsAhead.ts";
 import { findArithmeticClaims } from "./arithmetic.ts";
-import { applyEntryAction } from "../shared/boardAdapter.ts";
-import { boardSurfaceBlock } from "./boardEvents.ts";
-import { replyStatesValue, harshOpener, asksToDraw, asksWhy, ignoresWhy, WHY_BLOCK, similarity, repeatsRecentReply, repeatsRecentQuestion, repairLine, voiceInputBlock, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario, inventedNumbers, claimsBoardWrite, stripBoardClaim, posesProblemInProse, reachedResultUnrecorded, setsMathTaskUnboarded, confirmsUnchecked, wrapsUpUnasked, blamesWidget, asksToWrite, handsOverCalculation, sendsBackToStatement, statesFormula, misstatesGiven } from "./tutorAdapt.ts";
-import { type LessonState } from "../shared/lessonState.ts";
-import { getCurrentTopic, generateLessonPlanSummary, type LessonPlan } from "../shared/lessonPlanner.ts";
+import { replyStatesValue, asksWhy, similarity, boardRepeatsMishearing, asksToMoveOn, asksForProblem, looksLikeGivensOrScenario, asksToWrite } from "./tutorAdapt.ts";
 export { sendsBackToStatement, statesFormula, misstatesGiven, harshOpener } from "./tutorAdapt.ts";
 import { latexToPlainText } from "../shared/mathText.ts";
 import { toExprSource, gapTarget, mathTail } from "../shared/mathEquiv.ts";
 import { compileExpr } from "../shared/mathExpr.ts";
 import {
-  createTutorChat, rewriteReply, retryRequest, usageOf, parseToolArgs, stripLeakedToolCallSyntax, stripWrapperTags, textToolCalls, OUT,
   CREATE_PROBLEM_TOOL, GEOMETRY_ON_BOARD_TOOL, GRAPH_ON_BOARD_TOOL, SVG_ON_BOARD_TOOL, FLOW_ON_BOARD_TOOL, TABLE_ON_BOARD_TOOL, SOURCE_ON_BOARD_TOOL, makeTableEntry, makeSourceEntry,
-  WIDGET_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, CREATE_INTERACTIVE_TOOL, ANNOTATE_BOARD_TOOL, SET_OBJECTIVES_TOOL,
+  WIDGET_ON_BOARD_TOOL, TRIG_SCENE_ON_BOARD_TOOL, ANNOTATE_BOARD_TOOL, SET_OBJECTIVES_TOOL,
   makeProblem, makeBoardEntry, makeGeometryEntry, makeGraphEntry, makeSvgEntry, makeFlowEntry, makeWidgetEntry,
   makeInteractiveEntry, makeObjectives, leaksAnyProblemAnswer, isDuplicateBoardEntry, isDuplicateDiagram, isDuplicateProblem,
-  resolveBoardTarget, stepVerdictLine, openerMemoryBlock, studentNameLine, personalContextLine, recentJournalLine,
-  sessionRecapLine, milestoneLine, errorLogLine, nowBlock, type TutorOpenerMemory,
+  resolveBoardTarget, openerMemoryBlock, studentNameLine, personalContextLine, recentJournalLine,
+  sessionRecapLine, milestoneLine, errorLogLine, type TutorOpenerMemory,
 } from "./claude.ts";
 import { repairLatex, latexifyBoardLine } from "./tutorAdapt.ts";
 
@@ -219,8 +212,6 @@ CONTEXT
 - THIS conversation comes first. The background (what they've proved before, journal, past sessions, deadlines) is there when it genuinely helps — start at their level, link to what they learned, never recite it, never invent it.
 - Their JOURNAL is your memory of them: dated entries labelled by subject. When one bears on what they're doing, bring it up naturally ("on Tuesday you wrote that…"). If they ask what's in their journal, answer from it. Never invent an entry.`;
 
-const VOICE_BLOCK = `\n\nVOICE MODE: your reply is shown AND read aloud (the app turns maths into spoken words, so "$a - b$" is heard as "a minus b"). Write it to be heard: short spoken sentences, no markdown, no lists, at most one short formula in $…$ in the reply — every other equation goes on the board, and you refer to it by what it says ("the line with the tension"). Never spell symbols out yourself.`;
-
 /** The student needs an explanation now, not another question: they're lost, asked to start over, asked to be shown
  *  or told, asked why, or questions have failed twice. In this mode the "never derive an equation" guards step aside
  *  (the final answer stays protected). Exported for tests. */
@@ -248,11 +239,6 @@ const UPDATE_BOARD_LINE = {
   name: "UPDATE_BOARD_LINE",
   description: "Add a corrected version of ONE of YOUR OWN board lines (its #n from the board listing) as a NEW line below the board — the original stays, nothing is overwritten. Student-written lines can never be changed — add the corrected line beside theirs with WRITE_TO_BOARD instead. Use it for a wrong line you wrote, not to redraw the board.",
   input_schema: { type: "object", properties: { target: { type: "string", description: "the line's #n (or id)" }, text: { type: "string", description: "the corrected line, maths in $…$" } }, required: ["target", "text"] },
-};
-const REMOVE_BOARD_LINE = {
-  name: "REMOVE_BOARD_LINE",
-  description: "Take ONE of YOUR OWN lines off the active board (reversible; it is archived, not destroyed). Never for student-written lines; never to clear the board.",
-  input_schema: { type: "object", properties: { target: { type: "string", description: "the line's #n (or id)" } }, required: ["target"] },
 };
 const WRITE_TO_BOARD = {
   name: "WRITE_TO_BOARD",
@@ -607,10 +593,6 @@ export interface TutorTurnInput {
   solution?: TutorSolution;
   /** Help given so far this session (nextTeachingState). */
   teaching?: TutorTeachingState;
-  /** Lesson plan for proactive teaching (optional, created from student goal). */
-  lessonPlan?: LessonPlan;
-  /** Current lesson state (synchronized across tutor, board, exercise engine). */
-  lessonState?: LessonState;
   lang: "fr" | "en";
 }
 
@@ -762,9 +744,6 @@ export function reachedSolutionSteps(message: string, sol: TutorSolution | undef
   if (sol.value != null && theirs.some((n) => Math.abs(n - sol.value!) <= Math.max(0.01, Math.abs(sol.value!) * 0.006))) hits.push(0);
   return hits;
 }
-
-const MAX_TOOL_ROUNDS = 5;
-const MAX_HISTORY = 14;
 
 /** The answer keys a reply must not state: open gaps (board + this turn) and unsolved problems. A value the
  *  student already said themselves is theirs, not a leak. Exported for tests. */
@@ -992,16 +971,6 @@ export function wrongArithmetic(reply: string, message = ""): string | null {
   if (!bad.length) return null;
   return bad.map((c) => `"${c.raw}" is false (the left side is ${c.left})`).join("; ");
 }
-
-function cleanReply(text: string, voice: boolean): string {
-  let t = stripWrapperTags(stripLeakedToolCallSyntax(String(text || ""))).replace(/<plan>[\s\S]*?<\/plan>/gi, "").replace(new RegExp(PLAN_RE.source, "gi"), "").replace(/<\/?(?:plan|path)\s*>/gi, "").trim();
-  t = t.replace(/^\s*(otto|tutor)\s*:\s*/i, "").replace(/\*\*(.+?)\*\*/g, "$1");
-  // Voice mode keeps the maths typeset on screen: what is SHOWN and what is SAID differ, and the spoken words are made
-  // in the browser (client/voice/useSpeechSynthesis.ts toSpeakableText: "a − b" → "a minus b"). Flattening the LaTeX
-  // here made the bubble unreadable ("a=(M sin(theta) −m)M+mg") without making the speech any better.
-  void voice;
-  return dedupeParagraphs(t.trim());
-}
 /** Canned praise as an OPENER ("Spot on, Willem!", "Exactly — 60 J", "Perfect, that's 20.8"): the student sees it
  *  first and it's the same every turn, so it carries no information (reported live: "don't always say spot on").
  *  Stripped in code after the prompt's own rule has had its say. A praise word with a lowercase continuation
@@ -1010,15 +979,6 @@ const PRAISE_OPENER = /^\s*(?:spot on|exactly|perfect|nailed it|well done|great 
 export function stripPraiseOpener(t: string): string {
   const rest = t.trimStart().replace(PRAISE_OPENER, "").trimStart();
   return rest.length >= 12 ? rest.charAt(0).toUpperCase() + rest.slice(1) : t;
-}
-
-/** The one line of maths in a reply that belongs on the board: its own $…$ spans, or the clause around the "=". */
-function formulaLineFor(reply: string): string {
-  // Only a RELATION is worth a board line: a bare fragment like "$Mg\sin\theta - T$" says nothing on its own (reported live).
-  const spans = (reply.match(/\$[^$\n]{3,}\$/g) || []).filter((x) => /[=<>≈≤≥]|\\(?:le|ge|approx|neq)/.test(x)).slice(0, 3).join(" ");
-  if (spans) return /\?/.test(spans) ? "" : spans.slice(0, 200);
-  if (/\$[^$\n]{3,}\$/.test(reply)) return "";
-  return plainRelationIn(reply);
 }
 const GREEK_TEX: Record<string, string> = { "θ": "\\theta", "α": "\\alpha", "β": "\\beta", "μ": "\\mu", "π": "\\pi", "λ": "\\lambda", "ω": "\\omega", "Δ": "\\Delta", "ρ": "\\rho", "σ": "\\sigma", "φ": "\\phi" };
 /** Plain-text maths ("T - mg = ma", "Msinθ − m = 0") as one typeset span. Text that already has $…$, or reads as prose
@@ -1095,265 +1055,6 @@ export function dedupeParagraphs(rawText: string): string {
   return out.join("\n\n");
 }
 
-/** Lesson plan block: shows the current lesson sequence and next recommended activity (proactive teaching). */
-function lessonPlanBlock(plan?: LessonPlan, state?: LessonState): string {
-  if (!plan) return "";
-  const current = getCurrentTopic(plan);
-  if (!current) return "\n\nLESSON PLAN: Complete — mixed exam-style practice.";
-  
-  const { topic, subtopic } = current;
-  const summary = generateLessonPlanSummary(plan);
-  const recommended = state?.recommendedAction 
-    ? `\nNext: ${state.recommendedAction.description}`
-    : "";
-  
-  return `\n\nLESSON PLAN (proactive teaching): ${summary}${recommended}`;
-}
-
-export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResult> {
-  const { message, history, board, problems, objectives, context, lang } = input;
-  const fr = lang === "fr";
-  const result: TutorTurnResult = { reply: "", board: [], problems: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false };
-  // A right answer given in chat to an open problem counts as solving it.
-  const solvedNow = problems.filter((p) => answeredInChat(message, p));
-  if (solvedNow.length) { for (const p of solvedNow) p.solved = true; result.solvedInChat = solvedNow.map((p) => p.id); }
-
-  // The exercise widget marked them wrong, but the independently-verified solution says they were right: the
-  // model is told as a binding fact and answers in its own words (no canned reply — it has to feel natural).
-  const misgraded = misgradedExercise(message, input.solution);
-
-  const spokenRepair: SpokenRepair | null = input.spoken
-    ? repairSpokenMath(message, spokenContextFrom([context.subject || "", ...board.map((b) => b.text || ""), ...problems.map((p) => p.question || "")]))
-    : null;
-
-  // The plan is set and started at once (no approval round): the student can change it any time.
-  const planConsent = true;
-  const planPending = !objectives.length && history.length > 0 && (() => { const l = [...history].reverse().find((h) => h.role === "assistant"); return !!l && proposesPlan(l.text); })();
-  const discussion = isDiscussionSubject(context.subject, [message, ...history.slice(-4).map((h) => h.text)].join(" "));
-  // They need it explained, not another question: the "don't hand them an equation" checks step aside this turn.
-  const explain = needsExplanation(message, input.teaching);
-  const restart = asksToRestart(message);
-  const system = TUTOR_PROMPT
-    + (input.voiceMode ? VOICE_BLOCK : "")
-    + nowBlock()
-    + backgroundBlock(context)
-    + (discussion ? DISCUSSION_BLOCK : "")
-    + objectivesBlock(objectives)
-    + lessonPlanBlock(input.lessonPlan, input.lessonState)
-    + (boardSurfaceBlock(board, problems) || "\n\nTHE BOARD IS EMPTY.")
-    + solutionBlock(input.solution)
-    + solutionMatchLine(message, input.solution)
-    + (misgraded ? `\n\nCHECKED BY CODE — THEY WERE RIGHT: ${misgraded} Say so plainly in your own words (the exercise's key was wrong, not them), keep their working, and move on — never ask them to redo or re-enter it.` : "")
-    + ownArithmeticLine(message)
-    + teachingBlock(input.teaching)
-    + repairLine(message, history)
-    + (asksWhy(message) ? WHY_BLOCK : "")
-    + (explain ? EXPLAIN_BLOCK : "")
-    + (restart ? RESTART_BLOCK : "")
-    + directorBlock({ message, history, board, problems, objectives, stepVerdict: input.stepVerdict?.verdict ?? (!solvedNow.length && problems.some((p) => wrongInChat(message, p)) ? "incorrect" : undefined), solvedInChat: solvedNow.length > 0, drawRequest: asksToDraw(message), writeRequest: asksToWrite(message), stuckStreak: input.teaching?.stuckStreak, discussion })
-    + stepVerdictLine(input.stepVerdict)
-    + (solvedNow.length ? `\n\nTHEY JUST ANSWERED THE OPEN EXERCISE IN CHAT, AND IT IS RIGHT (checked by code): \"${solvedNow[0].question.slice(0, 160)}\". Confirm it and move on — never ask them to type it into the answer box.` : "")
-    + (input.spoken && spokenRepair ? voiceInputBlock(message, input.spoken.alternatives, spokenRepair) : "");
-
-  const messages: any[] = [
-    { role: "system", content: system },
-    ...history.slice(-MAX_HISTORY).filter((h) => h.text?.trim()).map((h) => ({ role: h.role, content: h.text.slice(0, 4000) })),
-    { role: "user", content: message },
-  ];
-  const tools = tutorTools(!!input.canvasMode).map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } }));
-
-  const said = [...history.filter((h) => h.role === "user").map((h) => h.text), message, input.solution?.statement || "", ...(spokenRepair ? [spokenRepair.interpreted, ...(input.spoken?.alternatives || [])] : []), ...problems.map((p) => p.question || ""), ...board.filter((b) => b.kind === "given" || b.owner === "student").map((b) => b.text)];
-  const wantsProblem = wantsExercise(message);
-  const focus = [input.solution?.statement || "", ...problems.filter((p) => !p.solved).map((p) => p.question), ...board.filter((b) => b.kind === "given" || b.owner === "student").map((b) => b.text), ...history.filter((h) => h.role === "user").slice(-3).map((h) => h.text), message].filter(Boolean);
-  if (spokenRepair?.interpreted) focus.push(spokenRepair.interpreted);
-  const known = [...solutionValues(input.solution), ...(input.solution?.steps || []).flatMap((st) => (String(st.result || "").replace(/(\d),(?=\d{3}(?!\d))/g, "$1").match(/\d+(?:\.\d+)?/g) || []).map(Number))];
-  const allBoard = () => [...board, ...result.board];
-  const allProblems = () => [...problems, ...result.problems];
-  // Failed checks go back to the model (at most twice); whatever reaches the student is always its own words.
-  let corrections = 0;
-  const MAX_CORRECTIONS = 2;
-
-  for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
-    const lastRound = round === MAX_TOOL_ROUNDS;
-    let res: any;
-    try {
-      res = await retryRequest(() => createTutorChat({
-        max_tokens: OUT.chat, temperature: 0.7,
-        messages: lastRound ? [...messages, { role: "user", content: "Reply to the student now in plain words, no more tools." }] : messages,
-        ...(lastRound ? {} : { tools }),
-      }, true), 2, 400);
-    } catch (e: any) {
-      console.error(`[tutor] model request failed: ${e?.message || e}`);
-      result.error = true;
-      return result;
-    }
-    const u = usageOf(res); result.tokens.in += u.in; result.tokens.out += u.out; result.tokens.cachedIn += u.cachedIn;
-    const msg = res?.choices?.[0]?.message || {};
-    const toolCalls: any[] = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
-    const text = String(msg.content || "");
-    // A call the model wrote out as text ("[write_to_board]{kind:gap,text:a = ?}") still happens: it's stripped from
-    // the reply anyway, and dropping it would lose the board write the reply is about (reported live).
-    if (!toolCalls.length) {
-      const offered = new Set(tutorTools(false).map((t) => t.name));
-      textToolCalls(text).filter((c) => offered.has(c.name)).forEach((c, i) => toolCalls.push({ id: `text_call_${round}_${i}`, type: "function", function: { name: c.name, arguments: JSON.stringify(c.args) } }));
-    }
-
-    const plan = parsePlan(text);
-    if (plan) result.plan = plan;
-    // Board writes first. SPEED: when the model sent its reply WITH the tool calls and every write landed, that reply is
-    // final — no second round just to say the same thing again (it used to cost a full model call per board write).
-    if (toolCalls.length && !lastRound) {
-      messages.push({ role: "assistant", content: text, tool_calls: toolCalls });
-      let allLanded = true;
-      for (const tc of toolCalls) {
-        const name = tc.function?.name;
-        const args = parseToolArgs(tc.function?.arguments) || {};
-        let content: string;
-        try { content = applyTool(name, args, { message, result, allBoard, allProblems, spokenRepair, fr, said, wantsExercise: wantsProblem, focus, known, solution: input.solution, discussion, planConsent, explain }); }
-        catch (e: any) { content = `ERROR: ${e?.message || e}`; }
-        if (/^(?:REJECTED|LIMIT|DUPLICATE|ERROR|LEAK)/.test(content)) { allLanded = false; content += " (Internal note for you only: never tell the student a write was refused, bounced or blocked, and never mention the board's or app's rules — just carry on teaching naturally.)"; }
-        if (process.env.TUTOR_TRACE) console.log(`[tool] ${name} → ${content.slice(0, 160)}`);
-        messages.push({ role: "tool", tool_call_id: tc.id, content });
-      }
-      // …but only when the reply hands the turn back (asks something); "Let me set us up…" alone needs the next round.
-      const draftNow = cleanReply(text, !!input.voiceMode);
-      if (!allLanded || !draftNow || !/\?/.test(draftNow)) continue;
-    }
-    {
-      let reply = cleanReply(text, !!input.voiceMode);
-      if (!reply) {
-        if (corrections < MAX_CORRECTIONS && !lastRound) { corrections++; messages.push({ role: "user", content: "(Now reply to the student — a short message ending with one question.)" }); continue; }
-        result.error = true;
-        return result;
-      }
-      // The hard checks, all at once: every problem found goes back in ONE correction round.
-      const leaked = leakedValue(reply, message, allBoard(), allProblems(), input.solution);
-      const issues: string[] = [];
-      if (leaked) issues.push(`it gives away ${leaked === "the problem's answer" ? "the answer to the open problem" : `the value of the open gap (${leaked})`} — they must find it; keep the idea, drop the value, end with one question that gets them there`);
-      if (wantsProblem && !result.problems.length) issues.push("they asked for an exercise: create it now with CREATE_PROBLEM (full statement, one short answer, a check expression for a numeric answer, precision and unit in the hint), then one line pointing them to it");
-      if (asksToWrite(message) && !result.board.length) issues.push("they asked you to write it on the board: do it now (WRITE_TO_BOARD, clean maths in $…$, their numbers), then one short line");
-      // Spec §6: a study goal gets a visible, editable lesson plan up front — not a question back about what to study.
-      if (!objectives.length && !result.objectives && (planPending || statesStudyGoal(message)) && !/\?\s*$/.test(message.trim())) issues.push("they gave a study goal: set the plan NOW with SET_OBJECTIVES (3-5 objectives, exactly what they asked for, nothing they excluded), say it in one line, then START objective 1 in this same reply — a problem or figure on the board and one question. Don't ask them to approve the plan");
-      // They ruled topics out ("everything except logs and exponentials"): the plan and the board must not bring them back.
-      const excluded = excludedTopics([message, ...history.filter((h) => h.role === "user").slice(-2).map((h) => h.text)].join("\n"));
-      const planLines = reply.split("\n").filter((l) => /^\s*(?:\d+[.)]|[-•*])\s+\S/.test(l));
-      const brought = includesExcluded([...planLines, ...result.board.map((b) => b.text), ...(result.objectives || []).map((o) => o.label), ...result.problems.map((p) => p.question)], excluded);
-      if (brought) issues.push(`they explicitly EXCLUDED this topic ("${brought}") — re-read what they said: work only on what they asked for, and leave the excluded topics out of the plan, the board and the problems`);
-      // Spec §2.1 Failure D/G: when they hand you the choice, you choose — never bounce it back.
-      if (delegatesChoice(message) && asksStudentToChoose(reply)) issues.push("they left the choice to you — don't ask them to choose. Pick the next useful activity yourself (the CURRENT milestone of the lesson plan, or a sensible one for this subject if there's no plan yet) and start it now: one short line on what we're doing, then its first question or exercise");
-      const doubt = doubtsRightAnswer(reply, message, input.solution);
-      if (doubt) issues.push(doubt);
-      const badMath = wrongArithmetic(reply, message);
-      if (badMath) issues.push(`it contains a wrong calculation: ${badMath}`);
-      const ahead = asksForFormula(message) || explain ? [] : equationsAhead(reply, said);
-      if (ahead.length) issues.push(`it hands them an equation they haven't stated (${ahead.join("; ")}) — don't derive it or name the formula; ask what relationship they'd use`);
-      const invented = discussion ? [] : inventedNumbers(reply, [...said, ...allBoard().map((b) => b.text), ...allProblems().map((p) => p.question)]);
-      if (invented.length) issues.push(`it uses numbers nobody gave (${invented.slice(0, 3).join(", ")}) — only their numbers and the problem's; never compute ahead or bring in a new scenario`);
-      if (!doubt && confirmsUnchecked(reply, message, input.stepVerdict ? { studentStep: { status: input.stepVerdict.verdict } } : null)) issues.push("it confirms a value they didn't actually give (or one that's wrong) — react to THEIR number, and if it's off, ask which step they'd recheck");
-      const lines = boardLineSet(board, result.board);
-      const badLine = [...reply.matchAll(/\b(?:line|ligne)\s*#?\s*(\d{1,3})\b|(?<![\w&])#(\d{1,3})\b/gi)].map((m) => Number(m[1] || m[2])).find((n) => !lines.has(n));
-      if (badLine) issues.push(`it points at line ${badLine}, which doesn't exist on their board — use the line's real margin number from the board listing, or describe it`);
-      if (!doubt && !explain && handsOverCalculation(reply, message)) issues.push("it hands them the calculation (which numbers to multiply/add) — ask what THEY would compute next instead");
-      // Canned praise as the OPENER — the same "Spot on, Willem!" every turn, with nothing specific in it.
-      // Otto restates a GIVEN with a number that isn't in it — reported live: "the problem on the board: a 3 kg box
-      // is pulled up by a force of 15 N (let's use 15 N instead so it actually moves!)" when the exercise says 12 N.
-      const wrongGiven = discussion ? null : misstatesGiven(reply, [...said, ...allBoard().map((b) => b.text)]);
-      if (wrongGiven) issues.push(`it says the problem gives ${wrongGiven}, which is not in it — NEVER change or invent a given: quote their numbers exactly as written, and if they don't work out, say so plainly instead of swapping one`);
-      // Sending them back to the problem statement to re-check a value they just gave is the loop the student
-      // cannot break — reported live, four turns of "what is the exact pulling force given in the problem text?"
-      // while they kept answering "12". Corrected with a prompt round; taken over in code below if it persists.
-      const missingLine = citesMissingBoardLine(reply, allBoard());
-      if (missingLine) issues.push(`you pointed at line ${missingLine}, but the board has no line ${missingLine}. Quote what the line says instead (or the right margin number), and never point at something that isn't on the board.`);
-      // Never say the same thing twice: a near-copy of a recent reply or question is the loop the student can't break.
-      const repeats = repeatsRecentReply(reply, history) || repeatsRecentQuestion(reply, history);
-      if (repeats) issues.push("you already said or asked almost exactly this a moment ago and it didn't land. Don't repeat it, not even reworded: say in a few words what you heard from them, then take a DIFFERENT step (a smaller question, a figure on the board, a tiny worked case) — or, if they already answered it, acknowledge that and move on");
-      const recentContext = [...history.slice(-5).map((h) => h.text), message].join("\n");
-      const offTopic = pointsAtOffTopicLine(reply, allBoard() as any, recentContext);
-      if (offTopic) issues.push(`you pointed at line ${offTopic.n} ("${offTopic.text}"), but that line is about something else than what you two are discussing now. Point at a line from THIS topic (or write one), or quote what you mean — don't drag an earlier problem back in`);
-      const reread = sendsBackToStatement(reply, message);
-      if (reread) issues.push(`it sends them back to the problem statement ("${reread}") to re-check something they ALREADY gave — don't re-ask it, use the value they said. If they misread it, say what the problem actually gives and why it differs. If the givens as written genuinely can't produce what the problem asks for, say so plainly ONCE (the numbers as given don't work out, and the one-line reason why) and offer to change one of them, instead of asking them to read it again`);
-      // A NEW problem posed only in the message ("If a 2 kg block drops 3 m onto a spring k = 400 N/m, how would you…?") with nothing on the board.
-      const quantitiesNew = posesProblemInProse(reply) && !result.problems.length && !result.board.length
-        ? newQuantities(reply, [...said, ...allBoard().map((b) => b.text), ...allProblems().map((p) => p.question)]) >= 2 : false;
-      if (quantitiesNew) issues.push("you set a new problem in the message only — nothing is on the board. Put it on the board: CREATE_PROBLEM when it is an exercise for them to solve (full statement, one checkable answer with a `check` expression), otherwise WRITE_TO_BOARD the givens and the question; the message then just points at it in one line");
-      const claimedBoard = claimsBoardWrite(reply) && !result.board.length && !result.problems.length;
-      if (claimedBoard) issues.push("you say you'll put (or have put) something on the board, but nothing was written this turn. Write it now (a new problem goes through CREATE_PROBLEM): ONE short clean line with WRITE_TO_BOARD (the result or step they reached, their numbers, maths in $…$, owner \"student\"; never their sentence), then reply. Only if there is truly nothing worth keeping, drop that sentence instead");
-      else if (reachedResultUnrecorded(reply, message, result.board.length + result.problems.length)) issues.push("they just reached a result or step of their own and you confirmed it, but nothing went on the board. Record it: ONE short clean line with WRITE_TO_BOARD (kind result or summary, owner \"student\", their numbers, maths in $…$), then reply as you planned");
-      if (!result.problems.length && setsMathTaskUnboarded(reply, result.board.length)) issues.push("you set them a maths task in chat but it isn't on the board. Put the question itself on the board as ONE short line ending '= ?' (WRITE_TO_BOARD, kind gap, with the expected answer), then keep your message to a line that points at it. The board should show every question you ask, not just the chat");
-      if (discussion && statesClaimUnboarded(message, result.board.length)) issues.push("they argued a position and none of it is on the board. Write their claim (and the evidence they gave) as ONE short line with WRITE_TO_BOARD (kind insight, owner \"student\", their words condensed), then raise ONE objection or ask for the missing evidence — and put that question on the board too as a short Otto line");
-      const writes = result.board.length + result.problems.length;
-      if (boardStillEmpty(board.length, writes, history, reply)) issues.push("the board is still empty. Open it now: a header line (WRITE_TO_BOARD kind focus: subject → topic → what we're doing) and the starting point (the question you're asking, the key definition, or the givens). The board must show what you're working on from the first turn");
-      else if (teachesUnboarded(reply, writes)) issues.push("you taught an idea in chat but the board doesn't show it. Write the key idea in one short line (kind definition, formula or insight; maths in $…$) — or draw it if it's a relationship — then keep the message as it is");
-      if (discussion && asksDiscussionQuestionUnboarded(reply, writes)) issues.push("put the question you're asking them to think about on the board as one short line (kind focus), so the discussion is visible");
-      if (!explain && teachesOverError(reply, message, input.stepVerdict?.verdict)) issues.push("they just got it wrong and you went straight to the method. First find out what they were thinking: name the belief you suspect (\"it looks like you treated log(x+y) as log x + log y\") or ask one question / give one counter-example that tests it — then help. The goal is to fix the misconception, not to show the right answer");
-      if (strategyMissing(message, allBoard(), result.board)) issues.push("they just solved it: name the reusable strategy behind it and put it on the board (WRITE_TO_BOARD kind strategy, a few words, e.g. \"Expand: fraction → product → powers\"), ideally asking them to put it in their own words");
-      if (mentionsMechanics(reply)) issues.push("it talks about the app's machinery (a write that bounced, the board not letting you, a rule) — the student must never hear that. Drop it and just teach: ask them for the step, or write what's allowed");
-      if (isStudentWriting(message) && rewritesTheirWriting(reply)) issues.push("they shared their own writing and you rewrote it. Don't: quote ONE of their sentences, name one real strength, then the single most important improvement (claim, evidence, analysis or link to the question), and ask them to rewrite that sentence themselves");
-      if (discussion && agreesWithoutChallenge(reply, message)) issues.push("you just agreed with their point and stopped. Be a critical-thinking partner: credit what's strong in one clause, then push on it ONCE — the strongest objection a critic would raise, a case where the logic doesn't hold, or the evidence it still needs — and ask them to answer it");
-      if (wrapsUpUnasked(reply, message)) issues.push("it offers to wrap up or move on, which they didn't ask for — stay on the current work");
-      if (reportsCorrectResult(message) && !movesOn(reply, !!(result.problems.length || result.board.length))) issues.push("they just got an exercise right: confirm in one specific clause, then ONE critical-thinking move (why it works, does the result make sense, what if a given changed, or find the flaw in a plausible wrong line) and/or start the next activity yourself (the CURRENT lesson-plan milestone, in a new format) — end with one question or a new exercise");
-      const missingObj = pointsAtMissingObject(reply, allBoard().map((b) => String(b.kind)));
-      if (missingObj) issues.push(`you point at "the ${missingObj}" but none is on the board — draw/write it now with the matching board tool, or reword so you don't refer to it`);
-      if (blamesWidget(reply)) issues.push("it blames the app/widget — if an exercise's key disagrees with a right answer, say plainly the key was wrong");
-      if (asksWhy(message) && ignoresWhy(reply)) issues.push("they asked WHY. Answer the why first: the actual reason in 1-2 plain sentences (what the step achieves, e.g. what the units become) — repeating the instruction is not an answer. Then at most one question");
-      if (questionCount(reply) > 1) issues.push("it asks more than one question — keep only the one that matters most, at the end");
-      const opener = harshOpener(reply);
-      if (opener) issues.push(`it opens with "${opener}" — never open harshly; start with what's worth keeping in their thinking, or go straight to the question`);
-      // A leak, a doubted right answer or a "go re-read the problem" loop gets a second chance; the rest one.
-      const hard = !!(leaked || doubt || reread || badLine || missingLine || offTopic || repeats);
-      if (issues.length && corrections < (hard ? MAX_CORRECTIONS : 1) && !lastRound) {
-        corrections++;
-        messages.push({ role: "assistant", content: text });
-        messages.push({ role: "user", content: `(Fix your reply before the student sees it:\n- ${issues.join("\n- ")}\nThen send the corrected reply. Don't mention this note.)` });
-        continue;
-      }
-      // They asked for it on the board and nothing landed (every write refused, or none tried): write THEIR line in
-      // code, through the same checks. Reported: "it says it wrote it, nothing on the board".
-      if (asksToWrite(message) && !result.board.length && !result.problems.length) {
-        const line = studentBoardLine([spokenRepair?.interpreted || "", message, ...history.filter((h) => h.role === "user").slice(-2).reverse().map((h) => h.text)]);
-        if (line) applyTool("WRITE_TO_BOARD", { text: line, kind: "result", owner: "student" }, { message, result, allBoard, allProblems, spokenRepair, fr, said, wantsExercise: wantsProblem, focus, known, solution: input.solution, explain });
-      }
-      // Still failing a hard check after the corrections: ONE last model-written rewrite of that reply, never a fixed line.
-      if (hard) {
-        const fixed = await rewriteReply(reply, issues.join("; "), message, result.tokens);
-        if (fixed) reply = dedupeParagraphs(fixed);
-      }
-      if (leaked) {
-        result.guardrailTripped = true;
-        result.leakedValue = leaked;
-        // A SECOND consecutive trip on the exact same value: blocking again teaches nothing and just
-        // repeats the identical non-answer forever, no matter what the student actually says — reported
-        // live, four turns straight. The correction round above already told the model once to drop the
-        // value and ask instead; if it still can't avoid stating it, that's a sign Socratic withholding
-        // has genuinely stopped working here (the spec's own "know when to explain directly" / "never
-        // leave a confused student trapped" case) — ship its real, content-aware reply instead of
-        // replacing it with the canned line a second time. First trip still behaves exactly as before.
-        // Two corrections didn't keep the value out: ship its reply anyway — after repeated attempts, a direct
-        // explanation is what the student needs (spec: never trap a confused student), and a canned line isn't.
-        result.reply = dropRepeatedName(stripPraiseOpener(mentionsMechanics(reply) ? (stripMechanics(reply) || reply) : reply), history);
-        return result;
-      }
-      // A formula in the reply and the board got nothing this turn: put the line up ourselves — the chat carries
-      // the words, the board carries the maths. Skipped when the reply is handing over an equation they never
-      // stated (that stays forbidden), and it can't add a second line to a turn that already wrote one.
-      if (statesFormula(reply) && !ahead.length && !result.board.length && !result.problems.length && !claimedBoard) {
-        const formulaLine = formulaLineFor(reply);
-        if (formulaLine) applyTool("WRITE_TO_BOARD", { text: formulaLine, kind: "formula" }, { message, result, allBoard, allProblems, spokenRepair, fr, said, wantsExercise: wantsProblem, focus, known, solution: input.solution, codeWrite: true, explain });
-      }
-      // Claimed a board write but never made one, even after the correction round: remove the false claim.
-      if (claimsBoardWrite(reply) && !result.board.length && !result.problems.length) {
-        result.reply = stripBoardClaim(reply) || reply;
-        return result;
-      }
-      // Harsh or canned-praise openers went back to the model above; nothing is rewritten into fixed phrases here.
-      result.reply = dropRepeatedName(stripPraiseOpener(mentionsMechanics(reply) ? (stripMechanics(reply) || reply) : reply), history);
-      return result;
-    }
-
-  }
-  result.error = !result.reply;
-  return result;
-}
 
 // ── Tool handling ─────────────────────────────────────────────────────────────────────────────────────
 interface ToolCtx {

@@ -46,4 +46,4 @@ npm run dev           # http://localhost:5273
 - **Code owns the rules**: `policy.ts` caps the support level (rises at most +1 a turn; explaining unlocks when they're lost, ask why, or are stuck twice), `verify.ts` runs ~10 structural checks (answer leaks, pointers at missing lines, question count, length budget, arithmetic, repeats), then at most one repair call, then `degradeTurn` removes only the offending bits. There are no canned replies.
 - `apply.ts` turns the ops into board entries (topic, step, gap, mark, draw, problem, plan); `ledger.ts` keeps the assistance ledger (help at support ≥ 4 is retested next sitting) and builds the recap (`POST /api/tasks/:id/tutor/close`). Tool-call text is stripped in `normalizeTurn`.
 - Tests: `tests/tutor-turn-sim.mjs` (scripted fake model, real engine) and `tests/tutor-ledger-sim.mjs`.
-- Known gaps: answer keys still travel with the board to the browser; the old `runTutorTurn` in `server/tutor.ts` only remains for `scripts/tutor-eval.mjs` and legacy sims.
+- Known gaps: answer keys still travel with the board to the browser; Study Mode chat (`server/ai/chat*.ts`) still uses the older tutorBrain/sessionState modules.

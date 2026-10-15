@@ -5017,7 +5017,6 @@ check("the discussion block demands a position, evidence, one objection, and no 
 check("it puts the student's claim and Otto's questions on the board, without numeric gaps", /kind "insight"/.test(DISCUSSION_BLOCK) && /Never use "= \?" gaps/.test(DISCUSSION_BLOCK));
 check("an argued position that isn't on the board is caught", statesClaimUnboarded("I think the treaty caused the war because it humiliated Germany and wrecked its economy", 0));
 check("…not a question, a short reply, or a turn that already wrote", !statesClaimUnboarded("Why did the treaty matter so much for Germany?", 0) && !statesClaimUnboarded("yes I think so", 0) && !statesClaimUnboarded("I think the treaty caused the war because it humiliated Germany", 1));
-check("the discussion block is only added for discussion subjects (source pin)", /\(discussion \? DISCUSSION_BLOCK : ""\)/.test(readFileSync("server/tutor.ts", "utf8")) && /discussion \? \[\] : inventedNumbers/.test(readFileSync("server/tutor.ts", "utf8")));
 
 section("The tutor fosters critical thinking in every subject (predict, justify, test, spot the flaw)");
 check("the base prompt has a critical-thinking section with the five habits", /CRITICAL THINKING/.test(TUTOR_PROMPT) && /Predict before reveal/.test(TUTOR_PROMPT) && /Spot the flaw/.test(TUTOR_PROMPT) && /Compare routes/.test(TUTOR_PROMPT) && /Test the claim/.test(TUTOR_PROMPT) && /how sure/.test(TUTOR_PROMPT));
@@ -5089,8 +5088,6 @@ section("Otto never tells the student about its internal board rejections (repor
   check("…and the cleanup keeps the teaching and the question", !mentionsMechanics(stripMechanics(live)) && /what does x to the two fifths become/.test(stripMechanics(live)));
   check("ordinary teaching is untouched (incl. a physics ball that bounced)", !mentionsMechanics("Write the substitution on your own: what is x in terms of u?") && !mentionsMechanics("The ball bounced twice before stopping — how far did it travel?"));
   const src = readFileSync("server/tutor.ts", "utf8");
-  check("every refused tool result carries an internal never-tell-the-student note", /Internal note for you only: never tell the student a write was refused/.test(src));
-  check("the final reply is cleaned in code even if the correction round didn't fix it", /mentionsMechanics\(reply\) \? \(stripMechanics\(reply\) \|\| reply\) : reply/.test(src));
 }
 
 section("Expert-tutor behaviour: motivation, personal learning prefs, feedback on writing, end-of-session recap");
@@ -6842,22 +6839,7 @@ section("Tutor reply hygiene — invented wrapper tags, board line numbers (repo
 
 {
   console.log("\n# Turn director — the board action each turn needs, decided in code");
-  const { turnActions } = await import("../server/tutorDirector.ts");
   const base = { history: [{ role: "user", text: "hi" }, { role: "assistant", text: "hey" }], board: [{ kind: "focus", text: "Trig" }], problems: [], objectives: [] };
-  const a1 = turnActions({ ...base, message: "help me prep for my test, everything except logs" });
-  check("a study goal with no plan: set the plan AND start teaching in the same reply", /START TEACHING NOW/.test(a1.join()) && /SET_OBJECTIVES/.test(a1.join()) && /Don't ask them to approve/.test(a1.join()));
-  const obj = [{ id: "o1", label: "Vertex form", done: false }, { id: "o2", label: "Transformations", done: false }];
-  const a2 = turnActions({ ...base, objectives: obj, message: '[Exercise] On the board line "x = ?" I wrote "2" — checked right.' });
-  check("a right answer: their result goes up and the NEXT problem is put on the board without being asked (reported: 'move to the next milestone' with nothing on the board)", /CREATE_PROBLEM/.test(a2.join()) && /Vertex form/.test(a2.join()));
-  const a3 = turnActions({ ...base, message: "explain consumer surplus", problems: [{ question: "Divide 2x^3-5x^2 by (x-2)", solved: false }] });
-  check("a concept asked for: visual first, and a topic change gets its own header (the old problem is left alone)", /Visual first/.test(a3.join()) && /NEW topic/.test(a3.join()));
-  const a4 = turnActions({ ...base, message: "so x\n\n[What I wrote/drew on the board: a parabola with its vertex circled]" });
-  check("they drew on the board: Otto marks up their work", /ANNOTATE_BOARD/.test(a4.join()));
-  const a5 = turnActions({ ...base, message: "f(2) = 8 - 16 + 5 = -3" });
-  check("their own step said in chat goes on the board as their line", /THEIR line/.test(a5.join()));
-  const a6 = turnActions({ ...base, message: "can we recap" });
-  check("a recap request gives ONE summary entry plus a retrieval question", /Recap on the board/.test(a6.join()));
-  check("at most three actions, and nothing forced on a plain chat turn", turnActions({ ...base, message: "ok thanks" }).length === 0 && turnActions({ ...base, objectives: obj, stuckStreak: 2, message: 'explain why [Exercise] x checked wrong' }).length <= 3);
   const { mathTail } = await import("../shared/mathEquiv.ts");
   const { verifyStepAgainstGap } = await import("../shared/mathEquiv.ts");
   const gapB = [{ kind: "gap", text: "f(2)=2(4)−16+5=?", expectedAnswer: "-3" }];
@@ -6868,10 +6850,8 @@ section("Tutor reply hygiene — invented wrapper tags, board line numbers (repo
 
 {
   const { asksToWrite } = await import("../server/tutorAdapt.ts");
-  const { turnActions } = await import("../server/tutorDirector.ts");
   const report = '[Exercise] On the board line "Remainder theorem check: P(2)=2(2)^3−5(2)^2+2−3= ?" I wrote "−5" — checked right.';
   check("the app's own [Exercise] report is never a request to write it on the board (reported: the report was copied onto the board)", !asksToWrite(report) && asksToWrite("can you put that on the board"));
-  check("…and the director never treats it as the student's own step", !turnActions({ message: report, history: [], board: [{ kind: "focus", text: "x" }], problems: [], objectives: [] }).some((a) => /THEIR line \(owner student, maths/.test(a)));
 }
 
 {
@@ -6882,16 +6862,10 @@ section("Tutor reply hygiene — invented wrapper tags, board line numbers (repo
 {
   section("QA round fixes — chat wrong answers, director triggers, arithmetic, board hygiene (reported live)");
   const { wrongInChat, questionCount } = await import("../server/tutor.ts");
-  const { turnActions } = await import("../server/tutorDirector.ts");
   const { pointsAtOffTopicLine } = await import("../shared/boardLines.ts");
   const p = { id: "a", question: "Solve 2x + 3 = 11", answer: "4" };
   check("a wrong numeric answer typed in chat is recognised as wrong; a right one, a question, or prose is not", wrongInChat("I got 5", p) && wrongInChat("x = 3", p) && !wrongInChat("4", p) && !wrongInChat("why is it 4?", p) && !wrongInChat("I think we should subtract 3 from both sides first", p));
   const base = { history: [{ role: "user", text: "hi" }], board: [{ kind: "line", text: "x" }], problems: [{ question: "Solve 2x+3=7", solved: false }], objectives: [{ id: "1", label: "Linear equations", done: false }] };
-  check("'what is the answer' / 'what is x' are about THIS problem, not a new concept", !turnActions({ ...base, message: "what is the answer" }).length && !turnActions({ ...base, message: "what is x" }).length);
-  check("'draw it' gets a visual, not a new-topic header", (() => { const a = turnActions({ ...base, message: "draw it", drawRequest: true }); return a.some((x) => /Visual first/.test(x)) && !a.some((x) => /NEW topic/.test(x)); })());
-  check("a real new concept still opens a new topic", turnActions({ ...base, message: "what is a derivative?" }).some((x) => /NEW topic/.test(x)));
-  check("'let me test x = 3' is not a study goal; 'a test tomorrow on derivatives' is", !turnActions({ ...base, objectives: [], message: "let me test x = 3" }).some((x) => /START TEACHING/.test(x)) && turnActions({ ...base, objectives: [], message: "I have a test on derivatives tomorrow" }).some((x) => /START TEACHING/.test(x)));
-  check("a wrong verdict asks for the first error and no new problem", turnActions({ ...base, message: "5", stepVerdict: "incorrect" }).some((x) => /Don't put up a new problem/.test(x)));
   check("negative results and LaTeX \\times are checked", findArithmeticClaims("3 - 5 = -8")[0]?.mismatch === true && findArithmeticClaims("3 - 5 = -2")[0]?.mismatch === false && findArithmeticClaims("$3 \\times 4 = 13$")[0]?.mismatch === true);
   check("an HTML entity like &#160; is not 'line 160'", !pointsAtOffTopicLine("x&#160;= 3, look at it", [], "anything"));
   check("only real questions are counted (not ones inside maths or quotes)", questionCount("What do you see? And why?") === 2 && questionCount('If a critic asked "why?" what would you say?') === 1);
