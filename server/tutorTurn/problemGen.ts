@@ -5,7 +5,8 @@
 // result gets one corrective retry. Pure apart from the model call.
 import { createTutorChat, retryRequest, usageOf, OUT, makeProblem } from "../claude.ts";
 import { extractJsonObject } from "../../shared/tutorTurn.ts";
-import { repeatedExercise, type QuestionKind } from "./exercises.ts";
+import { repeatedExercise, mostlyContains, type QuestionKind } from "./exercises.ts";
+import { inScope } from "./scope.ts";
 import type { TutorTurnRecord } from "../../shared/types.ts";
 
 export type Difficulty = "easier" | "at_level" | "harder";
@@ -23,6 +24,10 @@ export interface ProblemRequest {
   ask?: string;
   /** The skill that was shaky, for a retest or a targeted exercise. */
   skill?: string;
+  /** The session's plan labels: the exercise must stay within them. */
+  allowedTopics?: string[];
+  /** Words the session has used (scope.ts): an exercise touching none of them is off topic. */
+  scope?: Set<string>;
 }
 
 export interface GeneratedProblem {
@@ -63,10 +68,12 @@ const SYSTEM = `You write ONE exercise for a student, to be shown in an answer w
 
 RULES
 - Pitch it exactly as asked (level, difficulty, topic, subject). The statement is self-contained: every given is in it; it needs no figure or earlier context.
+- STAY ON THE SESSION'S TOPIC: the exercise is about the given topic (and the allowed topics), in the given subject — never another subject or an unrelated topic.
 - Use a situation and numbers that are NOT in the list of exercises already used — a genuinely different setting, not the same problem re-worded.
 - Quantitative: free response with ONE numeric answer. "answer" is a bare number (no units); the unit goes in "format" ("answer in m s^-1, to 3 s.f."). "check" is a plain expression that computes the answer (use * / ^ sqrt() sin() cos() ln(); trig in DEGREES when the statement uses degrees). The app evaluates "check" and trusts it over "answer", so it must be right.
 - Conceptual or humanities: multiple choice. "options" has 4 plausible options (distractors are real misconceptions, similar length, exactly one correct), "correct" is the index of the right one (0-3), no "check".
-- "hint": a nudge towards the idea, never a value. "why": the one-sentence reason the answer is right.
+- Multiple choice: make the options similar in length; the correct one must NOT be the longest, and it must not be written in a different style from the others.
+- "hint": a nudge towards the idea, never a value and never a restatement of any option. "why": the one-sentence reason the answer is right.
 - "intro": ONE short spoken sentence introducing the exercise in a warm, plain tone (it must NOT contain the problem text or the answer).
 - "topic": a short title (≤6 words) for the worksheet.
 - Backslashes in LaTeX are doubled (\\\\frac, \\\\sin). Language: as asked.
@@ -77,6 +84,7 @@ function userPrompt(r: ProblemRequest): string {
   return [
     `Subject: ${r.subject || "(unspecified)"}`,
     `Topic: ${r.topic || r.ask || "(the topic they have been working on)"}`,
+    r.allowedTopics?.length ? `Allowed topics this session (stay inside them): ${r.allowedTopics.join("; ")}` : "",
     r.ask && r.topic ? `They asked for: "${r.ask.slice(0, 200)}"` : "",
     `Their level (from their Settings): ${r.level || "not given — pitch it at the level of the work so far"}`,
     `Difficulty: ${DIFFICULTY_TEXT[r.difficulty]}`,
@@ -109,6 +117,8 @@ export async function generateProblem(req: ProblemRequest, tokens: { in: number;
     else {
       const built = makeProblem(j, true);
       if ("error" in built) complaint = String(built.error).replace(/^(?:ERROR|REJECTED):\s*/i, "");
+      else if (req.scope && !inScope(`${j.topic || ""} ${j.question}`, req.scope, 1)) complaint = `that is off topic for this session (${req.topic || req.subject || "the session's topic"}) — write it on the session's topic`;
+      else if (correctIsLongest(j)) complaint = "the correct option is much longer than the others, which gives it away — make the options similar in length";
       else if (repeatedExercise(String(j.question), req.used)) complaint = "that is too close to an exercise already used — set a different situation with different numbers";
       else if (!String(j.intro || "").trim()) complaint = "add the one-sentence spoken intro";
       else { problem = j; break; }
@@ -117,5 +127,45 @@ export async function generateProblem(req: ProblemRequest, tokens: { in: number;
   }
   if (!problem) return null;
   const { intro, topic, ...input } = problem;
+  scrub(input);
   return { input, intro: String(intro || "").replace(/\s+/g, " ").trim().slice(0, 240), topic: String(topic || req.topic || "").replace(/\s+/g, " ").trim().slice(0, 60) };
+}
+
+/** In a multiple-choice exercise the right option is much longer than every other (a giveaway). */
+export function correctIsLongest(j: any): boolean {
+  const opts: string[] = Array.isArray(j?.options) ? j.options.map((o: unknown) => String(o || "")) : [];
+  const c = Number(j?.correct);
+  if (opts.length < 3 || !Number.isInteger(c) || !opts[c]) return false;
+  const others = opts.filter((_, i) => i !== c).map((o) => o.length);
+  return opts[c].length > 1.4 * Math.max(...others);
+}
+
+/** A hint that states or restates the answer: the correct option's content, or the numeric answer itself. */
+export function hintLeaks(j: any): boolean {
+  const hint = String(j?.hint || "");
+  if (!hint) return false;
+  const opts: string[] = Array.isArray(j?.options) ? j.options.map((o: unknown) => String(o || "")) : [];
+  const c = Number(j?.correct);
+  if (opts.length >= 2 && Number.isInteger(c) && opts[c]) {
+    if (mostlyContains(hint, opts[c], 0.5)) return true;
+    const nums = opts[c].match(/\d+(?:[.,]\d+)?/g) || [];
+    return nums.length >= 2 && nums.every((n) => hint.includes(n));
+  }
+  const ans = String(j?.answer || "").trim();
+  return ans.length > 0 && /\d/.test(ans) && new RegExp(`(?<![\\d.])${ans.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\d])`).test(hint);
+}
+
+/** Final touches on a validated exercise: a leaking hint is removed (better none than the answer), and multiple-choice
+ *  options are shuffled so the right one isn't always first. */
+function scrub(input: Record<string, any>): void {
+  if (hintLeaks(input)) delete input.hint;
+  const opts: string[] = Array.isArray(input.options) ? input.options.map((o: unknown) => String(o)) : [];
+  const c = Number(input.correct);
+  if (opts.length >= 2 && Number.isInteger(c) && opts[c]) {
+    const right = opts[c];
+    const shuffled = [...opts];
+    for (let i = shuffled.length - 1; i > 0; i--) { const k = Math.floor(Math.random() * (i + 1)); [shuffled[i], shuffled[k]] = [shuffled[k], shuffled[i]]; }
+    input.options = shuffled;
+    input.correct = shuffled.indexOf(right);
+  }
 }

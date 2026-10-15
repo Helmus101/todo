@@ -13,6 +13,7 @@ import { replyStatesValue, ignoresWhy, repeatsRecentReply, repeatsRecentQuestion
 import { statesFinalAnswer, wrongArithmetic, badGap, mentionsMechanics } from "../tutor.ts";
 import type { Policy } from "./policy.ts";
 import { repeatedExercise, mostlyContains } from "./exercises.ts";
+import { inScope } from "./scope.ts";
 
 /** A sentence that says something is (or is about to be) on the board. */
 const BOARD_CLAIM = /\b(?:on the (?:board|whiteboard)|(?:look|take a look|have a look) at the (?:board|chart|grid|diagram|table|graph|figure|picture)|(?:i'?ve|i have|i'?ll|i will|let me|let'?s|we'?ll|here'?s|here is|here are) (?:just )?(?:draw|drawn|sketch|put|add|map|write|written|plot|build|make|made|show)\w*|sur le tableau|regarde (?:le|la|l')\s*(?:tableau|sch[ée]ma|graphique|figure))\b/i;
@@ -41,12 +42,14 @@ export interface VerifyContext {
   discussion: boolean;
   /** Exercises already used this session and in earlier ones (exercises.ts). */
   usedExercises?: string[];
+  /** The content words this session has used (scope.ts): plans, headers and exercises must touch them. */
+  scope?: Set<string>;
   /** The code-checked verdict on their step/answer this turn, if any. */
   verdict?: "correct" | "incorrect";
 }
 
 export interface Issue {
-  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh";
+  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "off_topic" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh";
   /** The instruction for the repair call. */
   fix: string;
   /** A leak or a pointer at nothing must be fixed; the rest are quality. */
@@ -188,6 +191,11 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
     if (!d.misconception) out.push({ code: "diagnosis", hard: false, fix: "you diagnosed a misconception: name the mistaken belief in diagnosis.misconception (≤8 words)." });
     if (["confirm", "elicit", "recap"].includes(t.move)) out.push({ code: "diagnosis", hard: false, fix: "a misconception shows, so don't just confirm or move on: name the idea that is off, gently, in the speech, and choose focus, correct_error, explain or probe_why to repair it." });
   }
+  // Stay on the session's topic: a plan, a new worksheet or an exercise that touches nothing the session has used is another topic.
+  if (c.scope) {
+    const off = t.board.find((o) => (o.op === "plan" && (o.objectives || []).some((l) => !inScope(l, c.scope!))) || (o.op === "topic" && !inScope(String(o.text || ""), c.scope!)) || (o.op === "problem" && !inScope(`${o.question || ""}`, c.scope!, 1)));
+    if (off) out.push({ code: "off_topic", hard: true, fix: `the ${off.op} op is about a different topic from this session. Stay on the session's subject and plan; only change topic when the student asks for it.` });
+  }
   const prose = t.board.find((o) => (o.op === "step" || o.op === "gap") && o.kind !== "note" && o.kind !== "definition" && proseEquation(String(o.text || "")));
   if (prose) out.push({ code: "prose_equation", hard: false, fix: `the board line "${String(prose.text).slice(0, 80)}" has words where numbers or symbols belong. Write the actual value (or just the expression) and put the explanation in the step's "why".` });
   // Only objects that exist in the problem: no cyclist in a car problem.
@@ -235,6 +243,7 @@ export function degradeTurn(t: TurnOutput, c: VerifyContext): TurnOutput {
   const board = t.board.filter((o) => {
     if (o.op !== "gap" && revealsKey(opText(o), c)) return false;
     if (o.op === "mark" && !targetExists(o.target, c.board)) return false;
+    if (c.scope && ((o.op === "plan" && (o.objectives || []).some((l) => !inScope(l, c.scope!))) || (o.op === "topic" && !inScope(String(o.text || ""), c.scope)))) return false;
     if (o.op === "draw" && ++draws > 1) return false;
     if ((o.op === "step" || o.op === "gap") && o.kind !== "note" && o.kind !== "definition" && proseEquation(String(o.text || ""))) return false;
     if (o.op === "problem" && c.usedExercises?.length && repeatedExercise(String(o.question || ""), c.usedExercises)) return false;

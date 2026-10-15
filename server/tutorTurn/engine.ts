@@ -29,6 +29,7 @@ import { applyOps } from "./apply.ts";
 import { sessionGuide } from "./guide.ts";
 import { asksToWriteProblem, wantsDifferent, problemStatement, wantsMoreExercises, difficultyAsked, cantSeeProblem } from "./intents.ts";
 import { generateProblem, difficultyFrom } from "./problemGen.ts";
+import { sessionScope, inScope, contentWords, sameSubjectMemory } from "./scope.ts";
 import { exercisesSoFar, exercisesBlock, recentQuestionKinds, varietyLine, sameExercise } from "./exercises.ts";
 
 const MAX_HISTORY = 14;
@@ -111,6 +112,8 @@ const countWordsLite = (t: string) => t.split(/\s+/).filter(Boolean).length;
 
 export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResult & { turn?: TurnExtras }> {
   const t0 = Date.now();
+  // Other subjects' memory never reaches this session (a labour-market plan in a physics session).
+  input = { ...input, context: { ...input.context, memory: sameSubjectMemory(input.context.memory, input.context.subject) } };
   const { message, history, board, problems, objectives, context, lang } = input;
   // WHAT THE PROBLEM IS RIGHT NOW, decided by code: the open exercise, else the last given/topic on the board. A saved
   // solution for some OTHER problem (a bicycle, an earlier question) must never steer this one.
@@ -134,6 +137,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const verdict = input.stepVerdict?.verdict ?? (solvedNow.length ? "correct" : wrongNow ? "incorrect" : undefined);
   const policy = supportPolicy({ teaching: input.teaching, needsExplanation: wants.explain, asksWhy: wants.why, asksForWorkedExample: asksForWorkedExample(message), verdict });
   const discussion = isDiscussionSubject(context.subject, [message, ...history.slice(-4).map((h) => h.text)].join(" "));
+  const scope = sessionScope({ subject: context.subject, objectives, board, problems, history, message, memory: context.memory });
   const affect = affectOf(message);
   const misgraded = misgradedExercise(message, input.solution);
   const usedExercises = exercisesSoFar({ history, problems, memory: context.memory, board });
@@ -152,6 +156,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     + ownArithmeticLine(message)
     + stepVerdictLine(input.stepVerdict)
     + (focusText ? `\n\nTHE PROBLEM RIGHT NOW (stay on it; the session memory and earlier problems are about OTHER work — never mix them in, and use only the objects, quantities and numbers this problem and the student gave): ${focusText.slice(0, 400)}` : "")
+    + (context.subject ? `\n\nSESSION TOPIC: ${context.subject}${objectives.length ? ` — plan: ${objectives.map((o) => o.label).join("; ")}` : ""}. Every plan, worksheet, question and exercise stays on this subject and plan; never bring in another subject or an unrelated topic unless the student asks for it.` : "")
     + (usedExercises.length ? `\n\n${exercisesBlock(usedExercises)}` : "")
     + (() => { const v = varietyLine(recentQuestionKinds(history)); return v ? `\n\n${v}` : ""; })()
     + factsBlock({ policy, verdict: input.stepVerdict, solvedInChat: solvedNow[0]?.question, wrongInChat: wrongNow, wants, teaching: input.teaching, affect, adapt: [...sessionGuide({ message, history, log: input.teaching?.log, correctNow: verdict === "correct", openWork: problems.some((p) => !p.solved) || board.some((b) => b.kind === "gap" && b.status !== "correct"), hasObjectives: objectives.length > 0, different: wants.different, finalValue: input.solution?.finalAnswer, finalReached: solvedNow.length > 0 || reachedSolutionSteps(message, input.solution).includes(0) || (problems.length > 0 && problems.every((p) => p.solved)), level: [context.profile?.yearLevel, context.profile?.track === "ib" ? "IB" : context.profile?.track === "ap" ? "AP" : context.profile?.track === "bac" ? "bac" : "", ...(context.profile?.courses || []).slice(0, 4)].filter(Boolean).join(", ") }), ...adaptationLines(input.teaching?.log, { wrong: verdict === "incorrect", stuck: STUCK.test(message) })] })
@@ -165,7 +170,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   ];
 
   const said = [...history.filter((h) => h.role === "user").map((h) => h.text), message, input.solution?.statement || "", ...(spokenRepair ? [spokenRepair.interpreted, ...(input.spoken?.alternatives || [])] : []), ...problems.map((p) => p.question || ""), ...board.filter((b) => b.kind === "given" || b.owner === "student").map((b) => b.text)];
-  const vctx: VerifyContext = { message, history, board, problems, solution: input.solution, policy, wants: { why: wants.why, write: wants.write, restart: wants.restart, exercise: wants.exercise, draw: wants.draw, problemOnBoard: wants.problemOnBoard, different: wants.different }, said, discussion, usedExercises, verdict };
+  const vctx: VerifyContext = { message, history, board, problems, solution: input.solution, policy, wants: { why: wants.why, write: wants.write, restart: wants.restart, exercise: wants.exercise, draw: wants.draw, problemOnBoard: wants.problemOnBoard, different: wants.different }, said, discussion, usedExercises, verdict, scope };
 
   // ── One structured call (+ one retry if it isn't JSON at all) ──
   let turn: TurnOutput | null = null, raw = "";
@@ -216,12 +221,16 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
         subject: context.subject, topic: wants.different ? "" : topic, level: levelText, difficulty: difficultyAsked(message) ?? difficultyFrom(input.teaching?.log),
         kind: isDiscussionSubject(context.subject, speechAll) && nextKind === "compute" ? "explain_why" : nextKind,
         used, lang: fr ? "fr" : "en", ask: wants.exercise || wants.different ? message.slice(0, 200) : undefined,
+        allowedTopics: objectives.map((o) => o.label), scope,
       }, result.tokens);
       if (gen) {
         // The widget carries the problem text; the speech keeps only the lead-in (the sentences before the problem is stated).
         // The problem starts at the first sentence with a number from which the rest of the reply poses a problem.
         const at = turn.speech.findIndex((sn, i) => /\d/.test(sn) && (statesAProblem(turn!.speech.slice(i).join(" ")) || (/\?\s*$/.test(sn) && countWordsLite(sn) >= 8)));
-        let speech = at >= 0 ? turn.speech.slice(0, at) : turn.speech.filter((sn) => !/\?\s*$/.test(sn));
+        const scopeWithGen = new Set([...scope, ...contentWords(`${gen.topic} ${String(gen.input.question || "")}`)]);
+        // Lead-in sentences must be about this session: "let's switch to macroeconomics" in a physics session goes.
+        const stays = (sn: string) => !/\d/.test(sn) && (contentWords(sn).length < 3 || inScope(sn, scopeWithGen, Math.ceil(contentWords(sn).length / 3)));
+        let speech = (at >= 0 ? turn.speech.slice(0, at) : turn.speech.filter((sn) => !/\?\s*$/.test(sn))).filter(stays);
         if (!speech.length || !/[.!?]\s*$/.test(speech[speech.length - 1])) speech = [...speech, gen.intro];
         else if (!speech.some((sn) => sn === gen.intro) && !/\b(?:try|work out|find|what|which|how)\b/i.test(speech[speech.length - 1])) speech = [...speech, gen.intro];
         const ops = turn.board.filter((o) => o.op !== "problem" && !(wants.different && o.op === "topic"));
