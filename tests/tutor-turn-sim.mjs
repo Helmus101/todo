@@ -168,6 +168,35 @@ export async function runTutorTurnSim(check, section) {
       const bg = backgroundBlock({ profile: prof, subject: "Math", memory: [{ when: "yesterday", subject: "Math", lines: ["Partial fractions"], asked: ["why A over x+1"] }] });
       check("the tutor's background carries the level and uses the on-device memory to plan", /THEIR LEVEL/.test(bg) && /Partial fractions/.test(bg) && /USE THAT MEMORY/.test(bg));
     }
+    {
+      const { sameExercise, exercisesSoFar, questionKind, recentQuestionKinds, varietyLine } = await import("../server/tutorTurn/exercises.ts");
+      const { vagueReply } = await import("../server/tutorTurn/verify.ts");
+      const { sessionGuide } = await import("../server/tutorTurn/guide.ts");
+      const { cleanVisionText } = await import("../server/ai/voice.ts");
+      const old = "What do you get when you transform h(x) = 2sin(3x) from f(x) = sin(x) for the amplitude?";
+      check("a reworded repeat of an exercise is the same exercise; a different function is not", sameExercise(old, "How does h(x) = 2sin(3x) change from f(x) = sin(x), and what is the amplitude?") && !sameExercise(old, "What do you get when you transform g(x) = 3cos(2x) from f(x) = cos(x) for the period?"));
+      const hist = [];
+      hist.push({ role: "assistant", text: "Let's start. " + old });
+      for (let k = 0; k < 8; k++) hist.push({ role: k % 2 ? "assistant" : "user", text: k % 2 ? "Good, now think about it." : "ok" });
+      check("exercises asked beyond the 14-message window and in past sessions are still remembered", exercisesSoFar({ history: hist, problems: [], memory: [{ done: ["Find the slant asymptote of f(x) = (2x^2 - 3x + 4)/(x - 2)?"] }] }).length === 2);
+      check("question kinds: error-spotting, sketching, why, compute", questionKind("Can you spot the mistake in line 2?") === "spot_error" && questionKind("Sketch the graph of y = 2sin(x)?") === "sketch" && questionKind("Why does the period halve?") === "explain_why" && questionKind("What is cos(2pi)?") === "compute");
+      check("variety: after two computes the next is asked to be a different kind", /spot_error|sketch|predict|compare|explain_why/.test(varietyLine(recentQuestionKinds([{ role: "assistant", text: "What is cos(2pi)?" }, { role: "assistant", text: "What is sin(3pi/2)?" }]))));
+      const T0 = (speech, move = "elicit", board = []) => ({ speech, move, board, heard: "", intent: "other", diagnosis: { status: "none" }, support: 1, expects: "open" });
+      const vc = { message: "ok", history: [], board: [], problems: [], policy: {}, wants: {}, said: [], discussion: false };
+      check("a reply that says nothing in particular is caught (too short / hands nothing back / touches nothing)", !!vagueReply(T0(["Sure."]), vc) && !!vagueReply(T0(["Let's switch to the next part of your preparation now."]), vc) && vagueReply(T0(["Take the vertex form of the parabola.", "Which way does it open?"]), { ...vc, message: "vertex form of the parabola" }) === null);
+      check("a concrete maths question passes", vagueReply(T0(["What is the amplitude of $y = 2\\sin(3x)$?"]), vc) === null);
+      const g = sessionGuide({ message: "ok", history: [{ role: "user", text: "a" }, { role: "assistant", text: "b" }, { role: "user", text: "ok" }], log: [1, 2, 3].map(() => ({ at: "x", move: "elicit", support: 1, intent: "answer", diagnosis: "none", verdict: "correct", words: 10, studentWords: 5, repaired: false, ms: 1 })), correctNow: false, openWork: false, hasObjectives: true, level: "DP1, Maths AA HL" }).join("\n");
+      check("difficulty is pitched at their level, questions come from the board, and a streak raises it", /DP1, Maths AA HL/.test(g) && /TOO EASY/.test(g) && /BUILD QUESTIONS FROM THE BOARD/.test(g) && /HARDER than any so far/.test(g));
+      check("a drawing in the message is answered with its specific features, never blind praise", /THEY DREW OR WROTE/.test(sessionGuide({ message: "is it like this [What I wrote/drew on the board: TEXT: x]", history: [], log: [], correctNow: false, openWork: false, hasObjectives: true }).join("\n")));
+      check("the image reader's preamble and markdown are stripped", cleanVisionText("Based on the image provided, here is a literal transcription:\n\n### Text\n**TEXT:** x^2") === "Text\nTEXT: x^2");
+      // a model that repeats an old exercise gets ONE repair that names it
+      const dupTurn = T({ heard: "ok", intent: "chat", diagnosis: { status: "none" }, move: "practice", support: 1, speech: ["Let's check it once more.", "What do you get when you transform h(x) = 2sin(3x) from f(x) = sin(x) for the amplitude?"], board: [], expects: "value" });
+      const freshTurn = T({ heard: "ok", intent: "chat", diagnosis: { status: "none" }, move: "practice", support: 1, speech: ["Now a different one.", "A buoy rises and falls 1.5 m every 8 seconds; which function models its height, and what is its period?"], board: [], expects: "value" });
+      script = (b, i) => (i === 0 ? dupTurn : freshTurn);
+      calls = [];
+      const rr = await runTutorTurn({ ...base, history: hist, message: "ok next" });
+      check("an exercise already used earlier is repaired into a new one (one repair call that names the old one)", calls.length === 2 && /already used/.test(JSON.stringify(calls[1].messages)) && /buoy/.test(rr.reply) && !/2sin\(3x\)/.test(rr.reply));
+    }
     script = () => ({ fail: true });
     r = await runTutorTurn({ ...base, message: "hello?" });
     check("the model being down is an error for the route to report — never a made-up reply", r.error === true && !r.reply);

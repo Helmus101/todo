@@ -920,6 +920,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
         ) : null}
         <TutorCanvas
           ref={canvasRef}
+          contextText={[...(task.problems || []).filter((p) => !p.solved).slice(-1).map((p) => p.question), ...(task.board || []).filter((b) => b.kind !== "annotation" && b.text).slice(-6).map((b) => b.text)].join(" | ").slice(0, 700)}
           visionReady={visionReady}
           hidden={desmosOpen}
           surface={surfaceEl}

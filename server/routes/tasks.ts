@@ -152,7 +152,7 @@ function memoryFromBody(raw: unknown): TutorOpenerMemory[] {
   if (!Array.isArray(raw)) return [];
   const str = (x: unknown, n: number) => (typeof x === "string" ? x.slice(0, n) : undefined);
   const strs = (x: unknown) => (Array.isArray(x) ? x.map((y) => str(y, 200)).filter((y): y is string => !!y).slice(0, 6) : []);
-  return raw.slice(0, 3).filter((m) => m && typeof m === "object").map((m: any) => ({ when: str(m.when, 40), subject: str(m.subject, 60), lines: strs(m.lines), asked: strs(m.asked) }));
+  return raw.slice(0, 3).filter((m) => m && typeof m === "object").map((m: any) => ({ when: str(m.when, 40), subject: str(m.subject, 60), lines: strs(m.lines), asked: strs(m.asked), done: strs(m.done) }));
 }
 
 /** One tutor turn: what the student said → server/tutor.ts → the board, problems and reply, persisted on the

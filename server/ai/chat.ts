@@ -35,6 +35,8 @@ export interface TutorOpenerMemory {
   lines?: string[];
   /** What the STUDENT asked in that session, in their own words. */
   asked?: string[];
+  /** Exercises Otto set in that session — used only to avoid repeating them. */
+  done?: string[];
 }
 
 /** The real-memory block the opener is grounded in. Exported so its exact shape is pinned by tests: the

@@ -286,7 +286,7 @@ export const api = {
   // is NOT best-effort-swallowed — a failed read (vision not configured, a blank canvas, a Gemini hiccup)
   // needs to reach the student as a real message ("nothing's configured" / "try drawing it bigger"), not
   // silently vanish, since this is the one thing they actually asked Otto to look at.
-  readWhiteboard: (image: string): Promise<{ description: string }> => post("/api/tutor/read-whiteboard", { image }),
+  readWhiteboard: (image: string, context?: string): Promise<{ description: string }> => post("/api/tutor/read-whiteboard", { image, context }),
   uploadCoursework: (body: { subject: string; name: string; text: string; pages: number; totalPages?: number; truncated?: boolean }): Promise<{ doc: CourseworkDoc; tasks: { id: string; title: string }[]; profile: Profile; aiSummarized: boolean }> =>
     post("/api/coursework", body).then((r: any) => ({ ...r, profile: normalizeProfile(r.profile) })),
   deleteCoursework: (id: string): Promise<Profile> => req(`/api/coursework/${encodeURIComponent(id)}`, { method: "DELETE" }).then(j).then(normalizeProfile),

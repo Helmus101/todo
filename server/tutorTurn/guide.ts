@@ -15,6 +15,8 @@ export interface GuideInput {
   /** An exercise or a gap is still open on the board. */
   openWork: boolean;
   hasObjectives: boolean;
+  /** From Settings: year/grade, programme, courses — empty when unknown. */
+  level?: string;
 }
 
 export function sessionGuide(i: GuideInput): string[] {
@@ -44,7 +46,15 @@ export function sessionGuide(i: GuideInput): string[] {
       : "MAKE IT SOLID BEFORE MOVING ON: credit exactly what was right, then do ONE of — ask why that step works, give a variation with different numbers, or ask them to state the rule in their own words. Don't open a new topic or a new exercise this turn.");
   }
 
-  // 4. Never ask for what is already on the board.
+  // 3b. A drawing came with the message: react to what is really in it.
+  const drew = /\[(?:What I wrote\/drew on the board|Ce que j'ai écrit\/dessiné sur le tableau)\s*:/i.test(i.message);
+  if (drew) out.push("THEY DREW OR WROTE ON THE BOARD (an image reader described it after the bracket; it can misread, so treat it as likely, not certain). Respond to the SPECIFIC features: say in one sentence what you see ('a curve with a vertical dashed line at x = 1 and …'), compare it with the problem and the verified solution (asymptote positions, intercepts, branches, labels), name what is right and the first thing that is off, then ask one question about that spot or mark it. Never say a sketch is good without checking it; if the reading looks implausible or low-confidence, say what you can make out and ask them to confirm.");
+  // 4. Questions at THEIR level, guided by the board, rising while they succeed.
+  const unaided = log.slice(-3);
+  const flying = unaided.length >= 3 && unaided.every((r) => r.verdict === "correct" && r.support <= 1);
+  out.push(`DIFFICULTY: pitch every question at ${i.level ? `their level (${i.level})` : "the level the student has shown so far"}, not below it. A question they could answer by reading one line off the board, or in a single obvious step, is TOO EASY — ask for two or three connected steps, a transfer to a new situation, a limit or special case, or the reason it works. Open the sitting with a question at their level, not a warm-up.${flying ? " They have answered the last three alone and right: make the next question clearly HARDER than any so far." : ""}`);
+  out.push("BUILD QUESTIONS FROM THE BOARD: the next question extends what is on the board now — change a parameter, reverse the problem, ask for a limit case or what breaks — so the board and your questions are one thread, never a disconnected drill.");
+  // 5. Never ask for what is already on the board.
   out.push("Before you ask for a value or a fact, check the board: if it's already on a line (like r = 1), point at that line instead of asking for it, and ask the next thing.");
   return out;
 }

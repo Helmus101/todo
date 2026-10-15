@@ -160,10 +160,10 @@ export function sessionMemoryForPrompt(
   subject: string | undefined,
   now: number,
   lang: "fr" | "en",
-): { when: string; subject?: string; lines: string[]; asked: string[] }[] {
+): { when: string; subject?: string; lines: string[]; asked: string[]; done: string[] }[] {
   const score = (s: TutorSessionSummary) => (subject && s.subject === subject ? 0 : 1);
   const ordered = [...sessions].sort((a, b) => score(a) - score(b) || String(b.endTime).localeCompare(String(a.endTime)));
-  const out: { when: string; subject?: string; lines: string[]; asked: string[] }[] = [];
+  const out: { when: string; subject?: string; lines: string[]; asked: string[]; done: string[] }[] = [];
   for (const s of ordered) {
     const topic = sessionTopic(s);
     if (!topic) continue;
@@ -175,6 +175,7 @@ export function sessionMemoryForPrompt(
       when: relativeWhen(s.endTime, now, lang),
       ...(s.subject ? { subject: s.subject } : {}),
       lines: [`${topic}`, ...(s.reflection ? [`Their own reflection then: ${s.reflection.replace(/\s+/g, " ").slice(0, 160)}`] : []), ...rest].slice(0, 6).map((l) => (l.length > 200 ? l.slice(0, 198).trimEnd() + "…" : l)),
+      done: (s.chat || []).filter((m) => m.role === "assistant").flatMap((m) => String(m.text || "").replace(/\s+/g, " ").match(/[^.!?]*[^.!?\s][^.!?]*\?/g) || []).filter((q) => /\d|\$|\\[a-z]+|[=^]/.test(q) && q.trim().split(/\s+/).length >= 5).slice(0, 4).map((q) => q.trim().slice(0, 120)),
       asked: asked.map((q) => (q.length > 200 ? q.slice(0, 198).trimEnd() + "…" : q)),
     });
     if (out.length >= 3) break;

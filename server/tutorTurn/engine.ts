@@ -27,6 +27,7 @@ import { supportPolicy, asksForWorkedExample, adaptationLines, type Policy } fro
 import { verifyTurn, degradeTurn, acceptsBoardOffer, claimsBoard, type Issue, type VerifyContext } from "./verify.ts";
 import { applyOps } from "./apply.ts";
 import { sessionGuide } from "./guide.ts";
+import { exercisesSoFar, exercisesBlock, recentQuestionKinds, varietyLine } from "./exercises.ts";
 
 const MAX_HISTORY = 14;
 const STUCK = /\b(?:i (?:don'?t|do not) (?:know|get it|understand)|idk|no idea|i'?m (?:stuck|lost|confused)|not sure|je (?:ne )?sais pas|j'?sais pas|aucune idée|je suis (?:perdu|bloqué)e?|je comprends pas|help me|aide[- ]moi)\b/i;
@@ -101,6 +102,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const discussion = isDiscussionSubject(context.subject, [message, ...history.slice(-4).map((h) => h.text)].join(" "));
   const affect = affectOf(message);
   const misgraded = misgradedExercise(message, input.solution);
+  const usedExercises = exercisesSoFar({ history, problems, memory: context.memory });
 
   const system = TURN_PROMPT
     + (input.voiceMode ? VOICE_NOTE : "")
@@ -115,7 +117,9 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     + (misgraded ? `\n\nCHECKED BY CODE — THEY WERE RIGHT: ${misgraded} Say so plainly (the exercise's key was wrong, not them) and move on.` : "")
     + ownArithmeticLine(message)
     + stepVerdictLine(input.stepVerdict)
-    + factsBlock({ policy, verdict: input.stepVerdict, solvedInChat: solvedNow[0]?.question, wrongInChat: wrongNow, wants, teaching: input.teaching, affect, adapt: [...sessionGuide({ message, history, log: input.teaching?.log, correctNow: verdict === "correct", openWork: problems.some((p) => !p.solved) || board.some((b) => b.kind === "gap" && b.status !== "correct"), hasObjectives: objectives.length > 0 }), ...adaptationLines(input.teaching?.log, { wrong: verdict === "incorrect", stuck: STUCK.test(message) })] })
+    + (usedExercises.length ? `\n\n${exercisesBlock(usedExercises)}` : "")
+    + (() => { const v = varietyLine(recentQuestionKinds(history)); return v ? `\n\n${v}` : ""; })()
+    + factsBlock({ policy, verdict: input.stepVerdict, solvedInChat: solvedNow[0]?.question, wrongInChat: wrongNow, wants, teaching: input.teaching, affect, adapt: [...sessionGuide({ message, history, log: input.teaching?.log, correctNow: verdict === "correct", openWork: problems.some((p) => !p.solved) || board.some((b) => b.kind === "gap" && b.status !== "correct"), hasObjectives: objectives.length > 0, level: [context.profile?.yearLevel, context.profile?.track === "ib" ? "IB" : context.profile?.track === "ap" ? "AP" : context.profile?.track === "bac" ? "bac" : "", ...(context.profile?.courses || []).slice(0, 4)].filter(Boolean).join(", ") }), ...adaptationLines(input.teaching?.log, { wrong: verdict === "incorrect", stuck: STUCK.test(message) })] })
     + (input.spoken && spokenRepair ? voiceInputBlock(message, input.spoken.alternatives, spokenRepair) : "")
     + `\n\nReply in ${fr ? "French" : "English"} unless the student is writing in another language. Return ONLY the JSON object.`;
 
@@ -126,7 +130,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   ];
 
   const said = [...history.filter((h) => h.role === "user").map((h) => h.text), message, input.solution?.statement || "", ...(spokenRepair ? [spokenRepair.interpreted, ...(input.spoken?.alternatives || [])] : []), ...problems.map((p) => p.question || ""), ...board.filter((b) => b.kind === "given" || b.owner === "student").map((b) => b.text)];
-  const vctx: VerifyContext = { message, history, board, problems, solution: input.solution, policy, wants: { why: wants.why, write: wants.write, restart: wants.restart, exercise: wants.exercise, draw: wants.draw }, said, discussion };
+  const vctx: VerifyContext = { message, history, board, problems, solution: input.solution, policy, wants: { why: wants.why, write: wants.write, restart: wants.restart, exercise: wants.exercise, draw: wants.draw }, said, discussion, usedExercises };
 
   // ── One structured call (+ one retry if it isn't JSON at all) ──
   let turn: TurnOutput | null = null, raw = "";
