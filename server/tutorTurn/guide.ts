@@ -17,6 +17,8 @@ export interface GuideInput {
   hasObjectives: boolean;
   /** The exercise's final answer was reached (code-checked) or every exercise is solved. */
   finalReached?: boolean;
+  /** They asked for something totally different / a new problem. */
+  different?: boolean;
   /** From Settings: year/grade, programme, courses — empty when unknown. */
   level?: string;
 }
@@ -67,7 +69,7 @@ export function sessionGuide(i: GuideInput): string[] {
   const unaided = log.slice(-3);
   const flying = unaided.length >= 3 && unaided.every((r) => r.verdict === "correct" && r.support <= 1);
   out.push(`DIFFICULTY: pitch every question at ${i.level ? `their level (${i.level})` : "the level the student has shown so far"}, not below it. A question they could answer by reading one line off the board, or in a single obvious step, is TOO EASY — ask for two or three connected steps, a transfer to a new situation, a limit or special case, or the reason it works. Open the sitting with a question at their level, not a warm-up.${flying ? " They have answered the last three alone and right: make the next question clearly HARDER than any so far." : ""}`);
-  out.push("BUILD QUESTIONS FROM THE BOARD: the next question extends what is on the board now — change a parameter, reverse the problem, ask for a limit case or what breaks — so the board and your questions are one thread, never a disconnected drill.");
+  out.push(i.different ? "FRESH START: they asked for something different, so do NOT extend or vary what is on the board — open a new worksheet with a different situation and idea." : "BUILD QUESTIONS FROM THE BOARD: the next question extends what is on the board now — change a parameter, reverse the problem, ask for a limit case or what breaks — so the board and your questions are one thread, never a disconnected drill.");
   // 5. Never ask for what is already on the board.
   out.push("Before you ask for a value or a fact, check the board: if it's already on a line (like r = 1), point at that line instead of asking for it, and ask the next thing.");
   return out;

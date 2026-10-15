@@ -235,6 +235,29 @@ export async function runTutorTurnSim(check, section) {
       const sys = systemOf(calls[0]);
       check("the current problem is stated to the model, and a saved solution for a different problem is not used", /THE PROBLEM RIGHT NOW[^]*car of mass 1000 kg/.test(sys) && !/cyclist/.test(sys));
     }
+    {
+      const { asksToWriteProblem, wantsDifferent, problemFromProse, problemStatement } = await import("../server/tutorTurn/intents.ts");
+      const { asksToWrite } = await import("../server/tutorAdapt.ts");
+      check("'write the problem on the board' (typos and all) is a request for the PROBLEM, not for their working", asksToWriteProblem("alriht write hte problem on board") && asksToWriteProblem("write problem on board") && asksToWriteProblem("put the question on the whiteboard please") && !asksToWriteProblem("write my steps on the board") && !asksToWriteProblem("what is the problem with this step"));
+      check("'new problem', 'totally different', 'not the same idea' mean something different; an ordinary reply doesn't", wantsDifferent("alright new problem now") && wantsDifferent("no but not same idea just toally different".replace("toally", "totally")) && wantsDifferent("something else please") && !wantsDifferent("it is the same as before"));
+      check("write-my-work is still write-my-work", asksToWrite("write my steps on the board"));
+      const stated = "Let's switch to a connected masses problem to bring in tension. What is the acceleration of a 5 kg mass on a 30 degree frictionless slope connected by a string over a pulley to a 2 kg hanging mass?";
+      check("the problem is lifted out of Otto's prose without the lead-in", problemFromProse(stated).startsWith("What is the acceleration of a 5 kg mass") && problemStatement({ history: [{ role: "assistant", text: stated }, { role: "user", text: "write problem on board" }] }).includes("2 kg hanging mass"));
+      // the model answers "write the problem on the board" with only a question — the board still gets the problem
+      script = () => T({ heard: "wants the problem on the board", intent: "write_my_work", diagnosis: { status: "none" }, move: "elicit", support: 1, speech: ["What expression gives the component of gravity pulling the 5 kg mass down the slope?"], board: [], expects: "value" });
+      calls = [];
+      const rp = await runTutorTurn({ ...base, board: [], problems: [], message: "write problem on board", history: [{ role: "user", text: "alright new problem now" }, { role: "assistant", text: stated }] });
+      check("asked to put the problem on the board, the engine puts the full statement there as a given line even when the model only asked a question", rp.board.some((e) => e.kind === "given" && /5 kg mass/.test(e.text) && /2 kg hanging mass/.test(e.text)));
+      check("and the repair instruction for that turn names the problem, not 'their step'", /PROBLEM on the board/.test(JSON.stringify(calls.map((c) => c.messages))));
+      // a model that offers the same car setup again after "totally different" is repaired
+      const car = { id: "p0", question: "A car of mass 1000 kg travels up a 10 degree slope at a steady speed of 15 m per second. The resistive force is proportional to the square of the speed, 450 N at 15 m per second. What effective power is required?", answer: "32790", solved: true };
+      script = (b, i) => (i === 0
+        ? T({ heard: "wants different", intent: "new_problem", diagnosis: { status: "none" }, move: "practice", support: 1, speech: ["Let's test that same idea with a different setup.", "A car of mass 1000 kg rolls down a 10 degree slope and the resistive force is 2 v squared. At what speed does it stop accelerating?"], board: [], expects: "value" })
+        : T({ heard: "wants different", intent: "new_problem", diagnosis: { status: "none" }, move: "practice", support: 1, speech: ["Here is something new.", "A 5 kg mass on a 30 degree frictionless slope is tied by a string over a pulley to a 2 kg hanging mass. What is the acceleration?"], board: [], expects: "value" }));
+      calls = [];
+      const rd = await runTutorTurn({ ...base, board: [], problems: [car], message: "no but not same idea just totally different", history: [{ role: "user", text: "alright new problem now" }, { role: "assistant", text: "Let's test that idea again." }] });
+      check("'totally different' after a car problem does not get another car problem (one repair), and the new problem lands on the board", calls.length === 2 && /TOTALLY DIFFERENT/.test(JSON.stringify(calls[0].messages)) && /pulley/.test(rd.reply) && rd.board.some((e) => e.kind === "given" && /pulley/.test(e.text)));
+    }
     script = () => ({ fail: true });
     r = await runTutorTurn({ ...base, message: "hello?" });
     check("the model being down is an error for the route to report — never a made-up reply", r.error === true && !r.reply);

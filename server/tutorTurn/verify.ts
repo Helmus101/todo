@@ -35,7 +35,7 @@ export interface VerifyContext {
   solution?: TutorSolution;
   policy: Policy;
   /** What code detected the student wants this turn. */
-  wants: { why: boolean; write: boolean; restart: boolean; exercise: boolean; draw?: boolean };
+  wants: { why: boolean; write: boolean; restart: boolean; exercise: boolean; draw?: boolean; problemOnBoard?: boolean; different?: boolean };
   /** Everything the student and the problem said — the only legitimate source of numbers. */
   said: string[];
   discussion: boolean;
@@ -46,7 +46,7 @@ export interface VerifyContext {
 }
 
 export interface Issue {
-  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "unwritten" | "diagnosis" | "invented_object" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh";
+  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh";
   /** The instruction for the repair call. */
   fix: string;
   /** A leak or a pointer at nothing must be fixed; the rest are quality. */
@@ -154,12 +154,18 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   if (c.wants.write && !t.board.some((o) => o.op === "step" && o.owner === "student")) out.push({ code: "intent_write", hard: false, fix: 'they asked you to write their working on the board: add a step op with owner "student" holding exactly the step they last stated, tidied into $…$.' });
   if (c.wants.restart && !t.board.some((o) => o.op === "topic")) out.push({ code: "intent_restart", hard: false, fix: 'they asked to start over: begin with a topic op (a fresh worksheet), put the givens up again as one step, and explain the very first idea plainly.' });
   if (c.wants.exercise && !t.board.some((o) => o.op === "problem")) out.push({ code: "intent_exercise", hard: false, fix: "they asked for an exercise: add a problem op (full statement, one short answer, a check expression for a number, the format in 'format')." });
+  if (c.wants.problemOnBoard && !t.board.some((o) => o.op === "problem" || (o.op === "step" && o.kind === "given"))) out.push({ code: "intent_problem", hard: true, fix: "they asked you to put the PROBLEM on the board: open with a topic op, then add a step op of kind \"given\" holding the full problem statement (all the givens and the question), in this turn. Then ask the first step." });
   if (c.wants.draw && !t.board.some((o) => o.op === "draw" || o.op === "step")) out.push({ code: "intent_draw", hard: true, fix: "they asked you to draw or show it — do it NOW, in this turn: add a draw op (a table op for a sign chart, grid or comparison; graph, numberline, geometry, flow for the rest), or a step op for a formula. Don't describe it and wait for them to ask again." });
   if (t.speech.some(claimsBoard) && !t.board.some((o) => CREATING.has(o.op))) out.push({ code: "board_promise", hard: true, fix: "the speech says something is on the board (or will be) but the board list has nothing new — add the draw/step op that puts it there, or take the board claim out of the speech." });
   // An exercise is never set twice: the spoken question or a problem op must differ from every earlier one.
   if (c.usedExercises?.length) {
     const prompts = [...t.board.filter((o) => o.op === "problem").map((o) => String(o.question || "")), t.speech.length ? t.speech.filter((s) => /\?\s*["»”)]*\s*$/.test(s)).pop() || "" : ""].filter(Boolean);
-    const dup = prompts.map((p) => repeatedExercise(p, c.usedExercises!)).find(Boolean);
+    let dup = prompts.map((p) => repeatedExercise(p, c.usedExercises!, c.wants.different ? 0.35 : 0.5)).find(Boolean);
+    // "Totally different" means a different SITUATION: sharing the setting (a car again) with a recent exercise is the same idea re-skinned.
+    if (!dup && c.wants.different) {
+      const recent = c.usedExercises.slice(-3);
+      for (const p of [...prompts, say]) { const mine = sceneNounsIn(p); const hit = recent.find((r) => sceneNounsIn(r).some((n) => mine.includes(n))); if (hit) { dup = hit; break; } }
+    }
     if (dup) out.push({ code: "repeat_exercise", hard: true, fix: `this is the same exercise as one already used ("${dup}"). Set a NEW one: change the function or numbers AND the situation, and either make it a step harder or test the skill a different way (spot the error, sketch, explain).` });
   }
   const vague = vagueReply(t, c);
@@ -175,7 +181,9 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   }
   // Only objects that exist in the problem: no cyclist in a car problem.
   const objs = inventedObjects([say, ...t.board.map(opText)], [...c.said, ...c.board.map((b) => b.text || ""), ...c.problems.map((p) => p.question || ""), ...(c.solution ? [c.solution.statement, ...c.solution.steps.map((s) => `${s.idea || ""} ${s.result || ""}`)] : [])]);
-  if (objs.length) out.push({ code: "invented_object", hard: true, fix: `it mentions ${objs.slice(0, 2).map((o) => `"${o}"`).join(" and ")}, which is not in the problem, the board or anything the student said. Refer only to the actual objects of the problem.` });
+  // A NEW problem brings its own objects; only an existing problem's objects are fixed.
+  const introducesProblem = c.wants.different || c.wants.exercise || c.wants.problemOnBoard || t.move === "practice" || t.board.some((o) => o.op === "problem" || o.op === "topic");
+  if (objs.length && !introducesProblem) out.push({ code: "invented_object", hard: true, fix: `it mentions ${objs.slice(0, 2).map((o) => `"${o}"`).join(" and ")}, which is not in the problem, the board or anything the student said. Refer only to the actual objects of the problem.` });
   // 5. One question, last.
   const qs = t.speech.map((s, i) => ({ i, q: /\?\s*["»”)]*\s*$/.test(s.replace(/\$[^$]*\$/g, "x")) })).filter((x) => x.q);
   if (qs.length > 1 || (qs.length === 1 && qs[0].i !== t.speech.length - 1)) out.push({ code: "questions", hard: false, fix: "ask at most ONE question, as the last sentence." });
