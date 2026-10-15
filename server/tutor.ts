@@ -590,6 +590,8 @@ export function asksStudentToChoose(reply: string): boolean {
 
 // ── One turn ──────────────────────────────────────────────────────────────────────────────────────────
 export interface TutorTurnInput {
+  /** Skills Otto helped with in an earlier sitting and hasn't yet seen them do alone (server/tutorTurn/ledger.ts). */
+  dueRetests?: string[];
   history: { role: "user" | "assistant"; text: string }[];
   message: string;
   board: BoardEntry[];

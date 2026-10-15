@@ -14,6 +14,7 @@ import { recordConceptEvidence, normalizeStudentModel, emptyStudentModel } from 
 import { detectSubject, computedGapKey, solvedGapKey } from "../tutor.ts";
 import { runTutorTurn } from "../tutorTurn/engine.ts";
 import { nextSupportState } from "../tutorTurn/policy.ts";
+import { logAssistance, settleRetest, buildRecap, dueRetests } from "../tutorTurn/ledger.ts";
 import type { Move } from "../../shared/tutorTurn.ts";
 import { selectJournal } from "../journal.ts";
 import type { TutorOpenerMemory } from "../claude.ts";
@@ -208,7 +209,7 @@ async function tutorTurn(
   }
   const out = await runTutorTurn({
     message, history, board: currentBoard, problems, objectives: currentObjectives, lang,
-    solution: t.solution, teaching: t.tutorState,
+    solution: t.solution, teaching: t.tutorState, dueRetests: dueRetests(profile.assistance, new Date()).map((a) => a.skill),
     voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, spoken, stepVerdict,
     context: { profile, subject: t.sourceSubject, journal: c.recentJournal, journalMeta: c.journalMeta, schoolRecord: schoolRecordLine(req.session.tasks, profile, t.sourceSubject), memory: memoryFromBody(req.body?.memory) },
   });
@@ -235,6 +236,11 @@ async function tutorTurn(
     t.tutorState = { ...next, ...support, ...(record ? { log: [...(prev?.log || []), record].slice(-30) } : {}) }; }
   const evidence = evidenceKindFor({ message, verdict: stepVerdict?.verdict, reachedFinal: reached.includes(0), helpLevel: helpBefore });
   const skill = t.solution?.skill || t.sourceSubject;
+  if (skill) {
+    const nowD = new Date();
+    if (out.turn) profile.assistance = logAssistance(profile.assistance, { skill, level: out.turn.support, now: nowD });
+    if (evidence === "solved-unaided") profile.assistance = settleRetest(profile.assistance, skill, true, nowD).ledger;
+  }
   if (evidence && skill) {
     try { profile.conceptModel = recordConceptEvidence(normalizeStudentModel(profile.conceptModel) || emptyStudentModel(), { label: skill, subject: t.sourceSubject, kind: evidence, evidence: "tutor session" }, new Date()); }  // a label, never the student's own words — those stay in this browser
     catch { /* best-effort — never blocks the reply */ }
@@ -771,6 +777,19 @@ export function registerTaskRoutes(app: express.Express): void {
       console.error(e);
       res.status(500).json({ error: M(req, "Impossible de nettoyer les étapes — réessaie.", "Couldn't cleanup steps — try again.") });
     }
+  });
+
+  // END OF A SITTING: the recap, built by code from the turn records and the board the client sends (the board lives in
+  // the browser). Every line traces to a record; nothing here asks the model what the student "mastered".
+  app.post("/api/tasks/:id/tutor/close", requireAuth, async (req, res) => {
+    const t = await findTaskOrReload(req, String(req.params.id));
+    if (!t) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
+    const profile = req.session.profile ||= emptyProfile();
+    const board = Array.isArray(req.body?.board) ? (req.body.board as BoardEntry[]).slice(-200) : [];
+    const objectives = Array.isArray(req.body?.objectives) ? (req.body.objectives as TaskObjective[]).slice(0, 12) : t.objectives;
+    const recap = buildRecap({ log: t.tutorState?.log || [], board, objectives, lang: profile.language === "en" ? "en" : "fr" });
+    const due = dueRetests(profile.assistance, new Date()).map((a) => a.skill).slice(0, 5);
+    res.json({ recap, retestsDue: due });
   });
 
   app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, res) => {

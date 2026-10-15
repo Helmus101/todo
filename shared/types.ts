@@ -95,6 +95,8 @@ export interface Profile {
   // student learns, with the evidence behind each belief. One object so it's validated, capped and reset as
   // a unit. Fully visible in the transparency panel (spec §30) and resettable from Settings.
   conceptModel?: StudentModelShape;
+  /** Assistance ledger (server/tutorTurn/ledger.ts), capped at 50. */
+  assistance?: AssistanceEntry[];
   // The concept/prerequisite graph (server/conceptGraph.ts) — the curated spine plus the concepts discovered
   // in this student's own courses and uploaded documents. Persisted so discovery is paid for once.
   conceptGraph?: ConceptGraphShape;
@@ -574,6 +576,7 @@ export function normalizeProfile(p: any): Profile {
     // keep it only if it's a plausibly-shaped object, let the server-side normalizers do the real work
     // once those are wired up (not yet, for these two — see the plan's "explicitly deferred" section).
     conceptModel: p?.conceptModel && typeof p.conceptModel === "object" && p.conceptModel.concepts && typeof p.conceptModel.concepts === "object" ? p.conceptModel : undefined,
+    assistance: Array.isArray(p?.assistance) ? p.assistance.filter((a: any) => a && typeof a.skill === "string" && typeof a.at === "string" && (a.status === "pending" || a.status === "passed")).slice(-50) : undefined,
     conceptGraph: p?.conceptGraph && typeof p.conceptGraph === "object" && p.conceptGraph.nodes && typeof p.conceptGraph.nodes === "object" ? p.conceptGraph : undefined,
     // Validated more concretely — these two are actively read/written every Tutor turn as of this change.
     tutorSessions: Array.isArray(p?.tutorSessions)
@@ -1240,6 +1243,9 @@ export interface TutorTeachingState {
 }
 
 /** One tutor turn, recorded by code (never the student's own words). */
+/** Help Otto gave at support level 4+ on a skill, until the student succeeds on it alone in a later sitting. */
+export interface AssistanceEntry { skill: string; level: number; at: string; status: "pending" | "passed"; settledAt?: string }
+
 export interface TutorTurnRecord {
   at: string;
   move: string;

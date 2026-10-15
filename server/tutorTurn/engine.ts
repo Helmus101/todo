@@ -105,6 +105,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     + (discussion ? DISCUSSION_BLOCK : "")
     + objectivesBlock(objectives).replace(/SET_OBJECTIVES/g, "a plan op")
     + `\n\nTHE BOARD (margin numbers #n are what you point at)${boardSurfaceBlock(board, problems) || ": empty — open it with a topic op and the starting point."}`
+    + (input.dueRetests?.length && history.length <= 1 ? `\n\nOPENING THE SITTING: last time you helped them with ${input.dueRetests.slice(0, 2).join(" and ")} and haven't yet seen them do it alone. After answering what they said, offer one short retest of it — as an offer, never a demand.` : "")
     + solutionBlock(input.solution)
     + solutionMatchLine(message, input.solution)
     + (misgraded ? `\n\nCHECKED BY CODE — THEY WERE RIGHT: ${misgraded} Say so plainly (the exercise's key was wrong, not them) and move on.` : "")
