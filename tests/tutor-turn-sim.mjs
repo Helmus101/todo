@@ -124,6 +124,18 @@ export async function runTutorTurnSim(check, section) {
       check("a student who is flying alone gets less help", adaptationLines([rec({ verdict: "correct" }), rec({ verdict: "correct" })], { wrong: false, stuck: false }).some((l) => /moving fast/.test(l)));
       check("nothing special is said when nothing needs adapting", adaptationLines([rec({ move: "confirm", verdict: "correct", support: 2 })], { wrong: false, stuck: false }).length === 0);
     }
+    {
+      const { sessionGuide } = await import("../server/tutorTurn/guide.ts");
+      const rec = (o) => ({ at: "x", move: "elicit", support: 1, intent: "answer", diagnosis: "none", words: 20, studentWords: 10, repaired: false, ms: 1, ...o });
+      const u = (t) => ({ role: "user", text: t }), a = (t) => ({ role: "assistant", text: t });
+      const g = (o) => sessionGuide({ message: "ok", history: [u("x"), a("y"), u("ok")], log: [], correctNow: false, openWork: false, hasObjectives: true, ...o }).join("\n");
+      check("the first turn of a sitting opens with a plan, not 'where do you want to start'", /OPEN THE SITTING WITH A PLAN/.test(g({ history: [u("lets continue")], message: "lets continue" })) && !/OPEN THE SITTING/.test(g({})));
+      check("with no objectives the opening asks for a plan op", /plan op/.test(g({ history: [u("hi")], message: "hi", hasObjectives: false })));
+      check("a right answer is made solid before moving on (why / variation / own words)", /MAKE IT SOLID/.test(g({ correctNow: true })) && /SOLID NOW/.test(g({ correctNow: true, log: [rec({ move: "probe_why" })] })));
+      check("asking to switch while the topic isn't solid: finish it quickly, then switch; a second ask switches at once", /come back to it/.test(g({ message: "lets do trig actually", openWork: true })) && /AGAIN: do it now/.test(g({ message: "actually partial fractions", history: [u("a"), a("b"), u("lets do trig actually"), a("c"), u("actually partial fractions")], openWork: true })));
+      check("a solid topic can be left when asked", !/SWITCH TOPICS/.test(g({ message: "lets do trig", log: [rec({ verdict: "correct" }), rec({ verdict: "correct" })] })));
+      check("the board is checked before asking for a value", /already on a line/.test(g({})));
+    }
     script = () => ({ fail: true });
     r = await runTutorTurn({ ...base, message: "hello?" });
     check("the model being down is an error for the route to report — never a made-up reply", r.error === true && !r.reply);

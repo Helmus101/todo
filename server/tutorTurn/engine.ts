@@ -26,6 +26,7 @@ import { TURN_PROMPT, VOICE_NOTE } from "./prompt.ts";
 import { supportPolicy, asksForWorkedExample, adaptationLines, type Policy } from "./policy.ts";
 import { verifyTurn, degradeTurn, type Issue, type VerifyContext } from "./verify.ts";
 import { applyOps } from "./apply.ts";
+import { sessionGuide } from "./guide.ts";
 
 const MAX_HISTORY = 14;
 const STUCK = /\b(?:i (?:don'?t|do not) (?:know|get it|understand)|idk|no idea|i'?m (?:stuck|lost|confused)|not sure|je (?:ne )?sais pas|j'?sais pas|aucune idée|je suis (?:perdu|bloqué)e?|je comprends pas|help me|aide[- ]moi)\b/i;
@@ -34,8 +35,8 @@ const STUCK = /\b(?:i (?:don'?t|do not) (?:know|get it|understand)|idk|no idea|i
 export function factsBlock(f: { policy: Policy; verdict?: { gap: string; given: string; verdict: "correct" | "incorrect" }; solvedInChat?: string; wrongInChat?: boolean; wants: VerifyContext["wants"] & { explain: boolean }; teaching?: TutorTeachingState; affect: string; adapt?: string[] }): string {
   const lines = [
     `SUPPORT ALLOWED THIS TURN: up to level ${f.policy.maxSupport} (${f.policy.reason}). Allowed moves: ${f.policy.allowed.join(", ")}.`,
-    f.verdict ? `THEIR STEP, CHECKED BY CODE: "${f.verdict.given}" for the open line "${f.verdict.gap}" is ${f.verdict.verdict === "correct" ? "RIGHT — credit exactly what was right and move them on" : "WRONG — find the first thing that's off; don't give the value"}.` : "",
-    f.solvedInChat ? `THEY JUST ANSWERED THE OPEN EXERCISE IN CHAT AND IT IS RIGHT (code-checked): "${f.solvedInChat.slice(0, 160)}". Confirm it — never ask them to type it into the box — then move on.` : "",
+    f.verdict ? `THEIR STEP, CHECKED BY CODE: "${f.verdict.given}" for the open line "${f.verdict.gap}" is ${f.verdict.verdict === "correct" ? "RIGHT — credit exactly what was right" : "WRONG — find the first thing that's off; don't give the value"}.` : "",
+    f.solvedInChat ? `THEY JUST ANSWERED THE OPEN EXERCISE IN CHAT AND IT IS RIGHT (code-checked): "${f.solvedInChat.slice(0, 160)}". Confirm it — never ask them to type it into the box — then deepen it (ask why it works or give a variation) before moving on.` : "",
     f.wrongInChat ? "Their number for the open exercise is WRONG (code-checked): look for the first slip, no new exercise." : "",
     f.wants.why ? "THEY ASKED WHY: give the real reason first, in plain words." : "",
     f.wants.explain && !f.wants.why ? "THEY NEED IT EXPLAINED (lost, asked to be shown, or stuck): teach the missing idea plainly and write it on the board as you say it, then hand back one small step." : "",
@@ -113,7 +114,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     + (misgraded ? `\n\nCHECKED BY CODE — THEY WERE RIGHT: ${misgraded} Say so plainly (the exercise's key was wrong, not them) and move on.` : "")
     + ownArithmeticLine(message)
     + stepVerdictLine(input.stepVerdict)
-    + factsBlock({ policy, verdict: input.stepVerdict, solvedInChat: solvedNow[0]?.question, wrongInChat: wrongNow, wants, teaching: input.teaching, affect, adapt: adaptationLines(input.teaching?.log, { wrong: verdict === "incorrect", stuck: STUCK.test(message) }) })
+    + factsBlock({ policy, verdict: input.stepVerdict, solvedInChat: solvedNow[0]?.question, wrongInChat: wrongNow, wants, teaching: input.teaching, affect, adapt: [...sessionGuide({ message, history, log: input.teaching?.log, correctNow: verdict === "correct", openWork: problems.some((p) => !p.solved) || board.some((b) => b.kind === "gap" && b.status !== "correct"), hasObjectives: objectives.length > 0 }), ...adaptationLines(input.teaching?.log, { wrong: verdict === "incorrect", stuck: STUCK.test(message) })] })
     + (input.spoken && spokenRepair ? voiceInputBlock(message, input.spoken.alternatives, spokenRepair) : "")
     + `\n\nReply in ${fr ? "French" : "English"} unless the student is writing in another language. Return ONLY the JSON object.`;
 
