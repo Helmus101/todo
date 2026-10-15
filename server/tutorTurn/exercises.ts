@@ -15,12 +15,12 @@ function grams(text: string): Set<string> {
   return out;
 }
 
-export function sameExercise(a: string, b: string): boolean {
+export function sameExercise(a: string, b: string, threshold = 0.5): boolean {
   const A = grams(a), B = grams(b);
   if (A.size < 5 || B.size < 5) return false;
   let inter = 0;
   for (const g of A) if (B.has(g)) inter++;
-  return inter / (A.size + B.size - inter) >= 0.5;
+  return inter / (A.size + B.size - inter) >= threshold;
 }
 
 const hasMaths = (s: string) => /\d|\$|\\[a-z]+|[=^]/.test(s);
@@ -28,7 +28,7 @@ const clip = (s: string) => s.replace(/\s+/g, " ").trim().slice(0, 120);
 
 /** Exercise-like prompts Otto has already set: every problem, every maths-bearing question he asked anywhere in the full
  *  history, and what the on-device memory says earlier sessions used. Newest last, de-duplicated, capped. */
-export function exercisesSoFar(i: { history: { role: string; text: string }[]; problems: TaskProblem[]; memory?: { done?: string[] }[] }): string[] {
+export function exercisesSoFar(i: { history: { role: string; text: string }[]; problems: TaskProblem[]; memory?: { done?: string[] }[]; board?: BoardEntry[] }): string[] {
   const all: string[] = [];
   for (const m of i.memory || []) for (const d of m.done || []) all.push(clip(d));
   for (const h of i.history) {
@@ -37,14 +37,15 @@ export function exercisesSoFar(i: { history: { role: string; text: string }[]; p
     for (const q of qs) if (hasMaths(q) && q.trim().split(/\s+/).length >= 5) all.push(clip(q));
   }
   for (const p of i.problems) if (p.question) all.push(clip(p.question));
+  for (const b of i.board || []) if (b.kind === "given" && b.text && b.text.split(/\s+/).length >= 12) all.push(clip(b.text));
   const out: string[] = [];
   for (const e of all) if (e && !out.some((o) => sameExercise(o, e))) out.push(e);
   return out.slice(-MAX_LIST);
 }
 
 /** The earlier exercise a new prompt repeats, if any. */
-export function repeatedExercise(prompt: string, used: string[]): string | null {
-  return used.find((u) => sameExercise(u, prompt)) ?? null;
+export function repeatedExercise(prompt: string, used: string[], threshold = 0.5): string | null {
+  return used.find((u) => sameExercise(u, prompt, threshold)) ?? null;
 }
 
 export function exercisesBlock(used: string[]): string {
