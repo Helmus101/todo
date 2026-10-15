@@ -136,6 +136,13 @@ export async function runTutorTurnSim(check, section) {
       check("a solid topic can be left when asked", !/SWITCH TOPICS/.test(g({ message: "lets do trig", log: [rec({ verdict: "correct" }), rec({ verdict: "correct" })] })));
       check("the board is checked before asking for a value", /already on a line/.test(g({})));
     }
+    {
+      const { salvageTurn, normalizeTurn } = await import("../shared/tutorTurn.ts");
+      const cut = '{"heard":"x","move":"explain","speech":["Think of it as a slope.","Each step right goes up two.",';
+      check("a reply cut off mid-JSON still yields the sentences it finished", normalizeTurn(salvageTurn(cut))?.speech.length === 2 && normalizeTurn(salvageTurn(cut)).move === "explain");
+      check("a trailing comma is forgiven", normalizeTurn(salvageTurn('{"speech":["Hello there friend."],}'))?.speech[0] === "Hello there friend.");
+      check("plain prose is only used as a last resort", salvageTurn("Let us look at the slope together now.") === null && normalizeTurn(salvageTurn("Let us look at the slope together now.", { prose: true }))?.speech.length === 1);
+    }
     script = () => ({ fail: true });
     r = await runTutorTurn({ ...base, message: "hello?" });
     check("the model being down is an error for the route to report — never a made-up reply", r.error === true && !r.reply);

@@ -10,7 +10,7 @@
 // the model spends its one call on teaching. Nothing here substitutes a fixed sentence: every word the student
 // reads is the model's own; code only removes what must not ship.
 import type { BoardEntry, TaskObjective, TaskProblem, TutorSolution, TutorTeachingState } from "../../shared/types.ts";
-import { MOVE_SUPPORT, normalizeTurn, extractJsonObject, type TurnOutput } from "../../shared/tutorTurn.ts";
+import { MOVE_SUPPORT, normalizeTurn, extractJsonObject, salvageTurn, type TurnOutput } from "../../shared/tutorTurn.ts";
 import { repairSpokenMath, spokenContextFrom, type SpokenRepair } from "../../shared/spokenMath.ts";
 import { boardSurfaceBlock } from "../boardEvents.ts";
 import { solutionBlock } from "../solver.ts";
@@ -64,7 +64,7 @@ async function callTurn(messages: any[], tokens: TutorTurnResult["tokens"]): Pro
   try { res = await ask(true); } catch (e: any) { if (Number(e?.status) === 400) res = await ask(false); else throw e; }
   const u = usageOf(res); tokens.in += u.in; tokens.out += u.out; tokens.cachedIn += u.cachedIn;
   const raw = String(res?.choices?.[0]?.message?.content || "");
-  return { turn: normalizeTurn(extractJsonObject(raw)), raw };
+  return { turn: normalizeTurn(extractJsonObject(raw)) ?? normalizeTurn(salvageTurn(raw)), raw };
 }
 
 export interface TurnExtras {
@@ -137,6 +137,8 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     result.error = true;
     return result;
   }
+  // Both tries were prose or cut-off JSON: the model's own words still beat an error message.
+  if (!turn) turn = normalizeTurn(salvageTurn(raw, { prose: true }));
   if (!turn) { console.error("[tutor] no usable JSON turn"); result.error = true; return result; }
 
   // ── Verify, repair once, then fix in code what's left ──
