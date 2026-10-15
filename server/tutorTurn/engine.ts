@@ -13,7 +13,7 @@ import type { BoardEntry, TaskObjective, TaskProblem, TutorSolution, TutorTeachi
 import { MOVE_SUPPORT, normalizeTurn, extractJsonObject, salvageTurn, type TurnOutput } from "../../shared/tutorTurn.ts";
 import { repairSpokenMath, spokenContextFrom, type SpokenRepair } from "../../shared/spokenMath.ts";
 import { boardSurfaceBlock } from "../boardEvents.ts";
-import { solutionBlock } from "../solver.ts";
+import { solutionBlock, solveProblem } from "../solver.ts";
 import { createTutorChat, retryRequest, usageOf, OUT, nowBlock, rewriteReply, stepVerdictLine } from "../claude.ts";
 import { asksWhy, asksToWrite, asksToDraw, voiceInputBlock, similarity, posesProblemInProse, studentProblemStatement } from "../tutorAdapt.ts";
 import {
@@ -27,7 +27,8 @@ import { supportPolicy, asksForWorkedExample, adaptationLines, type Policy } fro
 import { verifyTurn, degradeTurn, acceptsBoardOffer, claimsBoard, sceneNounsIn, type Issue, type VerifyContext } from "./verify.ts";
 import { applyOps } from "./apply.ts";
 import { sessionGuide } from "./guide.ts";
-import { asksToWriteProblem, wantsDifferent, problemStatement } from "./intents.ts";
+import { asksToWriteProblem, wantsDifferent, problemStatement, wantsMoreExercises, difficultyAsked } from "./intents.ts";
+import { generateProblem, difficultyFrom } from "./problemGen.ts";
 import { exercisesSoFar, exercisesBlock, recentQuestionKinds, varietyLine, sameExercise } from "./exercises.ts";
 
 const MAX_HISTORY = 14;
@@ -104,6 +105,10 @@ function statedAgain(message: string, statement: string): boolean {
   return hit >= 2;
 }
 
+/** Spoken text that sets a problem: two or more numbers and a question (units spelled out count: "120 metres"). */
+const statesAProblem = (t: string) => (t.match(/\d+(?:[.,]\d+)?/g) || []).length >= 2 && /\?/.test(t) && t.length >= 40;
+const countWordsLite = (t: string) => t.split(/\s+/).filter(Boolean).length;
+
 export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResult & { turn?: TurnExtras }> {
   const t0 = Date.now();
   const { message, history, board, problems, objectives, context, lang } = input;
@@ -122,7 +127,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const wrongNow = !solvedNow.length && problems.some((p) => wrongInChat(message, p));
   const spokenRepair: SpokenRepair | null = input.spoken ? repairSpokenMath(message, spokenContextFrom([context.subject || "", ...board.map((b) => b.text || ""), ...problems.map((p) => p.question || "")])) : null;
   const problemOnBoard = asksToWriteProblem(message);
-  const wants = { why: asksWhy(message), write: asksToWrite(message) && !problemOnBoard, problemOnBoard, different: wantsDifferent(message), restart: asksToRestart(message), exercise: wantsExercise(message), explain: needsExplanation(message, input.teaching), draw: asksToDraw(message) || acceptsBoardOffer(message, history) };
+  const wants = { why: asksWhy(message), write: asksToWrite(message) && !problemOnBoard, problemOnBoard, different: wantsDifferent(message), restart: asksToRestart(message), exercise: wantsExercise(message) || wantsMoreExercises(message), explain: needsExplanation(message, input.teaching), draw: asksToDraw(message) || acceptsBoardOffer(message, history) };
   const verdict = input.stepVerdict?.verdict ?? (solvedNow.length ? "correct" : wrongNow ? "incorrect" : undefined);
   const policy = supportPolicy({ teaching: input.teaching, needsExplanation: wants.explain, asksWhy: wants.why, asksForWorkedExample: asksForWorkedExample(message), verdict });
   const discussion = isDiscussionSubject(context.subject, [message, ...history.slice(-4).map((h) => h.text)].join(" "));
@@ -193,9 +198,54 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     turn = { ...turn, speech: [text] };
   }
 
+  // ── Exercises always come through the answer widget, generated at their level ──
+  let problemsForApply = problems;
+  {
+    const speechAll = turn.speech.join(" ");
+    const newExercise = !wants.problemOnBoard && (wants.exercise || wants.different || turn.move === "practice");
+    const levelText = [context.profile?.yearLevel, context.profile?.track === "ib" ? "IB Diploma" : context.profile?.track === "ap" ? "AP" : context.profile?.track === "bac" ? "baccalauréat" : "", ...(context.profile?.courses || []).slice(0, 4)].filter(Boolean).join(", ");
+    if (newExercise) {
+      const topic = objectives.find((o) => !o.done)?.label || [...board].reverse().find((b) => b.kind === "focus" && b.text)?.text || context.subject || "";
+      const used = exercisesSoFar({ history, problems, memory: context.memory, board });
+      const kinds = recentQuestionKinds(history);
+      const nextKind = (["compute", "explain_why", "spot_error", "predict", "compare"] as const).find((k) => !kinds.includes(k)) ?? "any";
+      const gen = await generateProblem({
+        subject: context.subject, topic: wants.different ? "" : topic, level: levelText, difficulty: difficultyAsked(message) ?? difficultyFrom(input.teaching?.log),
+        kind: isDiscussionSubject(context.subject, speechAll) && nextKind === "compute" ? "explain_why" : nextKind,
+        used, lang: fr ? "fr" : "en", ask: wants.exercise || wants.different ? message.slice(0, 200) : undefined,
+      }, result.tokens);
+      if (gen) {
+        // The widget carries the problem text; the speech keeps only the lead-in (the sentences before the problem is stated).
+        // The problem starts at the first sentence with a number from which the rest of the reply poses a problem.
+        const at = turn.speech.findIndex((sn, i) => /\d/.test(sn) && (statesAProblem(turn!.speech.slice(i).join(" ")) || (/\?\s*$/.test(sn) && countWordsLite(sn) >= 8)));
+        let speech = at >= 0 ? turn.speech.slice(0, at) : turn.speech.filter((sn) => !/\?\s*$/.test(sn));
+        if (!speech.length || !/[.!?]\s*$/.test(speech[speech.length - 1])) speech = [...speech, gen.intro];
+        else if (!speech.some((sn) => sn === gen.intro) && !/\b(?:try|work out|find|what|which|how)\b/i.test(speech[speech.length - 1])) speech = [...speech, gen.intro];
+        const ops = turn.board.filter((o) => o.op !== "problem" && !(wants.different && o.op === "topic"));
+        if (wants.different && gen.topic) ops.unshift({ op: "topic", cue: 0, text: gen.topic });
+        ops.push({ op: "problem", cue: Math.max(0, speech.length - 1), ...(gen.input as any) });
+        turn = { ...turn, speech, board: ops.map((o) => ({ ...o, cue: Math.min(o.cue, Math.max(0, speech.length - 1)) })), expects: "value" };
+        if (wants.different) problemsForApply = problems.map((p) => ({ ...p, solved: true }));
+      } else console.warn("[tutor] problem generator returned nothing — keeping the tutor's own exercise, if any");
+    } else if (wants.problemOnBoard) {
+      // A problem that already exists (Otto stated it, or they pasted it): the widget gets it with a code-verified key from the solver.
+      const text = problemStatement({ opQuestion: turn.board.find((o) => o.op === "problem")?.question, history: [...history, { role: "assistant", text: speechAll }], openProblem: [...problems].reverse().find((p) => !p.solved)?.question, studentStated: studentProblemStatement(message) });
+      if (text && !problems.some((p) => !p.solved && sameExercise(p.question, text, 0.7))) {
+        let sol = input.solution && sameExercise(input.solution.statement, text, 0.6) ? input.solution : null;
+        if (!sol) { const solved = await solveProblem(text, context.subject); result.tokens.in += solved.tokens.in; result.tokens.out += solved.tokens.out; sol = solved.solution; }
+        if (sol?.verified && Number.isFinite(sol.value)) {
+          const ops = turn.board.filter((o) => o.op !== "problem");
+          ops.push({ op: "problem", cue: Math.max(0, turn.speech.length - 1), question: text, answer: sol.finalAnswer, check: String(sol.value), format: "a number (units as in the problem)" } as any);
+          turn = { ...turn, board: ops };
+          problemsForApply = problems.map((p) => ({ ...p, solved: true }));
+        }
+      }
+    }
+  }
+
   // ── Board ──
   const theirWords = [message, ...(spokenRepair ? [spokenRepair.interpreted] : [])];
-  const applied = applyOps(turn.board, { message, theirWords, board, problems, fr, solution: input.solution });
+  const applied = applyOps(turn.board, { message, theirWords, board, problems: problemsForApply, fr, solution: input.solution });
   // "Write what I wrote" always ends with their line on the board, even if the model's step was refused.
   if (wants.write && !applied.board.some((e) => e.owner === "student")) {
     const line = studentBoardLine([spokenRepair?.interpreted || "", message, ...history.filter((h) => h.role === "user").slice(-2).reverse().map((h) => h.text)]);

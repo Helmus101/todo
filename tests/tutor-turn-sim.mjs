@@ -192,10 +192,11 @@ export async function runTutorTurnSim(check, section) {
       // a model that repeats an old exercise gets ONE repair that names it
       const dupTurn = T({ heard: "ok", intent: "chat", diagnosis: { status: "none" }, move: "practice", support: 1, speech: ["Let's check it once more.", "What do you get when you transform h(x) = 2sin(3x) from f(x) = sin(x) for the amplitude?"], board: [], expects: "value" });
       const freshTurn = T({ heard: "ok", intent: "chat", diagnosis: { status: "none" }, move: "practice", support: 1, speech: ["Now a different one.", "A buoy rises and falls 1.5 m every 8 seconds; which function models its height, and what is its period?"], board: [], expects: "value" });
-      script = (b, i) => (i === 0 ? dupTurn : freshTurn);
+      const GEN = (o = {}) => ({ topic: "Ocean waves", question: "A buoy rises and falls 1.5 m every 8 seconds. What is the frequency of its motion in hertz?", answer: "0.125", check: "1/8", format: "a number, in Hz", hint: "Frequency is the inverse of the period.", why: "f = 1/T", intro: "Here is a new one, about waves this time.", ...o });
+      script = (b, i) => (/write ONE exercise/.test(systemOf(b)) ? GEN() : i === 0 ? dupTurn : freshTurn);
       calls = [];
       const rr = await runTutorTurn({ ...base, history: hist, message: "ok next" });
-      check("an exercise already used earlier is repaired into a new one (one repair call that names the old one)", calls.length === 2 && /already used/.test(JSON.stringify(calls[1].messages)) && /buoy/.test(rr.reply) && !/2sin\(3x\)/.test(rr.reply));
+      check("an exercise already used earlier is repaired (one repair call names the old one) and the new exercise comes from the generator, in the widget", calls.length === 3 && /already used/.test(JSON.stringify(calls[1].messages)) && rr.problems.length === 1 && /buoy/.test(rr.problems[0].question) && !/2sin\(3x\)/.test(rr.reply) && /new one/.test(rr.reply));
     }
     {
       const { verifyTurn } = await import("../server/tutorTurn/verify.ts");
@@ -239,7 +240,7 @@ export async function runTutorTurnSim(check, section) {
       const { asksToWriteProblem, wantsDifferent, problemFromProse, problemStatement } = await import("../server/tutorTurn/intents.ts");
       const { asksToWrite } = await import("../server/tutorAdapt.ts");
       check("'write the problem on the board' (typos and all) is a request for the PROBLEM, not for their working", asksToWriteProblem("alriht write hte problem on board") && asksToWriteProblem("write problem on board") && asksToWriteProblem("put the question on the whiteboard please") && !asksToWriteProblem("write my steps on the board") && !asksToWriteProblem("what is the problem with this step"));
-      check("'new problem', 'totally different', 'not the same idea' mean something different; an ordinary reply doesn't", wantsDifferent("alright new problem now") && wantsDifferent("no but not same idea just toally different".replace("toally", "totally")) && wantsDifferent("something else please") && !wantsDifferent("it is the same as before"));
+      check("'new problem', 'totally different', 'not the same idea' mean something different; an ordinary reply doesn't", wantsDifferent("alright new problem now") && wantsDifferent("no but not same idea just toally different".replace("toally", "totally")) && wantsDifferent("something else please") && !wantsDifferent("it is the same as before") && !wantsDifferent("Another one like it, please."));
       check("write-my-work is still write-my-work", asksToWrite("write my steps on the board"));
       const stated = "Let's switch to a connected masses problem to bring in tension. What is the acceleration of a 5 kg mass on a 30 degree frictionless slope connected by a string over a pulley to a 2 kg hanging mass?";
       check("the problem is lifted out of Otto's prose without the lead-in", problemFromProse(stated).startsWith("What is the acceleration of a 5 kg mass") && problemStatement({ history: [{ role: "assistant", text: stated }, { role: "user", text: "write problem on board" }] }).includes("2 kg hanging mass"));
@@ -254,9 +255,52 @@ export async function runTutorTurnSim(check, section) {
       script = (b, i) => (i === 0
         ? T({ heard: "wants different", intent: "new_problem", diagnosis: { status: "none" }, move: "practice", support: 1, speech: ["Let's test that same idea with a different setup.", "A car of mass 1000 kg rolls down a 10 degree slope and the resistive force is 2 v squared. At what speed does it stop accelerating?"], board: [], expects: "value" })
         : T({ heard: "wants different", intent: "new_problem", diagnosis: { status: "none" }, move: "practice", support: 1, speech: ["Here is something new.", "A 5 kg mass on a 30 degree frictionless slope is tied by a string over a pulley to a 2 kg hanging mass. What is the acceleration?"], board: [], expects: "value" }));
+      const GEN = (o = {}) => ({ topic: "Ocean waves", question: "A buoy rises and falls 1.5 m every 8 seconds. What is the frequency of its motion in hertz?", answer: "0.125", check: "1/8", format: "a number, in Hz", hint: "Frequency is the inverse of the period.", why: "f = 1/T", intro: "Here is a new one.", ...o });
+      const script0 = script;
+      script = (b, i) => (/write ONE exercise/.test(systemOf(b)) ? GEN({ topic: "Pulleys", question: "A 5 kg mass on a 30 degree frictionless slope is tied by a string over a pulley to a 2 kg hanging mass. What is the acceleration in m per second squared? Use g = 10.", answer: "0", check: "(5*10*sin(30) - 2*10)/(5+2)", format: "a number", intro: "Here is something new: connected masses." }) : script0(b, i));
       calls = [];
       const rd = await runTutorTurn({ ...base, board: [], problems: [car], message: "no but not same idea just totally different", history: [{ role: "user", text: "alright new problem now" }, { role: "assistant", text: "Let's test that idea again." }] });
-      check("'totally different' after a car problem does not get another car problem (one repair), and the new problem lands on the board", calls.length === 2 && /TOTALLY DIFFERENT/.test(JSON.stringify(calls[0].messages)) && /pulley/.test(rd.reply) && rd.board.some((e) => e.kind === "given" && /pulley/.test(e.text)));
+      check("'totally different' after a car problem: the tutor is told, and the new problem (a different setting) lands in the widget with a verified key and a fresh worksheet header", /TOTALLY DIFFERENT/.test(JSON.stringify(calls[0].messages)) && rd.problems.length === 1 && /pulley/.test(rd.problems[0].question) && /^0\.7/.test(String(rd.problems[0].answer)) && rd.board.some((e) => e.kind === "focus" && /Pulleys/.test(e.text)));
+    }
+    {
+      const { generateProblem, difficultyFrom } = await import("../server/tutorTurn/problemGen.ts");
+      const tok = () => ({ in: 0, out: 0, cachedIn: 0 });
+      const rec = (o) => ({ at: "x", move: "elicit", support: 1, intent: "answer", diagnosis: "none", words: 10, studentWords: 5, repaired: false, ms: 1, ...o });
+      check("difficulty follows what they just did: up after success alone, down after two misses, otherwise at their level", difficultyFrom([rec({ verdict: "correct" }), rec({ verdict: "correct" })]) === "harder" && difficultyFrom([rec({ verdict: "incorrect" }), rec({ verdict: "incorrect" })]) === "easier" && difficultyFrom([rec({}), rec({ verdict: "correct", support: 4 })]) === "at_level");
+      const good = { topic: "Sound", question: "A tuning fork vibrates 440 times per second. What is its period in milliseconds?", answer: "2.3", check: "1000/440", format: "a number, in ms", hint: "Period is 1 over frequency.", why: "T = 1/f", intro: "Let's try a different kind of wave." };
+      let seen = [];
+      script = (b) => { seen.push(b); return good; };
+      let g = await generateProblem({ subject: "Physics", topic: "Waves", level: "DP1, IB Diploma, Physics HL", difficulty: "harder", kind: "compute", used: ["A pendulum swings 20 times in 30 s. What is its frequency?"], lang: "en", ask: "another one" }, tok());
+      const userMsg = String(seen[0].messages[1].content);
+      check("the generator is told the subject, topic, level, difficulty, kind and what is already used", /Subject: Physics/.test(userMsg) && /Topic: Waves/.test(userMsg) && /DP1, IB Diploma, Physics HL/.test(userMsg) && /HARDER/.test(userMsg) && /calculation/.test(userMsg) && /pendulum swings 20 times/.test(userMsg));
+      check("the exercise comes back ready for the widget, with the lead-in sentence and a title", !!g && /tuning fork/.test(g.input.question) && g.intro === "Let's try a different kind of wave." && g.topic === "Sound");
+      script = (b, i) => (i === 0 ? { ...good, answer: "9", check: "1000/440" } : good);
+      g = await generateProblem({ subject: "Physics", topic: "Waves", difficulty: "at_level", kind: "compute", used: [], lang: "en" }, tok());
+      const { makeProblem } = await import("../server/claude.ts");
+      check("a wrong answer key is overruled by the code-evaluated check (never trusted)", /^2\.3/.test(String(makeProblem(g.input, true).problem?.answer)));
+      let n = 0;
+      script = () => (n++ === 0 ? { ...good, question: "A pendulum swings 20 times in 30 s. What is its frequency in hertz?", answer: "0.67", check: "20/30" } : good);
+      g = await generateProblem({ subject: "Physics", topic: "Waves", difficulty: "at_level", kind: "compute", used: ["A pendulum swings 20 times in 30 s. What is its frequency?"], lang: "en" }, tok());
+      check("an exercise that repeats one already used gets one corrective retry and the new one is returned", n === 2 && /tuning fork/.test(g.input.question));
+      script = () => ({ question: "x" });
+      check("a generator that keeps failing returns null so the caller falls back, never a broken exercise", (await generateProblem({ subject: "Physics", difficulty: "at_level", kind: "any", used: [], lang: "en" }, tok())) === null);
+      // the full turn: asked for an exercise → the model only introduces it, the app writes it at their level
+      const turnJson = T({ heard: "wants one", intent: "chat", diagnosis: { status: "none" }, move: "practice", support: 1, speech: ["A cyclist covers 120 metres in 8 seconds. What is the speed?"], board: [], expects: "value" });
+      let genPrompt = "";
+      script = (b) => { if (/write ONE exercise/.test(systemOf(b))) { genPrompt = String(b.messages[1].content); return good; } return turnJson; };
+      calls = [];
+      const out = await runTutorTurn({ ...base, message: "give me another one", problems: [], board: [], objectives: [{ id: "o", label: "Wave speed and period", done: false }], context: { subject: "Physics", profile: { yearLevel: "DP1", track: "ib", courses: ["Physics HL"], about: "", preferences: [], people: [], projects: [], sessions: [] } } });
+      check("asked for an exercise: it lands in the answer widget at their level and topic, and the spoken problem text is replaced by the lead-in", out.problems.length === 1 && /tuning fork/.test(out.problems[0].question) && !/cyclist|120 metres/.test(out.reply) && /different kind of wave/.test(out.reply) && /Wave speed and period/.test(genPrompt) && /DP1/.test(genPrompt));
+      // a problem that already exists goes through the widget with a solver-verified key
+      script = (b) => (/write ONE exercise/.test(systemOf(b)) ? good : T({ heard: "wants the problem on the board", intent: "write_my_work", diagnosis: { status: "none" }, move: "elicit", support: 1, speech: ["What is the first force?"], board: [], expects: "value" }));
+      const stated2 = "A 5 kg mass on a 30 degree frictionless slope is tied by a string over a pulley to a 2 kg hanging mass. What is the acceleration?";
+      const solved = { ...sol, statement: stated2, focusKey: "k", value: 0.71, finalAnswer: "0.71 m s^-2", verified: true };
+      const wb = await runTutorTurn({ ...base, board: [], problems: [], solution: solved, message: "write problem on board", history: [{ role: "user", text: "new problem" }, { role: "assistant", text: "Let's try this. " + stated2 }] });
+      check("'write the problem on the board' puts the existing problem in the widget with a code-verified key", wb.problems.length === 1 && /pulley/.test(wb.problems[0].question) && /^0\.7/.test(String(wb.problems[0].answer)));
+    }
+    {
+      const { wantsMoreExercises, difficultyAsked } = await import("../server/tutorTurn/intents.ts");
+      check("the one-tap chips ('Got it! Give me another to try', 'Give me a harder one') ask for a new exercise; a harder/easier ask sets the difficulty", wantsMoreExercises("Got it! Give me another to try.") && wantsMoreExercises("Give me a harder one.") && !wantsMoreExercises("I'm lost — can we go smaller?") && difficultyAsked("Give me a harder one.") === "harder" && difficultyAsked("something easier please") === "easier" && difficultyAsked("another one") === null);
     }
     script = () => ({ fail: true });
     r = await runTutorTurn({ ...base, message: "hello?" });

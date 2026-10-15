@@ -16,7 +16,7 @@ export function asksToWriteProblem(message: string): boolean {
 
 /** "new problem", "totally different", "not the same idea" — they want something else, not a variation. */
 export function wantsDifferent(message: string): boolean {
-  return /\b(?:new|another|different|next)\s+(?:problem|question|exercise|topic|one|thing)\b|\b(?:totally|completely|entirely)\s+different\b|\bnot\s+(?:the\s+)?same\b|\bsomething\s+(?:else|different|new)\b|\bchange\s+(?:topic|subject)\b|\b(?:nouveau|autre)\s+(?:probl[eè]me|exercice|sujet)\b|\btout\s+autre\b/i.test(String(message || ""));
+  return /\b(?:new|different)\s+(?:problem|question|exercise|topic|one|thing)\b|\b(?:next|another)\s+topic\b|\b(?:totally|completely|entirely)\s+different\b|\bnot\s+(?:the\s+)?same\b|\bsomething\s+(?:else|different|new)\b|\bchange\s+(?:topic|subject)\b|\b(?:nouveau|autre)\s+(?:probl[eè]me|exercice|sujet)\b|\btout\s+autre\b/i.test(String(message || ""));
 }
 
 /** The text of a problem Otto stated in prose: the sentences from the scenario up to and including the question,
@@ -39,4 +39,17 @@ export function problemStatement(i: { opQuestion?: string; history: { role: stri
     if (p) return p;
   }
   return (i.openProblem || i.studentStated || "").trim().slice(0, 600);
+}
+
+/** "give me another", "a harder one", "another to try" — the one-tap chips and their plain-text cousins. */
+export function wantsMoreExercises(message: string): boolean {
+  return /\b(?:give me|donne[- ]moi|donne-m'en|i want|je veux|j'en veux)\b[^.?!]{0,20}\b(?:another|a (?:harder|easier|new|similar)|un (?:autre|plus))\b|\banother (?:one|to try|exercise|problem)\b|\b(?:harder|easier|more difficult|plus (?:dur|difficile|facile))\s*(?:one|exercise|problem|question)?\b[^.?!]*$/i.test(String(message || ""));
+}
+
+/** An explicit ask for harder or easier overrides what the log says. */
+export function difficultyAsked(message: string): "harder" | "easier" | null {
+  const m = String(message || "");
+  if (/\b(?:harder|more difficult|more challenging|tougher|plus (?:dur|difficile)|plus compliqu)/i.test(m)) return "harder";
+  if (/\b(?:easier|simpler|less difficult|plus facile|plus simple)/i.test(m)) return "easier";
+  return null;
 }
