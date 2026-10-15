@@ -15,7 +15,7 @@ import { repairSpokenMath, spokenContextFrom, type SpokenRepair } from "../../sh
 import { boardSurfaceBlock } from "../boardEvents.ts";
 import { solutionBlock } from "../solver.ts";
 import { createTutorChat, retryRequest, usageOf, OUT, nowBlock, rewriteReply, stepVerdictLine } from "../claude.ts";
-import { asksWhy, asksToWrite, voiceInputBlock } from "../tutorAdapt.ts";
+import { asksWhy, asksToWrite, asksToDraw, voiceInputBlock } from "../tutorAdapt.ts";
 import {
   backgroundBlock, objectivesBlock, solutionMatchLine, misgradedExercise, ownArithmeticLine, answeredInChat, wrongInChat,
   isDiscussionSubject, DISCUSSION_BLOCK, needsExplanation, asksToRestart, wantsExercise, reachedSolutionSteps,
@@ -24,7 +24,7 @@ import {
 } from "../tutor.ts";
 import { TURN_PROMPT, VOICE_NOTE } from "./prompt.ts";
 import { supportPolicy, asksForWorkedExample, adaptationLines, type Policy } from "./policy.ts";
-import { verifyTurn, degradeTurn, type Issue, type VerifyContext } from "./verify.ts";
+import { verifyTurn, degradeTurn, acceptsBoardOffer, claimsBoard, type Issue, type VerifyContext } from "./verify.ts";
 import { applyOps } from "./apply.ts";
 import { sessionGuide } from "./guide.ts";
 
@@ -42,6 +42,7 @@ export function factsBlock(f: { policy: Policy; verdict?: { gap: string; given: 
     f.wants.explain && !f.wants.why ? "THEY NEED IT EXPLAINED (lost, asked to be shown, or stuck): teach the missing idea plainly and write it on the board as you say it, then hand back one small step." : "",
     f.wants.write ? "THEY ASKED YOU TO WRITE THEIR WORKING: put their last step on the board as their own line (owner student)." : "",
     f.wants.restart ? "THEY ASKED TO START OVER: open a fresh worksheet (topic op), restate the givens, explain the first idea slowly." : "",
+    f.wants.draw ? "THEY ASKED YOU TO DRAW / SHOW IT (or said yes to your offer): put it on the board in THIS turn with a draw op (a table op for a sign chart, grid or comparison) — never promise it and wait." : "",
     f.wants.exercise ? "THEY ASKED FOR AN EXERCISE: post one with a problem op." : "",
     f.affect === "frustrated" ? "They sound frustrated: a few warm words, a smaller step, a quick win." : f.affect === "unsure" ? "They sound unsure: ask for their reasoning before you confirm." : "",
     (() => { const open = (f.teaching?.misconceptions || []).filter((m) => !m.resolved); return open.length ? `Open misconceptions this session: ${open.map((m) => `"${m.label}"`).join("; ")} — test them with a fresh case before moving on.` : ""; })(),
@@ -94,7 +95,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   if (solvedNow.length) { for (const p of solvedNow) p.solved = true; result.solvedInChat = solvedNow.map((p) => p.id); }
   const wrongNow = !solvedNow.length && problems.some((p) => wrongInChat(message, p));
   const spokenRepair: SpokenRepair | null = input.spoken ? repairSpokenMath(message, spokenContextFrom([context.subject || "", ...board.map((b) => b.text || ""), ...problems.map((p) => p.question || "")])) : null;
-  const wants = { why: asksWhy(message), write: asksToWrite(message), restart: asksToRestart(message), exercise: wantsExercise(message), explain: needsExplanation(message, input.teaching) };
+  const wants = { why: asksWhy(message), write: asksToWrite(message), restart: asksToRestart(message), exercise: wantsExercise(message), explain: needsExplanation(message, input.teaching), draw: asksToDraw(message) || acceptsBoardOffer(message, history) };
   const verdict = input.stepVerdict?.verdict ?? (solvedNow.length ? "correct" : wrongNow ? "incorrect" : undefined);
   const policy = supportPolicy({ teaching: input.teaching, needsExplanation: wants.explain, asksWhy: wants.why, asksForWorkedExample: asksForWorkedExample(message), verdict });
   const discussion = isDiscussionSubject(context.subject, [message, ...history.slice(-4).map((h) => h.text)].join(" "));
@@ -125,7 +126,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   ];
 
   const said = [...history.filter((h) => h.role === "user").map((h) => h.text), message, input.solution?.statement || "", ...(spokenRepair ? [spokenRepair.interpreted, ...(input.spoken?.alternatives || [])] : []), ...problems.map((p) => p.question || ""), ...board.filter((b) => b.kind === "given" || b.owner === "student").map((b) => b.text)];
-  const vctx: VerifyContext = { message, history, board, problems, solution: input.solution, policy, wants: { why: wants.why, write: wants.write, restart: wants.restart, exercise: wants.exercise }, said, discussion };
+  const vctx: VerifyContext = { message, history, board, problems, solution: input.solution, policy, wants: { why: wants.why, write: wants.write, restart: wants.restart, exercise: wants.exercise, draw: wants.draw }, said, discussion };
 
   // ── One structured call (+ one retry if it isn't JSON at all) ──
   let turn: TurnOutput | null = null, raw = "";
@@ -173,6 +174,16 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   result.problems = applied.problems;
   if (applied.objectives) result.objectives = applied.objectives;
   if (applied.dropped.length) console.log(`[tutor] dropped ops: ${applied.dropped.join(" | ")}`);
+
+  // The board ops can still fail to build (a bad figure spec, a duplicate): then the speech must not claim them.
+  if (turn.speech.some(claimsBoard) && !applied.board.some((e) => e.kind !== "annotation") && !applied.problems.length) {
+    const kept = turn.speech.filter((s) => !claimsBoard(s));
+    if (kept.length) turn = { ...turn, speech: kept };
+    else {
+      const text = await rewriteReply(turn.speech.join(" "), "it says something is on the board but nothing could be put there — say the idea in words only, no mention of the board", message, result.tokens);
+      if (text) turn = { ...turn, speech: [text] };
+    }
+  }
 
   // ── Reply ──
   let reply = turn.speech.join(" ");

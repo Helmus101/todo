@@ -143,6 +143,22 @@ export async function runTutorTurnSim(check, section) {
       check("a trailing comma is forgiven", normalizeTurn(salvageTurn('{"speech":["Hello there friend."],}'))?.speech[0] === "Hello there friend.");
       check("plain prose is only used as a last resort", salvageTurn("Let us look at the slope together now.") === null && normalizeTurn(salvageTurn("Let us look at the slope together now.", { prose: true }))?.speech.length === 1);
     }
+    {
+      // Reported live: "can you draw the sign chart" → Otto talked about a chart, drew nothing, then said "take a look at the chart on the board".
+      const noOp = T({ heard: "wants the sign chart", intent: "check", diagnosis: { status: "none" }, move: "explain", support: 4, speech: ["A sign chart shows where sine is positive or negative.", "Let's map out all four quadrants on a grid.", "Which quadrants make sine positive?"], board: [], expects: "open" });
+      const withTable = T({ heard: "wants the sign chart", intent: "check", diagnosis: { status: "none" }, move: "explain", support: 4, speech: ["A sign chart shows where sine is positive or negative.", "Here are the four quadrants on the board.", "Which quadrants make sine positive?"], board: [{ op: "draw", cue: 1, scene: "table", text: "Sign of sine by quadrant", spec: { headers: ["Quadrant", "sin"], rows: [["I", "+"], ["II", "+"], ["III", "-"], ["IV", "-"]] } }], expects: "open" });
+      script = (b, i) => (i === 0 ? noOp : withTable);
+      calls = [];
+      let d = await runTutorTurn({ ...base, message: "um can you also can you draw the sign chart please" });
+      check("asked to draw and nothing drawn: ONE repair call, and the chart really lands on the board", calls.length === 2 && d.board.some((e) => e.kind === "table") && /four quadrants on the board/.test(d.reply));
+      check("the repair instruction says to draw it now", /do it NOW/.test(JSON.stringify(calls[1].messages)));
+      script = (b, i) => (i === 0 ? noOp : noOp);
+      d = await runTutorTurn({ ...base, message: "can you draw the sign chart" });
+      check("if it still won't draw, the speech never claims the board", !/on the board|let's map/i.test(d.reply) || d.board.length > 0);
+      const { acceptsBoardOffer, claimsBoard } = await import("../server/tutorTurn/verify.ts");
+      check("'yeah can you do that' after Otto offered to map the quadrants counts as a request to draw; after a plain question it doesn't", acceptsBoardOffer("yeah can you do that", [{ role: "assistant", text: "Let's map out all four quadrants on a simple grid." }]) && !acceptsBoardOffer("yeah", [{ role: "assistant", text: "What is the radius?" }]));
+      check("board claims are recognised, plain teaching isn't", claimsBoard("Take a look at the sign chart on the board.") && claimsBoard("I'll draw the grid.") && !claimsBoard("Sine is positive where y is positive."));
+    }
     script = () => ({ fail: true });
     r = await runTutorTurn({ ...base, message: "hello?" });
     check("the model being down is an error for the route to report — never a made-up reply", r.error === true && !r.reply);

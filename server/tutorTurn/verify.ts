@@ -13,6 +13,19 @@ import { replyStatesValue, ignoresWhy, repeatsRecentReply, repeatsRecentQuestion
 import { statesFinalAnswer, wrongArithmetic, badGap, mentionsMechanics } from "../tutor.ts";
 import type { Policy } from "./policy.ts";
 
+/** A sentence that says something is (or is about to be) on the board. */
+const BOARD_CLAIM = /\b(?:on the (?:board|whiteboard)|(?:look|take a look|have a look) at the (?:board|chart|grid|diagram|table|graph|figure|picture)|(?:i'?ve|i have|i'?ll|i will|let me|let'?s|we'?ll|here'?s|here is|here are) (?:just )?(?:draw|drawn|sketch|put|add|map|write|written|plot|build|make|made|show)\w*|sur le tableau|regarde (?:le|la|l')\s*(?:tableau|sch[ée]ma|graphique|figure))\b/i;
+export const claimsBoard = (sentence: string): boolean => BOARD_CLAIM.test(sentence);
+const CREATING = new Set(["draw", "step", "gap", "problem", "topic"]);
+const OFFER = /\b(?:let'?s|i'?ll|shall we|want me to|should i|let me|we can|would you like)\b[^.?!]*\b(?:draw|map|sketch|chart|grid|plot|put|write|show|diagram|table)\b/i;
+const YES = /^\s*(?:yes|yeah|yep|yup|ok(?:ay)?|sure|please|do it|do that|go ahead|go on|oui|d'accord|vas-y)\b/i;
+/** They said yes to Otto's own offer to draw or write something. */
+export function acceptsBoardOffer(message: string, history: { role: string; text: string }[]): boolean {
+  if (!YES.test(message) && !/\b(?:can you|could you|please)\b[^.?!]*\b(?:do|show|draw)\b/i.test(message)) return false;
+  const lastOtto = [...history].reverse().find((h) => h.role === "assistant");
+  return !!lastOtto && OFFER.test(lastOtto.text);
+}
+
 export interface VerifyContext {
   message: string;
   history: { role: string; text: string }[];
@@ -21,14 +34,14 @@ export interface VerifyContext {
   solution?: TutorSolution;
   policy: Policy;
   /** What code detected the student wants this turn. */
-  wants: { why: boolean; write: boolean; restart: boolean; exercise: boolean };
+  wants: { why: boolean; write: boolean; restart: boolean; exercise: boolean; draw?: boolean };
   /** Everything the student and the problem said — the only legitimate source of numbers. */
   said: string[];
   discussion: boolean;
 }
 
 export interface Issue {
-  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh";
+  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh";
   /** The instruction for the repair call. */
   fix: string;
   /** A leak or a pointer at nothing must be fixed; the rest are quality. */
@@ -92,6 +105,8 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   if (c.wants.write && !t.board.some((o) => o.op === "step" && o.owner === "student")) out.push({ code: "intent_write", hard: false, fix: 'they asked you to write their working on the board: add a step op with owner "student" holding exactly the step they last stated, tidied into $…$.' });
   if (c.wants.restart && !t.board.some((o) => o.op === "topic")) out.push({ code: "intent_restart", hard: false, fix: 'they asked to start over: begin with a topic op (a fresh worksheet), put the givens up again as one step, and explain the very first idea plainly.' });
   if (c.wants.exercise && !t.board.some((o) => o.op === "problem")) out.push({ code: "intent_exercise", hard: false, fix: "they asked for an exercise: add a problem op (full statement, one short answer, a check expression for a number, the format in 'format')." });
+  if (c.wants.draw && !t.board.some((o) => o.op === "draw" || o.op === "step")) out.push({ code: "intent_draw", hard: true, fix: "they asked you to draw or show it — do it NOW, in this turn: add a draw op (a table op for a sign chart, grid or comparison; graph, numberline, geometry, flow for the rest), or a step op for a formula. Don't describe it and wait for them to ask again." });
+  if (t.speech.some(claimsBoard) && !t.board.some((o) => CREATING.has(o.op))) out.push({ code: "board_promise", hard: true, fix: "the speech says something is on the board (or will be) but the board list has nothing new — add the draw/step op that puts it there, or take the board claim out of the speech." });
   // 5. One question, last.
   const qs = t.speech.map((s, i) => ({ i, q: /\?\s*["»”)]*\s*$/.test(s.replace(/\$[^$]*\$/g, "x")) })).filter((x) => x.q);
   if (qs.length > 1 || (qs.length === 1 && qs[0].i !== t.speech.length - 1)) out.push({ code: "questions", hard: false, fix: "ask at most ONE question, as the last sentence." });
@@ -136,6 +151,8 @@ export function degradeTurn(t: TurnOutput, c: VerifyContext): TurnOutput {
     if (o.op === "gap" && badGap(String(o.text || ""), c.board.map((b) => String(b.text || "")))) return false;
     return true;
   }).map((o) => ({ ...o, cue: Math.min(o.cue, Math.max(0, speech.length - 1)) }));
+  // Never claim a board change that isn't in the list.
+  if (!board.some((o) => CREATING.has(o.op))) speech = speech.filter((s) => !claimsBoard(s));
   // Empty speech (every sentence leaked) is returned as is: the engine then asks for a rewrite rather than shipping a leak.
   return { ...t, speech, board };
 }
