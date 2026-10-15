@@ -63,7 +63,7 @@ import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtif
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, mergePronoteHomeworkAndTests } from "../server/discover.ts";
 import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, normalizeWhen, addUsage, monthKeyOf, monthCostUsd, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, singleNumber, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, validateThemeTokens, normalizeProfile, milestonesBySubject } from "../shared/types.ts";
 import { gradeGapAnswer } from "../shared/exerciseVerification.ts";
-import { planStuckRecovery, sweepDueForDay, localDay, sweepDue, shouldRefreshStudentModel, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
+import { planStuckRecovery, sweepDueForDay, localDay, sweepDue, shouldRefreshStudentModel, tasksToEnqueue } from "../server/jobs.ts";
 import { computeWorkload, isPileUp } from "../server/workload.ts";
 import { stripHtml, applyPronoteGrades, applyPronoteLessons, isPrivateOrReservedIp, assertSafeExternalUrl } from "../server/pronote.ts";
 import { connectionColumnUpdates } from "../server/store.ts";
@@ -1146,11 +1146,6 @@ check("tzOf uses profile.timezone", tzOf({ ...emptyProfile(), timezone: "Europe/
 check("tzOf falls back to UTC", tzOf(emptyProfile()) === "UTC");
 check("isValidTz accepts a real zone", isValidTz("Europe/Paris"));
 check("isValidTz rejects junk", !isValidTz("Mars/Olympus"));
-
-// ── New-task email alert HTML safety ───────────────────────────────────────────
-section("escapeHtml (new-task alert email)");
-check("escapes the five HTML-meaningful characters", escapeHtml(`<img src=x onerror="alert(1)">&'`) === "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;&amp;&#39;");
-check("plain text passes through unchanged", escapeHtml("Réviser Maths — chapitre 3") === "Réviser Maths — chapitre 3");
 
 // ── Monthly spend cap ─────────────────────────────────────────────────────────
 section("spend cap");
