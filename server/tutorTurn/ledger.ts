@@ -65,7 +65,7 @@ export function buildRecap(i: { log: TutorTurnRecord[]; board: BoardEntry[]; obj
     learned: done,
     canDoAlone: solvedAlone || mine ? [en ? `${Math.max(solvedAlone, mine)} step(s) solved on your own` : `${Math.max(solvedAlone, mine)} étape(s) réussie(s) seul`] : [],
     canDoWithHelp: solvedHelped ? [en ? `${solvedHelped} step(s) solved with Otto's help` : `${solvedHelped} étape(s) réussie(s) avec l'aide d'Otto`] : [],
-    mistakes: wrong || fixed ? [en ? `${Math.max(wrong, fixed)} slip(s) or misconception(s) worked through` : `${Math.max(wrong, fixed)} erreur(s) corrigée(s)`] : [],
+    mistakes: [...new Set(log.map((r) => r.misconception).filter((m): m is string => !!m))].slice(0, 4).map((m) => (en ? `Misconception worked on: ${m}` : `Idée fausse travaillée : ${m}`)).concat(wrong || fixed ? [en ? `${Math.max(wrong, fixed)} slip(s) or misconception(s) worked through` : `${Math.max(wrong, fixed)} erreur(s) corrigée(s)`] : []),
     keyLines: lines,
     gaps: open,
     next: open[0]

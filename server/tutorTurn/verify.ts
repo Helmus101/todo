@@ -41,10 +41,12 @@ export interface VerifyContext {
   discussion: boolean;
   /** Exercises already used this session and in earlier ones (exercises.ts). */
   usedExercises?: string[];
+  /** The code-checked verdict on their step/answer this turn, if any. */
+  verdict?: "correct" | "incorrect";
 }
 
 export interface Issue {
-  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh";
+  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "unwritten" | "diagnosis" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh";
   /** The instruction for the repair call. */
   fix: string;
   /** A leak or a pointer at nothing must be fixed; the rest are quality. */
@@ -140,6 +142,15 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   }
   const vague = vagueReply(t, c);
   if (vague) out.push({ code: "vague", hard: true, fix: `the reply says nothing in particular (${vague}). Say something specific: refer to their actual words, a board line or the problem, teach or check ONE concrete thing, and hand back one concrete question or step.` });
+  // Teaching must leave something on the board to look back at, and an error must be diagnosed and named.
+  const WRITTEN = ["step", "draw", "mark", "gap", "problem", "topic"];
+  if (["explain", "worked_step", "worked_example", "correct_error"].includes(t.move) && !t.board.some((o) => WRITTEN.includes(o.op))) out.push({ code: "unwritten", hard: false, fix: "you taught something but wrote nothing: add a step op with the key idea or formula (with its short 'why'), or a mark on the line that is off, so it stays on the board after you've spoken." });
+  const d = t.diagnosis;
+  if (c.verdict === "incorrect" && ["none", "correct", "unclear"].includes(d.status)) out.push({ code: "diagnosis", hard: false, fix: "their answer is wrong (checked by code) but the diagnosis says otherwise: find the FIRST thing that's off and set diagnosis.status to slip, misconception or partial." });
+  if (d.status === "misconception") {
+    if (!d.misconception) out.push({ code: "diagnosis", hard: false, fix: "you diagnosed a misconception: name the mistaken belief in diagnosis.misconception (≤8 words)." });
+    if (["confirm", "elicit", "recap"].includes(t.move)) out.push({ code: "diagnosis", hard: false, fix: "a misconception shows, so don't just confirm or move on: name the idea that is off, gently, in the speech, and choose focus, correct_error, explain or probe_why to repair it." });
+  }
   // 5. One question, last.
   const qs = t.speech.map((s, i) => ({ i, q: /\?\s*["»”)]*\s*$/.test(s.replace(/\$[^$]*\$/g, "x")) })).filter((x) => x.q);
   if (qs.length > 1 || (qs.length === 1 && qs[0].i !== t.speech.length - 1)) out.push({ code: "questions", hard: false, fix: "ask at most ONE question, as the last sentence." });

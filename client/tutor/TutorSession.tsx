@@ -942,6 +942,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           onClick={() => setChatDrawer((v) => !v)}
         >
           {chatDrawer ? <Minimize2 size={13} aria-hidden="true" /> : <Maximize2 size={13} aria-hidden="true" />}
+          <span className="tutor-dock-chat-toggle-label">{L("Historique", "History")}{task.chat?.length ? ` (${task.chat.length})` : ""}</span>
         </button>
         {chatDrawer && (
           <div className="tutor-dock-chat">

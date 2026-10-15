@@ -197,6 +197,16 @@ export async function runTutorTurnSim(check, section) {
       const rr = await runTutorTurn({ ...base, history: hist, message: "ok next" });
       check("an exercise already used earlier is repaired into a new one (one repair call that names the old one)", calls.length === 2 && /already used/.test(JSON.stringify(calls[1].messages)) && /buoy/.test(rr.reply) && !/2sin\(3x\)/.test(rr.reply));
     }
+    {
+      const { verifyTurn } = await import("../server/tutorTurn/verify.ts");
+      const { buildRecap } = await import("../server/tutorTurn/ledger.ts");
+      const mk = (o) => ({ speech: ["Think of the slope as steepness.", "Which way does it lean?"], move: "explain", board: [], heard: "", intent: "other", diagnosis: { status: "none" }, support: 4, expects: "open", ...o });
+      const vc = { message: "ok", history: [], board: [], problems: [], policy: { maxSupport: 5, allowed: [], reason: "" }, wants: {}, said: [], discussion: false };
+      const codes = (t, c = {}) => verifyTurn(t, { ...vc, ...c }).map((i) => i.code);
+      check("teaching that writes nothing on the board is flagged; with a step it passes", codes(mk({})).includes("unwritten") && !codes(mk({ board: [{ op: "step", cue: 0, text: "$m = \\Delta y/\\Delta x$" }] })).includes("unwritten"));
+      check("a wrong answer diagnosed as nothing is flagged, and a misconception must be named and not just confirmed", codes(mk({ move: "focus", board: [{ op: "mark", cue: 0, target: "#1" }] }), { verdict: "incorrect" }).includes("diagnosis") && codes(mk({ move: "confirm", diagnosis: { status: "misconception" } })).includes("diagnosis") && codes(mk({ move: "correct_error", diagnosis: { status: "misconception", misconception: "treats remainder as the line" }, board: [{ op: "step", cue: 0, text: "x" }] })).filter((c) => c === "diagnosis").length === 0);
+      check("the recap lists the misconceptions that were worked on", buildRecap({ lang: "en", board: [], log: [{ at: "x", move: "correct_error", support: 3, intent: "answer", diagnosis: "misconception", misconception: "treats remainder as the line", words: 10, studentWords: 4, repaired: false, ms: 1 }] }).mistakes[0] === "Misconception worked on: treats remainder as the line");
+    }
     script = () => ({ fail: true });
     r = await runTutorTurn({ ...base, message: "hello?" });
     check("the model being down is an error for the route to report — never a made-up reply", r.error === true && !r.reply);
