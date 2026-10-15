@@ -330,7 +330,7 @@ export function backgroundBlock(c: TutorContext): string {
     recentJournalLine(c.journal, c.subject, c.journalMeta),
     sessionRecapLine(p?.sessions, c.subject),
     openerMemoryBlock(c.memory),
-    (c.memory || []).some((m) => m?.lines?.length || m?.asked?.length) ? "USE THAT MEMORY: it is what they really did before (kept on their own device). Build on it — pick up where it left off, don't re-teach what they already worked through, and revisit what they struggled with — and use it to plan this sitting." : "",
+    (c.memory || []).some((m) => m?.lines?.length || m?.asked?.length) ? "USE THAT MEMORY: it is what they really did before (kept on their own device). It is about EARLIER sessions: use it only to plan, to skip what they already know and to revisit what they struggled with — never treat a problem, object or number from it as part of what is on the board now." : "",
     c.schoolRecord || "",
   ].map((s) => s.trim()).filter(Boolean);
   if (!parts.length) return "";
