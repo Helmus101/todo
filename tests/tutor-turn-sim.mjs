@@ -116,6 +116,14 @@ export async function runTutorTurnSim(check, section) {
       const leaky = normalizeTurn({ heard: "x", intent: "other", diagnosis: { status: "unclear" }, move: "elicit", support: 1, speech: ["Nice work. #%%call:default_api:write_board{\"text\":\"x\"}", "WRITE_TO_BOARD(gap, \"x\") What is 2 plus 2?"], board: [{ op: "topic", cue: 0, text: "Sums #%%call:default_api:" }], expects: "answer" });
       check("tool-call text in speech or on the board never survives parsing (reported live: '#%%call:default_api:')", !!leaky && !/default_api|%%|WRITE_TO_BOARD|call:/i.test(JSON.stringify(leaky)) && leaky.speech.join(" ").includes("What is 2 plus 2?"));
     }
+    {
+      const { adaptationLines } = await import("../server/tutorTurn/policy.ts");
+      const rec = (o) => ({ at: "x", move: "elicit", support: 1, intent: "answer", diagnosis: "none", words: 20, studentWords: 10, repaired: false, ms: 1, ...o });
+      const failed = adaptationLines([rec({ move: "explain", support: 4, angle: "picture" })], { wrong: true, stuck: false });
+      check("a failed explanation is not repeated: the next turn is told to change angle, and which angles are used", failed.length === 1 && /DID NOT LAND/.test(failed[0]) && /picture/.test(failed[0]));
+      check("a student who is flying alone gets less help", adaptationLines([rec({ verdict: "correct" }), rec({ verdict: "correct" })], { wrong: false, stuck: false }).some((l) => /moving fast/.test(l)));
+      check("nothing special is said when nothing needs adapting", adaptationLines([rec({ move: "confirm", verdict: "correct", support: 2 })], { wrong: false, stuck: false }).length === 0);
+    }
     script = () => ({ fail: true });
     r = await runTutorTurn({ ...base, message: "hello?" });
     check("the model being down is an error for the route to report — never a made-up reply", r.error === true && !r.reply);

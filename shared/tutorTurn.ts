@@ -10,6 +10,10 @@ import { hideToolLeaks } from "./toolLeak.ts";
 export const INTENTS = ["answer", "reasoning", "ask_why", "ask_explain", "write_my_work", "new_problem", "restart", "stuck", "check", "off_topic", "chat", "other"] as const;
 export type Intent = (typeof INTENTS)[number];
 
+/** The angle an explanation took. When one doesn't land, code tells the model which angles are already used up. */
+export const ANGLES = ["picture", "numbers", "analogy", "smaller_step", "symbols", "contrast"] as const;
+export type Angle = (typeof ANGLES)[number];
+
 export const DIAGNOSES = ["correct", "partial", "misconception", "slip", "no_attempt", "unclear", "none"] as const;
 export type DiagnosisStatus = (typeof DIAGNOSES)[number];
 
@@ -83,6 +87,8 @@ export interface TurnOutput {
   /** The reply, one sentence per item, in order. At most one question, and it is the last sentence. */
   speech: string[];
   board: BoardOp[];
+  /** How this turn explained or hinted (optional; recorded so the next turn can change angle). */
+  angle?: Angle;
   /** What kind of answer the student is expected to give next. */
   expects: (typeof EXPECTS)[number];
 }
@@ -164,6 +170,7 @@ export function normalizeTurn(raw: unknown): TurnOutput | null {
     support: Number.isFinite(supportRaw) ? Math.max(0, Math.min(5, Math.round(supportRaw))) : MOVE_SUPPORT[move],
     speech,
     board: (Array.isArray(r.board) ? r.board : Array.isArray(r.board_actions) ? r.board_actions : []).map((o: unknown) => normalizeOp(o, speech.length)).filter((o: BoardOp | null): o is BoardOp => !!o).slice(0, 8),
+    ...(optPick(ANGLES, r.angle) ? { angle: optPick(ANGLES, r.angle) } : {}),
     expects: pick(EXPECTS, r.expects?.kind ?? r.expects, "open"),
   };
 }

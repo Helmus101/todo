@@ -23,7 +23,7 @@ import {
   type TutorTurnInput, type TutorTurnResult, type TutorPlanLite,
 } from "../tutor.ts";
 import { TURN_PROMPT, VOICE_NOTE } from "./prompt.ts";
-import { supportPolicy, asksForWorkedExample, type Policy } from "./policy.ts";
+import { supportPolicy, asksForWorkedExample, adaptationLines, type Policy } from "./policy.ts";
 import { verifyTurn, degradeTurn, type Issue, type VerifyContext } from "./verify.ts";
 import { applyOps } from "./apply.ts";
 
@@ -31,7 +31,7 @@ const MAX_HISTORY = 14;
 const STUCK = /\b(?:i (?:don'?t|do not) (?:know|get it|understand)|idk|no idea|i'?m (?:stuck|lost|confused)|not sure|je (?:ne )?sais pas|j'?sais pas|aucune idée|je suis (?:perdu|bloqué)e?|je comprends pas|help me|aide[- ]moi)\b/i;
 
 /** The turn the app has already worked out, as a prompt block the model must respect. Exported for tests. */
-export function factsBlock(f: { policy: Policy; verdict?: { gap: string; given: string; verdict: "correct" | "incorrect" }; solvedInChat?: string; wrongInChat?: boolean; wants: VerifyContext["wants"] & { explain: boolean }; teaching?: TutorTeachingState; affect: string }): string {
+export function factsBlock(f: { policy: Policy; verdict?: { gap: string; given: string; verdict: "correct" | "incorrect" }; solvedInChat?: string; wrongInChat?: boolean; wants: VerifyContext["wants"] & { explain: boolean }; teaching?: TutorTeachingState; affect: string; adapt?: string[] }): string {
   const lines = [
     `SUPPORT ALLOWED THIS TURN: up to level ${f.policy.maxSupport} (${f.policy.reason}). Allowed moves: ${f.policy.allowed.join(", ")}.`,
     f.verdict ? `THEIR STEP, CHECKED BY CODE: "${f.verdict.given}" for the open line "${f.verdict.gap}" is ${f.verdict.verdict === "correct" ? "RIGHT — credit exactly what was right and move them on" : "WRONG — find the first thing that's off; don't give the value"}.` : "",
@@ -44,6 +44,7 @@ export function factsBlock(f: { policy: Policy; verdict?: { gap: string; given: 
     f.wants.exercise ? "THEY ASKED FOR AN EXERCISE: post one with a problem op." : "",
     f.affect === "frustrated" ? "They sound frustrated: a few warm words, a smaller step, a quick win." : f.affect === "unsure" ? "They sound unsure: ask for their reasoning before you confirm." : "",
     (() => { const open = (f.teaching?.misconceptions || []).filter((m) => !m.resolved); return open.length ? `Open misconceptions this session: ${open.map((m) => `"${m.label}"`).join("; ")} — test them with a fresh case before moving on.` : ""; })(),
+  ...(f.adapt || []),
   ].filter(Boolean);
   return `\n\nFACTS FROM THE APP (trust these over your own reading):\n- ${lines.join("\n- ")}`;
 }
@@ -68,6 +69,7 @@ async function callTurn(messages: any[], tokens: TutorTurnResult["tokens"]): Pro
 export interface TurnExtras {
   /** The reply as sentences, in order — the board ops' cues index into this. */
   speech: string[];
+  angle?: string;
   move: string;
   support: number;
   intent: string;
@@ -111,7 +113,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     + (misgraded ? `\n\nCHECKED BY CODE — THEY WERE RIGHT: ${misgraded} Say so plainly (the exercise's key was wrong, not them) and move on.` : "")
     + ownArithmeticLine(message)
     + stepVerdictLine(input.stepVerdict)
-    + factsBlock({ policy, verdict: input.stepVerdict, solvedInChat: solvedNow[0]?.question, wrongInChat: wrongNow, wants, teaching: input.teaching, affect })
+    + factsBlock({ policy, verdict: input.stepVerdict, solvedInChat: solvedNow[0]?.question, wrongInChat: wrongNow, wants, teaching: input.teaching, affect, adapt: adaptationLines(input.teaching?.log, { wrong: verdict === "incorrect", stuck: STUCK.test(message) }) })
     + (input.spoken && spokenRepair ? voiceInputBlock(message, input.spoken.alternatives, spokenRepair) : "")
     + `\n\nReply in ${fr ? "French" : "English"} unless the student is writing in another language. Return ONLY the JSON object.`;
 
@@ -178,7 +180,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const progressed = verdict === "correct" || reachedSolutionSteps(message, input.solution).length > 0;
   const struggled = verdict === "incorrect" || STUCK.test(message) || ["misconception", "slip", "no_attempt"].includes(turn.diagnosis.status);
   result.turn = {
-    speech: turn.speech, move: turn.move, support: MOVE_SUPPORT[turn.move], intent: turn.intent, diagnosis: turn.diagnosis.status,
+    speech: turn.speech, ...(turn.angle ? { angle: turn.angle } : {}), move: turn.move, support: MOVE_SUPPORT[turn.move], intent: turn.intent, diagnosis: turn.diagnosis.status,
     repaired, issues: firstIssues, dropped: applied.dropped, ms: Date.now() - t0, struggled: struggled && !progressed,
   };
   return result;
