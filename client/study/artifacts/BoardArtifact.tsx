@@ -190,6 +190,13 @@ export function MathText({ text }: { text: string }) {
   );
 }
 
+/** Otto points at a line the way a tutor does with a pen: circle, box, underline, arrow, cross or tick. Drawn with CSS on
+ *  the line itself (no measured overlay), so it can't drift out of place when the board reflows. */
+function markClass(marks?: BoardEntry[]): string {
+  const m = (marks || []).find((a) => a.markStyle);
+  return m ? ` sm-mark sm-mark-${m.markStyle} sm-mark-${m.tone || "focus"}` : "";
+}
+
 function InlineEquation({ latex }: { latex: string }) {
   const html = useMemo(() => {
     try { return katex.renderToString(/\\frac|\\sqrt/.test(latex) ? `\\displaystyle ${latex}` : latex, { throwOnError: false, strict: false, trust: false, displayMode: false, output: "html" }); } catch { return null; }
@@ -819,7 +826,7 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
             <div
               key={item.key}
               className={`sm-board-entry sm-board-entry-${e.kind || "note"}${e.owner === "student" ? " sm-board-entry-student" : ""}${e.status === "incorrect" && e.kind !== "gap" ? " sm-board-entry-incorrect" : ""} sm-board-writein${fresh ? " sm-board-reveal" : ""}${isPastGap || (e.kind === "gap" && e.status === "correct") ? " sm-board-gap-past" : ""}`}
-              style={fresh ? { animationDuration: `.35s, ${revealDuration(e.text)}s` } : undefined}
+              style={fresh ? { animationDuration: `.35s, ${revealDuration(e.text)}s`, ...(e.cue ? { animationDelay: `${Math.min(e.cue, 6) * 0.9}s` } : {}) } : undefined}
             >
               {lineNo.get(e.id) ? <span className="sm-board-lineno" aria-label={en ? `line ${lineNo.get(e.id)}` : `ligne ${lineNo.get(e.id)}`}>{lineNo.get(e.id)}</span> : null}
               <div className="sm-board-entry-main">
@@ -908,12 +915,12 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
                 </>
               ) : (
                 <>
-                  <div className="sm-board-line"><MathText text={autoMathLine(stripStrayMarkdown((e.kind === "result" ? e.text.replace(/^\s*(?:established|établi|found|result|trouvé)\s*:\s*/i, "") : e.text).replace(/&nbsp;|&#160;/gi, " ")))} /></div>
+                  <div className={`sm-board-line${markClass(notesFor.get(e.id))}`}><MathText text={autoMathLine(stripStrayMarkdown((e.kind === "result" ? e.text.replace(/^\s*(?:established|établi|found|result|trouvé)\s*:\s*/i, "") : e.text).replace(/&nbsp;|&#160;/gi, " ")))} /></div>
                   {e.why ? <div className="sm-board-why"><MathText text={autoMathLine(stripStrayMarkdown(e.why))} /></div> : null}
                   {e.kind === "gap" && e.expectedAnswer && e.status !== "correct" && !flowItems.slice(idx + 1).some((it) => it.entry?.kind === "gap") && onGapCheck ? <GapAnswer entry={e} onCheck={onGapCheck} en={en} /> : null}
                 </>
               )}
-              {(notesFor.get(e.id) || []).map((a) => (
+              {(notesFor.get(e.id) || []).filter((a) => a.text).map((a) => (
                 <div key={a.id} className={`sm-board-note sm-board-note-${a.tone || "focus"}`}><span aria-hidden>↳ </span><MathText text={a.text} /></div>
               ))}
               </div>

@@ -4850,3 +4850,15 @@ mark.otto-mark { background: linear-gradient(transparent 12%, color-mix(in srgb,
   /* The folded Draw button is icon-only so it covers less of the board. */
   .tc-draw-open > span { display: none; }
 }
+
+/* Otto's pen marks on a board line (BoardArtifact markClass). */
+.sm-mark { position: relative; border-radius: 10px; animation: sm-mark-in .45s ease-out both; }
+.sm-mark-circle { box-shadow: 0 0 0 2px var(--vermilion, #d4452f); border-radius: 999px; padding: 2px 12px; }
+.sm-mark-box { outline: 2px solid var(--vermilion, #d4452f); outline-offset: 3px; border-radius: 6px; }
+.sm-mark-underline { text-decoration: underline wavy var(--vermilion, #d4452f); text-underline-offset: 5px; }
+.sm-mark-arrow::before { content: "➜"; position: absolute; left: -22px; top: 0; color: var(--vermilion, #d4452f); }
+.sm-mark-cross { opacity: .7; text-decoration: line-through; text-decoration-color: var(--vermilion, #d4452f); }
+.sm-mark-tick::after { content: " ✓"; color: var(--green, #2f8f4e); font-weight: 600; }
+.sm-mark-good.sm-mark-circle, .sm-mark-good.sm-mark-box { box-shadow: 0 0 0 2px var(--green, #2f8f4e); outline-color: var(--green, #2f8f4e); }
+@keyframes sm-mark-in { from { opacity: 0; transform: scale(.97); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .sm-mark { animation: none; } }
