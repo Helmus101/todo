@@ -104,6 +104,7 @@ export function AskOttoPanel({
   // Barge-in refs — recognition's callbacks need the CURRENT speaking state and the text being spoken,
   // and useSpeechRecognition's options object is captured at hook-setup time, so plain closures over
   // synth.speaking / the last chat message would go stale.
+  const bargeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const speakingRef = useRef(false);
   speakingRef.current = synth.speaking;
   // THE LOOP-KILLER (the recurring "Otto hears himself" bug). The old guard only checked echo WHILE
@@ -168,9 +169,10 @@ export function AskOttoPanel({
     // Live barge-in channel: interim text streams in while the student is still talking — cancel the TTS
     // the instant real speech is detected. Echo-filtered so Otto doesn't cancel himself.
     onInterim: (text) => {
-      if (!bargeIn || !text) return;
-      if (echoFilterRef.current.isEcho(text)) return;
-      if (speakingRef.current && text.trim().split(/\s+/).length >= 2) synth.cancel();
+      const real = !!bargeIn && !!text && !echoFilterRef.current.isEcho(text) && speakingRef.current && text.trim().split(/\s+/).length >= 2;
+      // Only SUSTAINED speech interrupts (400 ms of real, non-echo words) — a cough or a speaker echo clears the timer.
+      if (!real) { if (bargeTimerRef.current) { clearTimeout(bargeTimerRef.current); bargeTimerRef.current = null; } return; }
+      if (!bargeTimerRef.current) bargeTimerRef.current = setTimeout(() => { bargeTimerRef.current = null; if (speakingRef.current) synth.cancel(); }, 400);
     },
     // Mic failures used to vanish silently (a blocked mic looked like "listening, heard nothing") — now
     // they surface as a real, bilingual, student-presentable message.

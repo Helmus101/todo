@@ -2986,7 +2986,7 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   // so `sending` pauses the mic even with bargeIn on; only the speaking half stays gated off by bargeIn).
   check("mic stays open during speech when barge-in is on (pause-the-mic is gated off for the speaking half)", /const busy = sending \|\| \(!bargeIn && synth\.speaking\);/.test(askOttoSrc));
   check("the mic is paused during generation too, not just during speech (reported: mic stayed open the whole time a reply was generating)", /busy && !wasBusyRef\.current/.test(askOttoSrc) && /recog\.abort\(\);/.test(askOttoSrc));
-  check("live interim text cancels the TTS mid-sentence (≥2 words, echo-filtered)", /onInterim: \(text\) =>/.test(askOttoSrc) && /echoFilterRef\.current\.isEcho\(text\)/.test(askOttoSrc) && /text\.trim\(\)\.split\(\/\\s\+\/\)\.length >= 2\) synth\.cancel\(\)/.test(askOttoSrc));
+  check("live interim text cancels the TTS mid-sentence (≥2 words, echo-filtered, sustained 400 ms)", /onInterim: \(text\) =>/.test(askOttoSrc) && /echoFilterRef\.current\.isEcho\(text\)/.test(askOttoSrc) && /text\.trim\(\)\.split\(\/\\s\+\/\)\.length >= 2/.test(askOttoSrc) && /setTimeout\(\(\) => \{ bargeTimerRef\.current = null; if \(speakingRef\.current\) synth\.cancel\(\); \}, 400\)/.test(askOttoSrc));
   check("the recognition hook exposes the live interim channel", /onInterim\?: \(text: string\) => void;/.test(recogSrc) && /onInterimRef\.current\?\.\(interim\.trim\(\)\)/.test(recogSrc));
   // TTS history: a third-party vendor (FreeTTS) used to be tried FIRST, browser speechSynthesis as
   // fallback. Reported live, repeatedly, across several rounds of fixes (a bare fetch missing the CSRF

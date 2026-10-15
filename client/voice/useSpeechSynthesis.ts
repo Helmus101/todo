@@ -668,7 +668,9 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
   const speakWithCloud = useCallback(async (gen: number, sentences: string[]) => {
     // Almost always ONE chunk now (see cloudChunks — fewer requests = less quota burn); fetched up front
     // so a multi-chunk reply's later chunks download while the first one plays.
-    const chunks = cloudChunks(sentences);
+    // The first sentence goes out alone so the voice starts as soon as it is synthesised; the rest are grouped as before
+    // and download while it plays (time-to-first-audio ≈ one sentence, not the whole reply).
+    const chunks = sentences.length > 1 && sentences[0].length >= 12 ? [sentences[0], ...cloudChunks(sentences.slice(1))] : cloudChunks(sentences);
     const pending = chunks.map((c) => fetchChunk(c, gen));
     pending.forEach((p) => p.catch(() => { /* handled in order below */ }));
     for (let i = 0; i < chunks.length; i++) {
