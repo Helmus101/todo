@@ -310,7 +310,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     // A reply that announces a task ("Let's examine a student's solution…", "Now let's check your intuition…") with nothing placed for it:
     // the app builds the task itself, so they never have to ask "so what is it?".
     const lastSn = turn.speech[turn.speech.length - 1] || "";
-    const announces = /^\s*(?:(?:now|next|so|ok(?:ay)?|alright)[, ]+)*(?:let'?s|let us|time to|on to)\b/i.test(lastSn) && !/\?\s*$/.test(lastSn)
+    const announces = /(?:^|[—–,;:]\s*|\.\s+)(?:(?:now|next|so|ok(?:ay)?|alright)[, ]+)*(?:let'?s|let us|time to|on to)\b/i.test(lastSn) && !/\?\s*$/.test(lastSn)
       && !turn.speech.some((sn) => /\?\s*$/.test(sn)) && !turn.board.some((o) => o.op === "problem" || o.op === "gap" || o.op === "draw" || (o.op === "step" && o.kind === "given"));
     const newExercise = !wants.problemOnBoard && (wants.exercise || wants.different || turn.move === "practice" || announces);
     exerciseIntended = newExercise;

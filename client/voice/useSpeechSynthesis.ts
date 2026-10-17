@@ -313,9 +313,23 @@ export function mathSymbolsToWords(text: string, lang: SpeechLang = "en"): strin
  *  pipes, bullet markers) down to plain readable prose, then turn every remaining symbol into words — read aloud
  *  verbatim, "hashtag hashtag", a silent minus or a literal pipe would be nonsense. What is SAID differs from what is
  *  SHOWN on purpose: the screen keeps the maths, the voice says only words. Exported for unit tests. */
+/** Plain-text physics the model writes outside $…$ ("F_(net)", "mgsin θ", "m s −1", "30 ∘"): a voice would read it as noise. */
+export function spellOutPlainPhysics(text: string, L: SpeechLang = "en"): string {
+  const en = L === "en";
+  return String(text || "")
+    .replace(/\b([A-Za-z])_\(([^()]{1,24})\)/g, (_m, a: string, b: string) => `${a} ${b.replace(/\\text\{([^}]*)\}/g, "$1")}`) // F_(net) → F net
+    .replace(/\b([A-Za-z])_([A-Za-z]{2,10})\b/g, "$1 $2")                                                                      // F_net → F net
+    .replace(/(\d)\s*[∘°]/g, en ? "$1 degrees" : "$1 degrés").replace(/\b(sin|cos|tan)\s*\(\s*([\d.]+)\s*degrees?\s*\)/gi, "$1 $2 degrees")
+    .replace(/\bm\s*s\s*(?:\^\s*)?[−–-]\s*2\b|\bm\s*s⁻²/g, en ? "metres per second squared" : "mètres par seconde carrée")
+    .replace(/\bm\s*s\s*(?:\^\s*)?[−–-]\s*1\b|\bm\s*s⁻¹/g, en ? "metres per second" : "mètres par seconde")
+    .replace(/(?<![\w.])(\d+(?:\.\d+)?\s?)?mg(sin|cos|tan)\b/gi, (_m, n: string | undefined, f: string) => `${n ? n.trim() + " " : ""}m g ${f}`)
+    .replace(/(?<![\w.])(\d+(?:\.\d+)?\s?)?mgh\b/gi, (_m, n: string | undefined) => `${n ? n.trim() + " " : ""}m g h`)
+    .replace(/(\d)([a-z]{1,3})\b(?=\s|[.,)$]|$)/g, (m, d: string, l: string) => (/^(?:s|m|g|kg|n|j|w|hz|v|a|k|c|cm|mm|km|ms|mol|st|nd|rd|th|pm|am|l|ml)$/i.test(l) ? m : `${d} ${l.split("").join(" ")}`)); // 2as → 2 a s
+}
+
 export function toSpeakableText(md: string, lang: string = "en"): string {
   const L: SpeechLang = String(lang).toLowerCase().startsWith("fr") ? "fr" : "en";
-  const prose = stripLatexForSpeech(hideToolLeaks(md), L)
+  const prose = stripLatexForSpeech(spellOutPlainPhysics(hideToolLeaks(md), L), L)
     .replace(/```[\s\S]*?```/g, " ")                 // code blocks — not worth reading aloud
     .replace(/`([^`]+)`/g, "$1")                      // inline code
     .replace(/^\s{0,3}#{1,6}\s+/gm, "")                // headings

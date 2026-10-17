@@ -116,5 +116,10 @@ export const SCENARIOS = [
     voice: true,
     persona: `${STU} You speak in messy transcribed speech ('okay so', 'um', 'right'), say equations in words ('f net equals f pull minus m g sin theta minus friction'). Around your second or third message you say 'can you graph this, can you create a chart of the forces' in the middle of a sentence. You know F=ma but forget to compute mg sin theta numerically (g = 9.8).`,
     expect: "When asked for a chart/graph mid-sentence it actually draws one (force diagram or table) that turn; writes the student's spoken equation cleanly on the board; each reply moves the problem forward (never repeats the same question); numbers come out right (mg sin30 = 49, a = (80-49-15)/10 = 1.6).", turns: 9 },
+  { id: "p27-crate-steep-ramp", subject: "Physics", lang: "en", profile: { yearLevel: "Year 12", track: "ib", courses: ["Physics SL"] },
+    opening: "ok so a 12 kilogram crate is pulled up a ramp with 80 newtons and friction is 15 newtons, what happens if the ramp is at 45 degrees, I think the net force is minus 20 so it slides back down right",
+    voice: true,
+    persona: `${STU} Messy transcribed speech; g = 10. You computed 80 - 15 - mg sin45 = about -20 and conclude it slides down with acceleration -18, and you don't realise friction flips direction (and may even hold the crate still). Accept a correct explanation after one good counter-question; do not volunteer the fix.`,
+    expect: "Does NOT accept 'accelerates down at -18': mg sin45 is about 85 N, the pull is 80 N, the shortfall is about 5 N which static friction (up to 15 N) can hold, so the crate stays at rest; or if it slid, friction would act up the slope. Diagnoses the sign-of-friction misconception with a question or counter-example, then explains plainly.", turns: 8 },
 ];
 export const byId = Object.fromEntries(SCENARIOS.map((s) => [s.id, s]));

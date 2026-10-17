@@ -61,7 +61,7 @@ export interface VerifyContext {
 export const SELF_CORRECTION = /(?:…|\.\.\.|—|,)\s*(?:non,?\s+(?:pardon|attends|en fait)|no,?\s+wait|wait,?\s+(?:no|that)|hmm,?\s|sorry,?\s+(?:let me|that'?s|i)|let me (?:redo|recompute|recalculate|rethink)|pardon,|oops)|\b(?:actually,? (?:no|that'?s wrong|let me)|scratch that|je me trompe|je reprends)\b/i;
 
 export interface Issue {
-  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "off_topic" | "plan_too_early" | "ignores_student" | "verdict_mismatch" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh" | "no_error" | "self_correct" | "unsourced_quote" | "stale_opener" | "fact";
+  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "off_topic" | "plan_too_early" | "ignores_student" | "verdict_mismatch" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh" | "no_error" | "self_correct" | "unsourced_quote" | "stale_opener" | "fact" | "format_leak";
   /** The instruction for the repair call. */
   fix: string;
   /** A leak or a pointer at nothing must be fixed; the rest are quality. */
@@ -184,6 +184,9 @@ export function unsourcedQuotes(speech: string, sources: string[]): string[] {
   return out;
 }
 
+/** The answer widget's own instruction line, leaked into the speech. */
+const FORMAT_INSTRUCTION = /^\s*(?:provide|give|round|express|write|state)\s+(?:your|the)\s+(?:final\s+)?answer\s+(?:to|in|as|with|correct to)\b[^.?!]*[.]?\s*$/i;
+
 export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   const out: Issue[] = [];
   const say = speechText(t);
@@ -260,6 +263,7 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
     const same = mine ? recent.filter((r) => r === mine).length : 0;
     if (same >= 1) out.push({ code: "stale_opener", hard: same >= 2, fix: `it opens with "${say.split(/\s+/).slice(0, 2).join(" ")}" again, as in recent replies. Start differently: react to something specific they said (in their own words), or begin straight with the content — no stock confirmation.` });
   }
+  if (t.speech.some((sn) => FORMAT_INSTRUCTION.test(sn))) out.push({ code: "format_leak", hard: false, fix: "a sentence is an answer-format instruction (\"Provide your answer to three significant figures\"): that belongs to the exercise's answer box, not to what you say — remove it." });
   const uq = unsourcedQuotes(say, [...c.said, ...c.board.map((b) => b.text || ""), ...c.problems.map((p) => p.question || "")]);
   if (uq.length) out.push({ code: "unsourced_quote", hard: true, fix: `it quotes "${uq[0]}", words the student never gave and that are not on the board. Never quote a text from memory: point at a line by number or describe it in your own words, or ask the student to read the line out.` });
   const objs = inventedObjects([say, ...t.board.map(opText)], [...c.said, ...c.board.map((b) => b.text || ""), ...c.problems.map((p) => p.question || ""), ...(c.solution ? [c.solution.statement, ...c.solution.steps.map((s) => `${s.idea || ""} ${s.result || ""}`)] : [])]);
@@ -298,7 +302,7 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
 /** Fix in code what the repair call didn't: drop leaking sentences and ops, bad pointers, extra visuals and invalid
  *  gaps; keep only the last question; trim an over-long reply at sentence boundaries. Never adds words of its own. */
 export function degradeTurn(t: TurnOutput, c: VerifyContext): TurnOutput {
-  let speech = t.speech.filter((s) => !revealsKey(s, c));
+  let speech = t.speech.filter((s) => !revealsKey(s, c) && !FORMAT_INSTRUCTION.test(s));
   const nums = new Set(boardLineNumbers(c.board as any).values());
   speech = speech.map((s) => s.replace(/\s*\(?(?:look at |see |on )?(?:line|ligne)\s*#?\s*(\d{1,3})\)?/gi, (m, n) => (nums.has(Number(n)) ? m : "")).trim()).filter(Boolean);
   // One question, kept at the end: earlier questions go (their statements stay).

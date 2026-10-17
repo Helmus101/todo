@@ -53,6 +53,14 @@ const WORD_SOUNDALIKES: [RegExp, string, string][] = [
   [/\b(?:hypothenuse|hippopotamus|high\s?pot(?:en|in)use|hypotenus)\b/gi, "hypotenuse", "sounds like \"hypotenuse\""],
   [/\bcortex\b/gi, "cot x", "sounds like \"cot x\""],
   [/\b(?:opposites?|a\s?posit)\b/gi, "opposite", "sounds like \"opposite\""],
+  // Mechanics vocabulary. "Sue" / "suit" only after a word that introduces an equation set, so people and clothes are left alone.
+  [/\b(?:sue\s?vat|suv\s?at|soup\s?at|souvat|suit\s?at|suvatt?s?)\b/gi, "SUVAT", "sounds like \"SUVAT\""],
+  [/(?<=\b(?:use|using|the|with|via|try|do|have|has)\s)(?:sue|suit|suite|suv)(?=\s*(?:equations?|formulas?|right|work|works|[?,.]|$)|\s+(?:that|here|then|we)\b)/gi, "SUVAT", "sounds like \"SUVAT\" (the constant-acceleration equations)"],
+  [/\b(?:sophie|vee)\s+squared\b/gi, "v squared", "sounds like \"v squared\""],
+  [/\b(?:m\s?b|emv|am\s?v|mvp)\s+squared\b/gi, "mv squared", "sounds like \"mv squared\""],
+  [/\bm\s?k\s?h\b/gi, "mgh", "sounds like \"mgh\""],
+  [/\b(?:sign|sine|cosign)\s+(?=(?:data|theater|theatre|fate a)\b)/gi, "sin ", "sounds like \"sin\""],
+  [/\b(sin|cos|tan|sine|cosine|tangent|sign)\s+(?:data|theater|theatre)\b/gi, "$1 theta", "sounds like \"theta\""],
 ];
 
 export function repairSpokenMath(transcript: string, ctx: SpokenContext): SpokenRepair {
@@ -63,7 +71,7 @@ export function repairSpokenMath(transcript: string, ctx: SpokenContext): Spoken
   const knownAngle = (n: string) => ctx.angles.includes(Number(n));
 
   for (const [re, to, why] of WORD_SOUNDALIKES) {
-    s = s.replace(re, (m) => { if (m.toLowerCase() === to) return m; changes.push({ from: m, to, why }); return to; });
+    s = s.replace(re, (m, g1?: string) => { const out = to.replace("$1", typeof g1 === "string" ? g1 : ""); if (m.toLowerCase() === out.toLowerCase()) return m; changes.push({ from: m, to: out, why }); return out; });
   }
 
   // "1025" / "1015": "tan" heard as "ten" and fused with the angle that follows it. An angle on the board is

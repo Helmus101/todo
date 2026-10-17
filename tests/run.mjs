@@ -5937,6 +5937,13 @@ section("TTS voice — MALE ONLY, and arrows read as a word (source pins)");
   // Direct request: "make sure here it doesn't say the arrow but replaces by word" — a worked-math arrow
   // ("t² = 9.18 → t = 3.03 s") either got read literally as "arrow" or mangled by the TTS engine.
   check("a unicode arrow is read as a word, not a symbol — and so is every other symbol", toSpeakableText("t² = 9.18 → t = 3.03 s") === "t squared equals 9.18 gives t equals 3.03 seconds");
+  check("plain-text physics is read as words: F_(net), mgsinθ, m s −1, 30 ∘ (reported live in a voice session)",
+    toSpeakableText("With F_(net) = F_(pull) - mgsinθ, a is 2 m s −2 or 3 m s −1 at sin(30 ∘)") === "With F net equals F pull minus m g sine theta, a is 2 metres per second squared or 3 metres per second at sine 30 degrees" &&
+    toSpeakableText("Use mgh here, 5 mg of salt") === "Use m g h here, 5 mg of salt");
+  { const { repairSpokenMath: rsm, spokenContextFrom: scf } = await import("../shared/spokenMath.ts"); const c0 = scf(["Physics"]);
+    check("speech-to-text: 'suit/Sue' after 'use', 'Sophie squared', 'MB squared', 'MKH', 'sign data' are repaired; ordinary Sue and suit are left alone",
+      rsm("can we use suit we can", c0).interpreted.includes("SUVAT") && rsm("Sophie squared equals 1.6", c0).interpreted.startsWith("v squared") && rsm("MB squared", c0).interpreted === "mv squared" &&
+      rsm("normally MKH equals", c0).interpreted.includes("mgh") && rsm("sign data equals", c0).interpreted === "sin theta equals" && rsm("I met Sue yesterday, the suit is blue", c0).interpreted === "I met Sue yesterday, the suit is blue"); }
   check("an ASCII '->' arrow is also replaced", toSpeakableText("x -> y") === "x gives y");
   // Reported live: "when there is - it should say minus" — what's SHOWN keeps the maths, what's SAID is words only.
   {
