@@ -443,6 +443,11 @@ export async function runTutorTurnSim(check, section) {
       const an = await runTutorTurn({ ...base, message: "ok" });
       check("a reply that only announces a task never ships alone: a question or the task itself follows", !an.reply || /\?\s*$/.test(an.reply) || an.problems?.length > 0);
     }
+    {
+      const { tidyQuestion } = await import("../server/tutorTurn/problemGen.ts");
+      const q = tidyQuestion("A student analyses a ball.\\nStep1: $E=144$ J.\\nStep2: $x \\neq 3$.nnIdentify the error.");
+      check("literal \\n in a statement becomes line breaks (and \\neq stays)", !/\\n(?!eq)/.test(q) && q.split("\n").length >= 4 && /\\neq/.test(q) && /\n\nIdentify/.test(q));
+    }
     script = () => ({ fail: true });
     r = await runTutorTurn({ ...base, message: "hello?" });
     check("the model being down is an error for the route to report — never a made-up reply", r.error === true && !r.reply);

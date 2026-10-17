@@ -4,6 +4,7 @@
 // built is dropped and reported — the reply never claims it, because the model only ever describes what it asked for
 // in the same turn and the dropped op is logged for the eval report.
 import { randomUUID } from "node:crypto";
+import { tidyQuestion } from "./problemGen.ts";
 import type { BoardEntry, TaskObjective, TaskProblem, TutorSolution } from "../../shared/types.ts";
 import type { BoardOp } from "../../shared/tutorTurn.ts";
 import { buildInclineScene, type InclineForce } from "../../shared/inclineScene.ts";
@@ -153,7 +154,7 @@ export function applyOps(ops: BoardOp[], c: ApplyContext): Applied {
         break;
       }
       case "problem": {
-        const input = { question: o.question, answer: o.answer, check: o.check, options: o.options, correct: o.correct, format: o.format, hint: o.hint, why: o.why, rubric: o.rubric };
+        const input = { question: o.question ? tidyQuestion(String(o.question)) : o.question, answer: o.answer, check: o.check, options: o.options, correct: o.correct, format: o.format, hint: o.hint, why: o.why, rubric: o.rubric };
         const open = [...c.problems, ...out.problems].filter((p) => !p.solved);
         if (open.length) { drop("an exercise is still open"); break; }
         if (isDuplicateProblem([...c.problems, ...out.problems], input)) { drop("duplicate exercise"); break; }

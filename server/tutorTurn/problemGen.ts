@@ -55,7 +55,7 @@ const DIFFICULTY_TEXT: Record<Difficulty, string> = {
 };
 const KIND_TEXT: Record<string, string> = {
   compute: "a calculation with ONE numeric answer",
-  spot_error: "multiple choice: a short worked solution is shown in the statement with one mistake; options are the possible places/kinds of mistake",
+  spot_error: "multiple choice: a short worked solution is shown in the statement with ONE real mistake (recompute every line yourself first: if all lines are right, change one); options are the possible places/kinds of mistake. Add a \"mistake\" field: the wrong line and what it should be",
   explain_why: "multiple choice: which explanation is correct (the distractors are real misconceptions)",
   predict: "multiple choice: what happens if something changes (the distractors are the common wrong predictions)",
   compare: "multiple choice: which statement correctly compares two things",
@@ -76,7 +76,7 @@ RULES
 - "hint": a nudge towards the idea, never a value and never a restatement of any option. "why": the one-sentence reason the answer is right.
 - "intro": ONE short spoken sentence introducing the exercise in a warm, plain tone (it must NOT contain the problem text or the answer).
 - "topic": a short title (≤6 words) for the worksheet.
-- Backslashes in LaTeX are doubled (\\\\frac, \\\\sin). Language: as asked.
+- Backslashes in LaTeX are doubled (\\\\frac, \\\\sin). Language: as asked. Put each step of a worked solution on its own line with a real line break (a JSON \\n inside the string), maths in $…$.
 
 JSON: {"topic":"…","question":"…","answer":"…","check":"…","format":"…","options":["…"],"correct":0,"hint":"…","why":"…","intro":"…"}  (use either answer+check OR options+correct)`;
 
@@ -118,6 +118,7 @@ export async function generateProblem(req: ProblemRequest, tokens: { in: number;
       const built = makeProblem(j, true);
       if ("error" in built) complaint = String(built.error).replace(/^(?:ERROR|REJECTED):\s*/i, "");
       else if (req.scope && !inScope(`${j.topic || ""} ${j.question}`, req.scope, 1)) complaint = `that is off topic for this session (${req.topic || req.subject || "the session's topic"}) — write it on the session's topic`;
+      else if (/\b(?:error|mistake|wrong|erreur|faute)\b/i.test(String(j.question)) && String(j.mistake || "").trim().length < 8) complaint = "an error-spotting exercise needs a \"mistake\" field: the one wrong line and what it should be (recompute every line first — if all are correct, introduce one error)"
       else if (correctIsLongest(j)) complaint = "the correct option is much longer than the others, which gives it away — make the options similar in length";
       else if (repeatedExercise(String(j.question), req.used)) complaint = "that is too close to an exercise already used — set a different situation with different numbers";
       else if (!String(j.intro || "").trim()) complaint = "add the one-sentence spoken intro";
@@ -126,8 +127,9 @@ export async function generateProblem(req: ProblemRequest, tokens: { in: number;
     messages.push({ role: "assistant", content: JSON.stringify(last || {}).slice(0, 3000) }, { role: "user", content: `(Fix this and send the whole JSON object again: ${complaint})` });
   }
   if (!problem) return null;
-  const { intro, topic, ...input } = problem;
+  const { intro, topic, mistake, ...input } = problem;
   scrub(input);
+  input.question = tidyQuestion(String(input.question));
   return { input, intro: String(intro || "").replace(/\s+/g, " ").trim().slice(0, 240), topic: String(topic || req.topic || "").replace(/\s+/g, " ").trim().slice(0, 60) };
 }
 
@@ -168,4 +170,14 @@ function scrub(input: Record<string, any>): void {
     input.options = shuffled;
     input.correct = shuffled.indexOf(right);
   }
+}
+
+const TEX_N = "(?:eq?|u|abla|ot|otin|ewline|i|less|gtr|mid|parallel|leq|geq|rightarrow|leftarrow|Rightarrow|Leftarrow|sim|cong|subset|vdash|vDash|exists)";
+
+/** A statement the model wrote with literal "\\n" (or a lost "\\n\\n" that became "nn") gets real line breaks; LaTeX like \\neq is left alone. */
+export function tidyQuestion(q: string): string {
+  return q
+    .replace(new RegExp(`\\\\n(?!${TEX_N}(?![a-zA-Z]))`, "g"), "\n")
+    .replace(/([.?!:)])n{1,2}(?=[A-Z][a-z])/g, "$1\n\n")
+    .replace(/[ \t]*\n[ \t]*/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
