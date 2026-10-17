@@ -66,7 +66,7 @@ const DIFFICULTY_TEXT: Record<Difficulty, string> = {
 };
 const KIND_TEXT: Record<string, string> = {
   compute: "a calculation with ONE numeric answer (for symbolic topics such as derivatives, integrals or limits, ask for the VALUE at a point, e.g. f'(2) or the definite integral, so the answer is one number with a \"check\" expression — not a formula)",
-  spot_error: "multiple choice: a short worked solution is shown in the statement with ONE real mistake (recompute every line yourself first: if all lines are right, change one); options are the possible places/kinds of mistake. Add a \"mistake\" field: the wrong line and what it should be",
+  spot_error: "multiple choice: a short worked solution is shown in the statement with ONE real mistake (recompute every line yourself first: if all lines are right, change one); options name only WHERE the mistake is and its TYPE in general words (\"Line 3 — a slip when solving the equation\"), NEVER the corrected value or result, and no option may contain false reasoning. Add a \"mistake\" field: the wrong line and what it should be",
   explain_why: "multiple choice: which explanation is correct (the distractors are real misconceptions)",
   predict: "multiple choice: what happens if something changes (the distractors are the common wrong predictions)",
   compare: "multiple choice: which statement correctly compares two things",
@@ -136,6 +136,7 @@ export async function generateProblem(req: ProblemRequest, tokens: { in: number;
       else if (req.scope && !inScope(`${j.topic || ""} ${j.question}`, req.scope, 1)) complaint = `that is off topic for this session (${req.topic || req.subject || "the session's topic"}) — write it on the session's topic`;
       else if (/\b(?:error|mistake|wrong|erreur|faute)\b/i.test(String(j.question)) && String(j.mistake || "").trim().length < 8) complaint = "an error-spotting exercise needs a \"mistake\" field: the one wrong line and what it should be (recompute every line first — if all are correct, introduce one error)"
       else if (rambles(j)) complaint = "the explanation or hint thinks aloud (\"wait\", \"actually\", \"let's re-verify\") — work it out first, then write only the clean final reasoning"
+      else if (isErrorSpotting(j) && optionRevealsFix(j)) complaint = "the right option states the corrected value, which gives the fix away — options may name the line and the TYPE of mistake in general words, but must not contain any number that is not already in the statement"
       else if (correctIsLongest(j)) complaint = "the correct option is much longer than the others, which gives it away — make the options similar in length";
       else if (repeatedExercise(String(j.question), req.used)) complaint = "that is too close to an exercise already used — set a different situation with different numbers";
       else if (!String(j.intro || "").trim()) complaint = "add the one-sentence spoken intro";
@@ -174,6 +175,16 @@ export async function keyDisagrees(j: any, built: any, req: ProblemRequest, toke
     const close = (a: number, b: number) => Math.abs(a - b) <= Math.max(Math.abs(b) * 0.015, 0.0006);
     return !(close(mine, theirs) || (pct && (close(mine, theirs * 100) || close(mine * 100, theirs))));
   } catch { return false; }
+}
+
+/** An error-spotting item whose right option states the corrected value ("solving 4Q=16 gives Q=4"): the numbers in it that the statement never used ARE the fix. */
+export function optionRevealsFix(j: any): boolean {
+  const opts: string[] = Array.isArray(j?.options) ? j.options.map((o: unknown) => String(o || "")) : [];
+  const c = Number(j?.correct);
+  if (opts.length < 2 || !Number.isInteger(c) || !opts[c]) return false;
+  const nums = (t: string) => (String(t).replace(/\b(?:line|ligne)\s*\d+/gi, " ").match(/\d+(?:[.,]\d+)?/g) || []).map((n) => n.replace(",", "."));
+  const stem = new Set(nums(String(j?.question || "")));
+  return nums(opts[c]).some((n) => !stem.has(n));
 }
 
 /** In a multiple-choice exercise the right option is much longer than every other (a giveaway). */

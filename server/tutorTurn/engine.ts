@@ -243,7 +243,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   ];
 
   const said = [...history.filter((h) => h.role === "user").map((h) => h.text), message, input.solution?.statement || "", ...(spokenRepair ? [spokenRepair.interpreted, ...(input.spoken?.alternatives || [])] : []), ...problems.map((p) => p.question || ""), ...board.filter((b) => b.kind === "given" || b.owner === "student").map((b) => b.text)];
-  const vctx: VerifyContext = { message, history, board, problems, solution: input.solution, policy, wants: { why: wants.why, write: wants.write, restart: wants.restart, exercise: wants.exercise, draw: wants.draw, problemOnBoard: wants.problemOnBoard, different: wants.different, topicSwitch: wants.topicSwitch }, said, discussion, usedExercises, verdict, keyDoubt, scope, goalsKnown: goalsAreKnown };
+  const vctx: VerifyContext = { message, history, board, problems, solution: input.solution, policy, wants: { why: wants.why, write: wants.write, restart: wants.restart, exercise: wants.exercise, draw: wants.draw, problemOnBoard: wants.problemOnBoard, different: wants.different, topicSwitch: wants.topicSwitch }, said, discussion, usedExercises, verdict, keyDoubt, private: [context.profile?.about || "", ...(context.profile?.preferences || []), ...(context.profile?.projects || []), ...(context.profile?.tutorPrefs || [])].filter(Boolean), scope, goalsKnown: goalsAreKnown };
 
   // ── The exercise generator doesn't depend on what the tutor says, so when they have asked for one it runs IN PARALLEL with the
   //    tutor's own call (the longest wait in a turn) instead of after it. ──

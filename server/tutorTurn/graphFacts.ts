@@ -83,7 +83,7 @@ export function graphFactsBlock(board: { n?: number; kind?: string; graph?: Grap
     for (const c of cs) { const m = interiorMin(c, spec); if (m) bits.push(`${c.label} is lowest at x≈${m.x.toFixed(2)} (y≈${m.y.toFixed(2)})`); }
     if (bits.length) lines.push(`graph ${e.n ? `#${e.n}` : ""}: ${bits.join("; ")}`);
   }
-  return lines.length ? `\n\nWHAT THE GRAPHS ON THE BOARD ACTUALLY SHOW (computed — use these numbers when you or the student read a value off a graph; if the student reads something else, say what the graph gives):\n${lines.join("\n")}` : "";
+  return lines.length ? `\n\nWHAT THE GRAPHS ON THE BOARD ACTUALLY SHOW (computed by code — use them to CHECK what the student reads and to make sure what you say about the figure is true. Don't read the value out for them: if their reading is off, mark the place on the graph yourself (a dashed line or point with draw/extend) and ask them to read it again):\n${lines.join("\n")}` : "";
 }
 
 /** Speech that points at shading / a rectangle on a figure. */

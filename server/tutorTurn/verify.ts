@@ -46,6 +46,8 @@ export interface VerifyContext {
   wants: { why: boolean; write: boolean; restart: boolean; exercise: boolean; draw?: boolean; problemOnBoard?: boolean; different?: boolean; topicSwitch?: boolean };
   /** Everything the student and the problem said — the only legitimate source of numbers. */
   said: string[];
+  /** The student's own saved notes (about, projects, preferences): used silently, never repeated back at them. */
+  private?: string[];
   /** The app's mark was probably wrong (an independent solve agrees with the student): the reply may disagree with it. */
   keyDoubt?: boolean;
   discussion: boolean;
@@ -62,7 +64,7 @@ export interface VerifyContext {
 export const SELF_CORRECTION = /(?:…|\.\.\.|—|,)\s*(?:non,?\s+(?:pardon|attends|en fait)|no,?\s+wait|wait,?\s+(?:no|that)|hmm,?\s|sorry,?\s+(?:let me|that'?s|i)|let me (?:redo|recompute|recalculate|rethink)|pardon,|oops)|\b(?:actually,? (?:no|that'?s wrong|let me)|scratch that|je me trompe|je reprends)\b/i;
 
 export interface Issue {
-  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "off_topic" | "plan_too_early" | "ignores_student" | "verdict_mismatch" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh" | "no_error" | "self_correct" | "unsourced_quote" | "stale_opener" | "fact" | "format_leak" | "unstated_setup" | "intent_topic" | "intent_equation" | "graph_inconsistent" | "shaded_claim" | "dead_end";
+  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "off_topic" | "plan_too_early" | "ignores_student" | "verdict_mismatch" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh" | "no_error" | "self_correct" | "unsourced_quote" | "stale_opener" | "fact" | "format_leak" | "unstated_setup" | "intent_topic" | "intent_equation" | "graph_inconsistent" | "shaded_claim" | "dead_end" | "echo_private";
   /** The instruction for the repair call. */
   fix: string;
   /** A leak or a pointer at nothing must be fixed; the rest are quality. */
@@ -224,6 +226,18 @@ export function endsDead(speech: string[], board: { op: string; kind?: string }[
   return !/\b(?:try|work out|find|calculate|tell me|write|say|show me|sketch|have a go|your turn|now do|go ahead|compute|explain (?:why|how|it)|describe|compare|predict|decide|pick|choose|name|give me|solve|substitute|plug|check)\b/i.test(last);
 }
 
+/** A reply sentence that repeats a run of 4+ words from the student's saved notes ("Fewer words, more thinking — try it") — those shape HOW Otto teaches and are never said aloud. */
+export function echoesPrivate(sentence: string, priv: string[]): boolean {
+  const w = (t: string) => t.toLowerCase().replace(/[^a-zà-ÿ0-9' ]/g, " ").split(/\s+/).filter(Boolean);
+  const sw = w(sentence).join(" ");
+  for (const p of priv) {
+    const pw = w(p);
+    if (pw.length < 4) continue;
+    for (let i = 0; i + 4 <= pw.length; i++) if (sw.includes(pw.slice(i, i + 4).join(" "))) return true;
+  }
+  return false;
+}
+
 export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   const out: Issue[] = [];
   const say = speechText(t);
@@ -312,6 +326,7 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
     const regionsAnywhere = [...drawn.map((o) => (o as any).spec), ...c.board.map((b: any) => b.graph)].some((g: any) => (g?.regions || []).length > 0);
     if (!regionsAnywhere && t.speech.some((sn) => SHADE_CLAIM.test(sn))) out.push({ code: "shaded_claim", hard: true, fix: "the speech points at a shaded area or rectangle but nothing is shaded on any graph. Redraw the graph with a \"regions\" entry for that area (upper curve, lower curve, from, to, label), or stop referring to shading." }); }
   if (endsDead(t.speech, t.board, c.message)) out.push({ code: "dead_end", hard: true, fix: "the reply stops with nothing for them to do (\"That gives a total profit of 15.\"). Confirm in a few words, then keep the conversation going: ask why it works, give a small variation, or hand them the next step — end on ONE concrete question or task." });
+  if (c.private?.length && t.speech.some((sn) => echoesPrivate(sn, c.private!))) out.push({ code: "echo_private", hard: true, fix: "a sentence repeats the student's own saved notes/preferences back at them (e.g. a style preference). Those only shape how you teach — never say them. Remove that sentence." });
   const uq = unsourcedQuotes(say, [...c.said, ...c.board.map((b) => b.text || ""), ...c.problems.map((p) => p.question || "")]);
   if (uq.length) out.push({ code: "unsourced_quote", hard: true, fix: `it quotes "${uq[0]}", words the student never gave and that are not on the board. Never quote a text from memory: point at a line by number or describe it in your own words, or ask the student to read the line out.` });
   const objs = inventedObjects([say, ...t.board.map(opText)], [...c.said, ...c.board.map((b) => b.text || ""), ...c.problems.map((p) => p.question || ""), ...(c.solution ? [c.solution.statement, ...c.solution.steps.map((s) => `${s.idea || ""} ${s.result || ""}`)] : [])]);
@@ -350,7 +365,7 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
 /** Fix in code what the repair call didn't: drop leaking sentences and ops, bad pointers, extra visuals and invalid
  *  gaps; keep only the last question; trim an over-long reply at sentence boundaries. Never adds words of its own. */
 export function degradeTurn(t: TurnOutput, c: VerifyContext): TurnOutput {
-  let speech = t.speech.filter((s) => !revealsKey(s, c) && !FORMAT_INSTRUCTION.test(s));
+  let speech = t.speech.filter((s) => !revealsKey(s, c) && !FORMAT_INSTRUCTION.test(s) && !(c.private?.length && echoesPrivate(s, c.private)));
   const nums = new Set(boardLineNumbers(c.board as any).values());
   speech = speech.map((s) => s.replace(/\s*\(?(?:look at |see |on )?(?:line|ligne)\s*#?\s*(\d{1,3})\)?/gi, (m, n) => (nums.has(Number(n)) ? m : "")).trim()).filter(Boolean);
   // One question, kept at the end: earlier questions go (their statements stay).

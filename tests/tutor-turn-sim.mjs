@@ -158,6 +158,19 @@ export async function runTutorTurnSim(check, section) {
       check("Otto can draw ON a graph that is already on the board: a dashed line, a point and a shaded area are added in place (same entry), nothing else is lost",
         ex.board.length === 1 && ge.id === gEntry.id && ge.graph.fns.length === 2 && ge.graph.vlines?.length === 1 && ge.graph.points?.length === 1 && ge.graph.regions?.length === 1 &&
         applyOps([{ op: "draw", cue: 0, scene: "graph", text: "", spec: { extend: "#7" } }], { message: "x", theirWords: ["x"], board: [gEntry], problems: [], fr: false }).board.length === 0); }
+    { const { echoesPrivate: ep } = await import("../server/tutorTurn/verify.ts");
+      const priv = ["Fewer words, more thinking", "prefers short replies; likes a drawing or diagram"];
+      check("a reply that repeats the student's saved notes aloud is caught ('Fewer words, more thinking — try it'); ordinary sentences are not",
+        ep("Fewer words, more thinking — try it.", priv) && ep("You like a drawing or diagram, so here is one.", priv) && !ep("Differentiating gives the slope at any quantity.", priv) && !ep("Try it with fewer words.", priv));
+      script = () => T({ heard: "x", move: "elicit", speech: ["Differentiating finds the slope of the curve.", "Fewer words, more thinking — try it.", "What is the marginal cost at 3 units?"], board: [] });
+      const rp = await runTutorTurn({ ...base, message: "what does differentiate mean", context: { subject: "Economics", profile: { yearLevel: "Y12", about: "Fewer words, more thinking", preferences: [], people: [], projects: [], sessions: [], courses: [] } } });
+      check("…and the engine removes it from the reply the student sees", !rp.error && !/fewer words/i.test(rp.reply) && /marginal cost/i.test(rp.reply));
+    }
+    { const { optionRevealsFix: orf } = await import("../server/tutorTurn/problemGen.ts");
+      const q = "A student solves 20 = 4 + 4Q. Line 1: 4Q = 24. Line 2: Q = 6. Which line has the error?";
+      check("an error-spotting item whose right option states the corrected value is caught; one that only names the line and the type passes (reported live: 'it just gave the answer')",
+        orf({ question: q, options: ["Line 1 — 4Q should be 16, so Q = 4", "Line 2 — division slip"], correct: 0 }) && !orf({ question: q, options: ["Line 1 — a slip when moving the 4 across", "Line 2 — a division slip"], correct: 0 }) && !orf({ question: q, options: ["Line 1", "Line 2"], correct: 1 }));
+    }
     check("verify: a quotation the student never gave is refused (a poem quoted from memory); quoting their own words or a board line is fine",
       codes({ move: "focus", speech: ["Au vers 2 il dit « sans bruit, sans voir, sans entendre » : qu'est-ce que ça change ?"] }).includes("unsourced_quote") &&
       !codes({ move: "focus", speech: ["Tu as écrit « il part plein d'espoir voir sa fille » : et à la fin ?"] }, { ...vctx, said: ["il part plein d'espoir voir sa fille"] }).includes("unsourced_quote") &&

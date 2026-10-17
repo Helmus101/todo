@@ -178,5 +178,10 @@ export const SCENARIOS = [
     opening: 'je dois comprendre les probabilités conditionnelles pour le bac',
     persona: `${STU} You are an average student: you answer in short natural sentences, are right about half the time (with a typical student mistake when wrong: confond P(A|B) et P(B|A)), you sometimes ask for a picture or a graph or a quick example, and once you say you don't get something.`,
     expect: "A good human tutor for this subject: finds out what they need, explains plainly when asked, diagnoses the typical mistake with a test case, uses the board and visuals/exercises where they help, never loses the thread, keeps every reply moving the session forward.", turns: 9 },
+  { id: "s42-econ-profit", subject: "Economics", lang: "en", profile: { yearLevel: "Year 12", track: "ib", courses: ["Economics HL"] },
+    opening: "hi can you do like let's do like average cost total cost and then you see the profit maximizing point yeah",
+    voice: true,
+    persona: `${STU} Messy transcribed speech. You ask 'can you draw a graph of all these curves, I can really visualize it' in your 3rd message, later you read a value off the graph (a bit off), and later you ask 'which rectangle' for the profit area. Mostly right otherwise.`,
+    expect: "Draws a consistent cost/revenue graph (MC cuts ATC at its lowest point, every curve it names is drawn), shades the profit rectangle when it talks about it and draws on the existing graph (marks Q*, adds a dashed line or the shaded area) instead of only describing; checks a student's read-off against the real graph; every reply continues the conversation.", turns: 10 },
 ];
 export const byId = Object.fromEntries(SCENARIOS.map((s) => [s.id, s]));
