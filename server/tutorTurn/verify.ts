@@ -168,6 +168,19 @@ export function ignoresStudentAnswer(message: string, heard: string, speech: str
   const have = new Set([...contentWordsOf(heard), ...contentWordsOf(speech)]);
   return !contentWordsOf(m).some((w) => have.has(w));
 }
+/** Otto asked a question, they answered it in words, and the reply neither reacts nor touches a single word of the answer
+ *  (reported live: "kilogram metres per second" was answered with "Let's set up that collision… what is the total momentum?"). */
+export function ignoresAnswerToQuestion(history: { role: string; text: string }[], message: string, heard: string, speech: string[]): boolean {
+  const m = String(message || "").trim();
+  const prev = [...history].reverse().find((h) => h.role === "assistant")?.text || "";
+  if (!/\?\s*["»”)]*\s*$/.test(prev.trim()) || m.split(/\s+/).length < 3 || m.length > 260 || /\?|^\[/.test(m)) return false;
+  const first = `${heard || ""} ${speech.slice(0, 2).join(" ")}`;
+  if (/\b(?:right|correct|yes|yep|exactly|not quite|close|careful|almost|good|nope|no\b|true|false|wrong|mistake|oui|non|juste|faux|exact|bien|presque|d'accord|ok|okay|sure|fair|good point|i see|got it)\b/i.test(speech.slice(0, 2).join(" "))) return false;
+  const words = (t: string) => (String(t).toLowerCase().match(/[a-zà-ÿ]{4,}/g) || []).filter((w) => !FILLER.has(w));
+  const have = new Set(words(first));
+  const mine = words(m);
+  return mine.length >= 2 && !mine.some((w) => have.has(w) || [...have].some((h) => h.length > 5 && w.length > 5 && (h.startsWith(w.slice(0, 5)) || w.startsWith(h.slice(0, 5)))));
+}
 const contentWordsOf = (t: string): string[] => (String(t).toLowerCase().match(/[a-zà-ÿ]{5,}/g) || []).filter((w) => !FILLER.has(w));
 
 /** Quotations (« … » / "…") of five or more words that appear nowhere the student gave: a model quoting a poem, a source or a
@@ -255,7 +268,7 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
       if (right && /\b(?:not quite|incorrect|isn'?t right|not right|wrong|pas tout à fait)\b/i.test(first)) out.push({ code: "verdict_mismatch", hard: true, fix: "the app marked their answer RIGHT, but the reply says it is wrong. Confirm it in a few words, then move on." });
     }
   }
-  if (!c.wants.exercise && !c.wants.different && !c.wants.problemOnBoard && !c.wants.draw && !c.verdict && ignoresStudentAnswer(c.message, t.heard, say)) out.push({ code: "ignores_student", hard: true, fix: `the student just said "${c.message.slice(0, 80)}" and the reply doesn't respond to it. Start from THEIR words: say whether it fits (or what it would need to be) and ask how they got it, before anything else.` });
+  if (!c.wants.exercise && !c.wants.different && !c.wants.problemOnBoard && !c.wants.draw && !c.verdict && (ignoresStudentAnswer(c.message, t.heard, say) || (!c.wants.restart && !c.wants.why && !c.wants.write && !/\b(?:don'?t|do not|can'?t) (?:understand|get|see)|lost|confus|idk|no idea|comprends pas|perdu\b/i.test(c.message) && ignoresAnswerToQuestion(c.history, c.message, t.heard, t.speech)))) out.push({ code: "ignores_student", hard: true, fix: `the student just said "${c.message.slice(0, 80)}" and the reply doesn't respond to it. Start from THEIR words: say whether it fits (or what it would need to be) and ask how they got it, before anything else.` });
   // Only objects that exist in the problem: no cyclist in a car problem.
   { // The same first words as the last replies ("That's the…", "Right —", "Yes —"): a script, not a person.
     const open2 = (x: string) => x.toLowerCase().replace(/[^a-zà-ÿ' ]/g, " ").split(/\s+/).filter(Boolean).slice(0, 2).join(" ");

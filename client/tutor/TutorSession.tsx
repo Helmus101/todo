@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
-import { ChevronRight, ChevronDown, Maximize2, Minimize2 } from "lucide-react";
+import { ChevronRight, ChevronDown, Maximize2, Minimize2, MessageSquare } from "lucide-react";
 import type { WebTask, TaskProblem, BoardEntry } from "../../shared/types.ts";
 import { api } from "../api.ts";
 import { setLocalObjectives, getLocalThread, setLocalChat, setLocalBoard, setLocalProblems } from "../localChatBoard.ts";
@@ -937,18 +937,20 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           className="tutor-dock-chat-toggle"
           data-tour="ts-chat"
           aria-expanded={chatDrawer}
-          aria-label={chatDrawer ? L("Réduire", "Collapse") : L("Agrandir", "Expand")}
-          title={chatDrawer ? L("Réduire", "Collapse") : L("Agrandir", "Expand")}
+          aria-label={L("Historique de la conversation", "Conversation history")}
+          title={chatDrawer ? L("Masquer l'historique", "Hide history") : L("Afficher l'historique", "Show history")}
           onClick={() => setChatDrawer((v) => !v)}
         >
-          {chatDrawer ? <Minimize2 size={13} aria-hidden="true" /> : <Maximize2 size={13} aria-hidden="true" />}
-          <span className="tutor-dock-chat-toggle-label">{L("Historique", "History")}{task.chat?.length ? ` (${task.chat.length})` : ""}</span>
+          <MessageSquare size={13} aria-hidden="true" />
+          <span className="tutor-dock-chat-toggle-label">{L("Historique", "History")}</span>
+          {task.chat?.length ? <span className="tutor-dock-chat-toggle-count">{task.chat.length}</span> : null}
+          <ChevronDown size={13} aria-hidden="true" className="tutor-dock-chat-toggle-chev" />
         </button>
         {chatDrawer && (
           <div className="tutor-dock-chat">
             <div className="tutor-dock-chat-head">
               <span>{task.chat?.length || 0} {L("messages", "messages")}</span>
-              <button type="button" className="btn ghost xs" onClick={() => setChatDrawer(false)}>{L("Réduire", "Collapse")}</button>
+              <button type="button" className="tutor-dock-chat-close" onClick={() => setChatDrawer(false)} aria-label={L("Réduire l'historique", "Collapse history")}><Minimize2 size={13} aria-hidden="true" />{L("Réduire", "Collapse")}</button>
             </div>
             <div className="tutor-chat-history">
               {!task.chat?.length && <p className="tutor-chat-empty">{L("Rien encore — dis bonjour à Otto.", "Nothing yet — say hi to Otto.")}</p>}

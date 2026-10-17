@@ -99,6 +99,14 @@ export async function runTutorTurnSim(check, section) {
       codes({ move: "explain", speech: ["Le discriminant vaut 64 - 24 = 40… non, pardon, c'est 64 - 24 = 40.", "Tu vois pourquoi ?"] }).includes("self_correct") &&
       codes({ move: "explain", speech: ["Sorry, let me redo that: it is 40.", "Clear?"] }).includes("self_correct") &&
       !codes({ move: "focus", speech: ["Check the sign of T in line 2.", "Which way does the string pull M?"] }).includes("self_correct"));
+    { const { ignoresAnswerToQuestion: iaq } = await import("../server/tutorTurn/verify.ts");
+      const h = [{ role: "user", text: "ok" }, { role: "assistant", text: "What is the standard unit for momentum based on those terms?" }];
+      check("verify: an answer to Otto's question that the reply skips entirely is caught; reacting or using their words passes (reported live: the unit answer was ignored)",
+        iaq(h, "so mass times velocity so kilograms meters per second", "", ["Let's set up that collision on the board.", "What is the total momentum before the blocks collide?"]) &&
+        !iaq(h, "so mass times velocity so kilograms meters per second", "", ["Yes, kilogram metres per second.", "Now set up the collision."]) &&
+        !iaq(h, "so mass times velocity so kilograms meters per second", "", ["Mass times velocity gives kg m/s.", "What is it before the blocks collide?"]) &&
+        !iaq([{ role: "assistant", text: "Here is the rule." }], "so mass times velocity so kilograms", "", ["Let's go on."]));
+    }
     check("verify: a quotation the student never gave is refused (a poem quoted from memory); quoting their own words or a board line is fine",
       codes({ move: "focus", speech: ["Au vers 2 il dit « sans bruit, sans voir, sans entendre » : qu'est-ce que ça change ?"] }).includes("unsourced_quote") &&
       !codes({ move: "focus", speech: ["Tu as écrit « il part plein d'espoir voir sa fille » : et à la fin ?"] }, { ...vctx, said: ["il part plein d'espoir voir sa fille"] }).includes("unsourced_quote") &&

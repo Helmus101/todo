@@ -4685,9 +4685,16 @@ mark.otto-mark { background: linear-gradient(transparent 12%, color-mix(in srgb,
 /* Chat on the tutor stage lives IN the floating island: the island's own expand button reveals the
    transcript above the input (report-live: "isn't a dedicated chat button, just on the floating island
    with chat there can be an expand button"). The old modal drawer + past-session list are gone. */
-.tutor-dock-chat-toggle { position: absolute; top: -34px; right: 6px; z-index: 5; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.10); }
+.tutor-dock-chat-toggle { position: absolute; top: -38px; right: 6px; z-index: 5; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px 0 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink-2, var(--ink)); cursor: pointer; font: inherit; font-size: 12px; font-weight: 600; transition: border-color .15s, color .15s, background .15s; }
+.tutor-dock-chat-toggle[aria-expanded="true"] { color: var(--ink); border-color: var(--ink-3); }
+.tutor-dock-chat-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tutor-dock-chat-toggle-count { font-variant-numeric: tabular-nums; font-size: 11px; font-weight: 600; min-width: 18px; padding: 0 5px; text-align: center; line-height: 17px; border-radius: 999px; background: var(--line); color: var(--ink-2, var(--ink)); }
+.tutor-dock-chat-toggle-chev { transition: transform .18s ease; }
+.tutor-dock-chat-toggle[aria-expanded="true"] .tutor-dock-chat-toggle-chev { transform: rotate(180deg); }
+.tutor-dock-chat-close { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; font: inherit; font-size: 12px; color: var(--ink-2, var(--ink)); background: none; border: 1px solid var(--line); border-radius: 999px; cursor: pointer; }
+.tutor-dock-chat-close:hover { border-color: var(--ink-3); color: var(--ink); }
 .tutor-dock-chat-toggle:hover { color: var(--accent); border-color: var(--accent); }
-.tutor-dock-chat { max-height: min(46vh, 380px); overflow-y: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-xl); margin-bottom: var(--space-2); box-shadow: 0 8px 24px rgba(0,0,0,.12); }
+.tutor-dock-chat { max-height: min(46vh, 380px); overflow-y: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-xl); margin-bottom: var(--space-2); }
 .tutor-dock-chat-head { position: sticky; top: 0; z-index: 1; display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--line-soft); background: var(--surface); color: var(--ink-2); font-size: 13px; }
 .tutor-dock-chat .tutor-chat-history { max-height: none; padding: var(--space-4); gap: var(--space-4); }
 .tutor-chat-empty { color: var(--ink-2); text-align: center; margin: var(--space-5) 0; }
@@ -4719,19 +4726,21 @@ mark.otto-mark { background: linear-gradient(transparent 12%, color-mix(in srgb,
 .sm-board-undo:hover { border-color: var(--ink-3, currentColor); color: var(--ink); }
 .sm-board-undo:focus-visible, .sm-board-ideas-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* Earlier worksheets on the board fold into one quiet row each (BoardArtifact boardSectionStarts) — tap to reopen. */
-.sm-board-section-row { display: flex; align-items: center; gap: var(--space-2); width: 100%; margin: 0 0 var(--space-2); padding: var(--space-2) var(--space-3); font: inherit; font-size: 13px; color: var(--ink-2, var(--ink)); background: color-mix(in srgb, var(--surface) 96%, var(--ink) 4%); border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; text-align: left; opacity: .85; }
-.sm-board-section-row:hover { opacity: 1; }
-.sm-board-section-row.is-open { opacity: 1; margin-bottom: var(--space-3); }
+.sm-board-section-row { display: flex; align-items: center; gap: var(--space-2); width: 100%; margin: 0 0 var(--space-2); padding: 7px var(--space-3); font: inherit; font-size: 13px; color: var(--ink-2, var(--ink)); background: none; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; cursor: pointer; text-align: left; transition: background .15s, color .15s; }
+.sm-board-section-row:hover { background: color-mix(in srgb, var(--surface) 94%, var(--ink) 6%); color: var(--ink); }
+.sm-board-section-row.is-open { margin-bottom: var(--space-3); color: var(--ink); }
 .sm-board-section-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.sm-board-section-chev { flex: none; width: 1em; }
+.sm-chev { flex: none; width: 7px; height: 7px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform .16s ease; margin: 0 3px 0 1px; opacity: .7; }
+button[aria-expanded="true"] > .sm-chev { transform: rotate(45deg); }
+.sm-board-section-chev { width: 7px; }
 .sm-board-section-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sm-board-section-title p { margin: 0; display: inline; }
-.sm-board-section-count { flex: none; font-size: 11px; padding: 0 6px; border-radius: 999px; background: var(--line); }
+.sm-board-section-count { flex: none; font-size: 11px; min-width: 18px; text-align: center; line-height: 17px; padding: 0 6px; border-radius: 999px; background: var(--line); font-variant-numeric: tabular-nums; }
 /* Key ideas — the board's revision strip: definitions, rules, strategies, the summary. */
 .sm-board-ideas { margin: var(--space-1) 0 var(--space-4); border: 1px solid var(--line); border-radius: var(--radius); background: color-mix(in srgb, var(--surface) 92%, var(--accent) 8%); }
 .sm-board-ideas-head { display: flex; align-items: center; gap: var(--space-2); width: 100%; padding: var(--space-2) var(--space-3); font: inherit; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-2, var(--ink)); background: none; border: 0; cursor: pointer; text-align: left; }
 .sm-board-ideas-count { font-variant-numeric: tabular-nums; color: var(--ink-3); font-weight: 500; }
-.sm-board-ideas-chev { margin-left: auto; color: var(--ink-3); }
+.sm-board-ideas-chev { margin-left: auto; margin-right: 2px; color: var(--ink-3); }
 .sm-board-ideas-list { list-style: none; margin: 0; padding: 0 var(--space-3) var(--space-3); display: grid; gap: var(--space-2); }
 .sm-board-idea { font-size: var(--text-sm, 14px); line-height: 1.45; color: var(--ink); overflow-x: auto; }
 .sm-board-idea-tag { display: inline-block; margin-right: var(--space-2); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
@@ -4865,4 +4874,4 @@ mark.otto-mark { background: linear-gradient(transparent 12%, color-mix(in srgb,
 
 .otto-replay-label { margin-left: 6px; font-size: 12px; font-weight: 600; }
 
-.tutor-dock-chat-toggle-label { margin-left: 6px; font-size: 12px; font-weight: 600; }
+.tutor-dock-chat-toggle-label { font-size: 12px; font-weight: 600; }

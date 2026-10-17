@@ -956,7 +956,7 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
           <button type="button" className="sm-board-ideas-head" aria-expanded={ideasOpen} onClick={toggleIdeas}>
             <span>{en ? "Key ideas" : "À retenir"}</span>
             <span className="sm-board-ideas-count">{keyIdeas.length + (latestSummary ? 1 : 0)}</span>
-            <span className="sm-board-ideas-chev" aria-hidden="true">{ideasOpen ? "▾" : "▸"}</span>
+            <span className="sm-chev sm-board-ideas-chev" aria-hidden="true" />
           </button>
           {ideasOpen ? (
             <ul className="sm-board-ideas-list">
@@ -991,7 +991,7 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
           const end = sectionStarts.find((st) => st > sec) ?? flowItems.length;
           const row = (
             <button type="button" className={`sm-board-section-row${folded ? "" : " is-open"}`} aria-expanded={!folded} onClick={() => toggleSection(secKey)}>
-              <span className="sm-board-section-chev" aria-hidden="true">{folded ? "▸" : "▾"}</span>
+              <span className="sm-chev sm-board-section-chev" aria-hidden="true" />
               <span className="sm-board-section-title"><MathText text={autoMathLine(stripStrayMarkdown(boardSectionTitle(flowItems.slice(sec, end))))} /></span>
               <span className="sm-board-section-count">{end - sec}</span>
             </button>
