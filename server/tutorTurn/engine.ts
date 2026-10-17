@@ -256,7 +256,12 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const studentStatedProblem = studentProblemStatement(message);
   {
     const speechAll = turn.speech.join(" ");
-    const newExercise = !wants.problemOnBoard && (wants.exercise || wants.different || turn.move === "practice");
+    // A reply that announces a task ("Let's examine a student's solution…", "Now let's check your intuition…") with nothing placed for it:
+    // the app builds the task itself, so they never have to ask "so what is it?".
+    const lastSn = turn.speech[turn.speech.length - 1] || "";
+    const announces = /^\s*(?:(?:now|next|so|ok(?:ay)?|alright)[, ]+)*(?:let'?s|let us|time to|on to)\b/i.test(lastSn) && !/\?\s*$/.test(lastSn)
+      && !turn.speech.some((sn) => /\?\s*$/.test(sn)) && !turn.board.some((o) => o.op === "problem" || o.op === "gap" || o.op === "draw" || (o.op === "step" && o.kind === "given"));
+    const newExercise = !wants.problemOnBoard && (wants.exercise || wants.different || turn.move === "practice" || announces);
     exerciseIntended = newExercise;
     // They asked for a new exercise: an unsolved earlier one is set aside, it must not block the new one (it was silently dropped before).
     if (newExercise && (wants.exercise || wants.different)) problemsForApply = problems.map((p) => ({ ...p, solved: true }));
@@ -354,6 +359,18 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       }
     }
     if (applied.dropped.length) console.warn(`[tutor] exercise not placed: ${applied.dropped.join(" | ")}`);
+  }
+
+  // A lead-in with nothing after it ("Now let's check your intuition about …") while no exercise, gap or question was placed: the reply
+  // must end on something they can answer.
+  {
+    const last = turn.speech[turn.speech.length - 1] || "";
+    const placedSomething = applied.problems.length > 0 || applied.board.some((e) => e.kind === "gap" || e.kind === "given");
+    const dangling = /^\s*(?:(?:now|next|so|ok(?:ay)?|alright)[, ]+)*(?:let'?s|let us|time to|on to)\b/i.test(last) && !/\?\s*$/.test(last);
+    if (dangling && !placedSomething && !turn.speech.some((sn) => /\?\s*$/.test(sn))) {
+      const text = await rewriteReply(turn.speech.join(" "), "the reply announces something to do ('let's check…') but never asks it — keep what it said and end with ONE concrete question about the current topic that they can answer now", message, result.tokens);
+      if (text && /\?\s*$/.test(text.trim())) turn = { ...turn, speech: [text] };
+    }
   }
 
   // The board ops can still fail to build (a bad figure spec, a duplicate): then the speech must not claim them.
