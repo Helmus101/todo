@@ -56,7 +56,7 @@ export interface VerifyContext {
 }
 
 export interface Issue {
-  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "off_topic" | "plan_too_early" | "ignores_student" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh";
+  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "off_topic" | "plan_too_early" | "ignores_student" | "verdict_mismatch" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh";
   /** The instruction for the repair call. */
   fix: string;
   /** A leak or a pointer at nothing must be fixed; the rest are quality. */
@@ -221,6 +221,16 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   }
   const prose = t.board.find((o) => (o.op === "step" || o.op === "gap") && o.kind !== "note" && o.kind !== "definition" && proseEquation(String(o.text || "")));
   if (prose) out.push({ code: "prose_equation", hard: false, fix: `the board line "${String(prose.text).slice(0, 80)}" has words where numbers or symbols belong. Write the actual value (or just the expression) and put the explanation in the step's "why".` });
+  {
+    // The app already graded their widget answer: the reply must agree with that mark.
+    const marked = /\bmarked (right|wrong)\b|\bchecked (right|wrong)\b/i.exec(c.message);
+    const first = (say.split(/(?<=[.!?])\s+/)[0] || "");
+    if (marked) {
+      const right = /right/i.test(marked[0]);
+      if (!right && /\b(?:that'?s (?:right|correct|it)|exactly|spot on|well done|correct|you got it|bien joué|exact)\b/i.test(first) && !/\b(?:not|n't|isn'?t|pas)\b/i.test(first)) out.push({ code: "verdict_mismatch", hard: true, fix: "the app marked their answer WRONG, but the reply starts by saying it is right. Open by saying it isn't there yet, find the first thing that's off and ask one question aimed at it." });
+      if (right && /\b(?:not quite|incorrect|isn'?t right|not right|wrong|pas tout à fait)\b/i.test(first)) out.push({ code: "verdict_mismatch", hard: true, fix: "the app marked their answer RIGHT, but the reply says it is wrong. Confirm it in a few words, then move on." });
+    }
+  }
   if (!c.wants.exercise && !c.wants.different && !c.wants.problemOnBoard && !c.wants.draw && !c.verdict && ignoresStudentAnswer(c.message, t.heard, say)) out.push({ code: "ignores_student", hard: true, fix: `the student just said "${c.message.slice(0, 80)}" and the reply doesn't respond to it. Start from THEIR words: say whether it fits (or what it would need to be) and ask how they got it, before anything else.` });
   // Only objects that exist in the problem: no cyclist in a car problem.
   const objs = inventedObjects([say, ...t.board.map(opText)], [...c.said, ...c.board.map((b) => b.text || ""), ...c.problems.map((p) => p.question || ""), ...(c.solution ? [c.solution.statement, ...c.solution.steps.map((s) => `${s.idea || ""} ${s.result || ""}`)] : [])]);

@@ -119,9 +119,11 @@ export async function generateProblem(req: ProblemRequest, tokens: { in: number;
       if ("error" in built) complaint = String(built.error).replace(/^(?:ERROR|REJECTED):\s*/i, "");
       else if (req.scope && !inScope(`${j.topic || ""} ${j.question}`, req.scope, 1)) complaint = `that is off topic for this session (${req.topic || req.subject || "the session's topic"}) — write it on the session's topic`;
       else if (/\b(?:error|mistake|wrong|erreur|faute)\b/i.test(String(j.question)) && String(j.mistake || "").trim().length < 8) complaint = "an error-spotting exercise needs a \"mistake\" field: the one wrong line and what it should be (recompute every line first — if all are correct, introduce one error)"
+      else if (rambles(j)) complaint = "the explanation or hint thinks aloud (\"wait\", \"actually\", \"let's re-verify\") — work it out first, then write only the clean final reasoning"
       else if (correctIsLongest(j)) complaint = "the correct option is much longer than the others, which gives it away — make the options similar in length";
       else if (repeatedExercise(String(j.question), req.used)) complaint = "that is too close to an exercise already used — set a different situation with different numbers";
       else if (!String(j.intro || "").trim()) complaint = "add the one-sentence spoken intro";
+      else if (isErrorSpotting(j) && !(await mistakeConfirmed(j, tokens))) complaint = "your worked solution has NO real mistake at the line you named (or has a different one). Recompute every line; either put one genuine error in a line, or set a different kind of exercise"
       else { problem = j; break; }
     }
     messages.push({ role: "assistant", content: JSON.stringify(last || {}).slice(0, 3000) }, { role: "user", content: `(Fix this and send the whole JSON object again: ${complaint})` });
@@ -180,4 +182,25 @@ export function tidyQuestion(q: string): string {
     .replace(new RegExp(`\\\\n(?!${TEX_N}(?![a-zA-Z]))`, "g"), "\n")
     .replace(/([.?!:)])n{1,2}(?=[A-Z][a-z])/g, "$1\n\n")
     .replace(/[ \t]*\n[ \t]*/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+const isErrorSpotting = (j: any) => /\b(?:error|mistake|wrong|erreur|faute)\b/i.test(String(j?.question || "")) && String(j?.mistake || "").trim().length >= 8;
+
+/** Thinking aloud inside text the student will read ("wait, let's re-verify"). */
+export function rambles(j: any): boolean {
+  return [j?.why, j?.hint, ...(Array.isArray(j?.options) ? j.options : [])].some((t) => /\b(?:wait|actually,|let'?s (?:re-?verify|recalculate|look closer|re-?check)|hmm|on second thought|attendez|en fait,)\b/i.test(String(t || "")));
+}
+
+/** An independent check that an error-spotting statement really contains the mistake it claims: a fresh call recomputes each
+ *  line without seeing the claimed mistake. Anything unclear counts as not confirmed. */
+async function mistakeConfirmed(j: any, tokens: { in: number; out: number; cachedIn: number }): Promise<boolean> {
+  try {
+    const res: any = await retryRequest(() => createTutorChat({ max_tokens: 900, temperature: 0, messages: [
+      { role: "system", content: 'You check a worked solution. Recompute EVERY line yourself from the given data. Return ONLY JSON: {"lines":[{"n":1,"ok":true}],"first_wrong":null or the line number}. Be strict and numerical; do not assume there is an error.' },
+      { role: "user", content: String(j.question).slice(0, 2500) },
+    ], response_format: { type: "json_object" } }, true), 2, 400);
+    const u = usageOf(res); tokens.in += u.in; tokens.out += u.out; tokens.cachedIn += u.cachedIn;
+    const v: any = extractJsonObject(String(res?.choices?.[0]?.message?.content || ""));
+    return !!v && v.first_wrong != null && Number.isFinite(Number(v.first_wrong));
+  } catch { return false; }
 }

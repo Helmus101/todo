@@ -448,6 +448,12 @@ export async function runTutorTurnSim(check, section) {
       const q = tidyQuestion("A student analyses a ball.\\nStep1: $E=144$ J.\\nStep2: $x \\neq 3$.nnIdentify the error.");
       check("literal \\n in a statement becomes line breaks (and \\neq stays)", !/\\n(?!eq)/.test(q) && q.split("\n").length >= 4 && /\\neq/.test(q) && /\n\nIdentify/.test(q));
     }
+    {
+      const { rambles } = await import("../server/tutorTurn/problemGen.ts");
+      check("a thinking-aloud explanation is rejected", rambles({ why: "It is 144 J... wait, let's re-verify: actually correct" }) && !rambles({ why: "Kinetic energy is half m v squared." }));
+      const vm = verifyTurn(normalizeTurn(T({ speech: ["That's right, energy is conserved.", "What balances the thrust?"] })), { ...vctx, message: '[Exercise] I answered "the equation failed to account for friction" — marked wrong (try #1).' });
+      check("a reply that says 'right' over a wrong mark is a hard issue", vm.some((i) => i.code === "verdict_mismatch" && i.hard));
+    }
     script = () => ({ fail: true });
     r = await runTutorTurn({ ...base, message: "hello?" });
     check("the model being down is an error for the route to report — never a made-up reply", r.error === true && !r.reply);
