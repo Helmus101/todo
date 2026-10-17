@@ -2029,10 +2029,24 @@ export function finalValue(s: string): number {
   if (/\b(?:or|and|ou|et)\b/i.test(t.replace(/\$/g, ""))) return NaN;
   const pieces = t.split(/=|≈|≃|~|\b(?:so|therefore|thus|hence|donc|soit|ainsi)\b|⇒|⟹|→/i).map((x) => x.trim()).filter(Boolean);
   if (pieces.length < 2) return NaN;
-  return singleNumber(pieces[pieces.length - 1].replace(/[.,;]\s*$/, ""));
+  const last = pieces[pieces.length - 1].replace(/[.,;]\s*$/, "");
+  // A fraction as the final value ("x = 15/8", "−3/4") is one number, not two quantities.
+  const fr = /^\(?\s*(−|-)?\s*(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)\s*\)?\s*[A-Za-zµΩ°%²³·\/]*$/.exec(normalizeMinus(last));
+  if (fr && Number(fr[3]) !== 0) return (fr[1] ? -1 : 1) * Number(fr[2]) / Number(fr[3]);
+  return singleNumber(last);
 }
 
+/** A worked or labelled answer ("x = 3/4", "…so y = 0.75") is also graded on its final value when the plain comparison fails. */
 export function practiceAnswerMatches(given: string, correct: string, value?: number, percent?: boolean): boolean {
+  if (practiceAnswerMatchesDirect(given, correct, value, percent)) return true;
+  if (/[=≈]|\b(?:so|therefore|thus|hence|donc|soit)\b/i.test(String(given || ""))) {
+    const fv = finalValue(given);
+    if (Number.isFinite(fv)) return practiceAnswerMatchesDirect(String(fv), sciNorm(correct), value, percent);
+  }
+  return false;
+}
+
+function practiceAnswerMatchesDirect(given: string, correct: string, value?: number, percent?: boolean): boolean {
   // A worked answer typed into the box is graded on its final value (finalValue above), against a key in the same notation.
   if (quantityCount(given) > 1) {
     const fv = finalValue(given);

@@ -121,6 +121,17 @@ export async function runTutorTurnSim(check, section) {
     { script = () => T({ heard: "lost", intent: "other", diagnosis: { status: "unclear" }, move: "explain", support: 4, speech: ["Let's rebuild it slowly.", "Momentum before is 2 times 6, so $p = 12$ and after the stick it is $12 = 6v$.", "Where does the 6 on the right come from?"], board: [] });
       const rw = await runTutorTurn({ ...base, board: [], problems: [], message: "I'm lost, can you explain this again" });
       check("an equation Otto says aloud while teaching ends up on the board even if the model wrote nothing (reported live: 'you didn't put that on the board')", !rw.error && rw.board.some((b) => /12\s*=\s*6v/.test(String(b.text || "").replace(/\s/g, "")) )); }
+    { const { DESCRIBES_EXERCISE: D, sharesWordRun: sw } = await import("../server/tutorTurn/engine.ts");
+      check("a sentence repeated inside one reply is detected by a shared run of words", sw("Both chain-rule questions clean, so that skill is solid.", "Both chain-rule questions clean, so that skill is solid — now the next.", 4) && sw("Right — three layers, three factors, and you kept them.", "Three layers, three factors — check the student kept every one.", 4) && !sw("That's right, x = 5.", "Now try the next one with a bracket.", 4));
+      check("lead-ins that describe the coming exercise are recognised (so the generator's own intro is used); plain reactions are not",
+        D.test("Here's one where brackets and a fraction both show up.") && D.test("You'll have to expand first.") && D.test("Let's try a harder one.") && D.test("Work out the acceleration and tell me which way friction points.") && !D.test("Right — test next week, so let's make it count.") && !D.test("Nice, x = 5 checks out."));
+    }
+    { const { studentComplaint: sc } = await import("../server/tutorTurn/intents.ts");
+      check("the student's complaints about the session are told apart (board, set-up, repeat, ignored, wrong, unclear) and ordinary talk is not one",
+        sc("I know you didn't put on the board") === "board" && sc("which masses are you talking about") === "setup" && sc("you already said that") === "repeat" &&
+        sc("that's not what I asked") === "ignored" && sc("I think you're wrong") === "wrong" && sc("I still don't get your explanation") === "unclear" &&
+        sc("so the answer is 12 right") === null && sc("[Exercise] I answered 3 — marked wrong") === null);
+    }
     check("verify: a quotation the student never gave is refused (a poem quoted from memory); quoting their own words or a board line is fine",
       codes({ move: "focus", speech: ["Au vers 2 il dit « sans bruit, sans voir, sans entendre » : qu'est-ce que ça change ?"] }).includes("unsourced_quote") &&
       !codes({ move: "focus", speech: ["Tu as écrit « il part plein d'espoir voir sa fille » : et à la fin ?"] }, { ...vctx, said: ["il part plein d'espoir voir sa fille"] }).includes("unsourced_quote") &&
@@ -363,6 +374,17 @@ export async function runTutorTurnSim(check, section) {
       calls = [];
       const out = await runTutorTurn({ ...base, message: "give me another one", problems: [], board: [], objectives: [{ id: "o", label: "Wave speed and period", done: false }], context: { subject: "Physics", profile: { yearLevel: "DP1", track: "ib", courses: ["Physics HL"], about: "", preferences: [], people: [], projects: [], sessions: [] } } });
       check("asked for an exercise: it lands in the answer widget at their level and topic, and the spoken problem text is replaced by the lead-in", out.problems.length === 1 && /tuning fork/.test(out.problems[0].question) && !/cyclist|120 metres/.test(out.reply) && /different kind of wave/.test(out.reply) && /Wave speed and period/.test(genPrompt) && /DP1/.test(genPrompt));
+      { // A confirming reply that only ANNOUNCES the next exercise ("Next one has a bracket in it") gets the exercise in the same turn.
+        const ann = T({ heard: "right", intent: "chat", diagnosis: { status: "correct" }, move: "confirm", support: 1, speech: ["x = 9 is right, you collected the terms well.", "Next one has a bracket in it, so there is one extra step before you collect."], board: [], expects: "none" });
+        script = (b) => (/write ONE exercise/.test(systemOf(b)) ? good : ann);
+        const ra = await runTutorTurn({ ...base, message: "x = 9", problems: [], board: [], objectives: [{ id: "o", label: "Wave speed and period", done: false }], context: { subject: "Physics" } });
+        check("a reply that announces the next exercise without placing one gets it generated in the same turn (reported live: 'ok what's the equation' after 'Next one has a bracket')", !ra.error && ra.problems.length === 1);
+        const ann2 = T({ heard: "right", intent: "chat", diagnosis: { status: "correct" }, move: "confirm", support: 1, speech: ["x = 4 matches your earlier answer.", "Now find the slip in the working on the board."], board: [{ op: "step", cue: 0, kind: "note", text: "Check by substituting back" }], expects: "none" });
+        script = (b) => (/write ONE exercise/.test(systemOf(b)) ? good : ann2);
+        const rb = await runTutorTurn({ ...base, message: "x = 4", problems: [], board: [], objectives: [{ id: "o", label: "Wave speed and period", done: false }], context: { subject: "Physics" } });
+        check("'find the slip in the working on the board' with no working placed gets the exercise generated (reported live: 'what's the working on the board? i don't see it')", !rb.error && rb.problems.length === 1);
+        script = (b) => { if (/write ONE exercise/.test(systemOf(b))) { genPrompt = String(b.messages[1].content); return good; } return turnJson; };
+      }
       // a problem that already exists goes through the widget with a solver-verified key
       script = (b) => (/write ONE exercise/.test(systemOf(b)) ? good : T({ heard: "wants the problem on the board", intent: "write_my_work", diagnosis: { status: "none" }, move: "elicit", support: 1, speech: ["What is the first force?"], board: [], expects: "value" }));
       const stated2 = "A 5 kg mass on a 30 degree frictionless slope is tied by a string over a pulley to a 2 kg hanging mass. What is the acceleration?";

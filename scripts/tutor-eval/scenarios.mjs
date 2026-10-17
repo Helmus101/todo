@@ -126,5 +126,9 @@ export const SCENARIOS = [
     voice: true,
     persona: `${STU} Messy transcribed speech with filler. After 2-3 exchanges on energy you say 'can you actually do momentum please'. In the momentum part you ask what the blocks/masses are if they were not stated ('which masses are you talking about'), and once, when an equation was only spoken, you say 'I don't see it on the board, you didn't put that on the board'. You know p = mv but not that momentum is conserved when objects stick together.`,
     expect: "When asked to switch to momentum it opens a fresh worksheet on momentum (not leftovers of energy), states the collision with numbers before asking about it, writes equations it talks about on the board, puts the CURRENT problem (not an old one) on the board when asked, never claims something is on the board that is not, explains inelastic collisions plainly when asked.", turns: 10 },
+  { id: "p29-plan-flow", subject: "Mathematics", lang: "en", profile: { yearLevel: "Year 11", track: "ib", courses: ["Maths AA SL"] },
+    opening: "hi, I have a test on quadratics on Friday and I'm kind of nervous",
+    persona: `${STU} You answer what Otto asks, mostly correctly, in short natural sentences. You know factorising but think the quadratic formula only works when the equation equals zero is NOT needed (you will try to apply it to x^2 + 3x = 10 without moving the 10). You have about 30 minutes.`,
+    expect: "Asks at most 2-3 short questions about the goal, then builds a visible plan (2-4 objectives) for quadratics, works through them one at a time, ticks them off when shown, catches the 'not set to zero' misconception with a counter-example, proactively moves to the next objective, and near the end recaps what was shown and what to practise.", turns: 12 },
 ];
 export const byId = Object.fromEntries(SCENARIOS.map((s) => [s.id, s]));

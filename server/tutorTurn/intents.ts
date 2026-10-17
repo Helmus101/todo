@@ -66,3 +66,18 @@ export function wantsTopicSwitch(message: string): boolean {
   return /\b(?:can|could|shall|may) (?:you|we|i) (?:please |actually |just )*(?:do|go (?:back )?to|work on|switch to|move (?:on )?to|talk about|learn|study|look at|try|revisit|cover)\s+(?!it\b|that\b|this\b|the (?:same|last|next|previous)\b|another\b|more\b|some\b|a\b|an\b|one\b|again\b|then\b|now\b|so\b)([a-zà-ÿ][a-zà-ÿ' -]{2,30})/i.test(m)
     || /\b(?:let'?s|i want to|i need to|i'd like to|on voudrait|je veux|peut-on|on peut) (?:please |actually |just )*(?:do|go (?:back )?to|work on|switch to|move (?:on )?to|talk about|learn|study|revisit|faire|passer à|revoir|travailler)\s+(?!it\b|that\b|this\b|another\b|more\b|again\b|the (?:same|last|next))([a-zà-ÿ][a-zà-ÿ' -]{2,30})/i.test(m);
 }
+
+export type Complaint = "board" | "unclear" | "repeat" | "ignored" | "wrong" | "setup";
+
+/** The student is telling Otto something went wrong with HIS side of the session. Each kind has its own repair (see the facts block). */
+export function studentComplaint(message: string): Complaint | null {
+  const m = String(message || "");
+  if (m.length > 300 || /^\s*\[/.test(m)) return null;
+  if (/\b(?:you(?:'ve| have)? (?:didn'?t|did not|never|haven'?t) (?:put|write|wrote|written|draw|show|add)|(?:it'?s|that'?s|is|are) not on the (?:board|baord)|(?:i )?(?:don'?t|can'?t|cannot) see (?:it|that|the (?:equation|formula|line|graph|diagram|table))|tu (?:n'?as|as) pas (?:écrit|mis)|(?:c'est|ce n'est) pas au tableau)\b/i.test(m)) return "board";
+  if (/\bwhich (?:masses|blocks|objects|numbers|values|one|problem|question|equation|line)\b[^.?!]{0,30}\b(?:talking about|mean|referring)|what (?:are|is) (?:the|those|these) (?:masses|blocks|numbers|values)\b|you haven'?t (?:said|told|given)|haven'?t (?:said|told me) (?:what|any)|de quel(?:le)?s? .{0,20} (?:parles|parlez)/i.test(m)) return "setup";
+  if (/\b(?:you (?:already|just) (?:said|told|asked)|(?:you )?(?:keep|already) (?:saying|asking)|same (?:question|thing) again|you asked (?:me )?that|tu l'as déjà dit|tu me redemandes)\b/i.test(m)) return "repeat";
+  if (/\b(?:that'?s not what i (?:asked|said|meant)|you(?:'re| are) not (?:listening|answering)|you (?:ignored|didn'?t answer)|i (?:asked|said) (?:about|for)|ce n'est pas ce que j'ai (?:demandé|dit)|tu n'as pas répondu)\b/i.test(m)) return "ignored";
+  if (/\b(?:that'?s (?:wrong|not right|incorrect)|you(?:'re| are) wrong|you made a mistake|isn'?t that wrong|i think you(?:'re| are) wrong|c'est faux|tu te trompes)\b/i.test(m)) return "wrong";
+  if (/\b(?:i (?:still )?(?:don'?t|do not) (?:get|understand) (?:your|what you|that explanation|how you)|(?:your|that) explanation (?:is|was) (?:confusing|unclear)|that (?:doesn'?t|does not) make sense|too (?:fast|confusing)|je ne comprends pas (?:ton|ce que))\b/i.test(m)) return "unclear";
+  return null;
+}

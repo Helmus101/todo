@@ -31,6 +31,10 @@ export interface ProblemRequest {
   recent?: { student?: string; tutor?: string };
   /** A belief this student has held on this topic (from earlier sittings): make a wrong option encode it, so a wrong pick is diagnostic. */
   probe?: string;
+  /** The first two words of the tutor's last few replies — the intro must not start the same way. */
+  openers?: string[];
+  /** What the tutor has just said it wants to practise next, this turn (the exercise must deliver exactly that skill). */
+  announced?: string;
   /** The session's plan labels: the exercise must stay within them. */
   allowedTopics?: string[];
   /** Words the session has used (scope.ts): an exercise touching none of them is off topic. */
@@ -81,7 +85,7 @@ RULES
 - Conceptual or humanities: multiple choice. "options" has 4 plausible options (distractors are real misconceptions, similar length, exactly one correct), "correct" is the index of the right one (0-3), no "check".
 - Multiple choice: make the options similar in length; the correct one must NOT be the longest, and it must not be written in a different style from the others.
 - "hint": a nudge towards the idea, never a value and never a restatement of any option. "why": the one-sentence reason the answer is right.
-- "intro": ONE short spoken sentence introducing the exercise like a person who was just talking with this student: it picks up what they just did or said ("You've got the mole count — now catch someone else's slip") and says what kind of task this is. It never starts with "Let's", never uses stock phrases ("a fresh case", "the next level"), and must NOT contain the problem text or the answer.
+- "intro": ONE short spoken sentence introducing the exercise like a person who was just talking with this student: it picks up what they just did or said and says what kind of task this is — in a different sentence shape each time (a short reason, a challenge, a "what if", a plain "okay, one more"), e.g. "That worked for 3 — does it survive a negative?" or "Okay, same idea, trickier numbers." Never open with "You handled", "You've got", "Now", "Great" or any praise formula. It never starts with "Let's", never uses stock phrases ("a fresh case", "the next level"), and must NOT contain the problem text or the answer.
 - "topic": a short title (≤6 words) for the worksheet.
 - Backslashes in LaTeX are doubled (\\\\frac, \\\\sin). Language: as asked. Put each step of a worked solution on its own line with a real line break (a JSON \\n inside the string), maths in $…$.
 
@@ -91,6 +95,7 @@ function userPrompt(r: ProblemRequest): string {
   return [
     `Subject: ${r.subject || "(unspecified)"}`,
     `Topic: ${r.topic || r.ask || "(the topic they have been working on)"}`,
+    r.announced ? `The tutor has just announced what this exercise is for: "${r.announced.replace(/\s+/g, " ").slice(0, 300)}". Set an exercise that practises exactly that skill (if it names one) — not a different one from the plan.` : "",
     r.allowedTopics?.length ? `Allowed topics this session (stay inside them): ${r.allowedTopics.join("; ")}` : "",
     r.ask && r.topic ? `They asked for: "${r.ask.slice(0, 200)}"` : "",
     `Their level (from their Settings): ${r.level || "not given — pitch it at the level of the work so far"}`,
@@ -134,6 +139,7 @@ export async function generateProblem(req: ProblemRequest, tokens: { in: number;
       else if (correctIsLongest(j)) complaint = "the correct option is much longer than the others, which gives it away — make the options similar in length";
       else if (repeatedExercise(String(j.question), req.used)) complaint = "that is too close to an exercise already used — set a different situation with different numbers";
       else if (!String(j.intro || "").trim()) complaint = "add the one-sentence spoken intro";
+      else if (req.openers?.includes(String(j.intro).toLowerCase().replace(/[^a-zà-ÿ' ]/g, " ").split(/\s+/).filter(Boolean).slice(0, 2).join(" "))) complaint = "the intro starts with the same words as a recent reply — open the sentence differently (not with praise, not with the same two words)";
       else if ((await keyDisagrees(j, built.problem, req, tokens)) && (complaint = `an independent solution of your statement gives a different answer than your key (${String(j.answer ?? "")}) — recompute it carefully from the givens, or change the problem so there is no doubt`)) { /* complaint set above */ }
       else if (isErrorSpotting(j) && !(await mistakeConfirmed(j, tokens))) complaint = "your worked solution has NO real mistake at the line you named (or has a different one). Recompute every line; either put one genuine error in a line, or set a different kind of exercise"
       else { problem = j; break; }

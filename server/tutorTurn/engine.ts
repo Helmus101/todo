@@ -29,7 +29,7 @@ import { supportPolicy, asksForWorkedExample, adaptationLines, questionRun, type
 import { verifyTurn, degradeTurn, revealsKey, acceptsBoardOffer, claimsBoard, hasVisual, sceneNounsIn, type Issue, type VerifyContext } from "./verify.ts";
 import { applyOps } from "./apply.ts";
 import { sessionGuide } from "./guide.ts";
-import { wantsTopicSwitch, asksToWriteProblem, wantsDifferent, problemStatement, wantsMoreExercises, difficultyAsked, cantSeeProblem } from "./intents.ts";
+import { studentComplaint, type Complaint, wantsTopicSwitch, asksToWriteProblem, wantsDifferent, problemStatement, wantsMoreExercises, difficultyAsked, cantSeeProblem } from "./intents.ts";
 import { generateProblem, difficultyFrom } from "./problemGen.ts";
 import { goalsKnown, mergeGoals } from "./goals.ts";
 import type { SessionGoals } from "../../shared/types.ts";
@@ -40,11 +40,31 @@ import { parseExerciseResults, verdictFromResults } from "./results.ts";
 const MAX_HISTORY = 14;
 /** A turn is a few hundred tokens of JSON; this only bounds a runaway reply (and its wait), it doesn't shape normal ones. */
 const TURN_MAX_TOKENS = 6000;
+/** Two sentences share a run of `n` consecutive words (ignoring case and punctuation). */
+export function sharesWordRun(a: string, b: string, n: number): boolean {
+  const w = (t: string) => t.toLowerCase().replace(/[^a-zà-ÿ0-9' ]/g, " ").split(/\s+/).filter(Boolean);
+  const wa = w(a), wb = w(b).join(" ");
+  for (let i = 0; i + n <= wa.length; i++) if (wb.includes(wa.slice(i, i + n).join(" "))) return true;
+  return false;
+}
+
+/** A lead-in that describes the exercise ahead ("here's one where brackets and a fraction show up"): only the generator knows what it built, so such sentences are dropped and its own intro is used. */
+/** What to do when the student points out a fault in the session itself: say it plainly, fix it THIS turn, don't defend or grovel. */
+const COMPLAINT_FIX: Record<Complaint, string> = {
+  board: "THEY SAY SOMETHING IS MISSING FROM THE BOARD. Check the board listing: if what you talked about isn't there, say so in one short plain sentence (no grovelling) and WRITE it now — the equation or the problem with its numbers — then continue from it.",
+  setup: "THEY DON'T KNOW WHAT YOU ARE REFERRING TO: you skipped the set-up. In one short sentence own it, then state the situation in full (what the objects are, the numbers) and put it on the board as a given line before asking anything.",
+  repeat: "THEY SAY YOU ALREADY SAID / ASKED THIS. Don't repeat it: say what the answer to it was (from the conversation), and move on with something NEW — the next step, or a different angle if they were stuck.",
+  ignored: "THEY SAY YOU DIDN'T ANSWER WHAT THEY ASKED. Re-read their previous message, answer THAT directly first (briefly, plainly), and only then steer back.",
+  wrong: "THEY SAY YOU ARE WRONG. Re-derive your last claim from the givens step by step before you reply. If you were wrong, say so plainly, give the correct version and correct the board; if you were right, explain the one step that shows it — kindly, with the numbers, without giving way just to please.",
+  unclear: "THEY SAY YOUR EXPLANATION DIDN'T LAND. Do not repeat it: choose a different angle (a concrete number case, a picture on the board, an analogy, or one smaller step), keep it short, and ask one small check question.",
+};
+
+export const DESCRIBES_EXERCISE = /^\s*(?:work out|calculate|find|determine|solve|compute|tell me (?:what|which|how)|show that|write down|predict)\b|\b(?:here'?s|here is|this one|this next one|the next one|in this one|you(?:'ll| will)? (?:have to|need to|must|get to)|show(?:s)? up|where you|exam-style|full (?:exam|worksheet)|set it up with|let'?s (?:try|do|look at|go through|work through|see) (?:a|an|one|this|another))\b/i;
 const STILL_LOST = /\b(?:(?:i )?still (?:don'?t|do not|can'?t) (?:get|understand|see|follow)|(?:explain|say|show) (?:it |that )?again|i'?m (?:still )?(?:lost|confused)|je (?:ne )?comprends (?:toujours )?pas|toujours pas compris|explique (?:encore|à nouveau|autrement))\b/i;
 const STUCK = /\b(?:i (?:don'?t|do not) (?:know|get it|understand)|still (?:don'?t|do not) (?:get|understand)|(?:explain|say) (?:it )?again|idk|no idea|i'?m (?:stuck|lost|confused)|not sure|je (?:ne )?sais pas|j'?sais pas|aucune idée|je suis (?:perdu|bloqué)e?|je comprends pas|help me|aide[- ]moi)\b/i;
 
 /** The turn the app has already worked out, as a prompt block the model must respect. Exported for tests. */
-export function factsBlock(f: { policy: Policy; verdict?: { gap: string; given: string; verdict: "correct" | "incorrect" }; solvedInChat?: string; wrongInChat?: boolean; wrongPick?: string; keyDoubt?: boolean; wants: VerifyContext["wants"] & { explain: boolean }; teaching?: TutorTeachingState; affect: string; adapt?: string[] }): string {
+export function factsBlock(f: { policy: Policy; verdict?: { gap: string; given: string; verdict: "correct" | "incorrect" }; solvedInChat?: string; wrongInChat?: boolean; wrongPick?: string; keyDoubt?: boolean; complaint?: Complaint | null; wants: VerifyContext["wants"] & { explain: boolean }; teaching?: TutorTeachingState; affect: string; adapt?: string[] }): string {
   const lines = [
     `SUPPORT ALLOWED THIS TURN: up to level ${f.policy.maxSupport} (${f.policy.reason}). Allowed moves: ${f.policy.allowed.join(", ")}.`,
     f.verdict ? `THEIR STEP, CHECKED BY CODE: "${f.verdict.given}" for the open line "${f.verdict.gap}" is ${f.verdict.verdict === "correct" ? "RIGHT — credit exactly what was right" : "WRONG — find the first thing that's off; don't give the value"}.` : "",
@@ -55,6 +75,7 @@ export function factsBlock(f: { policy: Policy; verdict?: { gap: string; given: 
     f.wants.why ? "THEY ASKED WHY: give the real reason first, in plain words." : "",
     f.wants.explain && !f.wants.why ? "THEY NEED IT EXPLAINED (lost, asked to be shown, or stuck): teach the missing idea plainly and write it on the board as you say it, then hand back one small step." : "",
     f.wants.problemOnBoard ? "THEY ASKED YOU TO PUT THE PROBLEM ON THE BOARD (or can't see it / don't know what is asked): in THIS turn say in one plain sentence what is given and what is asked, put the FULL problem on the board (the app shows it in the answer widget), then ask the first step. Don't ask a different question instead." : "",
+    f.complaint ? COMPLAINT_FIX[f.complaint] : "",
     f.wants.topicSwitch ? "THEY SWITCHED TOPIC. This turn: open a fresh worksheet with a topic op, make a plan op for the NEW topic (2–3 objectives), and put the first problem on the board as a given line WITH its numbers (state what the objects are) before you ask about it. Say in a few words that the old topic is parked. From now on stay on the new topic: do not drift back to the old plan or to old exercises unless they ask." : "",
     f.wants.different ? "THEY WANT SOMETHING TOTALLY DIFFERENT: a new problem in a different situation and, if you can, a different idea from everything used so far — not a variation of the last one. Open a fresh worksheet with a topic op." : "",
     f.wants.write ? "THEY ASKED YOU TO WRITE THEIR WORKING: put their last step on the board as their own line (owner student)." : "",
@@ -209,7 +230,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     + (context.subject ? `\n\nSESSION TOPIC: ${context.subject}${objectives.length ? ` — plan: ${objectives.map((o) => o.label).join("; ")}` : ""}. Every plan, worksheet, question and exercise stays on this subject and plan; never bring in another subject or an unrelated topic unless the student asks for it.` : "")
     + (usedExercises.length ? `\n\n${exercisesBlock(usedExercises)}` : "")
     + (() => { const v = varietyLine(recentQuestionKinds(history)); return v ? `\n\n${v}` : ""; })()
-    + factsBlock({ policy, verdict: input.stepVerdict, solvedInChat: solvedNow[0]?.question, wrongInChat: wrongNow, keyDoubt, wrongPick: keyDoubt ? undefined : reported.find((r) => r.verdict === "incorrect" || r.verdict === "partial")?.given, wants, teaching: input.teaching, affect, adapt: [...sessionGuide({ message, history, log: input.teaching?.log, correctNow: verdict === "correct", openWork: problems.some((p) => !p.solved) || board.some((b) => b.kind === "gap" && b.status !== "correct"), hasObjectives: objectives.length > 0, goals: input.teaching?.goals, goalsKnown: goalsAreKnown, different: wants.different, finalValue: input.solution?.finalAnswer, finalReached: solvedNow.length > 0 || reachedSolutionSteps(message, input.solution).includes(0) || (problems.length > 0 && problems.every((p) => p.solved)), level: [context.profile?.yearLevel, context.profile?.track === "ib" ? "IB" : context.profile?.track === "ap" ? "AP" : context.profile?.track === "bac" ? "bac" : "", ...(context.profile?.courses || []).slice(0, 4)].filter(Boolean).join(", ") }), ...adaptationLines(input.teaching?.log, { wrong: verdict === "incorrect", stuck: STUCK.test(message) || STILL_LOST.test(message), stillLost: STILL_LOST.test(message) }, history.filter((h) => h.role === "assistant").slice(-4).map((h) => h.text.toLowerCase().replace(/[^a-zà-ÿ' ]/g, " ").split(/\s+/).filter(Boolean).slice(0, 2).join(" ")).filter(Boolean))] })
+    + factsBlock({ policy, verdict: input.stepVerdict, solvedInChat: solvedNow[0]?.question, wrongInChat: wrongNow, keyDoubt, complaint: studentComplaint(message), wrongPick: keyDoubt ? undefined : reported.find((r) => r.verdict === "incorrect" || r.verdict === "partial")?.given, wants, teaching: input.teaching, affect, adapt: [...sessionGuide({ message, history, log: input.teaching?.log, correctNow: verdict === "correct", openWork: problems.some((p) => !p.solved) || board.some((b) => b.kind === "gap" && b.status !== "correct"), hasObjectives: objectives.length > 0, goals: input.teaching?.goals, goalsKnown: goalsAreKnown, different: wants.different, finalValue: input.solution?.finalAnswer, finalReached: solvedNow.length > 0 || reachedSolutionSteps(message, input.solution).includes(0) || (problems.length > 0 && problems.every((p) => p.solved)), level: [context.profile?.yearLevel, context.profile?.track === "ib" ? "IB" : context.profile?.track === "ap" ? "AP" : context.profile?.track === "bac" ? "bac" : "", ...(context.profile?.courses || []).slice(0, 4)].filter(Boolean).join(", ") }), ...adaptationLines(input.teaching?.log, { wrong: verdict === "incorrect", stuck: STUCK.test(message) || STILL_LOST.test(message), stillLost: STILL_LOST.test(message) }, history.filter((h) => h.role === "assistant").slice(-4).map((h) => h.text.toLowerCase().replace(/[^a-zà-ÿ' ]/g, " ").split(/\s+/).filter(Boolean).slice(0, 2).join(" ")).filter(Boolean))] })
     + (input.spoken && spokenRepair ? voiceInputBlock(message, input.spoken.alternatives, spokenRepair) : "")
     + `\n\nReply in ${fr ? "French" : "English"} unless the student is writing in another language. Return ONLY the JSON object.`;
 
@@ -244,7 +265,9 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     return {
       subject: context.subject, topic: wants.different ? "" : topic, level: levelText, difficulty: difficultyAsked(message) ?? modelDifficulty(difficultyFrom(input.teaching?.log), topic), probe: conceptRec(topic) ? liveMisconceptions(conceptRec(topic)!, new Date())[0]?.text : undefined,
       kind: (wants.exercise && !/\b(?:err|mistake|wrong|why|explain|erreur|faute|pourquoi|expliq)/i.test(message) ? "compute" : isDiscussionSubject(context.subject, spokenText) && nextKind === "compute" ? "explain_why" : nextKind) as any,
+      openers: history.filter((h) => h.role === "assistant").slice(-4).map((h) => h.text.toLowerCase().replace(/[^a-zà-ÿ' ]/g, " ").split(/\s+/).filter(Boolean).slice(0, 2).join(" ")).filter(Boolean),
       used, lang: (fr ? "fr" : "en") as "fr" | "en", ask: wants.exercise || wants.different ? message.slice(0, 200) : undefined,
+      announced: spokenText !== message ? spokenText.split(/(?<=[.!?])\s+/).filter((sn) => !/\?\s*$/.test(sn)).join(" ") : undefined,
       allowedTopics: objectives.map((o) => o.label), scope,
       recent: { student: message.startsWith("[") ? undefined : message, tutor: [...history].reverse().find((h) => h.role === "assistant")?.text },
     };
@@ -280,7 +303,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   // is it new, are its numbers the student's) are about text that won't be shown, so they must not cost a repair call.
   if (earlyGen) issues = issues.filter((i) => !["intent_exercise", "vague", "repeat_exercise", "numbers", "invented_object", "length"].includes(i.code));
   if (worthFactChecking(turn.move, turn.speech, turn.diagnosis.status)) {
-    const bad = await falseClaim(turn.speech, turn.board.map((o: any) => String(o.text || "")).filter(Boolean), { subject: context.subject, problem: problems.find((p) => !p.solved)?.question || input.solution?.statement, student: message }, result.tokens);
+    const bad = await falseClaim(turn.speech, turn.board.map((o: any) => String(o.text || "")).filter(Boolean), { subject: context.subject, problem: problems.find((p) => !p.solved)?.question || input.solution?.statement, student: message, recent: history.slice(-4).map((h) => `${h.role === "user" ? "Student" : "Tutor"}: ${h.text}`).join(" / ") }, result.tokens);
     if (bad) issues.push({ code: "fact", hard: true, fix: `a claim looks FALSE: ${bad}. Correct it (or leave it out) — only say what is true.` });
   }
   let repaired = false;
@@ -311,7 +334,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     // A reply that announces a task ("Let's examine a student's solution…", "Now let's check your intuition…") with nothing placed for it:
     // the app builds the task itself, so they never have to ask "so what is it?".
     const lastSn = turn.speech[turn.speech.length - 1] || "";
-    const announces = /(?:^|[—–,;:]\s*|\.\s+)(?:(?:now|next|so|ok(?:ay)?|alright)[, ]+)*(?:let'?s|let us|time to|on to)\b/i.test(lastSn) && !/\?\s*$/.test(lastSn)
+    const announces = /\b(?:find|spot|catch|check|fix|look at|hunt for)\b[^.?!]{0,25}\b(?:slip|mistake|error|working|solution|line)\b/i.test(lastSn) && !/\?\s*$/.test(lastSn) && !turn.board.some((o) => o.op === "problem" || o.op === "gap" || o.op === "draw" || (o.op === "step" && o.kind === "given")) || /(?:^|[—–,;:]\s*|\.\s+)(?:(?:now|next|so|ok(?:ay)?|alright)[, ]+)*(?:let'?s|let us|time to|on to|next (?:one|up|problem|exercise|question)\b|(?:here'?s|here is) (?:one|another|a (?:new|fresh|harder|trickier|similar|different) (?:one|problem|exercise|question)))\b/i.test(lastSn) && !/\?\s*$/.test(lastSn)
       && !turn.speech.some((sn) => /\?\s*$/.test(sn)) && !turn.board.some((o) => o.op === "problem" || o.op === "gap" || o.op === "draw" || (o.op === "step" && o.kind === "given"));
     const newExercise = !wants.problemOnBoard && (wants.exercise || wants.different || turn.move === "practice" || announces);
     exerciseIntended = newExercise;
@@ -331,10 +354,12 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
         const at = turn.speech.findIndex((sn, i) => /\d/.test(sn) && (statesAProblem(turn!.speech.slice(i).join(" ")) || (/\?\s*$/.test(sn) && countWordsLite(sn) >= 8)));
         const scopeWithGen = new Set([...scope, ...contentWords(`${gen.topic} ${String(gen.input.question || "")}`)]);
         // Lead-in sentences must be about this session: "let's switch to macroeconomics" in a physics session goes.
-        const stays = (sn: string) => !/\d/.test(sn) && (contentWords(sn).length < 3 || inScope(sn, scopeWithGen, Math.ceil(contentWords(sn).length / 3)));
+        const stays = (sn: string) => !/\d/.test(sn) && !DESCRIBES_EXERCISE.test(sn) && (contentWords(sn).length < 3 || inScope(sn, scopeWithGen, Math.ceil(contentWords(sn).length / 3)));
         let speech = (at >= 0 ? turn.speech.slice(0, at) : turn.speech.filter((sn) => !/\?\s*$/.test(sn))).filter(stays);
         if (!speech.length || !/[.!?]\s*$/.test(speech[speech.length - 1])) speech = [...speech, gen.intro];
         else if (!speech.some((sn) => sn === gen.intro) && !/\b(?:try|work out|find|what|which|how)\b/i.test(speech[speech.length - 1])) speech = [...speech, gen.intro];
+        // The tutor's own lead-in and the generator's intro often say the same thing twice ("Both chain-rule questions clean… Both chain-rule questions clean…"): keep the later one.
+        speech = speech.filter((sn, i) => !speech.slice(i + 1).some((later) => similarity(sn, later) >= 0.55 || sharesWordRun(sn, later, 4)));
         const ops = turn.board.filter((o) => o.op !== "problem" && !(wants.different && o.op === "topic"));
         if (wants.different && gen.topic) ops.unshift({ op: "topic", cue: 0, text: gen.topic });
         ops.push({ op: "problem", cue: Math.max(0, speech.length - 1), ...(gen.input as any) });
