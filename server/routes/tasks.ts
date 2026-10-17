@@ -204,17 +204,16 @@ async function tutorTurn(
   // The board's own problem (a full given line) counts too: Otto may have put it there in words, with no widget.
   const boardGiven = [...currentBoard].reverse().find((b) => b.kind === "given" && b.text && b.text.split(/\s+/).length >= 12)?.text || "";
   const focus = openProblem?.question || stated || boardGiven;
-  if (focus && focusKeyOf(focus) !== t.solution?.focusKey) {
-    const solved = await solveProblem(focus, t.sourceSubject);
-    addUsage(profile, solved.tokens, "chat");
-    if (solved.solution) t.solution = solved.solution;
-  }
+  // A solve for a NEW problem runs ALONGSIDE the tutor's own call (the engine awaits it just before verifying), so the first turn on a
+  // problem no longer waits for two model calls in a row.
+  const solving = focus && focusKeyOf(focus) !== t.solution?.focusKey ? solveProblem(focus, t.sourceSubject) : null;
   const out = await runTutorTurn({
     message, history, board: currentBoard, problems, objectives: currentObjectives, lang,
-    solution: t.solution, teaching: t.tutorState, dueRetests: dueRetests(profile.assistance, new Date()).map((a) => a.skill),
+    solution: solving ? undefined : t.solution, solutionPromise: solving ? solving.then((r) => r.solution).catch(() => null) : undefined, teaching: t.tutorState, dueRetests: dueRetests(profile.assistance, new Date()).map((a) => a.skill),
     voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, spoken, stepVerdict,
     context: { profile, subject: t.sourceSubject, journal: c.recentJournal, journalMeta: c.journalMeta, schoolRecord: schoolRecordLine(req.session.tasks, profile, t.sourceSubject), memory: memoryFromBody(req.body?.memory) },
   });
+  if (solving) { const solved = await solving.catch(() => null); if (solved) { addUsage(profile, solved.tokens, "chat"); if (solved.solution) t.solution = solved.solution; } }
   addUsage(profile, out.tokens, "chat");
   bumpActivityHour(profile, new Date(), t.sourceSubject);
   profile.lastTutorActivityAt = new Date().toISOString();
@@ -235,7 +234,7 @@ async function tutorTurn(
     const turn = out.turn;
     const support = turn ? nextSupportState(prev, { move: turn.move as Move, verdict: stepVerdict?.verdict, progressed: stepVerdict?.verdict === "correct" || reached.length > 0 || !!out.solvedInChat?.length, struggled: turn.struggled }) : {};
     const record = turn ? { at: new Date().toISOString(), move: turn.move, support: turn.support, intent: turn.intent, diagnosis: turn.diagnosis, ...(turn.angle ? { angle: turn.angle } : {}), ...(turn.misconception ? { misconception: turn.misconception } : {}), ...(stepVerdict?.verdict ? { verdict: stepVerdict.verdict } : {}), words: turn.speech.join(" ").split(/\s+/).filter(Boolean).length, studentWords: message.split(/\s+/).filter(Boolean).length, repaired: turn.repaired, ms: turn.ms } : null;
-    t.tutorState = { ...next, ...support, ...(record ? { log: [...(prev?.log || []), record].slice(-30) } : {}) }; }
+    t.tutorState = { ...next, ...support, ...(turn?.goals ? { goals: turn.goals } : prev?.goals ? { goals: prev.goals } : {}), ...(record ? { log: [...(prev?.log || []), record].slice(-30) } : {}) }; }
   const evidence = evidenceKindFor({ message, verdict: stepVerdict?.verdict, reachedFinal: reached.includes(0), helpLevel: helpBefore });
   const skill = t.solution?.skill || t.sourceSubject;
   if (skill) {

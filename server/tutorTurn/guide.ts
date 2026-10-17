@@ -1,7 +1,8 @@
 // RUNNING THE SESSION — what a good tutor does between questions: opens with a plan instead of "where do you want to
 // start?", makes a right answer solid before moving on, and doesn't drop a half-finished topic because the student's
 // attention drifted. Pure: it only reads the turn log, the history and the board, and returns lines for the facts block.
-import type { TutorTurnRecord } from "../../shared/types.ts";
+import type { SessionGoals, TutorTurnRecord } from "../../shared/types.ts";
+import { goalsLine, MAX_GOAL_QUESTIONS } from "./goals.ts";
 
 const SWITCH = /\b(?:let'?s do|can we do|lets? (?:go|move) (?:to|on)|actually|instead|switch(?: to)?|move on|something else|next topic|on (?:va|passe)|passons|plut[ôo]t|changeons)\b/i;
 const DEEPENING = new Set(["probe_why", "practice", "recap", "worked_example"]);
@@ -19,6 +20,9 @@ export interface GuideInput {
   finalReached?: boolean;
   /** The verified final answer of the current problem, when known. */
   finalValue?: string;
+  /** What they've told us they want from the sitting, and whether that is enough to make a plan (goals.ts). */
+  goals?: SessionGoals;
+  goalsKnown?: boolean;
   /** They asked for something totally different / a new problem. */
   different?: boolean;
   /** From Settings: year/grade, programme, courses — empty when unknown. */
@@ -32,9 +36,14 @@ export function sessionGuide(i: GuideInput): string[] {
   const log = (i.log || []).slice(-8);
   const studentTurns = i.history.filter((h) => h.role === "user").length;
 
-  // 1. Open with a plan, never an open question.
-  if (studentTurns <= 1 && !SWITCH.test(i.message) ) {
-    out.push(`OPEN THE SITTING WITH A PLAN, don't ask "where do you want to start?": in two sentences say what you will cover today and why (their level and courses, their objectives, the upcoming test, what they did and what was shaky last time — see BACKGROUND and its memory), start on the first item, and end with ONE easy question or "ready?". ${i.hasObjectives ? "" : "They have no plan yet: add a plan op with 3–4 objectives. "}If they named a topic, honour it and plan around it.`);
+  // 1. Learn their goals, THEN plan: a plan made from a guess is the plan that drifts.
+  if (!i.hasObjectives && i.goalsKnown === false) {
+    const n = (i.goals?.asked ?? 0) + 1;
+    out.push(`BEFORE YOU PLAN, LEARN WHAT THEY WANT FROM THIS SITTING (question ${n} of at most ${MAX_GOAL_QUESTIONS}). Known so far: ${goalsLine(i.goals)}. Ask ONE short, specific question this turn and do NOT make a plan yet (no plan op). Order: (1) what they want out of today — a test, homework, a topic, catching up; (2) when it is, or what feels hardest; (3) how long they have. Ground it in BACKGROUND instead of asking cold: their level and courses, what they did last time, an upcoming test ("Last time was energy and you have a test soon — is that still the aim?"). Never ask what you already know. Put anything they just told you in "goals" (aim, deadline, hard, minutes). If their message already tells you what they want AND one more thing (when it is due, what is hardest, or how long they have), don't ask anything: report it in "goals" and plan now. If they say "just start", plan at once.`);
+  } else if (!i.hasObjectives && i.goalsKnown) {
+    out.push(`THEY HAVE TOLD YOU WHAT THEY WANT (${goalsLine(i.goals)}): NOW BUILD THE PLAN from it with a plan op of 3–4 objectives in the order that serves their aim — what is due soonest or hardest first, sized to the time they have. Say it in two sentences ("Today: A, then B — we start with A because …") and begin the first one straight away. Every objective stays on their subject and aim.`);
+  } else if (studentTurns <= 1 && !SWITCH.test(i.message)) {
+    out.push(`START FROM THE PLAN, don't ask "where do you want to start?": in two sentences say where the plan stands and what you do first (their level and courses, their objectives, what was shaky last time — see BACKGROUND and its memory), and end with ONE easy question or "ready?".`);
   }
 
   // 2. Don't abandon a topic that isn't solid yet.

@@ -1242,7 +1242,12 @@ export interface TutorSolution {
   at: string;
 }
 /** The tutor's running record of help given this session (server/tutor.ts). */
+/** What the student told Otto they want from this sitting (server/tutorTurn/goals.ts): the plan is built from it. */
+export interface SessionGoals { aim?: string; deadline?: string; hard?: string; minutes?: number; asked: number }
+
 export interface TutorTeachingState {
+  /** Their goals for this sitting, gathered before the plan. */
+  goals?: SessionGoals;
   helpLevel: number;
   stuckStreak: number;
   lastAction?: string;

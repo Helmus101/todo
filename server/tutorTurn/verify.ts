@@ -17,7 +17,12 @@ import { inScope } from "./scope.ts";
 
 /** A sentence that says something is (or is about to be) on the board. */
 const BOARD_CLAIM = /\b(?:on the (?:board|whiteboard)|(?:look|take a look|have a look) at the (?:board|chart|grid|diagram|table|graph|figure|picture)|(?:i'?ve|i have|i'?ll|i will|let me|let'?s|we'?ll|here'?s|here is|here are) (?:just )?(?:draw|drawn|sketch|put|add|map|write|written|plot|build|make|made|show)\w*|sur le tableau|regarde (?:le|la|l')\s*(?:tableau|sch[ée]ma|graphique|figure))\b/i;
-export const claimsBoard = (sentence: string): boolean => BOARD_CLAIM.test(sentence);
+// A sentence that points at a picture ("notice how the curve flattens", "the graph shows") when no picture exists.
+const VISUAL_REF = /\b(?:notice|observe|see|look at|check out)\b[^.?!]{0,50}\b(?:curve|graph|diagram|figure|picture|chart|plot|sketch|table|slope of the line)\b|\b(?:the|this|that|our)\s+(?:curve|graph|diagram|figure|chart|plot|sketch|picture)\b/i;
+const VISUAL_KINDS = new Set(["graph", "diagram", "svg", "flow", "table", "source", "widget", "interactive"]);
+export const hasVisual = (board: { kind?: string }[]): boolean => board.some((e) => VISUAL_KINDS.has(String(e.kind)));
+/** True when a sentence says something is on the board, or points at a figure while the board has none. */
+export const claimsBoard = (sentence: string, visualOnBoard = true): boolean => BOARD_CLAIM.test(sentence) || (!visualOnBoard && VISUAL_REF.test(sentence));
 const CREATING = new Set(["draw", "step", "gap", "problem", "topic"]);
 const OFFER = /\b(?:let'?s|i'?ll|shall we|want me to|should i|let me|we can|would you like)\b[^.?!]*\b(?:draw|map|sketch|chart|grid|plot|put|write|show|diagram|table)\b/i;
 const YES = /^\s*(?:yes|yeah|yep|yup|ok(?:ay)?|sure|please|do it|do that|go ahead|go on|oui|d'accord|vas-y)\b/i;
@@ -44,12 +49,14 @@ export interface VerifyContext {
   usedExercises?: string[];
   /** The content words this session has used (scope.ts): plans, headers and exercises must touch them. */
   scope?: Set<string>;
+  /** False while they haven't yet told us enough about what they want (goals.ts) and no plan exists. */
+  goalsKnown?: boolean;
   /** The code-checked verdict on their step/answer this turn, if any. */
   verdict?: "correct" | "incorrect";
 }
 
 export interface Issue {
-  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "off_topic" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh";
+  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "off_topic" | "plan_too_early" | "ignores_student" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh";
   /** The instruction for the repair call. */
   fix: string;
   /** A leak or a pointer at nothing must be fixed; the rest are quality. */
@@ -144,6 +151,20 @@ export function proseEquation(text: string): boolean {
   return t.split("=").some((side) => (side.match(/\b[a-zA-Z]{3,}\b/g) || []).length >= 2 && /\b[a-zA-Z]{3,}\s+[a-zA-Z]{3,}\b/.test(side));
 }
 
+/** They gave a short answer with a number ("about 56%") and the model's own reading of it ("heard") and its reply have nothing in common
+ *  with it: the turn answers something else. (An empty `heard` means we can't tell, so it is never flagged.) */
+export function ignoresStudentAnswer(message: string, heard: string, speech: string): boolean {
+  const m = String(message || "").trim();
+  if (!m || !String(heard || "").trim() || m.length > 220 || /^\[(?:Exercise|Exercice|Activity|Activité)\]/i.test(m)) return false;
+  const nums = m.match(/\d+(?:[.,]\d+)?/g) || [];
+  if (!nums.length) return false;
+  const both = `${heard} ${speech}`.replace(/,/g, ".");
+  if (nums.some((n) => new RegExp(`(?<![\\d.])${n.replace(/[.,]/g, "\\.")}(?![\\d])`).test(both))) return false;
+  const have = new Set([...contentWordsOf(heard), ...contentWordsOf(speech)]);
+  return !contentWordsOf(m).some((w) => have.has(w));
+}
+const contentWordsOf = (t: string): string[] => (String(t).toLowerCase().match(/[a-zà-ÿ]{5,}/g) || []).filter((w) => !FILLER.has(w));
+
 export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   const out: Issue[] = [];
   const say = speechText(t);
@@ -166,7 +187,8 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   if (c.wants.exercise && !t.board.some((o) => o.op === "problem")) out.push({ code: "intent_exercise", hard: false, fix: "they asked for an exercise: add a problem op (full statement, one short answer, a check expression for a number, the format in 'format')." });
   if (c.wants.problemOnBoard && !t.board.some((o) => o.op === "problem" || (o.op === "step" && o.kind === "given"))) out.push({ code: "intent_problem", hard: true, fix: "they asked you to put the PROBLEM on the board: open with a topic op, then add a step op of kind \"given\" holding the full problem statement (all the givens and the question), in this turn. Then ask the first step." });
   if (c.wants.draw && !t.board.some((o) => o.op === "draw" || o.op === "step")) out.push({ code: "intent_draw", hard: true, fix: "they asked you to draw or show it — do it NOW, in this turn: add a draw op (a table op for a sign chart, grid or comparison; graph, numberline, geometry, flow for the rest), or a step op for a formula. Don't describe it and wait for them to ask again." });
-  if (t.speech.some(claimsBoard) && !t.board.some((o) => CREATING.has(o.op))) out.push({ code: "board_promise", hard: true, fix: "the speech says something is on the board (or will be) but the board list has nothing new — add the draw/step op that puts it there, or take the board claim out of the speech." });
+  const visualHere = hasVisual(c.board) || t.board.some((o) => o.op === "draw");
+  if (t.speech.some((sn) => claimsBoard(sn, visualHere)) && !t.board.some((o) => CREATING.has(o.op))) out.push({ code: "board_promise", hard: true, fix: "the speech says something is on the board (or will be) but the board list has nothing new — add the draw/step op that puts it there, or take the board claim out of the speech." });
   // An exercise is never set twice: the spoken question or a problem op must differ from every earlier one.
   if (c.usedExercises?.length) {
     // The whole reply counts when it sets a problem in words ("now let's look at the car problem: … 10° … 2v²"): an old problem dragged back.
@@ -191,6 +213,7 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
     if (!d.misconception) out.push({ code: "diagnosis", hard: false, fix: "you diagnosed a misconception: name the mistaken belief in diagnosis.misconception (≤8 words)." });
     if (["confirm", "elicit", "recap"].includes(t.move)) out.push({ code: "diagnosis", hard: false, fix: "a misconception shows, so don't just confirm or move on: name the idea that is off, gently, in the speech, and choose focus, correct_error, explain or probe_why to repair it." });
   }
+  if (c.goalsKnown === false && t.board.some((o) => o.op === "plan")) out.push({ code: "plan_too_early", hard: true, fix: "don't make a plan yet: you haven't learned what they want from this sitting. Remove the plan op and ask ONE short question about their goal (what they want today, when it is due or what is hardest, how long they have)." });
   // Stay on the session's topic: a plan, a new worksheet or an exercise that touches nothing the session has used is another topic.
   if (c.scope) {
     const off = t.board.find((o) => (o.op === "plan" && (o.objectives || []).some((l) => !inScope(l, c.scope!))) || (o.op === "topic" && !inScope(String(o.text || ""), c.scope!)) || (o.op === "problem" && !inScope(`${o.question || ""}`, c.scope!, 1)));
@@ -198,6 +221,7 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   }
   const prose = t.board.find((o) => (o.op === "step" || o.op === "gap") && o.kind !== "note" && o.kind !== "definition" && proseEquation(String(o.text || "")));
   if (prose) out.push({ code: "prose_equation", hard: false, fix: `the board line "${String(prose.text).slice(0, 80)}" has words where numbers or symbols belong. Write the actual value (or just the expression) and put the explanation in the step's "why".` });
+  if (!c.wants.exercise && !c.wants.different && !c.wants.problemOnBoard && !c.wants.draw && !c.verdict && ignoresStudentAnswer(c.message, t.heard, say)) out.push({ code: "ignores_student", hard: true, fix: `the student just said "${c.message.slice(0, 80)}" and the reply doesn't respond to it. Start from THEIR words: say whether it fits (or what it would need to be) and ask how they got it, before anything else.` });
   // Only objects that exist in the problem: no cyclist in a car problem.
   const objs = inventedObjects([say, ...t.board.map(opText)], [...c.said, ...c.board.map((b) => b.text || ""), ...c.problems.map((p) => p.question || ""), ...(c.solution ? [c.solution.statement, ...c.solution.steps.map((s) => `${s.idea || ""} ${s.result || ""}`)] : [])]);
   // A NEW problem brings its own objects; only an existing problem's objects are fixed.
@@ -244,6 +268,7 @@ export function degradeTurn(t: TurnOutput, c: VerifyContext): TurnOutput {
     if (o.op !== "gap" && revealsKey(opText(o), c)) return false;
     if (o.op === "mark" && !targetExists(o.target, c.board)) return false;
     if (c.scope && ((o.op === "plan" && (o.objectives || []).some((l) => !inScope(l, c.scope!))) || (o.op === "topic" && !inScope(String(o.text || ""), c.scope)))) return false;
+    if (c.goalsKnown === false && o.op === "plan") return false;
     if (o.op === "draw" && ++draws > 1) return false;
     if ((o.op === "step" || o.op === "gap") && o.kind !== "note" && o.kind !== "definition" && proseEquation(String(o.text || ""))) return false;
     if (o.op === "problem" && c.usedExercises?.length && repeatedExercise(String(o.question || ""), c.usedExercises)) return false;
@@ -251,7 +276,7 @@ export function degradeTurn(t: TurnOutput, c: VerifyContext): TurnOutput {
     return true;
   }).map((o) => ({ ...o, cue: Math.min(o.cue, Math.max(0, speech.length - 1)) }));
   // Never claim a board change that isn't in the list.
-  if (!board.some((o) => CREATING.has(o.op))) speech = speech.filter((s) => !claimsBoard(s));
+  if (!board.some((o) => CREATING.has(o.op))) speech = speech.filter((s) => !claimsBoard(s, hasVisual(c.board) || board.some((o) => o.op === "draw")));
   // Empty speech (every sentence leaked) is returned as is: the engine then asks for a rewrite rather than shipping a leak.
   return { ...t, speech, board };
 }

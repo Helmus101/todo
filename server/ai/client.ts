@@ -214,8 +214,8 @@ export async function createTutorChat(params: any, fast: boolean): Promise<any> 
     try {
       // The `thinking` toggle is DeepSeek-specific, so `fast` only applies to that provider (see
       // createChatFast's own comment) — passing it to Gemini would be a wasted 400 on every turn.
-      // `fast` = an interactive Primer turn: bounded per attempt (Gemini 9s, DeepSeek 24s) so a stalled provider falls over quickly.
-      return await createChatFast(p.client, { ...params, model: p.model }, fast && p.name !== "gemini", fast ? (p.name === "gemini" ? 9_000 : 24_000) : undefined);
+      // `fast` = an interactive Primer turn: bounded per attempt (Gemini 7s, DeepSeek 24s) so a stalled provider falls over quickly.
+      return await createChatFast(p.client, { ...params, model: p.model }, fast && p.name !== "gemini", fast ? (p.name === "gemini" ? 7_000 : 24_000) : undefined);
     } catch (e: any) {
       lastErr = e;
       const more = i < providers.length - 1;

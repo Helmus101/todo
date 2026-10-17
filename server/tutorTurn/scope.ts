@@ -25,7 +25,8 @@ export function sessionScope(i: ScopeInput): Set<string> {
   const texts = [
     i.subject || "",
     ...i.objectives.map((o) => o.label),
-    ...i.board.slice(-40).map((b) => String(b.text || "")),
+    // Only what the STUDENT or the problem itself put on the board counts: Otto's own headers and notes are exactly what drifts.
+    ...i.board.slice(-60).filter((b) => b.owner === "student" || b.kind === "given").map((b) => String(b.text || "")),
     ...i.problems.map((p) => p.question || ""),
     ...i.history.filter((h) => h.role === "user").map((h) => h.text),
     i.message,
@@ -54,4 +55,10 @@ export function sameSubjectMemory<T extends { subject?: string }>(memory: T[] | 
   const want = norm(subject);
   if (!want) return memory || [];
   return (memory || []).filter((m) => { const got = norm(m.subject); return !got || got === want || got.startsWith(want.slice(0, 5)) || want.startsWith(got.slice(0, 5)); });
+}
+
+/** Objectives the session never supports (an economics goal set during a physics session) are dropped. The scope passed in must
+ *  be built WITHOUT the objectives themselves, or they would vouch for each other. */
+export function cleanObjectives<T extends { label: string }>(objectives: T[], baseScope: Set<string>): T[] {
+  return objectives.filter((o) => inScope(o.label, baseScope));
 }

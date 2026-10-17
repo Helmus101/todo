@@ -13,7 +13,7 @@ export async function runTutorTurnSim(check, section) {
     if (!String(url).includes("api.deepseek.com")) return realFetch(url, init);
     const body = JSON.parse(init.body);
     calls.push(body);
-    const out = script(body, calls.length - 1);
+    const out = await script(body, calls.length - 1);
     if (out && out.fail) return new Response(JSON.stringify({ error: { message: "boom" } }), { status: out.status || 500, headers: { "content-type": "application/json" } });
     return new Response(JSON.stringify({ id: "sim", object: "chat.completion", model: "sim", choices: [{ index: 0, message: { role: "assistant", content: typeof out === "string" ? out : JSON.stringify(out) }, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } }), { status: 200, headers: { "content-type": "application/json" } });
   };
@@ -26,7 +26,7 @@ export async function runTutorTurnSim(check, section) {
     const { buildNumberLine, buildBalance } = await import("../shared/simpleScenes.ts");
     const { TURN_PROMPT } = await import("../server/tutorTurn/prompt.ts");
 
-    const T = (o) => ({ heard: "x", intent: "other", diagnosis: { status: "none" }, move: "elicit", support: 0, speech: ["What do you notice?"], board: [], expects: "open", ...o });
+    const T = (o) => ({ heard: "", intent: "other", diagnosis: { status: "none" }, move: "elicit", support: 0, speech: ["What do you notice?"], board: [], expects: "open", ...o });
     const board = [
       { id: "g", n: 1, kind: "given", text: "Masses $M$ on a slope at $\\theta$, $m$ hanging", at: "a" },
       { id: "s", n: 2, kind: "formula", owner: "student", text: "$Mg\\sin\\theta - T = Ma$", at: "b" },
@@ -109,7 +109,7 @@ export async function runTutorTurnSim(check, section) {
     check("a provider that rejects JSON mode gets the same request without it", calls.length === 2 && !calls[1].response_format && r.reply === "Which force pulls m up?");
 
     script = () => T({ intent: "new_problem", move: "practice", speech: ["Here's one to try."], board: [{ op: "problem", cue: 0, question: "Qd = 500 - 20P and Qs = 100 + 30P. Find P.", answer: "8", check: "400/50", format: "a whole number" }, { op: "plan", cue: 0, objectives: ["Equilibrium price", "Demand shifts"] }] });
-    r = await runTutorTurn({ ...base, message: "give me a problem on equilibrium" });
+    r = await runTutorTurn({ ...base, teaching: { helpLevel: 0, stuckStreak: 0, turns: 0, goals: { aim: "equilibrium", hard: "finding the price", asked: 1 } }, message: "give me a problem on equilibrium" });
     check("an exercise and a plan land as real objects (answer key code-checked)", r.problems.length === 1 && r.problems[0].answer === "8" && r.objectives?.length === 2);
 
     {
@@ -129,8 +129,8 @@ export async function runTutorTurnSim(check, section) {
       const rec = (o) => ({ at: "x", move: "elicit", support: 1, intent: "answer", diagnosis: "none", words: 20, studentWords: 10, repaired: false, ms: 1, ...o });
       const u = (t) => ({ role: "user", text: t }), a = (t) => ({ role: "assistant", text: t });
       const g = (o) => sessionGuide({ message: "ok", history: [u("x"), a("y"), u("ok")], log: [], correctNow: false, openWork: false, hasObjectives: true, ...o }).join("\n");
-      check("the first turn of a sitting opens with a plan, not 'where do you want to start'", /OPEN THE SITTING WITH A PLAN/.test(g({ history: [u("lets continue")], message: "lets continue" })) && !/OPEN THE SITTING/.test(g({})));
-      check("with no objectives the opening asks for a plan op", /plan op/.test(g({ history: [u("hi")], message: "hi", hasObjectives: false })));
+      check("with a plan already, the first turn starts from it rather than asking 'where do you want to start'", /START FROM THE PLAN/.test(g({ history: [u("lets continue")], message: "lets continue" })) && !/START FROM THE PLAN/.test(g({})));
+      check("with no plan and no goals yet the tutor asks about their goals first (question 1 of 3) and makes no plan", /LEARN WHAT THEY WANT/.test(g({ history: [u("hi")], message: "hi", hasObjectives: false, goalsKnown: false, goals: { asked: 0 } })) && /question 1 of at most 3/.test(g({ history: [u("hi")], message: "hi", hasObjectives: false, goalsKnown: false, goals: { asked: 0 } })) && /do NOT make a plan yet/.test(g({ hasObjectives: false, goalsKnown: false })));
       check("a right answer is made solid before moving on (why / variation / own words)", /MAKE IT SOLID/.test(g({ correctNow: true })) && /SOLID NOW/.test(g({ correctNow: true, log: [rec({ move: "probe_why" })] })));
       check("asking to switch while the topic isn't solid: finish it quickly, then switch; a second ask switches at once", /come back to it/.test(g({ message: "lets do trig actually", openWork: true })) && /AGAIN: do it now/.test(g({ message: "actually partial fractions", history: [u("a"), a("b"), u("lets do trig actually"), a("c"), u("actually partial fractions")], openWork: true })));
       check("a solid topic can be left when asked", !/SWITCH TOPICS/.test(g({ message: "lets do trig", log: [rec({ verdict: "correct" }), rec({ verdict: "correct" })] })));
@@ -257,10 +257,11 @@ export async function runTutorTurnSim(check, section) {
         : T({ heard: "wants different", intent: "new_problem", diagnosis: { status: "none" }, move: "practice", support: 1, speech: ["Here is something new.", "A 5 kg mass on a 30 degree frictionless slope is tied by a string over a pulley to a 2 kg hanging mass. What is the acceleration?"], board: [], expects: "value" }));
       const GEN = (o = {}) => ({ topic: "Ocean waves", question: "A buoy rises and falls 1.5 m every 8 seconds. What is the frequency of its motion in hertz?", answer: "0.125", check: "1/8", format: "a number, in Hz", hint: "Frequency is the inverse of the period.", why: "f = 1/T", intro: "Here is a new one.", ...o });
       const script0 = script;
-      script = (b, i) => (/write ONE exercise/.test(systemOf(b)) ? GEN({ topic: "Pulleys", question: "A 5 kg mass on a 30 degree frictionless slope is tied by a string over a pulley to a 2 kg hanging mass. What is the acceleration in m per second squared? Use g = 10.", answer: "0", check: "(5*10*sin(30) - 2*10)/(5+2)", format: "a number", intro: "Here is something new: connected masses." }) : script0(b, i));
+      let nonGen = 0; // the generator now starts alongside the tutor's call, so count only the tutor's own calls
+      script = (b, i) => (/write ONE exercise/.test(systemOf(b)) ? GEN({ topic: "Pulleys", question: "A 5 kg mass on a 30 degree frictionless slope is tied by a string over a pulley to a 2 kg hanging mass. What is the acceleration in m per second squared? Use g = 10.", answer: "0", check: "(5*10*sin(30) - 2*10)/(5+2)", format: "a number", intro: "Here is something new: connected masses." }) : script0(b, nonGen++));
       calls = [];
       const rd = await runTutorTurn({ ...base, board: [], problems: [car], message: "no but not same idea just totally different", history: [{ role: "user", text: "alright new problem now" }, { role: "assistant", text: "Let's test that idea again." }] });
-      check("'totally different' after a car problem: the tutor is told, and the new problem (a different setting) lands in the widget with a verified key and a fresh worksheet header", /TOTALLY DIFFERENT/.test(JSON.stringify(calls[0].messages)) && rd.problems.length === 1 && /pulley/.test(rd.problems[0].question) && /^0\.7/.test(String(rd.problems[0].answer)) && rd.board.some((e) => e.kind === "focus" && /Pulleys/.test(e.text)));
+      check("'totally different' after a car problem: the tutor is told, and the new problem (a different setting) lands in the widget with a verified key and a fresh worksheet header", calls.some((c) => /TOTALLY DIFFERENT/.test(JSON.stringify(c.messages))) && rd.problems.length === 1 && /pulley/.test(rd.problems[0].question) && /^0\.7/.test(String(rd.problems[0].answer)) && rd.board.some((e) => e.kind === "focus" && /Pulleys/.test(e.text)));
     }
     {
       const { generateProblem, difficultyFrom } = await import("../server/tutorTurn/problemGen.ts");
@@ -328,7 +329,7 @@ export async function runTutorTurnSim(check, section) {
       const { verifyTurn, degradeTurn } = await import("../server/tutorTurn/verify.ts");
       const { hintLeaks, correctIsLongest, generateProblem } = await import("../server/tutorTurn/problemGen.ts");
       const tok = () => ({ in: 0, out: 0, cachedIn: 0 });
-      const phys = sessionScope({ subject: "Physics", objectives: [{ id: "1", label: "Energy and mechanics quiz review", done: false }], board: [{ id: "b", text: "Net force on the slope and the work done against friction", kind: "note", at: "x" }], problems: [], history: [{ role: "user", text: "lets do work, energy and power in physics" }], message: "another one" });
+      const phys = sessionScope({ subject: "Physics", objectives: [{ id: "1", label: "Energy and mechanics quiz review", done: false }], board: [{ id: "b", text: "Net force on the slope and the work done against friction", kind: "given", at: "x" }], problems: [], history: [{ role: "user", text: "lets do work, energy and power in physics" }], message: "another one" });
       check("the session's scope accepts its own topic and rejects another subject", inScope("how much work is done against friction", phys) && inScope("energy conserved with non-conservative forces", phys) && !inScope("the labor market model with wage-setting and price-setting curves", phys));
       check("memory from other subjects never reaches a session", sameSubjectMemory([{ subject: "Economics", lines: ["labour market"] }, { subject: "Physics", lines: ["power"] }, { lines: ["no subject"] }], "Physics").map((m) => m.lines[0]).join("|") === "power|no subject");
       const base3 = { message: "ok", history: [], board: [], problems: [], policy: { maxSupport: 5, allowed: [], reason: "" }, wants: {}, said: [], discussion: false, scope: phys };
@@ -351,6 +352,86 @@ export async function runTutorTurnSim(check, section) {
       script = (b) => (/write ONE exercise/.test(systemOf(b)) ? { topic: "Energy", question: "A 0.20 kg sphere is thrown up with 40 J of kinetic energy and reaches 15 m because of air resistance. Which statement about the energy is correct?", options: ["Some mechanical energy is lost to air resistance.", "All 40 J becomes potential energy at the top.", "Air resistance adds energy.", "Energy is created."], correct: 0, hint: "Think about where the missing energy goes.", why: "w", intro: "Let's look at how energy behaves when air resistance acts." } : turnMacro);
       const rr2 = await runTutorTurn({ ...base, message: "give me another one", objectives: objs, board: [{ id: "b", text: "Net force on the slope and the work done against friction", kind: "note", at: "x" }], problems: [], history: [{ role: "user", text: "lets do work, energy and power in physics" }, { role: "assistant", text: "Sure." }], context: { subject: "Physics", memory: [{ subject: "Economics", lines: ["labour market model"] }] } });
       check("the reported mix-up: macro lead-in sentences are dropped, the physics exercise is shown, and the speech is about it", rr2.problems.length === 1 && /sphere/.test(rr2.problems[0].question) && !/macro|labor|wage/i.test(rr2.reply) && /air resistance/.test(rr2.reply));
+    }
+    {
+      // Speed: the exercise generator runs alongside the tutor's own call, a solve for a new problem doesn't hold the turn up, and
+      // a single soft issue no longer costs a whole repair call.
+      const starts = [];
+      const turnOnly = T({ heard: "wants one", intent: "chat", diagnosis: { status: "none" }, move: "practice", support: 1, speech: ["Here is a new one, about waves.", "Can you work out its frequency?"], board: [], expects: "value" });
+      const genJson = { topic: "Waves", question: "A buoy rises and falls 1.5 m every 8 seconds. What is its frequency in hertz?", answer: "0.125", check: "1/8", format: "a number", hint: "Think about the period.", why: "f = 1/T", intro: "Here is a new one." };
+      let tutorStarted = 0, genStarted = 0, overlapped = false;
+      script = async (b) => {
+        const isGen = /write ONE exercise/.test(systemOf(b));
+        if (isGen) genStarted = Date.now(); else tutorStarted = Date.now();
+        starts.push(isGen ? "gen" : "tutor");
+        await new Promise((r) => setTimeout(r, 120));
+        if (isGen && tutorStarted) overlapped = true;
+        return isGen ? genJson : turnOnly;
+      };
+      calls = [];
+      const t0 = Date.now();
+      const sp = await runTutorTurn({ ...base, board: [], problems: [], message: "give me a new exercise", context: { subject: "Physics" } });
+      const took = Date.now() - t0;
+      check("asked for an exercise: both model calls start together (the generator doesn't wait for the tutor's call), so the turn takes about one call, not two", starts.length === 2 && starts.includes("gen") && sp.problems.length === 1 && took < 230);
+    }
+    {
+      // A solve that is still running when the turn starts: the tutor's call doesn't wait for it, but the answer-leak check still uses it.
+      const stated3 = "A 5 kg mass on a 30 degree frictionless slope is tied by a string over a pulley to a 2 kg hanging mass. What is the acceleration?";
+      const solNew = { focusKey: "k2", statement: stated3, finalAnswer: "0.71 m s^-2", value: 0.71, verified: true, steps: [], at: "x" };
+      let firstPrompt = "";
+      script = (b, i) => { if (i === 0) firstPrompt = systemOf(b); return i === 0
+        ? T({ heard: "x", intent: "answer", diagnosis: { status: "none" }, move: "elicit", support: 1, speech: ["The acceleration is 0.71 m s^-2.", "Does that make sense?"], board: [] })
+        : T({ heard: "x", intent: "answer", diagnosis: { status: "none" }, move: "elicit", support: 1, speech: ["Start with the force along the slope on the 5 kg mass.", "What is it?"], board: [] }); };
+      calls = [];
+      const solutionPromise = new Promise((r) => setTimeout(() => r(solNew), 60));
+      const lk = await runTutorTurn({ ...base, board: [], problems: [], solution: undefined, solutionPromise, message: "ok let's start", context: { subject: "Physics" } });
+      check("a new problem's solve runs alongside the tutor's call: the first prompt doesn't have it, but a reply that states its answer is still caught and repaired", !/VERIFIED SOLUTION|0\.71/.test(firstPrompt) && calls.length === 2 && !/0\.71/.test(lk.reply));
+      // purging an off-topic objective left by an earlier turn
+      script = () => T({ heard: "x", intent: "answer", diagnosis: { status: "none" }, move: "elicit", support: 1, speech: ["What does the work-energy theorem say about the change in kinetic energy?"], board: [] });
+      calls = [];
+      const pr = await runTutorTurn({ ...base, board: [{ id: "g", text: "A package of mass 2.0 kg slides 4.0 m across a rough floor and stops. What is the work done by friction?", kind: "given", at: "x" }], problems: [], objectives: [{ id: "o1", label: "Define wage-setting and price-setting curves", done: false }, { id: "o2", label: "Work and energy with friction", done: false }], message: "work is change in kinetic energy", history: [{ role: "user", text: "lets do work and energy in physics" }, { role: "assistant", text: "Sure." }], context: { subject: "Physics" } });
+      check("an economics objective saved during a physics session is purged: the stored plan comes back without it, and the tutor never sees it", Array.isArray(pr.objectives) && pr.objectives.length === 1 && /Work and energy/.test(pr.objectives[0].label) && !calls.some((c) => /wage-setting|labour|labor/i.test(JSON.stringify(c.messages))));
+    }
+    {
+      const { verifyTurn, ignoresStudentAnswer, claimsBoard, hasVisual } = await import("../server/tutorTurn/verify.ts");
+      check("a reply about something else than the student's number answer is caught (the '56%' session), one that responds to it isn't", ignoresStudentAnswer("search about 56% is what I would say right yeah I think it's about 56%", "wants a new problem", "Here is how speed builds up over time. Why does the acceleration drop to zero?") && !ignoresStudentAnswer("about 56% is what I would say", "estimates the efficiency at 56%", "Good, how did you get 56 percent?") && !ignoresStudentAnswer("about 56%", "", "Something else entirely."));
+      check("pointing at a curve or graph that isn't there counts as a board claim; with a figure on the board it doesn't", claimsBoard("Notice how the curve flattens out once the drag equals the weight.", false) && claimsBoard("Why does the acceleration drop once the curve becomes horizontal?", false) && !claimsBoard("Notice how the curve flattens out.", true) && hasVisual([{ kind: "graph" }]) && !hasVisual([{ kind: "given" }]));
+      const base4 = { message: "ok", history: [], board: [], problems: [], policy: { maxSupport: 5, allowed: [], reason: "" }, wants: {}, said: [], discussion: false };
+      const sky = { heard: "", intent: "other", diagnosis: { status: "none" }, move: "explain", support: 4, expects: "open", board: [], speech: ["Here is how speed builds up over time as the skydiver falls.", "Notice how the curve flattens out once the upward drag equals the downward weight.", "Why does the acceleration drop to zero once the curve becomes horizontal?"] };
+      check("the skydiver reply (a curve described, nothing drawn) is flagged as a promise the board doesn't keep", verifyTurn(sky, base4).some((i) => i.code === "board_promise"));
+    }
+    {
+      // a problem the student types is shown in the answer widget with the solver's verified key, not just left in chat
+      const typed = "A 2.0 kg package is projected at 6.0 m per second across a rough floor and stops after sliding 4.0 m. What is the work done by friction?";
+      const solT = { ...sol, statement: typed, focusKey: "kt", value: 36, finalAnswer: "36 J", verified: true };
+      script = () => T({ heard: "gave a problem", intent: "new_problem", diagnosis: { status: "none" }, move: "elicit", support: 1, speech: ["Let's start with the energy the package has at the beginning.", "What is its kinetic energy?"], board: [] });
+      const ts = await runTutorTurn({ ...base, board: [], problems: [], solution: solT, message: typed, history: [{ role: "user", text: "hi" }, { role: "assistant", text: "Hi!" }], context: { subject: "Physics" } });
+      check("a problem the student types goes into the answer widget with a verified key", ts.problems.length === 1 && /package/.test(ts.problems[0].question) && /^36/.test(String(ts.problems[0].answer)));
+    }
+    {
+      const { goalsKnown, mergeGoals, goalsLine } = await import("../server/tutorTurn/goals.ts");
+      const { verifyTurn, degradeTurn } = await import("../server/tutorTurn/verify.ts");
+      const { sessionGuide } = await import("../server/tutorTurn/guide.ts");
+      check("goals: a plan may be made once we know their aim AND one more fact, or after three questions, or when they say 'just start' — never from nothing", !goalsKnown(undefined, "hi", false) && !goalsKnown({ aim: "pass the energy test", asked: 0 }, "ok", false) && goalsKnown({ aim: "pass the energy test", deadline: "Friday", asked: 1 }, "ok", false) && goalsKnown({ aim: "x", asked: 2 }, "ok", false) && goalsKnown({ asked: 3 }, "ok", false) && goalsKnown(undefined, "just start", false) && goalsKnown(undefined, "ok", true));
+      const m1 = mergeGoals(undefined, { aim: "energy test", deadline: "Friday" }, true);
+      const m2 = mergeGoals(m1, { hard: "work against friction", minutes: 30 }, true);
+      check("goals are merged across turns, new facts added, the question count rises, junk is capped", m2.aim === "energy test" && m2.deadline === "Friday" && m2.hard === "work against friction" && m2.minutes === 30 && m2.asked === 2 && /30 min/.test(goalsLine(m2)) && mergeGoals(undefined, { minutes: 99999 }, false).minutes === 600);
+      const planTurn = { speech: ["Today we do energy, then power.", "Ready?"], move: "elicit", heard: "", intent: "other", diagnosis: { status: "none" }, support: 1, expects: "open", board: [{ op: "plan", cue: 0, objectives: ["Energy and work", "Power"] }] };
+      const bc = { message: "hi", history: [], board: [], problems: [], policy: { maxSupport: 5, allowed: [], reason: "" }, wants: {}, said: [], discussion: false };
+      check("a plan made before the goals are known is flagged and dropped; once they are known it passes", verifyTurn(planTurn, { ...bc, goalsKnown: false }).some((i) => i.code === "plan_too_early") && degradeTurn(planTurn, { ...bc, goalsKnown: false }).board.length === 0 && !verifyTurn(planTurn, { ...bc, goalsKnown: true }).some((i) => i.code === "plan_too_early"));
+      const gk = sessionGuide({ message: "ok", history: [{ role: "user", text: "i have a test on friday on energy" }, { role: "assistant", text: "Which part is hardest?" }, { role: "user", text: "work with friction" }], log: [], correctNow: false, openWork: false, hasObjectives: false, goals: { aim: "energy test", deadline: "Friday", hard: "work with friction", asked: 2 }, goalsKnown: true }).join("\n");
+      check("once the goals are known the tutor is told to build the plan from them, hardest or soonest first", /BUILD THE PLAN/.test(gk) && /energy test/.test(gk) && /Friday/.test(gk));
+      // the full turn: first message, no plan, no goals — the tutor asks, the engine keeps the plan op out, and the goals it learned are saved
+      script = () => T({ heard: "has a test on energy on Friday", intent: "other", diagnosis: { status: "none" }, move: "elicit", support: 1, speech: ["Got it, an energy test on Friday.", "Which part of energy feels hardest right now?"], board: [{ op: "plan", cue: 0, objectives: ["Energy and work", "Power", "Conservation"] }], goals: { aim: "energy test" }, expects: "open" });
+      calls = [];
+      const g1 = await runTutorTurn({ ...base, board: [], problems: [], objectives: [], message: "i want to work on energy", history: [], context: { subject: "Physics" } });
+      check("first message, no plan: the plan op is repaired away, the question stands, and what they told us is kept", !g1.objectives && /hardest/.test(g1.reply) && g1.turn.goals.aim === "energy test" && g1.turn.goals.asked === 1);
+    }
+    {
+      // a first message that already says what they want and when: no questions, the plan is made in the same turn
+      script = () => T({ heard: "test on friday on energy, friction is hard", intent: "other", diagnosis: { status: "none" }, move: "elicit", support: 1, speech: ["Today: work and friction first, then conservation of energy, because friction is the hard part.", "Starting with work: what does friction do to the energy?"], board: [{ op: "plan", cue: 0, objectives: ["Work against friction", "Conservation of energy"] }], goals: { aim: "energy test", deadline: "Friday", hard: "friction" }, expects: "open" });
+      const g3 = await runTutorTurn({ ...base, board: [], problems: [], objectives: [], message: "i have a test on friday on energy and friction is what i find hard", history: [], context: { subject: "Physics" } });
+      check("when the first message already gives the aim and one more fact, the plan is made at once from it", g3.objectives?.length === 2 && /Work against friction/.test(g3.objectives[0].label));
     }
     script = () => ({ fail: true });
     r = await runTutorTurn({ ...base, message: "hello?" });
