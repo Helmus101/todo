@@ -49,12 +49,14 @@ export interface VerifyContext {
   usedExercises?: string[];
   /** The content words this session has used (scope.ts): plans, headers and exercises must touch them. */
   scope?: Set<string>;
+  /** False while they haven't yet told us enough about what they want (goals.ts) and no plan exists. */
+  goalsKnown?: boolean;
   /** The code-checked verdict on their step/answer this turn, if any. */
   verdict?: "correct" | "incorrect";
 }
 
 export interface Issue {
-  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "off_topic" | "ignores_student" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh";
+  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "off_topic" | "plan_too_early" | "ignores_student" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh";
   /** The instruction for the repair call. */
   fix: string;
   /** A leak or a pointer at nothing must be fixed; the rest are quality. */
@@ -211,6 +213,7 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
     if (!d.misconception) out.push({ code: "diagnosis", hard: false, fix: "you diagnosed a misconception: name the mistaken belief in diagnosis.misconception (≤8 words)." });
     if (["confirm", "elicit", "recap"].includes(t.move)) out.push({ code: "diagnosis", hard: false, fix: "a misconception shows, so don't just confirm or move on: name the idea that is off, gently, in the speech, and choose focus, correct_error, explain or probe_why to repair it." });
   }
+  if (c.goalsKnown === false && t.board.some((o) => o.op === "plan")) out.push({ code: "plan_too_early", hard: true, fix: "don't make a plan yet: you haven't learned what they want from this sitting. Remove the plan op and ask ONE short question about their goal (what they want today, when it is due or what is hardest, how long they have)." });
   // Stay on the session's topic: a plan, a new worksheet or an exercise that touches nothing the session has used is another topic.
   if (c.scope) {
     const off = t.board.find((o) => (o.op === "plan" && (o.objectives || []).some((l) => !inScope(l, c.scope!))) || (o.op === "topic" && !inScope(String(o.text || ""), c.scope!)) || (o.op === "problem" && !inScope(`${o.question || ""}`, c.scope!, 1)));
@@ -265,6 +268,7 @@ export function degradeTurn(t: TurnOutput, c: VerifyContext): TurnOutput {
     if (o.op !== "gap" && revealsKey(opText(o), c)) return false;
     if (o.op === "mark" && !targetExists(o.target, c.board)) return false;
     if (c.scope && ((o.op === "plan" && (o.objectives || []).some((l) => !inScope(l, c.scope!))) || (o.op === "topic" && !inScope(String(o.text || ""), c.scope)))) return false;
+    if (c.goalsKnown === false && o.op === "plan") return false;
     if (o.op === "draw" && ++draws > 1) return false;
     if ((o.op === "step" || o.op === "gap") && o.kind !== "note" && o.kind !== "definition" && proseEquation(String(o.text || ""))) return false;
     if (o.op === "problem" && c.usedExercises?.length && repeatedExercise(String(o.question || ""), c.usedExercises)) return false;

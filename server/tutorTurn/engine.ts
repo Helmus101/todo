@@ -29,6 +29,8 @@ import { applyOps } from "./apply.ts";
 import { sessionGuide } from "./guide.ts";
 import { asksToWriteProblem, wantsDifferent, problemStatement, wantsMoreExercises, difficultyAsked, cantSeeProblem } from "./intents.ts";
 import { generateProblem, difficultyFrom } from "./problemGen.ts";
+import { goalsKnown, mergeGoals } from "./goals.ts";
+import type { SessionGoals } from "../../shared/types.ts";
 import { sessionScope, inScope, contentWords, sameSubjectMemory, cleanObjectives } from "./scope.ts";
 import { exercisesSoFar, exercisesBlock, recentQuestionKinds, varietyLine, sameExercise } from "./exercises.ts";
 
@@ -80,6 +82,8 @@ export interface TurnExtras {
   /** The reply as sentences, in order — the board ops' cues index into this. */
   speech: string[];
   angle?: string;
+  /** What they've told us they want from the sitting, merged with what was known (saved on the teaching state). */
+  goals?: SessionGoals;
   misconception?: string;
   move: string;
   support: number;
@@ -145,6 +149,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const verdict = input.stepVerdict?.verdict ?? (solvedNow.length ? "correct" : wrongNow ? "incorrect" : undefined);
   const policy = supportPolicy({ teaching: input.teaching, needsExplanation: wants.explain, asksWhy: wants.why, asksForWorkedExample: asksForWorkedExample(message), verdict });
   const discussion = isDiscussionSubject(context.subject, [message, ...history.slice(-4).map((h) => h.text)].join(" "));
+  const goalsAreKnown = goalsKnown(input.teaching?.goals, message, objectives.length > 0);
   const scope = sessionScope({ subject: context.subject, objectives, board, problems, history, message, memory: context.memory });
   void baseScope;
   const affect = affectOf(message);
@@ -168,7 +173,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     + (context.subject ? `\n\nSESSION TOPIC: ${context.subject}${objectives.length ? ` — plan: ${objectives.map((o) => o.label).join("; ")}` : ""}. Every plan, worksheet, question and exercise stays on this subject and plan; never bring in another subject or an unrelated topic unless the student asks for it.` : "")
     + (usedExercises.length ? `\n\n${exercisesBlock(usedExercises)}` : "")
     + (() => { const v = varietyLine(recentQuestionKinds(history)); return v ? `\n\n${v}` : ""; })()
-    + factsBlock({ policy, verdict: input.stepVerdict, solvedInChat: solvedNow[0]?.question, wrongInChat: wrongNow, wants, teaching: input.teaching, affect, adapt: [...sessionGuide({ message, history, log: input.teaching?.log, correctNow: verdict === "correct", openWork: problems.some((p) => !p.solved) || board.some((b) => b.kind === "gap" && b.status !== "correct"), hasObjectives: objectives.length > 0, different: wants.different, finalValue: input.solution?.finalAnswer, finalReached: solvedNow.length > 0 || reachedSolutionSteps(message, input.solution).includes(0) || (problems.length > 0 && problems.every((p) => p.solved)), level: [context.profile?.yearLevel, context.profile?.track === "ib" ? "IB" : context.profile?.track === "ap" ? "AP" : context.profile?.track === "bac" ? "bac" : "", ...(context.profile?.courses || []).slice(0, 4)].filter(Boolean).join(", ") }), ...adaptationLines(input.teaching?.log, { wrong: verdict === "incorrect", stuck: STUCK.test(message) })] })
+    + factsBlock({ policy, verdict: input.stepVerdict, solvedInChat: solvedNow[0]?.question, wrongInChat: wrongNow, wants, teaching: input.teaching, affect, adapt: [...sessionGuide({ message, history, log: input.teaching?.log, correctNow: verdict === "correct", openWork: problems.some((p) => !p.solved) || board.some((b) => b.kind === "gap" && b.status !== "correct"), hasObjectives: objectives.length > 0, goals: input.teaching?.goals, goalsKnown: goalsAreKnown, different: wants.different, finalValue: input.solution?.finalAnswer, finalReached: solvedNow.length > 0 || reachedSolutionSteps(message, input.solution).includes(0) || (problems.length > 0 && problems.every((p) => p.solved)), level: [context.profile?.yearLevel, context.profile?.track === "ib" ? "IB" : context.profile?.track === "ap" ? "AP" : context.profile?.track === "bac" ? "bac" : "", ...(context.profile?.courses || []).slice(0, 4)].filter(Boolean).join(", ") }), ...adaptationLines(input.teaching?.log, { wrong: verdict === "incorrect", stuck: STUCK.test(message) })] })
     + (input.spoken && spokenRepair ? voiceInputBlock(message, input.spoken.alternatives, spokenRepair) : "")
     + `\n\nReply in ${fr ? "French" : "English"} unless the student is writing in another language. Return ONLY the JSON object.`;
 
@@ -179,7 +184,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   ];
 
   const said = [...history.filter((h) => h.role === "user").map((h) => h.text), message, input.solution?.statement || "", ...(spokenRepair ? [spokenRepair.interpreted, ...(input.spoken?.alternatives || [])] : []), ...problems.map((p) => p.question || ""), ...board.filter((b) => b.kind === "given" || b.owner === "student").map((b) => b.text)];
-  const vctx: VerifyContext = { message, history, board, problems, solution: input.solution, policy, wants: { why: wants.why, write: wants.write, restart: wants.restart, exercise: wants.exercise, draw: wants.draw, problemOnBoard: wants.problemOnBoard, different: wants.different }, said, discussion, usedExercises, verdict, scope };
+  const vctx: VerifyContext = { message, history, board, problems, solution: input.solution, policy, wants: { why: wants.why, write: wants.write, restart: wants.restart, exercise: wants.exercise, draw: wants.draw, problemOnBoard: wants.problemOnBoard, different: wants.different }, said, discussion, usedExercises, verdict, scope, goalsKnown: goalsAreKnown };
 
   // ── The exercise generator doesn't depend on what the tutor says, so when they have asked for one it runs IN PARALLEL with the
   //    tutor's own call (the longest wait in a turn) instead of after it. ──
@@ -213,6 +218,8 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   if (!turn) turn = normalizeTurn(salvageTurn(raw, { prose: true }));
   if (!turn) { console.error("[tutor] no usable JSON turn"); result.error = true; return result; }
 
+  // What this very turn learned counts: a first message that already says what they want and when allows the plan right away.
+  if (turn.goals) vctx.goalsKnown = goalsKnown(mergeGoals(input.teaching?.goals, turn.goals, false), message, objectives.length > 0);
   // A solve that ran alongside the tutor's call is needed from here on (leak checks, the verdicts, the answer key).
   if (input.solutionPromise) {
     const sol = await input.solutionPromise.catch(() => null);
@@ -369,7 +376,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const progressed = verdict === "correct" || reachedSolutionSteps(message, input.solution).length > 0;
   const struggled = verdict === "incorrect" || STUCK.test(message) || ["misconception", "slip", "no_attempt"].includes(turn.diagnosis.status);
   result.turn = {
-    speech: turn.speech, ...(turn.angle ? { angle: turn.angle } : {}), ...(turn.diagnosis.misconception ? { misconception: turn.diagnosis.misconception } : {}), move: turn.move, support: MOVE_SUPPORT[turn.move], intent: turn.intent, diagnosis: turn.diagnosis.status,
+    speech: turn.speech, goals: mergeGoals(input.teaching?.goals, turn.goals, !vctx.goalsKnown && !applied.objectives), ...(turn.angle ? { angle: turn.angle } : {}), ...(turn.diagnosis.misconception ? { misconception: turn.diagnosis.misconception } : {}), move: turn.move, support: MOVE_SUPPORT[turn.move], intent: turn.intent, diagnosis: turn.diagnosis.status,
     repaired, issues: firstIssues, dropped: applied.dropped, ms: Date.now() - t0, struggled: struggled && !progressed,
   };
   return result;

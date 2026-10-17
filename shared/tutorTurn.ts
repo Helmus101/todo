@@ -89,6 +89,8 @@ export interface TurnOutput {
   board: BoardOp[];
   /** How this turn explained or hinted (optional; recorded so the next turn can change angle). */
   angle?: Angle;
+  /** What the student has just told us they want from the sitting (only the new facts; the app merges them). */
+  goals?: { aim?: string; deadline?: string; hard?: string; minutes?: number };
   /** What kind of answer the student is expected to give next. */
   expects: (typeof EXPECTS)[number];
 }
@@ -171,6 +173,7 @@ export function normalizeTurn(raw: unknown): TurnOutput | null {
     speech,
     board: (Array.isArray(r.board) ? r.board : Array.isArray(r.board_actions) ? r.board_actions : []).map((o: unknown) => normalizeOp(o, speech.length)).filter((o: BoardOp | null): o is BoardOp => !!o).slice(0, 8),
     ...(optPick(ANGLES, r.angle) ? { angle: optPick(ANGLES, r.angle) } : {}),
+    ...(r.goals && typeof r.goals === "object" ? { goals: { ...(str(r.goals.aim, 160) ? { aim: str(r.goals.aim, 160) } : {}), ...(str(r.goals.deadline, 60) ? { deadline: str(r.goals.deadline, 60) } : {}), ...(str(r.goals.hard, 160) ? { hard: str(r.goals.hard, 160) } : {}), ...(Number(r.goals.minutes) > 0 ? { minutes: Number(r.goals.minutes) } : {}) } } : {}),
     expects: pick(EXPECTS, r.expects?.kind ?? r.expects, "open"),
   };
 }

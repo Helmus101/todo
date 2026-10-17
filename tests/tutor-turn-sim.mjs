@@ -109,7 +109,7 @@ export async function runTutorTurnSim(check, section) {
     check("a provider that rejects JSON mode gets the same request without it", calls.length === 2 && !calls[1].response_format && r.reply === "Which force pulls m up?");
 
     script = () => T({ intent: "new_problem", move: "practice", speech: ["Here's one to try."], board: [{ op: "problem", cue: 0, question: "Qd = 500 - 20P and Qs = 100 + 30P. Find P.", answer: "8", check: "400/50", format: "a whole number" }, { op: "plan", cue: 0, objectives: ["Equilibrium price", "Demand shifts"] }] });
-    r = await runTutorTurn({ ...base, message: "give me a problem on equilibrium" });
+    r = await runTutorTurn({ ...base, teaching: { helpLevel: 0, stuckStreak: 0, turns: 0, goals: { aim: "equilibrium", hard: "finding the price", asked: 1 } }, message: "give me a problem on equilibrium" });
     check("an exercise and a plan land as real objects (answer key code-checked)", r.problems.length === 1 && r.problems[0].answer === "8" && r.objectives?.length === 2);
 
     {
@@ -129,8 +129,8 @@ export async function runTutorTurnSim(check, section) {
       const rec = (o) => ({ at: "x", move: "elicit", support: 1, intent: "answer", diagnosis: "none", words: 20, studentWords: 10, repaired: false, ms: 1, ...o });
       const u = (t) => ({ role: "user", text: t }), a = (t) => ({ role: "assistant", text: t });
       const g = (o) => sessionGuide({ message: "ok", history: [u("x"), a("y"), u("ok")], log: [], correctNow: false, openWork: false, hasObjectives: true, ...o }).join("\n");
-      check("the first turn of a sitting opens with a plan, not 'where do you want to start'", /OPEN THE SITTING WITH A PLAN/.test(g({ history: [u("lets continue")], message: "lets continue" })) && !/OPEN THE SITTING/.test(g({})));
-      check("with no objectives the opening asks for a plan op", /plan op/.test(g({ history: [u("hi")], message: "hi", hasObjectives: false })));
+      check("with a plan already, the first turn starts from it rather than asking 'where do you want to start'", /START FROM THE PLAN/.test(g({ history: [u("lets continue")], message: "lets continue" })) && !/START FROM THE PLAN/.test(g({})));
+      check("with no plan and no goals yet the tutor asks about their goals first (question 1 of 3) and makes no plan", /LEARN WHAT THEY WANT/.test(g({ history: [u("hi")], message: "hi", hasObjectives: false, goalsKnown: false, goals: { asked: 0 } })) && /question 1 of at most 3/.test(g({ history: [u("hi")], message: "hi", hasObjectives: false, goalsKnown: false, goals: { asked: 0 } })) && /do NOT make a plan yet/.test(g({ hasObjectives: false, goalsKnown: false })));
       check("a right answer is made solid before moving on (why / variation / own words)", /MAKE IT SOLID/.test(g({ correctNow: true })) && /SOLID NOW/.test(g({ correctNow: true, log: [rec({ move: "probe_why" })] })));
       check("asking to switch while the topic isn't solid: finish it quickly, then switch; a second ask switches at once", /come back to it/.test(g({ message: "lets do trig actually", openWork: true })) && /AGAIN: do it now/.test(g({ message: "actually partial fractions", history: [u("a"), a("b"), u("lets do trig actually"), a("c"), u("actually partial fractions")], openWork: true })));
       check("a solid topic can be left when asked", !/SWITCH TOPICS/.test(g({ message: "lets do trig", log: [rec({ verdict: "correct" }), rec({ verdict: "correct" })] })));
@@ -407,6 +407,31 @@ export async function runTutorTurnSim(check, section) {
       script = () => T({ heard: "gave a problem", intent: "new_problem", diagnosis: { status: "none" }, move: "elicit", support: 1, speech: ["Let's start with the energy the package has at the beginning.", "What is its kinetic energy?"], board: [] });
       const ts = await runTutorTurn({ ...base, board: [], problems: [], solution: solT, message: typed, history: [{ role: "user", text: "hi" }, { role: "assistant", text: "Hi!" }], context: { subject: "Physics" } });
       check("a problem the student types goes into the answer widget with a verified key", ts.problems.length === 1 && /package/.test(ts.problems[0].question) && /^36/.test(String(ts.problems[0].answer)));
+    }
+    {
+      const { goalsKnown, mergeGoals, goalsLine } = await import("../server/tutorTurn/goals.ts");
+      const { verifyTurn, degradeTurn } = await import("../server/tutorTurn/verify.ts");
+      const { sessionGuide } = await import("../server/tutorTurn/guide.ts");
+      check("goals: a plan may be made once we know their aim AND one more fact, or after three questions, or when they say 'just start' — never from nothing", !goalsKnown(undefined, "hi", false) && !goalsKnown({ aim: "pass the energy test", asked: 0 }, "ok", false) && goalsKnown({ aim: "pass the energy test", deadline: "Friday", asked: 1 }, "ok", false) && goalsKnown({ aim: "x", asked: 2 }, "ok", false) && goalsKnown({ asked: 3 }, "ok", false) && goalsKnown(undefined, "just start", false) && goalsKnown(undefined, "ok", true));
+      const m1 = mergeGoals(undefined, { aim: "energy test", deadline: "Friday" }, true);
+      const m2 = mergeGoals(m1, { hard: "work against friction", minutes: 30 }, true);
+      check("goals are merged across turns, new facts added, the question count rises, junk is capped", m2.aim === "energy test" && m2.deadline === "Friday" && m2.hard === "work against friction" && m2.minutes === 30 && m2.asked === 2 && /30 min/.test(goalsLine(m2)) && mergeGoals(undefined, { minutes: 99999 }, false).minutes === 600);
+      const planTurn = { speech: ["Today we do energy, then power.", "Ready?"], move: "elicit", heard: "", intent: "other", diagnosis: { status: "none" }, support: 1, expects: "open", board: [{ op: "plan", cue: 0, objectives: ["Energy and work", "Power"] }] };
+      const bc = { message: "hi", history: [], board: [], problems: [], policy: { maxSupport: 5, allowed: [], reason: "" }, wants: {}, said: [], discussion: false };
+      check("a plan made before the goals are known is flagged and dropped; once they are known it passes", verifyTurn(planTurn, { ...bc, goalsKnown: false }).some((i) => i.code === "plan_too_early") && degradeTurn(planTurn, { ...bc, goalsKnown: false }).board.length === 0 && !verifyTurn(planTurn, { ...bc, goalsKnown: true }).some((i) => i.code === "plan_too_early"));
+      const gk = sessionGuide({ message: "ok", history: [{ role: "user", text: "i have a test on friday on energy" }, { role: "assistant", text: "Which part is hardest?" }, { role: "user", text: "work with friction" }], log: [], correctNow: false, openWork: false, hasObjectives: false, goals: { aim: "energy test", deadline: "Friday", hard: "work with friction", asked: 2 }, goalsKnown: true }).join("\n");
+      check("once the goals are known the tutor is told to build the plan from them, hardest or soonest first", /BUILD THE PLAN/.test(gk) && /energy test/.test(gk) && /Friday/.test(gk));
+      // the full turn: first message, no plan, no goals — the tutor asks, the engine keeps the plan op out, and the goals it learned are saved
+      script = () => T({ heard: "has a test on energy on Friday", intent: "other", diagnosis: { status: "none" }, move: "elicit", support: 1, speech: ["Got it, an energy test on Friday.", "Which part of energy feels hardest right now?"], board: [{ op: "plan", cue: 0, objectives: ["Energy and work", "Power", "Conservation"] }], goals: { aim: "energy test" }, expects: "open" });
+      calls = [];
+      const g1 = await runTutorTurn({ ...base, board: [], problems: [], objectives: [], message: "i want to work on energy", history: [], context: { subject: "Physics" } });
+      check("first message, no plan: the plan op is repaired away, the question stands, and what they told us is kept", !g1.objectives && /hardest/.test(g1.reply) && g1.turn.goals.aim === "energy test" && g1.turn.goals.asked === 1);
+    }
+    {
+      // a first message that already says what they want and when: no questions, the plan is made in the same turn
+      script = () => T({ heard: "test on friday on energy, friction is hard", intent: "other", diagnosis: { status: "none" }, move: "elicit", support: 1, speech: ["Today: work and friction first, then conservation of energy, because friction is the hard part.", "Starting with work: what does friction do to the energy?"], board: [{ op: "plan", cue: 0, objectives: ["Work against friction", "Conservation of energy"] }], goals: { aim: "energy test", deadline: "Friday", hard: "friction" }, expects: "open" });
+      const g3 = await runTutorTurn({ ...base, board: [], problems: [], objectives: [], message: "i have a test on friday on energy and friction is what i find hard", history: [], context: { subject: "Physics" } });
+      check("when the first message already gives the aim and one more fact, the plan is made at once from it", g3.objectives?.length === 2 && /Work against friction/.test(g3.objectives[0].label));
     }
     script = () => ({ fail: true });
     r = await runTutorTurn({ ...base, message: "hello?" });
