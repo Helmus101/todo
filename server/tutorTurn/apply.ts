@@ -62,6 +62,29 @@ function sceneEntry(o: BoardOp, fr: boolean): { entry: BoardEntry } | { error: s
   }
 }
 
+const plainWords = (s: string) => s.replace(/\$[^$]*\$/g, " ").toLowerCase().match(/[a-zà-ÿ']{2,}/g) || [];
+
+/** A step that is mostly the student's own spoken words (a transcript), not maths. */
+export function transcribes(text: string, theirWords: string[]): boolean {
+  const w = plainWords(text);
+  if (w.length < 5) return false;
+  const said = new Set(theirWords.flatMap(plainWords));
+  return w.filter((x) => said.has(x)).length / w.length >= 0.7;
+}
+
+/** The value inside a spoken answer, as a board line: the text unchanged when it is already short maths, "≈ 56%" for "about 56%",
+ *  null when there is no number to keep. */
+export function valueOfSpeech(text: string): string | null {
+  const t = text.trim();
+  if (!/\d|=/.test(t) && plainWords(t).length >= 3) return null;
+  if (plainWords(t).length < 5 && !/^(?:search|speech)\b/i.test(t)) return t;
+  const found = [...t.matchAll(/(?:(about|around|roughly|approximately|≈|~)\s*)?(-?\d+(?:[.,]\d+)?)\s*(%|[a-zA-Zµ°Ω]{1,3}(?:\/[a-zA-Z]{1,3})?\b)?/gi)];
+  const last = found[found.length - 1];
+  if (!last) return null;
+  const unit = last[3] && (last[3] === "%" || !/^(?:is|it|so|and|of|to|at|in|on|or|me|my|be|as|the|yes|yeah|not|but|can|for)$/i.test(last[3])) ? last[3] : "";
+  return `${last[1] ? "≈ " : ""}${last[2]}${unit ? (unit === "%" ? "%" : ` ${unit}`) : ""}`;
+}
+
 export function applyOps(ops: BoardOp[], c: ApplyContext): Applied {
   const out: Applied = { board: [], problems: [], dropped: [] };
   const all = () => [...c.board, ...out.board];
@@ -77,7 +100,14 @@ export function applyOps(ops: BoardOp[], c: ApplyContext): Applied {
       }
       case "step": {
         const kind = o.kind && o.kind !== "note" ? o.kind : "note";
-        const text = latexifyBoardLine(repairLatex(typesetPlainMath(String(o.text || ""))), kind);
+        let raw = String(o.text || "");
+        // Speech recognition output ("about 56% is what I would say right yeah I think it's about 56%") is not a board line: keep the value they gave.
+        if (o.owner === "student" || transcribes(raw, c.theirWords)) {
+          const core = valueOfSpeech(raw);
+          if (core == null) { drop("spoken words, not maths"); break; }
+          raw = core;
+        }
+        const text = latexifyBoardLine(repairLatex(typesetPlainMath(raw)), kind);
         // A line is THEIRS only when its numbers are ones they said this turn — Otto's own step never shows in their ink.
         const owner = o.owner === "student" && numbersAreTheirs(text, c.theirWords) ? "student" : "otto";
         if (isDuplicateBoardEntry(all(), { text, kind })) { drop("already on the board"); break; }

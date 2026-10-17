@@ -433,6 +433,16 @@ export async function runTutorTurnSim(check, section) {
       const g3 = await runTutorTurn({ ...base, board: [], problems: [], objectives: [], message: "i have a test on friday on energy and friction is what i find hard", history: [], context: { subject: "Physics" } });
       check("when the first message already gives the aim and one more fact, the plan is made at once from it", g3.objectives?.length === 2 && /Work against friction/.test(g3.objectives[0].label));
     }
+    {
+      const { valueOfSpeech, transcribes } = await import("../server/tutorTurn/apply.ts");
+      check("a spoken answer becomes its value, not a transcript line", valueOfSpeech("search about 56% is what I would say right yeah I think it's about 56%") === "≈ 56%" && valueOfSpeech("v = 12 m/s") === "v = 12 m/s" && valueOfSpeech("yeah I think so maybe") === null);
+      const said = ["about 56% is what I would say right yeah I think it's about 56%"];
+      const sp = applyOps([{ op: "step", cue: 0, text: "about 56% is what I would say right yeah I think it's about 56%", kind: "result", owner: "student" }], { message: said[0], theirWords: said, board: [], problems: [], fr: false });
+      check("a transcript is never written on the board as-is", transcribes(said[0], said) && !sp.board.some((e) => /would say/.test(String(e.text))));
+      script = (b, i) => i >= 2 ? "Which force does the work in that problem?" : T({ heard: "", intent: "other", diagnosis: { status: "none" }, move: "elicit", support: 1, speech: ["Let's examine a student's solution for a work-energy problem to spot the exact mistake made."], board: [], expects: "none" });
+      const an = await runTutorTurn({ ...base, message: "ok" });
+      check("a reply that only announces a task never ships alone: a question or the task itself follows", !an.reply || /\?\s*$/.test(an.reply) || an.problems?.length > 0);
+    }
     script = () => ({ fail: true });
     r = await runTutorTurn({ ...base, message: "hello?" });
     check("the model being down is an error for the route to report — never a made-up reply", r.error === true && !r.reply);
