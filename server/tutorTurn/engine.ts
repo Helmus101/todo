@@ -176,10 +176,10 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const nothingOfTheirs = !studentBoardLine([message]);
   const problemInPlay = problems.some((p) => !p.solved) || history.slice(-4).some((h) => h.role === "assistant" && statesAProblem(h.text));
   const problemOnBoard = asksToWriteProblem(message) || cantSeeProblem(message) || (asksToWrite(message) && nothingOfTheirs && problemInPlay && message.length < 60);
-  const wants = { why: asksWhy(message), write: asksToWrite(message) && !problemOnBoard, problemOnBoard, different: wantsDifferent(message), topicSwitch: wantsTopicSwitch(message), restart: asksToRestart(message), exercise: wantsExercise(message) || wantsMoreExercises(message), explain: needsExplanation(message, input.teaching) && (history.length > 0 || /\b(?:explain|understand|lost|confus|no idea|idk|dunno|don'?t get|expliqu|compren|perdu)/i.test(message)), draw: asksToDraw(message) || acceptsBoardOffer(message, history) };
+  const wants = { why: asksWhy(message), write: asksToWrite(message) && !problemOnBoard, problemOnBoard, different: wantsDifferent(message), topicSwitch: wantsTopicSwitch(message) || wantsTopicSwitch(parseExerciseResults(message).map((r) => r.given || "").join(" ")), restart: asksToRestart(message), exercise: wantsExercise(message) || wantsMoreExercises(message), explain: needsExplanation(message, input.teaching) && (history.length > 0 || /\b(?:explain|understand|lost|confus|no idea|idk|dunno|don'?t get|expliqu|compren|perdu)/i.test(message)), draw: asksToDraw(message) || acceptsBoardOffer(message, history) };
   // An answer-widget or answer-box result ("[Exercise] … marked right/wrong") is a verified outcome like any other step check.
   const reported = parseExerciseResults(message);
-  let verdict = input.stepVerdict?.verdict ?? (solvedNow.length ? "correct" : wrongNow ? "incorrect" : undefined) ?? verdictFromResults(reported);
+  let verdict = input.stepVerdict?.verdict ?? (solvedNow.length ? "correct" : wrongNow ? "incorrect" : undefined) ?? (wants.topicSwitch && reported.length ? undefined : verdictFromResults(reported));
   // A numeric exercise marked wrong twice: if an independent solve lands on THEIR number and not the key, the key is the suspect.
   let keyDoubt = false;
   const lastWidget = [...reported].reverse().find((r) => r.source === "widget");

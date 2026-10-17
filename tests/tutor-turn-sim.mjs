@@ -176,6 +176,15 @@ export async function runTutorTurnSim(check, section) {
       check("numbers from nowhere: a small decimal like 0,2 is caught when the data say 0,3; a percentage's decimal (30 % = 0,3) and the student's own numbers are fine",
         inv("Le haut reste bien 0,2.", src).includes("0.2") && inv("Le haut reste bien 0,3 et le bas 0,6.", src).length === 0 && inv("Tu as 30 sur 100.", src).length === 0);
     }
+    { const { problemFromProse: pfp } = await import("../server/tutorTurn/intents.ts");
+      const stated = "Let's switch. A 5.0 kg crate moving at 2.0 m/s hits a stationary 3.0 kg crate and they stick together. What is their common speed?";
+      check("a decimal point is not a sentence end: a problem with '5.0 kg' is kept whole (reported: the board got '0 kg crate, no other masses…')", /^A 5\.0 kg crate moving at 2\.0 m\/s/.test(pfp(stated)) && /common speed\?$/.test(pfp(stated)));
+    }
+    { let sys = "";
+      script = (b) => { sys = systemOf(b); return T({ heard: "wants momentum", move: "elicit", speech: ["Sure, momentum it is.", "What is momentum, in your own words?"], board: [{ op: "topic", cue: 0, text: "Momentum" }] }); };
+      const rt = await runTutorTurn({ ...base, message: '[Exercise] I answered "can you actually do momentum please" — marked wrong (try #1).', problems: [{ id: "p1", question: "A 2 kg block slides 3 m. Find its energy gain.", answer: "58.8", kind: "free", createdAt: "x" }] });
+      check("a request typed into the answer box ('can you actually do momentum please') is a topic switch, not a wrong answer", !rt.error && /THEY SWITCHED TOPIC/.test(sys) && rt.turn?.verdict !== "incorrect");
+    }
     check("verify: a quotation the student never gave is refused (a poem quoted from memory); quoting their own words or a board line is fine",
       codes({ move: "focus", speech: ["Au vers 2 il dit « sans bruit, sans voir, sans entendre » : qu'est-ce que ça change ?"] }).includes("unsourced_quote") &&
       !codes({ move: "focus", speech: ["Tu as écrit « il part plein d'espoir voir sa fille » : et à la fin ?"] }, { ...vctx, said: ["il part plein d'espoir voir sa fille"] }).includes("unsourced_quote") &&

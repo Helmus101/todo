@@ -22,7 +22,8 @@ export function wantsDifferent(message: string): boolean {
 /** The text of a problem Otto stated in prose: the sentences from the scenario up to and including the question,
  *  without a lead-in sentence that has no numbers ("Let's switch to…"). "" when there is none. */
 export function problemFromProse(text: string): string {
-  const sents = String(text || "").replace(/\s+/g, " ").match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g) || [];
+  // Split only where punctuation is followed by whitespace — a decimal point ("5.0 kg") is not a sentence end.
+  const sents = String(text || "").replace(/\s+/g, " ").split(/(?<=[.!?])\s+/);
   const s = sents.map((x) => x.trim()).filter(Boolean);
   while (s.length > 1 && !/\d/.test(s[0])) s.shift();
   const out = s.join(" ").slice(0, 600);

@@ -994,7 +994,7 @@ export function splitBoardContent(reply: string): { items: string[]; question: s
   const question = qMatch ? qMatch[1].trim() : "";
   const body = (qMatch ? t.slice(0, qMatch.index) : t).trim();
   let items = body.split(/\s*(?:^|\n|\s)(?:\d{1,2}[.)]|[-•*])\s+/).map((x) => x.trim()).filter((x) => x.length > 3);
-  if (items.length <= 1) items = (body.match(/[^.!?]+[.!?]+/g) || [body]).map((x) => x.trim()).filter((x) => x.length > 3);
+  if (items.length <= 1) items = body.split(/(?<=[.!?])\s+/).map((x) => x.trim()).filter((x) => x.length > 3);
   // a lead-in sentence ("Here is the quick cheat sheet:") is not an item
   items = items.filter((x, i) => !(i === 0 && /:\s*$/.test(x) || (i === 0 && items.length > 2 && /\b(?:here(?:'s| is| are)|voici)\b/i.test(x) && x.split(/\s+/).length <= 12)));
   return { items: items.slice(0, 8), question };
