@@ -203,7 +203,7 @@ export function boardSurfaceBlock(entries: BoardEntry[] | undefined, problems: T
     lines.push(`- [${e.kind || "note"}] (${tags.join("; ")}) ${e.text.slice(0, 400)}${figureSummary(e)}` +
       (e.kind === "outline" && e.outline?.length ? "\n" + e.outline.map((s) => `  · ${s.heading}: ${s.bullets.join("; ")}`).join("\n") : ""));
   }
-  for (const p of probs) lines.push(`- [problem] ${p.question.slice(0, 300)}${p.options?.length ? ` (options: ${p.options.join(" / ")})` : ""}${p.solved ? " — SOLVED" : ""}`);
+  for (const p of probs) lines.push(`- [problem] ${p.question.slice(0, p.solved ? 300 : 1400)}${p.options?.length ? ` (options: ${p.options.join(" / ")})` : ""}${p.solved ? " — SOLVED" : ""}`);
   return (
     `\nWHAT'S CURRENTLY ON THE BOARD (the visible surface next to this chat — you can see it, the student ` +
     `can see it, don't ask them to describe it back to you; anything new you write adds to this, it ` +

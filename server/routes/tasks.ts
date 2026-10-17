@@ -232,8 +232,9 @@ async function tutorTurn(
     const next = nextTeachingState(prev, { message, verdict: stepVerdict?.verdict, plan: out.plan, reachedStep: reached.length > 0, leaked: out.leakedValue });
     // Support level and struggle count are owned by code (server/tutorTurn/policy.ts), from the move actually delivered.
     const turn = out.turn;
-    const support = turn ? nextSupportState(prev, { move: turn.move as Move, verdict: stepVerdict?.verdict, progressed: stepVerdict?.verdict === "correct" || reached.length > 0 || !!out.solvedInChat?.length, struggled: turn.struggled }) : {};
-    const record = turn ? { at: new Date().toISOString(), move: turn.move, support: turn.support, intent: turn.intent, diagnosis: turn.diagnosis, ...(turn.angle ? { angle: turn.angle } : {}), ...(turn.misconception ? { misconception: turn.misconception } : {}), ...(stepVerdict?.verdict ? { verdict: stepVerdict.verdict } : {}), words: turn.speech.join(" ").split(/\s+/).filter(Boolean).length, studentWords: message.split(/\s+/).filter(Boolean).length, repaired: turn.repaired, ms: turn.ms } : null;
+    const verdict = turn?.verdict ?? stepVerdict?.verdict; // widget results count too (tutorTurn/results.ts)
+    const support = turn ? nextSupportState(prev, { move: turn.move as Move, verdict, progressed: verdict === "correct" || reached.length > 0 || !!out.solvedInChat?.length, struggled: turn.struggled }) : {};
+    const record = turn ? { at: new Date().toISOString(), move: turn.move, support: turn.support, intent: turn.intent, diagnosis: turn.diagnosis, ...(turn.angle ? { angle: turn.angle } : {}), ...(turn.misconception ? { misconception: turn.misconception } : {}), ...(verdict ? { verdict } : {}), words: turn.speech.join(" ").split(/\s+/).filter(Boolean).length, studentWords: message.split(/\s+/).filter(Boolean).length, repaired: turn.repaired, ms: turn.ms } : null;
     t.tutorState = { ...next, ...support, ...(turn?.goals ? { goals: turn.goals } : prev?.goals ? { goals: prev.goals } : {}), ...(record ? { log: [...(prev?.log || []), record].slice(-30) } : {}) }; }
   const evidence = evidenceKindFor({ message, verdict: stepVerdict?.verdict, reachedFinal: reached.includes(0), helpLevel: helpBefore });
   const skill = t.solution?.skill || t.sourceSubject;

@@ -6925,5 +6925,32 @@ section("Tutor reply hygiene — invented wrapper tags, board line numbers (repo
   check("a literal \\n in a board line is a line break, LaTeX \\neq is kept, and a long 'why' is cut on a word with …", e.text.includes("\n- slope") && e.text.includes("\\neq") && /word…$/.test(e.why) && e.why.length <= 160);
 }
 
+{
+  section("Exercise results reach the tutor's policy (tutorTurn/results.ts)");
+  const { parseExerciseResults, verdictFromResults } = await import("../server/tutorTurn/results.ts");
+  const r1 = parseExerciseResults('[Exercise] I answered "0.72" — marked right (try #1).');
+  check("a right widget answer is parsed with its text and attempt", r1.length === 1 && r1[0].verdict === "correct" && r1[0].given === "0.72" && r1[0].attempt === 1 && r1[0].source === "widget");
+  check("a wrong one, a partly right one and a not-graded one are told apart", parseExerciseResults('[Exercise] I answered "5" — marked wrong (try #2).')[0].verdict === "incorrect" && parseExerciseResults('[Exercise] I answered "x" — PARTLY right: some of the key ideas (try #1). Credit what\'s right.')[0].verdict === "partial" && parseExerciseResults('[Exercise] I answered "x" — NOT graded: the key contradicts (try #1).')[0].verdict === "ungraded");
+  check("French messages and board-box results are parsed too", parseExerciseResults("[Exercice] J'ai répondu « 12 » — juste (essai n°1).")[0].verdict === "correct" && parseExerciseResults("[Exercice] J'ai répondu « 3 » — faux (essai n°2).")[0].verdict === "incorrect" && parseExerciseResults('[Exercise] On the board line "a = ?" I wrote "4" — checked wrong.')[0].source === "gap" && parseExerciseResults("[Exercice] Au tableau, pour « a = ? », j'ai écrit « 4 » — vérifié juste.")[0].verdict === "correct");
+  const { bareNumeral } = await import("../server/tutorTurn/apply.ts");
+  check("a bare whole number or year is not a board line; a decimal, percentage, value with unit or equation is", bareNumeral("1917") && bareNumeral("$5$") && bareNumeral(" 12. ") && !bareNumeral("0.72") && !bareNumeral("56%") && !bareNumeral("12 N") && !bareNumeral("x = 5") && !bareNumeral("-3") && !bareNumeral("12345"));
+  const { questionRun, supportPolicy, adaptationLines } = await import("../server/tutorTurn/policy.ts");
+  const rec = (move, diagnosis = "partial", verdict) => ({ at: "", move, support: 1, intent: "answer", diagnosis, ...(verdict ? { verdict } : {}), words: 20, studentWords: 6, repaired: false, ms: 1 });
+  check("a run of question-only turns with a student who isn't getting there is counted; a run of right answers is not", questionRun([rec("explain"), rec("focus"), rec("focus"), rec("probe_why")]) === 3 && questionRun([rec("focus", "correct", "correct"), rec("probe_why", "correct", "correct"), rec("elicit", "correct", "correct")]) === 0 && questionRun([rec("focus"), rec("explain")]) === 0);
+  const pol = supportPolicy({ teaching: { helpLevel: 0, stuckStreak: 0, turns: 3, lastSupport: 1, unproductive: 0 }, needsExplanation: false, asksWhy: false, asksForWorkedExample: false, questionRun: 4 });
+  check("three questions in a row without teaching make explaining allowed at once", pol.maxSupport >= 4 && pol.explainAllowed && pol.allowed.includes("explain"));
+  const lines = adaptationLines([rec("explain", "partial"), rec("focus"), rec("focus"), rec("probe_why")].map((r, i) => (i === 0 ? { ...r, angle: "picture" } : r)), { wrong: false, stuck: true, stillLost: true }, ["right", "right", "that"]);
+  check("'I still don't get it' after a tried angle asks what is unclear or names untried angles; a question run says TEACH; stale openers are called out", lines.some((l) => /STILL DON'T GET IT/.test(l) && /picture/.test(l) && /numbers/.test(l)) && lines.some((l) => /QUESTIONS IN A ROW/.test(l)) && lines.some((l) => /"right…"/.test(l)));
+  { const { keyDisagrees } = await import("../server/tutorTurn/problemGen.ts");
+    check("an MCQ or a non-numeric key is never cross-checked (nothing to compare)", (await keyDisagrees({ question: "q" }, { options: ["a", "b"] }, { subject: "x" }, { in: 0, out: 0, cachedIn: 0 })) === false && (await keyDisagrees({ question: "q" }, { answer: "a word" }, { subject: "x" }, { in: 0, out: 0, cachedIn: 0 })) === false); }
+  const wlog = (move) => ({ at: "", move, support: 1, intent: "answer", diagnosis: "correct", verdict: "correct", words: 10, studentWords: 3, repaired: false, ms: 1 });
+  check("two 'why' questions in four turns tell the tutor to stop asking why", adaptationLines([wlog("probe_why"), wlog("confirm"), wlog("probe_why")], { wrong: false, stuck: false }).some((l) => /"why" 2 times/.test(l)) && !adaptationLines([wlog("probe_why"), wlog("confirm")], { wrong: false, stuck: false }).some((l) => /"why"/.test(l)));
+  { const { finalValue, sciNorm } = await import("../shared/types.ts");
+    check("a worked answer typed in the box is graded on its FINAL value, in ×10ⁿ notation too (reported live: a right 2.107×10²³ and a right 1,58 were marked wrong)", practiceAnswerMatches("12.32/246.4 = 0.05 mol, then ×7 = 0.35 mol, ×6.02x10^23 = 2.107x10^23 molecules", "2.107e23", 2.107e23) && practiceAnswerMatches("Δ = 64 - 24 = 40, donc √40/4 ≈ 1,58", "1.58", 1.58) && practiceAnswerMatches("3x = 15 so x = 5", "5") && practiceAnswerMatches("2.5x10^3", "2500") && sciNorm("6.02 × 10^-3") === "6.02e-3");
+    check("…while several values, the wrong final value, a restated question and an intermediate value are still not the answer", !practiceAnswerMatches("x = 3 or x = 7", "3", 3) && !practiceAnswerMatches("3x = 15 so x = 5", "15") && !practiceAnswerMatches("Find x if 3x + 6 = 15", "3", 3) && !practiceAnswerMatches("12.32/246.4 = 0.05 mol, then ×7 = 0.35 mol, ×6.02x10^23 = 2.107x10^23 molecules", "0.35") && Number.isNaN(finalValue("3 and 5"))); }
+  const batch = parseExerciseResults('[Exercise] I answered "5" — marked wrong (try #1).\n[Exercise] I answered "6" — marked right (try #2).');
+  check("batched results: the last gradable one decides; partial counts as not right; plain chat has none", batch.length === 2 && verdictFromResults(batch) === "correct" && verdictFromResults(parseExerciseResults('[Exercise] I answered "x" — PARTLY right (try #1).')) === "incorrect" && verdictFromResults(parseExerciseResults('[Exercise] On the board line "a" I wrote "1" — couldn\'t be auto-checked.')) === undefined && parseExerciseResults("hello 5").length === 0);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

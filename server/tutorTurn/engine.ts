@@ -23,7 +23,7 @@ import {
   type TutorTurnInput, type TutorTurnResult, type TutorPlanLite,
 } from "../tutor.ts";
 import { TURN_PROMPT, VOICE_NOTE } from "./prompt.ts";
-import { supportPolicy, asksForWorkedExample, adaptationLines, type Policy } from "./policy.ts";
+import { supportPolicy, asksForWorkedExample, adaptationLines, questionRun, type Policy } from "./policy.ts";
 import { verifyTurn, degradeTurn, acceptsBoardOffer, claimsBoard, hasVisual, sceneNounsIn, type Issue, type VerifyContext } from "./verify.ts";
 import { applyOps } from "./apply.ts";
 import { sessionGuide } from "./guide.ts";
@@ -32,19 +32,22 @@ import { generateProblem, difficultyFrom } from "./problemGen.ts";
 import { goalsKnown, mergeGoals } from "./goals.ts";
 import type { SessionGoals } from "../../shared/types.ts";
 import { sessionScope, inScope, contentWords, sameSubjectMemory, cleanObjectives } from "./scope.ts";
-import { exercisesSoFar, exercisesBlock, recentQuestionKinds, varietyLine, sameExercise } from "./exercises.ts";
+import { exercisesSoFar, exercisesBlock, recentQuestionKinds, varietyLine, sameExercise, questionKind } from "./exercises.ts";
+import { parseExerciseResults, verdictFromResults } from "./results.ts";
 
 const MAX_HISTORY = 14;
 /** A turn is a few hundred tokens of JSON; this only bounds a runaway reply (and its wait), it doesn't shape normal ones. */
 const TURN_MAX_TOKENS = 6000;
-const STUCK = /\b(?:i (?:don'?t|do not) (?:know|get it|understand)|idk|no idea|i'?m (?:stuck|lost|confused)|not sure|je (?:ne )?sais pas|j'?sais pas|aucune idée|je suis (?:perdu|bloqué)e?|je comprends pas|help me|aide[- ]moi)\b/i;
+const STILL_LOST = /\b(?:(?:i )?still (?:don'?t|do not|can'?t) (?:get|understand|see|follow)|(?:explain|say|show) (?:it |that )?again|i'?m (?:still )?(?:lost|confused)|je (?:ne )?comprends (?:toujours )?pas|toujours pas compris|explique (?:encore|à nouveau|autrement))\b/i;
+const STUCK = /\b(?:i (?:don'?t|do not) (?:know|get it|understand)|still (?:don'?t|do not) (?:get|understand)|(?:explain|say) (?:it )?again|idk|no idea|i'?m (?:stuck|lost|confused)|not sure|je (?:ne )?sais pas|j'?sais pas|aucune idée|je suis (?:perdu|bloqué)e?|je comprends pas|help me|aide[- ]moi)\b/i;
 
 /** The turn the app has already worked out, as a prompt block the model must respect. Exported for tests. */
-export function factsBlock(f: { policy: Policy; verdict?: { gap: string; given: string; verdict: "correct" | "incorrect" }; solvedInChat?: string; wrongInChat?: boolean; wants: VerifyContext["wants"] & { explain: boolean }; teaching?: TutorTeachingState; affect: string; adapt?: string[] }): string {
+export function factsBlock(f: { policy: Policy; verdict?: { gap: string; given: string; verdict: "correct" | "incorrect" }; solvedInChat?: string; wrongInChat?: boolean; wrongPick?: string; wants: VerifyContext["wants"] & { explain: boolean }; teaching?: TutorTeachingState; affect: string; adapt?: string[] }): string {
   const lines = [
     `SUPPORT ALLOWED THIS TURN: up to level ${f.policy.maxSupport} (${f.policy.reason}). Allowed moves: ${f.policy.allowed.join(", ")}.`,
     f.verdict ? `THEIR STEP, CHECKED BY CODE: "${f.verdict.given}" for the open line "${f.verdict.gap}" is ${f.verdict.verdict === "correct" ? "RIGHT — credit exactly what was right" : "WRONG — find the first thing that's off; don't give the value"}.` : "",
     f.solvedInChat ? `THEY JUST ANSWERED THE OPEN EXERCISE IN CHAT AND IT IS RIGHT (code-checked): "${f.solvedInChat.slice(0, 160)}". Confirm it — never ask them to type it into the box — then deepen it (ask why it works or give a variation) before moving on.` : "",
+    f.wrongPick ? `THEIR ANSWER-BOX CHOICE WAS WRONG ("${f.wrongPick.slice(0, 160)}"). A wrong choice shows what they believe: say in plain words what idea makes that choice attractive (name the belief gently, set diagnosis.misconception), then test it with a fresh case or a counter-example instead of just saying it's wrong. Don't say which option is right.` : "",
     f.wrongInChat ? "Their number for the open exercise is WRONG (code-checked): look for the first slip, no new exercise." : "",
     f.wants.why ? "THEY ASKED WHY: give the real reason first, in plain words." : "",
     f.wants.explain && !f.wants.why ? "THEY NEED IT EXPLAINED (lost, asked to be shown, or stuck): teach the missing idea plainly and write it on the board as you say it, then hand back one small step." : "",
@@ -95,6 +98,8 @@ export interface TurnExtras {
   ms: number;
   /** A wrong attempt, a stuck message or a diagnosed misconception this turn (drives "explain after struggle"). */
   struggled: boolean;
+  /** The verified outcome of the student's step or exercise this turn (board gap, answer in chat, or widget result). */
+  verdict?: "correct" | "incorrect";
 }
 
 /** Both texts name scenario objects, and not one in common (a bicycle problem vs a car problem). */
@@ -145,9 +150,11 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const nothingOfTheirs = !studentBoardLine([message]);
   const problemInPlay = problems.some((p) => !p.solved) || history.slice(-4).some((h) => h.role === "assistant" && statesAProblem(h.text));
   const problemOnBoard = asksToWriteProblem(message) || cantSeeProblem(message) || (asksToWrite(message) && nothingOfTheirs && problemInPlay && message.length < 60);
-  const wants = { why: asksWhy(message), write: asksToWrite(message) && !problemOnBoard, problemOnBoard, different: wantsDifferent(message), restart: asksToRestart(message), exercise: wantsExercise(message) || wantsMoreExercises(message), explain: needsExplanation(message, input.teaching), draw: asksToDraw(message) || acceptsBoardOffer(message, history) };
-  const verdict = input.stepVerdict?.verdict ?? (solvedNow.length ? "correct" : wrongNow ? "incorrect" : undefined);
-  const policy = supportPolicy({ teaching: input.teaching, needsExplanation: wants.explain, asksWhy: wants.why, asksForWorkedExample: asksForWorkedExample(message), verdict });
+  const wants = { why: asksWhy(message), write: asksToWrite(message) && !problemOnBoard, problemOnBoard, different: wantsDifferent(message), restart: asksToRestart(message), exercise: wantsExercise(message) || wantsMoreExercises(message), explain: needsExplanation(message, input.teaching) && (history.length > 0 || /\b(?:explain|understand|lost|confus|no idea|idk|dunno|don'?t get|expliqu|compren|perdu)/i.test(message)), draw: asksToDraw(message) || acceptsBoardOffer(message, history) };
+  // An answer-widget or answer-box result ("[Exercise] … marked right/wrong") is a verified outcome like any other step check.
+  const reported = parseExerciseResults(message);
+  const verdict = input.stepVerdict?.verdict ?? (solvedNow.length ? "correct" : wrongNow ? "incorrect" : undefined) ?? verdictFromResults(reported);
+  const policy = supportPolicy({ teaching: input.teaching, needsExplanation: wants.explain, asksWhy: wants.why, asksForWorkedExample: asksForWorkedExample(message), verdict, questionRun: questionRun(input.teaching?.log) });
   const discussion = isDiscussionSubject(context.subject, [message, ...history.slice(-4).map((h) => h.text)].join(" "));
   const goalsAreKnown = goalsKnown(input.teaching?.goals, message, objectives.length > 0);
   const scope = sessionScope({ subject: context.subject, objectives, board, problems, history, message, memory: context.memory });
@@ -173,7 +180,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     + (context.subject ? `\n\nSESSION TOPIC: ${context.subject}${objectives.length ? ` — plan: ${objectives.map((o) => o.label).join("; ")}` : ""}. Every plan, worksheet, question and exercise stays on this subject and plan; never bring in another subject or an unrelated topic unless the student asks for it.` : "")
     + (usedExercises.length ? `\n\n${exercisesBlock(usedExercises)}` : "")
     + (() => { const v = varietyLine(recentQuestionKinds(history)); return v ? `\n\n${v}` : ""; })()
-    + factsBlock({ policy, verdict: input.stepVerdict, solvedInChat: solvedNow[0]?.question, wrongInChat: wrongNow, wants, teaching: input.teaching, affect, adapt: [...sessionGuide({ message, history, log: input.teaching?.log, correctNow: verdict === "correct", openWork: problems.some((p) => !p.solved) || board.some((b) => b.kind === "gap" && b.status !== "correct"), hasObjectives: objectives.length > 0, goals: input.teaching?.goals, goalsKnown: goalsAreKnown, different: wants.different, finalValue: input.solution?.finalAnswer, finalReached: solvedNow.length > 0 || reachedSolutionSteps(message, input.solution).includes(0) || (problems.length > 0 && problems.every((p) => p.solved)), level: [context.profile?.yearLevel, context.profile?.track === "ib" ? "IB" : context.profile?.track === "ap" ? "AP" : context.profile?.track === "bac" ? "bac" : "", ...(context.profile?.courses || []).slice(0, 4)].filter(Boolean).join(", ") }), ...adaptationLines(input.teaching?.log, { wrong: verdict === "incorrect", stuck: STUCK.test(message) })] })
+    + factsBlock({ policy, verdict: input.stepVerdict, solvedInChat: solvedNow[0]?.question, wrongInChat: wrongNow, wrongPick: reported.find((r) => r.verdict === "incorrect" || r.verdict === "partial")?.given, wants, teaching: input.teaching, affect, adapt: [...sessionGuide({ message, history, log: input.teaching?.log, correctNow: verdict === "correct", openWork: problems.some((p) => !p.solved) || board.some((b) => b.kind === "gap" && b.status !== "correct"), hasObjectives: objectives.length > 0, goals: input.teaching?.goals, goalsKnown: goalsAreKnown, different: wants.different, finalValue: input.solution?.finalAnswer, finalReached: solvedNow.length > 0 || reachedSolutionSteps(message, input.solution).includes(0) || (problems.length > 0 && problems.every((p) => p.solved)), level: [context.profile?.yearLevel, context.profile?.track === "ib" ? "IB" : context.profile?.track === "ap" ? "AP" : context.profile?.track === "bac" ? "bac" : "", ...(context.profile?.courses || []).slice(0, 4)].filter(Boolean).join(", ") }), ...adaptationLines(input.teaching?.log, { wrong: verdict === "incorrect", stuck: STUCK.test(message) || STILL_LOST.test(message), stillLost: STILL_LOST.test(message) }, history.filter((h) => h.role === "assistant").slice(-4).map((h) => h.text.toLowerCase().replace(/[^a-zà-ÿ' ]/g, " ").split(/\s+/).filter(Boolean).slice(0, 2).join(" ")).filter(Boolean))] })
     + (input.spoken && spokenRepair ? voiceInputBlock(message, input.spoken.alternatives, spokenRepair) : "")
     + `\n\nReply in ${fr ? "French" : "English"} unless the student is writing in another language. Return ONLY the JSON object.`;
 
@@ -192,13 +199,17 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const buildGenRequest = (spokenText: string) => {
     const topic = objectives.find((o) => !o.done)?.label || [...board].reverse().find((b) => b.kind === "focus" && b.text)?.text || context.subject || "";
     const used = exercisesSoFar({ history, problems, memory: context.memory, board });
-    const kinds = recentQuestionKinds(history);
-    const nextKind = (["compute", "explain_why", "spot_error", "predict", "compare"] as const).find((k) => !kinds.includes(k)) ?? "any";
+    // What was actually SET counts, not just what was said: an exercise lives in the widget, so the chat text rarely shows its
+    // kind (every follow-up came out as multiple choice in the baseline run). A free-response exercise is a "compute".
+    const kinds = [...recentQuestionKinds(history), ...problems.slice(-3).map((p) => (p.options?.length ? questionKind(p.question) : "compute"))].slice(-6);
+    const lastTwoMcq = problems.length >= 2 && problems.slice(-2).every((p) => p.options?.length);
+    const nextKind = lastTwoMcq && !isDiscussionSubject(context.subject, spokenText) ? "compute" : (["compute", "explain_why", "spot_error", "predict", "compare", "sketch"] as const).find((k) => !kinds.includes(k)) ?? "any";
     return {
       subject: context.subject, topic: wants.different ? "" : topic, level: levelText, difficulty: difficultyAsked(message) ?? difficultyFrom(input.teaching?.log),
       kind: (isDiscussionSubject(context.subject, spokenText) && nextKind === "compute" ? "explain_why" : nextKind) as any,
       used, lang: (fr ? "fr" : "en") as "fr" | "en", ask: wants.exercise || wants.different ? message.slice(0, 200) : undefined,
       allowedTopics: objectives.map((o) => o.label), scope,
+      recent: { student: message.startsWith("[") ? undefined : message, tutor: [...history].reverse().find((h) => h.role === "assistant")?.text },
     };
   };
   const genTokens = { in: 0, out: 0, cachedIn: 0 };
@@ -394,7 +405,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const struggled = verdict === "incorrect" || STUCK.test(message) || ["misconception", "slip", "no_attempt"].includes(turn.diagnosis.status);
   result.turn = {
     speech: turn.speech, goals: mergeGoals(input.teaching?.goals, turn.goals, !vctx.goalsKnown && !applied.objectives), ...(turn.angle ? { angle: turn.angle } : {}), ...(turn.diagnosis.misconception ? { misconception: turn.diagnosis.misconception } : {}), move: turn.move, support: MOVE_SUPPORT[turn.move], intent: turn.intent, diagnosis: turn.diagnosis.status,
-    repaired, issues: firstIssues, dropped: applied.dropped, ms: Date.now() - t0, struggled: struggled && !progressed,
+    repaired, issues: firstIssues, dropped: applied.dropped, ms: Date.now() - t0, struggled: struggled && !progressed, ...(verdict ? { verdict } : {}),
   };
   return result;
 }

@@ -7,6 +7,7 @@ delete process.env.GEMINI_API_KEY;
 
 export async function runTutorTurnSim(check, section) {
   let script = () => ({});
+  process.env.TUTOR_KEYCHECK = "off"; // the sims count model calls; the key cross-check has its own test below
   let calls = [];
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (url, init) => {
@@ -59,6 +60,26 @@ export async function runTutorTurnSim(check, section) {
     const codes = (t, c = vctx) => verifyTurn(T(t), c).map((i) => i.code);
     check("verify: too much help, a leaked final answer, a pointer at a missing line, two questions", (() => { const c = codes({ move: "worked_example", speech: ["So a = 2.45.", "Is that clear?", "Look at line 9?"] }); return ["support", "leak", "target", "questions"].every((x) => c.includes(x)); })());
     check("verify: a clean focusing turn passes", codes({ move: "focus", speech: ["Check the sign of T in line 2.", "Which way does the string pull M?"], board: [{ op: "mark", cue: 0, target: "#2", style: "underline", part: "T", tone: "hint" }] }).length === 0);
+    { // The independent solve disagrees with the generator's key: the exercise is rejected and a corrected one is used.
+      process.env.TUTOR_KEYCHECK = "on";
+      const { generateProblem: gen2 } = await import("../server/tutorTurn/problemGen.ts");
+      const mk = (answer, check) => ({ topic: "Waves", question: "A tuning fork vibrates 440 times in one second while the sound travels 340 m. What is the wavelength in metres, to 2 s.f.?", answer, check, format: "a number, in m", hint: "wavelength = speed / frequency", why: "lambda = v/f", intro: "Let's try a different kind of wave." });
+      const solveJson = { final_answer: "0.77 m", check: "340/440", steps: [{ idea: "lambda = v/f", result: "0.77 m", check: "340/440" }], key_idea: "v = f lambda", alternatives: [], mistakes: [], skill: "wave speed" };
+      let gens = 0;
+      script = (b) => (/expert teacher preparing to tutor/.test(systemOf(b)) ? solveJson : /write ONE exercise/.test(systemOf(b)) ? (gens++ === 0 ? mk("1.3", "440/340") : mk("0.77", "340/440")) : {});
+      const g2 = await gen2({ subject: "Physics", topic: "Waves", difficulty: "at_level", kind: "compute", used: [], lang: "en" }, { in: 0, out: 0, cachedIn: 0 });
+      check("a generated exercise whose key an independent solve contradicts is rejected and regenerated (reported live: a right answer marked wrong five times)", gens === 2 && !!g2 && /0\.77/.test(String(g2.input.answer)));
+      process.env.TUTOR_KEYCHECK = "off";
+    }
+    check("verify: a reply that corrects itself mid-way is refused; a clean one passes (reported live: '= 40… non, pardon')",
+      codes({ move: "explain", speech: ["Le discriminant vaut 64 - 24 = 40… non, pardon, c'est 64 - 24 = 40.", "Tu vois pourquoi ?"] }).includes("self_correct") &&
+      codes({ move: "explain", speech: ["Sorry, let me redo that: it is 40.", "Clear?"] }).includes("self_correct") &&
+      !codes({ move: "focus", speech: ["Check the sign of T in line 2.", "Which way does the string pull M?"] }).includes("self_correct"));
+    check("verify: asking 'what went wrong' about a step that is RIGHT is refused (reported live: an invented error); a real error hunt is fine",
+      codes({ move: "probe_why", speech: ["Right.", "What went wrong there, and what should the second line have been?"] }, { ...vctx, verdict: "correct" }).includes("no_error") &&
+      !codes({ move: "probe_why", speech: ["Right.", "What went wrong there?"] }, { ...vctx, verdict: undefined }).includes("no_error"));
+    check("verify: the reply must agree with a French widget mark too ('faux' → don't say it's right)",
+      codes({ move: "confirm", speech: ["Exact, c'est ça.", "Pourquoi ?"] }, { ...vctx, message: "[Exercice] J'ai répondu « 4 » — faux (essai n°1)." }).includes("verdict_mismatch"));
     check("verify: a why answered with the instruction again is caught; a reason passes",
       verifyTurn(T({ move: "hint_procedure", speech: ["Multiply the volume by the energy per cm³.", "What do you get?"] }), { ...vctx, wants: { ...vctx.wants, why: true }, policy: supportPolicy({ needsExplanation: false, asksWhy: true, asksForWorkedExample: false }) }).some((i) => i.code === "intent_why") &&
       !verifyTurn(T({ move: "explain", speech: ["Because each cm³ gives 30 kJ, so the volume tells you how many lots of 30 kJ you get.", "What does one hour give?"] }), { ...vctx, wants: { ...vctx.wants, why: true }, policy: supportPolicy({ needsExplanation: false, asksWhy: true, asksForWorkedExample: false }) }).some((i) => i.code === "intent_why"));

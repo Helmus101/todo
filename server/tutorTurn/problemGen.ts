@@ -4,6 +4,7 @@
 // evaluates the `check` expression and overrules a wrong key), the exercise must differ from every earlier one, and a bad
 // result gets one corrective retry. Pure apart from the model call.
 import { createTutorChat, retryRequest, usageOf, OUT, makeProblem } from "../claude.ts";
+import { solveProblem } from "../solver.ts";
 import { extractJsonObject } from "../../shared/tutorTurn.ts";
 import { repeatedExercise, mostlyContains, type QuestionKind } from "./exercises.ts";
 import { inScope } from "./scope.ts";
@@ -24,6 +25,8 @@ export interface ProblemRequest {
   ask?: string;
   /** The skill that was shaky, for a retest or a targeted exercise. */
   skill?: string;
+  /** The last student message and the tutor's last reply, so the lead-in can connect to what just happened. */
+  recent?: { student?: string; tutor?: string };
   /** The session's plan labels: the exercise must stay within them. */
   allowedTopics?: string[];
   /** Words the session has used (scope.ts): an exercise touching none of them is off topic. */
@@ -54,7 +57,7 @@ const DIFFICULTY_TEXT: Record<Difficulty, string> = {
   harder: "clearly HARDER than a typical question at their level: several connected steps or an unfamiliar situation, something that makes a strong student think.",
 };
 const KIND_TEXT: Record<string, string> = {
-  compute: "a calculation with ONE numeric answer",
+  compute: "a calculation with ONE numeric answer (for symbolic topics such as derivatives, integrals or limits, ask for the VALUE at a point, e.g. f'(2) or the definite integral, so the answer is one number with a \"check\" expression — not a formula)",
   spot_error: "multiple choice: a short worked solution is shown in the statement with ONE real mistake (recompute every line yourself first: if all lines are right, change one); options are the possible places/kinds of mistake. Add a \"mistake\" field: the wrong line and what it should be",
   explain_why: "multiple choice: which explanation is correct (the distractors are real misconceptions)",
   predict: "multiple choice: what happens if something changes (the distractors are the common wrong predictions)",
@@ -74,7 +77,7 @@ RULES
 - Conceptual or humanities: multiple choice. "options" has 4 plausible options (distractors are real misconceptions, similar length, exactly one correct), "correct" is the index of the right one (0-3), no "check".
 - Multiple choice: make the options similar in length; the correct one must NOT be the longest, and it must not be written in a different style from the others.
 - "hint": a nudge towards the idea, never a value and never a restatement of any option. "why": the one-sentence reason the answer is right.
-- "intro": ONE short spoken sentence introducing the exercise in a warm, plain tone (it must NOT contain the problem text or the answer).
+- "intro": ONE short spoken sentence introducing the exercise like a person who was just talking with this student: it picks up what they just did or said ("You've got the mole count — now catch someone else's slip") and says what kind of task this is. It never starts with "Let's", never uses stock phrases ("a fresh case", "the next level"), and must NOT contain the problem text or the answer.
 - "topic": a short title (≤6 words) for the worksheet.
 - Backslashes in LaTeX are doubled (\\\\frac, \\\\sin). Language: as asked. Put each step of a worked solution on its own line with a real line break (a JSON \\n inside the string), maths in $…$.
 
@@ -91,6 +94,7 @@ function userPrompt(r: ProblemRequest): string {
     `Kind of task: ${KIND_TEXT[r.kind] || KIND_TEXT.any}`,
     r.skill ? `Target the skill they found hard: ${r.skill}` : "",
     r.used.length ? `Exercises ALREADY USED (never repeat or re-skin these): ${r.used.map((u) => `"${u}"`).join(" · ")}` : "",
+    r.recent?.student ? `What just happened (the "intro" must connect to it, in your own words): the student said "${r.recent.student.replace(/\s+/g, " ").slice(0, 200)}"${r.recent.tutor ? ` and the tutor replied "${r.recent.tutor.replace(/\s+/g, " ").slice(0, 220)}"` : ""}.` : "",
     `Write it in ${r.lang === "fr" ? "French" : "English"}.`,
   ].filter(Boolean).join("\n");
 }
@@ -123,6 +127,7 @@ export async function generateProblem(req: ProblemRequest, tokens: { in: number;
       else if (correctIsLongest(j)) complaint = "the correct option is much longer than the others, which gives it away — make the options similar in length";
       else if (repeatedExercise(String(j.question), req.used)) complaint = "that is too close to an exercise already used — set a different situation with different numbers";
       else if (!String(j.intro || "").trim()) complaint = "add the one-sentence spoken intro";
+      else if ((await keyDisagrees(j, built.problem, req, tokens)) && (complaint = `an independent solution of your statement gives a different answer than your key (${String(j.answer ?? "")}) — recompute it carefully from the givens, or change the problem so there is no doubt`)) { /* complaint set above */ }
       else if (isErrorSpotting(j) && !(await mistakeConfirmed(j, tokens))) complaint = "your worked solution has NO real mistake at the line you named (or has a different one). Recompute every line; either put one genuine error in a line, or set a different kind of exercise"
       else { problem = j; break; }
     }
@@ -133,6 +138,24 @@ export async function generateProblem(req: ProblemRequest, tokens: { in: number;
   scrub(input);
   input.question = tidyQuestion(String(input.question));
   return { input, intro: String(intro || "").replace(/\s+/g, " ").trim().slice(0, 240), topic: String(topic || req.topic || "").replace(/\s+/g, " ").trim().slice(0, 60) };
+}
+
+/** A numeric exercise's key checked by a SEPARATE solve of its statement (reported live: a right 15/√56 was marked wrong five
+ *  times because the generator's own key was wrong). True only when the independent solver is verified and disagrees;
+ *  an unverifiable or non-numeric item passes (nothing to compare). */
+export async function keyDisagrees(j: any, built: any, req: ProblemRequest, tokens: { in: number; out: number; cachedIn: number }): Promise<boolean> {
+  if (process.env.TUTOR_KEYCHECK === "off" || (Array.isArray(built?.options) && built.options.length)) return false; // (the call-counting sims switch it off)
+  const mine = Number.isFinite(Number(built?.value)) ? Number(built.value) : Number(String(built?.answer ?? "").replace(",", ".").match(/-?\d+(?:\.\d+)?/)?.[0]);
+  if (!Number.isFinite(mine)) return false;
+  try {
+    const r = await solveProblem(String(j.question), req.subject);
+    tokens.in += r.tokens.in; tokens.out += r.tokens.out; tokens.cachedIn += r.tokens.cachedIn;
+    const sol = r.solution;
+    if (!sol?.verified || !Number.isFinite(sol.value)) return false;
+    const theirs = Number(sol.value), pct = /%/.test(String(built?.answer ?? "") + String(sol.finalAnswer));
+    const close = (a: number, b: number) => Math.abs(a - b) <= Math.max(Math.abs(b) * 0.015, 0.0006);
+    return !(close(mine, theirs) || (pct && (close(mine, theirs * 100) || close(mine * 100, theirs))));
+  } catch { return false; }
 }
 
 /** In a multiple-choice exercise the right option is much longer than every other (a giveaway). */

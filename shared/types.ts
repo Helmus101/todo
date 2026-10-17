@@ -2016,7 +2016,37 @@ export function isNumericAnswer(answer: string | undefined): boolean {
 export function problemIsPercent(p: { question?: string; format?: string; answer?: string }): boolean {
   return /%|percent|pourcent/i.test(`${p.question || ""} ${p.format || ""}`);
 }
+/** "2.107x10^23" / "2,1 × 10^-3" → "2.107e23" / "2.1e-3" (a scientific-notation answer is one number). */
+export function sciNorm(s: string): string {
+  return String(s ?? "").replace(/(\d)\s*[x×*·]\s*10\s*\^?\s*\{?\s*([-−–]?\d+)\s*\}?/gi, (_, d, e) => `${d}e${String(e).replace(/[−–]/g, "-")}`);
+}
+/** The FINAL value of a worked answer typed into a one-answer box ("12.32/246.4 = 0.05, so 0.35 × 6.02x10^23 = 2.107x10^23
+ *  molecules" → 2.107e23): the last piece after "=", "≈", "so", "donc", "therefore" when it is one number with a unit. NaN when
+ *  the answer lists several values ("x = 3 or x = 7") or has no such ending. Reported live: a right worked answer was marked
+ *  wrong because it contained more than one number. */
+export function finalValue(s: string): number {
+  const t = sciNorm(String(s || ""));
+  if (/\b(?:or|and|ou|et)\b/i.test(t.replace(/\$/g, ""))) return NaN;
+  const pieces = t.split(/=|≈|≃|~|\b(?:so|therefore|thus|hence|donc|soit|ainsi)\b|⇒|⟹|→/i).map((x) => x.trim()).filter(Boolean);
+  if (pieces.length < 2) return NaN;
+  return singleNumber(pieces[pieces.length - 1].replace(/[.,;]\s*$/, ""));
+}
+
 export function practiceAnswerMatches(given: string, correct: string, value?: number, percent?: boolean): boolean {
+  // A worked answer typed into the box is graded on its final value (finalValue above), against a key in the same notation.
+  if (quantityCount(given) > 1) {
+    const fv = finalValue(given);
+    if (Number.isFinite(fv)) return practiceAnswerMatches(String(fv), sciNorm(correct), value, percent);
+  }
+  given = sciNorm(given); correct = sciNorm(correct);
+  // A key written as a percentage ("72%") is a percentage question whichever way the student writes it: 0.72, 72 and 72% are
+  // the same efficiency (reported live: a right 0.72 was called a slip because the key said 72%).
+  if (!percent && /%/.test(String(correct || ""))) percent = true;
+  // …and a percentage typed against a decimal key ("72%" for 0.72) is the same quantity.
+  if (!percent && /%/.test(String(given || ""))) {
+    const gn = firstNumber(String(given)), cn = firstNumber(String(correct));
+    if (Number.isFinite(gn) && Number.isFinite(cn) && Math.abs(cn) <= 1.5 && Math.abs(gn / 100 - cn) <= Math.max(Math.abs(cn) * 0.006, 0.0005)) return true;
+  }
   if (percent) {
     // A percentage may be given as a fraction/decimal (0.75, 3/4) or as a percent (75, 75%): compare in percent.
     const c = firstNumber(correct), gRaw = String(given || "");

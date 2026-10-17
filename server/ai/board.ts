@@ -348,7 +348,7 @@ export function clipWords(s: string, max: number): string {
 
 export function makeBoardEntry(input: any): { entry: BoardEntry } | { error: string } {
   // A literal "\n" the model typed (not LaTeX like \neq / \nu) is a line break (reported: recaps showed "\n").
-  const text = stripLeakedToolCallSyntax(String(input?.text || "").replace(/\\n(?![a-z])/g, "\n").trim()).replace(/<br\s*\/?>/gi, "\n").replace(/<\/?[a-z][^>]*>/gi, "").replace(/&nbsp;|&#160;/gi, " ").slice(0, 600);
+  const text = stripLeakedToolCallSyntax(String(input?.text || "").replace(/\\n(?!(?:eq?|u|abla|ot|otin|ewline|i|less|gtr|mid|parallel|leq|geq|rightarrow|leftarrow|Rightarrow|Leftarrow|sim|cong|subset|vdash|vDash|exists)(?![a-zA-Z]))/g, "\n").trim()).replace(/<br\s*\/?>/gi, "\n").replace(/<\/?[a-z][^>]*>/gi, "").replace(/&nbsp;|&#160;/gi, " ").slice(0, 600);
   if (!text) return { error: "ERROR: a board entry needs non-empty text." };
   const whyRaw = stripLeakedToolCallSyntax(String(input?.why || "")).replace(/<\/?[a-z][^>]*>/gi, "").replace(/&nbsp;|&#160;/gi, " ").replace(/\s+/g, " ").trim();
   const why = clipWords(whyRaw, 160);

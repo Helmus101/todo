@@ -73,6 +73,11 @@ export function transcribes(text: string, theirWords: string[]): boolean {
   return w.filter((x) => said.has(x)).length / w.length >= 0.7;
 }
 
+/** A line that is only a whole number of up to 4 digits (a year, a count), with no unit, sign, decimal or words. */
+export function bareNumeral(text: string): boolean {
+  return /^[\s$]*\d{1,4}[\s$.]*$/.test(String(text || ""));
+}
+
 /** The value inside a spoken answer, as a board line: the text unchanged when it is already short maths, "≈ 56%" for "about 56%",
  *  null when there is no number to keep. */
 export function valueOfSpeech(text: string): string | null {
@@ -109,6 +114,9 @@ export function applyOps(ops: BoardOp[], c: ApplyContext): Applied {
           raw = core;
         }
         const text = latexifyBoardLine(repairLatex(typesetPlainMath(raw)), kind);
+        // A bare whole number or year ("1917", "5", "$12$") says nothing on a board: reported live as "given: 1917" and "result: 5"
+        // (the tail of a spoken sentence). A decimal, a percentage or a value with its unit is a real result and stays.
+        if (bareNumeral(text)) { drop("a bare number says nothing without its label"); break; }
         // A line is THEIRS only when its numbers are ones they said this turn — Otto's own step never shows in their ink.
         const owner = o.owner === "student" && numbersAreTheirs(text, c.theirWords) ? "student" : "otto";
         if (isDuplicateBoardEntry(all(), { text, kind })) { drop("already on the board"); break; }

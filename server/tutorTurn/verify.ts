@@ -5,6 +5,7 @@
 // verifyTurn() lists what's wrong (each issue is a precise instruction for the one repair call); degradeTurn() fixes
 // what code can fix on its own (drops a leaking sentence or a bad board op, trims to one question) when the repair
 // call didn't — so the reply that ships is always the model's own words, never a canned sentence.
+import { parseExerciseResults, verdictFromResults } from "./results.ts";
 import type { BoardEntry, TaskProblem, TutorSolution } from "../../shared/types.ts";
 import { MOVE_SUPPORT, type BoardOp, type TurnOutput } from "../../shared/tutorTurn.ts";
 import { boardLineNumbers } from "../../shared/boardLines.ts";
@@ -55,8 +56,10 @@ export interface VerifyContext {
   verdict?: "correct" | "incorrect";
 }
 
+export const SELF_CORRECTION = /(?:…|\.\.\.|—|,)\s*(?:non,?\s+(?:pardon|attends|en fait)|no,?\s+wait|wait,?\s+(?:no|that)|hmm,?\s|sorry,?\s+(?:let me|that'?s|i)|let me (?:redo|recompute|recalculate|rethink)|pardon,|oops)|\b(?:actually,? (?:no|that'?s wrong|let me)|scratch that|je me trompe|je reprends)\b/i;
+
 export interface Issue {
-  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "off_topic" | "plan_too_early" | "ignores_student" | "verdict_mismatch" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh";
+  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "off_topic" | "plan_too_early" | "ignores_student" | "verdict_mismatch" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh" | "no_error" | "self_correct";
   /** The instruction for the repair call. */
   fix: string;
   /** A leak or a pointer at nothing must be fixed; the rest are quality. */
@@ -223,7 +226,9 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   if (prose) out.push({ code: "prose_equation", hard: false, fix: `the board line "${String(prose.text).slice(0, 80)}" has words where numbers or symbols belong. Write the actual value (or just the expression) and put the explanation in the step's "why".` });
   {
     // The app already graded their widget answer: the reply must agree with that mark.
-    const marked = /\bmarked (right|wrong)\b|\bchecked (right|wrong)\b/i.exec(c.message);
+    // (parseExerciseResults also reads the French messages: "juste" / "faux".)
+    const gradedBy = verdictFromResults(parseExerciseResults(c.message));
+    const marked = gradedBy ? [gradedBy === "correct" ? "marked right" : "marked wrong"] : /\bmarked (right|wrong)\b|\bchecked (right|wrong)\b/i.exec(c.message);
     const first = (say.split(/(?<=[.!?])\s+/)[0] || "");
     if (marked) {
       const right = /right/i.test(marked[0]);
@@ -253,6 +258,11 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
     const invented = inventedNumbers(say, [...c.said, ...c.board.map((b) => b.text), ...c.problems.map((p) => p.question), ...(c.solution ? [c.solution.statement, ...c.solution.steps.map((s) => s.result || "")] : [])]);
     if (invented.length) out.push({ code: "numbers", hard: false, fix: `it uses numbers nobody gave (${invented.slice(0, 3).join(", ")}) — only the problem's, the student's, or the verified solution's.` });
   }
+  // 8b. Never invent an error in work that is right (reported live: "what went wrong there?" asked about a correct line).
+  if (c.verdict === "correct" && !c.problems.some((p) => !p.solved) && /\b(?:what went wrong|what'?s wrong|where(?:'s| is| was) the (?:error|mistake|slip)|spot the (?:error|mistake|slip)|find the (?:error|mistake|slip)|qu'?est-ce qui (?:ne va pas|cloche)|où est l'erreur)\b/i.test(say))
+    out.push({ code: "no_error", hard: true, fix: "their step is RIGHT (checked) — there is no error to find. Don't ask what went wrong or hint at a mistake; confirm in a few words and move on (a different example is fine, but say it is a new one)." });
+  // 8c. Thinking aloud / correcting itself mid-reply ("= 40… non, pardon") reads as chaos: work it out first, then say it once.
+  if (SELF_CORRECTION.test(say)) out.push({ code: "self_correct", hard: true, fix: "the reply corrects itself mid-way (\"wait\", \"non, pardon\", \"let me redo\", \"actually\"). Work the maths out first, then say only the clean final version, once." });
   // 9. Not a repeat of what just failed to land; no app machinery; never harsh.
   if (repeatsRecentReply(say, c.history) || repeatsRecentQuestion(say, c.history)) out.push({ code: "repeat", hard: false, fix: "you said almost exactly this a moment ago and it didn't land. Change the angle: a smaller step, a picture on the board, numbers instead of letters, or explain it plainly." });
   if (mentionsMechanics(say)) out.push({ code: "mechanics", hard: false, fix: "it talks about the app's machinery — just teach." });

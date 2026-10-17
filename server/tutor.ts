@@ -215,7 +215,7 @@ CONTEXT
 /** The student needs an explanation now, not another question: they're lost, asked to start over, asked to be shown
  *  or told, asked why, or questions have failed twice. In this mode the "never derive an equation" guards step aside
  *  (the final answer stays protected). Exported for tests. */
-const NEEDS_EXPLANATION = /\b(?:(?:can|could) we (?:start|go) (?:over|again|back)|start (?:over|again|from (?:the )?(?:beginning|start|scratch))|from the (?:beginning|start)|(?:i )?(?:still )?(?:don'?t|do not|didn'?t|did not|can'?t) (?:really )?(?:understand|get it|get (?:this|that|it)|see|follow)|(?:they|i) don'?t understand|i'?m (?:so |still |really )?(?:lost|confused|stuck)|(?:makes|made) no sense|doesn'?t make sense|what do you mean|(?:explain|show me|walk me through|tell me)\b|(?:can|could) you (?:just )?(?:explain|show|tell|write|do)|i (?:have|got) no idea|i don'?t know|no idea|help me|on (?:recommence|reprend)|recommen[cç]|depuis le d[ée]but|je (?:ne )?(?:comprends|capte|vois) (?:pas|rien)|j'?ai pas compris|je suis (?:perdu|bloqu[ée])e?|explique|montre[- ]moi|aide[- ]moi|je sais pas)/i;
+const NEEDS_EXPLANATION = /\b(?:(?:can|could) we (?:start|go) (?:over|again|back)|start (?:over|again|from (?:the )?(?:beginning|start|scratch))|from the (?:beginning|start)|(?:i )?(?:still )?(?:don'?t|do not|didn'?t|did not|can'?t) (?:really )?(?:understand|get it|get (?:this|that|it)|see|follow)|(?:they|i) don'?t understand|i'?m (?:so |still |really )?(?:lost|confused|stuck)|(?:makes|made) no sense|doesn'?t make sense|what do you mean|(?:explain|show me|walk me through|tell me)\b|(?:can|could) you (?:just )?(?:explain|show|tell|write|do)|i (?:have|got) no idea|i don'?t know|no idea|idk|i\s?dunno|dunno|no clue|i'?m not sure|not sure (?:what|how|where)|help me|what(?:'s| is| are| does)\b[^.?!]{0,60}\b(?:actually|exactly|really|even|mean)\b|^\s*(?:what(?:'s| is| are)|c'est quoi|qu'est-ce que)\b(?!\s*(?:the |la |le )?(?:answer|next|result|value|solution|r[ée]ponse))[^.?!\d=+*/^]{3,40}\??\s*$|on (?:recommence|reprend)|recommen[cç]|depuis le d[ée]but|je (?:ne )?(?:comprends|capte|vois) (?:pas|rien)|j'?ai pas compris|je suis (?:perdu|bloqu[ée])e?|explique|montre[- ]moi|aide[- ]moi|je sais pas|j'?sais pas|aucune id[ée]e|ch?ais pas)/i;
 export function needsExplanation(message: string, teaching?: TutorTeachingState): boolean {
   const m = String(message || "").trim();
   if (/^\s*\[(?:Exercise|Exercice|Activity|Activité)\]/i.test(m)) return (teaching?.stuckStreak || 0) >= 2;
@@ -448,11 +448,22 @@ export function strategyMissing(message: string, board: { kind?: string }[], wri
 /** Talk about the app's own machinery — a board write that "bounced", a tool that refused, "the board won't let me" —
  *  which the student must never hear (reported live: "That first write bounced — the board won't let me put the equation
  *  up before you've stated it"). Exported for tests. */
-const MECHANICS = /\b(?:(?:write|line|entry|update) (?:just )?bounced|got rejected|was rejected|(?:it|that) (?:was )?refused|the board (?:won'?t|wouldn'?t|didn'?t) let me|won'?t let me (?:put|write)|(?:the|my|that) (?:first |board )?write (?:failed|bounced|didn'?t (?:go through|work))|(?:the|a) tool (?:call|failed|error|refused)|the app (?:won'?t|wouldn'?t|blocked|refused)|the system (?:won'?t|blocked|refused)|guardrail|le tableau (?:ne )?(?:m'a pas laissé|refuse|a refusé)|l'outil a refusé)\b/i;
+const MECHANICS = /\b(?:(?:write|line|entry|update) (?:just )?bounced|got rejected|was rejected|(?:it|that) (?:was )?refused|the board (?:won'?t|wouldn'?t|didn'?t) let me|won'?t let me (?:put|write)|(?:the|my|that) (?:first |board )?write (?:failed|bounced|didn'?t (?:go through|work))|(?:the|a) tool (?:call|failed|error|refused)|the app (?:won'?t|wouldn'?t|blocked|refused)|the system (?:won'?t|blocked|refused)|guardrail|(?:the )?(?:code|checker|solver|verifier|system|app) (?:has |had )?(?:confirm(?:s|ed)|check(?:s|ed)|verif(?:y|ies|ied)|says|said|agrees?|marked)|(?:checked|verified|confirmed) (?:by|with) (?:the )?(?:code|app|system|solver|checker)|code-checked|le code (?:confirme|a (?:vérifié|confirmé))|le tableau (?:ne )?(?:m'a pas laissé|refuse|a refusé)|l'outil a refusé)\b/i;
 export function mentionsMechanics(reply: string): boolean { return MECHANICS.test(String(reply || "")); }
 /** Last-resort cleanup: drop every sentence that talks about the machinery. Exported for tests. */
 export function stripMechanics(reply: string): string {
-  return String(reply || "").split(/(?<=[.!?…])\s+/).filter((s) => !MECHANICS.test(s)).join(" ").replace(/\s{2,}/g, " ").trim();
+  // First try to cut only the clause that talks about the machinery (", and the code confirms it"), so the real content of
+  // the sentence stays; a sentence that is nothing but machinery goes whole.
+  const trimmed = (sn: string) => {
+    if (!MECHANICS.test(sn)) return sn;
+    // Chunks with the separator that came before each, so what's left reads as the writer wrote it.
+    const bits = sn.split(/(,?\s+(?:and|but|so)\s+(?=the |that |it )|\s+[—–]\s+|[,;]\s+)/i);
+    const chunks = Array.from({ length: Math.ceil(bits.length / 2) }, (_, k) => ({ text: bits[k * 2], sep: k ? bits[k * 2 - 1] : "" })).filter((c) => !MECHANICS.test(c.text));
+    const out = chunks.map((c, k) => (k ? c.sep : "") + c.text);
+    const joined = out.join("").replace(/^[\s,;—–]+|[\s,;—–]+$/g, "").replace(/^(?:and|but|so)\s+/i, (m) => "").replace(/^[a-zà-ÿ]/, (c) => c.toUpperCase());
+    return joined && joined.length < sn.length ? (/[.!?…]$/.test(joined) ? joined : `${joined}.`) : "";
+  };
+  return String(reply || "").split(/(?<=[.!?…])\s+/).map(trimmed).filter(Boolean).join(" ").replace(/\s{2,}/g, " ").trim();
 }
 
 /** The student's motivational state from what they wrote — expert tutors watch confidence and frustration as closely

@@ -8,6 +8,19 @@
 import type { TutorTeachingState, TutorTurnRecord } from "../../shared/types.ts";
 import { MOVES, MOVE_SUPPORT, type Move } from "../../shared/tutorTurn.ts";
 
+/** Moves that only ASK. A tutor who asks again and again without ever teaching is funnelling (reported live: eight focusing
+ *  questions in a row on a poem, the student paraphrasing and the tutor steering). */
+export const QUESTION_ONLY = new Set(["elicit", "revoice", "focus", "probe_why", "hint_concept", "hint_procedure"]);
+/** How many of the most recent turns only asked while the student was not getting it right alone (0 when they were flying). */
+export function questionRun(log: TutorTurnRecord[] | undefined): number {
+  let n = 0;
+  for (const r of [...(log || [])].reverse()) {
+    if (!QUESTION_ONLY.has(r.move)) break;
+    n++;
+  }
+  return n >= 3 && (log || []).slice(-3).every((r) => r.verdict === "correct" || r.diagnosis === "correct") ? 0 : n;
+}
+
 export interface PolicyInput {
   teaching?: TutorTeachingState;
   /** The student needs it explained now (lost, "start over", "explain", "write it", why, frustrated). */
@@ -17,6 +30,8 @@ export interface PolicyInput {
   asksForWorkedExample: boolean;
   /** Code verified their step or answer this turn. */
   verdict?: "correct" | "incorrect";
+  /** Consecutive question-only turns (questionRun). */
+  questionRun?: number;
 }
 
 export interface Policy {
@@ -41,6 +56,7 @@ export function supportPolicy(p: PolicyInput): Policy {
   let explainAllowed = false;
   if (p.needsExplanation || p.asksWhy) { max = Math.max(max, 4); explainAllowed = true; reason = p.asksWhy ? "they asked why — explain the reason" : "they're lost or asked to be shown — explain it plainly now"; }
   if (stuck >= 2 && p.verdict !== "correct") { max = Math.max(max, 4); explainAllowed = true; reason = `stuck ${stuck} turns — questions aren't working, teach the missing idea`; }
+  if ((p.questionRun ?? 0) >= 3 && p.verdict !== "correct") { max = Math.max(max, 4); explainAllowed = true; reason = `${p.questionRun} questions in a row without teaching — share the idea yourself now`; }
   if (p.asksForWorkedExample || stuck >= 4) { max = 5; explainAllowed = true; reason = p.asksForWorkedExample ? "they asked to see it worked through" : "a long struggle — show a worked example with different numbers"; }
   const allowed = MOVES.filter((m) => MOVE_SUPPORT[m] <= max);
   return { maxSupport: max, explainAllowed, allowed, reason };
@@ -58,7 +74,8 @@ export function nextSupportState(prev: TutorTeachingState | undefined, delivered
 
 /** How the tutor should ADAPT this turn, worked out by code from what it already tried (the turn log) and how the student
  *  is doing — so a failed explanation changes angle instead of being repeated, and a student who is flying gets less. */
-export function adaptationLines(log: TutorTurnRecord[] | undefined, now: { wrong: boolean; stuck: boolean }): string[] {
+const ANGLES = ["picture", "numbers", "analogy", "smaller_step", "symbols", "contrast"] as const;
+export function adaptationLines(log: TutorTurnRecord[] | undefined, now: { wrong: boolean; stuck: boolean; stillLost?: boolean }, openers: string[] = []): string[] {
   const l = (log || []).slice(-6);
   const out: string[] = [];
   const last = l[l.length - 1];
@@ -67,6 +84,15 @@ export function adaptationLines(log: TutorTurnRecord[] | undefined, now: { wrong
     const tried = [...new Set(l.filter(teaching).map((r) => r.angle).filter(Boolean))] as string[];
     out.push(`YOUR LAST ${last.move.replace(/_/g, " ").toUpperCase()} DID NOT LAND (they are ${now.wrong ? "still wrong" : "still stuck"}). Do NOT repeat it or say it louder: change the angle${tried.length ? ` (already used: ${tried.join(", ")})` : ""} — a picture, real numbers, an everyday analogy, a smaller piece, or a contrast with the wrong idea. Name what was hard to see before you re-explain. Set "angle" to the one you use.`);
   }
+  const used = [...new Set(l.map((r) => r.angle).filter(Boolean))] as string[];
+  const untried = ANGLES.filter((a) => !used.includes(a));
+  if (now.stillLost && used.length) out.push(`THEY SAY THEY STILL DON'T GET IT, and you have already tried: ${used.join(", ")}. Re-explaining the same way again will not work. First find out WHAT exactly is unclear — ask them to point at the part that loses them, or to say it back in their own words — OR take an angle you haven't used (${untried.join(", ") || "a smaller prerequisite step"}). Say what you think was confusing in a sentence, like a person would.`);
+  const run = questionRun(log);
+  if (run >= 3) out.push(`YOU HAVE ASKED ${run} QUESTIONS IN A ROW without teaching, and they are not getting there alone. Stop steering them toward your answer. This turn TEACH: say the one idea or observation yourself in 2-3 plain sentences (what you notice, why it matters), then ask ONE small question that makes them use it.`);
+  const whys = l.slice(-4).filter((r) => r.move === "probe_why").length;
+  if (whys >= 2 && !now.wrong && !now.stuck) out.push(`You have asked "why" ${whys} times in your last 4 turns. Don't ask why again this turn: accept what they said, then give a variation with new numbers, the next step, or a short summary of what they can now do. Short answers ("to keep it balanced") are fine answers.`);
+  const stale = [...new Set(openers.filter((o, i) => openers.indexOf(o) !== i))];
+  if (stale.length) out.push(`You keep opening with the same words (${stale.map((o) => `"${o}…"`).join(", ")}). Open differently this time: react to what THEY just said, in your own natural words, or start with the content.`);
   const fast = l.slice(-2);
   if (fast.length === 2 && fast.every((r) => r.verdict === "correct" && r.support <= 1)) out.push("They are moving fast and getting it right alone: say less, skip the scaffolding, make the next step harder or ask why it works.");
   const tutorWords = l.reduce((n, r) => n + r.words, 0), theirWords = l.reduce((n, r) => n + r.studentWords, 0);
