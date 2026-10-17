@@ -59,7 +59,7 @@ export interface VerifyContext {
 export const SELF_CORRECTION = /(?:…|\.\.\.|—|,)\s*(?:non,?\s+(?:pardon|attends|en fait)|no,?\s+wait|wait,?\s+(?:no|that)|hmm,?\s|sorry,?\s+(?:let me|that'?s|i)|let me (?:redo|recompute|recalculate|rethink)|pardon,|oops)|\b(?:actually,? (?:no|that'?s wrong|let me)|scratch that|je me trompe|je reprends)\b/i;
 
 export interface Issue {
-  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "off_topic" | "plan_too_early" | "ignores_student" | "verdict_mismatch" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh" | "no_error" | "self_correct";
+  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "off_topic" | "plan_too_early" | "ignores_student" | "verdict_mismatch" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh" | "no_error" | "self_correct" | "unsourced_quote";
   /** The instruction for the repair call. */
   fix: string;
   /** A leak or a pointer at nothing must be fixed; the rest are quality. */
@@ -168,6 +168,20 @@ export function ignoresStudentAnswer(message: string, heard: string, speech: str
 }
 const contentWordsOf = (t: string): string[] => (String(t).toLowerCase().match(/[a-zà-ÿ]{5,}/g) || []).filter((w) => !FILLER.has(w));
 
+/** Quotations (« … » / "…") of five or more words that appear nowhere the student gave: a model quoting a poem, a source or a
+ *  thinker from memory gets the words wrong, and the student then analyses text that does not exist. */
+export function unsourcedQuotes(speech: string, sources: string[]): string[] {
+  const norm = (x: string) => x.toLowerCase().replace(/[\u2018\u2019\u201c\u201d«»"']/g, " ").replace(/[^a-zà-ÿ0-9 ]/gi, " ").replace(/\s+/g, " ").trim();
+  const hay = sources.map(norm).join(" | ");
+  const out: string[] = [];
+  for (const m of speech.matchAll(/«\s*([^»]{12,})\s*»|[“"]([^”"]{12,})[”"]/g)) {
+    const q = m[1] || m[2] || "";
+    if (/[$\\=^]/.test(q) || q.trim().split(/\s+/).length < 5) continue;
+    if (!hay.includes(norm(q))) out.push(q.trim().slice(0, 60));
+  }
+  return out;
+}
+
 export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   const out: Issue[] = [];
   const say = speechText(t);
@@ -238,6 +252,8 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   }
   if (!c.wants.exercise && !c.wants.different && !c.wants.problemOnBoard && !c.wants.draw && !c.verdict && ignoresStudentAnswer(c.message, t.heard, say)) out.push({ code: "ignores_student", hard: true, fix: `the student just said "${c.message.slice(0, 80)}" and the reply doesn't respond to it. Start from THEIR words: say whether it fits (or what it would need to be) and ask how they got it, before anything else.` });
   // Only objects that exist in the problem: no cyclist in a car problem.
+  const uq = unsourcedQuotes(say, [...c.said, ...c.board.map((b) => b.text || ""), ...c.problems.map((p) => p.question || "")]);
+  if (uq.length) out.push({ code: "unsourced_quote", hard: true, fix: `it quotes "${uq[0]}", words the student never gave and that are not on the board. Never quote a text from memory: point at a line by number or describe it in your own words, or ask the student to read the line out.` });
   const objs = inventedObjects([say, ...t.board.map(opText)], [...c.said, ...c.board.map((b) => b.text || ""), ...c.problems.map((p) => p.question || ""), ...(c.solution ? [c.solution.statement, ...c.solution.steps.map((s) => `${s.idea || ""} ${s.result || ""}`)] : [])]);
   // A NEW problem brings its own objects; only an existing problem's objects are fixed.
   const introducesProblem = c.wants.different || c.wants.exercise || c.wants.problemOnBoard || t.move === "practice" || t.board.some((o) => o.op === "problem" || o.op === "topic");

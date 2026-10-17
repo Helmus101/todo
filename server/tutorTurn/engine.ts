@@ -206,7 +206,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     const nextKind = lastTwoMcq && !isDiscussionSubject(context.subject, spokenText) ? "compute" : (["compute", "explain_why", "spot_error", "predict", "compare", "sketch"] as const).find((k) => !kinds.includes(k)) ?? "any";
     return {
       subject: context.subject, topic: wants.different ? "" : topic, level: levelText, difficulty: difficultyAsked(message) ?? difficultyFrom(input.teaching?.log),
-      kind: (isDiscussionSubject(context.subject, spokenText) && nextKind === "compute" ? "explain_why" : nextKind) as any,
+      kind: (wants.exercise && !/\b(?:err|mistake|wrong|why|explain|erreur|faute|pourquoi|expliq)/i.test(message) ? "compute" : isDiscussionSubject(context.subject, spokenText) && nextKind === "compute" ? "explain_why" : nextKind) as any,
       used, lang: (fr ? "fr" : "en") as "fr" | "en", ask: wants.exercise || wants.different ? message.slice(0, 200) : undefined,
       allowedTopics: objectives.map((o) => o.label), scope,
       recent: { student: message.startsWith("[") ? undefined : message, tutor: [...history].reverse().find((h) => h.role === "assistant")?.text },
@@ -360,7 +360,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   // They were promised an exercise and none was placed (the generator failed twice, or the board refused it): the reply must not say
   // "here is a new problem" over nothing.
   if (exerciseIntended && !applied.problems.length && !applied.board.some((e) => e.kind === "given")) {
-    const claimsExercise = (sn: string) => /\b(?:new|another|fresh|next|different)\s+(?:problem|exercise|question)\b|\bhere(?:'s| is| are)\b[^.?!]*\b(?:problem|exercise|question)\b|\b(?:check|test) (?:your|our) understanding\b/i.test(sn);
+    const claimsExercise = (sn: string) => /\b(?:new|another|fresh|next|different)\s+(?:problem|exercise|question)\b|\bhere(?:'s| is| are)\b[^.?!]*\b(?:problem|exercise|question)\b|\b(?:check|test) (?:your|our) understanding\b|\b(?:la |le |les )?(?:voil[àa]|voici)\b|\b(?:nouvel|autre|prochain)e?\s+(?:exercice|probl[èe]me|question|[ée]quation)\b/i.test(sn);
     if (turn.speech.some(claimsExercise)) {
       const kept = turn.speech.filter((sn) => !claimsExercise(sn));
       if (kept.length && kept.some((sn) => /\?\s*$/.test(sn))) turn = { ...turn, speech: kept };

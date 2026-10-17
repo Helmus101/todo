@@ -8,6 +8,8 @@ import { solveProblem } from "../solver.ts";
 import { extractJsonObject } from "../../shared/tutorTurn.ts";
 import { repeatedExercise, mostlyContains, type QuestionKind } from "./exercises.ts";
 import { inScope } from "./scope.ts";
+import { unsourcedQuotes } from "./verify.ts";
+import { asksForSeveralValues } from "../tutor.ts";
 import type { TutorTurnRecord } from "../../shared/types.ts";
 
 export type Difficulty = "easier" | "at_level" | "harder";
@@ -121,6 +123,8 @@ export async function generateProblem(req: ProblemRequest, tokens: { in: number;
     else {
       const built = makeProblem(j, true);
       if ("error" in built) complaint = String(built.error).replace(/^(?:ERROR|REJECTED):\s*/i, "");
+      else if (asksForSeveralValues(String(j.question || "")) && !(Array.isArray(j.options) && j.options.length >= 2)) complaint = "the answer box takes ONE answer, but this asks for several values — ask for exactly one (\"the larger root\", \"the sum of the roots\", \"the value of x\") or make it multiple choice"
+      else if (unsourcedQuotes(String(j.question || ""), [req.recent?.student || "", req.recent?.tutor || "", req.ask || ""]).length) complaint = "the statement quotes a text (a letter, a speech, a source) that you made up — never invent a quotation or present it as a real document. Describe the source in your own words without quoting it, or ask about the student's own text"
       else if (req.scope && !inScope(`${j.topic || ""} ${j.question}`, req.scope, 1)) complaint = `that is off topic for this session (${req.topic || req.subject || "the session's topic"}) — write it on the session's topic`;
       else if (/\b(?:error|mistake|wrong|erreur|faute)\b/i.test(String(j.question)) && String(j.mistake || "").trim().length < 8) complaint = "an error-spotting exercise needs a \"mistake\" field: the one wrong line and what it should be (recompute every line first — if all are correct, introduce one error)"
       else if (rambles(j)) complaint = "the explanation or hint thinks aloud (\"wait\", \"actually\", \"let's re-verify\") — work it out first, then write only the clean final reasoning"
@@ -144,8 +148,13 @@ export async function generateProblem(req: ProblemRequest, tokens: { in: number;
  *  times because the generator's own key was wrong). True only when the independent solver is verified and disagrees;
  *  an unverifiable or non-numeric item passes (nothing to compare). */
 export async function keyDisagrees(j: any, built: any, req: ProblemRequest, tokens: { in: number; out: number; cachedIn: number }): Promise<boolean> {
-  if (process.env.TUTOR_KEYCHECK === "off" || (Array.isArray(built?.options) && built.options.length)) return false; // (the call-counting sims switch it off)
-  const mine = Number.isFinite(Number(built?.value)) ? Number(built.value) : Number(String(built?.answer ?? "").replace(",", ".").match(/-?\d+(?:\.\d+)?/)?.[0]);
+  if (process.env.TUTOR_KEYCHECK === "off") return false; // (the call-counting sims switch it off)
+  // Multiple choice: only when every option is a computed value ("… = 288.4"), never a place or a reason ("line 3").
+  const opts: string[] = Array.isArray(j?.options) ? j.options.map((o: unknown) => String(o || "")) : [];
+  const numericOptions = opts.length >= 3 && opts.every((o) => /\d[.,]\d|\d{2,}/.test(o)) && !/\b(?:which line|what line|where|error|mistake|wrong|erreur|faute|quelle ligne)\b/i.test(String(j?.question || ""));
+  if (opts.length && !numericOptions) return false;
+  const optValue = (o: string) => Number((o.split("=").pop() || "").replace(",", ".").match(/-?\d+(?:\.\d+)?/g)?.pop());
+  const mine = numericOptions ? optValue(opts[Number(j?.correct)] || "") : Number.isFinite(Number(built?.value)) ? Number(built.value) : Number(String(built?.answer ?? "").replace(",", ".").match(/-?\d+(?:\.\d+)?/)?.[0]);
   if (!Number.isFinite(mine)) return false;
   try {
     const r = await solveProblem(String(j.question), req.subject);

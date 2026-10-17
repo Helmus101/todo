@@ -35,7 +35,9 @@ async function runScenario(scenario) {
   const turns = Number(process.env.EVAL_TURNS || scenario.turns || 10);
   let message = scenario.opening;
   for (let i = 0; i < turns; i++) {
-    const out = await playTurn(S, message, { voice: !!scenario.voice });
+    let out = await playTurn(S, message, { voice: !!scenario.voice });
+    // A provider timeout is infrastructure, not the tutor: retry the turn once before counting it.
+    if (out.error) { S.turns.pop(); out = await playTurn(S, message, { voice: !!scenario.voice }); }
     if (out.error) break;
     let said = await studentSay(scenario, S);
     const m = /(?:^|\n)\s*ANSWER\s*:\s*([^\n]+)/i.exec(said);

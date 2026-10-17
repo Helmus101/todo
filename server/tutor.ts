@@ -809,7 +809,7 @@ export function pointsAtMissingObject(reply: string, boardKinds: string[]): stri
 
 /** The student asked to be given an exercise ("give me a problem", "test me", "un exercice"). Exported for tests. */
 export function wantsExercise(message: string): boolean {
-  return asksForProblem(message) || /\b(?:one|a|the)\s+(?:last|final|other)\s+(?:problem|exercise|question|one)\b|\bcan you (?:do|make|give|create)\b[^.?!]{0,20}\b(?:problem|exercise|question)\b|\b(?:quiz|test) me\b|\binterroge[- ]moi\b|\b(?:un|des|un autre|nouvel?)\s+(?:exo|exercice|probl[èe]me)s?\b|\bpractice (?:problem|question)s?\b/i.test(String(message || ""));
+  return asksForProblem(message) || /\b(?:one|a|the)\s+(?:last|final|other)\s+(?:problem|exercise|question|one)\b|\bcan you (?:do|make|give|create)\b[^.?!]{0,20}\b(?:problem|exercise|question)\b|\b(?:quiz|test) me\b|\binterroge[- ]moi\b|\b(?:un|des|un autre|nouvel?)\s+(?:exo|exercice|probl[èe]me)s?\b|\bdonne(?:-moi)?\s+(?:moi\s+)?(?:l'|une?\s+|la\s+|des\s+)?(?:[ée]quation|exo|exercice|probl[èe]me|question)s?\b|\bpractice (?:problem|question)s?\b/i.test(String(message || ""));
 }
 
 /** A board line that sets up a problem nobody gave: a scenario/givens line (2+ quantities with units) carrying a

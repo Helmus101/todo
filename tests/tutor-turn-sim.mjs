@@ -75,6 +75,10 @@ export async function runTutorTurnSim(check, section) {
       codes({ move: "explain", speech: ["Le discriminant vaut 64 - 24 = 40… non, pardon, c'est 64 - 24 = 40.", "Tu vois pourquoi ?"] }).includes("self_correct") &&
       codes({ move: "explain", speech: ["Sorry, let me redo that: it is 40.", "Clear?"] }).includes("self_correct") &&
       !codes({ move: "focus", speech: ["Check the sign of T in line 2.", "Which way does the string pull M?"] }).includes("self_correct"));
+    check("verify: a quotation the student never gave is refused (a poem quoted from memory); quoting their own words or a board line is fine",
+      codes({ move: "focus", speech: ["Au vers 2 il dit « sans bruit, sans voir, sans entendre » : qu'est-ce que ça change ?"] }).includes("unsourced_quote") &&
+      !codes({ move: "focus", speech: ["Tu as écrit « il part plein d'espoir voir sa fille » : et à la fin ?"] }, { ...vctx, said: ["il part plein d'espoir voir sa fille"] }).includes("unsourced_quote") &&
+      !codes({ move: "focus", speech: ["You said \"balance\" there."] }).includes("unsourced_quote"));
     check("verify: asking 'what went wrong' about a step that is RIGHT is refused (reported live: an invented error); a real error hunt is fine",
       codes({ move: "probe_why", speech: ["Right.", "What went wrong there, and what should the second line have been?"] }, { ...vctx, verdict: "correct" }).includes("no_error") &&
       !codes({ move: "probe_why", speech: ["Right.", "What went wrong there?"] }, { ...vctx, verdict: undefined }).includes("no_error"));

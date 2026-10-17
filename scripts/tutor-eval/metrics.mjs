@@ -27,7 +27,8 @@ export function computeMetrics(S, scenario) {
     const r = t.reply;
     if (hideToolLeaks(r) !== r.replace(/\s+/g, " ").trim() && hideToolLeaks(r).trim() !== r.trim()) flag(i, "tool-syntax", r);
     if (/\bWRITE_TO_BOARD\b|\{"op"|"cue":|\[Exercise\]|\bSET_OBJECTIVES\b/.test(r)) flag(i, "tool-syntax", r);
-    if (t.guardrailTripped) flag(i, "leak", "guardrail tripped: the reply gave away an answer key or open value");
+    // guardrailTripped is set from the PRE-repair issues (the guard fired and the reply was fixed), so it is informational.
+    if (t.guardrailTripped) flag(i, "guard-fired", "the first draft leaked a key; repaired before sending");
     // Only plain-number claims: algebra and integrals ("2x^2 - 8 = 0", "3(0)^2+1 = 1") lose their variables to the parser.
     for (const c of findArithmeticClaims(r.replace(/\$[^$]*[A-Za-z\\^_][^$]*\$/g, " ").replace(/\b\d*[a-z]\^?\d*\b/gi, (m) => (/^\d+$/.test(m) ? m : " ")))) if (c.mismatch) flag(i, "wrong-arithmetic", c.raw);
     const created = (t.newBoard || []).some((e) => e.kind !== "focus" && e.kind !== "annotation") || (t.newProblems || []).length > 0;
