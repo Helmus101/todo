@@ -107,6 +107,12 @@ export async function runTutorTurnSim(check, section) {
         !iaq(h, "so mass times velocity so kilograms meters per second", "", ["Mass times velocity gives kg m/s.", "What is it before the blocks collide?"]) &&
         !iaq([{ role: "assistant", text: "Here is the rule." }], "so mass times velocity so kilograms", "", ["Let's go on."]));
     }
+    { const { unstatedSetup: us } = await import("../server/tutorTurn/verify.ts");
+      check("verify: 'the blocks' with no collision ever stated is refused; once stated (board, problem or earlier reply) it passes (reported live: 'which masses are you talking about')",
+        !!us("What is the total momentum before the blocks collide?", ["Definition of linear momentum p = mv"]) &&
+        !us("What is the total momentum before the blocks collide?", ["A 3 kg block moving at 4 m/s hits a 1 kg block"]) &&
+        !us("Which way do the masses accelerate?", ["Masses M and m on a slope"]) && !us("What is the momentum?", []));
+    }
     check("verify: a quotation the student never gave is refused (a poem quoted from memory); quoting their own words or a board line is fine",
       codes({ move: "focus", speech: ["Au vers 2 il dit « sans bruit, sans voir, sans entendre » : qu'est-ce que ça change ?"] }).includes("unsourced_quote") &&
       !codes({ move: "focus", speech: ["Tu as écrit « il part plein d'espoir voir sa fille » : et à la fin ?"] }, { ...vctx, said: ["il part plein d'espoir voir sa fille"] }).includes("unsourced_quote") &&

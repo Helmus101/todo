@@ -61,7 +61,7 @@ export interface VerifyContext {
 export const SELF_CORRECTION = /(?:…|\.\.\.|—|,)\s*(?:non,?\s+(?:pardon|attends|en fait)|no,?\s+wait|wait,?\s+(?:no|that)|hmm,?\s|sorry,?\s+(?:let me|that'?s|i)|let me (?:redo|recompute|recalculate|rethink)|pardon,|oops)|\b(?:actually,? (?:no|that'?s wrong|let me)|scratch that|je me trompe|je reprends)\b/i;
 
 export interface Issue {
-  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "off_topic" | "plan_too_early" | "ignores_student" | "verdict_mismatch" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh" | "no_error" | "self_correct" | "unsourced_quote" | "stale_opener" | "fact" | "format_leak";
+  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "off_topic" | "plan_too_early" | "ignores_student" | "verdict_mismatch" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh" | "no_error" | "self_correct" | "unsourced_quote" | "stale_opener" | "fact" | "format_leak" | "unstated_setup";
   /** The instruction for the repair call. */
   fix: string;
   /** A leak or a pointer at nothing must be fixed; the rest are quality. */
@@ -183,6 +183,17 @@ export function ignoresAnswerToQuestion(history: { role: string; text: string }[
 }
 const contentWordsOf = (t: string): string[] => (String(t).toLowerCase().match(/[a-zà-ÿ]{5,}/g) || []).filter((w) => !FILLER.has(w));
 
+/** "the blocks", "those masses", "the two carts" — a definite reference to objects nobody has introduced yet in this sitting
+ *  (reported live: "Let's set up that collision… what is the total momentum before the blocks collide?" with no collision stated). */
+export function unstatedSetup(speech: string, sources: string[]): string | null {
+  const hay = sources.join(" \n ").toLowerCase();
+  for (const m of speech.matchAll(/\b(?:the|those|these|both|the two|the three)\s+((?:\w+\s)?)(blocks|masses|carts|trolleys|balls|cars|particles|crates|boxes|bodies|spheres|skaters|wagons|vehicles)\b/gi)) {
+    const noun = m[2].toLowerCase(), stem = noun.replace(/(?:es|s)$/, "");
+    if (!new RegExp(`\\b${noun}\\b|\\b${stem}s?\\b`).test(hay)) return `${m[0]}`;
+  }
+  return null;
+}
+
 /** Quotations (« … » / "…") of five or more words that appear nowhere the student gave: a model quoting a poem, a source or a
  *  thinker from memory gets the words wrong, and the student then analyses text that does not exist. */
 export function unsourcedQuotes(speech: string, sources: string[]): string[] {
@@ -277,6 +288,8 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
     if (same >= 1) out.push({ code: "stale_opener", hard: same >= 2, fix: `it opens with "${say.split(/\s+/).slice(0, 2).join(" ")}" again, as in recent replies. Start differently: react to something specific they said (in their own words), or begin straight with the content — no stock confirmation.` });
   }
   if (t.speech.some((sn) => FORMAT_INSTRUCTION.test(sn))) out.push({ code: "format_leak", hard: false, fix: "a sentence is an answer-format instruction (\"Provide your answer to three significant figures\"): that belongs to the exercise's answer box, not to what you say — remove it." });
+  { const ghost = unstatedSetup(say, [...c.board.map((b) => b.text || ""), ...c.problems.map((p) => p.question || ""), ...c.said, ...c.history.map((h) => h.text), ...t.board.map(opText)]);
+    if (ghost) out.push({ code: "unstated_setup", hard: true, fix: `it refers to "${ghost}" but the situation hasn't been stated yet. First put the problem on the board (a step op of kind "given" with all the numbers) or state it in a sentence — then ask about it.` }); }
   const uq = unsourcedQuotes(say, [...c.said, ...c.board.map((b) => b.text || ""), ...c.problems.map((p) => p.question || "")]);
   if (uq.length) out.push({ code: "unsourced_quote", hard: true, fix: `it quotes "${uq[0]}", words the student never gave and that are not on the board. Never quote a text from memory: point at a line by number or describe it in your own words, or ask the student to read the line out.` });
   const objs = inventedObjects([say, ...t.board.map(opText)], [...c.said, ...c.board.map((b) => b.text || ""), ...c.problems.map((p) => p.question || ""), ...(c.solution ? [c.solution.statement, ...c.solution.steps.map((s) => `${s.idea || ""} ${s.result || ""}`)] : [])]);
