@@ -1688,6 +1688,11 @@ export interface GraphSpec {
   params?: { name: string; min: number; max: number; value: number; step?: number; label?: string }[];
   xmin: number; xmax: number;
   ymin?: number; ymax?: number;
+  /** Shaded areas between two curves over an x-range (consumer/producer surplus, a profit rectangle, area under a curve, deadweight loss).
+   *  `upper` / `lower` are expressions in x ("lower" defaults to "0"); `label` is written inside the area. */
+  regions?: { upper: string; lower?: string; from: number; to: number; label?: string; color?: "blue" | "red" | "green" | "orange" | "purple" | "ink" }[];
+  /** Vertical reference lines (the equilibrium quantity, a root, an asymptote), dashed, with an optional label at the top. */
+  vlines?: { x: number; label?: string }[];
   /** Marked points (a root, a vertex, a data point); with `connect` they are joined into a line (a data plot). */
   points?: { x: number; y: number; label?: string }[];
   connect?: boolean;
@@ -1937,7 +1942,7 @@ function parseNumericOrFraction(s: string): number {
   // rules firstNumber already uses: a comma/space before EXACTLY three digits is a thousands separator, any
   // other digit-comma-digit is a decimal comma.
   const cleaned = normalizeMinus(s)
-    .replace(/(\d)[ \u00a0,](?=\d{3}(?!\d))/g, "$1")
+    .replace(/(?!(?<![\d.,])0)(\d)[ \u00a0,](?=\d{3}(?!\d))/g, "$1")
     .replace(/(\d),(?=\d)/g, "$1.");
   const direct = Number(cleaned);
   if (Number.isFinite(direct)) return direct;
@@ -1956,7 +1961,7 @@ function parseNumericOrFraction(s: string): number {
  *  number alone — that is how an extra root, a partial root, or the question itself passed as the answer. */
 export function quantityCount(s: string): number {
   let t = normalizeMinus(String(s || ""));
-  t = t.replace(/(\d)[ \u00a0,](?=\d{3}(?!\d))/g, "$1").replace(/(\d),(?=\d)/g, "$1.");
+  t = t.replace(/(?!(?<![\d.,])0)(\d)[ \u00a0,](?=\d{3}(?!\d))/g, "$1").replace(/(\d),(?=\d)/g, "$1.");
   t = t.replace(/-?\d*(?:\.\d+)?\s*pi\s*\/\s*-?\d+(?:\.\d+)?/gi, " ")   // "5pi/6"
     .replace(/-?\d+(?:\.\d+)?\s*\/\s*-?\d+(?:\.\d+)?/g, " ");           // "7/2"
   return (t.match(/\d+(?:\.\d+)?(?:e-?\d+)?/gi) || []).length;
@@ -1967,7 +1972,7 @@ export function quantityCount(s: string): number {
  *  reduced to their first number. Reported live: "12 N", "2.5 m/s²", "30°" and "1,5" were all marked wrong. */
 export function singleNumber(s: string): number {
   let t = normalizeMinus(String(s || "").trim()).replace(/^[≈~=]+\s*/, "").replace(/\s*=\s*$/, "");
-  t = t.replace(/(\d)[ \u00a0,](?=\d{3}(?!\d))/g, "$1").replace(/(\d),(?=\d)/g, "$1.");
+  t = t.replace(/(?!(?<![\d.,])0)(\d)[ \u00a0,](?=\d{3}(?!\d))/g, "$1").replace(/(\d),(?=\d)/g, "$1.");
   const m = /^(\d+(?:\.\d+)?(?:e-?\d+)?)\s*(.*)$/i.exec(t);
   if (!m) return NaN;
   const num = Number(m[1]);
@@ -2003,7 +2008,7 @@ function numbersMatch(given: number, correct: string | number): boolean {
 /** The first number in free text, ignoring units, words and signs like "≈" or "=": "≈ 112 m", "h = 111,99 metres", "1 500 J", "1,500". NaN if none. */
 export function firstNumber(s: string): number {
   let t = normalizeMinus(String(s || ""));
-  t = t.replace(/(\d)[ \u00a0,](?=\d{3}(?!\d))/g, "$1");          // thousands separators: 1 500 / 1,500
+  t = t.replace(/(?!(?<![\d.,])0)(\d)[ \u00a0,](?=\d{3}(?!\d))/g, "$1");          // thousands separators: 1 500 / 1,500
   t = t.replace(/(\d),(?=\d)/g, "$1.");                             // decimal comma: 111,99
   const m = t.match(/-?\d+(?:\.\d+)?(?:e-?\d+)?/i);
   return m ? Number(m[0]) : NaN;

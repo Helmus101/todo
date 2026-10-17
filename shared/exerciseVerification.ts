@@ -122,7 +122,7 @@ export function statedKeyNumber(answer: string | undefined): number {
   // Leading "≈" / "=" and trailing units/°/% are formatting, not meaning; anything else (an operator, a
   // digit inside the unit, a second quantity) means this key is not a plain number.
   if (!/^[≈~=]*\s*[-−–]?\d+(?:[ \u00a0,]\d{3})*(?:[.,]\d+)?(?:e[+-]?\d+)?\s*[A-Za-zµΩ°%\s]*$/.test(t)) return NaN;
-  const n = Number(t.replace(/^[≈~=]*\s*/, "").replace(/[−–]/g, "-").replace(/(\d)[ \u00a0,](?=\d{3}(?!\d))/g, "$1").replace(/,/g, ".").replace(/[^0-9.eE+-].*$/, ""));
+  const n = Number(t.replace(/^[≈~=]*\s*/, "").replace(/[−–]/g, "-").replace(/(?!(?<![\d.,])0)(\d)[ \u00a0,](?=\d{3}(?!\d))/g, "$1").replace(/,/g, ".").replace(/[^0-9.eE+-].*$/, ""));
   return Number.isFinite(n) ? n : NaN;
 }
 

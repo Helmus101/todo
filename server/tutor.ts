@@ -450,7 +450,7 @@ export function strategyMissing(message: string, board: { kind?: string }[], wri
 /** Talk about the app's own machinery — a board write that "bounced", a tool that refused, "the board won't let me" —
  *  which the student must never hear (reported live: "That first write bounced — the board won't let me put the equation
  *  up before you've stated it"). Exported for tests. */
-const MECHANICS = /\b(?:(?:write|line|entry|update) (?:just )?bounced|got rejected|was rejected|(?:it|that) (?:was )?refused|the board (?:won'?t|wouldn'?t|didn'?t) let me|won'?t let me (?:put|write)|(?:the|my|that) (?:first |board )?write (?:failed|bounced|didn'?t (?:go through|work))|(?:the|a) tool (?:call|failed|error|refused)|the app (?:won'?t|wouldn'?t|blocked|refused|is putting|puts|has put|just put|will put|shows)|(?:in|into) the answer box (?:now|below)|the answer box (?:is|will be) (?:getting|showing)|the system (?:won'?t|blocked|refused)|guardrail|(?:the )?(?:code|checker|solver|verifier|system|app) (?:has |had )?(?:confirm(?:s|ed)|check(?:s|ed)|verif(?:y|ies|ied)|says|said|agrees?|marked)|(?:checked|verified|confirmed) (?:by|with) (?:the )?(?:code|app|system|solver|checker)|code-checked|le code (?:confirme|a (?:vérifié|confirmé))|le tableau (?:ne )?(?:m'a pas laissé|refuse|a refusé)|l'outil a refusé)\b/i;
+const MECHANICS = /\b(?:(?:write|line|entry|update) (?:just )?bounced|got rejected|was rejected|(?:it|that) (?:was )?refused|the board (?:won'?t|wouldn'?t|didn'?t) let me|won'?t let me (?:put|write)|(?:the|my|that) (?:first |board )?write (?:failed|bounced|didn'?t (?:go through|work))|(?:the|a) tool (?:call|failed|error|refused)|(?:l'app|l'application|le correcteur|le système) (?:a |m'a |vient de |dit |marque |affiche )?(?:corrig|marqu|not[ée]|dit|affich|vérifi|refus|bloqu)\w*|je vérifie ce que (?:l'app|l'application|le correcteur)|the app (?:marked|graded|says|said|checked|counted|scored)|the app (?:won'?t|wouldn'?t|blocked|refused|is putting|puts|has put|just put|will put|shows)|(?:in|into) the answer box (?:now|below)|the answer box (?:is|will be) (?:getting|showing)|the system (?:won'?t|blocked|refused)|guardrail|(?:the )?(?:code|checker|solver|verifier|system|app) (?:has |had )?(?:confirm(?:s|ed)|check(?:s|ed)|verif(?:y|ies|ied)|says|said|agrees?|marked)|(?:checked|verified|confirmed) (?:by|with) (?:the )?(?:code|app|system|solver|checker)|code-checked|le code (?:confirme|a (?:vérifié|confirmé))|le tableau (?:ne )?(?:m'a pas laissé|refuse|a refusé)|l'outil a refusé)\b/i;
 export function mentionsMechanics(reply: string): boolean { return MECHANICS.test(String(reply || "")); }
 /** Last-resort cleanup: drop every sentence that talks about the machinery. Exported for tests. */
 export function stripMechanics(reply: string): string {
@@ -651,7 +651,7 @@ export interface TutorPlanLite { diagnosis?: string; action?: string; helpLevel?
 const ACTIONS = ["probe", "hint", "visual", "explain", "example", "practice", "confirm"];
 /** How many unit-bearing quantities in the reply ("2 kg", "3 m", "400 N/m", "25°") appear nowhere in the conversation, board or problems. */
 export function newQuantities(reply: string, sources: string[]): number {
-  const hay = sources.join(" ").replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1");
+  const hay = sources.join(" ").replace(/(?!(?<![\d.,])0)(\d)[\s,](?=\d{3}(?!\d))/g, "$1");
   const nums = (String(reply).replace(/\$/g, " ").match(/\d+(?:[.,]\d+)?(?=\s?(?:°|\\circ|(?:m|cm|mm|km|kg|g|s|min|h|N|J|V|A|W|mol|L|mL|%|degrees?)\b))/gi) || []).map((n) => n.replace(",", "."));
   return new Set(nums.filter((n) => !new RegExp(`(?<![\\d.])${n.replace(".", "\\.")}(?![\\d])`).test(hay))).size;
 }
@@ -734,7 +734,7 @@ export function teachingBlock(t: TutorTeachingState | undefined): string {
 export function statesFinalAnswer(text: string, sol: TutorSolution | undefined): boolean {
   if (!sol || sol.value == null) return false;
   const v = sol.value;
-  const nums = (x: string) => (String(x || "").replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1").match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
+  const nums = (x: string) => (String(x || "").replace(/(?!(?<![\d.,])0)(\d)[\s,](?=\d{3}(?!\d))/g, "$1").match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
   const givens = new Set(nums(sol.statement).map((n) => Math.round(n * 1e6)));
   if (givens.has(Math.round(v * 1e6))) return false;
   if (Math.abs(v) < 10 && Number.isInteger(v)) {
@@ -767,7 +767,7 @@ export function solutionMatchLine(message: string, sol: TutorSolution | undefine
 /** The student's numbers that match a step of the verified solution — they've reached that step. Exported for tests. */
 export function reachedSolutionSteps(message: string, sol: TutorSolution | undefined): number[] {
   if (!sol) return [];
-  const theirs = (String(message || "").replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1").match(/-?\d+(?:\.\d+)?/g) || []).map(Number).filter((n) => Number.isFinite(n) && Math.abs(n) >= 1);
+  const theirs = (String(message || "").replace(/(?!(?<![\d.,])0)(\d)[\s,](?=\d{3}(?!\d))/g, "$1").match(/-?\d+(?:\.\d+)?/g) || []).map(Number).filter((n) => Number.isFinite(n) && Math.abs(n) >= 1);
   const hits: number[] = [];
   sol.steps.forEach((st, i) => { if (st.value != null && theirs.some((n) => Math.abs(n - st.value!) <= Math.max(0.01, Math.abs(st.value!) * 0.006))) hits.push(i + 1); });
   if (sol.value != null && theirs.some((n) => Math.abs(n - sol.value!) <= Math.max(0.01, Math.abs(sol.value!) * 0.006))) hits.push(0);
@@ -820,8 +820,8 @@ export function wantsExercise(message: string): boolean {
 export function inventsProblemOnBoard(text: string, said: string[], known: number[] = []): boolean {
   if (!looksLikeGivensOrScenario(text)) return false;
   const toNum = (n: string) => Number(n.replace(",", "."));
-  const nums = (String(text).replace(/\\[a-zA-Z]+/g, " ").replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1").match(/\d+(?:[.,]\d+)?/g) || []).map(toNum);
-  const heard = (said.join(" ").replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1").match(/\d+(?:[.,]\d+)?/g) || []).map(toNum);
+  const nums = (String(text).replace(/\\[a-zA-Z]+/g, " ").replace(/(?!(?<![\d.,])0)(\d)[\s,](?=\d{3}(?!\d))/g, "$1").match(/\d+(?:[.,]\d+)?/g) || []).map(toNum);
+  const heard = (said.join(" ").replace(/(?!(?<![\d.,])0)(\d)[\s,](?=\d{3}(?!\d))/g, "$1").match(/\d+(?:[.,]\d+)?/g) || []).map(toNum);
   // Not invented: what they said, what the verified solution reaches, standard constants (g, unit factors), and a
   // unit conversion of a number they gave ("54 km/h = 15 m/s"). Reported: givens lines with g = 9.8 were refused.
   const base = [...heard, ...known, ...BOARD_CONSTANTS];
@@ -838,7 +838,7 @@ export function doubtsRightAnswer(reply: string, message: string, sol?: TutorSol
   const RECHECK = /\b(?:check (?:that|this|it|your|the)|re-?verify|(?:try|run|re-?run|work|do) (?:it |that |this )?(?:out )?again|re-?check|re-?run|let'?s (?:check|re-?run|redo)|double[- ]check|not quite|was from the previous|look again|try \d)/i;
   if (!RECHECK.test(reply)) return null;
   if (/\[(?:Exercise|Exercice)\][^\n]*(?:marked right|checked right|juste|vérifié juste)/i.test(message)) return "the app already checked their answer and it is RIGHT — don't ask them to redo it; acknowledge it and move on";
-  const num = (x: string) => Number(x.replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1").replace(",", "."));
+  const num = (x: string) => Number(x.replace(/(?!(?<![\d.,])0)(\d)[\s,](?=\d{3}(?!\d))/g, "$1").replace(",", "."));
   const allNums = (message.match(/\d[\d\s,]*(?:\.\d+)?/g) || []).map((x) => num(x.trim())).filter((n) => Number.isFinite(n));
   if (!allNums.length) return null;
   // Their number IS a step of the verified solution: right, whatever the reply's own arithmetic says. No
@@ -885,7 +885,7 @@ export function misgradedExercise(message: string, sol?: TutorSolution): string 
 /** A gap that states an equation and asks for its unknown ("2·9.8·3 = ½(400)x² ⟹ x = ?"): the key is SOLVED here, not taken from the model.
  *  Finds the positive root of lhs − rhs numerically (scan + bisection); null unless there is exactly one clear positive root. Exported for tests. */
 export function solvedGapKey(text: string): number | null {
-  const plain = latexToPlainText(String(text || "").replace(/\$/g, " ")).replace(/(\d),(?=\d{3}(?!\d))/g, "$1");
+  const plain = latexToPlainText(String(text || "").replace(/\$/g, " ")).replace(/(?!(?<![\d.,])0)(\d),(?=\d{3}(?!\d))/g, "$1");
   const target = /([A-Za-z])\s*=\s*\?\s*$/.exec(plain)?.[1];
   if (!target) return null;
   // The connective split must accept the PLAIN-WORD forms too: latexToPlainText renders \implies as "implies"
@@ -963,7 +963,7 @@ export function rehydrateProblemKey(sent: any, stored?: TaskProblem): TaskProble
  *  HERE, not guessed by the model — a guessed "2553" for 2553.8 marked a right 2554.4 wrong (reported live).
  *  Returns the computed value, or null when the line isn't a closed calculation. Exported for tests. */
 export function computedGapKey(text: string): number | null {
-  const plain = latexToPlainText(String(text || "").replace(/\$/g, " ")).replace(/(\d),(?=\d{3}(?!\d))/g, "$1");
+  const plain = latexToPlainText(String(text || "").replace(/\$/g, " ")).replace(/(?!(?<![\d.,])0)(\d),(?=\d{3}(?!\d))/g, "$1");
   const m = /(?:^|=|:)\s*([(\d][\d.\s×x*·/÷+\-−()°^√a-z]*?)\s*=\s*\?\s*$/i.exec(plain);
   if (!m || !/[×x*·/÷+\-−^]/.test(m[1]) || (m[1].match(/\d+(?:\.\d+)?/g) || []).length < 2) return null;
   const f = compileExpr(toExprSource(m[1]), []);
@@ -978,7 +978,7 @@ const STOP = new Set("that this with have from what when where which their there
  *  for (reported: "sometimes it just writes random stuff"). Empty focus (session just started) → anything goes. */
 export function relevantToFocus(text: string, focus: string[], values: number[] = []): boolean {
   const toks = (x: string) => {
-    const plain = latexToPlainText(String(x || "").replace(/\$/g, " ")).toLowerCase().replace(/(\d),(?=\d{3}(?!\d))/g, "$1");
+    const plain = latexToPlainText(String(x || "").replace(/\$/g, " ")).toLowerCase().replace(/(?!(?<![\d.,])0)(\d),(?=\d{3}(?!\d))/g, "$1");
     return new Set([...(plain.match(/\d+(?:\.\d+)?/g) || []), ...(plain.match(/[a-zà-ÿ]{4,}/g) || []).filter((w) => !STOP.has(w))]);
   };
   const f = new Set(focus.flatMap((x) => [...toks(x)]));
@@ -1255,7 +1255,7 @@ export function applyTool(name: string, input: any, c: ToolCtx): string {
       if (input.kind !== "gap" && leaks(text)) return LEAK;
       if (input.owner !== "student" && statesFinalAnswer(text, c.solution) && !reachedSolutionSteps(c.message, c.solution).includes(0)) return LEAK;
       // A gap that already shows its own answer ("Power = 1000×9.8×sin(10°)×15 = 25,526?", reported live) isn't a gap.
-      const unsep = (x: string) => x.replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1");
+      const unsep = (x: string) => x.replace(/(?!(?<![\d.,])0)(\d)[\s,](?=\d{3}(?!\d))/g, "$1");
       if (input.kind === "gap" && input.expectedAnswer && replyStatesValue(unsep(text.replace(/=\s*\?\s*\$?\s*$/, "")), unsep(String(input.expectedAnswer)))) return "REJECTED: that gap line already shows its own answer — end it at '= ?', and leave the working for them.";
       // A problem is posted with CREATE_PROBLEM (answer box, checked key) — never as board text plus a "= ?" gap.
       if (input.owner !== "student" && c.wantsExercise && !result.problems.length && (input.kind === "gap" || looksLikeGivensOrScenario(text)))

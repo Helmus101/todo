@@ -5,6 +5,7 @@
 // verifyTurn() lists what's wrong (each issue is a precise instruction for the one repair call); degradeTurn() fixes
 // what code can fix on its own (drops a leaking sentence or a bad board op, trims to one question) when the repair
 // call didn't — so the reply that ships is always the model's own words, never a canned sentence.
+import { figureClaimFalse, SHADE_CLAIM } from "./graphFacts.ts";
 import { parseExerciseResults, verdictFromResults } from "./results.ts";
 import type { BoardEntry, TaskProblem, TutorSolution } from "../../shared/types.ts";
 import { MOVE_SUPPORT, type BoardOp, type TurnOutput } from "../../shared/tutorTurn.ts";
@@ -61,7 +62,7 @@ export interface VerifyContext {
 export const SELF_CORRECTION = /(?:…|\.\.\.|—|,)\s*(?:non,?\s+(?:pardon|attends|en fait)|no,?\s+wait|wait,?\s+(?:no|that)|hmm,?\s|sorry,?\s+(?:let me|that'?s|i)|let me (?:redo|recompute|recalculate|rethink)|pardon,|oops)|\b(?:actually,? (?:no|that'?s wrong|let me)|scratch that|je me trompe|je reprends)\b/i;
 
 export interface Issue {
-  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "off_topic" | "plan_too_early" | "ignores_student" | "verdict_mismatch" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh" | "no_error" | "self_correct" | "unsourced_quote" | "stale_opener" | "fact" | "format_leak" | "unstated_setup" | "intent_topic" | "intent_equation";
+  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "off_topic" | "plan_too_early" | "ignores_student" | "verdict_mismatch" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh" | "no_error" | "self_correct" | "unsourced_quote" | "stale_opener" | "fact" | "format_leak" | "unstated_setup" | "intent_topic" | "intent_equation" | "graph_inconsistent" | "shaded_claim" | "dead_end";
   /** The instruction for the repair call. */
   fix: string;
   /** A leak or a pointer at nothing must be fixed; the rest are quality. */
@@ -211,6 +212,18 @@ export function unsourcedQuotes(speech: string, sources: string[]): string[] {
 /** The answer widget's own instruction line, leaked into the speech. */
 const FORMAT_INSTRUCTION = /^\s*(?:provide|give|round|express|write|state)\s+(?:your|the)\s+(?:final\s+)?answer\s+(?:to|in|as|with|correct to)\b[^.?!]*[.]?\s*$/i;
 
+/** The student is closing the conversation (thanks, bye, that's all) — the only time a reply may end without a next step. */
+export const CLOSING = /\b(?:thanks|thank you|thx|merci|bye|goodbye|au revoir|that'?s all|that is all|i'?m done|gotta go|see you|à plus|à demain|c'est tout)\b/i;
+/** A reply with nothing to do after it: no question, no task for them, nothing placed on the board for them to act on. */
+export function endsDead(speech: string[], board: { op: string; kind?: string }[], message: string): boolean {
+  if (CLOSING.test(message) || !speech.length) return false;
+  const text = speech.join(" ");
+  if (/\?/.test(text)) return false;
+  if (board.some((o) => o.op === "problem" || o.op === "gap" || o.op === "draw")) return false;
+  const last = speech[speech.length - 1] || "";
+  return !/\b(?:try|work out|find|calculate|tell me|write|say|show me|sketch|have a go|your turn|now do|go ahead|compute|explain (?:why|how|it)|describe|compare|predict|decide|pick|choose|name|give me|solve|substitute|plug|check)\b/i.test(last);
+}
+
 export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   const out: Issue[] = [];
   const say = speechText(t);
@@ -293,6 +306,12 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   if (c.wants.topicSwitch && !t.board.some((o) => o.op === "topic")) out.push({ code: "intent_topic", hard: true, fix: "they asked to work on a different topic: open a fresh worksheet with a topic op (and a plan op for the new topic), state the first problem on the board, and say in a few words that you can come back to the old one. Do not carry on with the old plan." });
   if (/\b(?:equation|formula|expression|relation|formule)\b/i.test(c.message) && /\b(?:(?:didn'?t|did not|haven'?t|not|never) (?:put|write|written|show|on)|don'?t see|can'?t see|(?:write|put|show|add)\b|pas (?:écrit|au tableau)|je (?:ne )?vois pas)/i.test(c.message) && !/^\s*\[/.test(c.message) && !t.board.some((o) => (o.op === "step" || o.op === "gap") && ["formula", "strategy", "definition", "result", "insight"].includes(String(o.kind || "")) && /[=]/.test(String(o.text || ""))))
     out.push({ code: "intent_equation", hard: true, fix: "they asked for the EQUATION/FORMULA on the board and none was written: add a step op (kind formula or strategy) with the actual equation, in $…$, this turn — not just the givens — and say which line it is." });
+  { const drawn = t.board.filter((o) => o.op === "draw" && (o as any).scene === "graph");
+    const figures = [...drawn.map((o) => (o as any).spec), ...(drawn.length ? [] : c.board.filter((b: any) => b.graph).slice(-1).map((b: any) => b.graph))];
+    for (const g of figures) { const bad = g ? figureClaimFalse(t.speech.join(" "), g) : null; if (bad) { out.push({ code: "graph_inconsistent", hard: true, fix: `what you say about the figure is not what it shows: ${bad}. Either redraw it so the curves really have that property (build related curves from ONE underlying function), or describe what the figure does show.` }); break; } }
+    const regionsAnywhere = [...drawn.map((o) => (o as any).spec), ...c.board.map((b: any) => b.graph)].some((g: any) => (g?.regions || []).length > 0);
+    if (!regionsAnywhere && t.speech.some((sn) => SHADE_CLAIM.test(sn))) out.push({ code: "shaded_claim", hard: true, fix: "the speech points at a shaded area or rectangle but nothing is shaded on any graph. Redraw the graph with a \"regions\" entry for that area (upper curve, lower curve, from, to, label), or stop referring to shading." }); }
+  if (endsDead(t.speech, t.board, c.message)) out.push({ code: "dead_end", hard: true, fix: "the reply stops with nothing for them to do (\"That gives a total profit of 15.\"). Confirm in a few words, then keep the conversation going: ask why it works, give a small variation, or hand them the next step — end on ONE concrete question or task." });
   const uq = unsourcedQuotes(say, [...c.said, ...c.board.map((b) => b.text || ""), ...c.problems.map((p) => p.question || "")]);
   if (uq.length) out.push({ code: "unsourced_quote", hard: true, fix: `it quotes "${uq[0]}", words the student never gave and that are not on the board. Never quote a text from memory: point at a line by number or describe it in your own words, or ask the student to read the line out.` });
   const objs = inventedObjects([say, ...t.board.map(opText)], [...c.said, ...c.board.map((b) => b.text || ""), ...c.problems.map((p) => p.question || ""), ...(c.solution ? [c.solution.statement, ...c.solution.steps.map((s) => `${s.idea || ""} ${s.result || ""}`)] : [])]);

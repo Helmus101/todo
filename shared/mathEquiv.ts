@@ -49,7 +49,7 @@ function unfracs(s: string): string {
  *  "b =" (the variable the gap asks for) is dropped. Exported for tests. */
 export function toExprSource(input: string, target?: string): string {
   let s = String(input || "").trim().replace(/^\$+|\$+$/g, "").replace(/^\\\(|\\\)$/g, "");
-  s = s.replace(/(\d)[,\s](?=\d{3}(?!\d))/g, "$1"); // "2,554.4" / "25 526" → plain numbers
+  s = s.replace(/(?!(?<![\d.,])0)(\d)[,\s](?=\d{3}(?!\d))/g, "$1"); // "2,554.4" / "25 526" → plain numbers
   // Case-insensitive: the gap asks for "P" while a student may write "p =". compileExpr lowercases every
   // identifier, so the target letter must be read the same way everywhere (see varsIn below).
   if (target) s = s.replace(new RegExp(`^\\s*${target}\\s*=`, "i"), "");

@@ -58,7 +58,7 @@ function mathRun(side: string, fromEnd: boolean): string {
 /** Equations in `text` that the student hasn't reached: returns each one ("P = mgv sin θ") — empty when none. */
 export function equationsAhead(text: string, said: string[]): string[] {
   // Thousands separators out first, so "25,526" isn't split into two segments at the comma.
-  const plain = latexToPlainText(String(text || "").replace(/\$/g, " ")).replace(/(\d),(?=\d{3}(?!\d))/g, "$1");
+  const plain = latexToPlainText(String(text || "").replace(/\$/g, " ")).replace(/(?!(?<![\d.,])0)(\d),(?=\d{3}(?!\d))/g, "$1");
   const heard = said.map((x) => norm(x, true)).join(" | ");
   const saidSides = said.flatMap((x) => latexToPlainText(x.replace(/\$/g, " ")).split(/[=\n,;]/)).map((x) => x.trim()).filter((x) => x && x.length < 80);
   const out: string[] = [];
@@ -76,7 +76,7 @@ export function equationsAhead(text: string, said: string[]): string[] {
       // A substituted set-up they spoke ("mass 1000 times g 9.8 sine 10 times 15"): every number in it came from one
       // of their messages — they built it, the words around the numbers just don't normalize the same way.
       const nums = (f.match(/\d+(?:\.\d+)?/g) || []);
-      return nums.length >= 3 && said.some((x) => { const theirs = new Set(x.replace(/(\d),(?=\d{3}(?!\d))/g, "$1").match(/\d+(?:\.\d+)?/g) || []); return nums.every((n) => theirs.has(n)); });
+      return nums.length >= 3 && said.some((x) => { const theirs = new Set(x.replace(/(?!(?<![\d.,])0)(\d),(?=\d{3}(?!\d))/g, "$1").match(/\d+(?:\.\d+)?/g) || []); return nums.every((n) => theirs.has(n)); });
     });
     if (!reached) out.push(seg.trim().slice(0, 80));
   }

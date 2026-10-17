@@ -581,7 +581,7 @@ export function focusBlock(focus: string): string {
 /** Numbers the reply states (two+ significant digits, or decimals) that appear nowhere in the conversation, board or
  *  givens — a figure Otto computed or made up on its own ("take the square root of 390.4") instead of the student's. */
 export function inventedNumbers(reply: string, sources: string[]): string[] {
-  const norm = (t: string) => t.replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1").replace(/(\d),(\d)/g, "$1.$2");
+  const norm = (t: string) => t.replace(/(?!(?<![\d.,])0)(\d)[\s,](?=\d{3}(?!\d))/g, "$1").replace(/(\d),(\d)/g, "$1.$2");
   const hay = norm(sources.join(" \n "));
   const plain = norm(reply.replace(/\\[a-z]+/gi, " ").replace(/\$/g, " "));
   const out: string[] = [];
@@ -613,12 +613,12 @@ export function statesFormula(reply: string): boolean {
  *  givens, not a restatement). Returns the offending value, or null. Pure. */
 const ATTRIBUTES_PROBLEM = /\b(?:the\s+)?(?:problem|question|exercise|statement|givens?|board)\b|(?:^|[:,])\s*(?:we(?:'re| are) given|given)\b/i;
 export function misstatesGiven(reply: string, sources: string[]): string | null {
-  const hay = (sources || []).join(" \n ").replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1");
+  const hay = (sources || []).join(" \n ").replace(/(?!(?<![\d.,])0)(\d)[\s,](?=\d{3}(?!\d))/g, "$1");
   const given = (n: string) => new RegExp(`(?<![\\d.])${n.replace(".", "\\.")}(?![\\d])`).test(hay);
   for (const s of String(reply || "").split(/(?<=[.!?])\s+|\n+/)) {
     if (!ATTRIBUTES_PROBLEM.test(s)) continue;
     if (/[×÷*/^=]|\b(?:sin|cos|tan|sqrt|log|ln)\s*\(/i.test(s)) continue; // computed from the givens, not a restatement
-    const flat = s.replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1");
+    const flat = s.replace(/(?!(?<![\d.,])0)(\d)[\s,](?=\d{3}(?!\d))/g, "$1");
     for (const m of flat.matchAll(/(?<![\d.])\d+(?:\.\d+)?(?![\d])/g)) if (!given(m[0])) return m[0];
   }
   return null;
@@ -668,7 +668,7 @@ export function confirmsUnchecked(reply: string, message: string, plan?: { stude
   const status = plan?.studentStep?.status;
   if (status && status !== "correct") return true;
   const V = numVal((first.match(/\d[\d,]*(?:\.\d+)?/) || [""])[0]);
-  const mine = (message.replace(/(\d)[\s,](?=\d{3}(?!\d))/g, "$1").match(/\d+(?:\.\d+)?/g) || []).map(Number);
+  const mine = (message.replace(/(?!(?<![\d.,])0)(\d)[\s,](?=\d{3}(?!\d))/g, "$1").match(/\d+(?:\.\d+)?/g) || []).map(Number);
   // They gave numbers and Otto confirms a different one ("200,200 J is right on the money" after "200,000").
   if (V && mine.length && !mine.some((n) => Math.abs(n - V) <= 1e-9 * Math.max(1, V)) && V >= 10) return true;
   const divs = [...message.matchAll(/(\d[\d,]*(?:\.\d+)?)\s*(?:over|÷|\/|divided by)\s*(\d[\d,]*(?:\.\d+)?)/gi)];

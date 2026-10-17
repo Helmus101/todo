@@ -155,6 +155,22 @@ export function applyOps(ops: BoardOp[], c: ApplyContext): Applied {
       }
       case "draw": {
         if (out.board.some((e) => ["graph", "diagram", "svg", "flow", "table", "source", "widget"].includes(String(e.kind)))) { drop("one visual a turn"); break; }
+        // "extend": draw ON a graph that is already on the board (a point, a dashed line, a shaded area, one more curve) — same entry, redrawn in place.
+        const ext = o.scene === "graph" ? (o.spec as any)?.extend : undefined;
+        if (ext) {
+          const target = resolveBoardTarget(String(ext), c.board);
+          const base = target?.kind === "graph" ? target : [...c.board].reverse().find((e) => e.kind === "graph");
+          const g: any = (base as any)?.graph;
+          if (!base || !g || (g.kind && g.kind !== "function")) { drop("no graph to draw on"); break; }
+          const sp: any = o.spec || {};
+          const merged = { maxFns: 6, caption: base.text, kind: "function", xmin: g.xmin, xmax: g.xmax, ymin: g.ymin, ymax: g.ymax, xLabel: g.xLabel, yLabel: g.yLabel, params: g.params, connect: g.connect,
+            fns: [...(g.fns || []), ...(sp.fns || [])], points: [...(g.points || []), ...(sp.points || [])], regions: [...(g.regions || []), ...(sp.regions || [])], vlines: [...(g.vlines || []), ...(sp.vlines || [])] };
+          const r2 = makeGraphEntry(merged);
+          if ("error" in r2) { drop(r2.error); break; }
+          if (JSON.stringify((r2.entry as any).graph) === JSON.stringify(g)) { drop("nothing new to draw on that graph"); break; }
+          add({ ...r2.entry, id: base.id, at: (base as any).at || r2.entry.at } as BoardEntry, o.cue);
+          break;
+        }
         const r = sceneEntry(o, c.fr);
         if ("error" in r) { drop(r.error); break; }
         if (r.entry.kind === "graph" && all().slice(-12).some((e) => e.kind === "graph" && JSON.stringify((e as any).graph) === JSON.stringify((r.entry as any).graph))) { drop("that graph is already on the board"); break; }

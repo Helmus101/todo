@@ -132,6 +132,32 @@ export async function runTutorTurnSim(check, section) {
         sc("that's not what I asked") === "ignored" && sc("I think you're wrong") === "wrong" && sc("I still don't get your explanation") === "unclear" &&
         sc("so the answer is 12 right") === null && sc("[Exercise] I answered 3 — marked wrong") === null);
     }
+    { const { figureClaimFalse: fcf, graphFactsBlock: gfb } = await import("../server/tutorTurn/graphFacts.ts");
+      const { makeGraphEntry } = await import("../server/ai/board.ts");
+      const bad = { kind: "function", fns: [{ expr: "0.5*x^2-4*x+12", label: "MC" }, { expr: "0.25*x^2-2*x+10", label: "ATC" }, { expr: "4", label: "MR = P" }], xmin: 0, xmax: 10, ymin: 0, ymax: 14 };
+      const good = { kind: "function", fns: [{ expr: "3*x^2-12*x+15", label: "MC" }, { expr: "x^2-6*x+15+20/x", label: "ATC" }, { expr: "20", label: "MR = P" }], xmin: 0.5, xmax: 8, ymin: 0, ymax: 40 };
+      const claim = "Notice how MC cuts through the lowest point of ATC."; check("graph claims: saying one curve cuts another at its lowest point is checked against the plotted curves — invented-separately curves are caught, consistent ones pass, other claims are ignored (reported live)", !!fcf(claim, bad) && fcf(claim, good) === null && fcf("Look at the price line.", bad) === null);
+      const fb = gfb([{ n: 4, kind: "graph", graph: good }]);
+      check("graph facts: where MC meets the price line and where ATC is lowest are computed from the curves", /MC and MR = P cross at x≈4\.3|MC and MR = P cross at x≈4\.4/.test(fb) && /ATC is lowest at x≈3\.7/.test(fb));
+      const rg = makeGraphEntry({ caption: "Consumer surplus", fns: [{ expr: "12-2*x", label: "demand" }, { expr: "4", label: "price" }], xmin: 0, xmax: 6, ymin: 0, ymax: 12, regions: [{ upper: "12-2*x", lower: "4", from: 0, to: 4, label: "consumer surplus" }] });
+      check("a graph can shade the area between two curves (regions)", "entry" in rg && (rg.entry.graph.regions || []).length === 1 && makeGraphEntry({ caption: "x", fns: [{ expr: "x" }], xmin: 0, xmax: 4, regions: [{ upper: "x", from: 3, to: 1 }] }).error !== undefined);
+      check("verify: pointing at a shaded area that is not drawn is refused; a drawn region makes it fine",
+        codes({ move: "focus", speech: ["Look at the shaded area between price and ATC.", "What does it represent?"], board: [] }).includes("shaded_claim") &&
+        !codes({ move: "focus", speech: ["Look at the shaded area between price and ATC.", "What does it represent?"], board: [{ op: "draw", cue: 0, scene: "graph", text: "Profit", spec: { ...good, regions: [{ upper: "20", lower: "x^2-6*x+15+20/x", from: 0.5, to: 4.4, label: "profit" }] } }] }).includes("shaded_claim") &&
+        codes({ move: "explain", speech: ["Notice how MC cuts through the lowest point of ATC.", "Where does MC meet MR?"], board: [{ op: "draw", cue: 0, scene: "graph", text: "Costs", spec: bad }] }).includes("graph_inconsistent")); }
+    { const { endsDead: ed } = await import("../server/tutorTurn/verify.ts");
+      check("a reply that ends with nothing for the student to do is a dead end (reported live: 'That gives a total profit of 15.'); questions, tasks, exercises and a goodbye are not",
+        ed(["That gives a total profit of 15."], [], "so the profit is 60 minus 45 which is 15") && !ed(["That gives a total profit of 15.", "What happens to it if the price rises?"], [], "x") &&
+        !ed(["That's right.", "Now try the same with a price of 14."], [], "x") && !ed(["Here is one."], [{ op: "problem" }], "x") && !ed(["You're welcome, good luck on Friday."], [], "ok thanks, bye") && ed(["Right, so the profit is 15."], [{ op: "step" }], "ok"));
+    }
+    { const { makeGraphEntry: mg } = await import("../server/ai/board.ts");
+      const g0 = mg({ caption: "Demand and price", fns: [{ expr: "12-2*x", label: "demand" }, { expr: "4", label: "price" }], xmin: 0, xmax: 6, ymin: 0, ymax: 12 });
+      const gEntry = { ...g0.entry, n: 7 };
+      const ex = applyOps([{ op: "draw", cue: 0, scene: "graph", text: "", spec: { extend: "#7", vlines: [{ x: 4, label: "Q*" }], points: [{ x: 4, y: 4, label: "equilibrium" }], regions: [{ upper: "12-2*x", lower: "4", from: 0, to: 4, label: "consumer surplus" }] } }], { message: "show me", theirWords: ["show me"], board: [gEntry], problems: [], fr: false });
+      const ge = ex.board[0];
+      check("Otto can draw ON a graph that is already on the board: a dashed line, a point and a shaded area are added in place (same entry), nothing else is lost",
+        ex.board.length === 1 && ge.id === gEntry.id && ge.graph.fns.length === 2 && ge.graph.vlines?.length === 1 && ge.graph.points?.length === 1 && ge.graph.regions?.length === 1 &&
+        applyOps([{ op: "draw", cue: 0, scene: "graph", text: "", spec: { extend: "#7" } }], { message: "x", theirWords: ["x"], board: [gEntry], problems: [], fr: false }).board.length === 0); }
     check("verify: a quotation the student never gave is refused (a poem quoted from memory); quoting their own words or a board line is fine",
       codes({ move: "focus", speech: ["Au vers 2 il dit « sans bruit, sans voir, sans entendre » : qu'est-ce que ça change ?"] }).includes("unsourced_quote") &&
       !codes({ move: "focus", speech: ["Tu as écrit « il part plein d'espoir voir sa fille » : et à la fin ?"] }, { ...vctx, said: ["il part plein d'espoir voir sa fille"] }).includes("unsourced_quote") &&

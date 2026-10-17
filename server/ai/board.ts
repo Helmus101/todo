@@ -242,7 +242,7 @@ export function makeProblem(input: any, requireCheck = false): { problem: TaskPr
   const verified = !hasMCQ && checkSrc && !wordKey ? evalCheckFor(checkSrc, question) : null;
   if (verified != null) {
     // "25,538" is twenty-five thousand, not 25.538: thousands separators out before parsing the model's own key.
-    const given = answer ? Number(answer.replace(/(\d)[,\s](?=\d{3}(?!\d))/g, "$1").replace(/,/g, ".").replace(/[^0-9.eE+-]/g, "")) : NaN;
+    const given = answer ? Number(answer.replace(/(?!(?<![\d.,])0)(\d)[,\s](?=\d{3}(?!\d))/g, "$1").replace(/,/g, ".").replace(/[^0-9.eE+-]/g, "")) : NaN;
     if (!Number.isFinite(given) || Math.abs(given - verified) > Math.max(0.01, Math.abs(verified) * 0.01)) {
       const dec = (answer?.match(/[.,](\d+)/)?.[1] || (/(?:one|1) decimal|une décimale/i.test(String(input?.format || "")) ? "x" : "")).length;
       answer = Math.abs(verified) >= 1000 ? String(Math.round(verified)) : verified.toFixed(Number.isFinite(dec) && dec > 0 ? Math.min(dec, 4) : (Math.abs(verified - Math.round(verified)) < 1e-9 ? 0 : 1));
@@ -829,7 +829,7 @@ export function makeGraphEntry(input: any): { entry: BoardEntry } | { error: str
 
   const vars = ["x", ...params.map((q) => q.name)];
   const fns: GraphSpec["fns"] = [];
-  for (const rf of (Array.isArray(input?.fns) ? input.fns : []).slice(0, 4)) {
+  for (const rf of (Array.isArray(input?.fns) ? input.fns : []).slice(0, input?.maxFns === 6 ? 6 : 4)) {
     const expr = String(rf?.expr || "").trim().replace(/^y\s*=\s*/i, "").replace(/^f\(x\)\s*=\s*/i, "");
     const c = compileExpr(expr, vars);
     if ("error" in c) return { error: `ERROR: can't plot "${expr}": ${c.error}. Use plain math in x${params.length ? ` and ${params.map((q) => q.name).join(", ")}` : ""} (e.g. "2*x^2 - 3*x + 1", "sin(2x)", "sqrt(x)"). A function of TWO variables needs kind "surface".` };
@@ -838,11 +838,21 @@ export function makeGraphEntry(input: any): { entry: BoardEntry } | { error: str
     if (finite < 5) return { error: `ERROR: "${expr}" has no real values in x ∈ [${xmin}, ${xmax}] — widen the window or fix the expression.` };
     fns.push({ expr, label: label(rf?.label, 40), color: (GRAPH_COLORS as readonly string[]).includes(rf?.color) ? rf.color : GRAPH_COLORS[fns.length % 5], dashed: rf?.dashed === true ? true : undefined });
   }
+  const regions: NonNullable<GraphSpec["regions"]> = [];
+  for (const rr of (Array.isArray(input?.regions) ? input.regions : []).slice(0, 3)) {
+    const up = String(rr?.upper ?? "").trim().replace(/^y\s*=\s*/i, ""), lo = String(rr?.lower ?? "0").trim().replace(/^y\s*=\s*/i, "") || "0";
+    const from = num(rr?.from), to = num(rr?.to);
+    const cu = compileExpr(up, vars), cl = compileExpr(lo, vars);
+    if (!up || "error" in cu || "error" in cl || !(from < to)) return { error: `ERROR: a shaded region needs "upper" and "lower" expressions in x (lower defaults to 0) and from < to, e.g. {"upper":"12-2*x","lower":"4","from":0,"to":4,"label":"consumer surplus"}.` };
+    regions.push({ upper: up, lower: lo, from: Math.max(xmin, from), to: Math.min(xmax, to), label: label(rr?.label, 40), color: (GRAPH_COLORS as readonly string[]).includes(rr?.color) ? rr.color : GRAPH_COLORS[(fns.length + regions.length) % 5] });
+  }
+  const vlines = (Array.isArray(input?.vlines) ? input.vlines : []).slice(0, 4)
+    .map((v: any) => ({ x: num(v?.x), label: label(v?.label, 24) })).filter((v: { x: number }) => Number.isFinite(v.x) && v.x >= xmin && v.x <= xmax);
   const points = (Array.isArray(input?.points) ? input.points : []).slice(0, 12)
     .map((pt: any) => ({ x: num(pt?.x), y: num(pt?.y), label: label(pt?.label, 30) }))
     .filter((pt: { x: number; y: number }) => Number.isFinite(pt.x) && Number.isFinite(pt.y));
   if (!fns.length && !points.length) return { error: "ERROR: give at least one function in `fns` or some `points`." };
-  return mk({ kind: "function", fns, params: params.length ? params : undefined, xmin, xmax, ymin, ymax, points: points.length ? points : undefined, connect: input?.connect === true && points.length > 1 ? true : undefined, ...axes });
+  return mk({ kind: "function", fns, regions: regions.length ? regions : undefined, vlines: vlines.length ? vlines : undefined, params: params.length ? params : undefined, xmin, xmax, ymin, ymax, points: points.length ? points : undefined, connect: input?.connect === true && points.length > 1 ? true : undefined, ...axes });
 }
 
 export const GRAPH_ON_BOARD_TOOL = {

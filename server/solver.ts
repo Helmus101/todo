@@ -10,7 +10,7 @@ import { evalCheckFor } from "./tutorAdapt.ts";
  *  9.8 times sin 12… find the force")? New when most of its numbers are not in the current problem. Pure. */
 export function isNewProblem(stated: string, current: TutorSolution | undefined): boolean {
   if (!current) return true;
-  const nums = (x: string) => (String(x || "").replace(/(\d)[,\s](?=\d{3}(?!\d))/g, "$1").match(/\d+(?:\.\d+)?/g) || []);
+  const nums = (x: string) => (String(x || "").replace(/(?!(?<![\d.,])0)(\d)[,\s](?=\d{3}(?!\d))/g, "$1").match(/\d+(?:\.\d+)?/g) || []);
   const mine = nums(stated), theirs = new Set(nums(current.statement));
   if (!mine.length) return false;
   return mine.filter((n) => !theirs.has(n)).length / mine.length > 0.5;
@@ -42,7 +42,7 @@ function firstJson(raw: string): any {
   try { return JSON.parse(body.slice(start, end + 1)); } catch { return null; }
 }
 
-const num = (s: string): number => Number(String(s || "").replace(/(\d)[,\s](?=\d{3}(?!\d))/g, "$1").replace(",", ".").match(/-?\d+(?:\.\d+)?(?:e-?\d+)?/i)?.[0] ?? NaN);
+const num = (s: string): number => Number(String(s || "").replace(/(?!(?<![\d.,])0)(\d)[,\s](?=\d{3}(?!\d))/g, "$1").replace(",", ".").match(/-?\d+(?:\.\d+)?(?:e-?\d+)?/i)?.[0] ?? NaN);
 
 /** Build a TutorSolution from the solver's JSON, verifying numbers by code. Pure; exported for tests. */
 export function toSolution(statement: string, j: any, now = new Date()): TutorSolution | null {

@@ -80,8 +80,18 @@ function FunctionGraph({ spec }: { spec: GraphSpec }) {
         {ymin < 0 && ymax > 0 && <line x1={PAD.l} x2={W - PAD.r} y1={sy(0)} y2={sy(0)} className="sm-graph-axis" />}
         <clipPath id="sm-graph-clip"><rect x={PAD.l} y={PAD.t} width={W - PAD.l - PAD.r} height={H - PAD.t - PAD.b} /></clipPath>
         <g clipPath="url(#sm-graph-clip)">
+          {(spec.regions || []).map((r, i) => {
+            const cu = compileExpr(r.upper, names), cl = compileExpr(r.lower || "0", names);
+            if (!("fn" in cu) || !("fn" in cl)) return null;
+            const N = 80, top: string[] = [], bot: string[] = [];
+            for (let k = 0; k <= N; k++) { const x = r.from + ((r.to - r.from) * k) / N; const yu = cu.fn({ ...vals, x }), yl = cl.fn({ ...vals, x }); if (!Number.isFinite(yu) || !Number.isFinite(yl)) continue; top.push(`${sx(x).toFixed(1)},${sy(yu).toFixed(1)}`); bot.unshift(`${sx(x).toFixed(1)},${sy(yl).toFixed(1)}`); }
+            if (top.length < 2) return null;
+            const mx = (r.from + r.to) / 2, my = (cu.fn({ ...vals, x: mx }) + cl.fn({ ...vals, x: mx })) / 2;
+            return <g key={`rg${i}`}><polygon points={[...top, ...bot].join(" ")} fill={COLOR[r.color || "blue"]} fillOpacity={0.22} stroke={COLOR[r.color || "blue"]} strokeOpacity={0.5} strokeWidth={1} />{r.label && Number.isFinite(my) && <text x={sx(mx)} y={sy(my)} textAnchor="middle" className="sm-graph-ptlabel">{plainLabel(r.label)}</text>}</g>;
+          })}
           {paths.map((d, i) => d && <path key={i} d={d} fill="none" stroke={COLOR[spec.fns[i].color || "blue"]} strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" strokeDasharray={spec.fns[i].dashed ? "6 5" : undefined} />)}
           {spec.connect && spec.points && spec.points.length > 1 && <polyline points={spec.points.map((p) => `${sx(p.x)},${sy(p.y)}`).join(" ")} fill="none" stroke="var(--ink-2)" strokeWidth={1.6} />}
+          {(spec.vlines || []).map((v, i) => <g key={`vl${i}`}><line x1={sx(v.x)} x2={sx(v.x)} y1={PAD.t} y2={H - PAD.b} stroke="var(--ink-3)" strokeWidth={1.4} strokeDasharray="5 4" />{v.label && <text x={sx(v.x) + 5} y={PAD.t + 12} className="sm-graph-ptlabel">{plainLabel(v.label)}</text>}</g>)}
           {hoverX !== null && <line x1={sx(hoverX)} x2={sx(hoverX)} y1={PAD.t} y2={H - PAD.b} className="sm-graph-hover" />}
         </g>
         {(spec.points || []).map((p, i) => <g key={i}><circle cx={sx(p.x)} cy={sy(p.y)} r={4.5} className="sm-graph-pt" />{p.label && <text x={sx(p.x) + 8} y={sy(p.y) - 8} className="sm-graph-ptlabel">{plainLabel(p.label)}</text>}</g>)}

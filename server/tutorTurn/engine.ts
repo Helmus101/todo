@@ -15,6 +15,7 @@ import { repairSpokenMath, spokenContextFrom, type SpokenRepair } from "../../sh
 import { boardSurfaceBlock } from "../boardEvents.ts";
 import { solutionBlock, solveProblem } from "../solver.ts";
 import { normalizeStudentModel, findConcept, independentSuccess, liveMisconceptions } from "../studentModel.ts";
+import { graphFactsBlock } from "./graphFacts.ts";
 import { falseClaim, worthFactChecking } from "./factcheck.ts";
 import { createTutorChat, retryRequest, usageOf, OUT, rewriteReply, stepVerdictLine } from "../claude.ts";
 import { asksWhy, asksToWrite, asksToDraw, voiceInputBlock, similarity, posesProblemInProse, studentProblemStatement } from "../tutorAdapt.ts";
@@ -26,7 +27,7 @@ import {
 } from "../tutor.ts";
 import { TURN_PROMPT, VOICE_NOTE } from "./prompt.ts";
 import { supportPolicy, asksForWorkedExample, adaptationLines, questionRun, type Policy } from "./policy.ts";
-import { verifyTurn, degradeTurn, revealsKey, acceptsBoardOffer, claimsBoard, hasVisual, sceneNounsIn, type Issue, type VerifyContext } from "./verify.ts";
+import { verifyTurn, degradeTurn, endsDead, revealsKey, acceptsBoardOffer, claimsBoard, hasVisual, sceneNounsIn, type Issue, type VerifyContext } from "./verify.ts";
 import { applyOps } from "./apply.ts";
 import { sessionGuide } from "./guide.ts";
 import { studentComplaint, type Complaint, wantsTopicSwitch, asksToWriteProblem, wantsDifferent, problemStatement, wantsMoreExercises, difficultyAsked, cantSeeProblem } from "./intents.ts";
@@ -220,6 +221,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     + objectivesBlock(wants.topicSwitch ? [] : objectives).replace(/SET_OBJECTIVES/g, "a plan op")
     + `\n\nToday is ${new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })} (for deadlines only).`
     + `\n\nTHE BOARD (margin numbers #n are what you point at)${boardSurfaceBlock(board, problems) || ": empty — open it with a topic op and the starting point."}`
+    + graphFactsBlock(board as any)
     + (input.dueRetests?.length && history.length <= 1 ? `\n\nOPENING THE SITTING: last time you helped them with ${input.dueRetests.slice(0, 2).join(" and ")} and haven't yet seen them do it alone. After answering what they said, offer one short retest of it — as an offer, never a demand.` : "")
     + solutionBlock(input.solution)
     + solutionMatchLine(message, input.solution)
@@ -355,7 +357,8 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
         const scopeWithGen = new Set([...scope, ...contentWords(`${gen.topic} ${String(gen.input.question || "")}`)]);
         // Lead-in sentences must be about this session: "let's switch to macroeconomics" in a physics session goes.
         const stays = (sn: string) => !/\d/.test(sn) && !DESCRIBES_EXERCISE.test(sn) && (contentWords(sn).length < 3 || inScope(sn, scopeWithGen, Math.ceil(contentWords(sn).length / 3)));
-        let speech = (at >= 0 ? turn.speech.slice(0, at) : turn.speech.filter((sn) => !/\?\s*$/.test(sn))).filter(stays);
+        // Only the first, plain reaction survives: the tutor wrote its lead-in before the exercise existed, so anything beyond a reaction can describe an exercise that was never built.
+        let speech = (at >= 0 ? turn.speech.slice(0, at) : turn.speech.filter((sn) => !/\?\s*$/.test(sn))).filter(stays).slice(0, 1);
         if (!speech.length || !/[.!?]\s*$/.test(speech[speech.length - 1])) speech = [...speech, gen.intro];
         else if (!speech.some((sn) => sn === gen.intro) && !/\b(?:try|work out|find|what|which|how)\b/i.test(speech[speech.length - 1])) speech = [...speech, gen.intro];
         // The tutor's own lead-in and the generator's intro often say the same thing twice ("Both chain-rule questions clean… Both chain-rule questions clean…"): keep the later one.
@@ -459,6 +462,15 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     if (dangling && !placedSomething && !turn.speech.some((sn) => /\?\s*$/.test(sn))) {
       const text = await rewriteReply(turn.speech.join(" "), "the reply announces something to do ('let's check…') but never asks it — keep what it said and end with ONE concrete question about the current topic that they can answer now", message, result.tokens);
       if (text && /\?\s*$/.test(text.trim())) turn = { ...turn, speech: [text] };
+    }
+  }
+
+  // Still a dead end ("That gives a total profit of 15." and nothing more): one rewrite in the model's own words that goes on.
+  {
+    const placed = applied.problems.length > 0 || applied.board.some((e) => ["gap", "given", "graph", "diagram", "svg", "flow", "table", "source", "widget", "interactive"].includes(String(e.kind)));
+    if (turn.speech.length && !placed && !issues.some((i) => i.code === "leak") && endsDead(turn.speech, [], message)) {
+      const text = await rewriteReply(turn.speech.join(" "), "the reply stops with nothing for the student to do: keep what you said, then continue with ONE concrete question or small task that deepens or extends what they just did (why it works, a variation, or the next step)", message, result.tokens);
+      if (text) turn = { ...turn, speech: [text] };
     }
   }
 
