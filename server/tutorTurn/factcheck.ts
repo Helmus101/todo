@@ -8,7 +8,7 @@ const TEACHING_MOVES = new Set(["explain", "worked_step", "worked_example", "cor
 export function worthFactChecking(move: string, speech: string[], diagnosisStatus?: string): boolean {
   const text = speech.join(" ");
   // Teaching moves and diagnoses, and ANY substantial reply that works with numbers (a "confirm" that agrees with a wrong figure is the commonest way an error gets validated).
-  return (TEACHING_MOVES.has(move) || ["misconception", "slip", "partial"].includes(String(diagnosisStatus)) || /\d/.test(text)) && text.split(/\s+/).length >= 18;
+  return (TEACHING_MOVES.has(move) || ["misconception", "slip", "partial"].includes(String(diagnosisStatus)) || /\d/.test(text) || ["confirm", "revoice", "recap"].includes(move)) && text.split(/\s+/).length >= 14;
 }
 
 /** The first definitely-false claim in the reply, or null (also null when the check itself fails — it never blocks a reply). */

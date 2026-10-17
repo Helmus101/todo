@@ -582,13 +582,19 @@ export function focusBlock(focus: string): string {
  *  givens — a figure Otto computed or made up on its own ("take the square root of 390.4") instead of the student's. */
 export function inventedNumbers(reply: string, sources: string[]): string[] {
   const norm = (t: string) => t.replace(/(?!(?<![\d.,])0)(\d)[\s,](?=\d{3}(?!\d))/g, "$1").replace(/(\d),(\d)/g, "$1.$2");
-  const hay = norm(sources.join(" \n "));
+  // A percentage is also its decimal ("30 %" ⇒ 0.3), and a decimal is also its percentage (0.3 ⇒ 30).
+  const base = norm(sources.join(" \n "));
+  const extra: string[] = [];
+  for (const m of base.matchAll(/(\d+(?:\.\d+)?)\s*%/g)) { extra.push(String(Number(m[1]) / 100)); extra.push("100"); }
+  for (const m of base.matchAll(/(?<![\d.])0\.\d+(?![\d])/g)) extra.push(String(Math.round(Number(m[0]) * 1000) / 10));
+  const hay = `${base} \n ${extra.join(" ")}`;
   const plain = norm(reply.replace(/\\[a-z]+/gi, " ").replace(/\$/g, " "));
   const out: string[] = [];
   for (const m of plain.matchAll(/(?<![\d.])\d+(?:\.\d+)?(?![\d])/g)) {
     const n = m[0];
     if (!n.includes(".") && n.length < 3) continue;
-    if (n.includes(".") && n.replace(".", "").length < 3) continue;
+    // a decimal below 1 ("0,2" as a probability or a ratio) is a real claim even with two digits
+    if (n.includes(".") && n.replace(".", "").length < 3 && !/^0\.\d/.test(n)) continue;
     if (!new RegExp(`(?<![\\d.])${n.replace(".", "\\.")}(?![\\d])`).test(hay)) out.push(n);
   }
   return [...new Set(out)];

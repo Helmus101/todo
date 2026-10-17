@@ -347,7 +347,7 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   if (bad) out.push({ code: "arithmetic", hard: true, fix: `a calculation is wrong: ${bad}. Recompute it.` });
   if (!c.discussion && t.move !== "worked_example") {
     const invented = inventedNumbers(say, [...c.said, ...c.board.map((b) => b.text), ...c.problems.map((p) => p.question), ...(c.solution ? [c.solution.statement, ...c.solution.steps.map((s) => s.result || "")] : [])]);
-    if (invented.length) out.push({ code: "numbers", hard: false, fix: `it uses numbers nobody gave (${invented.slice(0, 3).join(", ")}) — only the problem's, the student's, or the verified solution's.` });
+    if (invented.length) out.push({ code: "numbers", hard: ["confirm", "elicit", "focus", "probe_why", "practice", "revoice", "correct_error", "hint_procedure"].includes(t.move), fix: `it uses numbers nobody gave (${invented.slice(0, 3).join(", ")}) — only the problem's, the student's, or the verified solution's.` });
   }
   // 8b. Never invent an error in work that is right (reported live: "what went wrong there?" asked about a correct line).
   if (c.verdict === "correct" && !c.problems.some((p) => !p.solved) && /\b(?:what went wrong|what'?s wrong|where(?:'s| is| was) the (?:error|mistake|slip)|spot the (?:error|mistake|slip)|find the (?:error|mistake|slip)|qu'?est-ce qui (?:ne va pas|cloche)|où est l'erreur)\b/i.test(say))

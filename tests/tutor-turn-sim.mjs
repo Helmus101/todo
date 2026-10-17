@@ -171,6 +171,11 @@ export async function runTutorTurnSim(check, section) {
       check("an error-spotting item whose right option states the corrected value is caught; one that only names the line and the type passes (reported live: 'it just gave the answer')",
         orf({ question: q, options: ["Line 1 — 4Q should be 16, so Q = 4", "Line 2 — division slip"], correct: 0 }) && !orf({ question: q, options: ["Line 1 — a slip when moving the 4 across", "Line 2 — a division slip"], correct: 0 }) && !orf({ question: q, options: ["Line 1", "Line 2"], correct: 1 }));
     }
+    { const { inventedNumbers: inv } = await import("../server/tutorAdapt.ts");
+      const src = ["Dans une classe, 60 % font de l'anglais et 30 % font anglais et espagnol.", "P(anglais|espagnol) = 0,3 / P(espagnol)"];
+      check("numbers from nowhere: a small decimal like 0,2 is caught when the data say 0,3; a percentage's decimal (30 % = 0,3) and the student's own numbers are fine",
+        inv("Le haut reste bien 0,2.", src).includes("0.2") && inv("Le haut reste bien 0,3 et le bas 0,6.", src).length === 0 && inv("Tu as 30 sur 100.", src).length === 0);
+    }
     check("verify: a quotation the student never gave is refused (a poem quoted from memory); quoting their own words or a board line is fine",
       codes({ move: "focus", speech: ["Au vers 2 il dit « sans bruit, sans voir, sans entendre » : qu'est-ce que ça change ?"] }).includes("unsourced_quote") &&
       !codes({ move: "focus", speech: ["Tu as écrit « il part plein d'espoir voir sa fille » : et à la fin ?"] }, { ...vctx, said: ["il part plein d'espoir voir sa fille"] }).includes("unsourced_quote") &&
