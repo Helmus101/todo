@@ -274,7 +274,7 @@ section("Tutor session routing — deep links resolve, the URL follows the live 
   check("the active session header has no 'All sessions' link back to the list (report-live: shouldn't be there)",
     !/tutor-crumb-link/.test(tutSrcR) && !/leaveToList/.test(tutSrcR));
   check("the dock chat toggle is an expand/collapse control, not a labeled 'Chat' button",
-    /chatDrawer \? <Minimize2 size=\{13\} aria-hidden="true" \/> : <Maximize2 size=\{13\} aria-hidden="true" \/>/.test(tutSrcR) &&
+    /aria-expanded=\{chatDrawer\}/.test(tutSrcR) && /tutor-dock-chat-toggle-chev/.test(tutSrcR) && /L\("Historique", "History"\)/.test(tutSrcR) &&
     !/\{chatDrawer \? L\("Fermer", "Close"\) : L\("Chat", "Chat"\)\}/.test(tutSrcR));
 }
 section("Tutor memory — earlier turns are condensed, not forgotten");
