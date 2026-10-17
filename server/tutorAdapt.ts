@@ -629,7 +629,9 @@ export function misstatesGiven(reply: string, sources: string[]): string | null 
 export function asksToDraw(message: string): boolean {
   const m = String(message || "");
   if (m.length > 320 || isDrawingTurn(m) || /\bi (?:drew|am drawing|'ll draw|will draw|created a drawing)\b|my (?:drawing|diagram|sketch)/i.test(m)) return false;
-  if (/\b(?:graph|plot|trace|représente)\b/i.test(m) && /\b(?:it|them|these|those|the (?:lines?|functions?|curves?|equations?)|can we|could we|let'?s|maybe|please|show|just)\b/i.test(m) && !/\bi (?:graphed|plotted)\b/i.test(m)) return true;
+  if (/\b(?:graph|plot|trace|représente)\b/i.test(m) && /\b(?:it|this|that|them|these|those|the (?:lines?|functions?|curves?|equations?)|can we|could we|let'?s|maybe|please|show|just)\b/i.test(m) && !/\bi (?:graphed|plotted)\b/i.test(m)) return true;
+  // "can you make a chart / table / graph of this" (spoken, often buried mid-sentence)
+  if (/\b(?:can|could|would) you\b[^.?!]{0,30}\b(?:graph|chart|plot|table|tableau|graphique)\b|\b(?:create|make|build|draw|give me|show me)\s+(?:me\s+)?(?:a|the)\s+(?:chart|table|graph|plot|tableau|graphique)\b|\bpeux-tu[^.?!]{0,30}\b(?:graphique|tableau|courbe)\b/i.test(m)) return true;
   return /\b(?:draw|sketch|illustrate|dessine[rz]?|dessin|schéma|diagram)\b/i.test(m) && /\b(?:can you|could you|please|just|for me|again|show|do it|try|make|peux-tu|pouvez|s'il)\b|^draw\b/i.test(m)
     || /\bshow (?:me )?(?:the )?(?:angles|diagram|picture|figure|situation|it)\b/i.test(m);
 }

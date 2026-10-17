@@ -42,11 +42,12 @@ const STILL_LOST = /\b(?:(?:i )?still (?:don'?t|do not|can'?t) (?:get|understand
 const STUCK = /\b(?:i (?:don'?t|do not) (?:know|get it|understand)|still (?:don'?t|do not) (?:get|understand)|(?:explain|say) (?:it )?again|idk|no idea|i'?m (?:stuck|lost|confused)|not sure|je (?:ne )?sais pas|j'?sais pas|aucune idée|je suis (?:perdu|bloqué)e?|je comprends pas|help me|aide[- ]moi)\b/i;
 
 /** The turn the app has already worked out, as a prompt block the model must respect. Exported for tests. */
-export function factsBlock(f: { policy: Policy; verdict?: { gap: string; given: string; verdict: "correct" | "incorrect" }; solvedInChat?: string; wrongInChat?: boolean; wrongPick?: string; wants: VerifyContext["wants"] & { explain: boolean }; teaching?: TutorTeachingState; affect: string; adapt?: string[] }): string {
+export function factsBlock(f: { policy: Policy; verdict?: { gap: string; given: string; verdict: "correct" | "incorrect" }; solvedInChat?: string; wrongInChat?: boolean; wrongPick?: string; keyDoubt?: boolean; wants: VerifyContext["wants"] & { explain: boolean }; teaching?: TutorTeachingState; affect: string; adapt?: string[] }): string {
   const lines = [
     `SUPPORT ALLOWED THIS TURN: up to level ${f.policy.maxSupport} (${f.policy.reason}). Allowed moves: ${f.policy.allowed.join(", ")}.`,
     f.verdict ? `THEIR STEP, CHECKED BY CODE: "${f.verdict.given}" for the open line "${f.verdict.gap}" is ${f.verdict.verdict === "correct" ? "RIGHT — credit exactly what was right" : "WRONG — find the first thing that's off; don't give the value"}.` : "",
     f.solvedInChat ? `THEY JUST ANSWERED THE OPEN EXERCISE IN CHAT AND IT IS RIGHT (code-checked): "${f.solvedInChat.slice(0, 160)}". Confirm it — never ask them to type it into the box — then deepen it (ask why it works or give a variation) before moving on.` : "",
+    f.keyDoubt ? "THE ANSWER BOX MARKED THEIR NUMBER WRONG, BUT AN INDEPENDENT SOLUTION AGREES WITH THEM — the exercise's stored answer is probably the mistaken one. Tell them plainly that their answer is right and the check was off (that's on the app, not them), credit their method, then move on or deepen it. Never hint that they made an error." : "",
     f.wrongPick ? `THEIR ANSWER-BOX CHOICE WAS WRONG ("${f.wrongPick.slice(0, 160)}"). A wrong choice shows what they believe: say in plain words what idea makes that choice attractive (name the belief gently, set diagnosis.misconception), then test it with a fresh case or a counter-example instead of just saying it's wrong. Don't say which option is right.` : "",
     f.wrongInChat ? "Their number for the open exercise is WRONG (code-checked): look for the first slip, no new exercise." : "",
     f.wants.why ? "THEY ASKED WHY: give the real reason first, in plain words." : "",
@@ -153,7 +154,32 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const wants = { why: asksWhy(message), write: asksToWrite(message) && !problemOnBoard, problemOnBoard, different: wantsDifferent(message), restart: asksToRestart(message), exercise: wantsExercise(message) || wantsMoreExercises(message), explain: needsExplanation(message, input.teaching) && (history.length > 0 || /\b(?:explain|understand|lost|confus|no idea|idk|dunno|don'?t get|expliqu|compren|perdu)/i.test(message)), draw: asksToDraw(message) || acceptsBoardOffer(message, history) };
   // An answer-widget or answer-box result ("[Exercise] … marked right/wrong") is a verified outcome like any other step check.
   const reported = parseExerciseResults(message);
-  const verdict = input.stepVerdict?.verdict ?? (solvedNow.length ? "correct" : wrongNow ? "incorrect" : undefined) ?? verdictFromResults(reported);
+  let verdict = input.stepVerdict?.verdict ?? (solvedNow.length ? "correct" : wrongNow ? "incorrect" : undefined) ?? verdictFromResults(reported);
+  // A numeric exercise marked wrong twice: if an independent solve lands on THEIR number and not the key, the key is the suspect.
+  let keyDoubt = false;
+  const lastWidget = [...reported].reverse().find((r) => r.source === "widget");
+  // …or they push back in chat on a number the box marked wrong ("but isn't it 2.04?").
+  const numIn = (t: string) => (String(t).replace(",", ".").match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
+  let disputed: string | undefined;
+  if (!reported.length && /\b(?:isn'?t it|shouldn'?t it|i thought|are you sure|that'?s what i|i got|c'est pas|non mais|pas plut[ôo]t|je trouve)\b/i.test(message)) {
+    const prior = history.filter((h) => h.role === "user").slice(-4).flatMap((h) => parseExerciseResults(h.text)).filter((r) => r.source === "widget" && r.verdict === "incorrect" && r.given);
+    const hit = [...prior].reverse().find((r) => numIn(message).some((n) => numIn(r.given!).some((g) => Math.abs(g - n) <= Math.max(Math.abs(n) * 0.005, 1e-6))));
+    if (hit) disputed = hit.given;
+  }
+  if ((verdict === "incorrect" || disputed) && (disputed || (lastWidget && (lastWidget.attempt || 0) >= 2)) && process.env.TUTOR_KEYCHECK !== "off") {
+    const open = [...problems].reverse().find((p) => !p.solved && !(p.options && p.options.length));
+    const theirs = numIn(disputed || lastWidget?.given || "").pop() ?? NaN;
+    const key = Number(String(open?.answer ?? "").replace(",", ".").match(/-?\d+(?:\.\d+)?/)?.[0]);
+    if (open && Number.isFinite(theirs) && Number.isFinite(key)) {
+      try {
+        const r = await solveProblem(String(open.question), context.subject);
+        result.tokens.in += r.tokens.in; result.tokens.out += r.tokens.out;
+        const v = r.solution?.verified ? Number(r.solution.value) : NaN;
+        const close = (a: number, b: number) => Math.abs(a - b) <= Math.max(Math.abs(b) * 0.015, 0.0006);
+        if (Number.isFinite(v) && close(theirs, v) && !close(key, v)) { keyDoubt = true; verdict = "correct"; }
+      } catch { /* keep the app's mark */ }
+    }
+  }
   const policy = supportPolicy({ teaching: input.teaching, needsExplanation: wants.explain, asksWhy: wants.why, asksForWorkedExample: asksForWorkedExample(message), verdict, questionRun: questionRun(input.teaching?.log) });
   const discussion = isDiscussionSubject(context.subject, [message, ...history.slice(-4).map((h) => h.text)].join(" "));
   const goalsAreKnown = goalsKnown(input.teaching?.goals, message, objectives.length > 0);
@@ -180,7 +206,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     + (context.subject ? `\n\nSESSION TOPIC: ${context.subject}${objectives.length ? ` — plan: ${objectives.map((o) => o.label).join("; ")}` : ""}. Every plan, worksheet, question and exercise stays on this subject and plan; never bring in another subject or an unrelated topic unless the student asks for it.` : "")
     + (usedExercises.length ? `\n\n${exercisesBlock(usedExercises)}` : "")
     + (() => { const v = varietyLine(recentQuestionKinds(history)); return v ? `\n\n${v}` : ""; })()
-    + factsBlock({ policy, verdict: input.stepVerdict, solvedInChat: solvedNow[0]?.question, wrongInChat: wrongNow, wrongPick: reported.find((r) => r.verdict === "incorrect" || r.verdict === "partial")?.given, wants, teaching: input.teaching, affect, adapt: [...sessionGuide({ message, history, log: input.teaching?.log, correctNow: verdict === "correct", openWork: problems.some((p) => !p.solved) || board.some((b) => b.kind === "gap" && b.status !== "correct"), hasObjectives: objectives.length > 0, goals: input.teaching?.goals, goalsKnown: goalsAreKnown, different: wants.different, finalValue: input.solution?.finalAnswer, finalReached: solvedNow.length > 0 || reachedSolutionSteps(message, input.solution).includes(0) || (problems.length > 0 && problems.every((p) => p.solved)), level: [context.profile?.yearLevel, context.profile?.track === "ib" ? "IB" : context.profile?.track === "ap" ? "AP" : context.profile?.track === "bac" ? "bac" : "", ...(context.profile?.courses || []).slice(0, 4)].filter(Boolean).join(", ") }), ...adaptationLines(input.teaching?.log, { wrong: verdict === "incorrect", stuck: STUCK.test(message) || STILL_LOST.test(message), stillLost: STILL_LOST.test(message) }, history.filter((h) => h.role === "assistant").slice(-4).map((h) => h.text.toLowerCase().replace(/[^a-zà-ÿ' ]/g, " ").split(/\s+/).filter(Boolean).slice(0, 2).join(" ")).filter(Boolean))] })
+    + factsBlock({ policy, verdict: input.stepVerdict, solvedInChat: solvedNow[0]?.question, wrongInChat: wrongNow, keyDoubt, wrongPick: keyDoubt ? undefined : reported.find((r) => r.verdict === "incorrect" || r.verdict === "partial")?.given, wants, teaching: input.teaching, affect, adapt: [...sessionGuide({ message, history, log: input.teaching?.log, correctNow: verdict === "correct", openWork: problems.some((p) => !p.solved) || board.some((b) => b.kind === "gap" && b.status !== "correct"), hasObjectives: objectives.length > 0, goals: input.teaching?.goals, goalsKnown: goalsAreKnown, different: wants.different, finalValue: input.solution?.finalAnswer, finalReached: solvedNow.length > 0 || reachedSolutionSteps(message, input.solution).includes(0) || (problems.length > 0 && problems.every((p) => p.solved)), level: [context.profile?.yearLevel, context.profile?.track === "ib" ? "IB" : context.profile?.track === "ap" ? "AP" : context.profile?.track === "bac" ? "bac" : "", ...(context.profile?.courses || []).slice(0, 4)].filter(Boolean).join(", ") }), ...adaptationLines(input.teaching?.log, { wrong: verdict === "incorrect", stuck: STUCK.test(message) || STILL_LOST.test(message), stillLost: STILL_LOST.test(message) }, history.filter((h) => h.role === "assistant").slice(-4).map((h) => h.text.toLowerCase().replace(/[^a-zà-ÿ' ]/g, " ").split(/\s+/).filter(Boolean).slice(0, 2).join(" ")).filter(Boolean))] })
     + (input.spoken && spokenRepair ? voiceInputBlock(message, input.spoken.alternatives, spokenRepair) : "")
     + `\n\nReply in ${fr ? "French" : "English"} unless the student is writing in another language. Return ONLY the JSON object.`;
 
@@ -191,7 +217,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   ];
 
   const said = [...history.filter((h) => h.role === "user").map((h) => h.text), message, input.solution?.statement || "", ...(spokenRepair ? [spokenRepair.interpreted, ...(input.spoken?.alternatives || [])] : []), ...problems.map((p) => p.question || ""), ...board.filter((b) => b.kind === "given" || b.owner === "student").map((b) => b.text)];
-  const vctx: VerifyContext = { message, history, board, problems, solution: input.solution, policy, wants: { why: wants.why, write: wants.write, restart: wants.restart, exercise: wants.exercise, draw: wants.draw, problemOnBoard: wants.problemOnBoard, different: wants.different }, said, discussion, usedExercises, verdict, scope, goalsKnown: goalsAreKnown };
+  const vctx: VerifyContext = { message, history, board, problems, solution: input.solution, policy, wants: { why: wants.why, write: wants.write, restart: wants.restart, exercise: wants.exercise, draw: wants.draw, problemOnBoard: wants.problemOnBoard, different: wants.different }, said, discussion, usedExercises, verdict, keyDoubt, scope, goalsKnown: goalsAreKnown };
 
   // ── The exercise generator doesn't depend on what the tutor says, so when they have asked for one it runs IN PARALLEL with the
   //    tutor's own call (the longest wait in a turn) instead of after it. ──

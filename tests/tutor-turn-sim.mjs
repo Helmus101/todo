@@ -71,6 +71,16 @@ export async function runTutorTurnSim(check, section) {
       check("a generated exercise whose key an independent solve contradicts is rejected and regenerated (reported live: a right answer marked wrong five times)", gens === 2 && !!g2 && /0\.77/.test(String(g2.input.answer)));
       process.env.TUTOR_KEYCHECK = "off";
     }
+    { // The box marked 2.04 wrong; the student pushes back; an independent solve agrees with them → the tutor is told the key is suspect.
+      process.env.TUTOR_KEYCHECK = "on";
+      const solveJson = { final_answer: "2.04 m/s^2", check: "20.4/10", steps: [{ idea: "a = F/m", result: "2.04", check: "20.4/10" }], key_idea: "F = ma", alternatives: [], mistakes: [], skill: "newton second law" };
+      const open = { id: "p1", question: "A 10 kg box is pulled by a net force of 20.4 N. Find its acceleration in m/s^2.", answer: "2.4", kind: "free", createdAt: "x" };
+      let facts = "";
+      script = (b) => { if (/expert teacher preparing to tutor/.test(systemOf(b))) return solveJson; facts = systemOf(b) + lastUser(b); return T({ move: "confirm", speech: ["Yes, your 2.04 is right and the check was off.", "What happens to the net force as the angle grows?"] }); };
+      const rk = await runTutorTurn({ ...base, problems: [open], history: [{ role: "user", text: "[Exercise] I answered \"2.04\" — marked wrong (try #1)." }, { role: "assistant", text: "Close, check it." }], message: "smaller but isn't it 2.04 for the question before" });
+      check("a student who disputes a wrong mark with the right number is told so when an independent solve agrees (reported live: 'spot on' after a wrong mark)", /INDEPENDENT SOLUTION AGREES/.test(facts) && /2\.04/.test(rk.reply));
+      process.env.TUTOR_KEYCHECK = "off";
+    }
     check("verify: a reply that corrects itself mid-way is refused; a clean one passes (reported live: '= 40… non, pardon')",
       codes({ move: "explain", speech: ["Le discriminant vaut 64 - 24 = 40… non, pardon, c'est 64 - 24 = 40.", "Tu vois pourquoi ?"] }).includes("self_correct") &&
       codes({ move: "explain", speech: ["Sorry, let me redo that: it is 40.", "Clear?"] }).includes("self_correct") &&

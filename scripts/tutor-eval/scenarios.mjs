@@ -111,5 +111,10 @@ export const SCENARIOS = [
     voice: true,
     persona: `${STU} You speak in messy transcribed speech with filler words ('um', 'so basically', 'like'), saying maths in words ('x squared plus three x'). You know the quotient rule as 'low d high minus high d low over low squared' but swap the numerator order the first time.`,
     expect: "Repairs the spoken maths against the board (writes the function cleanly), says back what it heard when messy, checks the numerator order with a focusing question rather than correcting directly; short sentences suited to being read aloud.", turns: 9 },
+  { id: "p26-voice-ramp-chart", subject: "Physics", lang: "en", profile: { yearLevel: "Year 12", track: "ib", courses: ["Physics SL"] },
+    opening: "okay so a box of 10 kilograms gets pulled up a ramp at 30 degrees with a pull of 80 newtons and friction is 15 newtons, I need the acceleration, so I guess we include gravity and friction right",
+    voice: true,
+    persona: `${STU} You speak in messy transcribed speech ('okay so', 'um', 'right'), say equations in words ('f net equals f pull minus m g sin theta minus friction'). Around your second or third message you say 'can you graph this, can you create a chart of the forces' in the middle of a sentence. You know F=ma but forget to compute mg sin theta numerically (g = 9.8).`,
+    expect: "When asked for a chart/graph mid-sentence it actually draws one (force diagram or table) that turn; writes the student's spoken equation cleanly on the board; each reply moves the problem forward (never repeats the same question); numbers come out right (mg sin30 = 49, a = (80-49-15)/10 = 1.6).", turns: 9 },
 ];
 export const byId = Object.fromEntries(SCENARIOS.map((s) => [s.id, s]));

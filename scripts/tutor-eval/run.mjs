@@ -46,7 +46,7 @@ async function runScenario(scenario) {
   }
   const metrics = computeMetrics(S, scenario);
   const verdict = noJudge ? null : await judge(S, scenario);
-  const rec = { id: scenario.id, subject: scenario.subject, metrics, judge: verdict, transcript: S.turns.map((t) => ({ student: t.message, tutor: t.reply, move: t.turn?.move, support: t.turn?.support, diagnosis: t.turn?.diagnosis, misconception: t.turn?.misconception, angle: t.turn?.angle, ms: t.ms, board: (t.newBoard || []).map((e) => `${e.kind}${e.owner === "student" ? "/student" : ""}: ${String(e.text || "").slice(0, 200)}`), exercises: (t.newProblems || []).map((p) => p.question + (p.options?.length ? `  [options: ${p.options.join(" / ")}]` : "")), issues: t.turn?.issues, dropped: t.turn?.dropped, verdict: t.verdict, error: t.error })) };
+  const rec = { id: scenario.id, subject: scenario.subject, metrics, judge: verdict, transcript: S.turns.map((t) => ({ student: t.message, tutor: t.reply, move: t.turn?.move, support: t.turn?.support, diagnosis: t.turn?.diagnosis, misconception: t.turn?.misconception, angle: t.turn?.angle, ms: t.ms, board: (t.newBoard || []).map((e) => `${e.kind}${e.owner === "student" ? "/student" : ""}: ${String(e.text || "").slice(0, 200)}`), exercises: (t.newProblems || []).map((p) => p.question + (p.options?.length ? `  [options: ${p.options.join(" / ")}]` : "") + (process.env.EVAL_KEYS ? `  [KEY: ${p.answer ?? p.check ?? p.correct}]` : "")), issues: t.turn?.issues, dropped: t.turn?.dropped, verdict: t.verdict, error: t.error })) };
   appendFileSync(join(OUT, "results.jsonl"), JSON.stringify(rec) + "\n");
   return rec;
 }

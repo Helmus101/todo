@@ -45,6 +45,8 @@ export interface VerifyContext {
   wants: { why: boolean; write: boolean; restart: boolean; exercise: boolean; draw?: boolean; problemOnBoard?: boolean; different?: boolean };
   /** Everything the student and the problem said — the only legitimate source of numbers. */
   said: string[];
+  /** The app's mark was probably wrong (an independent solve agrees with the student): the reply may disagree with it. */
+  keyDoubt?: boolean;
   discussion: boolean;
   /** Exercises already used this session and in earlier ones (exercises.ts). */
   usedExercises?: string[];
@@ -244,7 +246,7 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
     const gradedBy = verdictFromResults(parseExerciseResults(c.message));
     const marked = gradedBy ? [gradedBy === "correct" ? "marked right" : "marked wrong"] : /\bmarked (right|wrong)\b|\bchecked (right|wrong)\b/i.exec(c.message);
     const first = (say.split(/(?<=[.!?])\s+/)[0] || "");
-    if (marked) {
+    if (marked && !c.keyDoubt) {
       const right = /right/i.test(marked[0]);
       if (!right && /\b(?:that'?s (?:right|correct|it)|exactly|spot on|well done|correct|you got it|bien joué|exact)\b/i.test(first) && !/\b(?:not|n't|isn'?t|pas)\b/i.test(first)) out.push({ code: "verdict_mismatch", hard: true, fix: "the app marked their answer WRONG, but the reply starts by saying it is right. Open by saying it isn't there yet, find the first thing that's off and ask one question aimed at it." });
       if (right && /\b(?:not quite|incorrect|isn'?t right|not right|wrong|pas tout à fait)\b/i.test(first)) out.push({ code: "verdict_mismatch", hard: true, fix: "the app marked their answer RIGHT, but the reply says it is wrong. Confirm it in a few words, then move on." });
