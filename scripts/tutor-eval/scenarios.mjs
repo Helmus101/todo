@@ -121,5 +121,10 @@ export const SCENARIOS = [
     voice: true,
     persona: `${STU} Messy transcribed speech; g = 10. You computed 80 - 15 - mg sin45 = about -20 and conclude it slides down with acceleration -18, and you don't realise friction flips direction (and may even hold the crate still). Accept a correct explanation after one good counter-question; do not volunteer the fix.`,
     expect: "Does NOT accept 'accelerates down at -18': mg sin45 is about 85 N, the pull is 80 N, the shortfall is about 5 N which static friction (up to 15 N) can hold, so the crate stays at rest; or if it slid, friction would act up the slope. Diagnoses the sign-of-friction misconception with a question or counter-example, then explains plainly.", turns: 8 },
+  { id: "p28-voice-topic-switch", subject: "Physics", lang: "en", profile: { yearLevel: "Year 12", track: "ib", courses: ["Physics SL"] },
+    opening: "all right can we work on some energy questions please, like a block sliding down a rough track",
+    voice: true,
+    persona: `${STU} Messy transcribed speech with filler. After 2-3 exchanges on energy you say 'can you actually do momentum please'. In the momentum part you ask what the blocks/masses are if they were not stated ('which masses are you talking about'), and once, when an equation was only spoken, you say 'I don't see it on the board, you didn't put that on the board'. You know p = mv but not that momentum is conserved when objects stick together.`,
+    expect: "When asked to switch to momentum it opens a fresh worksheet on momentum (not leftovers of energy), states the collision with numbers before asking about it, writes equations it talks about on the board, puts the CURRENT problem (not an old one) on the board when asked, never claims something is on the board that is not, explains inelastic collisions plainly when asked.", turns: 10 },
 ];
 export const byId = Object.fromEntries(SCENARIOS.map((s) => [s.id, s]));

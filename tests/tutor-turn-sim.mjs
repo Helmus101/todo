@@ -113,6 +113,11 @@ export async function runTutorTurnSim(check, section) {
         !us("What is the total momentum before the blocks collide?", ["A 3 kg block moving at 4 m/s hits a 1 kg block"]) &&
         !us("Which way do the masses accelerate?", ["Masses M and m on a slope"]) && !us("What is the momentum?", []));
     }
+    check("verify: 'you didn't put the equation on the board' needs an equation line, the givens alone are refused; a switch of topic needs a topic op (reported live)",
+      codes({ move: "explain", speech: ["Here it is.", "What is v?"], board: [{ op: "step", cue: 0, kind: "given", text: "$m_1 = 2$ kg" }] }, { ...vctx, message: "I don't see it on the board, you didn't put the equation on the board" }).includes("intent_equation") &&
+      !codes({ move: "explain", speech: ["Here it is.", "What is v?"], board: [{ op: "step", cue: 0, kind: "formula", text: "$m_1u_1 = (m_1+m_2)v$" }] }, { ...vctx, message: "I don't see it on the board, you didn't put the equation on the board" }).includes("intent_equation") &&
+      codes({ move: "elicit", speech: ["Sure.", "What is p?"] }, { ...vctx, message: "can you actually do momentum please", wants: { ...vctx.wants, topicSwitch: true } }).includes("intent_topic") &&
+      !codes({ move: "elicit", speech: ["Sure.", "What is p?"], board: [{ op: "topic", cue: 0, text: "Momentum" }] }, { ...vctx, message: "can you actually do momentum please", wants: { ...vctx.wants, topicSwitch: true } }).includes("intent_topic"));
     check("verify: a quotation the student never gave is refused (a poem quoted from memory); quoting their own words or a board line is fine",
       codes({ move: "focus", speech: ["Au vers 2 il dit « sans bruit, sans voir, sans entendre » : qu'est-ce que ça change ?"] }).includes("unsourced_quote") &&
       !codes({ move: "focus", speech: ["Tu as écrit « il part plein d'espoir voir sa fille » : et à la fin ?"] }, { ...vctx, said: ["il part plein d'espoir voir sa fille"] }).includes("unsourced_quote") &&

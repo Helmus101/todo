@@ -29,7 +29,7 @@ import { supportPolicy, asksForWorkedExample, adaptationLines, questionRun, type
 import { verifyTurn, degradeTurn, acceptsBoardOffer, claimsBoard, hasVisual, sceneNounsIn, type Issue, type VerifyContext } from "./verify.ts";
 import { applyOps } from "./apply.ts";
 import { sessionGuide } from "./guide.ts";
-import { asksToWriteProblem, wantsDifferent, problemStatement, wantsMoreExercises, difficultyAsked, cantSeeProblem } from "./intents.ts";
+import { wantsTopicSwitch, asksToWriteProblem, wantsDifferent, problemStatement, wantsMoreExercises, difficultyAsked, cantSeeProblem } from "./intents.ts";
 import { generateProblem, difficultyFrom } from "./problemGen.ts";
 import { goalsKnown, mergeGoals } from "./goals.ts";
 import type { SessionGoals } from "../../shared/types.ts";
@@ -55,6 +55,7 @@ export function factsBlock(f: { policy: Policy; verdict?: { gap: string; given: 
     f.wants.why ? "THEY ASKED WHY: give the real reason first, in plain words." : "",
     f.wants.explain && !f.wants.why ? "THEY NEED IT EXPLAINED (lost, asked to be shown, or stuck): teach the missing idea plainly and write it on the board as you say it, then hand back one small step." : "",
     f.wants.problemOnBoard ? "THEY ASKED YOU TO PUT THE PROBLEM ON THE BOARD (or can't see it / don't know what is asked): in THIS turn say in one plain sentence what is given and what is asked, put the FULL problem on the board (the app shows it in the answer widget), then ask the first step. Don't ask a different question instead." : "",
+    f.wants.topicSwitch ? "THEY SWITCHED TOPIC. This turn: open a fresh worksheet with a topic op, make a plan op for the NEW topic (2–3 objectives), and put the first problem on the board as a given line WITH its numbers (state what the objects are) before you ask about it. Say in a few words that the old topic is parked. From now on stay on the new topic: do not drift back to the old plan or to old exercises unless they ask." : "",
     f.wants.different ? "THEY WANT SOMETHING TOTALLY DIFFERENT: a new problem in a different situation and, if you can, a different idea from everything used so far — not a variation of the last one. Open a fresh worksheet with a topic op." : "",
     f.wants.write ? "THEY ASKED YOU TO WRITE THEIR WORKING: put their last step on the board as their own line (owner student)." : "",
     f.wants.restart ? "THEY ASKED TO START OVER: open a fresh worksheet (topic op), restate the givens, explain the first idea slowly." : "",
@@ -153,7 +154,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const nothingOfTheirs = !studentBoardLine([message]);
   const problemInPlay = problems.some((p) => !p.solved) || history.slice(-4).some((h) => h.role === "assistant" && statesAProblem(h.text));
   const problemOnBoard = asksToWriteProblem(message) || cantSeeProblem(message) || (asksToWrite(message) && nothingOfTheirs && problemInPlay && message.length < 60);
-  const wants = { why: asksWhy(message), write: asksToWrite(message) && !problemOnBoard, problemOnBoard, different: wantsDifferent(message), restart: asksToRestart(message), exercise: wantsExercise(message) || wantsMoreExercises(message), explain: needsExplanation(message, input.teaching) && (history.length > 0 || /\b(?:explain|understand|lost|confus|no idea|idk|dunno|don'?t get|expliqu|compren|perdu)/i.test(message)), draw: asksToDraw(message) || acceptsBoardOffer(message, history) };
+  const wants = { why: asksWhy(message), write: asksToWrite(message) && !problemOnBoard, problemOnBoard, different: wantsDifferent(message), topicSwitch: wantsTopicSwitch(message), restart: asksToRestart(message), exercise: wantsExercise(message) || wantsMoreExercises(message), explain: needsExplanation(message, input.teaching) && (history.length > 0 || /\b(?:explain|understand|lost|confus|no idea|idk|dunno|don'?t get|expliqu|compren|perdu)/i.test(message)), draw: asksToDraw(message) || acceptsBoardOffer(message, history) };
   // An answer-widget or answer-box result ("[Exercise] … marked right/wrong") is a verified outcome like any other step check.
   const reported = parseExerciseResults(message);
   let verdict = input.stepVerdict?.verdict ?? (solvedNow.length ? "correct" : wrongNow ? "incorrect" : undefined) ?? verdictFromResults(reported);
@@ -195,7 +196,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     + (input.voiceMode ? VOICE_NOTE : "")
     + backgroundBlock(context)
     + (discussion ? DISCUSSION_BLOCK : "")
-    + objectivesBlock(objectives).replace(/SET_OBJECTIVES/g, "a plan op")
+    + objectivesBlock(wants.topicSwitch ? [] : objectives).replace(/SET_OBJECTIVES/g, "a plan op")
     + `\n\nToday is ${new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })} (for deadlines only).`
     + `\n\nTHE BOARD (margin numbers #n are what you point at)${boardSurfaceBlock(board, problems) || ": empty — open it with a topic op and the starting point."}`
     + (input.dueRetests?.length && history.length <= 1 ? `\n\nOPENING THE SITTING: last time you helped them with ${input.dueRetests.slice(0, 2).join(" and ")} and haven't yet seen them do it alone. After answering what they said, offer one short retest of it — as an offer, never a demand.` : "")
@@ -219,7 +220,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   ];
 
   const said = [...history.filter((h) => h.role === "user").map((h) => h.text), message, input.solution?.statement || "", ...(spokenRepair ? [spokenRepair.interpreted, ...(input.spoken?.alternatives || [])] : []), ...problems.map((p) => p.question || ""), ...board.filter((b) => b.kind === "given" || b.owner === "student").map((b) => b.text)];
-  const vctx: VerifyContext = { message, history, board, problems, solution: input.solution, policy, wants: { why: wants.why, write: wants.write, restart: wants.restart, exercise: wants.exercise, draw: wants.draw, problemOnBoard: wants.problemOnBoard, different: wants.different }, said, discussion, usedExercises, verdict, keyDoubt, scope, goalsKnown: goalsAreKnown };
+  const vctx: VerifyContext = { message, history, board, problems, solution: input.solution, policy, wants: { why: wants.why, write: wants.write, restart: wants.restart, exercise: wants.exercise, draw: wants.draw, problemOnBoard: wants.problemOnBoard, different: wants.different, topicSwitch: wants.topicSwitch }, said, discussion, usedExercises, verdict, keyDoubt, scope, goalsKnown: goalsAreKnown };
 
   // ── The exercise generator doesn't depend on what the tutor says, so when they have asked for one it runs IN PARALLEL with the
   //    tutor's own call (the longest wait in a turn) instead of after it. ──
@@ -374,7 +375,8 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   {
     const placed = applied.board.some((e) => e.kind === "given") || applied.problems.length > 0;
     const speechAll = turn.speech.join(" ");
-    const statesNew = posesProblemInProse(speechAll) && (wants.exercise || wants.different) && !problems.some((p) => !p.solved);
+    const freshScenario = posesProblemInProse(speechAll) && /\b(?:picture|imagine|suppose|consider|take|say|let'?s say|here'?s|if|a|an)\b[^.?!]{0,14}\ban?\s+\d/i.test(speechAll) && (() => { const nums = speechAll.match(/\d+(?:\.\d+)?/g) || []; const known = [...problems.filter((p) => !p.solved).map((p) => p.question || ""), ...board.map((b) => b.text || "")].join(" "); return nums.length >= 2 && nums.filter((n) => !new RegExp(`(?<![\\d.])${n.replace(".", "\\.")}(?![\\d])`).test(known)).length >= 2; })();
+    const statesNew = posesProblemInProse(speechAll) && (((wants.exercise || wants.different) && !problems.some((p) => !p.solved)) || wants.topicSwitch || freshScenario);
     if (!placed && (wants.problemOnBoard || statesNew)) {
       const opQ = turn.board.find((o) => o.op === "problem")?.question;
       const text = problemStatement({ opQuestion: opQ, history: [...history, { role: "assistant", text: speechAll }], openProblem: [...problems].reverse().find((p) => !p.solved)?.question, studentStated: studentProblemStatement(message) });
@@ -389,6 +391,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   result.board = applied.board;
   result.problems = applied.problems;
   if (applied.objectives) result.objectives = applied.objectives;
+  else if (wants.topicSwitch && objectives.length) result.objectives = []; // the old plan belongs to the topic they left
   else if (purgedObjectives) {
     // The stored plan is replaced by its on-topic part; if nothing is left, by one goal taken from the session's own worksheet.
     const header = [...board].reverse().find((b) => b.kind === "focus" && b.text && inScope(b.text, baseScope))?.text;

@@ -58,3 +58,11 @@ export function difficultyAsked(message: string): "harder" | "easier" | null {
 export function cantSeeProblem(message: string): boolean {
   return /\b(?:i (?:don'?t|do not|can'?t|cannot) see (?:anything|it|the (?:problem|question))|(?:don'?t|can'?t) see (?:anything|the (?:problem|question))|nothing (?:is )?(?:on|in) (?:the )?(?:board|baord)|what(?:'s| is| are) (?:the )?(?:question|problem) (?:asking|even)|what is (?:it|this|the question) asking|what am i (?:solving|supposed to)|which (?:question|problem)|what is just on (?:the )?bo|je (?:ne )?vois (?:rien|pas)|quelle question)\b/i.test(String(message || ""));
 }
+
+/** "can you actually do momentum", "can we go back to energy", "let's work on waves" — they name a different topic to work on. */
+export function wantsTopicSwitch(message: string): boolean {
+  const m = String(message || "");
+  if (m.length > 240 || /^\s*\[/.test(m)) return false;
+  return /\b(?:can|could|shall|may) (?:you|we|i) (?:please |actually |just )*(?:do|go (?:back )?to|work on|switch to|move (?:on )?to|talk about|learn|study|look at|try|revisit|cover)\s+(?!it\b|that\b|this\b|the (?:same|last|next|previous)\b|another\b|more\b|some\b|a\b|an\b|one\b|again\b|then\b|now\b|so\b)([a-zà-ÿ][a-zà-ÿ' -]{2,30})/i.test(m)
+    || /\b(?:let'?s|i want to|i need to|i'd like to|on voudrait|je veux|peut-on|on peut) (?:please |actually |just )*(?:do|go (?:back )?to|work on|switch to|move (?:on )?to|talk about|learn|study|revisit|faire|passer à|revoir|travailler)\s+(?!it\b|that\b|this\b|another\b|more\b|again\b|the (?:same|last|next))([a-zà-ÿ][a-zà-ÿ' -]{2,30})/i.test(m);
+}

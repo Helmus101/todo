@@ -906,7 +906,7 @@ export function posesProblemInProse(draft: string): boolean {
   const t = String(draft || "").replace(/\$/g, " ").replace(/\^?\{?\\(?:circ|degree)\}?/g, "°");
   if (!/[?？]/.test(t)) return false;
   // At least two quantities carrying a unit or an angle sign ("12 g", "100 m", "25°") — a lone "25°" is just a question about an angle.
-  const quantities = t.match(/\d+(?:[.,]\d+)?\s?(?:°|(?:m|cm|mm|km|kg|g|s|min|h|N|J|V|A|W|mol|L|mL|%|degrees?)\b)/gi) || [];
+  const quantities = t.match(/\d+(?:[.,]\d+)?\s?(?:°|(?:m|cm|mm|km|kg|g|s|min|h|N|J|V|A|W|mol|L|mL|%|degrees?|(?:kilo|milli|centi)?(?:grams?|meters?|metres?)|seconds?|minutes?|hours?|newtons?|joules?|volts?|amps?|amperes?|watts?|moles?|liters?|litres?|kilograms?)\b)/gi) || [];
   return quantities.length >= 2 && t.length >= 50;
 }
 

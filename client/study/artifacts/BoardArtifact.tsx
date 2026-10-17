@@ -826,7 +826,7 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
           return (
             <div
               key={item.key}
-              className={`sm-board-entry sm-board-entry-${e.kind || "note"}${e.owner === "student" ? " sm-board-entry-student" : ""}${e.status === "incorrect" && e.kind !== "gap" ? " sm-board-entry-incorrect" : ""} sm-board-writein${fresh ? " sm-board-reveal" : ""}${isPastGap || (e.kind === "gap" && e.status === "correct") ? " sm-board-gap-past" : ""}`}
+              className={`sm-board-entry sm-board-entry-${e.kind || "note"}${e.owner === "student" ? " sm-board-entry-student" : ""}${e.status === "incorrect" && e.kind !== "gap" ? " sm-board-entry-incorrect" : ""} sm-board-writein${fresh ? " sm-board-reveal" : ""}${isPastGap || (e.kind === "gap" && e.status === "correct") ? " sm-board-gap-past" : ""}${e.kind === "gap" && e.status !== "correct" && flowItems.slice(idx + 1).some((it) => it.entry?.kind === "gap") ? " sm-board-gap-skipped" : ""}`}
               style={fresh ? { animationDuration: `.35s, ${revealDuration(e.text)}s`, ...(e.cue ? { animationDelay: `${Math.min(e.cue, 6) * 0.9}s` } : {}) } : undefined}
             >
               {lineNo.get(e.id) ? <span className="sm-board-lineno" aria-label={en ? `line ${lineNo.get(e.id)}` : `ligne ${lineNo.get(e.id)}`}>{lineNo.get(e.id)}</span> : null}

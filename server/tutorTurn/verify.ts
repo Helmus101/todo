@@ -42,7 +42,7 @@ export interface VerifyContext {
   solution?: TutorSolution;
   policy: Policy;
   /** What code detected the student wants this turn. */
-  wants: { why: boolean; write: boolean; restart: boolean; exercise: boolean; draw?: boolean; problemOnBoard?: boolean; different?: boolean };
+  wants: { why: boolean; write: boolean; restart: boolean; exercise: boolean; draw?: boolean; problemOnBoard?: boolean; different?: boolean; topicSwitch?: boolean };
   /** Everything the student and the problem said — the only legitimate source of numbers. */
   said: string[];
   /** The app's mark was probably wrong (an independent solve agrees with the student): the reply may disagree with it. */
@@ -61,7 +61,7 @@ export interface VerifyContext {
 export const SELF_CORRECTION = /(?:…|\.\.\.|—|,)\s*(?:non,?\s+(?:pardon|attends|en fait)|no,?\s+wait|wait,?\s+(?:no|that)|hmm,?\s|sorry,?\s+(?:let me|that'?s|i)|let me (?:redo|recompute|recalculate|rethink)|pardon,|oops)|\b(?:actually,? (?:no|that'?s wrong|let me)|scratch that|je me trompe|je reprends)\b/i;
 
 export interface Issue {
-  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "off_topic" | "plan_too_early" | "ignores_student" | "verdict_mismatch" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh" | "no_error" | "self_correct" | "unsourced_quote" | "stale_opener" | "fact" | "format_leak" | "unstated_setup";
+  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "off_topic" | "plan_too_early" | "ignores_student" | "verdict_mismatch" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh" | "no_error" | "self_correct" | "unsourced_quote" | "stale_opener" | "fact" | "format_leak" | "unstated_setup" | "intent_topic" | "intent_equation";
   /** The instruction for the repair call. */
   fix: string;
   /** A leak or a pointer at nothing must be fixed; the rest are quality. */
@@ -290,6 +290,9 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   if (t.speech.some((sn) => FORMAT_INSTRUCTION.test(sn))) out.push({ code: "format_leak", hard: false, fix: "a sentence is an answer-format instruction (\"Provide your answer to three significant figures\"): that belongs to the exercise's answer box, not to what you say — remove it." });
   { const ghost = unstatedSetup(say, [...c.board.map((b) => b.text || ""), ...c.problems.map((p) => p.question || ""), ...c.said, ...c.history.map((h) => h.text), ...t.board.map(opText)]);
     if (ghost) out.push({ code: "unstated_setup", hard: true, fix: `it refers to "${ghost}" but the situation hasn't been stated yet. First put the problem on the board (a step op of kind "given" with all the numbers) or state it in a sentence — then ask about it.` }); }
+  if (c.wants.topicSwitch && !t.board.some((o) => o.op === "topic")) out.push({ code: "intent_topic", hard: true, fix: "they asked to work on a different topic: open a fresh worksheet with a topic op (and a plan op for the new topic), state the first problem on the board, and say in a few words that you can come back to the old one. Do not carry on with the old plan." });
+  if (/\b(?:equation|formula|expression|relation|formule)\b/i.test(c.message) && /\b(?:(?:didn'?t|did not|haven'?t|not|never) (?:put|write|written|show|on)|don'?t see|can'?t see|(?:write|put|show|add)\b|pas (?:écrit|au tableau)|je (?:ne )?vois pas)/i.test(c.message) && !/^\s*\[/.test(c.message) && !t.board.some((o) => (o.op === "step" || o.op === "gap") && ["formula", "strategy", "definition", "result", "insight"].includes(String(o.kind || "")) && /[=]/.test(String(o.text || ""))))
+    out.push({ code: "intent_equation", hard: true, fix: "they asked for the EQUATION/FORMULA on the board and none was written: add a step op (kind formula or strategy) with the actual equation, in $…$, this turn — not just the givens — and say which line it is." });
   const uq = unsourcedQuotes(say, [...c.said, ...c.board.map((b) => b.text || ""), ...c.problems.map((p) => p.question || "")]);
   if (uq.length) out.push({ code: "unsourced_quote", hard: true, fix: `it quotes "${uq[0]}", words the student never gave and that are not on the board. Never quote a text from memory: point at a line by number or describe it in your own words, or ask the student to read the line out.` });
   const objs = inventedObjects([say, ...t.board.map(opText)], [...c.said, ...c.board.map((b) => b.text || ""), ...c.problems.map((p) => p.question || ""), ...(c.solution ? [c.solution.statement, ...c.solution.steps.map((s) => `${s.idea || ""} ${s.result || ""}`)] : [])]);

@@ -4875,3 +4875,6 @@ button[aria-expanded="true"] > .sm-chev { transform: rotate(45deg); }
 .otto-replay-label { margin-left: 6px; font-size: 12px; font-weight: 600; }
 
 .tutor-dock-chat-toggle-label { font-size: 12px; font-weight: 600; }
+
+/* A gap Otto moved past without it being answered is a dead placeholder ("T₁ = ?") — don't leave it cluttering the board. */
+.sm-board-gap-skipped { display: none; }
