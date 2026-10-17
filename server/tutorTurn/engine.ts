@@ -280,7 +280,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   // is it new, are its numbers the student's) are about text that won't be shown, so they must not cost a repair call.
   if (earlyGen) issues = issues.filter((i) => !["intent_exercise", "vague", "repeat_exercise", "numbers", "invented_object", "length"].includes(i.code));
   if (worthFactChecking(turn.move, turn.speech, turn.diagnosis.status)) {
-    const bad = await falseClaim(turn.speech, turn.board.map((o: any) => String(o.text || "")).filter(Boolean), { subject: context.subject, problem: problems.find((p) => !p.solved)?.question || input.solution?.statement }, result.tokens);
+    const bad = await falseClaim(turn.speech, turn.board.map((o: any) => String(o.text || "")).filter(Boolean), { subject: context.subject, problem: problems.find((p) => !p.solved)?.question || input.solution?.statement, student: message }, result.tokens);
     if (bad) issues.push({ code: "fact", hard: true, fix: `a claim looks FALSE: ${bad}. Correct it (or leave it out) — only say what is true.` });
   }
   let repaired = false;
