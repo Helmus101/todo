@@ -26,7 +26,7 @@ export async function runTutorTurnSim(check, section) {
     const { buildNumberLine, buildBalance } = await import("../shared/simpleScenes.ts");
     const { TURN_PROMPT } = await import("../server/tutorTurn/prompt.ts");
 
-    const T = (o) => ({ heard: "x", intent: "other", diagnosis: { status: "none" }, move: "elicit", support: 0, speech: ["What do you notice?"], board: [], expects: "open", ...o });
+    const T = (o) => ({ heard: "", intent: "other", diagnosis: { status: "none" }, move: "elicit", support: 0, speech: ["What do you notice?"], board: [], expects: "open", ...o });
     const board = [
       { id: "g", n: 1, kind: "given", text: "Masses $M$ on a slope at $\\theta$, $m$ hanging", at: "a" },
       { id: "s", n: 2, kind: "formula", owner: "student", text: "$Mg\\sin\\theta - T = Ma$", at: "b" },
@@ -391,6 +391,22 @@ export async function runTutorTurnSim(check, section) {
       calls = [];
       const pr = await runTutorTurn({ ...base, board: [{ id: "g", text: "A package of mass 2.0 kg slides 4.0 m across a rough floor and stops. What is the work done by friction?", kind: "given", at: "x" }], problems: [], objectives: [{ id: "o1", label: "Define wage-setting and price-setting curves", done: false }, { id: "o2", label: "Work and energy with friction", done: false }], message: "work is change in kinetic energy", history: [{ role: "user", text: "lets do work and energy in physics" }, { role: "assistant", text: "Sure." }], context: { subject: "Physics" } });
       check("an economics objective saved during a physics session is purged: the stored plan comes back without it, and the tutor never sees it", Array.isArray(pr.objectives) && pr.objectives.length === 1 && /Work and energy/.test(pr.objectives[0].label) && !calls.some((c) => /wage-setting|labour|labor/i.test(JSON.stringify(c.messages))));
+    }
+    {
+      const { verifyTurn, ignoresStudentAnswer, claimsBoard, hasVisual } = await import("../server/tutorTurn/verify.ts");
+      check("a reply about something else than the student's number answer is caught (the '56%' session), one that responds to it isn't", ignoresStudentAnswer("search about 56% is what I would say right yeah I think it's about 56%", "wants a new problem", "Here is how speed builds up over time. Why does the acceleration drop to zero?") && !ignoresStudentAnswer("about 56% is what I would say", "estimates the efficiency at 56%", "Good, how did you get 56 percent?") && !ignoresStudentAnswer("about 56%", "", "Something else entirely."));
+      check("pointing at a curve or graph that isn't there counts as a board claim; with a figure on the board it doesn't", claimsBoard("Notice how the curve flattens out once the drag equals the weight.", false) && claimsBoard("Why does the acceleration drop once the curve becomes horizontal?", false) && !claimsBoard("Notice how the curve flattens out.", true) && hasVisual([{ kind: "graph" }]) && !hasVisual([{ kind: "given" }]));
+      const base4 = { message: "ok", history: [], board: [], problems: [], policy: { maxSupport: 5, allowed: [], reason: "" }, wants: {}, said: [], discussion: false };
+      const sky = { heard: "", intent: "other", diagnosis: { status: "none" }, move: "explain", support: 4, expects: "open", board: [], speech: ["Here is how speed builds up over time as the skydiver falls.", "Notice how the curve flattens out once the upward drag equals the downward weight.", "Why does the acceleration drop to zero once the curve becomes horizontal?"] };
+      check("the skydiver reply (a curve described, nothing drawn) is flagged as a promise the board doesn't keep", verifyTurn(sky, base4).some((i) => i.code === "board_promise"));
+    }
+    {
+      // a problem the student types is shown in the answer widget with the solver's verified key, not just left in chat
+      const typed = "A 2.0 kg package is projected at 6.0 m per second across a rough floor and stops after sliding 4.0 m. What is the work done by friction?";
+      const solT = { ...sol, statement: typed, focusKey: "kt", value: 36, finalAnswer: "36 J", verified: true };
+      script = () => T({ heard: "gave a problem", intent: "new_problem", diagnosis: { status: "none" }, move: "elicit", support: 1, speech: ["Let's start with the energy the package has at the beginning.", "What is its kinetic energy?"], board: [] });
+      const ts = await runTutorTurn({ ...base, board: [], problems: [], solution: solT, message: typed, history: [{ role: "user", text: "hi" }, { role: "assistant", text: "Hi!" }], context: { subject: "Physics" } });
+      check("a problem the student types goes into the answer widget with a verified key", ts.problems.length === 1 && /package/.test(ts.problems[0].question) && /^36/.test(String(ts.problems[0].answer)));
     }
     script = () => ({ fail: true });
     r = await runTutorTurn({ ...base, message: "hello?" });

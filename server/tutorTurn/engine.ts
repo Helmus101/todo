@@ -24,7 +24,7 @@ import {
 } from "../tutor.ts";
 import { TURN_PROMPT, VOICE_NOTE } from "./prompt.ts";
 import { supportPolicy, asksForWorkedExample, adaptationLines, type Policy } from "./policy.ts";
-import { verifyTurn, degradeTurn, acceptsBoardOffer, claimsBoard, sceneNounsIn, type Issue, type VerifyContext } from "./verify.ts";
+import { verifyTurn, degradeTurn, acceptsBoardOffer, claimsBoard, hasVisual, sceneNounsIn, type Issue, type VerifyContext } from "./verify.ts";
 import { applyOps } from "./apply.ts";
 import { sessionGuide } from "./guide.ts";
 import { asksToWriteProblem, wantsDifferent, problemStatement, wantsMoreExercises, difficultyAsked, cantSeeProblem } from "./intents.ts";
@@ -245,15 +245,22 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
 
   // ── Exercises always come through the answer widget, generated at their level ──
   let problemsForApply = problems;
+  let exerciseIntended = false;
+  const studentStatedProblem = studentProblemStatement(message);
   {
     const speechAll = turn.speech.join(" ");
     const newExercise = !wants.problemOnBoard && (wants.exercise || wants.different || turn.move === "practice");
+    exerciseIntended = newExercise;
+    // They asked for a new exercise: an unsolved earlier one is set aside, it must not block the new one (it was silently dropped before).
+    if (newExercise && (wants.exercise || wants.different)) problemsForApply = problems.map((p) => ({ ...p, solved: true }));
     if (newExercise) {
       let gen: Awaited<ReturnType<typeof generateProblem>> = null;
       if (earlyGen) {
         gen = await earlyGen; // started before the tutor's own call, so its wait overlapped
         result.tokens.in += genTokens.in; result.tokens.out += genTokens.out; result.tokens.cachedIn += genTokens.cachedIn;
       } else gen = await generateProblem(buildGenRequest(speechAll), result.tokens);
+      // One more, plainer try before giving up: any kind of task, nothing but the subject and level to satisfy.
+      if (!gen) gen = await generateProblem({ ...buildGenRequest(speechAll), kind: "any", scope: undefined, allowedTopics: undefined, used: buildGenRequest(speechAll).used.slice(-4) }, result.tokens);
       if (gen) {
         // The widget carries the problem text; the speech keeps only the lead-in (the sentences before the problem is stated).
         // The problem starts at the first sentence with a number from which the rest of the reply poses a problem.
@@ -270,15 +277,21 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
         turn = { ...turn, speech, board: ops.map((o) => ({ ...o, cue: Math.min(o.cue, Math.max(0, speech.length - 1)) })), expects: "value" };
         if (wants.different) problemsForApply = problems.map((p) => ({ ...p, solved: true }));
       } else console.warn("[tutor] problem generator returned nothing — keeping the tutor's own exercise, if any");
+    } else if (!wants.problemOnBoard && studentStatedProblem && input.solution?.verified && Number.isFinite(input.solution.value) && sameExercise(input.solution.statement, studentStatedProblem, 0.5) && !problems.some((p) => sameExercise(p.question, studentStatedProblem, 0.6)) && !turn.board.some((o) => o.op === "problem")) {
+      // They typed a problem of their own: it goes into the answer widget with the solver's code-verified key, not just chat text.
+      const ops = [...turn.board, { op: "problem", cue: Math.max(0, turn.speech.length - 1), question: studentStatedProblem, answer: input.solution.finalAnswer, check: String(input.solution.value), format: "a number (units as in the problem)" } as any];
+      turn = { ...turn, board: ops };
+      problemsForApply = problems.map((p) => ({ ...p, solved: true }));
     } else if (wants.problemOnBoard) {
       // A problem that already exists (Otto stated it, or they pasted it): the widget gets it with a code-verified key from the solver.
       const text = problemStatement({ opQuestion: turn.board.find((o) => o.op === "problem")?.question, history: [...history, { role: "assistant", text: speechAll }], openProblem: [...problems].reverse().find((p) => !p.solved)?.question, studentStated: studentProblemStatement(message) });
       if (text && !problems.some((p) => !p.solved && sameExercise(p.question, text, 0.7))) {
         let sol = input.solution && sameExercise(input.solution.statement, text, 0.6) ? input.solution : null;
         if (!sol) { const solved = await solveProblem(text, context.subject); result.tokens.in += solved.tokens.in; result.tokens.out += solved.tokens.out; sol = solved.solution; }
-        if (sol?.verified && Number.isFinite(sol.value)) {
+        const wordKey = sol?.verified && !Number.isFinite(sol.value) && String(sol.finalAnswer || "").trim().length > 0 && !/\d/.test(String(sol.finalAnswer));
+        if ((sol?.verified && Number.isFinite(sol.value)) || wordKey) {
           const ops = turn.board.filter((o) => o.op !== "problem");
-          ops.push({ op: "problem", cue: Math.max(0, turn.speech.length - 1), question: text, answer: sol.finalAnswer, check: String(sol.value), format: "a number (units as in the problem)" } as any);
+          ops.push({ op: "problem", cue: Math.max(0, turn.speech.length - 1), question: text, answer: sol!.finalAnswer, ...(Number.isFinite(sol!.value) ? { check: String(sol!.value), format: "a number (units as in the problem)" } : { format: "a short answer" }) } as any);
           turn = { ...turn, board: ops };
           problemsForApply = problems.map((p) => ({ ...p, solved: true }));
         }
@@ -321,9 +334,25 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   }
   if (applied.dropped.length) console.log(`[tutor] dropped ops: ${applied.dropped.join(" | ")}`);
 
+  // They were promised an exercise and none was placed (the generator failed twice, or the board refused it): the reply must not say
+  // "here is a new problem" over nothing.
+  if (exerciseIntended && !applied.problems.length && !applied.board.some((e) => e.kind === "given")) {
+    const claimsExercise = (sn: string) => /\b(?:new|another|fresh|next|different)\s+(?:problem|exercise|question)\b|\bhere(?:'s| is| are)\b[^.?!]*\b(?:problem|exercise|question)\b|\b(?:check|test) (?:your|our) understanding\b/i.test(sn);
+    if (turn.speech.some(claimsExercise)) {
+      const kept = turn.speech.filter((sn) => !claimsExercise(sn));
+      if (kept.length && kept.some((sn) => /\?\s*$/.test(sn))) turn = { ...turn, speech: kept };
+      else {
+        const text = await rewriteReply(turn.speech.join(" "), "you could not set an exercise just now: say so in one short sentence, and ask which topic or kind of question they want to practise next — do not describe an exercise", message, result.tokens);
+        if (text) turn = { ...turn, speech: [text] };
+      }
+    }
+    if (applied.dropped.length) console.warn(`[tutor] exercise not placed: ${applied.dropped.join(" | ")}`);
+  }
+
   // The board ops can still fail to build (a bad figure spec, a duplicate): then the speech must not claim them.
-  if (turn.speech.some(claimsBoard) && !applied.board.some((e) => e.kind !== "annotation" && e.kind !== "focus") && !applied.problems.length) {
-    const kept = turn.speech.filter((s) => !claimsBoard(s));
+  const visualNow = hasVisual([...board, ...applied.board]);
+  if (turn.speech.some((sn) => claimsBoard(sn, visualNow)) && !applied.board.some((e) => e.kind !== "annotation" && e.kind !== "focus") && !applied.problems.length) {
+    const kept = turn.speech.filter((s) => !claimsBoard(s, visualNow));
     if (kept.length) turn = { ...turn, speech: kept };
     else {
       const text = await rewriteReply(turn.speech.join(" "), "it says something is on the board but nothing could be put there — say the idea in words only, no mention of the board", message, result.tokens);
