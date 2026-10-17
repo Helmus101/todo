@@ -247,6 +247,11 @@ async function tutorTurn(
     try { profile.conceptModel = recordConceptEvidence(normalizeStudentModel(profile.conceptModel) || emptyStudentModel(), { label: skill, subject: t.sourceSubject, kind: evidence, evidence: "tutor session" }, new Date()); }  // a label, never the student's own words — those stay in this browser
     catch { /* best-effort — never blocks the reply */ }
   }
+  // A misconception the tutor diagnosed this turn is remembered across sittings (shown in BACKGROUND next time, and re-tested).
+  if (skill && out.turn?.misconception && out.turn.diagnosis === "conceptual") {
+    try { profile.conceptModel = recordConceptEvidence(normalizeStudentModel(profile.conceptModel) || emptyStudentModel(), { label: skill, subject: t.sourceSubject, kind: "misconception", detail: out.turn.misconception, evidence: "tutor session" }, new Date()); }
+    catch { /* best-effort */ }
+  }
   // The student's VERIFIED-CORRECT step goes on the board as their line — unless it's already there.
   // Reported live: this used to write a WRONG attempt too ("marked right or wrong"), unconditionally,
   // against whatever gap happened to still be open — including one the conversation had already moved

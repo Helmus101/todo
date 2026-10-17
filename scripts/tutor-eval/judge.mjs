@@ -13,7 +13,7 @@ function render(S, scenario) {
     lines.push(`[turn ${i}] TUTOR${mv}: ${t.reply}`);
     const b = (t.newBoard || []).map((e) => `${e.kind}${e.owner === "student" ? "/student" : ""}: ${String(e.text || "").replace(/\s+/g, " ").slice(0, 200)}`);
     if (b.length) lines.push(`   board+: ${b.join(" | ")}`);
-    for (const p of t.newProblems || []) lines.push(`   exercise: ${String(p.question).replace(/\s+/g, " ").slice(0, 900)}${p.options?.length ? ` [options: ${p.options.join(" / ").slice(0, 120)}]` : ""}`);
+    for (const p of t.newProblems || []) lines.push(`   exercise: ${String(p.question).replace(/\s+/g, " ").slice(0, 2500)}${p.options?.length ? ` [options: ${p.options.join(" / ").slice(0, 600)}]` : ""}`);
   });
   return lines.join("\n");
 }
@@ -26,7 +26,7 @@ export function renderSaved(transcript) {
     lines.push(`[turn ${i}] STUDENT: ${t.student}`);
     lines.push(`[turn ${i}] TUTOR {move: ${t.move}, support: ${t.support}, diagnosis: ${t.diagnosis}${t.misconception ? `, misconception: "${t.misconception}"` : ""}${t.angle ? `, angle: ${t.angle}` : ""}}: ${t.tutor}`);
     if ((t.board || []).length) lines.push(`   board+: ${t.board.join(" | ")}`);
-    for (const q of t.exercises || []) lines.push(`   exercise: ${String(q).replace(/\s+/g, " ").slice(0, 900)}`);
+    for (const q of t.exercises || []) lines.push(`   exercise: ${String(q).replace(/\s+/g, " ").slice(0, 2500)}`);
   });
   return lines.join("\n");
 }

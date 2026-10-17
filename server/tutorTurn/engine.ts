@@ -14,7 +14,9 @@ import { MOVE_SUPPORT, normalizeTurn, extractJsonObject, salvageTurn, type TurnO
 import { repairSpokenMath, spokenContextFrom, type SpokenRepair } from "../../shared/spokenMath.ts";
 import { boardSurfaceBlock } from "../boardEvents.ts";
 import { solutionBlock, solveProblem } from "../solver.ts";
-import { createTutorChat, retryRequest, usageOf, OUT, nowBlock, rewriteReply, stepVerdictLine } from "../claude.ts";
+import { normalizeStudentModel, findConcept, independentSuccess, liveMisconceptions } from "../studentModel.ts";
+import { falseClaim, worthFactChecking } from "./factcheck.ts";
+import { createTutorChat, retryRequest, usageOf, OUT, rewriteReply, stepVerdictLine } from "../claude.ts";
 import { asksWhy, asksToWrite, asksToDraw, voiceInputBlock, similarity, posesProblemInProse, studentProblemStatement } from "../tutorAdapt.ts";
 import {
   backgroundBlock, objectivesBlock, solutionMatchLine, misgradedExercise, ownArithmeticLine, answeredInChat, wrongInChat,
@@ -191,10 +193,10 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
 
   const system = TURN_PROMPT
     + (input.voiceMode ? VOICE_NOTE : "")
-    + nowBlock()
     + backgroundBlock(context)
     + (discussion ? DISCUSSION_BLOCK : "")
     + objectivesBlock(objectives).replace(/SET_OBJECTIVES/g, "a plan op")
+    + `\n\nToday is ${new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })} (for deadlines only).`
     + `\n\nTHE BOARD (margin numbers #n are what you point at)${boardSurfaceBlock(board, problems) || ": empty — open it with a topic op and the starting point."}`
     + (input.dueRetests?.length && history.length <= 1 ? `\n\nOPENING THE SITTING: last time you helped them with ${input.dueRetests.slice(0, 2).join(" and ")} and haven't yet seen them do it alone. After answering what they said, offer one short retest of it — as an offer, never a demand.` : "")
     + solutionBlock(input.solution)
@@ -222,6 +224,14 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   // ── The exercise generator doesn't depend on what the tutor says, so when they have asked for one it runs IN PARALLEL with the
   //    tutor's own call (the longest wait in a turn) instead of after it. ──
   const levelText = [context.profile?.yearLevel, context.profile?.track === "ib" ? "IB Diploma" : context.profile?.track === "ap" ? "AP" : context.profile?.track === "bac" ? "baccalauréat" : "", ...(context.profile?.courses || []).slice(0, 4)].filter(Boolean).join(", ");
+  // Earlier sittings (the learner model) decide the level when the last few turns do not: proven mastery goes up, repeated failure goes down.
+  const studentModel = (() => { try { return normalizeStudentModel(context.profile?.conceptModel); } catch { return undefined; } })();
+  const conceptRec = (t: string) => (t && studentModel ? findConcept(studentModel, t) : undefined);
+  const modelDifficulty = (d: "easier" | "at_level" | "harder", t: string) => {
+    const rec = conceptRec(t);
+    if (d !== "at_level" || !rec || rec.attempts < 3) return d;
+    return independentSuccess(rec) >= 0.75 ? "harder" : independentSuccess(rec) <= 0.25 ? "easier" : d;
+  };
   const buildGenRequest = (spokenText: string) => {
     const topic = objectives.find((o) => !o.done)?.label || [...board].reverse().find((b) => b.kind === "focus" && b.text)?.text || context.subject || "";
     const used = exercisesSoFar({ history, problems, memory: context.memory, board });
@@ -231,7 +241,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     const lastTwoMcq = problems.length >= 2 && problems.slice(-2).every((p) => p.options?.length);
     const nextKind = lastTwoMcq && !isDiscussionSubject(context.subject, spokenText) ? "compute" : (["compute", "explain_why", "spot_error", "predict", "compare", "sketch"] as const).find((k) => !kinds.includes(k)) ?? "any";
     return {
-      subject: context.subject, topic: wants.different ? "" : topic, level: levelText, difficulty: difficultyAsked(message) ?? difficultyFrom(input.teaching?.log),
+      subject: context.subject, topic: wants.different ? "" : topic, level: levelText, difficulty: difficultyAsked(message) ?? modelDifficulty(difficultyFrom(input.teaching?.log), topic), probe: conceptRec(topic) ? liveMisconceptions(conceptRec(topic)!, new Date())[0]?.text : undefined,
       kind: (wants.exercise && !/\b(?:err|mistake|wrong|why|explain|erreur|faute|pourquoi|expliq)/i.test(message) ? "compute" : isDiscussionSubject(context.subject, spokenText) && nextKind === "compute" ? "explain_why" : nextKind) as any,
       used, lang: (fr ? "fr" : "en") as "fr" | "en", ask: wants.exercise || wants.different ? message.slice(0, 200) : undefined,
       allowedTopics: objectives.map((o) => o.label), scope,
@@ -268,6 +278,10 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   // When the generator is writing the exercise, the tutor's reply is only a lead-in: checks about the exercise itself (is it there,
   // is it new, are its numbers the student's) are about text that won't be shown, so they must not cost a repair call.
   if (earlyGen) issues = issues.filter((i) => !["intent_exercise", "vague", "repeat_exercise", "numbers", "invented_object", "length"].includes(i.code));
+  if (worthFactChecking(turn.move, turn.speech, turn.diagnosis.status)) {
+    const bad = await falseClaim(turn.speech, turn.board.map((o: any) => String(o.text || "")).filter(Boolean), { subject: context.subject, problem: problems.find((p) => !p.solved)?.question || input.solution?.statement }, result.tokens);
+    if (bad) issues.push({ code: "fact", hard: true, fix: `a claim looks FALSE: ${bad}. Correct it (or leave it out) — only say what is true.` });
+  }
   let repaired = false;
   const firstIssues = issues.map((i) => i.code);
   // A repair is a whole extra model call: worth it for a hard problem or several soft ones; a single soft issue is fixed in code.
@@ -391,7 +405,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       const kept = turn.speech.filter((sn) => !claimsExercise(sn));
       if (kept.length && kept.some((sn) => /\?\s*$/.test(sn))) turn = { ...turn, speech: kept };
       else {
-        const text = await rewriteReply(turn.speech.join(" "), "you could not set an exercise just now: say so in one short sentence, and ask which topic or kind of question they want to practise next — do not describe an exercise", message, result.tokens);
+        const text = await rewriteReply(turn.speech.join(" "), "the exercise didn't come out: say so in one short natural sentence, then carry on yourself with ONE question on the same topic they are on right now (don't ask them what to study next, and don't describe an exercise)", message, result.tokens);
         if (text) turn = { ...turn, speech: [text] };
       }
     }

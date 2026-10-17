@@ -29,6 +29,8 @@ export interface ProblemRequest {
   skill?: string;
   /** The last student message and the tutor's last reply, so the lead-in can connect to what just happened. */
   recent?: { student?: string; tutor?: string };
+  /** A belief this student has held on this topic (from earlier sittings): make a wrong option encode it, so a wrong pick is diagnostic. */
+  probe?: string;
   /** The session's plan labels: the exercise must stay within them. */
   allowedTopics?: string[];
   /** Words the session has used (scope.ts): an exercise touching none of them is off topic. */
@@ -93,6 +95,7 @@ function userPrompt(r: ProblemRequest): string {
     r.ask && r.topic ? `They asked for: "${r.ask.slice(0, 200)}"` : "",
     `Their level (from their Settings): ${r.level || "not given — pitch it at the level of the work so far"}`,
     `Difficulty: ${DIFFICULTY_TEXT[r.difficulty]}`,
+    r.probe ? `This student has previously believed: "${r.probe.slice(0, 160)}". Where the format allows, build one wrong option (or the setting of an error-spotting item) around exactly that belief, so a wrong pick shows it.` : "",
     `Kind of task: ${KIND_TEXT[r.kind] || KIND_TEXT.any}`,
     r.skill ? `Target the skill they found hard: ${r.skill}` : "",
     r.used.length ? `Exercises ALREADY USED (never repeat or re-skin these): ${r.used.map((u) => `"${u}"`).join(" · ")}` : "",

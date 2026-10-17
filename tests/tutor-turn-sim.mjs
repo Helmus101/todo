@@ -7,6 +7,7 @@ delete process.env.GEMINI_API_KEY;
 
 export async function runTutorTurnSim(check, section) {
   let script = () => ({});
+  process.env.TUTOR_FACTCHECK = "off"; // (own test below)
   process.env.TUTOR_KEYCHECK = "off"; // the sims count model calls; the key cross-check has its own test below
   let calls = [];
   const realFetch = globalThis.fetch;
@@ -81,6 +82,19 @@ export async function runTutorTurnSim(check, section) {
       check("a student who disputes a wrong mark with the right number is told so when an independent solve agrees (reported live: 'spot on' after a wrong mark)", /INDEPENDENT SOLUTION AGREES/.test(facts) && /2\.04/.test(rk.reply));
       process.env.TUTOR_KEYCHECK = "off";
     }
+    { const { worthFactChecking, falseClaim } = await import("../server/tutorTurn/factcheck.ts");
+      check("fact check: teaching moves with substance are checked, questions and short confirmations are not",
+        worthFactChecking("explain", ["Tension equals mg only when the mass is not accelerating, so here it is smaller than the weight, because the net force points down."]) &&
+        !worthFactChecking("confirm", ["Right, that is correct."]) && !worthFactChecking("elicit", ["What do you think happens next in this case when the angle gets bigger?"]) &&
+        worthFactChecking("focus", ["x ".repeat(20)], "misconception"));
+      process.env.TUTOR_FACTCHECK = "on";
+      script = () => ({ wrong: "T = mg for an accelerating mass; it is less than mg" });
+      const tk = { in: 0, out: 0, cachedIn: 0 };
+      const bad = await falseClaim(["The tension is just mg."], [], { subject: "Physics" }, tk);
+      script = () => ({ wrong: null });
+      const ok = await falseClaim(["The tension is less than mg."], [], { subject: "Physics" }, tk);
+      check("fact check: a flagged claim is returned, a clean reply gives null", /T = mg/.test(String(bad)) && ok === null);
+      process.env.TUTOR_FACTCHECK = "off"; }
     check("verify: a reply that corrects itself mid-way is refused; a clean one passes (reported live: '= 40… non, pardon')",
       codes({ move: "explain", speech: ["Le discriminant vaut 64 - 24 = 40… non, pardon, c'est 64 - 24 = 40.", "Tu vois pourquoi ?"] }).includes("self_correct") &&
       codes({ move: "explain", speech: ["Sorry, let me redo that: it is 40.", "Clear?"] }).includes("self_correct") &&

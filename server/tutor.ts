@@ -32,7 +32,7 @@ import {
   makeProblem, makeBoardEntry, makeGeometryEntry, makeGraphEntry, makeSvgEntry, makeFlowEntry, makeWidgetEntry,
   makeInteractiveEntry, makeObjectives, leaksAnyProblemAnswer, isDuplicateBoardEntry, isDuplicateDiagram, isDuplicateProblem,
   resolveBoardTarget, openerMemoryBlock, studentNameLine, personalContextLine, recentJournalLine,
-  sessionRecapLine, milestoneLine, errorLogLine, type TutorOpenerMemory,
+  sessionRecapLine, milestoneLine, errorLogLine, learningStyleLine, hintDensityLine, type TutorOpenerMemory,
 } from "./claude.ts";
 import { repairLatex, latexifyBoardLine } from "./tutorAdapt.ts";
 
@@ -323,6 +323,8 @@ export function backgroundBlock(c: TutorContext): string {
     studentNameLine(p?.name),
     personalContextLine(p),
     milestoneLine(p, c.subject),
+    learningStyleLine(p),
+    hintDensityLine(p),
     (p?.tutorPrefs?.length ? `HOW THEY LIKE TO LEARN (from what they've asked for before — honour it unless it would hand over the answer): ${p.tutorPrefs.join("; ")}.` : ""),
     // What they've PROVED (code-verified evidence per skill, server/studentModel.ts) — where to start, what to skip.
     (() => { try { return studentModelBlock(normalizeStudentModel(p?.conceptModel), { subject: c.subject, limit: 6 }); } catch { return ""; } })(),
@@ -448,7 +450,7 @@ export function strategyMissing(message: string, board: { kind?: string }[], wri
 /** Talk about the app's own machinery — a board write that "bounced", a tool that refused, "the board won't let me" —
  *  which the student must never hear (reported live: "That first write bounced — the board won't let me put the equation
  *  up before you've stated it"). Exported for tests. */
-const MECHANICS = /\b(?:(?:write|line|entry|update) (?:just )?bounced|got rejected|was rejected|(?:it|that) (?:was )?refused|the board (?:won'?t|wouldn'?t|didn'?t) let me|won'?t let me (?:put|write)|(?:the|my|that) (?:first |board )?write (?:failed|bounced|didn'?t (?:go through|work))|(?:the|a) tool (?:call|failed|error|refused)|the app (?:won'?t|wouldn'?t|blocked|refused)|the system (?:won'?t|blocked|refused)|guardrail|(?:the )?(?:code|checker|solver|verifier|system|app) (?:has |had )?(?:confirm(?:s|ed)|check(?:s|ed)|verif(?:y|ies|ied)|says|said|agrees?|marked)|(?:checked|verified|confirmed) (?:by|with) (?:the )?(?:code|app|system|solver|checker)|code-checked|le code (?:confirme|a (?:vérifié|confirmé))|le tableau (?:ne )?(?:m'a pas laissé|refuse|a refusé)|l'outil a refusé)\b/i;
+const MECHANICS = /\b(?:(?:write|line|entry|update) (?:just )?bounced|got rejected|was rejected|(?:it|that) (?:was )?refused|the board (?:won'?t|wouldn'?t|didn'?t) let me|won'?t let me (?:put|write)|(?:the|my|that) (?:first |board )?write (?:failed|bounced|didn'?t (?:go through|work))|(?:the|a) tool (?:call|failed|error|refused)|the app (?:won'?t|wouldn'?t|blocked|refused|is putting|puts|has put|just put|will put|shows)|(?:in|into) the answer box (?:now|below)|the answer box (?:is|will be) (?:getting|showing)|the system (?:won'?t|blocked|refused)|guardrail|(?:the )?(?:code|checker|solver|verifier|system|app) (?:has |had )?(?:confirm(?:s|ed)|check(?:s|ed)|verif(?:y|ies|ied)|says|said|agrees?|marked)|(?:checked|verified|confirmed) (?:by|with) (?:the )?(?:code|app|system|solver|checker)|code-checked|le code (?:confirme|a (?:vérifié|confirmé))|le tableau (?:ne )?(?:m'a pas laissé|refuse|a refusé)|l'outil a refusé)\b/i;
 export function mentionsMechanics(reply: string): boolean { return MECHANICS.test(String(reply || "")); }
 /** Last-resort cleanup: drop every sentence that talks about the machinery. Exported for tests. */
 export function stripMechanics(reply: string): string {
