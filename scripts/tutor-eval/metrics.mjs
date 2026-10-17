@@ -6,6 +6,7 @@ const { questionCount } = await import("../../server/tutor.ts");
 const { findArithmeticClaims } = await import("../../server/arithmetic.ts");
 const { hideToolLeaks } = await import("../../shared/toolLeak.ts");
 const { claimsBoard, hasVisual } = await import("../../server/tutorTurn/verify.ts");
+const { posesProblemInProse } = await import("../../server/tutorAdapt.ts");
 
 const words = (t) => String(t || "").split(/\s+/).filter(Boolean).length;
 const median = (a) => (a.length ? [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)] : 0);
@@ -33,6 +34,10 @@ export function computeMetrics(S, scenario) {
     for (const c of findArithmeticClaims(r.replace(/\$[^$]*[A-Za-z\\^_][^$]*\$/g, " ").replace(/\b\d*[a-z]\^?\d*\b/gi, (m) => (/^\d+$/.test(m) ? m : " ")))) if (c.mismatch) flag(i, "wrong-arithmetic", c.raw);
     const created = (t.newBoard || []).some((e) => e.kind !== "focus" && e.kind !== "annotation") || (t.newProblems || []).length > 0;
     if (r.split(/(?<=[.!?])\s+/).some((sn) => claimsBoard(sn, hasVisual([...boardSoFar, ...(t.newBoard || [])]))) && !created) flag(i, "board-claim", r);
+    // A problem stated only in words: no given line, no gap, no widget exercise this turn.
+    if (posesProblemInProse(r) && !(t.newBoard || []).some((e) => e.kind === "given" || e.kind === "gap") && !(t.newProblems || []).length) flag(i, "prose-problem", r.slice(0, 120));
+    // An equation spoken in the reply ("12 = 6v") that is nowhere on the board (before or after this turn).
+    for (const m of r.matchAll(/\$([^$]{3,60}=[^$]{1,60})\$/g)) { const norm = (x) => x.replace(/[\s\\{}$]/g, "").toLowerCase(); const all = [...boardSoFar, ...(t.newBoard || [])].map((e) => norm(e.text || "")).join("|"); if (!all.includes(norm(m[1])) && !/\?/.test(m[1])) { flag(i, "spoken-not-written", m[1]); break; } }
     boardSoFar = [...boardSoFar, ...(t.newBoard || [])];
     const q = questionCount(r);
     if (q > 1) { multiQ++; flag(i, "multi-question", `${q} questions`); }
@@ -61,9 +66,10 @@ export function computeMetrics(S, scenario) {
   const issueCounts = {};
   for (const t of turns) for (const c of t.turn?.issues || []) issueCounts[c] = (issueCounts[c] || 0) + 1;
   const kinds = S.problems.map((p) => (p.options?.length ? "mcq" : p.rubric ? "rubric" : "free"));
+  const boardIssues = flags.filter((f) => f.kind === "prose-problem" || f.kind === "spoken-not-written").length;
   const hard = flags.filter((f) => ["tool-syntax", "leak", "wrong-arithmetic", "board-claim"].includes(f.kind)).length + errors;
   return {
-    turns: turns.length, errors, hardFails: hard, flags, repeatedOpeners, stockPhrases,
+    turns: turns.length, errors, boardIssues, hardFails: hard, flags, repeatedOpeners, stockPhrases,
     wordsAvg: Math.round(replies.reduce((n, r) => n + words(r), 0) / Math.max(1, replies.length)), wordsMax: Math.max(0, ...replies.map(words)),
     multiQuestionReplies: multiQ, longReplies, repeats, nameStarts, askedWhy, askedWhyIgnored, questionMoveRunMax: qOnlyMax, wrongLanguage: frWrong,
     msMedian: median(ms), msP90: pct(ms, 0.9), repaired, droppedOps, issueCounts, moves, problems, solved, problemKinds: kinds,

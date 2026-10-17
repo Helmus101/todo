@@ -26,7 +26,7 @@ import {
 } from "../tutor.ts";
 import { TURN_PROMPT, VOICE_NOTE } from "./prompt.ts";
 import { supportPolicy, asksForWorkedExample, adaptationLines, questionRun, type Policy } from "./policy.ts";
-import { verifyTurn, degradeTurn, acceptsBoardOffer, claimsBoard, hasVisual, sceneNounsIn, type Issue, type VerifyContext } from "./verify.ts";
+import { verifyTurn, degradeTurn, revealsKey, acceptsBoardOffer, claimsBoard, hasVisual, sceneNounsIn, type Issue, type VerifyContext } from "./verify.ts";
 import { applyOps } from "./apply.ts";
 import { sessionGuide } from "./guide.ts";
 import { wantsTopicSwitch, asksToWriteProblem, wantsDifferent, problemStatement, wantsMoreExercises, difficultyAsked, cantSeeProblem } from "./intents.ts";
@@ -370,6 +370,16 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   if (wants.write && !applied.board.some((e) => e.owner === "student")) {
     const line = studentBoardLine([spokenRepair?.interpreted || "", message, ...history.filter((h) => h.role === "user").slice(-2).reverse().map((h) => h.text)]);
     if (line) applied.board.push(...applyOps([{ op: "step", cue: 0, text: line, kind: "result", owner: "student" }], { message, theirWords: [...theirWords, line], board: [...board, ...applied.board], problems, fr }).board);
+  }
+  // A teaching reply that SAYS an equation ("so $12 = 6v$") puts it on the board, whatever the model did: speech passes, the board is what stays.
+  if (["explain", "worked_step", "worked_example", "correct_error", "hint_procedure"].includes(turn.move) && !applied.board.some((e) => e.kind !== "focus" && e.kind !== "annotation" && e.kind !== "given")) {
+    const norm = (x: string) => x.replace(/[\s\\{}$]/g, "").toLowerCase();
+    const onBoard = [...board, ...applied.board].map((e) => norm(e.text || "")).join("|");
+    const spoken = [...turn.speech.join(" ").matchAll(/\$([^$]{3,70}=[^$]{1,70})\$/g)].map((m) => m[1].trim()).find((q) => !/\?/.test(q) && !onBoard.includes(norm(q)));
+    if (spoken && !revealsKey(spoken, vctx)) {
+      const r = applyOps([{ op: "step", cue: Math.max(0, turn.speech.length - 1), text: `$${spoken}$`, kind: "result" }], { message, theirWords, board: [...board, ...applied.board], problems, fr });
+      applied.board.push(...r.board);
+    }
   }
   // THE PROBLEM IS ON THE BOARD whatever the model did: asked for it, or Otto just stated a new one in words only.
   {
