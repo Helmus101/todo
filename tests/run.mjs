@@ -5611,8 +5611,8 @@ section("Answers are NEVER revealed — chat prompt and every practice-problem s
   }
   for (const [file, label] of surfaces.slice(0, 2)) {
     const src = readFileSync(new URL(file, import.meta.url), "utf8");
-    check(`${label}: MCQ only counts as answered when the CORRECT option is picked (a wrong pick just strikes it out)`, /picked !== null && (state\.)?picked === problem\.correct/.test(src) && /wrong\.includes\(oi\)/.test(src));
-    check(`${label}: the ✓ and explanation only show once answered correctly; a miss says "try again"`, /answered && oi === problem\.correct \? "correct"/.test(src) && /Not quite — try (another option|again)\./.test(src));
+    check(`${label}: MCQ only counts as answered when the CORRECT option is picked (a wrong pick just strikes it out)`, /picked !== null && (state\.)?picked === (problem\.correct|correctIdx)/.test(src) && /wrong\.includes\(oi\)/.test(src));
+    check(`${label}: the ✓ and explanation only show once answered correctly; a miss says "try again"`, /answered && oi === (problem\.correct|correctIdx) \? "correct"/.test(src) && /Not quite — try (another option|again)\./.test(src));
     // Typed answers still go through the same shared lenient matcher (pi, fractions, units) — now wrapped in
     // the shared grader (shared/exerciseVerification.ts, spec §19), which grades against the independently
     // computed value and reports a key that disagrees with it as a system error instead of a miss.
@@ -6673,7 +6673,7 @@ section("Tutor sessions are fully local — the server stores no chat/board/prob
   check("…while the non-tutor chat route keeps persisting its own task fields (only the tutor went local, nothing else changed)",
     /if \(newChat\.length\) t\.chat = \[\.\.\.\(t\.chat \|\| \[\]\), \.\.\.newChat\]/.test(idxL));
   check("the turn hands back only this turn's delta (chatDelta/board/problems/objectives), never a task carrying content",
-    /res\.json\(\{\n\s*reply: out\.reply, speech: out\.turn\?\.speech, chatDelta: newChat, board: out\.board, problems:/.test(turn) && /task: \{ id: t\.id, title: t\.title, status: t\.status, source: t\.source, sourceSubject: t\.sourceSubject, updatedAt: t\.updatedAt, createdAt: t\.createdAt \}/.test(turn));
+    /res\.json\(\{\n\s*reply: out\.reply, speech: out\.turn\?\.speech, chatDelta: newChat, board: sealedOut\.board, problems: sealedOut\.problems/.test(turn) && /task: \{ id: t\.id, title: t\.title, status: t\.status, source: t\.source, sourceSubject: t\.sourceSubject, updatedAt: t\.updatedAt, createdAt: t\.createdAt \}/.test(turn));
 
   // Grading and the leak guard still work WITHOUT a server-held board: the line rides up, and the key is
   // recomputed from that line first — so the independent verification is unchanged.
@@ -6691,11 +6691,11 @@ section("Tutor sessions are fully local — the server stores no chat/board/prob
   check("an exercise sent back with no key stays keyless (the leak guard never invents one)", rehydrateProblemKey({ question: "q" }, undefined).answer === undefined);
 
   check("the chat route rehydrates gap keys and exercise keys from the request through those resolvers",
-    /resolveGapKey\(String\(b\.text\), stored\?\.expectedAnswer/.test(idxL) && /rehydrateProblemKey\(p, known\)/.test(idxL));
+    /resolveGapKey\(String\(b\.text\), stored\?\.expectedAnswer/.test(idxL) && /rehydrateProblemKey\(opened \? \{ \.\.\.p,/.test(idxL) && /unsealKey\(p\.keyToken/.test(idxL));
   check("the gap-check route grades from the line it is sent, so a local-only board no longer 404s every gap answer",
     /const line = entry\?\.text \?\? sentText;/.test(idxL) && /resolveGapKey\(line, entry\?\.expectedAnswer, sentKey\)/.test(idxL) && /req\.body\?\.text/.test(idxL));
   check("the client sends the line and its key with a gap answer (the server has no stored copy to look up)",
-    /api\.checkGap\(task\.id, entry\.id, given, \{ text: entry\.text, expectedAnswer: entry\.expectedAnswer \}\)/.test(tutorSrcL));
+    /api\.checkGap\(task\.id, entry\.id, given, \{ text: entry\.text, expectedAnswer: entry\.expectedAnswer, keyToken: entry\.keyToken \}\)/.test(tutorSrcL));
 
   // Resume must read the LOCAL copy: the server row this browser just fetched carries none of it.
   check("resuming a session reads local storage first and only falls back to the task row",

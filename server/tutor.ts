@@ -958,6 +958,8 @@ export function rehydrateProblemKey(sent: any, stored?: TaskProblem): TaskProble
     ...(value != null ? { value } : {}),
     ...(options?.length && !base.options ? { options } : {}),
     ...(correct != null && base.correct == null && options?.length ? { correct } : {}),
+    ...(sent?.rubric && Array.isArray(sent.rubric.required) && !base.rubric ? { rubric: sent.rubric } : {}),
+    ...(typeof sent?.why === "string" && sent.why && !base.why ? { why: sent.why.slice(0, 600) } : {}),
   };
 }
 

@@ -440,11 +440,11 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   }, [task, userId]);
   const sendRef = useRef(send);
   sendRef.current = send;
-  const onProblemResult = useCallback((r: { problem: TaskProblem; given: string; correct: boolean; attempt: number; systemError?: boolean; partial?: boolean }) => {
+  const onProblemResult = useCallback((r: { problem: TaskProblem; given: string; correct: boolean; attempt: number; systemError?: boolean; partial?: boolean; reveal?: { correct?: number; why?: string } }) => {
     if (r.correct) {
       solvedRef.current.add(r.problem.id);
       // Saved as solved right away, so a reload or "Reprendre" doesn't bring it back as open.
-      setTask((cur) => { if (!cur) return cur; const problems = (cur.problems || []).map((p) => (p.id === r.problem.id ? { ...p, solved: true } : p)); setLocalProblems(cur.id, problems, userId); return { ...cur, problems }; });
+      setTask((cur) => { if (!cur) return cur; const problems = (cur.problems || []).map((p) => (p.id === r.problem.id ? { ...p, solved: true, ...(r.reveal?.correct != null ? { correct: r.reveal.correct } : {}), ...(r.reveal?.why ? { why: r.reveal.why } : {}) } : p)); setLocalProblems(cur.id, problems, userId); return { ...cur, problems }; });
     }
     // A system-error result (the item's stored key disagreed with the independently computed value, spec §19.1)
     // is reported AS that, not as a miss: Otto must never treat it as evidence against the student.
@@ -465,7 +465,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     // The board lives in this browser now, so the line (and the key written with it) ride along: the server
     // has no stored copy to look the gap up in for a tutor session. It still recomputes the key from the line
     // itself first, and only falls back to what it's sent.
-    const { verdict, display } = await api.checkGap(task.id, entry.id, given, { text: entry.text, expectedAnswer: entry.expectedAnswer });
+    const { verdict, display } = await api.checkGap(task.id, entry.id, given, { text: entry.text, expectedAnswer: entry.expectedAnswer, keyToken: entry.keyToken });
     // The line is completed with the VERIFIED value from the server, never with what they typed.
     if (verdict === "correct") setTask((cur) => { if (!cur) return cur; const board = (cur.board || []).map((b) => (b.id === entry.id ? fillGap(b, display || "") : b)); setLocalBoard(cur.id, board, userId); return { ...cur, board }; });
     const line = entry.text.replace(/\s+/g, " ").slice(0, 100);
@@ -564,7 +564,9 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     try {
       // Dismiss any existing session before creating a new one
       if (pendingActiveSession) {
-        saveAndClose(pendingActiveSession, sessionStart || pendingActiveSession.createdAt);
+        // The list row carries no chat or board (they live in this browser): read the real thread first, or the history of the session being left is lost.
+        const localThread = getLocalThread(pendingActiveSession.id, userId);
+        saveAndClose({ ...pendingActiveSession, chat: localThread.chat.length ? localThread.chat : (pendingActiveSession.chat || []), board: localThread.board.length ? localThread.board : (pendingActiveSession.board || []) }, sessionStart || pendingActiveSession.createdAt);
         await dismissWithRetry(pendingActiveSession.id);
         setPendingActiveSession(null);
       }
@@ -669,7 +671,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   if (loadError) {
     return (
       <main className="list-wrap"><div className="empty-state">
-        <h3>{L("La séance n'a pas démarré. Relance.", "The session didn't start. Try again.")}</h3>
+        <h3>{L("Impossible de charger tes séances pour l'instant.", "Couldn't load your sessions right now.")}</h3>
         <button className="btn primary" onClick={() => { mountFetchStartedRef.current = false; peekForActiveSession(); }}>{L("Réessayer", "Try again")}</button>
       </div></main>
     );
@@ -734,6 +736,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
                 : L("On s'y met", "Let's work")}
             </button>
           </div>
+          {error ? <p className="tutor-error" role="alert">{error}</p> : null}
 
           {selectedSubject === OTHER && (
             <div className="tutor-topic">
@@ -918,7 +921,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       })()}
       <section className="ts-canvas" aria-label={L("Tableau", "Board")}>
         <div className="tutor-board-body ts-board-body" ref={setSurfaceEl} style={{ display: desmosOpen ? "none" : undefined }}>
-          <BoardArtifact task={task} onUndo={undoCount > 0 ? undoBoard : undefined} writing={sending} onProblemResult={onProblemResult} onWidgetResult={onWidgetResult} sheetSignal={sheetSignal} onGapCheck={onGapCheck} />
+          <BoardArtifact task={task} onUndo={undoCount > 0 ? undoBoard : undefined} writing={sending} onProblemResult={onProblemResult} onCheckProblem={(p, given) => api.checkProblem(task.id, p, given)} onWidgetResult={onWidgetResult} sheetSignal={sheetSignal} onGapCheck={onGapCheck} />
         </div>
         {/* Desmos stays mounted once opened (an iframe that's removed reloads blank, losing the student's graph). */}
         {desmosOpen || desmosEverOpenedRef.current ? (

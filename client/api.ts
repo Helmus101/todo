@@ -49,7 +49,7 @@ async function primeCsrfToken(): Promise<void> {
 // (paused/budget gates — server/index.ts) are hardcoded English regardless of the account's language, so
 // without this a French-language session could hit a "Lancer" click and see a raw English toast, jarring
 // and easy to misread as "the button didn't do anything" rather than an explained, actionable state.
-function currentLang(): "fr" | "en" {
+export function currentLang(): "fr" | "en" {
   try {
     const raw = localStorage.getItem("weave-status");
     if (raw && JSON.parse(raw)?.language === "en") return "en";
@@ -477,8 +477,11 @@ export const api = {
   // (client/localChatBoard.ts), so the server has no stored copy to look the gap up in. It recomputes the key
   // from `text` itself first — the independent verification — and uses the sent key only when the line has no
   // solvable equation of its own.
-  checkGap: (id: string, entryId: string, answer: string, gap?: { text: string; expectedAnswer?: string }): Promise<{ display?: string; verdict: "correct" | "incorrect" | "unknown" | "system_error"; verification?: "verified" | "conflict" | "uncertain" | "not_checked"; keyConflict?: boolean }> =>
-    post(`/api/tasks/${encodeURIComponent(id)}/board/${encodeURIComponent(entryId)}/check`, { answer, ...(gap ? { text: gap.text, expectedAnswer: gap.expectedAnswer } : {}) }),
+  checkGap: (id: string, entryId: string, answer: string, gap?: { text: string; expectedAnswer?: string; keyToken?: string }): Promise<{ display?: string; verdict: "correct" | "incorrect" | "unknown" | "system_error"; verification?: "verified" | "conflict" | "uncertain" | "not_checked"; keyConflict?: boolean }> =>
+    post(`/api/tasks/${encodeURIComponent(id)}/board/${encodeURIComponent(entryId)}/check`, { answer, ...(gap ? { text: gap.text, expectedAnswer: gap.expectedAnswer, keyToken: gap.keyToken } : {}) }),
+  /** Grade one answer to a tutor exercise on the server (the key is sealed — the browser never holds it). `correct`/`why` come back only for a right answer. */
+  checkProblem: (id: string, problem: { id: string; question: string; options?: string[]; format?: string; keyToken?: string }, answer: string): Promise<{ status: "correct" | "incorrect" | "partially_correct" | "system_error"; correct?: number; why?: string; miss?: string }> =>
+    post(`/api/tasks/${encodeURIComponent(id)}/problem/check`, { problemId: problem.id, keyToken: problem.keyToken, question: problem.question, options: problem.options, format: problem.format, answer }),
   chat: (id: string, message: string, history: NonNullable<WebTask["chat"]>, board: BoardEntry[], problems: TaskProblem[], stepIndex?: number, materials?: { label: string; text: string }[], voiceMode?: boolean, canvasMode?: boolean, primer?: boolean, objectives?: TaskObjective[], spoken?: { alternatives: string[] }, session?: { id: string; source?: string; sourceSubject?: string; createdAt?: string }, memory?: { when: string; subject?: string; lines: string[]; asked: string[] }[]): Promise<{ reply: string; chatDelta: NonNullable<WebTask["chat"]>; board: BoardEntry[]; problems: TaskProblem[]; objectives?: TaskObjective[]; guardrailTripped: boolean; task: WebTask; sessionCapReached?: boolean; subject?: string; sessionEnded?: boolean; error?: string }> =>
     postTurn(`/api/tasks/${id}/chat`, 95_000, {
       // The on-device thread can be long: send how the session began (first 3) + the recent tail, not all of it
@@ -486,8 +489,8 @@ export const api = {
       message, history: (history.length > 66 ? [...history.slice(0, 3), ...history.slice(-62)] : history).map((h) => ({ role: h.role, text: h.text })),
       // The board and problems live in this browser only, so their answer keys must travel with them: without them the
       // server can't check a chat answer, close a gap, or tell when a reply gives an answer away.
-      board: ((nums) => board.map((b) => ({ n: nums.get(b.id), id: b.id, text: b.text, kind: b.kind, outline: b.outline, diagram: b.diagram?.slice(0, 40), owner: b.owner, status: b.status, concept: b.concept, targetId: b.targetId, expectedAnswer: b.expectedAnswer, gapAction: b.gapAction, table: b.table, source: b.source })))(boardLineNumbers(board)),
-      problems: problems.map((p) => ({ id: p.id, question: p.question, options: p.options, correct: p.correct, answer: p.answer, value: p.value, rubric: p.rubric, solved: p.solved === true })),
+      board: ((nums) => board.map((b) => ({ n: nums.get(b.id), id: b.id, text: b.text, kind: b.kind, outline: b.outline, diagram: b.diagram?.slice(0, 40), owner: b.owner, status: b.status, concept: b.concept, targetId: b.targetId, expectedAnswer: b.expectedAnswer, keyToken: b.keyToken, gapAction: b.gapAction, table: b.table, source: b.source })))(boardLineNumbers(board)),
+      problems: problems.map((p) => ({ id: p.id, question: p.question, options: p.options, keyToken: p.keyToken, correct: p.correct, answer: p.answer, value: p.value, rubric: p.rubric, solved: p.solved === true })),
       stepIndex, materials, voiceMode, canvasMode, primer, objectives, spoken,
       // Who this tutor session is — lets the server rebuild a freestudy task it lost track of instead of 404ing.
       session,

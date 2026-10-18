@@ -1,4 +1,5 @@
 import { MathAnswerInput } from "../MathAnswerInput.tsx";
+import { BlockBoundary } from "./BlockBoundary.tsx";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import katex from "katex";
 import type { WebTask, BoardEntry, TaskProblem, DiagramOp } from "../../../shared/types.ts";
@@ -34,7 +35,7 @@ interface BoardArtifactProps {
   /** Tutor only — fired on every answer attempt (right or wrong) so Otto can react to it like a person would
    *  ("what made you pick B?") instead of the board silently marking it. `attempt` counts tries on this
    *  problem including this one. Never carries the correct answer — only what the student gave. */
-  onProblemResult?: (r: { problem: TaskProblem; given: string; correct: boolean; attempt: number; /** the item's own key and the independently computed value disagreed — nobody's mistake (spec §19.1). */ systemError?: boolean; /** a worded answer had some, not all, of the rubric's key ideas (spec §8.3). */ partial?: boolean }) => void;
+  onProblemResult?: (r: { problem: TaskProblem; given: string; correct: boolean; attempt: number; /** a sealed exercise answered right: the correct option and explanation the server just revealed (the page stores them with the solved exercise). */ reveal?: { correct?: number; why?: string }; /** the item's own key and the independently computed value disagreed — nobody's mistake (spec §19.1). */ systemError?: boolean; /** a worded answer had some, not all, of the rubric's key ideas (spec §8.3). */ partial?: boolean }) => void;
   /** Tutor only — a match / order / sort activity was finished (how many slips), so Otto can react to it. */
   onWidgetResult?: (r: WidgetResult) => void;
   /** Tutor only — each bump reserves `height` px of blank space right after the board's CURRENT last item: the
@@ -43,7 +44,12 @@ interface BoardArtifactProps {
   /** Tutor only — a gap with an answer key ("b = ?") gets an answer box; the attempt is graded by the SERVER
    *  (numeric equivalence, shared/mathEquiv.ts) and the result reaches Otto like an exercise result does. */
   onGapCheck?: (entry: BoardEntry, given: string) => Promise<"correct" | "incorrect" | "unknown" | "system_error">;
+  /** Tutor only — an exercise whose key is SEALED (it carries a `keyToken`, never the answer) is graded by the server; what comes back is only what the
+   *  student has earned (the explanation and the correct option appear after a right answer). Exercises from an older stored board still grade locally. */
+  onCheckProblem?: (problem: TaskProblem, given: string) => Promise<ServerGrade>;
 }
+/** What the server tells the student about one answer. */
+export type ServerGrade = { status: GradeStatus; correct?: number; why?: string; miss?: string };
 
 /** The answer box under an open gap. "unknown" (an answer the checker couldn't read) is never shown as
  *  wrong, and neither is "system_error" (the stored key disagreed with the value the app computed itself,
@@ -64,7 +70,7 @@ function GapAnswer({ entry, onCheck, en }: { entry: BoardEntry; onCheck: NonNull
       <div className="sm-inline-problem-input-row">
         <MathAnswerInput
           en={en}
-          showKeys={!isNumericAnswer(entry.expectedAnswer || "")}
+          showKeys={!(entry.answerKind ? entry.answerKind === "number" : isNumericAnswer(entry.expectedAnswer || ""))}
           answer={entry.expectedAnswer || ""}
           context={entry.text || ""}
           placeholder={en ? "Your answer…" : "Ta réponse…"}
@@ -337,6 +343,8 @@ interface ProblemBlockProps {
   fresh?: boolean;
   /** The submitted answer met a stored key that contradicts the verified value (spec §19.1): never shown as wrong. */
   systemError?: boolean;
+  /** What the server said about a sealed exercise (the correct option and explanation only once right; a worded miss message). */
+  info?: ServerGrade;
 }
 
 // A practice problem NEVER reveals its answer. Reported live ("it gives the answer, this should never
@@ -357,11 +365,13 @@ export function conceptMissMessage(problem: Pick<TaskProblem, "rubric">, given: 
   return null;
 }
 
-function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, systemError, onShowHint, onPick, onTextAnswer, onSubmit, en, fresh }: ProblemBlockProps) {
+function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, systemError, info, onShowHint, onPick, onTextAnswer, onSubmit, en, fresh }: ProblemBlockProps) {
   const [expanded, setExpanded] = useState(false);
   const problemIsMCQ = Array.isArray(problem.options) && problem.options.length >= 2;
   const wrong = state.wrong || [];
-  const answered = !!problem.solved || (problemIsMCQ ? state.picked !== null && state.picked === problem.correct : state.submitted && isCorrect);
+  const correctIdx = problem.correct ?? info?.correct; // a sealed exercise learns its correct option only once the student has it right
+  const numericBox = problem.answerKind ? problem.answerKind === "number" : isNumericAnswer(problem.answer);
+  const answered = !!problem.solved || (problemIsMCQ ? state.picked !== null && state.picked === correctIdx : state.submitted && isCorrect);
   const missed = !answered && !systemError && (problemIsMCQ ? wrong.length > 0 : state.submitted);
 
   if (answered && !expanded) {
@@ -414,7 +424,7 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, sys
       {problemIsMCQ ? (
         <div className="sm-board-problem-opts">
           {problem.options!.map((opt, oi) => {
-            const optState = answered && oi === problem.correct ? "correct" : wrong.includes(oi) ? "wrong" : "";
+            const optState = answered && oi === correctIdx ? "correct" : wrong.includes(oi) ? "wrong" : "";
             return (
               <button
                 key={oi}
@@ -438,10 +448,10 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, sys
             <div className="sm-inline-problem-input-row">
               <MathAnswerInput
                 en={en}
-                showKeys={!isNumericAnswer(problem.answer)}
+                showKeys={!numericBox}
                 answer={problem.answer || ""}
                 context={problem.question || ""}
-                placeholder={isNumericAnswer(problem.answer) ? (en ? "Your answer (a number, no units)…" : "Ta réponse (un nombre, sans unité)…") : (en ? "Your answer…" : "Ta réponse…")}
+                placeholder={numericBox ? (en ? "Your answer (a number, no units)…" : "Ta réponse (un nombre, sans unité)…") : (en ? "Your answer…" : "Ta réponse…")}
                 value={state.textAnswer}
                 onChange={onTextAnswer}
                 onEnter={() => { if (state.textAnswer.trim()) onSubmit(); }}
@@ -463,7 +473,7 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, sys
         <div className="sm-inline-problem-result wrong" role="status">
           {problemIsMCQ
             ? (en ? "Not quite — try another option." : "Pas tout à fait — essaie une autre réponse.")
-            : conceptMissMessage(problem, state.textAnswer, en) || (en ? "Not quite — try again." : "Pas tout à fait — réessaie.")}
+            : info?.miss || conceptMissMessage(problem, state.textAnswer, en) || (en ? "Not quite — try again." : "Pas tout à fait — réessaie.")}
         </div>
       ) : null}
       {systemError && state.submitted && !answered ? (
@@ -471,8 +481,8 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, sys
           {en ? "This exercise's answer key disagrees with the verified value — your answer isn't counted wrong. Otto will sort it out." : "La clé de cet exercice contredit la valeur vérifiée — ta réponse n'est pas comptée fausse. Otto va corriger."}
         </div>
       ) : null}
-      {answered && problem.why ? (
-        <div className="sm-inline-problem-why"><MathText text={stripStrayMarkdown(problem.why)} /></div>
+      {answered && (problem.why || info?.why) ? (
+        <div className="sm-inline-problem-why"><MathText text={stripStrayMarkdown(problem.why || info?.why || "")} /></div>
       ) : null}
       </div>
     </div>
@@ -580,13 +590,16 @@ export function keyIdeaEntries<T extends Pick<BoardEntry, "id" | "kind" | "text"
   return out.slice(-5);
 }
 
-export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidgetResult, sheetSignal, onGapCheck }: BoardArtifactProps) {
+export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidgetResult, sheetSignal, onGapCheck, onCheckProblem }: BoardArtifactProps) {
   const L = useLang();
   const endRef = useRef<HTMLDivElement>(null);
   const entries = (task.board || []).filter((e) => !e.archived);
   const problems = task.problems || [];
   const [showHint, setShowHint] = useState<{ [key: string]: boolean }>({});
   const [problemState, setProblemState] = useState<{ [key: string]: ProblemState }>({});
+  // What the server told them about sealed exercises (status, and — only once right — the correct option and the explanation).
+  const [serverInfo, setServerInfo] = useState<{ [key: string]: ServerGrade }>({});
+  const isSealed = (p: TaskProblem) => !!onCheckProblem && !!p.keyToken && p.answer == null && p.correct == null;
 
   // Content-level dedupe on RENDER (by id): sync merges (tasks.ts's unionStudyArtifacts) and a
   // double-responded turn can hand back an array containing the same entry/problem twice. Entries drop
@@ -711,11 +724,24 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
   // A wrong pick is recorded (struck out) but never "answers" the problem — only the correct one does.
   const attemptsRef = useRef<Record<string, number>>({});
   const lastGivenRef = useRef<Record<string, string>>({});
-  const reportResult = (problem: TaskProblem, given: string, status: GradeStatus) => {
+  const reportResult = (problem: TaskProblem, given: string, status: GradeStatus, reveal?: { correct?: number; why?: string }) => {
     const attempt = (attemptsRef.current[problem.id] = (attemptsRef.current[problem.id] || 0) + 1);
-    onProblemResult?.({ problem, given, correct: status === "correct", attempt, ...(status === "system_error" ? { systemError: true } : {}), ...(status === "partially_correct" ? { partial: true } : {}) });
+    onProblemResult?.({ problem, given, correct: status === "correct", attempt, ...(reveal ? { reveal } : {}), ...(status === "system_error" ? { systemError: true } : {}), ...(status === "partially_correct" ? { partial: true } : {}) });
   };
   const setProblemPicked = (problem: TaskProblem, picked: number) => {
+    if (isSealed(problem)) {
+      void (async () => {
+        let g: ServerGrade;
+        try { g = await onCheckProblem!(problem, String(picked)); } catch { return; } // could not reach the server: nothing is marked, they can pick again
+        reportResult(problem, problem.options?.[picked] ?? String(picked), g.status, g.status === "correct" ? { correct: g.correct, why: g.why } : undefined);
+        setServerInfo((prev) => ({ ...prev, [problem.id]: g }));
+        setProblemState((prev) => {
+          const cur = prev[problem.id] || { picked: null, textAnswer: "", submitted: false };
+          return g.status === "correct" ? { ...prev, [problem.id]: { ...cur, picked, submitted: false } } : { ...prev, [problem.id]: { ...cur, wrong: [...(cur.wrong || []).filter((w) => w !== picked), picked] } };
+        });
+      })();
+      return;
+    }
     reportResult(problem, problem.options?.[picked] ?? String(picked), gradeExerciseAnswer(problem, String(picked)).status);
     setProblemState(prev => {
       const cur = prev[problem.id] || { picked: null, textAnswer: "", submitted: false };
@@ -731,6 +757,19 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
 
   const submitProblem = (problemId: string) => {
     const pr = problems.find((p) => p.id === problemId);
+    if (pr && isSealed(pr)) {
+      const given = (problemState[problemId]?.textAnswer || "").trim();
+      if (!given) return;
+      void (async () => {
+        let g: ServerGrade;
+        try { g = await onCheckProblem!(pr, given); } catch { return; }
+        // The same answer checked twice in a row is one attempt, not two.
+        if (lastGivenRef.current[problemId] !== given) { lastGivenRef.current[problemId] = given; reportResult(pr, given, g.status, g.status === "correct" ? { why: g.why } : undefined); }
+        setServerInfo((prev) => ({ ...prev, [problemId]: g }));
+        setProblemState((prev) => ({ ...prev, [problemId]: { ...prev[problemId] || { picked: null, textAnswer: "", submitted: false }, submitted: true } }));
+      })();
+      return;
+    }
     // The same answer checked twice in a row is one attempt, not two (reported: identical "[Exercise] … wrong" spam to Otto).
     if (pr && pr.answer) { const given = (problemState[problemId]?.textAnswer || "").trim(); if (given && lastGivenRef.current[problemId] !== given) { lastGivenRef.current[problemId] = given; reportResult(pr, given, gradeExerciseAnswer(pr, given, { percent: problemIsPercent(pr) }).status); } }
     setProblemState(prev => ({ ...prev, [problemId]: { ...prev[problemId] || { picked: null, textAnswer: "", submitted: false }, submitted: true } }));
@@ -751,11 +790,13 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
   const freeResponseStatus = (problemId: string): GradeStatus | null => {
     const problem = problems.find(p => p.id === problemId);
     const st = getProblemState(problemId);
+    if (problem && isSealed(problem)) return st.submitted ? (serverInfo[problemId]?.status ?? null) : null;
     if (!problem || !problem.answer || !st.submitted) return null;
     return gradeExerciseAnswer(problem, st.textAnswer, { percent: problemIsPercent(problem) }).status;
   };
   const checkFreeResponse = (problemId: string): boolean => {
     const problem = problems.find(p => p.id === problemId);
+    if (problem && isSealed(problem)) return getProblemState(problemId).submitted && serverInfo[problemId]?.status === "correct";
     if (!problem || !problem.answer) return false;
     return gradeExerciseAnswer(problem, getProblemState(problemId).textAnswer, { percent: problemIsPercent(problem) }).status === "correct";
   };
@@ -813,6 +854,7 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
             hintShown={!!showHint[item.problem.id]}
             isCorrect={checkFreeResponse(item.problem.id)}
             systemError={freeResponseStatus(item.problem.id) === "system_error"}
+            info={serverInfo[item.problem.id]}
             onShowHint={() => setShowHint(prev => ({ ...prev, [item.problem!.id]: true }))}
             onPick={(picked) => setProblemPicked(item.problem!, picked)}
             onTextAnswer={(text) => setProblemTextAnswer(item.problem!.id, text)}
@@ -918,7 +960,7 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
                 <>
                   <div className={`sm-board-line${markClass(notesFor.get(e.id))}`}><MathText text={autoMathLine(stripStrayMarkdown((e.kind === "result" ? e.text.replace(/^\s*(?:established|établi|found|result|trouvé)\s*:\s*/i, "") : e.text).replace(/&nbsp;|&#160;/gi, " ")))} /></div>
                   {e.why ? <div className="sm-board-why"><MathText text={autoMathLine(stripStrayMarkdown(e.why))} /></div> : null}
-                  {e.kind === "gap" && e.expectedAnswer && e.status !== "correct" && !flowItems.slice(idx + 1).some((it) => it.entry?.kind === "gap") && onGapCheck ? <GapAnswer entry={e} onCheck={onGapCheck} en={en} /> : null}
+                  {e.kind === "gap" && (e.expectedAnswer || e.keyToken) && e.status !== "correct" && !flowItems.slice(idx + 1).some((it) => it.entry?.kind === "gap") && onGapCheck ? <GapAnswer entry={e} onCheck={onGapCheck} en={en} /> : null}
                 </>
               )}
               {(notesFor.get(e.id) || []).filter((a) => a.text).map((a) => (
@@ -928,7 +970,7 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
             </div>
           );
         })();
-        return <Fragment key={item.key}>{node}{sheets.filter((sh) => sh.afterKey === item.key).map((sh) => <div key={`sheet-${sh.id}`} className="sm-board-sheet" style={{ height: sh.height }} aria-hidden />)}</Fragment>;
+        return <Fragment key={item.key}><BlockBoundary>{node}</BlockBoundary>{sheets.filter((sh) => sh.afterKey === item.key).map((sh) => <div key={`sheet-${sh.id}`} className="sm-board-sheet" style={{ height: sh.height }} aria-hidden />)}</Fragment>;
   };
 
   return (

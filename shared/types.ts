@@ -1641,6 +1641,10 @@ export interface TaskProblem {
    *  `required` entry is one idea, given as alternative phrasings (any one counts); `misconceptions` are related
    *  ideas that must NOT pass on their own ("opportunity cost" for "define scarcity"). */
   rubric?: { required: string[][]; misconceptions?: string[] };
+  /** Tutor exercises: the key (answer, correct option, value, rubric, explanation) is sealed server-side; the browser holds only this opaque token and asks the server to grade. */
+  keyToken?: string;
+  /** What kind of answer box to show, since the key itself is not on the client. */
+  answerKind?: "mcq" | "number" | "text";
   /** Where the question comes from when it was adapted from a registered source (IB Documents, Revision Village,
    *  AP Central…) — shown as a link under the question. Absent for generated questions. */
   source?: { name: string; url: string };
@@ -1730,6 +1734,9 @@ export interface BoardEntry {
    *  as an interactive blank the student must complete (the completion effect: doing the last step yourself
    *  is where the learning happens). Otto must NEVER reveal this value in chat while the gap is open. */
   expectedAnswer?: string;
+  /** Tutor answer boxes: the sealed key (see server/tutorTurn/keySeal.ts) and the kind of answer box to show; `expectedAnswer` is never sent to the browser. */
+  keyToken?: string;
+  answerKind?: "number" | "text";
   /** Present only when kind === "gap" — the SPECIFIC next move that line is asking for (2-6 words, written by
    *  Otto: "expand the bracket"). Shown as the chip under the line ("Your turn: expand the bracket") so a gap
    *  names what to DO instead of a generic "finish this". Never carries the value itself. */

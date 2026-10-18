@@ -196,3 +196,6 @@ h1 { font-family: var(--display); font-weight: 400; letter-spacing: -0.025em; }
 @media (hover: none) {
   .step:not(.is-current) .substep-expand.btn { display: none; }
 }
+
+.tutor-error { margin: var(--space-3) 0 0; font-size: 13px; color: var(--vermilion, #b3382c); }
+.sm-board-block-error { margin: var(--space-2) 0; font-size: 13px; color: var(--ink-3); font-style: italic; }

@@ -7,6 +7,8 @@ import { gapTarget, verifyStepAgainstGap } from "../../shared/mathEquiv.ts";
 import { normalizeTable, normalizeSource } from "../../shared/boardTable.ts";
 import { gradeGapAnswer, gradeExerciseAnswer, verifyPolynomialDivision } from "../../shared/exerciseVerification.ts";
 import { repairSpokenMath, spokenContextFrom } from "../../shared/spokenMath.ts";
+import { sealOutgoing, unsealKey } from "../tutorTurn/keySeal.ts";
+import { checkProblemAnswer } from "../tutorTurn/problemCheck.ts";
 import { nextTeachingState, learningPrefsFrom, mergePrefs, evidenceKindFor, reachedSolutionSteps, resolveGapKey, rehydrateProblemKey } from "../tutor.ts";
 import { solveProblem, focusKeyOf, isNewProblem } from "../solver.ts";
 import { studentProblemStatement } from "../tutorAdapt.ts";
@@ -180,7 +182,9 @@ async function tutorTurn(
       // the leak guard couldn't tell whether a reply gave an answer away, and a mis-graded answer box had
       // nothing to be checked against.
       const known = (t.problems || []).find((x) => x.question === p.question);
-      return rehydrateProblemKey(p, known);
+      // A sealed key token (the browser never holds the key itself) is opened here for the engine; plain keys from an older stored board still work.
+      const opened = typeof p.keyToken === "string" ? unsealKey(p.keyToken, String(req.session.user), String(p.id || "")) : null;
+      return rehydrateProblemKey(opened ? { ...p, answer: opened.answer, value: opened.value, correct: opened.correct, rubric: opened.rubric, why: opened.why } : p, known);
     });
   const spoken = spokenFromBody(req.body?.spoken);
   // Is the student's step right? Code decides, against the newest open gap; for speech, a correct hearing wins.
@@ -291,8 +295,10 @@ async function tutorTurn(
   t.chat = undefined; t.board = undefined; t.problems = undefined; t.objectives = undefined;
   t.updatedAt = now;
   await commit(req);
+  // ANSWER KEYS NEVER LEAVE THE SERVER IN THE CLEAR: exercises and answer boxes go to the browser with a sealed token, not their key.
+  const sealedOut = sealOutgoing(out.board, out.problems, String(req.session.user));
   res.json({
-    reply: out.reply, speech: out.turn?.speech, chatDelta: newChat, board: out.board, problems: out.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped, solvedInChat: out.solvedInChat,
+    reply: out.reply, speech: out.turn?.speech, chatDelta: newChat, board: sealedOut.board, problems: sealedOut.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped, solvedInChat: out.solvedInChat,
     // A gap they answered right in CHAT is closed on the board too, so its answer box doesn't sit there asking again.
     gapsClosed: closedGaps,
     task: { id: t.id, title: t.title, status: t.status, source: t.source, sourceSubject: t.sourceSubject, updatedAt: t.updatedAt, createdAt: t.createdAt },
@@ -670,7 +676,8 @@ export function registerTaskRoutes(app: express.Express): void {
     // absent changes where the key comes from, never how trustworthy the grade is. A task that no longer exists
     // is no longer a 404 either: nothing here needs it.
     const sentText = typeof req.body?.text === "string" ? req.body.text.slice(0, 600) : "";
-    const sentKey = typeof req.body?.expectedAnswer === "string" ? req.body.expectedAnswer.slice(0, 200) : undefined;
+    // The key arrives SEALED (opened here, bound to this student and this entry); a plain key from an older stored board still works.
+    const sentKey = unsealKey(req.body?.keyToken, String(req.session.user), String(req.params.entryId))?.expectedAnswer ?? (typeof req.body?.expectedAnswer === "string" ? req.body.expectedAnswer.slice(0, 200) : undefined);
     const line = entry?.text ?? sentText;
     if (entry && entry.kind !== "gap") { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
     if (!line.trim()) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
@@ -692,6 +699,12 @@ export function registerTaskRoutes(app: express.Express): void {
     if (graded.keyConflict) void recordMetric(req.session.user!, "gap_key_conflict", 1);
     // `display` is the VERIFIED value the board line is completed with — never the text they typed.
     res.json({ verdict, verification: graded.verification, keyConflict: graded.keyConflict, ...(verdict === "correct" ? { display: String(key).slice(0, 80) } : {}) });
+  }));
+
+  // Grade one answer to a tutor exercise: the key is sealed in the token (never in the browser), so the server decides and returns only what the student has earned.
+  app.post("/api/tasks/:id/problem/check", requireAuth, rateLimit(120, 60_000), ah(async (req, res) => {
+    const r = checkProblemAnswer(String(req.session.user), req.body, M(req, "1", "0") === "1");
+    res.status(r.status).json(r.json);
   }));
 
   app.get("/api/interactive/:taskId/:entryId", requireAuth, rateLimit(120, 60_000), (req, res) => {
@@ -872,7 +885,7 @@ export function registerTaskRoutes(app: express.Express): void {
         // the key the browser sent with the line (see resolveGapKey — the tutor board is local-only now, so
         // the request body is the ONLY source for a session this server never stored a board for). Without a
         // key the open-gap leak guard and the step verdict below would only ever see gaps written this turn.
-        ...(b.kind === "gap" && typeof b.id === "string" ? (() => { const stored = (t.board || []).find((e) => e.id === b.id); const k = resolveGapKey(String(b.text), stored?.expectedAnswer, typeof b.expectedAnswer === "string" ? b.expectedAnswer : undefined); return k ? { expectedAnswer: k } : {}; })() : {}) }));
+        ...(b.kind === "gap" && typeof b.id === "string" ? (() => { const stored = (t.board || []).find((e) => e.id === b.id); const sealed = unsealKey(b.keyToken, String(req.session.user), b.id)?.expectedAnswer; const k = resolveGapKey(String(b.text), stored?.expectedAnswer, sealed ?? (typeof b.expectedAnswer === "string" ? b.expectedAnswer : undefined)); return k ? { expectedAnswer: k } : {}; })() : {}) }));
     const currentProblemsRaw = Array.isArray(req.body?.problems) ? req.body.problems : [];
     const currentProblems = currentProblemsRaw
       .filter((p: any) => p && typeof p.question === "string" && p.question.trim())

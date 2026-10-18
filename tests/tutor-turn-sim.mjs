@@ -265,6 +265,33 @@ export async function runTutorTurnSim(check, section) {
     const r4 = mkRes(); let n4 = false; oneTurnAtATime(mkReq("lock-user@example.com"), r4, () => { n4 = true; });
     check("a second tutor turn for the same task while one is running is refused (409), another task is fine, and the lock is released when the first turn ends",
       n1 && !n2 && r2.code === 409 && r2.body.code === "turn_in_flight" && n3 && n4); }
+    { const { sealKey, unsealKey, sealProblem, sealGap, sealOutgoing } = await import("../server/tutorTurn/keySeal.ts");
+      const { checkProblemAnswer } = await import("../server/tutorTurn/problemCheck.ts");
+      const prob = { id: "p1", createdAt: "x", question: "A 2 kg mass at 3 m/s hits a 4 kg mass and they stick. Their speed in m/s?", answer: "1", value: 1, why: "momentum is conserved: 6/6", hint: "p = mv", format: "a number" };
+      const mcq = { id: "p2", createdAt: "x", question: "Which line is wrong?", options: ["Line 1", "Line 2", "Line 3"], correct: 1, why: "Line 2 divides by the wrong mass" };
+      const sealed = sealProblem(prob, "ana@example.com"), sealedM = sealProblem(mcq, "ana@example.com");
+      const gap = sealGap({ id: "g1", text: "$v = ?$", kind: "gap", expectedAnswer: "1", at: "x" }, "ana@example.com");
+      check("sealed exercises and answer boxes carry no key at all (no answer, correct option, value, rubric, explanation or expectedAnswer) — only an opaque token and the kind of box",
+        !JSON.stringify([sealed, sealedM, gap]).match(/"answer":|"correct":|"value":|"why":|"expectedAnswer":|momentum is conserved|Line 2 divides/) && sealed.keyToken && sealed.answerKind === "number" && sealedM.answerKind === "mcq" && gap.keyToken && gap.answerKind === "number" && sealed.hint === "p = mv");
+      const opened = unsealKey(sealed.keyToken, "ana@example.com", "p1");
+      check("a token opens only for the same student and the same item; a forged, truncated or swapped token opens to nothing",
+        opened && opened.answer === "1" && opened.value === 1 && unsealKey(sealed.keyToken, "bob@example.com", "p1") === null && unsealKey(sealed.keyToken, "ana@example.com", "p2") === null &&
+        unsealKey(sealed.keyToken.slice(0, -4) + "AAAA", "ana@example.com", "p1") === null && unsealKey("garbage", "ana@example.com", "p1") === null && unsealKey(undefined, "ana@example.com", "p1") === null);
+      const body = (o) => ({ problemId: "p1", keyToken: sealed.keyToken, question: prob.question, format: "a number", ...o });
+      const right = checkProblemAnswer("ana@example.com", body({ answer: "1 m/s" }), false), wrong = checkProblemAnswer("ana@example.com", body({ answer: "3" }), false);
+      check("the server grades: a right answer returns the explanation, a wrong one returns nothing that reveals the answer",
+        right.status === 200 && right.json.status === "correct" && /momentum is conserved/.test(String(right.json.why)) && wrong.json.status === "incorrect" && !JSON.stringify(wrong.json).match(/momentum|\b1\b/) && !("why" in wrong.json));
+      const mq = (n) => checkProblemAnswer("ana@example.com", { problemId: "p2", keyToken: sealedM.keyToken, question: mcq.question, options: mcq.options, answer: String(n) }, false);
+      check("a multiple-choice pick is graded by the server; the correct option index comes back only for the right pick",
+        mq(1).json.status === "correct" && mq(1).json.correct === 1 && mq(0).json.status === "incorrect" && !("correct" in mq(0).json));
+      check("a token for someone else, or none, cannot be graded against (410, no key)", checkProblemAnswer("bob@example.com", body({ answer: "1" }), false).status === 410 && checkProblemAnswer("ana@example.com", body({ keyToken: undefined, answer: "1" }), false).status === 410);
+      check("sealOutgoing seals every exercise and answer box in a turn's response", (() => { const o = sealOutgoing([{ id: "g1", text: "$v = ?$", kind: "gap", expectedAnswer: "1", at: "x" }, { id: "n1", text: "note", kind: "note", at: "x" }], [prob, mcq], "ana@example.com"); return o.board[0].keyToken && !("expectedAnswer" in o.board[0]) && o.board[1].text === "note" && o.problems.every((p) => p.keyToken && !("answer" in p) && !("correct" in p)); })()); }
+    { const { sealProblem: sp, unsealKey: uk } = await import("../server/tutorTurn/keySeal.ts"); const { rehydrateProblemKey: rhk } = await import("../server/tutor.ts");
+      const full = { id: "px", createdAt: "x", question: "Find the speed.", options: ["1", "2", "3"], correct: 2, answer: "3", value: 3, rubric: { required: [["momentum"]] }, why: "p conserved" };
+      const wire = sp(full, "ana@example.com"); // what the browser holds, and sends back next turn
+      const opened = uk(wire.keyToken, "ana@example.com", "px");
+      const back = rhk({ ...wire, answer: opened.answer, value: opened.value, correct: opened.correct, rubric: opened.rubric, why: opened.why }, undefined);
+      check("the server can rebuild a full exercise (key, correct option, rubric, explanation) from the sealed token the browser sends back, for the engine's leak checks", back.answer === "3" && back.value === 3 && back.correct === 2 && back.rubric.required[0][0] === "momentum" && back.why === "p conserved" && !("answer" in wire)); }
     check("verify: a quotation the student never gave is refused (a poem quoted from memory); quoting their own words or a board line is fine",
       codes({ move: "focus", speech: ["Au vers 2 il dit « sans bruit, sans voir, sans entendre » : qu'est-ce que ça change ?"] }).includes("unsourced_quote") &&
       !codes({ move: "focus", speech: ["Tu as écrit « il part plein d'espoir voir sa fille » : et à la fin ?"] }, { ...vctx, said: ["il part plein d'espoir voir sa fille"] }).includes("unsourced_quote") &&
