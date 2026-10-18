@@ -10,6 +10,7 @@ import { runWebSearch } from "./tools.ts";
 import { DOABLE_STEP, EXECUTION_ENABLED, JUDGMENT_STEP, OTTO_INTERNAL_STEP, STUDY_TASK_TYPES, THIRD_PERSON_STUDENT_STEP, anchorStepsToTask, bestMatchingStep, canonicalUrl, dodLooksLikeCoordinationOutcome, dropForeignEntityLinks, dropForeignEntitySteps, dropOffTopicStudySteps, dropProcessComplaintSteps, dropRedundantArtifactSteps, dropSiblingBleedSteps, dropTrivialSteps, dropUnanchoredSteps, ensureArtifactUseSteps, hasDomainContamination, isFolderHousekeepingDrift, reattachStepExtras, restrictStepUrlsToLinks, sanitizeStepExtras, sanitizeSteps, separateArtifactsFromSteps, stepsMatchTitle, titleKeywords, truncateStepText } from "./steps.ts";
 import { recommendArtifactType } from "./scheduling.ts";
 import { BRIEF_COMPRESS_WORDS, makeDeck, makeNote, makeQuiz } from "./board.ts";
+import { briefGaps, briefFix } from "./definitionOfDone.ts";
 
 // Manual-add and sweep-generated tasks are both planned by the single `runTask()` agent below (see
 // enqueueJob("execute_task") callers) — it already reads every connected integration (Gmail, Calendar,
@@ -840,6 +841,8 @@ export async function runTask(
           `may run longer and use a table — but only with rows that each carry a real, necessary specific. ` +
           `A brief that mostly restates the task's own title, dates or due-status is too long however well ` +
           `organized.\n` +
+          `A BRIEF MUST ADD UP TO THE DEFINITION OF DONE: it covers every distinct part of it with the real specifics, and it ENDS with a ` +
+          `"Done when" checklist ("- [ ] …", 1-3 lines for a small task, 2-5 otherwise) — each line something the student can see is true, taken from the definition of done above, so they know exactly when to stop.\n` +
           `Use markdown ` +
           `(headings, **bold**, bullet lists, GFM pipe tables when tabular). Every cell in a table must be ` +
           `filled with real content from the context — never leave blanks, and never invent a name/price/detail ` +
@@ -881,6 +884,30 @@ export async function runTask(
                 note.note = rewritten.note;
               } else {
                 console.log(`${new Date().toISOString()} [ai] step 5: brief compression didn't return a usable rewrite — keeping the original (${wc} words)`);
+              }
+            }
+          }
+          // A BRIEF must deliver the definition of done: it ends with a "Done when" check and covers every part of it. The prompt asks
+          // for that; this verifies it and spends ONE rewrite only when something is actually missing (never a silent drop).
+          if (isNoteOnly && definitionOfDone) {
+            const small = !taskNeedsStepList({ title: task.title, why: task.why, goal: definitionOfDone, taskType: task.taskType });
+            const gaps = briefGaps(note.note.body, definitionOfDone);
+            const fix = briefFix(gaps, definitionOfDone, small);
+            if (fix) {
+              const fixedOut = await ask(
+                `Below is a brief Otto wrote for this task:\nTASK: "${task.title}"\nDEFINITION OF DONE: ${definitionOfDone}\n\nBRIEF (markdown):\n${note.note.body}\n\n` +
+                `Rewrite the brief so it adds up to the definition of done: ${fix}. Keep every real specific already in it; add nothing the brief or the task did not already contain (no invented names, prices or dates). ` +
+                `${small ? "It is a small task: stay under about 140 words in total. " : ""}Write in the same language as the original. Return JSON: {"body": "markdown"}.`,
+                1800,
+              );
+              const body = String(fixedOut?.body || "").trim();
+              const rewritten = body ? makeNote({ title: note.note.title, body }) : null;
+              if (rewritten && "note" in rewritten) {
+                const after = briefGaps(rewritten.note.body, definitionOfDone);
+                if (!after.missingSection || after.uncovered.length < gaps.uncovered.length) {
+                  note.note = rewritten.note;
+                  audit.push({ at: new Date().toISOString(), kind: "guardrail", label: fr ? "Fiche complétée : elle couvre maintenant la définition de « terminé »" : "Brief completed: it now covers the definition of done" });
+                }
               }
             }
           }

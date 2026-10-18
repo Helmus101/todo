@@ -1,4 +1,5 @@
 
+import { assessGoal } from "./definitionOfDone.ts";
 import type { Profile, TaskStep, TaskType, InfoRequirement, TaskArtifact } from "../../shared/types.ts";
 import type { AgentTools } from "../integrations.ts";
 import { hasAssignmentText } from "../discover.ts";
@@ -515,6 +516,28 @@ export async function classifyCandidates(
       const retry = await ask(nudge);
       const retried = parse(retry);
       if (retried.length) { out = retry; tasks = retried; break; }
+    }
+    // A task's goal IS its definition of done: if some came back vague, generic, a restated title or unobservable, ONE batched repair call
+    // rewrites just those (never a canned sentence, and a goal that is still weak afterwards is left as the model wrote it).
+    {
+      const weak = tasks.map((t, i) => ({ t, i, a: assessGoal(t.goal, t.title) })).filter((x) => !x.a.ok);
+      if (weak.length && weak.length <= 8) {
+        try {
+          const res: any = await retryRequest(() => client.chat.completions.create({
+            model: actualModel, max_tokens: OUT.classify, temperature: 0.1, response_format: { type: "json_object" },
+            messages: [
+              { role: "system", content: `You write the DEFINITION OF DONE for tasks: one or two sentences describing the observable end state — what will be TRUE and visible when the task is finished (something sent, booked, submitted, solved without notes, a list of N items saved, a total under a limit…). It must be specific to THIS task (names, quantities, dates from the task), measurable, and must not just repeat the title or say "complete the task". Never invent facts: use only what is given. Write in the same language as the task. Return JSON only: {"goals":[{"i":<number>,"goal":"..."}]}` },
+              { role: "user", content: weak.map(({ t, i, a }) => `#${i} TITLE: ${t.title}\nWHY: ${t.why}${t.when ? `\nDUE: ${t.when}` : ""}${t.sourceSubject ? `\nSUBJECT: ${t.sourceSubject}` : ""}${t.sourceDetail ? `\nDETAIL: ${String(t.sourceDetail).replace(/\s+/g, " ").slice(0, 500)}` : ""}\nCURRENT GOAL: ${t.goal || "(none)"}\nPROBLEM: ${a.problems.join("; ")}`).join("\n\n") },
+            ],
+          }));
+          const u = usageOf(res); tokIn += u.in; tokOut += u.out; tokCached += u.cachedIn;
+          const fixed = firstJson<any>(String(res.choices?.[0]?.message?.content || ""));
+          for (const g of Array.isArray(fixed?.goals) ? fixed.goals : []) {
+            const k = Number(g?.i), goal = String(g?.goal || "").trim().slice(0, 250);
+            if (Number.isInteger(k) && tasks[k] && goal && assessGoal(goal, tasks[k].title).ok) tasks[k] = { ...tasks[k], goal };
+          }
+        } catch (e: any) { console.warn(`[generate] goal repair failed: ${e?.message || e}`); }
+      }
     }
     return { tasks, profileUpdates: parseProfileUpdates(out?.profileUpdates), tokens: { in: tokIn, out: tokOut, cachedIn: tokCached } };
   } finally {
@@ -1067,7 +1090,8 @@ export async function enrichTaskIntentAndGoal(
         ...task,
         taskType: task.taskType || taskType,
         infoRequirement: task.infoRequirement || infoRequirement,
-        goal: task.goal || `Successfully complete the ${taskType} for ${task.sourceSubject}`,
+        // A goal built from the REAL title and due date — never a sentence that would fit any task.
+        goal: task.goal || pronoteGoal(taskType, task),
         subject: task.subject || task.sourceSubject,
       };
     }
@@ -1224,4 +1248,15 @@ export async function refineManualTask(text: string, profile?: Profile, schoolRe
       tokens: usageOf(res),
     };
   } catch { return null; }
+}
+
+
+/** A specific, observable definition of done for a Pronote item, from its real title, subject and due date (deterministic: no model call). */
+function pronoteGoal(taskType: TaskType, task: GeneratedTask): string {
+  const what = String(task.title || "").replace(/\s+/g, " ").trim().slice(0, 90);
+  const due = task.sourceDue || task.when ? ` ${/^\d{4}-\d{2}-\d{2}/.test(String(task.sourceDue || task.when)) ? "by " + String(task.sourceDue || task.when).slice(0, 10) : "by " + String(task.when).slice(0, 30)}` : "";
+  const fr = /[éèêàùç]|\b(?:devoir|exercice|révis|contrôle|interrogation|rédac|lecture)\b/i.test(what);
+  if (taskType === "prepare_assessment") return fr ? `Capable de refaire « ${what} » sans notes, toutes les réponses justes en auto-vérification${due ? due.replace("by", "avant le") : ""}` : `Can redo "${what}" without notes with every answer correct on self-check${due}`;
+  if (taskType === "homework_problem_set") return fr ? `« ${what} » terminé, relu et prêt à être rendu${due ? due.replace("by", "avant le") : ""}` : `"${what}" finished, checked and ready to hand in${due}`;
+  return fr ? `Capable d'expliquer « ${what} » à voix haute sans notes et de refaire un exemple seul${due ? due.replace("by", "avant le") : ""}` : `Can explain "${what}" aloud without notes and redo one example alone${due}`;
 }
