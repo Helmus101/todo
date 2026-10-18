@@ -68,6 +68,8 @@ export type QuestionKind = "spot_error" | "explain_why" | "sketch" | "predict" |
 export function questionKind(q: string): QuestionKind {
   const t = String(q || "").toLowerCase();
   if (/\b(?:error|mistake|wrong|spot|went wrong|erreur|faute)\b/.test(t)) return "spot_error";
+  // A worked solution shown for checking ("A student analyses … Their working is shown below: Line 1: …") IS an error-spotting item, even when it never says "error".
+  if (/\b(?:working is shown|worked solution|their working|his working|her working|(?:a|the) student (?:solves|analy[sz]es|calculates|writes|claims|works out|attempts)|sa r[ée]solution|son raisonnement)\b|(?:^|\s)line\s*[1-5]\s*:|ligne\s*[1-5]\s*:/.test(t)) return "spot_error";
   if (/\b(?:sketch|draw|graph|plot|dessine|trace)\b/.test(t)) return "sketch";
   if (/\bwhy\b|\bexplain\b|\bhow come\b|pourquoi|expliqu/.test(t)) return "explain_why";
   if (/\b(?:what happens|what would happen|predict|what if|que se passe)\b/.test(t)) return "predict";
@@ -88,9 +90,21 @@ export function recentQuestionKinds(history: { role: string; text: string }[], n
   return kinds.slice(-n);
 }
 
+/** The next kind of exercise to set: calculation stays the workhorse (about one in three), every other kind rotates by least-recently-used, and
+ *  "spot the error in a worked solution" is a once-in-a-while change of pace (never within the last five exercises). Oldest first in `kinds`. */
+export function pickNextKind(kinds: QuestionKind[], opts: { sketch?: boolean } = {}): QuestionKind {
+  const recent2 = kinds.slice(-2);
+  if (!recent2.includes("compute")) return "compute";
+  const order: QuestionKind[] = ["explain_why", "predict", "compare", ...(opts.sketch === false ? [] : ["sketch" as QuestionKind]), "spot_error"];
+  const eligible = order.filter((k) => !recent2.includes(k) && !(k === "spot_error" && kinds.slice(-5).includes("spot_error")));
+  const pool = eligible.length ? eligible : order.filter((k) => !recent2.includes(k) && k !== "spot_error");
+  const lastUse = (k: QuestionKind) => kinds.lastIndexOf(k);
+  return [...(pool.length ? pool : (["explain_why"] as QuestionKind[]))].sort((a, b) => lastUse(a) - lastUse(b) || order.indexOf(a) - order.indexOf(b))[0];
+}
+
 export function varietyLine(kinds: QuestionKind[]): string {
   if (kinds.length < 2) return "";
   const all: QuestionKind[] = ["compute", "explain_why", "spot_error", "sketch", "predict", "compare"];
-  const fresh = all.filter((k) => !kinds.includes(k));
+  const fresh = all.filter((k) => !kinds.includes(k) && (k !== "spot_error" || !kinds.length));
   return `QUESTION VARIETY: your last questions were: ${kinds.join(", ")}. ${fresh.length ? `Use a kind you haven't used lately — ${fresh.join(" / ")}.` : "Change the kind of task again."} (compute = work out a value; explain_why = give the reason; spot_error = find the mistake in a worked line; sketch = draw/graph it; predict = what happens if something changes; compare = how two things differ.)`;
 }

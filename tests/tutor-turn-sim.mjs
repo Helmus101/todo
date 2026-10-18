@@ -227,6 +227,14 @@ export async function runTutorTurnSim(check, section) {
       check("a new problem Otto states in words becomes an answer-widget exercise with a verified key and a clean statement — not a text paragraph with a duplicate answer box (reported live)",
         !rw2.error && rw2.problems.length === 1 && /^if a 2 kilogram mass/i.test(rw2.problems[0].question) && !rw2.board.some((b) => b.kind === "gap") && !rw2.board.some((b) => b.kind === "given"));
     }
+    { const { questionKind: qk, pickNextKind: pnk } = await import("../server/tutorTurn/exercises.ts");
+      const pasted = "A student analyses an impulse problem where a stationary 3.0 kg cart experiences both a collision and an external push. Their working is shown below: Line 1: Impulse J = F dt = 6.0 N x 2.0 s = 12 N s. Line 2: Change in momentum equals total impulse. Line 5: v = 12/3.0 = 3.0 m/s.";
+      check("a worked solution shown for checking counts as an error-spotting item even without the word 'error' (reported: too many of these)", qk(pasted) === "spot_error" && qk("A 2 kg cart moves at 3 m/s. What is its momentum?") === "compute");
+      const seq = []; for (let i = 0; i < 20; i++) seq.push(pnk(seq.slice(-8)));
+      const spots = seq.map((k, i) => (k === "spot_error" ? i : -1)).filter((i) => i >= 0);
+      check("exercise kinds rotate: calculation stays the workhorse, no kind twice in a row, error-spotting at most once in five and never early",
+        seq.every((k, i) => i === 0 || k !== seq[i - 1]) && spots.every((x, i) => i === 0 || x - spots[i - 1] >= 5) && seq.filter((k) => k === "compute").length >= 6 && seq.filter((k) => k === "compute").length <= 10 && new Set(seq).size >= 5 && spots.length <= 4);
+    }
     check("verify: a quotation the student never gave is refused (a poem quoted from memory); quoting their own words or a board line is fine",
       codes({ move: "focus", speech: ["Au vers 2 il dit « sans bruit, sans voir, sans entendre » : qu'est-ce que ça change ?"] }).includes("unsourced_quote") &&
       !codes({ move: "focus", speech: ["Tu as écrit « il part plein d'espoir voir sa fille » : et à la fin ?"] }, { ...vctx, said: ["il part plein d'espoir voir sa fille"] }).includes("unsourced_quote") &&

@@ -35,7 +35,7 @@ import { generateProblem, difficultyFrom } from "./problemGen.ts";
 import { goalsKnown, mergeGoals } from "./goals.ts";
 import type { SessionGoals } from "../../shared/types.ts";
 import { sessionScope, inScope, contentWords, sameSubjectMemory, cleanObjectives } from "./scope.ts";
-import { exercisesSoFar, exercisesBlock, recentQuestionKinds, varietyLine, sameExercise, questionKind } from "./exercises.ts";
+import { exercisesSoFar, exercisesBlock, recentQuestionKinds, varietyLine, sameExercise, questionKind, pickNextKind } from "./exercises.ts";
 import { parseExerciseResults, verdictFromResults } from "./results.ts";
 
 const MAX_HISTORY = 14;
@@ -262,9 +262,10 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     const used = exercisesSoFar({ history, problems, memory: context.memory, board });
     // What was actually SET counts, not just what was said: an exercise lives in the widget, so the chat text rarely shows its
     // kind (every follow-up came out as multiple choice in the baseline run). A free-response exercise is a "compute".
-    const kinds = [...recentQuestionKinds(history), ...problems.slice(-3).map((p) => (p.options?.length ? questionKind(p.question) : "compute"))].slice(-6);
+    // The exercises actually SET (widget problems, oldest first) decide the next kind: a worked-solution item counts as error-spotting even when it never says "error".
+    const setKinds = problems.slice(-8).map((p) => questionKind(p.question));
     const lastTwoMcq = problems.length >= 2 && problems.slice(-2).every((p) => p.options?.length);
-    const nextKind = lastTwoMcq && !isDiscussionSubject(context.subject, spokenText) ? "compute" : (["compute", "explain_why", "spot_error", "predict", "compare", "sketch"] as const).find((k) => !kinds.includes(k)) ?? "any";
+    const nextKind = lastTwoMcq && !isDiscussionSubject(context.subject, spokenText) && !setKinds.slice(-2).includes("compute") ? "compute" : pickNextKind(setKinds, { sketch: !isDiscussionSubject(context.subject, spokenText) });
     return {
       subject: context.subject, topic: wants.different ? "" : topic, level: levelText, difficulty: difficultyAsked(message) ?? modelDifficulty(difficultyFrom(input.teaching?.log), topic), probe: conceptRec(topic) ? liveMisconceptions(conceptRec(topic)!, new Date())[0]?.text : undefined,
       kind: (wants.exercise && !/\b(?:err|mistake|wrong|why|explain|erreur|faute|pourquoi|expliq)/i.test(message) ? "compute" : isDiscussionSubject(context.subject, spokenText) && nextKind === "compute" ? "explain_why" : nextKind) as any,

@@ -95,7 +95,7 @@ function userPrompt(r: ProblemRequest): string {
   return [
     `Subject: ${r.subject || "(unspecified)"}`,
     `Topic: ${r.topic || r.ask || "(the topic they have been working on)"}`,
-    r.announced ? `The tutor has just announced what this exercise is for: "${r.announced.replace(/\s+/g, " ").slice(0, 300)}". Set an exercise that practises exactly that skill (if it names one) — not a different one from the plan.` : "",
+    r.announced ? `The tutor has just announced what this exercise is for: "${r.announced.replace(/\s+/g, " ").slice(0, 300)}". Practise exactly that SKILL (if it names one), but the FORMAT of the task is set by \"Kind of task\" below — do not copy a format the tutor mentioned (for example a worked solution with a slip) unless that is the kind asked for.` : "",
     r.allowedTopics?.length ? `Allowed topics this session (stay inside them): ${r.allowedTopics.join("; ")}` : "",
     r.ask && r.topic ? `They asked for: "${r.ask.slice(0, 200)}"` : "",
     `Their level (from their Settings): ${r.level || "not given — pitch it at the level of the work so far"}`,
