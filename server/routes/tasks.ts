@@ -263,13 +263,9 @@ async function tutorTurn(
   // still reaches the student through the normal chat reply/correction path, which has real context;
   // losing the bare, unexplained board entry for the incorrect case only drops noise, not information.
   // A gap answered right in chat is filled in where it stands ("f(2) = 2(4) − 16 + 5 = −3") — no separate bare line.
-  const closedGaps = stepVerdict?.verdict === "correct" ? currentBoard.filter((e) => e.kind === "gap" && e.id && e.text.slice(0, 160) === stepVerdict.gap).map((e) => ({ id: e.id, given: stepVerdict.given })) : [];
-  if (stepVerdict?.verdict === "correct" && !closedGaps.length) {
-    const norm = (x: string) => x.toLowerCase().replace(/[\s$]/g, "");
-    if (![...currentBoard, ...out.board].some((e) => norm(e.text) === norm(stepVerdict.given))) {
-      out.board.unshift({ id: randomUUID(), text: stepVerdict.given, kind: "result", owner: "student", status: stepVerdict.verdict, at: turnStart } as BoardEntry);
-    }
-  }
+  const closedGaps = stepVerdict?.verdict === "correct" ? currentBoard.filter((e) => e.kind === "gap" && e.id && e.text.slice(0, 160) === stepVerdict.gap).map((e) => ({ id: e.id, given: String((e as any).expectedAnswer || "") })) : []; // the verified key, never what they typed
+  // (No student-owned line is written here any more: the board never shows the student's own text. A verified correct step is restated by Otto
+  // himself in the engine, from the verified solution.)
   const now = new Date().toISOString();
   const newChat = [
     { role: "user" as const, text: message, at: now },
@@ -684,7 +680,8 @@ export function registerTaskRoutes(app: express.Express): void {
     if (verdict === "unknown") verdict = verifyPolynomialDivision(line, answer) ?? verdict;
     if (verdict === "unknown" && practiceAnswerMatches(answer, key)) verdict = "correct";
     if (graded.keyConflict) void recordMetric(req.session.user!, "gap_key_conflict", 1);
-    res.json({ verdict, verification: graded.verification, keyConflict: graded.keyConflict });
+    // `display` is the VERIFIED value the board line is completed with — never the text they typed.
+    res.json({ verdict, verification: graded.verification, keyConflict: graded.keyConflict, ...(verdict === "correct" ? { display: String(key).slice(0, 80) } : {}) });
   }));
 
   app.get("/api/interactive/:taskId/:entryId", requireAuth, rateLimit(120, 60_000), (req, res) => {

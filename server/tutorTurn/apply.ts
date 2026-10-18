@@ -106,19 +106,16 @@ export function applyOps(ops: BoardOp[], c: ApplyContext): Applied {
       }
       case "step": {
         const kind = o.kind && o.kind !== "note" ? o.kind : "note";
-        let raw = String(o.text || "");
-        // Speech recognition output ("about 56% is what I would say right yeah I think it's about 56%") is not a board line: keep the value they gave.
-        if (o.owner === "student" || transcribes(raw, c.theirWords)) {
-          const core = valueOfSpeech(raw);
-          if (core == null) { drop("spoken words, not maths"); break; }
-          raw = core;
-        }
+        const raw = String(o.text || "");
+        // THE BOARD NEVER SHOWS THE STUDENT'S OWN TEXT: a line the model marks as theirs is refused, and so is one that mostly repeats what they said
+        // (a speech transcript, a typed answer). Otto writes his own clean, verified line instead (engine.ts builds it from the verified solution).
+        if (o.owner === "student") { drop("the student's own text is never written on the board"); break; }
+        if (transcribes(raw, c.theirWords)) { drop("echoes the student's words"); break; }
         const text = latexifyBoardLine(repairLatex(typesetPlainMath(raw)), kind);
         // A bare whole number or year ("1917", "5", "$12$") says nothing on a board: reported live as "given: 1917" and "result: 5"
         // (the tail of a spoken sentence). A decimal, a percentage or a value with its unit is a real result and stays.
         if (bareNumeral(text)) { drop("a bare number says nothing without its label"); break; }
-        // A line is THEIRS only when its numbers are ones they said this turn — Otto's own step never shows in their ink.
-        const owner = o.owner === "student" && numbersAreTheirs(text, c.theirWords) ? "student" : "otto";
+        const owner = "otto"; // (no student ink, ever)
         if (isDuplicateBoardEntry(all(), { text, kind })) { drop("already on the board"); break; }
         const m = mathOf(text);
         if (m.length >= 6 && all().slice(-20).some((e) => e.kind !== "gap" && mathOf(String(e.text || "")).includes(m))) { drop("that equation is already on the board"); break; }

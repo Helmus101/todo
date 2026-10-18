@@ -60,7 +60,8 @@ export function buildRecap(i: { log: TutorTurnRecord[]; board: BoardEntry[]; obj
   const solvedHelped = log.filter((r) => r.verdict === "correct" && r.support > 2).length;
   const wrong = log.filter((r) => r.verdict === "incorrect").length;
   const lines = i.board.filter((b) => (b.kind === "result" || b.kind === "formula") && b.text).map((b) => String(b.text)).slice(-4);
-  const mine = i.board.filter((b) => b.owner === "student" && b.status === "correct").length;
+  // (The board never carries the student's own lines any more: steps they got right alone are the correct answer boxes — old stored boards may still hold student lines.)
+  const mine = i.board.filter((b) => b.status === "correct" && (b.kind === "gap" || b.owner === "student")).length;
   return {
     learned: done,
     canDoAlone: solvedAlone || mine ? [en ? `${Math.max(solvedAlone, mine)} step(s) solved on your own` : `${Math.max(solvedAlone, mine)} étape(s) réussie(s) seul`] : [],

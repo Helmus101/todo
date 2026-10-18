@@ -80,7 +80,7 @@ export function factsBlock(f: { policy: Policy; verdict?: { gap: string; given: 
     f.wants.advice ? "THEY ASKED WHAT TO PRACTISE. Use the recap move: say what they showed today, what is still shaky, and 2–3 specific things to practise (concrete skills, not topics), then ask which they want to start with. No new exercise this turn." : "",
     f.wants.topicSwitch ? "THEY SWITCHED TOPIC. This turn: open a fresh worksheet with a topic op, make a plan op for the NEW topic (2–3 objectives), and put the first problem on the board as a given line WITH its numbers (state what the objects are) before you ask about it. Say in a few words that the old topic is parked. From now on stay on the new topic: do not drift back to the old plan or to old exercises unless they ask." : "",
     f.wants.different ? "THEY WANT SOMETHING TOTALLY DIFFERENT: a new problem in a different situation and, if you can, a different idea from everything used so far — not a variation of the last one. Open a fresh worksheet with a topic op." : "",
-    f.wants.write ? "THEY ASKED YOU TO WRITE THEIR WORKING: put their last step on the board as their own line (owner student)." : "",
+    f.wants.write ? "THEY ASKED YOU TO WRITE THEIR WORKING ON THE BOARD. The board never shows their words: if their last step is right, write it yourself as YOUR clean line (a step op, no owner), in tidy maths; if it is not right yet, write nothing of theirs — say in a sentence what to fix, and ask. Never copy what they said." : "",
     f.wants.restart ? "THEY ASKED TO START OVER: open a fresh worksheet (topic op), restate the givens, explain the first idea slowly." : "",
     f.wants.draw ? "THEY ASKED YOU TO DRAW / SHOW IT (or said yes to your offer): put it on the board in THIS turn with a draw op (a table op for a sign chart, grid or comparison) — never promise it and wait." : "",
     f.wants.exercise ? "THEY ASKED FOR AN EXERCISE: post one with a problem op." : "",
@@ -440,10 +440,14 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       } catch (e: any) { console.warn(`[tutor] figure repair failed: ${e?.message || e}`); }
     }
   }
-  // "Write what I wrote" always ends with their line on the board, even if the model's step was refused.
-  if (wants.write && !applied.board.some((e) => e.owner === "student")) {
-    const line = studentBoardLine([spokenRepair?.interpreted || "", message, ...history.filter((h) => h.role === "user").slice(-2).reverse().map((h) => h.text)]);
-    if (line) applied.board.push(...applyOps([{ op: "step", cue: 0, text: line, kind: "result", owner: "student" }], { message, theirWords: [...theirWords, line], board: [...board, ...applied.board], problems, fr }).board);
+  // THE STUDENT'S OWN TEXT NEVER GOES ON THE BOARD. When they ask for their step to be written, or just got one right, Otto writes the VERIFIED step
+  // himself — in his own clean words, from the solution the code checked — and only when it is verified; otherwise nothing is written.
+  if ((wants.write || verdict === "correct") && input.solution?.verified && !applied.board.some((e) => e.kind === "result" || e.kind === "formula")) {
+    const hits = reachedSolutionSteps(spokenRepair?.interpreted ? `${message} ${spokenRepair.interpreted}` : message, input.solution);
+    const k = hits.find((n) => n > 0);
+    const st = k ? input.solution.steps[k - 1] : undefined;
+    const line = st?.result ? `${st.idea ? `${st.idea}: ` : ""}${st.result}` : hits.includes(0) ? `${fr ? "Réponse" : "Answer"}: ${input.solution.finalAnswer}` : "";
+    if (line) applied.board.push(...applyOps([{ op: "step", cue: 0, text: line, kind: "result" }], { message, theirWords: [], board: [...board, ...applied.board], problems, fr }).board);
   }
   // A teaching reply that SAYS an equation ("so $12 = 6v$") puts it on the board, whatever the model did: speech passes, the board is what stays.
   if (["explain", "worked_step", "worked_example", "correct_error", "hint_procedure"].includes(turn.move) && !applied.board.some((e) => e.kind !== "focus" && e.kind !== "annotation" && e.kind !== "given")) {

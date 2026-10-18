@@ -458,8 +458,9 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     // The board lives in this browser now, so the line (and the key written with it) ride along: the server
     // has no stored copy to look the gap up in for a tutor session. It still recomputes the key from the line
     // itself first, and only falls back to what it's sent.
-    const { verdict } = await api.checkGap(task.id, entry.id, given, { text: entry.text, expectedAnswer: entry.expectedAnswer });
-    if (verdict === "correct") setTask((cur) => { if (!cur) return cur; const board = (cur.board || []).map((b) => (b.id === entry.id ? fillGap(b, given) : b)); setLocalBoard(cur.id, board, userId); return { ...cur, board }; });
+    const { verdict, display } = await api.checkGap(task.id, entry.id, given, { text: entry.text, expectedAnswer: entry.expectedAnswer });
+    // The line is completed with the VERIFIED value from the server, never with what they typed.
+    if (verdict === "correct") setTask((cur) => { if (!cur) return cur; const board = (cur.board || []).map((b) => (b.id === entry.id ? fillGap(b, display || "") : b)); setLocalBoard(cur.id, board, userId); return { ...cur, board }; });
     const line = entry.text.replace(/\s+/g, " ").slice(0, 100);
     // The same answer to the same line is reported once (a second click, or the line re-rendered with different
     // spacing, used to send Otto the identical result twice — and get two identical replies back).

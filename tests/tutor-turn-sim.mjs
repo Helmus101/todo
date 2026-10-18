@@ -254,9 +254,9 @@ export async function runTutorTurnSim(check, section) {
 
     const actx = { message: "x", theirWords: ["T - mg = ma"], board, problems: [], fr: false };
     check("apply: a mark points at a real line, keeps the part only when it's in the line, and carries its cue", (() => { const a = applyOps([{ op: "mark", cue: 2, target: "#2", style: "circle", part: "-T", tone: "focus", note: "the pull back" }, { op: "mark", cue: 0, target: "#2", style: "box", part: "zzz", tone: "error" }], actx); return a.board.length === 2 && a.board[0].markStyle === "circle" && a.board[0].markPart === "-T" && a.board[0].cue === 2 && !a.board[1].markPart && a.board[0].targetId === "s"; })());
-    check("apply: a gap's key is computed from the line when it can be; a typed plain step is typeset; their ink only when it's their numbers", (() => {
-      const a = applyOps([{ op: "gap", cue: 0, text: "$12 \\times 3 = ?$", expected: "38" }, { op: "step", cue: 0, text: "T - mg = ma", owner: "student" }, { op: "step", cue: 0, text: "$v = 14$", owner: "student" }], actx);
-      return a.board[0].expectedAnswer === "36" && a.board[1].text === "$T - mg = ma$" && a.board[1].owner === "student" && a.board[2].owner !== "student"; })());
+    check("apply: a gap's key is computed from the line when it can be; a step is typeset and is always OTTO's — a step marked as the student's is refused (no student ink, ever)", (() => {
+      const a = applyOps([{ op: "gap", cue: 0, text: "$12 \\times 3 = ?$", expected: "38" }, { op: "step", cue: 0, text: "T - mg = ma", owner: "student" }, { op: "step", cue: 0, text: "$v = 14$", owner: "student" }, { op: "step", cue: 0, text: "T - mg = ma" }], actx);
+      return a.board[0].expectedAnswer === "36" && a.board.length === 2 && a.board[1].text === "$T - mg = ma$" && a.board.every((b) => b.owner !== "student") && a.dropped.filter((d) => /never written on the board/.test(d)).length === 2; })());
     check("apply: one visual a turn, a repeated equation isn't written again", (() => { const a = applyOps([{ op: "step", cue: 0, text: "$Mg\\sin\\theta - T = Ma$" }, { op: "draw", cue: 0, scene: "numberline", spec: { min: 0, max: 5, points: [{ x: 2, label: "a" }] } }, { op: "draw", cue: 0, scene: "balance", spec: { left: ["2x", "3"], right: ["7"] } }], actx); return a.board.length === 1 && a.board[0].kind === "svg" && a.dropped.length === 2; })());
     check("number line and balance scenes build to clean SVG", "svg" in buildNumberLine({ min: -2, max: 4, points: [{ x: 1, label: "x" }], intervals: [{ from: 1, to: 3, open: "right" }] }) && "svg" in buildBalance({ left: ["2x", "3"], right: ["7"] }) && "error" in buildBalance({ left: [], right: ["7"] }));
     check("facts tell the model the limit, the verified step and what they asked for", (() => { const f = factsBlock({ policy, verdict: { gap: "a = ?", given: "3", verdict: "incorrect" }, wants: { why: true, write: true, restart: false, exercise: false, explain: false }, affect: "neutral" }); return /up to level 1/.test(f) && /WRONG/.test(f) && /ASKED WHY/.test(f) && /WRITE THEIR WORKING/.test(f); })());
@@ -281,7 +281,12 @@ export async function runTutorTurnSim(check, section) {
 
     script = () => T({ intent: "write_my_work", move: "confirm", speech: ["Sure.", "What's next for m?"] });
     r = await runTutorTurn({ ...base, message: "can you write T - mg = ma on the board" });
-    check("'write what I wrote' always ends with their line on the board, typeset, in their ink", r.board.some((b) => b.owner === "student" && b.text === "$T - mg = ma$"));
+    check("'write what I wrote' never puts THEIR text on the board (no student-owned entry, no copy of their words)", !r.board.some((b) => b.owner === "student") && !r.board.some((b) => /can you write/i.test(String(b.text))));
+    { const solV = { statement: "find a", steps: [{ idea: "Newton's second law on m", result: "a = 3 m/s²", value: 3 }], value: 3, finalAnswer: "a = 3 m/s²", verified: true };
+      const rv = await runTutorTurn({ ...base, board: [], message: "can you write that on the board, a is 3", solution: solV });
+      check("when the step they got is VERIFIED, Otto writes it himself as his own line (from the solution), never theirs", rv.board.some((b) => b.kind === "result" && b.owner !== "student" && /a\s*=\s*3/.test(String(b.text))) && rv.board.every((b) => b.owner !== "student"));
+      const rn = await runTutorTurn({ ...base, board: [], message: "can you write that on the board, a is 7", solution: solV });
+      check("…and when it is not verified nothing of theirs is written", rn.board.every((b) => b.owner !== "student" && !/7/.test(String(b.text))) && !rn.board.some((b) => b.kind === "result")); }
 
     script = (b, i) => i === 0 ? "Sure thing! WRITE_TO_BOARD(gap, x=?)" : T({ intent: "chat", speech: ["Hey — what are we working on today?"] });
     calls = [];
