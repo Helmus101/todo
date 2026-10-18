@@ -304,7 +304,9 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   let issues: Issue[] = verifyTurn(turn, vctx);
   // When the generator is writing the exercise, the tutor's reply is only a lead-in: checks about the exercise itself (is it there,
   // is it new, are its numbers the student's) are about text that won't be shown, so they must not cost a repair call.
+  // (a "practice" move is the same: the app writes the exercise and keeps only a short lead-in, so these checks judge text that is replaced)
   if (earlyGen) issues = issues.filter((i) => !["intent_exercise", "vague", "repeat_exercise", "numbers", "invented_object", "length"].includes(i.code));
+  else if (turn.move === "practice") issues = issues.filter((i) => !["vague", "numbers", "invented_object", "length", "dead_end", "target"].includes(i.code));
   let factBad = "";
   if (worthFactChecking(turn.move, turn.speech, turn.diagnosis.status, message)) {
     const bad = await falseClaim(turn.speech, turn.board.map((o: any) => String(o.text || "")).filter(Boolean), { subject: context.subject, problem: problems.find((p) => !p.solved)?.question || input.solution?.statement, student: message, recent: history.slice(-4).map((h) => `${h.role === "user" ? "Student" : "Tutor"}: ${h.text}`).join(" / ") }, result.tokens);
@@ -318,14 +320,14 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   // a fraction of the time and cost of regenerating the whole turn. Anything touching the board, the maths or the rules still gets the full repair.
   const WORDING_ONLY = new Set(["dead_end", "stale_opener", "length", "questions", "harsh", "vague", "self_correct", "mechanics", "format_leak", "echo_private", "repeat"]);
   const lightOnly = issues.length > 0 && issues.every((i) => WORDING_ONLY.has(i.code)) && !earlyGen;
-  if ((issues.some((i) => i.hard) || issues.length >= 2) && lightOnly) {
+  if ((issues.some((i) => i.hard) || issues.filter((i) => i.code !== "length" && i.code !== "target").length >= 2) && lightOnly) {
     const text = await rewriteReply(turn.speech.join(" "), issues.map((i) => i.fix).join("; "), message, result.tokens);
     if (text) {
       const lighter: TurnOutput = { ...turn, speech: [text], board: turn.board.map((o) => ({ ...o, cue: 0 })) };
       const again = verifyTurn(lighter, vctx);
       if (again.length <= issues.length) { turn = lighter; issues = again; repaired = true; }
     }
-  } else if (issues.some((i) => i.hard) || issues.length >= 2) {
+  } else if (issues.some((i) => i.hard) || issues.filter((i) => i.code !== "length" && i.code !== "target").length >= 2) {
     try {
       const fixed = await callTurn([...messages, { role: "assistant", content: raw.slice(0, 6000) }, { role: "user", content: `(Before the student sees it, fix this turn:\n- ${issues.map((i) => i.fix).join("\n- ")}\nSend the corrected turn as ONLY the JSON object. Don't mention this note.)` }], result.tokens);
       if (fixed.turn) { const again = verifyTurn(fixed.turn, vctx); if (again.length < issues.length || !again.some((i) => i.hard)) { turn = fixed.turn; issues = again; repaired = true; } }

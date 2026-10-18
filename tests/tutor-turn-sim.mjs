@@ -214,6 +214,10 @@ export async function runTutorTurnSim(check, section) {
         codes({ move: "practice", speech: ["Here is a new market.", "Who gains?"], board: [] }, { ...vctx, message: "what should I practise", wants: { ...vctx.wants, advice: true } }).includes("intent_advice") &&
         !codes({ move: "recap", speech: ["You showed shifts. Elasticity is shaky. Practise elasticity and surplus.", "Which first?"], board: [] }, { ...vctx, message: "what should I practise", wants: { ...vctx.wants, advice: true } }).includes("intent_advice"));
     }
+    check("'Line 3' that belongs to an error-spotting exercise in the widget (or to the student's own answer) is not a missing board line",
+      !codes({ move: "confirm", speech: ["Line 3 is the one — the sign slipped there.", "Why does it matter?"] }, { ...vctx, problems: [{ id: "p", question: "A student solves 2x+3=9. Line 1: 2x=6. Line 2: x=3. Line 3: check 2(3)+3=9. Which line has the error?", createdAt: "x" }] }).includes("target") &&
+      codes({ move: "confirm", speech: ["Line 3 is the one.", "Why?"] }, { ...vctx, message: "Line 3 — a sign slip" }).filter((x) => x === "target").length === 0 &&
+      codes({ move: "confirm", speech: ["Look at line 9.", "Why?"] }).includes("target"));
     check("verify: a quotation the student never gave is refused (a poem quoted from memory); quoting their own words or a board line is fine",
       codes({ move: "focus", speech: ["Au vers 2 il dit « sans bruit, sans voir, sans entendre » : qu'est-ce que ça change ?"] }).includes("unsourced_quote") &&
       !codes({ move: "focus", speech: ["Tu as écrit « il part plein d'espoir voir sa fille » : et à la fin ?"] }, { ...vctx, said: ["il part plein d'espoir voir sa fille"] }).includes("unsourced_quote") &&

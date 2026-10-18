@@ -102,9 +102,16 @@ export function targetExists(target: string | undefined, board: BoardEntry[]): b
   return !!resolveBoardTarget(target, board);
 }
 
+/** The "Line N" numbers inside an exercise worksheet (an error-spotting item shows Line 1–4 in the widget) or in the student's own answer — real references, not board lines. */
+function exerciseLineNumbers(c: { problems?: { question?: string }[]; message?: string }): Set<number> {
+  const out = new Set<number>();
+  for (const t of [...(c.problems || []).map((p) => p.question || ""), c.message || ""]) for (const m of String(t).matchAll(/\b(?:line|ligne)\s*(\d{1,2})\b/gi)) out.add(Number(m[1]));
+  return out;
+}
+
 /** Every "line N" / "#N" in the speech must be a real margin number. */
-function missingLineRefs(speech: string, board: BoardEntry[]): number[] {
-  const nums = new Set(boardLineNumbers(board as any).values());
+function missingLineRefs(speech: string, board: BoardEntry[], extra: Set<number> = new Set()): number[] {
+  const nums = new Set([...boardLineNumbers(board as any).values(), ...extra]);
   return [...speech.matchAll(/\b(?:line|ligne)\s*#?\s*(\d{1,3})\b|(?<![\w&])#(\d{1,3})\b/gi)].map((m) => Number(m[1] || m[2])).filter((n) => !nums.has(n));
 }
 
@@ -249,10 +256,10 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   if (leakSpeech) out.push({ code: "leak", hard: true, fix: `the speech states ${leakSpeech} — they must find it. Keep the idea, drop the value, and end with one question that gets them there.` });
   for (const o of t.board) { const l = o.op !== "gap" ? revealsKey(opText(o), c) : null; if (l) { out.push({ code: "leak", hard: true, fix: `a board ${o.op} shows ${l} — leave it as '?' or don't write it.` }); break; } }
   // 3. Every pointer names a real board line.
-  const missing = missingLineRefs(say, c.board);
-  if (missing.length) out.push({ code: "target", hard: true, fix: `the speech mentions line ${missing[0]}, which isn't on the board. Use a margin number from the listing, or say what the line says.` });
+  const missing = missingLineRefs(say, c.board, exerciseLineNumbers(c));
+  if (missing.length) out.push({ code: "target", hard: false, fix: `the speech mentions line ${missing[0]}, which isn't on the board. Use a margin number from the listing, or say what the line says.` });
   const badMark = t.board.find((o) => o.op === "mark" && !targetExists(o.target, c.board));
-  if (badMark) out.push({ code: "target", hard: true, fix: `the mark points at "${badMark.target ?? ""}", which isn't a line on the board — use a #n from the listing.` });
+  if (badMark) out.push({ code: "target", hard: false, fix: `the mark points at "${badMark.target ?? ""}", which isn't a line on the board — use a #n from the listing.` });
   // 4. What they asked for is actually done.
   if (c.wants.why && (!["probe_why", "explain", "hint_concept", "worked_step", "worked_example", "correct_error", "revoice"].includes(t.move) || ignoresWhy(say))) out.push({ code: "intent_why", hard: false, fix: "they asked WHY. Give the actual reason first, in 1–2 plain sentences (because…, so that…, it means…) — repeating the instruction is not a reason. Then at most one question." });
   if (c.wants.write && !t.board.some((o) => o.op === "step" && o.owner === "student")) out.push({ code: "intent_write", hard: false, fix: 'they asked you to write their working on the board: add a step op with owner "student" holding exactly the step they last stated, tidied into $…$.' });
@@ -367,7 +374,7 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
  *  gaps; keep only the last question; trim an over-long reply at sentence boundaries. Never adds words of its own. */
 export function degradeTurn(t: TurnOutput, c: VerifyContext): TurnOutput {
   let speech = t.speech.filter((s) => !revealsKey(s, c) && !FORMAT_INSTRUCTION.test(s) && !(c.private?.length && echoesPrivate(s, c.private)));
-  const nums = new Set(boardLineNumbers(c.board as any).values());
+  const nums = new Set([...boardLineNumbers(c.board as any).values(), ...exerciseLineNumbers(c)]);
   speech = speech.map((s) => s.replace(/\s*\(?(?:look at |see |on )?(?:line|ligne)\s*#?\s*(\d{1,3})\)?/gi, (m, n) => (nums.has(Number(n)) ? m : "")).trim()).filter(Boolean);
   // One question, kept at the end: earlier questions go (their statements stay).
   const lastQ = [...speech].reverse().find((s) => /\?\s*["»”)]*\s*$/.test(s));
