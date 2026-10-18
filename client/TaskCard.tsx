@@ -1129,12 +1129,13 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
       <ul className="steps">
         {steps.map((s, i) => {
           const blk = stepBlocked(steps, s);
+          const isCurrent = i === steps.findIndex((o) => !o.done && !stepBlocked(steps, o)); // the step to do now: the only one that always shows its extra actions
           const gatesAnother = steps.some((o, j) => j !== i && o.dependsOn === i);
           const markLabel = s.done
             ? L(`Marquer « ${s.text} » comme pas encore faite`, `Mark "${s.text}" as not done`)
             : L(`Marquer « ${s.text} » comme faite`, `Mark "${s.text}" as done`);
           return (
-            <li key={i} className={`step ${s.done ? "done" : ""} ${blk ? "blocked" : ""}`}>
+            <li key={i} className={`step ${s.done ? "done" : ""} ${blk ? "blocked" : ""} ${isCurrent ? "is-current" : ""}`}>
               {/* The mark IS the control for a needs-you step: click ○ to tick it done (no separate button).
                   It renders no text when unticked, so it needs a real accessible name — a bare title
                   attribute left it announced as an unlabelled button. */}
@@ -1237,14 +1238,14 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                   // always one tap away instead of being reserved for a detected big project.
                   <button type="button" className="btn xs ghost substep-expand" disabled={expanding === i} onClick={() => void expandStep(i)}>
                     {expanding === i ? <Spinner size="xs" /> : null}
-                    {expanding === i ? L("Découpage…", "Breaking down…") : L("Détailler cette étape", "Break this step down")}
+                    {expanding === i ? L("Découpage…", "Breaking down…") : L("Détailler", "Break down")}
                   </button>
                 ) : null}
               </div>
               <div className="step-act">
                 {/* A URL step keeps its "Open ↗" link ALWAYS — even after Otto opened it. */}
                 {s.url ? <button className="btn xs ghost" title={s.url} onClick={() => openTab(s.url!, TAB_GROUP)}>{L(`Ouvrir ${linkKind(s.url, L) || "le lien"} ↗`, `Open ${linkKind(s.url, L) || "link"} ↗`)}</button> : null}
-                {!s.done ? <button className="btn xs ghost" onClick={() => onAsk(i, s.text)}>{L("Aide", "Help")}</button> : null}
+                {!s.done ? <button className="btn xs ghost step-help" onClick={() => onAsk(i, s.text)}>{L("Aide", "Help")}</button> : null}
               </div>
             </li>
           );

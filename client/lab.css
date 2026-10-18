@@ -181,3 +181,18 @@ h1 { font-family: var(--display); font-weight: 400; letter-spacing: -0.025em; }
 
 .sm-svgfig { width: 100%; max-width: 640px; margin: var(--space-2) 0 var(--space-4); color: var(--ink); }
 .sm-svgfig svg { width: 100%; height: auto; display: block; font-family: Inter, system-ui, sans-serif; }
+
+/* ---- Steps: one calm checklist. The extra actions (Break down, Help) are quiet text and only appear on the step you are on, or on hover / keyboard focus ---- */
+.step { padding: var(--space-3) 0; }
+.substep-expand.btn { font-size: 12.5px; font-weight: 500; color: var(--ink-3); margin-top: var(--space-1); }
+.substep-expand.btn::before { content: "+"; margin-right: var(--space-1); font-weight: 500; }
+.step-act .btn.step-help { border-color: transparent; background: none; color: var(--ink-3); padding: 0 var(--space-2); height: 28px; line-height: 28px; font-size: 13px; }
+.step-act .btn.step-help:hover { border-color: transparent; background: none; color: var(--accent); }
+.step .substep-expand.btn, .step .step-help.btn { transition: opacity .15s ease; }
+@media (hover: hover) {
+  .step:not(.is-current):not(:hover):not(:focus-within) .substep-expand.btn,
+  .step:not(.is-current):not(:hover):not(:focus-within) .step-help.btn { opacity: 0; }
+}
+@media (hover: none) {
+  .step:not(.is-current) .substep-expand.btn { display: none; }
+}
