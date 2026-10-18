@@ -201,25 +201,48 @@ function tutorProviders(): { name: string; client: OpenAI; model: string }[] {
   return out;
 }
 
+export type ProviderErrorKind = "balance" | "auth" | "rate" | "timeout" | "server" | "network" | "other";
+/** What kind of provider failure is this — so the route can answer "Otto is unavailable, try again shortly" (503) instead of a generic 500, and ops can alert on a 402. */
+export function classifyProviderError(e: any): ProviderErrorKind {
+  const status = Number(e?.status);
+  const msg = `${e?.message || ""} ${e?.error?.message || ""}`;
+  if (status === 402 || /insufficient balance|quota exceeded|billing/i.test(msg)) return "balance";
+  if (status === 401 || status === 403) return "auth";
+  if (status === 429 || /too many requests|rate limit/i.test(msg)) return "rate";
+  if (/timed out|timeout|ETIMEDOUT|deadline/i.test(`${msg} ${e?.code || ""} ${e?.name || ""}`)) return "timeout";
+  if (status >= 500 && status < 600) return "server";
+  if (/fetch failed|socket hang up|ECONNRESET|ENOTFOUND|ECONNREFUSED|network|terminated/i.test(`${msg} ${e?.code || ""} ${e?.cause?.code || ""}`)) return "network";
+  return "other";
+}
+
+// A circuit breaker for Gemini: after three failures in a row it is skipped for a minute, so a provider that is down costs one slow turn, not every turn.
+const geminiBreaker = { fails: 0, openUntil: 0 };
+
 /** One tutor completion, Gemini first with DeepSeek as the fallback. A provider that fails (network, auth,
  *  quota, an unsupported param) hands the SAME turn to the next provider instead of failing the reply —
  *  which is what makes "Gemini, falling back to DeepSeek" real rather than nominal. Usage/cost accounting
  *  downstream is provider-agnostic (usageOf reads the OpenAI-shaped fields both return). */
-export async function createTutorChat(params: any, fast: boolean): Promise<any> {
+export async function createTutorChat(params: any, fast: boolean, opts?: { deadline?: number }): Promise<any> {
   const providers = tutorProviders();
   if (!providers.length) throw new Error("Set GEMINI_API_KEY or DEEPSEEK_API_KEY in web/.env.");
   let lastErr: any;
   for (let i = 0; i < providers.length; i++) {
     const p = providers[i];
+    const left = opts?.deadline ? opts.deadline - Date.now() : Infinity;
+    if (left < 1500) { lastErr = Object.assign(new Error("Request timed out: the turn's time budget is used up."), { code: "ETIMEDOUT" }); break; }
+    if (p.name === "gemini" && i < providers.length - 1 && Date.now() < geminiBreaker.openUntil) continue; // breaker open: straight to the fallback
     try {
       // The `thinking` toggle is DeepSeek-specific, so `fast` only applies to that provider (see
       // createChatFast's own comment) — passing it to Gemini would be a wasted 400 on every turn.
       // `fast` = an interactive Primer turn: bounded per attempt (Gemini 7s, DeepSeek 24s) so a stalled provider falls over quickly.
-      return await createChatFast(p.client, { ...params, model: p.model }, fast && p.name !== "gemini", fast ? (p.name === "gemini" ? 7_000 : 24_000) : undefined);
+      const out = await createChatFast(p.client, { ...params, model: p.model }, fast && p.name !== "gemini", fast ? Math.min(p.name === "gemini" ? 7_000 : 24_000, left) : undefined);
+      if (p.name === "gemini") geminiBreaker.fails = 0;
+      return out;
     } catch (e: any) {
       lastErr = e;
+      if (p.name === "gemini" && ++geminiBreaker.fails >= 3) { geminiBreaker.openUntil = Date.now() + 60_000; geminiBreaker.fails = 0; console.warn("[chat] gemini failed 3 times in a row — skipping it for 60 s"); }
       const more = i < providers.length - 1;
-      console.warn(`[chat] ${p.name} (${p.model}) failed: ${e?.message || e}${more ? ` — falling back to ${providers[i + 1].name}` : ""}`);
+      console.warn(`[chat] ${p.name} (${p.model}) failed: ${classifyProviderError(e)}${e?.status ? ` ${e.status}` : ""}${more ? ` — falling back to ${providers[i + 1].name}` : ""}`);
     }
   }
   throw lastErr;

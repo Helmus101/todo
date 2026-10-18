@@ -235,6 +235,36 @@ export async function runTutorTurnSim(check, section) {
       check("exercise kinds rotate: calculation stays the workhorse, no kind twice in a row, error-spotting at most once in five and never early",
         seq.every((k, i) => i === 0 || k !== seq[i - 1]) && spots.every((x, i) => i === 0 || x - spots[i - 1] >= 5) && seq.filter((k) => k === "compute").length >= 6 && seq.filter((k) => k === "compute").length <= 10 && new Set(seq).size >= 5 && spots.length <= 4);
     }
+    { const { classifyProviderError: cpe } = await import("../server/ai/client.ts");
+      check("provider failures are classified: 402 balance, 401 auth, 429 rate, timeout, 5xx, network — and a bug is 'other'",
+        cpe({ status: 402, message: "Insufficient Balance" }) === "balance" && cpe({ status: 401 }) === "auth" && cpe({ status: 429, message: "Too many requests" }) === "rate" &&
+        cpe({ message: "Request timed out." }) === "timeout" && cpe({ status: 503 }) === "server" && cpe({ message: "fetch failed" }) === "network" && cpe(new Error("x is not a function")) === "other");
+      script = () => ({ fail: true, status: 402 });
+      const rb = await runTutorTurn({ ...base, message: "hello there" });
+      check("an out-of-credit provider (402) ends the turn with errorKind 'balance' so the route can answer 503 + Retry-After (not a generic 500)", rb.error === true && rb.errorKind === "balance");
+      // Once the time budget is spent, no optional extra call (repair, rewrite, fact check) may start.
+      const bad = T({ move: "worked_example", support: 5, speech: ["So a = 2.45.", "Is that clear?", "Look at line 9?"] }); // a hard leak + extra question: normally repaired
+      process.env.TUTOR_TURN_SOFT_MS = "0"; calls = []; script = () => bad;
+      const rs = await runTutorTurn({ ...base, message: "so a is 3", solution: sol });
+      delete process.env.TUTOR_TURN_SOFT_MS;
+      check("after the soft time budget no repair or extra call runs: one model call only, and the leak is still removed by code", !rs.error && calls.length === 1 && !/2\.45/.test(rs.reply));
+    }
+  { const { dailyTurnCap, oneTurnAtATime } = await import("../server/http.ts");
+    const mkRes = () => { const r = { code: 200, body: null, headers: {}, handlers: {}, set(k, v) { this.headers[k] = v; return this; }, setHeader(k, v) { this.headers[k] = v; }, status(c) { this.code = c; return this; }, json(b) { this.body = b; return this; }, on(e, f) { this.handlers[e] = f; } }; return r; };
+    const mkReq = (user, body = { primer: true }, id = "t1") => ({ session: { user, profile: { language: "en" } }, body, params: { id }, ip: "1.1.1.1" });
+    const cap = dailyTurnCap(3); let allowed = 0, blocked = null;
+    for (let i = 0; i < 5; i++) { const res = mkRes(); let nexted = false; await cap(mkReq("cap-user@example.com"), res, () => { nexted = true; }); if (nexted) allowed++; else blocked = res; }
+    const untouched = mkRes(); let tasksChat = false; await cap(mkReq("cap-user@example.com", { primer: false }), untouched, () => { tasksChat = true; });
+    check("the daily tutor cap lets exactly N turns through, then answers 429 with a friendly message and Retry-After; ordinary task chat is not counted",
+      allowed === 3 && blocked && blocked.code === 429 && blocked.body.code === "daily_cap" && /Come back tomorrow/.test(blocked.body.error) && Number(blocked.headers["Retry-After"]) > 0 && tasksChat === true);
+    const r1 = mkRes(), r2 = mkRes(); let n1 = false, n2 = false;
+    oneTurnAtATime(mkReq("lock-user@example.com"), r1, () => { n1 = true; });
+    oneTurnAtATime(mkReq("lock-user@example.com"), r2, () => { n2 = true; });
+    const other = mkRes(); let n3 = false; oneTurnAtATime(mkReq("lock-user@example.com", { primer: true }, "t2"), other, () => { n3 = true; });
+    r1.handlers.finish && r1.handlers.finish();
+    const r4 = mkRes(); let n4 = false; oneTurnAtATime(mkReq("lock-user@example.com"), r4, () => { n4 = true; });
+    check("a second tutor turn for the same task while one is running is refused (409), another task is fine, and the lock is released when the first turn ends",
+      n1 && !n2 && r2.code === 409 && r2.body.code === "turn_in_flight" && n3 && n4); }
     check("verify: a quotation the student never gave is refused (a poem quoted from memory); quoting their own words or a board line is fine",
       codes({ move: "focus", speech: ["Au vers 2 il dit « sans bruit, sans voir, sans entendre » : qu'est-ce que ça change ?"] }).includes("unsourced_quote") &&
       !codes({ move: "focus", speech: ["Tu as écrit « il part plein d'espoir voir sa fille » : et à la fin ?"] }, { ...vctx, said: ["il part plein d'espoir voir sa fille"] }).includes("unsourced_quote") &&

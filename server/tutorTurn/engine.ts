@@ -17,7 +17,7 @@ import { solutionBlock, solveProblem } from "../solver.ts";
 import { normalizeStudentModel, findConcept, independentSuccess, liveMisconceptions } from "../studentModel.ts";
 import { graphFactsBlock } from "./graphFacts.ts";
 import { falseClaim, worthFactChecking } from "./factcheck.ts";
-import { createTutorChat, retryRequest, usageOf, OUT, rewriteReply, stepVerdictLine } from "../claude.ts";
+import { createTutorChat, retryRequest, usageOf, OUT, rewriteReply, stepVerdictLine, classifyProviderError } from "../claude.ts";
 import { asksWhy, asksToWrite, asksToDraw, voiceInputBlock, similarity, posesProblemInProse, studentProblemStatement } from "../tutorAdapt.ts";
 import {
   backgroundBlock, objectivesBlock, solutionMatchLine, misgradedExercise, ownArithmeticLine, answeredInChat, wrongInChat,
@@ -41,6 +41,9 @@ import { parseExerciseResults, verdictFromResults } from "./results.ts";
 const MAX_HISTORY = 14;
 /** A turn is a few hundred tokens of JSON; this only bounds a runaway reply (and its wait), it doesn't shape normal ones. */
 const TURN_MAX_TOKENS = 6000;
+/** A turn is interactive: after the SOFT budget only what the reply cannot do without runs (no extra checks or rewrites); at the HARD budget the turn stops with a clear error. */
+const turnHardMs = () => Number(process.env.TUTOR_TURN_HARD_MS) || 90_000;
+const turnSoftMs = () => (process.env.TUTOR_TURN_SOFT_MS !== undefined && process.env.TUTOR_TURN_SOFT_MS !== "" ? Number(process.env.TUTOR_TURN_SOFT_MS) : 55_000);
 /** Two sentences share a run of `n` consecutive words (ignoring case and punctuation). */
 export function sharesWordRun(a: string, b: string, n: number): boolean {
   const w = (t: string) => t.toLowerCase().replace(/[^a-zà-ÿ0-9' ]/g, " ").split(/\s+/).filter(Boolean);
@@ -98,8 +101,8 @@ function planOf(t: TurnOutput): TutorPlanLite {
   return { action, diagnosis, helpLevel: Math.min(4, MOVE_SUPPORT[t.move]), ...(t.diagnosis.misconception ? { misconception: t.diagnosis.misconception } : {}) };
 }
 
-async function callTurn(messages: any[], tokens: TutorTurnResult["tokens"]): Promise<{ turn: TurnOutput | null; raw: string }> {
-  const ask = async (json: boolean) => retryRequest(() => createTutorChat({ max_tokens: TURN_MAX_TOKENS, temperature: 0.5, messages, ...(json ? { response_format: { type: "json_object" } } : {}) }, true), 2, 400);
+async function callTurn(messages: any[], tokens: TutorTurnResult["tokens"], deadline?: number): Promise<{ turn: TurnOutput | null; raw: string }> {
+  const ask = async (json: boolean) => retryRequest(() => createTutorChat({ max_tokens: TURN_MAX_TOKENS, temperature: 0.5, messages, ...(json ? { response_format: { type: "json_object" } } : {}) }, true, { deadline }), 2, 400);
   let res: any;
   // JSON mode first; a provider that rejects the parameter gets the same request without it (the prompt asks for JSON anyway).
   try { res = await ask(true); } catch (e: any) { if (Number(e?.status) === 400) res = await ask(false); else throw e; }
@@ -150,6 +153,8 @@ const countWordsLite = (t: string) => t.split(/\s+/).filter(Boolean).length;
 
 export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResult & { turn?: TurnExtras }> {
   const t0 = Date.now();
+  const deadline = t0 + turnHardMs();
+  const optionalOk = () => Date.now() < t0 + turnSoftMs();
   // Other subjects' memory never reaches this session (a labour-market plan in a physics session).
   input = { ...input, context: { ...input.context, memory: sameSubjectMemory(input.context.memory, input.context.subject) } };
   // Objectives a past (bad) turn saved that the session never supports — an economics goal in a physics session — are purged
@@ -271,6 +276,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       kind: (wants.exercise && !/\b(?:err|mistake|wrong|why|explain|erreur|faute|pourquoi|expliq)/i.test(message) ? "compute" : isDiscussionSubject(context.subject, spokenText) && nextKind === "compute" ? "explain_why" : nextKind) as any,
       openers: history.filter((h) => h.role === "assistant").slice(-4).map((h) => h.text.toLowerCase().replace(/[^a-zà-ÿ' ]/g, " ").split(/\s+/).filter(Boolean).slice(0, 2).join(" ")).filter(Boolean),
       used, lang: (fr ? "fr" : "en") as "fr" | "en", ask: wants.exercise || wants.different ? message.slice(0, 200) : undefined,
+      deadline,
       announced: spokenText !== message ? spokenText.split(/(?<=[.!?])\s+/).filter((sn) => !/\?\s*$/.test(sn)).join(" ") : undefined,
       allowedTopics: objectives.map((o) => o.label), scope,
       recent: { student: message.startsWith("[") ? undefined : message, tutor: [...history].reverse().find((h) => h.role === "assistant")?.text },
@@ -282,10 +288,11 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   // ── One structured call (+ one retry if it isn't JSON at all) ──
   let turn: TurnOutput | null = null, raw = "";
   try {
-    ({ turn, raw } = await callTurn(messages, result.tokens));
-    if (!turn) ({ turn, raw } = await callTurn([...messages, { role: "assistant", content: raw.slice(0, 2000) }, { role: "user", content: "(That wasn't the JSON object. Send the same turn again as ONLY the JSON object described above.)" }], result.tokens));
+    ({ turn, raw } = await callTurn(messages, result.tokens, deadline));
+    if (!turn) ({ turn, raw } = await callTurn([...messages, { role: "assistant", content: raw.slice(0, 2000) }, { role: "user", content: "(That wasn't the JSON object. Send the same turn again as ONLY the JSON object described above.)" }], result.tokens, deadline));
   } catch (e: any) {
-    console.error(`[tutor] model request failed: ${e?.message || e}`);
+    result.errorKind = classifyProviderError(e);
+    console.error(`[tutor] model request failed: ${result.errorKind}${e?.status ? ` ${e.status}` : ""}`); // (kind and status only: provider error bodies can echo prompt text)
     result.error = true;
     return result;
   }
@@ -309,7 +316,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   if (earlyGen) issues = issues.filter((i) => !["intent_exercise", "vague", "repeat_exercise", "numbers", "invented_object", "length"].includes(i.code));
   else if (turn.move === "practice") issues = issues.filter((i) => !["vague", "numbers", "invented_object", "length", "dead_end", "target"].includes(i.code));
   let factBad = "";
-  if (worthFactChecking(turn.move, turn.speech, turn.diagnosis.status, message)) {
+  if (optionalOk() && worthFactChecking(turn.move, turn.speech, turn.diagnosis.status, message)) {
     const bad = await falseClaim(turn.speech, turn.board.map((o: any) => String(o.text || "")).filter(Boolean), { subject: context.subject, problem: problems.find((p) => !p.solved)?.question || input.solution?.statement, student: message, recent: history.slice(-4).map((h) => `${h.role === "user" ? "Student" : "Tutor"}: ${h.text}`).join(" / ") }, result.tokens);
     if (bad) factBad = bad;
     if (bad) issues.push({ code: "fact", hard: true, fix: `a claim looks FALSE: ${bad}. Correct it (or leave it out) — only say what is true.` });
@@ -321,22 +328,22 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   // a fraction of the time and cost of regenerating the whole turn. Anything touching the board, the maths or the rules still gets the full repair.
   const WORDING_ONLY = new Set(["dead_end", "stale_opener", "length", "questions", "harsh", "vague", "self_correct", "mechanics", "format_leak", "echo_private", "repeat"]);
   const lightOnly = issues.length > 0 && issues.every((i) => WORDING_ONLY.has(i.code)) && !earlyGen;
-  if ((issues.some((i) => i.hard) || issues.filter((i) => i.code !== "length" && i.code !== "target").length >= 2) && lightOnly) {
+  if ((issues.some((i) => i.hard) || issues.filter((i) => i.code !== "length" && i.code !== "target").length >= 2) && lightOnly && optionalOk()) {
     const text = await rewriteReply(turn.speech.join(" "), issues.map((i) => i.fix).join("; "), message, result.tokens);
     if (text) {
       const lighter: TurnOutput = { ...turn, speech: [text], board: turn.board.map((o) => ({ ...o, cue: 0 })) };
       const again = verifyTurn(lighter, vctx);
       if (again.length <= issues.length) { turn = lighter; issues = again; repaired = true; }
     }
-  } else if (issues.some((i) => i.hard) || issues.filter((i) => i.code !== "length" && i.code !== "target").length >= 2) {
+  } else if ((issues.some((i) => i.hard) || issues.filter((i) => i.code !== "length" && i.code !== "target").length >= 2) && optionalOk()) {
     try {
-      const fixed = await callTurn([...messages, { role: "assistant", content: raw.slice(0, 6000) }, { role: "user", content: `(Before the student sees it, fix this turn:\n- ${issues.map((i) => i.fix).join("\n- ")}\nSend the corrected turn as ONLY the JSON object. Don't mention this note.)` }], result.tokens);
+      const fixed = await callTurn([...messages, { role: "assistant", content: raw.slice(0, 6000) }, { role: "user", content: `(Before the student sees it, fix this turn:\n- ${issues.map((i) => i.fix).join("\n- ")}\nSend the corrected turn as ONLY the JSON object. Don't mention this note.)` }], result.tokens, deadline);
       if (fixed.turn) { const again = verifyTurn(fixed.turn, vctx); if (again.length < issues.length || !again.some((i) => i.hard)) { turn = fixed.turn; issues = again; repaired = true; } }
     } catch (e: any) { console.warn(`[tutor] repair call failed: ${e?.message || e}`); }
   }
   if (issues.length) turn = degradeTurn(turn, vctx);
   // The repair did not remove a claim the fact check found false: one targeted rewrite, in the model's own words.
-  if (factBad && issues.some((i) => i.code === "fact") && turn.speech.length) {
+  if (factBad && optionalOk() && issues.some((i) => i.code === "fact") && turn.speech.length) {
     const text = await rewriteReply(turn.speech.join(" "), `it contains a FALSE claim: ${factBad}. Correct it plainly (say what is actually true, kindly) and keep the rest; end with ONE question for them`, message, result.tokens);
     if (text) turn = { ...turn, speech: [text] };
   }
@@ -426,9 +433,9 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   {
     const failed = applied.dropped.find((d) => /^draw: ERROR|^draw: (?:can'?t|couldn'?t)|^draw: .*(?:undefined|invalid|must|needs|requires)/i.test(d) && !/one visual|already on the board|no graph|nothing new/i.test(d));
     const wantedDraw = turn.board.find((o) => o.op === "draw");
-    if (failed && wantedDraw) {
+    if (failed && wantedDraw && optionalOk()) {
       try {
-        const fixedTry = await callTurn([...messages, { role: "assistant", content: raw.slice(0, 6000) }, { role: "user", content: `(The figure could not be built: ${failed.replace(/^draw:\s*/, "")}. Send the SAME turn again as ONLY the JSON object, with the draw op corrected so it builds — every point used must be defined, every expression valid. Don't mention this note.)` }], result.tokens);
+        const fixedTry = await callTurn([...messages, { role: "assistant", content: raw.slice(0, 6000) }, { role: "user", content: `(The figure could not be built: ${failed.replace(/^draw:\s*/, "")}. Send the SAME turn again as ONLY the JSON object, with the draw op corrected so it builds — every point used must be defined, every expression valid. Don't mention this note.)` }], result.tokens, deadline);
         const again = fixedTry.turn?.board.find((o) => o.op === "draw");
         if (again) {
           const r = applyOps([again], { message, theirWords, board: [...board, ...applied.board], problems: problemsForApply, fr, solution: input.solution });
@@ -514,7 +521,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     const last = turn.speech[turn.speech.length - 1] || "";
     const placedSomething = applied.problems.length > 0 || applied.board.some((e) => e.kind === "gap" || e.kind === "given");
     const dangling = /^\s*(?:(?:now|next|so|ok(?:ay)?|alright)[, ]+)*(?:let'?s|let us|time to|on to)\b/i.test(last) && !/\?\s*$/.test(last);
-    if (dangling && !placedSomething && !turn.speech.some((sn) => /\?\s*$/.test(sn))) {
+    if (optionalOk() && dangling && !placedSomething && !turn.speech.some((sn) => /\?\s*$/.test(sn))) {
       const text = await rewriteReply(turn.speech.join(" "), "the reply announces something to do ('let's check…') but never asks it — keep what it said and end with ONE concrete question about the current topic that they can answer now", message, result.tokens);
       if (text && /\?\s*$/.test(text.trim())) turn = { ...turn, speech: [text] };
     }
@@ -523,7 +530,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   // Still a dead end ("That gives a total profit of 15." and nothing more): one rewrite in the model's own words that goes on.
   {
     const placed = applied.problems.length > 0 || applied.board.some((e) => ["gap", "given", "graph", "diagram", "svg", "flow", "table", "source", "widget", "interactive"].includes(String(e.kind)));
-    if (turn.speech.length && !placed && !issues.some((i) => i.code === "leak") && endsDead(turn.speech, [], message)) {
+    if (optionalOk() && turn.speech.length && !placed && !issues.some((i) => i.code === "leak") && endsDead(turn.speech, [], message)) {
       const text = await rewriteReply(turn.speech.join(" "), "the reply stops with nothing for the student to do: keep what you said, then continue with ONE concrete question or small task that deepens or extends what they just did (why it works, a variation, or the next step)", message, result.tokens);
       if (text) turn = { ...turn, speech: [text] };
     }

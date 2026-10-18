@@ -30,7 +30,7 @@ import * as tasks from "../tasks.ts";
 import * as jobs from "../jobs.ts";
 import * as integrations from "../integrations.ts";
 import * as pronoteSvc from "../pronote.ts";
-import { M, PROD, ah, commit, isPaused, mergeProfiles, mergeTasks, outgoingTasks, rateLimit, requireAuth, saveSession, scheduler, tasksPayload, toolsFor } from "../http.ts";
+import { M, PROD, ah, commit, dailyTurnCap, isPaused, mergeProfiles, mergeTasks, oneTurnAtATime, outgoingTasks, rateLimit, requireAuth, saveSession, scheduler, tasksPayload, toolsFor } from "../http.ts";
 
 /** Response-only slimming of the task list (never persisted): a finished/dismissed tutor session keeps its
  *  whole chat + board + events in the account row, but the client keeps its own session history locally and
@@ -220,6 +220,16 @@ async function tutorTurn(
   void recordMetric(req.session.user!, "chat_message_sent", 1);
   if (out.error || !out.reply.trim()) {
     void recordMetric(req.session.user!, "chat_error", 1);
+    const kind = String(out.errorKind || "other");
+    if (out.error && kind !== "other") {
+      // The model provider is down, out of credit, rate-limited or too slow: that is "try again shortly" (503 + Retry-After), not a bug (500).
+      void recordMetric(req.session.user!, `chat_provider_${kind}`, 1);
+      if (kind === "balance" || kind === "auth") reportError("tutor-provider", new Error(`tutor provider ${kind}`), { kind });
+      const wait = kind === "rate" ? 20 : 30;
+      res.setHeader("Retry-After", String(wait));
+      res.status(503).json({ error: M(req, "Otto est momentanément indisponible — réessaie dans une minute.", "Otto is briefly unavailable — please try again in a minute."), code: "tutor_unavailable", retryAfter: wait });
+      return;
+    }
     res.status(500).json({ error: M(req, "Otto n'a pas pu répondre — réessaie dans un instant.", "Otto couldn't reply just now — try again in a moment.") });
     return;
   }
@@ -796,7 +806,7 @@ export function registerTaskRoutes(app: express.Express): void {
     res.json({ recap, retestsDue: due });
   });
 
-  app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, res) => {
+  app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), dailyTurnCap(), oneTurnAtATime, async (req, res) => {
     if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour discuter.", "AI is paused — resume it in Settings to chat.") }); return; }
     if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
     

@@ -634,6 +634,8 @@ export interface TutorTurnResult {
   tokens: { in: number; out: number; cachedIn: number };
   /** The model failed outright (no reply at all). */
   error?: boolean;
+  /** Why, when the provider failed (balance / auth / rate / timeout / server / network): the route answers 503 + Retry-After instead of a generic 500. */
+  errorKind?: string;
   /** A reply had to be replaced because it gave the answer away. */
   guardrailTripped: boolean;
   /** Open problems the student answered correctly IN CHAT this turn — the client marks them solved (no retyping into the box). */

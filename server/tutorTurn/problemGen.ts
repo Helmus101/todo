@@ -35,6 +35,8 @@ export interface ProblemRequest {
   openers?: string[];
   /** What the tutor has just said it wants to practise next, this turn (the exercise must deliver exactly that skill). */
   announced?: string;
+  /** Epoch ms after which no further model call is worth starting (the turn's hard budget). */
+  deadline?: number;
   /** The session's plan labels: the exercise must stay within them. */
   allowedTopics?: string[];
   /** Words the session has used (scope.ts): an exercise touching none of them is off topic. */
@@ -109,8 +111,8 @@ function userPrompt(r: ProblemRequest): string {
   ].filter(Boolean).join("\n");
 }
 
-async function once(messages: any[], tokens: { in: number; out: number; cachedIn: number }): Promise<any | null> {
-  const ask = async (json: boolean) => retryRequest(() => createTutorChat({ max_tokens: OUT.chat, temperature: 0.8, messages, ...(json ? { response_format: { type: "json_object" } } : {}) }, true), 2, 400);
+async function once(messages: any[], tokens: { in: number; out: number; cachedIn: number }, deadline?: number): Promise<any | null> {
+  const ask = async (json: boolean) => retryRequest(() => createTutorChat({ max_tokens: OUT.chat, temperature: 0.8, messages, ...(json ? { response_format: { type: "json_object" } } : {}) }, true, { deadline }), 2, 400);
   let res: any;
   try { res = await ask(true); } catch (e: any) { if (Number(e?.status) === 400) res = await ask(false); else throw e; }
   const u = usageOf(res); tokens.in += u.in; tokens.out += u.out; tokens.cachedIn += u.cachedIn;
@@ -123,8 +125,9 @@ export async function generateProblem(req: ProblemRequest, tokens: { in: number;
   const messages: any[] = [{ role: "system", content: SYSTEM }, { role: "user", content: userPrompt(req) }];
   let problem: any = null, last: any = null;
   for (let attempt = 0; attempt < 2; attempt++) {
+    if (req.deadline && Date.now() > req.deadline - 4000) return null; // out of time: the caller falls back to what the tutor wrote
     let j: any;
-    try { j = await once(messages, tokens); } catch (e: any) { console.warn(`[problemGen] model call failed: ${e?.message || e}`); return null; }
+    try { j = await once(messages, tokens, req.deadline); } catch (e: any) { console.warn(`[problemGen] model call failed: ${e?.message || e}`); return null; }
     last = j;
     let complaint = "";
     if (!j || !String(j.question || "").trim()) complaint = "that wasn't a usable exercise: return the JSON object with a question";

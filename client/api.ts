@@ -178,6 +178,19 @@ const postTimed = (url: string, timeoutMs: number, body?: unknown) =>
     throw e;
   });
 
+/** A tutor turn: ONE attempt with a hard timeout. A turn costs real model calls, so it must never be silently re-run (the generic helper retries
+ *  dropped connections and proxy error pages up to 6 times), and a 401 is an expired session, not an empty answer. */
+const postTurn = (url: string, timeoutMs: number, body: unknown) =>
+  req(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) }, 0)
+    .then(async (r) => {
+      if (r.status === 401) { const err: any = new Error(currentLang() === "en" ? "Your session expired — sign in again to continue." : "Ta session a expiré — reconnecte-toi pour continuer."); err.status = 401; throw err; }
+      return j(r);
+    })
+    .catch((e: any) => {
+      if (e?.name === "AbortError" || e?.name === "TimeoutError") { const err: any = new Error(currentLang() === "en" ? "Otto took too long to answer — please try again." : "Otto met trop de temps à répondre — réessaie."); err.status = 504; throw err; }
+      throw e;
+    });
+
 const j = async (r: Response) => {
   if (!r.ok && r.status !== 401) {
     const raw = (await r.json().catch(() => ({}))).error || `HTTP ${r.status}`;
@@ -467,7 +480,7 @@ export const api = {
   checkGap: (id: string, entryId: string, answer: string, gap?: { text: string; expectedAnswer?: string }): Promise<{ display?: string; verdict: "correct" | "incorrect" | "unknown" | "system_error"; verification?: "verified" | "conflict" | "uncertain" | "not_checked"; keyConflict?: boolean }> =>
     post(`/api/tasks/${encodeURIComponent(id)}/board/${encodeURIComponent(entryId)}/check`, { answer, ...(gap ? { text: gap.text, expectedAnswer: gap.expectedAnswer } : {}) }),
   chat: (id: string, message: string, history: NonNullable<WebTask["chat"]>, board: BoardEntry[], problems: TaskProblem[], stepIndex?: number, materials?: { label: string; text: string }[], voiceMode?: boolean, canvasMode?: boolean, primer?: boolean, objectives?: TaskObjective[], spoken?: { alternatives: string[] }, session?: { id: string; source?: string; sourceSubject?: string; createdAt?: string }, memory?: { when: string; subject?: string; lines: string[]; asked: string[] }[]): Promise<{ reply: string; chatDelta: NonNullable<WebTask["chat"]>; board: BoardEntry[]; problems: TaskProblem[]; objectives?: TaskObjective[]; guardrailTripped: boolean; task: WebTask; sessionCapReached?: boolean; subject?: string; sessionEnded?: boolean; error?: string }> =>
-    post(`/api/tasks/${id}/chat`, {
+    postTurn(`/api/tasks/${id}/chat`, 95_000, {
       // The on-device thread can be long: send how the session began (first 3) + the recent tail, not all of it
       // (the server pins the opening verbatim and keeps its own window).
       message, history: (history.length > 66 ? [...history.slice(0, 3), ...history.slice(-62)] : history).map((h) => ({ role: h.role, text: h.text })),

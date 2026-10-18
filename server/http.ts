@@ -236,6 +236,44 @@ export const rateLimit = (max: number, windowMs: number): RequestHandler => asyn
   next();
 };
 
+/** A per-account DAILY cap on tutor turns (one turn can cost 5-20 model calls, and the per-minute limit alone allows ~600 a day).
+ *  Only `primer` (tutor) requests count. Shared across serverless instances through the rate-limit table; falls back to per-process. */
+export const TUTOR_DAILY_TURNS = Number(process.env.TUTOR_DAILY_TURNS) || 150;
+export const dailyTurnCap = (max = TUTOR_DAILY_TURNS): RequestHandler => async (req, res, next) => {
+  if (req.body?.primer !== true) { next(); return; }
+  const day = new Date().toISOString().slice(0, 10);
+  const key = `${req.session.user || req.ip}:cap:tutor:${day}`;
+  const windowMs = 86_400_000;
+  const cloud = await checkRateLimit(key, max, windowMs);
+  const result = cloud ?? inMemoryRateLimit(key, max, windowMs);
+  if (!result.allowed) {
+    const untilMidnight = Math.max(60, Math.ceil((Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate() + 1) - Date.now()) / 1000));
+    res.set("Retry-After", String(untilMidnight)).status(429).json({ error: M(req, `Tu as atteint la limite quotidienne de messages avec Otto (${max}). Reviens demain !`, `You've reached today's limit of messages with Otto (${max}). Come back tomorrow!`), code: "daily_cap" });
+    return;
+  }
+  next();
+};
+
+/** One tutor turn at a time per account and task: a double click, two tabs or a voice flush must not run (and bill) the same turn twice.
+ *  Per instance, with a TTL so a crashed request can never lock a student out. */
+const turnsInFlight = new Map<string, number>();
+export const oneTurnAtATime: RequestHandler = (req, res, next) => {
+  if (req.body?.primer !== true) { next(); return; }
+  const key = `${req.session.user || req.ip}:${String(req.params?.id || "")}`;
+  const now = Date.now();
+  const started = turnsInFlight.get(key);
+  if (started && now - started < 110_000) {
+    res.status(409).json({ error: M(req, "Otto répond encore à ton message précédent — un instant.", "Otto is still answering your previous message — one moment."), code: "turn_in_flight" });
+    return;
+  }
+  turnsInFlight.set(key, now);
+  let released = false;
+  const release = () => { if (!released) { released = true; if (turnsInFlight.get(key) === now) turnsInFlight.delete(key); } };
+  res.on("finish", release); res.on("close", release);
+  if (turnsInFlight.size > 2000) for (const [k, t] of turnsInFlight) if (now - t > 110_000) turnsInFlight.delete(k);
+  next();
+};
+
 // The agent's toolset for this account's connected apps (Composio). Empty if Composio's unset/nothing linked.
 export const toolsFor = (req: express.Request) => integrations.getAgentTools(req.session.user!, { primaryAccounts: req.session.profile?.primaryAccounts }).catch(() => undefined);
 

@@ -308,13 +308,19 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [objectivesOpen]);
+  // A real lock (not render-time state): a typed Enter, a voice flush and the batched exercise result can all arrive in the same tick.
+  const inflightRef = useRef(false);
   const send = useCallback(async (override?: string, voiceMode?: boolean, spoken?: { alternatives: string[] }) => {
     let message = (override ?? input).trim();
-    if (!message || sending || !task) return;
+    const original = message; // what they typed (no appended ink notes), restored on failure
+    if (!message || sending || inflightRef.current || !task) return;
+    inflightRef.current = true;
     const isAutoResult = /^\[(?:Exercise|Exercice)\]/.test(message);
     if (!isAutoResult) setExerciseDone(false);
     else if (/\b(marked right|juste)\b/.test(message) && !/en partie juste|PARTLY right/i.test(message)) setExerciseDone(true);
-    setInput(""); setSending(true); setError(null); setPendingMsg(message);
+    // An automatic exercise result must not wipe what they are in the middle of typing.
+    if (override === undefined) setInput("");
+    setSending(true); setError(null); setPendingMsg(message);
     try {
       // Anything new on the whiteboard rides along with the message — draw, then just say "is this right?"
       // like you would to a person leaning over your page; no separate "send drawing" step needed.
@@ -405,9 +411,10 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
         // real server error. Only show the server's OWN message (it always sets `.status`, see api.ts's
         // `j()`); anything without one is a network-layer failure, so use the friendly fallback instead.
         setError(e?.status != null ? e.message : L("J'ai perdu le fil. Redis-le ?", "I lost the thread. Say that again?"));
-        setInput(message);
+        if (override === undefined) setInput(original); // never the app's own "[Exercice] …" text, never the appended ink note
       }
     } finally {
+      inflightRef.current = false;
       setSending(false); setPendingMsg(null);
     }
   }, [input, sending, task, userId, L]);

@@ -273,6 +273,11 @@ section("Tutor session routing — deep links resolve, the URL follows the live 
     tutSrcR.includes('if (path.startsWith("tutor/session/")) goRoute("tutor");'));
   check("the active session header has no 'All sessions' link back to the list (report-live: shouldn't be there)",
     !/tutor-crumb-link/.test(tutSrcR) && !/leaveToList/.test(tutSrcR));
+  { const apiSrcR = readFileSync("client/api.ts", "utf8");
+    check("a tutor turn is ONE attempt with a hard timeout (no silent re-billing retries) and a 401 is an expired session, not an empty answer",
+      /const postTurn = /.test(apiSrcR) && /\}, 0\)\s*\n\s*\.then\(async \(r\) => \{\s*\n\s*if \(r\.status === 401\)/.test(apiSrcR) && /postTurn\(`\/api\/tasks\/\$\{id\}\/chat`, 95_000,/.test(apiSrcR));
+    check("send() uses a ref lock, does not clear or restore the input for an automatic exercise result, and restores only what they typed",
+      /const inflightRef = useRef\(false\)/.test(tutSrcR) && /if \(override === undefined\) setInput\(""\)/.test(tutSrcR) && /if \(override === undefined\) setInput\(original\)/.test(tutSrcR) && /inflightRef\.current = false/.test(tutSrcR)); }
   check("the dock chat toggle is an expand/collapse control, not a labeled 'Chat' button",
     /aria-expanded=\{chatDrawer\}/.test(tutSrcR) && /tutor-dock-chat-toggle-chev/.test(tutSrcR) && /L\("Historique", "History"\)/.test(tutSrcR) &&
     !/\{chatDrawer \? L\("Fermer", "Close"\) : L\("Chat", "Chat"\)\}/.test(tutSrcR));
