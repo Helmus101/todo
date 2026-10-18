@@ -78,6 +78,7 @@ export function useSpeechRecognition({ lang, onResult, onInterim, onError }: Use
   // wanted this to stop." Without this distinction, mic-always-on mode would silently go dead the moment
   // Chrome's own session cap or a transient network hiccup ended the underlying recognizer.
   const keepAliveRef = useRef(false);
+  const netFailsRef = useRef<number[]>([]); // timestamps of recent "network" errors (restart backoff)
   // Reported live: a short mid-thought breath ("so the derivative of x squared... is 2x") was getting cut
   // into two separate sent messages — the browser's own pause-detection marks a result `isFinal` on any
   // brief silence, which is far shorter than a natural thinking pause. Don't act on a final result the
@@ -159,6 +160,12 @@ export function useSpeechRecognition({ lang, onResult, onInterim, onError }: Use
       if (e.error === "not-allowed" || e.error === "service-not-allowed" || e.error === "audio-capture") {
         keepAliveRef.current = false;
         setListening(false);
+      }
+      // A "network" error restarts forever when the device is offline, hammering the recogniser: after three in a row, stop and say so.
+      if (e.error === "network") {
+        const now = Date.now();
+        netFailsRef.current = [...netFailsRef.current.filter((t) => now - t < 15_000), now];
+        if (netFailsRef.current.length >= 3) { keepAliveRef.current = false; setListening(false); netFailsRef.current = []; }
       }
       onErrorRef.current?.(speechErrorMessage(e.error));
     };

@@ -308,6 +308,13 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [objectivesOpen]);
+  // Escape closes the History drawer (keyboard users could open it but not leave it).
+  useEffect(() => {
+    if (!chatDrawer) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setChatDrawer(false); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [chatDrawer]);
   // A real lock (not render-time state): a typed Enter, a voice flush and the batched exercise result can all arrive in the same tick.
   const inflightRef = useRef(false);
   const send = useCallback(async (override?: string, voiceMode?: boolean, spoken?: { alternatives: string[] }) => {
@@ -948,7 +955,8 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           className="tutor-dock-chat-toggle"
           data-tour="ts-chat"
           aria-expanded={chatDrawer}
-          aria-label={L("Historique de la conversation", "Conversation history")}
+          aria-controls="tutor-history-drawer"
+          aria-label={`${L("Historique de la conversation", "Conversation history")}${task.chat?.length ? ` (${task.chat.length} ${L("messages", "messages")})` : ""}`}
           title={chatDrawer ? L("Masquer l'historique", "Hide history") : L("Afficher l'historique", "Show history")}
           onClick={() => setChatDrawer((v) => !v)}
         >
@@ -958,7 +966,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           <ChevronDown size={13} aria-hidden="true" className="tutor-dock-chat-toggle-chev" />
         </button>
         {chatDrawer && (
-          <div className="tutor-dock-chat">
+          <div className="tutor-dock-chat" id="tutor-history-drawer">
             <div className="tutor-dock-chat-head">
               <span>{task.chat?.length || 0} {L("messages", "messages")}</span>
               <button type="button" className="tutor-dock-chat-close" onClick={() => setChatDrawer(false)} aria-label={L("Réduire l'historique", "Collapse history")}><Minimize2 size={13} aria-hidden="true" />{L("Réduire", "Collapse")}</button>

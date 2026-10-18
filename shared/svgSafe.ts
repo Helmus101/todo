@@ -87,6 +87,7 @@ export function sanitizeSvg(input: string): string {
       if (!ATTR_OK.test(an) && an !== "xlink:href") continue;
       if (name === "svg" && /^(?:width|height|x|y|xmlns.*)$/i.test(an)) continue; // the app sizes the root
       const lname = an.toLowerCase();
+      if (lname === "style") continue; // inline CSS can position a figure over the whole page (UI redress): the app styles figures itself
       if (lname === "xlink:href" && name !== "use") continue;
       const val = cleanValue(lname, a[2] ?? a[3] ?? "");
       if (val === null) continue;

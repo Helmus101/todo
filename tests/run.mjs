@@ -278,6 +278,10 @@ section("Tutor session routing — deep links resolve, the URL follows the live 
       /const postTurn = /.test(apiSrcR) && /\}, 0\)\s*\n\s*\.then\(async \(r\) => \{\s*\n\s*if \(r\.status === 401\)/.test(apiSrcR) && /postTurn\(`\/api\/tasks\/\$\{id\}\/chat`, 95_000,/.test(apiSrcR));
     check("send() uses a ref lock, does not clear or restore the input for an automatic exercise result, and restores only what they typed",
       /const inflightRef = useRef\(false\)/.test(tutSrcR) && /if \(override === undefined\) setInput\(""\)/.test(tutSrcR) && /if \(override === undefined\) setInput\(original\)/.test(tutSrcR) && /inflightRef\.current = false/.test(tutSrcR)); }
+  check("figures cannot carry inline CSS (a model-written style attribute could overlay the page); the rest of a safe figure is kept",
+    (() => { const out = sanitizeSvg('<svg viewBox="0 0 10 10"><rect x="1" y="1" width="5" height="5" style="position:fixed;inset:0;width:100vw" fill="red"/></svg>'); return /<rect/.test(out) && !/style=/i.test(out) && /fill="red"/.test(out); })());
+  { const mic = readFileSync("client/voice/useSpeechRecognition.ts", "utf8");
+    check("speech recognition stops after three 'network' errors in a row instead of restarting forever", /netFailsRef/.test(mic) && /e\.error === "network"/.test(mic) && /length >= 3/.test(mic)); }
   check("the dock chat toggle is an expand/collapse control, not a labeled 'Chat' button",
     /aria-expanded=\{chatDrawer\}/.test(tutSrcR) && /tutor-dock-chat-toggle-chev/.test(tutSrcR) && /L\("Historique", "History"\)/.test(tutSrcR) &&
     !/\{chatDrawer \? L\("Fermer", "Close"\) : L\("Chat", "Chat"\)\}/.test(tutSrcR));

@@ -57,12 +57,12 @@ export type ServerGrade = { status: GradeStatus; correct?: number; why?: string;
 function GapAnswer({ entry, onCheck, en }: { entry: BoardEntry; onCheck: NonNullable<BoardArtifactProps["onGapCheck"]>; en: boolean }) {
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
-  const [verdict, setVerdict] = useState<"correct" | "incorrect" | "unknown" | "system_error" | null>(null);
+  const [verdict, setVerdict] = useState<"correct" | "incorrect" | "unknown" | "system_error" | "failed" | null>(null);
   const submit = async () => {
     const given = value.trim();
     if (!given || busy) return;
     setBusy(true);
-    try { setVerdict(await onCheck(entry, given)); } catch { setVerdict("unknown"); } finally { setBusy(false); }
+    try { setVerdict(await onCheck(entry, given)); } catch { setVerdict("failed"); } finally { setBusy(false); }
   };
   if (verdict === "correct") return <div className="sm-inline-problem-result correct">{en ? "Correct!" : "Correct !"}</div>;
   return (
@@ -85,6 +85,7 @@ function GapAnswer({ entry, onCheck, en }: { entry: BoardEntry; onCheck: NonNull
       </div>
       {verdict === "incorrect" ? <div className="sm-inline-problem-result wrong" role="status">{en ? "Not quite — Otto will help you check it." : "Pas tout à fait — Otto va t'aider à vérifier."}</div> : null}
       {verdict === "unknown" ? <div className="sm-inline-problem-result" role="status">{en ? "Sent to Otto to look at." : "Envoyé à Otto pour qu'il regarde."}</div> : null}
+      {verdict === "failed" ? <div className="sm-inline-problem-result wrong" role="alert">{en ? "Couldn't check that just now — try again." : "Impossible de vérifier pour l'instant — réessaie."}</div> : null}
       {verdict === "system_error" ? <div className="sm-inline-problem-result" role="status">{en ? "Otto can't trust this line's answer key — he'll check it with you." : "La clé de cette ligne n'est pas fiable — Otto va la vérifier avec toi."}</div> : null}
     </div>
   );
@@ -205,7 +206,7 @@ function markClass(marks?: BoardEntry[]): string {
 
 function InlineEquation({ latex }: { latex: string }) {
   const html = useMemo(() => {
-    try { return katex.renderToString(/\\frac|\\sqrt/.test(latex) ? `\\displaystyle ${latex}` : latex, { throwOnError: false, strict: false, trust: false, displayMode: false, output: "html" }); } catch { return null; }
+    try { return katex.renderToString(/\\frac|\\sqrt/.test(latex) ? `\\displaystyle ${latex}` : latex, { throwOnError: false, strict: false, trust: false, displayMode: false, output: "html", maxSize: 20, maxExpand: 500 }); } catch { return null; }
   }, [latex]);
   if (html === null) return <span>{latexToPlain(latex)}</span>;
   return <span className="sm-inline-eq" role="math" aria-label={latexToPlain(latex)} dangerouslySetInnerHTML={{ __html: html }} />;
@@ -408,7 +409,7 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, sys
         )}
       </div>
       <div className="sm-board-problem-q"><MathText text={stripStrayMarkdown(problem.question)} /></div>
-      {problem.source ? <a className="sm-board-problem-source" href={problem.source.url} target="_blank" rel="noopener noreferrer">{en ? "Source" : "Source"}: {problem.source.name} ↗</a> : null}
+      {problem.source && /^https:\/\//i.test(problem.source.url) ? <a className="sm-board-problem-source" href={problem.source.url} target="_blank" rel="noopener noreferrer">{en ? "Source" : "Source"}: {problem.source.name} ↗</a> : null}
       {problem.format && !answered ? <div className="sm-board-problem-format"><MathText text={problem.format} /></div> : null}
       {problem.hint && !answered ? (
         <div className="sm-board-problem-hint-row">

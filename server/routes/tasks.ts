@@ -808,7 +808,7 @@ export function registerTaskRoutes(app: express.Express): void {
 
   // END OF A SITTING: the recap, built by code from the turn records and the board the client sends (the board lives in
   // the browser). Every line traces to a record; nothing here asks the model what the student "mastered".
-  app.post("/api/tasks/:id/tutor/close", requireAuth, async (req, res) => {
+  app.post("/api/tasks/:id/tutor/close", requireAuth, rateLimit(30, 60_000), async (req, res) => {
     const t = await findTaskOrReload(req, String(req.params.id));
     if (!t) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
     const profile = req.session.profile ||= emptyProfile();
