@@ -40,6 +40,8 @@ import { parseExerciseResults, verdictFromResults } from "./results.ts";
 
 const MAX_HISTORY = 14;
 /** A turn is a few hundred tokens of JSON; this only bounds a runaway reply (and its wait), it doesn't shape normal ones. */
+/** What a dropped op is logged as: its kind only — the reason text can carry student or model words. */
+const dropLabel = (d: string) => String(d).split(/[:(]/)[0].trim().slice(0, 24);
 const TURN_MAX_TOKENS = 6000;
 /** A turn is interactive: after the SOFT budget only what the reply cannot do without runs (no extra checks or rewrites); at the HARD budget the turn stops with a clear error. */
 const turnHardMs = () => Number(process.env.TUTOR_TURN_HARD_MS) || 90_000;
@@ -498,7 +500,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     const fallback = cleanObjs.length ? cleanObjs : header ? [{ id: `obj-${Date.now().toString(36)}`, label: String(header).replace(/\$/g, "").slice(0, 48), done: false }] : [];
     if (fallback.length) result.objectives = fallback as any;
   }
-  if (applied.dropped.length) console.log(`[tutor] dropped ops: ${applied.dropped.join(" | ")}`);
+  if (applied.dropped.length) console.log(`[tutor] dropped ops: ${applied.dropped.map(dropLabel).join(", ")}`);
 
   // They were promised an exercise and none was placed (the generator failed twice, or the board refused it): the reply must not say
   // "here is a new problem" over nothing.
@@ -512,7 +514,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
         if (text) turn = { ...turn, speech: [text] };
       }
     }
-    if (applied.dropped.length) console.warn(`[tutor] exercise not placed: ${applied.dropped.join(" | ")}`);
+    if (applied.dropped.length) console.warn(`[tutor] exercise not placed: ${applied.dropped.map(dropLabel).join(", ")}`);
   }
 
   // A lead-in with nothing after it ("Now let's check your intuition about …") while no exercise, gap or question was placed: the reply

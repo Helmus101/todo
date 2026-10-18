@@ -17,6 +17,16 @@ export function initSentry(): void {
     // Errors only — no performance tracing. This app's cost/latency is already tracked its own way
     // (token/usage accounting in shared/types.ts); tracing would just add overhead for data already covered.
     tracesSampleRate: 0,
+    // Students' messages are personal data: events carry the error and where it happened, never request bodies, cookies or long free text.
+    beforeSend(event) {
+      try {
+        if (event.request) { delete (event.request as any).data; delete (event.request as any).cookies; delete (event.request as any).headers; }
+        if (event.message) event.message = String(event.message).slice(0, 160);
+        for (const ex of event.exception?.values || []) if (ex.value) ex.value = String(ex.value).slice(0, 160);
+        if (event.extra) for (const k of Object.keys(event.extra)) { const v = (event.extra as any)[k]; if (typeof v === "string") (event.extra as any)[k] = v.slice(0, 80); }
+      } catch { /* never block reporting */ }
+      return event;
+    },
   });
   initialized = true;
 }

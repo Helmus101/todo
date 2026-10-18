@@ -67,6 +67,11 @@ if (PROD) {
   if (!process.env.PUBLIC_URL) {
     throw new Error("PUBLIC_URL must be set in production — required for OAuth callbacks.");
   }
+  // Serverless instances share nothing in memory: without the cloud store, sessions, CSRF tokens and rate limits would differ per instance
+  // (students logged out at random, limits that don't hold). A single long-lived process may run without it.
+  if (process.env.VERCEL && !(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY)) {
+    throw new Error("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in production on Vercel — sessions, CSRF and rate limits need the shared store.");
+  }
 }
 
 const app = express();

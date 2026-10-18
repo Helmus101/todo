@@ -61,7 +61,8 @@ applyPricingOverride(process.env.DEEPSEEK_PRICING);
 export const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 8000, pick: 4000, refine: 3000, steps: 1500, chat: 12000, studylog: 14000, theme: 2000, studentModel: 2000, artifact: 8000 } as const;
 
 export function aiReady(): boolean {
-  return !!process.env[USING_NVIDIA ? "NVIDIA_API_KEY" : "DEEPSEEK_API_KEY"];
+  // Gemini alone is enough for the tutor (it is the first provider tried), so a Gemini-only deployment is "ready" too.
+  return !!process.env[USING_NVIDIA ? "NVIDIA_API_KEY" : "DEEPSEEK_API_KEY"] || !!process.env.GEMINI_API_KEY;
 }
 
 // Whiteboard vision — a SEPARATE provider from the rest of this file on purpose. DeepSeek (the model behind

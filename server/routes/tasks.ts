@@ -22,7 +22,7 @@ import type { WebTask, Profile, BoardEntry, TaskObjective, TaskProblem } from ".
 import { emptyProfile, isHandled, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHourForSubject } from "../../shared/types.ts";
 import { computeWorkload } from "../workload.ts";
 import { schoolRecordLine } from "../schoolRecord.ts";
-import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, evaluateCheckpoint, needsAdaptiveReplan, computeTaskOutcome, interactiveSceneDocument, INTERACTIVE_SCENE_CSP } from "../claude.ts";
+import { aiReady, classifyProviderError, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, evaluateCheckpoint, needsAdaptiveReplan, computeTaskOutcome, interactiveSceneDocument, INTERACTIVE_SCENE_CSP } from "../claude.ts";
 import { loadState, saveState, cloudEnabled, getJob, getLatestJob, eventsForTask, recordEvent, countActiveJobs, activeJobTaskIds, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary } from "../store.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "../bandit.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, subjectFrequency, orderingBoost, weakSubjectBoost, twoMinuteRuleBoost, stallNudgeLine } from "../patterns.ts";
@@ -1032,7 +1032,11 @@ export function registerTaskRoutes(app: express.Express): void {
       const { solution: _hiddenSolution, tutorState: _hiddenState, ...leanTask } = t;
       res.json({ reply: out.reply, chatDelta: newChat, board: out.board, problems: out.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped, task: leanTask });
     } catch (e: any) {
-      console.error(e);
+      // (status/kind only: the whole error object can carry the provider's echo of the prompt)
+      const kind = classifyProviderError(e);
+      console.error(`[chat] failed: ${kind}${e?.status ? ` ${e.status}` : ""} ${String(e?.message || "").slice(0, 120)}`);
+      reportError("tutor-chat", e instanceof Error ? e : new Error(String(e)), { kind });
+      if (kind !== "other") { res.setHeader("Retry-After", "30"); res.status(503).json({ error: M(req, "Otto est momentanément indisponible — réessaie dans une minute.", "Otto is briefly unavailable — please try again in a minute."), code: "tutor_unavailable", retryAfter: 30 }); return; }
       res.status(500).json({ error: M(req, "échec de la discussion", "chat failed") });
     }
   });
