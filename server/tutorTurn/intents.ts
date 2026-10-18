@@ -26,7 +26,9 @@ export function problemFromProse(text: string): string {
   const sents = String(text || "").replace(/\s+/g, " ").split(/(?<=[.!?])\s+/);
   const s = sents.map((x) => x.trim()).filter(Boolean);
   while (s.length > 1 && !/\d/.test(s[0])) s.shift();
-  const out = s.join(" ").slice(0, 600);
+  // "Now let's see how that applies to a collision: if a 2 kg mass …" — the lead-in before the colon is not part of the problem.
+  if (s.length) s[0] = s[0].replace(/^[^:]{0,90}:\s*(?=(?:if|a|an|suppose|consider|imagine|\d))/i, "").replace(/^(?:if)\s+/i, (m) => m); 
+  const out = s.join(" ").slice(0, 600).replace(/^\s*([a-zà-ÿ])/, (m, c: string) => c.toUpperCase());
   return posesProblemInProse(out) ? out : "";
 }
 

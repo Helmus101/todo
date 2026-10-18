@@ -218,6 +218,15 @@ export async function runTutorTurnSim(check, section) {
       !codes({ move: "confirm", speech: ["Line 3 is the one — the sign slipped there.", "Why does it matter?"] }, { ...vctx, problems: [{ id: "p", question: "A student solves 2x+3=9. Line 1: 2x=6. Line 2: x=3. Line 3: check 2(3)+3=9. Which line has the error?", createdAt: "x" }] }).includes("target") &&
       codes({ move: "confirm", speech: ["Line 3 is the one.", "Why?"] }, { ...vctx, message: "Line 3 — a sign slip" }).filter((x) => x === "target").length === 0 &&
       codes({ move: "confirm", speech: ["Look at line 9.", "Why?"] }).includes("target"));
+    { const { problemFromProse: pfp2 } = await import("../server/tutorTurn/intents.ts");
+      const said = "Total momentum stays constant. Now let's see how that applies to a collision: if a 2 kilogram mass moving at 3 meters per second hits a stationary 4 kilogram mass and they stick together, what is their combined velocity right after?";
+      check("the lead-in before a colon is not part of the problem statement", /^if a 2 kilogram mass/i.test(pfp2(said)) && !/let's see/i.test(pfp2(said)));
+      const solveJ = { final_answer: "1 m/s", check: "(2*3)/(2+4)", steps: [{ idea: "p before = p after", result: "6 kg m/s", check: "2*3" }, { idea: "v = p/(m1+m2)", result: "1 m/s", check: "6/6" }], key_idea: "momentum is conserved", alternatives: [], mistakes: [], skill: "inelastic collision" };
+      script = (b) => (/expert teacher preparing to tutor/.test(systemOf(b)) ? solveJ : T({ heard: "momentum conserved", move: "elicit", speech: ["Total momentum stays constant.", "Now let's see how that applies to a collision: if a 2 kilogram mass moving at 3 meters per second hits a stationary 4 kilogram mass and they stick together, what is their combined velocity right after?"], board: [{ op: "gap", cue: 1, text: "$v_{final} = ?$ m/s", expected: "1" }], expects: "value" }));
+      const rw2 = await runTutorTurn({ ...base, board: [], problems: [], message: "oh it's conserved", history: [{ role: "user", text: "let's work on momentum" }, { role: "assistant", text: "What is the key condition for momentum to be conserved?" }], objectives: [{ id: "o", label: "Momentum and collisions", done: false }] });
+      check("a new problem Otto states in words becomes an answer-widget exercise with a verified key and a clean statement — not a text paragraph with a duplicate answer box (reported live)",
+        !rw2.error && rw2.problems.length === 1 && /^if a 2 kilogram mass/i.test(rw2.problems[0].question) && !rw2.board.some((b) => b.kind === "gap") && !rw2.board.some((b) => b.kind === "given"));
+    }
     check("verify: a quotation the student never gave is refused (a poem quoted from memory); quoting their own words or a board line is fine",
       codes({ move: "focus", speech: ["Au vers 2 il dit « sans bruit, sans voir, sans entendre » : qu'est-ce que ça change ?"] }).includes("unsourced_quote") &&
       !codes({ move: "focus", speech: ["Tu as écrit « il part plein d'espoir voir sa fille » : et à la fin ?"] }, { ...vctx, said: ["il part plein d'espoir voir sa fille"] }).includes("unsourced_quote") &&

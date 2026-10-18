@@ -359,7 +359,12 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     const lastSn = turn.speech[turn.speech.length - 1] || "";
     const announces = /\b(?:find|spot|catch|check|fix|look at|hunt for)\b[^.?!]{0,25}\b(?:slip|mistake|error|working|solution|line)\b/i.test(lastSn) && !/\?\s*$/.test(lastSn) && !turn.board.some((o) => o.op === "problem" || o.op === "gap" || o.op === "draw" || (o.op === "step" && o.kind === "given")) || /(?:^|[—–,;:]\s*|\.\s+)(?:(?:now|next|so|ok(?:ay)?|alright)[, ]+)*(?:let'?s|let us|time to|on to|next (?:one|up|problem|exercise|question)\b|(?:here'?s|here is) (?:one|another|a (?:new|fresh|harder|trickier|similar|different) (?:one|problem|exercise|question)))\b/i.test(lastSn) && !/\?\s*$/.test(lastSn)
       && !turn.speech.some((sn) => /\?\s*$/.test(sn)) && !turn.board.some((o) => o.op === "problem" || o.op === "gap" || o.op === "draw" || (o.op === "step" && o.kind === "given"));
-    const newExercise = !wants.problemOnBoard && (wants.exercise || wants.different || turn.move === "practice" || announces);
+    const freshScenario = posesProblemInProse(speechAll) && /\b(?:picture|imagine|suppose|consider|take|say|let'?s say|here'?s|if|a|an)\b[^.?!]{0,14}\ban?\s+\d/i.test(speechAll) && (() => { const nums = speechAll.match(/\d+(?:\.\d+)?/g) || []; const known = [...problems.filter((p) => !p.solved).map((p) => p.question || ""), ...board.map((b) => b.text || "")].join(" "); return nums.length >= 2 && nums.filter((n) => !new RegExp(`(?<![\\d.])${n.replace(".", "\\.")}(?![\\d])`).test(known)).length >= 2; })();
+    // A NEW problem Otto states in words (a fresh scenario, or after a topic switch) belongs in the answer widget with a verified key — not as a text paragraph.
+    const proseProblemWidget = !wants.problemOnBoard && !wants.exercise && !wants.different && !announces && turn.move !== "practice"
+      && !turn.board.some((o) => o.op === "problem") && !problems.some((p) => !p.solved) && posesProblemInProse(speechAll) && (wants.topicSwitch || freshScenario);
+    const wantsProblemWidget = wants.problemOnBoard || proseProblemWidget;
+    const newExercise = !wantsProblemWidget && (wants.exercise || wants.different || turn.move === "practice" || announces);
     exerciseIntended = newExercise;
     // They asked for a new exercise: an unsolved earlier one is set aside, it must not block the new one (it was silently dropped before).
     if (newExercise && (wants.exercise || wants.different)) problemsForApply = problems.map((p) => ({ ...p, solved: true }));
@@ -395,7 +400,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       const ops = [...turn.board, { op: "problem", cue: Math.max(0, turn.speech.length - 1), question: studentStatedProblem, answer: input.solution.finalAnswer, check: String(input.solution.value), format: "a number (units as in the problem)" } as any];
       turn = { ...turn, board: ops };
       problemsForApply = problems.map((p) => ({ ...p, solved: true }));
-    } else if (wants.problemOnBoard) {
+    } else if (wantsProblemWidget) {
       // A problem that already exists (Otto stated it, or they pasted it): the widget gets it with a code-verified key from the solver.
       const text = problemStatement({ opQuestion: turn.board.find((o) => o.op === "problem")?.question, history: [...history, { role: "assistant", text: speechAll }], openProblem: [...problems].reverse().find((p) => !p.solved)?.question, studentStated: studentProblemStatement(message) });
       if (text && !problems.some((p) => !p.solved && sameExercise(p.question, text, 0.7))) {
@@ -403,7 +408,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
         if (!sol) { const solved = await solveProblem(text, context.subject); result.tokens.in += solved.tokens.in; result.tokens.out += solved.tokens.out; sol = solved.solution; }
         const wordKey = sol?.verified && !Number.isFinite(sol.value) && String(sol.finalAnswer || "").trim().length > 0 && !/\d/.test(String(sol.finalAnswer));
         if ((sol?.verified && Number.isFinite(sol.value)) || wordKey) {
-          const ops = turn.board.filter((o) => o.op !== "problem");
+          const ops = turn.board.filter((o) => o.op !== "problem" && !(proseProblemWidget && o.op === "gap")); // (one answer box: the widget replaces a duplicate "v = ?" line)
           ops.push({ op: "problem", cue: Math.max(0, turn.speech.length - 1), question: text, answer: sol!.finalAnswer, ...(Number.isFinite(sol!.value) ? { check: String(sol!.value), format: "a number (units as in the problem)" } : { format: "a short answer" }) } as any);
           turn = { ...turn, board: ops };
           problemsForApply = problems.map((p) => ({ ...p, solved: true }));
