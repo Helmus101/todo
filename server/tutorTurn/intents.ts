@@ -82,3 +82,10 @@ export function studentComplaint(message: string): Complaint | null {
   if (/\b(?:i (?:still )?(?:don'?t|do not) (?:get|understand) (?:your|what you|that explanation|how you)|(?:your|that) explanation (?:is|was) (?:confusing|unclear)|that (?:doesn'?t|does not) make sense|too (?:fast|confusing)|je ne comprends pas (?:ton|ce que))\b/i.test(m)) return "unclear";
   return null;
 }
+
+/** "what should I practise before the test", "what do I revise next", "what should I work on" — they want study advice, not another question. */
+export function asksWhatToPractise(message: string): boolean {
+  const m = String(message || "");
+  if (m.length > 240 || /^\s*\[/.test(m)) return false;
+  return /\bwhat (?:should|do|can|would) (?:i|we) (?:practi[sc]e|revise|study|work on|focus on|review|do next|learn next)\b|\bwhat (?:to|else to) (?:practi[sc]e|revise|study|focus on)\b|\b(?:what|which) (?:topics?|parts?|things?) (?:should|do) i (?:practi[sc]e|revise|study|review)\b|\bquoi (?:réviser|travailler|revoir)\b|\bque (?:dois|devrais)-je (?:réviser|travailler)\b/i.test(m);
+}

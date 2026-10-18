@@ -43,7 +43,7 @@ export interface VerifyContext {
   solution?: TutorSolution;
   policy: Policy;
   /** What code detected the student wants this turn. */
-  wants: { why: boolean; write: boolean; restart: boolean; exercise: boolean; draw?: boolean; problemOnBoard?: boolean; different?: boolean; topicSwitch?: boolean };
+  wants: { why: boolean; write: boolean; restart: boolean; exercise: boolean; draw?: boolean; problemOnBoard?: boolean; different?: boolean; topicSwitch?: boolean; advice?: boolean };
   /** Everything the student and the problem said — the only legitimate source of numbers. */
   said: string[];
   /** The student's own saved notes (about, projects, preferences): used silently, never repeated back at them. */
@@ -64,7 +64,7 @@ export interface VerifyContext {
 export const SELF_CORRECTION = /(?:…|\.\.\.|—|,)\s*(?:non,?\s+(?:pardon|attends|en fait)|no,?\s+wait|wait,?\s+(?:no|that)|hmm,?\s|sorry,?\s+(?:let me|that'?s|i)|let me (?:redo|recompute|recalculate|rethink)|pardon,|oops)|\b(?:actually,? (?:no|that'?s wrong|let me)|scratch that|je me trompe|je reprends)\b/i;
 
 export interface Issue {
-  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "off_topic" | "plan_too_early" | "ignores_student" | "verdict_mismatch" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh" | "no_error" | "self_correct" | "unsourced_quote" | "stale_opener" | "fact" | "format_leak" | "unstated_setup" | "intent_topic" | "intent_equation" | "graph_inconsistent" | "shaded_claim" | "dead_end" | "echo_private";
+  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "off_topic" | "plan_too_early" | "ignores_student" | "verdict_mismatch" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh" | "no_error" | "self_correct" | "unsourced_quote" | "stale_opener" | "fact" | "format_leak" | "unstated_setup" | "intent_topic" | "intent_equation" | "graph_inconsistent" | "shaded_claim" | "dead_end" | "echo_private" | "intent_advice";
   /** The instruction for the repair call. */
   fix: string;
   /** A leak or a pointer at nothing must be fixed; the rest are quality. */
@@ -327,6 +327,7 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
     if (!regionsAnywhere && t.speech.some((sn) => SHADE_CLAIM.test(sn))) out.push({ code: "shaded_claim", hard: true, fix: "the speech points at a shaded area or rectangle but nothing is shaded on any graph. Redraw the graph with a \"regions\" entry for that area (upper curve, lower curve, from, to, label), or stop referring to shading." }); }
   if (endsDead(t.speech, t.board, c.message)) out.push({ code: "dead_end", hard: true, fix: "the reply stops with nothing for them to do (\"That gives a total profit of 15.\"). Confirm in a few words, then keep the conversation going: ask why it works, give a small variation, or hand them the next step — end on ONE concrete question or task." });
   if (c.private?.length && t.speech.some((sn) => echoesPrivate(sn, c.private!))) out.push({ code: "echo_private", hard: true, fix: "a sentence repeats the student's own saved notes/preferences back at them (e.g. a style preference). Those only shape how you teach — never say them. Remove that sentence." });
+  if (c.wants.advice && (t.move !== "recap" || t.board.some((o) => o.op === "problem"))) out.push({ code: "intent_advice", hard: true, fix: "they asked WHAT TO PRACTISE. Do not start another exercise: use the recap move — say in a few plain sentences what they showed today, what is still shaky, and name 2–3 specific things to practise before the test (each one concrete), then ask which they want to start with." });
   const uq = unsourcedQuotes(say, [...c.said, ...c.board.map((b) => b.text || ""), ...c.problems.map((p) => p.question || "")]);
   if (uq.length) out.push({ code: "unsourced_quote", hard: true, fix: `it quotes "${uq[0]}", words the student never gave and that are not on the board. Never quote a text from memory: point at a line by number or describe it in your own words, or ask the student to read the line out.` });
   const objs = inventedObjects([say, ...t.board.map(opText)], [...c.said, ...c.board.map((b) => b.text || ""), ...c.problems.map((p) => p.question || ""), ...(c.solution ? [c.solution.statement, ...c.solution.steps.map((s) => `${s.idea || ""} ${s.result || ""}`)] : [])]);

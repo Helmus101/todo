@@ -185,6 +185,35 @@ export async function runTutorTurnSim(check, section) {
       const rt = await runTutorTurn({ ...base, message: '[Exercise] I answered "can you actually do momentum please" — marked wrong (try #1).', problems: [{ id: "p1", question: "A 2 kg block slides 3 m. Find its energy gain.", answer: "58.8", kind: "free", createdAt: "x" }] });
       check("a request typed into the answer box ('can you actually do momentum please') is a topic switch, not a wrong answer", !rt.error && /THEY SWITCHED TOPIC/.test(sys) && rt.turn?.verdict !== "incorrect");
     }
+    { const badFig = T({ heard: "wants a picture", move: "explain", support: 3, speech: ["Here are two similar triangles — same shape, different size.", "Which side of the big one matches the 4?"], board: [{ op: "draw", cue: 0, scene: "geometry", text: "Similar triangles", spec: { points: { A: [0, 0], B: [4, 0], C: [0, 3] }, segments: [["A", "B"], ["B", "C"], ["C", "Z"]] } }] });
+      const goodFig = T({ heard: "wants a picture", move: "explain", support: 3, speech: ["Here are two similar triangles — same shape, different size.", "Which side of the big one matches the 4?"], board: [{ op: "draw", cue: 0, scene: "geometry", text: "Similar triangles", spec: { points: { A: [0, 0], B: [4, 0], C: [0, 3] }, segments: [["A", "B"], ["B", "C"], ["C", "A"]] } }] });
+      let n = 0; script = () => (n++ === 0 ? badFig : goodFig);
+      const rf = await runTutorTurn({ ...base, board: [], problems: [], message: "two triangles are similar, can you show me with a picture" });
+      check("a figure that fails to build (undefined point) is repaired once with the exact error and then appears on the board (reported: 'Here are two similar triangles' with nothing drawn)", !rf.error && n === 2 && rf.board.some((b) => ["diagram", "svg"].includes(String(b.kind))));
+      n = 0; script = () => badFig;
+      const rg2 = await runTutorTurn({ ...base, board: [], problems: [], message: "two triangles are similar, can you show me with a picture" });
+      check("…and if it still cannot be built the reply no longer points at a picture that is not there", !rg2.error && !/here are two similar triangles/i.test(rg2.reply) && /which side/i.test(rg2.reply));
+    }
+    { const docShapes = {
+        graph: { kind: "function", fns: [{ expr: "x^2-4", label: "f" }], xmin: -4, xmax: 4, ymin: -5, ymax: 12, points: [{ x: 2, y: 0, label: "root" }] },
+        geometry: { points: { A: [0, 0], B: [4, 0], C: [0, 3] }, segments: [["A", "B"], ["B", "C"], ["C", "A"]], angles: [{ at: "A", from: "B", to: "C", label: "90" }] },
+        incline: { angle: 30, forces: ["weight", "components", "normal", "friction"], motion: "down", labels: { weight: "mg" } },
+        trig: { mode: "elevation", observers: [{ name: "Ann", angle: 35 }], towerHeight: 20, distance: 15, units: "m" },
+        flow: { type: "cycle", nodes: [{ id: "a", label: "Prophase" }, { id: "b", label: "Metaphase" }, { id: "c", label: "Anaphase" }], edges: [{ from: "a", to: "b" }, { from: "b", to: "c" }, { from: "c", to: "a" }] },
+        table: { headers: ["x", "y"], rows: [["1", "2"], ["2", "4"]] },
+        source: { text: "We must act now.", attribution: "A speaker, 1914", highlights: [{ phrase: "act now", note: "urgency" }] },
+        widget: { type: "sort", categories: ["acid", "base"], items: [{ text: "HCl", category: 0 }, { text: "NaOH", category: 1 }, { text: "H2SO4", category: 0 }, { text: "KOH", category: 1 }] },
+        numberline: { min: -3, max: 5, points: [{ x: 2, label: "x" }], intervals: [{ from: 1, to: 4, open: "right" }] },
+        balance: { left: ["2x", "3"], right: ["7"] },
+      };
+      const failed = Object.entries(docShapes).filter(([scene, spec]) => !applyOps([{ op: "draw", cue: 0, scene, text: scene, spec }], { message: "x", theirWords: ["x"], board: [], problems: [], fr: false }).board.length).map(([k]) => k);
+      check("every drawing scene the tutor prompt documents builds from the documented shape (audit: geometry segments as pairs used to fail silently)" + (failed.length ? " — failing: " + failed.join(",") : ""), failed.length === 0); }
+    { const { asksWhatToPractise: awp } = await import("../server/tutorTurn/intents.ts");
+      check("'what should I practise before the test' needs a recap with advice, not another exercise (reported: asked, got a new exercise)",
+        awp("ok what should I practise before the test") && awp("what do I revise next") && !awp("what is the derivative of x squared") &&
+        codes({ move: "practice", speech: ["Here is a new market.", "Who gains?"], board: [] }, { ...vctx, message: "what should I practise", wants: { ...vctx.wants, advice: true } }).includes("intent_advice") &&
+        !codes({ move: "recap", speech: ["You showed shifts. Elasticity is shaky. Practise elasticity and surplus.", "Which first?"], board: [] }, { ...vctx, message: "what should I practise", wants: { ...vctx.wants, advice: true } }).includes("intent_advice"));
+    }
     check("verify: a quotation the student never gave is refused (a poem quoted from memory); quoting their own words or a board line is fine",
       codes({ move: "focus", speech: ["Au vers 2 il dit « sans bruit, sans voir, sans entendre » : qu'est-ce que ça change ?"] }).includes("unsourced_quote") &&
       !codes({ move: "focus", speech: ["Tu as écrit « il part plein d'espoir voir sa fille » : et à la fin ?"] }, { ...vctx, said: ["il part plein d'espoir voir sa fille"] }).includes("unsourced_quote") &&

@@ -109,6 +109,7 @@ export function buildGeometry(spec: GeoSpec): { ops: DiagramOp[]; elementIds: Re
 
   for (const s of spec.segments || []) {
     if (typeof s === "string") { const n = parseNames(s.replace(/[\s-]/g, ""), known); if (!n || n.length !== 2) return { error: `ERROR: segment "${s}" must be two defined points, e.g. "AB" (defined: ${[...known].join(", ")}).` }; segs.push({ from: n[0], to: n[1] }); }
+    else if (Array.isArray(s) && s.length >= 2 && P.has(String(s[0]).trim()) && P.has(String(s[1]).trim())) segs.push({ from: String(s[0]).trim(), to: String(s[1]).trim(), ...(s[2] && typeof s[2] === "string" ? { label: s[2] } : {}) } as GeoSegment); // ["A","B"] — the form the tutor prompt shows
     else if (s && P.has(s.from) && P.has(s.to)) segs.push(s);
     else return { error: `ERROR: segment ${JSON.stringify(s)} uses an undefined point (defined: ${[...known].join(", ")}).` };
   }
