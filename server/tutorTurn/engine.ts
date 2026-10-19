@@ -27,6 +27,8 @@ async function callTurn(messages: any[], tokens: TutorTurnResult["tokens"]): Pro
   return { turn: normalizeTurn(extractJsonObject(raw)) ?? normalizeTurn(salvageTurn(raw, { prose: true })), raw };
 }
 
+const POINTS_AT_BOARD = /\b(?:here(?:'s| is| are)|we have|we got|this|these|that|the following|look at|see)\b[^.?!]{0,40}\b(?:equation|expression|formula|identity|figure|graph|diagram|curve|triangle|step|line|inequality|function)\b/i;
+
 export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResult & { turn?: { speech: string[]; ms: number } }> {
   const t0 = Date.now();
   const { message, history, board, problems, context } = input;
@@ -60,6 +62,11 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   }
   if (!turn) { console.error("[tutor] no usable turn"); result.error = true; return result; }
 
+  // Nothing was written or drawn although the reply points at something, or the student gave maths: ask once for the board ops.
+  if (!turn.board.length && (POINTS_AT_BOARD.test(turn.speech.join(" ")) || (/[\d=]/.test(message) && message.length > 2))) {
+    const again = await callTurn([...messages, { role: "assistant", content: JSON.stringify(turn) }, { role: "user", content: "(You wrote nothing on the board. Check: a step they reached, the rule or reason, a figure or table that would help, a mark on a mistake. Send the same turn again with the board ops that belong (and anything you refer to must be written or drawn), each with its cue. If truly nothing belongs, return the same turn.)" }], result.tokens).catch(() => null);
+    if (again?.turn?.board.length) turn = again.turn;
+  }
   const applied = applyOps(turn.board, { board, problems, theirWords: [message] });
   result.board = applied.board;
   result.reply = turn.speech.join(" ");
