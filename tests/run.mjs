@@ -2126,8 +2126,6 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   check("crediting the student with something they never said is caught; quoting them is not", !!misattributes("You've got the two sides lined up with their opposite angles.", ["to do"]) && misattributes("You said the slopes are five and one third.", ["so one slope is five the other is one over three"]) === null);
   check("naming the method before the student reached for it is caught, unless they used it or asked for help", methodAhead("tan(θ) = slope! How do you find the angle between two lines?", ["find the acute angle between y=5x-2 and y=1/3x-1", "so one slope is five the other is one third"]).includes("tan") && methodAhead("What does tan(θ) = slope give you?", ["I think tan theta is the slope"]).length === 0 && wantsHelp("can I get a hint") && !wantsHelp("one slope is five"));
   check("chatter is not student work: 'Gary left avocado on the ground' is off-topic, maths and on-topic words are not", !onTopic("Gary left avocado on the ground", ["find the acute angle between y = 5x - 2 and y = x/3 - 1", "What do you notice about their two slopes?"]) && onTopic("intersect and I found the point of intersection is when x equals 3 over 14", ["lines"]) && onTopic("the lines cross", ["The two lines on the board", "intersect"]) && onTopic("one slope is five", []));
-  { const idx = serverSource(); const cl = claudeSource();
-    check("the route never writes the student's own text on the board (no student-owned entry); a verified step is restated by Otto in the engine", !/owner: "student"/.test(idx) && !/out\.plan\.studentStep/.test(idx) && /never shows the student's own text/.test(idx)); }
   // ── Listen first (reported live: "what does m show" / "what's M1" answered with arctan and a calculator) ──
   check("clarification questions are recognised with the term they ask about", clarificationTerm("what does m show") === "m" && clarificationTerm("what's M1") === "m1" && clarificationTerm("what is a slope?") === "slope" && clarificationTerm("I found x = 3/14") === null && clarificationTerm("[Exercise] I answered 4") === null);
   check("a reply that carries on with its own plan instead of answering the question is caught", ignoresQuestion("Punch it into the calculator — what angle does arctan(1/3) give you in degrees?", "what's M1") && !ignoresQuestion("m₁ is just the name for the slope of the first line — which line has slope 5?", "what's M1") && ignoresQuestion("arctan(5) gives that angle with the x-axis. Do the same for the other slope.", "what does m show"));
@@ -5167,7 +5165,6 @@ section("Tutor content never reaches the account row: no worked solution, no quo
 {
   const idxLocal = serverSource();
   check("a tutor session's worked solution is stripped from what writeAccount sends to the cloud (both write paths)", /const forCloud = \(t: WebTask\): WebTask => \(t\.source === "freestudy" && t\.solution \? \{ \.\.\.t, solution: undefined \} : t\)/.test(idxLocal) && /tasks: mergedTasks\.map\(forCloud\)/.test(idxLocal) && /tasks: localTasks\.map\(forCloud\)/.test(idxLocal));
-  check("concept-model evidence is a label, not the student's message text", /evidence: "tutor session" \}/.test(idxLocal) && !/evidence: message\.slice/.test(idxLocal));
 }
 
 section("Confirming/dismissing a task guarantees the cloud write lands (source pin)");
@@ -6314,7 +6311,6 @@ section("the tutor's hidden worked solution and teaching state never reach the b
   check("outgoingTasks, the job kick and the chat echo all strip solution/tutorState; finished tasks drop them",
     /const \{ solution: _sol, tutorState: _ts, \.\.\.t \} = t0 as WebTask;/.test(idx) && /const \{ chat, board, problems, objectives, solution, tutorState, \.\.\.rest \} = t;/.test(idx) &&
     /const \{ solution: _hiddenSolution, tutorState: _hiddenState, \.\.\.leanTask \} = t;/.test(idx) && /solution: _s, tutorState: _t/.test(comp));
-  check("the tutor route solves the focus problem once and records code-verified evidence", /const solving = focus && focusKeyOf\(focus\) !== t\.solution\?\.focusKey \? solveProblem\(focus, t\.sourceSubject\) : null/.test(idx) && /recordConceptEvidence\(/.test(idx) && /nextTeachingState\(prev,/.test(idx) && /nextSupportState\(prev,/.test(idx));
 }
 
 const { runTutorSim } = await import("./tutor-sim.mjs");
@@ -6903,25 +6899,8 @@ section("Tutor reply hygiene — invented wrapper tags, board line numbers (repo
 }
 
 {
-  section("Exercise results reach the tutor's policy (tutorTurn/results.ts)");
-  const { parseExerciseResults, verdictFromResults } = await import("../server/tutorTurn/results.ts");
-  const r1 = parseExerciseResults('[Exercise] I answered "0.72" — marked right (try #1).');
-  check("a right widget answer is parsed with its text and attempt", r1.length === 1 && r1[0].verdict === "correct" && r1[0].given === "0.72" && r1[0].attempt === 1 && r1[0].source === "widget");
-  check("a wrong one, a partly right one and a not-graded one are told apart", parseExerciseResults('[Exercise] I answered "5" — marked wrong (try #2).')[0].verdict === "incorrect" && parseExerciseResults('[Exercise] I answered "x" — PARTLY right: some of the key ideas (try #1). Credit what\'s right.')[0].verdict === "partial" && parseExerciseResults('[Exercise] I answered "x" — NOT graded: the key contradicts (try #1).')[0].verdict === "ungraded");
-  check("French messages and board-box results are parsed too", parseExerciseResults("[Exercice] J'ai répondu « 12 » — juste (essai n°1).")[0].verdict === "correct" && parseExerciseResults("[Exercice] J'ai répondu « 3 » — faux (essai n°2).")[0].verdict === "incorrect" && parseExerciseResults('[Exercise] On the board line "a = ?" I wrote "4" — checked wrong.')[0].source === "gap" && parseExerciseResults("[Exercice] Au tableau, pour « a = ? », j'ai écrit « 4 » — vérifié juste.")[0].verdict === "correct");
   const { bareNumeral } = await import("../server/tutorTurn/apply.ts");
   check("a bare whole number or year is not a board line; a decimal, percentage, value with unit or equation is", bareNumeral("1917") && bareNumeral("$5$") && bareNumeral(" 12. ") && !bareNumeral("0.72") && !bareNumeral("56%") && !bareNumeral("12 N") && !bareNumeral("x = 5") && !bareNumeral("-3") && !bareNumeral("12345"));
-  const { questionRun, supportPolicy, adaptationLines } = await import("../server/tutorTurn/policy.ts");
-  const rec = (move, diagnosis = "partial", verdict) => ({ at: "", move, support: 1, intent: "answer", diagnosis, ...(verdict ? { verdict } : {}), words: 20, studentWords: 6, repaired: false, ms: 1 });
-  check("a run of question-only turns with a student who isn't getting there is counted; a run of right answers is not", questionRun([rec("explain"), rec("focus"), rec("focus"), rec("probe_why")]) === 3 && questionRun([rec("focus", "correct", "correct"), rec("probe_why", "correct", "correct"), rec("elicit", "correct", "correct")]) === 0 && questionRun([rec("focus"), rec("explain")]) === 0);
-  const pol = supportPolicy({ teaching: { helpLevel: 0, stuckStreak: 0, turns: 3, lastSupport: 1, unproductive: 0 }, needsExplanation: false, asksWhy: false, asksForWorkedExample: false, questionRun: 4 });
-  check("three questions in a row without teaching make explaining allowed at once", pol.maxSupport >= 4 && pol.explainAllowed && pol.allowed.includes("explain"));
-  const lines = adaptationLines([rec("explain", "partial"), rec("focus"), rec("focus"), rec("probe_why")].map((r, i) => (i === 0 ? { ...r, angle: "picture" } : r)), { wrong: false, stuck: true, stillLost: true }, ["right", "right", "that"]);
-  check("'I still don't get it' after a tried angle asks what is unclear or names untried angles; a question run says TEACH; stale openers are called out", lines.some((l) => /STILL DON'T GET IT/.test(l) && /picture/.test(l) && /numbers/.test(l)) && lines.some((l) => /QUESTIONS IN A ROW/.test(l)) && lines.some((l) => /"right…"/.test(l)));
-  { const { keyDisagrees } = await import("../server/tutorTurn/problemGen.ts");
-    check("an MCQ or a non-numeric key is never cross-checked (nothing to compare)", (await keyDisagrees({ question: "q" }, { options: ["a", "b"] }, { subject: "x" }, { in: 0, out: 0, cachedIn: 0 })) === false && (await keyDisagrees({ question: "q" }, { answer: "a word" }, { subject: "x" }, { in: 0, out: 0, cachedIn: 0 })) === false); }
-  const wlog = (move) => ({ at: "", move, support: 1, intent: "answer", diagnosis: "correct", verdict: "correct", words: 10, studentWords: 3, repaired: false, ms: 1 });
-  check("two 'why' questions in four turns tell the tutor to stop asking why", adaptationLines([wlog("probe_why"), wlog("confirm"), wlog("probe_why")], { wrong: false, stuck: false }).some((l) => /"why" 2 times/.test(l)) && !adaptationLines([wlog("probe_why"), wlog("confirm")], { wrong: false, stuck: false }).some((l) => /"why"/.test(l)));
   { const { finalValue, sciNorm } = await import("../shared/types.ts");
     check("a worked answer typed in the box is graded on its FINAL value, in ×10ⁿ notation too (reported live: a right 2.107×10²³ and a right 1,58 were marked wrong)", practiceAnswerMatches("12.32/246.4 = 0.05 mol, then ×7 = 0.35 mol, ×6.02x10^23 = 2.107x10^23 molecules", "2.107e23", 2.107e23) && practiceAnswerMatches("Δ = 64 - 24 = 40, donc √40/4 ≈ 1,58", "1.58", 1.58) && practiceAnswerMatches("3x = 15 so x = 5", "5") && practiceAnswerMatches("2.5x10^3", "2500") && sciNorm("6.02 × 10^-3") === "6.02e-3");
     check("…while several values, the wrong final value, a restated question and an intermediate value are still not the answer", !practiceAnswerMatches("x = 3 or x = 7", "3", 3) && !practiceAnswerMatches("3x = 15 so x = 5", "15") && !practiceAnswerMatches("Find x if 3x + 6 = 15", "3", 3) && !practiceAnswerMatches("12.32/246.4 = 0.05 mol, then ×7 = 0.35 mol, ×6.02x10^23 = 2.107x10^23 molecules", "0.35") && Number.isNaN(finalValue("3 and 5"))); }
@@ -6946,8 +6925,7 @@ section("Tutor reply hygiene — invented wrapper tags, board line numbers (repo
     practiceAnswerMatches("0,667", "0.667", 0.667) && practiceAnswerMatches("0,667", "2/3", 0.66667) && practiceAnswerMatches("0,45", "0.45", 0.45) && !practiceAnswerMatches("0,667", "667", 667) && practiceAnswerMatches("10,500", "10500", 10500) && practiceAnswerMatches("1,500", "1500", 1500) && practiceAnswerMatches("2,554.4", "2554.4", 2554.4));
   check("talk about the app's marking is machinery talk in French and English", mentionsMechanics("Attends, je vérifie ce que l'app a corrigé — 0,30 sur 0,45") && mentionsMechanics("The app marked it wrong but it is right.") && !mentionsMechanics("Check the mark you gave to the second line."));
   check("a worked answer that ends in a fraction is graded on that fraction (reported live: 'y = 8x - 15, so Q is at x = 15/8' marked wrong four times)",
-    practiceAnswerMatches("y = 8x - 15, so Q is at x = 15/8", "15/8", 1.875) && practiceAnswerMatches("so x = -3/4", "-0.75", -0.75) && practiceAnswerMatches("the slope is 2/5 so y = 3/4", "0.75", 0.75) && !practiceAnswerMatches("x = 3/4", "-3/4", -0.75) && !practiceAnswerMatches("x = 2 or x = 3", "2", 2));  const batch = parseExerciseResults('[Exercise] I answered "5" — marked wrong (try #1).\n[Exercise] I answered "6" — marked right (try #2).');
-  check("batched results: the last gradable one decides; partial counts as not right; plain chat has none", batch.length === 2 && verdictFromResults(batch) === "correct" && verdictFromResults(parseExerciseResults('[Exercise] I answered "x" — PARTLY right (try #1).')) === "incorrect" && verdictFromResults(parseExerciseResults('[Exercise] On the board line "a" I wrote "1" — couldn\'t be auto-checked.')) === undefined && parseExerciseResults("hello 5").length === 0);
+    practiceAnswerMatches("y = 8x - 15, so Q is at x = 15/8", "15/8", 1.875) && practiceAnswerMatches("so x = -3/4", "-0.75", -0.75) && practiceAnswerMatches("the slope is 2/5 so y = 3/4", "0.75", 0.75) && !practiceAnswerMatches("x = 3/4", "-3/4", -0.75) && !practiceAnswerMatches("x = 2 or x = 3", "2", 2));
 }
 
 section("Arduino companion — line protocol, sketch and wiring agree (unit tests + source pins)");

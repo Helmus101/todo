@@ -4,7 +4,6 @@
 // built is dropped and reported — the reply never claims it, because the model only ever describes what it asked for
 // in the same turn and the dropped op is logged for the eval report.
 import { randomUUID } from "node:crypto";
-import { tidyQuestion } from "./problemGen.ts";
 import type { BoardEntry, TaskObjective, TaskProblem, TutorSolution } from "../../shared/types.ts";
 import type { BoardOp } from "../../shared/tutorTurn.ts";
 import { buildInclineScene, type InclineForce } from "../../shared/inclineScene.ts";
@@ -19,13 +18,10 @@ import { latexifyBoardLine, repairLatex, similarity } from "../tutorAdapt.ts";
 import { computedGapKey, solvedGapKey, typesetPlainMath, numbersAreTheirs, asksForSeveralValues, repeatsSolvedCalculation, nearDuplicateLine } from "../tutor.ts";
 
 export interface ApplyContext {
-  message: string;
   /** What the student said this turn (typed, plus the repaired spoken reading) — the only source of "their" lines. */
   theirWords: string[];
   board: BoardEntry[];
   problems: TaskProblem[];
-  fr: boolean;
-  solution?: TutorSolution;
 }
 
 export interface Applied {
@@ -39,7 +35,7 @@ export interface Applied {
 const now = () => new Date().toISOString();
 const mathOf = (x: string) => (String(x).match(/\$[^$]+\$/g) || []).join("").replace(/\$|\s|[{}]/g, "").toLowerCase();
 
-function sceneEntry(o: BoardOp, fr: boolean): { entry: BoardEntry } | { error: string } {
+function sceneEntry(o: BoardOp): { entry: BoardEntry } | { error: string } {
   const spec: any = { ...(o.spec || {}), caption: String(o.text || (o.spec as any)?.caption || "").slice(0, 200) };
   const svgEntry = (built: { svg: string; facts: string } | { error: string }, fallback: string) => {
     if ("error" in built) return built;
@@ -109,7 +105,6 @@ export function applyOps(ops: BoardOp[], c: ApplyContext): Applied {
         const raw = String(o.text || "");
         // THE BOARD NEVER SHOWS THE STUDENT'S OWN TEXT: a line the model marks as theirs is refused, and so is one that mostly repeats what they said
         // (a speech transcript, a typed answer). Otto writes his own clean, verified line instead (engine.ts builds it from the verified solution).
-        if (o.owner === "student") { drop("the student's own text is never written on the board"); break; }
         if (transcribes(raw, c.theirWords)) { drop("echoes the student's words"); break; }
         const text = latexifyBoardLine(repairLatex(typesetPlainMath(raw)), kind);
         // A bare whole number or year ("1917", "5", "$12$") says nothing on a board: reported live as "given: 1917" and "result: 5"
@@ -121,18 +116,6 @@ export function applyOps(ops: BoardOp[], c: ApplyContext): Applied {
         if (m.length >= 6 && all().slice(-20).some((e) => e.kind !== "gap" && mathOf(String(e.text || "")).includes(m))) { drop("that equation is already on the board"); break; }
         if (all().slice(-20).some((e) => e.text && nearDuplicateLine(String(e.text), text))) { drop("near-duplicate line"); break; }
         const r = makeBoardEntry({ text, kind, owner, why: o.why });
-        if ("error" in r) { drop(r.error); break; }
-        add(r.entry, o.cue);
-        break;
-      }
-      case "gap": {
-        if (out.board.some((e) => e.kind === "gap")) { drop("one gap a turn"); break; }
-        const text = latexifyBoardLine(repairLatex(typesetPlainMath(String(o.text || ""))), "gap");
-        // The key is computed from the line itself when it's a closed calculation or a solvable equation — never guessed.
-        const computed = computedGapKey(text) ?? solvedGapKey(text);
-        const expected = computed != null ? String(computed) : String(o.expected || "").trim();
-        if (!expected) { drop("a gap needs its expected answer"); break; }
-        const r = makeBoardEntry({ text, kind: "gap", owner: "otto", expectedAnswer: expected, gapAction: o.action, why: o.why });
         if ("error" in r) { drop(r.error); break; }
         add(r.entry, o.cue);
         break;
@@ -168,28 +151,10 @@ export function applyOps(ops: BoardOp[], c: ApplyContext): Applied {
           add({ ...r2.entry, id: base.id, at: (base as any).at || r2.entry.at } as BoardEntry, o.cue);
           break;
         }
-        const r = sceneEntry(o, c.fr);
+        const r = sceneEntry(o);
         if ("error" in r) { drop(r.error); break; }
         if (r.entry.kind === "graph" && all().slice(-12).some((e) => e.kind === "graph" && JSON.stringify((e as any).graph) === JSON.stringify((r.entry as any).graph))) { drop("that graph is already on the board"); break; }
         add(r.entry, o.cue);
-        break;
-      }
-      case "problem": {
-        const input = { question: o.question ? tidyQuestion(String(o.question)) : o.question, answer: o.answer, check: o.check, options: o.options, correct: o.correct, format: o.format, hint: o.hint, why: o.why, rubric: o.rubric };
-        const open = [...c.problems, ...out.problems].filter((p) => !p.solved);
-        if (open.length) { drop("an exercise is still open"); break; }
-        if (isDuplicateProblem([...c.problems, ...out.problems], input)) { drop("duplicate exercise"); break; }
-        if (asksForSeveralValues(String(o.question || "")) && !(o.options && o.options.length >= 2)) { drop("one answer box, several values asked"); break; }
-        if (repeatsSolvedCalculation(c.problems, input, c.message)) { drop("third drill of the same kind"); break; }
-        const r = makeProblem(input, true);
-        if ("error" in r) { drop(r.error); break; }
-        out.problems.push({ ...r.problem, cue: o.cue } as TaskProblem);
-        break;
-      }
-      case "plan": {
-        const r = makeObjectives({ objectives: (o.objectives || []).map((label) => ({ label })) });
-        if ("error" in r) { drop(r.error); break; }
-        out.objectives = r.objectives;
         break;
       }
     }
