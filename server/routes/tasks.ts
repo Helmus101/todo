@@ -15,9 +15,7 @@ import { studentProblemStatement } from "../tutorAdapt.ts";
 import { recordConceptEvidence, normalizeStudentModel, emptyStudentModel } from "../studentModel.ts";
 import { detectSubject, computedGapKey, solvedGapKey } from "../tutor.ts";
 import { runTutorTurn } from "../tutorTurn/engine.ts";
-import { nextSupportState } from "../tutorTurn/policy.ts";
 import { logAssistance, settleRetest, buildRecap, dueRetests } from "../tutorTurn/ledger.ts";
-import type { Move } from "../../shared/tutorTurn.ts";
 import { selectJournal } from "../journal.ts";
 import type { TutorOpenerMemory } from "../claude.ts";
 import type { WebTask, Profile, BoardEntry, TaskObjective, TaskProblem } from "../../shared/types.ts";
@@ -187,37 +185,11 @@ async function tutorTurn(
       return rehydrateProblemKey(opened ? { ...p, answer: opened.answer, value: opened.value, correct: opened.correct, rubric: opened.rubric, why: opened.why } : p, known);
     });
   const spoken = spokenFromBody(req.body?.spoken);
-  // Is the student's step right? Code decides, against the newest open gap; for speech, a correct hearing wins.
-  const stepVerdict = (() => {
-    const raw = verifyStepAgainstGap(message, currentBoard);
-    if (raw?.verdict === "correct" || !spoken) return raw;
-    const ctx = spokenContextFrom([t.title || "", ...currentBoard.map((e) => e.text)]);
-    for (const h of [repairSpokenMath(message, ctx).interpreted, ...spoken.alternatives]) {
-      const v = verifyStepAgainstGap(h, currentBoard);
-      if (v?.verdict === "correct") return v;
-    }
-    return raw;
-  })();
-  const lang: "fr" | "en" = "en";
-  // THE TUTOR KNOWS THE ANSWER: when the problem in focus changes (a new open exercise, or the student states a new
-  // problem), it is solved once by server/solver.ts and checked by code; every turn then steers by that solution.
-  const openProblem = [...problems].reverse().find((p) => !p.solved);
-  const statedRaw = studentProblemStatement(message);
-  // Their own working on the current problem (its numbers) is not a new problem — only a genuinely new statement is.
-  const stated = statedRaw && isNewProblem(statedRaw, t.solution) ? statedRaw : "";
-  // The board's own problem (a full given line) counts too: Otto may have put it there in words, with no widget.
-  const boardGiven = [...currentBoard].reverse().find((b) => b.kind === "given" && b.text && b.text.split(/\s+/).length >= 12)?.text || "";
-  const focus = openProblem?.question || stated || boardGiven;
-  // A solve for a NEW problem runs ALONGSIDE the tutor's own call (the engine awaits it just before verifying), so the first turn on a
-  // problem no longer waits for two model calls in a row.
-  const solving = focus && focusKeyOf(focus) !== t.solution?.focusKey ? solveProblem(focus, t.sourceSubject) : null;
   const out = await runTutorTurn({
-    message, history, board: currentBoard, problems, objectives: currentObjectives, lang,
-    solution: solving ? undefined : t.solution, solutionPromise: solving ? solving.then((r) => r.solution).catch(() => null) : undefined, teaching: t.tutorState, dueRetests: dueRetests(profile.assistance, new Date()).map((a) => a.skill),
-    voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, spoken, stepVerdict,
+    message, history, board: currentBoard, problems, objectives: currentObjectives, lang: "en",
+    voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, spoken,
     context: { profile, subject: t.sourceSubject, journal: c.recentJournal, journalMeta: c.journalMeta, schoolRecord: schoolRecordLine(req.session.tasks, profile, t.sourceSubject), memory: memoryFromBody(req.body?.memory) },
   });
-  if (solving) { const solved = await solving.catch(() => null); if (solved) { addUsage(profile, solved.tokens, "chat"); if (solved.solution) t.solution = solved.solution; } }
   addUsage(profile, out.tokens, "chat");
   bumpActivityHour(profile, new Date(), t.sourceSubject);
   profile.lastTutorActivityAt = new Date().toISOString();
@@ -238,48 +210,6 @@ async function tutorTurn(
     return;
   }
   if (out.guardrailTripped) void recordMetric(req.session.user!, "chat_guardrail_tripped", 1, "freestudy");
-  // The teaching state and what this turn PROVED about the skill — both from code-verified events.
-  const reached = reachedSolutionSteps(message, t.solution);
-  const helpBefore = t.tutorState?.helpLevel ?? 0;
-  { const found = learningPrefsFrom(message); if (found.length) profile.tutorPrefs = mergePrefs(profile.tutorPrefs, found); }
-  { const prev = t.tutorState;
-    const next = nextTeachingState(prev, { message, verdict: stepVerdict?.verdict, plan: out.plan, reachedStep: reached.length > 0, leaked: out.leakedValue });
-    // Support level and struggle count are owned by code (server/tutorTurn/policy.ts), from the move actually delivered.
-    const turn = out.turn;
-    const verdict = turn?.verdict ?? stepVerdict?.verdict; // widget results count too (tutorTurn/results.ts)
-    const support = turn ? nextSupportState(prev, { move: turn.move as Move, verdict, progressed: verdict === "correct" || reached.length > 0 || !!out.solvedInChat?.length, struggled: turn.struggled }) : {};
-    const record = turn ? { at: new Date().toISOString(), move: turn.move, support: turn.support, intent: turn.intent, diagnosis: turn.diagnosis, ...(turn.angle ? { angle: turn.angle } : {}), ...(turn.misconception ? { misconception: turn.misconception } : {}), ...(verdict ? { verdict } : {}), words: turn.speech.join(" ").split(/\s+/).filter(Boolean).length, studentWords: message.split(/\s+/).filter(Boolean).length, repaired: turn.repaired, ms: turn.ms } : null;
-    t.tutorState = { ...next, ...support, ...(turn?.goals ? { goals: turn.goals } : prev?.goals ? { goals: prev.goals } : {}), ...(record ? { log: [...(prev?.log || []), record].slice(-30) } : {}) }; }
-  const evidence = evidenceKindFor({ message, verdict: stepVerdict?.verdict, reachedFinal: reached.includes(0), helpLevel: helpBefore });
-  const skill = t.solution?.skill || t.sourceSubject;
-  if (skill) {
-    const nowD = new Date();
-    if (out.turn) profile.assistance = logAssistance(profile.assistance, { skill, level: out.turn.support, now: nowD });
-    if (evidence === "solved-unaided") profile.assistance = settleRetest(profile.assistance, skill, true, nowD).ledger;
-  }
-  if (evidence && skill) {
-    try { profile.conceptModel = recordConceptEvidence(normalizeStudentModel(profile.conceptModel) || emptyStudentModel(), { label: skill, subject: t.sourceSubject, kind: evidence, evidence: "tutor session" }, new Date()); }  // a label, never the student's own words — those stay in this browser
-    catch { /* best-effort — never blocks the reply */ }
-  }
-  // A misconception the tutor diagnosed this turn is remembered across sittings (shown in BACKGROUND next time, and re-tested).
-  if (skill && out.turn?.misconception && out.turn.diagnosis === "conceptual") {
-    try { profile.conceptModel = recordConceptEvidence(normalizeStudentModel(profile.conceptModel) || emptyStudentModel(), { label: skill, subject: t.sourceSubject, kind: "misconception", detail: out.turn.misconception, evidence: "tutor session" }, new Date()); }
-    catch { /* best-effort */ }
-  }
-  // The student's VERIFIED-CORRECT step goes on the board as their line — unless it's already there.
-  // Reported live: this used to write a WRONG attempt too ("marked right or wrong"), unconditionally,
-  // against whatever gap happened to still be open — including one the conversation had already moved
-  // past (Otto asks about a different quantity, the student does genuine scratch work on THAT instead,
-  // and every attempt still gets checked against the stale old gap). The board has no visual distinction
-  // for a wrong `result` entry's status (only a `gap` entry's status changes how it renders), so a wrong,
-  // stale-gap, zero-context guess rendered pixel-identical to a real given/result — pure clutter with no
-  // teaching value, three bare unlabeled numbers in a row. A genuinely wrong attempt at the CURRENT gap
-  // still reaches the student through the normal chat reply/correction path, which has real context;
-  // losing the bare, unexplained board entry for the incorrect case only drops noise, not information.
-  // A gap answered right in chat is filled in where it stands ("f(2) = 2(4) − 16 + 5 = −3") — no separate bare line.
-  const closedGaps = stepVerdict?.verdict === "correct" ? currentBoard.filter((e) => e.kind === "gap" && e.id && e.text.slice(0, 160) === stepVerdict.gap).map((e) => ({ id: e.id, given: String((e as any).expectedAnswer || "") })) : []; // the verified key, never what they typed
-  // (No student-owned line is written here any more: the board never shows the student's own text. A verified correct step is restated by Otto
-  // himself in the engine, from the verified solution.)
   const now = new Date().toISOString();
   const newChat = [
     { role: "user" as const, text: message, at: now },
@@ -300,7 +230,7 @@ async function tutorTurn(
   res.json({
     reply: out.reply, speech: out.turn?.speech, chatDelta: newChat, board: sealedOut.board, problems: sealedOut.problems, objectives: out.objectives, guardrailTripped: out.guardrailTripped, solvedInChat: out.solvedInChat,
     // A gap they answered right in CHAT is closed on the board too, so its answer box doesn't sit there asking again.
-    gapsClosed: closedGaps,
+    gapsClosed: [],
     task: { id: t.id, title: t.title, status: t.status, source: t.source, sourceSubject: t.sourceSubject, updatedAt: t.updatedAt, createdAt: t.createdAt },
   });
 }
