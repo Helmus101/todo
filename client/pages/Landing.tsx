@@ -16,7 +16,6 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
         <span className="landing-min-brand">otto</span>
         <nav>
           <a href="/research">{"Approach"}</a>
-          <button type="button" onClick={() => onLangChange("fr")} aria-label={"Switch language"}>{"FR"}</button>
           <a href="/login">{"Log in"}</a>
         </nav>
       </header>

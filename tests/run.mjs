@@ -1758,7 +1758,6 @@ section("Onboarding — short but complete (source pins)");
   check("an interactive step exists (advances when the student really uses the control)", /interactive: true/.test(toursSrc) && /step\.interactive/.test(readFileSync(new URL("../client/PageTour.tsx", import.meta.url), "utf8")));
   check("the mistakes guide says what the log feeds (quizzing where you slip)", /quiz you where you slip|t'interroger/.test(toursSrc));
   check("the tutor guide keeps the never-the-answer rule", /instead of handing you the answer|plut[ôo]t que de donner la r[ée]ponse/.test(toursSrc));
-  check("language is picked on the track step, not its own screen", /saveLang\("fr"\)/.test(ob) && !/PreferencesFields profile=\{null\}/.test(ob));
   check("Settings keeps the year level field and gains a Test onboarding replay", /saveYearLevel/.test(src) && /Test onboarding/.test(src) && /onReplayOnboarding/.test(src));
   // The per-feature detail the old flow spent 4 screens on must live in the first-time hint system.
   const uiSrc = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8");

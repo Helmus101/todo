@@ -71,17 +71,6 @@ function writePronoteOptimistic(value: boolean | null): void {
 function PreferencesFields({ profile, onChanged }: { profile: Profile | null; onChanged?: (p: Profile) => void }) {
   const L = useLang();
   const notify = useNotify();
-  const [lang, setLang] = useState<"fr" | "en">("en");
-  useEffect(() => { setLang("en"); }, [profile?.language]);
-  const saveLang = async (v: "fr" | "en") => {
-    const prev = lang;
-    setLang(v); // optimistic — revert below on failure
-    try { onChanged?.(await api.setProfilePreference("language", v)); }
-    catch (e: any) {
-      setLang(prev);
-      notify(e?.message || "Your language didn't save — give it another try.", "error");
-    }
-  };
   // Track: onboarding's copy has always claimed this is "changeable any time in Settings" — it wasn't
   // actually wired up here, so that claim was false for anyone past onboarding. Same optimistic-save
   // pattern as language above.
@@ -120,13 +109,6 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
   };
   return (
     <>
-      <div className="set-row">
-        <span className="set-text"><b>{"Language"}</b><span className="settings-hint">{"Switches the interface and everything Otto writes."}</span></span>
-        <div className="lang-toggle">
-          <button type="button" className={`btn xs ${"ghost"}`} aria-pressed={lang === "fr"} onClick={() => void saveLang("fr")}>Français</button>
-          <button type="button" className={`btn xs ${""}`} aria-pressed={lang === "en"} onClick={() => void saveLang("en")}>English</button>
-        </div>
-      </div>
       <div className="set-row">
         <span className="set-text"><b>{"Your track"}</b><span className="settings-hint">{"Vocabulary, integrations offered, and the style of generated exercises/quizzes. Not doing Bac, IB, or AP (middle school, etc.)? Pick \"Other\"."}</span></span>
         <div className="lang-toggle">

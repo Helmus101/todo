@@ -83,7 +83,6 @@ export function LoginPage({ status, lang, onLangChange, onDone, initialMode }: {
           one shell: lowercase "otto" wordmark left, language toggle right. */}
       <header className="landing-nav-framer">
         <a className="brand-framer" href="/"><Logo size={20} /> <span className="brand-name-framer">otto</span></a>
-        <button type="button" className="lang-toggle-framer" onClick={() => onLangChange("fr")} aria-label={"Switch language"}>{"FR"}</button>
       </header>
       <main className="login-main">
         <div className="login-card">

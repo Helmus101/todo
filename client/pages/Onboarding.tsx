@@ -67,16 +67,6 @@ export function Onboarding({ status, onStatus, onDone }: { status?: ConnectionSt
     setTrackState(t);
     try { if (t) localStorage.setItem("otto-onboard-track", t); else localStorage.removeItem("otto-onboard-track"); } catch { /* best-effort */ }
   };
-  // Language pick lives on step 1 next to the track — two button rows, one save pattern. Same optimistic
-  // save + revert as PreferencesFields.saveLang (which onboarding used to render wholesale for this one
-  // choice, plus a duplicate track picker it didn't need).
-  const [lang, setLang] = useState<"fr" | "en">("fr");
-  const saveLang = async (v: "fr" | "en") => {
-    const prev = lang;
-    setLang(v);
-    try { await api.setProfilePreference("language", v); await onStatus(); } // onStatus flips the WHOLE app's LangContext live
-    catch { setLang(prev); notify("Your language didn't save — give it another try.", "error"); }
-  };
   // Year level is no longer asked in onboarding: it was one more field on day one for optional context,
   // and the track pick already calibrates the AI vocabulary. It remains fully settable in Settings
   // (PreferencesFields.saveYearLevel), which is the right home for an optional detail.
@@ -90,7 +80,6 @@ export function Onboarding({ status, onStatus, onDone }: { status?: ConnectionSt
     void api.profile().then((p) => {
       if (!alive) return;
       if (p.name) setName((n) => n || p.name!);
-      if (p.language === "en" || p.language === "fr") setLang(p.language);
       if (p.track) setTrack(p.track);
       if (p.yearLevel) setYear(p.yearLevel);
       if (p.subjects?.length) setSubs(p.subjects);
@@ -162,16 +151,6 @@ export function Onboarding({ status, onStatus, onDone }: { status?: ConnectionSt
               <button type="button" className={`btn xs ob-track-btn ${track === "ib" ? "" : "ghost"}`} onClick={() => void saveTrack("ib")}>IB</button>
               <button type="button" className={`btn xs ob-track-btn ${track === "ap" ? "" : "ghost"}`} onClick={() => void saveTrack("ap")}>AP</button>
               <button type="button" className={`btn xs ob-track-btn ${track === "other" ? "" : "ghost"}`} onClick={() => void saveTrack("other")}>{"Other (middle school, etc.)"}</button>
-            </div>
-            <p className="onboard-lead mt-5">{"Your language"}</p>
-            {/* Two buttons, not the full PreferencesFields block: track was ALREADY picked above on this
-                same step, and PreferencesFields would render its own (duplicate, unset-looking) track
-                picker plus fields onboarding never needed. Language saves server-side immediately — the
-                same api call Settings uses — and onStatus() makes the WHOLE onboarding (and app) flip
-                live, same wiring requirement the old PreferencesFields usage documented below. */}
-            <div className="onboard-apps">
-              <button type="button" className={`btn xs ${"ghost"}`} onClick={() => void saveLang("fr")}>Français</button>
-              <button type="button" className={`btn xs ${""}`} onClick={() => void saveLang("en")}>English</button>
             </div>
             <div className="onboard-actions onboard-actions-split">
               <button className="btn ghost" onClick={() => setStep(0)}>{"Back"}</button>

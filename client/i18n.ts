@@ -28,27 +28,27 @@ type Catalog = Record<string, CatalogEntry>;
 // translation is in progress; `en` may not, or a missing key silently degrades to English anyway.
 const MESSAGES: Catalog = {
   // ── Study Mode: bottom bar (client/study/BottomBar.tsx) ──────────────────
-  "studymode.bar.task": { fr: "Tâche", en: "Task" },
-  "studymode.bar.materials": { fr: "Matériel", en: "Materials" },
-  "studymode.bar.tools": { fr: "Outils", en: "Tools" },
-  "studymode.bar.audio": { fr: "Audio", en: "Audio" },
-  "studymode.bar.audioPlayingSuffix": { fr: " · en lecture", en: " · playing" },
-  "studymode.bar.askOtto": { fr: "Ask Otto", en: "Ask Otto" },
-  "studymode.bar.break": { fr: "Pause", en: "Break" },
-  "studymode.bar.end": { fr: "Fin", en: "End" },
+  "studymode.bar.task": { en: "Task" },
+  "studymode.bar.materials": { en: "Materials" },
+  "studymode.bar.tools": { en: "Tools" },
+  "studymode.bar.audio": { en: "Audio" },
+  "studymode.bar.audioPlayingSuffix": { en: " · playing" },
+  "studymode.bar.askOtto": { en: "Ask Otto" },
+  "studymode.bar.break": { en: "Break" },
+  "studymode.bar.end": { en: "End" },
 
   // ── Dashboard header (client/App.tsx) ────────────────────────────────────
-  "dashboard.greeting.morning": { fr: "Bonjour", en: "Good morning" },
-  "dashboard.greeting.afternoon": { fr: "Bon après-midi", en: "Good afternoon" },
-  "dashboard.greeting.evening": { fr: "Bonsoir", en: "Good evening" },
-  "dashboard.allCaughtUp": { fr: "Rien n'est dû. Ce n'est pas de la chance — c'est de la marge pour avancer.", en: "Nothing's due. That's not luck — it's room to get ahead." },
-  "dashboard.doneForToday": { fr: "La journée est réglée. Demain, commence par ce que tu préférerais éviter.", en: "Today's handled. Tomorrow, start with the thing you'd rather skip." },
+  "dashboard.greeting.morning": { en: "Good morning" },
+  "dashboard.greeting.afternoon": { en: "Good afternoon" },
+  "dashboard.greeting.evening": { en: "Good evening" },
+  "dashboard.allCaughtUp": { en: "Nothing's due. That's not luck — it's room to get ahead." },
+  "dashboard.doneForToday": { en: "Today's handled. Tomorrow, start with the thing you'd rather skip." },
   // {count}/{plural} are computed by the caller (a plain "" or "s"), not by this module — see t()'s own
   // doc comment on why this stays plain string interpolation instead of a full ICU plural engine.
-  "dashboard.thingsLeft": { fr: "{count} chose{plural} à faire — commence par celle que tu évites", en: "{count} thing{plural} to do — start with the one you're avoiding" },
-  "dashboard.focusThree": { fr: "Commence par ces trois. Les {rest} autres peuvent attendre", en: "Start with these three. The other {rest} can wait" },
-  "dashboard.alreadyDone": { fr: " — {count} déjà derrière toi", en: " — {count} already behind you" },
-  "dashboard.nextUp": { fr: " Ensuite : {title}.", en: " Next up: {title}." },
+  "dashboard.thingsLeft": { en: "{count} thing{plural} to do — start with the one you're avoiding" },
+  "dashboard.focusThree": { en: "Start with these three. The other {rest} can wait" },
+  "dashboard.alreadyDone": { en: " — {count} already behind you" },
+  "dashboard.nextUp": { en: " Next up: {title}." },
   "dashboard.momentum": {
     fr: "Tu progresses vraiment en {subject} — ce n'est pas une impression. Continue.",
     en: "You're actually getting better at {subject} — not imagining it. Keep going.",

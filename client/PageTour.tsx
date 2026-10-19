@@ -7,10 +7,10 @@ import { COACH_MARKS, useLang } from "./ui.tsx";
  *  `interactive` steps ask the student to actually do the thing: they advance when the target is clicked. */
 export interface TourStep {
   target?: string;
-  title: [string, string];
-  body: [string, string];
+  title: string;
+  body: string;
   /** "Try it: …" line shown on interactive steps. */
-  action?: [string, string];
+  action?: string;
   interactive?: boolean;
 }
 
@@ -112,7 +112,7 @@ export function PageTour({ id, steps, ready = true }: { id: string; steps: TourS
   }
   const last = i >= steps.length - 1;
   return createPortal(
-    <div className="tour-root" role="dialog" aria-modal="false" aria-label={L(...step.title)}>
+    <div className="tour-root" role="dialog" aria-modal="false" aria-label={step.title}>
       {hole ? (
         <>
           <div className="tour-dim" style={{ left: 0, top: 0, width: "100%", height: hole.y }} />
@@ -124,9 +124,9 @@ export function PageTour({ id, steps, ready = true }: { id: string; steps: TourS
       ) : <div className="tour-dim" style={{ inset: 0 }} />}
       <div className="tour-card" style={cardStyle}>
         <div className="tour-meta"><span>{i + 1} / {steps.length}</span><button type="button" className="tour-skip" onClick={finish}>{"Skip"}</button></div>
-        <h3 className="tour-title">{L(...step.title)}</h3>
-        <p className="tour-body">{L(...step.body)}</p>
-        {step.interactive && step.action ? <p className="tour-action">{L(...step.action)}</p> : null}
+        <h3 className="tour-title">{step.title}</h3>
+        <p className="tour-body">{step.body}</p>
+        {step.interactive && step.action ? <p className="tour-action">{step.action}</p> : null}
         <div className="tour-actions">
           <button type="button" className="btn ghost xs" onClick={() => go(i - 1)} disabled={i === 0}>{"Back"}</button>
           <button type="button" className="btn primary xs" onClick={() => go(i + 1)} autoFocus>{last ? "Got it" : step.interactive ? "Next" : "Next"}</button>
