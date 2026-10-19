@@ -468,6 +468,12 @@ export async function runTutorTurnSim(check, section) {
       check("boards already saved with the corrupted characters render again", repairLatex("F_\x09ext{resistive} = kv²") === "F_\\text{resistive} = kv²" && repairLatex("P = F\x09imes v") === "P = F\\times v" && repairLatex("\x0crac{1}{2}") === "\\frac{1}{2}");
       const src = ["A car of mass 1000 kg travels up a 10° slope at a steady speed of 15 m s-1."];
       check("an object the problem never mentioned is caught (the cyclist), a car is not", inventedObjects(["What total driving force must the cyclist maintain?"], src).includes("cyclist") && inventedObjects(["What total driving force must the car maintain?"], src).length === 0);
+
+      const { inventedFeatures, garbledAnswer } = await import("../server/tutorTurn/verify.ts");
+      const srcM = ["A 3 kg cart at 4.5 m/s hits a 1.5 kg cart at rest and they stick. Find the final speed."];
+      check("an angle the problem never had is caught; one it has is not", inventedFeatures(["How did you factor in the angle?"], srcM).includes("angle") && inventedFeatures(["How did you factor in the angle?"], ["a 30° slope", "angle"]).length === 0);
+      const Q = [{ role: "assistant", text: "What does that give for the final velocity?" }];
+      check("a garbled non-answer is detected; a number, a yes and a real answer are not", garbledAnswer(Q, "to be earlier") && !garbledAnswer(Q, "4.5 m/s") && !garbledAnswer(Q, "yes") && !garbledAnswer(Q, "the final velocity is smaller"));
       const G = (o) => sessionGuide({ message: "ok", history: [{ role: "user", text: "a" }, { role: "assistant", text: "b" }, { role: "user", text: "ok" }], log: [], correctNow: false, openWork: false, hasObjectives: true, ...o }).join("\n");
       check("when they push back ('that is just equation', 'but we are asked power') Otto accepts and moves on, no more why", /PUSHED BACK/.test(G({ message: "that is just equation" })) && /PUSHED BACK/.test(G({ message: "but we are asked power" })) && !/MAKE IT SOLID/.test(G({ message: "that is just equation", correctNow: true })));
       check("when the exercise is finished: confirm, then a harder variation or the next item — no more 'why'", /THE EXERCISE IS DONE/.test(G({ correctNow: true, finalReached: true })) && !/MAKE IT SOLID/.test(G({ correctNow: true, finalReached: true })));

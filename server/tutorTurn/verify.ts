@@ -64,7 +64,7 @@ export interface VerifyContext {
 export const SELF_CORRECTION = /(?:…|\.\.\.|—|,)\s*(?:non,?\s+(?:pardon|attends|en fait)|no,?\s+wait|wait,?\s+(?:no|that)|hmm,?\s|sorry,?\s+(?:let me|that'?s|i)|let me (?:redo|recompute|recalculate|rethink)|pardon,|oops)|\b(?:actually,? (?:no|that'?s wrong|let me)|scratch that|je me trompe|je reprends)\b/i;
 
 export interface Issue {
-  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "off_topic" | "plan_too_early" | "ignores_student" | "verdict_mismatch" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh" | "no_error" | "self_correct" | "unsourced_quote" | "stale_opener" | "fact" | "format_leak" | "unstated_setup" | "intent_topic" | "intent_equation" | "graph_inconsistent" | "shaded_claim" | "dead_end" | "echo_private" | "intent_advice" | "student_ink";
+  code: "support" | "leak" | "target" | "intent_why" | "intent_write" | "intent_restart" | "intent_exercise" | "intent_draw" | "board_promise" | "repeat_exercise" | "vague" | "intent_problem" | "unwritten" | "diagnosis" | "invented_object" | "prose_equation" | "off_topic" | "plan_too_early" | "ignores_student" | "verdict_mismatch" | "questions" | "length" | "visuals" | "gap" | "arithmetic" | "numbers" | "repeat" | "mechanics" | "harsh" | "no_error" | "self_correct" | "unsourced_quote" | "stale_opener" | "fact" | "format_leak" | "unstated_setup" | "intent_topic" | "intent_equation" | "graph_inconsistent" | "shaded_claim" | "dead_end" | "echo_private" | "intent_advice" | "student_ink" | "invented_feature" | "garbled_unasked" | "understood_untested" | "self_repeat";
   /** The instruction for the repair call. */
   fix: string;
   /** A leak or a pointer at nothing must be fixed; the rest are quality. */
@@ -158,6 +158,27 @@ export function inventedObjects(texts: string[], sources: string[]): string[] {
   }
   return out;
 }
+
+
+/** Setup features the model must not conjure ("how did you factor in the angle?" in a straight-line problem). */
+const SETUP_FEATURES: [string, RegExp][] = [["angle", /\bangles?\b|\bangled\b|\bdegrees?\b|°/i], ["incline", /\binclin(?:e|ed|es)\b|\bslope\b|\bramp\b/i], ["friction", /\bfriction\b|\bair resistance\b|\bdrag\b/i]];
+export function inventedFeatures(texts: string[], sources: string[]): string[] {
+  const src = sources.join(" ");
+  return SETUP_FEATURES.filter(([, re]) => texts.some((t) => re.test(t)) && !re.test(src)).map(([n]) => n);
+}
+/** A short non-answer that shares nothing with the question just asked ("to be earlier" after "what is the velocity?"): speech-to-text noise. */
+export function garbledAnswer(history: { role: string; text: string }[], message: string): boolean {
+  const m = String(message || "").trim();
+  const prev = [...history].reverse().find((h) => h.role === "assistant")?.text || "";
+  if (!/\?\s*["»”)]*\s*$/.test(prev.trim()) || !m || m.split(/\s+/).length > 5 || /\d|[?=+\-*/^$]|^\[/.test(m)) return false;
+  if (/^(?:yes|yeah|yep|no|nope|ok|okay|sure|maybe|idk|i don'?t know|not sure|true|false|oui|non|je ne sais pas|hi|hello|hey|thanks|thank you|bye|lol|haha|hmm|huh|wait|what|why|how|salut|bonjour|merci|please|continue|next|go on|stop|help|new|another|different|again|more)\b/i.test(m)) return false;
+  if (/\b(?:give|show|draw|explain|write|can you|could you|let'?s|i want|i need|we|exercise|problem|question|example|practi[sc]e|test|quiz|different|another|new)\b/i.test(m)) return false;
+  const mine = (m.toLowerCase().match(/[a-zà-ÿ]{3,}/g) || []).filter((w) => !FILLER.has(w));
+  const have = new Set((prev.toLowerCase().match(/[a-zà-ÿ]{3,}/g) || []));
+  return !mine.some((w) => have.has(w));
+}
+const UNDERSTOOD = /\b(?:i (?:get|understand|see) (?:it|that|this)(?: now)?|(?:it )?makes sense(?: now)?|got it|i (?:now )?get it)\b/i;
+const CLARIFIES = /\b(?:did you mean|do you mean|what do you mean|say (?:that|it) again|repeat|catch that|didn'?t (?:catch|hear)|come through|garbled|cut (?:in|off)|not sure (?:i|what)|could you (?:say|rephrase|repeat)|what (?:did|were) you|tu veux dire|répète|répéter|pas bien compris)\b/i;
 
 /** A board "equation" with plain words on a side ("4 × 10 × sin 25° − 30 = pull down − 30"): not maths. */
 export function proseEquation(text: string): boolean {
@@ -342,6 +363,15 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   // A NEW problem brings its own objects; only an existing problem's objects are fixed.
   const introducesProblem = c.wants.different || c.wants.exercise || c.wants.problemOnBoard || t.move === "practice" || t.board.some((o) => o.op === "problem" || o.op === "topic");
   if (objs.length && !introducesProblem) out.push({ code: "invented_object", hard: true, fix: `it mentions ${objs.slice(0, 2).map((o) => `"${o}"`).join(" and ")}, which is not in the problem, the board or anything the student said. Refer only to the actual objects of the problem.` });
+  const srcAll = [...c.said, ...c.board.map((b) => b.text || ""), ...c.problems.map((p) => p.question || ""), ...(c.solution ? [c.solution.statement, ...c.solution.steps.map((s) => `${s.idea || ""} ${s.result || ""}`)] : [])];
+  const feats = inventedFeatures([say, ...t.board.map(opText)], srcAll);
+  // Said about THEIR work ("how did you factor in the angle?") it is a false claim; in a new scenario Otto poses it is just the scenario.
+  const aboutTheirWork = t.speech.some((sn) => SETUP_FEATURES.some(([, re]) => re.test(sn)) && /\b(?:you|your|you'?ve|we|our)\b/i.test(sn));
+  if (feats.length && !introducesProblem && !c.wants.different) out.push({ code: "invented_feature", hard: aboutTheirWork, fix: `it brings in "${feats[0]}", which is not in the problem, the board or anything the student said. Talk only about what the problem actually contains (the problem has no ${feats[0]}).` });
+  if (garbledAnswer(c.history, c.message) && !CLARIFIES.test(say) && ["unclear", "none", "no_attempt"].includes(t.diagnosis.status)) out.push({ code: "garbled_unasked", hard: true, fix: "their last message makes no sense as an answer (likely speech-to-text noise). Do NOT build on it or continue as if it did: say in a few friendly words that it didn't come through clearly and ask what they meant, or to say it again. One short reply, one question." });
+  if (UNDERSTOOD.test(c.message) && !t.board.some((o) => o.op === "problem") && !/\d/.test(say) && !/\b(?:recap|summar)/i.test(t.move)) out.push({ code: "understood_untested", hard: false, fix: "they say they get it. Don't take their word for it or change topic: give them a fresh, concrete case with new numbers (or ask them to predict a result) so they show it." });
+  const heads = t.speech.map((sn) => (sn.toLowerCase().match(/[a-zà-ÿ0-9']+/g) || []).slice(0, 3).join(" ")).filter((h) => h.split(" ").length >= 3);
+  if (new Set(heads).size < heads.length) out.push({ code: "self_repeat", hard: true, fix: "two sentences of the reply open with the same words (a repeated lead-in). Say it once and go straight to the content." });
   // 5. One question, last.
   const qs = t.speech.map((s, i) => ({ i, q: /\?\s*["»”)]*\s*$/.test(s.replace(/\$[^$]*\$/g, "x")) })).filter((x) => x.q);
   if (qs.length > 1 || (qs.length === 1 && qs[0].i !== t.speech.length - 1)) out.push({ code: "questions", hard: false, fix: "ask at most ONE question, as the last sentence." });
