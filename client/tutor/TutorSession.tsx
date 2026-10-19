@@ -13,6 +13,9 @@ import { enterFullscreen, exitFullscreen, inFullscreen } from "./fullscreen.ts";
 import { asksToLook } from "../../shared/lookRequest.ts";
 import { hideToolLeaks } from "../../shared/toolLeak.ts";
 import { TutorCanvas, type TutorCanvasHandle } from "./TutorCanvas.tsx";
+import { useArduino } from "../hardware/useArduino.ts";
+import { DeviceButton } from "../hardware/DeviceButton.tsx";
+import { buttonMessage, deviceStateOf } from "../../shared/deviceProtocol.ts";
 import { PageTour } from "../PageTour.tsx";
 import { TOURS } from "../tours.ts";
 import { COMMON_SUBJECTS } from "../../shared/coursework.ts";
@@ -447,6 +450,20 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   }, [task, userId]);
   const sendRef = useRef(send);
   sendRef.current = send;
+  // The optional USB companion (Arduino): its buttons are the same asks the student could type, and its lights follow the tutor's state.
+  const sendingRef = useRef(false);
+  sendingRef.current = sending;
+  const device = useArduino(useCallback((b) => {
+    const en = L("fr", "en") === "en";
+    if (b === "mic") return; // voice mode stays the student's own click on screen — the device never switches it
+    const m = buttonMessage(b, en);
+    if (m && !sendingRef.current) void sendRef.current(m);
+  }, [L]));
+  const deviceSend = device.send;
+  const deviceStatus = device.status;
+  useEffect(() => {
+    if (deviceStatus === "connected") deviceSend({ state: deviceStateOf({ sending, speaking: voiceState.speaking, listening: voiceState.listening }) });
+  }, [deviceStatus, deviceSend, sending, voiceState.speaking, voiceState.listening]);
   const onProblemResult = useCallback((r: { problem: TaskProblem; given: string; correct: boolean; attempt: number; systemError?: boolean; partial?: boolean; reveal?: { correct?: number; why?: string } }) => {
     if (r.correct) {
       solvedRef.current.add(r.problem.id);
@@ -906,6 +923,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
                   {typeof task.mastery === "number" ? <span className="ts-bar-mastery">{Math.round(task.mastery * 100)}%</span> : null}
                 </button>
               ) : null}
+              <DeviceButton status={device.status} onConnect={device.connect} onDisconnect={device.disconnect} en={L("fr", "en") === "en"} />
               <button type="button" className="tutor-fs-btn" onClick={() => (fs ? exitFullscreen() : enterFullscreen())} aria-pressed={fs} aria-label={fs ? L("Quitter le plein écran", "Exit full screen") : L("Plein écran", "Full screen")} title={fs ? L("Quitter le plein écran", "Exit full screen") : L("Plein écran", "Full screen")}>
                 {fs ? <Minimize2 size={14} aria-hidden="true" /> : <Maximize2 size={14} aria-hidden="true" />}
               </button>

@@ -6989,5 +6989,18 @@ section("Tutor reply hygiene — invented wrapper tags, board line numbers (repo
   check("batched results: the last gradable one decides; partial counts as not right; plain chat has none", batch.length === 2 && verdictFromResults(batch) === "correct" && verdictFromResults(parseExerciseResults('[Exercise] I answered "x" — PARTLY right (try #1).')) === "incorrect" && verdictFromResults(parseExerciseResults('[Exercise] On the board line "a" I wrote "1" — couldn\'t be auto-checked.')) === undefined && parseExerciseResults("hello 5").length === 0);
 }
 
+section("Arduino companion — line protocol, sketch and wiring agree (unit tests + source pins)");
+{ const dp = await import("../shared/deviceProtocol.ts");
+  const ino = readFileSync(new URL("../arduino/otto_companion/otto_companion.ino", import.meta.url), "utf8");
+  const buf = new dp.LineBuffer();
+  const got = [...buf.push('{"btn":"he'), ...buf.push('lp"}\r\n{"btn":"mic"}\n{"hel'), ...buf.push('lo":"otto-mega"}\n')];
+  check("serial chunks are joined into whole lines and parsed; boot noise and unknown buttons are ignored", got.length === 3 && dp.parseDeviceLine(got[0]).btn === "help" && dp.parseDeviceLine(got[1]).btn === "mic" && dp.parseDeviceLine(got[2]).hello === "otto-mega" && dp.parseDeviceLine("ets Jun 8 2016") === null && dp.parseDeviceLine('{"btn":"format"}') === null && dp.parseDeviceLine("{") === null);
+  check("messages to the device are one ASCII line: accents folded, quotes removed, 16 chars, unknown state becomes idle", dp.encodeDeviceMsg({ lcd: 'Étape "deux" — très long texte ici' }) === '{"lcd":"Etape \'deux\'  tres"}\n'.replace("  ", " ").replace(" tres", " tres") || /^\{"lcd":"[\x20-\x7e]{0,16}"\}\n$/.test(dp.encodeDeviceMsg({ lcd: 'Étape "deux" — très long texte ici' })));
+  check("an unknown state is sent as idle, and the lights follow the tutor (thinking beats speaking beats listening)", dp.encodeDeviceMsg({ state: "banana" }) === '{"state":"idle"}\n' && dp.deviceStateOf({ sending: true, speaking: true, listening: true }) === "thinking" && dp.deviceStateOf({ sending: false, speaking: true, listening: true }) === "speaking" && dp.deviceStateOf({ sending: false, speaking: false, listening: true }) === "listening" && dp.deviceStateOf({ sending: false, speaking: false, listening: false }) === "idle");
+  check("help and next are ordinary tutor asks in both languages; mic is not a message", /stuck/i.test(dp.buttonMessage("help", true)) && /bloqu/i.test(dp.buttonMessage("help", false)) && dp.buttonMessage("next", true) && dp.buttonMessage("mic", true) === null);
+  check("the sketch matches the protocol: same baud, same button names and state words, debounced pull-up buttons", /Serial\.begin\(115200\)/.test(ino) && dp.DEVICE_BAUD === 115200 && ["help", "next", "mic"].every((b) => ino.includes(`"${b}"`)) && ["listening", "thinking", "speaking"].every((w) => ino.includes(`"${w}"`)) && /INPUT_PULLUP/.test(ino) && /DEBOUNCE_MS/.test(ino) && /"state"/.test(ino) && /"lcd"/.test(ino) && /"beep"/.test(ino));
+  const web = readFileSync(new URL("../client/hardware/useArduino.ts", import.meta.url), "utf8") + readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  check("the web side is optional and safe: Web Serial feature-detected, port opened only from a click, 2 s reset wait, button presses rate-limited, never sends board or student text", /navigator as any\)\.serial/.test(web) && /requestPort/.test(web) && /2000/.test(web) && /250/.test(web) && /deviceStateOf\(\{ sending/.test(web) && !/deviceSend\(\{ lcd/.test(web)); }
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

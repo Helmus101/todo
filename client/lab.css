@@ -199,3 +199,10 @@ h1 { font-family: var(--display); font-weight: 400; letter-spacing: -0.025em; }
 
 .tutor-error { margin: var(--space-3) 0 0; font-size: 13px; color: var(--vermilion, #b3382c); }
 .sm-board-block-error { margin: var(--space-2) 0; font-size: 13px; color: var(--ink-3); font-style: italic; }
+
+/* USB companion pill (Arduino): quiet until connected. */
+.tutor-device-pill { margin-left: auto; margin-right: 6px; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: var(--radius-xs); background: transparent; color: var(--muted, var(--ink)); cursor: pointer; }
+.tutor-device-pill:hover { border-color: var(--accent); }
+.tutor-device-pill.is-on { color: var(--ink); border-color: var(--accent); }
+.tutor-device-pill:disabled { opacity: .5; cursor: default; }
+.tutor-device-pill + .tutor-fs-btn, .tutor-crumbbar .tutor-device-pill + .tutor-fs-btn { margin-left: 0; }
