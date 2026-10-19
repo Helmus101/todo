@@ -580,8 +580,10 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     desmosEverOpenedRef.current = false;
   }, [pendingActiveSession, userId]);
 
-  const startNewSession = useCallback(async () => {
+  const [talkRequest, setTalkRequest] = useState(0);
+  const startNewSession = useCallback(async (talk = false) => {
     if (!chosenSubject || startingSession) return;
+    if (talk) setTalkRequest((n) => n + 1); // "Start talking" is the student's own tap: voice mode turns on once the panel mounts
     enterFullscreen(); // tutor mode is full screen (this click is the user gesture the browser requires)
     setError(null);
     setStartingSession(true);
@@ -752,12 +754,20 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
             </select>
             <button
               className="btn primary tutor-start-btn"
-              onClick={() => void startNewSession()}
+              onClick={() => void startNewSession(true)}
               disabled={startingSession || !chosenSubject}
             >
               {startingSession
                 ? L("Démarrage…", "Starting…")
-                : L("On s'y met", "Let's work")}
+                : L("Parler avec Otto", "Start talking")}
+            </button>
+            <button
+              type="button"
+              className="btn ghost tutor-start-type"
+              onClick={() => void startNewSession(false)}
+              disabled={startingSession || !chosenSubject}
+            >
+              {L("Écrire plutôt", "Type instead")}
             </button>
           </div>
           {error ? <p className="tutor-error" role="alert">{error}</p> : null}
@@ -1011,6 +1021,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           quickReplies={fresh ? starters : justFinishedExercise ? nextChips : followUps}
           placeholder={L("Parle ou écris à Otto…", "Talk or type to Otto…")}
           onVoiceStateChange={handleVoiceState}
+          talkRequest={talkRequest}
         />
       </div>
       {reflectOpen && (

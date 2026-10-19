@@ -32,6 +32,8 @@ interface AskOttoPanelProps {
   onOpenQuiz: (id: string, title: string) => void;
   /** Optional overrides (Tutor Session) for the empty-state line and input placeholder. */
   emptyText?: string;
+  /** Bumped by the Tutor's "Start talking" click (the student's own tap): turns voice mode on and has Otto speak his opening line. */
+  talkRequest?: number;
   placeholder?: string;
   /** Tutor Session only — reports the voice loop's state upward ({@link TutorSession}) so the BOARD pane
    *  (not just the chat's mic button) can show Listening…/Speaking…/Voice on. In a voice-first session the
@@ -81,7 +83,7 @@ function arithmeticMismatches(text: string): { raw: string; lhs: string; claimed
 // other drawers, so the title bar/close/drag/resize handles all come from ArtifactCanvas's generic wrapper.
 export function AskOttoPanel({
   task, currentStep, input, setInput, sending, error, pendingMsg, onSend,
-  onOpenNote, onOpenDeck, onOpenQuiz, emptyText, placeholder, onVoiceStateChange, bargeIn, variant = "chat", quickReplies,
+  onOpenNote, onOpenDeck, onOpenQuiz, emptyText, placeholder, onVoiceStateChange, bargeIn, variant = "chat", quickReplies, talkRequest,
 }: AskOttoPanelProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -91,11 +93,21 @@ export function AskOttoPanel({
   const en = useContext(LangContext) === "en";
   const speechLang = en ? "en-US" : "fr-FR";
   const synth = useSpeechSynthesis(speechLang);
-  const [voiceModeOn, toggleVoiceMode] = useVoiceModePref();
+  const [voiceModeOn, toggleVoiceMode, enableVoiceMode] = useVoiceModePref();
   // NO auto-enable, ever: voice mode (mic + auto-speak) starts OFF on every load and only an explicit tap
   // on the mic button turns it on — see useVoiceModePref.ts's product-rule comment. A mount effect that
   // flipped the pref on automatically used to live here; removed along with the persisted pref itself so
   // no code path can open the microphone without the student tapping it.
+  // The ONLY non-mic-button way voice turns on: the student clicked "Start talking" (that click bumped talkRequest). Never on load.
+  const talkSeenRef = useRef(0);
+  useEffect(() => {
+    if (!talkRequest || talkRequest === talkSeenRef.current) return;
+    talkSeenRef.current = talkRequest;
+    synth.unlock();
+    enableVoiceMode();
+    if (emptyText && !(task.chat || []).length) synth.speak(emptyText);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [talkRequest]);
   const L = useLang();
   // Fires per detected utterance while listening — ignore a stray recognition result that lands while a
   // previous message is still in flight rather than firing a second send on top of it.

@@ -206,3 +206,6 @@ h1 { font-family: var(--display); font-weight: 400; letter-spacing: -0.025em; }
 .tutor-device-pill.is-on { color: var(--ink); border-color: var(--accent); }
 .tutor-device-pill:disabled { opacity: .5; cursor: default; }
 .tutor-device-pill + .tutor-fs-btn, .tutor-crumbbar .tutor-device-pill + .tutor-fs-btn { margin-left: 0; }
+
+/* Tutor start: "Start talking" is primary, "Type instead" is a quiet second choice. */
+.tutor-start-type { font-size: 13px; }

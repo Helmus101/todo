@@ -11,8 +11,10 @@ import { useState } from "react";
  *  used to persist in localStorage ("otto-voice-mode"), which meant any reload silently re-opened the
  *  microphone with no fresh consent from the student — reported live as "the mic should never by default
  *  be on; it is first always off". (The pre-consent auto-enable path, startInVoiceMode, was removed from
- *  AskOttoPanel for the same reason: no code path may turn the mic on without a user tap.) */
-export function useVoiceModePref(): [boolean, () => void] {
+ *  AskOttoPanel for the same reason: no code path may turn the mic on without a user tap.) The Tutor's "Start talking" button
+ *  is such a tap: its click bumps `talkRequest`, which is the only other way voice mode turns on. */
+export function useVoiceModePref(): [boolean, () => void, () => void] {
   const [voiceModeOn, setVoiceModeOn] = useState(false);
-  return [voiceModeOn, () => setVoiceModeOn((v) => !v)];
+  // `enable` exists for ONE caller: the Tutor's "Start talking" button, whose own click is the student's consent (see AskOttoPanel `talkRequest`).
+  return [voiceModeOn, () => setVoiceModeOn((v) => !v), () => setVoiceModeOn(true)];
 }

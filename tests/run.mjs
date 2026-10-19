@@ -7002,5 +7002,12 @@ section("Arduino companion — line protocol, sketch and wiring agree (unit test
   const web = readFileSync(new URL("../client/hardware/useArduino.ts", import.meta.url), "utf8") + readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
   check("the web side is optional and safe: Web Serial feature-detected, port opened only from a click, 2 s reset wait, button presses rate-limited, never sends board or student text", /navigator as any\)\.serial/.test(web) && /requestPort/.test(web) && /2000/.test(web) && /250/.test(web) && /deviceStateOf\(\{ sending/.test(web) && !/deviceSend\(\{ lcd/.test(web)); }
 
+section("Voice-first start — voice turns on only from the student's own click (source pins)");
+{ const ts = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  const ao = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
+  const hk = readFileSync(new URL("../client/voice/useVoiceModePref.ts", import.meta.url), "utf8");
+  check("the primary start button is 'Start talking' and bumps talkRequest inside the click path; 'Type instead' is the quiet alternative", /startNewSession\(true\)/.test(ts) && /startNewSession\(false\)/.test(ts) && /Start talking/.test(ts) && /Type instead/.test(ts) && /if \(talk\) setTalkRequest/.test(ts));
+  check("the only extra way voice turns on is talkRequest (never on load: starts false, Enter in the topic box does not start voice)", /useState\(false\)/.test(hk) && /talkRequest === talkSeenRef\.current\) return/.test(ao) && /enableVoiceMode\(\)/.test(ao) && (ao.match(/enableVoiceMode\(\)/g) || []).length === 1 && /key === "Enter" && topic\.trim\(\)\) void startNewSession\(\)/.test(ts) && !/setTalkRequest\(\(n\) => n \+ 1\)[^;]*useEffect/.test(ts)); }
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
