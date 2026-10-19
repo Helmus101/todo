@@ -47,6 +47,8 @@ interface BoardArtifactProps {
   /** Tutor only — an exercise whose key is SEALED (it carries a `keyToken`, never the answer) is graded by the server; what comes back is only what the
    *  student has earned (the explanation and the correct option appear after a right answer). Exercises from an older stored board still grade locally. */
   onCheckProblem?: (problem: TaskProblem, given: string) => Promise<ServerGrade>;
+  /** Tutor: the board is paper, not a form. No answer boxes, Check buttons or hint buttons: the student answers Otto out loud or in the chat and the server checks it there. */
+  paper?: boolean;
 }
 /** What the server tells the student about one answer. */
 export type ServerGrade = { status: GradeStatus; correct?: number; why?: string; miss?: string };
@@ -331,6 +333,7 @@ function DiagramOpSVG({ op, partId }: { op: DiagramOp; partId?: string }) {
  *  they were created between the entries around them). State lives in BoardArtifact (keyed by problem id)
  *  so answers survive the flow being re-sorted or the same problem re-rendering. */
 interface ProblemBlockProps {
+  paper?: boolean;
   problem: TaskProblem;
   sectionNumber: number;
   state: ProblemState;
@@ -366,7 +369,7 @@ export function conceptMissMessage(problem: Pick<TaskProblem, "rubric">, given: 
   return null;
 }
 
-function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, systemError, info, onShowHint, onPick, onTextAnswer, onSubmit, en, fresh }: ProblemBlockProps) {
+function ProblemBlock({ paper, problem, sectionNumber, state, hintShown, isCorrect, systemError, info, onShowHint, onPick, onTextAnswer, onSubmit, en, fresh }: ProblemBlockProps) {
   const [expanded, setExpanded] = useState(false);
   const problemIsMCQ = Array.isArray(problem.options) && problem.options.length >= 2;
   const wrong = state.wrong || [];
@@ -410,8 +413,8 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, sys
       </div>
       <div className="sm-board-problem-q"><MathText text={stripStrayMarkdown(problem.question)} /></div>
       {problem.source && /^https:\/\//i.test(problem.source.url) ? <a className="sm-board-problem-source" href={problem.source.url} target="_blank" rel="noopener noreferrer">{"Source"}: {problem.source.name} ↗</a> : null}
-      {problem.format && !answered ? <div className="sm-board-problem-format"><MathText text={problem.format} /></div> : null}
-      {problem.hint && !answered ? (
+      {problem.format && !answered && !paper ? <div className="sm-board-problem-format"><MathText text={problem.format} /></div> : null}
+      {problem.hint && !answered && !paper ? (
         <div className="sm-board-problem-hint-row">
           {hintShown ? (
             <div className="sm-board-problem-hint"><MathText text={stripStrayMarkdown(problem.hint)} /></div>
@@ -445,7 +448,7 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, sys
         <div className="sm-board-problem-free">
           {answered ? (
             <div className="sm-inline-problem-result correct">{"Correct!"}</div>
-          ) : (
+          ) : paper ? null : (
             <div className="sm-inline-problem-input-row">
               <MathAnswerInput
                 en={en}
@@ -591,7 +594,7 @@ export function keyIdeaEntries<T extends Pick<BoardEntry, "id" | "kind" | "text"
   return out.slice(-5);
 }
 
-export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidgetResult, sheetSignal, onGapCheck, onCheckProblem }: BoardArtifactProps) {
+export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidgetResult, sheetSignal, onGapCheck, onCheckProblem, paper }: BoardArtifactProps) {
   const L = useLang();
   const endRef = useRef<HTMLDivElement>(null);
   const entries = (task.board || []).filter((e) => !e.archived);
@@ -845,6 +848,7 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
         const node = item.problem ? (
           <ProblemBlock
             key={item.key}
+            paper={paper}
             fresh={isFreshlyWritten(item.key)}
             problem={item.problem}
             sectionNumber={idx + 1}
@@ -958,7 +962,7 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
                 <>
                   <div className={`sm-board-line${markClass(notesFor.get(e.id))}`}><MathText text={autoMathLine(stripStrayMarkdown((e.kind === "result" ? e.text.replace(/^\s*(?:established|établi|found|result|trouvé)\s*:\s*/i, "") : e.text).replace(/&nbsp;|&#160;/gi, " ")))} /></div>
                   {e.why ? <div className="sm-board-why"><MathText text={autoMathLine(stripStrayMarkdown(e.why))} /></div> : null}
-                  {e.kind === "gap" && (e.expectedAnswer || e.keyToken) && e.status !== "correct" && !flowItems.slice(idx + 1).some((it) => it.entry?.kind === "gap") && onGapCheck ? <GapAnswer entry={e} onCheck={onGapCheck} en={en} /> : null}
+                  {e.kind === "gap" && (e.expectedAnswer || e.keyToken) && e.status !== "correct" && !flowItems.slice(idx + 1).some((it) => it.entry?.kind === "gap") && onGapCheck && !paper ? <GapAnswer entry={e} onCheck={onGapCheck} en={en} /> : null}
                 </>
               )}
               {(notesFor.get(e.id) || []).filter((a) => a.text).map((a) => (

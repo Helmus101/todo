@@ -308,7 +308,8 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   if (vague) out.push({ code: "vague", hard: true, fix: `the reply says nothing in particular (${vague}). Say something specific: refer to their actual words, a board line or the problem, teach or check ONE concrete thing, and hand back one concrete question or step.` });
   // Teaching must leave something on the board to look back at, and an error must be diagnosed and named.
   const WRITTEN = ["step", "draw", "mark", "gap", "problem", "topic"];
-  if (["explain", "worked_step", "worked_example", "correct_error"].includes(t.move) && !t.board.some((o) => WRITTEN.includes(o.op))) out.push({ code: "unwritten", hard: false, fix: "you taught something but wrote nothing: add a step op with the key idea or formula (with its short 'why'), or a mark on the line that is off, so it stays on the board after you've spoken." });
+  const statesEquation = t.speech.some((sn) => /\$[^$]*=[^$]*\$/.test(sn));
+  if ((["explain", "worked_step", "worked_example", "correct_error"].includes(t.move) || statesEquation) && !t.board.some((o) => WRITTEN.includes(o.op))) out.push({ code: "unwritten", hard: statesEquation, fix: "you taught something but wrote nothing: add a step op with the key idea or formula (with its short 'why'), or a mark on the line that is off, so it stays on the board after you've spoken." });
   const d = t.diagnosis;
   if (c.verdict === "incorrect" && ["none", "correct", "unclear"].includes(d.status)) out.push({ code: "diagnosis", hard: false, fix: "their answer is wrong (checked by code) but the diagnosis says otherwise: find the FIRST thing that's off and set diagnosis.status to slip, misconception or partial." });
   if (d.status === "misconception") {
