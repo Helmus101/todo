@@ -36,12 +36,9 @@ export function sessionGuide(i: GuideInput): string[] {
   const log = (i.log || []).slice(-8);
   const studentTurns = i.history.filter((h) => h.role === "user").length;
 
-  // 1. Learn their goals, THEN plan: a plan made from a guess is the plan that drifts.
-  if (!i.hasObjectives && i.goalsKnown === false) {
-    const n = (i.goals?.asked ?? 0) + 1;
-    out.push(`BEFORE YOU PLAN, LEARN WHAT THEY WANT FROM THIS SITTING (question ${n} of at most ${MAX_GOAL_QUESTIONS}). Known so far: ${goalsLine(i.goals)}. Ask ONE short, specific question this turn and do NOT make a plan yet (no plan op). Order: (1) what they want out of today — a test, homework, a topic, catching up; (2) when it is, or what feels hardest; (3) how long they have. Ground it in BACKGROUND instead of asking cold: their level and courses, what they did last time, an upcoming test ("Last time was energy and you have a test soon — is that still the aim?"). Never ask what you already know. Put anything they just told you in "goals" (aim, deadline, hard, minutes). If their message already tells you what they want AND one more thing (when it is due, what is hardest, or how long they have), don't ask anything: report it in "goals" and plan now. If they say "just start", plan at once.`);
-  } else if (!i.hasObjectives && i.goalsKnown) {
-    out.push(`THEY HAVE TOLD YOU WHAT THEY WANT (${goalsLine(i.goals)}): NOW BUILD THE PLAN from it with a plan op of 3–4 objectives in the order that serves their aim — what is due soonest or hardest first, sized to the time they have. Say it in two sentences ("Today: A, then B — we start with A because …") and begin the first one straight away. Every objective stays on their subject and aim.`);
+  // 1. No form-filling: start on what they asked; a short plan appears once the topic is clear.
+  if (!i.hasObjectives) {
+    out.push(`NO PLAN YET. Start straight on what they asked (their problem or topic) with ONE question; don't interview them about goals. Once the topic is clear (this turn or the next), add a plan op of 2–3 objectives and say it in one sentence. Anything they tell you about their aim, deadline or time goes in "goals".`);
   } else if (studentTurns <= 1 && !SWITCH.test(i.message)) {
     out.push(`START FROM THE PLAN, don't ask "where do you want to start?": in two sentences say where the plan stands and what you do first (their level and courses, their objectives, what was shaky last time — see BACKGROUND and its memory), and end with ONE easy question or "ready?".`);
   }

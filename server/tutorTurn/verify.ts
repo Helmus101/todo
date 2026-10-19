@@ -43,7 +43,7 @@ export interface VerifyContext {
   solution?: TutorSolution;
   policy: Policy;
   /** What code detected the student wants this turn. */
-  wants: { why: boolean; write: boolean; restart: boolean; exercise: boolean; draw?: boolean; problemOnBoard?: boolean; different?: boolean; topicSwitch?: boolean; advice?: boolean };
+  wants: { why: boolean; write: boolean; restart: boolean; exercise: boolean; draw?: boolean; problemOnBoard?: boolean; different?: boolean; topicSwitch?: boolean; advice?: boolean; explain?: boolean };
   /** Everything the student and the problem said — the only legitimate source of numbers. */
   said: string[];
   /** The student's own saved notes (about, projects, preferences): used silently, never repeated back at them. */
@@ -368,7 +368,7 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   // Said about THEIR work ("how did you factor in the angle?") it is a false claim; in a new scenario Otto poses it is just the scenario.
   const aboutTheirWork = t.speech.some((sn) => SETUP_FEATURES.some(([, re]) => re.test(sn)) && /\b(?:you|your|you'?ve|we|our)\b/i.test(sn));
   if (feats.length && !introducesProblem && !c.wants.different) out.push({ code: "invented_feature", hard: aboutTheirWork, fix: `it brings in "${feats[0]}", which is not in the problem, the board or anything the student said. Talk only about what the problem actually contains (the problem has no ${feats[0]}).` });
-  if (garbledAnswer(c.history, c.message) && !CLARIFIES.test(say) && ["unclear", "none", "no_attempt"].includes(t.diagnosis.status)) out.push({ code: "garbled_unasked", hard: true, fix: "their last message makes no sense as an answer (likely speech-to-text noise). Do NOT build on it or continue as if it did: say in a few friendly words that it didn't come through clearly and ask what they meant, or to say it again. One short reply, one question." });
+  if (garbledAnswer(c.history, c.message) && !CLARIFIES.test(say) && t.diagnosis.status === "unclear") out.push({ code: "garbled_unasked", hard: true, fix: "their last message makes no sense as an answer (likely speech-to-text noise). Do NOT build on it or continue as if it did: say in a few friendly words that it didn't come through clearly and ask what they meant, or to say it again. One short reply, one question." });
   if (UNDERSTOOD.test(c.message) && !t.board.some((o) => o.op === "problem") && !/\d/.test(say) && !/\b(?:recap|summar)/i.test(t.move)) out.push({ code: "understood_untested", hard: false, fix: "they say they get it. Don't take their word for it or change topic: give them a fresh, concrete case with new numbers (or ask them to predict a result) so they show it." });
   const heads = t.speech.map((sn) => (sn.toLowerCase().match(/[a-zà-ÿ0-9']+/g) || []).slice(0, 3).join(" ")).filter((h) => h.split(" ").length >= 3);
   if (new Set(heads).size < heads.length) out.push({ code: "self_repeat", hard: true, fix: "two sentences of the reply open with the same words (a repeated lead-in). Say it once and go straight to the content." });
@@ -376,7 +376,9 @@ export function verifyTurn(t: TurnOutput, c: VerifyContext): Issue[] {
   const qs = t.speech.map((s, i) => ({ i, q: /\?\s*["»”)]*\s*$/.test(s.replace(/\$[^$]*\$/g, "x")) })).filter((x) => x.q);
   if (qs.length > 1 || (qs.length === 1 && qs[0].i !== t.speech.length - 1)) out.push({ code: "questions", hard: false, fix: "ask at most ONE question, as the last sentence." });
   // 6. Length for the move.
-  if (countWords(say) > wordBudget(t.move)) out.push({ code: "length", hard: false, fix: `too long for "${t.move}" (${countWords(say)} words; keep it under ${wordBudget(t.move)}). Fewer, shorter sentences — longer maths goes on the board.` });
+  // A lecture is the opposite of Socratic: far over budget on a move that should be a question, when nothing asked for an explanation.
+  const lecture = countWords(say) > Math.max(70, wordBudget(t.move) * 1.6) && !["explain", "worked_step", "worked_example", "recap"].includes(t.move) && !c.wants.why && !c.wants.explain && !c.wants.advice && !c.policy.allowed.includes("explain");
+  if (countWords(say) > wordBudget(t.move)) out.push({ code: "length", hard: lecture, fix: `too long for "${t.move}" (${countWords(say)} words; keep it under ${wordBudget(t.move)}). Fewer, shorter sentences — longer maths goes on the board.` });
   // 7. Board tidy: one new visual; one valid gap.
   if (t.board.filter((o) => o.op === "draw").length > 1) out.push({ code: "visuals", hard: false, fix: "at most ONE new visual per turn — keep the most useful one." });
   for (const g of t.board.filter((o) => o.op === "gap")) { const bad = badGap(String(g.text || ""), c.board.map((b) => String(b.text || ""))); if (bad) { out.push({ code: "gap", hard: false, fix: `gap "${g.text}": ${bad}` }); break; } }

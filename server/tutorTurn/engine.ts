@@ -25,7 +25,7 @@ import {
   studentBoardLine, stripPraiseOpener, dropRepeatedName, stripMechanics, mentionsMechanics, affectOf,
   type TutorTurnInput, type TutorTurnResult, type TutorPlanLite,
 } from "../tutor.ts";
-import { TURN_PROMPT, VOICE_NOTE } from "./prompt.ts";
+import { TURN_PROMPT, VOICE_NOTE, DRAW_REFERENCE } from "./prompt.ts";
 import { supportPolicy, asksForWorkedExample, adaptationLines, questionRun, type Policy } from "./policy.ts";
 import { verifyTurn, degradeTurn, endsDead, revealsKey, acceptsBoardOffer, claimsBoard, hasVisual, sceneNounsIn, type Issue, type VerifyContext } from "./verify.ts";
 import { applyOps } from "./apply.ts";
@@ -81,7 +81,7 @@ export function factsBlock(f: { policy: Policy; verdict?: { gap: string; given: 
     f.wants.why ? "THEY ASKED WHY: give the real reason first, in plain words." : "",
     f.wants.explain && !f.wants.why ? "THEY NEED IT EXPLAINED (lost, asked to be shown, or stuck): teach the missing idea plainly and write it on the board as you say it, then hand back one small step." : "",
     f.wants.problemOnBoard ? "THEY ASKED YOU TO PUT THE PROBLEM ON THE BOARD (or can't see it / don't know what is asked): in THIS turn say in one plain sentence what is given and what is asked, put the FULL problem on the board (the app shows it in the answer widget), then ask the first step. Don't ask a different question instead." : "",
-    f.complaint ? COMPLAINT_FIX[f.complaint] : "",
+    f.complaint ? `THEY SAY SOMETHING WAS OFF (${f.complaint}). Say so plainly in one sentence, fix it THIS turn (re-read the board and their last message; correct the board if you were wrong), then ask your question.` : "",
     f.wants.advice ? "THEY ASKED WHAT TO PRACTISE. Use the recap move: say what they showed today, what is still shaky, and 2–3 specific things to practise (concrete skills, not topics), then ask which they want to start with. No new exercise this turn." : "",
     f.wants.topicSwitch ? "THEY SWITCHED TOPIC. This turn: open a fresh worksheet with a topic op, make a plan op for the NEW topic (2–3 objectives), and put the first problem on the board as a given line WITH its numbers (state what the objects are) before you ask about it. Say in a few words that the old topic is parked. From now on stay on the new topic: do not drift back to the old plan or to old exercises unless they ask." : "",
     f.wants.different ? "THEY WANT SOMETHING TOTALLY DIFFERENT: a new problem in a different situation and, if you can, a different idea from everything used so far — not a variation of the last one. Open a fresh worksheet with a topic op." : "",
@@ -215,14 +215,17 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   }
   const policy = supportPolicy({ teaching: input.teaching, needsExplanation: wants.explain, asksWhy: wants.why, asksForWorkedExample: asksForWorkedExample(message), verdict, questionRun: questionRun(input.teaching?.log) });
   const discussion = isDiscussionSubject(context.subject, [message, ...history.slice(-4).map((h) => h.text)].join(" "));
-  const goalsAreKnown = goalsKnown(input.teaching?.goals, message, objectives.length > 0);
+  const goalsAreKnown = true; // no goal interview any more (guide.ts): the tutor starts on what they asked
   const scope = sessionScope({ subject: context.subject, objectives, board, problems, history, message, memory: context.memory });
   void baseScope;
   const affect = affectOf(message);
   const misgraded = misgradedExercise(message, input.solution);
   const usedExercises = exercisesSoFar({ history, problems, memory: context.memory, board });
 
+  // The long figure specs ride along only when a figure is plausible; every other turn gets the short prompt.
+  const canDraw = wants.draw || hasVisual(board) || /math|physic|chem|bio|econ|scien|geom|stat|calc|algebra|trig|maths|physique|chimie|svt|économ/i.test(context.subject || "") || !context.subject;
   const system = TURN_PROMPT
+    + (canDraw ? DRAW_REFERENCE : "")
     + (input.voiceMode ? VOICE_NOTE : "")
     + backgroundBlock(context)
     + (discussion ? DISCUSSION_BLOCK : "")
@@ -251,7 +254,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   ];
 
   const said = [...history.filter((h) => h.role === "user").map((h) => h.text), message, input.solution?.statement || "", ...(spokenRepair ? [spokenRepair.interpreted, ...(input.spoken?.alternatives || [])] : []), ...problems.map((p) => p.question || ""), ...board.filter((b) => b.kind === "given" || b.owner === "student").map((b) => b.text)];
-  const vctx: VerifyContext = { message, history, board, problems, solution: input.solution, policy, wants: { why: wants.why, write: wants.write, restart: wants.restart, exercise: wants.exercise, draw: wants.draw, problemOnBoard: wants.problemOnBoard, different: wants.different, topicSwitch: wants.topicSwitch, advice: wants.advice }, said, discussion, usedExercises, verdict, keyDoubt, private: [context.profile?.about || "", ...(context.profile?.preferences || []), ...(context.profile?.projects || []), ...(context.profile?.tutorPrefs || [])].filter(Boolean), scope, goalsKnown: goalsAreKnown };
+  const vctx: VerifyContext = { message, history, board, problems, solution: input.solution, policy, wants: { why: wants.why, write: wants.write, restart: wants.restart, exercise: wants.exercise, draw: wants.draw, problemOnBoard: wants.problemOnBoard, different: wants.different, topicSwitch: wants.topicSwitch, advice: wants.advice, explain: wants.explain }, said, discussion, usedExercises, verdict, keyDoubt, private: [context.profile?.about || "", ...(context.profile?.preferences || []), ...(context.profile?.projects || []), ...(context.profile?.tutorPrefs || [])].filter(Boolean), scope, goalsKnown: goalsAreKnown };
 
   // ── The exercise generator doesn't depend on what the tutor says, so when they have asked for one it runs IN PARALLEL with the
   //    tutor's own call (the longest wait in a turn) instead of after it. ──
@@ -325,19 +328,21 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   }
   let repaired = false;
   const firstIssues = issues.map((i) => i.code);
-  // A repair is a whole extra model call: worth it for a hard problem or several soft ones; a single soft issue is fixed in code.
+  // A repair is a whole extra model call: worth it only for a hard problem.
   // Problems that are only about the WORDS (a dead end, a repeated opener, too long, two questions) are fixed with a small rewrite of the speech —
   // a fraction of the time and cost of regenerating the whole turn. Anything touching the board, the maths or the rules still gets the full repair.
   const WORDING_ONLY = new Set(["dead_end", "stale_opener", "length", "questions", "harsh", "vague", "self_correct", "mechanics", "format_leak", "echo_private", "repeat"]);
+  // Only a HARD problem (wrong maths, a leaked answer, a false claim, a dead end…) costs a second model call; soft style issues are left alone.
+  const needsRepair = issues.some((i) => i.hard);
   const lightOnly = issues.length > 0 && issues.every((i) => WORDING_ONLY.has(i.code)) && !earlyGen;
-  if ((issues.some((i) => i.hard) || issues.filter((i) => i.code !== "length" && i.code !== "target").length >= 2) && lightOnly && optionalOk()) {
+  if (needsRepair && lightOnly && optionalOk()) {
     const text = await rewriteReply(turn.speech.join(" "), issues.map((i) => i.fix).join("; "), message, result.tokens);
     if (text) {
       const lighter: TurnOutput = { ...turn, speech: [text], board: turn.board.map((o) => ({ ...o, cue: 0 })) };
       const again = verifyTurn(lighter, vctx);
       if (again.length <= issues.length) { turn = lighter; issues = again; repaired = true; }
     }
-  } else if ((issues.some((i) => i.hard) || issues.filter((i) => i.code !== "length" && i.code !== "target").length >= 2) && optionalOk()) {
+  } else if (needsRepair && optionalOk()) {
     try {
       const fixed = await callTurn([...messages, { role: "assistant", content: raw.slice(0, 6000) }, { role: "user", content: `(Before the student sees it, fix this turn:\n- ${issues.map((i) => i.fix).join("\n- ")}\nSend the corrected turn as ONLY the JSON object. Don't mention this note.)` }], result.tokens, deadline);
       if (fixed.turn) { const again = verifyTurn(fixed.turn, vctx); if (again.length < issues.length || !again.some((i) => i.hard)) { turn = fixed.turn; issues = again; repaired = true; } }
