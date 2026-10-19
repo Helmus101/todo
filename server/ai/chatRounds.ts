@@ -137,9 +137,7 @@ export async function finishChatReply(ctx: FinishChatReplyContext, reply: string
     if (CHAT_DOES_WORK.test(reply) || (CHAT_STATES_ANSWER.test(reply) && !studentStatedAnswer(message, history))) {
       result.notes = []; result.flashcards = []; result.quizzes = []; result.problems = []; result.board = [];
       result.guardrailTripped = true;
-      logAudit("guardrail", fr
-        ? "Tu as demandé quelque chose qui ressemblait à faire le travail à ta place — Otto a dit non et a fait un guide à la place."
-        : "That looked like asking Otto to do the graded work for you — it said no and made a guide instead.");
+      logAudit("guardrail", "That looked like asking Otto to do the graded work for you — it said no and made a guide instead.");
       reply = await rewriteReply(reply, "it does the student's graded work for them (writes the essay/answers). Don't produce that work: say briefly that this part is theirs, then help them find a starting point with one question about their own ideas.", message, result.tokens);
       if (CHAT_DOES_WORK.test(reply)) reply = ""; // still doing the work → an honest error, never a canned line
     }
@@ -150,9 +148,7 @@ export async function finishChatReply(ctx: FinishChatReplyContext, reply: string
     else if (leaksAnyProblemAnswer(reply, [...(opts?.currentProblems || []), ...result.problems])) {
       result.notes = []; result.flashcards = []; result.quizzes = []; result.problems = []; result.board = [];
       result.guardrailTripped = true;
-      logAudit("guardrail", fr
-        ? "La réponse donnait la solution d'un problème en cours — Otto a dit non et a reposé une question à la place."
-        : "The reply stated a problem's answer outright — Otto caught it and asked a question instead.");
+      logAudit("guardrail", "The reply stated a problem's answer outright — Otto caught it and asked a question instead.");
       reply = await rewriteReply(reply, "it states the answer to a problem the student is still working on. Remove that value and anything that gives it away; keep the idea, and end with one question that helps them get there themselves.", message, result.tokens);
       if (leaksAnyProblemAnswer(reply, [...(opts?.currentProblems || [])])) reply = "";
     }
@@ -216,7 +212,7 @@ export async function finishChatReply(ctx: FinishChatReplyContext, reply: string
       const madeBoardOnly = !madeProblem && result.board.length > 0;
       const landed = madeProblem ? `a new exercise: "${result.problems[0].question.slice(0, 200)}"` : madeDiagram ? "a diagram" : madeBoardOnly ? `a board line: "${String(result.board[0].text || "").slice(0, 200)}"` : "";
       const said = landed ? await rewriteReply("", `the reply is missing. You just put ${landed} on the board; write the short reply that goes with it (point them at it, one question).`, message, result.tokens) : "";
-      result.reply = said || (fr ? "Otto n'a pas pu répondre tout de suite — réessaie dans un instant." : "Otto couldn't reply just now — try again in a moment.");
+      result.reply = said || ("Otto couldn't reply just now — try again in a moment.");
       if (said) result.error = false;
     } else {
       result.reply = cleaned;
@@ -858,7 +854,7 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
           langCorrected = true;
           console.log(`${new Date().toISOString()} [chat] round ${round}: draft is in ${draftLang} but the student is writing in ${studentLang} — asking for a same-content rewrite`);
           messages.push({ role: "assistant", content: textContent });
-          messages.push({ role: "user", content: `That reply came out in the wrong language — the student is writing in ${studentLang === "fr" ? "French" : "English"}. Rewrite it in ${studentLang === "fr" ? "French" : "English"}, exact same content and tutoring move, don't mention this correction.` });
+          messages.push({ role: "user", content: `That reply came out in the wrong language — the student is writing in ${"English"}. Rewrite it in ${"English"}, exact same content and tutoring move, don't mention this correction.` });
           continue;
         }
         // (4) LENGTH BACKSTOP (TALE): the 45-word budget is prompt-side; this catches the draft that
@@ -934,15 +930,15 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
         const madeEnough = result.notes.length + result.flashcards.length + result.quizzes.length + result.problems.length >= CHAT_MAX_ARTIFACTS;
         if (name === "web_search") {
           content = await runWebSearch(input);
-          logAudit("tool", fr ? `Recherche web : "${String((input as any)?.query || "").slice(0, 140)}"` : `Web search: "${String((input as any)?.query || "").slice(0, 140)}"`);
+          logAudit("tool", `Web search: "${String((input as any)?.query || "").slice(0, 140)}"`);
         }
         else if (name === "read_page") {
           content = await runReadPage(input);
-          logAudit("tool", fr ? `Page lue : ${String((input as any)?.url || "").slice(0, 140)}` : `Read page: ${String((input as any)?.url || "").slice(0, 140)}`);
+          logAudit("tool", `Read page: ${String((input as any)?.url || "").slice(0, 140)}`);
         }
         else if (name === "CREATE_CALC") {
           content = runCalcTool(input);
-          logAudit("tool", fr ? `Vérifié au calculateur : "${String((input as any)?.expression || "").slice(0, 80)}"` : `Checked with calculator: "${String((input as any)?.expression || "").slice(0, 80)}"`);
+          logAudit("tool", `Checked with calculator: "${String((input as any)?.expression || "").slice(0, 80)}"`);
         }
         else if (name === "CREATE_NOTE") {
           if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
@@ -954,24 +950,22 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
             else if (CHAT_DOES_WORK.test(r.note.body)) {
               content = "REJECTED: that reads like their graded work, not a study aid — a fiche is method/structure/prompts, never the finished essay or solved exercise. Make a structure with prompts instead.";
               result.guardrailTripped = true;
-              logAudit("guardrail", fr
-                ? "Tu as demandé quelque chose qui ressemblait à faire le travail à ta place — Otto a dit non et a fait un guide à la place."
-                : "That looked like asking Otto to do the graded work for you — it said no and made a guide instead.");
+              logAudit("guardrail", "That looked like asking Otto to do the graded work for you — it said no and made a guide instead.");
             }
-            else { result.notes.push(r.note); content = JSON.stringify({ ok: true, id: r.note.id }); logAudit("artifact", fr ? `Fiche créée : « ${r.note.title} »` : `Note created: "${r.note.title}"`); }
+            else { result.notes.push(r.note); content = JSON.stringify({ ok: true, id: r.note.id }); logAudit("artifact", `Note created: "${r.note.title}"`); }
           }
         } else if (name === "CREATE_FLASHCARDS") {
           if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
-          else { const r = makeDeck(input); if ("error" in r) content = r.error; else { result.flashcards.push(r.deck); content = JSON.stringify({ ok: true, id: r.deck.id, count: r.deck.cards.length }); logAudit("artifact", fr ? `Cartes créées : « ${r.deck.title} » (${r.deck.cards.length})` : `Flashcards created: "${r.deck.title}" (${r.deck.cards.length})`); } }
+          else { const r = makeDeck(input); if ("error" in r) content = r.error; else { result.flashcards.push(r.deck); content = JSON.stringify({ ok: true, id: r.deck.id, count: r.deck.cards.length }); logAudit("artifact", `Flashcards created: "${r.deck.title}" (${r.deck.cards.length})`); } }
         } else if (name === "CREATE_QUIZ") {
           if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
-          else { const r = makeQuiz(input); if ("error" in r) content = r.error; else { result.quizzes.push(r.quiz); content = JSON.stringify({ ok: true, id: r.quiz.id, count: r.quiz.questions.length }); logAudit("artifact", fr ? `Quiz créé : « ${r.quiz.title} » (${r.quiz.questions.length} questions)` : `Quiz created: "${r.quiz.title}" (${r.quiz.questions.length} questions)`); } }
+          else { const r = makeQuiz(input); if ("error" in r) content = r.error; else { result.quizzes.push(r.quiz); content = JSON.stringify({ ok: true, id: r.quiz.id, count: r.quiz.questions.length }); logAudit("artifact", `Quiz created: "${r.quiz.title}" (${r.quiz.questions.length} questions)`); } }
         } else if (name === "FIND_SOURCE_QUESTION") {
           const found = await findSourceQuestions({ track: profile?.track, subject: task.sourceSubject, topic: String((input as any)?.topic || "") });
           content = found.length
             ? JSON.stringify(found.map((f) => ({ source: f.sourceName, url: f.url, title: f.title, excerpt: f.excerpt })))
             : "NONE: nothing usable from the registered sources for this topic — write the exercise yourself, without a sourceUrl.";
-          logAudit("tool", fr ? `Source de questions : ${found.length} résultat(s)` : `Question source lookup: ${found.length} result(s)`);
+          logAudit("tool", `Question source lookup: ${found.length} result(s)`);
         } else if (name === "CREATE_PROBLEM") {
           if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
           // Never set an exercise the student didn't ask for (the tutor started a friction-and-car problem nobody mentioned). The first turn of a
@@ -991,7 +985,7 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
           // they've said and the problems/board itself — the same launder-guard ownGivens uses everywhere else.
           else if (opts?.primer && questionAhead(String(input?.question || ""), [...history.filter((h) => h.role === "user").map((h) => h.text), ...heard, ...(opts?.opening || []).map((m) => m.text), ...(opts?.currentBoard || []).filter((e) => e.owner === "student").map((e) => e.text), ...(opts?.currentProblems || []).map((p) => p.question)]).length)
             content = "REJECTED: that exercise hands them the equation they were going to build — the substituted setup is inside the question itself. State the situation and what to find in words (or the raw given line, e.g. '$E_k = \\frac{1}{2} m v^2 = ?$' only when THEY have already named that relationship); never pre-build the first equation for them. Let THEM set it up.";
-          else { const r = makeProblem(input, !!opts?.primer); if ("error" in r) content = r.error; else { result.problems.push(r.problem); content = JSON.stringify({ ok: true, id: r.problem.id }); logAudit("artifact", fr ? `Problème créé : « ${r.problem.question.slice(0, 60)} »` : `Problem created: "${r.problem.question.slice(0, 60)}"`); } }          } else if (name === "CLEAR_BOARD") {
+          else { const r = makeProblem(input, !!opts?.primer); if ("error" in r) content = r.error; else { result.problems.push(r.problem); content = JSON.stringify({ ok: true, id: r.problem.id }); logAudit("artifact", `Problem created: "${r.problem.question.slice(0, 60)}"`); } }          } else if (name === "CLEAR_BOARD") {
           // Nothing is ever erased: the student's working stays. Reported live — Otto announced "let's clear the
           // board" and the working was gone. The board only grows.
           content = "REJECTED: the board is never cleared — their working stays. Keep every existing entry, and add the new focus line for the new topic.";
@@ -1046,7 +1040,7 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
           // same "both what they already see and what this turn made" scope as the duplicate check above.
           else if (leaksAnyProblemAnswer(String(input?.text || ""), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that states a problem's answer outright — rewrite this entry without that value. The answer only shows once they solve the problem themselves, in its own widget.";
           else if (boardRepeatsMishearing(String(input?.text || ""), spokenRepair)) content = `REJECTED: that line repeats a speech-recognition slip ("${boardRepeatsMishearing(String(input?.text || ""), spokenRepair)}") — write what the student MEANT, typeset in $…$ (see SPOKEN INPUT), then call WRITE_TO_BOARD again.`;
-          else { if (input && typeof (input as any).text === "string") (input as any).text = latexifyBoardLine((input as any).text, String((input as any).kind)); const r = makeBoardEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Écrit au tableau : « ${r.entry.text.slice(0, 60)} »` : `Written to board: "${r.entry.text.slice(0, 60)}"`); } }
+          else { if (input && typeof (input as any).text === "string") (input as any).text = latexifyBoardLine((input as any).text, String((input as any).kind)); const r = makeBoardEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", `Written to board: "${r.entry.text.slice(0, 60)}"`); } }
         } else if (name === "DRAW_ON_BOARD") {
           // Its own smaller cap, separate from WRITE_TO_BOARD's — a figure is heavier to render (SVG, not
           // text) and a turn with several genuine diagrams is already an unusual turn.
@@ -1055,11 +1049,11 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
           // Same answer-leak guard as WRITE_TO_BOARD above — a figure's caption or an equation/label op can
           // state a value just as plainly as prose can.
           else if (leaksAnyProblemAnswer([input?.caption, ...(Array.isArray(input?.ops) ? input.ops.map((o: any) => `${o?.text || ""} ${o?.latex || ""}`) : [])].join(" "), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that figure states a problem's answer outright — redraw it without that value.";
-          else { const r = makeDiagramEntry(input); if ("error" in r) content = r.error; else if (isDuplicateDiagram([...(opts?.currentBoard || []), ...result.board], r.entry)) content = "DUPLICATE: that exact figure/equation is already on the board — point at it in your reply instead of drawing it again (draw again only to ADD something new)."; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Figure dessinée : « ${r.entry.text.slice(0, 60)} »` : `Diagram drawn: "${r.entry.text.slice(0, 60)}"`); } }
+          else { const r = makeDiagramEntry(input); if ("error" in r) content = r.error; else if (isDuplicateDiagram([...(opts?.currentBoard || []), ...result.board], r.entry)) content = "DUPLICATE: that exact figure/equation is already on the board — point at it in your reply instead of drawing it again (draw again only to ADD something new)."; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", `Diagram drawn: "${r.entry.text.slice(0, 60)}"`); } }
         } else if (name === "GEOMETRY_ON_BOARD") {
           if (result.board.filter((e) => e.kind === "diagram").length >= 3) content = "LIMIT: you've already drawn a few figures this message — that's enough for one turn.";
           else if (leaksAnyProblemAnswer([input?.caption, ...(Array.isArray(input?.segments) ? input.segments.map((x: any) => (typeof x === "object" ? x?.label : "")) : []), ...(Array.isArray(input?.angles) ? input.angles.map((x: any) => x?.label) : []), ...(Array.isArray(input?.arcs) ? input.arcs.map((x: any) => x?.label) : []), ...(Array.isArray(input?.circles) ? input.circles.map((x: any) => x?.label) : [])].filter(Boolean).join(" "), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that figure labels a problem's answer — redraw it with the unknown shown as '?'.";
-          else { const r = makeGeometryEntry(input); if ("error" in r) content = r.error; else if (isDuplicateDiagram([...(opts?.currentBoard || []), ...result.board], r.entry)) content = "DUPLICATE: that exact figure is already on the board — point at it in your reply instead of drawing it again (draw again only to ADD something new)."; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Figure dessinée : « ${r.entry.text.slice(0, 60)} »` : `Diagram drawn: "${r.entry.text.slice(0, 60)}"`); } }
+          else { const r = makeGeometryEntry(input); if ("error" in r) content = r.error; else if (isDuplicateDiagram([...(opts?.currentBoard || []), ...result.board], r.entry)) content = "DUPLICATE: that exact figure is already on the board — point at it in your reply instead of drawing it again (draw again only to ADD something new)."; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", `Diagram drawn: "${r.entry.text.slice(0, 60)}"`); } }
         } else if (name === "ANNOTATE_BOARD") {
           const all = [...(opts?.currentBoard || []), ...result.board];
           const hit = resolveBoardTarget(String((input as any)?.target || ""), all);
@@ -1070,16 +1064,16 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
           else if (!note) content = "ERROR: a pointer needs a short note.";
           else if (result.board.filter((e) => e.kind === "annotation").length >= 2) content = "LIMIT: two pointers per turn is plenty.";
           else if (leaksAnyProblemAnswer(note, [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that note states a problem's answer — point and ask, don't tell.";
-          else { result.board.push({ id: randomUUID(), text: note, kind: "annotation", targetId: hit.id, tone, owner: "otto", at: new Date().toISOString() } as BoardEntry); content = JSON.stringify({ ok: true }); logAudit("artifact", fr ? `Annotation : « ${note.slice(0, 60)} »` : `Pointed at the board: "${note.slice(0, 60)}"`); }
+          else { result.board.push({ id: randomUUID(), text: note, kind: "annotation", targetId: hit.id, tone, owner: "otto", at: new Date().toISOString() } as BoardEntry); content = JSON.stringify({ ok: true }); logAudit("artifact", `Pointed at the board: "${note.slice(0, 60)}"`); }
         } else if (name === "GRAPH_ON_BOARD") {
           if (result.board.filter((e) => e.kind === "graph").length >= 2) content = "LIMIT: you've already put a couple of graphs on the board this message — that's enough for one turn.";
           else if (leaksAnyProblemAnswer([input?.caption, ...(Array.isArray(input?.fns) ? input.fns.map((f: any) => f?.label || "") : [])].join(" "), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that graph's caption or labels state a problem's answer — title it by what to explore, not by the result.";
-          else { const r = makeGraphEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Graphique : « ${r.entry.text.slice(0, 60)} »` : `Graph: "${r.entry.text.slice(0, 60)}"`); } }
+          else { const r = makeGraphEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", `Graph: "${r.entry.text.slice(0, 60)}"`); } }
         } else if (name === "TRIG_SCENE_ON_BOARD") {
           if (result.board.filter((e) => e.kind === "svg").length >= 2) content = "LIMIT: that's enough figures for one turn.";
           else {
             const inp: any = input || {};
-            const caption = String(inp.caption || "").trim().slice(0, 200) || (fr ? "Situation" : "The situation");
+            const caption = String(inp.caption || "").trim().slice(0, 200) || ("The situation");
             const built = buildTrigScene({ mode: inp.mode, observers: Array.isArray(inp.observers) ? inp.observers : [], separation: inp.separation, towerHeight: inp.towerHeight, unknownTop: typeof inp.unknownTop === "string" ? inp.unknownTop.slice(0, 3) : undefined, distance: inp.distance, baseName: inp.baseName, topName: inp.topName, units: inp.units });
             if ("error" in built) content = built.error;
             else {
@@ -1089,7 +1083,7 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
                 const entry: BoardEntry = { id: randomUUID(), text: caption, kind: "svg", svg, facts: built.facts, at: new Date().toISOString() };
                 result.board.push(entry);
                 content = JSON.stringify({ ok: true, id: entry.id, geometry: built.facts, note: "Drawn to scale with only the GIVEN angles marked (the equal angle at the ground is for the student to find). Now ask ONE question; don't state values they haven't found." });
-                logAudit("artifact", fr ? `Figure : « ${caption.slice(0, 60)} »` : `Figure: "${caption.slice(0, 60)}"`);
+                logAudit("artifact", `Figure: "${caption.slice(0, 60)}"`);
               }
             }
           }
@@ -1097,7 +1091,7 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
           if (result.board.filter((e) => e.kind === "svg").length >= 2) content = "LIMIT: that's enough figures for one turn.";
           else {
             const inp: any = input || {};
-            const caption = String(inp.caption || "").trim().slice(0, 200) || (fr ? "Solide" : "The solid");
+            const caption = String(inp.caption || "").trim().slice(0, 200) || ("The solid");
             const built = buildSolid({ shape: inp.shape, width: inp.width, height: inp.height, depth: inp.depth, radius: inp.radius, dims: inp.dims && typeof inp.dims === "object" ? inp.dims : undefined, labels: inp.labels, highlight: Array.isArray(inp.highlight) ? inp.highlight : undefined });
             if ("error" in built) content = built.error;
             else {
@@ -1107,7 +1101,7 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
                 const entry: BoardEntry = { id: randomUUID(), text: caption, kind: "svg", svg, facts: built.facts, at: new Date().toISOString() };
                 result.board.push(entry);
                 content = JSON.stringify({ ok: true, id: entry.id, geometry: built.facts, note: "Drawn to scale in oblique projection with only the GIVEN dimensions labelled. Now ask ONE question; don't state values they haven't found." });
-                logAudit("artifact", fr ? `Solide : « ${caption.slice(0, 60)} »` : `Solid: "${caption.slice(0, 60)}"`);
+                logAudit("artifact", `Solid: "${caption.slice(0, 60)}"`);
               }
             }
           }
@@ -1115,11 +1109,11 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
           if (result.board.filter((e) => e.kind === "svg").length >= 2) content = "LIMIT: that's enough figures for one turn.";
           else if (leaksAnyProblemAnswer(`${input?.caption || ""} ${svgText(sanitizeSvg(String(input?.svg || "")))}`, [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that figure labels a problem's answer outright — redraw it with the unknown shown as '?'.";
           else if (opts?.primer && equationAhead(svgText(sanitizeSvg(String(input?.svg || ""))), [...history.filter((h) => h.role === "user").map((h) => h.text), ...heard], ownGivens()).length) content = "REJECTED: that figure contains an equation step the student never reached — draw the situation (givens and unknowns) without it.";
-          else { const r = makeSvgEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Figure : « ${r.entry.text.slice(0, 60)} »` : `Figure: "${r.entry.text.slice(0, 60)}"`); } }
+          else { const r = makeSvgEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", `Figure: "${r.entry.text.slice(0, 60)}"`); } }
         } else if (name === "FLOW_ON_BOARD") {
           if (result.board.filter((e) => e.kind === "flow").length >= 2) content = "LIMIT: that's enough diagrams for one turn.";
           else if (leaksAnyProblemAnswer(JSON.stringify(input || {}), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that diagram states a problem's answer outright — label the boxes without the value.";
-          else { const r = makeFlowEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Schéma : « ${r.entry.text.slice(0, 60)} »` : `Diagram: "${r.entry.text.slice(0, 60)}"`); } }
+          else { const r = makeFlowEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", `Diagram: "${r.entry.text.slice(0, 60)}"`); } }
         } else if (name === "TABLE_ON_BOARD") {
           if (result.board.filter((e) => e.kind === "table").length >= 2) content = "LIMIT: enough tables for one turn.";
           else if (leaksAnyProblemAnswer(JSON.stringify(input || {}), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that table states a problem's answer outright — leave that cell out.";
@@ -1130,7 +1124,7 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
         } else if (name === "WIDGET_ON_BOARD") {
           if (result.board.filter((e) => e.kind === "widget").length >= 1) content = "LIMIT: one activity per turn — let them do this one first.";
           else if (leaksAnyProblemAnswer(JSON.stringify(input || {}), [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that activity states a problem's answer outright — build it around different content.";
-          else { const r = makeWidgetEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Activité : « ${r.entry.text.slice(0, 60)} »` : `Activity: "${r.entry.text.slice(0, 60)}"`); } }
+          else { const r = makeWidgetEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", `Activity: "${r.entry.text.slice(0, 60)}"`); } }
         } else if (name === "CREATE_INTERACTIVE") {
           // Own small cap, separate from WRITE_TO_BOARD/DRAW_ON_BOARD's — this is the heaviest entry kind
           // (a whole embedded iframe), and a session needing more than a couple is almost certainly
@@ -1139,11 +1133,11 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
           // Same answer-leak guard as WRITE_TO_BOARD/DRAW_ON_BOARD above — an embedded scene's labels/text
           // can state a value just as plainly as prose can.
           else if (leaksAnyProblemAnswer(`${input?.caption || ""} ${input?.html || ""}`, [...(opts?.currentProblems || []), ...result.problems])) content = "REJECTED: that scene states a problem's answer outright — rebuild it without that value.";
-          else { const r = makeInteractiveEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Scène interactive créée : « ${r.entry.text.slice(0, 60)} »` : `Interactive scene created: "${r.entry.text.slice(0, 60)}"`); } }
+          else { const r = makeInteractiveEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", `Interactive scene created: "${r.entry.text.slice(0, 60)}"`); } }
         } else if (name === "SET_OBJECTIVES") {
           const r = makeObjectives(input);
           if ("error" in r) content = r.error;
-          else { result.objectives = r.objectives; content = JSON.stringify({ ok: true, count: r.objectives.length }); logAudit("artifact", fr ? `Objectifs mis à jour (${r.objectives.length})` : `Objectives updated (${r.objectives.length})`); }
+          else { result.objectives = r.objectives; content = JSON.stringify({ ok: true, count: r.objectives.length }); logAudit("artifact", `Objectives updated (${r.objectives.length})`); }
         } else if (name === "remember") {
           const category = String((input as any)?.category || "preference");
           const fact = String((input as any)?.fact || "").trim();
@@ -1152,7 +1146,7 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
           else {
             applyRememberFact(profile, category, fact);
             content = "saved";
-            logAudit("tool", fr ? `Retenu : ${fact.slice(0, 140)}` : `Remembered: ${fact.slice(0, 140)}`);
+            logAudit("tool", `Remembered: ${fact.slice(0, 140)}`);
           }
         } else if (readOnlyExtras?.tools.some((t) => t.name === name)) {
           // A real connected-account call (e.g. GMAIL_FETCH_EMAILS) — unlike the in-app tools above, this is
@@ -1165,7 +1159,7 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
               new Promise<string>((resolve) => setTimeout(() => resolve("ERROR: timed out — try asking again."), 15_000)),
             ]);
             content = r ?? "ERROR: that didn't return anything.";
-            logAudit("tool", fr ? `Recherche dans un compte connecté : ${String(name)}` : `Searched a connected account: ${String(name)}`);
+            logAudit("tool", `Searched a connected account: ${String(name)}`);
           } catch (e: any) { content = `ERROR: ${e?.message || "that call failed"}.`; }
         } else content = "ERROR: unknown tool.";
         messages.push({ role: "tool", tool_call_id: tc.id || `tool_${Date.now()}`, content: untrustedToolResult(String(content).slice(0, 2000)) });

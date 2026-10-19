@@ -59,12 +59,12 @@ export function FlashcardsLibraryPage({ lang, tasks, embedded, userId }: { lang?
     <Wrap className={embedded ? "" : "list-wrap"}>
       {!embedded ? (
         <div className="dash-head">
-          <h2>{L("Tes cartes", "Your flashcards")}</h2>
-          <p className="dash-line">{L("Toutes les cartes et quiz générés, accessibles à tout moment — même sans connexion.", "Every deck and quiz you've ever generated, accessible anytime — even offline.")}</p>
+          <h2>{"Your flashcards"}</h2>
+          <p className="dash-line">{"Every deck and quiz you've ever generated, accessible anytime — even offline."}</p>
         </div>
       ) : null}
       {decks.length === 0 ? (
-        <p className="muted small">{L("Pas encore de cartes — elles apparaissent ici dès qu'Otto (ou toi) en crée.", "No flashcards yet — they'll show up here as soon as Otto (or you) creates some.")}</p>
+        <p className="muted small">{"No flashcards yet — they'll show up here as soon as Otto (or you) creates some."}</p>
       ) : (
         <div className="list">
           {decks.map(({ deck, taskTitle, savedAt, logDate }) => (
@@ -72,8 +72,8 @@ export function FlashcardsLibraryPage({ lang, tasks, embedded, userId }: { lang?
               <div className="card-text">
                 <div className="card-title">{deck.title}</div>
                 <div className="card-sub">
-                  {logDate ? `${L("Journal du", "Journal entry —")} ${new Date(`${logDate}T00:00:00Z`).toLocaleDateString(en ? "en-GB" : "fr-FR", { timeZone: "UTC" })} · ` : `${taskTitle} · `}
-                  {deck.cards.length} {L("cartes", "cards")} · {new Date(savedAt).toLocaleDateString(en ? "en-GB" : "fr-FR")}
+                  {logDate ? `${"Journal entry —"} ${new Date(`${logDate}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC" })} · ` : `${taskTitle} · `}
+                  {deck.cards.length} {"cards"} · {new Date(savedAt).toLocaleDateString("en-GB")}
                 </div>
               </div>
             </button>
@@ -82,7 +82,7 @@ export function FlashcardsLibraryPage({ lang, tasks, embedded, userId }: { lang?
       )}
       {quizzes.length > 0 ? (
         <div className="dash-head mt-4">
-          <h2>{L("Tes quiz", "Your quizzes")}</h2>
+          <h2>{"Your quizzes"}</h2>
         </div>
       ) : null}
       {quizzes.length > 0 ? (
@@ -92,8 +92,8 @@ export function FlashcardsLibraryPage({ lang, tasks, embedded, userId }: { lang?
               <div className="card-text">
                 <div className="card-title">{quiz.title}</div>
                 <div className="card-sub">
-                  {logDate ? `${L("Journal du", "Journal entry —")} ${new Date(`${logDate}T00:00:00Z`).toLocaleDateString(en ? "en-GB" : "fr-FR", { timeZone: "UTC" })} · ` : `${taskTitle} · `}
-                  {quiz.questions.length} {L("questions", "questions")} · {new Date(savedAt).toLocaleDateString(en ? "en-GB" : "fr-FR")}
+                  {logDate ? `${"Journal entry —"} ${new Date(`${logDate}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC" })} · ` : `${taskTitle} · `}
+                  {quiz.questions.length} {"questions"} · {new Date(savedAt).toLocaleDateString("en-GB")}
                 </div>
               </div>
             </button>
@@ -104,7 +104,7 @@ export function FlashcardsLibraryPage({ lang, tasks, embedded, userId }: { lang?
         <TaskModal onClose={() => setOpenId(null)} title={open.deck.title}>
           {!liveOwner ? (
             <p className="settings-hint mb-3">
-              {L("Cette source a changé côté serveur — tu peux toujours réviser, mais ta progression ne sera pas synchronisée.", "This deck's source has changed on the server — you can still review it, but progress won't sync.")}
+              {"This deck's source has changed on the server — you can still review it, but progress won't sync."}
             </p>
           ) : null}
           <FlashcardDeck
@@ -121,7 +121,7 @@ export function FlashcardsLibraryPage({ lang, tasks, embedded, userId }: { lang?
         <TaskModal onClose={() => setOpenQuizId(null)} title={openQuiz.quiz.title}>
           {!liveQuizOwner ? (
             <p className="settings-hint mb-3">
-              {L("Cette source a changé côté serveur — tu peux toujours réviser, mais ta progression ne sera pas synchronisée.", "This quiz's source has changed on the server — you can still review it, but progress won't sync.")}
+              {"This quiz's source has changed on the server — you can still review it, but progress won't sync."}
             </p>
           ) : null}
           <QuizPlayer quiz={openQuiz.quiz} taskId={liveQuizOwner ? openQuiz.taskId : undefined} userId={userId} />

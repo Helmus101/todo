@@ -260,27 +260,27 @@ export function ArtifactCanvas({
               <div className="sm-artifact-controls" onPointerDown={(e) => e.stopPropagation()}>
                 <button
                   className="sm-artifact-btn"
-                  title={art.dockSide === "left" ? L("Détacher", "Undock") : L("Ancrer à gauche", "Dock left")}
+                  title={art.dockSide === "left" ? "Undock" : "Dock left"}
                   onClick={e => { e.stopPropagation(); onUpdateArtifact(art.id, { dockSide: art.dockSide === "left" ? "none" : "left" }); }}
                 >⊟</button>
                 <button
                   className="sm-artifact-btn"
-                  title={art.dockSide === "right" ? L("Détacher", "Undock") : L("Ancrer à droite", "Dock right")}
+                  title={art.dockSide === "right" ? "Undock" : "Dock right"}
                   onClick={e => { e.stopPropagation(); onUpdateArtifact(art.id, { dockSide: art.dockSide === "right" ? "none" : "right" }); }}
                 >⊞</button>
                 <button
                   className="sm-artifact-btn"
-                  title={art.maximized ? L("Restaurer", "Restore") : L("Agrandir", "Maximize")}
+                  title={art.maximized ? "Restore" : "Maximize"}
                   onClick={e => { e.stopPropagation(); onUpdateArtifact(art.id, { maximized: !art.maximized, dockSide: "none" }); }}
                 >{art.maximized ? "⊡" : "□"}</button>
                 <button
                   className="sm-artifact-btn"
-                  title={L("Réduire", "Minimize")}
+                  title={"Minimize"}
                   onClick={e => { e.stopPropagation(); onUpdateArtifact(art.id, { minimized: true }); }}
                 >−</button>
                 <button
                   className="sm-artifact-btn sm-artifact-close"
-                  title={L("Fermer", "Close")}
+                  title={"Close"}
                   onClick={e => { e.stopPropagation(); onRemoveArtifact(art.id); }}
                 >×</button>
               </div>

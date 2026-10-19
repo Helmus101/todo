@@ -74,39 +74,39 @@ export function EndSessionModal({ completedSteps, totalSteps, elapsed, formatTim
   return (
     <SmBackdrop closing={closing} className="sm-modal-backdrop">
       <SmSurface variant="modal" closing={closing} className="sm-modal">
-        <h2>{L("Terminer la session de révision ?", "End study session?")}</h2>
-        <p className="sm-modal-sub">{L("Ton bureau sera sauvegardé exactement comme il est.", "Your environment will be saved exactly as it is.")}</p>
+        <h2>{"End study session?"}</h2>
+        <p className="sm-modal-sub">{"Your environment will be saved exactly as it is."}</p>
 
         <div className="sm-modal-stats">
           <div className="sm-modal-stat">
             <span className="sm-modal-stat-value">{formatTime(elapsed)}</span>
-            <span className="sm-modal-stat-label">{L("Temps de travail", "Time studied")}</span>
+            <span className="sm-modal-stat-label">{"Time studied"}</span>
           </div>
           {totalSteps > 0 && (
             <div className="sm-modal-stat">
               <span className="sm-modal-stat-value">{completedSteps} / {totalSteps}</span>
-              <span className="sm-modal-stat-label">{L("Étapes terminées", "Steps completed")}</span>
+              <span className="sm-modal-stat-label">{"Steps completed"}</span>
             </div>
           )}
         </div>
 
         <div className="sm-modal-review">
           <label>
-            {L("Qu'as-tu terminé ?", "What did you finish?")}
-            <input value={finished} onChange={(e) => setFinished(e.target.value)} placeholder={L("Facultatif", "Optional")} />
+            {"What did you finish?"}
+            <input value={finished} onChange={(e) => setFinished(e.target.value)} placeholder={"Optional"} />
           </label>
           <label>
-            {L("Qu'est-ce qui t'a bloqué ?", "What confused you?")}
-            <input value={confusing} onChange={(e) => setConfusing(e.target.value)} placeholder={L("Facultatif", "Optional")} />
+            {"What confused you?"}
+            <input value={confusing} onChange={(e) => setConfusing(e.target.value)} placeholder={"Optional"} />
           </label>
           <label>
-            {L("Quelle est la prochaine petite étape ?", "What's the next smallest step?")}
-            <input value={nextStep} onChange={(e) => setNextStep(e.target.value)} placeholder={L("Facultatif", "Optional")} />
+            {"What's the next smallest step?"}
+            <input value={nextStep} onChange={(e) => setNextStep(e.target.value)} placeholder={"Optional"} />
           </label>
         </div>
 
         <div className="sm-modal-actions">
-          <button className="sm-btn sm-btn-ghost" onClick={doContinue}>{L("Continuer à travailler", "Continue studying")}</button>
+          <button className="sm-btn sm-btn-ghost" onClick={doContinue}>{"Continue studying"}</button>
           <button
             type="button"
             className={`sm-btn sm-btn-danger sm-btn-hold ${holding ? "sm-btn-holding" : ""}`}
@@ -119,8 +119,8 @@ export function EndSessionModal({ completedSteps, totalSteps, elapsed, formatTim
             <span className="sm-btn-hold-fill" aria-hidden="true" />
             <span className="sm-btn-hold-label">
               {holding
-                ? L("Continue d'appuyer pour terminer…", "Keep holding to end…")
-                : L("Maintenir pour terminer", "Hold to end session")}
+                ? "Keep holding to end…"
+                : "Hold to end session"}
             </span>
           </button>
         </div>

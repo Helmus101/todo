@@ -21,7 +21,7 @@ export function FlashcardArtifact({ task, deckId, userId, onClose }: FlashcardAr
   // the local copy still posts to the server as usual; it just won't reflect a review made on ANOTHER
   // device until the real sync catches up (this is a local backup, not a second source of truth).
   const deck = task.flashcards?.find((f) => f.id === deckId) || getLocalDeck(deckId, userId) || undefined;
-  if (!deck) return <div className="sm-artifact-empty">{L("Ce paquet n'est plus disponible.", "This deck is no longer available.")}</div>;
+  if (!deck) return <div className="sm-artifact-empty">{"This deck is no longer available."}</div>;
   return (
     <div className="sm-flashcard-body">
       <FlashcardDeck

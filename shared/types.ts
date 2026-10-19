@@ -494,7 +494,7 @@ export function normalizeProfile(p: any): Profile {
     primaryAccounts: p?.primaryAccounts && typeof p.primaryAccounts === "object"
       ? Object.fromEntries(Object.entries(p.primaryAccounts).filter((e): e is [string, string] => typeof e[1] === "string"))
       : undefined,
-    language: p?.language === "en" ? "en" : "fr",
+    language: "en",
     languageSetAt: typeof p?.languageSetAt === "string" ? p.languageSetAt : undefined,
     preferencesUpdatedAt: typeof p?.preferencesUpdatedAt === "string" ? p.preferencesUpdatedAt : undefined,
     grades: Array.isArray(p?.grades)

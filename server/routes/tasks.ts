@@ -198,7 +198,7 @@ async function tutorTurn(
     }
     return raw;
   })();
-  const lang: "fr" | "en" = profile.language === "en" ? "en" : "fr";
+  const lang: "fr" | "en" = "en";
   // THE TUTOR KNOWS THE ANSWER: when the problem in focus changes (a new open exercise, or the student states a new
   // problem), it is solved once by server/solver.ts and checked by code; every turn then steers by that solution.
   const openProblem = [...problems].reverse().find((p) => !p.solved);
@@ -231,10 +231,10 @@ async function tutorTurn(
       if (kind === "balance" || kind === "auth") reportError("tutor-provider", new Error(`tutor provider ${kind}`), { kind });
       const wait = kind === "rate" ? 20 : 30;
       res.setHeader("Retry-After", String(wait));
-      res.status(503).json({ error: M(req, "Otto est momentanément indisponible — réessaie dans une minute.", "Otto is briefly unavailable — please try again in a minute."), code: "tutor_unavailable", retryAfter: wait });
+      res.status(503).json({ error: "Otto is briefly unavailable — please try again in a minute.", code: "tutor_unavailable", retryAfter: wait });
       return;
     }
-    res.status(500).json({ error: M(req, "Otto n'a pas pu répondre — réessaie dans un instant.", "Otto couldn't reply just now — try again in a moment.") });
+    res.status(500).json({ error: "Otto couldn't reply just now — try again in a moment." });
     return;
   }
   if (out.guardrailTripped) void recordMetric(req.session.user!, "chat_guardrail_tripped", 1, "freestudy");
@@ -324,7 +324,7 @@ const runViaJob = async (req: express.Request, res: express.Response, type: "exe
     // returns THAT job as-is, silently discarding the new input (the revise note never gets applied).
     // That used to look exactly like "revise does nothing" — no error, no effect. Say so honestly instead.
     if (job.type !== type) {
-      res.status(409).json({ error: M(req, "Otto travaille encore sur cette tâche — réessaie dans un instant.", "Otto is still working on this task — try again in a moment.") });
+      res.status(409).json({ error: "Otto is still working on this task — try again in a moment." });
       return;
     }
     // ALWAYS fold the cloud copy in and answer with the task's REAL state — a requeued-after-failure or
@@ -338,13 +338,13 @@ const runViaJob = async (req: express.Request, res: express.Response, type: "exe
     req.session.profile = mergeProfiles(cloud.profile || emptyProfile(), req.session.profile || emptyProfile());
     await saveSession(req);
     const t = (req.session.tasks || []).find((x) => x.id === id);
-    if (!t) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
+    if (!t) { res.status(404).json({ error: "Not found." }); return; }
     // Only a TERMINAL job failure is an error response — the user needs the message + Retry.
     if (job.status === "failed_terminal") { res.status(500).json({ error: job.last_error || t.lastError || "run failed" }); return; }
     // The job re-checks "paused" against the fresh cloud profile (another device may have paused it) and
     // reports a "skipped: AI paused" success — surface that instead of silently returning an unchanged task.
     const skipNote = typeof job.output?.note === "string" && job.output.note.startsWith("skipped:") ? job.output.note : null;
-    if (skipNote?.includes("paused")) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour lancer ceci.", "AI is paused — resume it in Settings to run this.") }); return; }
+    if (skipNote?.includes("paused")) { res.status(403).json({ error: "AI is paused — resume it in Settings to run this." }); return; }
     res.json(t);
   } catch (e: any) {
     console.error(`[tasks] ${type} error for task`, id, ":", e);
@@ -353,7 +353,7 @@ const runViaJob = async (req: express.Request, res: express.Response, type: "exe
     // Needs its own call here to cover this whole action surface.
     reportError("tasks-job-action", e, { type, taskId: id });
     console.error(e);
-    res.status(500).json({ error: M(req, "échec de l'exécution", "run failed") });
+    res.status(500).json({ error: "run failed" });
   }
 };
 
@@ -543,7 +543,7 @@ export function registerTaskRoutes(app: express.Express): void {
 
    // min gap between background sweeps
   app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, res) => {
-    if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour chercher de nouvelles tâches.", "AI is paused — resume it in Settings to sweep for new tasks.") }); return; }
+    if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to sweep for new tasks." }); return; }
     try {
       const user = req.session.user!;
       const force = req.body?.force === true; // the manual Refresh button — always run a REAL sweep
@@ -557,7 +557,7 @@ export function registerTaskRoutes(app: express.Express): void {
       // alone used to hard-block them here even though the deterministic pipeline already supports this.
     const pronoteOn = (await pronoteSvc.pronoteConnected(user)).connected;
     if (!extras?.tools?.length && !pronoteOn) {
-      res.status(400).json({ error: M(req, "Connecte Gmail, Google Calendar ou Pronote dans les Réglages pour qu'Otto ait quelque chose à lire.", "Connect Gmail, Google Calendar, or Pronote in Settings so Otto has something to read.") });
+      res.status(400).json({ error: "Connect Gmail, Google Calendar, or Pronote in Settings so Otto has something to read." });
       return;
     }
       const job = await jobs.enqueueAndDrain(user, "sweep");
@@ -582,13 +582,13 @@ export function registerTaskRoutes(app: express.Express): void {
       // would otherwise report this to Sentry, so it needs its own call here.
       reportError("tasks-generate", e);
       console.error(e);
-      res.status(500).json({ error: M(req, "échec de la génération", "generate failed") });
+      res.status(500).json({ error: "generate failed" });
     }
   });
 
   app.post("/api/tasks", requireAuth, rateLimit(20, 60_000), async (req, res) => {
     const title = String(req.body?.title || "").trim();
-    if (!title) { res.status(400).json({ error: M(req, "titre requis", "title required") }); return; }
+    if (!title) { res.status(400).json({ error: "title required" }); return; }
     // Idempotency key — the client sends its own local stub id. Without this, a retried request (the client's
     // own retry-on-dropped-response logic in api.ts's `req()`, or a plain double-click before the button
     // disabled) created a SECOND task for the same submission — reported live as "manual tasks are sometimes
@@ -647,7 +647,7 @@ export function registerTaskRoutes(app: express.Express): void {
       res.json(tasksPayload(req, req.session.tasks));
     } catch (e: any) {
       console.error(e);
-      res.status(500).json({ error: M(req, "Impossible d'ajouter cette tâche — réessaie.", "Couldn't add that task — try again.") });
+      res.status(500).json({ error: "Couldn't add that task — try again." });
     }
   });
 
@@ -679,16 +679,16 @@ export function registerTaskRoutes(app: express.Express): void {
     // The key arrives SEALED (opened here, bound to this student and this entry); a plain key from an older stored board still works.
     const sentKey = unsealKey(req.body?.keyToken, String(req.session.user), String(req.params.entryId))?.expectedAnswer ?? (typeof req.body?.expectedAnswer === "string" ? req.body.expectedAnswer.slice(0, 200) : undefined);
     const line = entry?.text ?? sentText;
-    if (entry && entry.kind !== "gap") { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
-    if (!line.trim()) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
+    if (entry && entry.kind !== "gap") { res.status(404).json({ error: "Not found." }); return; }
+    if (!line.trim()) { res.status(404).json({ error: "Not found." }); return; }
     const answer = typeof req.body?.answer === "string" ? req.body.answer.slice(0, 300) : "";
-    if (!answer.trim()) { res.status(400).json({ error: M(req, "Écris une réponse d'abord.", "Write an answer first.") }); return; }
+    if (!answer.trim()) { res.status(400).json({ error: "Write an answer first." }); return; }
     const target = gapTarget(line);
     // A closed calculation's key is recomputed here, so a gap written with a guessed key still grades right.
     const recomputed = computedGapKey(line) ?? solvedGapKey(line);
     const storedKey = entry?.expectedAnswer ?? sentKey;
     const key = resolveGapKey(line, entry?.expectedAnswer, sentKey) ?? storedKey;
-    if (!key) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
+    if (!key) { res.status(404).json({ error: "Not found." }); return; }
     // Spec §19.4: the stored key and the key recomputed by code must AGREE. When they don't, the key — not the
     // student — is what's broken, so the item enters a system-error state instead of grading them wrong
     // (reported live: a correct equilibrium price P = 8 was "checked wrong" against a model-written key).
@@ -703,7 +703,7 @@ export function registerTaskRoutes(app: express.Express): void {
 
   // Grade one answer to a tutor exercise: the key is sealed in the token (never in the browser), so the server decides and returns only what the student has earned.
   app.post("/api/tasks/:id/problem/check", requireAuth, rateLimit(120, 60_000), ah(async (req, res) => {
-    const r = checkProblemAnswer(String(req.session.user), req.body, M(req, "1", "0") === "1");
+    const r = checkProblemAnswer(String(req.session.user), req.body, false);
     res.status(r.status).json(r.json);
   }));
 
@@ -719,10 +719,10 @@ export function registerTaskRoutes(app: express.Express): void {
 
   // Refine an UNREFINED manual task (one added while AI was paused/unavailable) now that AI is back.
   app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 60_000), async (req, res) => {
-    if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour affiner.", "AI is paused — resume it in Settings to refine.") }); return; }
-    if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
+    if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to refine." }); return; }
+    if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
     const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
-    if (!t) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
+    if (!t) { res.status(404).json({ error: "Not found." }); return; }
     try {
       const refined = await refineManualTask(t.title, req.session.profile, schoolRecordLine(req.session.tasks, req.session.profile, t.sourceSubject));
       if (refined) addUsage(req.session.profile ||= emptyProfile(), refined.tokens, "manual_refine");
@@ -730,15 +730,15 @@ export function registerTaskRoutes(app: express.Express): void {
       await commit(req);
       res.json(tasksPayload(req, req.session.tasks));
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible d'affiner cette tâche — réessaie.", "Couldn't refine that task — try again.") }); }
+      res.status(500).json({ error: "Couldn't refine that task — try again." }); }
   });
 
   // Regenerate steps for an existing task using the new architecture
   app.post("/api/tasks/:id/regenerate", requireAuth, rateLimit(5, 60_000), async (req, res) => {
-    if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour régénérer.", "AI is paused — resume it in Settings to regenerate.") }); return; }
-    if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
+    if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to regenerate." }); return; }
+    if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
     const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
-    if (!t) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
+    if (!t) { res.status(404).json({ error: "Not found." }); return; }
     try {
       const { writeStepsFromContext } = await import("../claude.ts");
       const profile = req.session.profile || emptyProfile();
@@ -778,7 +778,7 @@ export function registerTaskRoutes(app: express.Express): void {
     } catch (e: any) {
       console.error("[tasks] regenerate error:", e);
       console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de régénérer les étapes — réessaie.", "Couldn't regenerate steps — try again.") });
+      res.status(500).json({ error: "Couldn't regenerate steps — try again." });
     }
   });
 
@@ -802,7 +802,7 @@ export function registerTaskRoutes(app: express.Express): void {
     } catch (e: any) {
       console.error("[tasks] cleanup error:", e);
       console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de nettoyer les étapes — réessaie.", "Couldn't cleanup steps — try again.") });
+      res.status(500).json({ error: "Couldn't cleanup steps — try again." });
     }
   });
 
@@ -810,21 +810,21 @@ export function registerTaskRoutes(app: express.Express): void {
   // the browser). Every line traces to a record; nothing here asks the model what the student "mastered".
   app.post("/api/tasks/:id/tutor/close", requireAuth, rateLimit(30, 60_000), async (req, res) => {
     const t = await findTaskOrReload(req, String(req.params.id));
-    if (!t) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
+    if (!t) { res.status(404).json({ error: "Not found." }); return; }
     const profile = req.session.profile ||= emptyProfile();
     const board = Array.isArray(req.body?.board) ? (req.body.board as BoardEntry[]).slice(-200) : [];
     const objectives = Array.isArray(req.body?.objectives) ? (req.body.objectives as TaskObjective[]).slice(0, 12) : t.objectives;
-    const recap = buildRecap({ log: t.tutorState?.log || [], board, objectives, lang: profile.language === "en" ? "en" : "fr" });
+    const recap = buildRecap({ log: t.tutorState?.log || [], board, objectives, lang: "en" });
     const due = dueRetests(profile.assistance, new Date()).map((a) => a.skill).slice(0, 5);
     res.json({ recap, retestsDue: due });
   });
 
   app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), dailyTurnCap(), oneTurnAtATime, async (req, res) => {
-    if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour discuter.", "AI is paused — resume it in Settings to chat.") }); return; }
-    if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
+    if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to chat." }); return; }
+    if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
     
     const message = String(req.body?.message || "").trim().slice(0, 2000);
-    if (!message) { res.status(400).json({ error: M(req, "Écris quelque chose d'abord.", "Say something first.") }); return; }
+    if (!message) { res.status(400).json({ error: "Say something first." }); return; }
     let t = await findTaskOrReload(req, String(req.params.id));
     if (!t) {
       // Last resort for a LIVE tutor session whose task never reached this instance or the cloud row (the
@@ -837,7 +837,7 @@ export function registerTaskRoutes(app: express.Express): void {
         t = rebuilt;
       }
     }
-    if (!t) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
+    if (!t) { res.status(404).json({ error: "Not found." }); return; }
     
 
     
@@ -983,7 +983,7 @@ export function registerTaskRoutes(app: express.Express): void {
       // AND any artifacts the turn managed to create away, leaving the student with a broken "couldn't
       // reply" error and no chat bubble at all.  Instead: if we have a fallback reply, treat it as a
       // successful turn so the reply and artifacts are saved and the student always gets a response.
-      if (out.error && !out.reply?.trim()) { void recordMetric(req.session.user!, "chat_error", 1); res.status(500).json({ error: M(req, "Otto n'a pas pu répondre — réessaie dans un instant.", "Otto couldn't reply just now — try again in a moment.") }); return; }
+      if (out.error && !out.reply?.trim()) { void recordMetric(req.session.user!, "chat_error", 1); res.status(500).json({ error: "Otto couldn't reply just now — try again in a moment." }); return; }
       if (out.error) void recordMetric(req.session.user!, "chat_fallback_reply", 1);
       if (out.guardrailTripped) void recordMetric(req.session.user!, "chat_guardrail_tripped", 1, t.source || "n/a");
       // Score the chat-style arm: the only IMMEDIATELY observable outcome of one turn is whether the guardrail
@@ -1049,8 +1049,8 @@ export function registerTaskRoutes(app: express.Express): void {
       const kind = classifyProviderError(e);
       console.error(`[chat] failed: ${kind}${e?.status ? ` ${e.status}` : ""} ${String(e?.message || "").slice(0, 120)}`);
       reportError("tutor-chat", e instanceof Error ? e : new Error(String(e)), { kind });
-      if (kind !== "other") { res.setHeader("Retry-After", "30"); res.status(503).json({ error: M(req, "Otto est momentanément indisponible — réessaie dans une minute.", "Otto is briefly unavailable — please try again in a minute."), code: "tutor_unavailable", retryAfter: 30 }); return; }
-      res.status(500).json({ error: M(req, "échec de la discussion", "chat failed") });
+      if (kind !== "other") { res.setHeader("Retry-After", "30"); res.status(503).json({ error: "Otto is briefly unavailable — please try again in a minute.", code: "tutor_unavailable", retryAfter: 30 }); return; }
+      res.status(500).json({ error: "chat failed" });
     }
   });
 
@@ -1059,10 +1059,10 @@ export function registerTaskRoutes(app: express.Express): void {
   // artifacts, no persisted history. Rate-limited higher than the main chat since a student can burn through
   // several hints per card while drilling a deck.
   app.post("/api/tasks/:id/study-help", requireAuth, rateLimit(40, 60_000), ah(async (req, res) => {
-    if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour discuter.", "AI is paused — resume it in Settings to chat.") }); return; }
-    if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
+    if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to chat." }); return; }
+    if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
     const message = String(req.body?.message || "").trim().slice(0, 1000);
-    if (!message) { res.status(400).json({ error: M(req, "Écris quelque chose d'abord.", "Say something first.") }); return; }
+    if (!message) { res.status(400).json({ error: "Say something first." }); return; }
     const rawHistory = Array.isArray(req.body?.history) ? req.body.history : [];
     const history = rawHistory
       .filter((h: any) => h && (h.role === "user" || h.role === "assistant") && typeof h.text === "string")
@@ -1073,28 +1073,28 @@ export function registerTaskRoutes(app: express.Express): void {
     if (kind === "flashcard") {
       const front = String(req.body?.card?.front || "").slice(0, 500);
       const back = String(req.body?.card?.back || "").slice(0, 500);
-      if (!front || !back) { res.status(400).json({ error: M(req, "Carte manquante.", "Missing card.") }); return; }
+      if (!front || !back) { res.status(400).json({ error: "Missing card." }); return; }
       card = { kind: "flashcard", front, back };
     } else if (kind === "quiz") {
       const question = String(req.body?.card?.question || "").slice(0, 500);
       const options = Array.isArray(req.body?.card?.options) ? req.body.card.options.map((o: any) => String(o).slice(0, 300)).slice(0, 10) : [];
       const correct = Number(req.body?.card?.correct);
-      if (!question || !options.length || !Number.isInteger(correct) || correct < 0 || correct >= options.length) { res.status(400).json({ error: M(req, "Question manquante.", "Missing question.") }); return; }
+      if (!question || !options.length || !Number.isInteger(correct) || correct < 0 || correct >= options.length) { res.status(400).json({ error: "Missing question." }); return; }
       card = { kind: "quiz", question, options, correct };
-    } else { res.status(400).json({ error: M(req, "Carte manquante.", "Missing card.") }); return; }
+    } else { res.status(400).json({ error: "Missing card." }); return; }
     const out = await studyHelp(card, history, message, req.session.profile);
     addUsage(req.session.profile ||= emptyProfile(), out.tokens, "chat");
     await commit(req);
     // Same fix as the main task chat route above — a real failure must surface as an error, not as the
     // generic "I'm here" line rendered like a normal hint.
-    if (out.error) { void recordMetric(req.session.user!, "chat_error", 1); res.status(500).json({ error: M(req, "Otto n'a pas pu répondre — réessaie dans un instant.", "Otto couldn't reply just now — try again in a moment.") }); return; }
+    if (out.error) { void recordMetric(req.session.user!, "chat_error", 1); res.status(500).json({ error: "Otto couldn't reply just now — try again in a moment." }); return; }
     res.json({ reply: out.reply });
   }));
 
   // The client requests runs; the SERVER executes them (via the queue) — same queue the cron drains offline.
   // `manual: true` marks a deliberate user click, which is allowed to retry a terminally-failed task.
   app.post("/api/tasks/:id/run", requireAuth, rateLimit(40, 60_000), async (req, res) => {
-    if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour lancer des tâches.", "AI is paused — resume it in Settings to run tasks.") }); return; }
+    if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to run tasks." }); return; }
     // Hard reset ("Réexécuter depuis le début"): the actual wipe happens INSIDE processExecuteTask (jobs.ts),
     // on the same load→mutate→commit cycle as the run itself — doing it here first and committing separately
     // got silently undone by commit()'s cross-device merge (see jobs.ts's comment on this). Just pass the
@@ -1106,8 +1106,8 @@ export function registerTaskRoutes(app: express.Express): void {
   // updates the draft (and re-offers it as a sendable) before they send.
   app.post("/api/tasks/:id/revise", requireAuth, rateLimit(20, 60_000), async (req, res) => {
     const note = String(req.body?.note || "").trim();
-    if (!note) { res.status(400).json({ error: M(req, "note requise", "note required") }); return; }
-    if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour réviser des tâches.", "AI is paused — resume it in Settings to revise tasks.") }); return; }
+    if (!note) { res.status(400).json({ error: "note required" }); return; }
+    if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to revise tasks." }); return; }
     if (req.session.user) void recordMetric(req.session.user, "task_revision_requested", 1);
     await runViaJob(req, res, "revise", { note });
   });
@@ -1118,7 +1118,7 @@ export function registerTaskRoutes(app: express.Express): void {
     const id = String(req.params.id);
     try {
       const task = await findTaskOrReload(req, id);
-      if (!task) { res.status(404).json({ error: M(req, "Tâche introuvable — elle a peut-être déjà été traitée ailleurs.", "Task not found — it may have already been handled elsewhere.") }); return; }
+      if (!task) { res.status(404).json({ error: "Task not found — it may have already been handled elsewhere." }); return; }
       stampFirstAction(task, req.session.user, req.session.profile);
       task.status = "done";
       task.updatedAt = new Date().toISOString();
@@ -1144,26 +1144,26 @@ export function registerTaskRoutes(app: express.Express): void {
       if (task.shownAt) void recordMetric(req.session.user!, "task_time_to_completion_seconds", (Date.now() - Date.parse(task.shownAt)) / 1000, task.source || "n/a");
       res.json(tasksPayload(req, req.session.tasks));
     } catch (e: any) { reportError("tasks-confirm", e, { taskId: id }); console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de confirmer cette tâche — réessaie.", "Couldn't confirm that task — try again.") }); }
+      res.status(500).json({ error: "Couldn't confirm that task — try again." }); }
   });
 
   app.post("/api/tasks/:id/reject", requireAuth, rateLimit(60, 60_000), async (req, res) => {
     const id = String(req.params.id);
     try {
       const task = await findTaskOrReload(req, id);
-      if (!task) { res.status(404).json({ error: M(req, "Tâche introuvable — elle a peut-être déjà été traitée ailleurs.", "Task not found — it may have already been handled elsewhere.") }); return; }
+      if (!task) { res.status(404).json({ error: "Task not found — it may have already been handled elsewhere." }); return; }
       tasks.reject(req.session.tasks || [], id);
       await commit(req);
       res.json(tasksPayload(req, req.session.tasks));
     } catch (e: any) { reportError("tasks-reject", e, { taskId: id }); console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de rejeter cette tâche — réessaie.", "Couldn't reject that task — try again.") }); }
+      res.status(500).json({ error: "Couldn't reject that task — try again." }); }
   });
 
   app.post("/api/tasks/:id/dismiss", requireAuth, rateLimit(60, 60_000), async (req, res) => {
     const id = String(req.params.id);
     try {
       const task = await findTaskOrReload(req, id);
-      if (!task) { res.status(404).json({ error: M(req, "Tâche introuvable — elle a peut-être déjà été traitée ailleurs.", "Task not found — it may have already been handled elsewhere.") }); return; }
+      if (!task) { res.status(404).json({ error: "Task not found — it may have already been handled elsewhere." }); return; }
       task.status = "dismissed";
       task.updatedAt = new Date().toISOString();
       // Same reasoning as /confirm just above: rare, permanent, high-value-per-write — worth guaranteeing
@@ -1173,7 +1173,7 @@ export function registerTaskRoutes(app: express.Express): void {
       void recordMetric(req.session.user!, "task_dismissed", 1, task.source || "n/a");
       res.json(tasksPayload(req, req.session.tasks));
     } catch (e: any) { reportError("tasks-dismiss", e, { taskId: id }); console.error(e);
-      res.status(500).json({ error: M(req, "Impossible d'ignorer cette tâche — réessaie.", "Couldn't dismiss that task — try again.") }); }
+      res.status(500).json({ error: "Couldn't dismiss that task — try again." }); }
   });
 
   // Auto-do ONE automatable step (focused agent run over the connected apps) — through the job queue, same
@@ -1183,12 +1183,12 @@ export function registerTaskRoutes(app: express.Express): void {
   // captured as the job's input (see tasks.runStep's `answer` handling) the moment it's queued. The open
   // tab's kick loop (client/App.tsx) drains queued/executing work within seconds; cron covers it offline.
   app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 60_000), async (req, res) => {
-    if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour lancer des étapes.", "AI is paused — resume it in Settings to run steps.") }); return; }
+    if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to run steps." }); return; }
     const id = String(req.params.id);
     const index = Number(req.params.index);
     const answer = typeof req.body?.answer === "string" ? req.body.answer.slice(0, 500) : undefined;
     const task = (req.session.tasks || []).find((t) => t.id === id);
-    if (!task || !task.steps?.[index]) { res.status(404).json({ error: M(req, "Étape introuvable — elle a peut-être déjà changé ailleurs.", "Step not found — it may have already changed elsewhere.") }); return; }
+    if (!task || !task.steps?.[index]) { res.status(404).json({ error: "Step not found — it may have already changed elsewhere." }); return; }
     stampFirstAction(task, req.session.user, req.session.profile);
     // Routed through runViaJob (same helper /run and /revise already use) instead of a bare enqueueJob —
     // this used to only ENQUEUE and return immediately, relying entirely on the client's 4s "kick loop" (or,
@@ -1207,12 +1207,12 @@ export function registerTaskRoutes(app: express.Express): void {
     try {
       const id = String(req.params.id);
       const index = Number(req.params.index);
-      if (!Number.isInteger(index) || index < 0) { res.status(400).json({ error: M(req, "Index d'étape invalide.", "Invalid step index.") }); return; }
+      if (!Number.isInteger(index) || index < 0) { res.status(400).json({ error: "Invalid step index." }); return; }
       const done = req.body?.done !== false;
       const result = typeof req.body?.result === "string" ? req.body.result : undefined;
       const task = await findTaskOrReload(req, id);
       const step = task?.steps?.[index];
-      if (!task || !step) { res.status(404).json({ error: M(req, "Étape introuvable — elle a peut-être déjà changé ailleurs.", "Step not found — it may have already changed elsewhere.") }); return; }
+      if (!task || !step) { res.status(404).json({ error: "Step not found — it may have already changed elsewhere." }); return; }
       if (done) stampFirstAction(task, req.session.user, req.session.profile);
       step.done = done;
       step.doneAt = done ? new Date().toISOString() : undefined;
@@ -1237,7 +1237,7 @@ export function registerTaskRoutes(app: express.Express): void {
       await commit(req);
       res.json(tasksPayload(req, req.session.tasks));
     } catch (e: any) { reportError("tasks-step-done", e); console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de mettre à jour l'étape — réessaie.", "Couldn't update the step — try again.") }); }
+      res.status(500).json({ error: "Couldn't update the step — try again." }); }
   });
 
   // Record one flashcard review — advances/resets its Leitner box and schedules the next `dueAt` (see
@@ -1251,7 +1251,7 @@ export function registerTaskRoutes(app: express.Express): void {
     const task = await findTaskOrReload(req, id);
     const deck = task?.flashcards?.find((d) => d.id === deckId);
     const card = deck?.cards?.[cardIndex];
-    if (!task || !card) { res.status(404).json({ error: M(req, "Carte introuvable — elle a peut-être déjà changé ailleurs.", "Card not found — it may have already changed elsewhere.") }); return; }
+    if (!task || !card) { res.status(404).json({ error: "Card not found — it may have already changed elsewhere." }); return; }
     const prev = card.review;
     const { box, dueAt } = nextLeitnerReview(prev?.box, correct);
     card.review = { seen: (prev?.seen || 0) + 1, correct: (prev?.correct || 0) + (correct ? 1 : 0), lastAt: new Date().toISOString(), dueAt, box };
@@ -1276,7 +1276,7 @@ export function registerTaskRoutes(app: express.Express): void {
   app.post("/api/tasks/:id/flashcard/:deckId/:cardIndex/not-needed", requireAuth, rateLimit(120, 60_000), ah(async (req, res) => {
     const task = await findTaskOrReload(req, String(req.params.id));
     const card = task?.flashcards?.find((d) => d.id === String(req.params.deckId))?.cards?.[Number(req.params.cardIndex)];
-    if (!task || !card) { res.status(404).json({ error: M(req, "Carte introuvable — elle a peut-être déjà changé ailleurs.", "Card not found — it may have already changed elsewhere.") }); return; }
+    if (!task || !card) { res.status(404).json({ error: "Card not found — it may have already changed elsewhere." }); return; }
     const notNeeded = req.body?.notNeeded !== false;
     if (notNeeded) card.notNeeded = true; else delete card.notNeeded;
     task.updatedAt = new Date().toISOString();
@@ -1291,10 +1291,10 @@ export function registerTaskRoutes(app: express.Express): void {
     const total = Number(req.body?.total);
     const score = Number(req.body?.score);
     const wrong = Array.isArray(req.body?.wrong) ? req.body.wrong.filter((n: any) => Number.isInteger(n)).slice(0, 50) : undefined;
-    if (!Number.isInteger(total) || total <= 0 || !Number.isInteger(score) || score < 0 || score > total) { res.status(400).json({ error: M(req, "Score invalide.", "Invalid score.") }); return; }
+    if (!Number.isInteger(total) || total <= 0 || !Number.isInteger(score) || score < 0 || score > total) { res.status(400).json({ error: "Invalid score." }); return; }
     const task = await findTaskOrReload(req, id);
     const quiz = task?.quizzes?.find((q) => q.id === quizId);
-    if (!task || !quiz) { res.status(404).json({ error: M(req, "Quiz introuvable — il a peut-être déjà changé ailleurs.", "Quiz not found — it may have already changed elsewhere.") }); return; }
+    if (!task || !quiz) { res.status(404).json({ error: "Quiz not found — it may have already changed elsewhere." }); return; }
     quiz.attempts = [...(quiz.attempts || []), { at: new Date().toISOString(), score, total, ...(wrong?.length ? { wrong } : {}) }].slice(-QUIZ_ATTEMPT_CAP);
     task.updatedAt = new Date().toISOString();
     // Every other activity site (flashcard review, chat, journal save) feeds bumpActivityHour — a quiz attempt
@@ -1315,9 +1315,9 @@ export function registerTaskRoutes(app: express.Express): void {
     const id = String(req.params.id);
     const title = String(req.body?.title || "").trim().slice(0, 90) || "Note";
     const body = String(req.body?.body || "").trim().slice(0, 4000);
-    if (!body) { res.status(400).json({ error: M(req, "Écris quelque chose d'abord.", "Write something first.") }); return; }
+    if (!body) { res.status(400).json({ error: "Write something first." }); return; }
     const task = await findTaskOrReload(req, id);
-    if (!task) { res.status(404).json({ error: M(req, "Tâche introuvable — elle a peut-être déjà été traitée ailleurs.", "Task not found — it may have already been handled elsewhere.") }); return; }
+    if (!task) { res.status(404).json({ error: "Task not found — it may have already been handled elsewhere." }); return; }
     const note = { id: randomUUID(), title, body, createdAt: new Date().toISOString() };
     task.notes = [...(task.notes || []), note].slice(-tasks.ARTIFACT_CAP);
     task.updatedAt = new Date().toISOString();
@@ -1334,10 +1334,10 @@ export function registerTaskRoutes(app: express.Express): void {
   app.post("/api/tasks/:id/practice-problem/attempt", requireAuth, rateLimit(200, 60_000), ah(async (req, res) => {
     const id = String(req.params.id);
     const answer = String(req.body?.answer || "").trim().slice(0, 200);
-    if (!answer) { res.status(400).json({ error: M(req, "Tape une réponse d'abord.", "Type an answer first.") }); return; }
+    if (!answer) { res.status(400).json({ error: "Type an answer first." }); return; }
     const task = await findTaskOrReload(req, id);
     const problem = task?.practiceProblem;
-    if (!task || !problem) { res.status(404).json({ error: M(req, "Problème d'entraînement introuvable — il a peut-être déjà changé ailleurs.", "Practice problem not found — it may have already changed elsewhere.") }); return; }
+    if (!task || !problem) { res.status(404).json({ error: "Practice problem not found — it may have already changed elsewhere." }); return; }
     // The stored key is only used to grade once the independently computed value agrees with it (spec §19): a
     // key that disagrees routes the attempt to a system-error state, which is never recorded as a mistake.
     const grade = gradeExerciseAnswer({ question: problem.problem, answer: problem.answer, check: problem.check, value: problem.value }, answer);
@@ -1357,13 +1357,13 @@ export function registerTaskRoutes(app: express.Express): void {
   // Break ONE step down into its own small checklist ("Détailler cette étape") — on demand, not automatic.
   // Costs one AI call, so it's gated the same as any other interactive AI action (paused/budget).
   app.post("/api/tasks/:id/step/:index/expand", requireAuth, rateLimit(20, 60_000), async (req, res) => {
-    if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour utiliser ceci.", "AI is paused — resume it in Settings to use this.") }); return; }
-    if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas encore configurée sur ce serveur.", "AI isn't set up on this server yet.") }); return; }
+    if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to use this." }); return; }
+    if (!aiReady()) { res.status(503).json({ error: "AI isn't set up on this server yet." }); return; }
     const id = String(req.params.id);
     const index = Number(req.params.index);
     const task = (req.session.tasks || []).find((t) => t.id === id);
     const step = task?.steps?.[index];
-    if (!task || !step) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
+    if (!task || !step) { res.status(404).json({ error: "Not found." }); return; }
     try {
       const substeps = await expandStep({ title: task.title, why: task.why, goal: task.goal, context: task.context, sourceDetail: task.sourceDetail, sourceSubject: task.sourceSubject, steps: task.steps }, { text: step.text }, req.session.profile, task.links);
       if (substeps.length) {
@@ -1380,7 +1380,7 @@ export function registerTaskRoutes(app: express.Express): void {
       }
       res.json(tasksPayload(req, req.session.tasks));
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de découper cette étape — réessaie.", "Couldn't break this step down — try again.") }); }
+      res.status(500).json({ error: "Couldn't break this step down — try again." }); }
   });
 
   // Tick/untick one sub-step — independent of the parent step's own "done" (see the Profile.grades-style
@@ -1395,7 +1395,7 @@ export function registerTaskRoutes(app: express.Express): void {
     // Was a silent no-op on a bad id/index — still 200'd with the unchanged list, indistinguishable from
     // success. Every sibling route (confirm/dismiss/step-done) already 404s on a missing target; this one
     // was missed.
-    if (!task || !sub) { res.status(404).json({ error: M(req, "Sous-étape introuvable — elle a peut-être déjà changé ailleurs.", "Sub-step not found — it may have already changed elsewhere.") }); return; }
+    if (!task || !sub) { res.status(404).json({ error: "Sub-step not found — it may have already changed elsewhere." }); return; }
     try {      sub.done = done;
         task.updatedAt = new Date().toISOString();
         // awaitCloud — same substeps-vanish reasoning as the expand route above: a sub-step tick lost to a
@@ -1403,23 +1403,23 @@ export function registerTaskRoutes(app: express.Express): void {
         await commit(req);
         res.json(tasksPayload(req, req.session.tasks));
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible d'enregistrer cette sous-étape — réessaie.", "Couldn't save this sub-step — try again.") }); }
+      res.status(500).json({ error: "Couldn't save this sub-step — try again." }); }
   });
 
   // Let Otto just answer an automatable sub-action (see expandStep's `automatable` classification) instead
   // of the student having to look it up themselves — a read-only web search + synthesis, no permissioned
   // tools needed, so it runs inline here rather than through the job queue.
   app.post("/api/tasks/:id/step/:index/substep/:subIndex/run", requireAuth, rateLimit(20, 60_000), async (req, res) => {
-    if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour utiliser ceci.", "AI is paused — resume it in Settings to use this.") }); return; }
-    if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas encore configurée sur ce serveur.", "AI isn't set up on this server yet.") }); return; }
+    if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to use this." }); return; }
+    if (!aiReady()) { res.status(503).json({ error: "AI isn't set up on this server yet." }); return; }
     const id = String(req.params.id);
     const index = Number(req.params.index);
     const subIndex = Number(req.params.subIndex);
     const task = (req.session.tasks || []).find((t) => t.id === id);
     const step = task?.steps?.[index];
     const sub = step?.substeps?.[subIndex];
-    if (!task || !step || !sub) { res.status(404).json({ error: M(req, "Sous-étape introuvable — elle a peut-être déjà changé ailleurs.", "Sub-step not found — it may have already changed elsewhere.") }); return; }
-    if (!sub.automatable) { res.status(400).json({ error: M(req, "Ce n'est pas quelque chose qu'Otto peut faire à ta place.", "This one isn't something Otto can do for you.") }); return; }
+    if (!task || !step || !sub) { res.status(404).json({ error: "Sub-step not found — it may have already changed elsewhere." }); return; }
+    if (!sub.automatable) { res.status(400).json({ error: "This one isn't something Otto can do for you." }); return; }
     try {
       sub.result = await runSubstep({ title: task.title, why: task.why }, { text: step.text }, { text: sub.text }, req.session.profile);
       sub.done = true;
@@ -1427,7 +1427,7 @@ export function registerTaskRoutes(app: express.Express): void {
       await commit(req);
       res.json(tasksPayload(req, req.session.tasks));
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Otto n'a pas réussi à répondre.", "Otto couldn't come up with a reply.") }); }
+      res.status(500).json({ error: "Otto couldn't come up with a reply." }); }
   });
 
   // "Move to a lighter day" from the workload widget — a manual, reversible nudge (never AI-driven): the
@@ -1437,18 +1437,18 @@ export function registerTaskRoutes(app: express.Express): void {
   app.post("/api/tasks/:id/reschedule", requireAuth, rateLimit(60, 60_000), async (req, res) => {
     const id = String(req.params.id);
     const when = String(req.body?.when || "").trim();
-    if (!when || Number.isNaN(Date.parse(when))) { res.status(400).json({ error: M(req, "une date valide est requise", "a valid date is required") }); return; }
+    if (!when || Number.isNaN(Date.parse(when))) { res.status(400).json({ error: "a valid date is required" }); return; }
     const task = (req.session.tasks || []).find((t) => t.id === id);
-    if (!task) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
+    if (!task) { res.status(404).json({ error: "Not found." }); return; }
     // The workload widget only ever offers this for a LIVE task (computeWorkload skips handled ones entirely)
     // — but re-check server-side rather than trusting the client: a done/dismissed task has nothing left to
     // move, and silently re-dating one would make it look active again.
-    if (isHandled(task.status)) { res.status(409).json({ error: M(req, "Cette tâche est déjà terminée ou ignorée — rien à déplacer.", "This task is already done or dismissed — nothing to move.") }); return; }
+    if (isHandled(task.status)) { res.status(409).json({ error: "This task is already done or dismissed — nothing to move." }); return; }
     // This route only exists for the workload widget's "move to a lighter day" nudge — which only ever
     // offers it for a task with NO stated deadline (see movable in server/workload.ts). Re-check here too:
     // a task that already states a real deadline must never have it silently overwritten by a "which day is
     // lighter" heuristic, whether the client is right or not.
-    if (task.when?.trim()) { res.status(409).json({ error: M(req, "Cette tâche a déjà une échéance — elle ne peut pas être déplacée.", "This task already has a deadline — it can't be moved.") }); return; }
+    if (task.when?.trim()) { res.status(409).json({ error: "This task already has a deadline — it can't be moved." }); return; }
     try {
       task.when = when;
       task.updatedAt = new Date().toISOString();
@@ -1456,7 +1456,7 @@ export function registerTaskRoutes(app: express.Express): void {
       await commit(req);
       res.json(tasksPayload(req, req.session.tasks));
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de déplacer cette tâche — réessaie.", "Couldn't move that task — try again.") }); }
+      res.status(500).json({ error: "Couldn't move that task — try again." }); }
   });
 
   // Change (or clear) any live task's deadline — manual tasks and tasks Otto found alike. A student knows their own
@@ -1465,11 +1465,11 @@ export function registerTaskRoutes(app: express.Express): void {
   app.post("/api/tasks/:id/deadline", requireAuth, rateLimit(60, 60_000), async (req, res) => {
     const id = String(req.params.id);
     const raw = String(req.body?.when ?? "").trim();
-    if (raw && !/^\d{4}-\d{2}-\d{2}(?:T[\d:.]+Z?)?$/.test(raw)) { res.status(400).json({ error: M(req, "une date valide est requise", "a valid date is required") }); return; }
-    if (raw && Number.isNaN(Date.parse(raw))) { res.status(400).json({ error: M(req, "une date valide est requise", "a valid date is required") }); return; }
+    if (raw && !/^\d{4}-\d{2}-\d{2}(?:T[\d:.]+Z?)?$/.test(raw)) { res.status(400).json({ error: "a valid date is required" }); return; }
+    if (raw && Number.isNaN(Date.parse(raw))) { res.status(400).json({ error: "a valid date is required" }); return; }
     const task = (req.session.tasks || []).find((t) => t.id === id);
-    if (!task) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
-    if (isHandled(task.status)) { res.status(409).json({ error: M(req, "Cette tâche est déjà terminée ou ignorée.", "This task is already done or dismissed.") }); return; }
+    if (!task) { res.status(404).json({ error: "Not found." }); return; }
+    if (isHandled(task.status)) { res.status(409).json({ error: "This task is already done or dismissed." }); return; }
     try {
       if (raw) {
         task.when = raw; task.whenApprox = false;
@@ -1483,7 +1483,7 @@ export function registerTaskRoutes(app: express.Express): void {
       await commit(req);
       res.json(tasksPayload(req, req.session.tasks));
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de changer l'échéance — réessaie.", "Couldn't change the deadline — try again.") }); }
+      res.status(500).json({ error: "Couldn't change the deadline — try again." }); }
   });
 
   // One-click send: fire a reviewed Gmail draft / composed Slack message — USER-confirmed, the ONLY send path.
@@ -1493,7 +1493,7 @@ export function registerTaskRoutes(app: express.Express): void {
   app.post("/api/tasks/:id/send/:index", requireAuth, rateLimit(10, 60_000), async (req, res) => {
     const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
     const s = t?.sendables?.[Number(req.params.index)];
-    if (!t || !s) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
+    if (!t || !s) { res.status(404).json({ error: "Not found." }); return; }
     try {
       if (!s.sent) {
         const r = await integrations.sendSendable(req.session.user!, s, req.session.profile?.primaryAccounts);
@@ -1505,7 +1505,7 @@ export function registerTaskRoutes(app: express.Express): void {
       }
       res.json(t);
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible d'envoyer — réessaie.", "Couldn't send — try again.") }); }
+      res.status(500).json({ error: "Couldn't send — try again." }); }
   });
 
   // Manual edit of an unsent draft — the user typing directly into the draft box, not an AI rewrite (that's
@@ -1514,8 +1514,8 @@ export function registerTaskRoutes(app: express.Express): void {
   app.post("/api/tasks/:id/sendable/:index/edit", requireAuth, rateLimit(30, 60_000), async (req, res) => {
     const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
     const s = t?.sendables?.[Number(req.params.index)];
-    if (!t || !s) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
-    if (s.sent) { res.status(400).json({ error: M(req, "déjà envoyé", "already sent") }); return; }
+    if (!t || !s) { res.status(404).json({ error: "Not found." }); return; }
+    if (s.sent) { res.status(400).json({ error: "already sent" }); return; }
     const subject = typeof req.body?.subject === "string" ? req.body.subject.slice(0, 300) : undefined;
     const body = typeof req.body?.body === "string" ? req.body.body.slice(0, 20_000) : undefined;
     try {
@@ -1524,18 +1524,18 @@ export function registerTaskRoutes(app: express.Express): void {
         if (!r.ok) { res.status(500).json({ error: r.error || "couldn't save your edit to the draft" }); return; }
         if (subject !== undefined) s.subject = subject;
         if (body !== undefined) s.body = body;
-      } else { res.status(400).json({ error: M(req, "ce brouillon ne peut pas être modifié ici", "this draft can't be edited here") }); return; }
+      } else { res.status(400).json({ error: "this draft can't be edited here" }); return; }
       t.updatedAt = new Date().toISOString();
       await commit(req);
       res.json(t);
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible d'enregistrer ta modification — réessaie.", "Couldn't save your edit — try again.") }); }
+      res.status(500).json({ error: "Couldn't save your edit — try again." }); }
   });
 
   // ── Jobs + timeline (the durable execution layer's public surface) ────────────
   app.get("/api/jobs/:id", requireAuth, ah(async (req, res) => {
     const job = await getJob(String(req.params.id), req.session.user!);
-    if (!job) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
+    if (!job) { res.status(404).json({ error: "Not found." }); return; }
     res.json({ id: job.id, type: job.type, status: job.status, taskId: job.task_id, attempts: job.attempt_count, error: job.last_error, createdAt: job.created_at, finishedAt: job.finished_at });
   }));
 
@@ -1632,7 +1632,7 @@ export function registerTaskRoutes(app: express.Express): void {
       if (req.headers["if-none-match"] === etag) { res.status(304).end(); return; }
       res.type("json").send(bodyJson);
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "échec du déclenchement", "kick failed") }); }
+      res.status(500).json({ error: "kick failed" }); }
   });
 
   // Background drain — called by Vercel Cron (Authorization: Bearer $CRON_SECRET) once a day (vercel.json;
@@ -1645,8 +1645,8 @@ export function registerTaskRoutes(app: express.Express): void {
   app.get("/api/cron/drain", async (req, res) => {
     const secret = process.env.CRON_SECRET;
     const auth = String(req.headers.authorization || "");
-    if (secret && auth !== `Bearer ${secret}`) { res.status(401).json({ error: M(req, "non autorisé", "unauthorized") }); return; }
-    if (!secret && PROD) { res.status(503).json({ error: M(req, "CRON_SECRET non configuré", "CRON_SECRET not configured") }); return; }
+    if (secret && auth !== `Bearer ${secret}`) { res.status(401).json({ error: "unauthorized" }); return; }
+    if (!secret && PROD) { res.status(503).json({ error: "CRON_SECRET not configured" }); return; }
     try {
       const out = await jobs.cronTick();
       console.log(`${new Date().toISOString()} [cron] drain: ${JSON.stringify(out)}`);
@@ -1658,7 +1658,7 @@ export function registerTaskRoutes(app: express.Express): void {
       // was previously invisible outside Vercel's own logs.
       reportError("cron-drain", e);
       console.error(e);
-      res.status(500).json({ error: M(req, "échec du traitement", "drain failed") });
+      res.status(500).json({ error: "drain failed" });
     }
   });
 
@@ -1682,6 +1682,6 @@ export function registerTaskRoutes(app: express.Express): void {
         cronConfigured: !!process.env.CRON_SECRET,
       });
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "échec de la vérification du statut", "status failed") }); }
+      res.status(500).json({ error: "status failed" }); }
   });
 }

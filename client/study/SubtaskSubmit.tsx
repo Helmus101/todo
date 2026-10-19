@@ -28,35 +28,35 @@ export function SubtaskSubmit({ stepText, stepIndex, totalSteps, onSubmit, onCan
   return (
     <SmBackdrop closing={closing} className="sm-modal-backdrop">
       <SmSurface variant="modal" closing={closing} className="sm-modal">
-        <p className="sm-modal-step-label">{L(`Étape ${stepIndex + 1} sur ${totalSteps}`, `Step ${stepIndex + 1} of ${totalSteps}`)}</p>
+        <p className="sm-modal-step-label">{`Step ${stepIndex + 1} of ${totalSteps}`}</p>
         <h2>{stepText}</h2>
-        <p className="sm-modal-sub">{L("Comment ça s'est passé ?", "How did it go?")}</p>
+        <p className="sm-modal-sub">{"How did it go?"}</p>
 
         <div className="sm-submit-options">
           <button
             className={`sm-submit-opt ${status === "completed" ? "selected" : ""}`}
             onClick={() => setStatus("completed")}
           >
-            <span>✓</span> {L("Terminée", "Completed")}
+            <span>✓</span> {"Completed"}
           </button>
           <button
             className={`sm-submit-opt ${status === "partial" ? "selected" : ""}`}
             onClick={() => setStatus("partial")}
           >
-            <span>◑</span> {L("En partie", "Partially completed")}
+            <span>◑</span> {"Partially completed"}
           </button>
           <button
             className={`sm-submit-opt ${status === "stuck" ? "selected" : ""}`}
             onClick={() => setStatus("stuck")}
           >
-            <span>?</span> {L("Je bloque", "I'm stuck")}
+            <span>?</span> {"I'm stuck"}
           </button>
         </div>
 
         {status && (
           <textarea
             className="sm-submit-note"
-            placeholder={status === "stuck" ? L("Sur quoi est-ce que tu bloques ?", "What are you stuck on?") : L("Facultatif : qu'as-tu terminé ?", "Optional: what did you complete?")} aria-label={status === "stuck" ? L("Sur quoi est-ce que tu bloques ?", "What are you stuck on?") : L("Facultatif : qu'as-tu terminé ?", "Optional: what did you complete?")}
+            placeholder={status === "stuck" ? "What are you stuck on?" : "Optional: what did you complete?"} aria-label={status === "stuck" ? "What are you stuck on?" : "Optional: what did you complete?"}
             value={note}
             onChange={e => setNote(e.target.value)}
             rows={3}
@@ -64,13 +64,13 @@ export function SubtaskSubmit({ stepText, stepIndex, totalSteps, onSubmit, onCan
         )}
 
         <div className="sm-modal-actions">
-          <button className="sm-btn sm-btn-ghost" onClick={() => doClose(onCancel)}>{L("Annuler", "Cancel")}</button>
+          <button className="sm-btn sm-btn-ghost" onClick={() => doClose(onCancel)}>{"Cancel"}</button>
           <button
             className="sm-btn sm-btn-primary"
             disabled={!status}
             onClick={() => status && doClose(() => onSubmit(status, note))}
           >
-            {L("Valider", "Submit")}
+            {"Submit"}
           </button>
         </div>
       </SmSurface>

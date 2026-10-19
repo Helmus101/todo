@@ -91,7 +91,7 @@ export function AskOttoPanel({
   const userScrolledRef = useRef(false);
   const thinkingWord = useThinkingWord(sending);
   const en = useContext(LangContext) === "en";
-  const speechLang = en ? "en-US" : "fr-FR";
+  const speechLang = "en-US";
   const synth = useSpeechSynthesis(speechLang);
   const [voiceModeOn, toggleVoiceMode, enableVoiceMode] = useVoiceModePref();
   // NO auto-enable, ever: voice mode (mic + auto-speak) starts OFF on every load and only an explicit tap
@@ -150,7 +150,7 @@ export function AskOttoPanel({
     try {
       if (file.type === "application/pdf") {
         const text = await extractPdfText(file);
-        if (!text) { notify(L("Impossible de lire ce PDF (page scannée sans texte ?).", "Couldn't read that PDF (a scanned page with no text layer?)."), "error"); return; }
+        if (!text) { notify("Couldn't read that PDF (a scanned page with no text layer?).", "error"); return; }
         appendAttachment(file.name, text);
       } else if (file.type.startsWith("image/")) {
         const dataUrl: string = await new Promise((resolve, reject) => {
@@ -164,12 +164,12 @@ export function AskOttoPanel({
       } else if (file.type.startsWith("text/") || /\.(txt|md)$/i.test(file.name)) {
         appendAttachment(file.name, await file.text());
       } else {
-        notify(L("Type de fichier non pris en charge — PDF, image ou texte uniquement.", "Unsupported file type — PDF, image, or plain text only."), "error");
+        notify("Unsupported file type — PDF, image, or plain text only.", "error");
         return;
       }
       inputRef.current?.focus();
     } catch (e: any) {
-      notify(e?.message || L("Impossible de lire ce fichier — réessaie.", "Couldn't read that file — try again."), "error");
+      notify(e?.message || "Couldn't read that file — try again.", "error");
     } finally {
       setAttaching(false);
     }
@@ -302,12 +302,12 @@ export function AskOttoPanel({
       {error ? (
         <div className="sm-ai-error">
           {error}
-          <button type="button" className="sm-btn sm-btn-ghost sm-btn-sm" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending}>{L("Réessayer", "Retry")}</button>
+          <button type="button" className="sm-btn sm-btn-ghost sm-btn-sm" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending}>{"Retry"}</button>
         </div>
       ) : null}
       {/* Real mic failure surfacing (permission denied, no mic, network) — previously silent. */}
-      {micError ? <div className="sm-ai-error" role="alert">{L(micError[0], micError[1])}</div> : null}
-      {heardNote ? <div className="sm-ai-hint" role="status">{L("J'ai entendu « ", "I heard “")}{heardNote.slice(0, 80)}{L(" » — ignoré (écho d'Otto ?). Redis-le après sa phrase.", "” — ignored as Otto's own voice. Say it again after he finishes.")}</div> : null}
+      {micError ? <div className="sm-ai-error" role="alert">{micError[1]}</div> : null}
+      {heardNote ? <div className="sm-ai-hint" role="status">{"I heard “"}{heardNote.slice(0, 80)}{"” — ignored as Otto's own voice. Say it again after he finishes."}</div> : null}
       {/* TTS diagnostic (useSpeechSynthesis's lastDiagnostic): which speech path actually ran and, when it
           fell back, WHY. Voice failures were the last fully-silent surface in this panel — a 501 from a
           missing server key, a CSP-blocked audio element, and a vendor outage all looked like "Otto just
@@ -327,8 +327,8 @@ export function AskOttoPanel({
           ref={inputRef}
           className="sm-ai-input"
           rows={1}
-          aria-label={L("Ton message à Otto", "Your message to Otto")}
-          placeholder={placeholder ?? L("De quoi as-tu besoin ?", "What do you need help with?")}
+          aria-label={"Your message to Otto"}
+          placeholder={placeholder ?? "What do you need help with?"}
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(undefined, voiceModeOn); } }}
@@ -347,7 +347,7 @@ export function AskOttoPanel({
           className="sm-btn sm-btn-ghost sm-btn-sm sm-ai-attach-btn"
           disabled={attaching || sending}
           onClick={() => fileInputRef.current?.click()}
-          title={L("Joindre un fichier (PDF, image, texte)", "Attach a file (PDF, image, text)")}
+          title={"Attach a file (PDF, image, text)"}
         >
           {attaching ? "…" : <Paperclip size={15} aria-hidden="true" />}
         </button>
@@ -367,8 +367,8 @@ export function AskOttoPanel({
           onToggle={() => { if (!voiceModeOn) synth.unlock(); toggleVoiceMode(); }}
           en={en}
         />
-        <button className="sm-btn sm-btn-primary" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending || !input.trim()} aria-label={L("Envoyer", "Send")}>
-          {variant === "dock" ? <ArrowUp size={16} aria-hidden="true" /> : L("Envoyer", "Send")}
+        <button className="sm-btn sm-btn-primary" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending || !input.trim()} aria-label={"Send"}>
+          {variant === "dock" ? <ArrowUp size={16} aria-hidden="true" /> : "Send"}
         </button>
       </div>
     </>
@@ -382,7 +382,7 @@ export function AskOttoPanel({
       <div className="otto-dock">
         <div className="otto-dock-row">
           <OttoAvatar mood={mood} size={voiceModeOn ? 84 : 56} />
-          <div className="otto-bubble" role="log" aria-live="polite" aria-label={L("Réponse d'Otto", "Otto's answer")}>
+          <div className="otto-bubble" role="log" aria-live="polite" aria-label={"Otto's answer"}>
             {sending ? (
               <div className="otto-bubble-thinking" role="status">
                 <span className="sm-typing-dots" aria-hidden="true"><i /><i /><i /></span>
@@ -394,15 +394,15 @@ export function AskOttoPanel({
                 {mismatches.length ? (
                   <div className="sm-ai-calc-check" role="note">
                     <span className="sm-ai-calc-check-icon" aria-hidden="true"><TriangleAlert size={13} /></span>
-                    <span>{L("Vérifie ce calcul avec Otto : ", "Double-check this with Otto: ")}<code>{mismatches[0].raw}</code></span>
+                    <span>{"Double-check this with Otto: "}<code>{mismatches[0].raw}</code></span>
                   </div>
                 ) : null}
                 <button
                   type="button" className="otto-replay"
                   onClick={() => (synth.speaking ? synth.cancel() : (synth.unlock(), synth.speak(lastReply.text)))}
-                  title={synth.speaking ? L("Arrêter la voix", "Stop voice") : L("Réécouter", "Listen again")}
-                  aria-label={synth.speaking ? L("Arrêter la voix", "Stop voice") : L("Réécouter", "Listen again")}
-                >{synth.speaking ? <><Square size={13} aria-hidden="true" /><span className="otto-replay-label">{L("Interrompre", "Interrupt")}</span></> : <Volume2 size={15} aria-hidden="true" />}</button>
+                  title={synth.speaking ? "Stop voice" : "Listen again"}
+                  aria-label={synth.speaking ? "Stop voice" : "Listen again"}
+                >{synth.speaking ? <><Square size={13} aria-hidden="true" /><span className="otto-replay-label">{"Interrupt"}</span></> : <Volume2 size={15} aria-hidden="true" />}</button>
               </>
             ) : (
               // MathText, not raw text: the opener quotes real board maths ("Solve for $x ∈ [0, 2\pi]$: …")
@@ -414,7 +414,7 @@ export function AskOttoPanel({
           </div>
         </div>
         {quickReplies?.length && !sending && !voiceModeOn ? (
-          <div className="otto-quick" role="group" aria-label={L("Réponses rapides", "Quick replies")}>
+          <div className="otto-quick" role="group" aria-label={"Quick replies"}>
             {quickReplies.map((q) => (
               <button key={q.text} type="button" className="otto-quick-btn" onClick={() => onSend(q.text, voiceModeOn)}>{q.label}</button>
             ))}
@@ -424,11 +424,11 @@ export function AskOttoPanel({
         {voiceModeOn && !typeOpen ? (
           <div className="otto-voice-row">
             <span className={`otto-voice-status is-${mood}`} role="status" aria-live="polite">
-              {mood === "listening" ? L("Je t'écoute…", "Listening…") : mood === "thinking" ? L("Otto réfléchit…", "Otto is thinking…") : mood === "speaking" ? L("Otto parle — parle pour l'interrompre", "Otto is speaking — talk to interrupt") : L("Dis quelque chose", "Say something")}
+              {mood === "listening" ? "Listening…" : mood === "thinking" ? "Otto is thinking…" : mood === "speaking" ? "Otto is speaking — talk to interrupt" : "Say something"}
             </span>
             {recog.interimTranscript ? <span className="otto-voice-heard" aria-live="polite">“{recog.interimTranscript}”</span> : null}
-            <button type="button" className="otto-voice-type" onClick={() => setTypeOpen(true)} title={L("Écrire à la place", "Type instead")} aria-label={L("Écrire à la place", "Type instead")}>
-              <Keyboard size={15} aria-hidden="true" /><span>{L("Écrire", "Type")}</span>
+            <button type="button" className="otto-voice-type" onClick={() => setTypeOpen(true)} title={"Type instead"} aria-label={"Type instead"}>
+              <Keyboard size={15} aria-hidden="true" /><span>{"Type"}</span>
             </button>
             <VoiceControls supported={recog.supported} voiceModeOn={voiceModeOn} listening={recog.listening} speaking={synth.speaking} interimTranscript="" onToggle={() => toggleVoiceMode()} en={en} />
           </div>
@@ -439,7 +439,7 @@ export function AskOttoPanel({
 
   return (
     <div className="sm-ai-embed">
-      <div className="sm-ai-chat" role="log" aria-live="polite" aria-label={L("Conversation avec Otto", "Conversation with Otto")} ref={chatContainerRef} onScroll={handleScroll}>
+      <div className="sm-ai-chat" role="log" aria-live="polite" aria-label={"Conversation with Otto"} ref={chatContainerRef} onScroll={handleScroll}>
         {!task.chat?.length && !pendingMsg ? (
           <div className="sm-ai-empty">
             <MathText text={emptyText ?? `Ask anything about ${currentStep ? `"${currentStep.text}"` : task.title}.`} />
@@ -475,7 +475,7 @@ export function AskOttoPanel({
               </div>
             ) : null}
             {m.role === "assistant" && m.guardrail ? (
-              <span className="sm-ai-guardrail-tag">{L("Otto guide, ne fait pas à ta place", "Otto guides, doesn't do it for you")}</span>
+              <span className="sm-ai-guardrail-tag">{"Otto guides, doesn't do it for you"}</span>
             ) : null}
             {m.role === "assistant" && (() => {
               const mismatches = arithmeticMismatches(m.text);
@@ -483,10 +483,10 @@ export function AskOttoPanel({
                 <div className="sm-ai-calc-check" role="note">
                   <span className="sm-ai-calc-check-icon" aria-hidden="true"><TriangleAlert size={13} /></span>
                   <span>
-                    {L("Vérifie ce calcul avec Otto : ", "Double-check this with Otto: ")}
+                    {"Double-check this with Otto: "}
                     <code>{mismatches[0].raw}</code>
                     {(mismatches[0].actual != null && mismatches[0].claimed != null) ? ` (${mismatches[0].lhs} = ${mismatches[0].actual})` : ""}
-                    {mismatches.length > 1 ? L(` — et ${mismatches.length - 1} autre(s)`, ` — and ${mismatches.length - 1} more`) : ""}
+                    {mismatches.length > 1 ? ` — and ${mismatches.length - 1} more` : ""}
                   </span>
                 </div>
               ) : null;
@@ -495,7 +495,7 @@ export function AskOttoPanel({
         ))}
         {pendingMsg ? <div className="sm-ai-msg sm-ai-msg-user sm-ai-msg-pending">{pendingMsg}</div> : null}
         {sending ? (
-          <div className="sm-ai-msg sm-ai-msg-assistant sm-ai-typing" role="status" aria-label={L("Otto te cuisine", "Otto is working on you")}>
+          <div className="sm-ai-msg sm-ai-msg-assistant sm-ai-typing" role="status" aria-label={"Otto is working on you"}>
             <span className="sm-typing-dots" aria-hidden="true"><i /><i /><i /></span>
             {/* The cycling word itself already reads as "still actively working" (it keeps changing), so it
                 replaces the old static "still thinking…"/"might be putting something together…" text

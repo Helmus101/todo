@@ -75,7 +75,7 @@ export function Onboarding({ status, onStatus, onDone }: { status?: ConnectionSt
     const prev = lang;
     setLang(v);
     try { await api.setProfilePreference("language", v); await onStatus(); } // onStatus flips the WHOLE app's LangContext live
-    catch { setLang(prev); notify(L("Ta langue n'a pas été enregistrée — réessaie.", "Your language didn't save — give it another try."), "error"); }
+    catch { setLang(prev); notify("Your language didn't save — give it another try.", "error"); }
   };
   // Year level is no longer asked in onboarding: it was one more field on day one for optional context,
   // and the track pick already calibrates the AI vocabulary. It remains fully settable in Settings
@@ -102,17 +102,17 @@ export function Onboarding({ status, onStatus, onDone }: { status?: ConnectionSt
     try {
       if (year.trim()) await api.setProfilePreference("yearLevel", year.trim());
       await api.setSubjects(subs);
-    } catch { notify(L("Année/matières non enregistrées — tu peux les refaire dans Réglages.", "Year/subjects didn't save — you can set them later in Settings."), "error"); }
+    } catch { notify("Year/subjects didn't save — you can set them later in Settings.", "error"); }
     setStep(3);
   };
   const saveName = async () => {
     const n = name.trim();
-    if (n) { try { await api.setProfile("name", n); await onStatus(); } catch { notify(L("Prénom non enregistré — tu peux le refaire dans Réglages.", "Name didn't save — you can set it later in Settings."), "error"); } }
+    if (n) { try { await api.setProfile("name", n); await onStatus(); } catch { notify("Name didn't save — you can set it later in Settings.", "error"); } }
     setStep(1);
   };
   const saveTrack = async (t: "ib" | "ap" | "bac" | "other") => {
     setTrack(t);
-    try { await api.setProfilePreference("track", t); await onStatus(); } catch { notify(L("Parcours non enregistré — tu peux le refaire dans Réglages.", "Track didn't save — you can set it later in Settings."), "error"); }
+    try { await api.setProfilePreference("track", t); await onStatus(); } catch { notify("Track didn't save — you can set it later in Settings.", "error"); }
     // Used to jump straight to step 2 here — but the year-level field below lives on this SAME step, so
     // auto-advancing the instant a track button is clicked never gave the student a chance to see or fill
     // it in. Stay put; "Continue" (added alongside the field) is what actually moves on now.
@@ -132,74 +132,74 @@ export function Onboarding({ status, onStatus, onDone }: { status?: ConnectionSt
   return (
     <div className="onboard-overlay" role="dialog" aria-modal="true">
       <div className="onboard-card">
-        <button className="onboard-skip" onClick={onDone} aria-label={L("Passer", "Skip")}>{L("Passer", "Skip")}</button>
+        <button className="onboard-skip" onClick={onDone} aria-label={"Skip"}>{"Skip"}</button>
         <div className="onboard-top">
           <div className="onboard-brand"><Logo size={20} /> <span>Otto</span></div>
-          <div className="onboard-progress" role="progressbar" aria-valuemin={1} aria-valuemax={OB_STEPS} aria-valuenow={step + 1} aria-label={L(`Étape ${step + 1} sur ${OB_STEPS}`, `Step ${step + 1} of ${OB_STEPS}`)}>
+          <div className="onboard-progress" role="progressbar" aria-valuemin={1} aria-valuemax={OB_STEPS} aria-valuenow={step + 1} aria-label={`Step ${step + 1} of ${OB_STEPS}`}>
             {Array.from({ length: OB_STEPS }).map((_, d) => <span key={d} aria-hidden="true" className={d <= step ? "on" : ""} />)}
           </div>
         </div>
 
         {step === 0 && (
           <div className="onboard-step">
-            <h2>{L("Bienvenue sur Otto", "Welcome to Otto")}</h2>
-            <p className="onboard-lead">{L("Otto lit tes devoirs, contrôles et mails, transforme tout ça en un plan clair pour aujourd'hui, et t'aide à démarrer — sans jamais faire le travail à ta place. Connecte Pronote, Gmail, ou ajoute tes tâches à la main.", "Otto turns homework, tests, and emails into a clear plan — without doing the work for you. Connect a source or add tasks yourself.")}</p>
-            <label className="field onboard-name"><span>{L("Comment veux-tu qu'Otto t'appelle ?", "What should Otto call you?")}</span>
-              <input className="addinput" placeholder={L("Ton prénom (optionnel)", "Your first name (optional)")} value={name} maxLength={60} autoFocus
+            <h2>{"Welcome to Otto"}</h2>
+            <p className="onboard-lead">{"Otto turns homework, tests, and emails into a clear plan — without doing the work for you. Connect a source or add tasks yourself."}</p>
+            <label className="field onboard-name"><span>{"What should Otto call you?"}</span>
+              <input className="addinput" placeholder={"Your first name (optional)"} value={name} maxLength={60} autoFocus
                 onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void saveName(); }} />
             </label>
-            <p className="muted small">{L("Tu peux le renseigner plus tard dans les Réglages.", "You can set this later in Settings.")}</p>
-            <div className="onboard-actions"><button className="btn primary big" onClick={() => void saveName()}>{L("Commencer", "Get started")}</button></div>
+            <p className="muted small">{"You can set this later in Settings."}</p>
+            <div className="onboard-actions"><button className="btn primary big" onClick={() => void saveName()}>{"Get started"}</button></div>
           </div>
         )}
 
         {step === 1 && (
           <div className="onboard-step">
-            <h2>{L("Ton parcours", "Your track")}</h2>
-            <p className="onboard-lead">{L("Change le vocabulaire qu'Otto utilise.", "Changes the vocabulary Otto uses.")}</p>
+            <h2>{"Your track"}</h2>
+            <p className="onboard-lead">{"Changes the vocabulary Otto uses."}</p>
             <div className="onboard-apps">
-              <button type="button" className={`btn xs ob-track-btn ${track === "bac" ? "" : "ghost"}`} onClick={() => void saveTrack("bac")}>{L("Bac français (lycée)", "French Bac (lycée)")}</button>
+              <button type="button" className={`btn xs ob-track-btn ${track === "bac" ? "" : "ghost"}`} onClick={() => void saveTrack("bac")}>{"French Bac (lycée)"}</button>
               <button type="button" className={`btn xs ob-track-btn ${track === "ib" ? "" : "ghost"}`} onClick={() => void saveTrack("ib")}>IB</button>
               <button type="button" className={`btn xs ob-track-btn ${track === "ap" ? "" : "ghost"}`} onClick={() => void saveTrack("ap")}>AP</button>
-              <button type="button" className={`btn xs ob-track-btn ${track === "other" ? "" : "ghost"}`} onClick={() => void saveTrack("other")}>{L("Autre (collège, etc.)", "Other (middle school, etc.)")}</button>
+              <button type="button" className={`btn xs ob-track-btn ${track === "other" ? "" : "ghost"}`} onClick={() => void saveTrack("other")}>{"Other (middle school, etc.)"}</button>
             </div>
-            <p className="onboard-lead mt-5">{L("Ta langue", "Your language")}</p>
+            <p className="onboard-lead mt-5">{"Your language"}</p>
             {/* Two buttons, not the full PreferencesFields block: track was ALREADY picked above on this
                 same step, and PreferencesFields would render its own (duplicate, unset-looking) track
                 picker plus fields onboarding never needed. Language saves server-side immediately — the
                 same api call Settings uses — and onStatus() makes the WHOLE onboarding (and app) flip
                 live, same wiring requirement the old PreferencesFields usage documented below. */}
             <div className="onboard-apps">
-              <button type="button" className={`btn xs ${lang === "fr" ? "" : "ghost"}`} onClick={() => void saveLang("fr")}>Français</button>
-              <button type="button" className={`btn xs ${lang === "en" ? "" : "ghost"}`} onClick={() => void saveLang("en")}>English</button>
+              <button type="button" className={`btn xs ${"ghost"}`} onClick={() => void saveLang("fr")}>Français</button>
+              <button type="button" className={`btn xs ${""}`} onClick={() => void saveLang("en")}>English</button>
             </div>
             <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(0)}>{L("Retour", "Back")}</button>
-              <button className="btn primary" onClick={() => setStep(2)}>{L("Continuer", "Continue")}</button>
+              <button className="btn ghost" onClick={() => setStep(0)}>{"Back"}</button>
+              <button className="btn primary" onClick={() => setStep(2)}>{"Continue"}</button>
             </div>
           </div>
         )}
 
         {step === 2 && (
           <div className="onboard-step">
-            <h2>{L("Ta classe", "Your classes")}</h2>
-            <p className="onboard-lead">{L("Otto règle son niveau et classe tes cours par matière.", "Otto pitches his level to you and files your coursework by subject.")}</p>
-            <p className="onboard-lead mt-3">{L("Ton année", "Your year")}</p>
+            <h2>{"Your classes"}</h2>
+            <p className="onboard-lead">{"Otto pitches his level to you and files your coursework by subject."}</p>
+            <p className="onboard-lead mt-3">{"Your year"}</p>
             <div className="onboard-chips">
               {["Seconde", "Première", "Terminale", "IB DP1", "IB DP2", "Grade 9", "Grade 10", "Grade 11", "Grade 12"].map((y) => (
                 <button key={y} type="button" className={`btn xs ${year === y ? "" : "ghost"}`} onClick={() => setYear(y)} aria-pressed={year === y}>{y}</button>
               ))}
             </div>
-            <p className="onboard-lead mt-4">{L("Tes matières", "Your subjects")}</p>
+            <p className="onboard-lead mt-4">{"Your subjects"}</p>
             <div className="onboard-chips">
               {COMMON_SUBJECTS.filter((x) => x !== "Other").map((x) => (
                 <button key={x} type="button" className={`btn xs ${subs.includes(x) ? "" : "ghost"}`} onClick={() => setSubs((cur) => (cur.includes(x) ? cur.filter((c) => c !== x) : [...cur, x]))} aria-pressed={subs.includes(x)}>{x}</button>
               ))}
             </div>
-            <p className="muted small">{L("Optionnel — modifiable à tout moment dans les Réglages.", "Optional — change it any time in Settings.")}</p>
+            <p className="muted small">{"Optional — change it any time in Settings."}</p>
             <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(1)}>{L("Retour", "Back")}</button>
-              <button className="btn primary" onClick={() => void saveYearSubjects()}>{L("Continuer", "Continue")}</button>
+              <button className="btn ghost" onClick={() => setStep(1)}>{"Back"}</button>
+              <button className="btn primary" onClick={() => void saveYearSubjects()}>{"Continue"}</button>
             </div>
           </div>
         )}
@@ -211,18 +211,18 @@ export function Onboarding({ status, onStatus, onDone }: { status?: ConnectionSt
                 reframes as optional/parallel rather than "the one thing Otto reads" for them. Pronote and
                 Google live on ONE step now — two separate connect screens was two more taps for zero
                 extra understanding, and both are skippable anyway. */}
-            <h2>{L("Connecte tes sources", "Connect your sources")}</h2>
+            <h2>{"Connect your sources"}</h2>
             <p className="onboard-lead">{pronoteIsPrimary
-              ? L("Pronote suffit pour lancer Otto. Gmail et Calendar sont optionnels — Otto y repère devoirs et échéances. Tes identifiants sont chiffrés, jamais revendus.", "Pronote alone gets Otto going. Gmail and Calendar are optional — Otto spots homework and deadlines in them. Your credentials are encrypted, never resold.")
-              : L("La plupart des écoles IB n'utilisent pas Pronote — connecte-le seulement si ton école l'a. Sinon Gmail/Calendar, ou ajoute tes devoirs à la main.", "Most IB schools don't use Pronote — connect it only if your school has it. Otherwise Gmail/Calendar, or add your homework by hand.")}</p>
+              ? "Pronote alone gets Otto going. Gmail and Calendar are optional — Otto spots homework and deadlines in them. Your credentials are encrypted, never resold."
+              : "Most IB schools don't use Pronote — connect it only if your school has it. Otherwise Gmail/Calendar, or add your homework by hand."}</p>
             <div className="onboard-apps">
               <PronoteTile status={status} onChanged={() => void checkPronote()} />
               <GoogleTiles restricted={true} onChanged={() => void onStatus()} />
             </div>
-            <p className="muted small">{L("Tout se connecte aussi plus tard, depuis les Réglages.", "You can connect any of these later from Settings.")}</p>
+            <p className="muted small">{"You can connect any of these later from Settings."}</p>
             <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(2)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(4)}>{pronoteConnected ? L("Continuer — connecté ✓", "Continue — connected ✓") : L("Plus tard", "Later")}</button>
+              <button className="btn ghost" onClick={() => setStep(2)}>{"Back"}</button>
+              <button className="btn primary big" onClick={() => setStep(4)}>{pronoteConnected ? "Continue — connected ✓" : "Later"}</button>
             </div>
           </div>
         )}
@@ -235,14 +235,14 @@ export function Onboarding({ status, onStatus, onDone }: { status?: ConnectionSt
         {step === 4 && (
           <div className="onboard-step onboard-done">
             <div className="onboard-done-mark"><Logo size={30} /></div>
-            <h2>{L("C'est prêt", "You're all set")}{name.trim() ? `, ${name.trim().split(/\s+/)[0]}` : ""}</h2>
+            <h2>{"You're all set"}{name.trim() ? `, ${name.trim().split(/\s+/)[0]}` : ""}</h2>
             <p className="onboard-lead">{pronoteConnected
-              ? L("Otto se met au travail. Ton plan du jour arrive.", "Otto is getting to work. Your plan for today is on its way.")
+              ? "Otto is getting to work. Your plan for today is on its way."
               // Nothing connected yet — offer the whole picker (Pronote, Gmail, Calendar, Drive) rather
               // than naming Pronote as if it were required, and remind them manual tasks work too.
-              : L("Connecte une app (Pronote, Gmail, Calendar) ou ajoute tes examens depuis les Réglages, et Otto se met au travail.", "Connect an app (Pronote, Gmail, Calendar) or add your exams from Settings, and Otto gets to work.")}</p>
-            <p className="muted small">{L("La première fois que tu ouvres une page, Otto te montre comment elle marche — étape par étape, sur les vrais boutons.", "The first time you open a page, Otto shows you how it works — step by step, on the real buttons.")}</p>
-            <div className="onboard-actions"><button className="btn primary big" onClick={onDone}>{L("Voir mes tâches", "See my tasks")}</button></div>
+              : "Connect an app (Pronote, Gmail, Calendar) or add your exams from Settings, and Otto gets to work."}</p>
+            <p className="muted small">{"The first time you open a page, Otto shows you how it works — step by step, on the real buttons."}</p>
+            <div className="onboard-actions"><button className="btn primary big" onClick={onDone}>{"See my tasks"}</button></div>
           </div>
         )}
       </div>

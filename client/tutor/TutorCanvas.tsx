@@ -297,7 +297,7 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
     readUnseenInk: async (force?: boolean) => {
       if (!visionReady || !canvasRef.current || !items.current.some((i) => i.kind === "text" || i.tool !== "eraser") || (!force && inkStamp.current === seenStamp.current)) return null;
       // A failed read must not be silent: without this Otto never learns there is a drawing and carries on as if nothing was drawn.
-      try { return await readInk(); } catch { return L("(mon dessin n'a pas pu être lu — demande-moi de te le décrire)", "(my drawing couldn't be read just now — ask me to describe it)"); }
+      try { return await readInk(); } catch { return "(my drawing couldn't be read just now — ask me to describe it)"; }
     },
   }));
 
@@ -318,7 +318,7 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
           {typing && !hidden && (
             <input
               ref={textRef} className="tc-text" style={{ left: typing.x, top: typing.y, color }} value={typing.value}
-              placeholder={L("Écris ici…", "Type here…")} aria-label={L("Écris ici…", "Type here…")}
+              placeholder={"Type here…"} aria-label={"Type here…"}
               onChange={(e) => setTyping({ ...typing, value: e.target.value })}
               onKeyDown={(e) => { if (e.key === "Enter") commitText(); if (e.key === "Escape") setTyping(null); }}
               onBlur={commitText}
@@ -330,28 +330,28 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
             board, a long scrolled lesson or Desmos is showing (drawing tools just dim while Desmos is up). */}
         {!toolsOpen ? (
           <div className="tc-toolbar tc-toolbar-folded" style={{ pointerEvents: "auto" }}>
-            <button type="button" className="tc-btn tc-draw-open" onClick={() => { setToolsOpen(true); setTool("pen"); }} aria-label={L("Dessiner sur le tableau", "Draw on the board")} title={L("Dessiner", "Draw")}><Pencil size={16} /><span>{L("Dessiner", "Draw")}</span></button>
-            <button type="button" className={`tc-btn tc-fn${hidden ? " on" : ""}`} onClick={onDesmos} title={hidden ? L("Retour au tableau", "Back to the board") : "Desmos"} aria-label="Desmos" aria-pressed={hidden}>ƒ</button>
+            <button type="button" className="tc-btn tc-draw-open" onClick={() => { setToolsOpen(true); setTool("pen"); }} aria-label={"Draw on the board"} title={"Draw"}><Pencil size={16} /><span>{"Draw"}</span></button>
+            <button type="button" className={`tc-btn tc-fn${hidden ? " on" : ""}`} onClick={onDesmos} title={hidden ? "Back to the board" : "Desmos"} aria-label="Desmos" aria-pressed={hidden}>ƒ</button>
           </div>
         ) : (
-        <div className={`tc-toolbar${hidden ? " dim" : ""}`} role="toolbar" aria-label={L("Outils du tableau", "Whiteboard tools")} style={{ pointerEvents: "auto" }}>
-          {btn("pen", <Pencil size={18} />, L("Stylo", "Pen"))}
-          {btn("highlighter", <Highlighter size={18} />, L("Surligneur", "Highlighter"), "tc-highlighter")}
-          {btn("eraser", <Eraser size={18} />, L("Gomme", "Eraser"))}
-          {btn("text", <Type size={18} />, L("Texte", "Text"))}
-          {btn("pan", <Hand size={18} />, L("Défiler le tableau", "Scroll the board"))}
+        <div className={`tc-toolbar${hidden ? " dim" : ""}`} role="toolbar" aria-label={"Whiteboard tools"} style={{ pointerEvents: "auto" }}>
+          {btn("pen", <Pencil size={18} />, "Pen")}
+          {btn("highlighter", <Highlighter size={18} />, "Highlighter", "tc-highlighter")}
+          {btn("eraser", <Eraser size={18} />, "Eraser")}
+          {btn("text", <Type size={18} />, "Text")}
+          {btn("pan", <Hand size={18} />, "Scroll the board")}
           <span className="tc-sep" aria-hidden />
           {COLORS.map((c) => (
             <button key={c} type="button" className={`tc-swatch${color === c && tool !== "eraser" ? " on" : ""}`} style={{ background: c }} onClick={() => { setColor(c); if (tool === "eraser" || tool === "pan") setTool("pen"); }} aria-label={c} />
           ))}
           <span className="tc-sep" aria-hidden />
-          <button type="button" className="tc-btn" onClick={undo} disabled={!items.current.length} title={L("Annuler", "Undo")} aria-label={L("Annuler", "Undo")}><Undo2 size={18} /></button>
-          <button type="button" className="tc-btn" onClick={redoFn} disabled={!redo.current.length} title={L("Rétablir", "Redo")} aria-label={L("Rétablir", "Redo")}><Redo2 size={18} /></button>
-          <button type="button" className="tc-btn" onClick={clear} disabled={!items.current.length} title={L("Tout effacer", "Clear all")} aria-label={L("Tout effacer", "Clear all")}><Trash2 size={18} /></button>
+          <button type="button" className="tc-btn" onClick={undo} disabled={!items.current.length} title={"Undo"} aria-label={"Undo"}><Undo2 size={18} /></button>
+          <button type="button" className="tc-btn" onClick={redoFn} disabled={!redo.current.length} title={"Redo"} aria-label={"Redo"}><Redo2 size={18} /></button>
+          <button type="button" className="tc-btn" onClick={clear} disabled={!items.current.length} title={"Clear all"} aria-label={"Clear all"}><Trash2 size={18} /></button>
           <span className="tc-sep" aria-hidden />
-          <button type="button" className={`tc-btn tc-fn${hidden ? " on" : ""}`} onClick={onDesmos} title={hidden ? L("Retour au tableau", "Back to the board") : "Desmos"} aria-label="Desmos" aria-pressed={hidden}>ƒ</button>
+          <button type="button" className={`tc-btn tc-fn${hidden ? " on" : ""}`} onClick={onDesmos} title={hidden ? "Back to the board" : "Desmos"} aria-label="Desmos" aria-pressed={hidden}>ƒ</button>
           <span className="tc-sep" aria-hidden />
-          <button type="button" className="tc-btn" onClick={() => { if (typing) commitText(); setTool("pan"); setToolsOpen(false); }} title={L("Fermer les outils", "Close the tools")} aria-label={L("Fermer les outils", "Close the tools")}>✕</button>
+          <button type="button" className="tc-btn" onClick={() => { if (typing) commitText(); setTool("pan"); setToolsOpen(false); }} title={"Close the tools"} aria-label={"Close the tools"}>✕</button>
         </div>
         )}
         {error && <div className="tc-error" role="alert" style={{ pointerEvents: "auto" }}>{error}</div>}

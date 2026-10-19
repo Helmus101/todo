@@ -297,7 +297,7 @@ export function makeProblem(input: any, requireCheck = false): { problem: TaskPr
     const dec = (String(answer).match(/[.,](\d+)\s*$/)?.[1] || "").length;
     const exact = /[\/√π]|\bsqrt\b|\\frac/i.test(String(answer)); // 1/2, 2√3, π/6: not a whole-number answer
     const fr = /\b(?:le|la|les|un|une|des|quel|quelle|calcule[rz]?|détermine[rz]?|trouve[rz]?)\b/i.test(question) && !/\b(?:the|find|calculate|what)\b/i.test(question);
-    const prec = exact ? (fr ? "valeur exacte ou décimale à 3 chiffres significatifs" : "exact value, or a decimal to 3 significant figures") : dec === 0 ? (fr ? "arrondi à l'entier le plus proche" : "to the nearest whole number") : (fr ? `à ${dec} décimale${dec > 1 ? "s" : ""}` : `to ${dec} decimal place${dec > 1 ? "s" : ""}`);
+    const prec = exact ? ("exact value, or a decimal to 3 significant figures") : dec === 0 ? ("to the nearest whole number") : (`to ${dec} decimal place${dec > 1 ? "s" : ""}`);
     format = `${format ? format + " — " : ""}${prec}`;
   }
   if (checkHint) hint = scrubAnswerLeak(hint, secret);

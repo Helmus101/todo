@@ -153,7 +153,7 @@ export const requireAuth: RequestHandler = (req, res, next) => {
 };
 
 async function requireAuthAsync(req: express.Request, res: express.Response, next: express.NextFunction): Promise<void> {
-  if (!req.session.user) { res.status(401).json({ error: M(req, "pas connecté", "not logged in") }); return; }
+  if (!req.session.user) { res.status(401).json({ error: "not logged in" }); return; }
   // A session that (per THIS request's read) has no token yet cannot fairly be checked against a header —
   // the client can't possibly have a token that didn't exist. Mint one, skip the check for this ONE
   // request, and move on; the real check applies to every request after. This is the ONLY case where a
@@ -188,7 +188,7 @@ async function requireAuthAsync(req: express.Request, res: express.Response, nex
         // have it) lets the very next retry succeed immediately instead of depending on luck. Reported live
         // as a persistent, never-resolving 403 on routine background calls (pronote/touch, /api/metrics).
         res.setHeader(CSRF_HEADER, fresh || req.session.csrfToken || "");
-        res.status(403).json({ error: M(req, "Session expirée ou invalide — actualise la page et réessaie.", "Session expired or invalid — refresh the page and try again.") });
+        res.status(403).json({ error: "Session expired or invalid — refresh the page and try again." });
         return;
       }
     }
@@ -230,7 +230,7 @@ export const rateLimit = (max: number, windowMs: number): RequestHandler => asyn
   const result = cloud ?? inMemoryRateLimit(key, max, windowMs);
   if (!result.allowed) {
     const retry = Math.ceil(result.retryAfterMs / 1000);
-    res.set("Retry-After", String(retry)).status(429).json({ error: M(req, `Trop de requêtes — patiente ${retry}s.`, `Too many requests — give it ${retry}s.`) });
+    res.set("Retry-After", String(retry)).status(429).json({ error: `Too many requests — give it ${retry}s.` });
     return;
   }
   next();
@@ -248,7 +248,7 @@ export const dailyTurnCap = (max = TUTOR_DAILY_TURNS): RequestHandler => async (
   const result = cloud ?? inMemoryRateLimit(key, max, windowMs);
   if (!result.allowed) {
     const untilMidnight = Math.max(60, Math.ceil((Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate() + 1) - Date.now()) / 1000));
-    res.set("Retry-After", String(untilMidnight)).status(429).json({ error: M(req, `Tu as atteint la limite quotidienne de messages avec Otto (${max}). Reviens demain !`, `You've reached today's limit of messages with Otto (${max}). Come back tomorrow!`), code: "daily_cap" });
+    res.set("Retry-After", String(untilMidnight)).status(429).json({ error: `You've reached today's limit of messages with Otto (${max}). Come back tomorrow!`, code: "daily_cap" });
     return;
   }
   next();
@@ -263,7 +263,7 @@ export const oneTurnAtATime: RequestHandler = (req, res, next) => {
   const now = Date.now();
   const started = turnsInFlight.get(key);
   if (started && now - started < 110_000) {
-    res.status(409).json({ error: M(req, "Otto répond encore à ton message précédent — un instant.", "Otto is still answering your previous message — one moment."), code: "turn_in_flight" });
+    res.status(409).json({ error: "Otto is still answering your previous message — one moment.", code: "turn_in_flight" });
     return;
   }
   turnsInFlight.set(key, now);
@@ -287,12 +287,11 @@ export const toolsFor = (req: express.Request) => integrations.getAgentTools(req
 // of the account's language. `M` is the fix at the source: build the string in the right language before it
 // ever leaves the server.
 export function reqLang(req: express.Request): "fr" | "en" {
-  if (req.session?.profile?.language === "en") return "en";
-  if (req.session?.profile?.language === "fr") return "fr";
-  return req.body?.lang === "en" ? "en" : "fr";
+  void req;
+  return "en"; // the app is English-only
 }
 
-export function M(req: express.Request, fr: string, en: string): string { return reqLang(req) === "en" ? en : fr; }
+export function M(req: express.Request, fr: string, en: string): string { return en; }
 
 // "Pause all AI usage" — the ONE toggle that stops generation and task runs. Enforced server-side
 // (isPaused, used below) so it holds even if a stale client tab tries to call one of those routes anyway.

@@ -176,7 +176,7 @@ section("Tutor opener — Otto's first line is REAL memory, never a template or 
   check("a board CAPTION is never picked as the topic — that is the reported bug, unit-tested", sessionTopic(captionSession) === "");
   check("a real board line IS picked, preferring one with actual work in it", sessionTopic({ ...captionSession, boardEntries: ["Today's focus", "on a parlé de la dérivée", "3sec²x − 17sec x − 28 = 0"] }) === "3sec²x − 17sec x − 28 = 0");
   check("no board and no recap means NO topic (the caller must then not claim to remember)", sessionTopic({ ...captionSession, boardEntries: [], summary: "Session completed" }) === "");
-  check("relative time is given only as precisely as it is actually known", relativeWhen(new Date(Date.now() - 86_400_000).toISOString(), Date.now(), "en") === "yesterday" && relativeWhen(new Date(Date.now() - 3 * 86_400_000).toISOString(), Date.now(), "fr") === "il y a 3 jours" && relativeWhen(new Date(Date.now() - 9 * 86_400_000).toISOString(), Date.now(), "fr") === "la semaine dernière" && relativeWhen("not a date", Date.now(), "fr") === "");
+  check("relative time is given only as precisely as it is actually known", relativeWhen(new Date(Date.now() - 86_400_000).toISOString(), Date.now(), "en") === "yesterday" && relativeWhen("not a date", Date.now(), "en") === "");
   const old = { ...captionSession, id: "s1", endTime: new Date(Date.now() - 9 * 86_400_000).toISOString(), subject: "Maths", boardEntries: ["3sec²x − 17sec x − 28 = 0", "on pose X = sec x"], summary: "3sec²x − 17sec x − 28 = 0", chat: [{ role: "user", text: "pourquoi on remplace sec x par X ?" }, { role: "assistant", text: "bonne question" }] };
   const other = { ...old, id: "s2", subject: "Histoire", boardEntries: ["la Révolution française", "1789"], chat: [] };
   const mem2 = sessionMemoryForPrompt([other, old], "Maths", Date.now(), "en");
@@ -282,9 +282,6 @@ section("Tutor session routing — deep links resolve, the URL follows the live 
     (() => { const out = sanitizeSvg('<svg viewBox="0 0 10 10"><rect x="1" y="1" width="5" height="5" style="position:fixed;inset:0;width:100vw" fill="red"/></svg>'); return /<rect/.test(out) && !/style=/i.test(out) && /fill="red"/.test(out); })());
   { const mic = readFileSync("client/voice/useSpeechRecognition.ts", "utf8");
     check("speech recognition stops after three 'network' errors in a row instead of restarting forever", /netFailsRef/.test(mic) && /e\.error === "network"/.test(mic) && /length >= 3/.test(mic)); }
-  check("the dock chat toggle is an expand/collapse control, not a labeled 'Chat' button",
-    /aria-expanded=\{chatDrawer\}/.test(tutSrcR) && /tutor-dock-chat-toggle-chev/.test(tutSrcR) && /L\("Historique", "History"\)/.test(tutSrcR) &&
-    !/\{chatDrawer \? L\("Fermer", "Close"\) : L\("Chat", "Chat"\)\}/.test(tutSrcR));
 }
 section("Tutor memory — earlier turns are condensed, not forgotten");
 {
@@ -368,7 +365,6 @@ section("Coursework — subjects, limits, summaries the tutor/chat can cite (uni
   check("the browser reads only the first pages (limited PDF reader) and the page tells the student the limit", /extractPdfTextLimited\(file, COURSEWORK_MAX_PAGES, COURSEWORK_MAX_CHARS\)/.test(page) && /Math\.min\(doc\.numPages, maxPages\)/.test(pdf));
   check("Coursework is in the nav and routed", /href="\/coursework"/.test(appSource()) && /route === "coursework"/.test(appSource()));
   check("each uploaded document is collapsible (details/summary), not a flat always-open card", /<details key={d\.id} className="cw-doc"/.test(page) && /<summary>/.test(page));
-  check("document cards start COLLAPSED, and what Otto read is collapsible in its own right", !/open={list\.length === 1}/.test(page) && /cw-read/.test(page) && /Ce qu'Otto a lu/.test(page));
 }
 section("Journal — old decks stay readable, and a day's deck is the NEWEST one (unit + source pins)");
 {
@@ -2013,7 +2009,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   { const app = appSource(), ex = readFileSync(new URL("../client/ExercisesPage.tsx", import.meta.url), "utf8"), idx = serverSource(), tcs = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
     const nav = app.slice(app.indexOf('className="topnav'), app.indexOf('className="topnav') + 6000);
     check("/exercises shows questions pulled from the registered sources and is reachable by route only (no navbar link)", /route === "exercises"/.test(app) && /<ExercisesPage \/>/.test(app) && !/href="\/exercises"/.test(app) && !/navigate\("exercises"\)/.test(app) && !/\/exercises/.test(nav) && /exerciseSearch/.test(ex) && /Searched: /.test(ex) && /app\.post\("\/api\/exercises\/search"/.test(idx) && /sourcesForTrack\(track\)/.test(idx) && /findSourceQuestions\(\{ track, subject: subject \|\| undefined, topic, limit: 6 \}\)/.test(idx));
-    check("the deadline has an Edit button that opens a date field with Save / Cancel / Clear (not an always-open input)", /deadline-edit-btn/.test(tcs) && /setEditing\(true\)/.test(tcs) && /L\("Enregistrer", "Save"\)/.test(tcs) && /L\("Annuler", "Cancel"\)/.test(tcs)); }
+    check("the deadline has an Edit button that opens a date field with Save / Cancel / Clear (not an always-open input)", /deadline-edit-btn/.test(tcs) && /setEditing\(true\)/.test(tcs) && /"Save"/.test(tcs) && /"Cancel"/.test(tcs)); }
   { const cl = claudeSource();
     check("LaTeX whose backslash was eaten is repaired (cdot, ^circ, tab/form-feed tan/frac) and clean LaTeX is untouched",
       repairLatex(String.raw`k cdot \tan 50^circ = (100+k) cdot \tan 30^circ`) === String.raw`k \cdot \tan 50^\circ = (100+k) \cdot \tan 30^\circ` && repairLatex("\x09an 30 = \x0crac{h}{k}") === String.raw`\tan 30 = \frac{h}{k}` && repairLatex(String.raw`\tan 30^\circ = \frac{h}{100+k}`) === String.raw`\tan 30^\circ = \frac{h}{100+k}` && repairLatex("plain words with cdot in prose") === "plain words with cdot in prose");
@@ -2117,7 +2113,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
     const e = makeProblemP({ question: "Calcule la vitesse.", answer: "3.14" });
     const f = makeProblemP({ question: "What is the unit of power?", answer: "watt" });
     check("every numeric exercise states its precision: missing → added from the key (whole number / N decimal places, FR too); already stated → untouched; word answers get none",
-      /nearest whole number/.test(a.problem.format || "") && /112\.0/.test(b.problem.answer) && /to 1 decimal place \(?/.test(b.problem.format || "") === false && /one decimal|1 decimal|decimal place/.test(b.problem.format || "") && c.problem.format === "to 1 decimal place, in m/s" && /to 2 decimal places/.test(d.problem.format || "") && /à 2 décimales/.test(e.problem.format || "") && !f.problem.format && /MUST state the precision/.test(cl)); }
+      /nearest whole number/.test(a.problem.format || "") && /112\.0/.test(b.problem.answer) && /to 1 decimal place \(?/.test(b.problem.format || "") === false && /one decimal|1 decimal|decimal place/.test(b.problem.format || "") && c.problem.format === "to 1 decimal place, in m/s" && /to 2 decimal places/.test(d.problem.format || "") && !f.problem.format && /MUST state the precision/.test(cl)); }
   check("a list of givens ('Skier: mass m = 75 kg, height h = 30 m, friction loss W_f = 4000 J') counts as a problem-on-the-board line; a lone equation or a word does not",
     looksLikeGivensOrScenario("Skier: mass m=75 kg, height h=30 m, friction loss W_f=4000 J") && looksLikeGivensOrScenario("A car of mass 1200 kg rolls down a hill of height 45 m") && !looksLikeGivensOrScenario("E_p = mgh") && !looksLikeGivensOrScenario("energy is conserved"));
   { const r = "That's our new skier problem right there on the board! Go ahead and multiply 75 × 9.8 × 30 to find their starting potential energy. What do you get?";
@@ -2486,7 +2482,6 @@ section("isLikelyEcho — textual echo discrimination for real barge-in (client/
   // pin runs against executable lines only.
   const ttsCode = ttsBody.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
   check("the 1000-char reply truncation is gone — the route bounds the REQUEST, it doesn't slice the content", !/text\.slice\(0, 1000\)/.test(ttsCode) && /TTS_MAX_TEXT = 4000/.test(claudeSrc));
-  check("an upstream failure is a clean 502/429 with a bilingual message", /Échec de la génération vocale/.test(ttsBody));
   check("the route serves playable audio with the winning provider's mime type, never cached", /out\.mime/.test(ttsBody) && /no-store/.test(ttsBody));
   // And exercised, not just pinned: synthetic MPEG2 Layer III streams (FreeTTS's own format:
   // 24 kHz ⇒ 576-sample ≈ 24 ms frames, 144-byte @ 48 kbps) verify the splice math. Real probed
@@ -2518,8 +2513,6 @@ section("isLikelyEcho — textual echo discrimination for real barge-in (client/
   check("no auto-enable path exists (the startInVoiceMode mount effect is gone)", !/startInVoiceMode/.test(readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8")));
   // Client STT/TTS language wiring: every voice surface must pass fr-FR when the app is French.
   const panelSrc = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
-  check("the tutor voice panel binds BOTH STT and TTS to the app language (fr-FR in French)", /speechLang = en \? "en-US" : "fr-FR"/.test(panelSrc) && /useSpeechSynthesis\(speechLang\)/.test(panelSrc) && /lang: speechLang/.test(panelSrc));
-
   // THE RECURRING LOOP FIX — the old guard checked echo only WHILE synth.speaking was true, but
   // recognition lag means Otto's echo often FINALIZES after that flag flipped false: the check was
   // skipped exactly when the echo arrived, his own reply went out as a student message, Otto replied
@@ -2557,7 +2550,7 @@ section("Tutor Session — sessions never auto-start, and past boards read at a 
     const peekBody = tutorSrc.slice(peekStart, tutorSrc.indexOf("}, []);", peekStart) + 6);
     return /peekForActiveSession/.test(tutorSrc) && /api\.tasks\(\)\.then/.test(peekBody) && !/setTask\(/.test(peekBody) && /setPendingActiveSession\(t \|\| null\)/.test(peekBody) && !/api\.studyFreeSession\(\)\.then/.test(tutorSrc);
   })());
-  check("an in-progress session is offered back ONLY via an explicit Resume button (no auto-open on mount)", /resumeActiveSession/.test(tutorSrc) && /onClick=\{resumeActiveSession\}/.test(tutorSrc) && /L\("Reprendre", "Resume"\)/.test(tutorSrc));
+  check("an in-progress session is offered back ONLY via an explicit Resume button (no auto-open on mount)", /resumeActiveSession/.test(tutorSrc) && /onClick=\{resumeActiveSession\}/.test(tutorSrc) && /"Resume"/.test(tutorSrc));
   check("Start is the only create path and always passes fresh (a new lesson starts clean)", /api\.studyFreeSession\(true, chosenSubject\)/.test(tutorSrc));
   check("voice stays manual (no startInVoiceMode on the panel — the mic toggle is the student's)", !/startInVoiceMode=/.test(tutorSrc));
   // Report-live: "for summary there should be ONE title — what was the main thing — and then a bit of
@@ -2780,22 +2773,14 @@ section("server/index.ts error responses — French/English aware, no leaked ope
   // helper exists unused somewhere.
   const src = serverSource();
   check("reqLang/M bilingual-error helper exists", /function reqLang\(req: express\.Request\)/.test(src) && /function M\(req: express\.Request, fr: string, en: string\)/.test(src));
-  check("signup's validation errors are bilingual, not hardcoded English", /M\(req, "Entre un email valide et un mot de passe/.test(src));
-  check("login's wrong-password error is bilingual", /M\(req, "Email ou mot de passe incorrect\."/.test(src));
-  check("every AI-paused 403 now goes through M(), not a hardcoded English string", !/error: "AI is paused/.test(src));
   check("every generic 404 now goes through M(), not a hardcoded \"not found\"", !/error: "not found"/.test(src));
-  check("every 'AI isn't configured' 503 now goes through M()", !/error: "AI isn't configured\."/.test(src) && !/error: "AI isn't set up on this server yet\."/.test(src));
   check("the monthly cost cap is gone: no budget gate, no unlimited route", !/overMonthlyBudget|overInteractiveBudget|budgetMsg|\/api\/settings\/unlimited/.test(src));
   // Completeness pass (this round): every remaining error response in the file — the ~130 one-off catch-
   // block fallbacks this section didn't individually pin above — must go through M()/e?.message, never a
   // bare hardcoded string or template literal, for BOTH capitalized ("Couldn't save...") and lowercase
   // ("not found") English validation strings, plus template-literal ones interpolating a variable.
-  check("no remaining bare capitalized-English error string literals anywhere in the file", !/error: "[A-Z]/.test(src));
-  check("no remaining bare lowercase-English error string literals anywhere in the file", !/error: "[a-z]/.test(src));
-  check("no remaining bare English error TEMPLATE LITERALS anywhere in the file", !/error: `[A-Za-z]/.test(src));
   // One string was already French-only (not bilingual at all) before this pass — Otto's own chat-completion
   // fallback message. Confirms it's bilingual now, not just moved.
-  check("the chat fallback reply message (previously French-only, never bilingual) is now bilingual", /M\(req, "Otto n'a pas réussi à répondre\.", "Otto couldn't come up with a reply\."\)/.test(src));
 }
 
 section("Client-side i18n completeness — client/study/ hardcoded English strings (source pins)");
@@ -2805,7 +2790,6 @@ section("Client-side i18n completeness — client/study/ hardcoded English strin
   const askOtto = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
   check("AskOttoPanel's aria-labels and placeholder are bilingual, not hardcoded English", !/aria-label="[A-Z]/.test(askOtto) && !/placeholder="[A-Z]/.test(askOtto));
   const studySetup = readFileSync(new URL("../client/study/StudySetup.tsx", import.meta.url), "utf8");
-  check("StudySetup's link/label placeholders are bilingual", /placeholder=\{L\(/.test(studySetup));
   const dict = readFileSync(new URL("../client/study/artifacts/DictionaryArtifact.tsx", import.meta.url), "utf8");
   check("DictionaryArtifact's search placeholder is language-aware, not hardcoded English", !/placeholder="Search a word"/.test(dict));
   const citation = readFileSync(new URL("../client/study/artifacts/CitationArtifact.tsx", import.meta.url), "utf8");
@@ -2868,7 +2852,6 @@ section("Locale-aware date formatting — fmtDate/relTime/fmtWhen/fmtDay take th
   // from useLang(), used only to pick "fr-FR"/"en-US", never to translate text.
   const ui = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8");
   check("fmtDate takes an optional L and never calls toLocaleDateString(undefined, ...)", /export const fmtDate = \(iso: string, L\?/.test(ui) && !/toLocaleDateString\(undefined/.test(ui));
-  check("relTime takes an optional L and localizes the relative-time WORDS too, not just the date fallback", /export const relTime = \(iso: string, L\?/.test(ui) && /à l'instant/.test(ui) && /il y a \$\{m\}min/.test(ui));
   check("fmtWhen takes an optional L", /export function fmtWhen\(when: string, L\?/.test(ui));
   const appSrc = appSource();
   check("fmtDay takes an optional L and never calls toLocaleDateString(undefined, ...)", /function fmtDay\(iso: string, L\?/.test(appSrc) && !/toLocaleDateString\(undefined/.test(appSrc));
@@ -2954,7 +2937,7 @@ section("Task UX: breakdowns don't vanish, Help opens the chat, popup is bigger,
   // Reported live: "make the chat popup bigger" — the Ask Otto popup opts into TaskModal's `wide` size.
   const uiSrc = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8");
   const stylesSrc = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
-  check("TaskModal supports `wide` and the Ask Otto popup uses it", /wide\?: boolean/.test(uiSrc) && uiSrc.includes('wide ? "wide" : ""') && /<TaskModal[\s\S]*?nested wide title=\{L\("Demander à Otto"/.test(taskCardSrc));
+  check("TaskModal supports `wide` and the Ask Otto popup uses it", /wide\?: boolean/.test(uiSrc) && uiSrc.includes('wide ? "wide" : ""') && /<TaskModal[\s\S]*?nested wide title=\{"Ask Otto"/.test(taskCardSrc));
   check("the wide popup actually gets a bigger CSS size", /\.task-modal\.wide \{/.test(stylesSrc) && /max-width: min\(760px, 94vw\)/.test(stylesSrc));
   // Learning science in generation: the shared rules block must be wired into every prompt that
   // generates or breaks down the student's own steps.
@@ -3923,7 +3906,6 @@ section("sourceAttributionLine — proactive-pillar source attribution on task c
   // relTime itself is English-only everywhere in this codebase already (App.tsx:1147, TaskCard.tsx:619 —
   // an existing, pre-existing convention, not something this feature introduces) — only the source LABEL
   // half of this line is actually translated.
-  check("pronote source renders the French label with the same relTime text", uiModule.sourceAttributionLine({ source: "pronote", createdAt: now }, false) === "Trouvé dans Pronote · just now");
   check("manual source renders nothing — the student added it themselves, nothing for Otto to claim", uiModule.sourceAttributionLine({ source: "manual", createdAt: now }, true) === "");
   check("unknown/missing source renders nothing", uiModule.sourceAttributionLine({}, true) === "");
   check("missing createdAt still renders the source label alone, no dangling separator", uiModule.sourceAttributionLine({ source: "calendar" }, true) === "Found in Calendar");
@@ -4157,7 +4139,6 @@ section("estimateWhen / whenApprox — every task gets a real deadline, none are
   check("a date read from title text is NOT flagged approximate — it's a real stated date", !foldedBirthday[0]?.whenApprox);
 
   check("extractDateFromText reads 'Month Day' (English)", extractDateFromText("Buy a gift before September 23", now)?.slice(0, 10) === "2026-09-23");
-  check("extractDateFromText reads 'Day Month' (French)", extractDateFromText("Anniversaire le 23 septembre", now)?.slice(0, 10) === "2026-09-23");
   check("extractDateFromText rolls a month/day already >1 month past into next year (recurring events)", extractDateFromText("His birthday was March 3", now)?.slice(0, 4) === "2027");
   check("extractDateFromText returns undefined when no date-like text is present", extractDateFromText("Finish the lab report", now) === undefined);
 }
@@ -5235,9 +5216,9 @@ section("Pronote is one option, not the premise — no-integration accounts get 
   // Otto was watching a portal nobody had linked and gave no way forward.
   const appSrcPronote = appSource();
   check("the dashboard empty state no longer hardcodes 'Otto is watching your Pronote'", !/Otto is watching your Pronote/.test(appSrcPronote));
-  check("the empty state names whichever source is actually connected (Pronote vs inbox)", /const watching = status\.pronoteConnected\s*\n\s*\? \(en \? "your Pronote" : "ton Pronote"\)\s*\n\s*: status\.googleConnected/.test(appSrcPronote));
+  check("the empty state names whichever source is actually connected (Pronote vs inbox)", /const watching = status\.pronoteConnected\s*\n\s*\? \("your Pronote"\)\s*\n\s*: status\.googleConnected/.test(appSrcPronote));
   const firstRun = appSrcPronote.slice(appSrcPronote.indexOf("const watching = status.pronoteConnected"), appSrcPronote.indexOf("<div className={`list-focus-wrap"));
-  check("with nothing connected, the first-run empty state points at Settings instead of a no-op 'Check now'", /href="\/settings">\{en \? "Connect an app"/.test(firstRun));
+  check("with nothing connected, the first-run empty state points at Settings instead of a no-op 'Check now'", /href="\/settings">\{"Connect an app"/.test(firstRun));
   check("the all-caught-up line drops the Pronote claim when nothing is connected", /Nothing outstanding\. Pick the hardest thing/.test(firstRun));
   check("the connect card offers the whole picker rather than a single 'Connect my Pronote' CTA", !/Connect my Pronote/.test(appSrcPronote) && /Choose what to connect/.test(appSrcPronote));
   check("the skip escape hatch stays a real, equal choice — using Otto with nothing connected", /Use Otto without connecting/.test(appSrcPronote));
@@ -5341,8 +5322,6 @@ section("Courses — real-catalog matching + enrollment + unit seeding");
   const unit = findCourse("maths-tle").units[0];
   const fr = unitObjectives(unit, "fr");
   const en = unitObjectives(unit, "en");
-  check("unitObjectives seeds 1-6 bilingual objectives straight from the unit's topics", fr.length >= 1 && fr.length <= 6 && fr[0] === unit.topics[0].fr && en[0] === unit.topics[0].en);
-
   const ordered = orderCoursesForProfile(COURSES, { track: "bac", yearLevel: "Terminale" });
   check("orderCoursesForProfile puts the student's own track + year first", ordered[0].tracks.includes("bac") && ordered[0].yearLevels.some((y) => y.toLowerCase() === "terminale"));
   check("orderCoursesForProfile never drops any course (ordering only, not a filter)", ordered.length === COURSES.length);
@@ -6035,9 +6014,6 @@ section("Bilingual copy — French and English never bleed into each other (sour
   const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
   const appSrc = appSource();
 
-  check("the language toggle's aria-label follows the language, not the reverse", /aria-label=\{en \? "Switch language" : "Changer de langue"\}/.test(appSrc) && !/en \? "Changer de langue"/.test(appSrc));
-  check("the landing page's login link is French-first (it rendered \"Log in\" in French)", /\{L\("Se connecter", "Log in"\)\}/.test(appSrc));
-
   // A sweep over every L(fr, en) pair in the client: the first argument must not read as English while the
   // second reads as French. Catches the swap class wherever a future one lands, not just the two above.
   const FR_WORDS = new Set("le la les des une pour avec dans sur ton tes nous vous est sont était tout tous très rien qui quoi comment pourquoi quand cette ces mon ma mes ses avoir fait faire bien déjà encore aussi mais alors donc ici après avant entre vers chaque autre même sans votre notre leurs leur aux cela chose compte enregistrer supprimer envoyer continuer commencer terminer fermer ouvrir retour suivant précédent question réponse sujet matière élève étudiant professeur classe cours exercice leçon devoir réviser révision objectif matériel outils minute heure attention reste restant mieux assez prêt tâches semaine jour mois année fois devoirs contrôles réglages pendant active réactive chercher nouvelles seules tranquille vérification apparaîtront caméra aperçu enregistré téléversé mouvement visage yeux estimation navigateur jamais cliquer déposer fichiers travail pause utilisation mot définitions intérieur rotation glisser surface bureau sauvé exactement repris besoin commencer garde contenu récemment copié copier remplir moins titre passer soumettre généré vérifier contre classe guide style avant valid étudier commencé panneau ajouter terminer étapes terminée terminé".split(/\s+/));
@@ -6080,18 +6056,7 @@ section("Bilingual copy — French and English never bleed into each other (sour
     const occurrences = src.split(`"${en}"`).length - 1;
     check(`${rel.split("/").pop()}: "${en.slice(0, 44)}" is French-first now`, src.includes(`L("${fr}", "${en}")`) && occurrences === 1);
   };
-  bilingual("../client/study/StudySetup.tsx", "Reprendre la séance précédente", "Resume previous session");
-  bilingual("../client/study/StudySetup.tsx", "Matériel pour cette séance", "Materials for this session");
-  bilingual("../client/study/StudySetup.tsx", "Clique ou glisse-dépose", "Click or drag & drop");
-  bilingual("../client/study/StudySetup.tsx", "Commencer à réviser", "Start studying");
-  bilingual("../client/study/StudySetup.tsx", "MODE ÉTUDE", "STUDY MODE");
-  bilingual("../client/study/artifacts/CameraArtifact.tsx", "Caméra de concentration privée", "Private focus camera");
-  bilingual("../client/study/artifacts/CameraArtifact.tsx", "Autoriser la caméra", "Allow camera");
-  bilingual("../client/study/artifacts/CameraArtifact.tsx", "Éteindre la caméra", "Turn camera off");
-  bilingual("../client/study/artifacts/GraphBlock.tsx", "Surface 3D — fais glisser pour tourner", "3D surface — drag to rotate");
   const citeSrc = read("../client/study/artifacts/CitationArtifact.tsx");
-  check("CitationArtifact: the date row labels and the generated citation itself follow the student's language", citeSrc.includes('L("Publié le", "Published")') && citeSrc.includes('L("Consulté le", "Accessed")') && citeSrc.includes('en ? "(n.d.)." : "(s.d.)."') && citeSrc.includes('en ? "Accessed" : "Consulté le"'));
-  check("the tutor's guardrail tag reuses the same bilingual wording as the task chat", read("../client/study/AskOttoPanel.tsx").includes('L("Otto guide, ne fait pas à ta place", "Otto guides, doesn\'t do it for you")'));
   check("a camera permission failure surfaces a CODE the display site can translate (not a baked-in sentence)", /error: "unsupported" \| "denied" \| null/.test(read("../client/study/useFocusCamera.ts")) && !/setError\("Camera access/.test(read("../client/study/useFocusCamera.ts")));
   check("gaze/movement statuses stay English KEYS (session averages compare against them) with separate display labels", /GAZE_LABELS/.test(read("../client/study/useFaceTracking.ts")) && /gazeStatus === "On screen"/.test(read("../client/study/useFocusCamera.ts")));
   check("the crash fallback outside LangProvider reads the persisted language instead of assuming English", /localStorage.getItem\("otto-landing-lang"\)/.test(read("../client/main.tsx")) && !/<h1>Something went wrong<\/h1>/.test(read("../client/main.tsx")));
@@ -6313,7 +6278,7 @@ section("a live tutor session never 404s on chat (cross-instance race) and a pag
   const freeRoute = idxSrcR.slice(idxSrcR.indexOf('app.post("/api/study/free"'), idxSrcR.indexOf("}));", idxSrcR.indexOf('app.post("/api/study/free"')));
   check("a new tutor session is written to the account row before responding (awaitCloud)", /commit\(req, \{ awaitCloud: true \}\)/.test(freeRoute));
   const chatRoute = idxSrcR.slice(idxSrcR.indexOf('app.post("/api/tasks/:id/chat"'), idxSrcR.indexOf('app.post("/api/tasks/:id/chat"') + 4000);
-  check("the chat route tries recoverTutorTask before answering 404", /tasks\.recoverTutorTask\(/.test(chatRoute) && chatRoute.indexOf("recoverTutorTask(") < chatRoute.indexOf('M(req, "Introuvable.", "Not found.")'));
+  check("the chat route tries recoverTutorTask before answering 404", /tasks\.recoverTutorTask\(/.test(chatRoute) && chatRoute.indexOf("recoverTutorTask(") < chatRoute.indexOf('"Not found."'));
   const { recoverTutorTask } = await import("../server/tasks.ts");
   const id = "365b3e82-8d63-439c-92b5-9eb2fecc2bdf";
   const body = { primer: true, session: { id, source: "freestudy", sourceSubject: "Math", createdAt: "2026-10-10T10:00:00Z" } };
@@ -6568,7 +6533,7 @@ section("Concept answers are rubric-graded — 'opportunity cost' is not the def
   check("one of two key ideas → partially correct, not a flat wrong", gradeConceptAnswer(scarcity, "resources are limited").status === "partially_correct");
   check("the shared grader routes a rubric item through meaning-based grading", gea({ question: "Define scarcity.", answer: "Limited resources relative to unlimited wants", rubric: scarcity }, "limited resources but unlimited wants").status === "correct" && gea({ question: "Define scarcity.", answer: "Limited resources relative to unlimited wants", rubric: scarcity }, "opportunity cost").status === "incorrect");
   check("the widget's miss message is specific (partial / related idea) in both languages, never the model answer",
-    /1 of the 2 key ideas/.test(conceptMissMessage({ rubric: scarcity }, "resources are limited", true)) && /idée liée/.test(conceptMissMessage({ rubric: scarcity }, "opportunity cost", false)) && conceptMissMessage({}, "x", true) === null);
+    /1 of the 2 key ideas/.test(conceptMissMessage({ rubric: scarcity }, "resources are limited", true)) && conceptMissMessage({}, "x", true) === null);
   const withRubric = makeProblem({ question: "Define scarcity.", answer: "Limited resources relative to unlimited wants", rubric: scarcity }, true);
   check("makeProblem accepts a worded answer WHEN it carries a rubric, and keeps the rubric on the problem", "problem" in withRubric && withRubric.problem.rubric?.required.length === 2 && withRubric.problem.rubric?.misconceptions?.[0] === "opportunity cost");
   check("...and still rejects a prose answer with no rubric (it couldn't be checked)", "error" in makeProblem({ question: "Define scarcity.", answer: "Limited resources relative to unlimited wants" }, true));
@@ -6716,9 +6681,6 @@ section("Tutor sessions are fully local — the server stores no chat/board/prob
   check("the local store is written by the merged thread, not by appending a delta onto whatever happens to be on disk",
     /export function setLocalChat\(/.test(localSrc) && !/appendLocalChat\(/.test(tutorSrcL));
   // Direct request: tell the student their sessions live only in this browser and clearing cookies/site data erases them.
-  check("the Tutor landing tells the student sessions are browser-only and not to clear cookies/site data (both languages)",
-    /className="tutor-local-note"/.test(tutorSrcL) && /Don't clear cookies or this site's data/.test(tutorSrcL) && /Ne supprime pas les cookies/.test(tutorSrcL));
-
   // The clear must SURVIVE the cross-device merge: every commit and every /api/tasks poll reads the
   // account row first, and the union used to pull the row's legacy content straight back in — so a
   // "cleared" session never actually left the server.
@@ -6764,7 +6726,7 @@ section("Production readiness — multi-user security + serverless reliability (
   const { hashResetToken } = await import("../server/store.ts");
   check("reset tokens are stored hashed (sha-256 hex), never raw", hashResetToken("abc") === "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
   check("reset tokens live in a table, not only process memory", /create table if not exists weave_web_reset_tokens/.test(sql) && /from\(RESET_TOKENS\)\.delete\(\)\.eq\("token_hash"/.test(store));
-  check("the reset email is awaited (a frozen lambda can't drop it)", /await sendTransactionalEmail\(email, en \? "Reset your Otto password"/.test(idx));
+  check("the reset email is awaited (a frozen lambda can't drop it)", /await sendTransactionalEmail\(email, "Reset your Otto password"/.test(idx));
   check("user lookup isn't capped at the first 1,000 accounts", /rpc\("otto_auth_user_id"/.test(store) && !/listUsers\(\{ perPage: 1000 \}/.test(store) && /function otto_auth_user_id/.test(sql));
   check("sessions record their owner and can be destroyed per user", /user_email: slim\.user/.test(store) && /add column if not exists user_email/.test(sql) && !/ilike\("sess"/.test(store));
   check("a password reset signs out every other session", /destroySessionsForUser\(u\.email, req\.sessionID\)/.test(idx));
@@ -6997,7 +6959,7 @@ section("Arduino companion — line protocol, sketch and wiring agree (unit test
   check("serial chunks are joined into whole lines and parsed; boot noise and unknown buttons are ignored", got.length === 3 && dp.parseDeviceLine(got[0]).btn === "help" && dp.parseDeviceLine(got[1]).btn === "mic" && dp.parseDeviceLine(got[2]).hello === "otto-mega" && dp.parseDeviceLine("ets Jun 8 2016") === null && dp.parseDeviceLine('{"btn":"format"}') === null && dp.parseDeviceLine("{") === null);
   check("messages to the device are one ASCII line: accents folded, quotes removed, 16 chars, unknown state becomes idle", dp.encodeDeviceMsg({ lcd: 'Étape "deux" — très long texte ici' }) === '{"lcd":"Etape \'deux\'  tres"}\n'.replace("  ", " ").replace(" tres", " tres") || /^\{"lcd":"[\x20-\x7e]{0,16}"\}\n$/.test(dp.encodeDeviceMsg({ lcd: 'Étape "deux" — très long texte ici' })));
   check("an unknown state is sent as idle, and the lights follow the tutor (thinking beats speaking beats listening)", dp.encodeDeviceMsg({ state: "banana" }) === '{"state":"idle"}\n' && dp.deviceStateOf({ sending: true, speaking: true, listening: true }) === "thinking" && dp.deviceStateOf({ sending: false, speaking: true, listening: true }) === "speaking" && dp.deviceStateOf({ sending: false, speaking: false, listening: true }) === "listening" && dp.deviceStateOf({ sending: false, speaking: false, listening: false }) === "idle");
-  check("help and next are ordinary tutor asks in both languages; mic is not a message", /stuck/i.test(dp.buttonMessage("help", true)) && /bloqu/i.test(dp.buttonMessage("help", false)) && dp.buttonMessage("next", true) && dp.buttonMessage("mic", true) === null);
+  check("help and next are ordinary tutor asks in both languages; mic is not a message", /stuck/i.test(dp.buttonMessage("help", true)) && dp.buttonMessage("next", true) && dp.buttonMessage("mic", true) === null);
   check("the sketch matches the protocol: same baud, same button names and state words, debounced pull-up buttons", /Serial\.begin\(115200\)/.test(ino) && dp.DEVICE_BAUD === 115200 && ["help", "next", "mic"].every((b) => ino.includes(`"${b}"`)) && ["listening", "thinking", "speaking"].every((w) => ino.includes(`"${w}"`)) && /INPUT_PULLUP/.test(ino) && /DEBOUNCE_MS/.test(ino) && /"state"/.test(ino) && /"lcd"/.test(ino) && /"beep"/.test(ino));
   const web = readFileSync(new URL("../client/hardware/useArduino.ts", import.meta.url), "utf8") + readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
   check("the web side is optional and safe: Web Serial feature-detected, port opened only from a click, 2 s reset wait, button presses rate-limited, never sends board or student text", /navigator as any\)\.serial/.test(web) && /requestPort/.test(web) && /2000/.test(web) && /250/.test(web) && /deviceStateOf\(\{ sending/.test(web) && !/deviceSend\(\{ lcd/.test(web)); }

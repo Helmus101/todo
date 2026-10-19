@@ -96,14 +96,14 @@ function useTaskLeave(
       // api.ts's j() RESOLVES (doesn't throw) on a 401 — an expired session lands here as `{error: "..."}`,
       // not a WebTask[]. Without this guard that object would flow straight into onChange and corrupt the
       // task list state. Treat it the same as a thrown failure.
-      if (!Array.isArray(list)) throw new Error((list as any)?.error || L("On dirait que tu as été déconnecté — recharge la page.", "Looks like you got logged out — reload the page."));
+      if (!Array.isArray(list)) throw new Error((list as any)?.error || "Looks like you got logged out — reload the page.");
     } catch (e: any) {
       // A failed confirm/dismiss used to leave the button/animation stuck forever with no feedback and no
       // way to retry — this is the actual live-reported "Looks good doesn't close the task" bug. Reset the
       // leave state so the button works again, and say what happened instead of failing silently.
       setLeaving(false);
       if (task) onTask?.(task); // roll back the optimistic flip to the real prior state
-      notify(e?.message || L("Un imprévu est survenu — réessaie.", "Something went wrong on our end — try again."), "error");
+      notify(e?.message || "Something went wrong on our end — try again.", "error");
       return;
     }
     if (kind === "confirm") onConfirmed?.(taskId); // flags the row it lands on in "Completed" for a beat, so
@@ -120,7 +120,7 @@ function useTaskLeave(
  *  at all, which read as incomplete/broken next to every other card that has one. Falls back to a relative
  *  "Added <when>" from `createdAt`, which every task has unconditionally. */
 const taskDateLabel = (t: WebTask, L: (fr: string, en: string) => string): string =>
-  t.when ? (t.whenApprox ? `~${fmtWhen(t.when, L)}` : fmtWhen(t.when, L)) : t.createdAt ? L(`Ajoutée ${relTime(t.createdAt, L)}`, `Added ${relTime(t.createdAt, L)}`) : "";
+  t.when ? (t.whenApprox ? `~${fmtWhen(t.when, L)}` : fmtWhen(t.when, L)) : t.createdAt ? `Added ${relTime(t.createdAt, L)}` : "";
 
 // "Open example.com ↗" instead of a bare "Open ↗" — the user sees WHERE each step goes before clicking.
 const urlHost = (u?: string) => { try { return u ? new URL(u).hostname.replace(/^www\./, "") : ""; } catch { return ""; } };
@@ -131,15 +131,15 @@ const urlHost = (u?: string) => { try { return u ? new URL(u).hostname.replace(/
 // into an otherwise-translated sentence, which is what happened before this had no L param at all.
 function linkKind(u?: string, L: (fr: string, en: string) => string = (_fr, en) => en): string {
   const s = u || "";
-  if (/docs\.google\.com\/document/.test(s)) return L("Document", "Doc");
-  if (/docs\.google\.com\/spreadsheets/.test(s)) return L("Feuille", "Sheet");
-  if (/docs\.google\.com\/presentation/.test(s)) return L("Diapositives", "Slides");
-  if (/docs\.google\.com\/forms|forms\.gle/.test(s)) return L("Formulaire", "Form");
-  if (/mail\.google\.com/.test(s)) return /#drafts/.test(s) ? L("Brouillon", "Draft") : L("Email", "Email");
-  if (/calendar\.google\.com/.test(s)) return L("Événement", "Event");
-  if (/drive\.google\.com/.test(s)) return L("Fichier", "File");
-  if (/maps\.google\.com|google\.com\/maps/.test(s)) return L("Itinéraire", "Directions");
-  if (/^tel:/.test(s)) return L("Appel", "Call");
+  if (/docs\.google\.com\/document/.test(s)) return "Doc";
+  if (/docs\.google\.com\/spreadsheets/.test(s)) return "Sheet";
+  if (/docs\.google\.com\/presentation/.test(s)) return "Slides";
+  if (/docs\.google\.com\/forms|forms\.gle/.test(s)) return "Form";
+  if (/mail\.google\.com/.test(s)) return /#drafts/.test(s) ? "Draft" : "Email";
+  if (/calendar\.google\.com/.test(s)) return "Event";
+  if (/drive\.google\.com/.test(s)) return "File";
+  if (/maps\.google\.com|google\.com\/maps/.test(s)) return "Directions";
+  if (/^tel:/.test(s)) return "Call";
   if (/notion\.so/.test(s)) return "Notion";
   return urlHost(s);
 }
@@ -225,7 +225,7 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
   const daysLeft = Number.isFinite(dueMs) ? (dueMs - Date.now()) / 86_400_000 : NaN;
   const soon = !isDone && !isNaN(daysLeft) && daysLeft <= 3;
   const next = !isDone ? (task.steps || []).find((s) => !s.done) : undefined;
-  const secondary = next ? L(`Suivant : ${next.text}`, `Next: ${next.text}`) : subtitle(task);
+  const secondary = next ? `Next: ${next.text}` : subtitle(task);
 
   return (
     <div className={`card ${isInFlight(task.status) ? "running" : ""} ${needsYou ? "needs-you" : ""} ${isDone ? "is-done" : ""} ${leaving && leaveKind === "confirm" ? "confirming" : task.status === "dismissed" || leaving ? "dismissed" : ""}`}>
@@ -238,7 +238,7 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
           siblings, since a <button> can't contain another <button>. */}
       {!isDone ? (
         <button type="button" className={`card-check ${leaving && leaveKind === "confirm" ? "checked" : ""}`}
-          title={L("Marquer comme fait", "Mark as done")} aria-label={L(`Marquer « ${task.title} » comme faite`, `Mark "${task.title}" as done`)} disabled={leaving}
+          title={"Mark as done"} aria-label={`Mark "${task.title}" as done`} disabled={leaving}
           onClick={() => void leave(() => api.confirm(task.id), "confirm", task)}>
           <span aria-hidden="true">{leaving && leaveKind === "confirm" ? "✓" : ""}</span>
         </button>
@@ -247,13 +247,13 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
           workspace (materials, notes, chat with Otto) useful even before a plan exists yet, not something
           that should stay hidden while a task is still being generated/refined. */}
       {!isDone && !readOnly && onEnterStudyMode && (
-        <button type="button" className="card-study" title={L("Mode étude", "Study Mode")} aria-label={L(`Mode étude pour : ${task.title}`, `Study Mode for: ${task.title}`)} disabled={leaving} onClick={(e) => { e.stopPropagation(); onEnterStudyMode(); }}>
+        <button type="button" className="card-study" title={"Study Mode"} aria-label={`Study Mode for: ${task.title}`} disabled={leaving} onClick={(e) => { e.stopPropagation(); onEnterStudyMode(); }}>
           <BookOpen aria-hidden="true" size={16} />
         </button>
       )}
-      <button type="button" className="card-main" onClick={onOpen} aria-label={L(`Ouvrir : ${task.title}`, `Open: ${task.title}`)}>
+      <button type="button" className="card-main" onClick={onOpen} aria-label={`Open: ${task.title}`}>
         <span className="card-text">
-          <span className="card-title">{isNew ? <span className="new-dot" title={L("Nouveau", "New")} /> : null}{taskDisplayName(task)}</span>
+          <span className="card-title">{isNew ? <span className="new-dot" title={"New"} /> : null}{taskDisplayName(task)}</span>
           {/* Compact row: at most subject + one of {due date, secondary text} — the quadrant word-label
               used to also render here, stacking up to 4 distinct pieces into one 2-line-clamped span on
               every ordinary task (direct instruction: cut crowding). Urgency is still visible via the
@@ -263,8 +263,8 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
             <span className="card-sub">
               {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
               {showPeakBadge ? (
-                <span className="card-peak-badge" title={L(`Heure de pic d'attention : ${peakHour}:00`, `Peak focus hour: ${peakHour}:00`)}>
-                  {L("Meilleur moment", "Best time")}
+                <span className="card-peak-badge" title={`Peak focus hour: ${peakHour}:00`}>
+                  {"Best time"}
                 </span>
               ) : null}
               {w ? <span className={`when ${soon ? "when-soon" : ""}`}>{w}</span> : secondary}
@@ -272,13 +272,13 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
           ) : null}
         </span>
         {showChip ? <span className={`chip chip-${showChip.tone}`}>{showChip.label}</span> : null}
-        {guardrailHeld ? <span className="row-guardrail" title={L("Otto a refusé de faire cette tâche à ta place ici — voir le journal d'activité", "Otto declined to do this one for you here — see the activity log")} aria-hidden="true">✦</span> : null}
-        {cStatus === "executing" ? <span className="card-spin" title={L("En cours…", "Working…")} /> : null}
+        {guardrailHeld ? <span className="row-guardrail" title={"Otto declined to do this one for you here — see the activity log"} aria-hidden="true">✦</span> : null}
+        {cStatus === "executing" ? <span className="card-spin" title={"Working…"} /> : null}
         <span className="caret" aria-hidden="true">›</span>
       </button>
       {/* Quick dismiss — remove a task in one click without opening it. Hover-revealed so the row stays clean.
           Hidden once the row is already leaving (dismissing or confirming) — a second click has nothing to do. */}
-      {!isDone && !leaving && !readOnly && <button className="card-x" title={L("Ignorer", "Dismiss")} aria-label={L(`Ignorer « ${task.title} »`, `Dismiss "${task.title}"`)} onClick={() => void leave(() => api.dismiss(task.id), "dismiss", task)}>×</button>}
+      {!isDone && !leaving && !readOnly && <button className="card-x" title={"Dismiss"} aria-label={`Dismiss "${task.title}"`} onClick={() => void leave(() => api.dismiss(task.id), "dismiss", task)}>×</button>}
       {leaving && leaveKind === "confirm" ? <span className="confirm-check" aria-hidden="true">✓</span> : null}
     </div>
   );
@@ -311,9 +311,9 @@ export function TaskHero({ task, onOpen, onChange, onTask, onConfirmed, readOnly
     <div className={`dash-hero ${leaving ? "confirming" : ""}`}>
       {/* The prototype leads with the subject ("Mathematics"); fall back to the priority label when a
           task has no subject. */}
-      <div className="dash-hero-kicker">{task.sourceSubject || L("Ta priorité", "Your next priority")}</div>
+      <div className="dash-hero-kicker">{task.sourceSubject || "Your next priority"}</div>
       <h2 className="dash-hero-title">{taskDisplayName(task)}</h2>
-      {task.goal ? <div className="task-goal-banner"><span className="task-goal-tag">{L("Objectif", "Goal")}:</span> {stripStrayMarkdown(task.goal)}</div> : null}
+      {task.goal ? <div className="task-goal-banner"><span className="task-goal-tag">{"Goal"}:</span> {stripStrayMarkdown(task.goal)}</div> : null}
       {(task.nudgeLine || task.why) ? <p className="dash-hero-why">{stripStrayMarkdown(task.nudgeLine || task.why)}</p> : null}
       {sourceAttributionLine(task, cardEn) ? <p className="card-source-attribution">{sourceAttributionLine(task, cardEn)}</p> : null}
       {(task.sourceSubject || w || showChip || task.taskType) ? (
@@ -325,14 +325,14 @@ export function TaskHero({ task, onOpen, onChange, onTask, onConfirmed, readOnly
         </div>
       ) : null}
       <button type="button" className="btn primary big dash-hero-cta" onClick={onOpen}>
-        {L("Avance dessus avec Otto", "Work through this with Otto")}
+        {"Work through this with Otto"}
       </button>
       {/* The prototype's quiet "Done for now" checkbox under the CTA — same optimistic confirm as the
           rows, so the task animates away exactly like a row confirm would. */}
       {!readOnly && (
         <label className="dash-hero-done">
           <input type="checkbox" disabled={leaving} onChange={() => void leave(() => api.confirm(task.id), "confirm", task)} />
-          <span>{L("Fait pour l'instant", "Done for now")}</span>
+          <span>{"Done for now"}</span>
         </label>
       )}
       {!!heroSteps.length && (
@@ -348,7 +348,7 @@ export function TaskHero({ task, onOpen, onChange, onTask, onConfirmed, readOnly
       {/* Same destination as the CTA (the task detail view) — the prototype's quiet secondary access to
           the plan and Otto's prepared materials. */}
       <button type="button" className="btn ghost dash-hero-plan" onClick={onOpen}>
-        {L("Voir le plan et les documents", "View plan & materials")}
+        {"View plan & materials"}
       </button>
     </div>
   );
@@ -378,12 +378,12 @@ export function TaskReadOnly({ task, onTask, userId }: { task: WebTask; onTask: 
     onTask({ ...task, status: "done", updatedAt: new Date().toISOString() });
     try {
       const list = await api.confirm(task.id);
-      if (!Array.isArray(list)) throw new Error((list as any)?.error || L("On dirait que tu as été déconnecté — recharge la page.", "Looks like you got logged out — reload the page."));
+      if (!Array.isArray(list)) throw new Error((list as any)?.error || "Looks like you got logged out — reload the page.");
       const updated = list.find((t) => t.id === task.id);
       if (updated) onTask(updated);
     } catch (e: any) {
       onTask(task); // roll back the optimistic flip
-      notify(e?.message || L("Un imprévu est survenu — réessaie.", "Something went wrong on our end — try again."), "error");
+      notify(e?.message || "Something went wrong on our end — try again.", "error");
     } finally {
       setConfirming(false);
     }
@@ -394,15 +394,15 @@ export function TaskReadOnly({ task, onTask, userId }: { task: WebTask; onTask: 
   const preparedCount = (task.notes?.length || 0) + (task.flashcards?.length || 0) + (task.quizzes?.length || 0) + (task.links?.length || 0) + (task.did?.length || 0);
   const linkKind = (u?: string) => {
     const s = u || "";
-    if (/docs\.google\.com\/document/.test(s)) return L("Document", "Doc");
-    if (/docs\.google\.com\/spreadsheets/.test(s)) return L("Feuille", "Sheet");
-    if (/docs\.google\.com\/presentation/.test(s)) return L("Diapositives", "Slides");
-    if (/docs\.google\.com\/forms|forms\.gle/.test(s)) return L("Formulaire", "Form");
-    if (/mail\.google\.com/.test(s)) return /#drafts/.test(s) ? L("Brouillon", "Draft") : L("Email", "Email");
-    if (/calendar\.google\.com/.test(s)) return L("Événement", "Event");
-    if (/drive\.google\.com/.test(s)) return L("Fichier", "File");
-    if (/maps\.google\.com|google\.com\/maps/.test(s)) return L("Itinéraire", "Directions");
-    if (/^tel:/.test(s)) return L("Appel", "Call");
+    if (/docs\.google\.com\/document/.test(s)) return "Doc";
+    if (/docs\.google\.com\/spreadsheets/.test(s)) return "Sheet";
+    if (/docs\.google\.com\/presentation/.test(s)) return "Slides";
+    if (/docs\.google\.com\/forms|forms\.gle/.test(s)) return "Form";
+    if (/mail\.google\.com/.test(s)) return /#drafts/.test(s) ? "Draft" : "Email";
+    if (/calendar\.google\.com/.test(s)) return "Event";
+    if (/drive\.google\.com/.test(s)) return "File";
+    if (/maps\.google\.com|google\.com\/maps/.test(s)) return "Directions";
+    if (/^tel:/.test(s)) return "Call";
     if (/notion\.so/.test(s)) return "Notion";
     try { return u ? new URL(u).hostname.replace(/^www\./, "") : ""; } catch { return ""; }
   };
@@ -416,12 +416,12 @@ export function TaskReadOnly({ task, onTask, userId }: { task: WebTask; onTask: 
           <span className={`card-quadrant card-quadrant-${task.quadrant}`}>{quadrantLabel(task.quadrant, cardEn)}</span>
         </div>
       ) : null}
-      {task.goal ? <div className="task-goal-banner"><span className="task-goal-tag">{L("Objectif", "Goal")}:</span> {stripStrayMarkdown(task.goal)}</div> : null}
+      {task.goal ? <div className="task-goal-banner"><span className="task-goal-tag">{"Goal"}:</span> {stripStrayMarkdown(task.goal)}</div> : null}
       {(task.nudgeLine || task.why) ? <p className="task-readonly-why">{stripStrayMarkdown(task.nudgeLine || task.why)}</p> : null}
       {steps.length ? (
         <>
           <h4 className="task-readonly-head">
-            {L("Le plan d'Otto", "Otto's plan")}
+            {"Otto's plan"}
             <span className="task-readonly-count">{doneCount}/{steps.length}</span>
           </h4>
           <ol className="task-readonly-steps">
@@ -437,53 +437,52 @@ export function TaskReadOnly({ task, onTask, userId }: { task: WebTask; onTask: 
           </ol>
         </>
       ) : (
-        <p className="task-readonly-why">{L("Otto n'a pas encore écrit de plan pour celle-ci.", "Otto hasn't written a plan for this one yet.")}</p>
+        <p className="task-readonly-why">{"Otto hasn't written a plan for this one yet."}</p>
       )}
       {/* Artifacts, links, and board - now visible on mobile */}
       {preparedCount > 0 ? (
         <div className="tf-prepared-inline">
           {task.did?.length ? (
             <>
-              <span className="prepared-label">{L("Fait", "Done")}</span>
+              <span className="prepared-label">{"Done"}</span>
               <ul className="bullets">{task.did.map((d, i) => <li key={i}>{stripStrayMarkdown(d)}</li>)}</ul>
             </>
           ) : null}
           {(task.notes?.length || task.flashcards?.length || task.quizzes?.length) ? (
             <>
-              <span className="prepared-label">{L("Créé pour toi", "Made for you")}</span>
+              <span className="prepared-label">{"Made for you"}</span>
               <div className="note-chips prepared-chips">
                 {task.notes?.map((n) => (
                   <button key={n.id} type="button" className="note-chip" onClick={() => setOpenNote(n.id)}>
                     <span className="note-chip-icon" aria-hidden="true">▤</span>
-                    <span className="note-chip-text"><span className="note-chip-title">{n.title}</span><span className="note-chip-meta">{L("Fiche · Ouvrir", "Note · Open")}</span></span>
+                    <span className="note-chip-text"><span className="note-chip-title">{n.title}</span><span className="note-chip-meta">{"Note · Open"}</span></span>
                   </button>
                 ))}
                 {task.flashcards?.map((f) => (
                   <button key={f.id} type="button" className="note-chip" onClick={() => setOpenDeck(f.id)}>
                     <span className="note-chip-icon" aria-hidden="true"><Layers size={13} /></span>
-                    <span className="note-chip-text"><span className="note-chip-title">{f.title}</span><span className="note-chip-meta">{L(`${f.cards.length} carte${f.cards.length === 1 ? "" : "s"} · Ouvrir`, `${f.cards.length} card${f.cards.length === 1 ? "" : "s"} · Open`)}</span></span>
+                    <span className="note-chip-text"><span className="note-chip-title">{f.title}</span><span className="note-chip-meta">{`${f.cards.length} card${f.cards.length === 1 ? "" : "s"} · Open`}</span></span>
                   </button>
                 ))}
                 {task.quizzes?.map((qz) => (
                   <button key={qz.id} type="button" className="note-chip" onClick={() => setOpenQuiz(qz.id)}>
                     <span className="note-chip-icon" aria-hidden="true">?</span>
-                    <span className="note-chip-text"><span className="note-chip-title">{qz.title}</span><span className="note-chip-meta">{L(`${qz.questions.length} questions · Ouvrir`, `${qz.questions.length} questions · Open`)}</span></span>
+                    <span className="note-chip-text"><span className="note-chip-title">{qz.title}</span><span className="note-chip-meta">{`${qz.questions.length} questions · Open`}</span></span>
                   </button>
                 ))}
               </div>
             </>
           ) : null}
           {task.links?.length ? (
-            <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url} onClick={(e) => { e.preventDefault(); openTab(l.url, TAB_GROUP); }}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url)) || L("Ouvrir le lien", "Open link")} ↗</a></li>)}</ul>
+            <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url} onClick={(e) => { e.preventDefault(); openTab(l.url, TAB_GROUP); }}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url)) || "Open link"} ↗</a></li>)}</ul>
           ) : null}
         </div>
       ) : null}
       <button type="button" className="btn primary task-readonly-done" disabled={confirming} onClick={() => void markDone()}>
-        {confirming ? L("…", "…") : L("Marquer comme fait", "Mark as done")}
+        {confirming ? "…" : "Mark as done"}
       </button>
       <p className="task-readonly-foot">
-        {L("Sur téléphone, Otto est en lecture seule pour le travail lui-même — ouvre-le sur un ordinateur ou un iPad pour ça.",
-           "On a phone, Otto is read-only for the actual work — open it on a laptop or iPad for that.")}
+        {"On a phone, Otto is read-only for the actual work — open it on a laptop or iPad for that."}
       </p>
       <ArtifactPopups task={task} onTask={onTask} openNote={openNote} openDeck={openDeck} openQuiz={openQuiz}
         setOpenNote={setOpenNote} setOpenDeck={setOpenDeck} setOpenQuiz={setOpenQuiz} userId={userId} />
@@ -508,18 +507,18 @@ function DeadlineEdit({ task, onChange }: { task: WebTask; onChange: (t: WebTask
     if (v === current) { setEditing(false); return; }
     setBusy(true);
     try { onChange(await api.setDeadline(task.id, v)); setEditing(false); }
-    catch (e: any) { notify(e?.message || L("Impossible de changer l'échéance — réessaie.", "Couldn't change the deadline — try again."), "error"); }
+    catch (e: any) { notify(e?.message || "Couldn't change the deadline — try again.", "error"); }
     setBusy(false);
   };
   if (!editing) {
-    return <button type="button" className="ghost small deadline-edit-btn" onClick={() => setEditing(true)} aria-label={L("Modifier l'échéance", "Edit the deadline")}>✎ {L("Modifier", "Edit")}</button>;
+    return <button type="button" className="ghost small deadline-edit-btn" onClick={() => setEditing(true)} aria-label={"Edit the deadline"}>✎ {"Edit"}</button>;
   }
   return (
     <span className="deadline-edit">
-      <input type="date" value={draft} disabled={busy} autoFocus onChange={(e) => setDraft(e.target.value)} aria-label={L("Nouvelle échéance", "New deadline")} />
-      <button type="button" className="btn xs primary" disabled={busy || !draft} onClick={() => void save(draft)}>{L("Enregistrer", "Save")}</button>
-      {current ? <button type="button" className="ghost small" disabled={busy} onClick={() => void save("")}>{L("Effacer", "Clear")}</button> : null}
-      <button type="button" className="ghost small" disabled={busy} onClick={() => { setDraft(current); setEditing(false); }}>{L("Annuler", "Cancel")}</button>
+      <input type="date" value={draft} disabled={busy} autoFocus onChange={(e) => setDraft(e.target.value)} aria-label={"New deadline"} />
+      <button type="button" className="btn xs primary" disabled={busy || !draft} onClick={() => void save(draft)}>{"Save"}</button>
+      {current ? <button type="button" className="ghost small" disabled={busy} onClick={() => void save("")}>{"Clear"}</button> : null}
+      <button type="button" className="ghost small" disabled={busy} onClick={() => { setDraft(current); setEditing(false); }}>{"Cancel"}</button>
     </span>
   );
 }
@@ -593,11 +592,11 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
       setStepDoneLocal(i, true, result);
       try {
         const list = await api.stepDone(currentTask.id, i, true, result);
-        if (!Array.isArray(list)) throw new Error((list as any)?.error || L("On dirait que tu as été déconnecté — recharge la page.", "Looks like you got logged out — reload the page."));
+        if (!Array.isArray(list)) throw new Error((list as any)?.error || "Looks like you got logged out — reload the page.");
         onChange(list);
       } catch (e: any) {
         onTask(currentTask); // revert the optimistic tick — onTask merges by id, onChange([...]) would nuke the whole list
-        notify(e?.message || L("Impossible de marquer cette étape comme faite.", "Couldn't mark this step as done."), "error");
+        notify(e?.message || "Couldn't mark this step as done.", "error");
       }
     });
   };
@@ -612,11 +611,11 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
       setStepDoneLocal(i, false);
       try {
         const list = await api.stepDone(currentTask.id, i, false);
-        if (!Array.isArray(list)) throw new Error((list as any)?.error || L("On dirait que tu as été déconnecté — recharge la page.", "Looks like you got logged out — reload the page."));
+        if (!Array.isArray(list)) throw new Error((list as any)?.error || "Looks like you got logged out — reload the page.");
         onChange(list);
       } catch (e: any) {
         onTask(currentTask); // revert the optimistic un-tick — onTask merges by id, onChange([...]) would nuke the whole list
-        notify(e?.message || L("Impossible d'annuler cette étape.", "Couldn't undo this step."), "error");
+        notify(e?.message || "Couldn't undo this step.", "error");
       }
     });
   };
@@ -641,14 +640,14 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
       setAnswering(i);
       const currentTask = taskRef.current;
       const optimisticSteps = (currentTask.steps || []).map((s, si) => si !== i ? s
-        : { ...s, question: undefined, options: undefined, result: L(`Tu as répondu : ${answer.trim()} — Otto s'en occupe…`, `You answered: ${answer.trim()} — Otto's on it…`) });
+        : { ...s, question: undefined, options: undefined, result: `You answered: ${answer.trim()} — Otto's on it…` });
       onTask({ ...currentTask, steps: optimisticSteps });
       try {
         const updated = await api.runStep(currentTask.id, i, answer.trim());
         onTask(updated);
       } catch (e: any) {
         onTask(currentTask); // revert — restores the real question so the student can retry
-        notify(e?.message || L("Échec de la réponse — réessaie.", "Couldn't send that answer — try again."), "error");
+        notify(e?.message || "Couldn't send that answer — try again.", "error");
       } finally { setAnswering((cur) => (cur === i ? null : cur)); }
     });
   };
@@ -705,7 +704,7 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
       const { task: updated } = await api.chat(task.id, message, task.chat || [], task.board || [], task.problems || [], stepIndex ?? undefined, undefined, voiceMode);
       onTask({ ...task, ...updated });
     }
-    catch (e: any) { setChatError(e?.message || L("Envoi impossible — réessaie.", "Couldn't send that — try again.")); setChatInput(message); }
+    catch (e: any) { setChatError(e?.message || "Couldn't send that — try again."); setChatInput(message); }
     finally { setChatSending(false); setPendingMsg(null); }
   };
   // Seed the ONE task-level chat thread with which step this is about, then let the student add their own
@@ -717,7 +716,7 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
     // "the help button doesn't work". Opening it makes the prefilled, step-scoped draft visible.
     setOpenChat(true);
     setChatStep(i);
-    setChatInput(L(`Aide-moi avec : ${text}`, `Help me with: ${text}`));
+    setChatInput(`Help me with: ${text}`);
     chatInputRef.current?.focus();
     chatEndRef.current?.scrollIntoView({ block: "nearest" });
   };
@@ -736,9 +735,9 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
         // while the list shows in-flight work. This makes it start, and it reconciles with real server
         // state on its very next tick.
         onTask({ ...task, status: "queued" });
-        notify(L("Otto travaille encore dessus — les étapes apparaîtront toutes seules.", "Otto's still working on this — the steps will appear on their own."));
+        notify("Otto's still working on this — the steps will appear on their own.");
       } else {
-        notify(e?.message || L("Impossible de lancer cette tâche — réessaie.", "Couldn't run this task — try again."), "error");
+        notify(e?.message || "Couldn't run this task — try again.", "error");
       }
     }
     finally { setRunning(false); }
@@ -761,7 +760,7 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
         <h2 className="tf-title">{taskDisplayName(task)}</h2>
         {task.goal ? (
           <div className="task-goal-banner">
-            <span className="task-goal-tag">{L("Objectif de fin", "Definition of Done")}:</span> {stripStrayMarkdown(task.goal)}
+            <span className="task-goal-tag">{"Definition of Done"}:</span> {stripStrayMarkdown(task.goal)}
           </div>
         ) : null}
         {(task.nudgeLine || task.why) ? <p className="tf-why">{stripStrayMarkdown(task.nudgeLine || task.why)}</p> : null}
@@ -774,13 +773,13 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
           {!isDone ? <DeadlineEdit task={task} onChange={onChange} /> : null}
           {!isDone ? <span className={`card-quadrant card-quadrant-${task.quadrant}`}>{quadrantLabel(task.quadrant, cardEn)}</span> : null}
           {chip ? <span className={`chip chip-${chip.tone}`}>{chip.label}</span> : null}
-          {task.audit?.some((a) => a.kind === "guardrail") ? <span className="row-guardrail" title={L("Otto a refusé de faire cette tâche à ta place ici — voir le journal d'activité", "Otto declined to do this one for you here — see the activity log")} aria-hidden="true">✦</span> : null}
+          {task.audit?.some((a) => a.kind === "guardrail") ? <span className="row-guardrail" title={"Otto declined to do this one for you here — see the activity log"} aria-hidden="true">✦</span> : null}
           {/* Study Mode entry point — the collapsed row already has one (.card-study); the expanded
               detail view had none at all, so opening a task and wanting to study it meant closing the
               modal and going back to find the row's tiny icon button. */}
           {!isDone && onEnterStudyMode && (
             <button type="button" className="tf-study-btn" onClick={onEnterStudyMode}>
-              <BookOpen aria-hidden="true" size={16} /> {L("Mode étude", "Study Mode")}
+              <BookOpen aria-hidden="true" size={16} /> {"Study Mode"}
             </button>
           )}
         </div>
@@ -816,7 +815,7 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
           step list. */}
       {!isDone ? (
         <button type="button" className="btn primary xs tf-ask-otto" onClick={() => setOpenChat(true)}>
-          <MessageCircle size={14} aria-hidden="true" /> {L("Demander à Otto — besoin d'aide ?", "Ask Otto — need help?")}
+          <MessageCircle size={14} aria-hidden="true" /> {"Ask Otto — need help?"}
         </button>
       ) : null}
 
@@ -838,7 +837,7 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
       {/* (D) everything else — closed, counted, one open at a time. */}
       <div className="tf-panels">
         {steps.length > 0 ? (
-          <Disclosure label={L("Toutes les étapes", "All steps")} count={`${doneCount}/${steps.length}`}
+          <Disclosure label={"All steps"} count={`${doneCount}/${steps.length}`}
             open={openPanel === "steps"} onToggle={() => togglePanel("steps")}>
             <StepList task={task} steps={steps} decided={decided} setDecided={setDecided}
               onStepDone={markStepDone} onUndo={undoStep}
@@ -851,7 +850,7 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
           of this change, never writes one either; see chatAboutTask's tools gating in server/claude.ts). */}
 
       {openChat ? (
-        <TaskModal onClose={() => setOpenChat(false)} nested wide title={L("Demander à Otto", "Ask Otto")}>
+        <TaskModal onClose={() => setOpenChat(false)} nested wide title={"Ask Otto"}>
           <TaskChat
             task={task} input={chatInput} setInput={setChatInput} sending={chatSending} error={chatError}
             pendingMsg={pendingMsg} slow={chatSlow} verySlow={chatVerySlow} onSend={sendChat}
@@ -907,14 +906,14 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
       const list = await api.refine(task.id);
       const fresh = list.find((t) => t.id === task.id);
       if (fresh) { onTask(fresh); if (!fresh.unrefined) onRun(); }
-    } catch (e: any) { notify(e?.message || L("Échec de la relance.", "Retry failed."), "error"); }
+    } catch (e: any) { notify(e?.message || "Retry failed.", "error"); }
     finally { setRetryingRefine(false); }
   };
 
   if (isDone) {
     return (
       <div className="step-hero hero-done">
-        <p className="hero-line">{task.status === "dismissed" ? L("Tâche ignorée.", "Task dismissed.") : L("Tâche terminée.", "Task finished.")}</p>
+        <p className="hero-line">{task.status === "dismissed" ? "Task dismissed." : "Task finished."}</p>
       </div>
     );
   }
@@ -924,12 +923,12 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
       <div className="step-hero hero-waiting">
         <span className="card-spin" aria-hidden="true" />
         <p className="hero-line">{task.unrefined
-          ? L("Otto prépare ça tout seul.", "Otto's handling this on its own.")
-          : L("Otto prépare ça…", "Otto is getting this ready…")}</p>
+          ? "Otto's handling this on its own."
+          : "Otto is getting this ready…"}</p>
         {task.unrefined && showRetry ? (
           <div className="hero-acts">
             <button className="btn ghost" disabled={retryingRefine} onClick={() => void retryRefine()}>
-              {retryingRefine ? L("Relance…", "Retrying…") : L("Ça prend du temps — réessayer maintenant", "Taking a while — retry now")}
+              {retryingRefine ? "Retrying…" : "Taking a while — retry now"}
             </button>
           </div>
         ) : null}
@@ -943,7 +942,7 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
                 try { onRun(true); } finally { window.setTimeout(() => setRetryingStuckTask(false), 1200); }
               }}
             >
-              {retryingStuckTask ? L("Relance…", "Retrying…") : L("Ça prend du temps — relancer", "Taking a while — retry")}
+              {retryingStuckTask ? "Retrying…" : "Taking a while — retry"}
             </button>
           </div>
         ) : null}
@@ -953,11 +952,11 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
   if (cStatus === "failed_retryable" || cStatus === "failed_terminal") {
     return (
       <div className="step-hero hero-failed">
-        <p className="hero-line">{task.lastError || L("Otto n'a pas réussi à préparer cette tâche.", "Otto couldn't get this ready.")}</p>
+        <p className="hero-line">{task.lastError || "Otto couldn't get this ready."}</p>
         <div className="hero-acts">
           {retrying
-            ? <button className="btn primary" disabled>{L("Nouvel essai…", "Retrying…")}</button>
-            : <button className="btn primary" disabled={running} onClick={() => onRun()}>{running ? L("En cours…", "Working…") : L("Réessayer", "Retry")}</button>}
+            ? <button className="btn primary" disabled>{"Retrying…"}</button>
+            : <button className="btn primary" disabled={running} onClick={() => onRun()}>{running ? "Working…" : "Retry"}</button>}
         </div>
       </div>
     );
@@ -976,9 +975,9 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
     return (
       <div className="step-hero hero-complete">
         <div className="deck-score-ring good"><span className="deck-score-pct" aria-hidden="true">✓</span></div>
-        <p className="hero-line">{L("Tout est fait.", "Everything's done.")}</p>
+        <p className="hero-line">{"Everything's done."}</p>
         <div className="hero-acts">
-          <button className="btn primary" onClick={onConfirm}>{L("C'est bon", "Looks good")}</button>
+          <button className="btn primary" onClick={onConfirm}>{"Looks good"}</button>
         </div>
       </div>
     );
@@ -998,7 +997,7 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
       <div className="step-hero hero-empty">
         <p className="hero-line">{stripStrayMarkdown(subtitle(task) || task.nudgeLine || task.why || "")}</p>
         {autoStarting ? (
-          <p className="hero-sub">{L("Otto prépare ça…", "Otto is getting this ready…")}</p>
+          <p className="hero-sub">{"Otto is getting this ready…"}</p>
         ) : (
           <>
             {/* This used to be silent — a plain "ready" task with no steps yet looked identical to one Otto
@@ -1006,18 +1005,18 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
                 ("didn't prepare anything"). It's neither: it just hasn't had its turn in the once-daily
                 sweep yet (see the comment above autoStarting) — say so explicitly instead of leaving it
                 looking incomplete. */}
-            <p className="hero-sub">{L("Otto n'a pas encore préparé ça — ce sera fait lors du prochain passage quotidien.", "Otto hasn't prepared this yet — it'll get to it in the next daily check.")}</p>
+            <p className="hero-sub">{"Otto hasn't prepared this yet — it'll get to it in the next daily check."}</p>
             <div className="hero-acts">
               {/* The daily sweep only auto-runs up to a fixed number of tasks per day (tasks.autoRunBudgetLeft)
                   — anything past that cap just waits, with no way to jump the queue since the old "Start"
                   button was removed. This click hits the SAME /api/tasks/:id/run endpoint the sweep's own
                   auto-run uses — that endpoint never checks the daily auto-run cap (it only exists to bound
                   UNATTENDED spend), so a deliberate manual click here always works today, cap or no cap. */}
-              <button className="btn primary" disabled={running} onClick={() => onRun()}>{running ? L("En cours…", "Working…") : L("Exécuter maintenant", "Run now")}</button>
+              <button className="btn primary" disabled={running} onClick={() => onRun()}>{running ? "Working…" : "Run now"}</button>
               {/* "Looks good" stays: a task Otto hasn't planned yet (or never needed a plan — already handled
                   elsewhere, a duplicate, a quick manual note) still needs SOME way to be marked done without
                   waiting for a run that isn't coming. */}
-              <button className="btn ghost" onClick={onConfirm}>{L("C'est bon", "Looks good")}</button>
+              <button className="btn ghost" onClick={onConfirm}>{"Looks good"}</button>
             </div>
           </>
         )}
@@ -1058,7 +1057,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
   const expandStep = async (i: number) => {
     setExpanding(i);
     try { applyTaskFromList(await api.expandStep(task.id, i)); }
-    catch (e: any) { notify(e?.message || L("Impossible de détailler cette étape.", "Couldn't break this step down."), "error"); }
+    catch (e: any) { notify(e?.message || "Couldn't break this step down.", "error"); }
     finally { setExpanding((cur) => (cur === i ? null : cur)); }
   };
   // "Do it" on an automatable sub-action (a pure lookup — see expandStep's classification): Otto answers
@@ -1069,7 +1068,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
     const key = `${i}-${subIndex}`;
     setRunningSub(key);
     try { applyTaskFromList(await api.runSubstep(task.id, i, subIndex)); }
-    catch (e: any) { notify(e?.message || L("Otto n'a pas réussi à répondre.", "Otto couldn't get an answer."), "error"); }
+    catch (e: any) { notify(e?.message || "Otto couldn't get an answer.", "error"); }
     finally { setRunningSub((cur) => (cur === key ? null : cur)); }
   };
   // Optimistic: flip the checkbox instantly (this is the highest-frequency, lowest-latency-tolerance
@@ -1084,7 +1083,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
     try { applyTaskFromList(await api.substepDone(task.id, i, subIndex, done)); }
     catch (e: any) {
       onTask(task); // revert the optimistic flip
-      notify(e?.message || L("Impossible d'enregistrer cette sous-étape.", "Couldn't save this sub-step."), "error");
+      notify(e?.message || "Couldn't save this sub-step.", "error");
     }
   };
   const openableCount = steps.filter((s) => s.url && !s.done && !stepBlocked(steps, s)).length;
@@ -1095,18 +1094,18 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
     openTabs(idxs.map((i) => steps[i].url!), TAB_GROUP);
     let res: WebTask[] | null = null;
     try {
-      for (const i of idxs) if (steps[i].automatable) res = await api.stepDone(task.id, i, true, L("Ouvert ↗", "Opened ↗"));
+      for (const i of idxs) if (steps[i].automatable) res = await api.stepDone(task.id, i, true, "Opened ↗");
       if (res) applyTaskFromList(res); // same merge-by-id rule as expand/runSubstep — never wholesale setTasks
     } catch (e: any) {
       // The tabs already opened (that part can't fail) — only the "mark done" half failed, so say so
       // without implying the tabs themselves didn't open.
-      notify(e?.message || L("Les onglets se sont ouverts, mais l'état n'a pas pu être enregistré.", "The tabs opened, but the state couldn't be saved."), "error");
+      notify(e?.message || "The tabs opened, but the state couldn't be saved.", "error");
     }
   };
   return (
     <>
       {openableCount >= 2 ? (
-        <button className="btn xs ghost head-act" onClick={() => void openAllPages()}>{L(`Tout ouvrir (${openableCount}) ↗`, `Open all (${openableCount}) ↗`)}</button>
+        <button className="btn xs ghost head-act" onClick={() => void openAllPages()}>{`Open all (${openableCount}) ↗`}</button>
       ) : null}
       {/* A big IB project (Extended Essay/TOK/CAS/IA — see isBigIbProject in server/claude.ts) gets a
           milestone stepper: each segment is one milestone, so progress through a months-long project reads
@@ -1118,7 +1117,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
             const late = !s.done && s.targetDate! < todayIso();
             const state = s.done ? "done" : late ? "late" : i === doneIdx ? "current" : "upcoming";
             return (
-              <div key={i} role="listitem" className={`milestone-segment ${state}`} title={`${s.text}${s.targetDate ? ` — ${L("d'ici le", "by")} ${fmtDate(s.targetDate, L)}${late ? ` (${L("en retard", "overdue")})` : ""}` : ""}`}>
+              <div key={i} role="listitem" className={`milestone-segment ${state}`} title={`${s.text}${s.targetDate ? ` — ${"by"} ${fmtDate(s.targetDate, L)}${late ? ` (${"overdue"})` : ""}` : ""}`}>
                 <span className="milestone-segment-bar" />
                 <span className="milestone-segment-label">{s.text}</span>
               </div>
@@ -1132,8 +1131,8 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
           const isCurrent = i === steps.findIndex((o) => !o.done && !stepBlocked(steps, o)); // the step to do now: the only one that always shows its extra actions
           const gatesAnother = steps.some((o, j) => j !== i && o.dependsOn === i);
           const markLabel = s.done
-            ? L(`Marquer « ${s.text} » comme pas encore faite`, `Mark "${s.text}" as not done`)
-            : L(`Marquer « ${s.text} » comme faite`, `Mark "${s.text}" as done`);
+            ? `Mark "${s.text}" as not done`
+            : `Mark "${s.text}" as done`;
           return (
             <li key={i} className={`step ${s.done ? "done" : ""} ${blk ? "blocked" : ""} ${isCurrent ? "is-current" : ""}`}>
               {/* The mark IS the control for a needs-you step: click ○ to tick it done (no separate button).
@@ -1142,9 +1141,9 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
               <button
                 type="button"
                 className={`step-mark ${!s.done && !blk ? "tickable" : ""}`}
-                aria-label={blk ? L("En attente d'une étape précédente", "Waiting on an earlier step") : markLabel}
+                aria-label={blk ? "Waiting on an earlier step" : markLabel}
                 aria-pressed={s.done}
-                title={s.done ? L(`Fait${s.doneAt ? " " + relTime(s.doneAt, L) : ""} — cliquer pour annuler`, `Done${s.doneAt ? " " + relTime(s.doneAt, L) : ""} — click to undo`) : blk ? L("En attente d'une étape précédente", "Waiting on an earlier step") : L("Cliquer pour marquer comme fait", "Click to mark done")}
+                title={s.done ? `Done${s.doneAt ? " " + relTime(s.doneAt, L) : ""} — click to undo` : blk ? "Waiting on an earlier step" : "Click to mark done"}
                 disabled={blk}
                 onClick={() => { if (blk) return; s.done ? onUndo(i) : onStepDone(i); }}
               >
@@ -1157,17 +1156,17 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                 </div>
                 {/* NOTE: doneWhen no longer displayed on individual steps */}
                 {/* NOTE: checkpoint no longer displayed on individual steps */}
-                {s.done && s.doneAt ? <span className="step-when">{L(`fait ${relTime(s.doneAt, L)}`, `done ${relTime(s.doneAt, L)}`)}</span> : null}
-                {!s.done && s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate, L)}`, `by ${fmtDate(s.targetDate, L)}`)}</span> : null}
+                {s.done && s.doneAt ? <span className="step-when">{`done ${relTime(s.doneAt, L)}`}</span> : null}
+                {!s.done && s.targetDate ? <span className="step-target">{`by ${fmtDate(s.targetDate, L)}`}</span> : null}
                 {/* 2-minute rule: a step this short shouldn't just sit in the checklist waiting its turn —
                     flag it so it's obviously worth knocking out right now instead of scheduling for later. */}
                 {!s.done && s.minutes ? (
                   s.minutes <= 2
-                    ? <span className="step-minutes quick-win">{L("2 min — fais-le maintenant", "2 min — just do it now")}</span>
-                    : <span className="step-minutes">~{s.minutes} {L("min", "min")}</span>
+                    ? <span className="step-minutes quick-win">{"2 min — just do it now"}</span>
+                    : <span className="step-minutes">~{s.minutes} {"min"}</span>
                 ) : null}
                 {s.result ? <span className={`step-result ${s.done ? "" : "note"}`}>{s.result}</span> : null}
-                {!s.done && blk ? <span className="step-dep">{L(`Débloque à l'étape ${(s.dependsOn ?? 0) + 1}`, `Unlocks at step ${(s.dependsOn ?? 0) + 1}`)}</span> : null}
+                {!s.done && blk ? <span className="step-dep">{`Unlocks at step ${(s.dependsOn ?? 0) + 1}`}</span> : null}
                 {s.question && !s.done && !blk ? (
                   <div className="step-question">
                     <p className="step-question-text">{withInlineLinks(s.question)}</p>
@@ -1180,7 +1179,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                     ) : null}
                     <input
                       className="step-input"
-                      placeholder={s.options?.length ? L("Ou écris ta propre réponse…", "Or type your own answer…") : L("Écris ta réponse…", "Type your answer…")} aria-label={s.options?.length ? L("Ou écris ta propre réponse…", "Or type your own answer…") : L("Écris ta réponse…", "Type your answer…")}
+                      placeholder={s.options?.length ? "Or type your own answer…" : "Type your answer…"} aria-label={s.options?.length ? "Or type your own answer…" : "Type your answer…"}
                       value={decided[i] || ""}
                       disabled={answering === i}
                       onChange={(e) => setDecided((d) => ({ ...d, [i]: e.target.value }))}
@@ -1189,11 +1188,11 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                   </div>
                 ) : gatesAnother && !s.done && !blk && !s.automatable ? (
                   <>
-                  <label className="sr-only" htmlFor={`step-input-${i}`}>{L("Réponds ici pour continuer :", "Answer here to continue:")}</label>
+                  <label className="sr-only" htmlFor={`step-input-${i}`}>{"Answer here to continue:"}</label>
                   <input
                     id={`step-input-${i}`}
                     className="step-input"
-                    placeholder={L("Ta réponse…", "Your answer…")}
+                    placeholder={"Your answer…"}
                     value={decided[i] || ""}
                     onChange={(e) => setDecided((d) => ({ ...d, [i]: e.target.value }))}
                     onKeyDown={(e) => { if (e.key === "Enter") onStepDone(i); }}
@@ -1211,7 +1210,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                       return (
                       <li key={si} className={`substep ${sub.done ? "done" : ""}`}>
                         <button type="button" className="substep-mark" aria-pressed={sub.done}
-                          aria-label={sub.done ? L(`Marquer « ${sub.text} » comme pas encore faite`, `Mark "${sub.text}" as not done`) : L(`Marquer « ${sub.text} » comme faite`, `Mark "${sub.text}" as done`)}
+                          aria-label={sub.done ? `Mark "${sub.text}" as not done` : `Mark "${sub.text}" as done`}
                           onClick={() => void toggleSubstep(i, si, !sub.done)}>
                           <span aria-hidden="true">{sub.done ? "✓" : ""}</span>
                         </button>
@@ -1219,13 +1218,13 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                         {sub.result ? <span className="step-result note substep-result">{sub.result}</span> : null}
                         {/* Same "land one click from done" affordance as a parent step's own url — a
                             sub-action can point at a real resource Otto already found (see expandStep). */}
-                        {sub.url ? <button type="button" className="btn xs ghost substep-link" title={sub.url} onClick={() => openTab(sub.url!, TAB_GROUP)}>{L(`Ouvrir ${linkKind(sub.url, L) || "le lien"} ↗`, `Open ${linkKind(sub.url, L) || "link"} ↗`)}</button> : null}
+                        {sub.url ? <button type="button" className="btn xs ghost substep-link" title={sub.url} onClick={() => openTab(sub.url!, TAB_GROUP)}>{`Open ${linkKind(sub.url, L) || "link"} ↗`}</button> : null}
                         {/* A pure lookup Otto can just answer (see expandStep's `automatable` classification)
                             instead of the student going to find it themselves. */}
                         {sub.automatable && !sub.done ? (
                           <button type="button" className="btn xs ghost substep-run" disabled={subRunning} onClick={() => void runSubstep(i, si)}>
                             {subRunning ? <Spinner size="xs" /> : null}
-                            {subRunning ? L("Otto cherche…", "Otto's looking…") : L("Laisser Otto répondre", "Let Otto answer")}
+                            {subRunning ? "Otto's looking…" : "Let Otto answer"}
                           </button>
                         ) : null}
                       </li>
@@ -1238,14 +1237,14 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                   // always one tap away instead of being reserved for a detected big project.
                   <button type="button" className="btn xs ghost substep-expand" disabled={expanding === i} onClick={() => void expandStep(i)}>
                     {expanding === i ? <Spinner size="xs" /> : null}
-                    {expanding === i ? L("Découpage…", "Breaking down…") : L("Détailler", "Break down")}
+                    {expanding === i ? "Breaking down…" : "Break down"}
                   </button>
                 ) : null}
               </div>
               <div className="step-act">
                 {/* A URL step keeps its "Open ↗" link ALWAYS — even after Otto opened it. */}
-                {s.url ? <button className="btn xs ghost" title={s.url} onClick={() => openTab(s.url!, TAB_GROUP)}>{L(`Ouvrir ${linkKind(s.url, L) || "le lien"} ↗`, `Open ${linkKind(s.url, L) || "link"} ↗`)}</button> : null}
-                {!s.done ? <button className="btn xs ghost step-help" onClick={() => onAsk(i, s.text)}>{L("Aide", "Help")}</button> : null}
+                {s.url ? <button className="btn xs ghost" title={s.url} onClick={() => openTab(s.url!, TAB_GROUP)}>{`Open ${linkKind(s.url, L) || "link"} ↗`}</button> : null}
+                {!s.done ? <button className="btn xs ghost step-help" onClick={() => onAsk(i, s.text)}>{"Help"}</button> : null}
               </div>
             </li>
           );
@@ -1287,27 +1286,27 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
           label off artifactCount alone so the chips are never unlabeled. */}
       {artifactCount > 0 ? (
         <>
-          <span className="prepared-label">{L("Créé pour toi", "Made for you")}</span>
+          <span className="prepared-label">{"Made for you"}</span>
           <div className="note-chips prepared-chips">
             {visibleChips.map((c) => c.kind === "note" ? (
               <button key={c.item.id} type="button" className="note-chip" onClick={() => onOpenNote(c.item.id)}>
                 <span className="note-chip-icon" aria-hidden="true">▤</span>
-                <span className="note-chip-text"><span className="note-chip-title">{c.item.title}</span><span className="note-chip-meta">{L("Fiche", "Note")}</span></span>
+                <span className="note-chip-text"><span className="note-chip-title">{c.item.title}</span><span className="note-chip-meta">{"Note"}</span></span>
               </button>
             ) : c.kind === "deck" ? (
               <button key={c.item.id} type="button" className="note-chip" onClick={() => onOpenDeck(c.item.id)}>
                 <span className="note-chip-icon" aria-hidden="true"><Layers size={13} /></span>
-                <span className="note-chip-text"><span className="note-chip-title">{c.item.title}</span><span className="note-chip-meta">{L(`${c.item.cards.length} carte${c.item.cards.length === 1 ? "" : "s"}`, `${c.item.cards.length} card${c.item.cards.length === 1 ? "" : "s"}`)}</span></span>
+                <span className="note-chip-text"><span className="note-chip-title">{c.item.title}</span><span className="note-chip-meta">{`${c.item.cards.length} card${c.item.cards.length === 1 ? "" : "s"}`}</span></span>
               </button>
             ) : (
               <button key={c.item.id} type="button" className="note-chip" onClick={() => onOpenQuiz(c.item.id)}>
                 <span className="note-chip-icon" aria-hidden="true">?</span>
-                <span className="note-chip-text"><span className="note-chip-title">{c.item.title}</span><span className="note-chip-meta">{L(`${c.item.questions.length} questions`, `${c.item.questions.length} questions`)}</span></span>
+                <span className="note-chip-text"><span className="note-chip-title">{c.item.title}</span><span className="note-chip-meta">{`${c.item.questions.length} questions`}</span></span>
               </button>
             ))}
             {hiddenCount > 0 ? (
               <button type="button" className="btn xs ghost" onClick={() => setShowAllChips(true)}>
-                {L(`+${hiddenCount} de plus`, `+${hiddenCount} more`)}
+                {`+${hiddenCount} more`}
               </button>
             ) : null}
           </div>
@@ -1315,7 +1314,7 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
       ) : null}
       {task.links?.length ? (
         // openTab() opens via window.open with noopener (see client/ui.tsx).
-        <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url} onClick={(e) => { e.preventDefault(); openTab(l.url, TAB_GROUP); }}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url, L)) || L("Ouvrir le lien", "Open link")} ↗</a></li>)}</ul>
+        <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url} onClick={(e) => { e.preventDefault(); openTab(l.url, TAB_GROUP); }}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url, L)) || "Open link"} ↗</a></li>)}</ul>
       ) : null}
     </>
   );
@@ -1330,9 +1329,9 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
   onOpenNote: (id: string) => void; onOpenDeck: (id: string) => void; onOpenQuiz: (id: string) => void;
 }) {
   const L = useLang();
-  const en = L("fr", "en") === "en";
+  const en = "en" === "en";
   const thinkingWord = useThinkingWord(sending);
-  const speechLang = en ? "en-US" : "fr-FR";
+  const speechLang = "en-US";
   // AUTO-SCROLL — ALWAYS: the thread lands on its newest message when it opens, and every new turn (the
   // student's own message, the pending echo, Otto's reply, the typing indicator) keeps the bottom in
   // view. Nothing scrolled it before: the only autoscroll effect lived in the PARENT and read a
@@ -1409,27 +1408,27 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
   }, [tailKey, voiceModeOn]);
   return (
     <section className="task-chat">
-      <h3>{L("Demander à Otto", "Ask Otto")}</h3>
+      <h3>{"Ask Otto"}</h3>
       {/* role="log" so a screen reader announces replies as they arrive — the thread updates without any
           navigation, so without this a blind student would never know an answer had come back. */}
-      <div className="chat-thread" role="log" aria-live="polite" aria-label={L("Conversation avec Otto", "Conversation with Otto")}>
+      <div className="chat-thread" role="log" aria-live="polite" aria-label={"Conversation with Otto"}>
         {!task.chat?.length && !pendingMsg ? (
-          <p className="muted small">{L("Dis-lui ce qui bloque. Il explique, il ne donne pas la réponse.", "Say what's blocking you. It'll explain — not hand you the answer.")}</p>
+          <p className="muted small">{"Say what's blocking you. It'll explain — not hand you the answer."}</p>
         ) : task.chat?.map((m, i) => (
           <div key={i} className={`chat-msg chat-${m.role}`}>
             {/* Who said it — was sr-only (screen readers already get this from the region's own role="log"
                 context); a bare bubble with no visible label made a longer reply read as an undifferentiated
                 blob of text rather than a structured message. */}
-            <span className={`chat-sender chat-sender-${m.role}`}>{m.role === "user" ? L("Toi", "You") : "Otto"}</span>
+            <span className={`chat-sender chat-sender-${m.role}`}>{m.role === "user" ? "You" : "Otto"}</span>
             {/* Which step this USER message was about — stepText, not a live lookup by index: steps are
                 regenerated on every rerun, so a bare index could point at the wrong step by now. */}
-            {m.role === "user" && m.stepText ? <span className="chat-step-tag">{L("Étape", "Step")} {(m.stepIndex ?? 0) + 1} · {m.stepText}</span> : null}
+            {m.role === "user" && m.stepText ? <span className="chat-step-tag">{"Step"} {(m.stepIndex ?? 0) + 1} · {m.stepText}</span> : null}
             {/* Assistant replies get light markdown; a student's own message stays literal — pasting "**"
                 from their notes shouldn't get eaten. */}
             {m.role === "assistant" ? renderChatText(m.text) : <CondensedUserMessage text={m.text} />}
             {m.role === "assistant" && m.sources?.length ? (
               <details className="chat-sources">
-                <summary>{L("Sources utilisées", "Sources used")} ({m.sources.length})</summary>
+                <summary>{"Sources used"} ({m.sources.length})</summary>
                 <ul>
                   {m.sources.map((source, sourceIndex) => (
                     <li key={`${source.label}-${sourceIndex}`}>
@@ -1455,7 +1454,7 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
             {/* The exact moment the "won't do your graded work" boundary held, right where it happened —
                 not just a line buried in the Activity log. */}
             {m.role === "assistant" && m.guardrail ? (
-              <span className="chat-guardrail-tag"><span aria-hidden="true">✦</span> {L("Otto guide, ne fait pas à ta place", "Otto guides, doesn't do it for you")}</span>
+              <span className="chat-guardrail-tag"><span aria-hidden="true">✦</span> {"Otto guides, doesn't do it for you"}</span>
             ) : null}
           </div>
         ))}
@@ -1463,7 +1462,7 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
             waiting, instead of swallowing what they just typed. */}
         {pendingMsg ? <div className="chat-msg chat-user chat-pending">{pendingMsg}</div> : null}
         {sending ? (
-          <div className="chat-msg chat-assistant chat-typing" role="status" aria-label={L("Otto te cuisine", "Otto is working on you")}>
+          <div className="chat-msg chat-assistant chat-typing" role="status" aria-label={"Otto is working on you"}>
             <span className="typing-dots" aria-hidden="true"><i /><i /><i /></span>
             {/* Cycling word (see useThinkingWord, ui.tsx) replaces the old static "still thinking…"/"might
                 be putting something together…" text — it already reads as "still actively working" since
@@ -1477,16 +1476,16 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
         <div className="rewrite-error">
           {error}
           {/* onSend restores the input to the failed message on error, so retrying is just calling it again. */}
-          <button type="button" className="btn xs ghost" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending}>{L("Réessayer", "Retry")}</button>
+          <button type="button" className="btn xs ghost" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending}>{"Retry"}</button>
         </div>
       ) : null}
       {/* Real mic failure surfacing (permission denied, no mic, network) — previously silent. */}
-      {micError ? <div className="rewrite-error" role="alert">{L(micError[0], micError[1])}</div> : null}
+      {micError ? <div className="rewrite-error" role="alert">{micError[1]}</div> : null}
       <div className="chat-row">
         <textarea
           ref={inputRef}
-          className="chat-input" rows={1} aria-label={L("Ton message pour Otto", "Your message to Otto")}
-          placeholder={L("ex : je bloque à la question 3…", "e.g. I'm stuck on question 3…")}
+          className="chat-input" rows={1} aria-label={"Your message to Otto"}
+          placeholder={"e.g. I'm stuck on question 3…"}
           value={input} onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(undefined, voiceModeOn); } }}
           disabled={sending}
@@ -1500,7 +1499,7 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
           onToggle={toggleVoiceMode}
           en={en}
         />
-        <button className="chat-send" aria-label={L("Envoyer", "Send")} disabled={sending || !input.trim()} onClick={() => onSend(undefined, voiceModeOn)}>
+        <button className="chat-send" aria-label={"Send"} disabled={sending || !input.trim()} onClick={() => onSend(undefined, voiceModeOn)}>
           <span aria-hidden="true">↑</span>
         </button>
       </div>
@@ -1537,7 +1536,7 @@ function SendableReview({ task, onTask }: {
     catch (e: any) {
       // Edit stays pending — the box keeps the user's text so nothing is lost — but say so instead of
       // letting the spinner just stop with no explanation.
-      notify(e?.message || L("Ça n'a pas été enregistré — réessaie.", "That didn't save — give it another try."), "error");
+      notify(e?.message || "That didn't save — give it another try.", "error");
     }
     finally { setSavingDraft(null); }
   };
@@ -1548,7 +1547,7 @@ function SendableReview({ task, onTask }: {
     // A failed send used to be swallowed entirely — for an irreversible action that's the worst possible
     // silence, so surface it.
     try { onTask(await api.sendDraft(task.id, i)); }
-    catch (e: any) { notify(e?.message || L("Envoi impossible — rien n'a été envoyé. Réessaie.", "Couldn't send — nothing was sent. Try again."), "error"); }
+    catch (e: any) { notify(e?.message || "Couldn't send — nothing was sent. Try again.", "error"); }
     finally { setSending(null); }
   };
   // The user declined and said what to change → re-run the task with that note so Otto revises the draft.
@@ -1559,7 +1558,7 @@ function SendableReview({ task, onTask }: {
     // The re-draft replaces the sendables list, so clear any open draft preview (its index may now be stale).
     try { onTask(await api.revise(task.id, note)); setChangeIdx(null); setChangeText(""); setViewDraft(null); }
     // Note is deliberately KEPT in the box on failure so a rejected revision isn't lost — just retry it.
-    catch (e: any) { setReviseError(e?.message || L("Révision impossible — réessaie.", "Couldn't revise — try again.")); }
+    catch (e: any) { setReviseError(e?.message || "Couldn't revise — try again."); }
     finally { setRevising(false); }
   };
   if (!task.sendables?.length) return null;
@@ -1568,34 +1567,34 @@ function SendableReview({ task, onTask }: {
       {task.sendables.map((s, i) => {
         // Who this goes to — ALWAYS shown before the user sends (a calendar invite lists every attendee).
         const recipients = s.app === "gcal" ? (s.attendees || []).join(", ") : (s.to || "");
-        const noun = s.app === "gcal" ? L("l'invitation calendrier", "the calendar invite") : L("l'email", "the email");
+        const noun = s.app === "gcal" ? "the calendar invite" : "the email";
         return (
           <div key={i} className="sendable">
             {recipients ? (
               <div className="sendable-to">
-                <span className="sendable-to-label">{s.app === "gcal" ? L("Invités", "Invites") : L("À", "To")}</span>
+                <span className="sendable-to-label">{s.app === "gcal" ? "Invites" : "To"}</span>
                 <span className="sendable-to-who">{recipients}</span>
               </div>
             ) : null}
             <div className="sendable-row">
               {/* Only ONE panel open at a time (draft view, or the send confirm) — opening one closes the other. */}
-              <button className="btn xs ghost" aria-expanded={viewDraft === i} onClick={() => { setConfirmIdx(null); setViewDraft((v) => (v === i ? null : i)); if (viewDraft !== i) { setChangeIdx(null); setChangeText(""); } }}>{viewDraft === i ? L("Masquer les détails", "Hide details") : s.app === "gcal" ? L("Voir l'événement", "View event") : L("Voir le brouillon", "View draft")}</button>
+              <button className="btn xs ghost" aria-expanded={viewDraft === i} onClick={() => { setConfirmIdx(null); setViewDraft((v) => (v === i ? null : i)); if (viewDraft !== i) { setChangeIdx(null); setChangeText(""); } }}>{viewDraft === i ? "Hide details" : s.app === "gcal" ? "View event" : "View draft"}</button>
               {/* Not yet blue: clicking this only OPENS the confirm below, it doesn't send anything — the
                   real "irreversible" signal belongs on "Oui, envoyer" alone. */}
               {s.sent
-                ? <button className="btn send-btn sent" disabled>{L("Envoyé", "Sent")}</button>
+                ? <button className="btn send-btn sent" disabled>{"Sent"}</button>
                 : sending === i
-                  ? <button className="btn send-btn" disabled>{L("Envoi…", "Sending…")}</button>
+                  ? <button className="btn send-btn" disabled>{"Sending…"}</button>
                   : <button className="btn send-btn" onClick={() => { setViewDraft(null); setChangeIdx(null); setConfirmIdx(confirmIdx === i ? null : i); }}>{s.label}</button>}
             </div>
             {/* Confirm step — the recipient is spelled out in full before anything sends. */}
             {confirmIdx === i && !s.sent && sending !== i ? (
               <div className="confirm">
-                <div className="confirm-q">{L("Envoyer", "Send")} {noun} {L("à", "to")} <b>{recipients || L("le destinataire", "the recipient")}</b> ?</div>
+                <div className="confirm-q">{"Send"} {noun} {"to"} <b>{recipients || "the recipient"}</b> ?</div>
                 <div className="confirm-acts">
-                  <button className="btn primary xs" onClick={() => void doSend(i)}>{L("Oui, envoyer", "Yes, send")}</button>
-                  <button className="btn xs" onClick={() => { setConfirmIdx(null); setViewDraft(i); setChangeText(""); setChangeIdx(i); }}>{L("Changer quelque chose", "Change something")}</button>
-                  <button className="btn xs ghost" onClick={() => setConfirmIdx(null)}>{L("Annuler", "Cancel")}</button>
+                  <button className="btn primary xs" onClick={() => void doSend(i)}>{"Yes, send"}</button>
+                  <button className="btn xs" onClick={() => { setConfirmIdx(null); setViewDraft(i); setChangeText(""); setChangeIdx(i); }}>{"Change something"}</button>
+                  <button className="btn xs ghost" onClick={() => setConfirmIdx(null)}>{"Cancel"}</button>
                 </div>
               </div>
             ) : null}
@@ -1604,52 +1603,52 @@ function SendableReview({ task, onTask }: {
               <div className="draft">
                 {s.app === "gcal" ? (
                   <>
-                    {s.summary ? <div className="draft-row"><span className="draft-label">{L("Événement", "Event")}</span><span>{s.summary}</span></div> : null}
-                    {s.when ? <div className="draft-row"><span className="draft-label">{L("Quand", "When")}</span><span>{s.when}</span></div> : null}
-                    {recipients ? <div className="draft-row"><span className="draft-label">{L("Invités", "Invites")}</span><span>{recipients}</span></div> : null}
+                    {s.summary ? <div className="draft-row"><span className="draft-label">{"Event"}</span><span>{s.summary}</span></div> : null}
+                    {s.when ? <div className="draft-row"><span className="draft-label">{"When"}</span><span>{s.when}</span></div> : null}
+                    {recipients ? <div className="draft-row"><span className="draft-label">{"Invites"}</span><span>{recipients}</span></div> : null}
                   </>
                 ) : s.sent ? (
                   <>
-                    {s.to ? <div className="draft-row"><span className="draft-label">{L("À", "To")}</span><span>{s.to}</span></div> : null}
-                    {s.subject ? <div className="draft-row"><span className="draft-label">{L("Objet", "Subject")}</span><span>{s.subject}</span></div> : null}
-                    <pre className="draft-body">{s.body || L("Envoyé.", "Sent.")}</pre>
+                    {s.to ? <div className="draft-row"><span className="draft-label">{"To"}</span><span>{s.to}</span></div> : null}
+                    {s.subject ? <div className="draft-row"><span className="draft-label">{"Subject"}</span><span>{s.subject}</span></div> : null}
+                    <pre className="draft-body">{s.body || "Sent."}</pre>
                   </>
                 ) : (
                   <>
-                    {s.to ? <div className="draft-row"><span className="draft-label">{L("À", "To")}</span><span>{s.to}</span></div> : null}
+                    {s.to ? <div className="draft-row"><span className="draft-label">{"To"}</span><span>{s.to}</span></div> : null}
                     {s.app === "gmail" ? (
-                      <input className="addinput sm draft-subject" placeholder={L("Objet", "Subject")} aria-label={L("Objet", "Subject")} disabled={revising}
+                      <input className="addinput sm draft-subject" placeholder={"Subject"} aria-label={"Subject"} disabled={revising}
                         value={draftEdits[i]?.subject ?? s.subject ?? ""}
                         onChange={(e) => setDraftEdits((d) => ({ ...d, [i]: { ...d[i], subject: e.target.value } }))} />
                     ) : null}
                     {/* Auto-grows to fit the WHOLE text (up to a cap) instead of a small fixed box that clips
                         a real email. Disabled while Otto is rewriting — a manual edit landing mid-rewrite
                         would just get silently overwritten. */}
-                    <textarea className="draft-body-edit" rows={12} disabled={revising} aria-label={L("Contenu du brouillon", "Draft content")}
+                    <textarea className="draft-body-edit" rows={12} disabled={revising} aria-label={"Draft content"}
                       ref={(el) => { if (el) { el.style.height = "auto"; el.style.height = `${Math.min(el.scrollHeight, 600)}px`; } }}
                       value={draftEdits[i]?.body ?? s.body ?? ""}
                       onChange={(e) => { setDraftEdits((d) => ({ ...d, [i]: { ...d[i], body: e.target.value } })); e.target.style.height = "auto"; e.target.style.height = `${Math.min(e.target.scrollHeight, 600)}px`; }} />
                     {draftEdits[i] && !revising ? (
                       <div className="draft-edit-acts">
-                        <button className="btn xs" disabled={savingDraft === i} onClick={() => void saveDraftEdit(i)}>{savingDraft === i ? L("Enregistrement…", "Saving…") : L("Enregistrer les modifications", "Save changes")}</button>
-                        <button className="btn xs ghost" disabled={savingDraft === i} onClick={() => setDraftEdits((d) => { const { [i]: _, ...rest } = d; return rest; })}>{L("Annuler", "Discard")}</button>
+                        <button className="btn xs" disabled={savingDraft === i} onClick={() => void saveDraftEdit(i)}>{savingDraft === i ? "Saving…" : "Save changes"}</button>
+                        <button className="btn xs ghost" disabled={savingDraft === i} onClick={() => setDraftEdits((d) => { const { [i]: _, ...rest } = d; return rest; })}>{"Discard"}</button>
                       </div>
                     ) : null}
                     {changeIdx === i ? (
                       <div className="rewrite-row">
                         <input className="addinput sm" autoFocus disabled={revising}
-                          aria-label={L("Ce qu'il faut changer", "What to change")}
-                          placeholder={L("Dis à Otto quoi changer — ex : ajoute mes horaires de vol, raccourcis, corrige la date", "Tell Otto what to change — e.g. add my flight times, make it shorter, fix the date")}
+                          aria-label={"What to change"}
+                          placeholder={"Tell Otto what to change — e.g. add my flight times, make it shorter, fix the date"}
                           value={changeText} onChange={(e) => setChangeText(e.target.value)}
                           onKeyDown={(e) => { if (e.key === "Enter") void doRevise(); }} />
-                        {!revising && <button className="btn xs" disabled={!changeText.trim()} onClick={() => void doRevise()}>{L("Réviser", "Revise")}</button>}
-                        <button className="btn xs ghost" disabled={revising} onClick={() => { setChangeIdx(null); setChangeText(""); setReviseError(null); }}>{L("Annuler", "Cancel")}</button>
+                        {!revising && <button className="btn xs" disabled={!changeText.trim()} onClick={() => void doRevise()}>{"Revise"}</button>}
+                        <button className="btn xs ghost" disabled={revising} onClick={() => { setChangeIdx(null); setChangeText(""); setReviseError(null); }}>{"Cancel"}</button>
                         {reviseError ? <div className="rewrite-error">{reviseError}</div> : null}
                       </div>
                     ) : !revising ? (
-                      <button className="btn xs ghost rewrite-toggle" onClick={() => { setChangeText(""); setReviseError(null); setChangeIdx(i); }}>{L("Demander à Otto de le réécrire →", "Ask Otto to rewrite it →")}</button>
+                      <button className="btn xs ghost rewrite-toggle" onClick={() => { setChangeText(""); setReviseError(null); setChangeIdx(i); }}>{"Ask Otto to rewrite it →"}</button>
                     ) : null}
-                    {revising && changeIdx === i ? <div className="rewrite-progress" title={L("Otto réécrit le brouillon…", "Otto is rewriting the draft…")} /> : null}
+                    {revising && changeIdx === i ? <div className="rewrite-progress" title={"Otto is rewriting the draft…"} /> : null}
                   </>
                 )}
               </div>

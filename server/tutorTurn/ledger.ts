@@ -64,14 +64,14 @@ export function buildRecap(i: { log: TutorTurnRecord[]; board: BoardEntry[]; obj
   const mine = i.board.filter((b) => b.status === "correct" && (b.kind === "gap" || b.owner === "student")).length;
   return {
     learned: done,
-    canDoAlone: solvedAlone || mine ? [en ? `${Math.max(solvedAlone, mine)} step(s) solved on your own` : `${Math.max(solvedAlone, mine)} étape(s) réussie(s) seul`] : [],
-    canDoWithHelp: solvedHelped ? [en ? `${solvedHelped} step(s) solved with Otto's help` : `${solvedHelped} étape(s) réussie(s) avec l'aide d'Otto`] : [],
-    mistakes: [...new Set(log.map((r) => r.misconception).filter((m): m is string => !!m))].slice(0, 4).map((m) => (en ? `Misconception worked on: ${m}` : `Idée fausse travaillée : ${m}`)).concat(wrong || fixed ? [en ? `${Math.max(wrong, fixed)} slip(s) or misconception(s) worked through` : `${Math.max(wrong, fixed)} erreur(s) corrigée(s)`] : []),
+    canDoAlone: solvedAlone || mine ? [`${Math.max(solvedAlone, mine)} step(s) solved on your own`] : [],
+    canDoWithHelp: solvedHelped ? [`${solvedHelped} step(s) solved with Otto's help`] : [],
+    mistakes: [...new Set(log.map((r) => r.misconception).filter((m): m is string => !!m))].slice(0, 4).map((m) => (`Misconception worked on: ${m}`)).concat(wrong || fixed ? [`${Math.max(wrong, fixed)} slip(s) or misconception(s) worked through`] : []),
     keyLines: lines,
     gaps: open,
     next: open[0]
-      ? (en ? `Next: ${open[0]}` : `Ensuite : ${open[0]}`)
-      : solvedAlone > 0 ? (en ? "Next: try a similar problem with new numbers, alone." : "Ensuite : un problème semblable avec d'autres nombres, seul.")
-      : (en ? "Next: redo the last step on your own." : "Ensuite : refais la dernière étape seul."),
+      ? (`Next: ${open[0]}`)
+      : solvedAlone > 0 ? ("Next: try a similar problem with new numbers, alone.")
+      : ("Next: redo the last step on your own."),
   };
 }

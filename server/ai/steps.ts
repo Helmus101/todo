@@ -192,14 +192,14 @@ export function ensureArtifactUseSteps(
   const deck = created.decks?.[0];
   if (deck && out.length < 6 && !mentions(deck.title)) {
     out.push({
-      text: fr ? `Réviser les cartes « ${deck.title.slice(0, 40)} » jusqu'à toutes les avoir justes` : `Drill the "${deck.title.slice(0, 40)}" flashcards until every card is right`,
+      text: `Drill the "${deck.title.slice(0, 40)}" flashcards until every card is right`,
       automatable: false, minutes: Math.min(45, Math.max(5, Math.round(deck.count * 1.5))),
     });
   }
   const quiz = created.quizzes?.[0];
   if (quiz && out.length < 6 && !out.some((s) => /quiz|qcm/i.test(s.text))) {
     out.push({
-      text: fr ? `Faire le quiz « ${quiz.title.slice(0, 40)} » sans notes, puis revoir les erreurs` : `Take the "${quiz.title.slice(0, 40)}" quiz without notes, then review what you missed`,
+      text: `Take the "${quiz.title.slice(0, 40)}" quiz without notes, then review what you missed`,
       automatable: false, minutes: Math.min(30, Math.max(5, Math.round(quiz.count * 1.5))),
     });
   }

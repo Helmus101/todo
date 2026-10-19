@@ -1256,7 +1256,7 @@ function pronoteGoal(taskType: TaskType, task: GeneratedTask): string {
   const what = String(task.title || "").replace(/\s+/g, " ").trim().slice(0, 90);
   const due = task.sourceDue || task.when ? ` ${/^\d{4}-\d{2}-\d{2}/.test(String(task.sourceDue || task.when)) ? "by " + String(task.sourceDue || task.when).slice(0, 10) : "by " + String(task.when).slice(0, 30)}` : "";
   const fr = /[éèêàùç]|\b(?:devoir|exercice|révis|contrôle|interrogation|rédac|lecture)\b/i.test(what);
-  if (taskType === "prepare_assessment") return fr ? `Capable de refaire « ${what} » sans notes, toutes les réponses justes en auto-vérification${due ? due.replace("by", "avant le") : ""}` : `Can redo "${what}" without notes with every answer correct on self-check${due}`;
-  if (taskType === "homework_problem_set") return fr ? `« ${what} » terminé, relu et prêt à être rendu${due ? due.replace("by", "avant le") : ""}` : `"${what}" finished, checked and ready to hand in${due}`;
-  return fr ? `Capable d'expliquer « ${what} » à voix haute sans notes et de refaire un exemple seul${due ? due.replace("by", "avant le") : ""}` : `Can explain "${what}" aloud without notes and redo one example alone${due}`;
+  if (taskType === "prepare_assessment") return `Can redo "${what}" without notes with every answer correct on self-check${due}`;
+  if (taskType === "homework_problem_set") return `"${what}" finished, checked and ready to hand in${due}`;
+  return `Can explain "${what}" aloud without notes and redo one example alone${due}`;
 }

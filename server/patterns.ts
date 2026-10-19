@@ -204,7 +204,5 @@ export function stallNudgeLine(
   const fr = profile?.language === "fr";
   const smallest = (task.firstAction?.text || task.why || "").trim().replace(/[.!]+$/, "");
   if (!smallest) return null;
-  return fr
-    ? `Toujours là — mais c'est petit : ${smallest}. Pas un projet, juste un truc de deux minutes.`
-    : `Still there — but it's small: ${smallest}. Not a project, just a two-minute thing.`;
+  return `Still there — but it's small: ${smallest}. Not a project, just a two-minute thing.`;
 }

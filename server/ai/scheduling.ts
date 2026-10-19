@@ -37,15 +37,11 @@ export function generateSchedulingSuggestion(task: { sourceSubject?: string; dif
   if (task.sourceSubject && profile.focusStats.subjectFocus?.[task.sourceSubject]) {
     const subjectFocus = profile.focusStats.subjectFocus[task.sourceSubject];
     if (subjectFocus < 50) {
-      return en
-        ? `This subject typically shows lower focus. Consider scheduling for ${hourStr} when your overall focus is at its peak.`
-        : `Cette matière montre généralement une concentration plus faible. Envisagez de la programmer pour ${hourStr} quand votre concentration est à son pic.`;
+      return `This subject typically shows lower focus. Consider scheduling for ${hourStr} when your overall focus is at its peak.`;
     }
   }
   
-  return en
-    ? `This task might be easier at ${hourStr} (your peak focus hour).`
-    : `Cette tâche pourrait être plus facile à ${hourStr} (votre heure de pic d'attention).`;
+  return `This task might be easier at ${hourStr} (your peak focus hour).`;
 }
 
 /** Recommend artifact types based on focus patterns for a subject. */

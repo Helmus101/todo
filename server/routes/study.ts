@@ -282,7 +282,7 @@ export function registerStudyRoutes(app: express.Express): void {
   app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req, res) => {
     const date = String(req.body?.date || "");
     const text = String(req.body?.text || "").trim().slice(0, 4000);
-    if (!DATE_RE.test(date)) { res.status(400).json({ error: M(req, "Date invalide.", "Invalid date.") }); return; }
+    if (!DATE_RE.test(date)) { res.status(400).json({ error: "Invalid date." }); return; }
     const list = req.session.tasks || [];
     const anchorKey = `studylog:${date}`;
     let t = list.find((x) => x.source === "studylog" && x.logDate === date);
@@ -293,8 +293,8 @@ export function registerStudyRoutes(app: express.Express): void {
       res.json(tasksPayload(req, req.session.tasks));
       return;
     }
-    if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour générer des cartes.", "AI is paused — resume it in Settings to generate flashcards.") }); return; }
-    if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
+    if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to generate flashcards." }); return; }
+    if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
     const now = new Date().toISOString();
     if (!t) {
       const e = tasks.eisenhower(0, 0);
@@ -430,12 +430,12 @@ export function registerStudyRoutes(app: express.Express): void {
       await commit(req, { awaitCloud: true });
       res.json(tasksPayload(req, req.session.tasks));
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de créer des cartes à partir de ça — réessaie.", "Couldn't make flashcards from that — try again.") }); }
+      res.status(500).json({ error: "Couldn't make flashcards from that — try again." }); }
   }));
 
   app.get("/api/studylog/week", requireAuth, ah(async (req, res) => {
     const start = String(req.query.start || "");
-    if (!DATE_RE.test(start)) { res.status(400).json({ error: M(req, "Date invalide.", "Invalid date.") }); return; }
+    if (!DATE_RE.test(start)) { res.status(400).json({ error: "Invalid date." }); return; }
     const monday = mondayOf(start);
     const dates = weekdayDates(monday);
     // Same cloud-reconcile as GET /api/tasks — see week-summary's identical comment for why. bypassCache:true
@@ -457,10 +457,10 @@ export function registerStudyRoutes(app: express.Express): void {
   }));
 
   app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 60_000), ah(async (req, res) => {
-    if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour générer le résumé.", "AI is paused — resume it in Settings to generate the summary.") }); return; }
-    if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
+    if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to generate the summary." }); return; }
+    if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
     const weekStart = String(req.body?.weekStart || "");
-    if (!DATE_RE.test(weekStart)) { res.status(400).json({ error: M(req, "Date invalide.", "Invalid date.") }); return; }
+    if (!DATE_RE.test(weekStart)) { res.status(400).json({ error: "Invalid date." }); return; }
     const monday = mondayOf(weekStart);
     const dates = weekdayDates(monday);
     // Reconcile with the cloud copy first — same reasoning as GET /api/tasks's own reload. This route used to
@@ -489,13 +489,13 @@ export function registerStudyRoutes(app: express.Express): void {
       const found = allLogs.length
         ? allLogs.map((x) => `${x.logDate}${x.logText?.trim() ? "" : en2 ? " (empty)" : " (vide)"}`).sort().join(", ")
         : (en2 ? "none at all" : "aucune");
-      res.status(400).json({ error: M(req, `Aucune entrée cette semaine pour l'instant. (Recherché : ${dates.join(", ")} — entrées existantes : ${found})`, `No entries logged this week yet. (Looked for ${dates.join(", ")} — entries that actually exist: ${found})`) });
+      res.status(400).json({ error: `No entries logged this week yet. (Looked for ${dates.join(", ")} — entries that actually exist: ${found})` });
       return;
     }
     const boxBreakdown = tasks.leitnerBoxBreakdown(dayTasks);
     try {
       const result = await generateWeeklyStudyDeck(dayTasks.map((dt) => ({ date: dt.logDate!, logText: dt.logText! })), boxBreakdown, req.session.profile);
-      if (!result) { res.status(500).json({ error: M(req, "Impossible de créer le résumé de la semaine — réessaie.", "Couldn't build the week summary — try again.") }); return; }
+      if (!result) { res.status(500).json({ error: "Couldn't build the week summary — try again." }); return; }
       addUsage(req.session.profile ||= emptyProfile(), result.tokens, "studylog");
       const deck = result.deck;
       const anchorKey = `studylog:week:${monday}`;
@@ -536,12 +536,12 @@ export function registerStudyRoutes(app: express.Express): void {
       await commit(req, { awaitCloud: true });
       res.json(tasksPayload(req, req.session.tasks));
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de créer le résumé de la semaine — réessaie.", "Couldn't build the week summary — try again.") }); }
+      res.status(500).json({ error: "Couldn't build the week summary — try again." }); }
   }));
 
   app.get("/api/studylog/month", requireAuth, ah(async (req, res) => {
     const start = String(req.query.start || "");
-    if (!MONTH_RE.test(start) && !DATE_RE.test(start)) { res.status(400).json({ error: M(req, "Date invalide.", "Invalid date.") }); return; }
+    if (!MONTH_RE.test(start) && !DATE_RE.test(start)) { res.status(400).json({ error: "Invalid date." }); return; }
     const month = monthOf(start);
     // Same cloud-reconcile as GET /api/tasks — see week-summary's identical comment for why.
     if (req.session.user && cloudEnabled()) {
@@ -558,10 +558,10 @@ export function registerStudyRoutes(app: express.Express): void {
   }));
 
   app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 60_000), ah(async (req, res) => {
-    if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour générer le résumé.", "AI is paused — resume it in Settings to generate the summary.") }); return; }
-    if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
+    if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to generate the summary." }); return; }
+    if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
     const monthStart = String(req.body?.monthStart || "");
-    if (!MONTH_RE.test(monthStart) && !DATE_RE.test(monthStart)) { res.status(400).json({ error: M(req, "Date invalide.", "Invalid date.") }); return; }
+    if (!MONTH_RE.test(monthStart) && !DATE_RE.test(monthStart)) { res.status(400).json({ error: "Invalid date." }); return; }
     const month = monthOf(monthStart);
     // Same cloud-reconcile as GET /api/tasks — see week-summary's identical comment for why.
     if (req.session.user && cloudEnabled()) {
@@ -572,14 +572,14 @@ export function registerStudyRoutes(app: express.Express): void {
     }
     const list = req.session.tasks || [];
     const weekTasks = list.filter((x) => x.source === "studylog" && x.logDate?.startsWith("week:") && monthOf(x.logDate.slice(5)) === month && x.flashcards?.length);
-    if (!weekTasks.length) { res.status(400).json({ error: M(req, "Pas encore de résumés hebdomadaires ce mois-ci.", "No weekly summaries yet this month.") }); return; }
+    if (!weekTasks.length) { res.status(400).json({ error: "No weekly summaries yet this month." }); return; }
     const boxBreakdown = tasks.leitnerBoxBreakdown(weekTasks);
     try {
       const result = await generateMonthlyStudyDeck(
         weekTasks.map((wt) => ({ label: wt.logDate!.slice(5), cards: (wt.flashcards![0]?.cards || []).map((c) => ({ front: c.front, back: c.back })) })),
         boxBreakdown, req.session.profile,
       );
-      if (!result) { res.status(500).json({ error: M(req, "Impossible de créer le résumé du mois — réessaie.", "Couldn't build the month summary — try again.") }); return; }
+      if (!result) { res.status(500).json({ error: "Couldn't build the month summary — try again." }); return; }
       addUsage(req.session.profile ||= emptyProfile(), result.tokens, "studylog");
       const deck = result.deck;
       const anchorKey = `studylog:month:${month}`;
@@ -615,7 +615,7 @@ export function registerStudyRoutes(app: express.Express): void {
       await commit(req, { awaitCloud: true });
       res.json(tasksPayload(req, req.session.tasks));
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de créer le résumé du mois — réessaie.", "Couldn't build the month summary — try again.") }); }
+      res.status(500).json({ error: "Couldn't build the month summary — try again." }); }
   }));
 
   // A "just let me start studying" entry point — the full StudyMode workspace (StudyMode.tsx) and the /tutor
@@ -668,8 +668,8 @@ export function registerStudyRoutes(app: express.Express): void {
     const id = randomUUID();
     const t: WebTask = {
       id, 
-      title: topic ? topic : subject ? `${subject} session` : (en ? "Free study session" : "Séance de révision libre"),
-      why: topic ? (en ? `The student chose to work on exactly this: ${topic}${subject ? ` (${subject})` : ""}.` : `L'élève a choisi de travailler précisément : ${topic}${subject ? ` (${subject})` : ""}.`) : (en ? "Started on demand, not tied to a task." : "Lancée à la demande, sans tâche associée."),
+      title: topic ? topic : subject ? `${subject} session` : ("Free study session"),
+      why: topic ? (`The student chose to work on exactly this: ${topic}${subject ? ` (${subject})` : ""}.`) : ("Started on demand, not tied to a task."),
       ...(topic ? { sourceTopic: topic } : {}),
       source: "freestudy", risk: "low",
       urgency: 0, importance: 0, quadrant: e.quadrant, score: e.score, status: "needs_review",
@@ -692,13 +692,13 @@ export function registerStudyRoutes(app: express.Express): void {
 
   app.post("/api/study/extract-text", requireAuth, rateLimit(30, 60_000), ah(async (req, res) => {
     const url = String(req.body?.url || "").trim();
-    if (!/^https?:\/\//i.test(url)) { res.status(400).json({ error: M(req, "URL invalide.", "Invalid URL.") }); return; }
+    if (!/^https?:\/\//i.test(url)) { res.status(400).json({ error: "Invalid URL." }); return; }
     // Same SSRF guard the Pronote connect flow uses for the identical risk: an authenticated student could
     // otherwise point this at an internal address (cloud metadata, an internal service) and have the server
     // fetch it on their behalf, handing the response back as "extracted text." Checks scheme + both a literal
     // IP and the DNS-resolved address against private/reserved ranges — a normal-looking hostname isn't
     // enough to trust on its own (DNS rebinding).
-    try { await pronoteSvc.assertSafeExternalUrl(url); } catch { res.status(400).json({ error: M(req, "URL invalide.", "Invalid URL.") }); return; }
+    try { await pronoteSvc.assertSafeExternalUrl(url); } catch { res.status(400).json({ error: "Invalid URL." }); return; }
     try {
       const gdoc = url.match(GDOC_URL_RE);
       if (gdoc) {
@@ -765,7 +765,7 @@ export function registerStudyRoutes(app: express.Express): void {
   app.post("/api/study/session-outcome", requireAuth, rateLimit(30, 60_000), ah(async (req, res) => {
     try {
       const armId = String(req.body?.armId || "");
-      if (!POMODORO_ARMS.some((a) => a.id === armId)) { res.status(400).json({ error: M(req, "Option inconnue.", "Unknown arm.") }); return; }
+      if (!POMODORO_ARMS.some((a) => a.id === armId)) { res.status(400).json({ error: "Unknown arm." }); return; }
       const completedPlanned = !!req.body?.completedPlanned;
       const idleRatio = Number(req.body?.idleRatio);
       const netBoxDelta = req.body?.netBoxDelta !== undefined ? Number(req.body.netBoxDelta) : undefined;
@@ -774,7 +774,7 @@ export function registerStudyRoutes(app: express.Express): void {
       const avgBlinkRate = req.body?.avgBlinkRate !== undefined ? Number(req.body.avgBlinkRate) : undefined;
       const restlessPct = req.body?.restlessPct !== undefined ? Number(req.body.restlessPct) : undefined;
       const headPoseStability = req.body?.headPoseStability !== undefined ? Number(req.body.headPoseStability) : undefined;
-      if (!Number.isFinite(idleRatio)) { res.status(400).json({ error: M(req, "idleRatio invalide.", "Invalid idleRatio.") }); return; }
+      if (!Number.isFinite(idleRatio)) { res.status(400).json({ error: "Invalid idleRatio." }); return; }
       const reward = computeReward({
         completedPlanned, idleRatio,
         netBoxDelta: Number.isFinite(netBoxDelta) ? netBoxDelta : undefined,
@@ -809,7 +809,7 @@ export function registerStudyRoutes(app: express.Express): void {
       }
       res.json({ ok: true });
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible d'enregistrer ça — ça n'affectera pas ta session.", "Couldn't record that — it won't affect your session.") }); }
+      res.status(500).json({ error: "Couldn't record that — it won't affect your session." }); }
   }));
 
   // ── Exercises (route /exercises — reachable by URL only, not from the navbar) ──
@@ -820,7 +820,7 @@ export function registerStudyRoutes(app: express.Express): void {
     const subject = String(req.body?.subject || "").trim().slice(0, 60);
     const track = req.session.profile?.track;
     const sources = sourcesForTrack(track).map((s) => ({ name: s.name, host: s.host }));
-    if (!topic) { res.status(400).json({ error: M(req, "Indique un sujet.", "Enter a topic.") }); return; }
+    if (!topic) { res.status(400).json({ error: "Enter a topic." }); return; }
     if (!sources.length) { res.json({ track: track || null, sources, questions: [] }); return; }
     const questions = await findSourceQuestions({ track, subject: subject || undefined, topic, limit: 6 }).catch(() => []);
     res.json({ track, sources, questions });
@@ -836,9 +836,9 @@ export function registerStudyRoutes(app: express.Express): void {
     const subject = String(req.body?.subject || "").trim().slice(0, 60);
     const name = String(req.body?.name || "").trim().replace(/\s+/g, " ").slice(0, 140);
     const text = String(req.body?.text || "").replace(/\u0000/g, "").trim().slice(0, COURSEWORK_MAX_CHARS);
-    if (!subject || !name) { res.status(400).json({ error: M(req, "choisis une matière et un nom de document", "pick a subject and a document name") }); return; }
-    if (text.length < 40) { res.status(400).json({ error: M(req, "Je n'ai pas réussi à lire de texte dans ce document (scan sans texte ?).", "I couldn't read any text in that document (a scanned page with no text?).") }); return; }
-    if ((p.coursework || []).length >= COURSEWORK_MAX_DOCS) { res.status(400).json({ error: M(req, "Tu as atteint la limite de documents — supprime-en un d'abord.", "You've reached the document limit — remove one first.") }); return; }
+    if (!subject || !name) { res.status(400).json({ error: "pick a subject and a document name" }); return; }
+    if (text.length < 40) { res.status(400).json({ error: "I couldn't read any text in that document (a scanned page with no text?)." }); return; }
+    if ((p.coursework || []).length >= COURSEWORK_MAX_DOCS) { res.status(400).json({ error: "You've reached the document limit — remove one first." }); return; }
     const pages = Math.max(1, Math.min(COURSEWORK_MAX_PAGES, Math.round(Number(req.body?.pages) || 1)));
     const totalPages = Number(req.body?.totalPages) > 0 ? Math.min(9999, Math.round(Number(req.body.totalPages))) : undefined;
     const truncated = req.body?.truncated === true || (totalPages != null && totalPages > pages) || String(req.body?.text || "").length > COURSEWORK_MAX_CHARS;
@@ -891,7 +891,7 @@ export function registerStudyRoutes(app: express.Express): void {
       await commit(req);
       res.json(p);
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de supprimer ce document — réessaie.", "Couldn't remove that document — try again.") }); }
+      res.status(500).json({ error: "Couldn't remove that document — try again." }); }
   });
 
   // ── Focus Tracking ─────────────────────────────────────────────────────────────
@@ -903,7 +903,7 @@ export function registerStudyRoutes(app: express.Express): void {
       
       // Validate required fields
       if (!session.id || !session.startTime || !session.endTime || session.duration === undefined) {
-        res.status(400).json({ error: M(req, "Champs de session requis manquants", "Missing required session fields") });
+        res.status(400).json({ error: "Missing required session fields" });
         return;
       }
       
@@ -924,7 +924,7 @@ export function registerStudyRoutes(app: express.Express): void {
     } catch (e: any) {
       console.error("Failed to save focus session:", e);
       console.error(e);
-      res.status(500).json({ error: M(req, "Impossible d'enregistrer la session — réessaie.", "Couldn't save session — try again.") });
+      res.status(500).json({ error: "Couldn't save session — try again." });
     }
   });
 
@@ -940,7 +940,7 @@ export function registerStudyRoutes(app: express.Express): void {
       res.json({ stats: p.focusStats });
     } catch (e: any) {
       console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de charger les statistiques — réessaie.", "Couldn't load stats — try again.") });
+      res.status(500).json({ error: "Couldn't load stats — try again." });
     }
   });
 
@@ -957,7 +957,7 @@ export function registerStudyRoutes(app: express.Express): void {
       res.json({ sessions });
     } catch (e: any) {
       console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de charger les sessions — réessaie.", "Couldn't load sessions — try again.") });
+      res.status(500).json({ error: "Couldn't load sessions — try again." });
     }
   });
 
@@ -971,7 +971,7 @@ export function registerStudyRoutes(app: express.Express): void {
       res.json({ suggestion });
     } catch (e: any) {
       console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de générer une suggestion — réessaie.", "Couldn't generate suggestion — try again.") });
+      res.status(500).json({ error: "Couldn't generate suggestion — try again." });
     }
   });
 
@@ -984,7 +984,7 @@ export function registerStudyRoutes(app: express.Express): void {
       res.json({ recommendation });
     } catch (e: any) {
       console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de générer une recommandation — réessaie.", "Couldn't generate recommendation — try again.") });
+      res.status(500).json({ error: "Couldn't generate recommendation — try again." });
     }
   });
 
@@ -999,7 +999,7 @@ export function registerStudyRoutes(app: express.Express): void {
         res.json([]);
       }
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de charger les sessions d'étude.", "Couldn't load study sessions.") }); }
+      res.status(500).json({ error: "Couldn't load study sessions." }); }
   });
 
   // Create/save a study session
@@ -1007,13 +1007,13 @@ export function registerStudyRoutes(app: express.Express): void {
     try {
       const sessionData = req.body as Partial<StudySession>;
       if (!sessionData.taskId || !sessionData.userId) {
-        res.status(400).json({ error: M(req, "taskId et userId sont requis", "taskId and userId are required") });
+        res.status(400).json({ error: "taskId and userId are required" });
         return;
       }
       
       const email = req.session.user;
       if (!email) {
-        res.status(401).json({ error: M(req, "Non authentifié", "Not authenticated") });
+        res.status(401).json({ error: "Not authenticated" });
         return;
       }
       
@@ -1050,7 +1050,7 @@ export function registerStudyRoutes(app: express.Express): void {
       await saveState(email, { profile: current.profile, tasks: current.tasks, studySessions: trimmedSessions }, { throwOnError: true });
       res.json(session);
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible d'enregistrer la session d'étude.", "Couldn't save study session.") }); }
+      res.status(500).json({ error: "Couldn't save study session." }); }
   });
 
   // Get study profile
@@ -1063,7 +1063,7 @@ export function registerStudyRoutes(app: express.Express): void {
         res.json({ userId: req.session.user, updatedAt: new Date().toISOString() });
       }
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de charger le profil d'étude.", "Couldn't load study profile.") }); }
+      res.status(500).json({ error: "Couldn't load study profile." }); }
   });
 
   // Update study profile
@@ -1072,7 +1072,7 @@ export function registerStudyRoutes(app: express.Express): void {
       const profileData = req.body as Partial<StudyProfile>;
       const email = req.session.user;
       if (!email) {
-        res.status(401).json({ error: M(req, "Non authentifié", "Not authenticated") });
+        res.status(401).json({ error: "Not authenticated" });
         return;
       }
       
@@ -1105,6 +1105,6 @@ export function registerStudyRoutes(app: express.Express): void {
       await saveState(email, { profile: current.profile, tasks: current.tasks, studyProfile: updated }, { throwOnError: true });
       res.json(updated);
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible d'enregistrer le profil d'étude.", "Couldn't save study profile.") }); }
+      res.status(500).json({ error: "Couldn't save study profile." }); }
   });
 }

@@ -76,7 +76,7 @@ export function DocumentArtifact({ url, title }: DocumentArtifactProps) {
           ) : (
             <div className="sm-document-reference">
               <strong>{title}</strong>
-              <p>{L("Ce matériel est rattaché à la tâche. Aucun aperçu n'est encore disponible pour ce type de fichier.", "This material is attached to the task. A native preview is not available for this file type yet.")}</p>
+              <p>{"This material is attached to the task. A native preview is not available for this file type yet."}</p>
             </div>
           )}
           {/* Real, clickable fallback — always rendered, not conditional on the embed failing. A site that
@@ -85,12 +85,12 @@ export function DocumentArtifact({ url, title }: DocumentArtifactProps) {
               onError fires) — the student would otherwise be stuck staring at a dead pane with no way out.
               Same pattern PDFArtifact already uses for the same reason. */}
           <a className="sm-document-fallback-link" href={url} target="_blank" rel="noopener noreferrer">
-            {canEmbed ? L("Ça ne s'affiche pas ? Ouvre dans un nouvel onglet ↗", "Not loading? Open in a new tab ↗") : L(`Ouvrir ${title} dans un nouvel onglet ↗`, `Open ${title} in a new tab ↗`)}
+            {canEmbed ? "Not loading? Open in a new tab ↗" : `Open ${title} in a new tab ↗`}
           </a>
         </>
       ) : (
         <div className="sm-document-editor">
-          <textarea placeholder={L("Commence à écrire ici.", "Start writing here.")} aria-label={L("Commence à écrire ici.", "Start writing here.")} />
+          <textarea placeholder={"Start writing here."} aria-label={"Start writing here."} />
         </div>
       )}
     </div>

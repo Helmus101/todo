@@ -107,7 +107,7 @@ function userPrompt(r: ProblemRequest): string {
     r.skill ? `Target the skill they found hard: ${r.skill}` : "",
     r.used.length ? `Exercises ALREADY USED (never repeat or re-skin these): ${r.used.map((u) => `"${u}"`).join(" · ")}` : "",
     r.recent?.student ? `What just happened (the "intro" must connect to it, in your own words): the student said "${r.recent.student.replace(/\s+/g, " ").slice(0, 200)}"${r.recent.tutor ? ` and the tutor replied "${r.recent.tutor.replace(/\s+/g, " ").slice(0, 220)}"` : ""}.` : "",
-    `Write it in ${r.lang === "fr" ? "French" : "English"}.`,
+    `Write it in ${"English"}.`,
   ].filter(Boolean).join("\n");
 }
 

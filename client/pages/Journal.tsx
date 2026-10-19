@@ -29,7 +29,7 @@ function MilestonesStrip({ lang }: { lang?: "fr" | "en" }) {
   if (!groups?.length) return null;
   return (
     <div className="due-reviews milestones-strip">
-      <div className="exam-strip-label">{en ? "What's clicked so far" : "Ce qui a déclic jusqu'ici"}</div>
+      <div className="exam-strip-label">{"What's clicked so far"}</div>
       <div className="exam-strip">
         {groups.flatMap((g) => g.entries.slice(0, 3).map((m) => (
           <span key={m.id} className="exam-chip milestone-chip" title={m.label}>
@@ -123,7 +123,7 @@ export function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" |
   const [genBusy, setGenBusy] = useState(false);
 
   // Speech-to-text dictation for the Journal entry — never auto-started; explicit user tap required.
-  const speechLang = en ? "en-US" : "fr-FR";
+  const speechLang = "en-US";
   const recog = useSpeechRecognition({
     lang: speechLang,
     onResult: (transcript) => {
@@ -218,7 +218,7 @@ export function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" |
       saveWeekCache(status?.user || null, m, { days: r.days, summary: r.summary });
     }).catch(() => {
       if (loadGenRef.current !== gen) return; // superseded ��� a newer request's own success/failure wins
-      if (!cached) { setLoaded(true); notify(en ? "Couldn't load this week." : "Impossible de charger la semaine.", "error"); }
+      if (!cached) { setLoaded(true); notify("Couldn't load this week.", "error"); }
     });
   }, [en, notify]);
   useEffect(() => { load(monday); }, [monday, load]);
@@ -257,7 +257,7 @@ export function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" |
   }, [month]);
 
   const dates = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
-  const dayLabels = en ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] : ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
+  const dayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
   const save = async () => {
     setSaving(true);
@@ -276,9 +276,9 @@ export function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" |
       // clue why the flashcards never appeared. Detect it here since the client already has enough info
       // (non-empty text, no cards) without needing a server response-shape change.
       if (text.trim() && !fresh?.flashcards?.length) {
-        notify(en ? "Saved, but couldn't make flashcards from that — try saving again." : "Enregistré, mais impossible de créer les cartes — réessaie d'enregistrer.", "error");
+        notify("Saved, but couldn't make flashcards from that — try saving again.", "error");
       }
-    } catch (e: any) { notify(e?.message || (en ? "That didn't save — give it another try." : "Ça n'a pas été enregistré — réessaie."), "error"); }
+    } catch (e: any) { notify(e?.message || ("That didn't save — give it another try."), "error"); }
     finally { setSaving(false); }
   };
   const genSummary = async () => {
@@ -291,7 +291,7 @@ export function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" |
       // Open it immediately — leaving the student to notice a button's label silently changed to "View
       // summary" and click it a SECOND time read as "nothing happened" after a real wait for generation.
       if (fresh?.flashcards?.length) setOpenDeckFor("summary");
-    } catch (e: any) { notify(e?.message || (en ? "Couldn't build the week summary — try again." : "Impossible de créer le résumé — réessaie."), "error"); }
+    } catch (e: any) { notify(e?.message || ("Couldn't build the week summary — try again."), "error"); }
     finally { setGenBusy(false); }
   };
 
@@ -343,23 +343,23 @@ export function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" |
       setMonthSummary(fresh);
       saveMonthCache(status?.user || null, month, { weeks: monthWeeks, summary: fresh });
       if (fresh?.flashcards?.length) setOpenDeckFor("month");
-    } catch (e: any) { notify(e?.message || (en ? "Couldn't build the month summary — try again." : "Impossible de créer le résumé mensuel — réessaie."), "error"); }
+    } catch (e: any) { notify(e?.message || ("Couldn't build the month summary — try again."), "error"); }
     finally { setMonthGenBusy(false); }
   };
 
   return (
     <main className="list-wrap studylog-page">
-      <h1 className="list-head">{phoneOnly ? L("Tes cartes", "Your flashcards") : L("Journal", "Journal")}</h1>
+      <h1 className="list-head">{phoneOnly ? "Your flashcards" : "Journal"}</h1>
       <p className="page-sub mt-3">{phoneOnly
-        ? L("Révise tes cartes ici — le reste d'Otto marche mieux sur un plus grand écran.", "Review your flashcards here — the rest of Otto works better on a bigger screen.")
-        : L("Garde ce que tu as appris. Reviens à ce qui compte.", "Keep what you learned. Come back to what matters.")}</p>
+        ? "Review your flashcards here — the rest of Otto works better on a bigger screen."
+        : "Keep what you learned. Come back to what matters."}</p>
 
       {/* Same .seg/.seg-btn segmented-control pattern as Pronote's Student/Parent picker — one visual
           language for every binary switcher in the app, not a second bespoke tab style. Hidden on phone:
           there's only one tab to show there, so a switcher with one real destination is just clutter. */}
       {!phoneOnly && <div className="seg studylog-tabs" role="tablist">
-        <button type="button" role="tab" aria-selected={tab === "journal"} className={`seg-btn ${tab === "journal" ? "on" : ""}`} onClick={() => setTab("journal")}>{L("Journal", "Journal")}</button>
-        <button type="button" role="tab" aria-selected={tab === "flashcards"} className={`seg-btn ${tab === "flashcards" ? "on" : ""}`} onClick={() => setTab("flashcards")}>{L("Cartes", "Flashcards")}</button>
+        <button type="button" role="tab" aria-selected={tab === "journal"} className={`seg-btn ${tab === "journal" ? "on" : ""}`} onClick={() => setTab("journal")}>{"Journal"}</button>
+        <button type="button" role="tab" aria-selected={tab === "flashcards"} className={`seg-btn ${tab === "flashcards" ? "on" : ""}`} onClick={() => setTab("flashcards")}>{"Flashcards"}</button>
       </div>}
 
       {/* The spaced-repetition system (Leitner boxes, see nextLeitnerReview in shared/types.ts) was otherwise
@@ -373,9 +373,9 @@ export function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" |
       {phoneOnly || tab === "flashcards" ? <FlashcardsLibraryPage lang={lang} tasks={tasks} embedded userId={status?.user || null} /> : (
       <>
       <div className="studylog-weeknav">
-        <button type="button" className="btn xs ghost" onClick={() => setMonday(addDays(monday, -7))}>{"← " + L("Semaine préc.", "Prev week")}</button>
+        <button type="button" className="btn xs ghost" onClick={() => setMonday(addDays(monday, -7))}>{"← " + "Prev week"}</button>
         <span className="studylog-weeklabel">{fmtDate(monday, L)} – {fmtDate(addDays(monday, 4), L)}</span>
-        <button type="button" className="btn xs ghost" onClick={() => setMonday(addDays(monday, 7))}>{L("Semaine suiv.", "Next week") + " →"}</button>
+        <button type="button" className="btn xs ghost" onClick={() => setMonday(addDays(monday, 7))}>{"Next week" + " →"}</button>
       </div>
 
       <div className="studylog-days">
@@ -386,7 +386,7 @@ export function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" |
         ))}
       </div>
 
-      {!loaded ? <p className="muted small">{L("Récupération de ton journal…", "Pulling up your journal…")}</p> : (
+      {!loaded ? <p className="muted small">{"Pulling up your journal…"}</p> : (
         <>
           {/* Once a day has a deck, that IS the view — the entry textarea only comes back if you explicitly
               ask to edit. This is the point of the whole redesign: flashcards (and the quiz, when Otto made
@@ -395,18 +395,18 @@ export function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" |
             <div className="studylog-day-cards">
               <div className="studylog-day-cards-head">
                 <h3>{dayDeck.title}</h3>
-                <button type="button" className="btn xs ghost" onClick={() => setEditingDay(true)}>{L("Modifier l'entrée", "Edit entry")}</button>
+                <button type="button" className="btn xs ghost" onClick={() => setEditingDay(true)}>{"Edit entry"}</button>
               </div>
               <FlashcardDeck deck={dayDeck} onReview={onDayReview} taskId={dayTask?.id} userId={status?.user || null} />
               {/* The quiz is only present when today's material genuinely called for discrimination-style
                   testing (server decides, not a guaranteed add-on) — so it may not exist even with a deck. */}
-              {dayQuiz ? <button type="button" className="btn ghost" onClick={() => setOpenQuizFor("day")}>{L("Quiz", "Quiz")} ({dayQuiz.questions.length})</button> : null}
+              {dayQuiz ? <button type="button" className="btn ghost" onClick={() => setOpenQuizFor("day")}>{"Quiz"} ({dayQuiz.questions.length})</button> : null}
               {/* Only present when the day's entry actually covered math/physics/science (server decides via
                   looksLikeStem) — a free-response problem, not multiple choice, so it's rendered inline
                   rather than behind a button: it's one problem, not a sequence to open a popup for. */}
               {dayTask?.practiceProblem ? (
                 <div className="studylog-practice-sec">
-                  <h4>{L("Problème d'application", "Practice problem")}</h4>
+                  <h4>{"Practice problem"}</h4>
                   <PracticeProblemCard problem={dayTask.practiceProblem} taskId={dayTask.id} />
                 </div>
               ) : null}
@@ -431,60 +431,60 @@ export function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" |
                       if (recog.listening) recog.stop();
                       else recog.start();
                     }}
-                    title={recog.listening ? L("Arrêter la dictée vocale", "Stop voice dictation") : L("Dictée vocale (STT)", "Voice dictation (STT)")}
+                    title={recog.listening ? "Stop voice dictation" : "Voice dictation (STT)"}
                   >
                     {recog.listening ? <MicOff size={13} /> : <Mic size={13} />}
-                    <span>{recog.listening ? L("Écoute en cours…", "Listening…") : L("Dictée vocale", "Voice dictation")}</span>
+                    <span>{recog.listening ? "Listening…" : "Voice dictation"}</span>
                   </button>
                 ) : null}
               </div>
               {recog.listening ? (
                 <div className="studylog-stt-live">
-                  <span className="stt-dot" /> {recog.interimTranscript || L("Parle maintenant, Otto note tes propos…", "Speak now, Otto is writing down your notes…")}
+                  <span className="stt-dot" /> {recog.interimTranscript || "Speak now, Otto is writing down your notes…"}
                 </div>
               ) : null}
               <textarea className="studylog-textarea" rows={14}
-                placeholder={L("Qu'as-tu appris aujourd'hui ?", "What did you learn today?")} aria-label={L("Qu'as-tu appris aujourd'hui ?", "What did you learn today?")}
+                placeholder={"What did you learn today?"} aria-label={"What did you learn today?"}
                 value={text} onChange={(e) => setText(e.target.value)} maxLength={4000} />
               <div className="studylog-actions">
                 <button type="button" className="btn primary" disabled={saving || !text.trim()} onClick={() => void save()}>
-                  {saving ? L("Enregistrement…", "Saving…") : L("Enregistrer et créer les cartes", "Save & make flashcards")}
+                  {saving ? "Saving…" : "Save & make flashcards"}
                 </button>
-                {dayDeck ? <button type="button" className="btn ghost" onClick={() => setEditingDay(false)}>{L("Voir les cartes", "View flashcards")}</button> : null}
+                {dayDeck ? <button type="button" className="btn ghost" onClick={() => setEditingDay(false)}>{"View flashcards"}</button> : null}
               </div>
             </>
           )}
 
           <div className="studylog-summary-sec">
-            <h3>{L("Résumé de la semaine", "Week summary")}</h3>
+            <h3>{"Week summary"}</h3>
             {summaryDeck ? (
               <div className="studylog-actions">
-                <button type="button" className="btn ghost" onClick={() => setOpenDeckFor("summary")}>{L("Voir le résumé", "View summary")} ({summaryDeck.cards.length})</button>
+                <button type="button" className="btn ghost" onClick={() => setOpenDeckFor("summary")}>{"View summary"} ({summaryDeck.cards.length})</button>
                 {/* The quiz is only present when the week's material genuinely called for discrimination-style
                     testing (server decides, not a guaranteed add-on) — so it may not exist even with a deck. */}
-                {summaryQuiz ? <button type="button" className="btn ghost" onClick={() => setOpenQuizFor("summary")}>{L("Quiz", "Quiz")} ({summaryQuiz.questions.length})</button> : null}
+                {summaryQuiz ? <button type="button" className="btn ghost" onClick={() => setOpenQuizFor("summary")}>{"Quiz"} ({summaryQuiz.questions.length})</button> : null}
               </div>
             ) : (
               <button type="button" className="btn ghost" disabled={genBusy || !anyEntryThisWeek} onClick={() => void genSummary()}>
-                {genBusy ? L("Création…", "Building…") : L("Créer le résumé de la semaine", "Generate week summary")}
+                {genBusy ? "Building…" : "Generate week summary"}
               </button>
             )}
-            {!anyEntryThisWeek ? <p className="settings-hint">{L("Ajoute au moins une entrée cette semaine d'abord.", "Add at least one entry this week first.")}</p> : null}
+            {!anyEntryThisWeek ? <p className="settings-hint">{"Add at least one entry this week first."}</p> : null}
           </div>
 
           <div className="studylog-summary-sec">
-            <h3>{L("Résumé du mois", "Month summary")}</h3>
+            <h3>{"Month summary"}</h3>
             {monthDeck ? (
               <div className="studylog-actions">
-                <button type="button" className="btn ghost" onClick={() => setOpenDeckFor("month")}>{L("Voir le résumé", "View summary")} ({monthDeck.cards.length})</button>
-                {monthQuiz ? <button type="button" className="btn ghost" onClick={() => setOpenQuizFor("month")}>{L("Quiz", "Quiz")} ({monthQuiz.questions.length})</button> : null}
+                <button type="button" className="btn ghost" onClick={() => setOpenDeckFor("month")}>{"View summary"} ({monthDeck.cards.length})</button>
+                {monthQuiz ? <button type="button" className="btn ghost" onClick={() => setOpenQuizFor("month")}>{"Quiz"} ({monthQuiz.questions.length})</button> : null}
               </div>
             ) : (
               <button type="button" className="btn ghost" disabled={monthGenBusy || monthWeeks.length === 0} onClick={() => void genMonthSummary()}>
-                {monthGenBusy ? L("Création…", "Building…") : L("Créer le résumé du mois", "Generate month summary")}
+                {monthGenBusy ? "Building…" : "Generate month summary"}
               </button>
             )}
-            {monthWeeks.length === 0 ? <p className="settings-hint">{L("Crée d'abord au moins un résumé de semaine ce mois-ci.", "Build at least one week summary this month first.")}</p> : null}
+            {monthWeeks.length === 0 ? <p className="settings-hint">{"Build at least one week summary this month first."}</p> : null}
           </div>
         </>
       )}

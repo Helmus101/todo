@@ -245,7 +245,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     + (() => { const v = varietyLine(recentQuestionKinds(history)); return v ? `\n\n${v}` : ""; })()
     + factsBlock({ policy, verdict: input.stepVerdict, solvedInChat: solvedNow[0]?.question, wrongInChat: wrongNow, keyDoubt, complaint: studentComplaint(message), wrongPick: keyDoubt ? undefined : reported.find((r) => r.verdict === "incorrect" || r.verdict === "partial")?.given, wants, teaching: input.teaching, affect, adapt: [...sessionGuide({ message, history, log: input.teaching?.log, correctNow: verdict === "correct", openWork: problems.some((p) => !p.solved) || board.some((b) => b.kind === "gap" && b.status !== "correct"), hasObjectives: objectives.length > 0, goals: input.teaching?.goals, goalsKnown: goalsAreKnown, different: wants.different, finalValue: input.solution?.finalAnswer, finalReached: solvedNow.length > 0 || reachedSolutionSteps(message, input.solution).includes(0) || (problems.length > 0 && problems.every((p) => p.solved)), level: [context.profile?.yearLevel, context.profile?.track === "ib" ? "IB" : context.profile?.track === "ap" ? "AP" : context.profile?.track === "bac" ? "bac" : "", ...(context.profile?.courses || []).slice(0, 4)].filter(Boolean).join(", ") }), ...adaptationLines(input.teaching?.log, { wrong: verdict === "incorrect", stuck: STUCK.test(message) || STILL_LOST.test(message), stillLost: STILL_LOST.test(message) }, history.filter((h) => h.role === "assistant").slice(-4).map((h) => h.text.toLowerCase().replace(/[^a-zà-ÿ' ]/g, " ").split(/\s+/).filter(Boolean).slice(0, 2).join(" ")).filter(Boolean))] })
     + (input.spoken && spokenRepair ? voiceInputBlock(message, input.spoken.alternatives, spokenRepair) : "")
-    + `\n\nReply in ${fr ? "French" : "English"} unless the student is writing in another language. Return ONLY the JSON object.`;
+    + `\n\nReply in ${"English"} unless the student is writing in another language. Return ONLY the JSON object.`;
 
   const messages: any[] = [
     { role: "system", content: system },
@@ -280,7 +280,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       subject: context.subject, topic: wants.different ? "" : topic, level: levelText, difficulty: difficultyAsked(message) ?? modelDifficulty(difficultyFrom(input.teaching?.log), topic), probe: conceptRec(topic) ? liveMisconceptions(conceptRec(topic)!, new Date())[0]?.text : undefined,
       kind: (wants.exercise && !/\b(?:err|mistake|wrong|why|explain|erreur|faute|pourquoi|expliq)/i.test(message) ? "compute" : isDiscussionSubject(context.subject, spokenText) && nextKind === "compute" ? "explain_why" : nextKind) as any,
       openers: history.filter((h) => h.role === "assistant").slice(-4).map((h) => h.text.toLowerCase().replace(/[^a-zà-ÿ' ]/g, " ").split(/\s+/).filter(Boolean).slice(0, 2).join(" ")).filter(Boolean),
-      used, lang: (fr ? "fr" : "en") as "fr" | "en", ask: wants.exercise || wants.different ? message.slice(0, 200) : undefined,
+      used, lang: ("en") as "fr" | "en", ask: wants.exercise || wants.different ? message.slice(0, 200) : undefined,
       deadline,
       announced: spokenText !== message ? spokenText.split(/(?<=[.!?])\s+/).filter((sn) => !/\?\s*$/.test(sn)).join(" ") : undefined,
       allowedTopics: objectives.map((o) => o.label), scope,
@@ -464,7 +464,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     const hits = reachedSolutionSteps(spokenRepair?.interpreted ? `${message} ${spokenRepair.interpreted}` : message, input.solution);
     const k = hits.find((n) => n > 0);
     const st = k ? input.solution.steps[k - 1] : undefined;
-    const line = st?.result ? `${st.idea ? `${st.idea}: ` : ""}${st.result}` : hits.includes(0) ? `${fr ? "Réponse" : "Answer"}: ${input.solution.finalAnswer}` : "";
+    const line = st?.result ? `${st.idea ? `${st.idea}: ` : ""}${st.result}` : hits.includes(0) ? `${"Answer"}: ${input.solution.finalAnswer}` : "";
     if (line) applied.board.push(...applyOps([{ op: "step", cue: 0, text: line, kind: "result" }], { message, theirWords: [], board: [...board, ...applied.board], problems, fr }).board);
   }
   // A teaching reply that SAYS an equation ("so $12 = 6v$") puts it on the board, whatever the model did: speech passes, the board is what stays.
@@ -490,7 +490,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       if (text && studentStatedProblem && sameExercise(text, studentStatedProblem, 0.8)) text = input.solution?.restated && sameExercise(input.solution.statement, studentStatedProblem, 0.5) ? input.solution.restated : "";
       const onBoardAlready = !!text && [...board, ...applied.board].some((e) => (e.kind === "given" || e.kind === "focus") && e.text && sameExercise(e.text, text, 0.7));
       if (text && !onBoardAlready) {
-        const r = applyOps([{ op: "step", cue: 0, text, kind: "given", why: fr ? "L'énoncé" : "The problem" }], { message, theirWords, board: [...board, ...applied.board], problems, fr });
+        const r = applyOps([{ op: "step", cue: 0, text, kind: "given", why: "The problem" }], { message, theirWords, board: [...board, ...applied.board], problems, fr });
         applied.board.push(...r.board);
         if (r.dropped.length) applied.dropped.push(...r.dropped);
       }

@@ -169,12 +169,12 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
     try {
       new URL(url.startsWith("http") ? url : `https://${url}`);
     } catch {
-      setLinkError(L("Entre une URL valide.", "Enter a valid URL."));
+      setLinkError("Enter a valid URL.");
       return;
     }
     const fullUrl = url.startsWith("http") ? url : `https://${url}`;
     const type = classifyUrl(fullUrl);
-    const label = linkLabel.trim() || (type === "video" ? L("Vidéo", "Video") : new URL(fullUrl).hostname);
+    const label = linkLabel.trim() || (type === "video" ? "Video" : new URL(fullUrl).hostname);
     const mat: StudyMaterial = {
       id: crypto.randomUUID(),
       label,
@@ -240,21 +240,21 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
     if (type === "note") return "▤";
     if (type === "flashcard") return <Layers size={12} aria-hidden="true" />;
     if (type === "quiz") return "?";
-    return L("Lien", "Link");
+    return "Link";
   };
 
   return (
     <div className="sm-setup">
       <div className="sm-setup-inner">
         {/* Header */}
-        <button className="sm-setup-back" onClick={onExit}>{L("← Retour", "← Back")}</button>
+        <button className="sm-setup-back" onClick={onExit}>{"← Back"}</button>
 
         <div className="sm-setup-task">
-          <p className="sm-setup-label">{L("MODE ÉTUDE", "STUDY MODE")}</p>
+          <p className="sm-setup-label">{"STUDY MODE"}</p>
           <h1 className="sm-setup-title">{task.title}</h1>
-          {currentStep && <p className="sm-setup-step">{L("On commence par : ", "Starting with: ")}<strong>{currentStep.text}</strong></p>}
+          {currentStep && <p className="sm-setup-step">{"Starting with: "}<strong>{currentStep.text}</strong></p>}
           {steps.length > 0 && (
-            <p className="sm-setup-meta">{L(`${steps.length} étapes · ${steps.filter(s => s.done).length} terminées`, `${steps.length} steps · ${steps.filter(s => s.done).length} completed`)}</p>
+            <p className="sm-setup-meta">{`${steps.length} steps · ${steps.filter(s => s.done).length} completed`}</p>
           )}
         </div>
 
@@ -262,24 +262,24 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
         {existingEnv && onResume && (
           <div className="sm-setup-resume">
             <div>
-              <strong>{L("Reprendre la séance précédente", "Resume previous session")}</strong>
-              <p>{L("Ton bureau a été sauvegardé — reprends exactement là où tu t'es arrêté.", "Your desk has been saved — resume exactly where you left off.")}</p>
+              <strong>{"Resume previous session"}</strong>
+              <p>{"Your desk has been saved — resume exactly where you left off."}</p>
             </div>
-            <button className="sm-btn sm-btn-primary" onClick={onResume}>{L("Reprendre", "Resume")}</button>
+            <button className="sm-btn sm-btn-primary" onClick={onResume}>{"Resume"}</button>
           </div>
         )}
 
         {/* Materials */}
         <div className="sm-setup-section">
-          <h2>{L("Matériel pour cette séance", "Materials for this session")}</h2>
-          <p className="sm-setup-hint">{L("Ajoute tout ce dont tu auras besoin avant de commencer. Le mode étude garde le matériel de cette tâche sur ton bureau.", "Add everything you'll need before starting. Study Mode keeps this task's materials contained on your desk.")}</p>
+          <h2>{"Materials for this session"}</h2>
+          <p className="sm-setup-hint">{"Add everything you'll need before starting. Study Mode keeps this task's materials contained on your desk."}</p>
 
           {/* Link / URL input */}
           <div className="sm-setup-link-row">
             <input
               className="sm-setup-input"
               type="text"
-              placeholder={L("Colle un lien — YouTube, PDF, Google Doc, n'importe quoi…", "Paste a link — YouTube, PDF, Google Doc, anything…")} aria-label={L("Colle un lien — YouTube, PDF, Google Doc, n'importe quoi…", "Paste a link — YouTube, PDF, Google Doc, anything…")}
+              placeholder={"Paste a link — YouTube, PDF, Google Doc, anything…"} aria-label={"Paste a link — YouTube, PDF, Google Doc, anything…"}
               value={linkInput}
               onChange={e => { setLinkInput(e.target.value); setLinkError(""); }}
               onKeyDown={e => e.key === "Enter" && addLink()}
@@ -287,11 +287,11 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
             <input
               className="sm-setup-input sm-setup-input-sm"
               type="text"
-              placeholder={L("Étiquette (optionnel)", "Label (optional)")} aria-label={L("Étiquette (optionnel)", "Label (optional)")}
+              placeholder={"Label (optional)"} aria-label={"Label (optional)"}
               value={linkLabel}
               onChange={e => setLinkLabel(e.target.value)}
             />
-            <button className="sm-btn sm-btn-ghost" onClick={addLink}>{L("Ajouter", "Add")}</button>
+            <button className="sm-btn sm-btn-ghost" onClick={addLink}>{"Add"}</button>
           </div>
           {linkError && <p className="sm-setup-error">{linkError}</p>}
 
@@ -302,8 +302,8 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
             onDragOver={e => e.preventDefault()}
             onDrop={e => { e.preventDefault(); handleFiles(e.dataTransfer.files); }}
           >
-            <span>{L("Envoie des fichiers — PDF, images, documents", "Upload files — PDF, images, documents")}</span>
-            <span className="sm-setup-dropzone-hint">{L("Clique ou glisse-dépose", "Click or drag & drop")}</span>
+            <span>{"Upload files — PDF, images, documents"}</span>
+            <span className="sm-setup-dropzone-hint">{"Click or drag & drop"}</span>
           </div>
           <input
             ref={fileInputRef}
@@ -322,7 +322,7 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
                   <span className="sm-mat-icon">{typeIcon(m.type)}</span>
                   <span className="sm-mat-label">{m.label}</span>
                   {m.size && <span className="sm-mat-size">{(m.size / 1024).toFixed(0)} KB</span>}
-                  <button className="sm-mat-remove" aria-label={L("Retirer", "Remove")} onClick={() => removeMaterial(m.id)}>×</button>
+                  <button className="sm-mat-remove" aria-label={"Remove"} onClick={() => removeMaterial(m.id)}>×</button>
                 </li>
               ))}
             </ul>
@@ -333,16 +333,16 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
         <div className="sm-setup-section">
           <label className="sm-setup-toggle-row">
             <input type="checkbox" checked={pomodoroEnabled} onChange={(e) => setPomodoroEnabled(e.target.checked)} />
-            <span>{L("Utiliser Pomodoro — alterne automatiquement travail et pause", "Use Pomodoro — auto-alternate work and break")}</span>
+            <span>{"Use Pomodoro — auto-alternate work and break"}</span>
           </label>
           {pomodoroEnabled && (
             <div className="sm-pomodoro-config">
               <label>
-                {L("Travail", "Work")}
+                {"Work"}
                 <input type="number" min={5} max={90} value={workMinutes} onChange={(e) => setWorkMinutes(Math.max(5, Math.min(90, Number(e.target.value) || 25)))} /> min
               </label>
               <label>
-                {L("Pause", "Break")}
+                {"Break"}
                 <input type="number" min={1} max={30} value={breakMinutes} onChange={(e) => setBreakMinutes(Math.max(1, Math.min(30, Number(e.target.value) || 5)))} /> min
               </label>
             </div>
@@ -353,7 +353,7 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
             && suggestionRef.current.breakMinutes === breakMinutes ? (
             // Only shown while the values still match the untouched suggestion — the moment the student
             // edits anything, this is no longer an honest claim about what Otto picked.
-            <p className="sm-setup-personalized-note">{L("Réglé d'après ta concentration récente.", "Set from how your focus has trended recently.")}</p>
+            <p className="sm-setup-personalized-note">{"Set from how your focus has trended recently."}</p>
           ) : null}
         </div>
 
@@ -366,12 +366,12 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
             }
             onStart(materials, { enabled: pomodoroEnabled, workMinutes, breakMinutes, armId }, audioChoice);
           }}>
-            {existingEnv ? L("Nouvelle séance", "Start new session") : L("Commencer à réviser", "Start studying")}
+            {existingEnv ? "Start new session" : "Start studying"}
           </button>
           <p className="sm-setup-footer-hint">
             {materials.length === 0
-              ? L("Tu peux commencer sans matériel — ajoute-le plus tard depuis le panneau Matériel.", "You can start without materials — add them later from the Materials panel.")
-              : L(`${materials.length} matériel${materials.length > 1 ? "s" : ""} prêt${materials.length > 1 ? "s" : ""}`, `${materials.length} material${materials.length > 1 ? "s" : ""} ready`)}
+              ? "You can start without materials — add them later from the Materials panel."
+              : `${materials.length} material${materials.length > 1 ? "s" : ""} ready`}
           </p>
         </div>
       </div>

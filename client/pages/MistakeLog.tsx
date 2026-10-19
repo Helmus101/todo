@@ -70,12 +70,12 @@ export function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
       setProfile(p); setQuestion(""); setMistake(""); setFix(""); setSubject("");
       setShowAddForm(false);
       setExpandedSubjects(new Set([s]));
-    } catch (e: any) { notify(e?.message || L("Impossible d'ajouter cette erreur.", "Couldn't add that entry."), "error"); }
+    } catch (e: any) { notify(e?.message || "Couldn't add that entry.", "error"); }
     finally { setSaving(false); }
   };
   const remove = async (id: string) => {
     try { setProfile(await api.deleteErrorLogEntry(id)); }
-    catch (e: any) { notify(e?.message || L("Impossible de supprimer cette entrée.", "Couldn't remove that entry."), "error"); }
+    catch (e: any) { notify(e?.message || "Couldn't remove that entry.", "error"); }
   };
 
   const totalMistakes = groups.reduce((sum, g) => sum + g.entries.length, 0);
@@ -84,38 +84,38 @@ export function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
     <main className="list-wrap">
       <div className="dash-head">
         <div className="row-between">
-          <h1 className="list-head">{L("Les erreurs que tu ne referas plus.", "The mistakes you won't make twice.")}</h1>
+          <h1 className="list-head">{"The mistakes you won't make twice."}</h1>
           <button className="btn primary" onClick={() => setShowAddForm(!showAddForm)}>
-            {showAddForm ? L("Fermer", "Close") : L("+ Ajouter", "+ Add")}
+            {showAddForm ? "Close" : "+ Add"}
           </button>
         </div>
         <p className="page-sub mt-3">
           {totalMistakes > 0 ? (
-            <>{totalMistakes} {totalMistakes === 1 ? L("erreur notée", "mistake logged") : L("erreurs notées", "mistakes logged")} · {groups.length} {groups.length === 1 ? L("matière", "subject") : L("matières", "subjects")}</>
+            <>{totalMistakes} {totalMistakes === 1 ? "mistake logged" : "mistakes logged"} · {groups.length} {groups.length === 1 ? "subject" : "subjects"}</>
           ) : (
-            L("La question. Ce qui a mal tourné. Ce que tu essaieras la prochaine fois.", "The question. What went wrong. What you'll try next time.")
+            "The question. What went wrong. What you'll try next time."
           )}
         </p>
       </div>
 
       {profileError ? (
-        <ErrorNote onRetry={loadProfile}>{L("Certaines infos n'ont pas pu être chargées.", "Some info couldn't load.")}</ErrorNote>
+        <ErrorNote onRetry={loadProfile}>{"Some info couldn't load."}</ErrorNote>
       ) : null}
 
       {groups.length > 0 && (
         <div className="stack-3 mt-4">
           <input
             className="addinput mb-0"
-            placeholder={L("Filtrer par matière...", "Filter by subject...")} aria-label={L("Filtrer par matière...", "Filter by subject...")}
+            placeholder={"Filter by subject..."} aria-label={"Filter by subject..."}
             value={filterSubject}
             onChange={(e) => setFilterSubject(e.target.value)}
           />
           <div className="row-between">
             <p className="muted small">
-              {filteredGroups.length} {filteredGroups.length === 1 ? L("résultat", "result") : L("résultats", "results")}
+              {filteredGroups.length} {filteredGroups.length === 1 ? "result" : "results"}
             </p>
             <button className="btn xs ghost" onClick={toggleExpandAll}>
-              {expandAll ? L("Tout réduire", "Collapse all") : L("Tout développer", "Expand all")}
+              {expandAll ? "Collapse all" : "Expand all"}
             </button>
           </div>
         </div>
@@ -124,24 +124,24 @@ export function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
       {showAddForm && (
         <div className="errorlog-addform">
           <div className="addrow">
-            <input className="addinput sm" placeholder={L("ex : Physique", "e.g. Physics")} aria-label={L("ex : Physique", "e.g. Physics")} value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={60} />
+            <input className="addinput sm" placeholder={"e.g. Physics"} aria-label={"e.g. Physics"} value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={60} />
           </div>
-          <textarea className="errorlog-textarea" rows={1} placeholder={L("La question ?", "What was the question?")} aria-label={L("La question ?", "What was the question?")} value={question} onChange={(e) => setQuestion(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
-          <textarea className="errorlog-textarea" rows={1} placeholder={L("Ce qui a mal tourné ?", "What went wrong?")} aria-label={L("Ce qui a mal tourné ?", "What went wrong?")} value={mistake} onChange={(e) => setMistake(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
-          <textarea className="errorlog-textarea" rows={1} placeholder={L("Ce que tu essaieras la prochaine fois ?", "What will you try next time?")} aria-label={L("Ce que tu essaieras la prochaine fois ?", "What will you try next time?")} value={fix} onChange={(e) => setFix(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
+          <textarea className="errorlog-textarea" rows={1} placeholder={"What was the question?"} aria-label={"What was the question?"} value={question} onChange={(e) => setQuestion(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
+          <textarea className="errorlog-textarea" rows={1} placeholder={"What went wrong?"} aria-label={"What went wrong?"} value={mistake} onChange={(e) => setMistake(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
+          <textarea className="errorlog-textarea" rows={1} placeholder={"What will you try next time?"} aria-label={"What will you try next time?"} value={fix} onChange={(e) => setFix(e.target.value)} onInput={autoGrowTextarea} maxLength={500} />
           <button type="button" className="btn primary" disabled={saving || !subject.trim() || !question.trim()} onClick={() => void add()}>
-            {saving ? L("Enregistrement…", "Saving…") : L("Ajouter au journal", "Add to log")}
+            {saving ? "Saving…" : "Add to log"}
           </button>
         </div>
       )}
 
       {!loaded ? (
-        <p className="muted small">{L("Récupération de ton journal…", "Pulling up your log…")}</p>
+        <p className="muted small">{"Pulling up your log…"}</p>
       ) : groups.length === 0 ? (
         <div className="empty-state">
-          <h3>{L("Aucune erreur notée. Soit tu maîtrises, soit tu évites.", "No mistakes logged. Either you've mastered it or you're avoiding it.")}</h3>
-          <p>{L("Note ta première erreur. C'est là que tu progresses vraiment.", "Log your first mistake. That's where you actually improve.")}</p>
-          <button className="btn primary" onClick={() => setShowAddForm(true)}>{L("Ajouter une erreur", "Add a mistake")}</button>
+          <h3>{"No mistakes logged. Either you've mastered it or you're avoiding it."}</h3>
+          <p>{"Log your first mistake. That's where you actually improve."}</p>
+          <button className="btn primary" onClick={() => setShowAddForm(true)}>{"Add a mistake"}</button>
         </div>
       ) : (
         <div className="errorlog-groups">
@@ -149,19 +149,19 @@ export function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
             <div key={g.subject} className="errorlog-group">
               <button type="button" className="errorlog-group-head" onClick={() => toggleSubject(g.subject)}>
                 <span className="card-title">{g.subject}</span>
-                <span className="card-sub">{g.entries.length} {g.entries.length === 1 ? L("erreur", "mistake") : L("erreurs", "mistakes")}</span>
+                <span className="card-sub">{g.entries.length} {g.entries.length === 1 ? "mistake" : "mistakes"}</span>
               </button>
               {expandedSubjects.has(g.subject) ? (
                 <ul className="errorlog-entries">
                   {g.entries.map((e) => (
                     <li key={e.id} className="errorlog-entry">
                       <div className="errorlog-entry-head">
-                        <span className="muted">{new Date(e.createdAt).toLocaleDateString(en ? "en-GB" : "fr-FR", { day: "numeric", month: "short", year: "numeric" })}</span>
-                        <button className="x" title={L("Supprimer", "Remove")} aria-label={L("Supprimer", "Remove")} onClick={() => void remove(e.id)}>×</button>
+                        <span className="muted">{new Date(e.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</span>
+                        <button className="x" title={"Remove"} aria-label={"Remove"} onClick={() => void remove(e.id)}>×</button>
                       </div>
-                      <p><strong>{L("Question : ", "Question: ")}</strong>{e.question}</p>
-                      {e.mistake ? <p><strong>{L("Erreur : ", "Mistake: ")}</strong>{e.mistake}</p> : null}
-                      {e.fix ? <p><strong>{L("À faire : ", "Next time: ")}</strong>{e.fix}</p> : null}
+                      <p><strong>{"Question: "}</strong>{e.question}</p>
+                      {e.mistake ? <p><strong>{"Mistake: "}</strong>{e.mistake}</p> : null}
+                      {e.fix ? <p><strong>{"Next time: "}</strong>{e.fix}</p> : null}
                     </li>
                   ))}
                 </ul>

@@ -283,10 +283,8 @@ async function saveRotatedToken(email: string, rotated: StoredPronote): Promise<
 async function notifyPronoteReconnectNeeded(email: string, profile: Profile): Promise<void> {
   if (!(await connectionStatusesCached(email, ["gmail"]))["gmail"]) return; // no Gmail, nothing to send through
   const en = profile.language === "en";
-  const subject = en ? "Otto — reconnect Pronote" : "Otto — reconnecte Pronote";
-  const body = en
-    ? `<p>Your Pronote session expired — Otto can't see your homework or tests until you reconnect.</p><p><a href="${process.env.PUBLIC_URL || "https://hiotto.vercel.app"}/settings">Reconnect Pronote →</a></p>`
-    : `<p>Ta session Pronote a expiré — Otto ne peut plus voir tes devoirs ni tes contrôles tant que tu ne te reconnectes pas.</p><p><a href="${process.env.PUBLIC_URL || "https://hiotto.vercel.app"}/settings">Se reconnecter à Pronote →</a></p>`;
+  const subject = "Otto — reconnect Pronote";
+  const body = `<p>Your Pronote session expired — Otto can't see your homework or tests until you reconnect.</p><p><a href="${process.env.PUBLIC_URL || "https://hiotto.vercel.app"}/settings">Reconnect Pronote →</a></p>`;
   await sendSystemEmail(email, { to: email, subject, body, primaryAccounts: profile.primaryAccounts });
 }
 

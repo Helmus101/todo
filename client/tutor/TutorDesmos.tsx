@@ -20,26 +20,26 @@ export function TutorDesmos({ onClose }: { onClose: () => void }) {
     <div className="tutor-desmos-full">
       <div className="tutor-desmos-full-header">
         <span className="tutor-desmos-glyph" aria-hidden>ƒ</span>
-        <span>{L(tool.label[0], tool.label[1])}</span>
+        <span>{tool.label[1]}</span>
         {/* Link-out for small screens / fullscreen preference — opens the SAME tool in its own tab. */}
         <a className="tutor-desmos-pop" href={tool.path} target="_blank" rel="noreferrer noopener">
-          {L("Ouvrir dans un onglet", "Open in a tab")} ↗
+          {"Open in a tab"} ↗
         </a>
         <button type="button" className="btn ghost xs tutor-desmos-close" onClick={onClose}>
-          {L("Retour au tableau", "Back to board")}
+          {"Back to board"}
         </button>
       </div>
       <div className="tutor-desmos-full-frame-wrap">
         <iframe
           src={desmosToolUrl(tool.id)}
-          title={`Desmos ${L(tool.label[0], tool.label[1])}`}
+          title={`Desmos ${tool.label[1]}`}
           className="tutor-desmos-frame"
           allow="fullscreen"
           // No allow-top-navigation — Desmos (or anything it links out to) must never redirect the outer tab.
           sandbox="allow-scripts allow-same-origin allow-popups"
         />
       </div>
-      <p className="tutor-desmos-hint">{L(tool.hint[0], tool.hint[1])}</p>
+      <p className="tutor-desmos-hint">{tool.hint[1]}</p>
     </div>
   );
 }

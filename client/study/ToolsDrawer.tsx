@@ -59,7 +59,7 @@ export function ToolsDrawer({ template, onClose, onAddTool, onAddLink, backgroun
     const url = linkUrl.trim();
     if (!url) return;
     if (!GSUITE_DOC_RE.test(url)) {
-      setLinkError(L("Seuls les liens Google Docs, Sheets ou Slides peuvent être ouverts ici.", "Only Google Docs, Sheets, or Slides links can be opened here."));
+      setLinkError("Only Google Docs, Sheets, or Slides links can be opened here.");
       return;
     }
     setLinkError("");
@@ -71,25 +71,25 @@ export function ToolsDrawer({ template, onClose, onAddTool, onAddLink, backgroun
   return (
     <SmSurface variant="drawer" closing={closing} className="sm-drawer">
       <div className="sm-drawer-header">
-        <span>{L("OUTILS", "TOOLS")}</span>
-        <button className="sm-drawer-close" aria-label={L("Fermer", "Close")} onClick={doClose}>×</button>
+        <span>{"TOOLS"}</span>
+        <button className="sm-drawer-close" aria-label={"Close"} onClick={doClose}>×</button>
       </div>
       <div className="sm-drawer-body">
-        <div className="sm-tools-divider">{L("Ouvrir un Google Doc, Sheet ou Slides", "Open a Google Doc, Sheet, or Slides")}</div>
+        <div className="sm-tools-divider">{"Open a Google Doc, Sheet, or Slides"}</div>
         <div className="sm-bg-row">
           <input
             type="text"
             className="sm-link-input"
-            placeholder={L("Colle un lien docs.google.com…", "Paste a docs.google.com link…")} aria-label={L("Colle un lien docs.google.com…", "Paste a docs.google.com link…")}
+            placeholder={"Paste a docs.google.com link…"} aria-label={"Paste a docs.google.com link…"}
             value={linkUrl}
             onChange={(e) => { setLinkUrl(e.target.value); setLinkError(""); }}
             onKeyDown={(e) => { if (e.key === "Enter") submitLink(); }}
           />
-          <button className="sm-btn sm-btn-ghost sm-btn-sm" onClick={submitLink} disabled={!linkUrl.trim()}>{L("Ouvrir", "Open")}</button>
+          <button className="sm-btn sm-btn-ghost sm-btn-sm" onClick={submitLink} disabled={!linkUrl.trim()}>{"Open"}</button>
         </div>
         {linkError && <p className="sm-bg-filename" style={{ color: "var(--vermilion)" }}>{linkError}</p>}
 
-        <div className="sm-tools-divider">{L("Ajouter un outil", "Add a tool")}</div>
+        <div className="sm-tools-divider">{"Add a tool"}</div>
         <div className="sm-tools-grid">
           {recommended.map(tool => (
             <button
@@ -98,12 +98,12 @@ export function ToolsDrawer({ template, onClose, onAddTool, onAddLink, backgroun
               onClick={() => { onAddTool(tool.type); doClose(); }}
             >
               <span className="sm-tool-icon">{tool.icon}</span>
-              <span className="sm-tool-label">{L(tool.label[0], tool.label[1])}</span>
+              <span className="sm-tool-label">{tool.label[1]}</span>
             </button>
           ))}
           {others.length > 0 && (
             <>
-              <div className="sm-tools-divider">{L("Autres outils", "Other tools")}</div>
+              <div className="sm-tools-divider">{"Other tools"}</div>
               {others.map(tool => (
                 <button
                   key={tool.type}
@@ -111,20 +111,20 @@ export function ToolsDrawer({ template, onClose, onAddTool, onAddLink, backgroun
                   onClick={() => { onAddTool(tool.type); doClose(); }}
                 >
                   <span className="sm-tool-icon">{tool.icon}</span>
-                  <span className="sm-tool-label">{L(tool.label[0], tool.label[1])}</span>
+                  <span className="sm-tool-label">{tool.label[1]}</span>
                 </button>
               ))}
             </>
           )}
         </div>
 
-        <div className="sm-tools-divider">{L("Fond du bureau", "Desk background")}</div>
+        <div className="sm-tools-divider">{"Desk background"}</div>
         <div className="sm-bg-row">
           <button className="sm-btn sm-btn-ghost sm-btn-sm" onClick={() => bgInputRef.current?.click()}>
-            {backgroundImageName ? L("Remplacer l'image", "Replace image") : L("Ajouter une image", "Upload image")}
+            {backgroundImageName ? "Replace image" : "Upload image"}
           </button>
           {backgroundImageName && (
-            <button className="sm-btn sm-btn-ghost sm-btn-sm" onClick={onClearBackground}>{L("Rétablir le fond par défaut", "Reset to default")}</button>
+            <button className="sm-btn sm-btn-ghost sm-btn-sm" onClick={onClearBackground}>{"Reset to default"}</button>
           )}
         </div>
         {backgroundImageName && <p className="sm-bg-filename">{backgroundImageName}</p>}

@@ -37,7 +37,7 @@ const USAGE_CATEGORY_LABEL: Record<string, [string, string]> = {
 
 function fmtDay(iso: string, L?: (fr: string, en: string) => string): string {
   const d = new Date(/T/.test(iso) ? iso : `${iso}T00:00:00`);
-  return isNaN(d.getTime()) ? iso : d.toLocaleDateString(L?.("fr-FR", "en-US"), { month: "short", day: "numeric" });
+  return isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 // Survives a PronoteTile remount (e.g. navigating away from Settings and back) — see its own comment on
@@ -71,15 +71,15 @@ function writePronoteOptimistic(value: boolean | null): void {
 function PreferencesFields({ profile, onChanged }: { profile: Profile | null; onChanged?: (p: Profile) => void }) {
   const L = useLang();
   const notify = useNotify();
-  const [lang, setLang] = useState<"fr" | "en">(profile?.language === "en" ? "en" : "fr");
-  useEffect(() => { setLang(profile?.language === "en" ? "en" : "fr"); }, [profile?.language]);
+  const [lang, setLang] = useState<"fr" | "en">("en");
+  useEffect(() => { setLang("en"); }, [profile?.language]);
   const saveLang = async (v: "fr" | "en") => {
     const prev = lang;
     setLang(v); // optimistic — revert below on failure
     try { onChanged?.(await api.setProfilePreference("language", v)); }
     catch (e: any) {
       setLang(prev);
-      notify(e?.message || L("Ta langue n'a pas été enregistrée — réessaie.", "Your language didn't save — give it another try."), "error");
+      notify(e?.message || "Your language didn't save — give it another try.", "error");
     }
   };
   // Track: onboarding's copy has always claimed this is "changeable any time in Settings" — it wasn't
@@ -91,7 +91,7 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
     const prev = track;
     setTrackState(v);
     try { onChanged?.(await api.setProfilePreference("track", v)); }
-    catch (e: any) { setTrackState(prev); notify(e?.message || L("Ça n'a pas été enregistré — réessaie.", "That didn't save — give it another try."), "error"); }
+    catch (e: any) { setTrackState(prev); notify(e?.message || "That didn't save — give it another try.", "error"); }
   };
   // Hint density — a DIFFERENT axis from learningStyle (VARK, presentation-only): this is how much the
   // tutor walks through vs. just nudges when the student is stuck. Never changes whether the direct
@@ -106,7 +106,7 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
     const prev = hintDensity;
     setHintDensityState(v);
     try { onChanged?.(await api.setProfilePreference("hintDensity", v)); }
-    catch (e: any) { setHintDensityState(prev); notify(e?.message || L("Ça n'a pas été enregistré — réessaie.", "That didn't save — give it another try."), "error"); }
+    catch (e: any) { setHintDensityState(prev); notify(e?.message || "That didn't save — give it another try.", "error"); }
   };
   // Year/grade level — free text (see Profile.yearLevel's doc comment for why not a dropdown). Local draft
   // state so typing doesn't round-trip on every keystroke; saved on blur/Enter like other free-text fields.
@@ -116,46 +116,46 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
     const v = yearLevel.trim();
     if (v === (profile?.yearLevel || "")) return;
     try { onChanged?.(await api.setProfilePreference("yearLevel", v)); }
-    catch (e: any) { notify(e?.message || L("Ça n'a pas été enregistré — réessaie.", "That didn't save — give it another try."), "error"); }
+    catch (e: any) { notify(e?.message || "That didn't save — give it another try.", "error"); }
   };
   return (
     <>
       <div className="set-row">
-        <span className="set-text"><b>{lang === "en" ? "Language" : "Langue"}</b><span className="settings-hint">{lang === "en" ? "Switches the interface and everything Otto writes." : "Change l'interface et tout ce qu'Otto écrit."}</span></span>
+        <span className="set-text"><b>{"Language"}</b><span className="settings-hint">{"Switches the interface and everything Otto writes."}</span></span>
         <div className="lang-toggle">
-          <button type="button" className={`btn xs ${lang === "fr" ? "" : "ghost"}`} aria-pressed={lang === "fr"} onClick={() => void saveLang("fr")}>Français</button>
-          <button type="button" className={`btn xs ${lang === "en" ? "" : "ghost"}`} aria-pressed={lang === "en"} onClick={() => void saveLang("en")}>English</button>
+          <button type="button" className={`btn xs ${"ghost"}`} aria-pressed={lang === "fr"} onClick={() => void saveLang("fr")}>Français</button>
+          <button type="button" className={`btn xs ${""}`} aria-pressed={lang === "en"} onClick={() => void saveLang("en")}>English</button>
         </div>
       </div>
       <div className="set-row">
-        <span className="set-text"><b>{L("Ton parcours", "Your track")}</b><span className="settings-hint">{L("Vocabulaire, intégrations proposées, et le style des exercices/quiz générés. Pas en Bac, IB ou AP (collège, etc.) ? Choisis « Autre ».", "Vocabulary, integrations offered, and the style of generated exercises/quizzes. Not doing Bac, IB, or AP (middle school, etc.)? Pick \"Other\".")}</span></span>
+        <span className="set-text"><b>{"Your track"}</b><span className="settings-hint">{"Vocabulary, integrations offered, and the style of generated exercises/quizzes. Not doing Bac, IB, or AP (middle school, etc.)? Pick \"Other\"."}</span></span>
         <div className="lang-toggle">
-          <button type="button" className={`btn xs ${track === "bac" ? "" : "ghost"}`} aria-pressed={track === "bac"} onClick={() => void saveTrack("bac")}>{L("Bac", "Bac")}</button>
+          <button type="button" className={`btn xs ${track === "bac" ? "" : "ghost"}`} aria-pressed={track === "bac"} onClick={() => void saveTrack("bac")}>{"Bac"}</button>
           <button type="button" className={`btn xs ${track === "ib" ? "" : "ghost"}`} aria-pressed={track === "ib"} onClick={() => void saveTrack("ib")}>IB</button>
           <button type="button" className={`btn xs ${track === "ap" ? "" : "ghost"}`} aria-pressed={track === "ap"} onClick={() => void saveTrack("ap")}>AP</button>
-          <button type="button" className={`btn xs ${track === "other" ? "" : "ghost"}`} aria-pressed={track === "other"} onClick={() => void saveTrack("other")}>{L("Autre", "Other")}</button>
+          <button type="button" className={`btn xs ${track === "other" ? "" : "ghost"}`} aria-pressed={track === "other"} onClick={() => void saveTrack("other")}>{"Other"}</button>
         </div>
       </div>
       <div className="set-row">
-        <span className="set-text"><b>{L("Style d'accompagnement", "Learning style")}</b><span className="settings-hint">{L("Quand tu bloques : Otto te donne juste un indice, t'accompagne pas à pas, ou juge lui-même selon la situation. Il ne te donnera jamais directement la réponse, quel que soit ton choix.", "When you're stuck: Otto gives just a hint, walks through it step by step, or judges it case by case. Either way, it never just gives you the direct answer.")}</span></span>
+        <span className="set-text"><b>{"Learning style"}</b><span className="settings-hint">{"When you're stuck: Otto gives just a hint, walks through it step by step, or judges it case by case. Either way, it never just gives you the direct answer."}</span></span>
         <div className="hint-density-slider">
           <input
             type="range" min={0} max={2} step={1}
             value={HINT_DENSITY_POSITIONS.indexOf(hintDensity || "balanced")}
             onChange={(e) => void saveHintDensity(HINT_DENSITY_POSITIONS[Number(e.target.value)])}
-            aria-label={L("Style d'accompagnement", "Learning style")}
+            aria-label={"Learning style"}
           />
           <div className="hint-density-slider-labels">
-            <span className={hintDensity === "hints" ? "active" : ""}>{L("Juste un indice", "Just a hint")}</span>
-            <span className={!hintDensity || hintDensity === "balanced" ? "active" : ""}>{L("Équilibré", "Balanced")}</span>
-            <span className={hintDensity === "steps" ? "active" : ""}>{L("Pas à pas", "All the steps")}</span>
+            <span className={hintDensity === "hints" ? "active" : ""}>{"Just a hint"}</span>
+            <span className={!hintDensity || hintDensity === "balanced" ? "active" : ""}>{"Balanced"}</span>
+            <span className={hintDensity === "steps" ? "active" : ""}>{"All the steps"}</span>
           </div>
         </div>
       </div>
       <label className="set-row">
-        <span className="set-text"><b>{L("Ta classe / ton année", "Your year/grade")}</b><span className="settings-hint">{L("Aide Otto à caler la difficulté des fiches et exercices sur ton niveau exact.", "Helps Otto match revision sheets and exercises to your exact level.")}</span></span>
+        <span className="set-text"><b>{"Your year/grade"}</b><span className="settings-hint">{"Helps Otto match revision sheets and exercises to your exact level."}</span></span>
         <input className="addinput" style={{ maxWidth: 160 }} maxLength={40}
-          placeholder={track === "ib" ? L("ex. DP1", "e.g. DP1") : track === "ap" ? L("ex. Junior", "e.g. Junior year") : track === "other" ? L("ex. 5ème", "e.g. Grade 7") : L("ex. Terminale", "e.g. Terminale")}
+          placeholder={track === "ib" ? "e.g. DP1" : track === "ap" ? "e.g. Junior year" : track === "other" ? "e.g. Grade 7" : "e.g. Terminale"}
           value={yearLevel} onChange={(e) => setYearLevelState(e.target.value)}
           onBlur={() => void saveYearLevel()} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
       </label>
@@ -188,12 +188,12 @@ function TutorPolicyRow() {
   const say = (m?: { move: string; pace: string }) => m ? `${L(...(MOVE_LABEL[m.move] || ["", ""]))}, ${L(...(PACE_LABEL[m.pace] || ["", ""]))}` : "";
   return (
     <div className="modal-row">
-      <span className="lbl">{L("Comment Otto t'enseigne", "How Otto teaches you")}</span>
+      <span className="lbl">{"How Otto teaches you"}</span>
       <span className="val">
         {info?.learning && info.updates >= 8
-          ? <>{L(`Otto apprend de tes réactions (${info.updates} échanges). Quand ça roule : ${say(info.flow)}. Quand tu bloques : ${say(info.stuck)}. `, `Otto learns from how you react (${info.updates} replies so far). When you're flowing: ${say(info.flow)}. When you're stuck: ${say(info.stuck)}. `)}</>
-          : L("Otto commence à apprendre ce qui marche pour toi — quelques séances et il s'adaptera. ", "Otto is starting to learn what works for you — a few sessions and it will adapt. ")}
-        <button type="button" className="btn xs ghost" onClick={() => { if (window.confirm(L("Réinitialiser ce qu'Otto a appris sur ta façon d'apprendre ?", "Reset what Otto has learned about how you learn?"))) void api.resetTutorPolicy().then(load); }}>{L("Réinitialiser", "Reset")}</button>
+          ? <>{`Otto learns from how you react (${info.updates} replies so far). When you're flowing: ${say(info.flow)}. When you're stuck: ${say(info.stuck)}. `}</>
+          : "Otto is starting to learn what works for you — a few sessions and it will adapt. "}
+        <button type="button" className="btn xs ghost" onClick={() => { if (window.confirm("Reset what Otto has learned about how you learn?")) void api.resetTutorPolicy().then(load); }}>{"Reset"}</button>
       </span>
     </div>
   );
@@ -260,7 +260,7 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
       const text = await file.text();
       let parsed: any;
       try { parsed = JSON.parse(text); }
-      catch { throw new Error(L("Ce fichier n'est pas un export Otto valide.", "That file isn't a valid Otto export.")); }
+      catch { throw new Error("That file isn't a valid Otto export."); }
       // jobs/events ride along in a full export for GDPR Art.15 completeness, but POST /api/account/import
       // only ever reads `profile`/`tasks` (see that route's own body) — pure dead weight here, dropped
       // before even computing batches below.
@@ -271,11 +271,11 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
         if (batches.length > 1) setImportProgress([i + 1, batches.length]);
         result = await api.importData({ profile: parsed.profile, tasks: batches[i] });
       }
-      notify(L(`Importé — ${result!.tasksAfter} tâches, ${result!.errorLogAfter} erreurs au total.`, `Imported — ${result!.tasksAfter} tasks, ${result!.errorLogAfter} error-log entries in total now.`));
+      notify(`Imported — ${result!.tasksAfter} tasks, ${result!.errorLogAfter} error-log entries in total now.`);
       loadProfile();
       onChanged();
     } catch (e: any) {
-      notify(e?.message || L("Impossible d'importer ce fichier — réessaie.", "Couldn't import that file — try again."), "error");
+      notify(e?.message || "Couldn't import that file — try again.", "error");
     } finally {
       setImportingData(false);
       setImportProgress(null);
@@ -291,35 +291,35 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
   return (
     <main className="settings-page">
       {/* The prototype's Settings head: "Set the bar for Otto." + "Your account, your connections, your standards." */}
-      <h1 className="list-head">{L("Fixe le niveau d'exigence d'Otto.", "Set the bar for Otto.")}</h1>
-      <p className="page-sub mt-3 mb-6">{L("Ton compte, tes connexions, tes exigences.", "Your account, your connections, your standards.")}</p>
+      <h1 className="list-head">{"Set the bar for Otto."}</h1>
+      <p className="page-sub mt-3 mb-6">{"Your account, your connections, your standards."}</p>
       {profileError ? (
-        <ErrorNote onRetry={loadProfile}>{L("Certaines infos du profil n'ont pas pu être chargées.", "Some profile info couldn't load.")}</ErrorNote>
+        <ErrorNote onRetry={loadProfile}>{"Some profile info couldn't load."}</ErrorNote>
       ) : null}
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.03s" }}>
-        <h3>{L("Compte", "Account")}</h3>
+        <h3>{"Account"}</h3>
         <div className="acct-card">
           <span className="acct-avatar" aria-hidden="true">{(status.user || "?").charAt(0).toUpperCase()}</span>
           <div className="acct-id">
             <span className="acct-email">{status.user}</span>
             <span className={`acct-sync ${status.cloud ? "on" : ""}`}>
               <span className="acct-sync-dot" aria-hidden="true" />
-              {status.cloud ? L("Synchronisé", "Synced") : L("Hors ligne", "Not synced")}
+              {status.cloud ? "Synced" : "Not synced"}
             </span>
           </div>
-          <button className="btn xs ghost" onClick={() => void onSignOut()}>{L("Se déconnecter", "Sign out")}</button>
+          <button className="btn xs ghost" onClick={() => void onSignOut()}>{"Sign out"}</button>
         </div>
-        <div className="modal-row"><span className="lbl">{L("Confidentialité", "Privacy")}</span><span className="val">{L("Ton mot de passe Pronote est chiffré et jamais revendu. ", "Your Pronote password is encrypted and never resold. ")}<a href="/privacy">{L("Détails →", "Details →")}</a></span></div>
-        <div className="modal-row"><span className="lbl">{L("Mentions légales", "Legal")}</span><span className="val"><a href="/privacy">{L("Confidentialité", "Privacy")}</a> · <a href="/terms">{L("CGU", "Terms")}</a></span></div>
+        <div className="modal-row"><span className="lbl">{"Privacy"}</span><span className="val">{"Your Pronote password is encrypted and never resold. "}<a href="/privacy">{"Details →"}</a></span></div>
+        <div className="modal-row"><span className="lbl">{"Legal"}</span><span className="val"><a href="/privacy">{"Privacy"}</a> · <a href="/terms">{"Terms"}</a></span></div>
         <TutorPolicyRow />
         <div className="modal-row" data-tour="replay-onboarding">
-          <span className="lbl">{L("Visite guidée", "Welcome tour")}</span>
-          <span className="val"><button type="button" className="btn xs ghost" onClick={() => onReplayOnboarding?.()}>{L("Tester l'onboarding", "Test onboarding")}</button></span>
+          <span className="lbl">{"Welcome tour"}</span>
+          <span className="val"><button type="button" className="btn xs ghost" onClick={() => onReplayOnboarding?.()}>{"Test onboarding"}</button></span>
         </div>
         <div className="modal-row">
-          <span className="lbl">{L("Tes données", "Your data")}</span>
-          <span className="val"><a href={api.exportDataUrl()} download>{L("Télécharger mes données", "Download my data")}</a></span>
+          <span className="lbl">{"Your data"}</span>
+          <span className="val"><a href={api.exportDataUrl()} download>{"Download my data"}</a></span>
         </div>
         {/* Reported live: "i don't see import place" — the handler/state (onImportFile, importFileRef,
             importingData) were fully built but nothing in this render ever used them, so the whole feature
@@ -328,52 +328,52 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
             /api/account/export file from a DIFFERENT account/project (see server/index.ts's own comment on
             that route) — e.g. moving to a freshly created Supabase project. */}
         <div className="modal-row">
-          <span className="lbl">{L("Importer des données", "Import data")}</span>
+          <span className="lbl">{"Import data"}</span>
           <span className="val">
             <input ref={importFileRef} type="file" accept="application/json" style={{ display: "none" }}
               onChange={(e) => { const f = e.target.files?.[0]; if (f) void onImportFile(f); }} />
             <button type="button" className="btn xs ghost" disabled={importingData} onClick={() => importFileRef.current?.click()}>
               {importingData
-                ? (importProgress ? L(`Import en cours… (${importProgress[0]}/${importProgress[1]})`, `Importing… (${importProgress[0]}/${importProgress[1]})`) : L("Import en cours…", "Importing…"))
-                : L("Importer un export Otto", "Import an Otto export")}
+                ? (importProgress ? `Importing… (${importProgress[0]}/${importProgress[1]})` : "Importing…")
+                : "Import an Otto export"}
             </button>
           </span>
         </div>
         <div className="danger-zone">
           <div className="modal-row">
-            <span className="lbl">{L("Supprimer le compte", "Delete account")}<span className="settings-hint m-0">{L("Tâches, profil, connexions — irréversible.", "Tasks, profile, connections — can't be undone.")}</span></span>
+            <span className="lbl">{"Delete account"}<span className="settings-hint m-0">{"Tasks, profile, connections — can't be undone."}</span></span>
             <button
               className="btn xs danger"
               disabled={deletingAccount}
               onClick={async () => {
-                if (!window.confirm(L("Supprimer ton compte Otto (tâches, profil, connexions) ? Irréversible.", "Delete your Otto account (tasks, profile, connections)? This can't be undone."))) return;
+                if (!window.confirm("Delete your Otto account (tasks, profile, connections)? This can't be undone.")) return;
                 setDeletingAccount(true);
                 try { await api.deleteAccount(); clearAllLocalAccountData(status.user || null); window.location.href = "/"; }
-                catch (e: any) { setDeletingAccount(false); notify(e?.message || L("Impossible de supprimer le compte — réessaie.", "Couldn't delete the account — try again."), "error"); }
+                catch (e: any) { setDeletingAccount(false); notify(e?.message || "Couldn't delete the account — try again.", "error"); }
               }}
-            >{deletingAccount ? L("Suppression…", "Deleting…") : L("Tout supprimer", "Delete everything")}</button>
+            >{deletingAccount ? "Deleting…" : "Delete everything"}</button>
           </div>
         </div>
       </section>
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.07s" }}>
-        <h3>{L("Sources", "Sources")}</h3>
-        <p className="settings-hint">{L("Otto lit ces sources et prépare le travail — ", "Otto reads these sources and preps the work — ")}<b>{L("il n'envoie et ne rend jamais rien à ta place", "it never sends or hands anything in for you")}</b>.</p>
+        <h3>{"Sources"}</h3>
+        <p className="settings-hint">{"Otto reads these sources and preps the work — "}<b>{"it never sends or hands anything in for you"}</b>.</p>
         <PronoteTile status={status} onStatusUpdate={onStatusUpdate} />
         <GoogleTiles onChanged={onChanged} restricted={profile?.track !== "ib" && profile?.track !== "ap" && profile?.track !== "other"} />
       </section>
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.09s" }}>
-        <h3>{L("Préférences", "Preferences")}</h3>
+        <h3>{"Preferences"}</h3>
         <div className="set-list">
           <label className="set-row">
-            <span className="set-text"><b>{L("Mettre Otto en pause", "Pause Otto")}</b><span className="settings-hint">{L("Arrête toute l'IA. Tes tâches restent en place.", "Stops all AI activity. Your tasks stay as they are.")}</span></span>
+            <span className="set-text"><b>{"Pause Otto"}</b><span className="settings-hint">{"Stops all AI activity. Your tasks stay as they are."}</span></span>
             <span className="switch"><input type="checkbox" checked={paused} onChange={(e) => {
               const v = e.target.checked;
               setPausedLocal(v);
               void api.setPaused(v).then(() => onChanged()).catch((err: any) => {
                 setPausedLocal(!v);
-                notify(err?.message || L("Ce réglage n'a pas été enregistré — réessaie.", "That setting didn't save — give it another try."), "error");
+                notify(err?.message || "That setting didn't save — give it another try.", "error");
               });
             }} /><span className="switch-track" /></span>
           </label>
@@ -383,10 +383,10 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
 
       {usage && (
         <section className="settings-sec reveal" style={{ ["--d" as any]: "0.11s" }}>
-          <h3>{L("Utilisation de l'IA", "AI usage")}</h3>
+          <h3>{"AI usage"}</h3>
           <div className="set-list">
             <div className="set-row">
-              <span className="set-text"><b>{L("Coût ce mois-ci", "Cost this month")}</b><span className="settings-hint">{L("Estimation, en dollars US.", "Estimate, in US dollars.")}</span></span>
+              <span className="set-text"><b>{"Cost this month"}</b><span className="settings-hint">{"Estimate, in US dollars."}</span></span>
               <span className="usage-figure">${usage.monthCostUsd.toFixed(2)}</span>
             </div>
             {Object.entries(usage.byCategory).filter(([, v]) => (v || 0) > 0).sort((a, b) => (b[1] || 0) - (a[1] || 0)).map(([k, v]) => (
@@ -396,7 +396,7 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
               </div>
             ))}
             <div className="set-row">
-              <span className="set-text">{L("Jetons utilisés au total", "Total tokens used")}</span>
+              <span className="set-text">{"Total tokens used"}</span>
               <span className="usage-figure muted">{usage.total.toLocaleString()}</span>
             </div>
           </div>
@@ -405,33 +405,30 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.13s" }}>
         <button className="sec-toggle" aria-expanded={showKnows} onClick={() => setShowKnows((v) => !v)}>
-          <h3>{L("Ce qu'Otto sait sur toi", "What Otto knows about you")}</h3>
+          <h3>{"What Otto knows about you"}</h3>
           <span className={`caret ${showKnows ? "open" : ""}`} aria-hidden="true">›</span>
         </button>
-        {showKnows && <div className="settings-reveal"><p className="settings-hint">{L("Otto remplit ça au fil du temps. Tu peux tout modifier.", "Otto fills this in over time. You can edit anything.")}</p><ProfileEditor /></div>}
+        {showKnows && <div className="settings-reveal"><p className="settings-hint">{"Otto fills this in over time. You can edit anything."}</p><ProfileEditor /></div>}
       </section>
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.18s" }}>
         <button className="sec-toggle" aria-expanded={showStudentModel} onClick={() => setShowStudentModel((v) => !v)}>
-          <h3>{L("Comment Otto te voit", "How Otto sees you")}</h3>
+          <h3>{"How Otto sees you"}</h3>
           <span className={`caret ${showStudentModel ? "open" : ""}`} aria-hidden="true">›</span>
         </button>
         {showStudentModel && (
           <div className="settings-reveal">
-            <p className="settings-hint">{L(
-              "Mis à jour au plus une fois par jour à partir de tes sessions de tuteur et ton activité. Jamais partagé, jamais utilisé pour te noter.",
-              "Updated at most once a day from your tutor sessions and activity. Never shared, never used to grade you."
-            )}</p>
+            <p className="settings-hint">{"Updated at most once a day from your tutor sessions and activity. Never shared, never used to grade you."}</p>
             {profile?.studentModel?.summary ? (
               <>
                 <p className="student-model-text">{profile.studentModel.summary}</p>
-                <p className="settings-hint">{L(`Mis à jour le ${fmtDay(profile.studentModel.updatedAt, L)}`, `Updated ${fmtDay(profile.studentModel.updatedAt, L)}`)}</p>
+                <p className="settings-hint">{`Updated ${fmtDay(profile.studentModel.updatedAt, L)}`}</p>
                 <button type="button" className="btn xs ghost" onClick={async () => {
                   try { setProfile(await api.resetStudentModel()); }
-                  catch (e: any) { notify(e?.message || L("Réinitialisation impossible — réessaie.", "Couldn't reset — try again."), "error"); }
-                }}>{L("Réinitialiser", "Reset")}</button>
+                  catch (e: any) { notify(e?.message || "Couldn't reset — try again.", "error"); }
+                }}>{"Reset"}</button>
               </>
-            ) : <p className="settings-hint">{L("Pas encore assez d'activité pour ça.", "Not enough activity yet.")}</p>}
+            ) : <p className="settings-hint">{"Not enough activity yet."}</p>}
           </div>
         )}
       </section>
@@ -489,18 +486,18 @@ export function PronoteTile({ status: mainStatus, onStatusUpdate, onChanged }: {
   const connect = async () => {
     const trimmedUrl = url.trim();
     const trimmedUsername = username.trim();
-    if (!trimmedUrl || !trimmedUsername || !password) { setErr(L("Renseigne l'URL, l'identifiant et le mot de passe.", "Fill in the URL, username, and password.")); return; }
+    if (!trimmedUrl || !trimmedUsername || !password) { setErr("Fill in the URL, username, and password."); return; }
     setBusy(true); setErr("");
     try {
       const r = await api.connectPronote(trimmedUrl, trimmedUsername, password, kind === "parent" ? 7 : 6);
-      if (!r.ok) { setErr(r.error || L("Connexion impossible.", "Couldn't connect.")); return; }
+      if (!r.ok) { setErr(r.error || "Couldn't connect."); return; }
       setPassword(""); setOpen(false);
       setPronoteUsername(trimmedUsername);
       setOptimistic(true);
       onStatusUpdate?.();
       onChanged?.();
     } catch (e: any) {
-      setErr(e?.message || L("Connexion impossible.", "Couldn't connect."));
+      setErr(e?.message || "Couldn't connect.");
     } finally { setBusy(false); }
   };
   const disconnect = async () => {
@@ -511,7 +508,7 @@ export function PronoteTile({ status: mainStatus, onStatusUpdate, onChanged }: {
       onStatusUpdate?.();
       onChanged?.();
     }
-    catch (e: any) { notify(e?.message || L("Déconnexion impossible — réessaie.", "Couldn't disconnect — try again."), "error"); }
+    catch (e: any) { notify(e?.message || "Couldn't disconnect — try again.", "error"); }
     finally { setBusy(false); }
   };
 
@@ -526,34 +523,31 @@ export function PronoteTile({ status: mainStatus, onStatusUpdate, onChanged }: {
               Index Éducation) — self-hosted at public/logos/pronote.png, see public/logos/ATTRIBUTION.md. */}
           <span className="int-logo pronote-logo"><img src="/logos/pronote.png" alt="" loading="lazy" /></span>
           <div className="int-info">
-            <div className="int-name">Pronote{status.connected && <span className="int-dot" title={L("Connecté", "Connected")} />}</div>
-            <div className="int-blurb">{L(
-              "Devoirs et contrôles à venir. Otto lit ces sources et prépare le travail — il ne renvoie jamais rien à ta place. Connexion non-officielle (Index Éducation n'a pas d'API publique) — ton mot de passe est conservé chiffré (AES-256), uniquement pour te reconnecter automatiquement quand Pronote expire la session, et il est effacé dès que tu déconnectes Pronote.",
-              "Upcoming homework and tests. Otto reads these sources and preps the work — it never sends or hands anything in for you. Unofficial connection (Index Éducation has no public API) — your password is stored encrypted (AES-256), used only to reconnect you automatically when Pronote expires the session, and deleted the moment you disconnect Pronote."
-            )}</div>
+            <div className="int-name">Pronote{status.connected && <span className="int-dot" title={"Connected"} />}</div>
+            <div className="int-blurb">{"Upcoming homework and tests. Otto reads these sources and preps the work — it never sends or hands anything in for you. Unofficial connection (Index Éducation has no public API) — your password is stored encrypted (AES-256), used only to reconnect you automatically when Pronote expires the session, and deleted the moment you disconnect Pronote."}</div>
           </div>
           {status.connected
-            ? <button className="btn xs" disabled={busy} onClick={() => void disconnect()}>{busy ? "…" : L("Déconnecter", "Disconnect")}</button>
-            : <button className="btn xs" disabled={busy} onClick={() => setOpen((v) => !v)}>{open ? L("Annuler", "Cancel") : L("Connecter", "Connect")}</button>}
+            ? <button className="btn xs" disabled={busy} onClick={() => void disconnect()}>{busy ? "…" : "Disconnect"}</button>
+            : <button className="btn xs" disabled={busy} onClick={() => setOpen((v) => !v)}>{open ? "Cancel" : "Connect"}</button>}
         </div>
       </div>
       {status.connected && <div className="int-accounts"><div className="int-acct"><span className="int-acct-email">{status.username}</span></div></div>}
       {open && !status.connected && (
         <div className="pronote-form">
-          <input className="addinput sm" placeholder={L("URL Pronote de ton établissement (ex : https://0000000a.index-education.net/pronote/eleve.html)", "Your school's Pronote URL (e.g. https://0000000a.index-education.net/pronote/eleve.html)")} aria-label={L("URL Pronote de ton établissement (ex : https://0000000a.index-education.net/pronote/eleve.html)", "Your school's Pronote URL (e.g. https://0000000a.index-education.net/pronote/eleve.html)")}
+          <input className="addinput sm" placeholder={"Your school's Pronote URL (e.g. https://0000000a.index-education.net/pronote/eleve.html)"} aria-label={"Your school's Pronote URL (e.g. https://0000000a.index-education.net/pronote/eleve.html)"}
             value={url} onChange={(e) => setUrl(e.target.value)} disabled={busy} />
           <div className="pronote-form-row">
-            <input className="addinput sm" placeholder={L("Identifiant", "Username")} aria-label={L("Identifiant", "Username")} value={username} onChange={(e) => setUsername(e.target.value)} disabled={busy} />
-            <input className="addinput sm" type="password" placeholder={L("Mot de passe", "Password")} aria-label={L("Mot de passe", "Password")} value={password}
+            <input className="addinput sm" placeholder={"Username"} aria-label={"Username"} value={username} onChange={(e) => setUsername(e.target.value)} disabled={busy} />
+            <input className="addinput sm" type="password" placeholder={"Password"} aria-label={"Password"} value={password}
               onChange={(e) => setPassword(e.target.value)} disabled={busy}
               onKeyDown={(e) => { if (e.key === "Enter") void connect(); }} />
           </div>
           <div className="pronote-form-row">
-            <div className="seg" role="group" aria-label={L("Type de compte", "Account type")}>
-              <button type="button" className={`seg-btn ${kind === "student" ? "on" : ""}`} aria-pressed={kind === "student"} onClick={() => setKind("student")}>{L("Élève", "Student")}</button>
-              <button type="button" className={`seg-btn ${kind === "parent" ? "on" : ""}`} aria-pressed={kind === "parent"} onClick={() => setKind("parent")}>{L("Parent", "Parent")}</button>
+            <div className="seg" role="group" aria-label={"Account type"}>
+              <button type="button" className={`seg-btn ${kind === "student" ? "on" : ""}`} aria-pressed={kind === "student"} onClick={() => setKind("student")}>{"Student"}</button>
+              <button type="button" className={`seg-btn ${kind === "parent" ? "on" : ""}`} aria-pressed={kind === "parent"} onClick={() => setKind("parent")}>{"Parent"}</button>
             </div>
-            <button className="btn primary xs" disabled={busy} onClick={() => void connect()}>{busy ? L("Connexion…", "Connecting…") : L("Connecter", "Connect")}</button>
+            <button className="btn primary xs" disabled={busy} onClick={() => void connect()}>{busy ? "Connecting…" : "Connect"}</button>
           </div>
           {err && <div className="autherr">{err}</div>}
         </div>
@@ -575,7 +569,7 @@ function GoogleAppAccounts({ appKey, onChanged }: { appKey: string; onChanged?: 
   const disc = async (id: string) => {
     setBusy(id);
     try { await api.disconnectAccount(appKey, id); await load(); onChanged?.(); }
-    catch (e: any) { notify(e?.message || L("Déconnexion impossible — réessaie.", "Couldn't disconnect — try again."), "error"); }
+    catch (e: any) { notify(e?.message || "Couldn't disconnect — try again.", "error"); }
     finally { setBusy(""); }
   };
   if (!accts?.length) return null;
@@ -583,9 +577,9 @@ function GoogleAppAccounts({ appKey, onChanged }: { appKey: string; onChanged?: 
     <div className="int-accounts">
       {accts.map((a, i) => (
         <div key={a.id} className="int-acct">
-          <span className="int-acct-email">{a.email || (accts.length > 1 ? L(`Compte ${i + 1}`, `Account ${i + 1}`) : L("Connecté", "Connected"))}</span>
+          <span className="int-acct-email">{a.email || (accts.length > 1 ? `Account ${i + 1}` : "Connected")}</span>
           <div className="int-acct-actions">
-            <button className="btn xs ghost" disabled={busy === a.id} onClick={() => void disc(a.id)}>{busy === a.id ? "…" : L("Déconnecter", "Disconnect")}</button>
+            <button className="btn xs ghost" disabled={busy === a.id} onClick={() => void disc(a.id)}>{busy === a.id ? "…" : "Disconnect"}</button>
           </div>
         </div>
       ))}
@@ -638,7 +632,7 @@ export function GoogleTiles({ onChanged, restricted = true }: { onChanged?: () =
   const L = useLang();
   // Same reasoning as PronoteTile's skeleton — an empty gap while `items` loads reads as stuck, not loading.
   if (items === undefined) return <div className="int-group"><div className="int-grid"><div className="int-tile int-tile-skel" /><div className="int-tile int-tile-skel" /></div></div>;
-  if (items === null || !items.length) return <div className="warn">{L("Google n'est pas encore activé sur ce serveur.", "Google isn't set up on this server yet.")}</div>;
+  if (items === null || !items.length) return <div className="warn">{"Google isn't set up on this server yet."}</div>;
   return (
     <div className="int-group">
       {items.map((item) => (
@@ -647,10 +641,10 @@ export function GoogleTiles({ onChanged, restricted = true }: { onChanged?: () =
             <div className={`int-tile ${item.connected ? "on" : ""}`}>
               <img className="int-logo" src={item.logo} alt="" loading="lazy" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
               <div className="int-info">
-                <div className="int-name">{item.name}{item.connected && <span className="int-dot" title={L("Connecté", "Connected")} />}</div>
-                <div className="int-blurb">{L(GOOGLE_APP_BLURBS[item.key] || item.blurb, GOOGLE_APP_BLURBS_EN[item.key] || item.blurb)}</div>
+                <div className="int-name">{item.name}{item.connected && <span className="int-dot" title={"Connected"} />}</div>
+                <div className="int-blurb">{GOOGLE_APP_BLURBS_EN[item.key] || item.blurb}</div>
               </div>
-              <a className="btn xs" href={`/integrations/${item.key}/connect`} target="_blank" rel="noreferrer">{item.connected ? L("Ajouter un compte ↗", "Add an account ↗") : L("Connecter ↗", "Connect ↗")}</a>
+              <a className="btn xs" href={`/integrations/${item.key}/connect`} target="_blank" rel="noreferrer">{item.connected ? "Add an account ↗" : "Connect ↗"}</a>
             </div>
           </div>
           {/* The connected account(s) for THIS app, right below its own tile — not lumped together
@@ -673,15 +667,15 @@ function ProfileEditor() {
   const [loadError, setLoadError] = useState(false);
   const load = () => { setLoadError(false); void api.profile().then(setP).catch(() => setLoadError(true)); };
   useEffect(load, []);
-  if (loadError) return <ErrorNote onRetry={load}>{L("Impossible de charger ton profil.", "Couldn't load your profile.")}</ErrorNote>;
-  if (!p) return <p className="muted small">{L("Chargement…", "Loading…")}</p>;
-  const saveErr = () => L("Ça n'a pas été enregistré — réessaie.", "That didn't save — give it another try.");
+  if (loadError) return <ErrorNote onRetry={load}>{"Couldn't load your profile."}</ErrorNote>;
+  if (!p) return <p className="muted small">{"Loading…"}</p>;
+  const saveErr = () => "That didn't save — give it another try.";
   const count = (p.name ? 1 : 0) + (p.about ? 1 : 0) + p.preferences.length + p.people.length + p.projects.length + p.courses.length;
   const lists = [
-    { key: "preference" as const, label: L("Préférences", "Preferences"), items: p.preferences },
-    { key: "person" as const, label: L("Personnes", "People"), items: p.people },
-    { key: "project" as const, label: L("Projets", "Projects"), items: p.projects },
-    { key: "course" as const, label: L("Cours", "Courses"), items: p.courses },
+    { key: "preference" as const, label: "Preferences", items: p.preferences },
+    { key: "person" as const, label: "People", items: p.people },
+    { key: "project" as const, label: "Projects", items: p.projects },
+    { key: "course" as const, label: "Courses", items: p.courses },
   ];
   return (
     <div className="memory-body">
@@ -692,23 +686,23 @@ function ProfileEditor() {
           <div className="prof-label">{l.label}</div>
           <ul className="memory-list">
             {l.items.map((it, i) => (
-              <li key={i}><span>{it}</span><button className="x" title={L("Supprimer", "Remove")} aria-label={L("Supprimer", "Remove")} onClick={async () => { try { setP(await api.delProfile(l.key, i)); } catch (e: any) { notify(e?.message || saveErr(), "error"); } }}>×</button></li>
+              <li key={i}><span>{it}</span><button className="x" title={"Remove"} aria-label={"Remove"} onClick={async () => { try { setP(await api.delProfile(l.key, i)); } catch (e: any) { notify(e?.message || saveErr(), "error"); } }}>×</button></li>
             ))}
           </ul>
-          <AddRow placeholder={L(`Ajouter : ${l.label.toLowerCase().replace(/s$/, "")}…`, `Add a ${l.label.toLowerCase().replace(/s$/, "")}…`)} onAdd={async (v) => { try { setP(await api.setProfile(l.key, v)); } catch (e: any) { notify(e?.message || saveErr(), "error"); } }} />
+          <AddRow placeholder={`Add a ${l.label.toLowerCase().replace(/s$/, "")}…`} onAdd={async (v) => { try { setP(await api.setProfile(l.key, v)); } catch (e: any) { notify(e?.message || saveErr(), "error"); } }} />
         </div>
       ))}
       {count === 0
-        ? <div className="muted small">{L("Vide pour l'instant — Otto le remplit au fil du travail, ou ajoute ton nom, une description, tes préférences, personnes et projets ici.", "Empty for now — Otto fills this in as it works, or add your name, about, preferences, people and projects here.")}</div>
+        ? <div className="muted small">{"Empty for now — Otto fills this in as it works, or add your name, about, preferences, people and projects here."}</div>
         : <div className="forget-row">
             <button
               className="btn xs forget"
               onClick={async () => {
-                if (!window.confirm(L("Oublier tout ce qu'Otto a appris sur toi ? Ça efface ta description, préférences, personnes et projets, sans retour en arrière possible.", "Forget everything Otto has learned about you? This clears your About, preferences, people and projects, and can't be undone."))) return;
+                if (!window.confirm("Forget everything Otto has learned about you? This clears your About, preferences, people and projects, and can't be undone.")) return;
                 try { setP(await api.clearProfile()); } catch (e: any) { notify(e?.message || saveErr(), "error"); }
               }}
-            >{L("Tout oublier", "Forget everything")}</button>
-            <span className="muted small">{L("Efface la mémoire d'Otto — il repart de zéro et te réapprend au fil du travail.", "Wipes Otto's memory — it starts from zero and learns you again as it works.")}</span>
+            >{"Forget everything"}</button>
+            <span className="muted small">{"Wipes Otto's memory — it starts from zero and learns you again as it works."}</span>
           </div>}
     </div>
   );
@@ -720,10 +714,10 @@ function NameRow({ name, onSave }: { name: string; onSave: (v: string) => Promis
   useEffect(() => { setText(name); }, [name]);
   return (
     <div className="prof-group">
-      <div className="prof-label">{L("Nom", "Name")}</div>
+      <div className="prof-label">{"Name"}</div>
       <div className="addrow">
-        <input className="addinput sm" placeholder={L("Comment Otto doit-il t'appeler ?", "What should Otto call you?")} aria-label={L("Comment Otto doit-il t'appeler ?", "What should Otto call you?")} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void onSave(text.trim()); }} />
-        <button className="btn" disabled={text.trim() === name.trim()} onClick={() => void onSave(text.trim())}>{L("Enregistrer", "Save")}</button>
+        <input className="addinput sm" placeholder={"What should Otto call you?"} aria-label={"What should Otto call you?"} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void onSave(text.trim()); }} />
+        <button className="btn" disabled={text.trim() === name.trim()} onClick={() => void onSave(text.trim())}>{"Save"}</button>
       </div>
     </div>
   );
@@ -735,10 +729,10 @@ function AboutRow({ about, onSave }: { about: string; onSave: (v: string) => Pro
   useEffect(() => { setText(about); }, [about]);
   return (
     <div className="prof-group">
-      <div className="prof-label">{L("À propos de toi", "About you")}</div>
+      <div className="prof-label">{"About you"}</div>
       <div className="addrow">
-        <input className="addinput sm" placeholder={L("Une ligne : qui tu es / comment tu travailles", "One line: who you are / how you work")} aria-label={L("Une ligne : qui tu es / comment tu travailles", "One line: who you are / how you work")} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void onSave(text.trim()); }} />
-        <button className="btn" disabled={text.trim() === about.trim()} onClick={() => void onSave(text.trim())}>{L("Enregistrer", "Save")}</button>
+        <input className="addinput sm" placeholder={"One line: who you are / how you work"} aria-label={"One line: who you are / how you work"} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void onSave(text.trim()); }} />
+        <button className="btn" disabled={text.trim() === about.trim()} onClick={() => void onSave(text.trim())}>{"Save"}</button>
       </div>
     </div>
   );
@@ -753,7 +747,7 @@ function AddRow({ placeholder, onAdd }: { placeholder: string; onAdd: (v: string
   return (
     <div className="addrow">
       <input className="addinput sm" placeholder={placeholder} aria-label={placeholder} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void go(); }} />
-      <button className="btn" disabled={!text.trim()} onClick={() => void go()}>{L("Ajouter", "Add")}</button>
+      <button className="btn" disabled={!text.trim()} onClick={() => void go()}>{"Add"}</button>
     </div>
   );
 }

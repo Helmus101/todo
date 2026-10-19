@@ -29,7 +29,7 @@ export function registerIntegrationRoutes(app: express.Express): void {
   // Get connected accounts for a specific app (supports multiple accounts)
   app.get("/api/integrations/:app/accounts", requireAuth, ah(async (req, res) => {
     const app2 = String(req.params.app);
-    if (!integrations.CATALOG.some((c) => c.key === app2)) { res.status(404).json({ error: M(req, "Intégration inconnue.", "Unknown integration.") }); return; }
+    if (!integrations.CATALOG.some((c) => c.key === app2)) { res.status(404).json({ error: "Unknown integration." }); return; }
     const accounts = integrations.integrationsReady() ? await integrations.getConnectedAccounts(req.session.user!, app2, true) : [];
     res.json({ accounts });
   }));
@@ -61,7 +61,7 @@ export function registerIntegrationRoutes(app: express.Express): void {
   app.post("/api/integrations/pronote/connect", requireAuth, rateLimit(8, 15 * 60_000), async (req, res) => {
     const { url, username, password, kind } = req.body || {};
     if (typeof url !== "string" || typeof username !== "string" || typeof password !== "string") {
-      res.status(400).json({ error: M(req, "L'URL, l'identifiant et le mot de passe sont requis.", "URL, username and password are required.") }); return;
+      res.status(400).json({ error: "URL, username and password are required." }); return;
     }
     try {
       const result = await pronoteSvc.connectPronote(req.session.user!, { url, username, password, kind: Number(kind) || undefined });
@@ -80,7 +80,7 @@ export function registerIntegrationRoutes(app: express.Express): void {
       }
       res.status(result.ok ? 200 : 400).json(result);
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de se connecter à Pronote — réessaie.", "Couldn't connect to Pronote — try again.") }); }
+      res.status(500).json({ error: "Couldn't connect to Pronote — try again." }); }
   });
 
   // Upcoming tests for the dashboard's exam countdown strip — a plain read, separate from the task pipeline
@@ -116,14 +116,14 @@ export function registerIntegrationRoutes(app: express.Express): void {
       pronoteSvc.invalidatePronoteStatus(req.session.user!);
       res.json({ ok: true });
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de déconnecter Pronote — réessaie.", "Couldn't disconnect Pronote — try again.") }); }
+      res.status(500).json({ error: "Couldn't disconnect Pronote — try again." }); }
   });
 
   // Read-only: the raw Pronote grade averages, for anything that just wants to display them.
   app.post("/api/pronote/grades/sync", requireAuth, rateLimit(6, 60_000), async (req, res) => {
     try {
       const live = await pronoteSvc.pronoteGrades(req.session.user!);
-      if (!live.length) { res.status(502).json({ error: M(req, "Pronote n'a renvoyé aucune note. Vérifie la période en cours et la connexion.", "Pronote returned no subject grades. Check the current period and connection.") }); return; }
+      if (!live.length) { res.status(502).json({ error: "Pronote returned no subject grades. Check the current period and connection." }); return; }
       const profile = (req.session.profile ||= emptyProfile());
       pronoteSvc.applyPronoteGrades(profile, live);
       await pronoteSvc.syncPronoteLessons(profile, req.session.user!);
@@ -131,7 +131,7 @@ export function registerIntegrationRoutes(app: express.Express): void {
       res.json({ grades: live, synced: true });
     } catch (e: any) {
       console.error(e);
-      res.status(502).json({ error: M(req, "Impossible de récupérer les notes depuis Pronote.", "Could not pull grades from Pronote.") });
+      res.status(502).json({ error: "Could not pull grades from Pronote." });
     }
   });
 
@@ -196,7 +196,7 @@ export function registerIntegrationRoutes(app: express.Express): void {
   app.post("/api/integrations/blackbaud/disconnect", requireAuth, async (req, res) => {
     try { await blackbaudSvc.disconnectBlackbaud(req.session.user!); res.json({ ok: true }); }
     catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de déconnecter — réessaie.", "Couldn't disconnect — try again.") }); }
+      res.status(500).json({ error: "Couldn't disconnect — try again." }); }
   });
 
   app.post("/api/integrations/:app/disconnect", requireAuth, async (req, res) => {
@@ -209,7 +209,7 @@ export function registerIntegrationRoutes(app: express.Express): void {
       await saveSession(req);
       res.json(result);
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de déconnecter — réessaie.", "Couldn't disconnect — try again.") }); }
+      res.status(500).json({ error: "Couldn't disconnect — try again." }); }
   });
 
   // Disconnect a specific account by ID (for multi-account support)
@@ -220,12 +220,12 @@ export function registerIntegrationRoutes(app: express.Express): void {
       // Verify the account belongs to this user and app before disconnecting
       const accounts = integrations.integrationsReady() ? await integrations.getConnectedAccounts(req.session.user!, app2) : [];
       const account = accounts.find((a) => a.id === accountId);
-      if (!account) { res.status(404).json({ error: M(req, "Compte introuvable.", "Account not found.") }); return; }
+      if (!account) { res.status(404).json({ error: "Account not found." }); return; }
       const result = await integrations.disconnectAccount(accountId);
       integrations.invalidateTools(req.session.user!);
       await saveSession(req);
       res.json(result);
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de déconnecter — réessaie.", "Couldn't disconnect — try again.") }); return; }
+      res.status(500).json({ error: "Couldn't disconnect — try again." }); return; }
   });
 }

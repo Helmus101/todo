@@ -28,7 +28,7 @@ export function AudioPanel({ audioType, volume, playing, customAudioName, spotif
 
   const submitSpotify = () => {
     const embed = toSpotifyEmbedUrl(spotifyInput);
-    if (!embed) { setSpotifyError(L("Ça ne ressemble pas à un lien Spotify (playlist, album ou titre).", "That doesn't look like a Spotify playlist/album/track link.")); return; }
+    if (!embed) { setSpotifyError("That doesn't look like a Spotify playlist/album/track link."); return; }
     setSpotifyError("");
     setSpotifyInput("");
     onSetSpotify(embed);
@@ -38,7 +38,7 @@ export function AudioPanel({ audioType, volume, playing, customAudioName, spotif
     <SmSurface variant="drawer" closing={closing} className="sm-drawer sm-drawer-audio">
       <div className="sm-drawer-header">
         <span>AUDIO</span>
-        <button className="sm-drawer-close" aria-label={L("Fermer", "Close")} onClick={doClose}>×</button>
+        <button className="sm-drawer-close" aria-label={"Close"} onClick={doClose}>×</button>
       </div>
       <div className="sm-drawer-body">
         <div className="sm-audio-tracks">
@@ -54,14 +54,14 @@ export function AudioPanel({ audioType, volume, playing, customAudioName, spotif
               className={`sm-audio-track ${audioType === opt.id ? "active" : ""}`}
               onClick={() => onChange(opt.id, volume, true)}
             >
-              {playing && audioType === opt.id ? <Play size={12} aria-hidden="true" /> : null}{L(opt.label[0], opt.label[1])}
+              {playing && audioType === opt.id ? <Play size={12} aria-hidden="true" /> : null}{opt.label[1]}
             </button>
           ))}
           <button
             className={`sm-audio-track ${audioType === "custom" ? "active" : ""}`}
             onClick={() => customAudioName ? onChange("custom", volume, true) : fileInputRef.current?.click()}
           >
-            {playing && audioType === "custom" ? <Play size={12} aria-hidden="true" /> : null}{customAudioName || L("Ajouter ta propre musique…", "Upload your own…")}
+            {playing && audioType === "custom" ? <Play size={12} aria-hidden="true" /> : null}{customAudioName || "Upload your own…"}
           </button>
           <input
             ref={fileInputRef}
@@ -81,12 +81,12 @@ export function AudioPanel({ audioType, volume, playing, customAudioName, spotif
         </div>
         {audioType === "custom" && customAudioName && (
           <button className="sm-btn sm-btn-ghost sm-audio-replace" onClick={() => fileInputRef.current?.click()}>
-            {L("Remplacer le morceau", "Replace track")}
+            {"Replace track"}
           </button>
         )}
 
         <div className="sm-audio-spotify">
-          <label>{L("Lien de playlist Spotify", "Spotify playlist link")}</label>
+          <label>{"Spotify playlist link"}</label>
           <div className="sm-audio-spotify-row">
             <input
               value={spotifyInput}
@@ -94,7 +94,7 @@ export function AudioPanel({ audioType, volume, playing, customAudioName, spotif
               onKeyDown={(e) => e.key === "Enter" && submitSpotify()}
               placeholder="https://open.spotify.com/playlist/…" aria-label="https://open.spotify.com/playlist/…"
             />
-            <button className="sm-btn sm-btn-primary sm-btn-sm" onClick={submitSpotify} disabled={!spotifyInput.trim()}>{L("Ajouter", "Add")}</button>
+            <button className="sm-btn sm-btn-primary sm-btn-sm" onClick={submitSpotify} disabled={!spotifyInput.trim()}>{"Add"}</button>
           </div>
           {spotifyError && <p className="sm-dictionary-error">{spotifyError}</p>}
           {/* Spotify's own official embed widget — it has its own play/pause/volume, so ours don't apply here. */}
@@ -117,7 +117,7 @@ export function AudioPanel({ audioType, volume, playing, customAudioName, spotif
 
         {audioType !== "silence" && audioType !== "spotify" && (
           <div className="sm-audio-volume">
-            <label>{L("Volume", "Volume")}</label>
+            <label>{"Volume"}</label>
             <input
               type="range"
               min={0}
@@ -133,7 +133,7 @@ export function AudioPanel({ audioType, volume, playing, customAudioName, spotif
             className="sm-btn sm-btn-ghost mt-2"
             onClick={() => onChange(audioType, volume, !playing)}
           >
-            {playing ? L("Pause", "Pause") : L("Lecture", "Play")}
+            {playing ? "Pause" : "Play"}
           </button>
         )}
       </div>

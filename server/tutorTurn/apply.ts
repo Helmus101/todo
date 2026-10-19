@@ -55,10 +55,10 @@ function sceneEntry(o: BoardOp, fr: boolean): { entry: BoardEntry } | { error: s
     case "source": return makeSourceEntry(spec);
     case "widget": return makeWidgetEntry(spec);
     case "svg": return makeSvgEntry(spec);
-    case "incline": return svgEntry(buildInclineScene({ angle: Number(spec.angle), forces: Array.isArray(spec.forces) ? (spec.forces as InclineForce[]) : undefined, motion: spec.motion, labels: spec.labels && typeof spec.labels === "object" ? spec.labels : undefined }), fr ? "Le plan incliné" : "The slope");
-    case "trig": return svgEntry(buildTrigScene({ mode: spec.mode, observers: Array.isArray(spec.observers) ? spec.observers : [], separation: spec.separation, towerHeight: spec.towerHeight, unknownTop: typeof spec.unknownTop === "string" ? spec.unknownTop.slice(0, 3) : undefined, distance: spec.distance, baseName: spec.baseName, topName: spec.topName, units: spec.units }), fr ? "La situation" : "The situation");
-    case "numberline": return svgEntry(buildNumberLine(spec), fr ? "Droite numérique" : "Number line");
-    case "balance": return svgEntry(buildBalance(spec), fr ? "La balance" : "The balance");
+    case "incline": return svgEntry(buildInclineScene({ angle: Number(spec.angle), forces: Array.isArray(spec.forces) ? (spec.forces as InclineForce[]) : undefined, motion: spec.motion, labels: spec.labels && typeof spec.labels === "object" ? spec.labels : undefined }), "The slope");
+    case "trig": return svgEntry(buildTrigScene({ mode: spec.mode, observers: Array.isArray(spec.observers) ? spec.observers : [], separation: spec.separation, towerHeight: spec.towerHeight, unknownTop: typeof spec.unknownTop === "string" ? spec.unknownTop.slice(0, 3) : undefined, distance: spec.distance, baseName: spec.baseName, topName: spec.topName, units: spec.units }), "The situation");
+    case "numberline": return svgEntry(buildNumberLine(spec), "Number line");
+    case "balance": return svgEntry(buildBalance(spec), "The balance");
     default: return { error: `unknown scene "${o.scene ?? ""}"` };
   }
 }

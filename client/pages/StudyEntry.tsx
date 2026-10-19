@@ -23,8 +23,8 @@ export function StandaloneStudyEntry({ tasks, setTasks, status, notify, navigate
       setTasks(list);
       const t = list.find((x) => x.source === "freestudy" && !isHandled(x.status));
       if (t) { studyTaskRef.current = t; setTaskId(t.id); }
-      else notify(en ? "Couldn't start a study session — try again." : "Impossible de démarrer une session — réessaie.", "error");
-    }).catch((e: any) => notify(e?.message || (en ? "Couldn't start a study session — try again." : "Impossible de démarrer une session — réessaie."), "error"))
+      else notify("Couldn't start a study session — try again.", "error");
+    }).catch((e: any) => notify(e?.message || ("Couldn't start a study session — try again."), "error"))
       .finally(() => setStarting(false));
   };
   if (taskId && studyTaskRef.current?.id === taskId) {
@@ -36,9 +36,9 @@ export function StandaloneStudyEntry({ tasks, setTasks, status, notify, navigate
     return (
       <main className="list-wrap">
         <div className="empty-state">
-          <h3>{en ? "Study whenever you want" : "Révise quand tu veux"}</h3>
-          <p>{en ? "Not tied to a task — a free workspace with notes, materials, and Otto's help." : "Sans tâche associée — un espace libre avec notes, ressources, et l'aide d'Otto."}</p>
-          <button className="btn primary" disabled={starting} onClick={start}>{starting ? (en ? "Starting…" : "Démarrage…") : (en ? "Enter study mode" : "Entrer en mode étude")}</button>
+          <h3>{"Study whenever you want"}</h3>
+          <p>{"Not tied to a task — a free workspace with notes, materials, and Otto's help."}</p>
+          <button className="btn primary" disabled={starting} onClick={start}>{starting ? ("Starting…") : ("Enter study mode")}</button>
         </div>
       </main>
     );
@@ -60,7 +60,7 @@ export function StandaloneStudyEntry({ tasks, setTasks, status, notify, navigate
           })
         : [...prev, u])}
       userId={status?.user}
-      language={en ? "en" : "fr"}
+      language="en"
       betaFeatures={!!status?.betaFeatures}
     />
   );

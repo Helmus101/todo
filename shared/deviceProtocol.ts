@@ -54,7 +54,7 @@ export function deviceStateOf(s: { sending: boolean; speaking: boolean; listenin
 
 /** What a button asks Otto, in the session language. "mic" is not a message: it toggles voice. */
 export function buttonMessage(b: DeviceButton, en: boolean): string | null {
-  if (b === "help") return en ? "I'm stuck — can you give me a hint?" : "Je suis bloqué — tu peux me donner un indice ?";
-  if (b === "next") return en ? "Okay, what should we do next?" : "D'accord, on fait quoi ensuite ?";
+  if (b === "help") return "I'm stuck — can you give me a hint?";
+  if (b === "next") return "Okay, what should we do next?";
   return null;
 }

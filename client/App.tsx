@@ -56,18 +56,14 @@ export function shouldKeepLocal(cur: WebTask | undefined, incoming: WebTask, mut
 
 // Translate a sweep job's skip/failure line into user terms — an honest reason, never a fake all-clear.
 function sweepSkipMessage(note: string, en?: boolean): string {
-  if (/nothing connected/i.test(note)) return en
-    ? "No apps are connected for this account — connect one in Settings (Pronote, Gmail…) so Otto has something to read, or add tasks yourself."
-    : "Aucune app n'est connectée sur ce compte — connecte ton Pronote/Gmail dans les Réglages pour qu'Otto ait de quoi lire.";
-  if (/paused/i.test(note)) return en
-    ? "AI is paused — resume it in Settings to sweep for new tasks."
-    : "L'IA est en pause — réactive-la dans les Réglages pour chercher de nouvelles tâches.";
-  return en ? `Sweep didn't finish: ${note.replace(/^(skipped:|sweep \w+:?)\s*/i, "")}` : `Vérification incomplète : ${note.replace(/^(skipped:|sweep \w+:?)\s*/i, "")}`;
+  if (/nothing connected/i.test(note)) return "No apps are connected for this account — connect one in Settings (Pronote, Gmail…) so Otto has something to read, or add tasks yourself.";
+  if (/paused/i.test(note)) return "AI is paused — resume it in Settings to sweep for new tasks.";
+  return `Sweep didn't finish: ${note.replace(/^(skipped:|sweep \w+:?)\s*/i, "")}`;
 }
 
 // Today, full form for the dashboard's top-of-page date line — "dimanche 23 août" / "Sunday, August 23".
 function todayLong(lang?: string): string {
-  return new Date().toLocaleDateString(lang === "en" ? "en-US" : "fr-FR", { weekday: "long", month: "long", day: "numeric" });
+  return new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
 }
 
 /** Study Mode's in-app entry points — the sidebar "Réviser"/"Study" item and the per-task Study Mode
@@ -146,7 +142,7 @@ export function App() {
   // English-mode user got French pronunciation applied to English text by every screen reader. This is the
   // one place the whole app's active language is decided (the LangContext.Provider value below), so it's
   // the right place to keep the document attribute in sync with it.
-  useEffect(() => { document.documentElement.lang = status?.language === "en" ? "en" : "fr"; }, [status?.language]);
+  useEffect(() => { document.documentElement.lang = "en"; }, [status?.language]);
   // Fired once per app load (not per status refresh) — only once we actually know an account is signed in.
   useEffect(() => { if (status?.loggedIn) void api.recordMetric("app_session_started", 1); }, [status?.loggedIn]);
   // Fifth bandit target (see DENSITY_ARMS, server/bandit.ts) — fetched ONCE per app load, applied as
@@ -201,7 +197,7 @@ export function App() {
       const saved = localStorage.getItem("otto-landing-lang");
       if (saved === "fr" || saved === "en") return saved;
     } catch { /* ignore */ }
-    return typeof navigator !== "undefined" && /^en/i.test(navigator.language) ? "en" : "fr";
+    return "en";
   });
   const setLandingLang = useCallback((v: "fr" | "en") => {
     setPreLoginLang(v);
@@ -662,19 +658,13 @@ export function App() {
       // "Still running" isn't broken — a sweep is genuinely mid-flight elsewhere (another tab, cron). Say so
       // gently rather than "Sweep didn't finish", which reads as an error when nothing's actually wrong.
       const sweepEn = status?.language === "en";
-      if (stillRunning) notify(sweepEn ? "Still checking — hang on a moment." : "Vérification en cours — patiente un instant.");
+      if (stillRunning) notify("Still checking — hang on a moment.");
       else if (/^(skipped:|sweep )/.test(serverNote)) notify(sweepSkipMessage(serverNote, sweepEn), /paused|connected/i.test(serverNote) ? "error" : "info");
       // Name whatever source is actually connected instead of assuming Pronote — a Google-only (or manual)
       // student was being told about a school portal they never linked.
-      else if (!t.length) notify(sweepEn
-        ? `You're all set — nothing new from ${status?.pronoteConnected ? "Pronote" : status?.googleConnected ? "your inbox" : "your sources"} yet.`
-        : `Tu es tranquille — rien de nouveau ${status?.pronoteConnected ? "sur Pronote" : status?.googleConnected ? "dans ta boîte mail" : "côté sources"} pour l'instant.`);
-      else if (!fresh.length) notify(sweepEn
-        ? `Checked — no new tasks${needsYou ? `; ${needsYou} still need${needsYou === 1 ? "s" : ""} you` : "; everything's already on your list"}.`
-        : `Vérifié — rien de nouveau${needsYou ? ` ; ${needsYou} tâche${needsYou === 1 ? "" : "s"} ${needsYou === 1 ? "attend" : "attendent"} encore toi` : " ; tout est déjà sur ta liste"}.`);
-      else notify(sweepEn
-        ? `Found ${fresh.length} new task${fresh.length === 1 ? "" : "s"}${queuedN ? `, ${queuedN} getting ready` : ""}${needsYou ? `, ${needsYou} need${needsYou === 1 ? "s" : ""} you` : ""}.`
-        : `${fresh.length} nouvelle${fresh.length === 1 ? "" : "s"} tâche${fresh.length === 1 ? "" : "s"} trouvée${fresh.length === 1 ? "" : "s"}${queuedN ? `, ${queuedN} en préparation` : ""}${needsYou ? `, ${needsYou} ${needsYou === 1 ? "a besoin" : "ont besoin"} de toi` : ""}.`);
+      else if (!t.length) notify(`You're all set — nothing new from ${status?.pronoteConnected ? "Pronote" : status?.googleConnected ? "your inbox" : "your sources"} yet.`);
+      else if (!fresh.length) notify(`Checked — no new tasks${needsYou ? `; ${needsYou} still need${needsYou === 1 ? "s" : ""} you` : "; everything's already on your list"}.`);
+      else notify(`Found ${fresh.length} new task${fresh.length === 1 ? "" : "s"}${queuedN ? `, ${queuedN} getting ready` : ""}${needsYou ? `, ${needsYou} need${needsYou === 1 ? "s" : ""} you` : ""}.`);
     }
     catch (e: any) {
       // A long sweep that outran the client timeout is NOT a failure — it's still running server-side and
@@ -682,13 +672,12 @@ export function App() {
       // which just spends more AI on a sweep already in flight). Say it's still working and pick the
       // results up on our own, so the tasks appear without them having to do anything.
       if (e?.sweepStillRunning) {
-        notify(en ? "Still checking — this one's taking a while. New tasks will appear here on their own."
-                  : "Vérification en cours — ça prend un peu de temps. Les nouvelles tâches apparaîtront toutes seules.");
+        notify("Still checking — this one's taking a while. New tasks will appear here on their own.");
         window.setTimeout(() => { void syncTasks(); }, 20_000);
         window.setTimeout(() => { void syncTasks(); }, 60_000);
         return;
       }
-      notify(en ? `Couldn't refresh: ${e?.message || "something went wrong — try again."}` : `Actualisation impossible : ${e?.message || "une erreur est survenue — réessaie."}`, "error");
+      notify(`Couldn't refresh: ${e?.message || "something went wrong — try again."}`, "error");
     }
     finally { setBusy(false); }
   };
@@ -771,9 +760,9 @@ export function App() {
       return (
         <div className="screen crash">
           <div className="crash-card">
-            <h1>{crashEn ? "Can't reach Otto" : "Impossible de contacter Otto"}</h1>
-            <p>{crashEn ? "The server isn't responding. Check your connection and try again." : "Le serveur ne répond pas. Vérifie ta connexion et réessaie."}</p>
-            <button className="btn primary big" onClick={() => { setLoadError(false); setReloadKey((k) => k + 1); }}>{crashEn ? "Try again" : "Réessayer"}</button>
+            <h1>{"Can't reach Otto"}</h1>
+            <p>{"The server isn't responding. Check your connection and try again."}</p>
+            <button className="btn primary big" onClick={() => { setLoadError(false); setReloadKey((k) => k + 1); }}>{"Try again"}</button>
           </div>
         </div>
       );
@@ -813,7 +802,7 @@ export function App() {
     const task = studyModeTask?.id === taskId ? studyModeTask : tasks.find(t => t.id === taskId);
     if (task) {
       return (
-        <LangContext.Provider value={status?.language === "en" ? "en" : "fr"}>
+        <LangContext.Provider value="en">
           <NotifyContext.Provider value={notify}>
             <StudyMode
               task={task}
@@ -838,7 +827,7 @@ export function App() {
                 });
               }}
               userId={status?.user}
-              language={status?.language === "en" ? "en" : "fr"}
+              language="en"
               betaFeatures={!!status?.betaFeatures}
             />
           </NotifyContext.Provider>
@@ -854,9 +843,9 @@ export function App() {
       ? (
         <main className="list-wrap">
           <div className="empty-state">
-            <h3>{enNow ? "Couldn't find that task" : "Tâche introuvable"}</h3>
-            <p>{enNow ? "It may have been removed or merged — go back and try again." : "Elle a peut-être été supprimée ou fusionnée — reviens en arrière et réessaie."}</p>
-            <button className="btn primary" onClick={() => navigate("tasks")}>{enNow ? "Back to tasks" : "Retour aux tâches"}</button>
+            <h3>{"Couldn't find that task"}</h3>
+            <p>{"It may have been removed or merged — go back and try again."}</p>
+            <button className="btn primary" onClick={() => navigate("tasks")}>{"Back to tasks"}</button>
           </div>
         </main>
       )
@@ -883,7 +872,7 @@ export function App() {
   // got it right — reported live as the dashboard mixing English chrome with French sentences ("Good
   // afternoon, Willem." next to "Ensuite : ...") for an English-language account. Deriving the same way
   // GREETING/todayLong already do keeps every dashboard string in this function on one real source.
-  const T = (key: string, vars?: Record<string, string | number>) => t(key, en ? "en" : "fr", vars);
+  const T = (key: string, vars?: Record<string, string | number>) => t(key, "en", vars);
   // Show first 3 tasks, rest behind "show more"
   const focusToday = live.slice(0, 3);
   // Today's real momentum — the ALL-TIME done count only ever grows, so a bar based on it would sit near
@@ -895,7 +884,7 @@ export function App() {
   const overdueCount = live.reduce((n, t) => n + (t.steps || []).filter((s) => !s.done && s.targetDate && s.targetDate < todayIso()).length, 0);
 
   return (
-    <LangContext.Provider value={status?.language === "en" ? "en" : "fr"}>
+    <LangContext.Provider value="en">
     <NotifyContext.Provider value={notify}>
     <TourProvider seen={toursSeen} markSeen={markTourSeen} suppressed={onboard}>
     <div className="app">
@@ -912,33 +901,33 @@ export function App() {
             className={`topnav-link ${route === "" || route === "tasks" || route.startsWith("task/") ? "active" : ""}`}
             href="/tasks"
           >
-            {en ? "Today" : "Aujourd'hui"}
+            {"Today"}
           </a>
           <a
             className={`topnav-link ${route === "tutor" || route.startsWith("tutor/session/") ? "active" : ""}`}
             href="/tutor"
           >
-            {en ? "Tutor" : "Tuteur"}
+            {"Tutor"}
           </a>
           <a
             className={`topnav-link ${route === "log" ? "active" : ""}`}
             href="/log"
           >
-            {en ? "Journal" : "Journal"}
+            {"Journal"}
           </a>
           {!isPhone && <a
             className={`topnav-link ${route === "coursework" ? "active" : ""}`}
             href="/coursework"
           >
-            {en ? "Coursework" : "Cours"}
+            {"Coursework"}
           </a>}
           {/* Hick's law: four primary destinations stay in view; the rest sit one tap away under "More" so the bar offers fewer
               choices at once. The "More" label itself lights up when one of its pages is open. */}
           <details className="topnav-more" key={route}>
-            <summary className={`topnav-link ${["errorlog", "settings", "admin"].includes(route) ? "active" : ""}`}>{en ? "More" : "Plus"}</summary>
+            <summary className={`topnav-link ${["errorlog", "settings", "admin"].includes(route) ? "active" : ""}`}>{"More"}</summary>
             <div className="topnav-more-menu">
-              {!isPhone && <a className={`topnav-link ${route === "errorlog" ? "active" : ""}`} href="/errorlog">{en ? "Mistakes" : "Erreurs"}</a>}
-              <a className={`topnav-link ${route === "settings" ? "active" : ""}`} href="/settings">{en ? "Settings" : "Réglages"}</a>
+              {!isPhone && <a className={`topnav-link ${route === "errorlog" ? "active" : ""}`} href="/errorlog">{"Mistakes"}</a>}
+              <a className={`topnav-link ${route === "settings" ? "active" : ""}`} href="/settings">{"Settings"}</a>
               {!isPhone && !!status?.isAdmin && <a className={`topnav-link ${route === "admin" ? "active" : ""}`} href="/admin">Admin</a>}
             </div>
           </details>
@@ -956,7 +945,7 @@ export function App() {
       {note && (
         <div className={`toast ${noteKind}`} role="status" aria-live="polite">
           <span className="toast-msg">{note}</span>
-          <button className="toast-x" aria-label={status?.language === "en" ? "Close" : "Fermer"} onClick={dismissNote}>✕</button>
+          <button className="toast-x" aria-label={"Close"} onClick={dismissNote}>✕</button>
         </div>
       )}
 
@@ -1002,7 +991,7 @@ export function App() {
                 reassurance with a middle dot ("Monday, 5 October · Three priorities. Everything else
                 can wait.") instead of a separate uppercase date label above the title. */}
             {/* Warm, plain, human: a greeting by first name, then the date — no tagline, no progress widgets. */}
-            <h1 className="list-head">{(status?.name || "").trim().split(/\s+/)[0] ? (en ? `Hi ${(status?.name || "").trim().split(/\s+/)[0]}.` : `Salut ${(status?.name || "").trim().split(/\s+/)[0]}.`) : todayLong(status?.language)}</h1>
+            <h1 className="list-head">{(status?.name || "").trim().split(/\s+/)[0] ? (`Hi ${(status?.name || "").trim().split(/\s+/)[0]}.`) : todayLong(status?.language)}</h1>
             {(status?.name || "").trim() ? <p className="page-sub mt-2">{todayLong(status?.language)}</p> : null}
             {/* One plain sentence instead of the old "3 active · 1 processing · 5 done" mono readout —
                 that read like debug output, not like something written for a stressed 17-year-old. A second
@@ -1017,12 +1006,12 @@ export function App() {
                   which outranks a routine scan — instead of stacking every pill that happens to apply. */}
               {overdueCount > 0 ? (
                 <span className="dash-late">
-                  {en ? `${overdueCount} milestone${overdueCount > 1 ? "s" : ""} overdue` : `${overdueCount} jalon${overdueCount > 1 ? "s" : ""} en retard`}
+                  {`${overdueCount} milestone${overdueCount > 1 ? "s" : ""} overdue`}
                 </span>
               ) : working > 0 ? (
-                <span className="dash-working">{en ? `Otto is working on ${working}` : `Otto en prépare ${working}`}</span>
+                <span className="dash-working">{`Otto is working on ${working}`}</span>
               ) : scanning ? (
-                <span className="scan-note"><span className="scan-dot" /> {en ? "checking…" : "vérification…"}</span>
+                <span className="scan-note"><span className="scan-dot" /> {"checking…"}</span>
               ) : null}
             </p>
           </div>
@@ -1031,16 +1020,14 @@ export function App() {
               on this page nothing else explains (the landing page's marketing copy covers this for
               prospects, but a logged-in student never sees that page again). Dismiss-once, not a
               permanent fixture — see PageInfoHint's own comment. */}
-          <PageInfoHint pageKey="dashboard" text={en
-            ? "Sorted by real priority, not just deadline: \"Do now\" is urgent AND important, \"This week\" and \"Later\" are what can wait — urgency climbs on its own as a deadline nears."
-            : "Trié par vraie priorité, pas juste par échéance : « À faire maintenant » est urgent ET important, « Cette semaine » et « Plus tard » peuvent attendre — l'urgence monte automatiquement à l'approche d'une échéance."} />
+          <PageInfoHint pageKey="dashboard" text={"Sorted by real priority, not just deadline: \"Do now\" is urgent AND important, \"This week\" and \"Later\" are what can wait — urgency climbs on its own as a deadline nears."} />
           {status.paused && (
             <div className="intro paused-banner">
               <div className="intro-body">
-                <div className="intro-title">{en ? "Otto is paused" : "Otto est en pause"}</div>
-                <p>{en ? "Turn it back on in Settings whenever you're ready — nothing's been lost." : "Réactive-le dans les Réglages quand tu veux — rien n'a été perdu."}</p>
+                <div className="intro-title">{"Otto is paused"}</div>
+                <p>{"Turn it back on in Settings whenever you're ready — nothing's been lost."}</p>
               </div>
-              <button className="btn xs ghost" onClick={() => navigate("settings")}>{en ? "Settings" : "Réglages"}</button>
+              <button className="btn xs ghost" onClick={() => navigate("settings")}>{"Settings"}</button>
             </div>
           )}
           {/* Two-zone dashboard: Today (dash-today) is the main event — it comes FIRST on both mobile
@@ -1062,33 +1049,31 @@ export function App() {
                 // claiming Otto is watching a school portal nobody ever connected (that copy read as a
                 // bug — and "Check now" there did nothing but return a "nothing connected" skip).
                 const watching = status.pronoteConnected
-                  ? (en ? "your Pronote" : "ton Pronote")
+                  ? ("your Pronote")
                   : status.googleConnected
-                    ? (en ? "your inbox" : "ta boîte mail")
+                    ? ("your inbox")
                     : null;
                 // First run (nothing ever completed) reads differently from a genuinely cleared list.
                 return handled === 0 ? (
                   connected ? (
                     <div className="empty-state">
-                      <h3>{en ? `I'm watching ${watching}${who ? `, ${who}` : ""}` : `Je surveille ${watching}${who ? `, ${who}` : ""}`}</h3>
-                      <p>{en ? "Homework and tests land here the second I spot them. Until then — this quiet is yours, not empty time." : "Devoirs et contrôles arrivent ici dès que je les repère. D'ici là — ce calme est à toi, pas du temps mort."}</p>
-                      <button className="btn primary" disabled={busy} onClick={() => void generate()}>{busy ? (en ? "Looking…" : "Je regarde…") : (en ? "Look again" : "Regarde encore")}</button>
+                      <h3>{`I'm watching ${watching}${who ? `, ${who}` : ""}`}</h3>
+                      <p>{"Homework and tests land here the second I spot them. Until then — this quiet is yours, not empty time."}</p>
+                      <button className="btn primary" disabled={busy} onClick={() => void generate()}>{busy ? ("Looking…") : ("Look again")}</button>
                     </div>
                   ) : (
                     <div className="empty-state">
-                      <h3>{en ? `Nothing on your list${who ? `, ${who}` : ""} — suspicious` : `Rien sur ta liste${who ? `, ${who}` : ""} — suspect`}</h3>
-                      <p>{en
-                        ? "Add what you've been putting off — you already know what it is. Or connect an app in Settings and I'll find the deadlines before you do."
-                        : "Ajoute ce que tu repousses — tu sais déjà ce que c'est. Ou connecte une app dans les Réglages, je trouverai les échéances avant toi."}</p>
-                      <a className="btn ghost" href="/settings">{en ? "Connect an app" : "Connecter une app"}</a>
+                      <h3>{`Nothing on your list${who ? `, ${who}` : ""} — suspicious`}</h3>
+                      <p>{"Add what you've been putting off — you already know what it is. Or connect an app in Settings and I'll find the deadlines before you do."}</p>
+                      <a className="btn ghost" href="/settings">{"Connect an app"}</a>
                     </div>
                   )
                 ) : (
                   <div className="empty-state">
-                    <h3>{en ? `Clear${who ? `, ${who}` : ""}` : `C'est dégagé${who ? `, ${who}` : ""}`}</h3>
+                    <h3>{`Clear${who ? `, ${who}` : ""}`}</h3>
                     <p>{connected
-                      ? (en ? `Nothing outstanding. I'm still watching ${watching} — so go get ahead on something that's actually hard.` : `Rien en retard. Je surveille toujours ${watching} — alors prends de l'avance sur quelque chose de vraiment dur.`)
-                      : (en ? "Nothing outstanding. Pick the hardest thing on your plate and get ahead of it — that's the whole game." : "Rien en retard. Choisis la chose la plus dure sur ta liste et prends-la de vitesse — c'est tout le jeu.")}</p>
+                      ? (`Nothing outstanding. I'm still watching ${watching} — so go get ahead on something that's actually hard.`)
+                      : ("Nothing outstanding. Pick the hardest thing on your plate and get ahead of it — that's the whole game.")}</p>
                   </div>
                 );
               })() : (
@@ -1122,15 +1107,13 @@ export function App() {
                   <div className="focus-group">
                     {!showAllTasks ? (
                       <button className="btn xs ghost show-more-btn" onClick={() => setShowAllTasks(true)}>
-                        {en
-                          ? `${live.length - 3} more waiting`
-                          : `${live.length - 3} de plus qui attendent`}
+                        {`${live.length - 3} more waiting`}
                       </button>
                     ) : (
                       <div className="later-groups">
                         {[
-                          { key: "week", label: en ? "This week" : "Cette semaine", items: live.slice(3).filter((t) => t.quadrant === "do" || t.quadrant === "schedule") },
-                          { key: "later", label: en ? "Later" : "Plus tard", items: live.slice(3).filter((t) => t.quadrant !== "do" && t.quadrant !== "schedule") },
+                          { key: "week", label: "This week", items: live.slice(3).filter((t) => t.quadrant === "do" || t.quadrant === "schedule") },
+                          { key: "later", label: "Later", items: live.slice(3).filter((t) => t.quadrant !== "do" && t.quadrant !== "schedule") },
                         ].filter((g) => g.items.length).map((g) => (
                           <section key={g.key} className="later-group">
                             <h3 className="later-group-head">{g.label}</h3>
@@ -1160,7 +1143,7 @@ export function App() {
               )}
               {completed.length > 0 && (
                 <div className="completed-section">
-                  <h3 className="completed-head">{en ? "Completed" : "Terminées"}</h3>
+                  <h3 className="completed-head">{"Completed"}</h3>
                   {/* Minimalist done-list: checked rows like a to-do app, not full cards. Click to expand details. */}
                   <div className="done-list">{(showCompleted ? completed : completed.slice(0, 8)).map((t) => (
                     // A real <button>: reopening a finished task was mouse-only, and this row is the ONLY
@@ -1168,11 +1151,11 @@ export function App() {
                     <button type="button" key={t.id} className={`done-row ${t.id === justDoneId ? "just-done" : ""}`} onClick={() => navigate(`task/${t.id}`)} title={t.synthesis || t.why}>
                       <span className="done-check" aria-hidden="true">✓</span>
                       <span className="done-title">{t.title}</span>
-                      <span className="done-when">{relTime(t.updatedAt || t.createdAt, (fr, enS) => en ? enS : fr)}</span>
+                      <span className="done-when">{relTime(t.updatedAt || t.createdAt, (fr, enS) => enS)}</span>
                     </button>
                   ))}</div>
                   {completed.length > 8 && !showCompleted && (
-                    <button className="btn xs ghost" onClick={() => setShowCompleted(true)}>{en ? `Show all ${completed.length}` : `Tout afficher (${completed.length})`}</button>
+                    <button className="btn xs ghost" onClick={() => setShowCompleted(true)}>{`Show all ${completed.length}`}</button>
                   )}
                 </div>
               )}
@@ -1223,7 +1206,7 @@ const LEGAL_UPDATED = "July 30, 2026";
 
 function LegalPage({ kind, lang }: { kind: "privacy" | "terms"; lang?: string }) {
   return (
-    <LangContext.Provider value={lang === "en" ? "en" : "fr"}>
+    <LangContext.Provider value="en">
       <LegalPageBody kind={kind} />
     </LangContext.Provider>
   );
@@ -1235,14 +1218,14 @@ function LegalPageBody({ kind }: { kind: "privacy" | "terms" }) {
       <header className="landing-nav glass-nav">
         <a className="brand" href="/"><Logo size={22} /> Otto</a>
         <nav className="landing-navlinks">
-          <a className="btn ghost" href="/privacy">{L("Confidentialité", "Privacy")}</a>
-          <a className="btn ghost" href="/terms">{L("Conditions", "Terms")}</a>
+          <a className="btn ghost" href="/privacy">{"Privacy"}</a>
+          <a className="btn ghost" href="/terms">{"Terms"}</a>
         </nav>
       </header>
       <main className="legal">
         {kind === "privacy" ? <PrivacyBody /> : <TermsBody />}
-        <p className="legal-meta">{L(`Dernière mise à jour : ${LEGAL_UPDATED} · Géré par ${LEGAL_ENTITY} · Contact : ${LEGAL_EMAIL}`, `Last updated: ${LEGAL_UPDATED} · Operated by ${LEGAL_ENTITY} · Contact: ${LEGAL_EMAIL}`)}</p>
-        <a className="legal-back" href="/">{L("← Retour à Otto", "← Back to Otto")}</a>
+        <p className="legal-meta">{`Last updated: ${LEGAL_UPDATED} · Operated by ${LEGAL_ENTITY} · Contact: ${LEGAL_EMAIL}`}</p>
+        <a className="legal-back" href="/">{"← Back to Otto"}</a>
       </main>
       <footer className="legal-foot">
         <span className="foot-mit">© 2026 Otto</span>
@@ -1258,7 +1241,7 @@ function LegalPageBody({ kind }: { kind: "privacy" | "terms" }) {
  *  as the legal pages (own LangContext, reachable logged-out) since it's public. */
 function ResearchPage({ lang }: { lang?: string }) {
   return (
-    <LangContext.Provider value={lang === "en" ? "en" : "fr"}>
+    <LangContext.Provider value="en">
       <ResearchPageBody />
     </LangContext.Provider>
   );

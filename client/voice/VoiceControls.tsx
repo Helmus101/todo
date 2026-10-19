@@ -25,12 +25,12 @@ export function VoiceControls({ supported, voiceModeOn, listening, speaking, int
   if (!supported) return null; // no SpeechRecognition on this browser (e.g. Firefox) — hide, don't show a dead button
   const state = speaking ? "speaking" : listening ? "listening" : voiceModeOn ? "idle-on" : "off";
   const title = !voiceModeOn
-    ? (en ? "Turn on voice mode — talk to Otto hands-free" : "Activer le mode vocal — parle à Otto en mains libres")
+    ? ("Turn on voice mode — talk to Otto hands-free")
     : speaking
-    ? (en ? "Otto is speaking — tap to turn off voice mode" : "Otto parle — touche pour désactiver le mode vocal")
+    ? ("Otto is speaking — tap to turn off voice mode")
     : listening
-    ? (en ? "Listening — tap to turn off voice mode" : "Écoute en cours — touche pour désactiver le mode vocal")
-    : (en ? "Voice mode on — tap to turn off" : "Mode vocal activé — touche pour désactiver");
+    ? ("Listening — tap to turn off voice mode")
+    : ("Voice mode on — tap to turn off");
   return (
     <div className="voice-controls">
       {voiceModeOn && listening && interimTranscript ? <span className="voice-interim">{interimTranscript}</span> : null}

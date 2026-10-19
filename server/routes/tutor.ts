@@ -17,8 +17,8 @@ export function registerTutorRoutes(app: express.Express): void {
   // degrades to that line instead of an empty greeting — which is why a failure is a 502 the client quietly
   // ignores rather than an error the student sees.
   app.post("/api/tutor/opener", requireAuth, rateLimit(30, 60_000), ah(async (req, res) => {
-    if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour discuter.", "AI is paused — resume it in Settings to chat.") }); return; }
-    if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
+    if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to chat." }); return; }
+    if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
     const subject = typeof req.body?.subject === "string" ? req.body.subject.trim().slice(0, 80) : "";
     // Client-controlled input, so every field is capped here (the prompt builder does no capping of its own).
     const rawMemory = Array.isArray(req.body?.pastSessions) ? req.body.pastSessions : [];
@@ -37,7 +37,7 @@ export function registerTutorRoutes(app: express.Express): void {
       res.json({ opener: out.opener });
     } catch (e: any) {
       console.error(`[tutor] opener failed: ${e?.message || e}`);
-      res.status(502).json({ error: M(req, "Otto n'a pas pu démarrer la séance — réessaie.", "Otto couldn't start the session — try again.") });
+      res.status(502).json({ error: "Otto couldn't start the session — try again." });
     }
   }));
 
@@ -50,13 +50,13 @@ export function registerTutorRoutes(app: express.Express): void {
   // base64-inflated by ~33%) — same bumped-limit pattern as /api/account/import, just smaller: nothing
   // resembling a real whiteboard sketch should ever approach 8mb.
   app.post("/api/tutor/read-whiteboard", requireAuth, rateLimit(15, 60_000), express.json({ limit: "8mb" }), ah(async (req, res) => {
-    if (!visionReady()) { res.status(503).json({ error: M(req, "La lecture du tableau blanc n'est pas configurée sur ce serveur.", "Whiteboard reading isn't configured on this server.") }); return; }
-    if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour continuer.", "AI is paused — resume it in Settings to continue.") }); return; }
+    if (!visionReady()) { res.status(503).json({ error: "Whiteboard reading isn't configured on this server." }); return; }
+    if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to continue." }); return; }
     const image = String(req.body?.image || "");
-    if (!image) { res.status(400).json({ error: M(req, "Aucun dessin reçu.", "No drawing received.") }); return; }
+    if (!image) { res.status(400).json({ error: "No drawing received." }); return; }
     // The vision helper composes its own (diagnostic, sometimes upstream-detail-bearing) message, so it
     // takes the request's language instead of returning English the client would show inside a French UI.
-    const r = await describeWhiteboard(image, (fr, en) => M(req, fr, en), typeof req.body?.context === "string" ? req.body.context : "");
+    const r = await describeWhiteboard(image, (fr, en) => en, typeof req.body?.context === "string" ? req.body.context : "");
     if ("error" in r) { res.status(422).json({ error: r.error }); return; }
     void recordEvent(req.session.user!, "whiteboard_read", {});
     res.json({ description: r.description });
@@ -68,11 +68,11 @@ export function registerTutorRoutes(app: express.Express): void {
   // no server round trip needed) and plain text files are read directly in the browser — this route exists
   // specifically for the case neither of those cover: a phone-camera photo with no text layer at all.
   app.post("/api/tutor/read-photo", requireAuth, rateLimit(15, 60_000), express.json({ limit: "8mb" }), ah(async (req, res) => {
-    if (!visionReady()) { res.status(503).json({ error: M(req, "La lecture d'image n'est pas configurée sur ce serveur.", "Image reading isn't configured on this server.") }); return; }
-    if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour continuer.", "AI is paused — resume it in Settings to continue.") }); return; }
+    if (!visionReady()) { res.status(503).json({ error: "Image reading isn't configured on this server." }); return; }
+    if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to continue." }); return; }
     const image = String(req.body?.image || "");
-    if (!image) { res.status(400).json({ error: M(req, "Aucune image reçue.", "No image received.") }); return; }
-    const r = await describeUploadedPhoto(image, (fr, en) => M(req, fr, en));
+    if (!image) { res.status(400).json({ error: "No image received." }); return; }
+    const r = await describeUploadedPhoto(image, (fr, en) => en);
     if ("error" in r) { res.status(422).json({ error: r.error }); return; }
     void recordEvent(req.session.user!, "photo_read", {});
     res.json({ description: r.description });
@@ -93,7 +93,7 @@ export function registerTutorRoutes(app: express.Express): void {
 
   app.delete("/api/tutor/policy", requireAuth, async (req, res) => {
     try { await saveBanditState(req.session.user!, "tutorpolicy", {} as any); res.json({ ok: true }); }
-    catch { res.status(500).json({ error: M(req, "Impossible de réinitialiser.", "Couldn't reset.") }); }
+    catch { res.status(500).json({ error: "Couldn't reset." }); }
   });
 
   app.get("/api/primer/dependence", requireAuth, (req, res) => {
@@ -130,8 +130,8 @@ export function registerTutorRoutes(app: express.Express): void {
   // is 1-3 chunks, and voice mode can go quickly.
   app.post("/api/tts", requireAuth, rateLimit(120, 60_000), async (req, res) => {
     const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
-    const lang = req.body?.lang === "fr" ? "fr" : "en";
-    if (!text) { res.status(400).json({ error: M(req, "le texte est requis", "text is required") }); return; }
+    const lang = "en";
+    if (!text) { res.status(400).json({ error: "text is required" }); return; }
     // One free, keyless provider speaking from a MALE-ONLY voice pool (see synthesizeSpeech in
     // server/claude.ts): no Gemini TTS, no female voice to fall back to, and a failure retries the next male
     // voice rather than switching gender. Long text is CHUNKED by that function, never sliced — the old
@@ -141,7 +141,7 @@ export function registerTutorRoutes(app: express.Express): void {
     const out = await synthesizeSpeech(text.slice(0, TTS_MAX_TEXT), lang);
     if ("error" in out) {
       console.error(`[tts] every male voice failed: ${out.error}`);
-      res.status(out.status === 429 ? 429 : 502).json({ error: M(req, "Échec de la génération vocale", "TTS generation failed") });
+      res.status(out.status === 429 ? 429 : 502).json({ error: "TTS generation failed" });
       return;
     }
     res.setHeader("Content-Type", out.mime);

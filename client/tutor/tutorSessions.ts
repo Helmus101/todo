@@ -141,12 +141,12 @@ export function relativeWhen(iso: string | undefined, now: number, lang: "fr" | 
   const t = Date.parse(String(iso || ""));
   if (!Number.isFinite(t)) return "";
   const days = Math.floor((now - t) / 86_400_000);
-  if (days <= 0) return lang === "en" ? "earlier today" : "tout à l'heure";
-  if (days === 1) return lang === "en" ? "yesterday" : "hier";
-  if (days < 7) return lang === "en" ? `${days} days ago` : `il y a ${days} jours`;
-  if (days < 14) return lang === "en" ? "last week" : "la semaine dernière";
-  if (days < 60) return lang === "en" ? `${Math.round(days / 7)} weeks ago` : `il y a ${Math.round(days / 7)} semaines`;
-  return lang === "en" ? "a while ago" : "il y a longtemps";
+  if (days <= 0) return "earlier today";
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days} days ago`;
+  if (days < 14) return "last week";
+  if (days < 60) return `${Math.round(days / 7)} weeks ago`;
+  return "a while ago";
 }
 
 /** The REAL memory sent up for Otto's opening line (see tutorOpener in server/claude.ts): the actual board

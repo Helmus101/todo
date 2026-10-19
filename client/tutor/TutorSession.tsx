@@ -79,8 +79,8 @@ export function mergeBoardById<T extends { id: string; at?: string; createdAt?: 
 export function friendlyExerciseText(text: string, en: boolean): string {
   const m = /^\s*\[(?:Exercise|Exercice)\]\s*(?:I answered|J'ai répondu)\s*["«]\s*([\s\S]*?)\s*["»]\s*—\s*([^\n(]*)/i.exec(text);
   if (!m) return hideToolLeaks(text);
-  const verdict = /NOT graded|non not/i.test(m[2]) ? (en ? "not graded (the key was off)" : "non noté (la clé était fausse)") : /PARTLY|en partie/i.test(m[2]) ? (en ? "partly right" : "en partie juste") : /\bright\b|juste/i.test(m[2]) && !/wrong|faux/i.test(m[2]) ? (en ? "✓ right" : "✓ juste") : (en ? "✗ not yet" : "✗ pas encore");
-  return `${en ? "My answer" : "Ma réponse"} : ${autoMathLine(m[1])} — ${verdict}`;
+  const verdict = /NOT graded|non not/i.test(m[2]) ? ("not graded (the key was off)") : /PARTLY|en partie/i.test(m[2]) ? ("partly right") : /\bright\b|juste/i.test(m[2]) && !/wrong|faux/i.test(m[2]) ? ("✓ right") : ("✗ not yet");
+  return `${"My answer"} : ${autoMathLine(m[1])} — ${verdict}`;
 }
 
 export function TutorSession({ userId, onExit, visionReady, sessionId, reviewView }: { userId: string | null; onExit: () => void; visionReady: boolean; sessionId?: string; reviewView?: string }) {
@@ -340,8 +340,8 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       if (sheetH > 0) setSheetSignal((s0) => ({ n: s0.n + 1, height: sheetH }));
       const wantsLook = !isAutoResult && asksToLook(message);
       const seen = await canvasRef.current?.readUnseenInk(wantsLook);
-      if (seen) message += "\n\n" + L(`[Ce que j'ai écrit/dessiné sur le tableau : ${seen}]`, `[What I wrote/drew on the board: ${seen}]`);
-      else if (wantsLook && !canvasRef.current?.hasInk()) message += "\n\n" + L("[Mon tableau est vide pour l'instant — je n'ai encore rien dessiné.]", "[My whiteboard is empty right now — I haven't drawn anything yet.]");
+      if (seen) message += "\n\n" + `[What I wrote/drew on the board: ${seen}]`;
+      else if (wantsLook && !canvasRef.current?.hasInk()) message += "\n\n" + "[My whiteboard is empty right now — I haven't drawn anything yet.]";
       // canvasMode: true — the Tutor UI has no way to OPEN a note/flashcard-deck/quiz artifact (onOpenNote/
       // onOpenDeck/onOpenQuiz are all no-ops below, since this screen is chat+board, not the task list's
       // artifact viewer). Without this flag the full tool set was still offered server-side, so the model
@@ -420,7 +420,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
         // student should ever have to read verbatim; `e.message` for those is generic browser text, not a
         // real server error. Only show the server's OWN message (it always sets `.status`, see api.ts's
         // `j()`); anything without one is a network-layer failure, so use the friendly fallback instead.
-        setError(e?.status != null ? e.message : L("J'ai perdu le fil. Redis-le ?", "I lost the thread. Say that again?"));
+        setError(e?.status != null ? e.message : "I lost the thread. Say that again?");
         if (override === undefined) setInput(original); // never the app's own "[Exercice] …" text, never the appended ink note
       }
     } finally {
@@ -454,7 +454,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   const sendingRef = useRef(false);
   sendingRef.current = sending;
   const device = useArduino(useCallback((b) => {
-    const en = L("fr", "en") === "en";
+    const en = "en" === "en";
     if (b === "mic") return; // voice mode stays the student's own click on screen — the device never switches it
     const m = buttonMessage(b, en);
     if (m && !sendingRef.current) void sendRef.current(m);
@@ -472,13 +472,11 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     }
     // A system-error result (the item's stored key disagreed with the independently computed value, spec §19.1)
     // is reported AS that, not as a miss: Otto must never treat it as evidence against the student.
-    resultsRef.current.push(L(
-      `[Exercice] J'ai répondu « ${r.given.slice(0, 120)} » — ${r.systemError ? "non noté : la clé du problème contredit la valeur vérifiée par le calcul" : r.correct ? "juste" : r.partial ? "en partie juste (une idée clé manque)" : "faux"} (essai n°${r.attempt}).`,
-      r.systemError
+    resultsRef.current.push(r.systemError
         ? `[Exercise] I answered "${r.given.slice(0, 120)}" — NOT graded: this problem's stored answer key contradicts the independently computed value (try #${r.attempt}).`
         : r.partial
           ? `[Exercise] I answered "${r.given.slice(0, 120)}" — PARTLY right: some of the key ideas, one still missing (try #${r.attempt}). Credit what's right, then ask for the missing piece.`
-          : `[Exercise] I answered "${r.given.slice(0, 120)}" — marked ${r.correct ? "right" : "wrong"} (try #${r.attempt}).`));
+          : `[Exercise] I answered "${r.given.slice(0, 120)}" — marked ${r.correct ? "right" : "wrong"} (try #${r.attempt}).`);
     setResultTick((n) => n + 1);
   }, [L]);
   // A board gap answered in place: graded by the server, then reported to Otto like an exercise result (the
@@ -498,18 +496,14 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     const key = `${entry.text}|${given}`.replace(/\s+/g, "").toLowerCase();
     if (reportedGapsRef.current.has(key)) return verdict;
     reportedGapsRef.current.add(key);
-    resultsRef.current.push(L(
-      `[Exercice] Au tableau, pour « ${line} », j'ai écrit « ${given.slice(0, 120)} » — ${verdict === "correct" ? "vérifié juste" : verdict === "system_error" ? "non noté : la clé écrite pour cette ligne contredit la clé recalculée par le code" : verdict === "incorrect" ? "vérifié faux" : "non vérifiable automatiquement"}.`,
-      verdict === "system_error"
+    resultsRef.current.push(verdict === "system_error"
         ? `[Exercise] On the board line "${line}" I wrote "${given.slice(0, 120)}" — NOT graded: the key stored for this line contradicts the key computed from the line itself. Say plainly that the app's key was wrong, not me, and continue.`
-        : `[Exercise] On the board line "${line}" I wrote "${given.slice(0, 120)}" — ${verdict === "correct" ? "checked right" : verdict === "incorrect" ? "checked wrong" : "couldn't be auto-checked"}.`));
+        : `[Exercise] On the board line "${line}" I wrote "${given.slice(0, 120)}" — ${verdict === "correct" ? "checked right" : verdict === "incorrect" ? "checked wrong" : "couldn't be auto-checked"}.`);
     setResultTick((n) => n + 1);
     return verdict;
   }, [task, L]);
   const onWidgetResult = useCallback((r: { type: string; caption: string; mistakes: number; total: number }) => {
-    resultsRef.current.push(L(
-      `[Activité] J'ai terminé « ${r.caption.slice(0, 80)} » (${r.type}) — ${r.mistakes === 0 ? "sans erreur" : `${r.mistakes} erreur${r.mistakes > 1 ? "s" : ""}`}.`,
-      `[Activity] I finished "${r.caption.slice(0, 80)}" (${r.type}) — ${r.mistakes === 0 ? "no slips" : `${r.mistakes} slip${r.mistakes > 1 ? "s" : ""}`}.`));
+    resultsRef.current.push(`[Activity] I finished "${r.caption.slice(0, 80)}" (${r.type}) — ${r.mistakes === 0 ? "no slips" : `${r.mistakes} slip${r.mistakes > 1 ? "s" : ""}`}.`);
     setResultTick((n) => n + 1);
   }, [L]);
   useEffect(() => {
@@ -631,7 +625,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       }
       setPendingActiveSession(null);
     } catch {
-      setError(L("La séance n'a pas démarré. Relance.", "The session didn't start. Try again."));
+      setError("The session didn't start. Try again.");
     } finally {
       setStartingSession(false);
     }
@@ -652,42 +646,42 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     const hasBoard = !!reviewSession.board?.length;
     const hasChat = !!reviewSession.chat?.length;
     const base = `/tutor/session/${reviewSession.id}`;
-    const dateStr = new Date(reviewSession.endTime).toLocaleDateString(L("fr-FR", "en-US"), { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    const dateStr = new Date(reviewSession.endTime).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
     return (
       <main className="list-wrap tutor-review">
-        <a href="/tutor" className="tutor-back-btn">← {L("Toutes les séances", "All sessions")}</a>
+        <a href="/tutor" className="tutor-back-btn">← {"All sessions"}</a>
         <div className="tutor-review-head">
-          <span className="tutor-review-subject">{reviewSession.subject || L("Séance passée", "Past session")}</span>
-          <span className="tutor-review-meta">{dateStr} · {reviewSession.messageCount} {L("messages", "messages")}</span>
+          <span className="tutor-review-subject">{reviewSession.subject || "Past session"}</span>
+          <span className="tutor-review-meta">{dateStr} · {reviewSession.messageCount} {"messages"}</span>
         </div>
         <div className="tutor-review-tabs">
           {hasBoard && (
             <a className={`tutor-review-tab${view === "board" ? " on" : ""}`} href={`${base}/board`} aria-current={view === "board" ? "page" : undefined}>
-              {L("Voir le tableau", "See the board")}
+              {"See the board"}
             </a>
           )}
           {hasChat && (
             <a className={`tutor-review-tab${view === "chat" ? " on" : ""}`} href={`${base}/chat`} aria-current={view === "chat" ? "page" : undefined}>
-              {L("Voir le chat", "See the chat")}
+              {"See the chat"}
             </a>
           )}
         </div>
         <div className="tutor-review-body">
           {!hasBoard && !hasChat ? (
-            <p className="tutor-review-empty">{L("Rien à revoir ici — cette séance n'a ni tableau ni chat sauvegardés.", "Nothing to review — this session has no saved board or chat.")}</p>
+            <p className="tutor-review-empty">{"Nothing to review — this session has no saved board or chat."}</p>
           ) : view === "board" ? (
-            hasBoard ? <BoardArtifact task={{ board: reviewSession.board } as unknown as WebTask} /> : <p className="tutor-review-empty">{L("Pas de tableau pour cette séance.", "No board for this session.")}</p>
+            hasBoard ? <BoardArtifact task={{ board: reviewSession.board } as unknown as WebTask} /> : <p className="tutor-review-empty">{"No board for this session."}</p>
           ) : hasChat ? (
             <div className="tutor-chat-history">
               {reviewSession.chat!.map((msg, i) => (
                 <div key={i} className={`tutor-chat-message ${msg.role}`}>
-                  <div className="tutor-chat-role">{msg.role === "user" ? L("Toi", "You") : L("Otto", "Otto")}</div>
-                  <div className="tutor-chat-text"><MathText text={friendlyExerciseText(msg.text, L("fr", "en") === "en")} /></div>
+                  <div className="tutor-chat-role">{msg.role === "user" ? "You" : "Otto"}</div>
+                  <div className="tutor-chat-text"><MathText text={friendlyExerciseText(msg.text, "en" === "en")} /></div>
                 </div>
               ))}
             </div>
           ) : (
-            <p className="tutor-review-empty">{L("Pas de chat pour cette séance.", "No chat for this session.")}</p>
+            <p className="tutor-review-empty">{"No chat for this session."}</p>
           )}
         </div>
       </main>
@@ -697,8 +691,8 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   if (loadError) {
     return (
       <main className="list-wrap"><div className="empty-state">
-        <h3>{L("Impossible de charger tes séances pour l'instant.", "Couldn't load your sessions right now.")}</h3>
-        <button className="btn primary" onClick={() => { mountFetchStartedRef.current = false; peekForActiveSession(); }}>{L("Réessayer", "Try again")}</button>
+        <h3>{"Couldn't load your sessions right now."}</h3>
+        <button className="btn primary" onClick={() => { mountFetchStartedRef.current = false; peekForActiveSession(); }}>{"Try again"}</button>
       </div></main>
     );
   }
@@ -713,22 +707,22 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           {/* The prototype's cream-circle face — two dots, no mouth. The one illustration the whole
               design system allows, reused on the landing and the session screens. */}
           <div className="tutor-face" aria-hidden><span className="tutor-face-eye" /><span className="tutor-face-eye" /></div>
-          <h2 className="tutor-landing-title">{L("Je suis Otto, ton partenaire de réflexion.", "I'm Otto, your thinking partner.")}</h2>
-          <p className="tutor-landing-sub">{L("Qu'est-ce qu'on aiguise aujourd'hui ? Je ne te donnerai pas les réponses — je te ferai les trouver.", "What are we sharpening today? I won't hand you answers — I'll make you find them.")}</p>
+          <h2 className="tutor-landing-title">{"I'm Otto, your thinking partner."}</h2>
+          <p className="tutor-landing-sub">{"What are we sharpening today? I won't hand you answers — I'll make you find them."}</p>
 
           {/* If there's an active session, show resume option */}
           {pendingActiveSession && (
             <div className="tutor-active-session-card">
               <div className="tutor-active-session-header">
-                <span className="tutor-active-session-badge">{L("En cours", "In progress")}</span>
+                <span className="tutor-active-session-badge">{"In progress"}</span>
                 <span className="tutor-active-session-subject">{pendingActiveSession.sourceSubject || ""}</span>
               </div>
               <p className="tutor-active-session-text">
-                {L("Tu as une séance en cours. Veux-tu la reprendre ?", "You have a session in progress. Resume it?")}
+                {"You have a session in progress. Resume it?"}
               </p>
               <div className="tutor-active-session-actions">
                 <button className="btn primary tutor-resume-btn" onClick={resumeActiveSession}>
-                  {L("Reprendre", "Resume")}
+                  {"Resume"}
                 </button>
               </div>
             </div>
@@ -744,13 +738,13 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
               value={selectedSubject}
               onChange={(e) => { setSelectedSubject(e.target.value); setTopic(""); }}
               className="tutor-start-select"
-              aria-label={L("Matière", "Subject")}
+              aria-label={"Subject"}
             >
-              <option value="">{L("Choisir une matière", "Choose a subject")}</option>
+              <option value="">{"Choose a subject"}</option>
               {subjectOptions.map((subj) => (
                 <option key={subj} value={subj}>{subj}</option>
               ))}
-              <option value={OTHER}>{L("Autre…", "Other…")}</option>
+              <option value={OTHER}>{"Other…"}</option>
             </select>
             <button
               className="btn primary tutor-start-btn"
@@ -758,8 +752,8 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
               disabled={startingSession || !chosenSubject}
             >
               {startingSession
-                ? L("Démarrage…", "Starting…")
-                : L("Parler avec Otto", "Start talking")}
+                ? "Starting…"
+                : "Start talking"}
             </button>
             <button
               type="button"
@@ -767,7 +761,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
               onClick={() => void startNewSession(false)}
               disabled={startingSession || !chosenSubject}
             >
-              {L("Écrire plutôt", "Type instead")}
+              {"Type instead"}
             </button>
           </div>
           {error ? <p className="tutor-error" role="alert">{error}</p> : null}
@@ -780,8 +774,8 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
                 value={topic}
                 maxLength={80}
                 autoFocus
-                aria-label={L("Quelle matière ?", "Which subject?")}
-                placeholder={L("Quelle matière ? ex. Théorie de la connaissance, Latin…", "Which subject? e.g. Theory of Knowledge, Latin…")}
+                aria-label={"Which subject?"}
+                placeholder={"Which subject? e.g. Theory of Knowledge, Latin…"}
                 onChange={(e) => setTopic(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && topic.trim()) void startNewSession(); }}
               />
@@ -791,32 +785,31 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           {/* Direct request: sessions are stored only in this browser now (client/localChatBoard.ts +
               tutorSessions.ts), so say so plainly — clearing site data is the one way to lose them. */}
           <p className="tutor-local-note" role="note">
-            {L("Tes séances sont enregistrées uniquement dans ce navigateur, pas dans le cloud. Ne supprime pas les cookies ni les données de ce site (et évite la navigation privée), sinon elles seront effacées. Elles ne te suivent pas sur un autre appareil.",
-              "Your sessions are saved only in this browser, not in the cloud. Don't clear cookies or this site's data (and avoid private browsing), or they'll be erased. They won't follow you to another device.")}
+            {"Your sessions are saved only in this browser, not in the cloud. Don't clear cookies or this site's data (and avoid private browsing), or they'll be erased. They won't follow you to another device."}
           </p>
 
           {pastSessions.length > 0 && (
             <div className="tutor-past-sessions">
               <button className="tutor-history-toggle" onClick={() => setShowHistory((v) => !v)}>
-                {showHistory ? <ChevronDown size={13} aria-hidden="true" /> : <ChevronRight size={13} aria-hidden="true" />}{L("Nos séances passées", "Our past sessions")} ({pastSessions.length})
+                {showHistory ? <ChevronDown size={13} aria-hidden="true" /> : <ChevronRight size={13} aria-hidden="true" />}{"Our past sessions"} ({pastSessions.length})
               </button>
               {showHistory && (
                 <ul className="tutor-history-list">
                   {pastSessions.map((s) => (
                     <li key={s.id} className="tutor-history-item">
                       <div className="tutor-history-date">
-                        {new Date(s.endTime).toLocaleDateString(L("fr-FR", "en-US"), { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                        {new Date(s.endTime).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                         {s.subject && <span className="tutor-history-subject"> · {s.subject}</span>}
                       </div>
                       <div className="tutor-history-summary">
                         <div className="tutor-history-summary-heading">
-                          <span>{L("Ce qu'on a travaillé", "What we worked on")}</span>
+                          <span>{"What we worked on"}</span>
                           <span className="tutor-history-message-count">
-                            {s.messageCount} {L("messages", "messages")}
+                            {s.messageCount} {"messages"}
                             {/* Undefined (no objectives were ever set this session) vs. "0/3" are different
                                 facts — only render when objectivesTotal is actually a number. */}
                             {typeof s.objectivesTotal === "number" && (
-                              <> · {s.objectivesCompleted ?? 0}/{s.objectivesTotal} {L("objectifs", "objectives")}</>
+                              <> · {s.objectivesCompleted ?? 0}/{s.objectivesTotal} {"objectives"}</>
                             )}
                           </span>
                         </div>
@@ -836,12 +829,12 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
                       <div className="tutor-history-actions">
                         {!!s.board?.length && (
                           <a href={`/tutor/session/${s.id}/board`} className="btn ghost xs tutor-history-view-board">
-                            {L("Voir le tableau", "See the board")}
+                            {"See the board"}
                           </a>
                         )}
                         {!!s.chat?.length && (
                           <a href={`/tutor/session/${s.id}/chat`} className="btn ghost xs tutor-history-view-chat">
-                            {L("Voir le chat", "See the chat")}
+                            {"See the chat"}
                           </a>
                         )}
                       </div>
@@ -876,16 +869,15 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   const leadFr = lastWhen ? `${cap(lastWhen)}, on` : "La dernière fois, on";
   const leadEn = lastWhen ? `${cap(lastWhen)} we` : "Last time we";
   const instantOpener = lastTopic
-    ? L(`Salut ! ${leadFr} a bossé sur « ${lastTopic} ». Qu'est-ce que tu en retiens ?`,
-        `Hey! ${leadEn} worked on "${lastTopic}". What do you still remember?`)
+    ? `Hey! ${leadEn} worked on "${lastTopic}". What do you still remember?`
     : subj
-      ? L(`Salut ! Montre-moi où tu en es en ${subj} : un énoncé, ou ce que tu as essayé.`, `Hey! Show me where you are in ${subj}: the problem, or what you've tried.`)
-      : L("Salut ! Montre-moi où tu en es : un énoncé, ou ce que tu as essayé.", "Hey! Show me where you are: the problem, or what you've tried.");
+      ? `Hey! Show me where you are in ${subj}: the problem, or what you've tried.`
+      : "Hey! Show me where you are: the problem, or what you've tried.";
   const openerText = instantOpener;
   const starters = [
-    { label: L("Je bloque sur un exercice", "I'm stuck — push me"), text: L("Je bloque sur un exercice.", "I'm stuck on a problem.") },
-    { label: L("Fais-moi comprendre un cours", "Make me understand a topic"), text: L("J'aimerais comprendre un chapitre.", "I'd like to understand a topic.") },
-    { label: L("Interroge-moi", "Test me"), text: L("Interroge-moi pour voir ce que je sais.", "Quiz me to see what I know.") },
+    { label: "I'm stuck — push me", text: "I'm stuck on a problem." },
+    { label: "Make me understand a topic", text: "I'd like to understand a topic." },
+    { label: "Test me", text: "Quiz me to see what I know." },
   ];
   // Right after the student has completed an exercise: offer the next move as one-tap choices (Otto also asks
   // what they'd like to do — see the persona's EXERCISE RESULTS rule) instead of leaving them at a bare "solved".
@@ -896,14 +888,14 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   const ic = { size: 14, "aria-hidden": true } as const;
   // Hick's law: never more than three one-tap choices at a time (anything else, they can simply type).
   const nextChips = [
-    { label: L("Un autre", "Another one"), text: L("J'en veux un autre comme celui-là.", "Another one like it, please.") },
-    { label: L("Plus dur", "Harder"), text: L("Donne-m'en un plus difficile.", "Give me a harder one.") },
-    { label: L("Revoir l'idée", "Go over the idea"), text: L("Reprenons l'idée derrière cet exercice.", "Let's go back over the idea behind that one.") },
+    { label: "Another one", text: "Another one like it, please." },
+    { label: "Harder", text: "Give me a harder one." },
+    { label: "Go over the idea", text: "Let's go back over the idea behind that one." },
   ];
   const followUps = [
-    { label: L("Un indice", "Hint"), text: L("Tu peux me donner un petit indice ?", "Can I have a small hint?") },
-    { label: L("Je suis perdu", "I'm lost"), text: L("Je suis perdu — on peut y aller plus doucement ?", "I'm lost — can we go smaller?") },
-    { label: L("Un autre", "Another one"), text: L("Compris ! Donne-m'en un autre à essayer.", "Got it! Give me another to try.") },
+    { label: "Hint", text: "Can I have a small hint?" },
+    { label: "I'm lost", text: "I'm lost — can we go smaller?" },
+    { label: "Another one", text: "Got it! Give me another to try." },
   ];
   // Gauth-style stage: ONE big canvas (Otto's lesson board with the student's ink over it) and Otto himself
   // as just an avatar docked at the bottom — no transcript. The student talks (or types) to the avatar and
@@ -925,24 +917,24 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
               {task.sourceSubject ? <span className="tutor-crumb-subject">{task.sourceSubject}</span> : null}
               {objs.length ? (
                 <button type="button" className="ts-objstrip-line ts-bar-plan" aria-expanded={objectivesOpen} aria-controls="ts-objectives" onClick={() => setObjectivesOpen((o) => !o)}
-                  title={objectivesOpen ? L("Masquer le plan", "Hide the plan") : L("Voir le plan de la séance", "See this session's plan")}>
-                  <span className="ts-objstrip-label">{current ? <MathText text={current.label} /> : L("Plan terminé", "Plan done")}</span>
+                  title={objectivesOpen ? "Hide the plan" : "See this session's plan"}>
+                  <span className="ts-objstrip-label">{current ? <MathText text={current.label} /> : "Plan done"}</span>
                   <span className="ts-objstrip-dots" aria-label={`${objDone}/${objs.length}`}>
                     {objs.map((o, i) => <i key={o.id || i} className={o.done ? "done" : o === current ? "current" : undefined} />)}
                   </span>
                   {typeof task.mastery === "number" ? <span className="ts-bar-mastery">{Math.round(task.mastery * 100)}%</span> : null}
                 </button>
               ) : null}
-              <DeviceButton status={device.status} onConnect={device.connect} onDisconnect={device.disconnect} en={L("fr", "en") === "en"} />
-              <button type="button" className="tutor-fs-btn" onClick={() => (fs ? exitFullscreen() : enterFullscreen())} aria-pressed={fs} aria-label={fs ? L("Quitter le plein écran", "Exit full screen") : L("Plein écran", "Full screen")} title={fs ? L("Quitter le plein écran", "Exit full screen") : L("Plein écran", "Full screen")}>
+              <DeviceButton status={device.status} onConnect={device.connect} onDisconnect={device.disconnect} en={"en" === "en"} />
+              <button type="button" className="tutor-fs-btn" onClick={() => (fs ? exitFullscreen() : enterFullscreen())} aria-pressed={fs} aria-label={fs ? "Exit full screen" : "Full screen"} title={fs ? "Exit full screen" : "Full screen"}>
                 {fs ? <Minimize2 size={14} aria-hidden="true" /> : <Maximize2 size={14} aria-hidden="true" />}
               </button>
               <button className="btn ghost tutor-end-btn" disabled={endingSession} onClick={() => { const real = (task.chat || []).filter((m) => m.role === "user").length >= 3; if (real) setReflectOpen(true); else void endSession(); }}>
-                {endingSession ? L("Fin…", "Ending…") : L("Terminer", "End")}
+                {endingSession ? "Ending…" : "End"}
               </button>
             </header>
             {objs.length && objectivesOpen ? (
-              <ol className="ts-objstrip-list ts-plan-list" id="ts-objectives" aria-label={L("Plan de la séance", "Session plan")}>
+              <ol className="ts-objstrip-list ts-plan-list" id="ts-objectives" aria-label={"Session plan"}>
                 {objs.map((o, i) => (
                   <li key={o.id || `${i}:${o.label}`} className={o.done ? "done" : o === current ? "current" : undefined}>
                     <span className="ts-obj-mark" aria-hidden="true">{o.done ? "✓" : o === current ? "●" : "○"}</span>
@@ -954,7 +946,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           </>
         );
       })()}
-      <section className="ts-canvas" aria-label={L("Tableau", "Board")}>
+      <section className="ts-canvas" aria-label={"Board"}>
         <div className="tutor-board-body ts-board-body" ref={setSurfaceEl} style={{ display: desmosOpen ? "none" : undefined }}>
           <BoardArtifact task={task} onUndo={undoCount > 0 ? undoBoard : undefined} writing={sending} onProblemResult={onProblemResult} onCheckProblem={(p, given) => api.checkProblem(task.id, p, given)} onWidgetResult={onWidgetResult} sheetSignal={sheetSignal} onGapCheck={onGapCheck} />
         </div>
@@ -984,28 +976,28 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           data-tour="ts-chat"
           aria-expanded={chatDrawer}
           aria-controls="tutor-history-drawer"
-          aria-label={`${L("Historique de la conversation", "Conversation history")}${task.chat?.length ? ` (${task.chat.length} ${L("messages", "messages")})` : ""}`}
-          title={chatDrawer ? L("Masquer l'historique", "Hide history") : L("Afficher l'historique", "Show history")}
+          aria-label={`${"Conversation history"}${task.chat?.length ? ` (${task.chat.length} ${"messages"})` : ""}`}
+          title={chatDrawer ? "Hide history" : "Show history"}
           onClick={() => setChatDrawer((v) => !v)}
         >
           <MessageSquare size={13} aria-hidden="true" />
-          <span className="tutor-dock-chat-toggle-label">{L("Historique", "History")}</span>
+          <span className="tutor-dock-chat-toggle-label">{"History"}</span>
           {task.chat?.length ? <span className="tutor-dock-chat-toggle-count">{task.chat.length}</span> : null}
           <ChevronDown size={13} aria-hidden="true" className="tutor-dock-chat-toggle-chev" />
         </button>
         {chatDrawer && (
           <div className="tutor-dock-chat" id="tutor-history-drawer">
             <div className="tutor-dock-chat-head">
-              <span>{task.chat?.length || 0} {L("messages", "messages")}</span>
-              <button type="button" className="tutor-dock-chat-close" onClick={() => setChatDrawer(false)} aria-label={L("Réduire l'historique", "Collapse history")}><Minimize2 size={13} aria-hidden="true" />{L("Réduire", "Collapse")}</button>
+              <span>{task.chat?.length || 0} {"messages"}</span>
+              <button type="button" className="tutor-dock-chat-close" onClick={() => setChatDrawer(false)} aria-label={"Collapse history"}><Minimize2 size={13} aria-hidden="true" />{"Collapse"}</button>
             </div>
             <div className="tutor-chat-history">
-              {!task.chat?.length && <p className="tutor-chat-empty">{L("Rien encore — dis bonjour à Otto.", "Nothing yet — say hi to Otto.")}</p>}
+              {!task.chat?.length && <p className="tutor-chat-empty">{"Nothing yet — say hi to Otto."}</p>}
               {/* Otto's latest reply is already in the bubble right below — listing it here too showed it twice. */}
               {(task.chat || []).slice(0, task.chat?.length && task.chat[task.chat.length - 1].role === "assistant" ? -1 : undefined).map((msg, i) => (
                 <div key={i} className={`tutor-chat-message ${msg.role}`}>
-                  <div className="tutor-chat-role">{msg.role === "user" ? L("Toi", "You") : "Otto"}</div>
-                  <div className="tutor-chat-text"><MathText text={friendlyExerciseText(msg.text, L("fr", "en") === "en")} /></div>
+                  <div className="tutor-chat-role">{msg.role === "user" ? "You" : "Otto"}</div>
+                  <div className="tutor-chat-text"><MathText text={friendlyExerciseText(msg.text, "en" === "en")} /></div>
                 </div>
               ))}
               <div ref={chatEndRef} />
@@ -1019,33 +1011,33 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           onOpenNote={noop} onOpenDeck={noop} onOpenQuiz={noop}
           emptyText={openerText}
           quickReplies={fresh ? starters : justFinishedExercise ? nextChips : followUps}
-          placeholder={L("Parle ou écris à Otto…", "Talk or type to Otto…")}
+          placeholder={"Talk or type to Otto…"}
           onVoiceStateChange={handleVoiceState}
           talkRequest={talkRequest}
         />
       </div>
       {reflectOpen && (
-        <div className="tutor-reflect-overlay" role="dialog" aria-modal="true" aria-label={L("Avant de partir", "Before you go")} onClick={() => setReflectOpen(false)}>
+        <div className="tutor-reflect-overlay" role="dialog" aria-modal="true" aria-label={"Before you go"} onClick={() => setReflectOpen(false)}>
           <div className="tutor-reflect" onClick={(e) => e.stopPropagation()}>
-            <h3>{L("Avant de partir", "Before you go")}</h3>
+            <h3>{"Before you go"}</h3>
             {(() => {
-              const en = L("fr", "en") === "en";
+              const en = "en" === "en";
               const r = buildSessionRecap(task.board || [], task.problems || [], task.objectives || [], en);
               if (!r.showed.length && !r.developing.length && !r.strategies.length && !r.reviewQuestion) return null;
               return (
                 <div className="tutor-recap">
-                  {r.showed.length > 0 && <section><h4>{L("Tu as montré", "You showed")}</h4><ul>{r.showed.map((x, i) => <li key={i}><MathText text={x} /></li>)}</ul></section>}
-                  {r.developing.length > 0 && <section><h4>{L("À retravailler", "Still developing")}</h4><ul>{r.developing.map((x, i) => <li key={i}><MathText text={x} /></li>)}</ul></section>}
-                  {r.strategies.length > 0 && <section><h4>{L("Tes méthodes", "Your strategies")}</h4><ul>{r.strategies.map((x, i) => <li key={i}><MathText text={x} /></li>)}</ul></section>}
+                  {r.showed.length > 0 && <section><h4>{"You showed"}</h4><ul>{r.showed.map((x, i) => <li key={i}><MathText text={x} /></li>)}</ul></section>}
+                  {r.developing.length > 0 && <section><h4>{"Still developing"}</h4><ul>{r.developing.map((x, i) => <li key={i}><MathText text={x} /></li>)}</ul></section>}
+                  {r.strategies.length > 0 && <section><h4>{"Your strategies"}</h4><ul>{r.strategies.map((x, i) => <li key={i}><MathText text={x} /></li>)}</ul></section>}
                   {r.reviewQuestion && <p className="tutor-recap-review"><MathText text={r.reviewQuestion} /></p>}
                 </div>
               );
             })()}
-            <p>{L("Qu'est-ce qui t'a fait « tilt » aujourd'hui, et qu'est-ce que tu ferais différemment la prochaine fois ?", "What's one thing that clicked today, and what would you do differently next time?")}</p>
-            <textarea className="tutor-reflect-input" rows={4} autoFocus value={reflectText} onChange={(e) => setReflectText(e.target.value)} placeholder={L("Écris quelques mots… (facultatif)", "A few words… (optional)")} aria-label={L("Écris quelques mots… (facultatif)", "A few words… (optional)")} />
+            <p>{"What's one thing that clicked today, and what would you do differently next time?"}</p>
+            <textarea className="tutor-reflect-input" rows={4} autoFocus value={reflectText} onChange={(e) => setReflectText(e.target.value)} placeholder={"A few words… (optional)"} aria-label={"A few words… (optional)"} />
             <div className="tutor-reflect-actions">
-              <button type="button" className="btn ghost" onClick={() => { setReflectOpen(false); void endSession(""); }}>{L("Passer", "Skip")}</button>
-              <button type="button" className="btn primary" onClick={() => { setReflectOpen(false); void endSession(reflectText); }}>{L("Enregistrer et terminer", "Save & end")}</button>
+              <button type="button" className="btn ghost" onClick={() => { setReflectOpen(false); void endSession(""); }}>{"Skip"}</button>
+              <button type="button" className="btn primary" onClick={() => { setReflectOpen(false); void endSession(reflectText); }}>{"Save & end"}</button>
             </div>
           </div>
         </div>

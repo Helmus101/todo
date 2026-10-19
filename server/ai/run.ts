@@ -527,7 +527,7 @@ export async function runTask(
       steps = dropUnanchoredSteps(steps, (text) => anchoredTexts.has(text));
       if (steps.length < beforeAnchor) {
         console.log(`${new Date().toISOString()} [ai] step 4: dropped ${beforeAnchor - steps.length} step(s) not tied to any part of the definition of done`);
-        audit.push({ at: new Date().toISOString(), kind: "guardrail", label: fr ? `Étape(s) retirée(s) : aucun lien avec la définition de terminé` : `Removed step(s) that didn't advance any part of the definition of done` });
+        audit.push({ at: new Date().toISOString(), kind: "guardrail", label: `Removed step(s) that didn't advance any part of the definition of done` });
       }
     }
     // Apply the same quality gates every step list passes through.
@@ -569,7 +569,7 @@ export async function runTask(
     // full list; only shapes with no such signal at all get trimmed to the one-step + first-action form.
     if (!taskNeedsStepList({ title: task.title, why: task.why, goal: definitionOfDone, taskType: task.taskType }) && steps.length > 1) {
       steps = steps.slice(0, 1);
-      audit.push({ at: new Date().toISOString(), kind: "guardrail", label: fr ? `Plan réduit à une seule action : petite tâche d'une seule session` : `Plan trimmed to a single action — small, single-session task` });
+      audit.push({ at: new Date().toISOString(), kind: "guardrail", label: `Plan trimmed to a single action — small, single-session task` });
     }
     // Observational only — never deletes a step. stepsMatchTitle/isFolderHousekeepingDrift are whole-plan
     // drift signals; this file has repeated scars from keyword-based DELETION filters "verified live to
@@ -594,7 +594,7 @@ export async function runTask(
     // If stepsOut itself is empty (AI returned no steps), create a fallback step
     if (!steps.length) {
       console.warn(`${new Date().toISOString()} [ai] step 4: no steps from AI, creating fallback`);
-      steps = [{ text: fr ? `Avancer sur : ${task.title}` : `Continue working on: ${task.title}`, automatable: false }];
+      steps = [{ text: `Continue working on: ${task.title}`, automatable: false }];
     }
     if (stepsOut.definitionOfDone && String(stepsOut.definitionOfDone).trim()) {
       // The model may refine the definition of done during step planning — keep it.
@@ -788,7 +788,7 @@ export async function runTask(
         const deck = makeDeck(deckOut);
         if ("deck" in deck) {
           flashcards.push(deck.deck);
-          did.push(fr ? `Créé un jeu de flashcards : ${deck.deck.title}` : `Created flashcard deck: ${deck.deck.title}`);
+          did.push(`Created flashcard deck: ${deck.deck.title}`);
           audit.push({ at: new Date().toISOString(), kind: "artifact", label: `flashcards: ${deck.deck.title}` });
           console.log(`${new Date().toISOString()} [ai] step 5: created flashcard deck with ${deck.deck.cards.length} cards`);
         } else {
@@ -809,7 +809,7 @@ export async function runTask(
         const quiz = makeQuiz(quizOut);
         if ("quiz" in quiz) {
           quizzes.push(quiz.quiz);
-          did.push(fr ? `Créé un quiz : ${quiz.quiz.title}` : `Created quiz: ${quiz.quiz.title}`);
+          did.push(`Created quiz: ${quiz.quiz.title}`);
           audit.push({ at: new Date().toISOString(), kind: "artifact", label: `quiz: ${quiz.quiz.title}` });
           console.log(`${new Date().toISOString()} [ai] step 5: created quiz with ${quiz.quiz.questions.length} questions`);
         } else {
@@ -879,7 +879,7 @@ export async function runTask(
               const body = String(compressed?.body || "").trim();
               const rewritten = body && countWords(body) < wc ? makeNote({ title: note.note.title, body }) : null;
               if (rewritten && "note" in rewritten) {
-                audit.push({ at: new Date().toISOString(), kind: "guardrail", label: fr ? `Fiche raccourcie : ${wc} → ${countWords(rewritten.note.body)} mots` : `Brief compressed: ${wc} → ${countWords(rewritten.note.body)} words` });
+                audit.push({ at: new Date().toISOString(), kind: "guardrail", label: `Brief compressed: ${wc} → ${countWords(rewritten.note.body)} words` });
                 console.log(`${new Date().toISOString()} [ai] step 5: compressed an over-long brief for a small task (${wc} → ${countWords(rewritten.note.body)} words)`);
                 note.note = rewritten.note;
               } else {
@@ -906,13 +906,13 @@ export async function runTask(
                 const after = briefGaps(rewritten.note.body, definitionOfDone);
                 if (!after.missingSection || after.uncovered.length < gaps.uncovered.length) {
                   note.note = rewritten.note;
-                  audit.push({ at: new Date().toISOString(), kind: "guardrail", label: fr ? "Fiche complétée : elle couvre maintenant la définition de « terminé »" : "Brief completed: it now covers the definition of done" });
+                  audit.push({ at: new Date().toISOString(), kind: "guardrail", label: "Brief completed: it now covers the definition of done" });
                 }
               }
             }
           }
           notes.push(note.note);
-          did.push(fr ? `Créé une fiche : ${note.note.title}` : `Created note: ${note.note.title}`);
+          did.push(`Created note: ${note.note.title}`);
           audit.push({ at: new Date().toISOString(), kind: "artifact", label: `note: ${note.note.title}` });
           console.log(`${new Date().toISOString()} [ai] step 5: created note`);
         } else {
@@ -951,7 +951,7 @@ export async function runTask(
       const beforeArtifactDedupe = steps.length;
       steps = dropRedundantArtifactSteps(steps, { note: notes.length > 0, flashcards: flashcards.length > 0, quiz: quizzes.length > 0 });
       if (steps.length < beforeArtifactDedupe) {
-        audit.push({ at: new Date().toISOString(), kind: "guardrail", label: fr ? `Étape retirée : Otto avait déjà créé ce document` : `Removed a step that asked for something Otto had already made` });
+        audit.push({ at: new Date().toISOString(), kind: "guardrail", label: `Removed a step that asked for something Otto had already made` });
       }
 
       // The old version of this pass asked one yes/no question, was told to "say yes" on anything that
@@ -1013,9 +1013,9 @@ export async function runTask(
         steps = dropTrivialSteps(steps);
         if (uncovered.length) {
           console.log(`${new Date().toISOString()} [ai] DoD repair: parts with no step — ${uncovered.join("; ")}`);
-          audit.push({ at: new Date().toISOString(), kind: "guardrail", label: fr ? `Étapes ajoutées pour couvrir la définition de terminé : ${uncovered.join(" ; ")}` : `Added steps so the plan covers every part of the definition of done: ${uncovered.join("; ")}` });
+          audit.push({ at: new Date().toISOString(), kind: "guardrail", label: `Added steps so the plan covers every part of the definition of done: ${uncovered.join("; ")}` });
         } else if (grew || reordered) {
-          audit.push({ at: new Date().toISOString(), kind: "guardrail", label: fr ? `Étapes réordonnées / séparées pour suivre l'ordre réel du travail` : `Steps reordered and split so they follow the real order of the work` });
+          audit.push({ at: new Date().toISOString(), kind: "guardrail", label: `Steps reordered and split so they follow the real order of the work` });
         }
       } else if (!repaired.length) {
         // ask() returned {} or nothing usable — the call failed even after its own retry. Falling through
@@ -1042,19 +1042,19 @@ export async function runTask(
 
     // Build the synthesis line.
     const didLines: string[] = [];
-    if (allSearchResults.length) didLines.push(fr ? `Recherche web effectuée (${allSearchResults.length} requêtes)` : `Web research done (${allSearchResults.length} queries)`);
-    if (notes.length) didLines.push(fr ? `Fiche(s) créée(s)` : `Note(s) created`);
-    if (flashcards.length) didLines.push(fr ? `Flashcards créées` : `Flashcards created`);
-    if (quizzes.length) didLines.push(fr ? `Quiz créé` : `Quiz created`);
+    if (allSearchResults.length) didLines.push(`Web research done (${allSearchResults.length} queries)`);
+    if (notes.length) didLines.push(`Note(s) created`);
+    if (flashcards.length) didLines.push(`Flashcards created`);
+    if (quizzes.length) didLines.push(`Quiz created`);
     const synthesis = didLines.length
-      ? (fr ? `${didLines.join(", ")}. ${steps.length} étape(s) restante(s).` : `${didLines.join(", ")}. ${steps.length} step(s) left.`)
-      : (fr ? `Analyse terminée. ${steps.length} étape(s) à faire.` : `Analysis done. ${steps.length} step(s) to do.`);
+      ? (`${didLines.join(", ")}. ${steps.length} step(s) left.`)
+      : (`Analysis done. ${steps.length} step(s) to do.`);
 
     return {
-      context: context || (fr ? "Analyse basée sur la tâche elle-même." : "Analyzed from the task itself."),
+      context: context || ("Analyzed from the task itself."),
       synthesis,
       did: did.length ? did : [],
-      steps: steps.length ? steps : [{ text: fr ? `Avancer sur : ${task.title}` : `Continue working on: ${task.title}`, automatable: false }],
+      steps: steps.length ? steps : [{ text: `Continue working on: ${task.title}`, automatable: false }],
       ...(firstActionText && steps.some((st) => !st.automatable && !st.done) ? { firstAction: {
         text: firstActionText,
         ...(Number.isInteger(firstActionMinutes) && firstActionMinutes >= 1 && firstActionMinutes <= 10 ? { minutes: firstActionMinutes } : {}),
@@ -1072,9 +1072,9 @@ export async function runTask(
     console.error(`${new Date().toISOString()} [ai] runTask error: ${e?.message || e}`);
     return {
       context,
-      synthesis: fr ? "Erreur lors de l'analyse. Réessaie." : "Error during analysis. Retry.",
+      synthesis: "Error during analysis. Retry.",
       did: [],
-      steps: [{ text: fr ? `Avancer sur : ${task.title}` : `Continue working on: ${task.title}`, automatable: false }],
+      steps: [{ text: `Continue working on: ${task.title}`, automatable: false }],
       links: [],
       sendables: [],
       notes: notes.length ? notes : undefined,

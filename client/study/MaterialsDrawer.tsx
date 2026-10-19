@@ -36,18 +36,18 @@ export function MaterialsDrawer({ materials, onClose, onOpenArtifact, onAddFiles
     if (type === "note") return "▤";
     if (type === "flashcard") return <Layers size={12} aria-hidden="true" />;
     if (type === "quiz") return "?";
-    return L("Lien", "Link");
+    return "Link";
   };
 
   return (
     <SmSurface variant="drawer" closing={closing} className="sm-drawer">
       <div className="sm-drawer-header">
-        <span>{L("MATÉRIEL", "MATERIALS")}</span>
-        <button className="sm-drawer-close" aria-label={L("Fermer", "Close")} onClick={doClose}>×</button>
+        <span>{"MATERIALS"}</span>
+        <button className="sm-drawer-close" aria-label={"Close"} onClick={doClose}>×</button>
       </div>
       <div className="sm-drawer-body">
         {materials.length === 0 ? (
-          <p className="sm-drawer-empty">{L("Aucun matériel pour cette session.", "No materials for this session.")}</p>
+          <p className="sm-drawer-empty">{"No materials for this session."}</p>
         ) : (
           <ul className="sm-material-list">
             {materials.map(m => (
@@ -57,9 +57,9 @@ export function MaterialsDrawer({ materials, onClose, onOpenArtifact, onAddFiles
                 <button
                   className="sm-mat-open"
                   onClick={() => onOpenArtifact(m)}
-                  title={L("Ouvrir sur le bureau", "Open on canvas")}
+                  title={"Open on canvas"}
                 >
-                  {L("Ouvrir ↗", "Open ↗")}
+                  {"Open ↗"}
                 </button>
               </li>
             ))}
@@ -69,7 +69,7 @@ export function MaterialsDrawer({ materials, onClose, onOpenArtifact, onAddFiles
             used to mean closing out and starting over just to reattach it. */}
         <div className="sm-material-add">
           <button className="sm-btn sm-btn-ghost sm-btn-sm" onClick={() => fileInputRef.current?.click()}>
-            {L("+ Ajouter un fichier", "+ Add a file")}
+            {"+ Add a file"}
           </button>
           <input
             ref={fileInputRef}
@@ -84,9 +84,9 @@ export function MaterialsDrawer({ materials, onClose, onOpenArtifact, onAddFiles
               value={linkInput}
               onChange={(e) => setLinkInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && submitLink()}
-              placeholder={L("Colle un lien (ou une URL YouTube)…", "Paste a link (or YouTube URL)…")} aria-label={L("Colle un lien (ou une URL YouTube)…", "Paste a link (or YouTube URL)…")}
+              placeholder={"Paste a link (or YouTube URL)…"} aria-label={"Paste a link (or YouTube URL)…"}
             />
-            <button className="sm-btn sm-btn-ghost sm-btn-sm" onClick={submitLink} disabled={!linkInput.trim()}>{L("Ajouter", "Add")}</button>
+            <button className="sm-btn sm-btn-ghost sm-btn-sm" onClick={submitLink} disabled={!linkInput.trim()}>{"Add"}</button>
           </div>
         </div>
       </div>

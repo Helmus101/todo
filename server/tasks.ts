@@ -253,9 +253,8 @@ const DATE_FR_RE = /\b(\d{1,2})\s+(janvier|f[ée]vrier|mars|avril|mai|juin|juill
  *  it's read as next year's occurrence (a birthday, an annual deadline) rather than a stale past date. */
 export function extractDateFromText(text: string, now: Date = new Date()): string | undefined {
   const enMatch = DATE_EN_RE.exec(text);
-  const frMatch = enMatch ? null : DATE_FR_RE.exec(text); // English checked first — "may" ⊂ both patterns' word sets, no overlap risk either way, but keep it deterministic
-  const monthWord = (enMatch ? enMatch[1] : frMatch?.[2])?.toLowerCase().replace(/\.$/, "");
-  const day = Number(enMatch ? enMatch[2] : frMatch?.[1]);
+  const monthWord = enMatch?.[1]?.toLowerCase().replace(/\.$/, "");
+  const day = Number(enMatch?.[2]);
   if (!monthWord) return undefined;
   const month = MONTH_NAMES[monthWord];
   if (month === undefined || !Number.isFinite(day) || day < 1 || day > 31) return undefined;
@@ -1074,8 +1073,8 @@ export function homeworkTaskTitle(subject: string | undefined, snippet: string, 
   const due = (dueIso || "").slice(0, 10);
   const s = subject?.trim();
   return (s
-    ? (en ? `${s} — homework due ${due}` : `${s} — devoir pour le ${due}`)
-    : (en ? `Homework due ${due}` : `Devoirs pour le ${due}`)
+    ? (`${s} — homework due ${due}`)
+    : (`Homework due ${due}`)
   ).slice(0, 120);
 }
 export function forceWeekCoverage(
@@ -1108,14 +1107,14 @@ export function forceWeekCoverage(
       // Approaches HL" — subject-only names): homework takes its full name from the énoncé via
       // homeworkTaskTitle; the test branch already has a proper action line.
       title: (isTest
-        ? (en ? `Start reviewing for the ${c.subject || "class"} test` : `Commencer à réviser pour le contrôle de ${c.subject || "la matière"}`)
+        ? (`Start reviewing for the ${c.subject || "class"} test`)
         : homeworkTaskTitle(c.subject, c.snippet, en, c.timestamp)).slice(0, 120),
       // "Due this week" used to be hardcoded here even for items up to 21 days out once daysAhead was
       // widened past WEEK_COVERAGE_DAYS — genuinely misleading for something 3 weeks away. Phrase off the
       // real daysLeft instead: still "this week" language when it actually is, a plain due-date line otherwise.
       why: daysLeft <= 7
-        ? (en ? "Due this week — from Pronote." : "À faire cette semaine — vu sur Pronote.")
-        : (en ? "From Pronote — not marked done yet." : "Vu sur Pronote — pas encore marqué comme fait."),
+        ? ("Due this week — from Pronote.")
+        : ("From Pronote — not marked done yet."),
       when: c.timestamp,
       source: "pronote", risk: "low", urgency, importance,
       anchorKey: c.anchorKey,
@@ -1206,7 +1205,7 @@ export function ensurePronoteLinks<T extends { source?: string; links?: TaskLink
     if (t.source !== "pronote") return t;
     const links = t.links || [];
     if (links.some((l) => l.url === url)) return t;
-    return { ...t, links: [...links, { label: en ? "Open in Pronote" : "Ouvrir dans Pronote", url }].slice(0, 6) };
+    return { ...t, links: [...links, { label: "Open in Pronote", url }].slice(0, 6) };
   });
 }
 
@@ -1849,8 +1848,8 @@ export function recoverTutorTask(id: string, body: any, existing: WebTask[], en:
   const e = eisenhower(0, 0);
   return {
     id,
-    title: subject ? `${subject} session` : (en ? "Free study session" : "Séance de révision libre"),
-    why: en ? "Started on demand, not tied to a task." : "Lancée à la demande, sans tâche associée.",
+    title: subject ? `${subject} session` : ("Free study session"),
+    why: "Started on demand, not tied to a task.",
     source: "freestudy", risk: "low",
     urgency: 0, importance: 0, quadrant: e.quadrant, score: e.score, status: "needs_review",
     createdAt, updatedAt: new Date().toISOString(), anchorKey: `freestudy:${id}`,

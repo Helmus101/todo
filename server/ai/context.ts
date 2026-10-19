@@ -46,13 +46,9 @@ export const CHAT_LANGUAGE_OVERRIDE = `\n\nCHAT LANGUAGE: the LANGUAGE instructi
   `no signal (e.g. just "salut" or "hey").\n`;
 
 export function languageLine(p?: Profile): string {
-  const lang = p?.language === "en" ? "en" : "fr";
-  return (lang === "en"
-    ? `\n\nLANGUAGE: write EVERY user-facing string in ENGLISH (task titles, "why", steps, context, synthesis, ` +
-      `chat replies) — regardless of what language the source material (an email, a document) happens to be in.\n`
-    : `\n\nLANGUAGE: write EVERY user-facing string in FRENCH (tu, not vous — talk to the student like a peer, ` +
-      `not an administrator) — task titles, "why", steps, context, synthesis, chat replies — regardless of what ` +
-      `language the source material (an email, a document) happens to be in.\n`) + NO_MARKDOWN_LINE;
+  const lang = "en" as "fr" | "en";
+  return ((`\n\nLANGUAGE: write EVERY user-facing string in ENGLISH (task titles, "why", steps, context, synthesis, ` +
+      `chat replies) — regardless of what language the source material (an email, a document) happens to be in.\n`)) + NO_MARKDOWN_LINE;
 }
 
 /** No track picker anymore — the student never declares IB vs BFI vs other, so Otto has to recognize the

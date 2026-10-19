@@ -25,30 +25,30 @@ export function registerAuthRoutes(app: express.Express): void {
     const birthYear = req.body?.birthYear ? parseInt(req.body.birthYear) : undefined;
     const isChildAccount = req.body?.isChildAccount === true;
     
-    if (!validEmail(email) || password.length < 8 || password.length > 200) { res.status(400).json({ error: M(req, "Entre un email valide et un mot de passe entre 8 et 200 caractères.", "Enter a valid email and a password between 8 and 200 characters.") }); return; }
+    if (!validEmail(email) || password.length < 8 || password.length > 200) { res.status(400).json({ error: "Enter a valid email and a password between 8 and 200 characters." }); return; }
     
     // For child accounts, require birth year and parental consent
     if (isChildAccount) {
       if (!birthYear || birthYear < 2000 || birthYear > new Date().getFullYear()) {
-        res.status(400).json({ error: M(req, "L'année de naissance est requise pour les comptes d'enfants.", "Birth year is required for child accounts.") }); return;
+        res.status(400).json({ error: "Birth year is required for child accounts." }); return;
       }
       if (req.body?.parentalConsent !== true) {
-        res.status(400).json({ error: M(req, "Le consentement parental est requis pour les comptes d'enfants.", "Parental consent is required for child accounts.") }); return;
+        res.status(400).json({ error: "Parental consent is required for child accounts." }); return;
       }
     } else {
       // Adult accounts: require 15+ consent
-      if (req.body?.consent !== true) { res.status(400).json({ error: M(req, "Confirme que tu as 15 ans ou plus, ou qu'un parent a créé ce compte.", "Please confirm you're 15 or older, or that a parent set this account up for you.") }); return; }
+      if (req.body?.consent !== true) { res.status(400).json({ error: "Please confirm you're 15 or older, or that a parent set this account up for you." }); return; }
     }
     
-    if (!cloudEnabled()) { res.status(500).json({ error: M(req, "Le stockage des comptes n'est pas configuré sur le serveur (Supabase).", "Account storage isn't configured on the server (Supabase).") }); return; }
-    if (await findAuthUserByEmail(email)) { res.status(409).json({ error: M(req, "Un compte existe déjà avec cet email — connecte-toi plutôt.", "An account with that email already exists — log in instead.") }); return; }
-    if (!(await createAuthUser(email, password))) { res.status(500).json({ error: M(req, "Impossible de créer le compte.", "Couldn't create the account.") }); return; }
+    if (!cloudEnabled()) { res.status(500).json({ error: "Account storage isn't configured on the server (Supabase)." }); return; }
+    if (await findAuthUserByEmail(email)) { res.status(409).json({ error: "An account with that email already exists — log in instead." }); return; }
+    if (!(await createAuthUser(email, password))) { res.status(500).json({ error: "Couldn't create the account." }); return; }
     // Regenerate the session id on every privilege change (login/signup) — never write the authenticated
     // user onto a pre-existing session id. Without this, a session id fixed on a victim's browser BEFORE
     // they sign up (e.g. planted via an unrelated XSS/subdomain trick) would become a live authenticated
     // session the moment they complete signup — classic session fixation.
     req.session.regenerate((err) => {
-      if (err) { res.status(500).json({ error: M(req, "Impossible de créer le compte — réessaie.", "Couldn't create the account — try again.") }); return; }
+      if (err) { res.status(500).json({ error: "Couldn't create the account — try again." }); return; }
       req.session.user = email;
       // Must explicitly reset these, exactly like /api/auth/login does — if this browser's session cookie
       // already had another account's tasks/profile in it (e.g. someone created a new account without signing
@@ -98,7 +98,7 @@ export function registerAuthRoutes(app: express.Express): void {
     // Without this, verifyAuthPassword() always returns false when Supabase isn't configured (e.g. local dev
     // with no .env set up) and login falls straight through to "Wrong email or password" — sending you down
     // the wrong path (retyping/resetting a password that was never the actual problem). Same check signup has.
-    if (!cloudEnabled()) { res.status(500).json({ error: M(req, "Le stockage des comptes n'est pas configuré sur le serveur (Supabase) — la connexion ne peut pas fonctionner tant que ce n'est pas réglé.", "Account storage isn't configured on the server (Supabase) — sign-in can't work until that's set.") }); return; }
+    if (!cloudEnabled()) { res.status(500).json({ error: "Account storage isn't configured on the server (Supabase) — sign-in can't work until that's set." }); return; }
     // Verified against Supabase Auth directly now (verifyAuthPassword, server/store.ts) — no more bcrypt
     // compare against a hash Otto stored itself. The old timing-side-channel guard here (always running
     // bcrypt against a fixed dummy hash so a nonexistent account took the same time as a wrong password on a
@@ -109,12 +109,12 @@ export function registerAuthRoutes(app: express.Express): void {
     const validPassword = await verifyAuthPassword(email, password);
     if (!validPassword) {
       void recordEvent(email, "login_failed", {}); // never the password — email only, for brute-force visibility
-      res.status(401).json({ error: M(req, "Email ou mot de passe incorrect.", "Wrong email or password.") });
+      res.status(401).json({ error: "Wrong email or password." });
       return;
     }
     // Regenerate the session id on login — see the signup handler's comment on why (session fixation).
     req.session.regenerate(async (err) => {
-      if (err) { res.status(500).json({ error: M(req, "Impossible de te connecter — réessaie.", "Couldn't log you in — try again.") }); return; }
+      if (err) { res.status(500).json({ error: "Couldn't log you in — try again." }); return; }
       req.session.user = email;
       // Bring back this account's saved profile + tasks. (App connections live in Composio, keyed by this
       // same account email, so they're already linked — nothing to restore here.)
@@ -137,8 +137,8 @@ export function registerAuthRoutes(app: express.Express): void {
   // IP (rateLimit) and, inside the handler, best-effort against hammering ONE victim's inbox from many IPs.
   app.post("/api/auth/forgot-password", rateLimit(5, 60 * 60_000), ah(async (req, res) => {
     const email = normEmail(req.body?.email);
-    if (!validEmail(email)) { res.status(400).json({ error: M(req, "Entre un email valide.", "Enter a valid email.") }); return; }
-    if (!cloudEnabled()) { res.status(500).json({ error: M(req, "Le stockage des comptes n'est pas configuré sur le serveur (Supabase).", "Account storage isn't configured on the server (Supabase).") }); return; }
+    if (!validEmail(email)) { res.status(400).json({ error: "Enter a valid email." }); return; }
+    if (!cloudEnabled()) { res.status(500).json({ error: "Account storage isn't configured on the server (Supabase)." }); return; }
     try {
       const u = await findAuthUserByEmail(email);
       if (u) {
@@ -146,12 +146,10 @@ export function registerAuthRoutes(app: express.Express): void {
         const expiresAt = new Date(Date.now() + 30 * 60_000).toISOString(); // 30 min — short-lived, a fresh request is one click away
         await setResetToken(email, token, expiresAt);
         const link = `${process.env.PUBLIC_URL || "https://hiotto.vercel.app"}/reset-password?token=${token}`;
-        const en = req.body?.lang !== "fr";
-        const html = en
-          ? `<p>Someone (hopefully you) asked to reset your Otto password. This link works once and expires in 30 minutes.</p><p><a href="${link}">Reset your password →</a></p><p>If this wasn't you, you can safely ignore this email — your password hasn't changed.</p>`
-          : `<p>Quelqu'un (toi, on espère) a demandé à réinitialiser ton mot de passe Otto. Ce lien fonctionne une seule fois et expire dans 30 minutes.</p><p><a href="${link}">Réinitialiser ton mot de passe →</a></p><p>Si ce n'était pas toi, tu peux ignorer cet e-mail — ton mot de passe n'a pas changé.</p>`;
+        const en = true;
+        const html = `<p>Someone (hopefully you) asked to reset your Otto password. This link works once and expires in 30 minutes.</p><p><a href="${link}">Reset your password →</a></p><p>If this wasn't you, you can safely ignore this email — your password hasn't changed.</p>`;
         // Awaited: a serverless function can be frozen right after the response, dropping an unsent email.
-        await sendTransactionalEmail(email, en ? "Reset your Otto password" : "Réinitialise ton mot de passe Otto", html);
+        await sendTransactionalEmail(email, "Reset your Otto password", html);
         void recordEvent(email, "password_reset_requested", {});
       }
     } catch (e: any) { reportError("auth-forgot-password", e, { email }); /* still respond ok:true below — never leak account existence via a failure path either */ }
@@ -163,18 +161,18 @@ export function registerAuthRoutes(app: express.Express): void {
   app.post("/api/auth/reset-password", rateLimit(10, 60 * 60_000), ah(async (req, res) => {
     const token = String(req.body?.token || "");
     const password = String(req.body?.password || "");
-    if (!token) { res.status(400).json({ error: M(req, "Lien de réinitialisation manquant ou invalide.", "Missing or invalid reset link.") }); return; }
-    if (password.length < 8 || password.length > 200) { res.status(400).json({ error: M(req, "Le mot de passe doit contenir entre 8 et 200 caractères.", "Password must be between 8 and 200 characters.") }); return; }
-    if (!cloudEnabled()) { res.status(500).json({ error: M(req, "Le stockage des comptes n'est pas configuré sur le serveur (Supabase).", "Account storage isn't configured on the server (Supabase).") }); return; }
+    if (!token) { res.status(400).json({ error: "Missing or invalid reset link." }); return; }
+    if (password.length < 8 || password.length > 200) { res.status(400).json({ error: "Password must be between 8 and 200 characters." }); return; }
+    if (!cloudEnabled()) { res.status(500).json({ error: "Account storage isn't configured on the server (Supabase)." }); return; }
     const u = await consumeResetToken(token);
-    if (!u) { res.status(400).json({ error: M(req, "Ce lien de réinitialisation est invalide ou a expiré — refais-en la demande.", "This reset link is invalid or has expired — request a new one.") }); return; }
+    if (!u) { res.status(400).json({ error: "This reset link is invalid or has expired — request a new one." }); return; }
     const authUser = await findAuthUserByEmail(u.email);
-    if (!authUser || !(await setAuthPassword(authUser.id, password))) { res.status(500).json({ error: M(req, "Impossible de réinitialiser le mot de passe — réessaie.", "Couldn't reset the password — try again.") }); return; }
+    if (!authUser || !(await setAuthPassword(authUser.id, password))) { res.status(500).json({ error: "Couldn't reset the password — try again." }); return; }
     void recordEvent(u.email, "password_reset", {});
     // Log the student straight in — same session-fixation-safe regenerate as signup/login above, so a reset
     // link doubles as an immediate "you're back in" instead of a second manual login right after.
     req.session.regenerate(async (err) => {
-      if (err) { res.status(500).json({ error: M(req, "Mot de passe réinitialisé — mais impossible de te reconnecter automatiquement. Connecte-toi avec ton nouveau mot de passe.", "Password reset — but couldn't log you in automatically. Log in with your new password.") }); return; }
+      if (err) { res.status(500).json({ error: "Password reset — but couldn't log you in automatically. Log in with your new password." }); return; }
       req.session.user = u.email;
       const restored = await loadState(u.email);
       req.session.profile = restored.profile;
@@ -237,7 +235,7 @@ export function registerAuthRoutes(app: express.Express): void {
       req.session.destroy(() => res.json(result));
     } catch (e: any) {
       console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de supprimer le compte — réessaie.", "Couldn't delete the account — try again.") });
+      res.status(500).json({ error: "Couldn't delete the account — try again." });
     }
   });
 
@@ -263,7 +261,7 @@ export function registerAuthRoutes(app: express.Express): void {
       res.json({ email, exportedAt: new Date().toISOString(), profile: state.profile, tasks: state.tasks, connections, jobs, events });
     } catch (e: any) {
       console.error(e);
-      res.status(500).json({ error: M(req, "Impossible d'exporter tes données — réessaie.", "Couldn't export your data — try again.") });
+      res.status(500).json({ error: "Couldn't export your data — try again." });
     }
   });
 
@@ -282,7 +280,7 @@ export function registerAuthRoutes(app: express.Express): void {
     const email = req.session.user!;
     const body = req.body;
     if (!body || typeof body !== "object" || (!body.profile && !Array.isArray(body.tasks))) {
-      res.status(400).json({ error: M(req, "Ce fichier ne ressemble pas à un export Otto.", "That doesn't look like an Otto export file.") });
+      res.status(400).json({ error: "That doesn't look like an Otto export file." });
       return;
     }
     try {
@@ -301,7 +299,7 @@ export function registerAuthRoutes(app: express.Express): void {
       res.json({ ok: true, tasksAfter: mergedTasks.length, errorLogAfter: mergedProfile.errorLog?.length || 0 });
     } catch (e: any) {
       console.error(e);
-      res.status(500).json({ error: M(req, "Impossible d'importer ce fichier — réessaie.", "Couldn't import that file — try again.") });
+      res.status(500).json({ error: "Couldn't import that file — try again." });
     }
   });
 }

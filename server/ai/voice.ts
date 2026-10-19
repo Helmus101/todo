@@ -172,7 +172,7 @@ export function stripId3v1(mp3: Buffer): Buffer {
  *  the client then plays nothing for that reply (see useSpeechSynthesis: it never substitutes a browser
  *  voice on a cloud failure) rather than switching gender mid-session. */
 export async function synthesizeSpeech(text: string, lang: string): Promise<{ audio: Buffer; mime: string } | { error: string; status: number }> {
-  const voices = TTS_MALE_VOICES[lang === "fr" ? "fr" : "en"];
+  const voices = TTS_MALE_VOICES["en"];
   const chunks = wordWrapChunks(text, TTS_CHUNK_MAX);
   if (!chunks.length) return { error: "nothing to speak", status: 400 };
   const parts: Buffer[] = [];
@@ -180,7 +180,7 @@ export async function synthesizeSpeech(text: string, lang: string): Promise<{ au
   for (const chunk of chunks) {
     let done = false;
     const attempts: Array<() => Promise<{ mp3: Buffer } | { error: string; status: number }>> = [
-      ...EDGE_MALE_VOICES[lang === "fr" ? "fr" : "en"].map((v) => () => synthesizeChunkWithEdge(chunk, v)),
+      ...EDGE_MALE_VOICES["en"].map((v) => () => synthesizeChunkWithEdge(chunk, v)),
       ...voices.map((v) => () => synthesizeChunkWithVoice(chunk, v)),
     ];
     for (let i = 0; i < attempts.length && !done; i++) {

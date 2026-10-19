@@ -118,19 +118,19 @@ export function DictionaryArtifact({ artifact, onChange, language = "en" }: Dict
           value={word}
           onChange={(e) => setWord(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && lookup()}
-          placeholder={uiEn ? "Search a word" : "Cherche un mot"} aria-label={uiEn ? "Search a word" : "Cherche un mot"}
+          placeholder={"Search a word"} aria-label={"Search a word"}
           autoCapitalize="none"
           spellCheck={false}
         />
         <button className="sm-btn sm-btn-primary" onClick={() => void lookup()} disabled={!word.trim() || status === "loading"}>
-          {status === "loading" ? "..." : (uiEn ? "Look up" : "Chercher")}
+          {status === "loading" ? "..." : ("Look up")}
         </button>
       </div>
 
       <div className="sm-dictionary-results">
         {status === "error" && <p className="sm-dictionary-error">{error}</p>}
         {!entry && status !== "error" && (
-          <p className="sm-artifact-empty">{uiEn ? "Type a word to see definitions inside Study Mode." : "Tape un mot pour voir les définitions dans le mode étude."}</p>
+          <p className="sm-artifact-empty">{"Type a word to see definitions inside Study Mode."}</p>
         )}
         {entry && (
           <>

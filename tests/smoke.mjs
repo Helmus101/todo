@@ -58,7 +58,7 @@ try {
     // exact string raw in English, an i18n bug fixed this round) and defaults to French absent a `lang`
     // hint, same as the rest of the app's own French-first default — assert the real current text rather
     // than a stale hardcoded English one.
-    check("401 body has the expected shape", tasksGet.body?.error === "pas connecté");
+    check("401 body has the expected shape", tasksGet.body?.error === "not logged in");
 
     const generate = await req("/api/tasks/generate", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     check("POST /api/tasks/generate → 401", generate.status === 401);

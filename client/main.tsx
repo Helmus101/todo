@@ -31,7 +31,7 @@ function crashLang(): "fr" | "en" {
     const saved = localStorage.getItem("otto-landing-lang");
     if (saved === "fr" || saved === "en") return saved;
   } catch { /* ignore */ }
-  return typeof navigator !== "undefined" && /^en/i.test(navigator.language) ? "en" : "fr";
+  return "en";
 }
 
 /** Last-resort error boundary: if any render throws (e.g. malformed task data), show a recoverable
@@ -46,9 +46,9 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
       return (
         <div className="screen crash">
           <div className="crash-card">
-            <h1>{en ? "Something went wrong" : "Quelque chose s'est mal passé"}</h1>
-            <p>{en ? "Otto hit an unexpected error. Reloading usually fixes it." : "Otto a rencontré une erreur inattendue. Recharger la page règle généralement le problème."}</p>
-            <button className="btn primary big" onClick={() => window.location.reload()}>{en ? "Reload" : "Recharger"}</button>
+            <h1>{"Something went wrong"}</h1>
+            <p>{"Otto hit an unexpected error. Reloading usually fixes it."}</p>
+            <button className="btn primary big" onClick={() => window.location.reload()}>{"Reload"}</button>
           </div>
         </div>
       );

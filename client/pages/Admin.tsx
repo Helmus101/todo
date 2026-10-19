@@ -26,7 +26,7 @@ export function AdminPage() {
   };
   const load = () => {
     setError(null);
-    void api.adminMetrics().then(setMetrics).catch((e: any) => setError(e?.message || L("Impossible de charger les métriques.", "Couldn't load metrics.")));
+    void api.adminMetrics().then(setMetrics).catch((e: any) => setError(e?.message || "Couldn't load metrics."));
   };
   useEffect(() => { load(); }, []);
   const cards: { label: [string, string]; value: string }[] = metrics ? [
@@ -39,23 +39,23 @@ export function AdminPage() {
   ] : [];
   return (
     <main className="list-wrap">
-      <h1 className="list-head">{L("Admin", "Admin")}</h1>
+      <h1 className="list-head">{"Admin"}</h1>
       {error ? (
         <ErrorNote onRetry={load}>{error}</ErrorNote>
       ) : !metrics ? (
-        <p className="settings-hint">{L("Chargement…", "Loading…")}</p>
+        <p className="settings-hint">{"Loading…"}</p>
       ) : (
         <>
           <div className="admin-metric-grid">
             {cards.map((c, i) => (
               <div key={i} className="admin-metric-card">
                 <span className="admin-metric-value">{c.value}</span>
-                <span className="admin-metric-label">{L(c.label[0], c.label[1])}</span>
+                <span className="admin-metric-label">{c.label[1]}</span>
               </div>
             ))}
           </div>
           <section className="settings-sec mt-5">
-            <h3>{L("Tâches par source", "Tasks by source")}</h3>
+            <h3>{"Tasks by source"}</h3>
             <div className="set-list">
               {Object.entries(metrics.tasksBySource).sort((a, b) => b[1] - a[1]).map(([src, n]) => (
                 <div key={src} className="modal-row"><span className="lbl">{src}</span><span className="val">{n}</span></div>
@@ -63,7 +63,7 @@ export function AdminPage() {
             </div>
           </section>
           <section className="settings-sec mt-5">
-            <h3>{L("Par utilisateur", "By user")}</h3>
+            <h3>{"By user"}</h3>
             <div className="admin-table-wrap">
               <table className="admin-table">
                 <thead>
@@ -77,7 +77,7 @@ export function AdminPage() {
                       ["journalCount", "Journal", "Journal"],
                     ] as [AdminSortKey, string, string][]).map(([key, fr, en]) => (
                       <th key={key} onClick={() => toggleSort(key)} className={sortKey === key ? "sorted" : ""}>
-                        {L(fr, en)}{sortKey === key ? (sortDesc ? " ↓" : " ↑") : ""}
+                        {en}{sortKey === key ? (sortDesc ? " ↓" : " ↑") : ""}
                       </th>
                     ))}
                   </tr>

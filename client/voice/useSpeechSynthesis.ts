@@ -67,7 +67,7 @@ function expandImplicitMultiplication(math: string, times = "times"): string {
  *  text instead of being deleted along with the syntax. Exported for unit tests. */
 export function stripLatexForSpeech(text: string, lang: "en" | "fr" = "en"): string {
   const W = SAY[lang];
-  const TRIG = lang === "fr" ? TRIG_WORDS_FR : TRIG_WORDS;
+  const TRIG = TRIG_WORDS;
   // \x01...\x02 mark genuine math zones (what was inside a LaTeX delimiter) so implicit multiplication can
   // be expanded ONLY there, at the very end, after everything inside has already been turned into words.
   let s = text
@@ -90,7 +90,7 @@ export function stripLatexForSpeech(text: string, lang: "en" | "fr" = "en"): str
       // along with the syntax, losing the fraction's arguments entirely).
       .replace(/\\[cdt]?frac\{([^{}]*)\}\{([^{}]*)\}/g, ` ($1) ${W.over} ($2) `)
       .replace(/\\[cdt]?frac(\S)(\S)/g, ` ($1) ${W.over} ($2) `) // brace-less: \tfrac12 → ( 1 ) over (2)
-      .replace(/\\sqrt\[(\d+)\]\{([^{}]*)\}/g, lang === "fr" ? " racine $1-ième de ($2) " : " the $1th root of ($2) ")
+      .replace(/\\sqrt\[(\d+)\]\{([^{}]*)\}/g, " the $1th root of ($2) ")
       .replace(/\\sqrt\{([^{}]*)\}/g, ` ${W.sqrt} ($1) `);
   }
   s = s
@@ -185,7 +185,7 @@ const unitWord = (u: string, plural: boolean, lang: SpeechLang): string | null =
   if (!pow) return w;
   // "cm³" → "cubic centimetres" / "centimètres cubes"; "m²" → "square metres" / "mètres carrés".
   const adj = SAY[lang][pow === "2" ? "square" : "cubic"];
-  return lang === "fr" ? `${w} ${adj}${plural ? "s" : ""}` : `${adj} ${w}`;
+  return `${adj} ${w}`;
 };
 /** "40 kW" → "40 kilowatts", "34 kJ/cm3" → "34 kilojoules per cubic centimetre", "9.8 m/s²" → "9.8 metres per second squared". */
 function unitsToWords(s: string, lang: SpeechLang): string {
@@ -319,9 +319,9 @@ export function spellOutPlainPhysics(text: string, L: SpeechLang = "en"): string
   return String(text || "")
     .replace(/\b([A-Za-z])_\(([^()]{1,24})\)/g, (_m, a: string, b: string) => `${a} ${b.replace(/\\text\{([^}]*)\}/g, "$1")}`) // F_(net) → F net
     .replace(/\b([A-Za-z])_([A-Za-z]{2,10})\b/g, "$1 $2")                                                                      // F_net → F net
-    .replace(/(\d)\s*[∘°]/g, en ? "$1 degrees" : "$1 degrés").replace(/\b(sin|cos|tan)\s*\(\s*([\d.]+)\s*degrees?\s*\)/gi, "$1 $2 degrees")
-    .replace(/\bm\s*s\s*(?:\^\s*)?[−–-]\s*2\b|\bm\s*s⁻²/g, en ? "metres per second squared" : "mètres par seconde carrée")
-    .replace(/\bm\s*s\s*(?:\^\s*)?[−–-]\s*1\b|\bm\s*s⁻¹/g, en ? "metres per second" : "mètres par seconde")
+    .replace(/(\d)\s*[∘°]/g, "$1 degrees").replace(/\b(sin|cos|tan)\s*\(\s*([\d.]+)\s*degrees?\s*\)/gi, "$1 $2 degrees")
+    .replace(/\bm\s*s\s*(?:\^\s*)?[−–-]\s*2\b|\bm\s*s⁻²/g, "metres per second squared")
+    .replace(/\bm\s*s\s*(?:\^\s*)?[−–-]\s*1\b|\bm\s*s⁻¹/g, "metres per second")
     .replace(/(?<![\w.])(\d+(?:\.\d+)?\s?)?mg(sin|cos|tan)\b/gi, (_m, n: string | undefined, f: string) => `${n ? n.trim() + " " : ""}m g ${f}`)
     .replace(/(?<![\w.])(\d+(?:\.\d+)?\s?)?mgh\b/gi, (_m, n: string | undefined) => `${n ? n.trim() + " " : ""}m g h`)
     .replace(/(\d)([a-z]{1,3})\b(?=\s|[.,)$]|$)/g, (m, d: string, l: string) => (/^(?:s|m|g|kg|n|j|w|hz|v|a|k|c|cm|mm|km|ms|mol|st|nd|rd|th|pm|am|l|ml)$/i.test(l) ? m : `${d} ${l.split("").join(" ")}`)); // 2as → 2 a s

@@ -123,13 +123,13 @@ export function PageTour({ id, steps, ready = true }: { id: string; steps: TourS
         </>
       ) : <div className="tour-dim" style={{ inset: 0 }} />}
       <div className="tour-card" style={cardStyle}>
-        <div className="tour-meta"><span>{i + 1} / {steps.length}</span><button type="button" className="tour-skip" onClick={finish}>{L("Passer", "Skip")}</button></div>
+        <div className="tour-meta"><span>{i + 1} / {steps.length}</span><button type="button" className="tour-skip" onClick={finish}>{"Skip"}</button></div>
         <h3 className="tour-title">{L(...step.title)}</h3>
         <p className="tour-body">{L(...step.body)}</p>
         {step.interactive && step.action ? <p className="tour-action">{L(...step.action)}</p> : null}
         <div className="tour-actions">
-          <button type="button" className="btn ghost xs" onClick={() => go(i - 1)} disabled={i === 0}>{L("Retour", "Back")}</button>
-          <button type="button" className="btn primary xs" onClick={() => go(i + 1)} autoFocus>{last ? L("C'est compris", "Got it") : step.interactive ? L("Suivant", "Next") : L("Suivant", "Next")}</button>
+          <button type="button" className="btn ghost xs" onClick={() => go(i - 1)} disabled={i === 0}>{"Back"}</button>
+          <button type="button" className="btn primary xs" onClick={() => go(i + 1)} autoFocus>{last ? "Got it" : step.interactive ? "Next" : "Next"}</button>
         </div>
       </div>
     </div>,

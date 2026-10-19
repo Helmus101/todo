@@ -25,10 +25,11 @@ import { hideToolLeaks } from "../shared/toolLeak.ts";
 // App-wide UI language (default French; toggled in Settings, sourced from the account's ConnectionStatus/
 // Profile). `L(fr, en)` picks the right string for whichever language is active — used everywhere instead of
 // hardcoding French so switching the toggle changes the WHOLE interface, not just AI-generated content.
-export const LangContext = createContext<"fr" | "en">("fr");
+export const LangContext = createContext<"fr" | "en">("en");
 export function useLang(): (fr: string, en: string) => string {
   const lang = useContext(LangContext);
-  return (fr: string, en: string) => (lang === "en" ? en : fr);
+  void lang;
+  return (_fr: string, en: string) => en; // English only: the French argument is never shown (being removed call site by call site)
 }
 
 /** The app's one loading indicator. */
@@ -42,7 +43,7 @@ export function ErrorNote({ children, onRetry, small }: { children: ReactNode; o
   return (
     <p className={`rewrite-error${small ? " small" : ""}`} role="alert">
       {children}
-      {onRetry && <> <button type="button" className="btn xs ghost" onClick={onRetry}>{L("Réessayer", "Retry")}</button></>}
+      {onRetry && <> <button type="button" className="btn xs ghost" onClick={onRetry}>{"Retry"}</button></>}
     </p>
   );
 }
@@ -158,7 +159,7 @@ export const todayIso = (): string => new Date().toISOString().slice(0, 10);
  *  same fallback behavior as before. */
 export const fmtDate = (iso: string, L?: (fr: string, en: string) => string): string => {
   const d = new Date(`${iso}T00:00:00`);
-  return isNaN(d.getTime()) ? iso : d.toLocaleDateString(L?.("fr-FR", "en-US"), { month: "short", day: "numeric" });
+  return isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 };
 
 /** "à l'instant" / "il y a 2h" / "12 sept." — compact, human moment for when a step was completed. Same
@@ -167,13 +168,13 @@ export const fmtDate = (iso: string, L?: (fr: string, en: string) => string): st
 export const relTime = (iso: string, L?: (fr: string, en: string) => string): string => {
   const ms = Date.now() - new Date(iso).getTime();
   if (!Number.isFinite(ms) || ms < 0) return "";
-  const en = L ? L("", "en") === "en" : true; // no L passed → keep the old English-default behavior
+  const en = L ? "en" === "en" : true; // no L passed → keep the old English-default behavior
   const m = Math.floor(ms / 60000);
-  if (m < 1) return en ? "just now" : "à l'instant";
-  if (m < 60) return en ? `${m}m ago` : `il y a ${m}min`;
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
   const h = Math.floor(m / 60);
-  if (h < 24) return en ? `${h}h ago` : `il y a ${h}h`;
-  return new Date(iso).toLocaleDateString(L?.("fr-FR", "en-US"), { month: "short", day: "numeric" });
+  if (h < 24) return `${h}h ago`;
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 };
 
 // "Found in Gmail · 2h ago" — the Pillar-1 (proactive, not reactive) claim made concrete on the card
@@ -192,7 +193,7 @@ export function sourceAttributionLine(t: { source?: string; createdAt?: string }
   const label = t.source ? SOURCE_LABEL[t.source] : undefined;
   if (!label) return "";
   const when = t.createdAt ? relTime(t.createdAt) : "";
-  return when ? `${en ? label.en : label.fr} · ${when}` : (en ? label.en : label.fr);
+  return when ? `${label.en} · ${when}` : (label.en);
 }
 
 // Onboarding's feature-map step is a one-liner per page only — once a student dismisses onboarding, that
@@ -221,20 +222,20 @@ export function PageInfoHint({ pageKey, text }: { pageKey: string; text: string 
 // lifecycle + the task's contents (a sendable → "Draft ready"; an open question → "Needs your answer").
 export function statusChip(t: WebTask, retrying?: boolean, en?: boolean): { label: string; tone: "muted" | "busy" | "attention" | "bad" | "good" } | null {
   const c = canonStatus(t.status);
-  if (c === "queued") return { label: en ? "Queued" : "En attente", tone: "muted" };
-  if (c === "executing") return { label: en ? "Working" : "En cours", tone: "busy" };
+  if (c === "queued") return { label: "Queued", tone: "muted" };
+  if (c === "executing") return { label: "Working", tone: "busy" };
   // "Retrying" is only claimed when a REAL queued/running job exists for this task (activeTaskIds from
   // the kick response) — otherwise the honest state is "Failed" with a Retry button.
-  if (c === "failed_retryable") return retrying ? { label: en ? "Failed — retrying…" : "Échec — nouvel essai…", tone: "busy" } : { label: en ? "Failed" : "Échec", tone: "bad" };
-  if (c === "failed_terminal") return { label: en ? "Failed" : "Échec", tone: "bad" };
+  if (c === "failed_retryable") return retrying ? { label: "Failed — retrying…", tone: "busy" } : { label: "Failed", tone: "bad" };
+  if (c === "failed_terminal") return { label: "Failed", tone: "bad" };
   if (c === "needs_review") {
-    if (t.steps?.some((s) => !s.done && s.question)) return { label: en ? "Needs your answer" : "Réponse nécessaire", tone: "attention" };
-    if (t.steps?.some((s) => !s.done && s.needsPermission)) return { label: en ? "Needs approval" : "Approbation nécessaire", tone: "attention" };
-    if (t.sendables?.some((s) => !s.sent)) return { label: en ? "Draft ready" : "Brouillon prêt", tone: "attention" };
+    if (t.steps?.some((s) => !s.done && s.question)) return { label: "Needs your answer", tone: "attention" };
+    if (t.steps?.some((s) => !s.done && s.needsPermission)) return { label: "Needs approval", tone: "attention" };
+    if (t.sendables?.some((s) => !s.sent)) return { label: "Draft ready", tone: "attention" };
     const n = (t.steps || []).filter((s) => !s.done && !s.automatable).length;
     return n
-      ? { label: en ? `${n} need${n > 1 ? "" : "s"} you` : `${n} étape${n > 1 ? "s" : ""} restante${n > 1 ? "s" : ""}`, tone: "attention" }
-      : { label: en ? "Done for you" : "Préparé pour toi", tone: "good" };
+      ? { label: `${n} need${n > 1 ? "" : "s"} you`, tone: "attention" }
+      : { label: "Done for you", tone: "good" };
   }
   return null;
 }
@@ -247,8 +248,8 @@ const SOURCE_BADGE: Record<string, string> = {
 const SOURCE_BADGE_EN: Record<string, string> = { ...SOURCE_BADGE, manual: "You" };
 const SOURCE_BADGE_FR: Record<string, string> = { ...SOURCE_BADGE, manual: "Toi" };
 export function sourceBadge(s: string, en?: boolean): string {
-  const map = en ? SOURCE_BADGE_EN : SOURCE_BADGE_FR;
-  return map[s] || (s ? s[0].toUpperCase() + s.slice(1) : (en ? "Task" : "Tâche"));
+  const map = SOURCE_BADGE_EN;
+  return map[s] || (s ? s[0].toUpperCase() + s.slice(1) : ("Task"));
 }
 // The Eisenhower quadrant (urgency×importance — see eisenhower() in server/tasks.ts) each task is already
 // scored into, but until now was computed purely for internal SORT ORDER and never actually surfaced to the
@@ -257,10 +258,10 @@ export function sourceBadge(s: string, en?: boolean): string {
 // it dead/unused code — a real Eisenhower matrix's whole point is separating "delegate" from "later", not
 // losing that distinction to a generic "Low").
 export function quadrantLabel(q?: string, en?: boolean): string {
-  if (q === "do") return en ? "Do now" : "À faire";
-  if (q === "schedule") return en ? "Schedule" : "À planifier";
-  if (q === "delegate") return en ? "Delegate" : "À déléguer";
-  return en ? "Later" : "Plus tard";
+  if (q === "do") return "Do now";
+  if (q === "schedule") return "Schedule";
+  if (q === "delegate") return "Delegate";
+  return "Later";
 }
 
 // One short context line under the title. The STATUS is carried by the chip on the right — the subtitle
@@ -277,7 +278,7 @@ export function subtitle(t: WebTask): string {
 // text" case is whatever the server already generated in the right language).
 export function fmtWhen(when: string, L?: (fr: string, en: string) => string): string {
   const s = String(when || "").trim();
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) { const d = new Date(s); if (!isNaN(d.getTime())) return d.toLocaleDateString(L?.("fr-FR", "en-US"), { month: "short", day: "numeric" }); }
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) { const d = new Date(s); if (!isNaN(d.getTime())) return d.toLocaleDateString("en-US", { month: "short", day: "numeric" }); }
   return s;
 }
 
@@ -724,14 +725,14 @@ export function CondensedUserMessage({ text }: { text: string }): ReactNode {
     return (
       <>
         {text}
-        <button type="button" className="chat-msg-toggle" onClick={() => setExpanded(false)}>{L("Réduire", "Show less")}</button>
+        <button type="button" className="chat-msg-toggle" onClick={() => setExpanded(false)}>{"Show less"}</button>
       </>
     );
   }
   return (
     <>
       {text.slice(0, USER_MESSAGE_PREVIEW_CHARS).trimEnd()}…
-      <button type="button" className="chat-msg-toggle" onClick={() => setExpanded(true)}>{L("Voir plus", "Show more")}</button>
+      <button type="button" className="chat-msg-toggle" onClick={() => setExpanded(true)}>{"Show more"}</button>
     </>
   );
 }
@@ -755,7 +756,7 @@ function StudyHelpPanel({ taskId, card }: { taskId?: string; card: StudyHelpCard
   const cardKey = card.kind === "flashcard" ? card.front : card.question;
   const lang = useContext(LangContext);
   const en = lang === "en";
-  const speechLang = en ? "en-US" : "fr-FR";
+  const speechLang = "en-US";
   const synth = useSpeechSynthesis(speechLang);
   const busyRef = useRef(busy);
   busyRef.current = busy;
@@ -774,7 +775,7 @@ function StudyHelpPanel({ taskId, card }: { taskId?: string; card: StudyHelpCard
         setHistory((h) => [...h, { role: "assistant", text: r.reply }]);
         if (voiceModeOn) synth.speak(r.reply);
       })
-      .catch((e: any) => setHistory((h) => [...h, { role: "assistant", text: e?.message || L("Erreur — réessaie.", "Error — try again.") }]))
+      .catch((e: any) => setHistory((h) => [...h, { role: "assistant", text: e?.message || "Error — try again." }]))
       .finally(() => setBusy(false));
   };
   const recog = useSpeechRecognition({
@@ -812,21 +813,21 @@ function StudyHelpPanel({ taskId, card }: { taskId?: string; card: StudyHelpCard
   return (
     <div className="study-help">
       <button type="button" className="btn xs ghost study-help-toggle" onClick={() => setOpen((v) => !v)}>
-        {open ? L("Fermer l'aide", "Close hint") : L("Un indice ?", "Need a hint?")}
+        {open ? "Close hint" : "Need a hint?"}
       </button>
       {open && (
         <div className="study-help-panel">
           <div className="study-help-log">
             {history.length === 0 && (
               <p className="study-help-empty">
-                {L("Otto peut t'aider à réfléchir — il ne te donnera jamais la réponse.", "Otto can help you think it through — he'll never just give you the answer.")}
+                {"Otto can help you think it through — he'll never just give you the answer."}
               </p>
             )}
             {history.map((h, i) => (
               // A plain <p> can't be used once the assistant branch renders — renderChatText returns its
               // own <p>/<ul> blocks, and a <p> inside a <p> is invalid HTML (silently breaks the DOM tree).
               <div key={i} className={`study-help-msg ${h.role}`}>
-                <span className="study-help-sender">{h.role === "user" ? L("Toi", "You") : "Otto"}</span>
+                <span className="study-help-sender">{h.role === "user" ? "You" : "Otto"}</span>
                 {/* This panel rendered assistant replies as raw text with no formatting at all — reported
                     live as a hint showing literal "\(...\)"/"**bold**" instead of real math/emphasis. Every
                     other chat surface in the app already runs assistant text through renderChatText; this
@@ -843,7 +844,7 @@ function StudyHelpPanel({ taskId, card }: { taskId?: string; card: StudyHelpCard
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) send(); }}
-              placeholder={L("Demande un indice…", "Ask for a hint…")} aria-label={L("Demande un indice…", "Ask for a hint…")}
+              placeholder={"Ask for a hint…"} aria-label={"Ask for a hint…"}
               disabled={busy}
             />
             <VoiceControls
@@ -855,7 +856,7 @@ function StudyHelpPanel({ taskId, card }: { taskId?: string; card: StudyHelpCard
               onToggle={toggleVoiceMode}
               en={en}
             />
-            <button type="button" className="btn xs primary" onClick={() => send()} disabled={busy || !input.trim()}>{L("Envoyer", "Send")}</button>
+            <button type="button" className="btn xs primary" onClick={() => send()} disabled={busy || !input.trim()}>{"Send"}</button>
           </div>
         </div>
       )}
@@ -1008,7 +1009,7 @@ function FlashcardDeckInner({ deck, onReview, onNotNeeded, taskId, onAllCorrect,
       return (
         <div className="deck-popup deck-done">
           <h3 className="note-popup-title">{stripStrayMarkdown(deck.title)}</h3>
-          <p className="deck-score">{L("Aucune carte à réviser ici — tu les as toutes marquées hors programme.", "No cards left to review here — you marked them all as not needed.")}</p>
+          <p className="deck-score">{"No cards left to review here — you marked them all as not needed."}</p>
         </div>
       );
     }
@@ -1019,12 +1020,12 @@ function FlashcardDeckInner({ deck, onReview, onNotNeeded, taskId, onAllCorrect,
         <div className={`deck-score-ring ${pct >= 70 ? "good" : ""}`}>
           <span className="deck-score-pct">{pct}%</span>
         </div>
-        <p className="deck-score">{L(`${right.length} / ${inScope} correctes`, `${right.length} / ${inScope} correct`)}</p>
+        <p className="deck-score">{`${right.length} / ${inScope} correct`}</p>
         <div className="deck-acts">
           {wrong.length > 0 ? (
-            <button className="btn primary" onClick={retryWrong}>{L(`Réessayer les ${wrong.length} ratées`, `Retry the ${wrong.length} you got wrong`)}</button>
+            <button className="btn primary" onClick={retryWrong}>{`Retry the ${wrong.length} you got wrong`}</button>
           ) : null}
-          <button className={wrong.length > 0 ? "btn ghost" : "btn primary"} onClick={restart}>{L("Recommencer tout", "Restart all")}</button>
+          <button className={wrong.length > 0 ? "btn ghost" : "btn primary"} onClick={restart}>{"Restart all"}</button>
         </div>
       </div>
     );
@@ -1032,43 +1033,43 @@ function FlashcardDeckInner({ deck, onReview, onNotNeeded, taskId, onAllCorrect,
   return (
     <div className="deck-popup">
       <h3 className="note-popup-title">{stripStrayMarkdown(deck.title)}</h3>
-      {retryQueue ? <p className="deck-retry-label">{L("Reprise des cartes ratées", "Retrying missed cards")}</p> : null}
+      {retryQueue ? <p className="deck-retry-label">{"Retrying missed cards"}</p> : null}
       <div className="deck-progress-bar"><div className="deck-progress-fill" style={{ width: `${(i / seqLen) * 100}%` }} /></div>
       <div className="deck-progress">{i + 1} / {seqLen}</div>
       <div className={`deck-card-3d ${flipped ? "flipped" : ""}`} onClick={() => setFlipped((v) => !v)}>
         <div className="deck-card-inner" style={skipFlipAnim ? { transition: "none" } : undefined}>
           <div className="deck-card-face deck-card-front">
-            <span className="deck-face-label">{L("Question", "Front")}</span>
+            <span className="deck-face-label">{"Front"}</span>
             {/* Spaced repetition is otherwise entirely invisible to the student — reviews happen, boxes move,
                 nothing on screen ever shows it. Two boxes now (LEITNER_BOX_LABEL, shared/types.ts): "Learning"
                 (box 0-1, still needs frequent review) vs "Known" (box 2, spaced further out). No badge at all
                 for a card with no review history yet — it hasn't earned either label. */}
             {card!.review?.box ? (
               <span className={`deck-box-badge deck-box-${card!.review.box}`}>
-                {L(card!.review.box >= 2 ? "Acquis" : "En cours", LEITNER_BOX_LABEL[Math.min(card!.review.box, 2) - 1])}
+                {LEITNER_BOX_LABEL[Math.min(card!.review.box, 2) - 1]}
               </span>
             ) : null}
             <div className="deck-face-text">{formatMath(stripStrayMarkdown(card!.front))}</div>
           </div>
           <div className="deck-card-face deck-card-back">
-            <span className="deck-face-label">{L("Réponse", "Back")}</span>
+            <span className="deck-face-label">{"Back"}</span>
             <div className="deck-face-text">{formatMath(stripStrayMarkdown(card!.back))}</div>
           </div>
         </div>
       </div>
-      <p className="deck-hint">{L("Pense à ta réponse, puis retourne · ← faux · → correct", "Think of your answer, then flip · ← wrong · → correct")}</p>
+      <p className="deck-hint">{"Think of your answer, then flip · ← wrong · → correct"}</p>
       <div className="deck-acts">
-        <button className="btn ghost deck-btn-wrong" onClick={() => mark(false)}>← {L("Faux", "Wrong")}</button>
-        <button className="btn ghost" onClick={() => setFlipped((v) => !v)}>{L("Retourner", "Flip")}</button>
-        <button className="btn primary deck-btn-right" onClick={() => mark(true)}>{L("Correct", "Correct")} →</button>
+        <button className="btn ghost deck-btn-wrong" onClick={() => mark(false)}>← {"Wrong"}</button>
+        <button className="btn ghost" onClick={() => setFlipped((v) => !v)}>{"Flip"}</button>
+        <button className="btn primary deck-btn-right" onClick={() => mark(true)}>{"Correct"} →</button>
       </div>
       {i > 0 ? (
-        <button type="button" className="btn xs ghost deck-btn-back" onClick={back}>{L("‹ Carte précédente", "‹ Previous card")}</button>
+        <button type="button" className="btn xs ghost deck-btn-back" onClick={back}>{"‹ Previous card"}</button>
       ) : null}
       {onNotNeeded ? (
         <button type="button" className="btn xs ghost deck-btn-not-needed" onClick={markNotNeeded}
-          title={L("Hors programme ou pas de ton niveau — la carte sort de tes révisions et Otto évitera ce genre de carte", "Outside your course or level — the card leaves your reviews and Otto will avoid cards like it")}>
-          {L("Pas à apprendre pour moi", "Not something I need to learn")}
+          title={"Outside your course or level — the card leaves your reviews and Otto will avoid cards like it"}>
+          {"Not something I need to learn"}
         </button>
       ) : null}
       <StudyHelpPanel taskId={taskId} card={{ kind: "flashcard", front: card!.front, back: card!.back }} />
@@ -1110,7 +1111,7 @@ function QuizWrongReflection({ subject, question }: { subject: string; question:
   const [text, setText] = useState("");
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
-  if (saved) return <p className="quiz-mistake-saved">{L("Enregistré dans le carnet d'erreurs.", "Saved to your error log.")}</p>;
+  if (saved) return <p className="quiz-mistake-saved">{"Saved to your error log."}</p>;
   const save = async () => {
     if (!text.trim()) return;
     setSaving(true);
@@ -1124,12 +1125,12 @@ function QuizWrongReflection({ subject, question }: { subject: string; question:
     <div className="quiz-mistake-note">
       <p className="quiz-mistake-q">{formatMath(stripStrayMarkdown(question))}</p>
       <label className="settings-hint" htmlFor={`qwr-${question.slice(0, 20)}`}>
-        {L("Pourquoi tu penses t'être trompé·e ?", "Why do you think you got this wrong?")}
+        {"Why do you think you got this wrong?"}
       </label>
       <textarea id={`qwr-${question.slice(0, 20)}`} className="quiz-mistake-textarea" value={text} onChange={(e) => setText(e.target.value)}
-        placeholder={L("Ex. : j'ai confondu vitesse et accélération…", "E.g., I mixed up velocity and acceleration…")} rows={2} />
+        placeholder={"E.g., I mixed up velocity and acceleration…"} rows={2} />
       <button type="button" className="btn xs ghost" disabled={!text.trim() || saving} onClick={() => void save()}>
-        {saving ? L("Enregistrement…", "Saving…") : L("Enregistrer", "Save")}
+        {saving ? "Saving…" : "Save"}
       </button>
     </div>
   );
@@ -1208,10 +1209,10 @@ export function QuizPlayer({ quiz, taskId, subject, userId }: { quiz: TaskQuiz; 
         <div className={`deck-score-ring ${pct >= 70 ? "good" : ""}`}>
           <span className="deck-score-pct">{pct}%</span>
         </div>
-        <p className="deck-score">{L(`${right.length} / ${total} correctes`, `${right.length} / ${total} correct`)}</p>
+        <p className="deck-score">{`${right.length} / ${total} correct`}</p>
         <div className="deck-acts">
-          {wrongIdx.length > 0 && <button className="btn ghost" onClick={() => restart(true)}>{L(`Revoir mes ${wrongIdx.length} erreurs`, `Review my ${wrongIdx.length} mistake${wrongIdx.length > 1 ? "s" : ""}`)}</button>}
-          <button className="btn primary" onClick={() => restart(false)}>{L("Recommencer", "Restart")}</button>
+          {wrongIdx.length > 0 && <button className="btn ghost" onClick={() => restart(true)}>{`Review my ${wrongIdx.length} mistake${wrongIdx.length > 1 ? "s" : ""}`}</button>}
+          <button className="btn primary" onClick={() => restart(false)}>{"Restart"}</button>
         </div>
         {/* One reflection prompt per question actually gotten wrong — saved straight to the error log
             (grouped by subject) instead of one combined note, so each mistake is a real, reviewable record
@@ -1241,8 +1242,8 @@ export function QuizPlayer({ quiz, taskId, subject, userId }: { quiz: TaskQuiz; 
               {/* Was border/background-only (deliberately not red/green — see the one-accent rule) but with
                   no text/icon and no aria-live announcement, a screen-reader student got zero signal about
                   which answer was right after picking. */}
-              {state === "correct" && <span className="quiz-opt-mark" aria-hidden="true">✓ {L("Correct", "Correct")}</span>}
-              {state === "wrong" && <span className="quiz-opt-mark" aria-hidden="true">✗ {L("Incorrect", "Incorrect")}</span>}
+              {state === "correct" && <span className="quiz-opt-mark" aria-hidden="true">✓ {"Correct"}</span>}
+              {state === "wrong" && <span className="quiz-opt-mark" aria-hidden="true">✗ {"Incorrect"}</span>}
             </button>
           );
         })}
@@ -1250,17 +1251,17 @@ export function QuizPlayer({ quiz, taskId, subject, userId }: { quiz: TaskQuiz; 
       {picked !== null && (
         <>
           <p className="sr-only" role="status" aria-live="polite">
-            {picked === q!.correct ? L("Correct.", "Correct.") : L(`Incorrect. La bonne réponse était : ${q!.options[q!.correct]}.`, `Incorrect. The correct answer was: ${q!.options[q!.correct]}.`)}
+            {picked === q!.correct ? "Correct." : `Incorrect. The correct answer was: ${q!.options[q!.correct]}.`}
           </p>
           {q!.why && <p className="quiz-why">{formatMath(stripStrayMarkdown(q!.why))}</p>}
           <div className="deck-acts">
-            <button className="btn primary" onClick={next}>{L("Suivant", "Next")} →</button>
+            <button className="btn primary" onClick={next}>{"Next"} →</button>
           </div>
         </>
       )}
-      {picked === null && <p className="deck-hint">{L("Clique sur une réponse", "Click an answer")}</p>}
+      {picked === null && <p className="deck-hint">{"Click an answer"}</p>}
       {i > 0 ? (
-        <button type="button" className="btn xs ghost deck-btn-back" onClick={back}>{L("‹ Question précédente", "‹ Previous question")}</button>
+        <button type="button" className="btn xs ghost deck-btn-back" onClick={back}>{"‹ Previous question"}</button>
       ) : null}
       <StudyHelpPanel taskId={taskId} card={{ kind: "quiz", question: q!.q, options: q!.options, correct: q!.correct }} />
     </div>
@@ -1314,26 +1315,26 @@ export function PracticeProblemCard({ problem, taskId, onAnswered }: { problem: 
   <div className="practice-problem-row">
   <input
   type="text" className="practice-problem-input" value={answer}
-  placeholder={L("Ta réponse…", "Your answer…")} aria-label={L("Ta réponse…", "Your answer…")}
+  placeholder={"Your answer…"} aria-label={"Your answer…"}
   disabled={result !== null}
   onChange={(e) => { setAnswer(e.target.value); setResult(null); }}
   onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) void check(); }}
   />
   {result === null ? (
           <button type="button" className="btn primary" disabled={!answer.trim() || checking} onClick={() => void check()}>
-            {checking ? L("Vérification…", "Checking…") : L("Vérifier", "Check")}
+            {checking ? "Checking…" : "Check"}
           </button>
         ) : (
-          <button type="button" className="btn ghost" onClick={() => { setResult(null); setAnswer(""); }}>{L("Réessayer", "Try again")}</button>
+          <button type="button" className="btn ghost" onClick={() => { setResult(null); setAnswer(""); }}>{"Try again"}</button>
         )}
       </div>
       {result ? (
         <p className={`practice-problem-verdict ${result.correct ? "correct" : "wrong"}`} role="status" aria-live="polite">
           {result.systemError
-            ? L("ⓘ La clé de ce problème ne correspond pas à la valeur vérifiée — ta réponse n'est pas comptée comme fausse.", "ⓘ This problem's answer key disagrees with the verified value — your answer isn't counted as wrong.")
+            ? "ⓘ This problem's answer key disagrees with the verified value — your answer isn't counted as wrong."
             : result.correct
-              ? L("✓ Correct.", "✓ Correct.")
-              : L("✗ Pas tout à fait — réessaie (l'indice d'Otto juste en dessous peut t'aider).", "✗ Not quite — try again (Otto's hint just below can help).")}
+              ? "✓ Correct."
+              : "✗ Not quite — try again (Otto's hint just below can help)."}
         </p>
       ) : null}
       {taskId ? (
@@ -1466,8 +1467,8 @@ export function TaskModal({ onClose, children, nested, title, wide }: { onClose:
           quiz's own <h3>, or TaskFocus's <h2>) in whatever markup that component chooses, so there's no
           reliable element to point an id at from here — the caller passes the same text as a plain string
           instead. Falls back to a generic name so the dialog is never announced completely unlabelled. */}
-      <motion.div ref={panelRef} className={`task-modal ${nested ? "nested" : ""} ${wide ? "wide" : ""}`} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={title || L("Détails", "Details")} tabIndex={-1} {...panelMotion}>
-        <button className={`task-modal-x ${nested ? "nested" : ""}`} onClick={doClose} aria-label={L("Fermer", "Close")}>✕</button>
+      <motion.div ref={panelRef} className={`task-modal ${nested ? "nested" : ""} ${wide ? "wide" : ""}`} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={title || "Details"} tabIndex={-1} {...panelMotion}>
+        <button className={`task-modal-x ${nested ? "nested" : ""}`} onClick={doClose} aria-label={"Close"}>✕</button>
         {children}
       </motion.div>
     </motion.div>,

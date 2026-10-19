@@ -25,7 +25,7 @@ export function registerProfileRoutes(app: express.Express): void {
       await commit(req);
       res.json(p);
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible d'enregistrer — réessaie.", "Couldn't save — try again.") }); }
+      res.status(500).json({ error: "Couldn't save — try again." }); }
   });
 
   // Live integration check — create → verify → clean up against the REAL connected account, on the user's
@@ -36,7 +36,7 @@ export function registerProfileRoutes(app: express.Express): void {
       void recordEvent(req.session.user!, "smoke_test", { message: `${results.filter((r) => r.ok).length}/${results.length} checks passed` });
       res.json(results);
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "échec de la vérification d'intégration", "integration check failed") }); }
+      res.status(500).json({ error: "integration check failed" }); }
   });
 
   // Fifth bandit target: overall UI density (see DENSITY_ARMS in bandit.ts) — app-wide, not Study-Mode-scoped,
@@ -63,9 +63,9 @@ export function registerProfileRoutes(app: express.Express): void {
   app.post("/api/ui/theme-personalize", requireAuth, rateLimit(5, 60_000), ah(async (req, res) => {
     // Beta-gated (defense in depth — the client button is already hidden when off, but the route itself
     // must not trust that alone). See Profile.betaFeatures' own doc comment.
-    if (!req.session.profile?.betaFeatures) { res.status(403).json({ error: M(req, "Les fonctionnalités bêta sont désactivées — active-les dans les Réglages pour essayer ça.", "Beta features are off — turn them on in Settings to try this.") }); return; }
-    if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour personnaliser ton thème.", "AI is paused — resume it in Settings to personalize your theme.") }); return; }
-    if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
+    if (!req.session.profile?.betaFeatures) { res.status(403).json({ error: "Beta features are off — turn them on in Settings to try this." }); return; }
+    if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to personalize your theme." }); return; }
+    if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
     try {
       const profile = req.session.profile ||= emptyProfile();
       // A short, factual summary — no free text from the student goes into this prompt, just already-computed
@@ -81,13 +81,13 @@ export function registerProfileRoutes(app: express.Express): void {
         ` Track: ${profile.track || "unknown"}.`;
       const result = await generateThemeTokens(summary, profile);
       addUsage(profile, result.tokensUsed, "other");
-      if (!Object.keys(result.tokens).length) { res.status(502).json({ error: M(req, "Impossible de générer un thème pour l'instant — réessaie.", "Couldn't come up with a theme just now — try again.") }); return; }
+      if (!Object.keys(result.tokens).length) { res.status(502).json({ error: "Couldn't come up with a theme just now — try again." }); return; }
       profile.customTheme = result.tokens;
       profile.preferencesUpdatedAt = new Date().toISOString();
       await commit(req);
       res.json({ customTheme: profile.customTheme });
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de personnaliser ton thème — réessaie.", "Couldn't personalize your theme — try again.") }); }
+      res.status(500).json({ error: "Couldn't personalize your theme — try again." }); }
   }));
 
   app.post("/api/ui/theme-reset", requireAuth, ah(async (req, res) => {
@@ -106,7 +106,7 @@ export function registerProfileRoutes(app: express.Express): void {
   app.post("/api/metrics", requireAuth, rateLimit(60, 60_000), ah(async (req, res) => {
     const name = String(req.body?.name || "").slice(0, 60);
     const value = Number(req.body?.value);
-    if (!name || !Number.isFinite(value)) { res.status(400).json({ error: M(req, "nom et valeur numérique requis.", "name and numeric value required.") }); return; }
+    if (!name || !Number.isFinite(value)) { res.status(400).json({ error: "name and numeric value required." }); return; }
     const bucket = req.body?.bucket ? String(req.body.bucket).slice(0, 60) : "n/a";
     const context = req.body?.context ? String(req.body.context).slice(0, 200) : "";
     void recordMetric(req.session.user!, name, value, bucket, context);
@@ -128,7 +128,7 @@ export function registerProfileRoutes(app: express.Express): void {
         byCategory: u?.monthByCategory || {},
       });
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "échec de la récupération de l'utilisation", "usage failed") }); }
+      res.status(500).json({ error: "usage failed" }); }
   });
 
   app.get("/api/profile", requireAuth, (req, res) => {
@@ -152,13 +152,13 @@ export function registerProfileRoutes(app: express.Express): void {
       else if (category === "about") { p.about = value.slice(0, 400); }
       else {
         const k = listKey(category);
-        if (!k) { res.status(400).json({ error: M(req, `Catégorie de profil inconnue : "${category}".`, `Unknown profile category "${category}".`) }); return; }
+        if (!k) { res.status(400).json({ error: `Unknown profile category "${category}".` }); return; }
         if (value && !(p as any)[k].some((x: string) => x.toLowerCase() === value.toLowerCase())) (p as any)[k].push(value.slice(0, 160));
       }
       await commit(req);
       res.json(p);
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible d'enregistrer — réessaie.", "Couldn't save — try again.") }); }
+      res.status(500).json({ error: "Couldn't save — try again." }); }
   });
 
   app.post("/api/profile/preference", requireAuth, async (req, res) => {
@@ -219,13 +219,13 @@ export function registerProfileRoutes(app: express.Express): void {
         // Every recognized key/value combo is handled above — anything else used to fall through to a
         // silent no-op 200 (profile committed unchanged, client reads back success). A typo'd key or an
         // out-of-range value should say so, not look like it saved.
-        res.status(400).json({ error: M(req, `Préférence non reconnue "${key}" ou valeur invalide.`, `Unrecognized preference "${key}" or invalid value.`) });
+        res.status(400).json({ error: `Unrecognized preference "${key}" or invalid value.` });
         return;
       }
       await commit(req);
       res.json(p);
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible d'enregistrer — réessaie.", "Couldn't save — try again.") }); }
+      res.status(500).json({ error: "Couldn't save — try again." }); }
   });
 
   // Per-subject grades — self-reported (Pronote's read API doesn't expose grades), so Otto can weigh which
@@ -238,7 +238,7 @@ export function registerProfileRoutes(app: express.Express): void {
     const subject = String(req.body?.subject || "").trim().slice(0, 60);
     const grade = Number(req.body?.grade);
     const scale = Number(req.body?.scale) > 0 ? Number(req.body.scale) : 20;
-    if (!subject || !Number.isFinite(grade)) { res.status(400).json({ error: M(req, "la matière et la note sont requises", "subject and grade are required") }); return; }
+    if (!subject || !Number.isFinite(grade)) { res.status(400).json({ error: "subject and grade are required" }); return; }
     const list = (p.grades ||= []);
     list.push({ id: randomUUID(), subject, grade: Math.max(0, Math.min(scale, grade)), scale, updatedAt: new Date().toISOString(), source: "manual" });
     await commit(req);
@@ -259,7 +259,7 @@ export function registerProfileRoutes(app: express.Express): void {
       await commit(req);
       res.json(p);
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de supprimer cette note — réessaie.", "Couldn't delete that grade — try again.") }); }
+      res.status(500).json({ error: "Couldn't delete that grade — try again." }); }
   });
 
   // Manually-logged exams/deadlines — the Pronote-less equivalent of Pronote's test list (server/pronote.ts),
@@ -270,7 +270,7 @@ export function registerProfileRoutes(app: express.Express): void {
     const p = (req.session.profile ||= emptyProfile());
     const subject = String(req.body?.subject || "").trim().slice(0, 60);
     const deadline = String(req.body?.deadline || "");
-    if (!subject || !/^\d{4}-\d{2}-\d{2}/.test(deadline)) { res.status(400).json({ error: M(req, "la matière et une vraie échéance sont requises", "subject and a real deadline are required") }); return; }
+    if (!subject || !/^\d{4}-\d{2}-\d{2}/.test(deadline)) { res.status(400).json({ error: "subject and a real deadline are required" }); return; }
     const list = (p.manualExams ||= []);
     list.push({ id: randomUUID(), subject, deadline });
     await commit(req);
@@ -290,7 +290,7 @@ export function registerProfileRoutes(app: express.Express): void {
   // A page guide was shown (or skipped): remember it on the account so it never repeats, on any device.
   app.post("/api/profile/tour-seen", requireAuth, ah(async (req, res) => {
     const id = String(req.body?.id || "").replace(/[^a-z0-9-]/gi, "").slice(0, 40);
-    if (!id) { res.status(400).json({ error: M(req, "identifiant requis", "id required") }); return; }
+    if (!id) { res.status(400).json({ error: "id required" }); return; }
     const p = (req.session.profile ||= emptyProfile());
     p.toursSeen = [...new Set([...(p.toursSeen || []), id])].slice(0, 40);
     await commit(req);
@@ -326,7 +326,7 @@ export function registerProfileRoutes(app: express.Express): void {
       await commit(req);
       res.json(p);
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de supprimer cet examen — réessaie.", "Couldn't remove that exam — try again.") }); }
+      res.status(500).json({ error: "Couldn't remove that exam — try again." }); }
   });
 
   // Error log — a student-maintained record of specific mistakes (question / what went wrong / what to do
@@ -338,7 +338,7 @@ export function registerProfileRoutes(app: express.Express): void {
     const question = String(req.body?.question || "").trim().slice(0, 500);
     const mistake = String(req.body?.mistake || "").trim().slice(0, 500);
     const fix = String(req.body?.fix || "").trim().slice(0, 500);
-    if (!subject || !question) { res.status(400).json({ error: M(req, "la matière et la question sont requises", "subject and question are required") }); return; }
+    if (!subject || !question) { res.status(400).json({ error: "subject and question are required" }); return; }
     const list = (p.errorLog ||= []);
     list.push({ id: randomUUID(), subject, question, mistake, fix, createdAt: new Date().toISOString() });
     await commit(req);
@@ -354,7 +354,7 @@ export function registerProfileRoutes(app: express.Express): void {
       await commit(req);
       res.json(p);
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de supprimer cette entrée — réessaie.", "Couldn't remove that entry — try again.") }); }
+      res.status(500).json({ error: "Couldn't remove that entry — try again." }); }
   });
 
   // Reset Otto's synthesized "read" on this student (profile.studentModel) — same transparency posture as
@@ -371,7 +371,7 @@ export function registerProfileRoutes(app: express.Express): void {
       await commit(req);
       res.json(p);
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de réinitialiser — réessaie.", "Couldn't reset — try again.") }); }
+      res.status(500).json({ error: "Couldn't reset — try again." }); }
   });
 
   // Wipe everything Otto has learned (restart from zero memory). The agent rebuilds it over time via `remember`.
@@ -381,7 +381,7 @@ export function registerProfileRoutes(app: express.Express): void {
       await commit(req);
       res.json(tasks.stripProfileForResponse(req.session.profile));
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de réinitialiser ton profil — réessaie.", "Couldn't reset your profile — try again.") }); }
+      res.status(500).json({ error: "Couldn't reset your profile — try again." }); }
   });
 
   app.delete("/api/profile/:category/:index", requireAuth, async (req, res) => {
@@ -391,21 +391,21 @@ export function registerProfileRoutes(app: express.Express): void {
     // Was a silent no-op on a bad category/out-of-range index — still 200'd with the unchanged profile,
     // indistinguishable from success (same anti-pattern already fixed on the task routes).
     if (!k || !Array.isArray((p as any)[k]) || !(i >= 0 && i < (p as any)[k].length)) {
-      res.status(404).json({ error: M(req, "Rien à supprimer ici — ça a peut-être déjà changé ailleurs.", "Nothing to delete there — it may have already changed elsewhere.") }); return;
+      res.status(404).json({ error: "Nothing to delete there — it may have already changed elsewhere." }); return;
     }
     try {
       (p as any)[k].splice(i, 1);
       await commit(req);
       res.json(tasks.stripProfileForResponse(p));
     } catch (e: any) { console.error(e);
-      res.status(500).json({ error: M(req, "Impossible de supprimer ça — réessaie.", "Couldn't delete that — try again.") }); }
+      res.status(500).json({ error: "Couldn't delete that — try again." }); }
   });
 
   app.get("/api/admin/metrics", requireAuth, async (req, res) => {
-    if (!isAdmin(req)) { res.status(403).json({ error: M(req, "Accès refusé.", "Access denied.") }); return; }
-    if (!cloudEnabled()) { res.status(500).json({ error: M(req, "Supabase n'est pas configuré.", "Supabase isn't configured.") }); return; }
+    if (!isAdmin(req)) { res.status(403).json({ error: "Access denied." }); return; }
+    if (!cloudEnabled()) { res.status(500).json({ error: "Supabase isn't configured." }); return; }
     const metrics = await getAdminMetrics();
-    if (!metrics) { res.status(500).json({ error: M(req, "Impossible de charger les métriques — réessaie.", "Couldn't load metrics — try again.") }); return; }
+    if (!metrics) { res.status(500).json({ error: "Couldn't load metrics — try again." }); return; }
     res.json(metrics);
   });
 }

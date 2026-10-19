@@ -25,7 +25,7 @@ function DoneBanner({ mistakes, total }: { mistakes: number; total: number }) {
   const L = useLang();
   return (
     <div className="sm-widget-done" role="status">
-      {mistakes === 0 ? L("Tout juste du premier coup.", "All correct on the first go.") : L(`Terminé — ${mistakes} erreur${mistakes > 1 ? "s" : ""} en chemin.`, `Done — ${mistakes} slip${mistakes > 1 ? "s" : ""} along the way.`)}
+      {mistakes === 0 ? "All correct on the first go." : `Done — ${mistakes} slip${mistakes > 1 ? "s" : ""} along the way.`}
       <span className="sm-widget-done-count"> {total}/{total}</span>
     </div>
   );
@@ -61,7 +61,7 @@ function MatchWidget({ id, caption, spec, onResult }: { id: string; caption: str
           ))}
         </div>
       </div>
-      {!done && <p className="sm-widget-hint">{pickedLeft == null ? L("Choisis un élément à gauche, puis sa paire à droite.", "Pick one on the left, then its partner on the right.") : L("Maintenant sa paire à droite.", "Now its partner on the right.")}</p>}
+      {!done && <p className="sm-widget-hint">{pickedLeft == null ? "Pick one on the left, then its partner on the right." : "Now its partner on the right."}</p>}
       {done && <DoneBanner mistakes={mistakes} total={spec.pairs.length} />}
     </div>
   );
@@ -92,14 +92,14 @@ function OrderWidget({ id, caption, spec, onResult }: { id: string; caption: str
             <span className="sm-widget-num">{pos + 1}</span>
             <span className="sm-widget-row-text"><MathText text={spec.items[v]} /></span>
             {!done && <span className="sm-widget-move">
-              <button type="button" aria-label={L("Monter", "Move up")} disabled={pos === 0} onClick={() => move(pos, -1)}>↑</button>
-              <button type="button" aria-label={L("Descendre", "Move down")} disabled={pos === list.length - 1} onClick={() => move(pos, 1)}>↓</button>
+              <button type="button" aria-label={"Move up"} disabled={pos === 0} onClick={() => move(pos, -1)}>↑</button>
+              <button type="button" aria-label={"Move down"} disabled={pos === list.length - 1} onClick={() => move(pos, 1)}>↓</button>
             </span>}
           </li>
         ))}
       </ol>
-      {!done && <button type="button" className="btn primary sm-widget-check" onClick={check}>{L("Vérifier l'ordre", "Check the order")}</button>}
-      {!done && wrongIdx.length > 0 && <p className="sm-widget-hint">{L("Pas encore — les lignes en rouge ne sont pas à la bonne place.", "Not yet — the red rows aren't in the right place.")}</p>}
+      {!done && <button type="button" className="btn primary sm-widget-check" onClick={check}>{"Check the order"}</button>}
+      {!done && wrongIdx.length > 0 && <p className="sm-widget-hint">{"Not yet — the red rows aren't in the right place."}</p>}
       {done && <DoneBanner mistakes={checks} total={spec.items.length} />}
     </div>
   );
@@ -139,7 +139,7 @@ function SortWidget({ id, caption, spec, onResult }: { id: string; caption: stri
           </button>
         ))}
       </div>
-      {!done && <p className="sm-widget-hint">{selected == null ? L("Choisis un élément, puis la catégorie où il va.", "Pick an item, then the category it belongs in.") : L("Où va-t-il ?", "Where does it go?")}</p>}
+      {!done && <p className="sm-widget-hint">{selected == null ? "Pick an item, then the category it belongs in." : "Where does it go?"}</p>}
       {done && <DoneBanner mistakes={mistakes} total={spec.items.length} />}
     </div>
   );
@@ -155,7 +155,7 @@ function UnitCircle({ spec }: { spec: Extract<WidgetSpec, { type: "unit_circle" 
   const fix = (v: number) => (Math.abs(v) < 0.0005 ? "0" : v.toFixed(3));
   return (
     <div className="sm-widget sm-widget-circle">
-      <svg viewBox="0 0 240 220" role="img" aria-label={L("Cercle trigonométrique", "Unit circle")}>
+      <svg viewBox="0 0 240 220" role="img" aria-label={"Unit circle"}>
         <line x1="10" y1={cy} x2="230" y2={cy} stroke="currentColor" opacity=".3" /><line x1={cx} y1="10" x2={cx} y2="210" stroke="currentColor" opacity=".3" />
         <circle cx={cx} cy={cy} r={r} fill="none" stroke="currentColor" opacity=".6" />
         <line x1={cx} y1={cy} x2={px} y2={py} stroke="#2563EB" strokeWidth="2" />
@@ -164,9 +164,9 @@ function UnitCircle({ spec }: { spec: Extract<WidgetSpec, { type: "unit_circle" 
         <path d={`M ${cx + 22} ${cy} A 22 22 0 ${deg > 180 ? 1 : 0} 0 ${cx + 22 * Math.cos(a)} ${cy - 22 * Math.sin(a)}`} fill="none" stroke="#2563EB" />
         <circle cx={px} cy={py} r="5" fill="#2563EB" />
       </svg>
-      <label className="sm-widget-slider"><span>{L("Angle", "Angle")} {Math.round(deg)}°</span><input type="range" min={0} max={360} step={1} value={deg} onChange={(e) => setDeg(Number(e.target.value))} /></label>
+      <label className="sm-widget-slider"><span>{"Angle"} {Math.round(deg)}°</span><input type="range" min={0} max={360} step={1} value={deg} onChange={(e) => setDeg(Number(e.target.value))} /></label>
       <div className="sm-widget-readout">
-        <button type="button" className="sm-widget-link" onClick={() => setShowValues((v) => !v)}>{showValues ? L("Masquer les valeurs (prédis d'abord)", "Hide the values (predict first)") : L("Afficher les valeurs", "Show the values")}</button>
+        <button type="button" className="sm-widget-link" onClick={() => setShowValues((v) => !v)}>{showValues ? "Hide the values (predict first)" : "Show the values"}</button>
         {showValues && <span><span style={{ color: "#16A34A" }}>cos</span> = {fix(Math.cos(a))} · <span style={{ color: "#DC2626" }}>sin</span> = {fix(Math.sin(a))}</span>}
       </div>
     </div>
@@ -192,16 +192,16 @@ function Projectile({ spec }: { spec: Extract<WidgetSpec, { type: "projectile" }
   void maxH;
   return (
     <div className="sm-widget sm-widget-projectile">
-      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={L("Trajectoire", "Trajectory")}>
+      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={"Trajectory"}>
         <line x1={pad} y1={H - pad} x2={W - pad / 2} y2={H - pad} stroke="currentColor" opacity=".4" />
         <polyline points={pts.join(" ")} fill="none" stroke="#2563EB" strokeWidth="2" />
         <circle cx={pad} cy={H - pad} r="4" fill="#DC2626" />
       </svg>
-      <label className="sm-widget-slider"><span>{L("Angle", "Angle")} {angle}°</span><input type="range" min={5} max={85} step={1} value={angle} onChange={(e) => setAngle(Number(e.target.value))} /></label>
-      <label className="sm-widget-slider"><span>{L("Vitesse", "Speed")} {speed} m/s</span><input type="range" min={5} max={60} step={1} value={speed} onChange={(e) => setSpeed(Number(e.target.value))} /></label>
+      <label className="sm-widget-slider"><span>{"Angle"} {angle}°</span><input type="range" min={5} max={85} step={1} value={angle} onChange={(e) => setAngle(Number(e.target.value))} /></label>
+      <label className="sm-widget-slider"><span>{"Speed"} {speed} m/s</span><input type="range" min={5} max={60} step={1} value={speed} onChange={(e) => setSpeed(Number(e.target.value))} /></label>
       <div className="sm-widget-readout">
-        <button type="button" className="sm-widget-link" onClick={() => setShowStats((v) => !v)}>{showStats ? L("Masquer les valeurs", "Hide the values") : L("Prédis la portée, puis affiche les valeurs", "Predict the range, then show the values")}</button>
-        {showStats && <span>{L("Portée", "Range")} {st.range.toFixed(1)} m · {L("Hauteur max", "Max height")} {st.height.toFixed(1)} m · {L("Durée", "Time")} {st.time.toFixed(2)} s · g = {g}</span>}
+        <button type="button" className="sm-widget-link" onClick={() => setShowStats((v) => !v)}>{showStats ? "Hide the values" : "Predict the range, then show the values"}</button>
+        {showStats && <span>{"Range"} {st.range.toFixed(1)} m · {"Max height"} {st.height.toFixed(1)} m · {"Time"} {st.time.toFixed(2)} s · g = {g}</span>}
       </div>
     </div>
   );

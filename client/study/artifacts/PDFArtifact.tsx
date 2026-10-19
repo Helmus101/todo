@@ -66,11 +66,11 @@ export function PDFArtifact({ artifact, onChange }: PDFArtifactProps) {
               refuse to be framed via its own X-Frame-Options/CSP — invisible to JS (no onError fires), so
               the student would otherwise be stuck looking at a blank/blocked pane with no way out. */}
           <a className="sm-pdf-fallback-link" href={url} target="_blank" rel="noopener noreferrer">
-            {L("Ça ne s'affiche pas ? Ouvre dans un nouvel onglet ↗", "Not loading? Open in a new tab ↗")}
+            {"Not loading? Open in a new tab ↗"}
           </a>
         </>
       ) : (
-        <div className="sm-artifact-empty">{L("Aucun PDF joint.", "No PDF attached.")}</div>
+        <div className="sm-artifact-empty">{"No PDF attached."}</div>
       )}
     </div>
   );

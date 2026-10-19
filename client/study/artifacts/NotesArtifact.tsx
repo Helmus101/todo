@@ -13,7 +13,7 @@ export function NotesArtifact({ value, onChange }: NotesArtifactProps) {
         className="sm-notes-textarea"
         value={value}
         onChange={e => onChange(e.target.value)}
-        placeholder={L("Pas encore de notes.", "No notes yet.")} aria-label={L("Notes", "Notes")}
+        placeholder={"No notes yet."} aria-label={"Notes"}
         spellCheck
       />
     </div>

@@ -31,7 +31,7 @@ export function StickyNoteArtifact({ artifact, onChange }: StickyNoteArtifactPro
         style={{ backgroundColor: "transparent" }}
         value={text}
         onChange={e => onChange({ text: e.target.value, color })}
-        placeholder={L("Écris une note…", "Write a note…")} aria-label={L("Écris une note…", "Write a note…")}
+        placeholder={"Write a note…"} aria-label={"Write a note…"}
       />
     </div>
   );

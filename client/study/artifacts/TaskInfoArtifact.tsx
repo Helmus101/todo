@@ -33,19 +33,19 @@ export function TaskInfoArtifact({ task, onToggleStep, onToggleSubstep, onComple
       {task.why && <p className="sm-task-detail-why">{stripStrayMarkdown(task.why)}</p>}
       {task.sourceDetail && (
         <div className="sm-task-detail-section">
-          <h4>{L("Consignes", "Instructions")}</h4>
+          <h4>{"Instructions"}</h4>
           <Paragraphs text={stripStrayMarkdown(stripHtml(task.sourceDetail))} />
         </div>
       )}
       {task.context && (
         <div className="sm-task-detail-section">
-          <h4>{L("Contexte", "Context")}</h4>
+          <h4>{"Context"}</h4>
           <Paragraphs text={stripStrayMarkdown(task.context)} />
         </div>
       )}
       {task.links?.length ? (
         <div className="sm-task-detail-section">
-          <h4>{L("Liens", "Links")}</h4>
+          <h4>{"Links"}</h4>
           <ul className="sm-task-detail-links">
             {task.links.map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noopener noreferrer">{l.label}</a></li>)}
           </ul>
@@ -53,11 +53,11 @@ export function TaskInfoArtifact({ task, onToggleStep, onToggleSubstep, onComple
       ) : null}
       {steps.length > 0 && (
         <div className="sm-task-detail-section">
-          <h4>{L(`Étapes (${doneCount}/${steps.length})`, `Steps (${doneCount}/${steps.length})`)}</h4>
+          <h4>{`Steps (${doneCount}/${steps.length})`}</h4>
           <ol className="sm-task-detail-steps">
             {steps.map((s, i) => (
               <li key={i} className={s.done ? "done" : ""}>
-                <button type="button" className="sm-task-detail-step-mark" aria-label={s.done ? L("Marquer l'étape comme non faite", "Mark step not done") : L("Marquer l'étape comme faite", "Mark step done")}
+                <button type="button" className="sm-task-detail-step-mark" aria-label={s.done ? "Mark step not done" : "Mark step done"}
                   onClick={() => onToggleStep?.(i, !s.done)} disabled={!onToggleStep}>
                   {s.done ? "✓" : i + 1}
                 </button>
@@ -82,7 +82,7 @@ export function TaskInfoArtifact({ task, onToggleStep, onToggleSubstep, onComple
       )}
       {onComplete && !isHandled ? (
         <button type="button" className="sm-btn sm-btn-primary sm-task-detail-complete" onClick={onComplete}>
-          {L("Marquer la tâche comme terminée", "Mark task complete")}
+          {"Mark task complete"}
         </button>
       ) : null}
     </div>

@@ -21,7 +21,7 @@ export function VideoArtifact({ url, title }: VideoArtifactProps) {
           sandbox="allow-scripts allow-same-origin allow-presentation allow-popups"
         />
       ) : (
-        <div className="sm-artifact-empty">{L("Aucune vidéo jointe.", "No video attached.")}</div>
+        <div className="sm-artifact-empty">{"No video attached."}</div>
       )}
     </div>
   );

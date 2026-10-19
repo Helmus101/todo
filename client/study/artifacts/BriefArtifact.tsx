@@ -12,7 +12,7 @@ export function BriefArtifact({ value }: BriefArtifactProps) {
   const L = useLang();
   return (
     <div className="sm-brief-body">
-      {value.trim() ? renderNoteBody(value) : <p className="muted">{L("Aucun contenu.", "No content.")}</p>}
+      {value.trim() ? renderNoteBody(value) : <p className="muted">{"No content."}</p>}
     </div>
   );
 }

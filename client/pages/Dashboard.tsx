@@ -24,7 +24,7 @@ export function DueReviews({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask
   useEffect(() => {
     if (openDeck && due && !due.some((d) => d.deckId === openDeck.deckId)) setOpenDeck(null);
   }, [due, openDeck]);
-  if (error) return <ErrorNote small>{en ? "Couldn't load reviews due." : "Impossible de charger les révisions dues."}</ErrorNote>;
+  if (error) return <ErrorNote small>{"Couldn't load reviews due."}</ErrorNote>;
   if (!due?.length) return null;
   // Group by DECK (not task) — a task with two decks should show two chips, not one merged count.
   const byDeck = new Map<string, { taskId: string; deckTitle: string; count: number }>();
@@ -42,7 +42,7 @@ export function DueReviews({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask
   const openDeckObj = openTask?.flashcards?.find((f) => f.id === openDeck?.deckId);
   return (
     <div className="due-reviews">
-      <div className="exam-strip-label">{en ? "Due for review" : "À réviser"}</div>
+      <div className="exam-strip-label">{"Due for review"}</div>
       <div className="exam-strip">
         {dueDecks.map(([deckId, t]) => (
           <button key={deckId} type="button" className="exam-chip due-review-chip" onClick={() => setOpenDeck({ taskId: t.taskId, deckId })}>
@@ -82,7 +82,7 @@ export function TaskSkeleton() {
     <div className="loading-screen" aria-busy="true" aria-live="polite">
       <div className="loading-head">
         <Spinner size="sm" />
-        <span className="loading-msg">{L("Récupération de ta journée…", "Pulling up your day…")}</span>
+        <span className="loading-msg">{"Pulling up your day…"}</span>
       </div>
       <div className="list" aria-hidden="true">
         {widths.map((w, i) => (
@@ -108,23 +108,21 @@ export function ConnectCard({ status, onSkip }: { status: ConnectionStatus; onSk
   return (
     <div className="connect-card">
       <div className="connect-mark"><Logo size={30} /></div>
-      <h2>{who ? (en ? `Welcome, ${who}` : `Bienvenue, ${who}`) : (en ? "Welcome to Otto" : "Bienvenue sur Otto")}</h2>
+      <h2>{who ? (`Welcome, ${who}`) : ("Welcome to Otto")}</h2>
       {/* Pronote is ONE option, never the premise: someone with no Pronote (IB/AP, a school on another
           portal, or nobody at all) must not read this as "this app isn't for me". Same picker either way. */}
-      <p>{en
-        ? "Connect whatever holds your homework — Pronote, Gmail, Calendar or Drive — and Otto turns it into a clear plan for today. It never does the exercise for you, and never checks anything off without you."
-        : "Connecte ce qui contient tes devoirs — Pronote, Gmail, Calendar ou Drive — et Otto en fait un plan clair pour aujourd'hui. Il ne fait jamais l'exercice à ta place, et ne coche jamais rien sans toi."}</p>
+      <p>{"Connect whatever holds your homework — Pronote, Gmail, Calendar or Drive — and Otto turns it into a clear plan for today. It never does the exercise for you, and never checks anything off without you."}</p>
       {/* A raw env-var name means nothing to a student — say what's actually broken instead. */}
-      {!status.aiReady && <div className="warn">{en ? "Otto's AI isn't set up on this server yet — task generation is off for now." : "L'IA d'Otto n'est pas encore configurée sur ce serveur — la génération de tâches est désactivée pour l'instant."}</div>}
-      <a className="btn primary big" href="/settings">{en ? "Choose what to connect" : "Choisir quoi connecter"}</a>
+      {!status.aiReady && <div className="warn">{"Otto's AI isn't set up on this server yet — task generation is off for now."}</div>}
+      <a className="btn primary big" href="/settings">{"Choose what to connect"}</a>
       {/* Escape hatch — reported live: no Pronote/school with Pronote, no Google account, just wants to add
           tasks by hand and use the tutor. Connecting nothing is a legitimate way to use Otto (manual tasks
           + chat/Study Mode still work fully; the only thing missing is AUTOMATIC detection), so this isn't
           hidden behind Settings or worded as a dead end — it's a real, first-class choice right here. It
           sits at the same weight as the connect button for the same reason: nothing connected is not a
           downgrade, and Otto must not read as a Pronote-only app. */}
-      <button type="button" className="btn ghost" onClick={onSkip}>{en ? "Use Otto without connecting" : "Utiliser Otto sans connecter"}</button>
-      <p className="fineprint">{en ? "Connect or disconnect any app, or pause Otto, any time in Settings. " : "Connecte ou déconnecte n'importe quelle app, ou mets Otto en pause, à tout moment dans les Réglages. "}<a href="/privacy">{en ? "What Otto reads and why →" : "Ce qu'Otto lit et pourquoi →"}</a></p>
+      <button type="button" className="btn ghost" onClick={onSkip}>{"Use Otto without connecting"}</button>
+      <p className="fineprint">{"Connect or disconnect any app, or pause Otto, any time in Settings. "}<a href="/privacy">{"What Otto reads and why →"}</a></p>
     </div>
   );
 }
@@ -153,7 +151,7 @@ export function AddTask({ onAdded }: { onAdded: Dispatch<SetStateAction<WebTask[
     // stub the moment it lands; a failure rolls the stub back and returns your text so nothing is lost.
     const stubId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const stub: WebTask = {
-      id: stubId, title: v, why: L("Ajouté par toi", "Added by you"), when: whenToSend || undefined, source: "manual", risk: "low",
+      id: stubId, title: v, why: "Added by you", when: whenToSend || undefined, source: "manual", risk: "low",
       urgency: 0.5, importance: 0.5, quadrant: "do", score: 1,
       status: "ready", createdAt: new Date().toISOString(), unrefined: true,
     };
@@ -163,12 +161,12 @@ export function AddTask({ onAdded }: { onAdded: Dispatch<SetStateAction<WebTask[
       // Defensive: a 401 (session expired) resolves instead of throwing (see api.ts's j()), returning the
       // error BODY where an array was expected. Setting `tasks` state to that non-array object crashed the
       // whole app on the next render — which, from the outside, looked exactly like the new task vanishing.
-      if (!Array.isArray(fresh)) throw new Error(L("On dirait que tu as été déconnecté — recharge la page.", "Looks like you got logged out — reload the page."));
+      if (!Array.isArray(fresh)) throw new Error("Looks like you got logged out — reload the page.");
       onAdded(fresh);
     } catch (e: any) {
       onAdded((prev) => prev.filter((t) => t.id !== stubId));
       setText(v); setWhen(whenToSend);
-      notify(e?.message || L("Impossible d'ajouter cette tâche — réessaie.", "Couldn't add this task — try again."), "error");
+      notify(e?.message || "Couldn't add this task — try again.", "error");
     }
     finally { setBusy(false); }
   };
@@ -177,7 +175,7 @@ export function AddTask({ onAdded }: { onAdded: Dispatch<SetStateAction<WebTask[
       <span className="add-plus" aria-hidden="true">+</span>
       <input
         className="add-task-input"
-        placeholder={L("Qu'est-ce que tu te dois de faire ensuite ?", "What do you owe yourself next?")} aria-label={L("Qu'est-ce que tu te dois de faire ensuite ?", "What do you owe yourself next?")}
+        placeholder={"What do you owe yourself next?"} aria-label={"What do you owe yourself next?"}
         value={text}
         disabled={busy}
         onChange={(e) => setText(e.target.value)}
@@ -190,12 +188,12 @@ export function AddTask({ onAdded }: { onAdded: Dispatch<SetStateAction<WebTask[
           value={when}
           disabled={busy}
           onChange={(e) => setWhen(e.target.value)}
-          title={L("Date d'échéance", "When this is due")}
+          title={"When this is due"}
         />
       ) : (
-        <button type="button" className="btn xs ghost add-when-toggle" disabled={busy} onClick={() => setShowWhen(true)}>{L("+ date", "+ date")}</button>
+        <button type="button" className="btn xs ghost add-when-toggle" disabled={busy} onClick={() => setShowWhen(true)}>{"+ date"}</button>
       )}
-      {text.trim() && <button className="btn xs primary" disabled={busy} onClick={() => void submit()}>{busy ? L("Ajout…", "Adding…") : L("Ajouter", "Add")}</button>}
+      {text.trim() && <button className="btn xs primary" disabled={busy} onClick={() => void submit()}>{busy ? "Adding…" : "Add"}</button>}
     </div>
   );
 }

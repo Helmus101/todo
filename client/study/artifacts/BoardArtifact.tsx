@@ -64,7 +64,7 @@ function GapAnswer({ entry, onCheck, en }: { entry: BoardEntry; onCheck: NonNull
     setBusy(true);
     try { setVerdict(await onCheck(entry, given)); } catch { setVerdict("failed"); } finally { setBusy(false); }
   };
-  if (verdict === "correct") return <div className="sm-inline-problem-result correct">{en ? "Correct!" : "Correct !"}</div>;
+  if (verdict === "correct") return <div className="sm-inline-problem-result correct">{"Correct!"}</div>;
   return (
     <div className="sm-board-problem-free sm-board-gap-answer">
       <div className="sm-inline-problem-input-row">
@@ -73,20 +73,20 @@ function GapAnswer({ entry, onCheck, en }: { entry: BoardEntry; onCheck: NonNull
           showKeys={!(entry.answerKind ? entry.answerKind === "number" : isNumericAnswer(entry.expectedAnswer || ""))}
           answer={entry.expectedAnswer || ""}
           context={entry.text || ""}
-          placeholder={en ? "Your answer…" : "Ta réponse…"}
+          placeholder={"Your answer…"}
           value={value}
           onChange={(v) => { setValue(v); if (verdict) setVerdict(null); }}
           onEnter={() => void submit()}
-          ariaLabel={en ? "Your answer for this line" : "Ta réponse pour cette ligne"}
+          ariaLabel={"Your answer for this line"}
         />
         <button type="button" className="sm-btn sm-btn-primary sm-btn-sm" disabled={!value.trim() || busy} onClick={() => void submit()}>
-          {en ? "Check" : "Vérifier"}
+          {"Check"}
         </button>
       </div>
-      {verdict === "incorrect" ? <div className="sm-inline-problem-result wrong" role="status">{en ? "Not quite — Otto will help you check it." : "Pas tout à fait — Otto va t'aider à vérifier."}</div> : null}
-      {verdict === "unknown" ? <div className="sm-inline-problem-result" role="status">{en ? "Sent to Otto to look at." : "Envoyé à Otto pour qu'il regarde."}</div> : null}
-      {verdict === "failed" ? <div className="sm-inline-problem-result wrong" role="alert">{en ? "Couldn't check that just now — try again." : "Impossible de vérifier pour l'instant — réessaie."}</div> : null}
-      {verdict === "system_error" ? <div className="sm-inline-problem-result" role="status">{en ? "Otto can't trust this line's answer key — he'll check it with you." : "La clé de cette ligne n'est pas fiable — Otto va la vérifier avec toi."}</div> : null}
+      {verdict === "incorrect" ? <div className="sm-inline-problem-result wrong" role="status">{"Not quite — Otto will help you check it."}</div> : null}
+      {verdict === "unknown" ? <div className="sm-inline-problem-result" role="status">{"Sent to Otto to look at."}</div> : null}
+      {verdict === "failed" ? <div className="sm-inline-problem-result wrong" role="alert">{"Couldn't check that just now — try again."}</div> : null}
+      {verdict === "system_error" ? <div className="sm-inline-problem-result" role="status">{"Otto can't trust this line's answer key — he'll check it with you."}</div> : null}
     </div>
   );
 }
@@ -361,8 +361,8 @@ type ProblemState = { picked: number | null; textAnswer: string; submitted: bool
 export function conceptMissMessage(problem: Pick<TaskProblem, "rubric">, given: string, en: boolean): string | null {
   if (!problem.rubric?.required?.length || !String(given || "").trim()) return null;
   const g = gradeConceptAnswer(problem.rubric, given);
-  if (g.status === "partially_correct") return en ? `Partly right — you have ${g.met} of the ${g.total} key ideas. What's still missing?` : `En partie juste — tu as ${g.met} des ${g.total} idées clés. Qu'est-ce qui manque encore ?`;
-  if (g.misconception) return en ? `"${g.misconception}" is a related idea, but it isn't what's being asked here. Try again.` : `« ${g.misconception} » est une idée liée, mais ce n'est pas ce qui est demandé ici. Réessaie.`;
+  if (g.status === "partially_correct") return `Partly right — you have ${g.met} of the ${g.total} key ideas. What's still missing?`;
+  if (g.misconception) return `"${g.misconception}" is a related idea, but it isn't what's being asked here. Try again.`;
   return null;
 }
 
@@ -386,7 +386,7 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, sys
             <span className="sm-board-problem-compact-mark" aria-hidden="true">✓</span>
             <span className="sm-board-problem-compact-q"><MathText text={stripStrayMarkdown(problem.question)} /></span>
             <button type="button" className="sm-btn sm-btn-ghost sm-btn-xs sm-board-compact-btn" onClick={() => setExpanded(true)}>
-              {en ? "Details" : "Détails"}
+              {"Details"}
             </button>
           </div>
         </div>
@@ -401,15 +401,15 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, sys
     >
       <div className="sm-board-entry-main">
       <div className="sm-board-problem-heading-row">
-        <div className="sm-board-problem-label">{answered ? (en ? "Resolved" : "Résolu") : (en ? "Your turn" : "À toi")}</div>
+        <div className="sm-board-problem-label">{answered ? ("Resolved") : ("Your turn")}</div>
         {answered && (
           <button type="button" className="sm-btn sm-btn-ghost sm-btn-xs sm-board-compact-btn" onClick={() => setExpanded(false)}>
-            {en ? "Compact" : "Réduire"}
+            {"Compact"}
           </button>
         )}
       </div>
       <div className="sm-board-problem-q"><MathText text={stripStrayMarkdown(problem.question)} /></div>
-      {problem.source && /^https:\/\//i.test(problem.source.url) ? <a className="sm-board-problem-source" href={problem.source.url} target="_blank" rel="noopener noreferrer">{en ? "Source" : "Source"}: {problem.source.name} ↗</a> : null}
+      {problem.source && /^https:\/\//i.test(problem.source.url) ? <a className="sm-board-problem-source" href={problem.source.url} target="_blank" rel="noopener noreferrer">{"Source"}: {problem.source.name} ↗</a> : null}
       {problem.format && !answered ? <div className="sm-board-problem-format"><MathText text={problem.format} /></div> : null}
       {problem.hint && !answered ? (
         <div className="sm-board-problem-hint-row">
@@ -417,7 +417,7 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, sys
             <div className="sm-board-problem-hint"><MathText text={stripStrayMarkdown(problem.hint)} /></div>
           ) : (
             <button type="button" className="sm-btn sm-btn-ghost sm-btn-sm" onClick={onShowHint}>
-              {en ? "Hint" : "Indice"}
+              {"Hint"}
             </button>
           )}
         </div>
@@ -444,7 +444,7 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, sys
       ) : (
         <div className="sm-board-problem-free">
           {answered ? (
-            <div className="sm-inline-problem-result correct">{en ? "Correct!" : "Correct !"}</div>
+            <div className="sm-inline-problem-result correct">{"Correct!"}</div>
           ) : (
             <div className="sm-inline-problem-input-row">
               <MathAnswerInput
@@ -452,7 +452,7 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, sys
                 showKeys={!numericBox}
                 answer={problem.answer || ""}
                 context={problem.question || ""}
-                placeholder={numericBox ? (en ? "Your answer (a number, no units)…" : "Ta réponse (un nombre, sans unité)…") : (en ? "Your answer…" : "Ta réponse…")}
+                placeholder={numericBox ? ("Your answer (a number, no units)…") : ("Your answer…")}
                 value={state.textAnswer}
                 onChange={onTextAnswer}
                 onEnter={() => { if (state.textAnswer.trim()) onSubmit(); }}
@@ -464,7 +464,7 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, sys
                 disabled={!state.textAnswer.trim()}
                 onClick={onSubmit}
               >
-                {en ? "Check" : "Vérifier"}
+                {"Check"}
               </button>
             </div>
           )}
@@ -473,13 +473,13 @@ function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, sys
       {missed ? (
         <div className="sm-inline-problem-result wrong" role="status">
           {problemIsMCQ
-            ? (en ? "Not quite — try another option." : "Pas tout à fait — essaie une autre réponse.")
-            : info?.miss || conceptMissMessage(problem, state.textAnswer, en) || (en ? "Not quite — try again." : "Pas tout à fait — réessaie.")}
+            ? ("Not quite — try another option.")
+            : info?.miss || conceptMissMessage(problem, state.textAnswer, en) || ("Not quite — try again.")}
         </div>
       ) : null}
       {systemError && state.submitted && !answered ? (
         <div className="sm-inline-problem-result" role="status">
-          {en ? "This exercise's answer key disagrees with the verified value — your answer isn't counted wrong. Otto will sort it out." : "La clé de cet exercice contredit la valeur vérifiée — ta réponse n'est pas comptée fausse. Otto va corriger."}
+          {"This exercise's answer key disagrees with the verified value — your answer isn't counted wrong. Otto will sort it out."}
         </div>
       ) : null}
       {answered && (problem.why || info?.why) ? (
@@ -518,7 +518,7 @@ function BoardTable({ spec, en }: { spec: TableSpec; en: boolean }) {
           {spec.rows.map((r, ri) => (
             <tr key={ri}>
               {r.map((c, ci) => ci === hide && !shown.has(ri)
-                ? <td key={ci}><button type="button" className="sm-board-table-reveal" onClick={() => reveal(ri)}>{en ? "Recall, then reveal" : "Rappelle-toi, puis révèle"}</button></td>
+                ? <td key={ci}><button type="button" className="sm-board-table-reveal" onClick={() => reveal(ri)}>{"Recall, then reveal"}</button></td>
                 : <td key={ci}><MathText text={c} /></td>)}
             </tr>
           ))}
@@ -538,7 +538,7 @@ function SourceBlock({ spec, en }: { spec: SourceSpec; en: boolean }) {
       </blockquote>
       {spec.attribution ? <figcaption className="sm-board-source-by">— {spec.attribution}</figcaption> : null}
       {spec.highlights.some((h) => h.note) ? (
-        <ol className="sm-board-source-notes" aria-label={en ? "Notes on the source" : "Notes sur la source"}>
+        <ol className="sm-board-source-notes" aria-label={"Notes on the source"}>
           {spec.highlights.map((h, i) => h.note ? <li key={i} value={i + 1}><em>{h.phrase}</em> — <MathText text={h.note} /></li> : null)}
         </ol>
       ) : null}
@@ -805,11 +805,8 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
   const hint = (
     <FirstTimeHint
       id="board"
-      title={L("Le tableau d'Otto", "Otto's board")}
-      body={L(
-        "Otto construit ici un document de séance, entrée par entrée : l'objectif du jour, les définitions et formules clés, tes propres déclics, un résumé de ton raisonnement — et des problèmes à résoudre. Toujours accessible, pas besoin de le rouvrir à chaque fois.",
-        "Otto builds a session document here, entry by entry: today's focus, key definitions and formulas, your own insights, a summary of your reasoning — and problems to solve. Always accessible, no need to reopen it each time.",
-      )}
+      title={"Otto's board"}
+      body={"Otto builds a session document here, entry by entry: today's focus, key definitions and formulas, your own insights, a summary of your reasoning — and problems to solve. Always accessible, no need to reopen it each time."}
     />
   );
 
@@ -821,28 +818,28 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
         {hint}
         <div className="sm-board-header">
           <span className="sm-board-header-date">
-            {new Date().toLocaleDateString(L("fr", "en") === "en" ? "en-US" : "fr-FR", { weekday: "long", day: "numeric", month: "long" })}
+            {new Date().toLocaleDateString("en" === "en" ? "en-US" : "fr-FR", { weekday: "long", day: "numeric", month: "long" })}
           </span>
           {task.sourceSubject ? <span className="sm-board-header-subject">{task.sourceSubject}</span> : null}
         </div>
         <div className="sm-board-empty">
           {/* The prototype's board empty state: two big serif lines with a quiet promise under them —
               the page reads as an invitation, not as an error message about missing content. */}
-          <p className="sm-board-empty-line">{L("On va le démonter ensemble.", "Let's take it apart together.")}</p>
-          <p className="sm-board-empty-line">{L("Qu'est-ce qui te résiste en ce moment ?", "What's beating you right now?")}</p>
-          <p className="sm-board-empty-sub">{L("Je ne te donne pas la réponse : tu la trouves, je te pousse. Une idée à la fois.", "I won't give you the answer — you find it, I push. One idea at a time.")}</p>
+          <p className="sm-board-empty-line">{"Let's take it apart together."}</p>
+          <p className="sm-board-empty-line">{"What's beating you right now?"}</p>
+          <p className="sm-board-empty-sub">{"I won't give you the answer — you find it, I push. One idea at a time."}</p>
         </div>
         {writing ? (
           <div className="sm-board-drafting" role="status" aria-live="polite">
             <span className="sm-typing-dots" aria-hidden="true"><i /><i /><i /></span>
-            {L("fr", "en") === "en" ? "Otto is writing…" : "Otto écrit…"}
+            {"en" === "en" ? "Otto is writing…" : "Otto écrit…"}
           </div>
         ) : null}
       </div>
     );
   }
 
-  const en = L("fr", "en") === "en";
+  const en = "en" === "en";
 
   const renderItem = (item: (typeof flowItems)[number], idx: number) => {
         const node = item.problem ? (
@@ -872,7 +869,7 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
               className={`sm-board-entry sm-board-entry-${e.kind || "note"}${e.owner === "student" ? " sm-board-entry-student" : ""}${e.status === "incorrect" && e.kind !== "gap" ? " sm-board-entry-incorrect" : ""} sm-board-writein${fresh ? " sm-board-reveal" : ""}${isPastGap || (e.kind === "gap" && e.status === "correct") ? " sm-board-gap-past" : ""}${e.kind === "gap" && e.status !== "correct" && flowItems.slice(idx + 1).some((it) => it.entry?.kind === "gap") ? " sm-board-gap-skipped" : ""}`}
               style={fresh ? { animationDuration: `.35s, ${revealDuration(e.text)}s`, ...(e.cue ? { animationDelay: `${Math.min(e.cue, 6) * 0.9}s` } : {}) } : undefined}
             >
-              {lineNo.get(e.id) ? <span className="sm-board-lineno" aria-label={en ? `line ${lineNo.get(e.id)}` : `ligne ${lineNo.get(e.id)}`}>{lineNo.get(e.id)}</span> : null}
+              {lineNo.get(e.id) ? <span className="sm-board-lineno" aria-label={`line ${lineNo.get(e.id)}`}>{lineNo.get(e.id)}</span> : null}
               <div className="sm-board-entry-main">
               {/* No kind-label chip here on purpose (removed: "Formule"/"Définition"/"Insight"/…) — the board
                   reads as ONE continuous document the tutor is working on, not a form with labeled fields.
@@ -983,21 +980,21 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
           sourceSubject (stamped at session start); date is today (the board is per-session). */}
       <div className="sm-board-header">
         <span className="sm-board-header-date">
-          {new Date().toLocaleDateString(en ? "en-US" : "fr-FR", { weekday: "long", day: "numeric", month: "long" })}
+          {new Date().toLocaleDateString("en-US", { weekday: "long", day: "numeric", month: "long" })}
         </span>
         {task.sourceSubject ? <span className="sm-board-header-subject">{task.sourceSubject}</span> : null}
         {onUndo ? (
-          <button type="button" className="sm-board-undo" onClick={onUndo} title={en ? "Undo the last board change" : "Annuler la dernière modification du tableau"}>
-            ↶ {en ? "Undo" : "Annuler"}
+          <button type="button" className="sm-board-undo" onClick={onUndo} title={"Undo the last board change"}>
+            ↶ {"Undo"}
           </button>
         ) : null}
       </div>
 
 
       {keyIdeas.length || latestSummary ? (
-        <section className={`sm-board-ideas${ideasOpen ? "" : " is-collapsed"}`} aria-label={en ? "Key ideas" : "À retenir"}>
+        <section className={`sm-board-ideas${ideasOpen ? "" : " is-collapsed"}`} aria-label={"Key ideas"}>
           <button type="button" className="sm-board-ideas-head" aria-expanded={ideasOpen} onClick={toggleIdeas}>
-            <span>{en ? "Key ideas" : "À retenir"}</span>
+            <span>{"Key ideas"}</span>
             <span className="sm-board-ideas-count">{keyIdeas.length + (latestSummary ? 1 : 0)}</span>
             <span className="sm-chev sm-board-ideas-chev" aria-hidden="true" />
           </button>
@@ -1005,13 +1002,13 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
             <ul className="sm-board-ideas-list">
               {keyIdeas.map((e) => (
                 <li key={`idea-${e.id}`} className={`sm-board-idea sm-board-idea-${e.kind}`}>
-                  {e.kind === "strategy" ? <span className="sm-board-idea-tag">{en ? "Strategy" : "Méthode"}</span> : null}
+                  {e.kind === "strategy" ? <span className="sm-board-idea-tag">{"Strategy"}</span> : null}
                   <MathText text={autoMathLine(stripStrayMarkdown(e.text))} />
                 </li>
               ))}
               {latestSummary ? (
                 <li className="sm-board-idea sm-board-idea-summary">
-                  <span className="sm-board-idea-tag">{en ? "Summary" : "Bilan"}</span>
+                  <span className="sm-board-idea-tag">{"Summary"}</span>
                   <MathText text={autoMathLine(stripStrayMarkdown(latestSummary.text))} />
                 </li>
               ) : null}
@@ -1053,7 +1050,7 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
       {writing ? (
         <div className="sm-board-drafting" role="status" aria-live="polite">
           <span className="sm-typing-dots" aria-hidden="true"><i /><i /><i /></span>
-          {en ? "Otto is writing…" : "Otto écrit…"}
+          {"Otto is writing…"}
         </div>
       ) : null}
 

@@ -39,7 +39,7 @@ export function InlineProblem({ problem }: InlineProblemProps) {
 
   return (
     <div className="sm-inline-problem">
-      <div className="sm-inline-problem-label">{L("Problème d'entraînement", "Practice problem")}</div>
+      <div className="sm-inline-problem-label">{"Practice problem"}</div>
       <div className="sm-inline-problem-q"><MathText text={stripStrayMarkdown(problem.question)} /></div>
 
       {problem.format && !answered ? (
@@ -52,7 +52,7 @@ export function InlineProblem({ problem }: InlineProblemProps) {
             <div className="sm-inline-problem-hint"><MathText text={stripStrayMarkdown(problem.hint)} /></div>
           ) : (
             <button type="button" className="sm-btn sm-btn-ghost sm-btn-sm" onClick={() => setShowHint(true)}>
-              {L("Indice", "Hint")}
+              {"Hint"}
             </button>
           )}
         </div>
@@ -80,15 +80,15 @@ export function InlineProblem({ problem }: InlineProblemProps) {
       ) : (
         <div className="sm-inline-problem-free">
           {answered ? (
-            <div className="sm-inline-problem-result correct">{L("Correct !", "Correct!")}</div>
+            <div className="sm-inline-problem-result correct">{"Correct!"}</div>
           ) : (
             <div className="sm-inline-problem-input-row">
               <MathAnswerInput
-                en={L("fr", "en") === "en"}
+                en={"en" === "en"}
                 showKeys={!isNumericAnswer(problem.answer)}
                 answer={problem.answer || ""}
                 context={problem.question || ""}
-                placeholder={isNumericAnswer(problem.answer) ? L("Ta réponse (un nombre, sans unité)…", "Your answer (a number, no units)…") : L("Ta réponse…", "Your answer…")}
+                placeholder={isNumericAnswer(problem.answer) ? "Your answer (a number, no units)…" : "Your answer…"}
                 value={textAnswer}
                 onChange={(v) => { setTextAnswer(v); setSubmitted(false); }}
                 onEnter={() => { if (textAnswer.trim()) setSubmitted(true); }}
@@ -100,7 +100,7 @@ export function InlineProblem({ problem }: InlineProblemProps) {
                 disabled={!textAnswer.trim()}
                 onClick={() => setSubmitted(true)}
               >
-                {L("Vérifier", "Check")}
+                {"Check"}
               </button>
             </div>
           )}
@@ -109,12 +109,12 @@ export function InlineProblem({ problem }: InlineProblemProps) {
 
       {missed ? (
         <div className="sm-inline-problem-result wrong" role="status">
-          {isMCQ ? L("Pas tout à fait — essaie une autre réponse.", "Not quite — try another option.") : conceptMissMessage(problem, textAnswer, L("fr", "en") === "en") || L("Pas tout à fait — réessaie.", "Not quite — try again.")}
+          {isMCQ ? "Not quite — try another option." : conceptMissMessage(problem, textAnswer, "en" === "en") || "Not quite — try again."}
         </div>
       ) : null}
       {systemError ? (
         <div className="sm-inline-problem-result" role="status">
-          {L("La clé de ce problème ne correspond pas à la valeur vérifiée — ta réponse n'est pas comptée comme fausse, Otto va corriger.", "This problem's answer key disagrees with the verified value — your answer isn't counted wrong, Otto will sort it out.")}
+          {"This problem's answer key disagrees with the verified value — your answer isn't counted wrong, Otto will sort it out."}
         </div>
       ) : null}
       {answered && problem.why ? (

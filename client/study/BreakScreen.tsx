@@ -25,14 +25,14 @@ export function BreakScreen({ elapsed, formatTime, onResume, onEnd, countdownRem
     <div className="sm-break-screen">
       <div className="sm-break-inner">
         <WallClock />
-        <p className="sm-break-label">{L("PAUSE", "BREAK")}</p>
+        <p className="sm-break-label">{"BREAK"}</p>
         <div className="sm-break-timer">{formatTime(elapsed)}</div>
         {countdownRemaining !== undefined && (
-          <p className="sm-break-countdown">{L(`Retour au travail dans ${formatTime(countdownRemaining)}`, `Back to work in ${formatTime(countdownRemaining)}`)}</p>
+          <p className="sm-break-countdown">{`Back to work in ${formatTime(countdownRemaining)}`}</p>
         )}
-        <p className="sm-break-hint">{L("Éloigne-toi de l'écran.", "Step away from your screen.")}</p>
-        <button className="sm-btn sm-btn-primary" onClick={onResume}>{L("Reprendre", "Resume studying")}</button>
-        <button className="sm-btn sm-btn-ghost mt-2" onClick={onEnd}>{L("Terminer la session", "End session")}</button>
+        <p className="sm-break-hint">{"Step away from your screen."}</p>
+        <button className="sm-btn sm-btn-primary" onClick={onResume}>{"Resume studying"}</button>
+        <button className="sm-btn sm-btn-ghost mt-2" onClick={onEnd}>{"End session"}</button>
       </div>
     </div>
   );

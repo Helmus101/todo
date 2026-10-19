@@ -549,7 +549,7 @@ export function normalizeEnrolledCourses(ids: unknown, courses: Course[] = COURS
  *  unit's own topics, one objective each, capped to the session-objective range (3-6, see SET_OBJECTIVES).
  *  Deterministic, zero AI cost: the tutor still decides when each is actually done. */
 export function unitObjectives(unit: CourseUnit, lang: "fr" | "en"): string[] {
-  const topics = unit.topics.map((t) => (lang === "en" ? t.en : t.fr));
-  const all = topics.length ? topics : [lang === "en" ? unit.title.en : unit.title.fr];
+  const topics = unit.topics.map((t) => (t.en));
+  const all = topics.length ? topics : [unit.title.en];
   return all.slice(0, 6);
 }

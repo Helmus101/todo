@@ -13,7 +13,7 @@ interface QuizArtifactProps {
 export function QuizArtifact({ task, quizId, userId }: QuizArtifactProps) {
   const L = useLang();
   const quiz = task.quizzes?.find((q) => q.id === quizId) || getLocalQuiz(quizId, userId);
-  if (!quiz) return <div className="sm-artifact-empty">{L("Ce quiz n'est plus disponible.", "This quiz is no longer available.")}</div>;
+  if (!quiz) return <div className="sm-artifact-empty">{"This quiz is no longer available."}</div>;
   return (
     <div className="sm-quiz-body">
       <QuizPlayer quiz={quiz} taskId={task.id} userId={userId} />

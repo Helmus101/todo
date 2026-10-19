@@ -58,9 +58,7 @@ export function currentLang(): "fr" | "en" {
 }
 function translateServerError(msg: string): string {
   const en = currentLang() === "en";
-  if (/AI is paused|otto is paused/i.test(msg)) return en
-    ? "Otto is paused — resume it in Settings to continue."
-    : "Otto est en pause — réactive-le dans les Réglages pour continuer.";
+  if (/AI is paused|otto is paused/i.test(msg)) return "Otto is paused — resume it in Settings to continue.";
   return msg;
 }
 
@@ -183,11 +181,11 @@ const postTimed = (url: string, timeoutMs: number, body?: unknown) =>
 const postTurn = (url: string, timeoutMs: number, body: unknown) =>
   req(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) }, 0)
     .then(async (r) => {
-      if (r.status === 401) { const err: any = new Error(currentLang() === "en" ? "Your session expired — sign in again to continue." : "Ta session a expiré — reconnecte-toi pour continuer."); err.status = 401; throw err; }
+      if (r.status === 401) { const err: any = new Error("Your session expired — sign in again to continue."); err.status = 401; throw err; }
       return j(r);
     })
     .catch((e: any) => {
-      if (e?.name === "AbortError" || e?.name === "TimeoutError") { const err: any = new Error(currentLang() === "en" ? "Otto took too long to answer — please try again." : "Otto met trop de temps à répondre — réessaie."); err.status = 504; throw err; }
+      if (e?.name === "AbortError" || e?.name === "TimeoutError") { const err: any = new Error("Otto took too long to answer — please try again."); err.status = 504; throw err; }
       throw e;
     });
 

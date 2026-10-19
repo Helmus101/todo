@@ -25,7 +25,7 @@ function formatDate(iso: string, style: Style, en: boolean): string {
   if (!iso) return "";
   const d = new Date(`${iso}T00:00:00`);
   if (isNaN(d.getTime())) return iso;
-  const loc = en ? "en-US" : "fr-FR";
+  const loc = "en-US";
   if (style === "apa") return `(${d.getFullYear()}, ${d.toLocaleDateString(loc, { month: "long", day: "numeric" })})`;
   if (style === "mla") return d.toLocaleDateString(loc, { day: "numeric", month: "short", year: "numeric" });
   return d.toLocaleDateString(loc, { month: "long", day: "numeric", year: "numeric" }); // chicago
@@ -37,7 +37,7 @@ function buildCitation(style: Style, f: { author: string; title: string; site: s
   if (style === "apa") {
     const parts = [
       f.author ? `${invertName(f.author)}.` : "",
-      f.published ? `${formatDate(f.published, "apa", en)}.` : (en ? "(n.d.)." : "(s.d.)."),
+      f.published ? `${formatDate(f.published, "apa", en)}.` : ("(n.d.)."),
       f.title ? `${f.title}.` : "",
       f.site ? `${f.site}.` : "",
       f.url || "",
@@ -51,7 +51,7 @@ function buildCitation(style: Style, f: { author: string; title: string; site: s
       f.site ? `${f.site},` : "",
       f.published ? `${formatDate(f.published, "mla", en)},` : "",
       f.url ? `${f.url}.` : "",
-      `${en ? "Accessed" : "Consulté le"} ${formatDate(accessed, "mla", en)}.`,
+      `${"Accessed"} ${formatDate(accessed, "mla", en)}.`,
     ].filter(Boolean);
     return parts.join(" ");
   }
@@ -60,7 +60,7 @@ function buildCitation(style: Style, f: { author: string; title: string; site: s
     f.author ? `${invertName(f.author)}.` : "",
     f.title ? `"${f.title}."` : "",
     f.site ? `${f.site}.` : "",
-    f.published ? `${en ? "Published" : "Publié le"} ${formatDate(f.published, "chicago", en)}.` : "",
+    f.published ? `${"Published"} ${formatDate(f.published, "chicago", en)}.` : "",
     f.url ? `${f.url}.` : "",
   ].filter(Boolean);
   return parts.join(" ");
@@ -102,27 +102,27 @@ export function CitationArtifact({ artifact, onChange }: CitationArtifactProps) 
       </div>
 
       <div className="sm-citation-fields">
-        <input value={author} onChange={(e) => set({ author: e.target.value })} placeholder={L("Auteur (Prénom Nom)", "Author (First Last)")} aria-label={L("Auteur (Prénom Nom)", "Author (First Last)")} />
-        <input value={title} onChange={(e) => set({ title: e.target.value })} placeholder={L("Titre de la page/article", "Page/article title")} aria-label={L("Titre de la page/article", "Page/article title")} />
-        <input value={site} onChange={(e) => set({ site: e.target.value })} placeholder={L("Nom du site ou de l'éditeur", "Site or publisher name")} aria-label={L("Nom du site ou de l'éditeur", "Site or publisher name")} />
-        <input value={url} onChange={(e) => set({ url: e.target.value })} placeholder={L("URL", "URL")} aria-label={L("URL", "URL")} />
+        <input value={author} onChange={(e) => set({ author: e.target.value })} placeholder={"Author (First Last)"} aria-label={"Author (First Last)"} />
+        <input value={title} onChange={(e) => set({ title: e.target.value })} placeholder={"Page/article title"} aria-label={"Page/article title"} />
+        <input value={site} onChange={(e) => set({ site: e.target.value })} placeholder={"Site or publisher name"} aria-label={"Site or publisher name"} />
+        <input value={url} onChange={(e) => set({ url: e.target.value })} placeholder={"URL"} aria-label={"URL"} />
         <label>
-          {L("Publié le", "Published")}
+          {"Published"}
           <input type="date" value={published} onChange={(e) => set({ published: e.target.value })} />
         </label>
         <label>
-          {L("Consulté le", "Accessed")}
-          <input type="date" value={accessed} onChange={(e) => set({ accessed: e.target.value })} placeholder={L("Aujourd'hui", "Today")} />
+          {"Accessed"}
+          <input type="date" value={accessed} onChange={(e) => set({ accessed: e.target.value })} placeholder={"Today"} />
         </label>
       </div>
 
       <div className="sm-citation-output">
-        <p>{citation || L("Remplis au moins un titre pour générer une citation.", "Fill in at least a title to generate a citation.")}</p>
+        <p>{citation || "Fill in at least a title to generate a citation."}</p>
         {citation && (
-          <button className="sm-btn sm-btn-primary sm-btn-sm" onClick={copy}>{copied ? L("Copié !", "Copied!") : L("Copier", "Copy")}</button>
+          <button className="sm-btn sm-btn-primary sm-btn-sm" onClick={copy}>{copied ? "Copied!" : "Copy"}</button>
         )}
       </div>
-      <p className="sm-citation-hint">{L("Généré — vérifie contre le guide de style exact de ta classe avant de rendre.", "Generated — double-check against your class's exact style guide before submitting.")}</p>
+      <p className="sm-citation-hint">{"Generated — double-check against your class's exact style guide before submitting."}</p>
     </div>
   );
 }

@@ -250,7 +250,7 @@ app.get("/api/status", ah(async (req, res) => {
     highPriorityPeople: req.session.profile?.highPriorityPeople,
     genPerDay: req.session.profile?.genPerDay,
     timezone: req.session.profile?.timezone,
-    language: req.session.profile?.language === "en" ? "en" : "fr",
+    language: "en",
     customTheme: req.session.profile?.customTheme,
     betaFeatures: !!req.session.profile?.betaFeatures,
     isAdmin: isAdmin(req),

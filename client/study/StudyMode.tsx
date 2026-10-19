@@ -153,7 +153,7 @@ function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskI
           ...base,
           id: `${envId}-pdf`,
           type: "pdf" as const,
-          title: firstPDF!.label || (lang === "en" ? "Reading" : "Lecture"),
+          title: firstPDF!.label || ("Reading"),
           x: 10, y: 5,
           width: 80, height: 88,
           source,
@@ -181,7 +181,7 @@ function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskI
           ...base,
           id: `${envId}-pdf`,
           type: "pdf" as const,
-          title: firstPDF!.label || (lang === "en" ? "Problem Set" : "Exercices"),
+          title: firstPDF!.label || ("Problem Set"),
           x: 2, y: 5,
           width: 57, height: 85,
           source,
@@ -190,7 +190,7 @@ function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskI
           ...base,
           id: `${envId}-scratch`,
           type: "scratchpad",
-          title: lang === "en" ? "Scratchpad" : "Brouillon",
+          title: "Scratchpad",
           x: source ? 61 : 20, y: source ? 5 : 10,
           width: source ? 36 : 60, height: source ? 85 : 75,
           dockSide: source ? "right" : "none",
@@ -1078,7 +1078,7 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
         const hasScratchpad = env.artifacts.some((a) => a.type === "scratchpad");
         if (!hasScratchpad) {
           addArtifact({
-            id: crypto.randomUUID(), type: "scratchpad", title: language === "en" ? "Scratchpad" : "Brouillon",
+            id: crypto.randomUUID(), type: "scratchpad", title: "Scratchpad",
             x: 5, y: 10, width: 40, height: 60, zIndex: 90,
             minimized: false, maximized: false, dockSide: "left", contentState: {},
             taskId: task.id, environmentId: env.id,
@@ -1138,11 +1138,9 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
   if (isPhone) {
     return (
       <div className="screen-center">
-        <h2 className="mb-3">{language === "en" ? "Study Mode requires a larger screen" : "Le mode révision demande un écran plus grand"}</h2>
-        <p>{language === "en"
-          ? "Study Mode is designed for laptop and iPad. Continue using Otto on this device, and switch to a larger screen to start a study session."
-          : "Le mode révision est conçu pour l'ordinateur et l'iPad. Continue d'utiliser Otto sur cet appareil, et passe à un écran plus grand pour lancer une session."}</p>
-        <button className="btn" onClick={onExit}>{language === "en" ? "← Back to tasks" : "← Retour aux tâches"}</button>
+        <h2 className="mb-3">{"Study Mode requires a larger screen"}</h2>
+        <p>{"Study Mode is designed for laptop and iPad. Continue using Otto on this device, and switch to a larger screen to start a study session."}</p>
+        <button className="btn" onClick={onExit}>{"← Back to tasks"}</button>
       </div>
     );
   }
@@ -1183,7 +1181,7 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
     <div className={`sm-shell ${chromeIdle ? "sm-chrome-idle" : ""}`} data-status={sessionStatus} ref={rootRef}>
       {/* ── Save indicator ── */}
       {saveIndicator && (
-        <div className="sm-save-indicator">{saveIndicator === "saving" ? (language === "en" ? "Saving…" : "Sauvegarde…") : (language === "en" ? "Saved" : "Sauvegardé")}</div>
+        <div className="sm-save-indicator">{saveIndicator === "saving" ? ("Saving…") : ("Saved")}</div>
       )}
 
       {/* ── Session header ── */}
@@ -1235,7 +1233,7 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
             </span>
             <span>{focusCamera.tracking.concentration}</span>
             <span className="muted-11">
-              {(() => { const g = GAZE_LABELS[focusCamera.tracking.gazeStatus] || [focusCamera.tracking.gazeStatus, focusCamera.tracking.gazeStatus]; return language === "en" ? g[1] : g[0]; })()}
+              {(() => { const g = GAZE_LABELS[focusCamera.tracking.gazeStatus] || [focusCamera.tracking.gazeStatus, focusCamera.tracking.gazeStatus]; return g[1]; })()}
             </span>
           </div>
         )}
@@ -1248,9 +1246,9 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
             backdropFilter: "blur(var(--blur)) saturate(180%)", WebkitBackdropFilter: "blur(var(--blur)) saturate(180%)",
             fontSize: "12px", color: "var(--ink)", cursor: "pointer",
           }}
-          title={language === "en" ? "Toggle focus tracking (webcam)" : "Suivi de concentration (caméra)"}
+          title={"Toggle focus tracking (webcam)"}
         >
-          {focusCamera.enabled ? (language === "en" ? "◉ Focus on" : "◉ Concentration on") : (language === "en" ? "○ Focus off" : "○ Concentration off")}
+          {focusCamera.enabled ? ("◉ Focus on") : ("○ Focus off")}
         </button>
       </div>}
 

@@ -120,7 +120,7 @@ export async function tutorOpener(
     (subject ? `The session is about ${subject}.\n` : "") +
     memorySection +
     nowBlock() + studentNameLine(profile?.name) +
-    `\nWrite the opening line ${en ? "in English" : "in French (tu, not vous)"} — nothing else.`;
+    `\nWrite the opening line ${"in English"} — nothing else.`;
   const res = await createTutorChat({
     messages: [{ role: "system", content: sys }, { role: "user", content: user }],
     temperature: 0.8,
@@ -236,14 +236,12 @@ export async function studyHelp(
   // "don't just trust the prompt" posture as chatAboutTask's CHAT_DOES_WORK/CHAT_STATES_ANSWER guardrail,
   // applied here with a stronger check since the actual answer string is right there (see revealsAnswer).
   if (raw && revealsAnswer(raw, answer)) {
-    raw = profile?.language === "en"
-      ? "I can point you at another angle, but not the answer directly — what part of the question feels like the key clue?"
-      : "Je peux te donner un autre angle, mais pas la réponse directement — qu'est-ce qui te semble être l'indice clé dans la question ?";
+    raw = "I can point you at another angle, but not the answer directly — what part of the question feels like the key clue?";
   }
   // Honest failure message, not a pretend-present "what's tripping you up?" — see chatAboutTask's identical
   // fix (its finish()) for why: this text only ever shows when the AI call genuinely came back empty/failed,
   // never because Otto is waiting on the student to clarify something.
-  const reply = raw || (profile?.language === "en" ? "Otto couldn't reply just now — try again in a moment." : "Otto n'a pas pu répondre tout de suite — réessaie dans un instant.");
+  const reply = raw || ("Otto couldn't reply just now — try again in a moment.");
   return { reply, tokens: usageOf(res), ...(raw ? {} : { error: true }) };
 }
 
