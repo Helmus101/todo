@@ -667,10 +667,16 @@ export async function runTutorTurnSim(check, section) {
     {
       // a problem the student types is shown in the answer widget with the solver's verified key, not just left in chat
       const typed = "A 2.0 kg package is projected at 6.0 m per second across a rough floor and stops after sliding 4.0 m. What is the work done by friction?";
-      const solT = { ...sol, statement: typed, focusKey: "kt", value: 36, finalAnswer: "36 J", verified: true };
+      const solT = { ...sol, statement: typed, focusKey: "kt", value: 36, finalAnswer: "36 J", verified: true, restated: "A $2.0\\,\\text{kg}$ package slides $4.0\\,\\text{m}$ on a rough floor from $6.0\\,\\text{m s}^{-1}$ to rest. What work does friction do?" };
       script = () => T({ heard: "gave a problem", intent: "new_problem", diagnosis: { status: "none" }, move: "elicit", support: 1, speech: ["Let's start with the energy the package has at the beginning.", "What is its kinetic energy?"], board: [] });
       const ts = await runTutorTurn({ ...base, board: [], problems: [], solution: solT, message: typed, history: [{ role: "user", text: "hi" }, { role: "assistant", text: "Hi!" }], context: { subject: "Physics" } });
-      check("a problem the student types goes into the answer widget with a verified key", ts.problems.length === 1 && /package/.test(ts.problems[0].question) && /^36/.test(String(ts.problems[0].answer)));
+      check("a problem the student types goes into the answer widget with a verified key, in the solver's clean wording — never their own text", ts.problems.length === 1 && /package/.test(ts.problems[0].question) && ts.problems[0].question !== typed && !/projected at 6\.0 m per second/.test(ts.problems[0].question) && /^36/.test(String(ts.problems[0].answer)));
+      script = () => T({ heard: "gave a problem", intent: "new_problem", diagnosis: { status: "none" }, move: "elicit", support: 1, speech: ["Let's start with the energy the package has at the beginning.", "What is its kinetic energy?"], board: [] });
+      { const { studentProblemStatement } = await import("../server/tutorAdapt.ts");
+        const st = studentProblemStatement("How would I solve through this (b) Solve arcsin x + arcsin(x 3) = π/2 for 0 ≤ x ≤ 1/3");
+        check("a question wrapped around a typed problem loses its 'how would I solve this' lead-in", !!st && !/^how would/i.test(st)); }
+      const tn = await runTutorTurn({ ...base, board: [], problems: [], solution: { ...solT, restated: undefined }, message: typed, history: [{ role: "user", text: "hi" }, { role: "assistant", text: "Hi!" }], context: { subject: "Physics" } });
+      check("…and with no clean restatement nothing of theirs is put on the board at all", tn.problems.length === 0 && !tn.board.some((b) => /projected at 6\.0 m per second/.test(String(b.text))));
     }
     {
       const { goalsKnown, mergeGoals, goalsLine } = await import("../server/tutorTurn/goals.ts");

@@ -23,6 +23,7 @@ export function focusKeyOf(statement: string): string {
 
 const SOLVER_PROMPT = `You are an expert teacher preparing to tutor ONE problem. Solve it completely and carefully, then return ONLY a JSON object:
 {
+  "problem": "the problem restated cleanly in YOUR words with LaTeX maths in $…$: only the givens and what is asked (one or two sentences). No lead-in like 'how would I', no part label, no answer. If the pasted text lost symbols (a root, a fraction bar, a power), repair them from the meaning",
   "final_answer": "the answer with its unit, e.g. \\"25538 W\\" or \\"x = 4\\" (for an open question: a one-sentence model answer)",
   "check": "an arithmetic expression that COMPUTES the numeric final answer from the givens, using + - * / ^ ( ) sqrt sin cos tan asin acos atan ln log exp pi — use sind/cosd/tand for degrees (e.g. \\"(900*9.8*sind(12)+900*0.4+360)*10\\"); empty string if the answer isn't a number",
   "steps": [ { "idea": "what this step does and why (one line)", "result": "what it gives, e.g. \\"F = 2553.8 N\\"", "check": "expression computing this step's number, or empty" } ],
@@ -44,6 +45,13 @@ function firstJson(raw: string): any {
 
 const num = (s: string): number => Number(String(s || "").replace(/(?!(?<![\d.,])0)(\d)[,\s](?=\d{3}(?!\d))/g, "$1").replace(",", ".").match(/-?\d+(?:\.\d+)?(?:e-?\d+)?/i)?.[0] ?? NaN);
 
+/** The solver's own clean wording of the problem — the only text that may go on the board for a problem the student typed. */
+export function cleanRestatement(x: unknown): string {
+  const t = String(x || "").replace(/\s+/g, " ").trim();
+  if (t.length < 15 || t.length > 420 || /^(?:how|can|could|please|help)\b/i.test(t) || /[∘\u200b]/.test(t)) return "";
+  return t;
+}
+
 /** Build a TutorSolution from the solver's JSON, verifying numbers by code. Pure; exported for tests. */
 export function toSolution(statement: string, j: any, now = new Date()): TutorSolution | null {
   if (!j || typeof j !== "object") return null;
@@ -62,6 +70,7 @@ export function toSolution(statement: string, j: any, now = new Date()): TutorSo
   const list = (x: unknown) => (Array.isArray(x) ? x.map((y) => String(y || "").slice(0, 200)).filter(Boolean).slice(0, 4) : []);
   return {
     focusKey: focusKeyOf(statement), statement: statement.slice(0, 1200), finalAnswer,
+    ...(cleanRestatement(j.problem) ? { restated: cleanRestatement(j.problem) } : {}),
     ...(value != null && Number.isFinite(value) ? { value } : {}),
     verified, steps,
     ...(j.key_idea ? { keyIdea: String(j.key_idea).slice(0, 200) } : {}),

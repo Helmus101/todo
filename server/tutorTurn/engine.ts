@@ -407,15 +407,19 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
       } else console.warn("[tutor] problem generator returned nothing — keeping the tutor's own exercise, if any");
     } else if (!wants.problemOnBoard && studentStatedProblem && input.solution?.verified && Number.isFinite(input.solution.value) && sameExercise(input.solution.statement, studentStatedProblem, 0.5) && !problems.some((p) => sameExercise(p.question, studentStatedProblem, 0.6)) && !turn.board.some((o) => o.op === "problem")) {
       // They typed a problem of their own: it goes into the answer widget with the solver's code-verified key, not just chat text.
-      const ops = [...turn.board, { op: "problem", cue: Math.max(0, turn.speech.length - 1), question: studentStatedProblem, answer: input.solution.finalAnswer, check: String(input.solution.value), format: "a number (units as in the problem)" } as any];
+      // Their own words never go on the board: the widget shows the solver's clean restatement (or nothing).
+      const boardQ = input.solution.restated || "";
+      const ops = [...turn.board, ...(boardQ ? [{ op: "problem", cue: Math.max(0, turn.speech.length - 1), question: boardQ, answer: input.solution.finalAnswer, check: String(input.solution.value), format: "a number (units as in the problem)" } as any] : [])];
       turn = { ...turn, board: ops };
-      problemsForApply = problems.map((p) => ({ ...p, solved: true }));
+      if (boardQ) problemsForApply = problems.map((p) => ({ ...p, solved: true }));
     } else if (wantsProblemWidget) {
       // A problem that already exists (Otto stated it, or they pasted it): the widget gets it with a code-verified key from the solver.
-      const text = problemStatement({ opQuestion: turn.board.find((o) => o.op === "problem")?.question, history: [...history, { role: "assistant", text: speechAll }], openProblem: [...problems].reverse().find((p) => !p.solved)?.question, studentStated: studentProblemStatement(message) });
+      let text = problemStatement({ opQuestion: turn.board.find((o) => o.op === "problem")?.question, history: [...history, { role: "assistant", text: speechAll }], openProblem: [...problems].reverse().find((p) => !p.solved)?.question, studentStated: studentProblemStatement(message) });
       if (text && !problems.some((p) => !p.solved && sameExercise(p.question, text, 0.7))) {
         let sol = input.solution && sameExercise(input.solution.statement, text, 0.6) ? input.solution : null;
         if (!sol) { const solved = await solveProblem(text, context.subject); result.tokens.in += solved.tokens.in; result.tokens.out += solved.tokens.out; sol = solved.solution; }
+        // A problem that came from the student's own message is shown in the solver's clean wording, never their text.
+        if (studentStatedProblem && sameExercise(text, studentStatedProblem, 0.8)) { if (sol?.restated) text = sol.restated; else sol = null; }
         const wordKey = sol?.verified && !Number.isFinite(sol.value) && String(sol.finalAnswer || "").trim().length > 0 && !/\d/.test(String(sol.finalAnswer));
         if ((sol?.verified && Number.isFinite(sol.value)) || wordKey) {
           const ops = turn.board.filter((o) => o.op !== "problem" && !(proseProblemWidget && o.op === "gap")); // (one answer box: the widget replaces a duplicate "v = ?" line)
@@ -476,7 +480,9 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     const statesNew = posesProblemInProse(speechAll) && (((wants.exercise || wants.different) && !problems.some((p) => !p.solved)) || wants.topicSwitch || freshScenario);
     if (!placed && (wants.problemOnBoard || statesNew)) {
       const opQ = turn.board.find((o) => o.op === "problem")?.question;
-      const text = problemStatement({ opQuestion: opQ, history: [...history, { role: "assistant", text: speechAll }], openProblem: [...problems].reverse().find((p) => !p.solved)?.question, studentStated: studentProblemStatement(message) });
+      let text = problemStatement({ opQuestion: opQ, history: [...history, { role: "assistant", text: speechAll }], openProblem: [...problems].reverse().find((p) => !p.solved)?.question, studentStated: studentProblemStatement(message) });
+      // Their typed problem is never copied onto the board: only the solver's clean restatement (if there is one) is.
+      if (text && studentStatedProblem && sameExercise(text, studentStatedProblem, 0.8)) text = input.solution?.restated && sameExercise(input.solution.statement, studentStatedProblem, 0.5) ? input.solution.restated : "";
       const onBoardAlready = !!text && [...board, ...applied.board].some((e) => (e.kind === "given" || e.kind === "focus") && e.text && sameExercise(e.text, text, 0.7));
       if (text && !onBoardAlready) {
         const r = applyOps([{ op: "step", cue: 0, text, kind: "given", why: fr ? "L'énoncé" : "The problem" }], { message, theirWords, board: [...board, ...applied.board], problems, fr });

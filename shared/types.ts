@@ -1229,6 +1229,8 @@ export interface TutorSolution {
   /** What problem this solves (normalized statement) — a different focus means a new solve. */
   focusKey: string;
   statement: string;
+  /** The solver's own clean wording of the problem (what goes on the board when the student typed it). */
+  restated?: string;
   finalAnswer: string;
   /** The answer as a number when it is one, from the code-evaluated check expression. */
   value?: number;

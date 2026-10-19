@@ -410,6 +410,7 @@ export function studentProblemStatement(message: string): string {
   if (/^(?:can|could|would|will|please|peux|pouvez)\b.{0,40}\b(?:you|tu|vous)\b/i.test(raw) && quantities < 3) return "";
   let t = raw
     .replace(/^(?:all ?right|alright|okay|ok|so|um+|uh+|well|right|d['’]accord|alors|bon)[,.\s]+(?:so\s+)?(?:(?:first|now|next)\s+)?(?:i(?:'ll| will)?\s+(?:do|try|have|want)\s+)?/i, "")
+    .replace(/^(?:how (?:would|do|can|should|could) (?:i|we) (?:solve|do|approach|start|go about)(?: through| with)?(?: this| that| it)?|can you (?:help me )?(?:solve|do|show me)(?: this| that)?|help me (?:solve|with)(?: this)?)[:,.\s]*/i, "")
     .replace(/\bequals?\b/gi, "=").replace(/\bdegrees?\b/gi, "°").replace(/\bcentimet(?:er|re)s?\b/gi, "cm").replace(/\bmet(?:er|re)s?\b/gi, "m")
     .replace(/\s*=\s*/g, " = ").replace(/\s+°/g, "°").replace(/\s{2,}/g, " ").trim();
   t = t.charAt(0).toUpperCase() + t.slice(1);
