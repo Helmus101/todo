@@ -44,6 +44,15 @@ export async function runTutorTurnSim(check, section) {
     { const r = await runTutorTurn({ ...base, message: "ok" });
       check("a reply that points at an equation but writes nothing gets one more call and ends up with the line on the board", calls.length === 2 && r.board.length === 1 && /sin/.test(r.board[0].text)); }
 
+    calls.length = 0;
+    script = (b, i) => (i === 0 ? { speech: ["Yes, that works.", "Why does it?"], board: [] } : { speech: ["Yes, that works.", "Why does it?"], board: [{ op: "step", cue: 0, text: "$x = 3$", kind: "result" }] });
+    { const r = await runTutorTurn({ ...base, message: "x = 3" });
+      check("after an answer with maths and an empty board, the model is asked once to write the step", calls.length === 2 && r.board.length === 1); }
+    calls.length = 0;
+    script = () => ({ speech: ["Hi there.", "What are we working on?"], board: [] });
+    { await runTutorTurn({ ...base, message: "hello" });
+      check("small talk with nothing to write costs no extra call", calls.length === 1); }
+
     section("Tutor turn — never a dead end");
     calls.length = 0;
     script = (b, i) => (i === 0 ? "not json at all" : { speech: ["Back on track — what did you get?"], board: [] });

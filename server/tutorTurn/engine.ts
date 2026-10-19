@@ -62,9 +62,9 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   }
   if (!turn) { console.error("[tutor] no usable turn"); result.error = true; return result; }
 
-  // The reply points at something ("here is the equation", "this expression") but nothing was written or drawn: ask once for the board ops.
-  if (!turn.board.length && POINTS_AT_BOARD.test(turn.speech.join(" "))) {
-    const again = await callTurn([...messages, { role: "assistant", content: JSON.stringify(turn) }, { role: "user", content: "(Your reply refers to an equation, expression or figure but the board has nothing new. Send the same turn again, with board ops that write or draw exactly what you refer to, each with its cue.)" }], result.tokens).catch(() => null);
+  // Nothing was written or drawn although the reply points at something, or the student gave maths: ask once for the board ops.
+  if (!turn.board.length && (POINTS_AT_BOARD.test(turn.speech.join(" ")) || (/[\d=]/.test(message) && message.length > 2))) {
+    const again = await callTurn([...messages, { role: "assistant", content: JSON.stringify(turn) }, { role: "user", content: "(You wrote nothing on the board. Check: a step they reached, the rule or reason, a figure or table that would help, a mark on a mistake. Send the same turn again with the board ops that belong (and anything you refer to must be written or drawn), each with its cue. If truly nothing belongs, return the same turn.)" }], result.tokens).catch(() => null);
     if (again?.turn?.board.length) turn = again.turn;
   }
   const applied = applyOps(turn.board, { board, problems, theirWords: [message] });
