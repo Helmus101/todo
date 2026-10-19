@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState, useContext, useCallback } from "react";
 import type { ReactNode } from "react";
-import { Paperclip, TriangleAlert, Volume2, Square, StickyNote, Layers, CircleCheck } from "lucide-react";
+import { Paperclip, TriangleAlert, Volume2, Square, StickyNote, Layers, CircleCheck, Keyboard, ArrowUp } from "lucide-react";
 import type { WebTask } from "../../shared/types.ts";
 import { renderChatText, useThinkingWord, useLang, LangContext, CondensedUserMessage, useNotify } from "../ui.tsx";
 import { useSpeechRecognition } from "../voice/useSpeechRecognition.ts";
@@ -98,6 +98,9 @@ export function AskOttoPanel({
   // on the mic button turns it on — see useVoiceModePref.ts's product-rule comment. A mount effect that
   // flipped the pref on automatically used to live here; removed along with the persisted pref itself so
   // no code path can open the microphone without the student tapping it.
+  // Voice-first dock: with voice on the typing box is tucked away behind a small "Type" button (opens on demand, closes when voice goes off).
+  const [typeOpen, setTypeOpen] = useState(false);
+  useEffect(() => { if (!voiceModeOn) setTypeOpen(false); }, [voiceModeOn]);
   // The ONLY non-mic-button way voice turns on: the student clicked "Start talking" (that click bumped talkRequest). Never on load.
   const talkSeenRef = useRef(0);
   useEffect(() => {
@@ -364,8 +367,8 @@ export function AskOttoPanel({
           onToggle={() => { if (!voiceModeOn) synth.unlock(); toggleVoiceMode(); }}
           en={en}
         />
-        <button className="sm-btn sm-btn-primary" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending || !input.trim()}>
-          {L("Envoyer", "Send")}
+        <button className="sm-btn sm-btn-primary" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending || !input.trim()} aria-label={L("Envoyer", "Send")}>
+          {variant === "dock" ? <ArrowUp size={16} aria-hidden="true" /> : L("Envoyer", "Send")}
         </button>
       </div>
     </>
@@ -378,7 +381,7 @@ export function AskOttoPanel({
     return (
       <div className="otto-dock">
         <div className="otto-dock-row">
-          <OttoAvatar mood={mood} size={56} />
+          <OttoAvatar mood={mood} size={voiceModeOn ? 84 : 56} />
           <div className="otto-bubble" role="log" aria-live="polite" aria-label={L("Réponse d'Otto", "Otto's answer")}>
             {sending ? (
               <div className="otto-bubble-thinking" role="status">
@@ -410,7 +413,7 @@ export function AskOttoPanel({
             )}
           </div>
         </div>
-        {quickReplies?.length && !sending ? (
+        {quickReplies?.length && !sending && !voiceModeOn ? (
           <div className="otto-quick" role="group" aria-label={L("Réponses rapides", "Quick replies")}>
             {quickReplies.map((q) => (
               <button key={q.text} type="button" className="otto-quick-btn" onClick={() => onSend(q.text, voiceModeOn)}>{q.label}</button>
@@ -418,7 +421,18 @@ export function AskOttoPanel({
           </div>
         ) : null}
         {diagnostics}
-        {inputRow}
+        {voiceModeOn && !typeOpen ? (
+          <div className="otto-voice-row">
+            <span className={`otto-voice-status is-${mood}`} role="status" aria-live="polite">
+              {mood === "listening" ? L("Je t'écoute…", "Listening…") : mood === "thinking" ? L("Otto réfléchit…", "Otto is thinking…") : mood === "speaking" ? L("Otto parle — parle pour l'interrompre", "Otto is speaking — talk to interrupt") : L("Dis quelque chose", "Say something")}
+            </span>
+            {recog.interimTranscript ? <span className="otto-voice-heard" aria-live="polite">“{recog.interimTranscript}”</span> : null}
+            <button type="button" className="otto-voice-type" onClick={() => setTypeOpen(true)} title={L("Écrire à la place", "Type instead")} aria-label={L("Écrire à la place", "Type instead")}>
+              <Keyboard size={15} aria-hidden="true" /><span>{L("Écrire", "Type")}</span>
+            </button>
+            <VoiceControls supported={recog.supported} voiceModeOn={voiceModeOn} listening={recog.listening} speaking={synth.speaking} interimTranscript="" onToggle={() => toggleVoiceMode()} en={en} />
+          </div>
+        ) : inputRow}
       </div>
     );
   }

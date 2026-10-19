@@ -2975,7 +2975,7 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   // Exactly ONE toggleVoiceMode() call site is allowed: inside the mic button's own onClick (a real user
   // gesture, also where synth.unlock() pre-arms speechSynthesis — see the TTS section below). Anywhere
   // else would mean voice got turned on without the student tapping anything.
-  check("AskOttoPanel has NO voice auto-enable left (toggleVoiceMode() only ever called from the mic button's own click handler)", !/autoVoiceAppliedRef/.test(askOtto) && (askOtto.match(/toggleVoiceMode\(\)/g) || []).length === 1 && /onToggle=\{\(\) => \{ if \(!voiceModeOn\) synth\.unlock\(\); toggleVoiceMode\(\); \}\}/.test(askOtto));
+  check("AskOttoPanel has NO voice auto-enable left (toggleVoiceMode() only ever called from a mic button's own onToggle click handler)", !/autoVoiceAppliedRef/.test(askOtto) && (askOtto.match(/toggleVoiceMode\(\)/g) || []).length === 2 && (askOtto.match(/onToggle=\{\(\) => (?:\{ if \(!voiceModeOn\) synth\.unlock\(\); )?toggleVoiceMode\(\)/g) || []).length === 2 && /onToggle=\{\(\) => \{ if \(!voiceModeOn\) synth\.unlock\(\); toggleVoiceMode\(\); \}\}/.test(askOtto));
   // Direct request: "make sure when end tutor session board is saved and users can see what was worked on" —
   // ending used to only save a FLATTENED TEXT preview (boardEntries: string[]) of the board, losing any
   // diagram/equation structure; the real board is now saved too and reopenable.

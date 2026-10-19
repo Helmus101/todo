@@ -4878,3 +4878,28 @@ button[aria-expanded="true"] > .sm-chev { transform: rotate(45deg); }
 
 /* A gap Otto moved past without it being answered is a dead placeholder ("T₁ = ?") — don't leave it cluttering the board. */
 .sm-board-gap-skipped { display: none; }
+
+/* Voice-first dock: a calm status line + what Otto heard, typing tucked behind a small button. */
+.otto-voice-row { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; padding: var(--space-2) 0 0; }
+.otto-voice-status { font-size: 14px; color: var(--ink); }
+.otto-voice-status.is-listening { color: var(--accent); }
+.otto-voice-heard { flex: 1; min-width: 0; font-size: 14px; color: var(--muted, var(--ink)); font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.otto-voice-type { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--radius-xs); background: transparent; color: var(--ink); font-size: 13px; cursor: pointer; }
+.otto-voice-type:hover { border-color: var(--accent); }
+.tutor-stage.voice-on .otto-bubble { font-size: 16px; }
+
+/* ── Tutor dock, stage style: Otto is a presence with subtitles, not a chat card. ──────────────────────────── */
+.ts-dock .otto-dock { background: linear-gradient(to top, var(--bg) 62%, transparent); border: 0; box-shadow: none; border-radius: 0; padding: var(--space-5) var(--space-4) var(--space-2); align-items: center; }
+.ts-dock .otto-dock-row { align-items: center; justify-content: center; gap: var(--space-4); width: 100%; }
+.ts-dock .otto-bubble { background: transparent; border-radius: 0; padding: 0 var(--space-6) 0 0; max-height: 7.5em; font-size: 18px; line-height: 1.5; letter-spacing: -.005em; flex: 0 1 640px; }
+.ts-dock .otto-replay { top: 0; right: 0; width: 24px; height: 24px; background: transparent; box-shadow: none; opacity: .55; }
+.ts-dock .otto-replay:hover { opacity: 1; }
+.ts-dock .otto-voice-row { justify-content: center; width: 100%; }
+.ts-dock .otto-voice-heard { flex: 0 1 auto; max-width: 50ch; }
+.ts-dock .sm-ai-input-row { width: min(640px, 100%); align-items: center; gap: var(--space-2); border-bottom: 1px solid var(--line); padding-bottom: var(--space-1); background: transparent; }
+.ts-dock .sm-ai-input { border: 0; background: transparent; box-shadow: none; font-size: 16px; padding-left: 0; }
+.ts-dock .sm-ai-input:focus { outline: none; }
+.ts-dock .sm-ai-input-row .sm-btn-primary { width: 34px; height: 34px; padding: 0; border-radius: 50%; display: inline-grid; place-items: center; }
+.ts-dock .sm-ai-attach-btn { opacity: .5; }
+.tutor-stage.voice-on .ts-dock .otto-dock { border: 0; }
+@media (max-width: 640px) { .ts-dock .otto-bubble { font-size: 16px; } .ts-dock .otto-dock-row { gap: var(--space-3); } }
