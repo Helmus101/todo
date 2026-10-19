@@ -38,6 +38,12 @@ export async function runTutorTurnSim(check, section) {
       check("one model call; the reply is the model's own sentences; the board gets the problem", calls.length === 1 && !r.error && r.reply === "Let's factor it. What two numbers multiply to 6 and add to −5?" && r.board.length === 1 && r.board[0].cue === 0);
       check("the system prompt carries the board and the history carries the conversation", /THE BOARD/.test(calls[0].messages[0].content) && calls[0].messages.at(-1).content === "solve x^2 - 5x + 6 = 0" && calls[0].messages.length === 4); }
 
+    section("Tutor turn — the question lives on the board");
+    calls.length = 0;
+    script = (b, i) => (i === 0 ? { speech: ["Here is the equation we have after taking sine of both sides.", "What do you get when you square both sides?"], board: [] } : { speech: ["Here is the equation we have after taking sine of both sides.", "What do you get when you square both sides?"], board: [{ op: "step", cue: 0, text: "$\\\\sin A = \\\\sin B$", kind: "formula" }] });
+    { const r = await runTutorTurn({ ...base, message: "ok" });
+      check("a reply that points at an equation but writes nothing gets one more call and ends up with the line on the board", calls.length === 2 && r.board.length === 1 && /sin/.test(r.board[0].text)); }
+
     section("Tutor turn — never a dead end");
     calls.length = 0;
     script = (b, i) => (i === 0 ? "not json at all" : { speech: ["Back on track — what did you get?"], board: [] });
