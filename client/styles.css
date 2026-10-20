@@ -4922,3 +4922,14 @@ button[aria-expanded="true"] > .sm-chev { transform: rotate(45deg); }
 .live-type { display: flex; align-items: center; gap: var(--space-2); width: min(560px, 100%); border-bottom: 1px solid var(--line); padding-bottom: 4px; }
 .live-type input { flex: 1; border: 0; background: transparent; font: inherit; font-size: 16px; color: var(--ink); outline: none; }
 @media (max-width: 640px) { .live-caption { font-size: 16px; } .live-main-btn { min-width: 130px; padding: 0 14px; } }
+
+/* ── The tutor board as PAPER (Socra's look): warm cream, a faint blue grid, handwriting for what Otto writes, amber titles. ── */
+.tutor-stage .ts-canvas { background-color: #f7f3e6; background-color: oklch(0.965 0.02 95); background-image: linear-gradient(rgba(70,110,170,.13) 1px, transparent 1px), linear-gradient(90deg, rgba(70,110,170,.13) 1px, transparent 1px); background-size: 32px 32px; }
+.tutor-stage .sm-board-line, .tutor-stage .sm-board-entry-text { font-family: "Kalam", "Handlee", "Comic Sans MS", cursive; font-size: 1.25rem; color: #3b3428; }
+.tutor-stage .sm-board-why { font-family: "Kalam", "Handlee", cursive; color: #6b5f4a; }
+.tutor-stage .sm-board-header-subject { font-family: "Instrument Serif", ui-serif, Georgia, serif; font-size: 1.9rem; font-style: italic; color: #b45309; }
+.tutor-stage .sm-board-lineno { color: #3b6ea5; font-family: "Kalam", "Handlee", cursive; }
+.tutor-stage .live-caption { font-family: "Instrument Serif", ui-serif, Georgia, serif; font-size: 1.35rem; }
+@keyframes otto-write-in { from { opacity: 0; transform: translateY(6px); filter: blur(2px); } to { opacity: 1; transform: none; filter: none; } }
+.tutor-stage .sm-board-reveal { animation: otto-write-in .5s ease-out both; }
+@media (prefers-reduced-motion: reduce) { .tutor-stage .sm-board-reveal { animation: none; } }

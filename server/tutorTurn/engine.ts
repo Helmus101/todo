@@ -27,6 +27,8 @@ async function callTurn(messages: any[], tokens: TutorTurnResult["tokens"]): Pro
   return { turn: normalizeTurn(extractJsonObject(raw)) ?? normalizeTurn(salvageTurn(raw, { prose: true })), raw };
 }
 
+const WRITING_CLAIM = /\b(?:(?:let(?:'s| us)|let me|i(?:'ll| will)|i'm going to|now)\s+(?:get|put|write|jot|draw|add|set)\b[^.?!]{0,40}\b(?:board|down|up)\b|(?:on|to|onto) the board|i(?:'ve| have) (?:written|put|added|drawn))/i;
+const ASKS_BOARD = /\b(?:on|onto|to) the (?:board|whiteboard|paper)\b|\bwrite (?:it|that|this|everything|the)\b|\bput (?:it|that|this) (?:up|down|on)\b/i;
 const POINTS_AT_BOARD = /\b(?:here(?:'s| is| are)|we have|we got|this|these|that|the following|look at|see)\b[^.?!]{0,40}\b(?:equation|expression|formula|identity|figure|graph|diagram|curve|triangle|step|line|inequality|function)\b/i;
 
 export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResult & { turn?: { speech: string[]; ms: number } }> {
@@ -62,15 +64,25 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   }
   if (!turn) { console.error("[tutor] no usable turn"); result.error = true; return result; }
 
-  // Nothing was written or drawn although the reply points at something, or the student gave maths: ask once for the board ops.
-  if (!turn.board.length && (POINTS_AT_BOARD.test(turn.speech.join(" ")) || (/[\d=]/.test(message) && message.length > 2))) {
-    const again = await callTurn([...messages, { role: "assistant", content: JSON.stringify(turn) }, { role: "user", content: "(You wrote nothing on the board. Check: a step they reached, the rule or reason, a figure or table that would help, a mark on a mistake. Send the same turn again with the board ops that belong (and anything you refer to must be written or drawn), each with its cue. If truly nothing belongs, return the same turn.)" }], result.tokens).catch(() => null);
-    if (again?.turn?.board.length) turn = again.turn;
+  let cur: TurnOutput = turn;
+  // The board must match the words. A reply that says it wrote something, a student who asked for it on the board, or maths from the
+  // student with nothing written: the turn is sent back (twice at most) with what was wrong, including ops the app rejected.
+  const claimsWriting = (t: TurnOutput) => POINTS_AT_BOARD.test(t.speech.join(" ")) || WRITING_CLAIM.test(t.speech.join(" "));
+  const askedForBoard = ASKS_BOARD.test(message);
+  const mathsFromStudent = /[\d=]/.test(message) && message.length > 2;
+  let applied = applyOps(cur.board, { board, problems, theirWords: [message] });
+  for (let attempt = 0; attempt < 2 && !applied.board.length && (askedForBoard || claimsWriting(cur) || mathsFromStudent); attempt++) {
+    const why = applied.dropped.length ? ` The app rejected these ops: ${applied.dropped.slice(0, 4).join("; ")}.` : "";
+    const ask = askedForBoard ? " They asked for it on the board: write the most recent equation or step you and they reached, in full, as a step op." : "";
+    const again: { turn: TurnOutput | null } | null = await callTurn([...messages, { role: "assistant", content: JSON.stringify(cur) }, { role: "user", content: `(Nothing new reached the board.${why}${ask} Check: a step they reached, the rule or reason, a figure or table that would help, a mark on a mistake. Anything you say you wrote must be written now. Send the same turn again with the board ops that belong, each with its cue, as ONLY the JSON object. If the line is already on the board, mark it instead and say so.)` }], result.tokens).catch(() => null);
+    if (!again?.turn) break;
+    const next = applyOps(again.turn.board, { board, problems, theirWords: [message] });
+    if (next.board.length) { cur = again.turn; applied = next; break; }
+    cur = again.turn; applied = next;
   }
-  const applied = applyOps(turn.board, { board, problems, theirWords: [message] });
   result.board = applied.board;
-  result.reply = turn.speech.join(" ");
-  result.turn = { speech: turn.speech, ms: Date.now() - t0 };
+  result.reply = cur.speech.join(" ");
+  result.turn = { speech: cur.speech, ms: Date.now() - t0 };
   return result;
 }
 

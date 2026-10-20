@@ -49,6 +49,14 @@ export async function runTutorTurnSim(check, section) {
     { const r = await runTutorTurn({ ...base, message: "x = 3" });
       check("after an answer with maths and an empty board, the model is asked once to write the step", calls.length === 2 && r.board.length === 1); }
     calls.length = 0;
+    script = (b, i) => (i === 0 ? { speech: ["My mistake, let's get that factored equation up on the board now.", "How can we isolate the square root term?"], board: [] } : { speech: ["Here it is.", "How can we isolate the square root term?"], board: [{ op: "step", cue: 0, text: "$x(1 + \\sqrt{3}) = 2$", kind: "result" }] });
+    { const r = await runTutorTurn({ ...base, message: "on the board though" });
+      check("a student who says 'on the board though' (no maths in the message) gets the line written: a reply that claims it wrote something is sent back", calls.length === 2 && r.board.length === 1 && /sqrt/.test(r.board[0].text)); }
+    calls.length = 0;
+    script = (b, i) => (i === 0 ? { speech: ["Done.", "What next?"], board: [{ op: "mark", cue: 0, target: "#99", note: "here" }] } : { speech: ["Done.", "What next?"], board: [{ op: "step", cue: 0, text: "$a + b = c$", kind: "result" }] });
+    { const r = await runTutorTurn({ ...base, message: "please write that on the board" });
+      check("ops the app rejects (a mark on a line that does not exist) do not count as writing: the model is told what was rejected and tries again", calls.length === 2 && /rejected/.test(calls[1].messages.at(-1).content) && r.board.length === 1); }
+    calls.length = 0;
     script = () => ({ speech: ["Hi there.", "What are we working on?"], board: [] });
     { await runTutorTurn({ ...base, message: "hello" });
       check("small talk with nothing to write costs no extra call", calls.length === 1); }

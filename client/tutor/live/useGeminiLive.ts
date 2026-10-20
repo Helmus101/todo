@@ -110,7 +110,8 @@ export function useGeminiLive(opts: LiveOptions) {
             heardRef.current = "";
             setThinking(true);
             let result: LiveToolResult;
-            try { result = await optsRef.current.ask(heard); } catch { result = { say: "", error: "Otto couldn't answer just now. Ask the student to say that again." }; }
+            // A slow brain must never leave the voice silent for good: after 45 s the voice is told to ask them to repeat.
+            try { result = await Promise.race([optsRef.current.ask(heard), new Promise<LiveToolResult>((r) => setTimeout(() => r({ say: "", error: "That took too long. Ask the student to say it again." }), 45_000))]); } catch { result = { say: "", error: "Otto couldn't answer just now. Ask the student to say that again." }; }
             setThinking(false);
             responses.push({ id: c.id, name: c.name, response: result });
           }
