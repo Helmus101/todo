@@ -600,6 +600,14 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   }, [pendingActiveSession, userId]);
 
   const [talkRequest, setTalkRequest] = useState(0);
+  // "Start talking" is the student's own tap: once the session exists the call starts by itself (voice is the main way in; typing is a side door).
+  const autoStartedRef = useRef(0);
+  useEffect(() => {
+    if (!talkRequest || !task || talkRequest === autoStartedRef.current || liveStatus !== "idle") return;
+    autoStartedRef.current = talkRequest;
+    void live.start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [talkRequest, task?.id, liveStatus]);
   const startNewSession = useCallback(async (talk = false) => {
     if (!chosenSubject || startingSession) return;
     if (talk) setTalkRequest((n) => n + 1); // "Start talking" is the student's own tap: voice mode turns on once the panel mounts
