@@ -56,6 +56,12 @@ export async function runTutorTurnSim(check, section) {
     script = (b, i) => (i === 0 ? { speech: ["Done.", "What next?"], board: [{ op: "mark", cue: 0, target: "#99", note: "here" }] } : { speech: ["Done.", "What next?"], board: [{ op: "step", cue: 0, text: "$a + b = c$", kind: "result" }] });
     { const r = await runTutorTurn({ ...base, message: "please write that on the board" });
       check("ops the app rejects (a mark on a line that does not exist) do not count as writing: the model is told what was rejected and tries again", calls.length === 2 && /rejected/.test(calls[1].messages.at(-1).content) && r.board.length === 1); }
+    { const { carriesWorking } = await import("../server/tutorTurn/check.ts");
+      check("working worth a second look is long, mathematical spoken working; a short answer, small talk and an exercise result are not", carriesWorking("I get one minus three x squared plus three minus three x squared equals one over x squared") && !carriesWorking("x = 3") && !carriesWorking("ok thanks that makes sense now") && !carriesWorking("[Exercise] I answered 4 — marked right")); }
+    calls.length = 0;
+    script = (b, i) => (i === 0 ? { steps: [{ said: "squared both sides", ok: true }, { said: "expanded with the cross term", ok: true }], first_error: null, already_done: "squared the left side and expanded it", unclear: false } : { speech: ["That expansion is right, cross term and all.", "What does the cross term still contain that stops us solving for x?"], board: [{ op: "step", cue: 0, text: "$1 - 3x^2 + 3 - 3x^2 + 2\\sqrt{(1-3x^2)(3-3x^2)} = \\frac{1}{x^2}$", kind: "result" }] });
+    { const r = await runTutorTurn({ ...base, message: "so I squared both sides and I get one minus three x squared plus three minus three x squared plus two times the root of those equals one over x squared" });
+      check("a long derivation is recomputed by a second reader first; its verdict rides in the tutor's prompt (already done, never redo) and the reply is the tutor's own", calls.length === 2 && /recomputed their working/.test(calls[1].messages[0].content) && /never ask them to redo/.test(calls[1].messages[0].content) && /cross term/.test(r.reply)); }
     calls.length = 0;
     script = () => ({ speech: ["Hi there.", "What are we working on?"], board: [] });
     { await runTutorTurn({ ...base, message: "hello" });

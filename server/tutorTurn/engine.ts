@@ -10,6 +10,7 @@ import { voiceInputBlock } from "../tutorAdapt.ts";
 import { backgroundBlock, type TutorTurnInput, type TutorTurnResult } from "../tutor.ts";
 import { TURN_PROMPT, VOICE_NOTE, DRAW_REFERENCE } from "./prompt.ts";
 import { applyOps } from "./apply.ts";
+import { carriesWorking, checkWork } from "./check.ts";
 
 const MAX_HISTORY = 14;
 const TURN_MAX_TOKENS = 4000;
@@ -37,6 +38,8 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const result: TutorTurnResult & { turn?: { speech: string[]; ms: number } } = { reply: "", board: [], problems: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false };
 
   const spokenRepair: SpokenRepair | null = input.spoken ? repairSpokenMath(message, spokenContextFrom([context.subject || "", ...board.map((b) => b.text || "")])) : null;
+  // Real working in the message: a second reader recomputes it before the tutor answers (so it neither praises a slip nor asks them to redo a step).
+  const checked = carriesWorking(message) ? await checkWork(message, board.map((b) => b.text || "").filter(Boolean), result.tokens) : null;
   const canDraw = !context.subject || /math|physic|chem|bio|econ|scien|geom|stat|calc|algebra|trig/i.test(context.subject) || board.some((b) => ["graph", "svg", "diagram"].includes(String(b.kind)));
   const system = TURN_PROMPT
     + (canDraw ? DRAW_REFERENCE : "")
@@ -44,6 +47,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     + backgroundBlock(context)
     + `\n\nToday is ${new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}.`
     + `\n\nTHE BOARD (margin numbers #n are what you point at)${boardSurfaceBlock(board, problems) || ": empty."}`
+    + (checked ? `\n\nCHECKED BY CODE-LIKE RECOMPUTATION (trust this over your own quick reading of their message): ${checked}` : "")
     + (input.spoken && spokenRepair ? voiceInputBlock(message, input.spoken.alternatives, spokenRepair) : "")
     + `\n\nReply in English unless the student writes in another language. Return ONLY the JSON object.`;
   const messages: any[] = [
