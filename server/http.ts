@@ -254,6 +254,20 @@ export const dailyTurnCap = (max = TUTOR_DAILY_TURNS): RequestHandler => async (
   next();
 };
 
+/** A per-account daily cap for any named resource (a live voice session, say): same storage and fallback as dailyTurnCap. */
+export const dailyCap = (name: string, max: number): RequestHandler => async (req, res, next) => {
+  const day = new Date().toISOString().slice(0, 10);
+  const key = `${req.session.user || req.ip}:cap:${name}:${day}`;
+  const windowMs = 86_400_000;
+  const cloud = await checkRateLimit(key, max, windowMs);
+  const result = cloud ?? inMemoryRateLimit(key, max, windowMs);
+  if (!result.allowed) {
+    res.set("Retry-After", "3600").status(429).json({ error: `You've reached today's limit for this (${max}). Come back tomorrow!`, code: "daily_cap" });
+    return;
+  }
+  next();
+};
+
 /** One tutor turn at a time per account and task: a double click, two tabs or a voice flush must not run (and bill) the same turn twice.
  *  Per instance, with a TTL so a crashed request can never lock a student out. */
 const turnsInFlight = new Map<string, number>();

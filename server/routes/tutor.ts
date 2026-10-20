@@ -6,7 +6,7 @@ import { parsePolicy, summarize as summarizePolicy } from "../tutorPolicy.ts";
 import { schoolRecordLine } from "../schoolRecord.ts";
 import { aiReady, visionReady, describeWhiteboard, describeUploadedPhoto, synthesizeSpeech, TTS_MAX_TEXT, tutorOpener } from "../claude.ts";
 import { recordEvent, loadBanditState, saveBanditState } from "../store.ts";
-import { M, ah, commit, isPaused, rateLimit, requireAuth } from "../http.ts";
+import { M, ah, commit, dailyCap, isPaused, rateLimit, requireAuth } from "../http.ts";
 
 export function registerTutorRoutes(app: express.Express): void {
   // Otto SPEAKS FIRST: the tutor session's opening line (see tutorOpener in server/claude.ts). REAL, not a
@@ -49,6 +49,25 @@ export function registerTutorRoutes(app: express.Express): void {
   // A canvas snapshot is bigger than a typical JSON body (a dense 800x600 PNG can run a few hundred KB once
   // base64-inflated by ~33%) — same bumped-limit pattern as /api/account/import, just smaller: nothing
   // resembling a real whiteboard sketch should ever approach 8mb.
+  // LIVE VOICE: the browser talks to Gemini Live directly (instant, interruptible speech), so it needs a credential. This mints a
+  // short-lived, single-use token — the real key never leaves the server. The tutor's brain (answers checked by code, the board) stays
+  // server-side behind /api/tasks/:id/chat; the voice model only calls it as a tool. Capped per account per day.
+  app.post("/api/tutor/live/token", requireAuth, rateLimit(6, 60_000), dailyCap("live", Number(process.env.TUTOR_DAILY_LIVE) || 20), ah(async (req, res) => {
+    if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to chat." }); return; }
+    const key = process.env.GEMINI_API_KEY;
+    if (!key) { res.status(503).json({ error: "Live voice isn't set up on this server.", code: "live_unavailable" }); return; }
+    try {
+      const { GoogleGenAI } = await import("@google/genai");
+      const ai = new GoogleGenAI({ apiKey: key });
+      const token = await ai.authTokens.create({ config: { uses: 1, expireTime: new Date(Date.now() + 35 * 60_000).toISOString(), newSessionExpireTime: new Date(Date.now() + 60_000).toISOString() } });
+      if (!token?.name) throw new Error("no token returned");
+      res.json({ token: token.name, model: process.env.GEMINI_LIVE_MODEL || "gemini-3.8-live" });
+    } catch (e: any) {
+      console.warn(`[live] token request failed: ${String(e?.message || e).slice(0, 160)}`);
+      res.status(502).json({ error: "Live voice isn't available right now.", code: "live_unavailable" });
+    }
+  }));
+
   app.post("/api/tutor/read-whiteboard", requireAuth, rateLimit(15, 60_000), express.json({ limit: "8mb" }), ah(async (req, res) => {
     if (!visionReady()) { res.status(503).json({ error: "Whiteboard reading isn't configured on this server." }); return; }
     if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to continue." }); return; }

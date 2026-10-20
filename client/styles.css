@@ -4903,3 +4903,22 @@ button[aria-expanded="true"] > .sm-chev { transform: rotate(45deg); }
 .ts-dock .sm-ai-attach-btn { opacity: .5; }
 .tutor-stage.voice-on .ts-dock .otto-dock { border: 0; }
 @media (max-width: 640px) { .ts-dock .otto-bubble { font-size: 16px; } .ts-dock .otto-dock-row { gap: var(--space-3); } }
+
+/* ── Live voice bar (Socra-style): Otto's presence, one caption line, a few controls. ───────────────────────── */
+.live-bar { display: flex; flex-direction: column; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-4) var(--space-3); background: linear-gradient(to top, var(--bg) 70%, transparent); }
+.live-bar-main { display: flex; align-items: center; gap: var(--space-4); max-width: 720px; width: 100%; justify-content: center; }
+.live-caption { margin: 0; font-size: 18px; line-height: 1.45; color: var(--ink); max-width: 60ch; min-height: 1.45em; }
+.live-caption.is-you { color: var(--muted, var(--ink)); font-style: italic; }
+.live-caption.is-error { color: var(--vermilion, #b3261e); font-size: 15px; }
+.live-controls { display: flex; align-items: center; gap: var(--space-2); padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius-xl); background: var(--surface); box-shadow: 0 6px 24px rgba(0,0,0,.08); }
+.live-main-btn { display: inline-flex; align-items: center; gap: 8px; height: 44px; min-width: 160px; padding: 0 20px; border-radius: var(--radius-pill, 999px); border: 0; background: var(--accent); color: var(--accent-ink, #fff); font: inherit; font-weight: 600; cursor: pointer; justify-content: center; }
+.live-main-btn.is-on { background: var(--bg-2); color: var(--ink); box-shadow: 0 0 0 1px var(--line) inset; }
+.live-main-btn:disabled { opacity: .5; cursor: default; }
+.live-icon-btn { position: relative; display: inline-grid; place-items: center; width: 40px; height: 40px; border: 0; border-radius: 50%; background: transparent; color: var(--ink); cursor: pointer; }
+.live-icon-btn:hover { background: var(--bg-2); }
+.live-icon-btn[aria-pressed="true"] { background: var(--bg-2); }
+.live-icon-btn:disabled { opacity: .4; cursor: default; }
+.live-count { position: absolute; top: 2px; right: 0; min-width: 16px; height: 16px; border-radius: 8px; background: var(--accent); color: var(--accent-ink, #fff); font-size: 10px; display: grid; place-items: center; padding: 0 3px; }
+.live-type { display: flex; align-items: center; gap: var(--space-2); width: min(560px, 100%); border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+.live-type input { flex: 1; border: 0; background: transparent; font: inherit; font-size: 16px; color: var(--ink); outline: none; }
+@media (max-width: 640px) { .live-caption { font-size: 16px; } .live-main-btn { min-width: 130px; padding: 0 14px; } }

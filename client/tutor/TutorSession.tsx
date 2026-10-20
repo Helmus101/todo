@@ -15,6 +15,10 @@ import { hideToolLeaks } from "../../shared/toolLeak.ts";
 import { TutorCanvas, type TutorCanvasHandle } from "./TutorCanvas.tsx";
 import { useArduino } from "../hardware/useArduino.ts";
 import { DeviceButton } from "../hardware/DeviceButton.tsx";
+import { LiveBar } from "./LiveBar.tsx";
+import { useGeminiLive } from "./live/useGeminiLive.ts";
+import { toolResultFor } from "../../shared/liveTutor.ts";
+import { toSpeakableText } from "../voice/useSpeechSynthesis.ts";
 import { buttonMessage, deviceStateOf } from "../../shared/deviceProtocol.ts";
 import { PageTour } from "../PageTour.tsx";
 import { TOURS } from "../tours.ts";
@@ -122,6 +126,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   // Live voice-loop state, reported up by AskOttoPanel — rendered as a pill on the BOARD pane header, not
   // the chat: with voice on, the student's eyes are on the board, so "am I being heard?" has to
   // be answerable where they're actually looking.
+  const instantOpenerRef = useRef<string>("");
   const [voiceState, setVoiceState] = useState({ listening: false, speaking: false, voiceModeOn: false, interim: "" });
   // Desmos replaces the board pane entirely while open (see the board pane's render below) — lifted up here
   // (was local to TutorDesmos) so this component can branch between <BoardArtifact> and <TutorDesmos>.
@@ -331,6 +336,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     // An automatic exercise result must not wipe what they are in the middle of typing.
     if (override === undefined) setInput("");
     setSending(true); setError(null); setPendingMsg(message);
+    let outcome: { reply: string; wrote: boolean } | null = null;
     try {
       // Anything new on the whiteboard rides along with the message — draw, then just say "is this right?"
       // like you would to a person leaning over your page; no separate "send drawing" step needed.
@@ -352,6 +358,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       // screen actually knows how to show.
       const response = await api.chat(task.id, message, task.chat || [], task.board || [], (task.problems || []).map((p) => ({ ...p, solved: p.solved === true || solvedRef.current.has(p.id) })), undefined, undefined, voiceMode, true, true, task.objectives || [], spoken, { id: task.id, source: task.source, sourceSubject: task.sourceSubject, createdAt: task.createdAt }, sessionMemoryForPrompt(pastSessions, task.sourceSubject, Date.now(), openerLang));
       const { task: updated, objectives, board, problems } = response as typeof response & { board?: typeof task.board; problems?: typeof task.problems };
+      outcome = { reply: String((response as any).reply || ""), wrote: !!(board && board.length) };
       // objectives is only ever the FULL replacement list (SET_OBJECTIVES' own contract), or undefined
       // when Otto didn't touch it this turn — never overwrite the existing list with an empty one.
       const newObjectives = objectives?.length ? setLocalObjectives(task.id, objectives, userId) : (task.objectives || []);
@@ -427,6 +434,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       inflightRef.current = false;
       setSending(false); setPendingMsg(null);
     }
+    return outcome;
   }, [input, sending, task, userId, L]);
 
   // Each answer to a board exercise goes to Otto as a short automatic message so he reacts like a person
@@ -453,6 +461,23 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   // The optional USB companion (Arduino): its buttons are the same asks the student could type, and its lights follow the tutor's state.
   const sendingRef = useRef(false);
   sendingRef.current = sending;
+  // LIVE VOICE (Gemini Live): the voice model only talks; every thought goes to Otto's engine through `ask`, and what Otto answers is
+  // what it says. If live voice can't start (no key on the server, daily limit, blocked mic) the classic voice dock takes over.
+  const [caption, setCaption] = useState<{ who: "you" | "otto"; text: string } | null>(null);
+  const live = useGeminiLive({
+    subject: task?.sourceSubject,
+    opener: instantOpenerRef.current,
+    resuming: (task?.chat?.length || 0) > 0,
+    ask: async (said) => {
+      const out = await sendRef.current(said, true);
+      return out ? toolResultFor(out.reply, out.wrote, toSpeakableText) : { say: "", error: "Otto couldn't answer just now. Ask the student to say that again." };
+    },
+    onCaption: (who, text) => setCaption({ who, text }),
+  });
+  const liveStatus = live.status;
+  useEffect(() => {
+    setVoiceState({ listening: liveStatus === "live" && !live.speaking && !live.thinking && !live.muted, speaking: live.speaking, voiceModeOn: liveStatus === "live", interim: "" });
+  }, [liveStatus, live.speaking, live.thinking, live.muted]);
   const device = useArduino(useCallback((b) => {
     const en = "en" === "en";
     if (b === "mic") return; // voice mode stays the student's own click on screen — the device never switches it
@@ -874,6 +899,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       ? `Hey! Show me where you are in ${subj}: the problem, or what you've tried.`
       : "Hey! Show me where you are: the problem, or what you've tried.";
   const openerText = instantOpener;
+  instantOpenerRef.current = instantOpener;
   const starters = [
     { label: "I'm stuck — push me", text: "I'm stuck on a problem." },
     { label: "Make me understand a topic", text: "I'd like to understand a topic." },
@@ -970,6 +996,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
             separate "chat" entry point (report-live: it isn't a dedicated chat button, just an expand
             button on the island where the answers already show). No past-sessions section either:
             in-session shows the CURRENT transcript only. */}
+        {liveStatus === "unavailable" ? (
         <button
           type="button"
           className="tutor-dock-chat-toggle"
@@ -985,6 +1012,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           {task.chat?.length ? <span className="tutor-dock-chat-toggle-count">{task.chat.length}</span> : null}
           <ChevronDown size={13} aria-hidden="true" className="tutor-dock-chat-toggle-chev" />
         </button>
+        ) : null}
         {chatDrawer && (
           <div className="tutor-dock-chat" id="tutor-history-drawer">
             <div className="tutor-dock-chat-head">
@@ -1004,17 +1032,27 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
             </div>
           </div>
         )}
-        <AskOttoPanel
-          variant="dock"
-          task={task} currentStep={undefined} input={input} setInput={setInput} sending={sending}
-          error={error} pendingMsg={pendingMsg} onSend={(o, v, _canvas, sp) => void send(o, v, sp)}
-          onOpenNote={noop} onOpenDeck={noop} onOpenQuiz={noop}
-          emptyText={openerText}
-          quickReplies={fresh ? starters : justFinishedExercise ? nextChips : followUps}
-          placeholder={"Talk or type to Otto…"}
-          onVoiceStateChange={handleVoiceState}
-          talkRequest={talkRequest}
-        />
+        {liveStatus === "unavailable" ? (
+          <AskOttoPanel
+            variant="dock"
+            task={task} currentStep={undefined} input={input} setInput={setInput} sending={sending}
+            error={error} pendingMsg={pendingMsg} onSend={(o, v, _canvas, sp) => void send(o, v, sp)}
+            onOpenNote={noop} onOpenDeck={noop} onOpenQuiz={noop}
+            emptyText={openerText}
+            quickReplies={fresh ? starters : justFinishedExercise ? nextChips : followUps}
+            placeholder={"Talk or type to Otto…"}
+            onVoiceStateChange={handleVoiceState}
+            talkRequest={talkRequest}
+          />
+        ) : (
+          <LiveBar
+            status={liveStatus} speaking={live.speaking} thinking={live.thinking} muted={live.muted} caption={caption} error={live.error}
+            sending={sending}
+            onStart={() => void live.start()} onStop={live.stop} onMute={live.setMuted}
+            onType={(t) => { void (async () => { const out = await send(t, true); if (out && liveStatus === "live") live.say(toSpeakableText(out.reply)); })(); }}
+            onHistory={() => setChatDrawer((v) => !v)} historyCount={task.chat?.length || 0}
+          />
+        )}
       </div>
       {reflectOpen && (
         <div className="tutor-reflect-overlay" role="dialog" aria-modal="true" aria-label={"Before you go"} onClick={() => setReflectOpen(false)}>
