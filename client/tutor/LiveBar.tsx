@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { ArrowUp, History, Keyboard, Mic, MicOff, PhoneOff } from "lucide-react";
-import { OttoAvatar } from "./OttoAvatar.tsx";
 import type { LiveStatus } from "./live/useGeminiLive.ts";
 
 /** The voice bar under the board: Otto's presence, one line of what is being said, and the few controls a call needs. Typing is a
@@ -35,7 +34,7 @@ export function LiveBar(p: {
   return (
     <div className="live-bar" data-state={mood}>
       <div className="live-bar-main">
-        <OttoAvatar mood={mood as any} size={live || connecting ? 72 : 56} />
+        <span className="live-orb" aria-hidden="true" style={live || connecting ? { width: 72, height: 72 } : undefined} />
         <p className={`live-caption${p.error ? " is-error" : ""}${p.caption?.who === "you" && !p.thinking ? " is-you" : ""}`} role="status" aria-live="polite">{line}</p>
       </div>
       {typing ? (

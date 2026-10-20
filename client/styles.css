@@ -4905,18 +4905,25 @@ button[aria-expanded="true"] > .sm-chev { transform: rotate(45deg); }
 @media (max-width: 640px) { .ts-dock .otto-bubble { font-size: 16px; } .ts-dock .otto-dock-row { gap: var(--space-3); } }
 
 /* ── Live voice bar (Socra-style): Otto's presence, one caption line, a few controls. ───────────────────────── */
-.live-bar { display: flex; flex-direction: column; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-4) var(--space-3); background: linear-gradient(to top, var(--bg) 70%, transparent); }
+.live-bar { display: flex; flex-direction: column; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-4) var(--space-3); }
 .live-bar-main { display: flex; align-items: center; gap: var(--space-4); max-width: 720px; width: 100%; justify-content: center; }
-.live-caption { margin: 0; font-size: 18px; line-height: 1.45; color: var(--ink); max-width: 60ch; min-height: 1.45em; }
+.live-caption { margin: 0; background-color: rgba(247,243,230,.94); padding: 4px 12px; border-radius: 12px; font-size: 18px; line-height: 1.45; color: var(--ink); max-width: 60ch; min-height: 1.45em; }
 .live-caption.is-you { color: var(--muted, var(--ink)); font-style: italic; }
 .live-caption.is-error { color: var(--vermilion, #b3261e); font-size: 15px; }
-.live-controls { display: flex; align-items: center; gap: var(--space-2); padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius-xl); background: var(--surface); box-shadow: 0 6px 24px rgba(0,0,0,.08); }
-.live-main-btn { display: inline-flex; align-items: center; gap: 8px; height: 44px; min-width: 160px; padding: 0 20px; border-radius: var(--radius-pill, 999px); border: 0; background: var(--accent); color: var(--accent-ink, #fff); font: inherit; font-weight: 600; cursor: pointer; justify-content: center; }
-.live-main-btn.is-on { background: var(--bg-2); color: var(--ink); box-shadow: 0 0 0 1px var(--line) inset; }
+.live-controls { display: flex; align-items: center; gap: var(--space-2); padding: 6px 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); box-shadow: 0 6px 24px rgba(0,0,0,.08) !important; }
+/* (!important: a global `button { background: transparent !important }` reset would otherwise make these invisible) */
+.live-main-btn { display: inline-flex; align-items: center; gap: 8px; height: 44px; min-width: 160px; padding: 0 20px; border-radius: 999px; border: 0; background: var(--accent) !important; color: #fff !important; font: inherit; font-weight: 600; cursor: pointer; justify-content: center; }
+.live-main-btn.is-on { background: var(--bg-2) !important; color: var(--ink) !important; box-shadow: 0 0 0 1px var(--line) inset; }
+.live-orb { position: relative; flex: none; width: 56px; height: 56px; border-radius: 50%; background-color: #e0a23a; background-image: radial-gradient(circle at 35% 30%, #fde7b0, #e0a23a 55%, #b45309) !important; box-shadow: 0 0 40px rgba(180,83,9,.25) !important; }
+.live-bar[data-state="listening"] .live-orb::after, .live-bar[data-state="speaking"] .live-orb::after { content: ""; position: absolute; inset: 0; border-radius: 50%; border: 2px solid #b45309; animation: otto-ripple 1.6s ease-out infinite; }
+.live-bar[data-state="thinking"] .live-orb { animation: live-breathe 1.4s ease-in-out infinite; }
+.live-bar[data-state="idle"] .live-orb { opacity: .85; }
+@keyframes live-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.1); } }
+@media (prefers-reduced-motion: reduce) { .live-orb, .live-orb::after { animation: none !important; } }
 .live-main-btn:disabled { opacity: .5; cursor: default; }
-.live-icon-btn { position: relative; display: inline-grid; place-items: center; width: 40px; height: 40px; border: 0; border-radius: 50%; background: transparent; color: var(--ink); cursor: pointer; }
-.live-icon-btn:hover { background: var(--bg-2); }
-.live-icon-btn[aria-pressed="true"] { background: var(--bg-2); }
+.live-icon-btn { position: relative; display: inline-grid; place-items: center; width: 40px; height: 40px; border: 0; border-radius: 50%; background: transparent; color: var(--ink) !important; cursor: pointer; }
+.live-icon-btn:hover { background: var(--bg-2) !important; }
+.live-icon-btn[aria-pressed="true"] { background: var(--bg-2) !important; }
 .live-icon-btn:disabled { opacity: .4; cursor: default; }
 .live-count { position: absolute; top: 2px; right: 0; min-width: 16px; height: 16px; border-radius: 8px; background: var(--accent); color: var(--accent-ink, #fff); font-size: 10px; display: grid; place-items: center; padding: 0 3px; }
 .live-type { display: flex; align-items: center; gap: var(--space-2); width: min(560px, 100%); border-bottom: 1px solid var(--line); padding-bottom: 4px; }
@@ -4924,7 +4931,7 @@ button[aria-expanded="true"] > .sm-chev { transform: rotate(45deg); }
 @media (max-width: 640px) { .live-caption { font-size: 16px; } .live-main-btn { min-width: 130px; padding: 0 14px; } }
 
 /* ── The tutor board as PAPER (Socra's look): warm cream, a faint blue grid, handwriting for what Otto writes, amber titles. ── */
-.tutor-stage .ts-canvas { background-color: #f7f3e6; background-color: oklch(0.965 0.02 95); background-image: linear-gradient(rgba(70,110,170,.13) 1px, transparent 1px), linear-gradient(90deg, rgba(70,110,170,.13) 1px, transparent 1px); background-size: 32px 32px; }
+.tutor-stage .ts-canvas { background-color: #f7f3e6; background-color: oklch(0.965 0.02 95); background-image: linear-gradient(rgba(70,110,170,.13) 1px, transparent 1px), linear-gradient(90deg, rgba(70,110,170,.13) 1px, transparent 1px) !important; background-size: 32px 32px; }
 .tutor-stage .sm-board-line, .tutor-stage .sm-board-entry-text { font-family: "Kalam", "Handlee", "Comic Sans MS", cursive; font-size: 1.25rem; color: #3b3428; }
 .tutor-stage .sm-board-why { font-family: "Kalam", "Handlee", cursive; color: #6b5f4a; }
 .tutor-stage .sm-board-header-subject { font-family: "Instrument Serif", ui-serif, Georgia, serif; font-size: 1.9rem; font-style: italic; color: #b45309; }
