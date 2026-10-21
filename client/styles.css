@@ -4948,3 +4948,14 @@ button[aria-expanded="true"] > .sm-chev { transform: rotate(45deg); }
   .tutor-stage .sm-board-body .sm-board-entry-main:has(> .sm-board-why) > .sm-board-why { grid-column: auto; grid-row: auto; margin-top: 2px; padding-left: 0; border-left: 0; font-size: 1rem; }
   .tutor-stage .sm-board-body .sm-board-entry-main:has(> .sm-board-why) > .sm-board-why::before { content: "↳ "; }
 }
+
+/* ── Tutor landing: pick a subject (chips), then one big "Start talking". ──────────────────────────────────── */
+.tutor-subject-chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; max-width: 520px; }
+.tutor-chip { font: inherit; font-size: 14px; padding: 8px 16px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink) !important; cursor: pointer; transition: border-color .12s, background .12s; }
+.tutor-chip:hover { border-color: var(--ink-3); }
+.tutor-chip.on { background: var(--accent) !important; color: #fff !important; border-color: var(--accent); }
+.tutor-start-actions { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.tutor-start-actions .tutor-start-btn { display: inline-flex; align-items: center; gap: 10px; height: 52px; padding: 0 32px; border-radius: 999px; font-size: 16px; font-weight: 600; background: var(--accent) !important; color: #fff !important; border: 0; }
+.tutor-start-actions .tutor-start-btn:disabled { opacity: .4; cursor: default; }
+.tutor-start-type { background: none !important; border: 0; font: inherit; font-size: 14px; color: var(--ink-2) !important; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; padding: 4px 8px; }
+.tutor-start-type:disabled { opacity: .4; cursor: default; }

@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
-import { ChevronRight, ChevronDown, Maximize2, Minimize2, MessageSquare } from "lucide-react";
+import { ChevronRight, ChevronDown, Maximize2, Minimize2, MessageSquare, Mic } from "lucide-react";
 import type { WebTask, TaskProblem, BoardEntry } from "../../shared/types.ts";
 import { api } from "../api.ts";
 import { setLocalObjectives, getLocalThread, setLocalChat, setLocalBoard, setLocalProblems } from "../localChatBoard.ts";
@@ -782,36 +782,18 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
               rendered as the prototype's single wide pill: subject select left, orange "Start a session"
               button right, no separate label above. The gate stays (the button is disabled until a
               subject is picked) but the affordance is always visible. */}
-          <div className="tutor-start-row">
-            <select
-              id="tutor-subject-select"
-              value={selectedSubject}
-              onChange={(e) => { setSelectedSubject(e.target.value); setTopic(""); }}
-              className="tutor-start-select"
-              aria-label={"Subject"}
-            >
-              <option value="">{"Choose a subject"}</option>
-              {subjectOptions.map((subj) => (
-                <option key={subj} value={subj}>{subj}</option>
-              ))}
-              <option value={OTHER}>{"Other…"}</option>
-            </select>
-            <button
-              className="btn primary tutor-start-btn"
-              onClick={() => void startNewSession(true)}
-              disabled={startingSession || !chosenSubject}
-            >
-              {startingSession
-                ? "Starting…"
-                : "Start talking"}
+          <div className="tutor-subject-chips" role="group" aria-label={"Subject"}>
+            {subjectOptions.map((subj) => (
+              <button key={subj} type="button" className={`tutor-chip${selectedSubject === subj ? " on" : ""}`} aria-pressed={selectedSubject === subj} onClick={() => { setSelectedSubject(subj); setTopic(""); }}>{subj}</button>
+            ))}
+            <button type="button" className={`tutor-chip${selectedSubject === OTHER ? " on" : ""}`} aria-pressed={selectedSubject === OTHER} onClick={() => { setSelectedSubject(OTHER); setTopic(""); }}>{"Other…"}</button>
+          </div>
+          <div className="tutor-start-actions">
+            <button className="btn primary tutor-start-btn" onClick={() => void startNewSession(true)} disabled={startingSession || !chosenSubject}>
+              <Mic size={18} aria-hidden="true" />{startingSession ? "Starting…" : "Start talking"}
             </button>
-            <button
-              type="button"
-              className="btn ghost tutor-start-type"
-              onClick={() => void startNewSession(false)}
-              disabled={startingSession || !chosenSubject}
-            >
-              {"Type instead"}
+            <button type="button" className="tutor-start-type" onClick={() => void startNewSession(false)} disabled={startingSession || !chosenSubject}>
+              {"or type instead"}
             </button>
           </div>
           {error ? <p className="tutor-error" role="alert">{error}</p> : null}

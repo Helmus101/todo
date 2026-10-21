@@ -13,6 +13,13 @@ const OPS = TURN_PROMPT.slice(TURN_PROMPT.indexOf("BOARD OPS"), TURN_PROMPT.inde
 
 export const BOARD_WRITER_PROMPT = `You keep the paper whiteboard for a spoken tutoring session. You never speak. You receive the latest spoken exchange (Student and Tutor lines) and what is already on the board, and you return the board ops to add.
 
+FIRST, in "notes", list in a few words each thing in this exchange that qualifies, answering this checklist honestly:
+(a) Was a RULE, DEFINITION, FORMULA or IDENTITY stated or confirmed, by the tutor or by the student (even if the student said it in words)? → it is written, in tidy general form.
+(b) Did the student reach a RESULT, expansion, simplification or final answer that the tutor confirmed as right ("exactly", "that's right", "spot on")? → the result line is written (the full line, e.g. the finished expansion). A result counts ONLY if the student reached it BEFORE the tutor's last question: whatever that last question asks them to work out is NOT a result yet (a worked example you would write to answer it is exactly what must not appear).
+(c) Was a new PROBLEM or task posed? → written once.
+(d) Would a PICTURE help? → drawn.
+Then put the ops for every item you listed in "board". If a box has nothing, say so in "notes" and write nothing for it.
+
 WRITE ONLY:
 1. THE PROBLEM, once, when the student states it: a "topic" op for a new problem or topic, then a "given" step with the full statement, cleanly typeset (maths in $…$). Never their raw words, never a "how would I solve this" lead-in.
 2. THE STUDENT'S OWN STEPS and results, as they say them, ONLY when they are right: first recompute each one yourself. Write it as your own clean typeset line (kind "result" or "formula"), with no "why". A step that is wrong or unclear: write nothing for it, and never write the correction.
@@ -21,16 +28,29 @@ WRITE ONLY:
 
 HOW MUCH: the board is the whole lesson on paper, so an exchange that teaches or confirms something usually adds one to three lines: the rule or definition, the worked example, the result the student reached (when the tutor confirms it is right), the final answer once THEY reached it. An empty list is right only for greetings, small talk, a question that adds nothing new, or an answer that was wrong.
 
-NEVER WRITE: the tutor's questions, hints that point at the student's next step, a result the student has not reached, praise, chit-chat, or the tutor's sentences. Maths in $…$, lines short, one idea per line. Never repeat a line that is already on the board. If nothing qualifies, return {"board":[]}.
+NEVER WRITE: the tutor's questions, hints that point at the student's next step, THE ANSWER TO THE QUESTION THE TUTOR ASKS AT THE END OF THE EXCHANGE (the student has not answered it yet: if the tutor asks for log_5 25, "log_5 25 = 2" must not appear), a result the student has not reached, praise, chit-chat, or the tutor's sentences. Maths in $…$, lines short, one idea per line. Never repeat a line that is already on the board. If nothing qualifies, return {"board":[]}.
 
 
 EXAMPLE
 Exchange: "Student: I don't get logarithms" / "Tutor: To start from scratch, think of a logarithm as the opposite of an exponent. For example, since 2 to the power of 3 is 8, the logarithm base 2 of 8 is 3. What do you think the logarithm base 3 of 9 would be?"
-Return: {"board":[{"op":"topic","cue":0,"text":"Logarithms"},{"op":"step","cue":0,"text":"A logarithm is the opposite of an exponent: $\\log_b x = y \\iff b^y = x$","kind":"definition"},{"op":"step","cue":0,"text":"$2^3 = 8 \\implies \\log_2 8 = 3$","kind":"formula"}]}
+Return: {"notes":["definition: a logarithm is the opposite of an exponent","example: 2^3 = 8 so log_2 8 = 3","question about log_3 9: not written"],"board":[{"op":"topic","cue":0,"text":"Logarithms"},{"op":"step","cue":0,"text":"A logarithm is the opposite of an exponent: $\\log_b x = y \\iff b^y = x$","kind":"definition"},{"op":"step","cue":0,"text":"$2^3 = 8 \\implies \\log_2 8 = 3$","kind":"formula"}]}
 (The question about $\\log_3 9$ is NOT written: the tutor asks it out loud.)
 
 ${OPS}
-Return ONLY JSON: {"board":[…ops…]}. Every op carries "cue":0. Inside strings write every LaTeX backslash TWICE.`;
+Return ONLY JSON: {"notes":["rule: …","result: …"],"board":[…ops…]}. Every op carries "cue":0. Inside strings write every LaTeX backslash TWICE.`;
+
+/** The tutor's last line ends in a question: split it off, so "what is log_5 25?" is never turned into "log_5 25 = 2" on the board. Pure. */
+export function splitOpenQuestion(exchange: string): { finished: string; openQuestion: string } {
+  const lines = exchange.split("\n");
+  const last = lines.length - 1;
+  if (last < 0 || !/^Tutor:/i.test(lines[last]) || !/\?\s*$/.test(lines[last])) return { finished: exchange, openQuestion: "" };
+  const body = lines[last].replace(/^Tutor:\s*/i, "");
+  const sentences = body.match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g) || [body];
+  const q: string[] = [];
+  while (sentences.length && (q.length === 0 || !/[.!]\s*$/.test(sentences[sentences.length - 1] || ""))) { const t = sentences.pop()!; q.unshift(t.trim()); if (/\?\s*$/.test(t)) break; }
+  const rest = sentences.join(" ").trim();
+  return { finished: [...lines.slice(0, last), ...(rest ? [`Tutor: ${rest}`] : [])].join("\n"), openQuestion: q.join(" ").trim() };
+}
 
 /** The tutor said something worth keeping (a definition, a rule, a worked example, a formula): numbers or maths with an explaining word. */
 export function tutorExplained(exchange: string): boolean {
@@ -42,7 +62,9 @@ export function tutorExplained(exchange: string): boolean {
 export async function writeBoard(input: { exchange: string; board: BoardEntry[]; subject?: string; history?: string }, tokens: { in: number; out: number; cachedIn: number }): Promise<{ board: BoardEntry[]; dropped: string[] }> {
   const canDraw = !input.subject || /math|physic|chem|bio|econ|scien|geom|stat|calc|algebra|trig|histor|geograph/i.test(input.subject) || input.board.some((b) => ["graph", "svg", "diagram"].includes(String(b.kind)));
   const system = BOARD_WRITER_PROMPT + (canDraw ? DRAW_REFERENCE : "") + `\n\nTHE BOARD (margin numbers #n are what you point at)${boardSurfaceBlock(input.board, []) || ": empty."}`;
-  const user = `${input.subject ? `Subject: ${input.subject}\n` : ""}${input.history ? `EARLIER IN THIS SESSION (context only: it tells you what a short answer like "two, right?" refers to; do NOT rewrite what is already on the board):\n${input.history.slice(-2500)}\n\n` : ""}LATEST EXCHANGE:\n${input.exchange.slice(0, 4000)}`;
+  // The tutor's closing question is still UNANSWERED: it is shown to the writer separately, so the working for it is never mistaken for something the student reached.
+  const { finished, openQuestion } = splitOpenQuestion(input.exchange.slice(0, 4000));
+  const user = `${input.subject ? `Subject: ${input.subject}\n` : ""}${input.history ? `EARLIER IN THIS SESSION (context only: it tells you what a short answer like "two, right?" refers to; do NOT rewrite what is already on the board):\n${input.history.slice(-2500)}\n\n` : ""}LATEST EXCHANGE (what has been said and settled):\n${finished}${openQuestion ? `\n\nTHE TUTOR THEN ASKED THE STUDENT (still unanswered: never write its answer or its working; if it poses a new problem or task you may write that task once, as a line without its answer):\n${openQuestion}` : ""}`;
   const studentWords = input.exchange.split("\n").filter((l) => /^Student:/i.test(l)).map((l) => l.replace(/^Student:\s*/i, ""));
   const once = async (extra?: string) => {
     const messages: any[] = [{ role: "system", content: system }, { role: "user", content: user }];

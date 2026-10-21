@@ -696,7 +696,7 @@ export function App() {
   const fullApp = !!status?.fullApp;
   useEffect(() => {
     if (!status?.loggedIn || fullApp) return;
-    const ok = route === "tutor" || route.startsWith("tutor/session/") || route === "full" || route === "privacy" || route === "terms" || route === "research";
+    const ok = route === "tutor" || route.startsWith("tutor/session/") || route === "settings" || route === "full" || route === "privacy" || route === "terms" || route === "research";
     if (!ok) navigate("tutor");
   }, [status?.loggedIn, fullApp, route]);
   // /full: unlock everything for this account, then show Today.
@@ -911,7 +911,11 @@ export function App() {
       <header className="topnav">
         <a className="topnav-brand" href={fullApp && status?.home === "tasks" ? "/tasks" : "/tutor"}>otto</a>
         {!fullApp ? (
-          <nav className="topnav-links"><button type="button" className="topnav-link" onClick={() => void signOut()}>{"Sign out"}</button></nav>
+          <nav className="topnav-links">
+            <a className={`topnav-link ${route === "tutor" || route.startsWith("tutor/session/") ? "active" : ""}`} href="/tutor">{"Tutor"}</a>
+            <a className={`topnav-link ${route === "settings" ? "active" : ""}`} href="/settings">{"Settings"}</a>
+            <button type="button" className="topnav-link" onClick={() => void signOut()}>{"Sign out"}</button>
+          </nav>
         ) : (
         <nav className="topnav-links">
           <a
