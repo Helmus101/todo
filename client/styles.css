@@ -5039,3 +5039,23 @@ html[data-i18n="loading"] body { opacity: 0; }
 .admin-actions { display: flex; gap: 8px; }
 .admin-note { margin: 4px 0 0; color: var(--ink-2); }
 .admin-grant { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+/* Blog */
+.blog { max-width: 720px; margin: 0 auto; padding: 8px 0 48px; line-height: 1.65; }
+.blog h1 { font-size: clamp(1.7rem, 4vw, 2.3rem); line-height: 1.2; margin: 6px 0 8px; text-wrap: balance; }
+.blog h2 { font-size: 1.25rem; margin: 28px 0 8px; }
+.blog p, .blog li { color: var(--ink); }
+.blog-lede { color: var(--ink-2, var(--ink)); font-size: 1.05rem; }
+.blog-meta, .blog-crumbs { color: var(--ink-3, var(--ink-2)); font-size: 13px; margin: 0 0 14px; }
+.blog-crumbs a { color: inherit; }
+.blog-list { list-style: none; padding: 0; display: grid; gap: 22px; margin-top: 24px; }
+.blog-list h2 { margin: 0 0 4px; font-size: 1.15rem; }
+.blog-list h2 a { color: var(--ink); text-decoration: none; }
+.blog-list h2 a:hover { text-decoration: underline; }
+.blog-list p { margin: 0 0 4px; }
+.blog-cta { margin: 36px 0 8px; padding: 18px 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.blog-cta p { margin: 0 0 12px; }
+.blog-more { padding-left: 18px; }
+.landing-blog { margin-top: 40px; text-align: left; max-width: 520px; }
+.landing-blog h2 { font-size: 1rem; margin: 0 0 8px; }
+.landing-blog ul { margin: 0 0 8px; padding-left: 18px; display: grid; gap: 4px; }

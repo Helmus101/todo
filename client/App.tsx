@@ -28,6 +28,7 @@ import { MistakeLogPage } from "./pages/MistakeLog.tsx";
 import { AddTask, ConnectCard, TaskSkeleton } from "./pages/Dashboard.tsx";
 import { PrivacyBody, ResearchPageBody, TermsBody } from "./pages/Legal.tsx";
 import { PAGE_META, ORIGIN } from "../shared/seo.ts";
+import { BlogIndexPage, BlogPostPage } from "./pages/Blog.tsx";
 
 // How long a local optimistic mutation (confirm/dismiss/step-done/substep) outranks an incoming background
 // fetch for the same task — see `keepLocalHandled`/`patchTask` in App(). Long enough to cover a slow
@@ -77,7 +78,8 @@ const STUDY_MODE_ENABLED = false;
 
 /** Strip leading/trailing slashes → the bare route ("" = dashboard, "settings", "login", "task/<id>"). */
 const HOME_TITLE = "Otto — the voice tutor that never gives you the answer";
-const PUBLIC_ROUTES = new Set(["", "research", "privacy", "terms"]);
+const PUBLIC_ROUTES = new Set(["", "research", "privacy", "terms", "blog"]);
+const isPublicRoute = (r: string) => PUBLIC_ROUTES.has(r) || (r.startsWith("blog/") && !!PAGE_META[r]);
 /** Title, canonical and robots for the current route. Public pages are indexable; everything behind login (and any
  *  path the app doesn't know) is `noindex` so search engines never index app screens or soft-404s. */
 function applyPageMeta(route: string): void {
@@ -87,7 +89,7 @@ function applyPageMeta(route: string): void {
     const canonical = document.querySelector<HTMLLinkElement>('link[rel="canonical"]');
     if (canonical) canonical.href = ORIGIN + (meta ? meta.path : "/");
     let robots = document.querySelector<HTMLMetaElement>('meta[name="robots"]');
-    if (!PUBLIC_ROUTES.has(route)) {
+    if (!isPublicRoute(route)) {
       if (!robots) { robots = document.createElement("meta"); robots.name = "robots"; document.head.appendChild(robots); }
       robots.content = "noindex, nofollow";
     } else robots?.remove();
@@ -721,7 +723,7 @@ export function App() {
   const [fullTry, setFullTry] = useState(0);
   useEffect(() => {
     if (!status?.loggedIn || fullApp) return;
-    const ok = route === "tutor" || route.startsWith("tutor/session/") || route === "settings" || route === "full" || (route === "admin" && !!status?.isAdmin) || route === "privacy" || route === "terms" || route === "research";
+    const ok = route === "tutor" || route.startsWith("tutor/session/") || route === "settings" || route === "full" || (route === "admin" && !!status?.isAdmin) || route === "privacy" || route === "terms" || route === "research" || route === "blog" || route.startsWith("blog/");
     if (!ok) navigate("tutor");
   }, [status?.loggedIn, fullApp, route]);
   // /full: unlock everything for this account, then show Today.
@@ -796,6 +798,8 @@ export function App() {
   if (route === "privacy") return <LegalPage kind="privacy" lang={status?.loggedIn ? status.language : preLoginLang} />;
   if (route === "terms") return <LegalPage kind="terms" lang={status?.loggedIn ? status.language : preLoginLang} />;
   if (route === "research") return <ResearchPage lang={status?.loggedIn ? status.language : preLoginLang} />;
+  if (route === "blog") return <LangContext.Provider value="en"><BlogIndexPage /></LangContext.Provider>;
+  if (route.startsWith("blog/")) return <LangContext.Provider value="en"><BlogPostPage slug={route.slice(5)} /></LangContext.Provider>;
 
   if (!status || !initialStatusChecked) {
     if (loadError) {

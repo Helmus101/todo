@@ -1,3 +1,4 @@
+import { POSTS, postPath } from "../../shared/blog.ts";
 import { LanguagePicker } from "../LanguagePicker.tsx";
 
 
@@ -24,6 +25,7 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
         <span className="landing-min-brand">otto</span>
         <nav>
           <a href="/research">{"Approach"}</a>
+          <a href="/blog">{"Blog"}</a>
           <a href="/login">{"Log in"}</a>
         </nav>
       </header>
@@ -42,11 +44,17 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
             ))}
           </div>
         </section>
+        <section className="landing-blog" aria-label="From the blog">
+          <h2>{"Study methods that work"}</h2>
+          <ul>{POSTS.slice(0, 3).map((p) => <li key={p.slug}><a href={postPath(p)}>{p.title}</a></li>)}</ul>
+          <p><a href="/blog">{"All guides"}</a></p>
+        </section>
       </main>
       <footer className="landing-min-foot">
         <a href="/privacy">{"Privacy"}</a>
         <a href="/terms">{"Terms"}</a>
         <a href="/research">{"Research"}</a>
+        <a href="/blog">{"Blog"}</a>
         <LanguagePicker compact />
       </footer>
     </div>

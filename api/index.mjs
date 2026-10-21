@@ -21792,6 +21792,19 @@ if (PROD && !process.env.VERCEL) {
   for (const page of ["research", "privacy", "terms"]) app.get(`/${page}`, (_req, res) => {
     res.sendFile(path.join(dist, `${page}.html`));
   });
+  app.get("/blog", (_req, res) => {
+    res.sendFile(path.join(dist, "blog.html"));
+  });
+  app.get("/blog/:slug", (req, res) => {
+    const slug = String(req.params.slug || "");
+    if (!/^[a-z0-9-]+$/.test(slug)) {
+      res.status(404).end();
+      return;
+    }
+    res.sendFile(path.join(dist, "blog", `${slug}.html`), (err) => {
+      if (err) res.status(404).sendFile(path.join(dist, "index.html"));
+    });
+  });
   app.get("*", (req, res) => {
     if (path.extname(req.path)) {
       res.status(404).end();

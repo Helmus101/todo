@@ -29,6 +29,8 @@
     { "source": "/og-image.png", "destination": "/og-image.png" },
     { "source": "/.well-known/:path*", "destination": "/.well-known/:path*" },
     { "source": "/research", "destination": "/research.html" },
+    { "source": "/blog", "destination": "/blog.html" },
+    { "source": "/blog/:slug", "destination": "/blog/:slug.html" },
     { "source": "/privacy", "destination": "/privacy.html" },
     { "source": "/terms", "destination": "/terms.html" },
     { "source": "/:path*", "destination": "/index.html" }

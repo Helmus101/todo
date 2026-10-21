@@ -1,6 +1,8 @@
 /** Per-page head metadata for the public pages (title, description, canonical, social tags). Used at build time by
  *  scripts/prerender-landing.tsx to write dist/<page>.html, and at runtime by the client to keep the tab title and
  *  canonical right when someone navigates between pages without a reload. */
+import { POSTS, postPath } from "./blog.ts";
+
 export const ORIGIN = "https://hiotto.vercel.app";
 
 export interface PageMeta { path: string; title: string; description: string }
@@ -22,6 +24,13 @@ export const PAGE_META: Record<string, PageMeta> = {
     description: "The terms for using Otto, the voice tutor with a shared whiteboard: who can use it, acceptable use, AI limitations and your rights.",
   },
 };
+
+PAGE_META.blog = {
+  path: "/blog",
+  title: "Otto blog: study methods that work, with the research behind them",
+  description: "Short guides to active recall, spaced repetition, worked examples, interleaving and essay arguments, each based on published studies.",
+};
+for (const p of POSTS) PAGE_META[`blog/${p.slug}`] = { path: postPath(p), title: `${p.title} | Otto`, description: p.description };
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 

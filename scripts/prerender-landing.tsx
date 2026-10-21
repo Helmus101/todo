@@ -18,6 +18,9 @@ import { Landing } from "../client/pages/Landing.tsx";
 import { PrivacyBody, TermsBody, ResearchPageBody } from "../client/pages/Legal.tsx";
 import { LangContext } from "../client/ui.tsx";
 import { PAGE_META, ORIGIN, headFor } from "../shared/seo.ts";
+import { POSTS, postPath } from "../shared/blog.ts";
+import { BlogIndexPage, BlogPostPage } from "../client/pages/Blog.tsx";
+import { mkdirSync } from "node:fs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const distIndexPath = resolve(__dirname, "../dist/index.html");
@@ -59,10 +62,42 @@ for (const [route, node] of Object.entries(bodies)) {
   console.log(`[prerender] ${route}.html — ${(inner.length / 1024).toFixed(1)}kb, title "${meta.title}"`);
 }
 
-// Sitemap freshness: lastmod is the build date, not a hand-edited constant that goes stale.
-try {
-  const smPath = resolve(__dirname, "../dist/sitemap.xml");
+// ── Blog: an index page and one static page per post, each with Article structured data ──
+mkdirSync(resolve(__dirname, "../dist/blog"), { recursive: true });
+const withJsonLd = (page: string, data: object) => page.replace("</head>", `<script type="application/ld+json">${JSON.stringify(data).replace(/</g, "\\u003c")}</script>\n  </head>`);
+{
+  const meta = PAGE_META.blog;
+  const inner = renderToStaticMarkup(<LangContext.Provider value="en"><BlogIndexPage /></LangContext.Provider>);
+  const page = withJsonLd(headFor(html, meta).replace('<div id="root"></div>', `<div id="root">${inner}</div>`), {
+    "@context": "https://schema.org", "@type": "Blog", name: "Otto blog", url: ORIGIN + "/blog", description: meta.description, inLanguage: "en",
+    blogPost: POSTS.map((p) => ({ "@type": "BlogPosting", headline: p.title, url: ORIGIN + postPath(p), datePublished: p.date })),
+  });
+  writeFileSync(resolve(__dirname, "../dist/blog.html"), page, "utf-8");
+  console.log(`[prerender] blog.html — ${POSTS.length} posts`);
+}
+for (const post of POSTS) {
+  const meta = PAGE_META[`blog/${post.slug}`];
+  const inner = renderToStaticMarkup(<LangContext.Provider value="en"><BlogPostPage slug={post.slug} /></LangContext.Provider>);
+  const page = withJsonLd(headFor(html, meta).replace('<div id="root"></div>', `<div id="root">${inner}</div>`), {
+    "@context": "https://schema.org", "@type": "BlogPosting", headline: post.title, description: post.description,
+    datePublished: post.date, dateModified: post.date, inLanguage: "en", mainEntityOfPage: ORIGIN + postPath(post),
+    author: { "@type": "Organization", name: "Otto", url: ORIGIN }, publisher: { "@type": "Organization", name: "Otto", url: ORIGIN },
+    image: ORIGIN + "/og-image.png",
+  });
+  writeFileSync(resolve(__dirname, `../dist/blog/${post.slug}.html`), page, "utf-8");
+}
+console.log(`[prerender] blog/*.html — ${POSTS.length} posts`);
+
+// ── Sitemap: every public page, with the build date (replaces a hand-edited file that went stale) ──
+{
   const today = new Date().toISOString().slice(0, 10);
-  writeFileSync(smPath, readFileSync(smPath, "utf-8").replace(/<lastmod>[^<]*<\/lastmod>/g, `<lastmod>${today}</lastmod>`), "utf-8");
-} catch { /* the static copy in public/ stays as is */ }
+  const urls: [string, string, string][] = [
+    ["/", "weekly", "1.0"], ["/research", "monthly", "0.6"], ["/blog", "weekly", "0.8"],
+    ...POSTS.map((p) => [postPath(p), "monthly", "0.7"] as [string, string, string]),
+    ["/privacy", "monthly", "0.3"], ["/terms", "monthly", "0.3"],
+  ];
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.map(([path, freq, prio]) => `  <url>\n    <loc>${ORIGIN}${path === "/" ? "/" : path}</loc>\n    <lastmod>${today}</lastmod>\n    <changefreq>${freq}</changefreq>\n    <priority>${prio}</priority>\n  </url>`).join("\n")}\n</urlset>\n`;
+  writeFileSync(resolve(__dirname, "../dist/sitemap.xml"), xml, "utf-8");
+  console.log(`[prerender] sitemap.xml — ${urls.length} urls`);
+}
 void ORIGIN;

@@ -5159,7 +5159,7 @@ section("Security + SEO audit fixes (source pins)");
 {
   const vj = readFileSync("vercel.json", "utf8"), idx = readFileSync("server/index.ts", "utf8"), auth = readFileSync("server/routes/auth.ts", "utf8");
   const { PAGE_META, headFor } = await import("../shared/seo.ts");
-  check("public pages each get their own title and canonical (no longer duplicates of the home page)", new Set(Object.values(PAGE_META).map((m) => m.title)).size === 3 && Object.values(PAGE_META).every((m) => m.description.length >= 60 && m.description.length <= 170));
+  check("every public page has its own title (no duplicates of the home page) and a search-sized description", new Set(Object.values(PAGE_META).map((m) => m.title)).size === Object.keys(PAGE_META).length && ["research", "privacy", "terms"].every((k) => PAGE_META[k]) && Object.values(PAGE_META).every((m) => m.description.length >= 60 && m.description.length <= 170));
   const head = headFor('<title>x</title><meta name="description" content="d"><link rel="canonical" href="https://hiotto.vercel.app/"><meta property="og:url" content="https://hiotto.vercel.app/">', PAGE_META.privacy);
   check("headFor rewrites title, description, canonical and og:url", /<title>Privacy Policy/.test(head) && /rel="canonical" href="https:\/\/hiotto\.vercel\.app\/privacy"/.test(head) && /og:url" content="https:\/\/hiotto\.vercel\.app\/privacy"/.test(head));
   check("vercel.json serves the prerendered public pages and security.txt before the SPA fallback", /"\/research", "destination": "\/research\.html"/.test(vj) && /"\/privacy", "destination": "\/privacy\.html"/.test(vj) && /\.well-known/.test(vj) && vj.indexOf("/research.html") < vj.indexOf('"destination": "/index.html"'));
@@ -5170,6 +5170,20 @@ section("Security + SEO audit fixes (source pins)");
   check("deleting the account needs the password again (server) and the UI asks for it", /Enter your password to delete the account/.test(auth) && /deleteAccount: \(password: string\)/.test(readFileSync("client/api.ts", "utf8")) && /type="password"[^>]*Your password, to confirm deleting/.test(readFileSync("client/pages/Settings.tsx", "utf8")));
   check("failed logins are capped per ACCOUNT across all IPs, not just per IP", /limitBy\(`login-fail:\$\{email\}`/.test(auth));
   check("app screens and unknown paths are noindex on client-side navigation", /robots\.content = "noindex, nofollow"/.test(readFileSync("client/App.tsx", "utf8")));
+}
+
+section("Blog: evidence-based guides, each a real prerendered page with its own head, schema and sitemap entry");
+{
+  const { POSTS, postPath } = await import("../shared/blog.ts");
+  const { PAGE_META } = await import("../shared/seo.ts");
+  check("at least six posts, unique slugs, titles and descriptions", POSTS.length >= 6 && new Set(POSTS.map((p) => p.slug)).size === POSTS.length && new Set(POSTS.map((p) => p.title)).size === POSTS.length);
+  check("each post has a search-sized description and a real body (3+ sections, 250+ words)", POSTS.every((p) => p.description.length >= 80 && p.description.length <= 170 && p.blocks.filter((b) => b.t === "h2").length >= 3 && JSON.stringify(p.blocks).split(/\s+/).length >= 250));
+  check("every post is registered in the SEO meta with its own canonical path", POSTS.every((p) => PAGE_META[`blog/${p.slug}`]?.path === postPath(p)) && !!PAGE_META.blog);
+  check("posts cite the studies they rely on (no uncited claims about research)", POSTS.filter((p) => !/history-essay/.test(p.slug)).every((p) => /\(\d{4}|, \d{4}\)|\d{4}\)/.test(JSON.stringify(p.blocks))));
+  const pre = readFileSync("scripts/prerender-landing.tsx", "utf8");
+  check("the build writes the blog index, one HTML file per post, Article JSON-LD and a sitemap listing them", /blog\.html/.test(pre) && /blog\/\$\{post\.slug\}\.html/.test(pre) && /BlogPosting/.test(pre) && /sitemap\.xml/.test(pre) && /postPath\(p\), "monthly"/.test(pre));
+  check("Vercel and Express both serve the blog pages before the SPA fallback", /"\/blog\/:slug", "destination": "\/blog\/:slug\.html"/.test(readFileSync("vercel.json", "utf8")) && /app\.get\("\/blog\/:slug"/.test(readFileSync("server/index.ts", "utf8")));
+  check("the landing page links to the blog (nav, footer, and three guides) for crawlability", (readFileSync("client/pages/Landing.tsx", "utf8").match(/href="\/blog"/g) || []).length >= 3);
 }
 
 section("Board changes are undoable in the Tutor session (spec §12 #10, source pins)");
