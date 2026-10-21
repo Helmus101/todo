@@ -912,8 +912,8 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           </div>
           {device.status !== "unsupported" ? (
             <div className="tutor-start-device">
-              <DeviceButton status={device.status} onConnect={device.connect} onDisconnect={device.disconnect} en={"en" === "en"} />
-              <span className="settings-hint">{device.status === "connected" ? "Otto device connected: press its button to start or stop the tutor." : "Have the Otto device? Click the USB icon to connect it."}</span>
+              <DeviceButton labelled status={device.status} onConnect={device.connect} onDisconnect={device.disconnect} en={"en" === "en"} />
+              <span className="settings-hint">{device.status === "connected" ? "Press the device button to start or stop the tutor." : "Plug it in over USB, then click to pick it (once)."}</span>
             </div>
           ) : null}
           {error ? <p className="tutor-error" role="alert">{error}</p> : null}

@@ -249,3 +249,6 @@ h1 { font-family: var(--display); font-weight: 400; letter-spacing: -0.025em; }
 .tutor-start-device { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: var(--space-4); }
 .tutor-start-device .tutor-device-pill { margin: 0; }
 .tutor-start-device .settings-hint { margin: 0; }
+.tutor-device-pill.labelled { width: auto; height: 38px; padding: 0 14px; gap: 8px; font-size: 14px; font-weight: 500; color: var(--ink); border-color: var(--ink); }
+.tutor-device-pill.labelled.is-on { background: var(--bg-2); }
+@media (max-width: 640px) { .tutor-start-device { flex-direction: column; } }
