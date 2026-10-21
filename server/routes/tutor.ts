@@ -78,39 +78,47 @@ export function registerTutorRoutes(app: express.Express): void {
       } catch { /* memory is a bonus: the voice works without it */ }
       const instructions = liveInstructions({ subject, level: undefined, background, resuming: req.body?.resuming === true });
 
-      // 1) OpenAI Realtime (WebRTC from the browser, a "mini" model): preferred when a key is configured (LIVE_PROVIDER=gemini forces Gemini).
-      if (openaiKey && process.env.LIVE_PROVIDER !== "gemini") {
-        const candidates = [...new Set([process.env.OPENAI_REALTIME_MODEL, "gpt-realtime-mini", "gpt-realtime-2.1-mini", "gpt-realtime-2.1"].filter((m): m is string => !!m))];
-        for (const model of candidates) {
-          for (const full of [true, false]) {
-            const session: any = { type: "realtime", model, instructions, output_modalities: ["audio"], audio: { output: { voice: "marin" }, ...(full ? { input: { transcription: { model: "gpt-4o-mini-transcribe" }, turn_detection: { type: "semantic_vad" } } } : {}) } };
-            const r = await fetch("https://api.openai.com/v1/realtime/client_secrets", { method: "POST", headers: { Authorization: `Bearer ${openaiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ session }) });
-            if (r.ok) {
-              const j: any = await r.json();
-              const value = String(j?.value || j?.client_secret?.value || "");
-              if (value) { res.json({ provider: "openai", token: value, model, models: [model], instructions }); return; }
-            }
-            detail = `openai ${model}: ${r.status}`;
-            if (r.status === 401 || r.status === 403 || r.status === 429) break;
-          }
-          if (/: (401|403|429)$/.test(detail)) break;
-        }
-        console.warn(`[live] OpenAI realtime token failed (${detail})`);
+      // The browser tries these in order: Gemini Live first (when GEMINI_API_KEY is set), then OpenAI Realtime (a "mini" model, over WebRTC)
+      // as the fallback. LIVE_PROVIDER=gemini or =openai pins one. A provider whose credential can't be minted is simply left out.
+      const only = process.env.LIVE_PROVIDER;
+      const providers: Array<{ provider: "gemini" | "openai"; token: string; model: string; models: string[]; instructions: string }> = [];
+      if (geminiKey && only !== "openai") {
+        try {
+          const now = Date.now();
+          const r = await fetch(`https://generativelanguage.googleapis.com/v1alpha/auth_tokens?key=${encodeURIComponent(geminiKey)}`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ uses: 3, expireTime: new Date(now + 35 * 60_000).toISOString(), newSessionExpireTime: new Date(now + 60_000).toISOString() }),
+          });
+          const token = r.ok ? String(((await r.json()) as { name?: string }).name || "") : "";
+          if (token) {
+            // Model ids change often; the browser tries them in order until Google accepts one (a configured id always goes first).
+            const models = [...new Set([process.env.GEMINI_LIVE_MODEL, "gemini-3.8-live", "gemini-2.5-flash-native-audio-preview-09-2025"].filter((m): m is string => !!m))];
+            providers.push({ provider: "gemini", token, model: models[0], models, instructions });
+          } else detail += `gemini token ${r.status}; `;
+        } catch (e: any) { detail += `gemini ${String(e?.message || e).slice(0, 60)}; `; }
       }
-
-      // 2) Gemini Live (WebSocket from the browser).
-      if (!geminiKey) { res.status(502).json({ error: "Live voice isn't available right now.", code: "live_unavailable", detail }); return; }
-      const now = Date.now();
-      const r = await fetch(`https://generativelanguage.googleapis.com/v1alpha/auth_tokens?key=${encodeURIComponent(geminiKey)}`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ uses: 3, expireTime: new Date(now + 35 * 60_000).toISOString(), newSessionExpireTime: new Date(now + 60_000).toISOString() }),
-      });
-      if (!r.ok) throw new Error(`gemini token request ${r.status}`);
-      const token = String(((await r.json()) as { name?: string }).name || "");
-      if (!token) throw new Error("no token returned");
-      // Model ids change often; the browser tries them in order until Google accepts one (a configured id always goes first).
-      const models = [...new Set([process.env.GEMINI_LIVE_MODEL, "gemini-3.8-live", "gemini-2.5-flash-native-audio-preview-09-2025"].filter((m): m is string => !!m))];
-      res.json({ provider: "gemini", token, model: models[0], models, instructions });
+      if (openaiKey && only !== "gemini") {
+        try {
+          const candidates = [...new Set([process.env.OPENAI_REALTIME_MODEL, "gpt-realtime-mini", "gpt-realtime-2.1-mini", "gpt-realtime-2.1"].filter((m): m is string => !!m))];
+          let got = false;
+          for (const model of candidates) {
+            for (const full of [true, false]) {
+              const session: any = { type: "realtime", model, instructions, output_modalities: ["audio"], audio: { output: { voice: "marin" }, ...(full ? { input: { transcription: { model: "gpt-4o-mini-transcribe" }, turn_detection: { type: "semantic_vad" } } } : {}) } };
+              const r = await fetch("https://api.openai.com/v1/realtime/client_secrets", { method: "POST", headers: { Authorization: `Bearer ${openaiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ session }) });
+              if (r.ok) {
+                const j: any = await r.json();
+                const value = String(j?.value || j?.client_secret?.value || "");
+                if (value) { providers.push({ provider: "openai", token: value, model, models: [model], instructions }); got = true; break; }
+              }
+              detail += `openai ${model} ${r.status}; `;
+              if (r.status === 401 || r.status === 403 || r.status === 429) break;
+            }
+            if (got || /(401|403|429); $/.test(detail)) break;
+          }
+        } catch (e: any) { detail += `openai ${String(e?.message || e).slice(0, 60)}; `; }
+      }
+      if (!providers.length) { console.warn(`[live] no live voice credential could be minted (${detail.trim()})`); res.status(502).json({ error: "Live voice isn't available right now.", code: "live_unavailable", detail: detail.trim().slice(0, 160) }); return; }
+      res.json({ ...providers[0], providers });
     } catch (e: any) {
       console.warn(`[live] token request failed: ${String(e?.message || e).slice(0, 160)}`);
       res.status(502).json({ error: "Live voice isn't available right now.", code: "live_unavailable", detail: String(e?.message || e).slice(0, 120) });

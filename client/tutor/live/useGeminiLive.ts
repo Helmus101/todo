@@ -71,7 +71,7 @@ export function useGeminiLive(opts: LiveOptions) {
     if (aliveRef.current) return;
     aliveRef.current = true;
     setError(null); setStatus("connecting");
-    const player = new Player(setSpeaking);
+    let player = new Player(setSpeaking);
     player.unlock(); // inside the click when there was one
     playerRef.current = player;
     const handle = (msg: any) => {
@@ -89,7 +89,9 @@ export function useGeminiLive(opts: LiveOptions) {
       const o = optsRef.current;
       const [{ GoogleGenAI, Modality }, tok] = await Promise.all([import("@google/genai"), api.liveToken({ subject: o.subject, pastSessions: o.pastSessions, resuming: o.resuming })]);
       if (!aliveRef.current) return;
-      if (tok.provider === "openai") {
+      // Each provider is a function that either gets a live call going or throws (cleaning up after itself); they are tried in order below.
+      type Cred = { token: string; model: string; models?: string[]; instructions: string };
+      const tryOpenAI = async (tok: Cred) => {
         providerRef.current = "openai";
         player.close(); playerRef.current = null;
         const pc = new RTCPeerConnection();
@@ -127,9 +129,10 @@ export function useGeminiLive(opts: LiveOptions) {
         await pc.setRemoteDescription({ type: "answer", sdp: await r.text() });
         if (!aliveRef.current) return;
         setStatus("live");
-        return;
-      }
+      };
+      const tryGemini = async (tok: Cred) => {
       providerRef.current = "gemini";
+      if (!playerRef.current) { player = new Player(setSpeaking); player.unlock(); playerRef.current = player; }
       const ai = new GoogleGenAI({ apiKey: tok.token, httpOptions: { apiVersion: "v1alpha" } });
       const config = {
         responseModalities: [Modality.AUDIO],
@@ -169,6 +172,25 @@ export function useGeminiLive(opts: LiveOptions) {
       window.setTimeout(() => { if (aliveRef.current && player.state !== "running") setBlocked(true); }, 800);
       // The model speaks first: nudge it so it greets from what it knows.
       session.sendClientContent({ turns: [{ role: "user", parts: [{ text: "(Session started. Greet me briefly.)" }] }], turnComplete: true });
+      };
+      // Gemini first; if it cannot connect (or isn't configured), OpenAI takes over. The server sends a credential for each provider it has a key for.
+      const creds = (tok.providers?.length ? tok.providers : [tok]) as Array<Cred & { provider?: string }>;
+      let lastFailure: any = null;
+      for (const c of creds) {
+        if (!aliveRef.current) return;
+        try { if (c.provider === "openai") await tryOpenAI(c); else await tryGemini(c); lastFailure = null; break; }
+        catch (e: any) {
+          lastFailure = e;
+          // clean up what the failed attempt left behind, then try the next provider (a blocked microphone is the same for all of them)
+          try { dcRef.current?.close(); } catch { /* */ } dcRef.current = null;
+          try { pcRef.current?.close(); } catch { /* */ } pcRef.current = null;
+          oaiStreamRef.current?.getTracks().forEach((t) => t.stop()); oaiStreamRef.current = null;
+          try { sessionRef.current?.close(); } catch { /* */ } sessionRef.current = null;
+          micRef.current?.stop(); micRef.current = null;
+          if (/NotAllowed|Permission|denied/i.test(String(e?.name || e?.message))) break;
+        }
+      }
+      if (lastFailure) throw lastFailure;
     } catch (e: any) {
       const denied = /NotAllowed|Permission|denied/i.test(String(e?.name || e?.message));
       const unavailable = e?.status === 503 || e?.status === 502 || e?.status === 429 || e?.status === 403 || denied;
